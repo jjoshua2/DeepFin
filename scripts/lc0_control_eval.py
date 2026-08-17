@@ -140,6 +140,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -313,6 +314,25 @@ NON_PREREG_HELDOUT_WAIVER = "--allow-non-prereg-heldout"
 # population it scored" are different claims, and a flag named for the first must
 # not clear the second.
 UNRECORDED_HELDOUT_WAIVER = "--allow-unrecorded-heldout"
+# ⚑⚑ THE POPULATION ROLE. The prereg reads TWO deltas — `Delta_heldout` and
+# `Delta_train` — and `cmd_score` classified EVERY artifact with the HELD-OUT
+# six-source rule while banking no statement of which population it scored. So a
+# train-side sample that happened to span six directories banked an empty
+# `heldout_source_selection_problems` and could be presented as the held-out
+# slope, while an honest train sample spanning more directories demanded a
+# MISLEADING held-out waiver. Reported by the third independent review of #438
+# (thread 3795733605). The role is now banked, `compare` is told which comparison
+# it is making, and the six-source rule applies only to the held-out one.
+UNRECORDED_POPULATION_WAIVER = "--allow-unrecorded-population"
+# ⚑ Partial cluster keys. `cluster_keys_complete` was banked by `score` and read
+# by NOTHING — the wave-5 mutant that set it to False changed no output and no
+# exit code, which is this repo's signature defect inside the very field added to
+# make an assumption visible. It gates here: a `rows/cluster` ratio computed over
+# a key set with holes UNDERSTATES the clustering (the missing rows read as one
+# empty cluster and are dropped from `distinct_clusters`), so the number is not
+# merely unproven, it is wrong in a known direction.
+PARTIAL_CLUSTERS_WAIVER = "--allow-partial-clusters"
+POPULATIONS = ("heldout", "train")
 
 
 def checkpoint_identity(
@@ -490,12 +510,14 @@ def _identity_readout(meta: Mapping[str, Any]) -> str:
     run_id = meta.get("run_id")
     return (
         f"role: {role or 'UNRECORDED'}   "
-        f"run: {str(run_id)[:8] if run_id else 'UNRECORDED'}"
+        f"run: {str(run_id)[:8] if run_id else 'UNRECORDED'}   "
+        f"pop: {meta.get('population') or 'UNRECORDED'}"
     )
 
 
 def score_provenance_problems(
     meta_a: Mapping[str, Any], meta_b: Mapping[str, Any],
+    *, population: str = "heldout",
 ) -> list[ProvenanceProblem]:
     """Every reason these two artifacts cannot be paired, each with its waiver.
 
@@ -688,7 +710,40 @@ def score_provenance_problems(
   # with two different answers in one commit; found by the independent review.
   # `cmd_score` writes a LIST (empty when clean), so `None` means "no record",
   # which gets its own waiver — the same split as `valid_control` false vs None.
+  # ⚑⚑ WHICH POPULATION, ASKED FOR AND RECORDED. See UNRECORDED_POPULATION_WAIVER:
+  # the six-source held-out rule was applied to every artifact, so the two
+  # preregistered deltas were indistinguishable in the artifact and each one's gate
+  # was wrong for the other. `population` is what the CALLER says this comparison
+  # is; the field is what the SCORER recorded; a disagreement is unwaivable,
+  # because a train-side slope presented as `Delta_heldout` is the prereg's
+  # generalisation claim made out of rows the net trained on.
     for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        recorded_pop = meta.get("population")
+        if recorded_pop is None:
+            refuse(
+                f"{label} carries NO population record: field `population` is "
+                "absent, so nothing in the artifact says whether these rows are "
+                "the preregistered HELD-OUT set or the TRAIN-side sample — and "
+                "the two are different prereg deltas with different gates. "
+                f"Re-score with --population, or pass "
+                f"{UNRECORDED_POPULATION_WAIVER}.",
+                waiver=UNRECORDED_POPULATION_WAIVER,
+            )
+        elif str(recorded_pop) != population:
+            refuse(
+                f"{label} scored the {str(recorded_pop).upper()} population but "
+                f"this comparison was asked for {population.upper()} "
+                "(--population). The prereg's two deltas are read against "
+                "different bars, and a train-side slope quoted as the held-out "
+                "one is the generalisation claim made out of rows the net "
+                "trained on.",
+            )
+  # ⚑ THE SIX-SOURCE RULE IS A HELD-OUT RULE, and applying it to a train-side
+  # artifact is what forced an honest train sample to pass a held-out waiver.
+  # Judged only when the comparison IS the held-out one.
+    for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        if population != "heldout":
+            continue
         heldout = meta.get("heldout_source_selection_problems")
         if heldout is None:
             refuse(
@@ -888,7 +943,23 @@ def cmd_score(args: argparse.Namespace) -> int:
   # ⚑ RECOMPUTED from the frozen artifact's own `sources`, not read off a stamp
   # the freezer wrote: a frozen set built before the stamp existed has none, and
   # "absent" would then read as "preregistered".
-    heldout_problems = source_selection_problems(payload)
+  #
+  # ⚑⚑ AND ONLY FOR THE HELD-OUT POPULATION. This call was unconditional, so the
+  # prereg's OTHER delta — `Delta_train`, scored on rows the net trained on — was
+  # classified by the held-out six-source rule: a train sample spanning six
+  # directories banked an empty problem list and could be presented as
+  # `Delta_heldout`, and an honest train sample spanning more needed a MISLEADING
+  # held-out waiver to compare at all. `--population` is banked so `compare` can
+  # require the role the verdict it is building needs.
+    population = str(args.population)
+    heldout_problems = (
+        source_selection_problems(payload) if population == "heldout" else []
+    )
+    print(f"[score] population {population.upper()}"
+          + ("" if population == "heldout" else
+             " — the preregistered six-hourly-source rule is NOT applied to a "
+             "train-side sample, and `compare --population train` is what reads "
+             "this artifact"))
     if heldout_problems:
         print("⚑⚑ [score] NON-PREREGISTERED HELD-OUT POPULATION — "
               + " | ".join(heldout_problems))
@@ -942,8 +1013,15 @@ def cmd_score(args: argparse.Namespace) -> int:
             "checkpoint_role": validity.get("checkpoint_role"),
             "run_id": validity.get("run_id"),
             "checkpoint_identity": validity.get("checkpoint_identity"),
+  # ⚑ WHICH POPULATION this artifact is, so `compare` can require the role the
+  # prereg's delta needs instead of inferring one. Absent in artifacts written
+  # before this field existed, which `compare` refuses under its own waiver.
+            "population": population,
   # ⚑ The HELD-OUT population, recomputed from the frozen artifact rather than
-  # trusted from its stamp. `freeze` gated n and not the sources.
+  # trusted from its stamp. `freeze` gated n and not the sources. ⚑ Empty for a
+  # TRAIN-side artifact because the rule does not apply to it — `population`
+  # above is what distinguishes that from a clean held-out read, and `compare`
+  # judges this field only when the comparison is the held-out one.
             "heldout_source_selection_problems": heldout_problems,
   # ⚑ The cluster STRUCTURE, next to the CI it makes optimistic. Recorded, not yet
   # applied — see `cluster_keys` above and `cmd_compare`'s printout.
@@ -1006,13 +1084,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # what the first `--allow-unrecorded-validity` did — makes the waiver's reach a
   # property of prose, and `valid_control: false` (a run the driver disqualified)
   # must stay unreachable by every flag in this file.
-    provenance = score_provenance_problems(meta_a, meta_b)
+    provenance = score_provenance_problems(
+        meta_a, meta_b, population=str(args.population),
+    )
     passed = {
         SHUFFLED_CONTRAST_WAIVER: bool(args.allow_shuffled_contrast),
         UNRECORDED_VALIDITY_WAIVER: bool(args.allow_unrecorded_validity),
         UNVERIFIED_IDENTITY_WAIVER: bool(args.allow_unverified_trajectory),
         NON_PREREG_HELDOUT_WAIVER: bool(args.allow_non_prereg_heldout),
         UNRECORDED_HELDOUT_WAIVER: bool(args.allow_unrecorded_heldout),
+        UNRECORDED_POPULATION_WAIVER: bool(args.allow_unrecorded_population),
     }
     waived = [p for p in provenance if p.waiver is not None and passed[p.waiver]]
     for flag in sorted({p.waiver for p in waived if p.waiver is not None}):
@@ -1058,43 +1139,43 @@ def cmd_compare(args: argparse.Namespace) -> int:
     se = float(np.sqrt(max(var, 0.0)))
     half = 1.959963985 * se
     p_exact = _exact_mcnemar_p(b, c)
-  # ⚑ PRINTED, not merely checked. "the provenance gate passed" has to be an
-  # observation in the output a reader can point at, otherwise a gate that
-  # stopped running looks identical to a gate that ran and passed.
-  # ⚑ The IDENTITY is on the line too, for the same reason `neg-control:` is: the
-  # prereg requires a pasted readout to be self-describing, and "this pair is
-  # mid-vs-last of one trajectory" is now a gate — a gate whose result a reader
-  # of the output could not see.
-    for label, meta, rate in (("A", meta_a, rate_a), ("B", meta_b, rate_b)):
-        print(f"{label}  {meta.get('checkpoint')}   top-1 {rate:.6f}   "
-              f"targets: {target_provenance(meta)[0]}   "
-              f"neg-control: {_negative_control_readout(meta)}   "
-              f"{_identity_readout(meta)}")
-    print(f"paired rows          {n}")
-    print(f"discordant  b(A only)={b}  c(B only)={c}  "
-          f"discordance={(b + c) / n:.4f}")
-    print(f"delta (B - A)        {delta * 100:+.4f} pp")
-    print(f"95% CI               [{(delta - half) * 100:+.4f}, "
-          f"{(delta + half) * 100:+.4f}] pp   (halfwidth {half * 100:.4f} pp)")
-    print(f"exact McNemar p      {p_exact:.6g}")
-  # ⚑⚑ THE CI ABOVE ASSUMES INDEPENDENT ROWS AND THE ROWS ARE NOT INDEPENDENT.
-  # The converter emits many plies per game, so hits are correlated within a game
-  # and both the halfwidth and `MATERIAL_BAR_PP` (derived at n=100,000 under
-  # independence) are optimistic by the design effect. The clustered estimator is
-  # DEFERRED — it needs the real corpus's plies-per-game distribution — so what
-  # ships is the KEY (banked by `score`, unrecoverable after the freeze) and this
-  # line, which states the assumption instead of leaving it implicit. A readout
-  # quoted against the pre-committed bar has to show it.
-    clusters_a = int(meta_a.get("distinct_clusters") or 0)
-    if clusters_a > 0:
-        print(f"game clusters        {clusters_a} over {n} rows "
-              f"({n / clusters_a:.1f} rows/cluster)   ⚑ the CI above is "
-              "ROW-level and is OPTIMISTIC by the design effect; the clustered "
-              "estimator is not yet implemented")
-    else:
-        print("game clusters        UNRECORDED   ⚑ the CI above is ROW-level and "
-              "cannot be corrected for within-game correlation from this artifact")
-  # ⚑ THE PRE-COMMITTED BAR IS A PROPERTY OF n, AND NOTHING WAS ENFORCING n.
+
+  # ⚑⚑ THE RESOLUTION GATE IS BUILT AND CHECKED **BEFORE** ANY RESULT LINE IS
+  # PRINTED. It used to run after the rates, the delta, the CI and the p-value
+  # were already on stdout, so a refused comparison still put a quotable
+  # primary-yardstick number on the screen — and a pasted readout that drops
+  # stderr and the exit code (which is how these numbers travel) shows the slope
+  # with nothing beside it. Reported by the third independent review of #438
+  # (thread 3795733620). The provenance gate twenty lines up was already built
+  # this way; this one had the same policy in a comment and the opposite order in
+  # the code.
+    half_pp = half * 100.0
+  # ⚑ A NON-FINITE OVERRIDE IS NOT AN OVERRIDE. `--max-halfwidth-pp nan` was
+  # accepted by `float()`, switched `prereg_bar_in_force` off (which disabled the
+  # n floor) and then compared `half_pp > nan` — FALSE for every finite
+  # halfwidth. Both gates off, exit 0, slope printed: a clamp is not a validator,
+  # and NaN propagates through every comparison as "no". `<= 0` is refused for
+  # the mirror reason: it makes the halfwidth gate unpassable rather than
+  # unfailable, which is a bar nobody could have re-derived.
+  # ⚑ Bound to a LOCAL, because the narrowing has to survive into `bar_pp` below:
+  # `args.max_halfwidth_pp` is `Any | None` to the type checker, so re-reading the
+  # attribute after the guard re-widens it.
+    override: float | None = args.max_halfwidth_pp
+    if override is not None and not (
+        math.isfinite(float(override)) and float(override) > 0.0
+    ):
+        print(
+            f"FAIL: --max-halfwidth-pp {override!r} is not a finite "
+            "positive number of percentage points. A non-finite bar switches the "
+            "n floor off and then compares FALSE against every halfwidth, so the "
+            "comparison would report a slope with no resolution gate in force at "
+            "all.",
+            file=sys.stderr,
+        )
+        return 1
+    prereg_bar_in_force = override is None
+    bar_pp = MATERIAL_BAR_PP if override is None else float(override)
+  # ⚑⚑ THE PRE-COMMITTED BAR IS A PROPERTY OF n, AND NOTHING WAS ENFORCING n.
   # The prereg's 0.392 pp material bar is derived AT n=100,000. The reviewer's
   # end-to-end demonstration paired 5,000 train-side rows and got a halfwidth
   # of 1.0721 pp — 2.7x the bar it would then be judged against — and the rig
@@ -1110,9 +1191,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # in this review. n is now checked in its own right, and the zero-discordance
   # case is refused by name rather than by an inequality it satisfies
   # vacuously.
-    half_pp = half * 100.0
-    prereg_bar_in_force = args.max_halfwidth_pp is None
-    bar_pp = MATERIAL_BAR_PP if prereg_bar_in_force else float(args.max_halfwidth_pp)
+  #
+  # ⚑⚑ AND THE n FLOOR IS NO LONGER SWITCHED OFF BY THE MERE PRESENCE OF AN
+  # OVERRIDE. `--max-halfwidth-pp` may only be a RE-DERIVATION of the bar, which
+  # at a smaller n means a TIGHTER bar; a bar LOOSER than the prereg's material
+  # effect size is not a re-derivation, it is "accept a CI wider than the effect
+  # I am judging", and it left the small-n gate open with one argument. So the
+  # floor is in force whenever the bar in force is not at least as strict as
+  # MATERIAL_BAR_PP, whether or not a flag was passed.
+    bar_is_relaxed = bar_pp > MATERIAL_BAR_PP + 1e-12
     problems: list[str] = []
     if b + c == 0:
         problems.append(
@@ -1122,12 +1209,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "that agree on every row — check that they are different "
             "checkpoints.",
         )
-    if prereg_bar_in_force and n < PREREG_SAMPLE_ROWS:
+    if (prereg_bar_in_force or bar_is_relaxed) and n < PREREG_SAMPLE_ROWS:
         problems.append(
             f"n={n} is below the prereg's resolution point "
-            f"{PREREG_SAMPLE_ROWS}, at which the {bar_pp:.4f} pp bar was "
-            "derived. Score the full frozen set, or pass --max-halfwidth-pp "
-            "explicitly with the bar you are re-deriving at this n.",
+            f"{PREREG_SAMPLE_ROWS}, at which the {MATERIAL_BAR_PP:.4f} pp "
+            f"material bar was derived (bar in force {bar_pp:.4f} pp"
+            + ("" if prereg_bar_in_force else
+               ", which is LOOSER than the material bar and so is not a "
+               "re-derivation at this n")
+            + "). Score the full frozen set, or pass --max-halfwidth-pp with a "
+            "bar at least as strict as the material one, re-derived at this n.",
         )
     if half_pp > bar_pp:
         problems.append(
@@ -1135,24 +1226,149 @@ def cmd_compare(args: argparse.Namespace) -> int:
             f"{bar_pp:.4f} pp at n={n}. At this n the comparison cannot resolve "
             "the effect it is being judged against.",
         )
+  # ⚑⚑ AND THE CLUSTER-KEY COMPLETENESS GATES SOMETHING NOW. `score` banked
+  # `cluster_keys_complete` and NOTHING read it: the wave-5 mutant that forced it
+  # False changed no line of output and no exit code — a field added to make an
+  # assumption visible, itself invisible. A PARTIAL key set is worse than none:
+  # rows without a key collapse into one dropped empty cluster, so
+  # `distinct_clusters` UNDERSTATES the clustering and the `rows/cluster` ratio
+  # printed below is wrong in a known direction. Refused under its own flag
+  # rather than folded into --allow-underpowered, because "the CI is too wide" and
+  # "the design effect cannot be estimated" are different claims.
+    cluster_line, partial_clusters = _cluster_readout(meta_a, meta_b, n=n)
+    if partial_clusters is not None:
+        problems.append(partial_clusters)
+
+  # ⚑ EACH AXIS IS WAIVED BY ITS OWN FLAG, and a flag that clears one leaves the
+  # others refused — the same rule the provenance waivers follow. Folding both
+  # into --allow-underpowered would make one flag clear two different claims,
+  # which is how a gate becomes a decoration.
+    resolution_problems = [q for q in problems if q != partial_clusters]
+    unwaived: list[str] = []
+    if resolution_problems and not args.allow_underpowered:
+        unwaived += resolution_problems
+    if partial_clusters is not None and not args.allow_partial_clusters:
+        unwaived.append(partial_clusters)
+    if unwaived:
+        print(f"FAIL: {' | '.join(unwaived)}", file=sys.stderr)
+        return 1
     if problems:
-        message = " | ".join(problems)
-        if not args.allow_underpowered:
-            print(f"FAIL: {message}", file=sys.stderr)
-            return 1
-        print(f"⚑⚑ --allow-underpowered: {message}")
+        print(f"⚑⚑ RESOLUTION GATE WAIVED: {' | '.join(problems)}")
+
+  # ⚑ PRINTED, not merely checked. "the provenance gate passed" has to be an
+  # observation in the output a reader can point at, otherwise a gate that
+  # stopped running looks identical to a gate that ran and passed.
+  # ⚑ The IDENTITY is on the line too, for the same reason `neg-control:` is: the
+  # prereg requires a pasted readout to be self-describing, and "this pair is
+  # mid-vs-last of one trajectory" is now a gate — a gate whose result a reader
+  # of the output could not see.
+    for label, meta, rate in (("A", meta_a, rate_a), ("B", meta_b, rate_b)):
+        print(f"{label}  {meta.get('checkpoint')}   top-1 {rate:.6f}   "
+              f"targets: {target_provenance(meta)[0]}   "
+              f"neg-control: {_negative_control_readout(meta)}   "
+              f"{_identity_readout(meta)}")
+    print(f"population           {args.population.upper()}")
+    print(f"paired rows          {n}")
+    print(f"discordant  b(A only)={b}  c(B only)={c}  "
+          f"discordance={(b + c) / n:.4f}")
+    print(f"delta (B - A)        {delta * 100:+.4f} pp")
+    print(f"95% CI               [{(delta - half) * 100:+.4f}, "
+          f"{(delta + half) * 100:+.4f}] pp   (halfwidth {half * 100:.4f} pp)")
+    print(f"exact McNemar p      {p_exact:.6g}")
+  # ⚑⚑ THE CI ABOVE ASSUMES INDEPENDENT ROWS AND THE ROWS ARE NOT INDEPENDENT.
+  # The converter emits many plies per game, so hits are correlated within a game
+  # and both the halfwidth and `MATERIAL_BAR_PP` (derived at n=100,000 under
+  # independence) are optimistic by the design effect. The clustered estimator is
+  # DEFERRED — it needs the real corpus's plies-per-game distribution — so what
+  # ships is the KEY (banked by `score`, unrecoverable after the freeze) and this
+  # line, which states the assumption instead of leaving it implicit. A readout
+  # quoted against the pre-committed bar has to show it.
+    print(cluster_line)
     return 0
 
 
+def _cluster_readout(
+    meta_a: Mapping[str, Any], meta_b: Mapping[str, Any], *, n: int,
+) -> tuple[str, str | None]:
+    """``(the printed line, a refusal message or None)`` for the game clusters.
+
+    ⚑ THE RATIO IS ONLY PRINTED WHEN THE KEY SET IS COMPLETE. `distinct_clusters`
+    counts the NON-EMPTY keys, so an artifact whose keys have holes reports fewer
+    clusters over the same rows and a HIGHER rows/cluster figure than the truth —
+    a number that looks like a stronger statement about the design effect while
+    being an artifact of the missing keys. Incomplete is therefore its own state,
+    with its own refusal, and never a clean ratio.
+    """
+    clusters_a = int(meta_a.get("distinct_clusters") or 0)
+    incomplete = [
+        label for label, meta in (("--a", meta_a), ("--b", meta_b))
+        if meta.get("distinct_clusters") and meta.get("cluster_keys_complete") is not True
+    ]
+    if incomplete:
+        return (
+            "game clusters        PARTIAL   ⚑ "
+            + " and ".join(incomplete)
+            + " bank cluster keys for only SOME rows "
+            f"(`cluster_keys_complete` is not true), so the {clusters_a} distinct "
+            "keys are counted over an unknown subset and no rows/cluster ratio is "
+            "shown",
+            f"{' and '.join(incomplete)} carr"
+            f"{'y' if len(incomplete) > 1 else 'ies'} an INCOMPLETE cluster-key "
+            "set: `cluster_keys_complete` is not true, so rows with no key collapse "
+            "into one dropped empty cluster, `distinct_clusters` understates the "
+            "clustering and any design-effect statement read off this pair is wrong "
+            "in a known direction. Re-freeze/re-score so every row carries a key, "
+            f"or pass {PARTIAL_CLUSTERS_WAIVER} to read the ROW-level CI knowing "
+            "the design effect cannot be estimated from these artifacts.",
+        )
+    if clusters_a > 0:
+        return (
+            f"game clusters        {clusters_a} over {n} rows "
+            f"({n / clusters_a:.1f} rows/cluster)   ⚑ the CI above is "
+            "ROW-level and is OPTIMISTIC by the design effect; the clustered "
+            "estimator is not yet implemented", None,
+        )
+    return (
+        "game clusters        UNRECORDED   ⚑ the CI above is ROW-level and "
+        "cannot be corrected for within-game correlation from this artifact",
+        None,
+    )
+
+
+# Above this many discordant pairs the exact tail is summed in LOG space. Below
+# it, `math.comb` is used unchanged, because that path is what the arithmetic
+# pins in `tests/test_lc0_control_drivers.py` assert against and an exact
+# integer/exact-power-of-two ratio is bit-reproducible.
+EXACT_COMB_MAX_DISCORDANT = 1000
+
+
 def _exact_mcnemar_p(b: int, c: int) -> float:
-    """Two-sided exact binomial p on the discordant pairs."""
+    """Two-sided exact binomial p on the discordant pairs.
+
+    ⚑ THE ENUMERATING VERSION DID NOT FINISH AT THE PREREG'S OWN n. It summed
+    `math.comb(total, k)` for every k up to `min(b, c)` — arbitrary-precision
+    integers with tens of thousands of digits, tens of thousands of times — so a
+    balanced 20,000-pair comparison took tens of seconds and a 100,000-pair one
+    minutes, on the ONE readout the prereg says decides the arm. Reported by the
+    third independent review of #438. Above `EXACT_COMB_MAX_DISCORDANT` the same
+    tail is accumulated in log space by a stable recurrence on
+    `log C(total, k+1) = log C(total, k) + log(total-k) - log(k+1)`, which is
+    O(min(b, c)) float operations. It is still the EXACT binomial tail, not a
+    normal approximation: only the arithmetic changed.
+    """
     total = b + c
     if total == 0:
         return 1.0
-    from math import comb
-
     smaller = min(b, c)
-    tail = sum(comb(total, k) for k in range(smaller + 1)) / 2**total
+    if total <= EXACT_COMB_MAX_DISCORDANT:
+        tail = sum(math.comb(total, k) for k in range(smaller + 1)) / 2**total
+        return float(min(1.0, 2.0 * tail))
+    log_half = -total * math.log(2.0)
+    log_comb = 0.0
+    tail = math.exp(log_half)
+    for k in range(smaller):
+        log_comb += math.log(total - k) - math.log(k + 1)
+        tail += math.exp(log_comb + log_half)
     return float(min(1.0, 2.0 * tail))
 
 
@@ -1187,6 +1403,15 @@ def build_parser() -> argparse.ArgumentParser:
              "collision rate SUM_m p_pred(m)*p_tgt(m) — NOT to E[1/n_legal], "
              "which sits ~19x higher and is the uniform-mover reference.",
     )
+    score.add_argument(
+        "--population", choices=POPULATIONS, default="heldout",
+        help="⚑⚑ WHICH of the prereg's two deltas this artifact is for. "
+             "`heldout` (default) applies the preregistered six-hourly-source "
+             "rule to the frozen set; `train` does not, because that rule is a "
+             "held-out rule. The role is banked and `compare --population` must "
+             "match it: an unconditional held-out classification let a "
+             "six-directory TRAIN sample be presented as Delta_heldout.",
+    )
     score.add_argument("--shuffle-seed", type=int, default=0)
     score.add_argument(
         "--negative-control-z", type=float, default=NEGATIVE_CONTROL_Z,
@@ -1207,10 +1432,37 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"the prereg's material bar ({MATERIAL_BAR_PP} pp = 2x the paired "
              "resolution at n=100,000; see paired_halfwidth_pp). A slope whose "
              "95%% halfwidth exceeds it is refused rather than reported. "
-             "Passing it explicitly also waives the n floor, because it says "
-             "you re-derived the bar at the n you have.",
+             "⚑ Passing a bar at least as STRICT as the material one waives the "
+             "n floor, because that is a re-derivation at the n you have; a "
+             "LOOSER bar does not, because accepting a CI wider than the effect "
+             "size is the underpowered state the floor exists for. Must be "
+             "finite and positive: `nan` used to switch the floor off AND pass "
+             "every halfwidth.",
     )
     compare.add_argument("--allow-underpowered", action="store_true")
+    compare.add_argument(
+        "--population", choices=POPULATIONS, default="heldout",
+        help="⚑⚑ WHICH of the prereg's two deltas this comparison is. Both score "
+             "files must have been scored with the SAME --population, and a "
+             "mismatch is UNWAIVABLE: the held-out six-source rule is applied "
+             "only to the held-out comparison, and a train-side slope presented "
+             "as Delta_heldout is the generalisation claim made out of rows the "
+             "net trained on.",
+    )
+    compare.add_argument(
+        UNRECORDED_POPULATION_WAIVER, action="store_true",
+        help="proceed when a score file carries no `population` field (written "
+             "before the field existed). ⚑ It does NOT waive a population "
+             "MISMATCH, and for a held-out comparison the six-source refusals "
+             "still apply on whatever the artifact records.")
+    compare.add_argument(
+        PARTIAL_CLUSTERS_WAIVER, action="store_true",
+        help="proceed when a score file's `cluster_keys_complete` is not true. "
+             "⚑ Its own flag rather than a clause of --allow-underpowered: a CI "
+             "that is too wide and a design effect that cannot be estimated are "
+             "different claims. With partial keys no rows/cluster ratio is "
+             "printed at all, because `distinct_clusters` understates the "
+             "clustering in a known direction.")
     compare.add_argument(
         UNVERIFIED_IDENTITY_WAIVER, action="store_true",
         help="proceed when a score file carries no `run_id`/`checkpoint_role`. "

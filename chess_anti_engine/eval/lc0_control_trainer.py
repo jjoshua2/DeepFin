@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.eval.lc0_control_arch import LIVE_FILE_UNREAD
+from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import trainer_kwargs_from_config
 
 # ── the recorded live trainer ────────────────────────────────────────────────
@@ -278,6 +279,39 @@ def _reference_signature(
 
     flat = flatten_run_config_defaults(load_yaml_file(str(live_config)))
     return trainer_kwargs_signature(flat), f"the LIVE file {live_config}"
+
+
+def live_production_game_frac(
+    *, live_config: Path | None = None, pin: Mapping[str, Any] | None = None,
+) -> tuple[float, str]:
+    """``(game_frac, provenance)`` — the RAW-OUTCOME share PRODUCTION trains on.
+
+    ⚑⚑ THE OUTCOME BAR CANNOT BE A CONSTANT IN THIS TREE, BECAUSE THE TWO KEYS IT
+    IS MADE OF ARE THE TWO GUARD 0c IS REQUIRED TO IGNORE.
+    ``value_blend_guard.PRODUCTION_GAME_FRAC`` is a hand-written ``0.0``,
+    re-derived on 2026-08-16 from live's ``sf_wdl_frac 0.69 / search_wdl_frac
+    0.31`` — and BOTH of those keys are ``LC0_TRAINER_DEVIATIONS`` entries, so
+    ``assert_control_matches_live_trainer`` is structurally blind to them. If
+    production moves to ``0.50 / 0.20`` it leaves ``0.30`` of the value target on
+    the raw game outcome while the arm holds ``0.00``: guard 0c stays silent by
+    construction, the realized guard's bar is still the stale constant, and the
+    run is stamped ``valid_control: true`` while no longer training production's
+    objective. Reported by the third independent review of PR #438.
+
+    So the bar is derived from the SAME reference signature the launch preflight
+    judged the recipe against — the live file when one is named, the recorded pin
+    otherwise — and through the SAME ``normalize_value_blend_fracs`` the loss
+    uses, so this is not a second copy of the arithmetic. The caller compares it
+    with ``PRODUCTION_GAME_FRAC`` and records the divergence; a driver that only
+    passed it to the guard would tighten or LOOSEN the bar silently.
+    """
+    pinned = dict(pin) if pin is not None else LIVE_TRAINER_PIN
+    reference, provenance = _reference_signature(live_config, pinned)
+    _, _, game = normalize_value_blend_fracs(
+        float(reference.get("sf_wdl_frac", 0.0) or 0.0),
+        float(reference.get("search_wdl_frac", 0.0) or 0.0),
+    )
+    return float(game), provenance
 
 
 def assert_control_matches_live_trainer(

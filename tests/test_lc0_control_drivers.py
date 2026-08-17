@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +170,7 @@ def test_the_control_run_completes_and_writes_a_summary(tmp_path: Path) -> None:
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ])
     assert rc == 0
     assert (out / "checkpoint.pt").is_file()
@@ -217,7 +220,8 @@ def test_the_realized_guard_fails_the_run_and_writes_no_checkpoint(
         lc0_control_train.main([
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
-            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control", "--allow-leak",
         ])
     assert "RAW GAME OUTCOME" in str(excinfo.value)
     assert not (out / "checkpoint.pt").exists(), (
@@ -251,6 +255,7 @@ def test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target(
             "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
             "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
     message = str(excinfo.value)
     assert "CATEGORICAL target rebuild" in message
@@ -294,7 +299,8 @@ def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
         rc = lc0_control_train.main([
             "--config", str(config), "--shards", str(labelled),
             "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
-            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control", "--allow-leak",
         ])
     assert rc == 0
     metrics = json.loads((out / "summary.json").read_text(encoding="utf-8"))["metrics"]
@@ -315,7 +321,7 @@ def test_the_trainer_publishes_the_effective_label_mass_and_warns_on_a_leak(
             "--config", str(config), "--shards", str(unlabelled),
             "--out-dir", str(tmp_path / "leak_warn"), "--steps", "1",
             "--batch-size", "4", "--device", "cpu", "--no-compile",
-            "--allow-arch-drift", "--allow-leak",
+            "--allow-arch-drift", "--allow-invalid-control", "--allow-leak",
         ])
     warned = [r.getMessage() for r in caplog.records if "RAW GAME OUTCOME" in r.getMessage()]
     assert warned, "the production-path warning did not fire on a real leak"
@@ -414,7 +420,7 @@ def test_the_normalized_leak_warning_fires_through_the_real_training_step(
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(tmp_path / "oversubscribed"), "--steps", "1",
             "--batch-size", "4", "--device", "cpu", "--no-compile",
-            "--allow-arch-drift", "--allow-leak",
+            "--allow-arch-drift", "--allow-invalid-control", "--allow-leak",
         ])
     warned = [r.getMessage() for r in caplog.records
               if "RAW GAME OUTCOME" in r.getMessage()]
@@ -441,6 +447,7 @@ def test_launch_refuses_a_production_blend_without_allow_leak(tmp_path: Path) ->
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(tmp_path / "x"), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
 
 
@@ -455,6 +462,7 @@ def test_an_all_outcome_value_target_is_refused(tmp_path: Path) -> None:
             "--config", str(config), "--shards", str(lc0_rows),
             "--out-dir", str(tmp_path / "y"), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
     assert "collapses onto the raw game outcome" in str(excinfo.value)
 
@@ -476,7 +484,8 @@ def test_the_realized_guard_also_catches_the_all_outcome_target(tmp_path: Path) 
         lc0_control_train.main([
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
-            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control", "--allow-leak",
         ])
     message = str(excinfo.value)
     assert "1.0000 of its mass on the RAW GAME OUTCOME" in message
@@ -503,6 +512,7 @@ def test_a_corpus_with_no_search_label_is_refused_at_launch(tmp_path: Path) -> N
             "--config", str(_tiny_config(tmp_path)), "--shards", str(rows),
             "--out-dir", str(tmp_path / "ns"), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
     message = str(excinfo.value)
     assert "NO search value label" in message
@@ -524,6 +534,7 @@ def test_a_partially_labelled_corpus_is_refused(tmp_path: Path) -> None:
             "--shards", str(lc0_rows), str(sf_rows),
             "--out-dir", str(tmp_path / "z"), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
 
 
@@ -664,7 +675,7 @@ def test_the_trainer_guard_refuses_a_drifted_control_at_launch(
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(tmp_path / "drift_run"), "--steps", "1",
             "--batch-size", "4", "--device", "cpu", "--no-compile",
-            "--allow-arch-drift",
+            "--allow-arch-drift", "--allow-invalid-control",
         ])
     assert "TRAINER is NOT production's" in str(excinfo.value)
     assert "w_moves_left" in str(excinfo.value)
@@ -796,6 +807,7 @@ def test_the_driver_builds_productions_buffer_not_the_constructor_defaults(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "2", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ])
     assert rc == 0
     live = lc0_control_replay.LIVE_REPLAY_PIN["kwargs"]
@@ -836,7 +848,7 @@ def test_the_replay_guard_refuses_a_drifted_control_at_launch(
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(tmp_path / "drift"), "--steps", "1",
             "--batch-size", "4", "--device", "cpu", "--no-compile",
-            "--allow-arch-drift",
+            "--allow-arch-drift", "--allow-invalid-control",
         ])
     message = str(excinfo.value)
     assert "REPLAY BUFFER is NOT production" in message
@@ -855,7 +867,7 @@ def test_allow_leak_downgrades_the_replay_guard_to_a_banner(
         "--config", str(config), "--shards", str(shards),
         "--out-dir", str(tmp_path / "leaky"), "--steps", "1",
         "--batch-size", "4", "--device", "cpu", "--no-compile",
-        "--allow-arch-drift", "--allow-leak",
+        "--allow-arch-drift", "--allow-invalid-control", "--allow-leak",
     ])
     assert rc == 0
     assert "IGNORING launch guard" in capsys.readouterr().out
@@ -922,6 +934,7 @@ def test_the_run_writes_a_mid_budget_checkpoint_from_one_trajectory(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ])
     assert rc == 0
     assert (out / "checkpoint_mid.pt").is_file()
@@ -970,6 +983,7 @@ def test_the_budget_runs_in_production_sized_windows_and_mid_lands_on_a_boundary
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "8", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
         "--train-window-steps", "2",
     ]) == 0
     assert calls == [2, 2, 2, 2], (
@@ -985,24 +999,51 @@ def test_the_budget_runs_in_production_sized_windows_and_mid_lands_on_a_boundary
     )
 
 
-def test_a_budget_that_is_not_an_even_number_of_windows_is_recorded(
-    tmp_path: Path,
+def test_an_odd_window_count_trains_the_remainder_and_is_a_valid_cadence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The other direction: an odd window count puts MID mid-cycle, so the slope
-    carries an LR artifact — and the artifact says so instead of the config
-    documenting it in prose (which is what the control yaml did)."""
+    """⚑⚑ REVIEW F1/F3 AND CODEX 3796113403, in one run.
+
+    The previous revision required ``steps % (2 * window) == 0``. That relocated
+    N1's outcome instead of fixing it — at the default window 88 only multiples of
+    **176** were valid, i.e. 175 of every 176 budgets INCLUDING the arm's own
+    20,000 — and it also ran ``steps // window`` FULL windows, silently discarding
+    the remainder while ``summary["steps"]`` went on reporting the request.
+
+    So this asserts the two OUTCOMES, not the arithmetic: an odd window count is a
+    CLEAN cadence, and every requested step is actually trained (the final window
+    is SHORT, which still ends at the LR release-cycle bottom — see
+    ``test_the_mid_budget_split_would_have_re_ramped_the_lr`` for the measurement
+    of that scheduler property).
+    """
     shards = _write_shards(tmp_path / "rows", list(range(16)))
+    calls: list[int] = []
+    real = lc0_control_train.Trainer.train_steps
+
+    def spy(self: Any, buf: Any, *, batch_size: int, steps: int) -> Any:
+        calls.append(int(steps))
+        return real(self, buf, batch_size=batch_size, steps=steps)
+
+    monkeypatch.setattr(lc0_control_train.Trainer, "train_steps", spy)
     out = tmp_path / "odd_windows"
     assert lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
-        "--out-dir", str(out), "--steps", "6", "--batch-size", "4",
+        "--out-dir", str(out), "--steps", "10", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
-        "--train-window-steps", "4",
+        "--allow-invalid-control", "--train-window-steps", "4",
     ]) == 0
+    assert calls == [4, 4, 2], (
+        "three windows, the last one SHORT: the remainder must be trained, not "
+        f"discarded (got {calls})"
+    )
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert [p for p in summary["validity_problems"]
-            if "LR cadence" in p and "even number of 4-step windows" in p], (
-        summary["validity_problems"]
+    assert summary["train_windows"] == 3
+    assert summary["steps"] == summary["steps_realized"] == 10, (
+        "the artifact's budget must be the budget that ran"
+    )
+    assert not [p for p in summary["validity_problems"] if "LR cadence" in p], (
+        "an odd window count is not a cadence problem — it was one only under the "
+        f"divisibility rule this fix removed: {summary['validity_problems']}"
     )
 
 
@@ -1011,18 +1052,27 @@ def test_the_default_window_is_productions_realized_cadence() -> None:
     so it is a default here and not a yaml key — and a default nobody pins is a
     number that drifts."""
     assert lc0_control_train.PRODUCTION_TRAIN_WINDOW_STEPS == 88
-    parser_default = lc0_control_train.main.__doc__ is not None or True
-    assert parser_default
   # The plan function is what the driver acts on, so pin ITS arithmetic.
     assert lc0_control_train.train_window_plan(steps=1760, window=88) == (88, 20, None)
+  # ⚑ A CEILING window count and NO divisibility requirement: 20001 steps is 228
+  # windows, the last of which is short, and it is a CLEAN plan.
+    assert lc0_control_train.train_window_plan(steps=20001, window=88) == (
+        88, 228, None,
+    )
+  # The one remaining problem: a budget with no INTERIOR boundary to put MID on.
     window, count, problem = lc0_control_train.train_window_plan(steps=100, window=88)
-    assert (window, count) == (88, 1)
+    assert (window, count) == (88, 2)
     assert problem is not None
-    assert "even number" in problem
+    assert "less than two" in problem
     window, count, problem = lc0_control_train.train_window_plan(steps=4, window=88)
     assert (window, count) == (4, 1)
     assert problem is not None
-    assert "exceeds --steps" in problem
+    assert "less than two" in problem
+  # ⚑ 2 x window is the smallest CLEAN budget, and it puts MID at exactly 0.5.
+    assert lc0_control_train.train_window_plan(steps=176, window=88) == (88, 2, None)
+    assert lc0_control_train.mid_step_on_window_boundary(
+        steps=176, window=88, frac=0.5,
+    ) == 88
 
 
 def test_the_mid_budget_split_would_have_re_ramped_the_lr() -> None:
@@ -1075,6 +1125,7 @@ def test_a_run_with_no_mid_checkpoint_is_not_a_valid_control(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "2", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
         "--mid-checkpoint-frac", "0",
     ])
     assert rc == 0
@@ -1101,7 +1152,8 @@ def test_a_failed_realized_guard_leaves_no_mid_checkpoint_either(
         lc0_control_train.main([
             "--config", str(config), "--shards", str(shards),
             "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
-            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control", "--allow-leak",
         ])
     assert not (out / "checkpoint.pt").exists()
     assert not (out / "checkpoint_mid.pt").exists()
@@ -1112,7 +1164,8 @@ def _run(tmp_path: Path, out: Path, shards: Path, *extra: str) -> int:
     return lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
-        "--device", "cpu", "--no-compile", "--allow-arch-drift", *extra,
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control", *extra,
     ])
 
 
@@ -1174,6 +1227,7 @@ def test_the_mid_budget_guard_judges_the_REALIZED_step_not_the_knob(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "3", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
         "--mid-checkpoint-frac", "0.5",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
@@ -1229,55 +1283,256 @@ def test_the_mid_fraction_tolerance_admits_truncation_and_still_catches_misplace
     )
 
 
-def test_the_tolerance_can_never_be_the_only_reason_a_run_is_invalid(
+def test_the_mid_fraction_floor_is_named_by_the_refusal_it_causes(
     tmp_path: Path,
 ) -> None:
-    """⚑⚑ THE CLAUSE THAT MAKES 0.01 SAFE RATHER THAN MERELY CONVENIENT.
+    """⚑⚑ THE HONEST VERSION OF A CLAIM THIS TEST USED TO MAKE FALSELY.
 
-    The tolerance is tighter than integer truncation only below 50 steps
-    (`0.5 / steps > 0.01`), and every such run is ALREADY disqualified by the
-    `warmup_steps` entry, because production's warmup is 1000. So no run can be
-    refused SOLELY by this entry — which is the argument the constant's comment
-    makes, executed rather than asserted.
+    Before MID was snapped to a window boundary, the tolerance was tighter than
+    integer truncation only below 50 steps — every such run was already
+    disqualified by `warmup_steps`, so the entry could never be the SOLE reason a
+    run was invalid, and this test asserted exactly that. Snapping changes it: a
+    boundary can miss 0.5 by up to half a window, so the tolerance is unreachable
+    below `min_budget_for_mid_tolerance(window)` — 4400 steps at the default 88,
+    which is ABOVE production's 1000-step warmup. Budgets in between ARE refused
+    by this entry alone.
+
+    That is a deliberate trade (the alternative is widening the prereg's mid point
+    for budgets nobody needs — the arm runs 17,600-20,000), and the requirement it
+    creates is that the refusal be ACTIONABLE: it must name the floor rather than
+    reporting an arithmetic mismatch the operator cannot act on. Asserted here,
+    both directions.
     """
     warmup = int(flatten_run_config_defaults(
         load_yaml_file(str(_tiny_config(tmp_path))),
     )["warmup_steps"])
-    assert warmup >= 1000, "production's warmup is what makes the bound safe"
-    tolerance = lc0_control_train.MID_CHECKPOINT_FRAC_TOLERANCE
-    tightest_safe_budget = int(0.5 / tolerance)
-    assert tightest_safe_budget < warmup, (
-        f"a budget between {tightest_safe_budget} and {warmup} steps could be "
-        "refused by the mid-fraction entry alone"
+    window = lc0_control_train.PRODUCTION_TRAIN_WINDOW_STEPS
+    floor = lc0_control_train.min_budget_for_mid_tolerance(window)
+    assert floor == 4400, "half a window over the 0.01 tolerance, at window 88"
+    assert floor > warmup, (
+        "if the floor were below warmup this entry could not be a sole reason and "
+        "the message below would be unnecessary"
     )
-  # And every budget at or above that point survives truncation.
-    for steps in range(tightest_safe_budget, tightest_safe_budget + 200):
-        mid = min(max(int(0.5 * steps), 1), max(steps - 1, 0))
-        assert not _mid_frac_is_recorded(saved_at_step=mid, steps=steps), steps
+  # A budget in the gap: refused, and the message names the floor.
+    mid = lc0_control_train.mid_step_on_window_boundary(
+        steps=2000, window=window, frac=0.5,
+    )
+    problems = lc0_control_train.control_validity_problems(
+        allow_leak=False, allow_arch_drift=False, has_purity_receipt=True,
+        steps=2000, warmup_steps=warmup, mid_saved_at_step=mid,
+        mid_checkpoint_frac=0.5, window_steps=window, cadence_problem=None,
+        device="cuda", configured_device="cuda", batch_size=512,
+        configured_batch_size=512, live_config_unread=False, live_game_frac=0.0,
+    )
+    assert len(problems) == 1, problems
+    assert f"unreachable below {floor} steps" in problems[0], problems
+  # And at the floor the entry cannot fire at all.
+    for steps in (floor, floor + 1, floor + window, 17600, 20000, 20001):
+        boundary = lc0_control_train.mid_step_on_window_boundary(
+            steps=steps, window=window, frac=0.5,
+        )
+        assert not _mid_frac_is_recorded(saved_at_step=boundary, steps=steps), (
+            f"steps={steps} mid={boundary} realized={boundary / steps:.6f}"
+        )
 
 
-def test_an_odd_budget_is_a_valid_control_through_the_real_driver(
-    tmp_path: Path,
+def test_the_arms_realistic_budget_is_a_valid_control_at_the_default_window(
 ) -> None:
-    """The wiring half of N1, on the largest ODD budget that is cheap to run.
+    """⚑⚑ REVIEW F1 — THE OUTCOME GUARANTEE, AT THE DEFAULT WINDOW.
 
-    101 steps, mid at 50 → realized 0.495050, which the previous exact `!=`
-    recorded as invalid. The cadence entry is expected here (101 is not an even
-    number of 88-step windows) and is asserted separately, so this test is about
-    the mid-fraction entry alone.
+    The guarantee is not "the arithmetic is right", it is **a realistic budget the
+    operator would actually type is accepted**. The test this replaces asserted
+    the arithmetic and then dodged the guarantee: it passed
+    `--train-window-steps 101`, so it never exercised the DEFAULT window, where
+    every budget that was not a multiple of 176 was invalid — including the arm's
+    own. Its name claimed a property it structurally could not check.
+
+    So: the DEFAULT window (read off the constant, never a literal), the prereg's
+    own budgets, and `control_validity_problems` — the ONE list `summary.json` and
+    the launch refusal both come from — asserted EMPTY.
+    """
+    window = lc0_control_train.PRODUCTION_TRAIN_WINDOW_STEPS
+    for steps in (17600, 20000, 20001, 4400, 100000):
+        plan_window, n_windows, cadence = lc0_control_train.train_window_plan(
+            steps=steps, window=window,
+        )
+        assert (plan_window, cadence) == (window, None), (steps, cadence)
+        assert n_windows * window >= steps, "no step may be dropped from the plan"
+        mid = lc0_control_train.mid_step_on_window_boundary(
+            steps=steps, window=plan_window, frac=0.5,
+        )
+        assert mid % window == 0, (steps, mid)
+        assert 0 < mid < steps, (steps, mid)
+        problems = lc0_control_train.control_validity_problems(
+            allow_leak=False, allow_arch_drift=False, has_purity_receipt=True,
+            steps=steps, warmup_steps=1000, mid_saved_at_step=mid,
+            mid_checkpoint_frac=0.5, window_steps=plan_window,
+            cadence_problem=cadence, device="cuda", configured_device="cuda",
+            batch_size=512, configured_batch_size=512, live_config_unread=False,
+            live_game_frac=0.0,
+        )
+        assert problems == [], (steps, problems)
+
+
+def test_the_mid_point_is_snapped_to_a_window_boundary_at_any_fraction() -> None:
+    """⚑⚑ REVIEW F2 — the reviewer's own violating input, and the property that
+    matters rather than the proxy that bounded it.
+
+    Two guards bounded PROXIES of "MID and LAST sit at comparable LR": the
+    realized fraction (±0.01) and the budget's divisibility. At 17,600 steps ±0.01
+    is ±2 whole 88-step windows, so `--mid-checkpoint-frac 0.5028` put MID at LR
+    scale 1.0 against LAST at 0.1 with both guards SILENT and
+    `valid_control: true`. Snapping removes the state: whatever fraction is asked
+    for, MID lands at the end of a window, i.e. at the release-cycle bottom, which
+    is where LAST is.
+    """
+    window = lc0_control_train.PRODUCTION_TRAIN_WINDOW_STEPS
+    for frac in (0.5, 0.5028, 0.4972, 0.51, 0.49):
+        mid = lc0_control_train.mid_step_on_window_boundary(
+            steps=17600, window=window, frac=frac,
+        )
+        assert mid % window == 0, (frac, mid)
+  # The reviewer's input specifically: it used to land 1 step past a boundary.
+    assert lc0_control_train.mid_step_on_window_boundary(
+        steps=17600, window=window, frac=0.5028,
+    ) == 8888
+    assert int(0.5028 * 17600) % window != 0, (
+        "if the UNSNAPPED value were already on a boundary this test would pass "
+        "with the snapping reverted"
+    )
+  # ⚑ And the entry that reports it, in case any future path bypasses the snap.
+    problems = lc0_control_train.control_validity_problems(
+        allow_leak=False, allow_arch_drift=False, has_purity_receipt=True,
+        steps=17600, warmup_steps=1000, mid_saved_at_step=8849,
+        mid_checkpoint_frac=0.5028, window_steps=window, cadence_problem=None,
+        device="cuda", configured_device="cuda", batch_size=512,
+        configured_batch_size=512, live_config_unread=False, live_game_frac=0.0,
+    )
+    assert [p for p in problems if "NOT a multiple of the 88-step train window" in p], (
+        problems
+    )
+  # ...and it does NOT fire on the snapped step, or it would refuse every run.
+    assert not [
+        p for p in lc0_control_train.control_validity_problems(
+            allow_leak=False, allow_arch_drift=False, has_purity_receipt=True,
+            steps=17600, warmup_steps=1000, mid_saved_at_step=8888,
+            mid_checkpoint_frac=0.5028, window_steps=window, cadence_problem=None,
+            device="cuda", configured_device="cuda", batch_size=512,
+            configured_batch_size=512, live_config_unread=False,
+            live_game_frac=0.0,
+        ) if "train window" in p
+    ]
+
+
+def test_the_run_is_refused_at_launch_before_a_single_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ REVIEW F1 — A DAY OF GPU MUST NOT BUY AN UNQUOTABLE ARTIFACT.
+
+    Every `validity_problems` entry is knowable from the arguments, and TWICE a
+    full run ended `valid_control: false` — which `compare` refuses with NO
+    waiver — for something its own command line already contained. The refusal is
+    therefore at LAUNCH, and the proof is that `train_steps` is never called and
+    no checkpoint is written; the escape is an explicit flag, whose effect is
+    checked in the same test so a refusal that always fires cannot pass it.
     """
     shards = _write_shards(tmp_path / "rows", list(range(16)))
-    out = tmp_path / "odd101"
+    calls: list[int] = []
+    real = lc0_control_train.Trainer.train_steps
+
+    def spy(self: Any, buf: Any, *, batch_size: int, steps: int) -> Any:
+        calls.append(int(steps))
+        return real(self, buf, batch_size=batch_size, steps=steps)
+
+    monkeypatch.setattr(lc0_control_train.Trainer, "train_steps", spy)
+    refused = tmp_path / "refused"
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(refused), "--steps", "4", "--batch-size", "4",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        ])
+    message = str(excinfo.value)
+    assert "REFUSING TO LAUNCH" in message
+    assert "--allow-arch-drift" in message
+    assert "NO WAIVER" in message, "the refusal must say why finishing is useless"
+    assert calls == [], "the refusal must precede the first optimizer step"
+    assert not (refused / "checkpoint.pt").exists()
+    assert not (refused / "checkpoint_mid.pt").exists()
+    assert not (refused / "summary.json").exists()
+  # And the flag is what a plumbing smoke passes — same arguments, rc 0.
+    allowed = tmp_path / "allowed"
     assert lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
-        "--out-dir", str(out), "--steps", "101", "--batch-size", "4",
+        "--out-dir", str(allowed), "--steps", "4", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
-        "--train-window-steps", "101",
+        "--allow-invalid-control",
     ]) == 0
+    assert calls, "the flag must let the run reach training"
+    summary = json.loads((allowed / "summary.json").read_text(encoding="utf-8"))
+    assert summary["valid_control"] is False, "the flag does not make it valid"
+
+
+def test_the_launch_refusal_and_the_artifact_list_the_same_problems(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ ONE implementation, called twice — the launch check and the artifact must
+    not be able to disagree. The only input that differs between the two calls is
+    the mid step (predicted, then realized), so the banner printed at launch is
+    compared with the list banked at the end of the SAME run."""
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "same_list"
+    assert _run(tmp_path, out, shards) == 0
+    printed = capsys.readouterr().out
+    banner = printed.split("--allow-invalid-control: THIS RUN IS NOT A VALID CONTROL")[1]
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert summary["mid_checkpoint"]["step"] == 50
-    assert not [p for p in summary["validity_problems"]
-                if "of the budget" in p], summary["validity_problems"]
+    assert summary["validity_problems"], "this smoke must have problems to compare"
+  # ⚑ The JOINED list, in order — not a per-entry `in` check. A per-entry check
+  # passes when the launch list carries entries the artifact does not, which is
+  # exactly the divergence a second copy of the list would produce.
+    assert "\n  ".join(summary["validity_problems"]) in banner, (
+        f"the launch banner and the artifact must be ONE list.\nlaunch: {banner}\n"
+        f"artifact: {summary['validity_problems']}"
+    )
+
+
+def test_the_outcome_bar_is_derived_from_the_live_recipe_not_a_constant() -> None:
+    """⚑⚑ THREAD 3795733617. `PRODUCTION_GAME_FRAC` is a hand-written 0.0, and the
+    two keys it is derived from (`sf_wdl_frac`, `search_wdl_frac`) are exactly the
+    two `LC0_TRAINER_DEVIATIONS` makes guard 0c IGNORE. So a production blend of
+    0.50/0.20 leaves 0.30 on the raw game outcome, guard 0c stays silent by
+    construction, and the arm would be stamped valid while no longer training
+    production's objective.
+    """
+    from chess_anti_engine.eval.lc0_control_trainer import (
+        LIVE_TRAINER_PIN,
+        live_production_game_frac,
+    )
+    from chess_anti_engine.train.value_blend_guard import PRODUCTION_GAME_FRAC
+
+  # The pin's own blend, through the loss's own normaliser.
+    live, provenance = live_production_game_frac()
+    assert live == pytest.approx(PRODUCTION_GAME_FRAC), (
+        f"the constant is stale against {provenance}"
+    )
+  # A moved production blend: derived, not constant.
+    moved = json.loads(json.dumps({
+        "recorded": LIVE_TRAINER_PIN["recorded"],
+        "kwargs": {**LIVE_TRAINER_PIN["kwargs"],
+                   "sf_wdl_frac": 0.5, "search_wdl_frac": 0.2},
+    }))
+    shifted, _ = live_production_game_frac(pin=moved)
+    assert shifted == pytest.approx(0.3)
+  # ...and the run that keeps holding 0.0 is refused for it, by name.
+    problems = lc0_control_train.control_validity_problems(
+        allow_leak=False, allow_arch_drift=False, has_purity_receipt=True,
+        steps=20000, warmup_steps=1000, mid_saved_at_step=10032,
+        mid_checkpoint_frac=0.5, window_steps=88, cadence_problem=None,
+        device="cuda", configured_device="cuda", batch_size=512,
+        configured_batch_size=512, live_config_unread=False,
+        live_game_frac=shifted,
+    )
+    assert [p for p in problems if "leaves game_frac=0.3000" in p], problems
 
 
 def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
@@ -1297,6 +1552,7 @@ def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(deviating), "--steps", "4", "--batch-size", "2",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ]) == 0
     summary = json.loads((deviating / "summary.json").read_text(encoding="utf-8"))
     assert summary["batch_size"] == 2
@@ -1348,7 +1604,8 @@ def test_a_failed_rerun_cannot_destroy_a_previous_runs_mid_checkpoint(
         lc0_control_train.main([
             "--config", str(config), "--shards", str(leaky),
             "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
-            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control", "--allow-leak",
         ])
   # ⚑ THE DATA ASSERTION FIRST, deliberately. If the refusal is removed the rerun
   # still raises (its realized guard fires), so a test that checked the MESSAGE
@@ -1365,6 +1622,7 @@ def test_a_failed_rerun_cannot_destroy_a_previous_runs_mid_checkpoint(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
         "--move-existing-aside",
     ]) == 0
     superseded = sorted(tmp_path.glob("shared.superseded_*"))
@@ -1394,6 +1652,7 @@ def test_a_shard_directory_named_twice_is_refused_before_anything_is_staged(
             str(shards), f"{shards}/.",
             "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
         ])
     message = str(excinfo.value)
     assert "named more than once" in message
@@ -1736,6 +1995,7 @@ def test_the_purity_receipt_ties_the_trained_corpus_to_the_check(
             "--shards", *[str(s) for s in shards],
             "--out-dir", str(tmp_path / out), "--steps", "1", "--batch-size", "4",
             "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
             "--purity-receipt", str(receipt),
         ])
 
@@ -1770,6 +2030,7 @@ def test_a_run_without_a_purity_receipt_is_not_a_valid_control(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["valid_control"] is False
@@ -1798,6 +2059,7 @@ def test_a_run_judged_only_against_the_pins_is_not_a_valid_control(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
   # The premise, asserted rather than assumed: the provenance really does carry
@@ -1822,6 +2084,7 @@ def test_the_realized_device_and_compile_survive_into_the_artifact(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "1", "--batch-size", "4",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["realized_after_guard"] == {
@@ -1850,7 +2113,8 @@ def test_the_training_seed_is_banked_so_a_trajectory_can_be_reproduced(
     assert lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
-        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "7",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control", "--seed", "7",
     ]) == 0
     summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["seed"] == 7
@@ -1860,7 +2124,8 @@ def test_the_training_seed_is_banked_so_a_trajectory_can_be_reproduced(
     assert lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(other), "--steps", "4", "--batch-size", "4",
-        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "8",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control", "--seed", "8",
     ]) == 0
     other_summary = json.loads((other / "summary.json").read_text(encoding="utf-8"))
     assert other_summary["seed"] == 8
@@ -2089,7 +2354,7 @@ def test_chance_prints_the_jensen_pair(
 
 def _scores(
     path: Path, hits: np.ndarray, *, checkpoint: str | None = None,
-    role: str = "mid",
+    role: str = "mid", population: str = "heldout",
 ) -> Path:
     np.savez_compressed(
         path,
@@ -2108,6 +2373,10 @@ def _scores(
   # ⚑ Empty LIST, not absent: `compare` refuses an artifact with no held-out
   # population record (absent is not clean), which has its own test.
             "heldout_source_selection_problems": [],
+  # ⚑ And the POPULATION role, for the fourth time over the same reasoning: an
+  # artifact that does not say which of the prereg's two deltas it is gets its own
+  # refusal, with its own test, and must not stand in front of these fixtures.
+            "population": population,
         })], dtype=object),
         allow_pickle=True,
     )
@@ -2164,7 +2433,13 @@ def test_compare_mcnemar_arithmetic_is_pinned(
     lc0_control_eval.main([
         "compare", "--a", str(_scores(tmp_path / "a.npz", hit_a)),
         "--b", str(_scores(tmp_path / "b.npz", hit_b, role="last")),
-        "--max-halfwidth-pp", "10.0",
+  # ⚑ BOTH flags, and that is the fix rather than the test being lenient: a
+  # `--max-halfwidth-pp` LOOSER than the material bar no longer switches off the
+  # n floor (it is a relaxation, not a re-derivation), so this n=10,000 fixture —
+  # which exists to pin the ESTIMATOR, not to make a resolution claim — has to
+  # waive the resolution gate explicitly. The waived banner is printed and the
+  # numbers still follow it.
+        "--max-halfwidth-pp", "10.0", "--allow-underpowered",
     ])
     out = capsys.readouterr().out
     delta = (c_cells - b_cells) / n
@@ -2193,7 +2468,7 @@ def test_compare_refuses_unpaired_score_files(
         meta=np.array([json.dumps({
             "checkpoint": None, "valid_control": True,
             "run_id": "trajectory-0", "checkpoint_role": "last",
-            "heldout_source_selection_problems": [],
+            "heldout_source_selection_problems": [], "population": "heldout",
         })], dtype=object),
         allow_pickle=True,
     )
@@ -2354,7 +2629,9 @@ def _paired_scores(
   # tests below would pass for the wrong reason.
   # ⚑ And a RECORDED (empty) held-out population, for the third time over the same
   # reasoning: `heldout_problems=None` omits the key, which is its own refusal.
-    common: dict[str, Any] = {"valid_control": True, "run_id": "trajectory-0"}
+    common: dict[str, Any] = {
+        "valid_control": True, "run_id": "trajectory-0", "population": "heldout",
+    }
     if heldout_problems is not None:
         common["heldout_source_selection_problems"] = list(heldout_problems)
     meta_a = {**common, "checkpoint_role": "mid", **meta_a}
@@ -2669,7 +2946,8 @@ def test_the_summary_binds_its_verdict_to_the_checkpoints_it_wrote(
     assert lc0_control_train.main([
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(other), "--steps", "4", "--batch-size", "4",
-        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--seed", "1",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control", "--seed", "1",
     ]) == 0
     foreign = json.loads((other / "summary.json").read_text(encoding="utf-8"))
     assert foreign["run_id"] != summary["run_id"], (
@@ -2749,14 +3027,46 @@ def test_the_score_artifact_carries_the_cluster_keys_and_compare_prints_them(
   # fixtures. Asserting it here would have needed a waiver that does not exist,
   # which is the gate working, not the test being awkward.
     capsys.readouterr()
+    complete = {"distinct_clusters": 5_000, "cluster_keys_complete": True}
     a, b = _paired_scores(
-        tmp_path, meta_a={"checkpoint": "a", "distinct_clusters": 5_000},
-        meta_b={"checkpoint": "b", "distinct_clusters": 5_000},
+        tmp_path, meta_a={"checkpoint": "a", **complete},
+        meta_b={"checkpoint": "b", **complete},
     )
     assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
     out_text = capsys.readouterr().out
     assert "game clusters        5000 over 100000 rows (20.0 rows/cluster)" in out_text
     assert "OPTIMISTIC by the design effect" in out_text
+
+  # ⚑⚑ REVIEW F5 — AND A PARTIAL KEY SET IS ITS OWN STATE. `cluster_keys_complete`
+  # was banked and read by NOTHING: the wave-5 mutant that forced it False changed
+  # no output and no exit code. It now REFUSES, under its own flag, and a partial
+  # set never prints a rows/cluster ratio — `distinct_clusters` counts only
+  # non-empty keys, so the ratio would overstate the cluster size in a known
+  # direction.
+    partial_dir = tmp_path / "partial"
+    partial_dir.mkdir()
+    a3, b3 = _paired_scores(
+        partial_dir,
+        meta_a={"checkpoint": "a", "distinct_clusters": 5_000,
+                "cluster_keys_complete": False},
+        meta_b={"checkpoint": "b", **complete},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a3), "--b", str(b3)]) == 1
+    refused = capsys.readouterr()
+    assert "INCOMPLETE cluster-key set" in refused.err
+    assert "--a carries" in refused.err, "the artifact that is partial is named"
+    assert "delta (B - A)" not in refused.out, (
+        "a refused pair must not put a slope on stdout"
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a3), "--b", str(b3), "--allow-partial-clusters",
+    ]) == 0
+    waived = capsys.readouterr().out
+    assert "game clusters        PARTIAL" in waived
+    assert "5000 over 100000 rows" not in waived, (
+        "no cluster ratio may be printed from a key set with holes"
+    )
+    assert "delta (B - A)" in waived
 
   # ...and an artifact with no key says THAT, rather than printing nothing.
     unrecorded_dir = tmp_path / "unrecorded"
@@ -2837,6 +3147,222 @@ def test_score_banks_the_trajectory_identity_and_the_heldout_population(
         meta["heldout_source_selection_problems"][0]
 
 
+def test_a_row_with_no_game_id_gets_no_cluster_key() -> None:
+    """⚑⚑ REVIEW F4. `game_id` is an OPTIONAL shard field with a `has_game_id`
+    mask, so an unset row carries the int64 FILL VALUE 0 — and the first version
+    read the column without the mask, emitting `"<source>#0"`: a real-looking key
+    that MERGED every unkeyed row into game 0's cluster while
+    `cluster_keys_complete` reported True. The docstring promised this case was
+    handled; it covered an absent COLUMN and never an unset ROW, and the banked
+    artifact — unrecoverable after the freeze — could not tell the two apart.
+    """
+    from chess_anti_engine.eval.lc0_control_rows import game_cluster_keys
+
+  # Rows 0 and 2 carry a real id; rows 1 and 3 are unset and read back as 0.
+    arrs = {
+        "game_id": np.array([7, 0, 7, 0], dtype=np.int64),
+        "has_game_id": np.array([1, 0, 1, 0], dtype=np.uint8),
+    }
+    keys = game_cluster_keys(arrs, source="hour0", rows=4)
+    assert keys == ["hour0#7", "", "hour0#7", ""], keys
+  # ⚑ THE MUTANT'S OWN OUTPUT, named: without the mask the unset rows would read
+  # as game 0 of this source, which is a key a real row could also have.
+    assert "hour0#0" not in keys, (
+        "an unset row must not be given the fill value's key"
+    )
+  # An absent MASK still means every row is keyed (older shards), and an absent
+  # COLUMN means none is.
+    assert game_cluster_keys(
+        {"game_id": np.array([1, 2], dtype=np.int64)}, source="h", rows=2,
+    ) == ["h#1", "h#2"]
+    assert game_cluster_keys({}, source="h", rows=2) == ["", ""]
+
+
+def test_the_frozen_sample_is_proportional_to_each_sources_rows() -> None:
+    """⚑ THREAD 3795733611. `remaining // sources_left` gave every source an
+    approximately EQUAL quota, so on six hours of unequal size the SMALL hours
+    were overrepresented in the frozen population and the result depended on
+    source ORDER whenever a late source could not fill its equal share — while
+    the docstring said "proportionally across sources".
+
+    Asserted on a deliberately lopsided pool, where the equal-quota rule and the
+    proportional one give different answers (that difference is what makes this
+    test able to fail).
+    """
+    from chess_anti_engine.eval.lc0_control_rows import _stratified_sample
+
+    sizes = [1_000, 100, 100, 100, 100, 100]
+    per_source = [
+        [(f"s{i}r{j}", f"in{i}r{j}", f"h{i}") for j in range(size)]
+        for i, size in enumerate(sizes)
+    ]
+    sample = 300
+    picked = _stratified_sample(per_source, sample=sample, seed=0)
+    assert len(picked) == sample, "largest-remainder must be exact"
+    counts = [sum(1 for row in picked if row[2] == f"h{i}") for i in range(len(sizes))]
+    total = sum(sizes)
+    for index, (size, got) in enumerate(zip(sizes, counts, strict=True)):
+        want = sample * size / total
+        assert abs(got - want) <= 1, (index, got, want, counts)
+  # The equal-quota rule this replaces would have given the big hour 50 of 300.
+    assert counts[0] > 100, (
+        f"the 1000-row hour must dominate a proportional draw, got {counts}"
+    )
+  # ⚑ ORDER-INDEPENDENT: reversing the sources reverses the counts and nothing
+  # else, which the `remaining // sources_left` rule did not satisfy.
+    reversed_counts = [
+        sum(1 for row in _stratified_sample(
+            list(reversed(per_source)), sample=sample, seed=0,
+        ) if row[2] == f"h{i}")
+        for i in range(len(sizes))
+    ]
+    assert reversed_counts == counts, (counts, reversed_counts)
+
+
+def test_the_population_role_is_banked_and_compare_requires_the_one_it_was_asked_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ THREAD 3795733605. The prereg reads TWO deltas — held-out and train —
+    and `score` classified EVERY artifact by the HELD-OUT six-source rule while
+    banking no statement of which population it scored. So a train-side sample
+    that happened to span six directories banked an empty
+    `heldout_source_selection_problems` and could be presented as
+    `Delta_heldout`, and an honest train sample spanning more directories needed a
+    MISLEADING held-out waiver to compare at all.
+
+    Both halves here: the role is WRITTEN by the real scorer (and the six-source
+    rule is not applied to a train-side artifact), and `compare` REFUSES a
+    population it was not asked for — unwaivably.
+    """
+    rows = 12
+    shards = _write_shards(tmp_path / "held", list(range(rows)))
+    rc, frozen = _freeze(tmp_path, shards, sample=rows)
+    assert rc == 0
+    out = tmp_path / "run"
+    assert _run(tmp_path, out, shards) == 0
+
+    def _rigged(*_args: Any, **_kwargs: Any) -> tuple[Any, int, Any, Any]:
+        moves = np.arange(rows, dtype=np.int64) % 3
+        return np.ones(rows, dtype=np.uint8), 0, moves, moves
+
+    monkeypatch.setattr(lc0_control_eval, "_score_rows", _rigged)
+
+    def score(name: str, *extra: str) -> dict[str, Any]:
+        path = tmp_path / f"{name}.npz"
+        assert lc0_control_eval.main([
+            "score", "--config", str(_tiny_config(tmp_path)),
+            "--frozen", str(frozen), "--shards", str(shards),
+            "--checkpoint", str(out / "checkpoint_mid.pt"),
+            "--summary", str(out / "summary.json"),
+            "--out", str(path), "--device", "cpu", *extra,
+        ]) == 0
+        return json.loads(str(np.load(path, allow_pickle=True)["meta"][0]))
+
+  # The default is the held-out population, and the six-source rule applies.
+    heldout = score("heldout")
+    assert heldout["population"] == "heldout"
+    assert heldout["heldout_source_selection_problems"], heldout
+  # ⚑ THE SAME ONE-HOUR FROZEN SET, scored as the TRAIN-side sample: the held-out
+  # rule is a held-out rule, so it does NOT fire — which is what made the honest
+  # train artifact need a misleading waiver before.
+    train = score("train", "--population", "train")
+    assert train["population"] == "train"
+    assert train["heldout_source_selection_problems"] == [], train
+
+  # ...and `compare` requires the role it was asked for.
+    capsys.readouterr()
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a", "population": "train"},
+        meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    err = capsys.readouterr().err
+    assert "scored the TRAIN population but this comparison was asked for HELDOUT" \
+        in err
+    assert "Waivable by" not in err, "a population mismatch is unwaivable"
+  # Both sides train, asked for train: accepted, and the readout says which.
+    both_train = tmp_path / "both_train"
+    both_train.mkdir()
+    a2, b2 = _paired_scores(
+        both_train,
+        meta_a={"checkpoint": "a", "population": "train"},
+        meta_b={"checkpoint": "b", "population": "train"},
+        heldout_problems=None,
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a2), "--b", str(b2), "--population", "train",
+    ]) == 0, "a train comparison must not need a held-out record at all"
+    printed = capsys.readouterr().out
+    assert "population           TRAIN" in printed
+    assert "pop: train" in printed
+
+
+def test_a_non_finite_halfwidth_override_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ CODEX 3796113406. `--max-halfwidth-pp nan` was accepted by `float()`,
+    switched the n floor off (`prereg_bar_in_force` false) and then compared
+    `half_pp > nan` — FALSE for every finite halfwidth. Both gates off, exit 0,
+    slope printed: a clamp is not a validator, and NaN propagates through every
+    comparison as "no".
+    """
+    rng = np.random.default_rng(0)
+    a = (rng.random(5_000) < 0.30).astype(np.uint8)
+    b = (rng.random(5_000) < 0.33).astype(np.uint8)
+    a_path = _scores(tmp_path / "a.npz", a)
+    b_path = _scores(tmp_path / "b.npz", b, role="last")
+    for bad in ("nan", "inf", "-inf", "0", "-1"):
+  # ⚑ `--flag=value` form: argparse reads a bare `-1` as another OPTION.
+        assert lc0_control_eval.main([
+            "compare", "--a", str(a_path), "--b", str(b_path),
+            f"--max-halfwidth-pp={bad}",
+        ]) == 1, bad
+        captured = capsys.readouterr()
+        assert "is not a finite positive number" in captured.err, bad
+        assert "delta (B - A)" not in captured.out, bad
+  # ⚑ AND THE n FLOOR IS NO LONGER SWITCHED OFF BY THE PRESENCE OF AN OVERRIDE.
+  # A LOOSER bar is a relaxation, not a re-derivation, so the floor stays in
+  # force; only a bar at least as strict as the material one waives it.
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a_path), "--b", str(b_path),
+        "--max-halfwidth-pp", "10.0",
+    ]) == 1
+    assert "below the prereg's resolution point" in capsys.readouterr().err
+
+
+def test_the_exact_mcnemar_tail_is_computable_at_the_preregs_own_n() -> None:
+    """⚑ CODEX 3796113409. The enumerating version summed `math.comb(total, k)` —
+    arbitrary-precision integers with tens of thousands of digits — once per k up
+    to `min(b, c)`, so the readout the prereg says DECIDES the arm took tens of
+    seconds at 20,000 discordant pairs and minutes at 100,000.
+
+    The log-space path is checked two ways: it agrees with an EXACT rational
+    reference across the switchover, and it finishes.
+    """
+    from fractions import Fraction
+
+    def exact(b: int, c: int) -> float:
+        total = b + c
+        tail = Fraction(sum(math.comb(total, k) for k in range(min(b, c) + 1)),
+                        2 ** total)
+        return float(min(Fraction(1), 2 * tail))
+
+  # The small-total path is unchanged and still bit-identical to scipy's answer.
+    assert lc0_control_eval._exact_mcnemar_p(10, 30) == 0.0022214337732293643
+    for b, c in ((300, 400), (500, 600), (700, 800), (1000, 1200), (1500, 1600)):
+        assert lc0_control_eval._exact_mcnemar_p(b, c) == pytest.approx(
+            exact(b, c), rel=1e-9,
+        ), (b, c)
+  # And the prereg-scale case, timed: the old implementation could not finish
+  # this inside a test run.
+    start = time.perf_counter()
+    p_big = lc0_control_eval._exact_mcnemar_p(49_000, 51_000)
+    elapsed = time.perf_counter() - start
+    assert 0.0 < p_big < 1e-6, p_big
+    assert elapsed < 2.0, f"the exact tail took {elapsed:.1f}s at 100,000 pairs"
+
+
 def test_a_batch_size_deviation_is_terminal_for_compare_not_a_soft_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2861,6 +3387,7 @@ def test_a_batch_size_deviation_is_terminal_for_compare_not_a_soft_note(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "4", "--batch-size", "2",
         "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
     ]) == 0
     assert (out / "checkpoint.pt").is_file(), "the run must still finish"
     assert (out / "checkpoint_mid.pt").is_file()

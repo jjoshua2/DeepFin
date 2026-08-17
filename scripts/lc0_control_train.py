@@ -111,9 +111,19 @@ stamped `valid_control: true`.
 
 ⚑⚑ "RECORDED" IS NOT "TOLERATED": every `validity_problems` entry sets
 `valid_control: false`, and `lc0_control_eval compare` refuses that with NO
-waiver. The choice being made is LAUNCH vs ARTIFACT — such a run still finishes
-and writes its checkpoints (which is what a plumbing smoke needs) and is
-disqualified from supplying either side of the primary comparison.
+waiver.
+
+⚑⚑ AND SINCE 2026-08-17 THE RUN REFUSES TO START RATHER THAN RECORDING IT LATER.
+Every entry is knowable from the arguments, the config and the window plan, and
+twice a full budget ran to completion and was only then stamped
+`valid_control: false` — an artifact nothing downstream will quote, for a reason
+its own command line already contained. `control_validity_problems` is therefore
+evaluated BEFORE the first optimizer step (with the PLANNED mid step) and again
+after the last one (with the REALIZED one, the only input that can differ), and
+`main` exits unless `--allow-invalid-control` is passed. That flag is what a
+plumbing smoke or a deliberate leak demonstration passes; it does not make the run
+valid, so the choice it offers is CHECKPOINTS vs NOTHING, never ARTIFACT vs
+VERDICT.
 
   * `--batch-size` differing from the config's changes the examples per step and
     the gradient-noise regime. `batch_size` is not a trainer kwarg, so guard 0c
@@ -175,8 +185,10 @@ from chess_anti_engine.eval.lc0_control_replay import (
 from chess_anti_engine.eval.lc0_control_trainer import (
     ControlTrainerDrift,
     assert_control_matches_live_trainer,
+    live_production_game_frac,
 )
 from chess_anti_engine.train.value_blend_guard import (
+    PRODUCTION_GAME_FRAC,
     CategoricalRebuildReadout,
     ValueBlendMisconfigured,
     ValueBlendReadout,
@@ -273,6 +285,23 @@ def mid_fraction_deviates(*, saved_at_step: int, steps: int) -> bool:
     return abs(realized - PREREG_MID_CHECKPOINT_FRAC) > MID_CHECKPOINT_FRAC_TOLERANCE
 
 
+def min_budget_for_mid_tolerance(window: int) -> int:
+    """The smallest budget whose nearest window boundary is inside the tolerance.
+
+    ⚑ `mid_step_on_window_boundary` SNAPS the mid point to a window boundary, so
+    the realized fraction can miss 0.5 by up to half a window — a bound that
+    shrinks with the budget. Below this many steps the strict tolerance is
+    unreachable NO MATTER WHAT `--mid-checkpoint-frac` says, so the refusal has to
+    name the number: an operator told only "0.4840 is more than 0.01 from 0.5" has
+    no way to know which argument to change. The tolerance is NOT widened for
+    short budgets — that would trade the prereg's mid point for the convenience of
+    a run nobody needs (at the default window this floor is 4400 steps, and the
+    arm's budget is 17600-20000).
+    """
+    window = max(1, int(window))
+    return int(-(-(window / 2.0) // MID_CHECKPOINT_FRAC_TOLERANCE))
+
+
 # The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
 # reuse is refused when any of these is present -- see `existing_run_artifacts`.
 RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json")
@@ -305,31 +334,85 @@ def existing_run_artifacts(out_dir: Path) -> list[str]:
 def train_window_plan(*, steps: int, window: int) -> tuple[int, int, str | None]:
     """``(window, n_windows, problem)`` for running ``steps`` at production cadence.
 
-    The budget must divide into an EVEN number of full windows: the MID
-    checkpoint then lands on a window boundary exactly like LAST, so both sit at
-    the BOTTOM of a release cycle — the same LR phase two production checkpoints
-    from different iterations sit at. An odd window count would put MID at a
-    boundary and LAST at a boundary too, but with `steps/2` not a multiple of the
-    window the mid checkpoint falls mid-cycle instead.
+    ⚑⚑ THE WINDOW COUNT IS A CEILING, SO NO STEP IS DISCARDED AND NO BUDGET IS
+    REJECTED FOR BEING INDIVISIBLE. The first version required
+    ``steps % (2 * window) == 0`` — which at the default 88 admits only multiples
+    of **176**, i.e. it refused 175 of every 176 budgets INCLUDING 20000, and it
+    silently trained ``steps // window * window`` steps while ``summary["steps"]``
+    reported the requested number. Both were found by the third independent
+    review, the first as the direct descendant of N1: the mid-fraction tolerance
+    was widened to admit odd budgets and the cadence rule then refused them
+    anyway, so N1's failure ("a day of GPU ends `valid_control: false`, no
+    recovery") survived its own fix with a trigger set ~88x WIDER.
+    ⇒ the divisibility requirement is GONE. A short final window is harmless:
+    ``_scale_for_window_step`` returns ``min_scale`` at ``local_step ==
+    cycle_steps - 1`` whatever the cycle length, so LAST still sits at the BOTTOM
+    of a release cycle — and `mid_step_on_window_boundary` puts MID at a boundary
+    too, which is the property that actually matters and the one the code's
+    comments always claimed.
+
+    The only remaining cadence problem is a budget shorter than TWO windows,
+    which has no interior boundary and so cannot place MID at LAST's LR phase.
     """
     window = max(1, int(window))
     steps = int(steps)
     if steps <= 0:
         return window, 0, None
-    if window > steps:
-        return steps, 1, (
-            f"--train-window-steps {window} exceeds --steps {steps}, so the run "
-            "is ONE window and its LR anneals once over the whole budget instead "
-            f"of every {window} steps as production's does"
+  # ⚑ CEILING, not floor: the loop trains a SHORT final window rather than
+  # discarding the remainder, so the realized budget equals the requested one.
+    n_windows = -(-steps // window)
+  # ⚑ TWO windows, not one. The property that matters is that MID and LAST both
+  # sit on a window boundary, and the only INTERIOR boundary of a budget shorter
+  # than 2 x window is none at all: `mid_step_on_window_boundary` then has nowhere
+  # to put MID. `steps == 2 * window` is the smallest budget that works, and it
+  # puts MID at exactly 0.5.
+    if steps < 2 * window:
+        return min(window, steps), n_windows, (
+            f"--steps {steps} is less than two --train-window-steps windows of "
+            f"{window}, so there is no INTERIOR window boundary: its LR anneals "
+            f"over the whole budget instead of every {window} steps as "
+            "production's does, and MID cannot sit at the same phase of the "
+            "release cycle as LAST"
         )
-    if steps % (2 * window) != 0:
-        return window, max(1, steps // window), (
-            f"--steps {steps} is not an even number of {window}-step windows "
-            f"({steps / window:.2f} windows), so the MID checkpoint does not land "
-            "on a window boundary and MID/LAST sit at different phases of the LR "
-            "release cycle"
-        )
-    return window, steps // window, None
+    return window, n_windows, None
+
+
+def mid_step_on_window_boundary(*, steps: int, window: int, frac: float) -> int:
+    """The mid-budget step, SNAPPED to the nearest train-window boundary.
+
+    ⚑⚑ THIS IS THE PROPERTY THE CADENCE FIX IS FOR, AND NOTHING WAS ENFORCING IT.
+    Two guards bounded proxies — the realized FRACTION (±0.01) and the budget's
+    DIVISIBILITY — and neither bounded "MID lands on a window boundary". At the
+    arm's budget ±0.01 is ±2 full 88-step windows, so the review executed
+    ``--mid-checkpoint-frac 0.5028`` at 17600 steps: MID at LR scale **1.0**
+    against LAST at **0.1**, both guards silent, `valid_control: true` — the exact
+    anneal-in-the-slope confound the cadence fix closed, reachable through a
+    PASSING knob.
+
+    Snapping fixes it at the source: whatever fraction is asked for, MID lands at
+    the END of a window, i.e. at the same LR phase (the release-cycle bottom) as
+    LAST. The residual deviation from the requested fraction is at most half a
+    window, which `mid_fraction_deviates` then judges — so on a budget of at least
+    ~50 windows every fraction near 0.5 is admitted, and on a budget too short for
+    that the run is refused for a reason that is TRUE rather than arithmetic.
+    """
+    steps, window = int(steps), max(1, int(window))
+    if float(frac) <= 0.0 or steps <= 0:
+        return 0
+  # ⚑ A budget shorter than TWO windows has no interior boundary, so there is
+  # nothing to snap to. Such a run is ALREADY disqualified by the cadence entry
+  # (`train_window_plan` returns a problem for it) and it is exactly the shape of
+  # every plumbing smoke in the test suite — which must still exercise the
+  # mid-checkpoint path, the role assignment and the identity binding. So it falls
+  # back to the plain interior clamp and the artifact records BOTH reasons it is
+  # not the prereg's mid point, rather than silently emitting one checkpoint.
+    if steps < 2 * window:
+        return min(max(int(float(frac) * steps), 1), max(steps - 1, 0))
+    target = float(frac) * steps
+    boundary = round(target / window) * window
+  # Interior only: 0 would save before any step ran, and `steps` would save LAST
+  # under a second name (a pair discordant on zero rows).
+    return min(max(boundary, window), steps - window)
 
 
 def checkpoint_identities(
@@ -894,6 +977,202 @@ def print_realized(capture: _LossCapture, metrics: Any) -> None:
         print(f"  {name:38s} {value!r}")
 
 
+def control_validity_problems(
+    *,
+    allow_leak: bool,
+    allow_arch_drift: bool,
+    has_purity_receipt: bool,
+    steps: int,
+    warmup_steps: int,
+    mid_saved_at_step: int | None,
+    mid_checkpoint_frac: float,
+    window_steps: int,
+    cadence_problem: str | None,
+    device: str,
+    configured_device: str,
+    batch_size: int,
+    configured_batch_size: int,
+    live_config_unread: bool,
+    live_game_frac: float,
+) -> list[str]:
+    """Every reason this run is not a valid control — ONE implementation.
+
+    ⚑⚑ CALLED TWICE: ONCE BEFORE THE FIRST STEP, ONCE AFTER THE LAST. Every entry
+    below is knowable BEFORE training — the flags, the corpus, the budget, the
+    window plan, the mid point, the device, the batch size — and until now they
+    were only computed AFTERWARDS. That is what made N1 and its successor cost a
+    day of GPU each: `--steps 20001` (mid-fraction, wave 4) and `--steps 20000`
+    (LR cadence, wave 5) both ran to completion and only then stamped
+    `valid_control: false`, which `compare` refuses with no waiver. `main` now
+    evaluates this at launch and REFUSES unless the run has declared itself a
+    smoke, so the class "a day of compute produces an unquotable artifact for a
+    reason that was knowable at launch" is closed rather than relocated.
+
+    ⚑ `mid_saved_at_step` is the PREDICTED step at launch and the REALIZED one
+    afterwards, which is the only input that differs between the two calls;
+    `test_every_disqualifying_reason_was_already_knowable_at_launch` pins that
+    they agree.
+    """
+  # ⚑ EVERY reason the run is not a valid control, NAMED. A bare
+  # `valid_control: false` says a run is disqualified without saying what for,
+  # which is the same "a flag instead of a measurement" shape as the rest of
+  # this review's findings.
+  #
+  # ⚑⚑ AND "RECORDED" MEANS RECORDED AT LAUNCH-TIME, NOT SOFT. Every entry below
+  # sets `valid_control: false` (`not validity_problems`), and
+  # `lc0_control_eval compare` refuses `valid_control: false` with NO WAIVER AT
+  # ALL. So the distinction earlier revisions of this block drew — "recorded
+  # rather than refused ... every plumbing smoke here runs at batch 4 by design"
+  # — was not a distinction between a hard block and a soft note. It was the
+  # difference between REFUSING TO LAUNCH and LETTING A DAY OF GPU PRODUCE AN
+  # UNQUOTABLE ARTIFACT, and the second is what happened twice. `main` now calls
+  # this BEFORE the first step and refuses unless `--allow-invalid-control` is
+  # passed, so a plumbing smoke still runs (it says so) and the arm cannot spend
+  # a day to learn something the arguments already said.
+  #
+  # ⚑ The LR-warmup entry is not bookkeeping. Production's `warmup_steps` is
+  # 1000 and this arm carries it verbatim, so a run whose whole budget is
+  # shorter than the warmup NEVER REACHES THE BASE LR — its held-out slope is a
+  # property of the warmup ramp, not of the trainer.
+    return [
+        message for flag, message in (
+            (allow_leak, "--allow-leak: the LAUNCH value-blend guards were "
+                         "downgraded to banners"),
+            (allow_arch_drift, "--allow-arch-drift: this is NOT production's "
+                               "architecture"),
+            (not has_purity_receipt, "no --purity-receipt: the trained corpus is "
+                                     "not tied to any held-out purity check"),
+            (steps <= warmup_steps,
+             f"--steps {steps} does not exceed warmup_steps "
+             f"{int(warmup_steps)}: the LR never reached the base "
+             "value, so no slope from this run describes the trainer"),
+  # ⚑ The prereg's PRIMARY yardstick is two slopes "both measured LAST vs
+  # MID-BUDGET" on ONE trajectory. Without the mid checkpoint the run has
+  # produced half of the deciding statistic, and nothing downstream would say
+  # so — `lc0_control_eval compare` would happily pair this run's LAST against
+  # some OTHER run's LAST and report a number.
+            (mid_saved_at_step is None,
+             f"no mid-budget checkpoint (--mid-checkpoint-frac "
+             f"{mid_checkpoint_frac}, --steps {steps}): "
+             "the prereg's primary yardstick is LAST vs MID-BUDGET on ONE "
+             "trajectory, and this run emitted only LAST"),
+  # ⚑ AND A MID CHECKPOINT AT THE WRONG PLACE IS NOT THE MID-BUDGET ONE. Any
+  # positive fraction is clamped to an interior step, so `--mid-checkpoint-frac
+  # 0.99` (or 5.0) wrote a checkpoint, satisfied the entry above, and left the
+  # run reading VALID — while `compare` would present a LAST-vs-99%-budget
+  # contrast, which measures the final 1% of training, as the preregistered
+  # LAST-vs-MID-BUDGET slope.
+  #
+  # ⚑⚑ AND THE PREDICATE IS THE REALIZED FRACTION, NOT THE KNOB. Judging
+  # `args.mid_checkpoint_frac` broke this file's own rule ("a configured value is
+  # not an applied value") inside the guard added to enforce a preregistered
+  # value: the requested fraction is snapped to a window boundary and clamped to
+  # the interior, so `--steps 3 --mid-checkpoint-frac 0.5` puts MID at step 1 of
+  # 3 — 33.3% of the budget — and recorded NOTHING. Measured by the independent
+  # review.
+            (mid_saved_at_step is not None
+             and mid_fraction_deviates(
+                 saved_at_step=mid_saved_at_step, steps=steps,
+             ),
+             f"the mid checkpoint was taken at step {mid_saved_at_step} of "
+             f"{steps} = "
+             f"{(mid_saved_at_step or 0) / max(steps, 1):.4f} of the "
+             f"budget, more than {MID_CHECKPOINT_FRAC_TOLERANCE} from the "
+             f"preregistered {PREREG_MID_CHECKPOINT_FRAC} "
+             f"(--mid-checkpoint-frac {mid_checkpoint_frac}, "
+             "snapped to a train-window boundary and clamped to the interior): "
+             "the LAST-vs-MID slope this run supports is not the prereg's LAST "
+             f"vs MID-BUDGET. ⚑ A boundary can miss 0.5 by up to half a window, "
+             f"so with --train-window-steps {window_steps} this tolerance is "
+             f"unreachable below "
+             f"{min_budget_for_mid_tolerance(window_steps)} steps — raise "
+             "--steps rather than the tolerance"),
+  # ⚑⚑ REVIEW F2 — THE PROPERTY THE CADENCE FIX IS ACTUALLY FOR, AND NOTHING WAS
+  # ENFORCING IT. The two guards above bound PROXIES: the realized fraction
+  # (±0.01) and, in the previous revision, the budget's divisibility. At 17600
+  # steps ±0.01 is ±2 whole 88-step windows, so `--mid-checkpoint-frac 0.5028`
+  # put MID at LR scale 1.0 against LAST at 0.1 with both guards silent and
+  # `valid_control: true` — the anneal-in-the-slope confound, reachable through a
+  # PASSING knob. `mid_step_on_window_boundary` now snaps MID to a boundary at
+  # the source; this entry is what says so if any future path does not.
+            (mid_saved_at_step is not None and window_steps > 0
+             and mid_saved_at_step % window_steps != 0,
+             f"the mid checkpoint sits at step {mid_saved_at_step}, which is NOT "
+             f"a multiple of the {window_steps}-step train window: with "
+             "`lr_release_cycle_steps: 0` the LR release cycle is derived from "
+             "each call's step count, so MID is at a different phase of the "
+             "anneal from LAST and part of the MID->LAST difference is the LR "
+             "moving, not the trainer learning"),
+  # ⚑⚑ THE LR CADENCE — the confound the control config DOCUMENTED and nothing
+  # measured. See `PRODUCTION_TRAIN_WINDOW_STEPS`. Now that the driver runs
+  # windows and the window count is a CEILING, this is EMPTY for every budget
+  # that holds at least two windows; it fires only for a smoke shorter than one
+  # window, which cannot place MID and LAST at distinct boundaries at all.
+            (cadence_problem is not None,
+             f"LR cadence: {cadence_problem}. The MID->LAST slope then contains "
+             "an anneal production never places between two of its own "
+             "checkpoints, and an annealed endpoint scores better on held-out "
+             "top-1 for reasons that are not the trainer learning"),
+  # ⚑ `--device` IS DISQUALIFYING, and the comment that used to defer this
+  # ("plausibly objective-neutral", "an entry here would disqualify every smoke")
+  # was measurably wrong on the second clause: a clean 4-step CPU smoke already
+  # banks FOUR entries (--allow-arch-drift, no purity receipt, steps <=
+  # warmup_steps, no live config), so the entry costs nothing and its absence
+  # made `realized_after_guard` a banked-and-unread field — this repo's signature
+  # defect. Guard 0c certifies the recipe with LIVE_TRAINER_PIN's "cuda" and the
+  # driver then overwrites it, so a CPU run has different bf16 kernels and
+  # execution semantics from the stack the arm claims to be testing.
+            (str(device) != str(configured_device),
+             f"--device {device} is not the configured "
+             f"{configured_device}: guard 0c certified the trainer recipe with "
+             f"device={configured_device!r} and this run then overwrote it, so "
+             "the kernels and execution semantics are not the production "
+             "stack's"),
+  # ⚑ THE GRADIENT-NOISE REGIME IS A TRAINING SETTING, AND `--batch-size` SAT
+  # AFTER EVERY PREFLIGHT. Guard 0c certifies the trainer recipe against live's,
+  # but `batch_size` is not a trainer kwarg — it is an argument to
+  # `train_steps` — so a `--batch-size 32` run against production's configured
+  # 512 changed the examples per step, and therefore the gradient noise, with
+  # every guard still passing and `valid_control` still true.
+            (batch_size != configured_batch_size,
+             f"--batch-size {batch_size} is not the configured "
+             f"{configured_batch_size}: the examples per step and hence the "
+             "gradient-noise regime are not production's, so no slope from this "
+             "run describes the production training stack"),
+  # ⚑ REVIEW F2. Judging the arm's WHOLE PREMISE — "production's net and
+  # production's trainer" — against a committed pin is strictly weaker
+  # evidence than judging it against the live file, because the pin is a
+  # snapshot and `configs/pbt2_small.yaml` is written only on the live branch.
+  # The tests that catch a stale pin SKIP when no live file is named, and that
+  # is correct for CI (making CI read an absolute host path was rejected as
+  # review F6). So the check has to live HERE, in the run artifact: the same
+  # rule the receipt already gets one entry up, for the same reason.
+            (live_config_unread,
+             "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or "
+             "--live-config omitted): the architecture and/or trainer premise "
+             "was judged against a COMMITTED PIN, which cannot detect that the "
+             "live file has moved since the pin was recorded"),
+  # ⚑⚑ THE OUTCOME BAR IS DERIVED FROM THE LIVE RECIPE, NOT FROM A CONSTANT IN
+  # THIS TREE. `PRODUCTION_GAME_FRAC` is a hand-written 0.0, correct for live's
+  # 0.69/0.31 — and both blend fracs are `LC0_TRAINER_DEVIATIONS` entries, so
+  # guard 0c is required to IGNORE them. If production moves to, say, 0.50/0.20,
+  # live leaves 0.30 of the value target on the raw game outcome while this arm
+  # holds 0.00, guard 0c stays silent by construction, and the arm would be
+  # stamped valid while no longer testing production's objective. Reported by
+  # the third independent review (thread 3795733617). `live_game_frac` is
+  # derived from the SAME reference signature the preflight judged against.
+            (abs(float(live_game_frac) - PRODUCTION_GAME_FRAC) > 1e-9,
+             f"production's value blend now leaves game_frac="
+             f"{float(live_game_frac):.4f} on the RAW GAME OUTCOME, but this arm "
+             f"is built to hold it at {PRODUCTION_GAME_FRAC:.4f} and "
+             "`LC0_TRAINER_DEVIATIONS` makes guard 0c ignore both blend fracs, "
+             "so nothing else can see the divergence: the arm is no longer "
+             "training production's value objective. Refresh LIVE_TRAINER_PIN, "
+             "`PRODUCTION_GAME_FRAC` and the two deviation reasons together"),
+        ) if flag
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
@@ -938,6 +1217,17 @@ def main(argv: list[str] | None = None) -> int:
              "knob is clamped to the interior, so `--steps 3 --frac 0.5` gives "
              "33%% — and anything else is recorded in `validity_problems`, which "
              "`compare` then refuses with no waiver.",
+    )
+    parser.add_argument(
+        "--allow-invalid-control", action="store_true",
+        help="⚑⚑ launch even though the arguments already guarantee "
+             "`valid_control: false`. WITHOUT this flag the driver REFUSES before "
+             "the first step and prints every reason, because `lc0_control_eval "
+             "compare` rejects such an artifact with NO WAIVER — twice now a full "
+             "budget ran to completion and was then stamped invalid for something "
+             "its own command line already said. The flag does not make the run "
+             "valid; it says the operator wants the checkpoints anyway (a "
+             "plumbing smoke, or a deliberate leak demonstration).",
     )
     parser.add_argument(
         "--move-existing-aside", action="store_true",
@@ -1105,22 +1395,81 @@ def main(argv: list[str] | None = None) -> int:
     print("[data] replay kwargs (realized): "
           + " ".join(f"{k}={v!r}" for k, v in sorted(replay_kwargs.items())))
 
-  # ⚑ `int(...)` after the multiply, and clamped to the interior: a mid point of
-  # 0 would save before any step ran and a mid point of `steps` would save the
-  # LAST checkpoint under a second name, and `compare` would then read a pair
-  # that is discordant on zero rows — refused, but only after the run cost a day.
-    mid_step = int(float(args.mid_checkpoint_frac) * int(args.steps))
-    if float(args.mid_checkpoint_frac) > 0.0:
-        mid_step = min(max(mid_step, 1), max(int(args.steps) - 1, 0))
-    mid_ckpt = out_dir / "checkpoint_mid.pt"
     window_steps, n_windows, cadence_problem = train_window_plan(
         steps=int(args.steps), window=int(args.train_window_steps),
     )
+  # ⚑⚑ SNAPPED TO A WINDOW BOUNDARY, not `int(frac * steps)` clamped to the
+  # interior. See `mid_step_on_window_boundary`: the fraction guard bounds a
+  # PROXY (±0.01 is ±2 whole windows at the arm's budget), so a passing knob
+  # could still put MID at LR scale 1.0 against LAST at 0.1. Snapping makes MID
+  # sit at the bottom of a release cycle, which is where LAST sits and where two
+  # production checkpoints sit.
+    mid_step = mid_step_on_window_boundary(
+        steps=int(args.steps), window=int(window_steps),
+        frac=float(args.mid_checkpoint_frac),
+    )
+    mid_ckpt = out_dir / "checkpoint_mid.pt"
     print(f"[train] {n_windows} window(s) of {window_steps} step(s) "
           f"(production cadence ~{PRODUCTION_TRAIN_WINDOW_STEPS}/iteration; the "
           "LR release cycle is derived from each call's step count)")
     if cadence_problem is not None:
         print(f"⚑ CADENCE: {cadence_problem}")
+    if mid_step:
+        print(f"[train] mid-budget checkpoint at step {mid_step} of "
+              f"{int(args.steps)} ({mid_step / max(int(args.steps), 1):.4f} of "
+              f"the budget, window boundary "
+              f"{mid_step // max(int(window_steps), 1)}/{n_windows})")
+
+  # ⚑⚑ THE LAUNCH-TIME REFUSAL. EVERY entry below is knowable from the
+  # arguments, the config and the plan — and until this call existed they were
+  # computed only AFTER the last step, so TWICE a full run ended
+  # `valid_control: false` for a reason its own command line already contained
+  # (`--steps 20001`, then `--steps 20000` against the divisibility rule). The
+  # mid step passed here is the PLANNED one; the post-run call re-evaluates with
+  # the REALIZED one, and `test_launch_refusal_lists_the_same_problems_as_the_run`
+  # pins that a clean run's two readings agree.
+  #
+  # ⚑ `--allow-invalid-control` is what a plumbing smoke passes. It does NOT
+  # make the run valid — every problem still lands in `validity_problems` and
+  # `compare` still refuses the artifact with no waiver — it only says the
+  # operator knows and wants the checkpoints anyway.
+    live_game_frac, game_frac_provenance = live_production_game_frac(
+        live_config=live_production_config_path(),
+    )
+    print(f"[preflight] production game_frac {live_game_frac:.4f} derived from "
+          f"{game_frac_provenance}")
+    planned_problems = control_validity_problems(
+        allow_leak=bool(args.allow_leak),
+        allow_arch_drift=bool(args.allow_arch_drift),
+        has_purity_receipt=receipt is not None,
+        steps=int(args.steps),
+        warmup_steps=int(kwargs["warmup_steps"]),
+        mid_saved_at_step=mid_step or None,
+        mid_checkpoint_frac=float(args.mid_checkpoint_frac),
+        window_steps=int(window_steps),
+        cadence_problem=cadence_problem,
+        device=str(kwargs["device"]),
+        configured_device=configured_device,
+        batch_size=batch_size,
+        configured_batch_size=configured_batch_size,
+        live_config_unread=(_LIVE_FILE_UNREAD in arch_provenance
+                            or _LIVE_FILE_UNREAD in trainer_provenance),
+        live_game_frac=live_game_frac,
+    )
+    if planned_problems and not args.allow_invalid_control:
+        raise SystemExit(
+            "REFUSING TO LAUNCH — this run cannot be a valid control, and every "
+            "reason is already knowable from the arguments:\n  "
+            + "\n  ".join(planned_problems)
+            + "\n⚑ `lc0_control_eval compare` refuses valid_control: false with "
+            "NO WAIVER, so finishing this run would spend its whole budget to "
+            "produce an artifact that cannot be quoted. Fix the arguments, or "
+            "pass --allow-invalid-control if you want the checkpoints anyway "
+            "(a plumbing smoke).",
+        )
+    if planned_problems:
+        print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
+              "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
@@ -1149,15 +1498,29 @@ def main(argv: list[str] | None = None) -> int:
   # possibly-unbound `metrics` further down: `--steps 0` would otherwise reach the
   # summary writer with no training at all having happened.
         metrics: Any = None
+  # ⚑⚑ THE LAST WINDOW IS SHORT WHEN THE BUDGET IS NOT A WHOLE NUMBER OF WINDOWS,
+  # so the REALIZED step count equals the REQUESTED one. The previous revision
+  # ran `steps // window` full windows and DISCARDED the remainder while
+  # `summary["steps"]` reported the request; running a ceiling number of FULL
+  # windows would make the opposite error and train up to `window - 1` steps MORE
+  # than the operator asked for. Both are "a value accepted and then silently
+  # ignored". A short final window is safe for the LR: `_scale_for_window_step`
+  # returns `min_scale` at `local_step == cycle_steps - 1` for ANY cycle length
+  # (measured), so LAST still sits at the bottom of a release cycle.
+        steps_done = 0
         for window_index in range(n_windows):
+            this_window = min(int(window_steps), int(args.steps) - steps_done)
+            if this_window <= 0:
+                break
             metrics = trainer.train_steps(
                 _as_replay_buffer(buf), batch_size=batch_size,
-                steps=int(window_steps),
+                steps=this_window,
             )
+            steps_done += this_window
             if n_windows > 1:
                 print(f"[train] window {window_index + 1}/{n_windows} "
-                      f"({window_steps} steps) done, "
-                      f"{(window_index + 1) * window_steps} of {int(args.steps)}")
+                      f"({this_window} steps) done, "
+                      f"{steps_done} of {int(args.steps)}")
 
     if metrics is None:
         raise SystemExit(
@@ -1176,7 +1539,15 @@ def main(argv: list[str] | None = None) -> int:
   # the assert here left it with no reachable input that could fire it. The
   # flag opens the LAUNCH gate; this one still closes.
     try:
-        assert_no_silent_outcome_fallback(readout, context="realized training step")
+  # ⚑ THE BAR IS DERIVED, NOT DEFAULTED. `max_outcome_borne` defaults to the
+  # hand-written `PRODUCTION_GAME_FRAC`; `live_game_frac` is the same quantity
+  # read off the recipe the preflight judged against, and the two disagreeing is
+  # itself a `validity_problems` entry. Passing it explicitly means a production
+  # blend change moves the bar rather than leaving a stale constant in force.
+        assert_no_silent_outcome_fallback(
+            readout, max_outcome_borne=live_game_frac,
+            context="realized training step",
+        )
   # ⚑ The SAME defect on the sibling value head, and it needs its own read
   # because `compute_loss`'s blend fracs cannot see it: the categorical
   # rebuild runs in `_prepare_arrays`, upstream of the loss. Inert on today's
@@ -1209,140 +1580,37 @@ def main(argv: list[str] | None = None) -> int:
     run_id, checkpoint_records = checkpoint_identities(
         last=ckpt, mid=mid_ckpt if mid.saved_at_step is not None else None,
     )
-  # ⚑ EVERY reason the run is not a valid control, NAMED. A bare
-  # `valid_control: false` says a run is disqualified without saying what for,
-  # which is the same "a flag instead of a measurement" shape as the rest of
-  # this review's findings.
-  #
-  # ⚑⚑ AND "RECORDED" MEANS RECORDED AT LAUNCH-TIME, NOT SOFT. Every entry below
-  # sets `valid_control: false` (`not validity_problems`), and
-  # `lc0_control_eval compare` refuses `valid_control: false` with NO WAIVER AT
-  # ALL. So the distinction these comments draw is between REFUSING TO LAUNCH and
-  # LETTING THE RUN FINISH AND DISQUALIFYING ITS ARTIFACT — not between a hard
-  # block and a soft note. An earlier revision of this block said "recorded
-  # rather than refused ... every plumbing smoke here runs at batch 4 by design",
-  # which reads as "such a run can still be compared". It cannot: the independent
-  # review executed `--batch-size 2` against a configured 4 and `compare` exited
-  # 1 with all four waivers passed at once. That is the intended policy — a slope
-  # from a run at the wrong batch size, the wrong mid point or below warmup must
-  # not supply either side of the arm's primary comparison, and a waiver for it
-  # would be a waiver for "quote a smoke run as the arm" — so the WIRING stands
-  # and the wording is fixed. What the entries buy is that the run still
-  # PRODUCES its checkpoints (which is what a plumbing smoke needs) and that the
-  # artifact says exactly why it cannot be quoted.
-  #
-  # ⚑ The LR-warmup entry is not bookkeeping. Production's `warmup_steps` is
-  # 1000 and this arm now carries it verbatim, so a run whose whole budget is
-  # shorter than the warmup NEVER REACHES THE BASE LR — its held-out slope is a
-  # property of the warmup ramp, not of the trainer. Recorded rather than refused
-  # AT LAUNCH because every plumbing smoke here is 1-8 steps by design; what must
-  # not happen is such a run being quoted as the arm, and the entry is what stops
-  # that.
-    validity_problems = [
-        message for flag, message in (
-            (args.allow_leak, "--allow-leak: the LAUNCH value-blend guards were "
-                              "downgraded to banners"),
-            (args.allow_arch_drift, "--allow-arch-drift: this is NOT production's "
-                                    "architecture"),
-            (receipt is None, "no --purity-receipt: the trained corpus is not "
-                              "tied to any held-out purity check"),
-            (int(args.steps) <= int(kwargs["warmup_steps"]),
-             f"--steps {int(args.steps)} does not exceed warmup_steps "
-             f"{int(kwargs['warmup_steps'])}: the LR never reached the base "
-             "value, so no slope from this run describes the trainer"),
-  # ⚑ The prereg's PRIMARY yardstick is two slopes "both measured LAST vs
-  # MID-BUDGET" on ONE trajectory. Without the mid checkpoint the run has
-  # produced half of the deciding statistic, and nothing downstream would say
-  # so — `lc0_control_eval compare` would happily pair this run's LAST against
-  # some OTHER run's LAST and report a number.
-            (mid.saved_at_step is None,
-             f"no mid-budget checkpoint (--mid-checkpoint-frac "
-             f"{float(args.mid_checkpoint_frac)}, --steps {int(args.steps)}): "
-             "the prereg's primary yardstick is LAST vs MID-BUDGET on ONE "
-             "trajectory, and this run emitted only LAST"),
-  # ⚑ AND A MID CHECKPOINT AT THE WRONG PLACE IS NOT THE MID-BUDGET ONE. Any
-  # positive fraction is clamped to an interior step, so `--mid-checkpoint-frac
-  # 0.99` (or 5.0) wrote a checkpoint, satisfied the entry above, and left the
-  # run reading VALID — while `compare` would present a LAST-vs-99%-budget
-  # contrast, which measures the final 1% of training, as the preregistered
-  # LAST-vs-MID-BUDGET slope.
-  #
-  # ⚑⚑ AND THE PREDICATE IS THE REALIZED FRACTION, NOT THE KNOB. Judging
-  # `args.mid_checkpoint_frac` broke this file's own rule ("a configured value is
-  # not an applied value") inside the guard added to enforce a preregistered
-  # value: `mid_step = int(frac * steps)`, clamped to the interior, so
-  # `--steps 3 --mid-checkpoint-frac 0.5` puts MID at step 1 of 3 — 33.3% of the
-  # budget — and recorded NOTHING. Measured by the independent review. The
-  # realized fraction is exact for the passing case (`n / 2n` is exact in
-  # IEEE754), and a knob of 0.5000001 that still lands on the mid step is
-  # correctly silent: the trajectory IS the mid-budget one.
-            (mid.saved_at_step is not None
-             and mid_fraction_deviates(
-                 saved_at_step=mid.saved_at_step, steps=int(args.steps),
-             ),
-             f"the mid checkpoint was taken at step {mid.saved_at_step} of "
-             f"{int(args.steps)} = "
-             f"{(mid.saved_at_step or 0) / max(int(args.steps), 1):.4f} of the "
-             f"budget, more than {MID_CHECKPOINT_FRAC_TOLERANCE} from the "
-             f"preregistered {PREREG_MID_CHECKPOINT_FRAC} "
-             f"(--mid-checkpoint-frac {float(args.mid_checkpoint_frac)}, "
-             "clamped to the interior): the LAST-vs-MID slope this run supports "
-             "is not the prereg's LAST vs MID-BUDGET"),
-  # ⚑⚑ THE LR CADENCE — the confound the control config DOCUMENTED and nothing
-  # measured. See `PRODUCTION_TRAIN_WINDOW_STEPS`: a budget that is not an even
-  # number of production-sized windows puts MID and LAST at different phases of
-  # the release cycle, so part of the deciding slope is an LR artifact. Now that
-  # the driver runs windows this is normally EMPTY; it fires for a short smoke
-  # (window > steps) and for an odd window count.
-            (cadence_problem is not None,
-             f"LR cadence: {cadence_problem}. The MID->LAST slope then contains "
-             "an anneal production never places between two of its own "
-             "checkpoints, and an annealed endpoint scores better on held-out "
-             "top-1 for reasons that are not the trainer learning"),
-  # ⚑ `--device` IS DISQUALIFYING, and the comment that used to defer this
-  # ("plausibly objective-neutral", "an entry here would disqualify every smoke")
-  # was measurably wrong on the second clause: a clean 4-step CPU smoke already
-  # banks FOUR entries (--allow-arch-drift, no purity receipt, steps <=
-  # warmup_steps, no live config), so the entry costs nothing and its absence
-  # made `realized_after_guard` a banked-and-unread field — this repo's signature
-  # defect. Guard 0c certifies the recipe with LIVE_TRAINER_PIN's "cuda" and the
-  # driver then overwrites it, so a CPU run has different bf16 kernels and
-  # execution semantics from the stack the arm claims to be testing.
-            (str(kwargs["device"]) != str(configured_device),
-             f"--device {kwargs['device']} is not the configured "
-             f"{configured_device}: guard 0c certified the trainer recipe with "
-             f"device={configured_device!r} and this run then overwrote it, so "
-             "the kernels and execution semantics are not the production "
-             "stack's"),
-  # ⚑ THE GRADIENT-NOISE REGIME IS A TRAINING SETTING, AND `--batch-size` SAT
-  # AFTER EVERY PREFLIGHT. Guard 0c certifies the trainer recipe against live's,
-  # but `batch_size` is not a trainer kwarg — it is an argument to
-  # `train_steps` — so a `--batch-size 32` run against production's configured
-  # 512 changed the examples per step, and therefore the gradient noise, with
-  # every guard still passing and `valid_control` still true.
-            (batch_size != configured_batch_size,
-             f"--batch-size {batch_size} is not the configured "
-             f"{configured_batch_size}: the examples per step and hence the "
-             "gradient-noise regime are not production's, so no slope from this "
-             "run describes the production training stack"),
-  # ⚑ REVIEW F2. Judging the arm's WHOLE PREMISE — "production's net and
-  # production's trainer" — against a committed pin is strictly weaker
-  # evidence than judging it against the live file, because the pin is a
-  # snapshot and `configs/pbt2_small.yaml` is written only on the live branch.
-  # The tests that catch a stale pin SKIP when no live file is named, and that
-  # is correct for CI (making CI read an absolute host path was rejected as
-  # review F6). So the check has to live HERE, in the run artifact: the same
-  # rule the receipt already gets one entry up, for the same reason.
-            (_LIVE_FILE_UNREAD in arch_provenance
-             or _LIVE_FILE_UNREAD in trainer_provenance,
-             "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or "
-             "--live-config omitted): the architecture and/or trainer premise "
-             "was judged against a COMMITTED PIN, which cannot detect that the "
-             "live file has moved since the pin was recorded"),
-        ) if flag
-    ]
+  # ⚑ THE SAME FUNCTION THE LAUNCH REFUSAL CALLED, with the ONE input that could
+  # not be known in advance replaced by its realized value. Two copies of this
+  # list would let the artifact and the refusal disagree, which is the shape of
+  # every finding in this review; `test_launch_refusal_lists_the_same_problems`
+  # asserts the two readings are identical for a clean run.
+    validity_problems = control_validity_problems(
+        allow_leak=bool(args.allow_leak),
+        allow_arch_drift=bool(args.allow_arch_drift),
+        has_purity_receipt=receipt is not None,
+        steps=int(args.steps),
+        warmup_steps=int(kwargs["warmup_steps"]),
+        mid_saved_at_step=mid.saved_at_step,
+        mid_checkpoint_frac=float(args.mid_checkpoint_frac),
+        window_steps=int(window_steps),
+        cadence_problem=cadence_problem,
+        device=str(kwargs["device"]),
+        configured_device=configured_device,
+        batch_size=batch_size,
+        configured_batch_size=configured_batch_size,
+        live_config_unread=(_LIVE_FILE_UNREAD in arch_provenance
+                            or _LIVE_FILE_UNREAD in trainer_provenance),
+        live_game_frac=live_game_frac,
+    )
     summary = {
         "steps": int(args.steps),
+  # ⚑ THE STEPS THAT ACTUALLY RAN. `steps` above is the REQUEST; a windowed loop
+  # can train fewer (the old floor plan discarded the remainder) or more (a
+  # ceiling plan of full windows), and nothing in the artifact said which. These
+  # are equal by construction now, and that is exactly why the number is banked
+  # rather than assumed: a reader can check it instead of trusting this comment.
+        "steps_realized": int(steps_done),
   # ⚑ THE SEED, BANKED. It seeds `torch.manual_seed` before `build_model` AND the
   # replay buffer's RNG, and it appeared in neither the summary nor the
   # checkpoint: `run_id` is content-derived, so it IDENTIFIES a trajectory but
@@ -1367,6 +1635,12 @@ def main(argv: list[str] | None = None) -> int:
         "trainable_params": params,
         "architecture_judged_against": arch_provenance,
         "trainer_judged_against": trainer_provenance,
+  # ⚑ The outcome bar the realized guard actually enforced, and where it came
+  # from. `PRODUCTION_GAME_FRAC` is banked beside it so a reader can see whether
+  # the constant in the tree still agrees with the recipe production runs.
+        "production_game_frac": live_game_frac,
+        "production_game_frac_judged_against": game_frac_provenance,
+        "pinned_production_game_frac": PRODUCTION_GAME_FRAC,
         "replay_judged_against": replay_provenance,
   # ⚑ The two DECLARED buffer deviations are applied after guard 0d, so the
   # realized values go in the artifact for the same reason

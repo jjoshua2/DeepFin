@@ -255,11 +255,33 @@ def game_cluster_keys(
     key. A fabricated one would make every row its own cluster, i.e. report the
     independence the estimator is supposed to stop assuming; the empty string is
     detectable, and `frozen_row_set` banks whether the set is complete.
+
+    ⚑⚑ AND THE MASK IS READ, NOT JUST THE COLUMN. `game_id` is an OPTIONAL shard
+    field (`replay/shard.py`: `_OptFieldSpec("game_id", "has_game_id", ...)`), so an
+    unset row carries the int64 FILL VALUE 0 — and the first version of this
+    function, whose docstring promised exactly this case was handled, emitted
+    `"<source>#0"` for it: a real-looking key that MERGED unkeyed rows into game
+    0's cluster while `cluster_keys_complete` reported True. Executed by the
+    independent review. It covered an absent COLUMN and never an unset ROW, and
+    the banked artifact could not tell them apart — the same "read a value without
+    its presence mask" defect this module already fixed once in its purity
+    reasoning. Direction is conservative for the CI (fewer clusters => wider), but
+    a false assurance in an artifact that is UNRECOVERABLE after the freeze is the
+    thing the banking argument rests on.
     """
     game_ids = arrs.get("game_id")
     if game_ids is None:
         return [""] * rows
-    return [f"{source}#{int(g)}" for g in np.asarray(game_ids).reshape(-1)[:rows]]
+    values = np.asarray(game_ids).reshape(-1)[:rows]
+    mask = arrs.get("has_game_id")
+    present = (
+        np.ones(len(values), dtype=bool) if mask is None
+        else np.asarray(mask).reshape(-1)[:rows].astype(bool)
+    )
+    return [
+        f"{source}#{int(value)}" if bool(flag) else ""
+        for value, flag in zip(values, present, strict=False)
+    ]
 
 
 def collect_split_ids(shard_dirs: Sequence[Path]) -> SplitIds:
@@ -295,15 +317,37 @@ def _stratified_sample(
     if sample >= total:
         return [row for chunk in per_source for row in chunk]
     rng = np.random.default_rng(seed)
+  # ⚑⚑ PROPORTIONAL TO EACH SOURCE'S ROWS, which is what this docstring has always
+  # claimed and what the code did not do. `remaining // sources_left` gives each
+  # source an approximately EQUAL quota, so on six hours of unequal size the small
+  # hours were OVERREPRESENTED and the result depended on source ORDER whenever a
+  # late source could not fill its equal share. The largest-remainder method below
+  # is exact (the floors plus the redistributed remainder sum to `sample`) and
+  # order-independent up to the tie-break, which is taken by descending remainder
+  # and then by index so it is deterministic. Codex 3795733611.
+    sizes = [len(chunk) for chunk in per_source]
+    exact = [sample * size / total for size in sizes]
+    quotas = [min(int(value), size) for value, size in zip(exact, sizes, strict=True)]
+    order = sorted(
+        range(len(per_source)),
+        key=lambda i: (-(exact[i] - int(exact[i])), i),
+    )
+    shortfall = sample - sum(quotas)
+    while shortfall > 0:
+        progressed = False
+        for index in order:
+            if shortfall <= 0:
+                break
+            if quotas[index] < sizes[index]:
+                quotas[index] += 1
+                shortfall -= 1
+                progressed = True
+        if not progressed:
+            break
     picked: list[tuple[str, str, str]] = []
-    remaining = sample
-    for index, chunk in enumerate(per_source):
-        sources_left = len(per_source) - index
-        want = remaining // sources_left if sources_left > 1 else remaining
-        want = min(want, len(chunk))
+    for chunk, want in zip(per_source, quotas, strict=True):
         take = rng.choice(len(chunk), size=want, replace=False)
         picked.extend(chunk[int(i)] for i in sorted(take))
-        remaining -= want
     return picked
 
 

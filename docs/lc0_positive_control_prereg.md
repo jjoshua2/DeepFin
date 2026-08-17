@@ -684,6 +684,107 @@ an even multiple of `--train-window-steps`, `--out-dir` must be fresh, and any q
 readout must show the `game clusters` line — whose stated caveat (the CI is row-level) is
 in force until the clustered estimator lands.
 
+## ⚑⚑ AMENDMENT 8 (2026-08-17, written BEFORE any training step): AMENDMENT 7's OWN FIXES MADE THE ARM'S BUDGET UNLAUNCHABLE
+
+**Still no arm has run and no number from this arm exists.** ⚑ **NO THRESHOLD MOVES IN
+THIS AMENDMENT** — the ±0.392 pp bar, the +2.0 pp effect size, the n=100,000 resolution
+point, the four guards and the outcome table are exactly as originally written. ⚑ Launch
+readiness is recorded separately and is NOT claimed here.
+
+From a THIRD independent review (of Amendment 7's fix wave) plus four Codex threads. The
+headline item is the second consecutive instance of `fixing_a_defect_class_reintroduces_it`
+on the SAME entry, which is why the fix this time is a change of KIND and not of arithmetic.
+
+1. **Amendment 7 fixed item 1's arithmetic and left its OUTCOME — with a trigger set ~88×
+   WIDER.** The mid-fraction tolerance admitted odd budgets, and then Amendment 7 item 3's
+   cadence rule required `steps % (2 × window) == 0`: at the default window 88 that admits
+   only multiples of **176**, i.e. it refused 175 of every 176 budgets **including this
+   arm's own 20,000**, unwaivably, after the budget had been spent. The same failure as
+   item 1, relocated one entry over. ⇒ three changes:
+   - **the divisibility requirement is GONE.** The window count is a CEILING and the final
+     window is SHORT, so no budget is refused and no step is discarded (Codex 3796113403:
+     the floor plan trained `steps // window × window` steps while `summary["steps"]` kept
+     reporting the request). A short final window still ends at the release-cycle bottom —
+     `_scale_for_window_step` returns `min_scale` at `local_step == cycle_steps - 1` for ANY
+     cycle length, measured, not argued.
+   - **MID is SNAPPED to a window boundary** rather than being checked against a fraction
+     band. This is the property the cadence fix was always for; see item 2.
+   - **every disqualification is now evaluated BEFORE the first optimizer step and REFUSES
+     the launch**, with `--allow-invalid-control` for plumbing smokes. Every entry in
+     `validity_problems` is knowable from the arguments, the config and the plan, and twice
+     a full budget ran only to be stamped `valid_control: false` — which `compare` refuses
+     with no waiver. The class "a day of compute buys an artifact that cannot be quoted for
+     a reason the command line already contained" is now closed rather than moved. The
+     launch check and the artifact come from ONE function, so they cannot disagree.
+   - ⚑ **What this trades:** a boundary can miss 0.5 by up to half a window, so the
+     preregistered mid point is unreachable below `min_budget_for_mid_tolerance(88)` =
+     **4400 steps** — above production's 1000-step warmup, so unlike Amendment 7's version
+     this entry CAN now be a run's sole disqualification. Budgets in that band are refused
+     **at launch** with the floor named in the message. The tolerance is NOT widened for
+     short budgets: that would trade the prereg's mid point for the convenience of a run
+     nobody needs (this arm runs 17,600–20,000).
+2. **Both mid-point guards bounded PROXIES, and the property itself was unguarded.** At
+   17,600 steps the ±0.01 fraction band is ±2 whole 88-step windows, so
+   `--mid-checkpoint-frac 0.5028` put MID at LR scale **1.0** against LAST at **0.1** with
+   both guards silent and `valid_control: true` — the exact anneal-in-the-slope confound
+   Amendment 7 item 3 closed, reachable through a PASSING knob. ⇒ MID is snapped to a
+   window boundary at the source, so MID and LAST are at the same phase of the release
+   cycle by construction, and a second entry reports any future path that bypasses the snap.
+3. **`cluster_keys_complete` was banked and read by NOTHING** (Amendment 7 item 4's own
+   field). A key set with holes is worse than none: unkeyed rows collapse into one dropped
+   empty cluster, so `distinct_clusters` UNDERSTATES the clustering and the `rows/cluster`
+   figure overstates the cluster size — a number that looks like a stronger design-effect
+   statement while being an artifact of the missing keys. ⇒ `compare` REFUSES a partial pair
+   under its own `--allow-partial-clusters`, and a partial set never prints a ratio.
+   Relatedly, `game_id` is an OPTIONAL shard field: the key builder read the column without
+   its `has_game_id` mask, so an unset row took the int64 fill value and was banked as
+   `<source>#0` — merged into game 0's cluster while `cluster_keys_complete` said True.
+4. **The outcome bar was a constant in this tree, and the two keys it is made of are the
+   two guard 0c must IGNORE.** `PRODUCTION_GAME_FRAC = 0.0` is correct for live's
+   `0.69 / 0.31`, and both fracs are `LC0_TRAINER_DEVIATIONS` entries by necessity. A
+   production move to, say, `0.50 / 0.20` leaves 0.30 of live's value target on the raw game
+   outcome while this arm holds 0.00: guard 0c is silent by construction, and the arm would
+   be stamped valid while no longer training production's objective. ⇒ the bar is DERIVED
+   from the same reference signature the launch preflight judged against
+   (`live_production_game_frac`), passed to the realized guard explicitly, banked in the
+   artifact next to the pinned constant, and a divergence between the two is a launch
+   refusal that names all three things to refresh together.
+5. **The prereg's TWO deltas were indistinguishable in the artifact.** `score` classified
+   every artifact by the HELD-OUT six-source rule and banked no statement of which
+   population it scored, so a `Δ_train` sample spanning six directories banked an empty
+   problem list and could be presented as `Δ_heldout`, while an honest train sample spanning
+   more directories needed a MISLEADING held-out waiver to compare at all. ⇒ `score
+   --population {heldout,train}` is banked, the six-source rule applies only to the held-out
+   comparison, and `compare --population` must match what the artifacts record — a mismatch
+   is **unwaivable**, an absent role has its own waiver.
+6. **A refused comparison printed the slope anyway.** The resolution refusals (n below the
+   prereg point, halfwidth over the bar, zero discordance) were evaluated AFTER the rates,
+   delta, CI and p-value were on stdout — and a pasted readout that drops stderr and the
+   exit code is how these numbers travel. ⇒ the resolution gate is built and checked before
+   any result line, exactly as the provenance gate already was.
+7. **Two Codex arithmetic items.** `--max-halfwidth-pp nan` was accepted, switched the
+   n=100,000 floor off and compared FALSE against every finite halfwidth — both gates off,
+   exit 0, slope printed; the override must now be finite and positive, and it waives the n
+   floor only when it is at least as STRICT as the material bar (a looser bar is a
+   relaxation, not a re-derivation). And the exact McNemar tail enumerated arbitrary-
+   precision binomial coefficients, taking tens of seconds at 20,000 discordant pairs and
+   minutes at 100,000 — i.e. slowest on the prereg's own readout; it is now summed in log
+   space above 1,000 pairs, with the exact-integer path kept below that so the pinned value
+   stays bit-identical.
+8. **Sampling.** `_stratified_sample` gave each source an approximately EQUAL quota while
+   its docstring said proportional, so on six hours of unequal size the small hours were
+   overrepresented and the result depended on source ORDER. Now largest-remainder
+   proportional, exact and order-independent.
+
+⇒ **Operational consequence for this arm, REPLACING Amendment 7's line:** `--steps` no
+longer needs to divide anything — any budget ≥ 4400 steps at the default window is accepted
+and every requested step is trained — but the driver now **refuses to launch** unless the
+run is a valid control, so `--out-dir` must be fresh, the purity receipt and the live config
+must be supplied, and `--device`/`--batch-size` must match the config. A plumbing smoke
+passes `--allow-invalid-control` and its artifact remains unquotable. Any quoted readout
+must still show the `game clusters` line, and a `PARTIAL` there is a refusal rather than a
+caveat.
+
 ## What each outcome licenses — pre-committed
 
 - **PASS** ⇒ the training stack and architecture can learn. Effort routes to targets
