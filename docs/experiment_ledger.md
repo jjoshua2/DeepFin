@@ -57254,3 +57254,24 @@ Marginal cost re-measured: **1.00 ms** on a 1697.8 ms step.
 **REVISED SHIP VALUES: delta = 20 cp, tau = 1/gumbel_topk (= 0.0625), w = 0.41.**
 This supersedes the `tau = 0.15, w = 0.20` of `d6b31110f`, which was set by gradient
 magnitude alone and had no search-side justification.
+
+**⚑ SCOPE BOUNDARY on the tau = 1/topk guarantee (owner, 2026-08-17).** "Normally the
+real problem isn't just one low prior policy but two or three in a row without value head
+showing it's promising." Correct, and the guarantee does NOT cover that:
+
+- The pigeonhole bound is **ROOT-ONLY**. It applies to `_select_top_m_with_gumbel`, which
+  runs at the root. **Interior** nodes descend by PUCT (`c_puct 2.5`, `mcts/puct.py`),
+  where the prior enters the exploration term MULTIPLICATIVELY
+  (`~ c_puct * P(a) * sqrt(N)/(1+N(a))`). There is no top-k there and therefore no
+  pigeonhole argument.
+- The floor still helps interior nodes, by a different and **unquantified** mechanism:
+  raising a prior 0.001 -> 0.0625 is a ~62x increase in PUCT exploration priority, and the
+  net's improved policy applies at EVERY node, not only at rows carrying `sf_p0_regret`.
+  For a refutation needing k low-prior plies the effect compounds multiplicatively — which
+  is an argument FOR the floor, but an UNMEASURED one.
+- A 2-3 ply refutation also needs the VALUE head to not prune the line. That is out of
+  scope here and is handled by the separate value-supervision track.
+
+⇒ Claim only what is measured: **at the root, tau >= 1/topk guarantees SF's move is
+searched.** Everything about multi-ply lines is a plausibility argument until someone
+measures a k-ply joint-inclusion rate. Filed as follow-up, not claimed as a result.
