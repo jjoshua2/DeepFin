@@ -56867,3 +56867,57 @@ and it costs one audit run. Recorded as the next step.
 ⚑ And the ruler stays legitimate for this purpose despite BT4 agreeing with deep-SF on only 57.3% of
 best moves — that DISAGREEMENT is the reason to keep it, per the decorrelation rule in the retraction
 above. What is illegitimate is stacking Ceres on top: it is r = +0.82 with BT4 and adds no opinion.
+
+## 2026-08-17 ⚑⚑ RETRACTION #2 — "FLATTER IS BETTER, TEMPERATURE IS THE CHEAPEST LEVER" IS WRONG. OUR DEFICIT IS PURE RANKING
+
+`985a98379` concluded *"our prior is sharp on the wrong move set, and BT4 is the existence proof that
+the flatter policy is the better one at this strength"*, and promoted the temperature/entropy control
+to a first-class strength candidate. **Both halves are retracted.** Caught by decomposing E[regret]
+into its top-move and tail parts instead of reading entropy as if it were quality.
+
+`E = p_top·r_top + (1−p_top)·r_tail`, solved for the tail:
+
+| raw policy, 1 node | E[regret] | top-1 regret | p(top) | **tail mean** |
+|---|---|---|---|---|
+| **BT4** | 50.9 | **20.1** | 0.496 | **81.2 cp** |
+| **ours** | 52.6 | **46.9** | 0.718 | **67.1 cp** |
+| BT4 @100 sims | 28.8 | 19.8 | 0.735 | 53.7 |
+| ours @100 sims | 39.1 | 36.4 | 0.803 | 50.1 |
+
+⇒ **OUR TAIL IS BETTER THAN BT4's, at both depths.** BT4's whole advantage is that its **#1 move is
+right** (20.1 vs 46.9); it PAYS for that with a worse tail spread over more moves, which is exactly why
+the two E[regret] figures nearly tie (50.9 vs 52.6) while the top-1 figures differ 2.3×.
+**BT4 is better DESPITE being flatter, not because of it.** Entropy was read as a quality signal; it is
+a spread signal, and the two came apart here.
+
+### Why this matters operationally — it removes a whole class of candidate
+
+**Temperature is argmax-invariant.** Softmax temperature cannot change which move is on top, so it
+**cannot move top-1 regret by a single centipawn**. And in the direction the raw cosine metric liked
+(flattening), it would move mass off a 46.9 cp move onto a 67.1 cp tail — i.e. it would make E[regret]
+**worse**. ⇒ temperature is **not a strength lever for us at all**; task #255 is demoted back to what it
+was originally, a CONTROL that proves arm C's cosine is not merely calibration, and nothing more.
+
+### What SURVIVES, and it now points somewhere sharper
+
+- The N2 result stands, but as a fact about the METRIC, not the policy: `d_bt4 = p_bt4 − p_ours` is
+  dominated by the large negative component at OUR top move, so ANY direction that removes top-move
+  mass scores well — whether or not the mass goes anywhere useful. That is precisely why the
+  orthogonalised (ranking-only) view was mandatory, and it is now doubly vindicated.
+- **Arm C is the only arm that targets the actual deficit.** A floor on SF's top-1/top-2 moves mass ONTO
+  named moves and therefore CAN change the argmax. Every other arm reweights magnitudes. That the
+  ranking-only view already picked C out (+0.41 / +0.32) and the deficit decomposition independently
+  says "ranking is the whole gap" is a genuine convergence, not a restatement.
+- ⚑ **The TARGET is not the problem.** SF's own soft target scores top-1 **12.4 cp** on this ruler — the
+  best of anything measured today, better than BT4 (20.1) and Ceres (18.6). Our net trains on that
+  label and produces **46.9**. ⇒ the label ranks correctly and **we are not learning its ranking**.
+  This is a LEARNING failure, not a labelling failure, and it corroborates
+  [[our_gap_is_training_not_capacity]] from a new direction.
+
+### ⇒ The calibration metric has to change
+
+Cosine against a ruler direction rewards calibration and ranking together, and we now know only
+ranking is load-bearing. The policy-SL arms must be scored by **whether they move the ARGMAX toward a
+better move**: for each arm direction `d`, read `d[sf_best] − d[our_argmax]` — positive means the arm
+raises mass on the deep-SF best move faster than on the move we currently pick. Argmax-invariant
+interventions score exactly 0 by construction, which is the correct answer for them.
