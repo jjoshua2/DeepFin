@@ -57598,3 +57598,61 @@ on — was better supported than the floor programme I replaced it with.
   **RE-DERIVED on the cp metric before it is cited.** Do not quote it as-is.
 - The floor + collar (#256) is unaffected as a LOW-RISK, GUARANTEED, ~free ply-1 fix; it is
   no longer the candidate for the BIGGEST fix.
+
+### 2026-08-17 — THE A+F HYBRID, SCORED ON A SEARCH-AWARE RULER. A IS THE ENGINE, F IS THE GUARDRAIL.
+
+Owner: "we want a hybrid of A and F, which is basically trying to optimize how correct SF
+plus our search is and use that as optimal training target." That names the ruler both of my
+earlier metrics were proxies for, and it resolves their disagreement.
+
+Rig: `scratchpad/sfpolicy_compare/armAF_hybrid.py`. **8,023 production rows** joined by
+(shard,row) to the 1M-node MultiPV-10 deep labels banked at
+`scratchpad/deeplabel_prod_rows_20260817.jsonl`. Root selection reproduced exactly
+(`gumbel_topk 16`, `sims 100`, `gumbel_c_scale 0.1`, `policy_temp 1.5`), 24 Gumbel trials/row,
+400-sample bootstrap. Arms stepped as UNIT-NORM directions on raw logits, then tempered.
+
+**TWO BOUNDS, because "the played move's regret" depends on how good search is:**
+- `J_min` — perfect ranking WITHIN the Gumbel candidate set. Credits INCLUSION (arm F's
+  mechanism), gives ranking nothing.
+- `J_soft` — no search value at all; the move is drawn ~ prior restricted to the candidate
+  set. Credits PRIOR QUALITY (arm A's mechanism).
+Truth is between. `d = a*Ahat + (1-a)*Fhat(tau .15)`, both unit-normalised.
+
+| mix (eta=1) | ΔJ_min | ΔJ_soft | frac>0 (soft) |
+|---|---|---|---|
+| a=0.00 pure F | +0.2958 | **+1.043** | **47.6%** |
+| a=0.25 | +0.2546 | +8.635 | 78.5% |
+| **a=0.50** | **+0.3150** (best of all) | +9.824 | 86.3% |
+| a=0.75 | +0.2383 | +10.432 | 86.5% |
+| a=1.00 pure A | +0.2281 | **+10.504** | 85.5% |
+| random ctl | +0.0278 | **-0.170** | 46.9% |
+
+(eta=3 reproduces the ordering at ~2.4x scale: soft a1.00 +24.91, a0.50 +24.43, a0.00 +6.09,
+rand -1.75.)
+
+⇒ **UNDER J_min ALL ARMS TIE** (CIs overlap; only 1.3-2.2% of rows change candidate set at
+all — it is discrete and stable, so the effect is concentrated: conditional magnitude ~20-40cp).
+⇒ **UNDER J_soft ARM A BEATS PURE F BY ~10x.** And pure F's frac>0 is **47.6% against the
+random control's 46.9%** — F barely moves more rows than chance. It is a PRECISION instrument
+for a small row set; A improves 85% of rows.
+
+**WHICH BOUND IS CLOSER TO TRUTH IS MEASURED, and it sets the mix.** Banked audit
+`b04d77eee`: raw policy top-1 **46.9 cp**, net+Gumbel search **36.1 cp**, SF soft target
+**12.4 cp**. So 100 sims recovers 10.8 of the 34.5cp gap = **~31%**. Weighting the bounds
+31/69 puts the optimum at **a ~ 0.75**, with a=0.50 capturing ~94%.
+
+**CAVEAT, stated because it cuts one way:** `J_soft` is essentially the expected-cp metric
+restricted to the candidate set, so arm A carries there the same SHARED-FORM advantage
+flagged in `acdae6fa8`. `J_min` is the bound that credits F's mechanism — and a=0.50 scores
+HIGHEST of anything tested on it.
+
+**⇒ RECOMMENDATION: a = 0.5-0.75, A-DOMINANT, F RETAINED.** The hybrid is not a compromise;
+it is the robust choice PRECISELY BECAUSE the two bounds disagree and each is shaped like one
+of the arms. F is kept not for average cp but for the two properties A cannot have:
+1. the `tau >= 1/gumbel_topk` root search-inclusion GUARANTEE (`ae2ea797b`), and
+2. provable silence on rows we already have right — production-verified mean dp
+   **+0.000000**, frac<0 **0.0%** at every tau <= 0.15 (deep-relabel run).
+
+⚑ OPEN: `J_min`/`J_soft` are BOUNDS, not the realized objective. A direct measurement would
+run the actual 100-sim search and read the played move's deep regret. That is the honest
+version of this ruler and it is not yet built.
