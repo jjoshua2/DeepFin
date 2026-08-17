@@ -813,6 +813,21 @@ def shrink_checkpoint(
         **dataclasses.asdict(target_cfg),
     }
     new_ckpt.pop("opt", None)
+  # ⚑ The manifest MUST go with the state it describes. `new_ckpt = dict(ckpt)`
+  # carries `opt_param_names` over, and popping `opt` alone leaves it behind
+  # describing an optimizer state no longer in the payload -- while
+  # `new_ckpt["model"]` above was rewritten to a NARROWER architecture, so the
+  # widths those names refer to are gone too. That is a self-INCONSISTENT
+  # checkpoint, the same one `scripts/reinit_value_heads.py` was fixed for in
+  # PR #427; this script was the sibling producer that fix missed.
+  #
+  # ⚑ It is harmless TODAY for exactly the reason that was rejected as
+  # insufficient over there: with `opt` absent nothing re-keys a state that is
+  # not there, so `Trainer.load` never reaches the manifest at all. That is an
+  # argument about today's caller, not about this file's output, and a later
+  # edit preserving `opt` -- or any tool that reads the manifest without it --
+  # arms it. Fix the producer, not just the detector.
+    new_ckpt.pop("opt_param_names", None)
     new_ckpt.pop("scheduler", None)
 
     source_hidden = _ffn_hidden_sizes(source_state, num_layers=source_cfg.num_layers)

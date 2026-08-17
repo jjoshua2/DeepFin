@@ -913,6 +913,13 @@ def test_the_dispatch_binds_the_shared_estimator_to_the_threaded_run() -> None:
     stub._selfplay_state_count = types.MethodType(
         cast(Any, WorkerSession)._selfplay_state_count, stub,
     )
+    # The dispatch also sizes the in-flight-resume settle barrier here. Bound as
+    # the REAL method rather than a lambda returning a constant: a stand-in would
+    # let this stub keep passing while the production arithmetic rotted, which is
+    # the substitution this test exists to refuse one line up.
+    stub._resume_hooks_for_session = types.MethodType(
+        cast(Any, WorkerSession)._resume_hooks_for_session, stub,
+    )
     build = cast(Any, WorkerSession)._build_shared_diff_focus_norm
     stub._build_shared_diff_focus_norm = lambda cfgs, gpb: build(stub, cfgs, gpb)
     dispatch = cast(Any, WorkerSession)._dispatch_selfplay_one_shard
@@ -921,6 +928,9 @@ def test_the_dispatch_binds_the_shared_estimator_to_the_threaded_run() -> None:
     dispatch(stub, games_per_batch=8, cfgs=on, need_local_model=False)
     assert isinstance(seen[-1], DiffFocusNormalizer), (
         "the estimator never reached the threads"
+    )
+    assert stub._resume_hooks_expected == stub._selfplay_state_count(8), (
+        "the dispatch must size the settle barrier from the path it just chose"
     )
 
     seen.clear()
