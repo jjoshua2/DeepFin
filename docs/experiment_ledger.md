@@ -57056,3 +57056,70 @@ Binds on ~54% of rows (2166/4000 at τ=0.35).
    building C. **Not doing this risks shipping rank machinery to buy a membership effect.**
 2. The exposed/unexposed purity split (#199 failed at 5.23%), still unmeasured.
 3. `w` is entirely uncalibrated — no gradient-share measurement exists for a floor-shaped term.
+
+### 2026-08-17 — ARM F (adaptive CP-window floor) SUPERSEDES C; arm E (membership-only) DEAD
+
+Rig: `scratchpad/sfpolicy_compare/arm_calibration_bt4.py`, tier-50000 audit rows,
+2000-sample paired bootstrap. Ours = iter190. Two axes, scored on DISJOINT populations:
+
+- **ARGMAX PULL** — rows where the deep-SF best != our argmax (where our deficit is).
+- **DO-NO-HARM** — the COMPLEMENT: rows where our argmax ALREADY IS the deep-SF best.
+  `d[our_argmax]`; >=0 good. This axis did not exist until this session and it
+  REVERSES the previous recommendation.
+
+**Arm F (Josh's design):** floor the label's top-1 unconditionally, plus every other
+surfaced move within `delta` cp of best **AND scoring strictly better than our current
+argmax**. The "better than our pick" clause is the whole mechanism.
+
+| arm | pull | do-no-harm mean | frac<0 |
+|---|---|---|---|
+| C_top2_floor (tau .10) | +0.804 | **-0.417** | **66.2%** |
+| C_tau0.35 (prev pick)  | +0.899 | **-0.504** | **80.1%** |
+| C_top1_only            | +0.853 | -0.112 | 19.1% |
+| E_membership_all       | +0.759 | **-0.633** | **91.7%** |
+| **F_adapt20_t0.15**    | **+0.881** | **-0.140** | 22.9% |
+| F_adapt20_t0.35        | +0.939 | -0.160 | 26.5% |
+| C_RANDOM_ctl           | +0.620 | -0.446 | 71.2% |
+
+Paired contrasts (***  = 95% CI excludes 0):
+`F20_t0.35 - C_RANDOM = +0.317 [+0.289,+0.344]***` · `F20_t0.35 - C_tau0.35 = +0.040
+[+0.027,+0.053]***` · `F50-F20 = +0.018***` · `F100-F20 = +0.013***` ·
+`F_t0.15 - F_t0.35 = -0.054***` · `E - C_RANDOM = +0.156***`.
+
+**⚑ THE SPLIT THAT EXPLAINS IT.** The do-no-harm population is defined by the DEEP
+ruler, but every arm floors the PRODUCTION MultiPV-6 label's top-1. Those disagree on
+**28.4%** of the population (agree 71.6%, n=1703). Splitting on that:
+
+| arm | mean\|AGREE | frac<0 | silent | mean\|DISAGREE | frac<0 |
+|---|---|---|---|---|---|
+| C_top2_floor    | -0.400 | 61.9% | 38.1% | -0.461 | 77.1% |
+| C_tau0.35       | -0.478 | 75.1% | 23.9% | -0.571 | 92.8% |
+| E_membership    | -0.623 | 88.9% | 11.1% | -0.657 | 98.6% |
+| **F_adapt20_t0.15** | **+0.000** | **0.0%** | **100.0%** | -0.493 | 80.6% |
+| F_adapt20_t0.35 | +0.010 | 0.0% | 98.9% | -0.585 | 93.4% |
+
+⇒ **F's entire residual harm is LABEL ERROR, not arm behaviour.** Where the shallow
+label is right, F is *provably* silent (100.0% at tau=.15) or pushes mass ONTO the
+correct move (+0.010 at tau=.35, 0.0% negative). It cannot drag mass off a move we got
+right — the "better than our pick" clause makes the set EMPTY in exactly that case.
+C cannot make that claim at any tau: it harms 62-75% of the rows where the label AGREES
+with the deep ruler, because its second slot is a DIFFERENT move by construction.
+
+⇒ **F amplifies label error** (-0.585 vs C's -0.461 on disagree rows): being more
+decisive costs more when the teacher is wrong. This is the same 28.4% that
+`multipv6_regret_tail_is_fabricated` and the 2.92% unconverged-label finding bound from
+the other side, and it is the price of the arm, priced explicitly.
+
+**VERDICTS.**
+- **Arm E (membership-only) KILLED.** Worst do-no-harm of any informed arm (88.9%
+  negative on AGREE rows) and the lowest pull. Membership alone is not the mechanism;
+  the rank read is load-bearing. This closes the screen owed by `b6295c475`.
+- **Arm C RETIRED in favour of F.** F beats C on BOTH axes simultaneously — higher pull
+  (+0.040***) and ~zero harm where C harms most.
+- **RECOMMENDED SETTING: delta = 20 cp, tau = 0.15.** Width is nearly inert (20->100 cp
+  buys +0.013..+0.018 pull and costs +0.012..+0.016 more harm), so the narrow window is
+  free. tau=0.15 gives the better pull-per-harm ratio (1.79 vs 1.61 at 0.35), is 100%
+  silent on correct rows, and is the "modest floor" the design asked for.
+- ⚑ **The loss weight `w` is still entirely uncalibrated** and the exposed/unexposed
+  purity split (#199, 5.23% exposed) is still unmeasured. F's margin is provisional on
+  both.
