@@ -42264,7 +42264,7 @@ different rulers are compared, which is the point. [[a_gate_that_cannot_fail]]
 
 ---
 
-## 2026-08-17 — #440 DECISION (Josh): option (c), with (a) as a PRE-COMMITTED follow-up
+## 2026-08-17 — #440 DECISION (the maintainer): option (c), with (a) as a PRE-COMMITTED follow-up
 
 Answering the open decision from the 2026-08-16 amendment. **Chosen: (c) now — gate on the
 full paired distribution at n=4000 — with (a) (buy ~3.2x the audit set) held as a follow-up
