@@ -45,6 +45,44 @@ class ReplaySample:
     sf_played_move_index: int | None = None  # regret-sampled curriculum reply, if different from best
     sf_played_rank: int | None = None  # 1=best among MultiPV candidates
     sf_played_regret: float | None = None  # best_score - played_score in WDL winrate units
+  # The generating net's RAW root policy prior, captured at selfplay time
+  # BEFORE search re-ranks it. Together with policy_target (the search-improved
+  # distribution) these give a SAME-MODEL (prior top-1 vs MCTS choice) pair on
+  # every row: both come from the one theta that played the ply, by
+  # construction. Nothing else in the schema records the generating prior --
+  # _NetRecord.policy_probs never leaves selfplay memory -- so a checkpoint's
+  # prior can otherwise only be paired against a DIFFERENT (historical) net's
+  # played move. Written only when selfplay.record_prior_top1 is on.
+  # index is in the SHARD's policy encoding (compact when policy_encoding is
+  # lc0_1858), like sf_move_index -- so it MUST be mirror-remapped, not copied.
+  # ⚑ WRITERS of this field, re-derived rather than assumed (an earlier review
+  # response claimed selfplay/finalize was the ONLY one; it is not, and the one
+  # it missed is the one the mirror correctness argument rests on). Three write
+  # a value, one propagates it:
+  #   1. selfplay/finalize._build_replay_samples -- the selfplay assembler, and
+  #      the only writer on the selfplay -> shard path. This is where the
+  #      record_prior_top1 kill switch is enforced for the bytes.
+  #   2. replay/shard.arrays_to_samples -- reconstitutes it when a shard is read
+  #      back off disk.
+  #   3. replay/augment.mirror_sample -- a DYNAMIC setattr looping over
+  #      POLICY_INDEX_FIELDS, which writes the MIRRORED index. It is invisible
+  #      to a grep for the field name, and this field's correctness under
+  #      mirroring depends on it entirely.
+  #   4. train/trainer -- dataclasses.replace(sample, ...) re-passes every field
+  #      as a kwarg, so it carries an existing value into a new instance. A
+  #      propagating writer, not an originating one.
+  # (finalize._build_sf_refute_opp_sample constructs a ReplaySample and never
+  # sets it; maybe_mirror_batch_arrays remaps the numpy COLUMN, not this class;
+  # selfplay/resume writes _NetRecord.prior_top1_index, a different type.)
+    prior_top1_index: int | None = None
+  # ⚑ Softmax at T = 1.0 over the legal moves: the NET's mass on that move, NOT
+  # the mass the search seeded its tree with (search divides root logits by
+  # gumbel_policy_temp, production 1.5, so the search's prior is flatter and
+  # this number is the higher of the two). The INDEX is unaffected -- argmax is
+  # temperature-invariant. Rationale for storing the untempered one:
+  # selfplay/network_turn._prior_top1.
+    prior_top1_prob: float | None = None  # in [0, 1]
+
     sf_policy_target: np.ndarray | None = None  # (POLICY_SIZE,) float32 SF reply distribution
     sf_multipv_raw: np.ndarray | None = None  # (SF_MULTIPV_RAW_MAX, 5) int16 raw MultiPV rows
     sf_label_meta: np.ndarray | None = None   # (6,) int32 record-level SF eval metadata

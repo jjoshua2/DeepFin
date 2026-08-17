@@ -594,6 +594,70 @@ def _expand_policy_logits_for_ply(pol_logits: np.ndarray) -> np.ndarray:
     return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
+def _prior_top1(logits_full: np.ndarray, mask: np.ndarray) -> tuple[int, float]:
+    """Raw root-prior top-1 move (full 4672 action id) and its probability.
+
+    Reads the network's policy logits for one ply BEFORE search touches them,
+    so the returned move is ``argmax pi_theta(s)`` for exactly the theta that is
+    about to choose a move via MCTS at the same node.
+
+    ⚑⚑ TEMPERATURE: the softmax is over the legal moves at **T = 1.0**, which is
+    NOT the temperature the search ran. Search divides the root (and every leaf)
+    logit by ``SearchConfig.gumbel_policy_temp`` -- production runs **1.5** --
+    so the returned probability is the NET's prior mass on that move, and is
+    NOT the prior mass the tree was seeded with. At T > 1 the search's prior is
+    flatter, so this value is systematically the HIGHER of the two. The returned
+    INDEX is unaffected: argmax is invariant under division by a positive
+    scalar, so ``a_P`` is identical either way and the DeltaQ pair is unharmed.
+
+    T = 1.0 is deliberate, on three grounds:
+
+    1. ``pi_theta`` is a property of theta. ``gumbel_policy_temp`` is a search
+       hyperparameter, and a stored column defined in terms of it silently
+       changes meaning the day someone moves the knob -- while old and new rows
+       sit in the same replay window under the same name, which is this repo's
+       "same name, different measurement" defect written to disk.
+    2. The schema already takes this side elsewhere: ``target_untempered_prior``
+       (production **true**) exists precisely to undo ``gumbel_policy_temp`` on
+       the STORED target's log-prior term, so "store the untempered prior" is
+       the established convention here, not a new one.
+    3. It is recoverable in neither direction from the other, and T = 1 is the
+       one of the two that does not need a per-row record of which temperature
+       was live when the row was written.
+
+    ⇒ read ``prior_top1_prob`` as "the net's confidence in its own top move",
+    never as "the mass search gave that move". A consumer that wants the latter
+    must apply the era's ``gumbel_policy_temp`` itself, and must first establish
+    what it was for those rows.
+
+    ⚑ Called from BOTH ``_append_records_via_c`` and
+    ``_append_records_via_python`` on purpose. The two paths must store the same
+    value for the same inputs, and the only way to guarantee that is to have one
+    implementation -- the same rule the search-WDL target follows above.
+
+    Returns ``(-1, 0.0)`` when there is no usable prior (no legal moves, or
+    non-finite / degenerate logits); callers store nothing for such a row rather
+    than inventing a uniform one.
+    """
+    m = np.asarray(mask).astype(bool, copy=False).reshape(-1)
+    legal = np.flatnonzero(m)
+    if legal.size == 0:
+        return -1, 0.0
+  # Index THEN widen: masking first keeps the float64 copy to the ~30 legal
+  # entries instead of allocating a 4672-wide (37 KB) one per net ply. float32
+  # -> float64 is exact, so this is bit-identical to widening first.
+    lg = np.asarray(logits_full).reshape(-1)[legal].astype(np.float64, copy=False)
+    k = int(np.argmax(lg))
+    top = float(lg[k])
+    if not math.isfinite(top):
+        return -1, 0.0
+    e = np.exp(lg - top)
+    total = float(e.sum())
+    if not math.isfinite(total) or total <= 0.0:
+        return -1, 0.0
+    return int(legal[k]), float(e[k] / total)
+
+
 def _policy_kl(
     prior: np.ndarray, search_probs: np.ndarray, legal_mask: np.ndarray,
 ) -> float:
@@ -678,6 +742,7 @@ def _append_records_via_c(
             input_extra_features=state.game.input_extra_features,
         )
     _want_rel = bool(state.game.record_relations)
+    want_prior_top1 = bool(state.game.record_prior_top1)
     # BEFORE c_process_ply, which pushes the move on these very CBoards: this
     # is the identity of the position the record is about (selfplay/resume.py
     # verifies its replay against it). One attribute read per board per turn.
@@ -736,27 +801,36 @@ def _append_records_via_c(
         # learning signal. Same shape as low-sim filtering (has_policy=False).
         has_policy = bool(is_full_py[j]) and int(c_mask[j].sum()) > 1
         eligible[j] = has_policy
-        state.samples_per_game[idx].append(
-            _NetRecord(
-                c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
-                chess.WHITE if c_pov_list[j] else chess.BLACK,
-                c_ply_list[j], has_policy,
-                c_priority_list[j], sample_weights[j], c_keep_list[j],
-                c_mask[j],
-                # .copy(): a bare row view would pin the whole (N, C, 8, 8)
-                # batch in memory until this record's game finalizes.
-                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
-                relations=(None if c_rel is None else c_rel[j]),
-                priority_policy_kl=c_priority_policy_kl_list[j],
-                priority_q_delta=c_priority_q_delta_list[j],
-                gumbel_policy_diag=gumbel_diags[j],
-                # The move was appended just above, so the recorded position is
-                # the one BEFORE it: len-1 moves preceded it. selfplay/resume.py
-                # re-encodes x at exactly this offset.
-                move_offset=len(state.move_idx_history[idx]) - 1,
-                pos_hash=pos_hashes[j],
-            ),
+        # Read off the SAME logits row that was just handed to c_process_ply,
+        # i.e. the prior before search re-ranked it. C returns the improved
+        # target (c_probs) and never sees this, so no .so change is involved.
+        prior_idx, prior_p = (
+            _prior_top1(pol_logits_full[j], c_mask[j])
+            if want_prior_top1 else (-1, 0.0)
         )
+        rec = _NetRecord(
+            c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
+            chess.WHITE if c_pov_list[j] else chess.BLACK,
+            c_ply_list[j], has_policy,
+            c_priority_list[j], sample_weights[j], c_keep_list[j],
+            c_mask[j],
+            # .copy(): a bare row view would pin the whole (N, C, 8, 8)
+            # batch in memory until this record's game finalizes.
+            x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
+            relations=(None if c_rel is None else c_rel[j]),
+            priority_policy_kl=c_priority_policy_kl_list[j],
+            priority_q_delta=c_priority_q_delta_list[j],
+            gumbel_policy_diag=gumbel_diags[j],
+            # The move was appended just above, so the recorded position is
+            # the one BEFORE it: len-1 moves preceded it. selfplay/resume.py
+            # re-encodes x at exactly this offset.
+            move_offset=len(state.move_idx_history[idx]) - 1,
+            pos_hash=pos_hashes[j],
+        )
+        if prior_idx >= 0:
+            rec.prior_top1_index = prior_idx
+            rec.prior_top1_prob = prior_p
+        state.samples_per_game[idx].append(rec)
 
         if c_over_list[j]:
             state.done_arr[idx] = 1
@@ -814,6 +888,7 @@ def _append_records_via_python(
     )
     df_norm_slope = float(diff_focus.norm_slope)
     df_norm_clip = float(diff_focus.norm_clip)
+    want_prior_top1 = bool(state.game.record_prior_top1)
     swdl_draw_mode = _search_wdl_draw_mode(state.game)
     swdl_cp_slope = float(state.game.sf_wdl_cp_slope)
     swdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
@@ -929,31 +1004,40 @@ def _append_records_via_python(
             search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 
         state.last_net_full[idx] = bool(is_full[j])
-        state.samples_per_game[idx].append(
-            _NetRecord(
-                x=xs_batch[j],
-                policy_probs=probs,
-                net_wdl_est=(
-                    wdl_est[j] if np.all(np.isfinite(wdl_est[j]))
-                    else np.array([0.0, 1.0, 0.0], dtype=np.float32)
-                ),
-                search_wdl_est=search_wdl_est,
-                pov_color=pov_color,
-                ply_index=ply_index,
-                has_policy=row_has_policy,
-                priority=float(priority),
-                sample_weight=float(sample_weights[j]),
-                keep_prob=float(keep_prob),
-                legal_mask=mask.view(np.uint8),
-                x_lc0_root=x_lc0_root,
-                priority_policy_kl=float(kl),
-                priority_q_delta=float(q_delta),
-                gumbel_policy_diag=gumbel_diags[j],
-                # Move already pushed above — see the C path's note.
-                move_offset=len(state.move_idx_history[idx]) - 1,
-                pos_hash=pos_hash,
-            ),
+        # Same helper, same inputs as the C path -- see _prior_top1. Uses
+        # pol_logits_full/mask rather than the local `raw` so both paths are
+        # literally one implementation.
+        prior_idx, prior_p = (
+            _prior_top1(pol_logits_full[j], mask)
+            if want_prior_top1 else (-1, 0.0)
         )
+        rec = _NetRecord(
+            x=xs_batch[j],
+            policy_probs=probs,
+            net_wdl_est=(
+                wdl_est[j] if np.all(np.isfinite(wdl_est[j]))
+                else np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            ),
+            search_wdl_est=search_wdl_est,
+            pov_color=pov_color,
+            ply_index=ply_index,
+            has_policy=row_has_policy,
+            priority=float(priority),
+            sample_weight=float(sample_weights[j]),
+            keep_prob=float(keep_prob),
+            legal_mask=mask.view(np.uint8),
+            x_lc0_root=x_lc0_root,
+            priority_policy_kl=float(kl),
+            priority_q_delta=float(q_delta),
+            gumbel_policy_diag=gumbel_diags[j],
+            # Move already pushed above — see the C path's note.
+            move_offset=len(state.move_idx_history[idx]) - 1,
+            pos_hash=pos_hash,
+        )
+        if prior_idx >= 0:
+            rec.prior_top1_index = prior_idx
+            rec.prior_top1_prob = prior_p
+        state.samples_per_game[idx].append(rec)
 
         if state.cboards[idx].is_game_over():
             state.done_arr[idx] = 1

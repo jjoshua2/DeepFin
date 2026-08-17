@@ -334,6 +334,15 @@ class GameConfig:
   # Compute + store dynamic board-relation matrices: search evals get them as
   # attention-bias input, and samples carry them into shards for training.
     record_relations: bool = False
+  # Persist the generating net's raw root policy prior top-1 (index + prob) on
+  # every net-turn row. ~4 bytes/row. Default TRUE: the point of the field is
+  # that the (prior top-1, MCTS move) same-model pair accumulates PASSIVELY in
+  # every shard from the moment this code deploys, and a default-off knob would
+  # need a yaml key to do anything -- which is the "wired but never enabled"
+  # failure this field exists to route around. Flip to false only as a
+  # throughput kill switch, and only on code that already defines this key: an
+  # unknown yaml key is fatal at launch (see CLAUDE.md).
+    record_prior_top1: bool = True
   # Write the dense sf_policy_target alongside the sparse MultiPV rows.
   # Flip to False only once (a) the full replay window carries sparse labels
   # AND (b) training runs with train.sf_policy_sparse_ce: true — the sparse

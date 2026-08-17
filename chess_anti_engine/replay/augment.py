@@ -13,7 +13,12 @@ from chess_anti_engine.moves.encode import (
 )
 
 from .buffer import ReplaySample
-from .shard import LEGAL_MASK_FIELDS, POLICY_DENSE_VALUE_FIELDS, POLICY_SPACE_FIELDS
+from .shard import (
+    LEGAL_MASK_FIELDS,
+    POLICY_DENSE_VALUE_FIELDS,
+    POLICY_INDEX_FIELDS,
+    POLICY_SPACE_FIELDS,
+)
 
 # Fields whose rows live in POLICY_SIZE move space and must be remapped under
 # the mirror permutation. Includes all policy-like targets, dense per-action
@@ -140,22 +145,21 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
   # Aux targets
     out.sf_wdl = None if s.sf_wdl is None else np.asarray(s.sf_wdl, dtype=np.float32)
     policy_width = int(np.asarray(s.policy_target).shape[-1])
-    if s.sf_move_index is None:
-        out.sf_move_index = None
-    else:
-        out.sf_move_index = _mirror_policy_index_for_width(
-            int(s.sf_move_index),
-            policy_width,
-        )
-    if s.sf_played_move_index is None:
-        out.sf_played_move_index = None
-    else:
-        out.sf_played_move_index = _mirror_policy_index_for_width(
-            int(s.sf_played_move_index),
-            policy_width,
+  # Every move-index scalar, driven off the shard registry rather than a
+  # hand-written list: a copied index is silently wrong on mirrored rows (no
+  # exception, no shape change), so the set that gets remapped must be the same
+  # set the schema calls index-valued. See POLICY_INDEX_FIELDS.
+    for name, _flag in POLICY_INDEX_FIELDS:
+        v = getattr(s, name, None)
+        setattr(
+            out, name,
+            None if v is None else _mirror_policy_index_for_width(int(v), policy_width),
         )
     out.sf_played_rank = getattr(s, "sf_played_rank", None)
     out.sf_played_regret = getattr(s, "sf_played_regret", None)
+  # Scalar probability attached to prior_top1_index: mirror-invariant, so a
+  # plain copy is correct here (unlike the index above).
+    out.prior_top1_prob = getattr(s, "prior_top1_prob", None)
     out.sf_policy_target = None if s.sf_policy_target is None else mirror_policy(s.sf_policy_target)
     out.moves_left = None if s.moves_left is None else float(s.moves_left)
     out.is_network_turn = None if s.is_network_turn is None else bool(s.is_network_turn)
@@ -272,7 +276,7 @@ def maybe_mirror_batch_arrays(
         out["relations"][mask] = mirror_relations(out["relations"][mask])
 
     policy_width = int(np.asarray(arrs["policy_target"]).shape[1])
-    for key in ("sf_move_index", "sf_played_move_index"):
+    for key, _flag in POLICY_INDEX_FIELDS:
         if key in arrs:
             out[key] = _mirror_policy_index_array(
                 np.asarray(arrs[key]),
