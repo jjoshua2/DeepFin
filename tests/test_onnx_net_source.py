@@ -785,7 +785,14 @@ def test_value_regret_main_scores_the_onnx_net(
     assert len(headers) == 1
     assert f"@ onnx:{echo_onnx}" in headers[0]
     # A dump is a report too: every row must carry the net that produced it.
-    rows = [json.loads(ln) for ln in dump.read_text(encoding="utf-8").splitlines()]
+    # ⚑ `iter_data_rows`, not a bare `splitlines()` loop. The dump is written
+    # through `write_audit_cache` and its line 1 is a provenance HEADER, not a
+    # scored position: reading it as data made this assertion see 3 rows for 2
+    # positions (#442 review B1). Every reader skips on the sentinel, and the
+    # shared helper is how the next one inherits that instead of the bug.
+    from chess_anti_engine.utils.audit_cache_format import iter_data_rows
+
+    rows = list(iter_data_rows(dump))
     assert len(rows) == 2
     assert {r["net"] for r in rows} == {f"onnx:{echo_onnx} "
                                         f"[in=planes policy=policy wdl=wdl]"}

@@ -15,6 +15,7 @@ explosion.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any, cast
 
 import chess
@@ -324,6 +325,90 @@ def build_selfplay_gumbel_config(
     )
 
 
+@dataclass(frozen=True)
+class SelfplaySearchShape:
+    """EVERY config-derived argument the selfplay search runner is handed.
+
+    ⚑ ``GumbelConfig`` is not that set, and believing it was is a measured
+    defect. ``gumbel_vloss_weight`` and ``gumbel_target_batch`` are read off
+    the selfplay ``SearchConfig`` and passed to the C runner as ordinary
+    keyword arguments — there are no such ``GumbelConfig`` fields — so an
+    instrument that certifies itself "field-complete over ``GumbelConfig``"
+    is blind to two knobs that change the search, and therefore the stored
+    target, by construction. (``chess_anti_engine/uci/search.py`` records the
+    same class: every arena before 2026-07-28 silently ran ``vloss_weight=0``
+    while production ran 1.)
+
+    So the certifiable boundary is this object, not the dataclass one level
+    inside it, and production selfplay builds the runner's arguments FROM it
+    (``runner_kwargs`` below) rather than assembling them beside it, which is
+    what makes "field-complete over ``SelfplaySearchShape``" a claim about the
+    consumer instead of a claim about a hand-drawn dataclass.
+
+    ⚑ WHAT IS PINNED, EXACTLY — because an earlier revision of this docstring
+    claimed "a knob has to pass through here to reach production at all" and
+    the test behind it did not enforce that. It enforced only that no argument
+    was spelled ``search.*``, which a config value routed through ``state.game``
+    walks straight past (measured: ``allow_terminal_root_shortcuts=
+    bool(state.game.syzygy_in_search)`` survived 120 tests). The claim is now
+    true because ``tests/test_production_shape_guard.py`` pins the call site's
+    NON-shape arguments as an exhaustive whitelist with a reason each: a new
+    argument fails until someone decides whether it is config or runtime.
+
+    What is deliberately NOT here, and is therefore on that whitelist:
+
+    * ``per_game_add_noise`` / ``per_game_gumbel_scale`` — per-PLY schedules
+      (``_scheduled_gumbel_scale``), not scalars. A single value cannot
+      represent them, so an instrument that wants to match production's root
+      noise has to say what it does about the schedule rather than compare a
+      field.
+    * the ``tb_probe`` gate. The prober is a runtime object, but the gate
+      ``game.syzygy_in_search`` IS config and reaches the runner beside this
+      object. It is value-compared by a different instrument
+      (``audit_targets.AUDIT_DIRECT_CONFIG_KEYS``) rather than left uncovered.
+
+    ``chess_anti_engine/eval/production_shape.py`` names both gaps explicitly
+    in ``SHAPE_COVERAGE_NOTE`` instead of implying coverage it does not have.
+    """
+
+    cfg: GumbelConfig
+    target_batch: int
+    vloss_weight: int
+
+    def runner_kwargs(self) -> dict[str, Any]:
+        """The config-derived keyword arguments for ``run_gumbel_root_many_c``.
+
+        Production unpacks this. That is the whole mechanism: a new
+        config-derived runner argument added beside the unpack instead of
+        inside this shape is caught by
+        ``tests/test_production_shape_guard.py``'s call-site pin, because the
+        call site is then no longer sourced entirely from one object.
+        """
+        return {
+            "cfg": self.cfg,
+            "target_batch": int(self.target_batch),
+            "vloss_weight": int(self.vloss_weight),
+        }
+
+
+def build_selfplay_search_shape(
+    *, search: SearchConfig, game: GameConfig, simulations: int,
+) -> SelfplaySearchShape:
+    """The complete search shape production selfplay hands its runner.
+
+    Thin by design: it is the one place the ``GumbelConfig`` half and the
+    two runner-argument knobs are assembled together, so "what production
+    searches with" has a single addressable answer.
+    """
+    return SelfplaySearchShape(
+        cfg=build_selfplay_gumbel_config(
+            search=search, game=game, simulations=int(simulations),
+        ),
+        target_batch=int(search.gumbel_target_batch),
+        vloss_weight=int(search.gumbel_vloss_weight),
+    )
+
+
 def _draw_is_full(
     rng: np.random.Generator,
     net_idxs: list[int],
@@ -509,6 +594,70 @@ def _expand_policy_logits_for_ply(pol_logits: np.ndarray) -> np.ndarray:
     return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
+def _prior_top1(logits_full: np.ndarray, mask: np.ndarray) -> tuple[int, float]:
+    """Raw root-prior top-1 move (full 4672 action id) and its probability.
+
+    Reads the network's policy logits for one ply BEFORE search touches them,
+    so the returned move is ``argmax pi_theta(s)`` for exactly the theta that is
+    about to choose a move via MCTS at the same node.
+
+    ⚑⚑ TEMPERATURE: the softmax is over the legal moves at **T = 1.0**, which is
+    NOT the temperature the search ran. Search divides the root (and every leaf)
+    logit by ``SearchConfig.gumbel_policy_temp`` -- production runs **1.5** --
+    so the returned probability is the NET's prior mass on that move, and is
+    NOT the prior mass the tree was seeded with. At T > 1 the search's prior is
+    flatter, so this value is systematically the HIGHER of the two. The returned
+    INDEX is unaffected: argmax is invariant under division by a positive
+    scalar, so ``a_P`` is identical either way and the DeltaQ pair is unharmed.
+
+    T = 1.0 is deliberate, on three grounds:
+
+    1. ``pi_theta`` is a property of theta. ``gumbel_policy_temp`` is a search
+       hyperparameter, and a stored column defined in terms of it silently
+       changes meaning the day someone moves the knob -- while old and new rows
+       sit in the same replay window under the same name, which is this repo's
+       "same name, different measurement" defect written to disk.
+    2. The schema already takes this side elsewhere: ``target_untempered_prior``
+       (production **true**) exists precisely to undo ``gumbel_policy_temp`` on
+       the STORED target's log-prior term, so "store the untempered prior" is
+       the established convention here, not a new one.
+    3. It is recoverable in neither direction from the other, and T = 1 is the
+       one of the two that does not need a per-row record of which temperature
+       was live when the row was written.
+
+    ⇒ read ``prior_top1_prob`` as "the net's confidence in its own top move",
+    never as "the mass search gave that move". A consumer that wants the latter
+    must apply the era's ``gumbel_policy_temp`` itself, and must first establish
+    what it was for those rows.
+
+    ⚑ Called from BOTH ``_append_records_via_c`` and
+    ``_append_records_via_python`` on purpose. The two paths must store the same
+    value for the same inputs, and the only way to guarantee that is to have one
+    implementation -- the same rule the search-WDL target follows above.
+
+    Returns ``(-1, 0.0)`` when there is no usable prior (no legal moves, or
+    non-finite / degenerate logits); callers store nothing for such a row rather
+    than inventing a uniform one.
+    """
+    m = np.asarray(mask).astype(bool, copy=False).reshape(-1)
+    legal = np.flatnonzero(m)
+    if legal.size == 0:
+        return -1, 0.0
+  # Index THEN widen: masking first keeps the float64 copy to the ~30 legal
+  # entries instead of allocating a 4672-wide (37 KB) one per net ply. float32
+  # -> float64 is exact, so this is bit-identical to widening first.
+    lg = np.asarray(logits_full).reshape(-1)[legal].astype(np.float64, copy=False)
+    k = int(np.argmax(lg))
+    top = float(lg[k])
+    if not math.isfinite(top):
+        return -1, 0.0
+    e = np.exp(lg - top)
+    total = float(e.sum())
+    if not math.isfinite(total) or total <= 0.0:
+        return -1, 0.0
+    return int(legal[k]), float(e[k] / total)
+
+
 def _policy_kl(
     prior: np.ndarray, search_probs: np.ndarray, legal_mask: np.ndarray,
 ) -> float:
@@ -593,6 +742,7 @@ def _append_records_via_c(
             input_extra_features=state.game.input_extra_features,
         )
     _want_rel = bool(state.game.record_relations)
+    want_prior_top1 = bool(state.game.record_prior_top1)
     # BEFORE c_process_ply, which pushes the move on these very CBoards: this
     # is the identity of the position the record is about (selfplay/resume.py
     # verifies its replay against it). One attribute read per board per turn.
@@ -651,27 +801,36 @@ def _append_records_via_c(
         # learning signal. Same shape as low-sim filtering (has_policy=False).
         has_policy = bool(is_full_py[j]) and int(c_mask[j].sum()) > 1
         eligible[j] = has_policy
-        state.samples_per_game[idx].append(
-            _NetRecord(
-                c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
-                chess.WHITE if c_pov_list[j] else chess.BLACK,
-                c_ply_list[j], has_policy,
-                c_priority_list[j], sample_weights[j], c_keep_list[j],
-                c_mask[j],
-                # .copy(): a bare row view would pin the whole (N, C, 8, 8)
-                # batch in memory until this record's game finalizes.
-                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
-                relations=(None if c_rel is None else c_rel[j]),
-                priority_policy_kl=c_priority_policy_kl_list[j],
-                priority_q_delta=c_priority_q_delta_list[j],
-                gumbel_policy_diag=gumbel_diags[j],
-                # The move was appended just above, so the recorded position is
-                # the one BEFORE it: len-1 moves preceded it. selfplay/resume.py
-                # re-encodes x at exactly this offset.
-                move_offset=len(state.move_idx_history[idx]) - 1,
-                pos_hash=pos_hashes[j],
-            ),
+        # Read off the SAME logits row that was just handed to c_process_ply,
+        # i.e. the prior before search re-ranked it. C returns the improved
+        # target (c_probs) and never sees this, so no .so change is involved.
+        prior_idx, prior_p = (
+            _prior_top1(pol_logits_full[j], c_mask[j])
+            if want_prior_top1 else (-1, 0.0)
         )
+        rec = _NetRecord(
+            c_x[j], c_probs[j], c_wdl_net[j], c_wdl_search[j],
+            chess.WHITE if c_pov_list[j] else chess.BLACK,
+            c_ply_list[j], has_policy,
+            c_priority_list[j], sample_weights[j], c_keep_list[j],
+            c_mask[j],
+            # .copy(): a bare row view would pin the whole (N, C, 8, 8)
+            # batch in memory until this record's game finalizes.
+            x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
+            relations=(None if c_rel is None else c_rel[j]),
+            priority_policy_kl=c_priority_policy_kl_list[j],
+            priority_q_delta=c_priority_q_delta_list[j],
+            gumbel_policy_diag=gumbel_diags[j],
+            # The move was appended just above, so the recorded position is
+            # the one BEFORE it: len-1 moves preceded it. selfplay/resume.py
+            # re-encodes x at exactly this offset.
+            move_offset=len(state.move_idx_history[idx]) - 1,
+            pos_hash=pos_hashes[j],
+        )
+        if prior_idx >= 0:
+            rec.prior_top1_index = prior_idx
+            rec.prior_top1_prob = prior_p
+        state.samples_per_game[idx].append(rec)
 
         if c_over_list[j]:
             state.done_arr[idx] = 1
@@ -729,6 +888,7 @@ def _append_records_via_python(
     )
     df_norm_slope = float(diff_focus.norm_slope)
     df_norm_clip = float(diff_focus.norm_clip)
+    want_prior_top1 = bool(state.game.record_prior_top1)
     swdl_draw_mode = _search_wdl_draw_mode(state.game)
     swdl_cp_slope = float(state.game.sf_wdl_cp_slope)
     swdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
@@ -844,31 +1004,40 @@ def _append_records_via_python(
             search_wdl_est = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 
         state.last_net_full[idx] = bool(is_full[j])
-        state.samples_per_game[idx].append(
-            _NetRecord(
-                x=xs_batch[j],
-                policy_probs=probs,
-                net_wdl_est=(
-                    wdl_est[j] if np.all(np.isfinite(wdl_est[j]))
-                    else np.array([0.0, 1.0, 0.0], dtype=np.float32)
-                ),
-                search_wdl_est=search_wdl_est,
-                pov_color=pov_color,
-                ply_index=ply_index,
-                has_policy=row_has_policy,
-                priority=float(priority),
-                sample_weight=float(sample_weights[j]),
-                keep_prob=float(keep_prob),
-                legal_mask=mask.view(np.uint8),
-                x_lc0_root=x_lc0_root,
-                priority_policy_kl=float(kl),
-                priority_q_delta=float(q_delta),
-                gumbel_policy_diag=gumbel_diags[j],
-                # Move already pushed above — see the C path's note.
-                move_offset=len(state.move_idx_history[idx]) - 1,
-                pos_hash=pos_hash,
-            ),
+        # Same helper, same inputs as the C path -- see _prior_top1. Uses
+        # pol_logits_full/mask rather than the local `raw` so both paths are
+        # literally one implementation.
+        prior_idx, prior_p = (
+            _prior_top1(pol_logits_full[j], mask)
+            if want_prior_top1 else (-1, 0.0)
         )
+        rec = _NetRecord(
+            x=xs_batch[j],
+            policy_probs=probs,
+            net_wdl_est=(
+                wdl_est[j] if np.all(np.isfinite(wdl_est[j]))
+                else np.array([0.0, 1.0, 0.0], dtype=np.float32)
+            ),
+            search_wdl_est=search_wdl_est,
+            pov_color=pov_color,
+            ply_index=ply_index,
+            has_policy=row_has_policy,
+            priority=float(priority),
+            sample_weight=float(sample_weights[j]),
+            keep_prob=float(keep_prob),
+            legal_mask=mask.view(np.uint8),
+            x_lc0_root=x_lc0_root,
+            priority_policy_kl=float(kl),
+            priority_q_delta=float(q_delta),
+            gumbel_policy_diag=gumbel_diags[j],
+            # Move already pushed above — see the C path's note.
+            move_offset=len(state.move_idx_history[idx]) - 1,
+            pos_hash=pos_hash,
+        )
+        if prior_idx >= 0:
+            rec.prior_top1_index = prior_idx
+            rec.prior_top1_prob = prior_p
+        state.samples_per_game[idx].append(rec)
 
         if state.cboards[idx].is_game_over():
             state.done_arr[idx] = 1
@@ -989,9 +1158,17 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                 float(per_game_gumbel_scale[j])
                 for j in group
             ] if per_game_gumbel_scale is not None else [float(search.gumbel_scale) for _ in group]
-            gumbel_cfg = build_selfplay_gumbel_config(
+          # ⚑ ONE object supplies EVERY config-derived argument the C runner
+          # gets. `cfg=`, `target_batch=` and `vloss_weight=` used to be three
+          # independent expressions here, and the two that were not
+          # `GumbelConfig` fields were invisible to every instrument that
+          # certified itself "field-complete over GumbelConfig". Sourcing them
+          # from one shape is what makes that certification a claim about this
+          # call site.
+            search_shape = build_selfplay_search_shape(
                 search=search, game=state.game, simulations=int(sim_count),
             )
+            gumbel_cfg = search_shape.cfg
             if volatility_search_enabled(gumbel_cfg):
                 warn_volatility_python_path()
             used_gumbel_c = _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg)
@@ -1004,7 +1181,6 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     sub_cboards,
                     device=state.device,
                     rng=rng,
-                    cfg=gumbel_cfg,
                     evaluator=eval_impl,
                     pre_pol_logits=sub_pol,
                     pre_wdl_logits=sub_wdl,
@@ -1017,8 +1193,7 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
                     allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
-                    target_batch=int(search.gumbel_target_batch),
-                    vloss_weight=int(search.gumbel_vloss_weight),
+                    **search_shape.runner_kwargs(),
                 )
             else:
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]
@@ -1148,4 +1323,9 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
         )
 
 
-__all__ = ["build_selfplay_gumbel_config", "run_network_turn"]
+__all__ = [
+    "SelfplaySearchShape",
+    "build_selfplay_gumbel_config",
+    "build_selfplay_search_shape",
+    "run_network_turn",
+]

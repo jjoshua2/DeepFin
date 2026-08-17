@@ -229,6 +229,11 @@ def test_build_replay_samples_records_producer_input_history_encoding() -> None:
             soft_policy_temp=1.0,
             input_history_encoding="lc0_root_legacy_meta",
             history_rep_fix=False,
+            # `_build_replay_samples` re-reads this at the shard boundary (the
+            # kill switch has to bind on the bytes, not only on the capture), so
+            # a double that omits it stops exercising that branch. Production's
+            # default, which is what these fixtures otherwise assume.
+            record_prior_top1=True,
         ),
     ))
 
@@ -300,6 +305,11 @@ def _fastply_state(
             record_sf_p0_policy=record_sf_p0_policy,
             record_sf_p0_regret=record_sf_p0_regret,
             record_dense_sf_policy=True,
+            # `_build_replay_samples` re-reads this at the shard boundary (the
+            # kill switch has to bind on the bytes, not only on the capture), so
+            # a double that omits it stops exercising that branch. Production's
+            # default, which is what these fixtures otherwise assume.
+            record_prior_top1=True,
         ),
     ))
 

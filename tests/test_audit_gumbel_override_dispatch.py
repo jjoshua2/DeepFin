@@ -36,6 +36,12 @@ def _args(**over: Any) -> SimpleNamespace:
     base: dict[str, Any] = {
         "gumbel": ["policy_temp=2.2"], "sims": 64, "gumbel_topk": None,
         "rl_sims": None, "gumbel_training_rows": False,
+      # ⚑ `None`, the real CLI default, meaning "whatever production runs".
+      # These are read by SUBSCRIPT-equivalent attribute access in
+      # `profiles_for_audit`, deliberately: a `getattr(args, ..., None)` here
+      # would keep passing if main() stopped forwarding them, which is the
+      # dropped-keyword failure this whole file exists for.
+        "vloss_weight": None, "target_batch": None,
     }
     base.update(over)
     return SimpleNamespace(**base)
@@ -466,3 +472,106 @@ def test_the_audit_loop_builds_its_top10_through_the_helper() -> None:
         f"at the tenth-ranked cp by mapping order (audit_targets.py lines "
         f"{offenders})"
     )
+
+
+# --- the runner ARGUMENTS that are not GumbelConfig fields (#443 F1) --------
+
+
+def test_the_guarded_vloss_weight_actually_reaches_the_c_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MUTANT (#443 F1): certify production's `vloss_weight`, dispatch a literal.
+
+    ⚑ THIS IS THE SURVIVOR. Replacing
+    ``tb_kwargs[name]["vloss_weight"] = int(shapes[name].vloss_weight)`` with
+    ``= 0`` left an 18-mutant battery green: every other test checks the SHAPE,
+    and the shape stayed production's while the search ran the duplicate-leaf
+    arm. "A value accepted and then silently ignored" is this repo's signature
+    defect, and the fix for it had shipped a fresh instance one line
+    downstream of its own guard.
+
+    So this drives the real ``_net_candidates`` and reads the keyword the
+    runner was actually handed FOR THE TRAINING ROW — matched by config
+    identity, because the PLAY row deliberately runs a different value and a
+    test that read the first call would pass against the bug.
+
+    BOTH directions: production's value by default, and an operator's explicit
+    value when asked for. Pinning only "== 1" would pass against a constant.
+    """
+    import chess
+    import numpy as np
+
+    import chess_anti_engine.inference as inference
+    import chess_anti_engine.mcts.gumbel_c as gumbel_c
+    import chess_anti_engine.uci.model_loader as model_loader
+    from chess_anti_engine.eval.production_shape import production_search_shape
+    from chess_anti_engine.moves import POLICY_SIZE
+
+    model = SimpleNamespace(
+        eval=lambda: None,
+        input_history_encoding="legacy",
+        input_extra_features="v1",
+        policy_encoding="lc0_1858",
+        use_dynamic_relations=False,
+    )
+
+    class _Evaluator:
+        def evaluate_encoded(self, x: Any, relations: Any = None) -> Any:
+            del relations
+            n = len(x)
+            return (
+                np.zeros((n, 1858), dtype=np.float32),
+                np.zeros((n, 3), dtype=np.float32),
+            )
+
+    calls: list[tuple[Any, dict[str, Any]]] = []
+
+    def _fake_runner(**kwargs: Any) -> tuple[Any, ...]:
+        calls.append((kwargs["cfg"], dict(kwargs)))
+        n = len(kwargs["boards"])
+        probs = np.full((n, POLICY_SIZE), 1.0 / POLICY_SIZE, dtype=np.float64)
+        return probs, np.zeros(n, dtype=np.int64), np.zeros(n), np.ones((n, 1))
+
+    monkeypatch.setattr(
+        model_loader, "load_model_from_checkpoint", lambda *a, **k: model,
+    )
+    monkeypatch.setattr(inference, "LocalModelEvaluator", lambda *a, **k: _Evaluator())
+    monkeypatch.setattr(gumbel_c, "run_gumbel_root_many_c", _fake_runner)
+
+    flat: dict[str, object] = {"gumbel_vloss_weight": 1, "gumbel_target_batch": 0}
+    prod = production_search_shape(flat, simulations=8)
+    assert prod.vloss_weight == 1, "the fixture does not exercise the case"
+
+    def _dispatched(**profile_kw: Any) -> dict[str, Any]:
+        calls.clear()
+        profiles = at.build_search_profiles(
+            flat, play_sims=8, play_topk=None, **profile_kw,
+        )
+        *_rest, shapes = at._net_candidates(
+            [chess.Board()],
+            net=NetSource(checkpoint="unused-the-loader-is-stubbed"),
+            device="cpu", batch_size=1, seed=0,
+            profiles=profiles, requested_gumbel_overrides=(),
+        )
+      # ⚑ Matched by IDENTITY to the training row's config. The PLAY row runs a
+      # different vloss_weight on purpose, so "the first captured call" would
+      # be the wrong object and would pass against the bug.
+        train_cfg = shapes["train"].cfg
+        for cfg, kwargs in calls:
+            if cfg is train_cfg:
+                return kwargs
+        raise AssertionError("the training row never reached the C runner")
+
+    handed = _dispatched()
+    assert handed["vloss_weight"] == 1, (
+        "the runner was handed a vloss_weight the guard did not certify — the "
+        "audit would search the duplicate-leaf shape under a header reading "
+        "'production training target'"
+    )
+    assert handed["target_batch"] == int(prod.target_batch)
+
+  # ...and the operator arm still reaches the runner, so the fix is not a
+  # constant wearing the costume of a lookup.
+    handed_arm = _dispatched(vloss_weight=0, target_batch=1)
+    assert handed_arm["vloss_weight"] == 0
+    assert handed_arm["target_batch"] == 1

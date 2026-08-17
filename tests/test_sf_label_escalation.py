@@ -58,9 +58,18 @@ class _QueuedFakePool(StockfishPool):
         self.calls: list[dict] = []
         self._results = list(results)
 
-    def submit(self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False):
+    def submit(
+        self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False,
+        searchmoves=None,
+    ):
+        # Recorded, so an escalation that silently narrowed its root would show
+        # up here rather than being absorbed by the fake.
         self.calls.append(
-            {"fen": fen, "nodes": nodes, "syzygy_path": syzygy_path, "fresh": fresh},
+            {
+                "fen": fen, "nodes": nodes, "syzygy_path": syzygy_path,
+                "fresh": fresh,
+                "searchmoves": None if searchmoves is None else list(searchmoves),
+            },
         )
         fut: Future = Future()
         fut.set_result(self._results.pop(0))

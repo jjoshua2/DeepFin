@@ -316,6 +316,50 @@ that key is a **deployment step, not a merge detail**. A behaviour-preserving PR
 whose safety argument lives in a file the deploy procedure never touches is not
 behaviour-preserving. Add it to this table the same day.
 
+### A7 config parity — `main`'s production yaml is NOT what production runs (added 2026-08-16)
+
+A6 is "the live branch may be missing merged CODE". **This is the exact mirror, and it is
+live today:** `main`'s `configs/pbt2_small.yaml` and the running `ops/live-20260725` copy
+disagree on **55 flattened keys**, 27 of which exist only on live. Measured 2026-08-16 by
+flattening both revisions of the file and diffing.
+
+**13 of the 55 are SF-label keys, including the two most load-bearing:**
+
+| key | `main` says | production RUNS |
+|---|---|---|
+| `stockfish.sf_multipv` | **40** | **6** |
+| `train.w_sf_own_regret` | **0.7** | **0.0** |
+| `stockfish.sf_nodes` | 5000 | 75000 |
+| `stockfish.sf_label_nodes_cap` | 0 | 200000 |
+| `stockfish.sf_label_nodes_floor` | *absent* | 150000 |
+| `train.sf_wdl_frac` / `_floor` | 0.5 / 0.45 | 0.69 / 0.69 |
+| `train.w_sf_eval`, `train.w_sf_own` | 0.1, 0.1 | 0.0, 0.0 |
+
+⚑ **`main` does not merely hold a stale number, it holds a stale JUSTIFICATION.** Its
+`sf_multipv: 40` still carries the 2026-04-29 comment arguing *for* 40 ("multipv=40 widens
+tail for richer training distribution"). Anyone reading the repo — a reviewer, an agent, a
+script that loads the config — comes away believing production surfaces 40 moves per label
+when it surfaces 6. That single key changes the imputed-regret tail from a marginal 12.9% of
+rows to **68.3% of legal moves**, i.e. from a rounding error to the dominant term.
+
+⇒ **Rule: for any claim about what production does, read the LIVE tree's yaml, or better,
+measure the realized value in the shards.** `configs/pbt2_small.yaml` on `main` is a
+different file with the same name — see method rule 12 and
+`[[diff_the_file_you_measured_against_production]]`. The 2026-08-15 MPV6 calibration panel
+sidestepped this by pinning `sf_multipv = 6` and `nodes = 150,071` from realized
+`sf_label_meta`/`sf_multipv_raw` rather than from any yaml.
+
+**Restart safety, checked the same day and CLEAN.** CLAUDE.md requires diffing the live
+yaml's KEYS against the TARGET BRANCH'S SCHEMA (not its yaml) before any restart, because an
+unknown key is fatal at launch. Run against current `main`
+(`flatten_run_config_defaults(yaml.safe_load(<live yaml>))`): **accepted, 324 flattened keys,
+no `ValueError`** ⇒ a restart onto `main` would boot. ⚑ **Do this check against the branch you
+will actually restart onto, freshly fetched.** The same check run from a worktree whose branch
+was 11 commits behind `main` reported `model.aux_policy_head_dim` as unknown and looked like a
+launch-blocking hazard; the key had been added to the schema on `main` by PR #439. **A stale
+checkout produces a false POSITIVE here, and the alarming direction is the one you will act
+on.**
+
 ### A6 code parity — the live branch may be missing MERGED code (added 2026-07-27)
 
 A5 reconciles config. It says nothing about **source**, and on 2026-07-27 that

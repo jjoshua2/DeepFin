@@ -519,17 +519,26 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     """
     import yaml as _yaml
 
+    from chess_anti_engine.eval.production_shape import LIVE_CONFIG_ENV
     from chess_anti_engine.utils.config_yaml import load_yaml_file
     from scripts import arena_standard as arena_mod
 
-    raw = load_yaml_file(str(arena_mod.PRODUCTION_CONFIG))
+    raw = load_yaml_file(str(arena_mod.production_config_path()))
     raw["selfplay"]["gumbel_vloss_weight"] = 2
     raw["selfplay"]["gumbel_topk"] = 24
     raw["selfplay"]["gumbel_c_scale"] = 0.077
     raw["selfplay"]["gumbel_policy_temp"] = 1.7
     patched = tmp_path / "patched.yaml"
     patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
-    monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
+  # ⚑ The env var, NOT a module attribute. This test used to
+  # `monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)`, and when
+  # the search shape moved onto `$CHESS_ANTI_ENGINE_LIVE_CONFIG` the patch
+  # stopped reaching it: the arena read the unpatched in-tree file and the
+  # assertions below went red. That was a real plumbing break, and the fix was
+  # to delete the second resolution rather than to re-point this patch at it.
+  # Pointing the ENV VAR is also what production does (scripts/train.sh), so
+  # the channel this exercises is now the channel operators use.
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(patched))
 
     side = arena_mod.resolve_search_shape("training")
 
@@ -701,7 +710,15 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
     """A sparse override dict is what made the old runs unreadable."""
     side = resolve_search_shape("training")
 
-    assert set(side.gumbel) == {"c_scale", "topk", "policy_temp"}
+  # The volatility trio joined the dict on 2026-08-16: production's builder
+  # sets all three, so `_assert_training_shape_is_production` requires the
+  # arena to carry them or refuse. They are pinned here rather than dropped
+  # from the assertion, because the point of pinning the SET is that a knob
+  # silently leaving the shape goes red.
+    assert set(side.gumbel) == {
+        "c_scale", "topk", "policy_temp",
+        "volatility_q_scale", "volatility_fpu", "volatility_anchor",
+    }
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
     # A knob the training shape never overrode still resolves to its realized
     # value (the GumbelConfig default), which is the point of the view.

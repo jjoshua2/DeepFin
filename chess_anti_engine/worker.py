@@ -3875,6 +3875,7 @@ class WorkerSession:
         "search_wdl_draw_mode",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
+        "record_prior_top1",
         "record_fast_ply_value", "blindspot_harvest_out_path",
         "categorical_blend_frac",
         "categorical_search_blend_frac",
@@ -4007,6 +4008,12 @@ class WorkerSession:
         "blindspot_harvest_out_path",
   # Recomputed from the board at resume, so consistent under either value.
         "record_relations", "use_dynamic_relations", "record_lc0_root_input",
+  # Not recomputable at resume (it needs the ply's logits), but exempt anyway:
+  # every row carries its own has_prior_top1 flag, so a game whose plies span a
+  # flip is self-describing -- it yields FEWER covered rows, never a wrong one.
+  # This is an analysis-only field, never a training target, so discarding
+  # in-flight games over it would cost real selfplay for no correctness gain.
+        "record_prior_top1",
   # Opening selection — decided when a game STARTS; a resumed game already has
   # its opening and a fresh one uses the new setting.
         "random_start_plies",
@@ -4468,6 +4475,7 @@ class WorkerSession:
                     reco.get("record_relations", reco.get("use_dynamic_relations", False))
                 ),
                 record_dense_sf_policy=bool(reco.get("record_dense_sf_policy", True)),
+                record_prior_top1=bool(reco.get("record_prior_top1", True)),
                 record_sf_p0_policy=bool(reco.get("record_sf_p0_policy", False)),
                 record_sf_p0_regret=bool(reco.get("record_sf_p0_regret", False)),
                 record_fast_ply_value=bool(reco.get("record_fast_ply_value", False)),
