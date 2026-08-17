@@ -54133,6 +54133,30 @@ Likewise the PID: post-restart winrate runs ~+0.110 high from sampling bias
 across iters 52-55 carries no verdict. `sf_nodes` pinned at 75000 throughout, so difficulty's
 second axis did not move.
 
+**⚑⚑ AMENDED at iter 60 — THE RUN DID NOT RETURN TO THE 248-266s BAND, AND EXPECTING IT TO WAS
+A CATEGORY ERROR.** Both series stopped declining and settled at a NEW operating point:
+`time_this_iter_s` 481 / 440 / 410 / 446 / 403 and steps/iter 223 / 186 / 180 / 162 / 161 over
+iters 56-60. That is not an unfinished transient. The decisive comparison is against this same
+trial's own pre-crash rows:
+
+| | steps/iter | s/iter | **steps/s** |
+|---|---|---|---|
+| pre-crash (ckpt 51 -> 52, steps 99545 -> 99631) | 86 | ~280 | 0.31 |
+| post-restart (iters 59-60) | ~161 | ~420 | **0.38** |
+
+⇒ **Work per second is ~24% HIGHER than before the outage.** Iterations are longer because
+views-targeting is requesting ~1.9x the steps — ingest per iteration rose, so the step budget
+rose, so wall-clock rose. Nothing got slower.
+
+⚑ **Under `train_views_per_position`, SECONDS-PER-ITERATION IS AN OUTPUT OF INGEST VOLUME, NOT A
+TARGET.** Comparing it across ingest regimes is the same error as comparing `wdl_regret` across
+search configs ([[wdl_regret_measures_agent_not_net]]): the number moved for a reason that has
+nothing to do with the quantity you meant to measure. The 248-266s band is meaningful ONLY at a
+matched ingest rate. **The instrument that survives the regime change is steps/second (or
+ms/step)** — quote that, and state the ingest rate beside any s/iter figure.
+⇒ Do not mine iters 56+ as a throughput regression either. The earlier draft of this marker
+covered only iters 54-56 and implied a return to the band; that expectation is withdrawn.
+
 **⚑ PROCESS FAILURE WORTH MORE THAN THE OUTAGE.** For ~1 hour the outage went undetected
 because health was being read off `runs/bt4heads_armB/.../progress.csv` — a **39-hour-stale**
 trial picked by *directory* mtime with no check of the *file's*. Reported "healthy, iter 101,
