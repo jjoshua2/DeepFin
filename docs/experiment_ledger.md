@@ -55010,8 +55010,12 @@ the arena baseline are both void.
 
 ### ⚑ DEPLOY ORDER — an unknown key is FATAL AT LAUNCH, not a silent revert
 
-`sf_own_regret_listed_mass_min` and `sf_own_regret_unlisted_scale` are in `TRAINER_WEIGHT_KEYS`,
-so they are live-pushable **once the running code defines them**. Neither may be added to the live
+⚑⚑ **SUPERSEDED BY AMENDMENT 3 BELOW — the two sentences struck through here are now FALSE, and
+false in the hazardous direction: they tell an operator to arm the gate MID-RUN, where it silently
+cannot take effect.** ~~`sf_own_regret_listed_mass_min` and `sf_own_regret_unlisted_scale` are in
+`TRAINER_WEIGHT_KEYS`, so they are live-pushable **once the running code defines them**.~~ **Both
+keys are now STARTUP-ONLY. The gate can ONLY be armed at a restart.** The rest of this paragraph
+stands. Neither key may be added to the live
 yaml until PR #447 is **merged AND production has restarted onto it** — `flatten_run_config_defaults`
 runs outside any `try` in `run.py`, so a key the running schema does not know **prevents the process
 from booting**. Neither key is range-validated (CLAUDE.md category (c)): a decimal typo lands
@@ -55129,3 +55133,104 @@ no finding against it.
 home-path scanner over the PR's own 28 files: **0 hits** (it fails only on 4 docs this PR does not
 touch). So the merge should be green — **that is the reviewer's measurement, not CI's**.
 [[ci_never_tests_the_merge_result]]
+
+## 2026-08-17 AMENDMENT 3 — the tail-gate prereg (PR #447): the gate is now **PINNED OFF ON THE EVAL PATH**, the deploy leg is **RESTART-ONLY**, and both holdout ruler pins MOVED
+
+Second independent review of PR #447 (head at review time `ecc7dacfe`, fixes at `81e88ecad`,
+https://github.com/jjoshua2/DeepFin/pull/447#issuecomment-5316581526) returned **REQUEST-CHANGES**.
+Three things in it change the PREREG above, not just the code, which is why this amendment exists.
+
+### 1. ⚑⚑ The deploy order in the prereg was WRONG, and wrong in the hazardous direction
+
+The prereg said both keys were in `TRAINER_WEIGHT_KEYS` and therefore "live-pushable once the running
+code defines them." **They are now STARTUP-ONLY** (`_STARTUP_ONLY_TRIAL_KEYS`,
+`_STARTUP_ONLY_READER_FILES`, and the startup-only group of `_TRAIN_KEYS`), so **leg B can ONLY be
+armed at a restart.** The paragraph above is struck through in place rather than quietly edited,
+because an operator following it would have added the key to the live yaml mid-run and read the
+gate as inert — this repo's signature defect, arrived at through the ledger instead of the code.
+
+The reason is the one `TRAINER_WEIGHT_KEYS` itself encodes: it is for loss **weights**, which scale a
+term over rows already in the window. This gate **re-interprets rows already in the window** on a
+per-row data-dependent predicate. That is the `policy_target_temp` carve-out's exact shape.
+
+⇒ **Leg B's deploy step is now: merge #447 → take the revert point → restart → arm in the same
+restart's yaml.** Not "merge, restart, then push the key." One fewer leg than the prereg assumed.
+
+### 2. ⚑⚑ The gate is PINNED OFF on the eval path — and this MOVED both holdout ruler pins
+
+`_eval_loss_kwargs`'s own stated criterion decided this: only target-**shape** knobs are pinned, and
+loss **weights** stay because they "scale a term without redefining it." A per-row data-dependent
+gate changes **which rows the column is measured over** ⇒ it **redefines the column**. Measured on an
+unchanged model: `sf_own_regret` **0.4174 → 0.2112**, a 2× move from a training knob. Unpinned,
+arming leg B would have read as *the eval loss improving with zero model change* —
+[[losses_are_decoupled_from_strength]] with a mechanism attached.
+
+That also closes the reviewer's blind-spot finding at the ROOT rather than by widening a digest
+closure: `eval_ruler_id` hashes the **source of the covered frames**, so it moves when `compute_loss`
+is edited but is **BLIND to `sf_regret_gate_scale`**, the helper that decides the number. Gate pinned
+off ⇒ that helper cannot reach the eval measurement at all.
+
+**Both pins in `tests/test_holdout_ruler_identity.py` are updated, and this line is the handover
+record that test's maintenance contract demands:**
+
+| pin | was | now |
+|---|---|---|
+| `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:73ff47d368fbe10e` | `v1:full_pass:c51de0073e92a007` |
+| `PRE_PR277_SAMPLED_RULER` | `v1:sampled:f41625e40b98e987` | `v1:sampled:4c56e2de95c7a82f` |
+
+⇒ **`holdout_generation` bumps at the merge-restart and the trial hands over its best-model record
+once.** `best_loss` across that boundary is not comparable — expected, not a defect
+([[holdout_ruler_dies_at_every_restart]]). It happens for a change that is a **bit-exact identity at
+its defaults**, which is the price of the pin being honest.
+
+### 3. The premise measurement in the prereg was taken on a population that EXCLUDED the failure case
+
+The prereg cites 2350/2350 live rows. Those rows were filtered to **>= 8 legal moves**, which excludes
+fully-covered and forced-move rows **by construction** — exactly the shapes that turned out to be
+mis-scored. The premise still holds where it was measured; it was never evidence about the rest.
+[[same_name_different_population]]
+
+Two consequences, both now closed in code and both narrowing the gate:
+
+* **Max-ties are STRUCTURAL, not rare.** Normalized regret is capped at 1.0, so a **real capped**
+  regret is numerically identical to the fill and `reg < row_max` counts capped real moves as tail.
+  Measured cost: a cap-plateau row discarding **0.1771** of gradient — **2× the intended-target
+  row's 0.0880.** A row whose max sits at the cap is now **never gated**. This costs coverage on the
+  ~3.75% of live legal entries that are exactly 1.0. Under-firing is the correct direction for a term
+  built to distrust fabricated magnitudes, and it is stated here so the leg-B coverage number is read
+  against it.
+* **The discriminator is the PLATEAU (multiplicity >= 2 at the row max), not `surfaced < legal`.** The
+  first repair was itself wrong in the direction the fix was meant to close: `reg < row_max` excludes
+  the argmax by construction, so `surfaced < legal` is true on **every** row with distinct values.
+  [[fixing_a_defect_class_reintroduces_it]], now 4/4 in three days.
+
+### 4. Corrections to my own claims, recorded because both were quoted as evidence
+
+* **"Regression delta: 0 new failures" was FALSE. The true delta is +3.** I measured the delta over a
+  file set I chose rather than the files the change affects. All three reproduced against base
+  `99379737e`; two of them are P1-1's defect class a **third** time (a declaration-table entry with no
+  paired declaration). See [[a_new_test_file_plus_green_lint_hides_the_crash]].
+* **"Clamped to [0,1]" covered ONE of the two keys.** `listed_mass_min: 10` gated **100% of rows**.
+  And ⚑ **NaN SURVIVES a `min`/`max` clamp** — Python's `min`/`max` propagate NaN, so a NaN scale took
+  the total loss to NaN **even at `w_sf_own_regret: 0.0`** while `sf_own_regret_gated_frac` still read
+  `0.0`: production dies, the instrument says nothing happened. `math.isnan` first, then clamp;
+  non-finite degrades to OFF. Same NaN-clamp defect as #438's `--max-halfwidth-pp nan`, found
+  independently on the same day in a different file.
+
+### Launch readiness — **NOT LAUNCHABLE** (unchanged), and unblocked only by the merge
+
+Verification standing at `81e88ecad`: **195 tests green** across the 5 affected files (was 76 across
+3), **19 mutants across 3 files ALL KILLED** (was 13), `./scripts/lint.sh` with no paths **exit code
+0**. ⚑ Lint exited **1 with ZERO errors** during this wave — basedpyright *warnings* also fail the
+gate, and there are three gates ([[lint_has_two_gates_check_both]] undercounts: it is three).
+
+One mutant survived the first wave-3 pass and is worth the line: an **unclamped `listed_mass_min` is a
+BEHAVIOURAL hazard, not a NaN one**, so the finiteness test could not see it. It needed its own
+assertion that a fully-listed row stays ungated at `listed_mass_min: 10`.
+[[new_tests_here_are_vacuous_until_mutated]]
+
+**Nothing in this PR touches production until it is merged AND restarted onto** — the defaults are a
+bit-exact identity on `compute_loss`, and the review's P1-1 (the `_RATIO_METRIC_FIELDS` entry that
+would have killed the trial on iteration 1 **at those identity defaults**) is closed and covered.
+⚑ That P1-1 is the standing reason "the defaults are an identity" is never by itself a safety
+argument here: it was true of the loss and false of the trainer.
