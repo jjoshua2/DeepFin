@@ -621,6 +621,47 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     return 1.0 / float(normalize_gumbel_topk(gumbel_topk))
 
 
+def warn_if_below_search_inclusion(
+    *, tau: float, tau_played: float, gumbel_topk: object, context: str,
+) -> float:
+    """Warn for each floor that has quietly stopped guaranteeing root inclusion.
+
+    ⚑ IT CHECKS BOTH, AND `tau_played` IS THE ONE THAT MATTERS. The first
+    version of this guard checked `tau` only -- the RANKING knob, default 0.15,
+    which is 2.4x the production guarantee and therefore essentially never trips
+    -- while `tau_played`, the one parameter whose documented sole job IS the
+    inclusion guarantee, was never looked at. `resolve(tau=0.15,
+    tau_played=0.001, gumbel_topk=16)` returned silently. A guard aimed at the
+    parameter that cannot lose the property, and blind on the parameter that
+    can, is the "gate that cannot fail" shape: present, green, and inert.
+
+    ``tau_played == 0.0`` stays SILENT: that is the documented collar-ablation
+    arm, a deliberate off switch rather than a floor that has stopped working.
+    Hence ``0 < tau_played < guarantee``, not ``tau_played < guarantee``.
+
+    Returns the guarantee so callers can report it without re-deriving it.
+    """
+    guarantee = search_inclusion_guarantee_tau(gumbel_topk)
+    topk = normalize_gumbel_topk(gumbel_topk)
+    for name, value, silent_at_zero in (
+        ("sf_policy_floor_tau", float(tau), False),
+        ("sf_policy_floor_tau_played", float(tau_played), True),
+    ):
+        if value >= guarantee or (silent_at_zero and value == 0.0):
+            continue
+        warnings.warn(
+            f"{name}={value!r} is BELOW the root-search inclusion guarantee "
+            f"1/gumbel_topk={guarantee!r} (gumbel_topk={topk}, {context}): the "
+            "floored move is no longer guaranteed a root-candidate slot, so the "
+            "term stops buying the search routing it exists for and becomes a "
+            "ranking nudge only. Raise it, or widen gumbel_topk, if that was not "
+            "the intent.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return guarantee
+
+
 @dataclass(frozen=True)
 class SfPolicyFloorParams:
     """Resolved, validated parameters of the SF-approved-move probability floor.
@@ -721,21 +762,13 @@ class SfPolicyFloorParams:
             # ablation arm and it is a clean no-op, not a special case.
             tau_played=guarantee if tau_played is None else float(tau_played),
         )
-  # AFTER the range check, deliberately: an out-of-range tau must RAISE, and a
+  # AFTER the range check, deliberately: an out-of-range value must RAISE, and a
   # warning emitted first would put "your tau is below the guarantee" on the log
   # ahead of the error that actually explains the failure.
-        if params.tau < guarantee:
-            warnings.warn(
-                f"sf_policy_floor_tau={resolved_tau!r} is BELOW the root-search "
-                f"inclusion guarantee 1/gumbel_topk={guarantee!r} "
-                f"(gumbel_topk={normalize_gumbel_topk(gumbel_topk)}): a floored move "
-                "is no longer guaranteed a root-candidate slot, so the term stops "
-                "buying the search routing it exists for and becomes a ranking "
-                "nudge only. Raise the tau or lower gumbel_topk if that was not "
-                "the intent.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        warn_if_below_search_inclusion(
+            tau=params.tau, tau_played=params.tau_played,
+            gumbel_topk=gumbel_topk, context="at config load",
+        )
         return params
 
 
@@ -795,10 +828,26 @@ def sf_policy_floor_deficit(
     played move can also be SF's top-1, or sit inside the window and beat our
     pick; summing the thresholds would floor it at their sum, and letting the
     first one win would silently drop the higher bar. So the per-move threshold
-    is a running MAX and there is exactly one ``relu`` per move. A consequence
-    worth stating: ``tau_top1`` BELOW ``tau`` cannot pull SF's best move under
-    the floor its membership in F already earns it -- a floor is a lower bound,
-    and the binding one is the highest that applies.
+    is a running MAX and there is exactly one ``relu`` per move.
+
+    ⚑ THE MAX RULE MAKES `tau_top1 < tau` ASYMMETRIC, AND THE ASYMMETRY RUNS THE
+    UNCOMFORTABLE WAY. SF's top-1 enters ``adaptive`` only when our argmax is
+    something else (the strict ``regret < our_r`` clause excludes it from its own
+    comparison), so with ``tau_top1 = 0.10`` and ``tau = 0.50``:
+
+    * our argmax IS SF's best -> ``adaptive`` is empty -> its threshold is
+      ``tau_top1`` alone, **0.10**;
+    * our argmax is WRONG -> it joins ``adaptive`` -> threshold
+      ``max(tau, tau_top1)`` = **0.50**.
+
+    So a ``tau_top1`` below ``tau`` floors SF's best move LOWER on exactly the
+    rows invariant 1 calls the whole mechanism -- the ones where we already
+    picked it and it is merely under-weighted. That is a real property of the
+    knob, not a paradox: it is inert at the shipped default (``tau_top1: null``
+    resolves to ``tau``), and it is stated rather than denied because an earlier
+    version of this docstring argued the reverse from the circular premise that
+    the floor top-1 "already earns" is ``tau_top1``. Set ``tau_top1 >= tau`` if
+    you want a strictly stronger floor on SF's best move.
 
     ``legal=None`` means the batch had no legal mask and every action is in the
     softmax's support (see ``policy_legal_bool``).
@@ -807,8 +856,18 @@ def sf_policy_floor_deficit(
         legal = torch.ones_like(regret, dtype=torch.bool)
     thr = params.delta_cp / SF_OWN_REGRET_CAP_CP
     # Illegal moves are pushed above every real regret (which is in [0, 1]) so
-    # the argmin cannot land on one, and so `our_r` for a row whose argmax is
-    # somehow illegal admits nothing rather than everything.
+    # the argmin cannot land on one.
+    #
+    # ⚑ THE SAME SUBSTITUTION MAKES `our_r` PERMISSIVE, NOT RESTRICTIVE, and an
+    # earlier version of this comment claimed the opposite. On a row whose argmax
+    # is somehow ILLEGAL, `our_r` is 2.0, so `regret < our_r` is true of every
+    # real regret and the WHOLE cp window is admitted (measured: deficit 0.98 on
+    # a two-member probe row, where "admits nothing" predicts 0.49). That branch
+    # is unreachable under a legal-masked softmax -- an illegal move carries
+    # probability 0 and cannot be the argmax unless every legal move is also 0 --
+    # and admitting the window is the better fallback if it ever were reachable.
+    # It is stated correctly here because the comment is the only spec: nothing
+    # tests the branch, so nothing else can contradict it.
     ranked = torch.where(legal, regret, torch.full_like(regret, 2.0))
     top1 = ranked.argmin(dim=-1, keepdim=True)
     our_r = ranked.gather(-1, probs.argmax(dim=-1, keepdim=True))
