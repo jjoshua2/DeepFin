@@ -56039,3 +56039,70 @@ about SF LABEL cost and is unaffected, but the qualifier "every data lever is ze
 2. **Raise `playout_cap_fraction`** for coverage — the table above, prereg owed.
 3. **Screen the fabricated tail** — OOF AUC 0.737, ~49% of deficit at 1.27x vs 2.76x blanket. A
    PRECONDITION, not a parallel track: the net inherits **91.5%** of the target's bad tail.
+
+## 2026-08-17 ⚑⚑ THE LOOK-AHEAD SHARD CHANGE WAS ALREADY MADE — 10 FIELDS AT **100.00%** COVERAGE, FEEDING **NOTHING**
+
+Josh: *"i thought we made a shard change for that already? we should do it now anyway so we have it
+later ... and then we get it for free later."* **The change exists, has been recording all along,
+and is the best-covered SF signal in the shard. It is also completely dead.** Measured over 70,976
+rows / 40 shards of `bt4heads_iter112_20260817`.
+
+### WHAT IS STORED
+| field | coverage | consumer |
+|---|---|---|
+| `future_sf_regret_{sum,max,h4,h6,h12,h24,h50,d95,d98}` + `_count` | **100.00%** | **NONE** |
+| `priority_q_delta` | **100.00%** | replay SAMPLING priority only — never a target |
+| `future_policy_target` / `future_legal_mask` | 97.85% | `w_future: 0.01` (default 0.15 — turned down 15x) |
+| `sf_volatility_target` | 23.57% | `w_sf_volatility: 0.05` |
+| `sf_played_rank` | 10.75% | — |
+
+**SEMANTICS, read from the source rather than the names.** `finalize.py:1092` fills them from
+`suffix_regret` — accumulated SF regret over the REST OF THE GAME from that ply: `sum` undiscounted,
+`max` the worst single future regret, `h4/h6/h12/h24/h50` horizon-discounted variants, `d95/d98`
+discount factors. `train/constants.py::FUTURE_REGRET_FIELDS` keys them by
+**`adjusted_wdl_regret_source`**.
+
+### ⚑⚑ WHY THEY ARE DEAD
+Their ONLY consumer is the adjusted-WDL **value** path, and the live yaml has
+**`use_adjusted_wdl_target: false`** — with its own comment recording that
+`adjusted_wdl_regret_source`, `_scale` and `_cap` were **DELETED from the yaml** as
+*"downstream of use_adjusted_wdl_target: false; losses.py:420 gate never opens."*
+⇒ **Ten look-ahead statistics, on every row, at full coverage, reaching no loss.** The signature
+defect at scale, and the same shape as the finding one entry up: the SF signal exists, it is
+wired only to VALUE, and POLICY gets nothing.
+
+### ⇒ THIS CORRECTS MY OWN RANKING, TWICE
+Earlier today I ranked the "who was right over the next few plies" idea **third and most
+expensive**, on the grounds that *"its training-time use needs a new stored field, hence a
+shard-format change and a restart."* **Both halves wrong.** The field exists, and:
+
+| candidate own-move teacher | coverage | fabricated tail? |
+|---|---|---|
+| native `sf_p0_regret` | **24.6%** | YES — ~74% invented on 16.3% of rows |
+| **`future_sf_regret_*`** | **100.00%** | **NO** — sums of REALIZED regrets over played positions |
+
+⇒ **It is 4x better covered than the native term and structurally free of the fabricated tail**,
+which attacks the exact blocker (24.6% coverage) named as the main obstacle to policy SL one entry
+up. And it needs **no restart, no new recording, no SF cost** — only a loss term.
+
+### THE STRUCTURAL CAVEAT, stated so the plan is not built on a wrong premise
+`future_sf_regret_*` is a **SCALAR PER ROW, not a distribution over moves.** It CANNOT supervise
+the policy distribution directly. Its natural use is Josh's own framing — **weight the policy
+target by how badly the position actually turned out** — which is also exactly what this session's
+earlier outcome measurement supports: **magnitude discriminates outcome (0.592 / 0.600 / 0.576 at
+gap<=2) while CONCENTRATION does NOT (frac>=0.8 at 21.7 / 25.3 / 25.5%)**. ⇒ the usable form is a
+GRADED WEIGHT, not a collapse detector, and `h4`/`h6` are that magnitude at the horizons Josh
+described ("within a couple plies"). Do NOT build a collapse-detector arm; it is already measured
+not to discriminate.
+
+### ⇒ CONSEQUENCE FOR THE COMPARISON JOSH ASKED FOR
+All three families are ALREADY IN BANKED DATA, so the three-way screen needs **no restart, no shard
+change and no new SF compute**:
+- **native magnitude** over `sf_p0_regret` (24.6%),
+- **surfaced-only / one-sided floor** over the same field (PR #447's mask, band measured today:
+  top-2 floor 0.10 binds 23.0%),
+- **look-ahead weighting** by `future_sf_regret_h4`/`h6` (100%).
+Plus the 0.0 control. ⚑ POWER remains the live risk: at 24.6% coverage the first two arms may be
+indistinguishable from control by construction, so screen the FORMS on teacher-carrying rows only
+(max contrast, deliberately not production-representative) before pricing a live deploy — and note
+the look-ahead arm does NOT share that limitation, being at 100%.
