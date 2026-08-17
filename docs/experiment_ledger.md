@@ -56704,3 +56704,73 @@ list for agents regardless [[pgrep_in_a_wait_loop_cannot_terminate]].
 explicit `--force` to override). A guard that only exists in one of two documented entry points is
 the same shape as every other defect in this ledger — it is not that the check is wrong, it is that
 the path that skips it is the one a human will use at 3am.
+
+## 2026-08-17 MEASURED — ⚑⚑ ONE BT4/CERES FORWARD PASS BEATS OUR ENTIRE 100-SIM SEARCH, ~1.9×
+
+Josh: *"I suspect even 1 BT4 or ceres node is stronger than our search of 100 or 256."* **Confirmed,
+and by more than suspected.** All rows below are top-1 regret in cp against the SAME frozen deep-SF
+audit ruler, n = 4,000, `enc=fen_only` on every net so nobody gets history the others lack.
+
+| candidate | nodes | E[regret] | **top-1** |
+|---|---|---|---|
+| c) SF MultiPV soft target (the LABEL itself) | — | 18.6 | **12.4** |
+| **Ceres C1-640-34** | **1** | 52.1 | **18.6** |
+| **BT4-it332-vanilla-winner** | **1** | 50.9 | **20.1** |
+| b) ours + Gumbel PLAY search | **100** | 37.3 | **36.1** |
+| d) ours, production TRAINING target | 100 | 39.1 | 36.4 |
+| e) ours, fast-ply | 32 | 42.3 | 37.9 |
+| a) ours, RAW POLICY | **1** | 52.6 | **46.9** |
+
+### What the ladder says
+
+- **Search buys us 10.8 cp**: raw 46.9 → 36.1 at 100 sims. That independently reproduces the −10.47 cp
+  of the 2026-08-16 entry (#206) from a different run, so the search DOES re-rank and the effect is real.
+- **And it is nowhere near enough.** One BT4 node (20.1) is **16.0 cp better than our 100-sim search**
+  (36.1); one Ceres node (18.6) is **17.5 cp better**. ⇒ **a single forward pass of either reference net
+  is ~1.9× stronger than our full search.** Our search would have to find roughly 1.5× more than it
+  currently finds, on top of what it already finds, merely to TIE one of their nodes.
+- **Ceres C1-640-34 (18.6) edges BT4 (20.1)** and is remarkably close to the SF soft target itself (12.4).
+  It is now a THIRD ruler from a different family — which matters, because the arm calibration found BT4
+  and deep-SF disagreeing on the sign of D−A and B−A.
+
+### ⚑ AND THE ANSWER TO "WAS THERE SEARCH ELO ON THE TABLE IN THE GUMBEL BATCHING?" — NO
+
+C17 (duplicate leaves inside a batched Gumbel search) was **real, was diagnosed, and was SOLVED by
+virtual loss** (PR #278, merged; production runs `gumbel_vloss_weight: 1`). The hypothesis at the time
+was that duplicate leaf accumulation was why extra nodes bought nothing. **It was not the explanation,
+and fixing it did not unlock search Elo:**
+
+- **32 → 100 sims is worth 1.5 cp** of top-1 regret (37.9 → 36.4) — measured today, POST-fix.
+- The arena read on the same change was **+3.5 Elo [−26.5, +33.5], a NULL** (#192), and sims-100 remains
+  deployed but unjudged on strength.
+- The first node is where all the value is: 1 → 32 sims buys ~9 cp, 32 → 100 buys 1.5 cp. The curve is
+  flat by 32.
+
+⇒ **the diminishing return is not a batching artefact, it is the NET.** Search compounds a prior and a
+value head; ours are weak enough that deepening the tree re-ranks within a bad candidate set. That is
+why 100 → 256 read as inert (#192, #206) and why C17's repair, though correct, bought no strength.
+This is the quantitative form of Josh's own framing — *"we are still in the weak regime"*, *"even 800
+nodes would be far below Stockfish"* — and it is now a measurement rather than a belief.
+[[flat_sims_ladder_means_search_may_be_inert]], [[ruler_proxy_shape_beats_sim_count]]
+
+### ⚑ SCOPE LIMIT — this is our search at its BEST, not production's realized shape
+
+`audit_targets.py` ran with **`vloss_weight=0 vloss_mode=0 target_batch=0`**, i.e. UNBATCHED and
+sequential, so it has no duplicate-leaf exposure at all. Production batches and relies on
+`gumbel_vloss_weight: 1` to suppress duplicates. ⇒ **36.1 cp is an UPPER BOUND on our search quality**;
+production's realized search is that or worse. The gap between the two is unmeasured and is the one
+place where residual batching Elo could still hide. Same trap the 2026-07-25 entry already flagged
+("neither batch shape is production's") — recorded here so the 1.9× headline is not later quoted as if
+it were production's shape.
+
+### Artefacts (all fresh today, full legal support, `--topk 256`)
+
+- `data/lc0/bt4_audit_cache_topk256_20260817.jsonl`
+- `data/ceres/C1-640-34_audit_cache_topk256_20260817.jsonl`
+- `data/lc0/ours_iter190_audit_cache_topk256_20260817.jsonl`
+- `runs/target_audit_b04d77eee.md` (the search ladder above)
+
+⚑ BT4 coverage is **1 of 8 ONNX exports**; all 8 are byte-distinct (7 distinct md5s + tf13tune). The
+others are value-head/output flavours and are expected to share the policy trunk, but **that is
+asserted, not measured** — if any later claim depends on BT4's policy being variant-invariant, run the
+check first.
