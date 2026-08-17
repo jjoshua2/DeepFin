@@ -55560,3 +55560,47 @@ No yaml edit, no restart. Re-setting `zclip_max_norm` is a training-affecting ch
 own prereg and a revert point, and the cap has been in this regime for the whole run so it is not an
 emergency. Recorded so that (a) it is not rediscovered a fourth time, and (b) no future readout
 quotes `lr` as the realized step size for this era.
+
+### ⚑⚑ CORRECTION, same session — the entry above is WRONG about the mechanism, and Josh caught the scope
+
+Three errors in the entry immediately above, all mine:
+
+1. **SCOPE — zclip does NOT touch the Aurora matrix params.** Josh: *"last time we investigated we
+   thought zclip doesn't do anything on the aurora parts only the adamw parts."* Correct.
+   `split_matrix_and_clipped_params` hands `ZClip` a `_GradClipScope` wrapper rather than the model,
+   which restricts **both what it measures and what it rescales** to the NON-matrix params, and a
+   construction-time check raises if that scope disagrees with the optimizer's `use_muon/use_aurora`
+   groups. With `matrix_optimizer_scope: mlp_out` the matrix group is ~28.6% of trainable params, so
+   the clip reaches the other ~71.4%. ⇒ "every step's gradient is scaled to ~0.60x" was wrong about
+   what "every" covers. (The reported median IS the clipped group's norm, so at least the metric and
+   the clip share a scope — the code comment at `GRAD_NORM_MEDIAN_WATCH` says that was deliberate.)
+
+2. **⚑⚑ THE HARD CAP NEVER BINDS. The ADAPTIVE clip does.** `effective_clip = min(adaptive_clip,
+   max_grad_norm)` and `hard_clip` is set only when `effective_clip == max_grad_norm`. The log reports
+   **clip rate 100.0% with hard-clip rate 0.0%**, which forces `adaptive_clip < 6.50` on EVERY step.
+   ⇒ **`zclip_max_norm` is not the binding constraint and re-setting it would change nothing.** I
+   asserted the opposite. And #94's "post-restart is a hard-cap-only regime" is NOT what this run is
+   in — the adaptive path is plainly alive and computing a clip value every step.
+
+3. **The pre-committed rule is only HALF satisfied, and I fired on the half.** The threshold's own
+   comment reads *"once the windowed MEDIAN grad norm passes this **(hard-clip rate ~10%)**,
+   `zclip_max_norm` has stopped being a tail guard and has become an LR cap in disguise."* The median
+   is past 4.75; the hard-clip rate is **0.0%**, not ~10%. ⇒ the diagnosed failure mode is **absent**.
+
+**⚑ ROOT CAUSE OF MY ERROR: I read the warning's TEXT as the mechanism.** The message asserts "the
+hard cap is acting as an LR cap — re-set it" while the statistic printed on the same line refutes it.
+[[a_counter_is_not_the_mechanism_behind_it]], and the tell was the documented one: a status value
+became an argument for CHANGING something, and I did not read the branch that SETS it.
+
+**⇒ THE ACTIONABLE DEFECT IS THE INSTRUMENT, NOT THE TRAINING.** 124 emissions have told operators to
+re-set a knob that is not binding, and the emitting condition tests one of its two documented
+criteria. Fix: gate the warning on the hard-clip rate as well, and make its text name whichever clip
+actually bound. Cheap, no training impact, and it retires a tripwire that has now mis-fired at me
+once and is on record as having "re-fired" twice before — plausibly the same false positive each time.
+
+**NOT ESTABLISHED, and explicitly not guessed at:** whether a 100% ADAPTIVE clip rate is pathological
+or normal-by-construction for this `clip_option`. `adaptive_scaling` computes
+`clip_val = (mean + z_thresh*std/eta)*clip_factor` on every step, so `adaptive_clip < total_norm`
+could be routine by design, which would make "clip rate" near-uninformative as a health signal. That
+needs reading the `zclip` library's semantics. **Until then no zclip knob should be touched, and the
+100% figure must not be quoted as evidence of anything.**
