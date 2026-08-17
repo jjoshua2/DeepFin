@@ -55072,3 +55072,60 @@ untouched and stays untouched.
 
 **Nothing here risks production.** The only production-path change in the PR is a correct, latent
 log-line fix. This is "do not launch the arm on this rig yet", not "revert anything".
+
+## 2026-08-17 AMENDMENT 2 — lc0-control arm (#199 / PR #438): still **UN-LAUNCHABLE**, and the wave-5 fix **WIDENED** its own blocker
+
+Third independent review of head `10a90268d`
+(https://github.com/jjoshua2/DeepFin/pull/438#issuecomment-5315982081): **REQUEST-CHANGES**, with
+an explicit **NOT LAUNCHABLE** verdict. Wave 6 routed.
+
+### CLOSED, verified by execution (not by the fixer's account)
+
+* **Irreversible `checkpoint_mid.pt` deletion** — closed. Every delete-shaped call across all 9
+  non-test files audited: 2 pre-existing `unlink`s, 1 `rename`, **no new delete path**. The refusal
+  precedes the first write, and a populated rename target raises `OSError 39`.
+* **Cadence / LR comparability** — closed **for the default path**, mechanism re-derived rather than
+  trusted: LR@mid == LR@last == **0.1000** at `17600/88/0.5`.
+* **`game_id` banking**, scoping (executed: **8 clusters not 4**), `subtract` trimming, the
+  row-level-CI caveat, `--device` + its stated reason, `--seed`, opaque basenames, `stage_shards`
+  intruder refusal.
+
+### ⚑⚑ THE LESSON, and it is the fourth instance on this project
+
+**The wave-5 fix corrected N1's ARITHMETIC and left N1's OUTCOME — and the trigger set got WIDER.**
+At the default `--train-window-steps 88` only multiples of **176** are valid; `20001`, `20000`,
+`1001` and `87` all still stamp `valid_control: false` unwaivably. Original N1 hit **odd** budgets
+(1/2 of inputs); the fix hits **non-multiples-of-176** (**175/176**). ⇒ *a correct fix at the wrong
+LAYER can make the defect strictly worse while every stated argument for it is true.*
+
+⚑ And the proof test **dodges the case**: it passes `--train-window-steps 101`, never exercising the
+default, while its NAME claims the property. Same shape as the fixer's earlier arithmetic table that
+restated the criterion. ⇒ **state the OUTCOME guarantee, then test that** — "a realistic budget an
+operator would type is accepted" — never the arithmetic underneath it.
+[[fixing_a_defect_class_reintroduces_it]]
+
+### Still blocking (wave 6)
+
+| # | finding | why it blocks |
+|---|---|---|
+| F1 (P1) | 175/176 of budgets unwaivably invalid at the default window | the budget is a trap, knowable before step 1 and reported only after |
+| F2 (P2) | ±0.01 tolerance is **±2 full windows** at the arm's budget; executed `--mid-checkpoint-frac 0.5028` → **LR@mid 1.0 vs LR@last 0.1**, both guards silent, `valid_control: true` | the deciding slope can still contain the anneal via a PASSING knob; neither guard checks the property the fix argues for |
+| F3 (P2) | mutant M1 survived — the even-window requirement is untested | |
+| F4 (P2) | `game_cluster_keys` reads `game_id` **without `has_game_id`**; unset rows become a real-looking `#0` and `cluster_keys_complete` reports True | the design-effect record is unreliable exactly where it will be quoted |
+| F5 (P2) | mutant M2 survived — `cluster_keys_complete` written at 3 sites, **read by nothing**; `compare` prints a confident "40.0 rows/cluster" with half the keys missing | a gate that cannot fire |
+| Codex | `--max-halfwidth-pp nan` turns a **500-row** pair into rc 0 with a quotable delta — one unvalidated float disables the resolution gate AND the 100k-row floor | ⚑ Python `min`/`max` **PROPAGATE** NaN, so a clamp is not a validator |
+| Codex | exact binomial tail **132 s at 20,000 discordant pairs**, ~cubic | the readout can appear to hang |
+
+Plus **four unrouted inline threads from 10:53, two P1.**
+
+### Launch readiness — **NOT LAUNCHABLE**, and this amendment is the record
+
+A day-long arm on this rig would not produce a quotable number. **Nothing here risks production:**
+the only live-path code in the PR is the `trainer.py` blend warning, latent on today's config, with
+no finding against it.
+
+⚑ **CI is green and MEANINGLESS**: base `025c8ffbb` vs `origin/main` `6d9d9161` = **22 commits**,
+`strict: false`, `mergeStateStatus: BLOCKED`. The reviewer separately ran `main`'s repo-wide
+home-path scanner over the PR's own 28 files: **0 hits** (it fails only on 4 docs this PR does not
+touch). So the merge should be green — **that is the reviewer's measurement, not CI's**.
+[[ci_never_tests_the_merge_result]]
