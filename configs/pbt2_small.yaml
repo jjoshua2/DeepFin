@@ -497,7 +497,22 @@ train:
   w_wdl: 1.0
   w_sf_move: 0.05   # bt4heads bundle 2026-08-15 (was 0.0)
   w_sf_own: 0.0
-  w_sf_own_regret: 0.0
+  # ⚑ SF POLICY SUPERVISION ARM, launched 2026-08-17 at iteration 191.
+  # Prereg + calibration: docs/experiment_ledger.md (2026-08-17). Weights set by
+  # EQUAL ~10% gradient-norm share each (joint ~21%), measured per COVERED row on
+  # the live replay window -- NOT by an optimum sweep; the A:F ratio is UNMEASURED.
+  # ⚑⚑ DO NOT RETUNE THESE MID-RUN. A weight MAGNITUDE change does not move the
+  # holdout ruler id, so it re-opens the best-model freeze. Changing them needs a
+  # restart. Same applies to use_adjusted_wdl_target / adjusted_wdl_regret_* /
+  # wdl_terminal_outcome_* -- live-pushable and NOT ruler-covered.
+  w_sf_own_regret: 0.7   # arm A: sum p*r over the SF regret vector (was 0.0)
+  w_sf_policy_floor: 0.8   # arm F: SF-approved-move probability floor + collar
+  sf_policy_floor_delta_cp: 20.0
+  sf_policy_floor_tau: 0.15
+  sf_policy_floor_tau_top1: 0.15
+  # sf_policy_floor_tau_played: deliberately ABSENT so it stays DERIVED from the
+  # trial's gumbel_topk (1/16 = 0.0625). Pinning it would silently stop tracking
+  # a gumbel_topk change.
   w_sf_eval: 0.0
   w_categorical: 1.0   # bt4heads bundle 2026-08-15 (was 0.0) — the head is now TRAINED
   rebuild_categorical_target: true   # bt4heads bundle 2026-08-15
