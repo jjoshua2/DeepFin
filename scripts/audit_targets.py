@@ -1908,6 +1908,16 @@ def _shallow_sf_records(
         return cache
 
     print(f"[sf-soft] labeling {len(todo)} positions at {nodes} nodes, multipv {multipv}")
+  # ⚑ CREATE THE PARENT BEFORE AN HOUR OF STOCKFISH, NOT AFTER. `open(..., "a")`
+  # does NOT create directories, and the default cache lives beside the audit
+  # set so its parent always exists -- but an explicit `--sf-cache` names a path
+  # the operator chose, and the repeat control's recommended layout
+  # (`scratchpad/sf440/...`) is a directory no fresh checkout has. Without this
+  # the run raises FileNotFoundError HERE, after the config, the checkpoint, the
+  # audit set and the engine pool have all loaded. Fixed in the writer rather
+  # than as a `mkdir -p` line in the ledger, because the ledger cannot be the
+  # thing that makes a command runnable. Codex review of PR #446 (P1).
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     engines = [
         StockfishUCI(str(stockfish), nodes=nodes, multipv=multipv, nice=nice)
         for _ in range(max(1, workers))

@@ -571,6 +571,36 @@ def test_main_passes_the_dump_path_to_the_resolver() -> None:
     assert "args.dump_per_position" in call_block, call_block
 
 
+def test_the_labelling_pass_creates_the_cache_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ AN HOUR OF STOCKFISH, THEN FileNotFoundError.
+
+    `open(cache_path, "a")` does not create directories. The DEFAULT cache
+    always has a parent (it sits beside the audit set), so nothing in this suite
+    could see it — but an explicit `--sf-cache` names a path the OPERATOR chose,
+    and the repeat control's own recommended layout
+    (`scratchpad/sf440/repeat_A1.shallow_sf.jsonl`) is a directory no fresh
+    checkout has. The failure lands AFTER the config, the checkpoint, the audit
+    set and the engine pool have loaded — the most expensive possible moment,
+    and on the one command this whole entry exists to make runnable.
+    Codex review of PR #446 (P1).
+
+    Fixed in the WRITER rather than as a `mkdir -p` line in the ledger: a runbook
+    line cannot be the thing that makes a command runnable.
+    """
+    monkeypatch.setattr("scripts.audit_targets.StockfishUCI", _DisagreeingEngine)
+    monkeypatch.setattr("scripts.audit_targets.engine_identity", lambda p, **k: "SF")
+    nested = tmp_path / "sf440" / "deeper" / "repeat_A1.shallow_sf.jsonl"
+    assert not nested.parent.exists(), "the whole point is that the dir is absent"
+    out = _shallow_sf_records(
+        [_pos("k0")], cache_path=nested, stockfish="/fake/sf",
+        nodes=NODES, multipv=MULTIPV, workers=1, nice=15,
+    )
+    assert nested.is_file(), "the labelling pass must create its own parent"
+    assert set(out) == {"k0"}
+
+
 def test_a_HARDLINK_to_the_audit_set_is_refused_at_the_append(
     tmp_path: Path,
 ) -> None:
