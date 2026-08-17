@@ -112,6 +112,12 @@ teacher change (MEASURED 2026-08-16: two arms, two different Stockfish
 binaries, identical `cand.sf_soft`, and Stockfish never launched for the
 second). Rows now carry `sf_id` (`id name`) and a run that names an engine
 reuses only that engine's rows.
+⚑⚑ ENGINE IDENTITY DOES NOT RESCUE A *REPEAT* CONTROL — the two runs share an
+`sf_id` BY DESIGN there, so run 2 is served run 1's rows and the measured
+run-to-run variance is 0 whatever the engine does (demonstrated with a stub
+that returned a different cp on every call: run 2 never launched it). A repeat
+must pass `--sf-cache <fresh path>`. Reading `d_obs = 0` off a shared cache
+establishes nothing about the pipeline's noise.
 GPU use is the batched forwards + search only; --max-positions and
 --batch-size bound the run (5k positions / 256 sims fits in <1h on a 5090).
 
@@ -1695,6 +1701,30 @@ def engine_identity(path: str, *, timeout_s: float = 60.0) -> str:
     return name
 
 
+#: The default shallow-SF cache's suffix, derived in exactly one place
+#: (`resolve_sf_cache_path`). A second site that re-derives the default is how
+#: an override silently stops applying on one of the two paths — which is why
+#: `tests/test_audit_shallow_sf_cache_provenance.py` proves the override
+#: through `main()` by EXECUTION rather than by reading the source.
+SHALLOW_SF_CACHE_SUFFIX = ".shallow_sf.jsonl"
+
+
+def resolve_sf_cache_path(audit_set: Path, override: Path | None) -> Path:
+    """Where this run reads and writes shallow-SF labels.
+
+    ⚑ The override exists for the REPEAT control and nothing else is a
+    substitute for it. Engine identity keys the cache by WHICH engine wrote a
+    row, which fixes the OLD-vs-NEW arm — two binaries, two `sf_id`s, forced
+    re-labelling. A repeat runs the SAME binary twice on purpose, so both runs
+    share an `sf_id`, run 2 matches every row, and Stockfish is never launched:
+    the measured run-to-run variance is 0 by CONSTRUCTION. Point the repeat at
+    a fresh path and it labels for real.
+    """
+    return override if override is not None else audit_set.with_suffix(
+        audit_set.suffix + SHALLOW_SF_CACHE_SUFFIX
+    )
+
+
 def _shallow_sf_records(
     positions: list[AuditPosition],
     *,
@@ -1714,6 +1744,11 @@ def _shallow_sf_records(
     these settings is refused rather than silently averaged: that is a mixed
     ruler, and a mixed ruler is not a ruler.
     """
+    # ⚑ Announced by the function that USES it, from the same parameter it
+    # reads and writes. `main` prints its resolution early so a mistyped
+    # --sf-cache fails cheaply, but an early print describes an INTENTION: the
+    # only line that cannot disagree with the labelling pass is this one.
+    print(f"[sf-soft] cache in use {cache_path}")
     sf_id = engine_identity(str(stockfish)) if stockfish is not None else None
     cache: dict[str, dict] = {}
     other_node_counts: set[int] = set()
@@ -2210,6 +2245,13 @@ def main() -> None:
                          "The 50k default was retired once production moved to 500k nodes. NOTE: "
                          "the cache is keyed by node count, so switching tiers needs --stockfish to "
                          "(re)label at the new count.")
+    ap.add_argument("--sf-cache", type=Path, default=None,
+                    help="write/read the shallow-SF label cache HERE instead of "
+                         "<audit-set>.shallow_sf.jsonl. ⚑ REQUIRED for a repeat "
+                         "control: two runs of the same engine against the "
+                         "shared cache do not re-label at all — run 2 is served "
+                         "run 1's rows verbatim, so the measured run-to-run "
+                         "variance is 0 by construction, not by determinism.")
     ap.add_argument("--sf-soft-multipv", type=int, default=40)
     ap.add_argument("--sf-workers", type=int, default=4)
     ap.add_argument("--nice", type=int, default=15)
@@ -2279,6 +2321,15 @@ def main() -> None:
                          "already emitted.")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+  # Resolved and PRINTED here, before the checkpoint loads, for the same reason
+  # the flag checks below are: the operator of a repeat control needs to see
+  # WHICH cache this run will use while there is still time to stop it. Printing
+  # it next to the labelling pass would be an hour too late, and printing the
+  # flag rather than the resolved path is how a defaulted override reads as an
+  # applied one.
+    sf_cache_path = resolve_sf_cache_path(args.audit_set, args.sf_cache)
+    print(f"[sf-soft] cache {sf_cache_path}"
+          f"{' (--sf-cache override)' if args.sf_cache else ''}")
   # Same fail-fast reasoning as the flags below, and the most expensive one to
   # get wrong: exactly one of --checkpoint/--onnx, and for --onnx the graph's
   # tensor names, resolved and printed HERE -- before the audit set loads and
@@ -2386,7 +2437,7 @@ def main() -> None:
 
     shallow = _shallow_sf_records(
         positions,
-        cache_path=args.audit_set.with_suffix(args.audit_set.suffix + ".shallow_sf.jsonl"),
+        cache_path=sf_cache_path,
         stockfish=args.stockfish, nodes=int(args.sf_soft_nodes),
         multipv=int(args.sf_soft_multipv), workers=int(args.sf_workers),
         nice=int(args.nice),

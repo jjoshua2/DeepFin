@@ -42460,3 +42460,88 @@ named in it does not. Quote **cp, clipped at 1000**, never "rank".
 **#440 remains BLOCKED, now on three counts**: the cache-bypass fix for the repeat control (B5),
 the retirement of the `>300cp` gate in favour of McNemar on `top1_match` (B4), and the two
 `tail_stats.py` / engine-resolution defects filed 2026-08-16. No arm has run; no config changed.
+
+---
+
+## 2026-08-17 — #440 UNBLOCKED: all three launch blockers CLOSED, with exact commands
+
+The three counts in the Status line above are now closed by code, not by argument. Each one is
+stated here as the command a run will actually type, because the standing failure on this entry
+has been thresholds and gates written as prose that turned out to have no implementation behind
+them. [[an_exact_command_means_it_was_run]]
+
+### B5 — the repeat control's cache bypass: `--sf-cache`
+
+`scripts/audit_targets.py` gained `--sf-cache PATH`, resolved by `resolve_sf_cache_path()` and
+printed BEFORE the checkpoint loads. Engine identity was never going to fix this: a repeat runs
+the SAME binary twice on purpose, so both runs share an `sf_id`, run 2 matches every cached row,
+and Stockfish is never launched.
+
+Pinned by execution, not by prose — `tests/test_audit_shallow_sf_cache_provenance.py`:
+
+- `test_a_repeat_on_the_SHARED_cache_never_relabels` drives a stub engine that returns a
+  DIFFERENT cp on every call and asserts the engine ran **once**. The two runs agree because the
+  cache was served; there is no determinism story left that can explain it away.
+- `test_a_repeat_on_a_FRESH_cache_does_relabel` asserts 2 calls and cp 100 vs 200.
+- `test_the_cli_resolves_the_override_before_anything_expensive_loads` drives the real `main()`
+  with an unloadable checkpoint and asserts the override was announced. ⚑ It is the wiring
+  check, and it is the one that matters: a resolver nothing calls is this codebase's signature
+  defect.
+
+⚑ **A mutant SURVIVED the first version of that suite and is worth recording.** Making `main`
+print the override and then hand `resolve_sf_cache_path(args.audit_set, None)` to the labelling
+pass passes every executing test here, because reaching the labelling call needs a real
+checkpoint and an hour of SF. Two changes close it: the labelling pass now announces the path it
+actually uses (it prints its own parameter, so that line cannot disagree with itself), and
+`test_main_resolves_the_cache_path_exactly_once` refuses a second derivation in `main`. The
+second is a source-level check and is labelled as one — the limit is stated in the test.
+
+### B4 — McNemar now EXISTS, in the validating paired reader
+
+`grep -rniE mcnemar` returned zero hits when the decision section named it as the primary gate.
+It now lives in `scripts/paired_compare.py` — deliberately there and not in `tail_stats.py`,
+because `paired_compare` is the reader that already refuses a ruler mismatch, enforces each
+dump's row count against its stamp, and accounts for unmatched rows per side. The deciding
+yardstick belongs on the validating instrument, not the descriptive one.
+
+```bash
+# the #440 primary, once both arms' dumps exist:
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  <ARM_OLD>.jsonl <ARM_NEW>.jsonl \
+  --join-key key --field cand.sf_soft.top1 \
+  --mcnemar-at 0 --require-n 4000
+```
+
+`--mcnemar-at 0` IS `top1_match := (cand.sf_soft.top1 == 0)` for a non-negative regret field —
+the binarisation the decision section pre-committed, spelled as a threshold the tool reads.
+It prints the 2x2, the exact two-sided binomial p (exact, not chi-square: the discordant
+population here is expected to be ~tens, the regime where the approximation manufactures
+significance), the paired rate difference with a CI, and:
+
+- **`d_obs`, MEASURED** — the input the amendment ASSUMED at 0.30, an assumption worth a 3.2x
+  spread in the half-width. `test_half_width_tracks_the_measured_discordance` fails any
+  implementation that quotes a constant.
+- **the half-width `1.96*sqrt(d_obs/n)`**, which is step 2 of the mandated sequencing. Publish it
+  before choosing the effect size, per that step.
+
+⚑⚑ **Zero discordant pairs prints `VOID`, never "NOT significant".** That is the served-cache
+shape, and a gate that returns a clean null there certifies an experiment whose second arm was
+never measured. `test_zero_discordance_is_reported_VOID_and_never_as_agreement` asserts the word
+`significant` does not appear.
+
+### The join guard — `--require-n`
+
+Every threshold on this entry is written at n=4000, and the join silently delivers whatever the
+two files happen to share: a dump truncated to 500 rows still loads, still joins, and still
+prints a quotable verdict at 2.8x the registered half-width. `--require-n N` refuses, with a
+non-zero exit, BEFORE any statistic is printed. It is opt-in — exploratory runs have no
+pre-committed n — and it is mandatory on every arm of this experiment.
+
+### Status
+
+**#440's three launch blockers are CLOSED. The experiment is still NOT launched** and nothing
+about its cost has changed: the upgrade remains a measured +16.1% wallclock per label with SF
+already holding 18.3/32 cores, so a PASS is necessary and not sufficient. The mandated order is
+unchanged and is now runnable: repeat arm with `--sf-cache` first, publish `d_obs` and the
+half-width, choose the effect size against the MEASURED resolution, demonstrate that PASS and
+KILL both land inside the statistic's observed range, and only then run arm NEW.

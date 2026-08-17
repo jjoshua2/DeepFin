@@ -17,13 +17,19 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from chess_anti_engine.eval.audit import AuditPosition
-from scripts.audit_targets import UNRECORDED_SF_ID, _shallow_sf_records, engine_identity
+from scripts.audit_targets import (
+    UNRECORDED_SF_ID,
+    _shallow_sf_records,
+    engine_identity,
+    resolve_sf_cache_path,
+)
 
 NODES, MULTIPV = 500_000, 40
 
@@ -218,3 +224,167 @@ def test_written_rows_carry_the_engine_id(tmp_path: Path, monkeypatch: pytest.Mo
     rows = [json.loads(x) for x in cache.read_text(encoding="utf-8").splitlines() if x]
     assert [r["sf_id"] for r in rows] == ["SF NEW"], rows
     assert os.path.exists(cache)
+
+
+# --------------------------------------------------------------------------
+# The REPEAT control. Engine identity fixes the OLD-vs-NEW arm and does
+# NOTHING for a repeat: both runs are the same binary on purpose, so they
+# share an `sf_id`, run 2 matches every cached row, and the engine is never
+# launched. The prereg makes "run OLD twice and read the paired flip count"
+# a MANDATORY first step and pre-commits d_obs=0 as a STOP -- so without a
+# cache bypass that step is structurally guaranteed to halt the experiment,
+# for a reason that has nothing to do with the pipeline's noise.
+# --------------------------------------------------------------------------
+
+
+class _DisagreeingEngine:
+    """Returns a DIFFERENT cp on every call, across every instance.
+
+    The point of the counter being a class attribute: if run 2 relabels at
+    all, its rows cannot match run 1's, whatever the ordering. So "the two
+    runs agree" can only mean the cache was served -- there is no
+    determinism story available to explain it away.
+    """
+
+    calls = 0
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        pass
+
+    def search(self, _fen: str, **_kwargs: object) -> object:
+        type(self).calls += 1
+        cp = 100 * type(self).calls
+
+        class _Pv:
+            move_uci, mate, wdl = "a1b1", None, (0.1, 0.8, 0.1)
+
+        class _Res:
+            mate, wdl = None, (0.1, 0.8, 0.1)
+
+        pv = _Pv()
+        pv.cp = cp                      # pyright: ignore[reportAttributeAccessIssue]
+        res = _Res()
+        res.cp = cp                     # pyright: ignore[reportAttributeAccessIssue]
+        res.pvs = (pv,)                 # pyright: ignore[reportAttributeAccessIssue]
+        return res
+
+    def close(self) -> None:
+        pass
+
+
+def _label_once(cache: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    monkeypatch.setattr("scripts.audit_targets.engine_identity", lambda p, **k: "SF SAME")
+    monkeypatch.setattr("scripts.audit_targets.StockfishUCI", _DisagreeingEngine)
+    return _shallow_sf_records(
+        [_pos("k0")], cache_path=cache, stockfish="/fake/same",
+        nodes=NODES, multipv=MULTIPV, workers=1, nice=15,
+    )
+
+
+def test_a_repeat_on_the_SHARED_cache_never_relabels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ #440 B5, pinned as BEHAVIOUR rather than as a warning in prose.
+
+    The engine disagrees with itself on every call. If the repeat measured
+    anything, the two runs would differ. They do not, and the call count
+    proves why: the engine ran once.
+    """
+    _DisagreeingEngine.calls = 0
+    cache = tmp_path / "shared.jsonl"
+    first = _label_once(cache, monkeypatch)
+    second = _label_once(cache, monkeypatch)
+    assert _DisagreeingEngine.calls == 1, "run 2 relabelled; the premise changed"
+    assert first["k0"]["cp"] == second["k0"]["cp"] == 100
+    # d_obs would be 0 here -- and it is a statement about the cache, not
+    # about the pipeline's run-to-run variance.
+
+
+def test_a_repeat_on_a_FRESH_cache_does_relabel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bypass, and the reason it is the only fix: a distinct path relabels."""
+    _DisagreeingEngine.calls = 0
+    first = _label_once(tmp_path / "run1.jsonl", monkeypatch)
+    second = _label_once(tmp_path / "run2.jsonl", monkeypatch)
+    assert _DisagreeingEngine.calls == 2
+    assert first["k0"]["cp"] == 100
+    assert second["k0"]["cp"] == 200
+    assert (tmp_path / "run2.jsonl").exists()
+
+
+def test_resolve_sf_cache_path_defaults_beside_the_audit_set() -> None:
+    assert resolve_sf_cache_path(Path("data/audit_set_v1.jsonl"), None) == Path(
+        "data/audit_set_v1.jsonl.shallow_sf.jsonl"
+    )
+
+
+def test_resolve_sf_cache_path_honours_the_override() -> None:
+    got = resolve_sf_cache_path(Path("data/audit_set_v1.jsonl"), Path("/tmp/rep2.jsonl"))
+    assert got == Path("/tmp/rep2.jsonl")
+
+
+def test_the_cli_resolves_the_override_before_anything_expensive_loads(
+    tmp_path: Path,
+) -> None:
+    """⚑ EXECUTED, not read off the source.
+
+    A resolver nothing calls is this codebase's signature defect. Drive the
+    real `main()` with a checkpoint that cannot load: the run must still have
+    printed which cache it would use, and it must be the overridden one. That
+    also pins the ORDER -- an operator who mistyped the path finds out now
+    rather than an hour into labelling.
+    """
+    override = tmp_path / "repeat2.shallow_sf.jsonl"
+    r = subprocess.run(
+        [sys.executable, "scripts/audit_targets.py",
+         "--checkpoint", str(tmp_path / "nope.pt"),
+         "--audit-set", str(tmp_path / "set.jsonl"),
+         "--sf-cache", str(override)],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, check=False,
+        env={**os.environ, "PYTHONPATH": ".", "CUDA_VISIBLE_DEVICES": ""},
+        timeout=600,
+    )
+    assert r.returncode != 0, "the bogus checkpoint should still fail the run"
+    assert f"[sf-soft] cache {override}" in r.stdout, r.stdout[-3000:]
+    assert "(--sf-cache override)" in r.stdout
+
+
+def test_the_labeling_pass_announces_the_path_it_actually_uses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one announcement that cannot lie: it prints its own parameter."""
+    _DisagreeingEngine.calls = 0
+    cache = tmp_path / "announced.jsonl"
+    _label_once(cache, monkeypatch)
+    assert f"[sf-soft] cache in use {cache}" in capsys.readouterr().out
+
+
+def test_main_resolves_the_cache_path_exactly_once() -> None:
+    """⚑ A STRUCTURAL check, and its limit is stated rather than implied.
+
+    The mutant this exists for SURVIVED every executing test in this file:
+    `main` resolves and prints the override, then hands
+    `resolve_sf_cache_path(args.audit_set, None)` to the labelling pass — the
+    announcement is truthful and the run uses the default. Nothing here can
+    observe that by execution, because reaching the labelling call needs a real
+    checkpoint and an hour of Stockfish; the repo's other `main()` wiring
+    checks (tests/test_audit_search_profiles.py) hit the same wall.
+
+    So the invariant is enforced one level up: the resolution happens ONCE, and
+    `main` never derives a cache path by hand. A second derivation is the only
+    way the printed and the used path can diverge.
+    """
+    import inspect
+
+    from scripts import audit_targets
+
+    src = inspect.getsource(audit_targets.main)
+    assert src.count("resolve_sf_cache_path(") == 1, (
+        "main resolves the shallow-SF cache path more than once; the printed "
+        "path and the labelled path can now disagree"
+    )
+    assert "shallow_sf.jsonl" not in src.replace(
+        '"<audit-set>.shallow_sf.jsonl. ⚑ REQUIRED for a repeat "', ""
+    ), "main derives a cache path by hand instead of calling the resolver"
