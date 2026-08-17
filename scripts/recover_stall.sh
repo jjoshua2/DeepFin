@@ -14,7 +14,7 @@
 # alive, no pause.txt, no intentional-stop marker), or by hand. Idempotent-ish:
 # safe to run when already down (kills nothing, just restarts).
 set -u
-cd /home/josh/projects/chess
+cd "$(dirname "$0")/.." || exit 2
 LOG=scratchpad/recover_stall.log
 mkdir -p scratchpad
 log(){ echo "$(date '+%m-%d %H:%M:%S') recover_stall: $*" | tee -a "$LOG"; }

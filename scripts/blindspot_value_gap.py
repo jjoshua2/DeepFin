@@ -102,8 +102,19 @@ from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.engine_discovery import (
+    announce_engine,
+    default_stockfish,
+    write_engine_record,
+)
 
-_DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+# ⚑ DISCOVERED, not merely repo-relative. `e2e_server/publish/` is UNTRACKED
+# runtime output, so it exists only in the checkout that published it — a
+# checkout-relative default resolves to nothing in the `git worktree` CLAUDE.md
+# mandates for branch work, which is where these tools are run. The shared
+# lookup falls back through $CAE_STOCKFISH, this checkout, the MAIN checkout and
+# PATH. (Codex inline review, #441.)
+_DEFAULT_SF = default_stockfish()
 
 
 def _sf_q(info: chess.engine.InfoDict, pov: chess.Color) -> float:
@@ -201,6 +212,8 @@ def main() -> None:
     use_rel = bool(getattr(model, "use_dynamic_relations", False))
     ev = LocalModelEvaluator(model, device=args.device)
 
+    # ⚑ #441 review N3: the gap is net-vs-SF, so the SF half IS half the number.
+    engine_record = announce_engine("valuegap", args.stockfish)
     eng = chess.engine.SimpleEngine.popen_uci(args.stockfish)
     eng.configure({"Threads": args.threads, "Hash": args.hash_mb})
     try:
@@ -241,6 +254,7 @@ def main() -> None:
         with open(args.out_jsonl, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r) + "\n")
+        write_engine_record(args.out_jsonl, engine_record)
 
     if not rows:
         print(f"[valuegap] no scorable seeds (unparsable/terminal={n_bad})")
