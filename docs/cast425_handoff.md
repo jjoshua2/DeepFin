@@ -78,7 +78,7 @@ differs between the live branch and `main` on ~55 keys, and this one is among th
 
 | | `w_sf_own_regret` |
 |---|---|
-| **LIVE** — `/home/josh/projects/chess` on `ops/live-20260725`, line 486 | **`0.0`** |
+| **LIVE** — the live checkout on `ops/live-20260725`, line 486 | **`0.0`** |
 | this branch / `main`, line 862 | `0.7` ⚑ **not what production runs** |
 
 An earlier revision of this file stated `0.0` unqualified, which is *false on the

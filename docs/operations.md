@@ -62,7 +62,9 @@ they were launched from; they now derive it with `cd "$(dirname "$0")/.."`. Laun
 `train.sh` / `watchdog_loop.sh` in the repo root this is identical behaviour — but running
 one **out of a `git worktree` now drives the worktree**, where `runs/` does not exist and
 the script will find no trial. Given the standing "use a worktree for all branch work"
-rule, run these from the main checkout, or `cd` there first.
+rule, run these from the main checkout, or `cd` there first. (`ratchet_common.sh` is
+*sourced*, so it uses `${BASH_SOURCE[0]}`, not `$0`; `RATCHET_ROOT` / `WATCHDOG_ROOT`
+still override.)
 
 ⚑⚑ **`bank_rolling_checkpoints.sh` is the one where that silently cost you something**, so
 it now refuses instead: from a tree with no `runs/pbt2_small/tune` it prints `[bank] ERROR:
@@ -70,8 +72,9 @@ no tune dir at <path>` and exits **2**, where before it printed nothing, created
 `data/salvage/rolling`, and — with `ONCE` unset, i.e. in production — looped on that
 forever. It is the rolling half of the **revert points** the experiment protocol depends
 on, and Ray prunes the originals meanwhile, so a silently-empty bank is only discovered at
-the moment a rollback is needed. `TUNE_DIR=<path>` overrides the location. (`ratchet_common.sh` is *sourced*, so it uses `${BASH_SOURCE[0]}`, not
-`$0`; `RATCHET_ROOT` / `WATCHDOG_ROOT` still override.) Engine-running tools
+the moment a rollback is needed. `TUNE_DIR=<path>` overrides the location.
+
+Engine-running tools
 (`blindspot_*`) do NOT have this problem — they discover the published Stockfish through
 `chess_anti_engine.utils.engine_discovery`, which falls back from the current checkout to
 the **main** checkout via `git rev-parse --git-common-dir`, because
