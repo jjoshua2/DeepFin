@@ -54521,3 +54521,84 @@ share, #235 collapses into #239's screen as one extra feature and should not be 
 
 No arm launched, no config touched, no GPU used. #235 stays PENDING and now carries a
 precondition; #239's prereg (`2239f7b70`) is unaffected and unblocked by this note.
+
+---
+
+## 2026-08-17 — AOT DEFECT (PRODUCTION, CONFIRMED) — **TWO INFERENCE-PATH CONSTANTS ARE NOT REBINDABLE: AOT SERVES BUILD-VINTAGE `log_temp` AND WDL BIAS**
+
+Diagnosed on PR #432, then **re-derived independently here from the shipped archives** (offline,
+no CUDA, no GPU, sha256/mtime untouched). This is a production-path defect, not an instrument
+artifact, and it is the amendment owed on this branch — the #432 work lives on a branch whose
+ledger is ~12k lines behind this one, so it could not be written there.
+
+### What is missing, measured from the packages themselves
+
+`torch._inductor` writes the rebindable constant table into each `.pt2`'s `wrapper.cpp` as
+`constants_info_[i].name = "..."`. ⚑ The names are **underscore-flattened** (`blocks_0_ffn_0_bias`),
+NOT dotted — a check written against the `state_dict`'s dotted FQNs finds nothing and would
+"confirm" this defect for the wrong reason. Read with the right convention, on `chess_b1024.pt2`:
+
+| package | declared constants | `policy_own_*` | `value_wdl_*` |
+|---|---|---|---|
+| `data/aot_models_512` | **455** | 10, none matching `log_temp` | 5 |
+| `data/aot_models_512_bt4heads` | **457** | 10, none matching `log_temp` | 5 |
+
+- **No constant in either package contains `temp` at all.** `policy_own.log_temp` is gone.
+- The `value_wdl` five are `net_0_bias`, `net_0_weight`, **`net_2_weight`**, `token_proj_bias`,
+  `token_proj_weight`. ⚑⚑ **`net_2_weight` is present and `net_2_bias` is ABSENT** — the layer's
+  weight is rebindable and its bias is not. That asymmetry is the fingerprint of the bias having
+  been constant-folded into the output, and it is much stronger evidence than a bare absence.
+- **Zero shape-`{}`/`{1}`/`{3}` constants exist in either archive**, so neither value survives
+  under some other name. They are folded, not aliased.
+
+### Why this matters on the production path
+
+Both are consumed in the forward pass — `policy_own.log_temp` folds into the policy logit scale
+(`transformer.py:289`) and `value_wdl.net.2.bias` into the WDL output bias. `load_constants` can
+only write FQNs the package DECLARES, so **every AOT-served weight publish silently keeps the
+build-vintage value for these two.** The AOT broker is a distinct policy path
+[[aot_broker_is_a_fifth_policy_path]], so this diverges AOT-served inference from eager for as
+long as a package outlives the checkpoint it was built from.
+
+Reproduced on #432 by swapping ONLY those two back to build vintage: policy mean row TV
+**0.00006** (build vintage) → **0.02970** (aug10) → **0.03361** (aug12) — a step then flat,
+matching the verify gate's x1.02 → x2.35 → x2.36. Implied healthy policy floor **0.0161** against
+an independently measured CUDA shape control of **0.0176** (8% apart). Argmax agreement **1.0000**
+under the swap, because a temperature rescale cannot reorder a row — which is exactly why argmax
+looked healthy while the ratio sat at 2.4.
+
+⇒ **This also resolves the standing puzzle** that sharpness rose 2.5× over aug10→aug11 with no
+ratio movement: **the ratio tracks Δ(folded constant), not sharpness.**
+
+### ⚑ The actuator, and it is our signature defect again
+
+The absence is not detected anywhere. `build_aot_constants` checks `fqns ⊆ state_dict`;
+`assert_package_has_updatable_constants` checks half-overlap; **neither checks the other
+direction**, and the payload is built FROM `fqns` — so even `check_full_update=True` cannot fire.
+The same hole is on production: `AOTEvaluator.load_weights` also builds from
+`self._constant_fqns`. A value is accepted and then silently ignored, and the gate that exists to
+notice cannot. [[a_gate_that_cannot_fail]] [[fixing_a_defect_class_reintroduces_it]]
+
+### ⚑ A confound this CORRECTS, against the PR's own headline
+
+The July-PASS/August-FAIL evidence originally offered for "the old gate measured the weights" is
+**confounded**: identical `.pt2` files do NOT have identical effective constants, so that contrast
+cannot separate "the gate read the weights" from "the packages were stale". The PR's thesis
+survives on the *unconfounded* 28/29 failure on freshly built packages verified against their own
+checkpoint. The `×1.02 perturb-and-rebind` control that was read as a REFUTATION moves `log_temp`
+by only 0.0055 — 10× less than the jul→aug step — so it is CONSISTENT with the hypothesis, not
+against it. [[a_counter_is_not_the_mechanism_behind_it]]
+
+### Status — NOT REPAIRED, and the repair is a hypothesis
+
+`build_inductor_configs` sets `aot_inductor.use_runtime_constant_folding = False`. Torch documents
+that flag as "whether to create a submodule for constant graph", so `True` PLAUSIBLY keeps these
+updatable — **that is a hypothesis, not a finding**, and confirming it needs a GPU rebuild while a
+training arm owns the GPU. Pre-committed confirming observation, written into the source so it
+cannot be quietly skipped: rebuild ONE bucket with the flag `True`, assert `get_constant_fqns()`
+gains the two names, and assert the new `unrebindable_output_constants` guard returns `[]`.
+Rebuilding alone does NOT clear it, which is why that guard FAILS rather than warns.
+
+⚑ Until the rebuild lands, **treat any AOT-served policy sharpness or WDL calibration number as
+carrying a build-vintage offset on these two constants**, and do not compare an AOT-served readout
+against an eager one without saying so. [[diff_the_file_you_measured_against_production]]
