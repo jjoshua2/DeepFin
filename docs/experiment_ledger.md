@@ -1161,9 +1161,11 @@ establish what it was for those rows. Rationale in
   `tb_policy_overrides.get(t, ...)` (`finalize.py:945`), and with
   **`syzygy_rescore_policy: true`** the tablebase policy REPLACES the visit
   distribution on TB rows — `argmax` there is the TABLEBASE's judgment, not search's.
-  Production is `false` (`configs/pbt2_small.yaml:335`), so this is a caveat, not a
-  defect. ⇒ if that flag is ever turned on, `a_M` is unusable on TB-rescored rows and
-  the decision to skip persisting the selected action must be re-opened.
+  It reads `false` in `configs/pbt2_small.yaml` (repo copy `:548`) AND in the live yaml
+  the run actually re-reads (`:335` there — the two files differ by 55 keys, so both were
+  checked), so this is a caveat, not a defect. ⇒ if that flag is ever turned on, `a_M` is
+  unusable on TB-rescored rows and the decision to skip persisting the selected action
+  must be re-opened.
 
 ### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, output below)
 
