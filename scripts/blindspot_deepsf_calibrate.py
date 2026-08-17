@@ -27,7 +27,11 @@ import time
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
-from chess_anti_engine.utils.engine_discovery import default_stockfish
+from chess_anti_engine.utils.engine_discovery import (
+    announce_engine,
+    default_stockfish,
+    write_engine_record,
+)
 
 _TAG = re.compile(r"bucket=(\w+).*?sq=(-?[0-9.]+).*?outcome=(\w+).*?game=(\d+)")
 # ⚑ DISCOVERED, not merely repo-relative. `e2e_server/publish/` is UNTRACKED
@@ -116,8 +120,8 @@ def main() -> None:
     sel = select(rows, args.control_n)
     print(f"[deepsf] {len(rows)} located seeds; rechecking {len(sel)} "
           f"(all REFUTED+INCONCLUSIVE + {sum(r['bucket']=='CONFIRMED_LOST' for r in sel)} CONFIRMED control)")
-    print(f"[deepsf] nodes={args.nodes:,} hash={args.hash_mb}MB syzygy={syzygy} "
-          f"stockfish={args.stockfish}")
+    print(f"[deepsf] nodes={args.nodes:,} hash={args.hash_mb}MB syzygy={syzygy} ")
+    engine_record = announce_engine("deepsf", args.stockfish)
 
     def make_engine() -> StockfishUCI:
         return StockfishUCI(args.stockfish, nodes=int(args.nodes),
@@ -158,6 +162,7 @@ def main() -> None:
     finally:
         eng.close()
 
+    write_engine_record(args.out, engine_record)
     with open(args.out, "w", encoding="utf-8") as fh:
         for r2 in results:
             fh.write(json.dumps(r2) + "\n")

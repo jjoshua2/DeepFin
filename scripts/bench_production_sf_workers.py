@@ -25,9 +25,22 @@ from typing import Any
 
 import numpy as np
 
-# All three CLI defaults below name paths INSIDE the checkout, so they are
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from chess_anti_engine.utils.engine_discovery import default_stockfish
+
+# The publish/AOT defaults below name paths INSIDE the checkout, so they are
 # derived from this file rather than written absolute — an absolute default
 # names one machine's copy and silently misses on any other.
+#
+# ⚑ THE ENGINE IS NOT ONE OF THEM. `e2e_server/publish/` is UNTRACKED runtime
+# output, so a checkout-relative engine path resolves in the one tree that
+# published it and nowhere else — including the `git worktree` CLAUDE.md
+# mandates for branch work. PR #441 converted this default from absolute to
+# `_REPO / "e2e_server/..."` and reintroduced exactly the regression it had just
+# fixed for `tests/stockfish_binary.py`. It goes through the shared discovery
+# in `chess_anti_engine.utils.engine_discovery` instead, which is the ONE
+# definition; a private copy here is how the copies drift.
 _REPO = Path(__file__).resolve().parents[1]
 
 
@@ -232,7 +245,7 @@ def main() -> None:
         default=str(_REPO / "runs/pbt2_small/server/trials/4c17c_00000/publish"),
     )
     parser.add_argument("--aot-dir", default=str(_REPO / "data/aot_models_512"))
-    parser.add_argument("--stockfish-path", default=str(_REPO / "e2e_server/publish/stockfish"))
+    parser.add_argument("--stockfish-path", default=default_stockfish())
     parser.add_argument("--orders", default="4,6,8:8,6,4")
     parser.add_argument("--max-plies", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)

@@ -9949,7 +9949,7 @@ result`. Cause: **PR #277's ragged tail batch.** `_iter_full_pass_batches`
 2000/512 gives shapes **512 and 464**, so a fresh process must compile BOTH before
 its first result. That exceeds the 120s budget. The extra graph was anticipated;
 its collision with the timeout on a cold process was not. Ruled out: cold inductor
-cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_josh` persists).
+cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_$USER` persists).
 **Self-healing** — Python cannot kill the thread, so the abandoned eval keeps
 compiling and warms the cache. **Standing cost: exactly 2 holdout readings per
 restart.** Fix ranked in the task list; pre-warming both shapes at init is the
@@ -38897,7 +38897,7 @@ becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read
 
 ### AMENDMENT 7 (2026-08-09) — REVERSING AMENDMENT 6: deploy BOTH knobs after all
 
-**Amendment 6's unbundling decision is WITHDRAWN.** Josh's objection is correct and it defeats
+**Amendment 6's unbundling decision is WITHDRAWN.** The maintainer's objection is correct and it defeats
 the reasoning I used:
 
 > *"if it hurts us or does not much we won't learn much since it doesn't have softening yet"*
@@ -39219,7 +39219,7 @@ the production path".
 
 ## TRAINING STOPPED 2026-08-09 20:03 — iteration 735, trial 379f6 (user decision)
 
-Stopped at Josh's instruction ("I think training isn't helping"), to price a rollback before
+Stopped at the maintainer's instruction ("I think training isn't helping"), to price a rollback before
 resuming. Clean teardown: `train.sh stop` exit 0, watchdog stopped FIRST (it auto-recovers on
 STALLED and would have relaunched training mid-teardown), **2304 in-flight games SUSPENDED**
 across 4 workers rather than discarded — so no resume point pays the drain-transient bias.
@@ -40418,7 +40418,7 @@ but not for the *arm-size* or *score-sd* statistics measured; the two trials agr
 
 ## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
 
-**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+**Status: PRE-REGISTERED, awaiting the maintainer's go-ahead + a GPU pause. Do not launch from this
 entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
 
 ### Hypothesis

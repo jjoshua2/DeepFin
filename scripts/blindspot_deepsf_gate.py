@@ -37,6 +37,7 @@ import time
 
 from chess_anti_engine.selfplay.opening import _fen_reject_reason, seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
+from chess_anti_engine.utils.engine_discovery import announce_engine, write_engine_record
 from scripts.blindspot_continuation import parse_seeds
 from scripts.blindspot_deepsf_calibrate import (
     _DEFAULT_SF,
@@ -85,6 +86,10 @@ def main() -> None:
         uniq.append(s)
     print(f"[gate] {len(uniq)} unique severe seeds; deep SF nodes={args.nodes:,} "
           f"syzygy={args.syzygy_path} blame_backup={args.blame_backup}")
+    # ⚑ #441 review N3: this gate DECIDES which blind spots are real, on deep-SF
+    # verdicts. Which binary produced them is part of the verdict, so it is said
+    # out loud and stored beside both artifacts.
+    engine_record = announce_engine("gate", args.stockfish)
 
     def make_engine() -> StockfishUCI:
         return StockfishUCI(args.stockfish, nodes=int(args.nodes), hash_mb=int(args.hash_mb),
@@ -219,8 +224,12 @@ def main() -> None:
     else:
         print("  (none graded)")
     print(f"  blame-backed to decision point: {backed}/{len(vetted)}")
+    for _artifact in (args.out_list, args.out_jsonl):
+        write_engine_record(_artifact, engine_record)
     print(f"  vetted list -> {args.out_list} ({len(vetted)} seeds)")
     print(f"  audit       -> {args.out_jsonl}")
+    print(f"  engine      -> {args.out_jsonl}.engine.json "
+          f"({engine_record['source']}, sha256={str(engine_record['sha256'])[:12]})")
 
 
 if __name__ == "__main__":

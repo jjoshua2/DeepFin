@@ -28,13 +28,18 @@ from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.moves import index_to_move
 from chess_anti_engine.stockfish import StockfishUCI
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.engine_discovery import default_stockfish
+from chess_anti_engine.utils.syzygy import default_syzygy_path
 
-# Defined AFTER the import block on purpose: ruff's E402 tolerates a bare
-# `sys.path` manipulation ahead of imports, but not an assignment, so hoisting
-# this above them turns all six local imports into findings.
-# The CLI defaults below name paths inside the checkout, so they are derived
-# from this file rather than written absolute.
-_REPO = Path(__file__).resolve().parent.parent
+# ⚑ THE ENGINE AND THE TABLEBASES ARE NOT IN THE CHECKOUT.
+# `e2e_server/publish/` is untracked runtime output and `data/syzygy_*` is 151G
+# of tablebases that only the publishing checkout has, so a `Path(__file__)`-
+# derived default resolves in that one tree and nowhere else -- including the
+# `git worktree` CLAUDE.md mandates for branch work. PR #441 made both of them
+# checkout-relative, which is why `--stockfish-path` and `--syzygy-path` below
+# take their defaults from the shared discovery instead of building a path here.
+# A missing engine at least fails loudly; a missing tablebase does not, which is
+# what `chess_anti_engine.utils.syzygy` exists to say out loud.
 
 
 @dataclass
@@ -377,11 +382,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument(
         "--stockfish-path",
-        default=str(_REPO / "e2e_server/publish/stockfish"),
+        default=default_stockfish(),
     )
     parser.add_argument("--sf-nodes", type=int, default=10000)
     parser.add_argument("--multipv", type=int, default=80)
-    parser.add_argument("--syzygy-path", default=str(_REPO / "data/syzygy_3-4-5"))
+    parser.add_argument("--syzygy-path", default=default_syzygy_path())
     parser.add_argument("--json-out", default="")
     args = parser.parse_args()
 

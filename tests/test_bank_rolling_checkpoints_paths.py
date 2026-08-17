@@ -154,3 +154,71 @@ def test_without_the_seam_the_script_still_loops(tmp_path: Path) -> None:
         f"the script exited on its own (code {result.returncode}) with ONCE "
         "unset — it is a daemon and must keep looping"
     )
+
+
+def test_the_wrong_tree_is_a_LOUD_failure_not_a_silent_no_op(tmp_path: Path) -> None:
+    """⚑⚑ #441 review N4: the banking daemon silently banked nothing.
+
+    Measured before the guard, from a `git worktree`::
+
+        $ ONCE=1 bash scripts/bank_rolling_checkpoints.sh
+        exit=0          # no output, nothing banked, empty data/salvage/rolling
+
+    Deriving the root from the checkout is right; it is also what turns "the
+    trial is not here" from impossible into ordinary, because CLAUDE.md mandates
+    doing branch work in a worktree. This is the salvage-banking daemon the
+    "snapshot before big changes" revert-point rule depends on, and with `ONCE`
+    unset it would have looped on the empty tree forever.
+
+    The assertion is on the EXIT CODE and stderr, not on stdout: a silent exit 0
+    is exactly the failure, so a test that only checked "did it bank anything"
+    would have passed on the broken version too.
+    """
+    root = tmp_path / "worktree_with_no_runs_dir"
+    root.mkdir()
+    script = _make_checkout(root)
+    # A checkout that has the script but no trial: precisely a fresh worktree.
+    shutil.rmtree(root / "runs")
+
+    result = _run_one_pass(script)
+
+    assert result.returncode == 2, (
+        f"exit {result.returncode} — a missing tune dir must be a loud exit 2 "
+        f"(the `feed_bootstrap_shards.py` shape), not a silent no-op. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "ERROR" in result.stderr, result.stderr
+    assert "no tune dir" in result.stderr, result.stderr
+    assert not (root / "data" / "salvage" / "rolling").exists(), (
+        "the destination directory was created for a run that can never bank "
+        "anything — an empty bank that LOOKS provisioned is what hid this"
+    )
+
+
+def test_TUNE_DIR_overrides_the_derived_location(tmp_path: Path) -> None:
+    """The guard must not become a wall: the override has to actually work.
+
+    Without this, `TUNE_DIR=${TUNE_DIR:-...}` could be reverted to a plain
+    assignment and every other test here would still pass — the knob would be
+    accepted and ignored, which is the defect class the guard exists for.
+    """
+    root = tmp_path / "empty_checkout"
+    root.mkdir()
+    script = _make_checkout(root)
+    elsewhere = root / "runs"          # the real trial, moved out of the way
+    (root / "somewhere_else").mkdir()
+    shutil.move(str(elsewhere / "pbt2_small" / "tune"), str(root / "somewhere_else" / "tune"))
+    shutil.rmtree(elsewhere)
+
+    result = subprocess.run(
+        ["timeout", "60", "bash", str(script)],
+        capture_output=True, text=True, check=False,
+        env={"PATH": "/usr/bin:/bin", "SLEEP": "600", "EVERY": "5", "KEEP": "24",
+             "ONCE": "1", "TUNE_DIR": str(root / "somewhere_else" / "tune")},
+    )
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
+    banked = root / "data" / "salvage" / "rolling" / "checkpoint_000005"
+    assert banked.is_dir(), (
+        f"TUNE_DIR was accepted and ignored. stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )

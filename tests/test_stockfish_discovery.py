@@ -14,6 +14,7 @@ having somewhere to look when the checkout has no engine of its own.
 """
 from __future__ import annotations
 
+import ast
 import stat
 from pathlib import Path
 
@@ -216,19 +217,274 @@ def test_the_script_default_is_never_none() -> None:
     assert fallback.endswith(str(engine_discovery.PUBLISHED)), fallback
 
 
-@pytest.mark.parametrize("script", [
+#: ⚑⚑ EVERY former call site, not the three someone happened to check.
+#:
+#: The first version of this list held only the three `blindspot_*` scripts
+#: Codex named, and the PR body claimed on that basis that "the lookup now lives
+#: in ONE place". It did not: the SAME commit had converted
+#: `bench_production_sf_workers.py` and `diagnose_gumbel_roots.py` from an
+#: absolute path (which reached the published engine) to
+#: `_REPO / "e2e_server/publish/stockfish"` (which resolves to nothing in a
+#: worktree), and `bench_vs_sf.py` had carried a private candidate list since
+#: before the PR. A partial consolidation is worse than none, because it is the
+#: partial one that gets described as finished.
+_ENGINE_CONSUMERS = (
     "blindspot_deepsf_calibrate.py", "blindspot_netside_vet.py",
-    "blindspot_value_gap.py",
-])
-def test_no_blindspot_script_hardcodes_its_own_engine_path(script: str) -> None:
-    """One definition, consumed — not three copies that drift.
+    "blindspot_value_gap.py", "bench_production_sf_workers.py",
+    "diagnose_gumbel_roots.py", "bench_vs_sf.py",
+)
 
-    Asserted on the SOURCE because the constant is evaluated at import and a
-    value check cannot tell a shared lookup from a lucky literal.
+
+def _code_string_literals(tree: ast.AST) -> list[str]:
+    """Every string literal the module EXECUTES with — docstrings excluded.
+
+    ⚑ Comments and docstrings are where the defect gets DESCRIBED, so a plain
+    substring grep over the source cannot tell "this script builds the published
+    engine path" from "this script explains why it must not". Parsing separates
+    them; grepping cannot.
     """
-    src = (REPO_ROOT / "scripts" / script).read_text(encoding="utf-8")
-    assert "default_stockfish()" in src, f"{script} does not use the shared lookup"
-    assert '"e2e_server"' not in src, (
-        f"{script} still builds its own engine path; the shared discovery is "
-        "the only definition"
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    return [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docstrings
+    ]
+
+
+def _stockfish_defaults(tree: ast.AST) -> list[ast.expr]:
+    """The `default=` expression of every `--stockfish*` argparse argument.
+
+    Module-level names are resolved one hop, because three of these scripts
+    write `_DEFAULT_SF = default_stockfish()` at import and then pass the name.
+    """
+    bindings: dict[str, ast.expr] = {}
+    module = tree if isinstance(tree, ast.Module) else None
+    for stmt in (module.body if module is not None else []):
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name):
+                bindings[target.id] = stmt.value
+
+    defaults: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "add_argument"):
+            continue
+        flags = [a.value for a in node.args if isinstance(a, ast.Constant)]
+        if not any(isinstance(f, str) and f.startswith("--stockfish") for f in flags):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "default":
+                continue
+            value = kw.value
+            if isinstance(value, ast.Name) and value.id in bindings:
+                value = bindings[value.id]
+            defaults.append(value)
+    return defaults
+
+
+@pytest.mark.parametrize("script", _ENGINE_CONSUMERS)
+def test_no_script_hardcodes_its_own_engine_path(script: str) -> None:
+    """One definition, consumed — not six copies that drift.
+
+    ⚑ Checked on the PARSED DEFAULT EXPRESSION, not with a substring grep. The
+    previous revision asserted `'"e2e_server"' not in src`, which is a
+    double-quoted, path-separator-free spelling: it could not see
+    `default=str(_REPO / "e2e_server/publish/stockfish")` — the exact form this
+    PR introduced in two of the files below — so the guard was green while the
+    defect it names was in the tree. A grep for a string is not a check on the
+    value that reaches argparse.
+    """
+    tree = ast.parse((REPO_ROOT / "scripts" / script).read_text(encoding="utf-8"))
+    offending = [s for s in _code_string_literals(tree) if "e2e_server" in s]
+    assert not offending, (
+        f"{script} still names the published-engine path itself ({offending}); "
+        "the shared discovery in chess_anti_engine.utils.engine_discovery is the "
+        "only definition, and it is the only one that looks in the main checkout"
+    )
+    defaults = _stockfish_defaults(tree)
+    assert defaults, f"{script} has no --stockfish* argument any more"
+    for default in defaults:
+        # `bench_vs_sf.py` alone defaults to None and resolves at CALL time,
+        # because it must raise rather than name a path that does not exist.
+        # That it consumes the shared list is proved by value, below.
+        if isinstance(default, ast.Constant) and default.value is None:
+            assert script == "bench_vs_sf.py", f"{script} defaults --stockfish to None"
+            continue
+        assert isinstance(default, ast.Call), ast.dump(default)
+        assert isinstance(default.func, ast.Name), ast.dump(default)
+        assert default.func.id == "default_stockfish", (
+            f"{script}'s --stockfish default is {ast.unparse(default)!r}, not a "
+            "call to the shared default_stockfish()"
+        )
+
+
+def test_bench_vs_sf_uses_the_shared_candidate_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ The one consumer with its own resolver, checked BY VALUE.
+
+    It keeps a resolver because it must RAISE rather than return a path that
+    does not exist, and because `$STOCKFISH_PATH` is its documented seam. What
+    it must not keep is its own candidate LIST — so patch the shared one and
+    watch the answer follow.
+    """
+    import scripts.bench_vs_sf as bench
+
+    engine = _fake_engine(tmp_path, "sf_from_shared_list")
+    monkeypatch.setattr(bench, "stockfish_candidates", lambda: [str(engine)])
+    monkeypatch.delenv("STOCKFISH_PATH", raising=False)
+    assert bench._resolve_stockfish_path(None) == str(engine)
+
+    # ...and with the shared list empty it raises, rather than silently
+    # falling back to a private literal.
+    monkeypatch.setattr(bench, "stockfish_candidates", list)
+    with pytest.raises(FileNotFoundError):
+        bench._resolve_stockfish_path(None)
+
+
+# ---------------------------------------------------------------------------
+# #441 review N3 — discovery must SAY which engine it picked, and the deep-SF
+# tools must RECORD it.
+#
+# `find_stockfish()` returning `/usr/games/stockfish` and returning
+# `<checkout>/e2e_server/publish/stockfish` are the same type and the same
+# shape. Before this, three of the four `blindspot_*` tools printed neither and
+# stored neither, so a substituted binary would have relabelled the audit set
+# and the artifact would have looked identical — the same shape as the recorded
+# burn where an SF cache key omitted engine identity.
+#
+#: The tools whose OUTPUT is a deep-SF label or a keep/kill verdict. For these,
+#: the engine is part of the result, not part of the invocation.
+_LABEL_TOOLS = (
+    "blindspot_deepsf_calibrate.py", "blindspot_deepsf_gate.py",
+    "blindspot_netside_vet.py", "blindspot_value_gap.py",
+)
+
+
+@pytest.mark.usefixtures("isolated")
+def test_resolve_reports_WHICH_source_answered(tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """The source label, per branch, by construction rather than by reading."""
+    engine = _fake_engine(tmp_path, "sf")
+
+    monkeypatch.setenv(ENV_VAR, str(engine))
+    assert engine_discovery.resolve_stockfish() == (str(engine), engine_discovery.SOURCE_ENV)
+    monkeypatch.delenv(ENV_VAR)
+
+    # Nothing anywhere: "missing", DISTINCT from "found somewhere unexpected".
+    assert engine_discovery.resolve_stockfish() == (None, engine_discovery.SOURCE_MISSING)
+
+    # A distro engine — the substitution the announcement exists to call out.
+    monkeypatch.setattr(engine_discovery, "DISTRO_CANDIDATES", (str(engine),))
+    assert engine_discovery.resolve_stockfish() == (str(engine), engine_discovery.SOURCE_DISTRO)
+    monkeypatch.setattr(engine_discovery, "DISTRO_CANDIDATES", ())
+
+    # ...and on PATH.
+    monkeypatch.setattr(engine_discovery.shutil, "which", lambda _n: str(engine))
+    assert engine_discovery.resolve_stockfish() == (str(engine), engine_discovery.SOURCE_PATH)
+
+
+@pytest.mark.usefixtures("isolated")
+def test_a_SUBSTITUTED_engine_is_called_out_and_a_published_one_is_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ The announcement must DISCRIMINATE, or it is decoration.
+
+    Printing the path unconditionally would pass a "does it print" test while
+    telling the reader nothing about the thing that changed: the pre-#441
+    literal had exactly one possible value, and the derived default does not.
+    """
+    engine = _fake_engine(tmp_path, "sf")
+
+    monkeypatch.setattr(engine_discovery, "DISTRO_CANDIDATES", (str(engine),))
+    engine_discovery.announce_engine("t", str(engine))
+    substituted = capsys.readouterr().err
+    assert "source=distro" in substituted, substituted
+    assert "NOT the one this checkout publishes" in substituted, substituted
+
+    # The checkout's own engine: reported, but NOT flagged.
+    monkeypatch.setattr(engine_discovery, "DISTRO_CANDIDATES", ())
+    published = tmp_path / "checkout_with_engine"
+    (published / engine_discovery.PUBLISHED).parent.mkdir(parents=True)
+    real = _fake_engine((published / engine_discovery.PUBLISHED).parent, "stockfish")
+    monkeypatch.setattr(engine_discovery, "REPO_ROOT", published)
+    engine_discovery.announce_engine("t", str(real))
+    ok = capsys.readouterr().err
+    assert "source=checkout" in ok, ok
+    assert "NOT the one this checkout publishes" not in ok, (
+        "the checkout's OWN engine was flagged as a substitution — an alarm "
+        "that fires every run is one people stop reading"
+    )
+
+
+def test_the_recorded_identity_is_the_CONTENT_not_just_the_path(tmp_path: Path) -> None:
+    """⚑ A path is not an identity: the same path holds a different engine
+    after a rebuild, which is exactly how a stale cache key produced wrong
+    labels here before."""
+    a = _fake_engine(tmp_path, "sf_a")
+    same_path = tmp_path / "rebuilt"
+    same_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    before = engine_discovery.engine_identity(str(same_path))
+    same_path.write_text("#!/bin/sh\necho different\nexit 0\n", encoding="utf-8")
+    after = engine_discovery.engine_identity(str(same_path))
+
+    assert before["path"] == after["path"]
+    assert before["sha256"] != after["sha256"], (
+        "the record does not change when the BINARY changes at the same path — "
+        "it is a path record, not an engine identity"
+    )
+    assert engine_discovery.engine_identity(str(a))["sha256"] is not None
+
+    # Never raises on an unreadable engine: the tool must still produce a result.
+    missing = engine_discovery.engine_identity(str(tmp_path / "nope"))
+    assert missing["sha256"] is None
+    assert missing["path"] is not None
+
+
+def test_the_sidecar_record_lands_next_to_the_artifact(tmp_path: Path) -> None:
+    import json
+
+    out = tmp_path / "nested" / "audit.jsonl"
+    side = engine_discovery.write_engine_record(out, {"path": "/x", "sha256": "abc"})
+    assert side == tmp_path / "nested" / "audit.jsonl.engine.json"
+    assert json.loads(side.read_text(encoding="utf-8"))["sha256"] == "abc"
+    # ⚑ A SIDECAR, so it cannot corrupt a JSONL that downstream scripts parse
+    # positionally. The artifact itself is untouched.
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("script", _LABEL_TOOLS)
+def test_every_deep_sf_label_tool_announces_its_engine(script: str) -> None:
+    """⚑ Checked on the CALL, not on a substring of the source.
+
+    Before #441's review, `blindspot_deepsf_calibrate.py` printed
+    `stockfish=...` and the other three — a GATE, a net-side VET and a
+    value-gap probe, all of which decide what survives — printed nothing and
+    stored nothing. A per-file `print` would drift back apart, which is why
+    they all go through the one helper.
+    """
+    tree = ast.parse((REPO_ROOT / "scripts" / script).read_text(encoding="utf-8"))
+    called = {
+        node.func.id for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "announce_engine" in called, (
+        f"{script} produces deep-SF labels or verdicts without ever saying "
+        "which binary produced them"
+    )
+    assert "write_engine_record" in called, (
+        f"{script} prints the engine but its ARTIFACT still carries no engine "
+        "identity — the print goes into a redirected log nobody keeps"
     )

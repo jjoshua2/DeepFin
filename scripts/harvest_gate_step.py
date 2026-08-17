@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.utils.syzygy import require_tablebases
+
 # Placement-key identity for dedup — the same helper mine_blindspot_seeds uses
 # (chess.Board(fen).epd()). Re-exported so callers/tests import one place.
 from scripts.mine_blindspot_seeds import (
@@ -460,7 +462,16 @@ def main(argv: list[str] | None = None) -> int:
                          "labelled is unlearnable by construction.")
     ap.add_argument("--multipv", type=int, default=10, help="Stockfish MultiPV for vetting")
     ap.add_argument("--syzygy-path", default=None,
-                    help="Stockfish SyzygyPath for <=6-man endgame rows")
+                    help="Stockfish SyzygyPath for <=6-man endgame rows. Every "
+                         "colon-separated component must actually hold .rtbw/.rtbz "
+                         "files or the gate REFUSES to run (see below).")
+    ap.add_argument("--allow-missing-tablebases", action="store_true",
+                    help="⚑ run TB-BLIND on purpose. The gate's whole claim is that "
+                         "it dominates the in-loop label on every axis INCLUDING "
+                         "tablebase coverage, and Stockfish accepts a nonexistent "
+                         "SyzygyPath in silence (`info string Found 0 WDL and 0 DTZ`, "
+                         "then `readyok`, exit 0). Without this flag a blind path is "
+                         "a non-zero exit, not a quietly worse number.")
     ap.add_argument("--vet-lost-below", type=float, default=-0.80,
                     help="keep only if deep-SF expected score ≤ this (truly lost)")
     ap.add_argument("--max-vet-per-run", type=int, default=30,
@@ -505,6 +516,20 @@ def main(argv: list[str] | None = None) -> int:
             if not args.sf_path:
                 print("harvest_gate: FAILED (sf-path required unless --dry-run or idle)")
                 return 2
+            # ⚑⚑ TB-BLINDNESS IS THE SILENT FAILURE, so it is checked BEFORE the
+            # engine is started rather than discovered from its output. The
+            # comment in `scripts/monitor_fen.sh` that supplies this path says the
+            # gate "must dominate the label on every axis (depth 2M>700k, MultiPV-1
+            # concentrated, TB equal) to legitimately overrule it" -- and TB equal
+            # was the one axis nothing enforced. Measured: Stockfish answers
+            # `readyok` and exits 0 with `Found 0 WDL and 0 DTZ`, so an absent
+            # tablebase directory changed only the ANSWERS, never the status.
+            if not args.allow_missing_tablebases:
+                try:
+                    require_tablebases(args.syzygy_path, what="--syzygy-path")
+                except ValueError as exc:
+                    print(f"harvest_gate: FAILED ({exc})")
+                    return 2
             sf_score, sf_close = _make_sf_score(
                 args.sf_path,
                 sf_nodes=args.sf_nodes,
