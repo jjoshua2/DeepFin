@@ -54907,3 +54907,122 @@ switched off.** [[relational_sf6_loses_to_the_constant_tail]]
    loss as a gain.
 5. Restart-gated with a revert point. This is a live training-path change; it does not go in
    mid-run.
+
+## 2026-08-17 PREREG — the `sf_own_regret` **fabricated-tail gate** (PR #447). ⚑ NOT ARMED, AND NOT ARMABLE IN ONE LEG.
+
+**Status: PREREG ONLY.** PR #447 is open against `ops/live-20260725`. Both its keys default to a
+**bit-exact identity** (`torch.equal` over every returned loss key), and `w_sf_own_regret` is
+`0.0` on the live yaml (`configs/pbt2_small.yaml:486`), so **merging changes nothing**. This
+entry exists so that the arm has a pre-committed rule BEFORE anyone edits the yaml — not to
+request the arm.
+
+### The defect being repaired
+
+`sf_p0_regret` is a **constant-tail** construction: up to `sf_multipv` (6) real normalized
+cp-regrets, then **ONE fitted constant repeated over every remaining legal move**. The term
+
+    sf_own_regret = sum_m p_own(m) * regret(m)      # losses.py, = E_p[SF regret]
+
+therefore puts **identical gradient on every unsurfaced move**, weighted by a number Stockfish
+never produced. On the **16.3%** of rows whose target argmax falls outside the MultiPV-6 set the
+regret magnitudes are **~74% invented** (`multipv6_regret_tail_is_fabricated`). Arming the weight
+ungated pushes policy mass by fabricated magnitudes on those rows.
+
+### ⚑⚑ THE SEQUENCING CONSTRAINT — this is the part that costs
+
+The gate is **not** a one-leg arm. Two things would change at once:
+
+* **Leg A** — `w_sf_own_regret` at dose *d*, gate at its identity defaults. Isolates **restoring
+  the term** (never tested against 0.0; see `2026-08-17 — w_sf_own_regret IS JOSH'S PROPOSAL`).
+* **Leg B** — the SAME dose *d*, gate armed. `B − A` isolates **the gate**.
+
+Running A and B together violates *one data-affecting change per readout window* and yields a
+number attributable to neither. **Each leg needs its own day-plus window** (this is a
+learning-quality change, not stability/throughput). That is the honest cost and it is the reason
+this is a prereg rather than a launch.
+
+### ⚑ REQUIRED PRECONDITIONS — both are offline, CPU-only, and either can kill the arm for free
+
+1. **The realized gradient share of the term on the CURRENT checkpoint** (task #38). ⚑ Do NOT
+   derive this from `m_sf_own_regret`: the loss VALUE is not the gradient share, the two moved in
+   opposite directions when I tried it, and I published the wrong direction before catching it
+   (`a_bundle_zeroing_destroys_n_verdicts`). One forward/backward, ~240 rows, CPU. Needed to pick
+   *d* at all — the historical 0.7 was calibrated for statistical POWER on a **different
+   architecture** and no dose ladder exists on either.
+2. **RESOLUTION BEFORE THRESHOLD.** On banked shards, measure the share of the term's total
+   gradient MAGNITUDE contributed by rows the gate would scale. **If the gate moves less than 10%
+   of the term's gradient magnitude, leg B is unfalsifiable at our arena resolution and is
+   CANCELLED** — not softened. The gate reaching 21.7% of rows (`has_sf_p0_regret_frac`) is a
+   COUNT, and a count is not the mechanism (`a_counter_is_not_the_mechanism_behind_it`).
+
+### Deciding yardstick — ONE, an exact command, per leg
+
+Paired-opening arena, same search config both sides, only the weights differing:
+
+    PYTHONPATH=. python3 scripts/arena_standard.py --matched-sims \
+      --engine-a <leg checkpoint> --engine-b <pre-leg checkpoint> \
+      --games 400 --concurrency 16 --out scratchpad/sfgate_arm/<leg>_arena.json
+
+**Pre-committed thresholds, per leg** (pentanomial Elo, 95% CI, **full 400 games — no rolling
+read, no suffix selection**; optional stopping faked +112 Elo on this project):
+
+| observed | verdict |
+|---|---|
+| CI lower bound **> 0** | **WORKED** — keep the leg |
+| CI contains 0 | **NULL** — revert the leg; the term/gate is not worth its risk |
+| CI upper bound **< 0** | **FAILED** — revert immediately |
+
+### ⚑⚑ THE RULER CONSTRAINT — three instruments are DISQUALIFIED
+
+* **NOT the deep-SF audit set.** This term pushes policy toward SF's own preferences on 21.7% of
+  rows — the anti-engine ratchet in its strongest ACTIVE form. An SF-derived ruler scores the
+  ratchet as success (`audit_first_cannot_judge_a_non_sf_teacher`). **SF at any budget is out.**
+* **NOT BT4**, if BT4 is ever used to select or weight these rows — a filter cannot judge its own
+  output.
+* **NOT `wdl_regret`.** It measures the AGENT (net + search), not the net
+  (`wdl_regret_measures_agent_not_net`), and the PID converts strength into difficulty. It may be
+  reported as context; it may **not** decide the leg.
+
+Secondary (reported, non-deciding): the **C1 non-SF ladder**, and `scripts/value_regret.py` as a
+no-harm check on the value head.
+
+### The observation that proves the gate took effect
+
+`sf_own_regret_gated_frac` (registered in `_RATIO_METRIC_FIELDS` against `sf_own_regret_rows`,
+the term's OWN denominator). **It must read exactly `0.0` before leg B and non-zero after.** If
+leg B is armed and this metric still reads 0.0, the leg is VOID and the gate never fired — that is
+this repo's signature defect and the metric exists precisely to make it visible.
+
+### Revert point — REQUIRED before either leg
+
+    ./scripts/train.sh salvage-export --top-n 1 --metric training_iteration \
+      --out data/salvage/pre_sfgate_<date>
+
+⚑ A yaml revert is **not** a rollback: the replay window holds ~a day of data made under the old
+settings.
+
+### Confounds
+
+Both legs sit on the post-EP-fix run (`dea5e`), which reads **FLAT-to-WEAKENING at n=95** — a flat
+baseline means "better than last time" is cleared by ZERO improvement. The search config has been
+frozen since 2026-08-09 20:58 and **must stay frozen** across both legs or the regret series and
+the arena baseline are both void.
+
+### ⚑ DEPLOY ORDER — an unknown key is FATAL AT LAUNCH, not a silent revert
+
+`sf_own_regret_listed_mass_min` and `sf_own_regret_unlisted_scale` are in `TRAINER_WEIGHT_KEYS`,
+so they are live-pushable **once the running code defines them**. Neither may be added to the live
+yaml until PR #447 is **merged AND production has restarted onto it** — `flatten_run_config_defaults`
+runs outside any `try` in `run.py`, so a key the running schema does not know **prevents the process
+from booting**. Neither key is range-validated (CLAUDE.md category (c)): a decimal typo lands
+silently. Dry-run on a COPY before writing the live file.
+
+### What would falsify the premise behind the whole idea
+
+That the surfaced set is identifiable at loss time from `sf_p0_regret` alone. It rests on the fill
+being the row MAXIMUM — measured, not assumed: over **2350** live rows with >= 8 legal moves the
+max is a plateau (multiplicity >= 2) in **2350/2350**, and **2350/2350** carry <= 6 values strictly
+below it. If a future `sf_multipv` change or label-builder change breaks that shape, the gate
+silently stops selecting the right rows. ⚑ `sf_p0_regret_raw` cannot substitute: it is the
+**previous ply's** read (`p0_alignment_is_the_previous_ply`) and the replay buffer shuffles rows
+independently.
