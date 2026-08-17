@@ -54602,3 +54602,65 @@ Rebuilding alone does NOT clear it, which is why that guard FAILS rather than wa
 ⚑ Until the rebuild lands, **treat any AOT-served policy sharpness or WDL calibration number as
 carrying a build-vintage offset on these two constants**, and do not compare an AOT-served readout
 against an eager one without saying so. [[diff_the_file_you_measured_against_production]]
+
+---
+
+## 2026-08-17 — OPS — **THE ROLLING CHECKPOINT BANKER HAS BEEN DEAD 16 DAYS, SILENTLY**
+
+Surfaced as a side-observation during the independent review of PR #441 and verified here
+directly. Recorded because it is a standing safety net that is OFF, and nothing said so.
+
+    newest rolling bank   data/salvage/rolling/checkpoint_000475   2026-07-31 12:46
+    now                                                            2026-08-17 01:50
+    gap                                                            16 days 13 h
+    bank_rolling processes running                                 0  (ps, no pattern-kill)
+
+### ⚑ State the scope correctly — "revert points are not being taken" is TOO STRONG
+
+The AUTOMATIC roller is dead. **MANUAL protocol-rule-2 snapshots are still being taken** and are
+current:
+
+    data/salvage/bt4heads_iter100_20260815   2026-08-15   <- the CURRENT run resumed FROM this
+    data/salvage/armB_launch_base_20260814   2026-08-14
+    data/salvage/pre_policy_adapter_20260812 2026-08-12
+
+⇒ The protocol has been followed at each deliberate change. What is missing is the **unattended**
+net underneath it. The real exposure is narrower and worth naming exactly: **the current run
+(launched 2026-08-16, now at iter 99) has no snapshot of its own** — only its launch base from
+the day before. A crash now costs the run's whole history since launch, which the roller existed
+to bound.
+
+### Why it went unnoticed — the same defect #441 is fixing
+
+`scripts/bank_rolling_checkpoints.sh` **silently no-ops and exits 0 when run from the wrong
+tree** (PR #441 finding N4, now fixed there to stderr + exit 2). A daemon whose failure mode is
+"exit 0, print nothing" cannot be distinguished from a daemon that is working, and there is no
+freshness alarm on `data/salvage/rolling/`. [[a_gate_that_cannot_fail]]
+
+⚑ This is the second instrument this month whose absence was invisible because its failure is
+silent. The generalisable rule: **a periodic job needs a staleness alarm on its OUTPUT, not a
+success path in its code.** The output here is a directory mtime, which is free to check.
+
+### Owed — NOT done in this session, and deliberately not auto-started
+
+1. Restart the roller (a user decision — it is an unattended daemon that writes ~2.3 G per bank
+   and contends with training; not something to start unasked). ⚑ It must be started from a tree
+   carrying #441's fix, or it will no-op silently again for the same reason.
+2. Add a staleness check on `data/salvage/rolling/` newest-mtime to whatever monitoring exists,
+   so a 16-day gap alarms instead of being discovered by an unrelated review.
+3. Consider one manual `salvage-export` for the current run now, since it holds 99 iterations
+   with no snapshot of its own.
+
+### Incident, disclosed and verified ZERO-IMPACT
+
+The #441 reviewer ran `bank_rolling_checkpoints.sh` **from the live tree** while testing N4. The
+live tree is on `ops/live-20260725`, which does NOT carry the PR's `TUNE_DIR`/`ONCE` seam, so the
+env prefix was ignored and the real script banked `checkpoint_000100`; its own trim then removed
+it (lowest of 25 at `KEEP=24`). **I verified the directory independently rather than accepting
+the report**: exactly **24** entries, `checkpoint_000360`–`checkpoint_000475`, newest mtime
+unchanged at 2026-07-31 12:46. Nothing pre-existing was touched.
+[[agent_destructive_latitude_and_false_backups]]
+
+⚑ The instructive part is not the write, it is the CAUSE: the agent reasoned about the script's
+behaviour from the PR's source while executing the LIVE tree's copy of it. Same file name, two
+different files. [[diff_the_file_you_measured_against_production]]
