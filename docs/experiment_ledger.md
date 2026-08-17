@@ -55234,3 +55234,116 @@ bit-exact identity on `compute_loss`, and the review's P1-1 (the `_RATIO_METRIC_
 would have killed the trial on iteration 1 **at those identity defaults**) is closed and covered.
 ⚑ That P1-1 is the standing reason "the defaults are an identity" is never by itself a safety
 argument here: it was true of the loss and false of the trainer.
+
+## 2026-08-17 AMENDMENT 4 — BOTH offline preconditions MEASURED. Leg B **SURVIVES**, `w_sf_own_regret 0.7` does **NOT**, and `listed_mass_min 0.1` would have been a **GUARANTEED NULL**
+
+Task #38 and the prereg's "RESOLUTION BEFORE THRESHOLD" gate, both executed on the CURRENT
+production checkpoint. **240 rows, 5 batches, CPU, one forward + 6 extra backwards per batch**, on
+the live trial's own replay shards.
+
+    # ckpt158 of dea5e copied OUT of the Ray-pruned tune dir first (global_iter 1150)
+    cd <worktree with PR #447> && OMP_NUM_THREADS=6 PYTHONPATH=. python3 \
+      scratchpad/probe_gate_resolution.py \
+      --checkpoint scratchpad/gradshare_probe/ckpt158_dea5e/trainer.pt \
+      --replay-dir runs/pbt2_small/replay/train_trial_dea5e_.../replay_shards \
+      --out scratchpad/sfgate_resolution/result.json
+
+⚑ Ran on **CPU, not GPU**, and the reason is a measurement in itself: the sibling probe this reuses
+defaults to `--gpu-mem-fraction 0.15`, but a live run holds **30.3 of the 5090's 32.6 GB**, so 0.15
+(~4.9 GB) does not exist to be taken. Reading the probe's own default as "blessed as concurrent-safe"
+would have been the OOM that has killed this run twice. **`--gpu-mem-fraction` is a CEILING, not a
+RESERVATION.**
+
+### P1 — the realized gradient share is 30.5%, NOT 5.9% ⇒ the dose must come DOWN, not up
+
+`|| d sf_own_regret / d trunk || / || d policy_ce / d trunk ||`, per batch, on production rows:
+
+| | value |
+|---|---|
+| per-batch ratios | 0.2734, 0.1585, 0.3613, 0.2029, 0.5271 |
+| **mean** | **0.3047** (sd 0.146, se 0.065, **95% CI [0.123, 0.486]** at n=5) |
+| weighted share at the historical `w_sf_own_regret 0.7` | **0.2133** |
+| dose that hits the historical ~7% target | **d = 0.23**, CI [0.144, 0.568] |
+
+⇒ **`0.7` is outside the upper end of the CI. It would deliver ~3× the dose it was calibrated for**
+— and that calibration was itself only ever a choice for statistical POWER, never an optimum. The
+recalibrated starting dose is **d ≈ 0.25**, and the three caveats carried in the 08-17 entry all
+still stand (no dose ladder exists on either architecture).
+
+⚑⚑ **THIS SUPERSEDES MY OWN CORRECTION, AND IN THE OPPOSITE DIRECTION AGAIN.** Earlier today I
+retracted a "point the dose DOWN" claim, showed the arithmetic pointed **UP (1.2×)** off the 5.9%
+figure, and recorded that as the correction. The measurement now says **DOWN (0.33×)**. Both are
+defensible and they are not the same net: 5.9% was **ckpt161 of the 13a9f lineage**; 30.5% is
+**ckpt158 of dea5e**, a bt4heads-architecture net salvaged from a different seed. So this is not a
+third flip on one quantity — it is the same quantity on a **different model**, which is exactly the
+thing [[knob_effects_reverse_sign_between_checkpoints]] warns about. ⇒ **The gradient share is a
+PER-CHECKPOINT property and must be re-measured at the checkpoint the arm actually starts from.**
+It is not a constant of the architecture and it must never be quoted across lineages.
+
+### P2 — the gate's reach, and the dose that would have wasted a day
+
+Share of the term's gradient magnitude the gate moves at `unlisted_scale = 0.0` (its MAXIMUM reach
+at that dose), measured by DIFFERENCE OF GRADIENTS through the production path:
+
+| `listed_mass_min` | gated rows / eligible | ‖Δg‖/‖g‖ | (‖Δg‖/‖g‖)² | vs the 10% bar |
+|---|---|---|---|---|
+| **0.10** | **0.000** | **0.000** | 0.000 | **FAIL — the gate is EXACTLY INERT** |
+| 0.25 | 0.089 | 0.202 | 0.041 | norm PASS / energy FAIL |
+| 0.50 | 0.156 | 0.289 | 0.084 | norm PASS / energy FAIL |
+| **0.75** | 0.218 | 0.420 | 0.177 | **PASS under BOTH readings** |
+| **0.90** | 0.324 | 0.675 | 0.455 | **PASS under BOTH readings** |
+| 1.00 | 0.851 | 0.929 | 0.864 | PASS, but see below |
+
+**⚑⚑ FINDING 1 — `listed_mass_min: 0.10` GATES ZERO ROWS AND MOVES ZERO GRADIENT.** A "let's start
+conservative" dose choice would have produced a leg B that is **literally a no-op**, arithmetically
+identical to leg A, and the arena would have returned a null that means nothing about the gate. That
+is this repo's signature defect — a value accepted and silently ignored — and it would have cost a
+**day-plus paired window** to discover. **The precondition earned its keep before the arm, which is
+the entire argument for pre-committing offline kill gates.** [[a_gate_that_cannot_fail]]
+
+**⚑ FINDING 2 — MY OWN PRE-COMMITTED BAR IS AMBIGUOUS, and it decides the answer.** The prereg said
+"share of the term's total gradient MAGNITUDE" and did not disambiguate norm from energy. It
+matters: at `0.25` the two readings give **20.2% (PASS)** and **4.1% (FAIL)**. Resolved NOW, before
+the arm, so it cannot be chosen post-hoc:
+
+* **The literal text governs — magnitude means the NORM ratio**, so doses ≥ 0.25 clear the
+  pre-committed bar and **leg B is NOT cancelled.**
+* ⚑ But a share of gradient magnitude is a **RATIO OF NORMS, NOT A PARTITION**: ‖g_a+g_b‖ ≠
+  ‖g_a‖+‖g_b‖, so these do not sum to 1 over a row partition and can exceed 1 under cancellation.
+  Any "the gated rows carry 2.3× their share" leverage claim is **NOT supported** — under
+  near-orthogonality the energy reading is the honest one, and it puts the minimum informative dose
+  at ~0.75.
+
+⇒ **OPERATING BAND: `listed_mass_min` ∈ [0.75, 0.90].** Clears the bar under BOTH readings, and
+still leaves most of the term intact.
+
+**⚑ FINDING 3 — `listed_mass_min: 1.00` IS NEAR-ABLATION, NOT A SCALPEL.** It gates **85.1% of
+eligible rows** and moves **92.9%** of the term's gradient. At that dose leg B is operationally
+"turn the term off on tail rows", which is **not the hypothesis** — the hypothesis is "keep the term,
+distrust fabricated magnitudes". **1.00 is therefore EXCLUDED as leg B's dose** even though it
+passes every bar, because a pass at 1.00 would be uninterpretable: it cannot distinguish "the gate
+helped" from "`w_sf_own_regret` should be 0.0", and 0.0 is what production already runs.
+
+### Two wiring facts the probe established as a side effect
+
+1. **Both keys ARE in a real `Trainer._loss_kwargs`** built from the production yaml, read at
+   `0.0`/`1.0` with `w_sf_own_regret: 0.0`, `w_policy: 1.0`. This is the exact leg the reviewer's
+   **surviving M19 mutant** proved was untested — every test in the PR called `compute_loss`
+   directly and never constructed a `Trainer`. Now confirmed against production config + a
+   production checkpoint, not a fixture.
+2. **The bit-exact identity holds on every batch of REAL production rows**
+   (`identity_holds_on_every_batch: true`), not only on the synthetic rows the unit tests build.
+
+### Resolution of the instrument itself — stated because n=5 is small
+
+The P1 95% CI is **[0.123, 0.486]**, a 4× spread. Every conclusion above is chosen to survive the
+whole interval: "0.7 is too high" holds at the CI's upper end (d_max 0.568 < 0.7), and "far above
+5.9%" holds at the lower end. ⚑ **What the interval does NOT support is quoting 30.5% as a
+calibration.** A tighter number needs more batches, and the dose LADDER the 08-17 entry already owes
+is the thing that decides *d* — never a restore-to-a-number. [[compute_instrument_resolution_before_the_threshold]]
+
+### Contamination marker
+
+Probe ran on 6 of 32 CPU threads for ~13 min during iters ~159-162 of `dea5e`. Task #244's re-read
+at n>=200 should treat that window as agent-CPU-loaded, consistent with the existing marker for
+iters 22+.
