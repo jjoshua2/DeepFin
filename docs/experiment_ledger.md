@@ -55604,3 +55604,63 @@ or normal-by-construction for this `clip_option`. `adaptive_scaling` computes
 could be routine by design, which would make "clip rate" near-uninformative as a health signal. That
 needs reading the `zclip` library's semantics. **Until then no zclip knob should be touched, and the
 100% figure must not be quoted as evidence of anything.**
+
+### ⚑⚑ MEASURED: CLIPPING THE AURORA GROUP WOULD BE ARITHMETICALLY INERT — and the real unguarded lever is `matrix_lr_multiplier`
+
+Josh asked the right follow-up: is excluding Aurora from the clip even correct, or could it still take
+bad steps we'd want to clip? **Excluding it is correct, and the reason is stronger than "it's fine".**
+
+**MEASURED (CPU, `_aurora_update` at the production settings `polar_express` / `polar_steps: 8` /
+`pp_iterations: 3` / `pp_beta: 0.25` / `polar_safety: 1.01`):**
+
+| grad scale | ‖update‖_F | max abs diff vs 1x |
+|---|---|---|
+| 1     | 22.627386 | 0        |
+| 0.1   | 22.627384 | 4.77e-07 |
+| 10    | 22.627386 | 4.40e-07 |
+| 100   | 22.627388 | 3.80e-07 |
+| 1000  | 22.627386 | 3.95e-07 |
+
+Singular values of the update: **min 1.0000, max 1.0000, mean 1.0000**. ‖update‖_F = **22.6274 =
+sqrt(512) exactly**. Rectangular 512x1024 behaves identically (22.6273 at 1x and at 250x).
+
+**MECHANISM, from the source, not inferred:** both polar paths (`_polar_factor_simple` and
+`_polar_express`) open with `x = x / (x.norm(dim=(-2,-1), keepdim=True) [* safety] + eps)`. A global
+rescale of the gradient is divided out on the FIRST LINE. Global-norm clipping does exactly one thing
+-- rescale -- so **applying it to the matrix group would change the update by ~1e-7, i.e. nothing.**
+The `_GradClipScope` split is not an oversight; it is the only non-pointless choice.
+
+**WHAT BOUNDS THE MATRIX GROUP INSTEAD:**
+- **Shape, not gradient.** step = `lr * sqrt(min(m,n)) * sqrt(max(1, m/n))`. "Huge gradient -> huge
+  step" is STRUCTURALLY IMPOSSIBLE. That is the property clipping exists to give AdamW.
+- **Non-finite is a loud crash**: `torch.isfinite(update).all()` -> `RuntimeError("Aurora produced a
+  non-finite matrix update")`, plus `check_finite` in the PP path. Not silent poison.
+- **Momentum dilutes a bad batch better than clipping would.** `buf.mul_(0.95).add_(grad, alpha=0.05)`
+  then nesterov `lerp(grad, buf, 0.95)`: one outlier enters at ~5-10% weight and its scale is then
+  discarded entirely. Clipping would have admitted the bad gradient at its CLIPPED magnitude.
+
+**THREE RESIDUALS THAT ARE REAL, none of which clipping addresses:**
+1. **A bad DIRECTION gets a FULL-SIZE step.** Magnitude being fixed cuts both ways: Aurora cannot take
+   a *smaller* step on a suspicious batch, where AdamW+clip can. The remedy would be a step SKIP
+   (batch rejection on a grad-norm z-score), not a clip. We have none. **Unmeasured** -- do not treat
+   this as a known defect.
+2. **`aurora_uw_floor` is a FLOOR and there is NO CEILING.** `clamp_min(floor / ratio, 1.0)` can only
+   scale UP; production is `0.0` (off). Grepped: `uw_ceil` / `uw_cap` / `uw_max` / `clamp_max` do not
+   exist in `aurora.py`. Low concern, because the ratio is
+   `lr*sqrt(min(m,n))*sqrt(max(1,m/n)) / ||W||` -- knowable, moves only as fast as `||W||`, and
+   `aurora_uw_ratio` is already logged.
+3. **⚑⚑ `matrix_lr_multiplier: 20` IS THE ENTIRE STEP-SIZE CONTROL FOR 28.6% OF PARAMS AND HAS NO
+   VALIDATOR.** `trainer.py:1697` reads it as `_f("matrix_lr_multiplier", 20.0)` -- float-converted,
+   **range-unchecked**: category (c). Because the matrix path has **no adaptive denominator at all**,
+   an AdamW lr typo is partly absorbed by its own denominator and this one is absorbed by NOTHING.
+   `trainable_init.py:108` states in its own comment that this group "started at 6e-3 -- double the
+   0.003" that GPBT knows destroys the model. So `matrix_lr_multiplier: 200` (one decimal) is silently
+   accepted and lands a value this repo already documents as destructive.
+   **MITIGATION:** it is CONSTRUCTION-ONLY (`trainable_config_ops.py:388`), so the hazard window is a
+   RESTART, not a mid-run live edit. That is why this is a cheap-guard item and not an emergency.
+
+**⇒ ACTIONS (both cheap, neither touches training):** (i) gate the zclip median warning on the
+hard-clip rate too and make its text name whichever clip actually bound -- see the correction above;
+(ii) range-validate `matrix_lr_multiplier` (and check its siblings `matrix_weight_decay`,
+`aux_weight_decay` for the same shape). **NOT actioned: nothing about the Aurora clip scope. It is
+correct as built and this measurement is the evidence.**
