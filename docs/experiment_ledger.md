@@ -55494,3 +55494,29 @@ opponent's position, so its `cp` is the OPPONENT's POV. Negating it makes the ne
    a fabricated number.
 4. **No `w_sf_own_regret` value is justified by matching the historical 7% share.** The dose ladder
    this ledger already owes is what decides it.
+
+### RESOLVED, same session — the concentration question, re-measured at a resolution that can answer it
+
+The 0.38 worst-drop share above was flagged as a LOWER BOUND the 4-ply sampling gap could not
+resolve. Re-measured on the **dense transitions only** (consecutive labelled plies <= 2 apart, >= 2
+drops per game, 32 shards):
+
+| outcome | games | n_drops median | worst drop median | **worst-drop SHARE** | frac >= 0.8 |
+|---|---|---|---|---|---|
+| Win | 563 | 4 | 524.0cp | **0.592** | 21.7% |
+| Draw | 597 | 3 | 177.0cp | **0.600** | 25.3% |
+| Loss | 813 | 4 | **585.0cp** | **0.576** | **25.5%** |
+
+* The gap-blur WAS understating concentration, exactly as predicted: 0.38 -> ~0.58 once restricted to
+  separable transitions. Predicting the direction before measuring is the only reason that number is
+  readable.
+* ⚑⚑ **THE HEADLINE SURVIVES AND IS NOW A FINDING, NOT A CAVEAT: concentration does NOT discriminate
+  outcome.** 0.592 / 0.600 / 0.576 across W/D/L, and `frac >= 0.8` is 21.7% / 25.3% / 25.5% — flat.
+  A loss is ~58% concentrated in one transition, **and so is a win.**
+* ⇒ **A "find the one collapse" detector is NOT a loss detector** — it would fire just as often on
+  games we won. The informative quantity is the **MAGNITUDE** of the local drop (loss 585cp vs win
+  524cp worst, and 1.4x on the totals), never its concentration.
+* ⇒ **DESIGN CONSEQUENCE: weight by local dEval MAGNITUDE, not by "was there a collapse".** And since
+  concentration is outcome-independent, the game OUTCOME adds little beyond what the local drop
+  already carries — which strengthens the per-position adjudicator over Josh's outcome-conditioned
+  version, on the outcome-conditioned version's own terms.
