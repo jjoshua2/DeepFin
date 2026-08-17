@@ -54084,9 +54084,42 @@ task-#11 fix working (counted and reported, not silently dropped).
 ⚑ **Measured rate ~1 failure per iteration** (failed=3 across iters 54-56), NOT the "~0.5% of
 draws" first estimated: the sampler is recency-weighted (`recency_exponent=1.0`, newest decile
 0.1899 vs oldest 0.0101) and these are the two **newest** shards, so they are drawn nearly
-every refresh and will age out slowest — ~a day, ~300 warnings. Quarantine by **move-aside**
-(never delete) is recommended; the buffer's own `vanished=` counter shows a disappeared shard
-is an expected category.
+every refresh and will age out slowest — ~a day.
+
+**⚑⚑ DO NOTHING. THE OBVIOUS REMEDY IS WRONG, AND SO WAS THIS ENTRY'S FIRST VERSION.**
+It originally recommended quarantining the two shards by move-aside, reasoning from the log
+line's `vanished=` counter that a disappeared shard is a handled category. **It is not what
+that counter means.** `disk_buffer.py:1436` splits the two cases on **tracking, not
+existence**:
+
+```python
+if sp not in self._shard_paths:      # <- TRACKED?, not "does the path exist?"
+    self._refresh_vanished_total += 1
+    return
+self._refresh_failed_total += 1
+```
+
+Its docstring is explicit that a path which is no longer tracked "was deliberately deleted and
+losing it is expected", and that going by exception type instead "would be both wrong and
+fragile" (a missing zarr group raises `GroupNotFoundError`, a `ValueError`, not
+`FileNotFoundError`; a half-deleted group raises a third kind). ⇒ **Moving the directories
+aside would leave them still TRACKED, so they would still count as `failed` and still warn on
+every draw** — while making them genuinely unrecoverable. It costs something and buys nothing.
+
+**They untrack themselves.** `enforce_window` calls `delete_shard_path` under the lock
+(`disk_buffer.py:1648`), which is the only thing that removes a path from `_shard_paths`. When
+these two age out of the window they flip to `vanished` and stop warning. The only mechanism
+that can retire them correctly lives inside the running process.
+
+Also corrected: the "~300 warnings" projection was too high — `_SHARD_LOAD_WARN_INTERVAL_S =
+60.0` throttles the message to at most one per minute. The *skipped draws* still occur at
+~1/iteration; only the printing is throttled.
+
+⇒ **Method rule, third instance today:** the presence of a counter/flag is not a reading of
+the mechanism behind it. Same shape as `git cat-file -e` reporting success on a zero-length
+object earlier the same evening ([[git_fetch_cannot_self_heal_a_zero_length_object]]) and as
+[[a_gate_that_cannot_fail]]. **Read the branch that sets the counter before recommending an
+operational action from it.**
 
 **⚑⚑ CONTAMINATION MARKER — iters 54-56 carry NO throughput or PID verdict.**
 `time_this_iter_s`: iter 54 = **1507.0**, iter 55 = **620.4**, against a 248-266s steady-state
