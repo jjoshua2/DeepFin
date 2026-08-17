@@ -266,6 +266,44 @@ def _stratified_sample(
     return picked
 
 
+def sha256_file(path: Path) -> str:
+    """sha256 of a file's bytes, streamed — checkpoints are ~2 GB in production.
+
+    ⚑ ONE implementation. ``lc0_control_train`` (which banks the checkpoint
+    digests) and ``lc0_control_eval`` (which re-derives one to verify the
+    binding) each grew a private copy in the same wave that argued "one
+    implementation, two callers" for the value-blend normalisation — and the two
+    sides of a hash comparison are the last place a second copy belongs.
+    """
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def duplicate_resolved_dirs(dirs: Sequence[Path | str]) -> list[str]:
+    """The resolved directories named more than once, in first-seen order.
+
+    ⚑ RESOLVED, not as typed: ``a``, ``a/``, ``./a`` and a symlink to ``a`` are
+    the same directory. Used by BOTH sides — ``lc0_control_train --shards``
+    (where a repeat oversamples an hour through the staging symlink farm) and
+    ``lc0_control_heldout freeze --shards`` (where a repeat inflates the
+    preregistered SIX-source count). The freeze side was the review's finding:
+    this function already existed for the train side, in the same commit, and
+    was not reused, so ``freeze --shards h h h h h h`` reached the population
+    gate as "6 sources" and PASSED it.
+    """
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for entry in dirs:
+        resolved = str(Path(entry).resolve())
+        if resolved in seen and resolved not in duplicates:
+            duplicates.append(resolved)
+        seen.add(resolved)
+    return duplicates
+
+
 # ⚑ THE PREREGISTERED HELD-OUT POPULATION, as a number the code can check.
 # `docs/lc0_positive_control_prereg.md`: "the LAST 6 hourly tars by wall-clock,
 # time-disjoint and never trained on". `freeze` gated the row COUNT (100,000)
@@ -281,23 +319,46 @@ def source_selection_problems(payload: Mapping[str, Any]) -> list[str]:
 
     ⚑ A function of the ARTIFACT, so both the writer (`lc0_control_heldout
     freeze`) and the reader (`lc0_control_eval score`) answer it from the same
-    `sources` list rather than one of them trusting a boolean the other stamped.
-    A stamp can be absent — every frozen set built before it existed has none —
-    and "absent" would then read as "preregistered", which is the direction that
+    list rather than one of them trusting a boolean the other stamped. A stamp
+    can be absent — every frozen set built before it existed has none — and
+    "absent" would then read as "preregistered", which is the direction that
     hides the deviation.
+
+    ⚑⚑ IT COUNTS DISTINCT RESOLVED PATHS, NOT OCCURRENCES. Counting the list
+    was the review's finding: `freeze --shards h h h h h h` — ONE hour named six
+    times, the exact input `_stratified_sample`'s docstring is written about —
+    reached the gate as "6 sources" and passed it, and was stopped only by the
+    unrelated duplicate-row-id refusal. `source_paths` is read in preference to
+    `sources` because the latter is BASENAMES: six genuinely distinct hours all
+    called `h` bank `["h"] * 6`, from which nobody can audit the prereg's actual
+    claim (the LAST 6 hourly tars BY WALL-CLOCK).
     """
-    sources = list(payload.get("sources") or ())
-    if len(sources) == PREREG_HELDOUT_SOURCES:
-        return []
-    return [
-        f"the frozen set was built from {len(sources)} source director"
-        f"{'y' if len(sources) == 1 else 'ies'} "
-        f"({', '.join(str(s) for s in sources) or '<none>'}), not the "
-        f"preregistered {PREREG_HELDOUT_SOURCES} hourly tars. The prereg names "
-        "the LAST 6 hourly tars by wall-clock; a different number of hours "
-        "carries different temporal correlation, and 100,000 rows drawn from it "
-        "clear every other gate in this rig.",
-    ]
+    entries = [str(s) for s in (
+        payload.get("source_paths") or payload.get("sources") or ()
+    )]
+    distinct = list(dict.fromkeys(entries))
+    problems: list[str] = []
+    if len(distinct) != len(entries):
+        repeated = duplicate_resolved_dirs(entries)
+        problems.append(
+            f"the frozen set names {len(entries)} sources but only "
+            f"{len(distinct)} distinct ones: "
+            + ", ".join(repeated)
+            + " appear(s) more than once. One hour named six times is not six "
+            "hours — it is a single net generation's worth of a correlated "
+            "stream, which is the population the prereg's SIX exists to avoid.",
+        )
+    if len(distinct) != PREREG_HELDOUT_SOURCES:
+        problems.append(
+            f"the frozen set was built from {len(distinct)} distinct source "
+            f"director{'y' if len(distinct) == 1 else 'ies'} "
+            f"({', '.join(distinct) or '<none>'}), not the preregistered "
+            f"{PREREG_HELDOUT_SOURCES} hourly tars. The prereg names the LAST 6 "
+            "hourly tars by wall-clock; a different number of hours carries "
+            "different temporal correlation, and 100,000 rows drawn from it "
+            "clear every other gate in this rig.",
+        )
+    return problems
 
 
 def frozen_row_set(
@@ -312,6 +373,12 @@ def frozen_row_set(
     """
     per_source: list[list[tuple[str, str]]] = []
     source_names: list[str] = []
+  # ⚑ RESOLVED PATHS, banked alongside the basenames. `sources` is what the
+  # printout reads and it cannot identify an hour: six distinct directories all
+  # named `h` bank `["h"] * 6`, so the prereg's claim — the LAST 6 hourly tars BY
+  # WALL-CLOCK — is unauditable from the artifact. `source_selection_problems`
+  # counts DISTINCT entries of this list.
+    source_paths: list[str] = []
     source_rows: list[int] = []
     all_ids: list[str] = []
     all_inputs: list[str] = []
@@ -319,6 +386,7 @@ def frozen_row_set(
         split = collect_split_ids([shard_dir])
         per_source.append(list(zip(split.ids, split.inputs, strict=True)))
         source_names.append(Path(shard_dir).name)
+        source_paths.append(str(Path(shard_dir).resolve()))
         source_rows.append(split.rows)
         all_ids.extend(split.ids)
         all_inputs.extend(split.inputs)
@@ -338,6 +406,7 @@ def frozen_row_set(
         "pool_unique_inputs": pool.unique_inputs,
         "pool_duplicate_inputs": pool.duplicate_inputs,
         "sources": source_names,
+        "source_paths": source_paths,
         "source_rows": source_rows,
         "frozen_rows": len(frozen),
         "frozen_unique_ids": len(set(frozen_ids)),

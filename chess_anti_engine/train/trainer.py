@@ -2595,6 +2595,31 @@ class Trainer:
         0.01 incident bar could fire on a leak the objective never had. The same
         helper the loss uses, per its own docstring: one implementation, two
         callers.
+
+        ⚑⚑ THAT CORRECTION IS **LATENT ON TODAY'S PRODUCTION CONFIG** — STATE THAT
+        BEFORE ANYONE HUNTS A 1.6x ERROR IN A LIVE TB SERIES. `blend_sum > 1.0` is
+        the only branch `normalize_value_blend_fracs` renormalises on, and the
+        live `configs/pbt2_small.yaml` cannot reach it: `sf_wdl_frac: 0.69` +
+        `search_wdl_frac: 0.31` is EXACTLY 1.0 (measured in IEEE754, not assumed —
+        `0.69 + 0.31 == 1.0` is True, so not even a float epsilon crosses it), and
+        `sf_wdl_frac_floor: 0.69` equals the start, so `_dynamic_sf_wdl_weight`
+        interpolates between 0.69 and 0.69 and the PID ramp cannot lift it. On
+        production this function is therefore bit-identical before and after the
+        fix. The states that DO reach it, all real:
+
+          * a live-yaml edit raising either frac. Both keys are in
+            `TRAINER_WEIGHT_KEYS`, so `_sync_trainer_weights` pushes them onto the
+            running trainer every iteration, and neither has a `TrialConfig`
+            validator (CLAUDE.md category (c)) — `search_wdl_frac: 0.8` lands
+            silently;
+          * a PB2 mutation of either key, same path;
+          * the lc0 positive control's own oversubscribed arms, which is where the
+            regression test lives.
+
+        ⇒ this is a correct fix to a REACHABLE-BUT-UNVISITED path, i.e. a latent
+        guard, not a live 1.6x mis-report. Do not "fix" the reach by changing the
+        blend: the 0.69/0.31 split is load-bearing (CLAUDE.md, "the WDL blend's SF
+        component is load-bearing — do not zero it").
         """
         if metrics.train_steps_done <= 0:
             return

@@ -1053,8 +1053,9 @@ def test_a_mid_checkpoint_at_a_custom_fraction_is_not_the_preregistered_one(
     assert not [p for p in problems if "no mid-budget checkpoint" in p], (
         "the backstop must be silent here, or this test cannot see its own fix"
     )
-    assert [p for p in problems if "--mid-checkpoint-frac 0.99 is not the "
-            "preregistered 0.5" in p], problems
+    assert [p for p in problems
+            if "at step 3 of 4 = 0.7500 of the budget, not the preregistered 0.5"
+            in p], problems
 
     baseline = tmp_path / "prereg_mid"
     assert _run(tmp_path, baseline, shards) == 0
@@ -1064,6 +1065,39 @@ def test_a_mid_checkpoint_at_a_custom_fraction_is_not_the_preregistered_one(
                 if "mid-checkpoint-frac" in p], (
         "the preregistered 0.5 must NOT be recorded as a deviation"
     )
+
+
+def test_the_mid_budget_guard_judges_the_REALIZED_step_not_the_knob(
+    tmp_path: Path,
+) -> None:
+    """⚑ The reviewer's violating input: ``--steps 3 --mid-checkpoint-frac 0.5``.
+
+    ``mid_step = int(frac * steps)`` clamped to the interior, so the knob being
+    the preregistered 0.5 does NOT mean the checkpoint landed at half the budget —
+    here it lands at step 1 of 3, **33.3%**, and the first version of this guard
+    recorded nothing because it compared the KNOB. That is this repo's own rule
+    ("a configured value is not an applied value") broken inside the guard added
+    to enforce a preregistered value.
+
+    ⚑ The backstop is disarmed by construction: a mid checkpoint IS written, so
+    the "no mid-budget checkpoint" entry cannot be what fires — asserted below.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "odd_budget"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "3", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--mid-checkpoint-frac", "0.5",
+    ]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["mid_checkpoint"]["step"] == 1, "1 of 3 = 33.3% of the budget"
+    problems = summary["validity_problems"]
+    assert not [p for p in problems if "no mid-budget checkpoint" in p], (
+        "the backstop must be silent here, or this test cannot see its own fix"
+    )
+    assert [p for p in problems
+            if "at step 1 of 3 = 0.3333 of the budget" in p], problems
 
 
 def test_a_non_production_batch_size_is_recorded_as_a_validity_problem(
@@ -1198,8 +1232,63 @@ def test_freeze_refuses_a_source_selection_that_is_not_the_preregistered_six(
         "unstamped on disk"
     )
     err = capsys.readouterr().err
-    assert "1 source directory" in err
+    assert "1 distinct source directory" in err
     assert "preregistered 6 hourly tars" in err
+
+
+def test_freeze_counts_distinct_resolved_sources_not_occurrences(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ The reviewer's violating input: ``freeze --shards h h h h h h``.
+
+    ONE hour named six times reached the population gate as "6 sources" and
+    PASSED it — the exact input `_stratified_sample`'s docstring is written about
+    ("a single hour is one net generation's worth of a correlated stream") — and
+    was stopped only by the UNRELATED duplicate-row-id refusal. This wave added
+    `duplicate_resolved_dirs` for the same hazard on `--shards` in the same commit
+    and did not reuse it here; it is now the shared implementation.
+
+    ⚑ A repeat is refused with NO flag: `--allow-source-selection` declares a
+    different NUMBER of hours, which is a legitimate smoke choice, while naming
+    one hour twice is not a population anybody chose. Asserted below, so the
+    refusal cannot be mistaken for the cardinality gate.
+    """
+    hour = _write_shards(tmp_path / "h", list(range(10)))
+    out = tmp_path / "frozen.json"
+    argv = ["freeze", "--out", str(out), "--sample", "10", "--seed", "0",
+            "--shards", *[str(hour)] * 6]
+    assert lc0_control_heldout.main(argv) == 1
+    err = capsys.readouterr().err
+    assert "named more than once" in err
+    assert str(hour.resolve()) in err
+    assert "duplicate row ids" not in err, (
+        "the population gate must fire, not the unrelated row-id refusal"
+    )
+    assert not out.exists()
+  # ...and the declared-cardinality flag does NOT clear it.
+    assert lc0_control_heldout.main([*argv, "--allow-source-selection"]) == 1
+    assert "named more than once" in capsys.readouterr().err
+
+
+def test_a_frozen_set_banks_resolved_source_paths_not_basenames(
+    tmp_path: Path,
+) -> None:
+    """Six genuinely distinct hours all called ``h`` banked ``["h"] * 6``, from
+    which nobody can audit the prereg's actual claim — the LAST 6 hourly tars BY
+    WALL-CLOCK. The distinctness gate needs the same field."""
+    sources = [
+        _write_shards(tmp_path / f"hour{i}" / "h", list(range(i * 10, i * 10 + 4)))
+        for i in range(6)
+    ]
+    rc, out = _freeze(
+        tmp_path, sources[0], sample=24, sources=sources,
+        allow_source_selection=False,
+    )
+    assert rc == 0, "six distinct directories that happen to share a basename"
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["sources"] == ["h"] * 6, "the basenames really do collide"
+    assert len(set(payload["source_paths"])) == 6
+    assert payload["preregistered_source_selection"] is True
 
 
 def test_freeze_accepts_the_preregistered_six_sources_unflagged(
@@ -1633,6 +1722,9 @@ def _scores(
             "checkpoint": checkpoint, "rows": int(hits.size),
             "valid_control": True, "run_id": "trajectory-0",
             "checkpoint_role": role,
+  # ⚑ Empty LIST, not absent: `compare` refuses an artifact with no held-out
+  # population record (absent is not clean), which has its own test.
+            "heldout_source_selection_problems": [],
         })], dtype=object),
         allow_pickle=True,
     )
@@ -1718,6 +1810,7 @@ def test_compare_refuses_unpaired_score_files(
         meta=np.array([json.dumps({
             "checkpoint": None, "valid_control": True,
             "run_id": "trajectory-0", "checkpoint_role": "last",
+            "heldout_source_selection_problems": [],
         })], dtype=object),
         allow_pickle=True,
     )
@@ -1852,7 +1945,7 @@ def test_score_exits_one_when_the_negative_control_does_not_collapse(
 
 def _paired_scores(
     tmp_path: Path, *, meta_a: dict[str, Any], meta_b: dict[str, Any],
-    n: int = 100_000,
+    n: int = 100_000, heldout_problems: list[str] | tuple[()] | None = (),
 ) -> tuple[Path, Path]:
     """The triage's reproduction of Codex finding 3791327309, verbatim.
 
@@ -1876,10 +1969,13 @@ def _paired_scores(
   # reason: `compare` refuses a pair with no `run_id`/`checkpoint_role`, which is
   # correct and has its own test, but if that refusal fired in every fixture the
   # tests below would pass for the wrong reason.
-    meta_a = {"valid_control": True, "run_id": "trajectory-0",
-              "checkpoint_role": "mid", **meta_a}
-    meta_b = {"valid_control": True, "run_id": "trajectory-0",
-              "checkpoint_role": "last", **meta_b}
+  # ⚑ And a RECORDED (empty) held-out population, for the third time over the same
+  # reasoning: `heldout_problems=None` omits the key, which is its own refusal.
+    common: dict[str, Any] = {"valid_control": True, "run_id": "trajectory-0"}
+    if heldout_problems is not None:
+        common["heldout_source_selection_problems"] = list(heldout_problems)
+    meta_a = {**common, "checkpoint_role": "mid", **meta_a}
+    meta_b = {**common, "checkpoint_role": "last", **meta_b}
 
     def write(path: Path, hits: np.ndarray, meta: dict[str, Any]) -> Path:
         np.savez_compressed(
@@ -2204,6 +2300,31 @@ def test_the_summary_binds_its_verdict_to_the_checkpoints_it_wrote(
     assert "does not describe" in str(excinfo.value)
 
 
+def test_two_checkpoints_with_identical_bytes_cannot_be_assigned_a_role(
+    tmp_path: Path,
+) -> None:
+    """⚑ The sha→role lookup was FIRST-MATCH on a content key, so a byte-identical
+    LAST would be labelled ``mid`` and the pair refused as ``{mid}`` — a refusal
+    naming the wrong thing. Two identical checkpoints mean nothing changed between
+    the mid step and the end, which is worth saying out loud."""
+    ckpt = tmp_path / "checkpoint.pt"
+    torch.save({"model": {}}, ckpt)
+    digest = lc0_control_eval.sha256_file(ckpt)
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps({
+        "valid_control": True, "run_id": "trajectory-0",
+        "checkpoints": [
+            {"role": "mid", "path": str(ckpt), "sha256": digest},
+            {"role": "last", "path": str(ckpt), "sha256": digest},
+        ],
+    }), encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_eval.read_training_validity(summary, ckpt)
+    message = str(excinfo.value)
+    assert "SAME sha256" in message
+    assert "mid, last" in message
+
+
 def test_score_banks_the_trajectory_identity_and_the_heldout_population(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2246,6 +2367,65 @@ def test_score_banks_the_trajectory_identity_and_the_heldout_population(
     assert meta["heldout_source_selection_problems"], meta
     assert "not the preregistered 6 hourly tars" in \
         meta["heldout_source_selection_problems"][0]
+
+
+def test_a_batch_size_deviation_is_terminal_for_compare_not_a_soft_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ WHAT "RECORDED RATHER THAN REFUSED" ACTUALLY BUYS, PINNED END TO END.
+
+    `valid_control = not validity_problems` and `compare` refuses
+    `valid_control: false` with NO waiver, so a `--batch-size` deviation is
+    TERMINAL for the comparison — the driver's comments called it a soft record,
+    which reads as "still comparable". The independent review executed this;
+    it is now a test, so the policy cannot drift back into prose:
+
+      * the run FINISHES and writes both checkpoints (what a plumbing smoke needs)
+      * and no combination of waivers lets its score be paired.
+    """
+    rows = 12
+    shards = _write_shards(tmp_path / "held", list(range(rows)))
+    rc, frozen = _freeze(tmp_path, shards, sample=rows)
+    assert rc == 0
+    out = tmp_path / "small_batch"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "4", "--batch-size", "2",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ]) == 0
+    assert (out / "checkpoint.pt").is_file(), "the run must still finish"
+    assert (out / "checkpoint_mid.pt").is_file()
+
+    def _rigged(*_args: Any, **_kwargs: Any) -> tuple[Any, int, Any, Any]:
+        moves = np.arange(rows, dtype=np.int64) % 3
+        return np.ones(rows, dtype=np.uint8), 0, moves, moves
+
+    monkeypatch.setattr(lc0_control_eval, "_score_rows", _rigged)
+    scores = []
+    for role in ("checkpoint_mid.pt", "checkpoint.pt"):
+        path = tmp_path / f"{role}.npz"
+        assert lc0_control_eval.main([
+            "score", "--config", str(_tiny_config(tmp_path)),
+            "--frozen", str(frozen), "--shards", str(shards),
+            "--checkpoint", str(out / role), "--summary", str(out / "summary.json"),
+            "--out", str(path), "--device", "cpu",
+        ]) == 0
+        scores.append(path)
+    meta = json.loads(str(np.load(scores[0], allow_pickle=True)["meta"][0]))
+    assert meta["valid_control"] is False
+    assert [p for p in meta["validity_problems"] if "--batch-size 2" in p]
+    capsys.readouterr()
+    assert lc0_control_eval.main([
+        "compare", "--a", str(scores[0]), "--b", str(scores[1]),
+        "--allow-shuffled-contrast", "--allow-unrecorded-validity",
+        "--allow-unverified-trajectory", "--allow-non-prereg-heldout",
+        "--allow-unrecorded-heldout", "--allow-underpowered",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert "THE DRIVER DISQUALIFIED" in captured.err
+    assert "--batch-size 2" in captured.err, "the recorded reason must survive"
+    assert "delta" not in captured.out
 
 
 def test_compare_refuses_two_checkpoints_from_different_trajectories(
@@ -2321,6 +2501,104 @@ def test_compare_refuses_an_unidentified_pair_but_that_waiver_is_its_own(
     out = capsys.readouterr().out
     assert "--allow-unverified-trajectory:" in out
     assert "delta" in out, "the waived path must still report the comparison"
+
+
+@pytest.mark.parametrize(
+    ("meta_a", "meta_b", "expected"),
+    [
+  # ⚑ THE REVIEWER'S OWN TWO VIOLATING INPUTS, verbatim from the independent
+  # review of the third wave (rc 0 with the full slope printed on both).
+        (
+            {"checkpoint": "a", "run_id": None, "checkpoint_role": "last"},
+            {"checkpoint": "b", "run_id": "trajectory-0", "checkpoint_role": "last"},
+            "not the prereg's MID/LAST pair",
+        ),
+        (
+            {"checkpoint": "a", "run_id": "trajectory-1", "checkpoint_role": None},
+            {"checkpoint": "b", "run_id": "trajectory-2", "checkpoint_role": "last"},
+            "DIFFERENT TRAJECTORIES",
+        ),
+    ],
+)
+def test_the_identity_waiver_leaves_the_other_two_refusals_in_force(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    meta_a: dict[str, Any], meta_b: dict[str, Any], expected: str,
+) -> None:
+    """⚑⚑ THE WAIVER CLEARED TWO REFUSALS ITS OWN HELP CALLS UNWAIVABLE.
+
+    The three identity checks were an `if / elif / elif` chain, so when EITHER
+    artifact lacked identity the waivable branch matched and the two unwaivable
+    branches NEVER EXECUTED. `--allow-unverified-trajectory` therefore cleared a
+    LAST-vs-LAST pair and a two-trajectory pair — exactly the two failures the
+    identity finding exists to stop — at rc 0 with the slope printed.
+
+    ⚑ WHY THE WAVE'S OWN TESTS COULD NOT SEE IT, which is why these fixtures are
+    shaped as they are: the mismatch test set BOTH `run_id`s (so `unidentified`
+    was empty and the chain reached the mismatch branch), and the absence test's
+    fixture pair already WAS `{mid, last}` (so the shadowed role branch had
+    nothing to say). Each row here has ONE field absent and the OTHER field
+    violating — the state the chain could not reach.
+    """
+    a, b = _paired_scores(tmp_path, meta_a=meta_a, meta_b=meta_b)
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b),
+        "--allow-unverified-trajectory",
+    ]) == 1
+    captured = capsys.readouterr()
+    assert expected in captured.err
+    assert "delta" not in captured.out, (
+        "the slope must not be printed for a pair that is refused"
+    )
+  # ...and the absence itself IS waived, so the refusal above is the unwaivable
+  # one speaking and not the waiver failing to apply.
+    assert "--allow-unverified-trajectory:" in captured.out
+
+
+def test_compare_refuses_an_artifact_with_no_heldout_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ ABSENT WAS READING AS PREREGISTERED. `compare` read the field as
+    `meta.get(...) or ()`, so an artifact written before it existed produced no
+    problem, no banner and rc 0 — the same absent⇒clean direction `cmd_score`
+    recomputes to avoid one level down, and the opposite of how the same function
+    treats an absent `run_id`.
+
+    Its own flag: "this set is declaredly not the prereg's six" and "nothing says
+    which population this scored" are different claims.
+    """
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a"}, meta_b={"checkpoint": "b"},
+        heldout_problems=None,
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    assert "NO held-out population record" in capsys.readouterr().err
+    for unrelated in ("--allow-non-prereg-heldout", "--allow-unverified-trajectory",
+                      "--allow-unrecorded-validity"):
+        assert lc0_control_eval.main([
+            "compare", "--a", str(a), "--b", str(b), unrelated,
+        ]) == 1, f"{unrelated} must not clear a refusal it does not name"
+        capsys.readouterr()
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-unrecorded-heldout",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert "--allow-unrecorded-heldout:" in out
+    assert "delta" in out
+
+
+def test_the_passing_readout_names_the_role_and_the_trajectory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """This file's own standard again: the mid/last binding is a GATE now, and a
+    reader of a passing readout could not see that it ran."""
+    a, b = _paired_scores(
+        tmp_path, meta_a={"checkpoint": "a"}, meta_b={"checkpoint": "b"},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
+    out = capsys.readouterr().out
+    assert "role: mid" in out
+    assert "role: last" in out
+    assert "run: trajecto" in out, "the run id must be on the line, truncated"
 
 
 def test_compare_refuses_a_non_preregistered_heldout_population(

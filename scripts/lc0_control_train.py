@@ -107,7 +107,13 @@ statistic's name.
 ⚑ TWO MORE THINGS ARE RECORDED AND ONE IS REFUSED (independent review of #438,
 2026-08-17), all of them the same shape as the guards above — a value accepted
 after every preflight, deviating from the production one, with the run still
-stamped `valid_control: true`:
+stamped `valid_control: true`.
+
+⚑⚑ "RECORDED" IS NOT "TOLERATED": every `validity_problems` entry sets
+`valid_control: false`, and `lc0_control_eval compare` refuses that with NO
+waiver. The choice being made is LAUNCH vs ARTIFACT — such a run still finishes
+and writes its checkpoints (which is what a plumbing smoke needs) and is
+disqualified from supplying either side of the primary comparison.
 
   * `--batch-size` differing from the config's changes the examples per step and
     the gradient-noise regime. `batch_size` is not a trainer kwarg, so guard 0c
@@ -148,6 +154,10 @@ from chess_anti_engine.eval.lc0_control_arch import (
     assert_control_matches_live_architecture,
     live_production_config_path,
     unique_storage_param_count,
+)
+from chess_anti_engine.eval.lc0_control_rows import (
+    duplicate_resolved_dirs,
+    sha256_file,
 )
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.replay.buffer import ReplayBuffer
@@ -196,15 +206,6 @@ from scripts.lc0_data_to_rows import (
 PREREG_MID_CHECKPOINT_FRAC = 0.5
 
 
-def _sha256_file(path: Path) -> str:
-    """sha256 of a file's bytes, streamed (checkpoints are ~2 GB in production)."""
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def checkpoint_identities(
     *, last: Path, mid: Path | None,
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -222,14 +223,24 @@ def checkpoint_identities(
     ⚑ The run id is CONTENT-DERIVED, not a uuid: it is a digest over the
     checkpoint hashes themselves, so it is exactly "which trajectory are these
     weights from" and cannot drift from the files it names. MID and LAST of one
-    run therefore share it by construction, and two runs — even two with
-    identical arguments — do not, because their weights differ.
+    run therefore share it by construction — they are digested together and the
+    result is written once per ``summary.json``.
+
+    ⚑ AND THE CONVERSE IS ABOUT BYTES, NOT ABOUT ARGUMENTS. An earlier revision
+    of this line claimed two runs "even two with identical arguments" cannot
+    share a run id "because their weights differ". That is FALSE and the driver's
+    own test says so: this arm seeds `torch` and the buffer RNG from `--seed`, so
+    two runs at the same seed, config and corpus are BIT-IDENTICAL and do share
+    the id. Which is correct — identical weights are the same trajectory in every
+    sense the comparison uses — but a reader must not be told the id separates
+    invocations. It separates WEIGHTS: a different seed, corpus, budget or code
+    path gives a different id, and nothing else does.
     """
     entries = [{"role": "last", "path": str(Path(last).resolve()),
-                "sha256": _sha256_file(last)}]
+                "sha256": sha256_file(last)}]
     if mid is not None:
         entries.insert(0, {"role": "mid", "path": str(Path(mid).resolve()),
-                           "sha256": _sha256_file(mid)})
+                           "sha256": sha256_file(mid)})
     fingerprint = "|".join(
         f"{entry['role']}:{entry['sha256']}"
         for entry in sorted(entries, key=lambda e: str(e["role"]))
@@ -238,28 +249,6 @@ def checkpoint_identities(
         f"lc0-control-trajectory|{fingerprint}".encode(),
     ).hexdigest()
     return run_id, entries
-
-
-def duplicate_shard_dirs(shard_dirs: list[Path]) -> list[str]:
-    """The resolved ``--shards`` directories named more than once.
-
-    ⚑ RESOLVED, not as typed: ``a``, ``a/``, ``./a`` and a symlink to ``a`` are
-    the same corpus and would each be staged again under a fresh
-    ``shard_NNNNNN.zarr`` name, so the replay buffer treats one hour's rows as
-    two shards and OVERSAMPLES it. Nothing downstream could see it: the coverage
-    preflight sums over the list (so its ratios stay right), and
-    ``purity_receipt_problems`` collapses the list into a ``set()`` to compare
-    against the receipt — so a duplicated corpus was stamped
-    ``valid_control: true``.
-    """
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    for shard_dir in shard_dirs:
-        resolved = str(Path(shard_dir).resolve())
-        if resolved in seen and resolved not in duplicates:
-            duplicates.append(resolved)
-        seen.add(resolved)
-    return duplicates
 
 
 class _LossCapture:
@@ -770,7 +759,9 @@ def main(argv: list[str] | None = None) -> int:
         "--batch-size", type=int, default=0,
         help="0 = config batch_size. ⚑ Any other value changes the examples per "
              "step and the gradient-noise regime, and is recorded in "
-             "`validity_problems`: the run is then not a valid control.",
+             "`validity_problems`: the run still finishes and writes its "
+             "checkpoints, and `lc0_control_eval compare` then refuses it with no "
+             "waiver.",
     )
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -797,10 +788,11 @@ def main(argv: list[str] | None = None) -> int:
              "PRIMARY yardstick is two slopes 'both measured LAST vs "
              "MID-BUDGET', so a run that emits one checkpoint cannot produce "
              "the deciding statistic at all. 0 disables it; the run then "
-             f"records that it cannot answer the prereg. Any value other than "
-             f"the preregistered {PREREG_MID_CHECKPOINT_FRAC} is likewise "
-             "recorded in `validity_problems` — a LAST-vs-99%%-budget contrast "
-             "is not the deciding statistic.",
+             f"records that it cannot answer the prereg. ⚑ The REALIZED step "
+             f"must land on {PREREG_MID_CHECKPOINT_FRAC} of the budget — the "
+             "knob is clamped to the interior, so `--steps 3 --frac 0.5` gives "
+             "33%% — and anything else is recorded in `validity_problems`, which "
+             "`compare` then refuses with no waiver.",
     )
     parser.add_argument(
         "--purity-receipt", type=Path, default=None,
@@ -825,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
   # quietly altered" shape as the finding itself. There is no reading of
   # `--shards a a` under which the duplicate is wanted — the buffer would draw
   # that hour twice as often — so the run stops and says which directory.
-    duplicates = duplicate_shard_dirs(shard_dirs)
+    duplicates = duplicate_resolved_dirs(shard_dirs)
     if duplicates:
         raise SystemExit(
             "REFUSING TO LAUNCH — these --shards directories are named more "
@@ -986,12 +978,31 @@ def main(argv: list[str] | None = None) -> int:
   # `valid_control: false` says a run is disqualified without saying what for,
   # which is the same "a flag instead of a measurement" shape as the rest of
   # this review's findings.
+  #
+  # ⚑⚑ AND "RECORDED" MEANS RECORDED AT LAUNCH-TIME, NOT SOFT. Every entry below
+  # sets `valid_control: false` (`not validity_problems`), and
+  # `lc0_control_eval compare` refuses `valid_control: false` with NO WAIVER AT
+  # ALL. So the distinction these comments draw is between REFUSING TO LAUNCH and
+  # LETTING THE RUN FINISH AND DISQUALIFYING ITS ARTIFACT — not between a hard
+  # block and a soft note. An earlier revision of this block said "recorded
+  # rather than refused ... every plumbing smoke here runs at batch 4 by design",
+  # which reads as "such a run can still be compared". It cannot: the independent
+  # review executed `--batch-size 2` against a configured 4 and `compare` exited
+  # 1 with all four waivers passed at once. That is the intended policy — a slope
+  # from a run at the wrong batch size, the wrong mid point or below warmup must
+  # not supply either side of the arm's primary comparison, and a waiver for it
+  # would be a waiver for "quote a smoke run as the arm" — so the WIRING stands
+  # and the wording is fixed. What the entries buy is that the run still
+  # PRODUCES its checkpoints (which is what a plumbing smoke needs) and that the
+  # artifact says exactly why it cannot be quoted.
+  #
   # ⚑ The LR-warmup entry is not bookkeeping. Production's `warmup_steps` is
   # 1000 and this arm now carries it verbatim, so a run whose whole budget is
   # shorter than the warmup NEVER REACHES THE BASE LR — its held-out slope is a
-  # property of the warmup ramp, not of the trainer. It is recorded rather than
-  # refused because every plumbing smoke here is 1-8 steps by design; what must
-  # not happen is such a run being quoted as the arm.
+  # property of the warmup ramp, not of the trainer. Recorded rather than refused
+  # AT LAUNCH because every plumbing smoke here is 1-8 steps by design; what must
+  # not happen is such a run being quoted as the arm, and the entry is what stops
+  # that.
     validity_problems = [
         message for flag, message in (
             (args.allow_leak, "--allow-leak: the LAUNCH value-blend guards were "
@@ -1019,24 +1030,32 @@ def main(argv: list[str] | None = None) -> int:
   # 0.99` (or 5.0) wrote a checkpoint, satisfied the entry above, and left the
   # run reading VALID — while `compare` would present a LAST-vs-99%-budget
   # contrast, which measures the final 1% of training, as the preregistered
-  # LAST-vs-MID-BUDGET slope. Recorded rather than refused, because a short
-  # smoke run may legitimately want the mid point elsewhere; what must not
-  # happen is such a run being quoted as the arm.
+  # LAST-vs-MID-BUDGET slope.
+  #
+  # ⚑⚑ AND THE PREDICATE IS THE REALIZED FRACTION, NOT THE KNOB. Judging
+  # `args.mid_checkpoint_frac` broke this file's own rule ("a configured value is
+  # not an applied value") inside the guard added to enforce a preregistered
+  # value: `mid_step = int(frac * steps)`, clamped to the interior, so
+  # `--steps 3 --mid-checkpoint-frac 0.5` puts MID at step 1 of 3 — 33.3% of the
+  # budget — and recorded NOTHING. Measured by the independent review. The
+  # realized fraction is exact for the passing case (`n / 2n` is exact in
+  # IEEE754), and a knob of 0.5000001 that still lands on the mid step is
+  # correctly silent: the trajectory IS the mid-budget one.
             (mid.saved_at_step is not None
-             and float(args.mid_checkpoint_frac) != PREREG_MID_CHECKPOINT_FRAC,
-             f"--mid-checkpoint-frac {float(args.mid_checkpoint_frac)} is not "
-             f"the preregistered {PREREG_MID_CHECKPOINT_FRAC}: the mid "
-             f"checkpoint was taken at step {mid.saved_at_step} of "
-             f"{int(args.steps)}, so the LAST-vs-MID slope this run supports is "
-             "not the prereg's LAST vs MID-BUDGET"),
+             and mid.saved_at_step / int(args.steps) != PREREG_MID_CHECKPOINT_FRAC,
+             f"the mid checkpoint was taken at step {mid.saved_at_step} of "
+             f"{int(args.steps)} = "
+             f"{(mid.saved_at_step or 0) / max(int(args.steps), 1):.4f} of the "
+             f"budget, not the preregistered {PREREG_MID_CHECKPOINT_FRAC} "
+             f"(--mid-checkpoint-frac {float(args.mid_checkpoint_frac)}, "
+             "clamped to the interior): the LAST-vs-MID slope this run supports "
+             "is not the prereg's LAST vs MID-BUDGET"),
   # ⚑ THE GRADIENT-NOISE REGIME IS A TRAINING SETTING, AND `--batch-size` SAT
   # AFTER EVERY PREFLIGHT. Guard 0c certifies the trainer recipe against live's,
   # but `batch_size` is not a trainer kwarg — it is an argument to
   # `train_steps` — so a `--batch-size 32` run against production's configured
   # 512 changed the examples per step, and therefore the gradient noise, with
-  # every guard still passing and `valid_control` still true. Recorded rather
-  # than refused for the same reason as `--no-compile`: every plumbing smoke
-  # here runs at batch 4 by design.
+  # every guard still passing and `valid_control` still true.
             (batch_size != configured_batch_size,
              f"--batch-size {batch_size} is not the configured "
              f"{configured_batch_size}: the examples per step and hence the "
@@ -1090,8 +1109,12 @@ def main(argv: list[str] | None = None) -> int:
   # LIVE_TRAINER_PIN ("cuda" / True), so a run can be certified and then execute
   # a different recipe with nothing in the artifact saying so. `--no-compile` is
   # plausibly objective-neutral, but "plausibly neutral" is an argument, not a
-  # record: a reader needs the REALIZED values to check it. Recorded rather than
-  # refused, because the CPU/no-compile path is how every plumbing smoke runs.
+  # record: a reader needs the REALIZED values to check it. ⚑ These two are
+  # BANKED ONLY — unlike the entries in `validity_problems` they do NOT
+  # disqualify the run, and nothing in `lc0_control_eval` reads this field. The
+  # CPU/no-compile path is how every plumbing smoke runs, so an entry here would
+  # disqualify every smoke; the cost is that a `--device cpu` run is comparable,
+  # which a later review may well decide is wrong.
         "realized_after_guard": {"device": kwargs["device"],
                                  "use_compile": kwargs["use_compile"]},
         "valid_control": not validity_problems,

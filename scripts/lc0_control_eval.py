@@ -61,13 +61,22 @@ the arithmetic so the number never reaches the screen to be quoted:
     unrelated (or disqualified) checkpoint, and two independently initialised
     trajectories' LAST checkpoints could be paired and reported as the prereg's
     LAST vs MID-BUDGET slope. `score` now hashes the `--checkpoint` it was given
-    and REFUSES a summary that does not name it;
+    and REFUSES a summary that does not name it. ⚑ These two are judged on the
+    artifacts that CARRY the field, INDEPENDENTLY of the waiver below — the first
+    version chained all three as `if/elif/elif`, so waiving the absent-identity
+    branch skipped both of these and `--allow-unverified-trajectory` cleared a
+    LAST-vs-LAST pair and a two-trajectory pair at exit 0;
   * either artifact carries no `run_id`/`checkpoint_role` at all -> refuse,
-    waivable by `--allow-unverified-trajectory`;
+    waivable by `--allow-unverified-trajectory`, which concedes only that the
+    MISSING field's binding is unverified;
   * either artifact's frozen set was not built from the preregistered SIX hourly
     tars -> refuse, waivable by `--allow-non-prereg-heldout`. `freeze` gated the
     row COUNT at 100,000 and not the POPULATION, and `score` recomputes the
-    source count from the artifact rather than trusting a stamp.
+    source count from the artifact rather than trusting a stamp;
+  * either artifact carries NO held-out population record at all -> refuse,
+    waivable by its own `--allow-unrecorded-heldout`. Absent is not clean here
+    either: reading the field as `... or ()` made a pre-field artifact read as
+    PREREGISTERED, the same direction `score`'s recompute exists to avoid.
 
 `--allow-shuffled-contrast` waives the first two, for the one case that wants
 them: deliberately reading the shuffled contrast. It does not waive the failed
@@ -130,7 +139,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
 import sys
 from collections.abc import Mapping
@@ -144,6 +152,7 @@ from chess_anti_engine.eval.lc0_control_rows import (
     iter_shard_arrays,
     load_frozen,
     row_ids,
+    sha256_file,
     source_selection_problems,
 )
 from chess_anti_engine.replay.dataset import collate_arrays
@@ -290,15 +299,6 @@ def _failed_negative_control(meta: Mapping[str, Any]) -> tuple[bool, float, floa
     return float(z) > bar, float(z), bar
 
 
-def _file_sha256(path: Path) -> str:
-    """sha256 of a file's bytes, streamed — checkpoints are ~2 GB in production."""
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 # The waiver flags, as constants: `ProvenanceProblem.waiver` names one of these
 # and `cmd_compare` looks each up on the parsed args, so a refusal and the flag
 # that clears it cannot drift apart in prose. ⚑ ONE FLAG PER REASON — a waiver
@@ -307,6 +307,12 @@ SHUFFLED_CONTRAST_WAIVER = "--allow-shuffled-contrast"
 UNRECORDED_VALIDITY_WAIVER = "--allow-unrecorded-validity"
 UNVERIFIED_IDENTITY_WAIVER = "--allow-unverified-trajectory"
 NON_PREREG_HELDOUT_WAIVER = "--allow-non-prereg-heldout"
+# ⚑ SEPARATE from the one above, on the same reasoning that keeps
+# `--allow-unrecorded-validity` separate from `valid_control: false`: "this set is
+# declaredly not the prereg's six" and "nothing in this artifact says which
+# population it scored" are different claims, and a flag named for the first must
+# not clear the second.
+UNRECORDED_HELDOUT_WAIVER = "--allow-unrecorded-heldout"
 
 
 def checkpoint_identity(
@@ -333,7 +339,7 @@ def checkpoint_identity(
                 "no --checkpoint: a random-init floor has no trajectory identity"
             ),
         }
-    digest = _file_sha256(Path(checkpoint))
+    digest = sha256_file(Path(checkpoint))
     if not banked:
         return {
             "checkpoint_sha256": digest, "checkpoint_role": None, "run_id": None,
@@ -343,17 +349,33 @@ def checkpoint_identity(
                 "existed)"
             ),
         }
-    for record in banked:
-        if str(record.get("sha256")) == digest:
-            return {
-                "checkpoint_sha256": digest,
-                "checkpoint_role": str(record.get("role")),
-                "run_id": data.get("run_id"),
-                "checkpoint_identity": (
-                    f"verified: role {record.get('role')!r}, sha256 "
-                    f"{digest[:16]}, named by {summary_path}"
-                ),
-            }
+  # ⚑ ALL matches, not the first. A first-match lookup on a CONTENT key silently
+  # labels a byte-identical LAST as `mid` (and the pair is then refused as
+  # `{mid}`, for a reason that names the wrong thing). Two identical checkpoints
+  # mean the optimizer changed nothing between the mid step and the end, which is
+  # a defect in its own right, so it is named here rather than resolved by
+  # iteration order.
+    matches = [r for r in banked if str(r.get("sha256")) == digest]
+    if len(matches) > 1:
+        raise SystemExit(
+            f"{summary_path} banks {len(matches)} checkpoints with the SAME "
+            f"sha256 {digest[:16]} (roles "
+            + ", ".join(str(r.get("role")) for r in matches)
+            + f"), so {checkpoint} cannot be assigned a role. Byte-identical "
+            "checkpoints mean no weight changed between them — the pair carries "
+            "no slope at all, and `compare` would refuse it for zero "
+            "discordance after reporting the wrong role.",
+        )
+    for record in matches:
+        return {
+            "checkpoint_sha256": digest,
+            "checkpoint_role": str(record.get("role")),
+            "run_id": data.get("run_id"),
+            "checkpoint_identity": (
+                f"verified: role {record.get('role')!r}, sha256 "
+                f"{digest[:16]}, named by {summary_path}"
+            ),
+        }
     raise SystemExit(
         f"{summary_path} does not describe {checkpoint}: that file's sha256 is "
         f"{digest}, and the summary banks "
@@ -404,7 +426,7 @@ def read_training_validity(
             "valid_control": None, "validity_problems": None,
             "source": "no summary.json found",
             "checkpoint_sha256": (
-                None if checkpoint is None else _file_sha256(Path(checkpoint))
+                None if checkpoint is None else sha256_file(Path(checkpoint))
             ),
             "checkpoint_role": None, "run_id": None,
             "checkpoint_identity": "no summary.json found",
@@ -458,6 +480,18 @@ class ProvenanceProblem:
 
     message: str
     waiver: str | None = None
+
+
+def _identity_readout(meta: Mapping[str, Any]) -> str:
+    """``role``/``run_id`` for the PASSING path's printout — same rule as
+    ``_negative_control_readout``: a gate that ran and passed must not look
+    identical to a gate that stopped running."""
+    role = meta.get("checkpoint_role")
+    run_id = meta.get("run_id")
+    return (
+        f"role: {role or 'UNRECORDED'}   "
+        f"run: {str(run_id)[:8] if run_id else 'UNRECORDED'}"
+    )
 
 
 def score_provenance_problems(
@@ -579,6 +613,21 @@ def score_provenance_problems(
   # prereg's statistic. The prereg reads the arm as two slopes "both measured
   # LAST vs MID-BUDGET" ON ONE TRAJECTORY, so that is what is required here:
   # one run id, and the roles {mid, last}.
+  # ⚑⚑ AND THE THREE CHECKS ARE INDEPENDENT, NOT AN `if/elif/elif` CHAIN. The
+  # first version chained them, so when EITHER artifact lacked identity the
+  # waivable branch matched and the two UNWAIVABLE branches never executed:
+  # `--allow-unverified-trajectory` then cleared a LAST-vs-LAST pair and a
+  # two-trajectory pair, both of which this flag's own help and prereg
+  # AMENDMENT 6 called unwaivable. Executed by the independent review of #438 at
+  # rc 0 with the full slope printed. One gate structurally shadowing two others
+  # is the "backstop hollows out the primary guard" shape one level over — and
+  # the wave's own tests could not see it, because the mismatch test set BOTH
+  # run_ids (so the waivable branch was empty) and the absence test's fixture pair
+  # already WAS {mid, last}.
+  #
+  # ⇒ each field is judged on the artifacts that CARRY it: the mismatch checks
+  # fire whenever both sides have the field, whatever the waiver does about the
+  # absent one.
     run_a, role_a = meta_a.get("run_id"), meta_a.get("checkpoint_role")
     run_b, role_b = meta_b.get("run_id"), meta_b.get("checkpoint_role")
     unidentified = [
@@ -586,17 +635,26 @@ def score_provenance_problems(
         if run is None or role is None
     ]
     if unidentified:
+        missing = ", ".join(sorted({
+            field
+            for run, role in ((run_a, role_a), (run_b, role_b))
+            for field, value in (("run_id", run), ("checkpoint_role", role))
+            if value is None
+        }))
         refuse(
             f"{' and '.join(unidentified)} carr"
             f"{'y' if len(unidentified) > 1 else 'ies'} NO trajectory identity: "
-            "fields `run_id`/`checkpoint_role` are absent, so this readout "
-            "cannot tell MID-vs-LAST on one trajectory from two unrelated "
-            "checkpoints — the prereg's primary yardstick is the former. "
-            "Re-score with --summary pointing at the training run's "
-            f"summary.json, or pass {UNVERIFIED_IDENTITY_WAIVER}.",
+            f"field(s) {missing} absent, so this readout cannot tell MID-vs-LAST "
+            "on one trajectory from two unrelated checkpoints — the prereg's "
+            "primary yardstick is the former. ⚑ Waiving this waives ONLY the "
+            "checks the missing field makes impossible: a run_id mismatch and a "
+            "role pair that is not {mid, last} are still refused on whatever the "
+            "two artifacts DO carry. Re-score with --summary pointing at the "
+            f"training run's summary.json, or pass {UNVERIFIED_IDENTITY_WAIVER} "
+            "and read the pair knowing the binding is UNVERIFIED.",
             waiver=UNVERIFIED_IDENTITY_WAIVER,
         )
-    elif run_a != run_b:
+    if run_a is not None and run_b is not None and run_a != run_b:
         refuse(
             "the two score files come from DIFFERENT TRAJECTORIES: field "
             f"`run_id` reads {str(run_a)[:16]} in --a and {str(run_b)[:16]} in "
@@ -604,7 +662,12 @@ def score_provenance_problems(
             "trajectory; two runs' checkpoints differ by their whole "
             "initialisation and data order as well as by budget.",
         )
-    elif {str(role_a), str(role_b)} != {"mid", "last"}:
+  # ⚑ Judged on the roles that are PRESENT. Two known roles must be {mid, last};
+  # one known role cannot form a pair, and the absence refusal above is what
+  # covers that state — so a `last` against an unknown is waivable, while a `last`
+  # against a `last` is not, whatever else is missing.
+    if role_a is not None and role_b is not None \
+            and {str(role_a), str(role_b)} != {"mid", "last"}:
         refuse(
             "the two score files are not the prereg's MID/LAST pair: field "
             f"`checkpoint_role` reads {role_a!r} in --a and {role_b!r} in --b. "
@@ -613,12 +676,31 @@ def score_provenance_problems(
         )
   # ⚑ AND THE HELD-OUT POPULATION. `freeze` gated the row COUNT at 100,000 and
   # not the SOURCES, so a frozen set built from one hour cleared every gate in
-  # this rig. Recomputed by `cmd_score` from the artifact's own `sources` list
+  # this rig. Recomputed by `cmd_score` from the artifact's own sources list
   # rather than trusted from a stamp, so a frozen set predating the stamp is
   # judged too.
+  #
+  # ⚑⚑ AND AN ABSENT KEY IS NOT A CLEAN ONE. The first version read
+  # `meta.get(...) or ()`, so an artifact written before the field existed
+  # produced no problem, no banner and rc 0 — absent ⇒ preregistered, the exact
+  # direction `cmd_score` recomputes to avoid one level down, and the opposite of
+  # how this same function treats an absent `run_id`. Two instances of one shape
+  # with two different answers in one commit; found by the independent review.
+  # `cmd_score` writes a LIST (empty when clean), so `None` means "no record",
+  # which gets its own waiver — the same split as `valid_control` false vs None.
     for label, meta in (("--a", meta_a), ("--b", meta_b)):
-        heldout = list(meta.get("heldout_source_selection_problems") or ())
-        if heldout:
+        heldout = meta.get("heldout_source_selection_problems")
+        if heldout is None:
+            refuse(
+                f"{label} carries NO held-out population record: field "
+                "`heldout_source_selection_problems` is absent, so this readout "
+                "cannot tell the preregistered six hourly tars from a frozen set "
+                "built out of one hour. Re-score it (the scorer recomputes the "
+                f"population from the frozen artifact), or pass "
+                f"{UNRECORDED_HELDOUT_WAIVER}.",
+                waiver=UNRECORDED_HELDOUT_WAIVER,
+            )
+        elif list(heldout):
             refuse(
                 f"{label} scored a NON-PREREGISTERED held-out population: "
                 + "; ".join(str(p) for p in heldout),
@@ -916,6 +998,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         UNRECORDED_VALIDITY_WAIVER: bool(args.allow_unrecorded_validity),
         UNVERIFIED_IDENTITY_WAIVER: bool(args.allow_unverified_trajectory),
         NON_PREREG_HELDOUT_WAIVER: bool(args.allow_non_prereg_heldout),
+        UNRECORDED_HELDOUT_WAIVER: bool(args.allow_unrecorded_heldout),
     }
     waived = [p for p in provenance if p.waiver is not None and passed[p.waiver]]
     for flag in sorted({p.waiver for p in waived if p.waiver is not None}):
@@ -924,13 +1007,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
     refusals = [p for p in provenance if p not in waived]
     if refusals:
         offered = sorted({p.waiver for p in refusals if p.waiver is not None})
+  # ⚑ The hint appears when EVERY refusal is waivable, not when the flag count
+  # happens to equal the refusal count: two artifacts both non-preregistered are
+  # two refusals sharing one waiver, and the earlier `len(offered) ==
+  # len(refusals)` test printed no hint for a state that is entirely waivable.
+        all_waivable = all(p.waiver is not None for p in refusals)
         print(
             "FAIL: these two score files are not a valid pair. "
             + " | ".join(p.message for p in refusals)
             + (
                 f" Waivable by: {', '.join(offered)} — if that IS the comparison "
                 "you intend."
-                if offered and len(offered) == len(refusals)
+                if all_waivable
                 else ""
             ),
             file=sys.stderr,
@@ -959,12 +1047,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
   # ⚑ PRINTED, not merely checked. "the provenance gate passed" has to be an
   # observation in the output a reader can point at, otherwise a gate that
   # stopped running looks identical to a gate that ran and passed.
-    print(f"A  {meta_a.get('checkpoint')}   top-1 {rate_a:.6f}   "
-          f"targets: {target_provenance(meta_a)[0]}   "
-          f"neg-control: {_negative_control_readout(meta_a)}")
-    print(f"B  {meta_b.get('checkpoint')}   top-1 {rate_b:.6f}   "
-          f"targets: {target_provenance(meta_b)[0]}   "
-          f"neg-control: {_negative_control_readout(meta_b)}")
+  # ⚑ The IDENTITY is on the line too, for the same reason `neg-control:` is: the
+  # prereg requires a pasted readout to be self-describing, and "this pair is
+  # mid-vs-last of one trajectory" is now a gate — a gate whose result a reader
+  # of the output could not see.
+    for label, meta, rate in (("A", meta_a, rate_a), ("B", meta_b, rate_b)):
+        print(f"{label}  {meta.get('checkpoint')}   top-1 {rate:.6f}   "
+              f"targets: {target_provenance(meta)[0]}   "
+              f"neg-control: {_negative_control_readout(meta)}   "
+              f"{_identity_readout(meta)}")
     print(f"paired rows          {n}")
     print(f"discordant  b(A only)={b}  c(B only)={c}  "
           f"discordance={(b + c) / n:.4f}")
@@ -1096,13 +1187,24 @@ def build_parser() -> argparse.ArgumentParser:
              "two LASTs from two independently initialised trajectories, "
              "reported as the prereg's LAST vs MID-BUDGET slope. It does NOT "
              "waive a run_id MISMATCH or a role pair that is not {mid, last} — "
-             "those are measurements, not absences.")
+             "those are measurements, not absences, and they are judged on "
+             "whatever the two artifacts DO carry even when this flag is passed. "
+             "⚑ What it DOES concede is that the missing field's binding is "
+             "UNVERIFIED: with one side's role absent, nothing establishes that "
+             "the pair is mid-vs-last at all.")
     compare.add_argument(
         NON_PREREG_HELDOUT_WAIVER, action="store_true",
         help="proceed when a score file's frozen set was not built from the "
              "preregistered six hourly tars. Its own flag, so declaring a "
              "different held-out population does not also clear an unrecorded "
              "validity or a shuffled contrast.")
+    compare.add_argument(
+        UNRECORDED_HELDOUT_WAIVER, action="store_true",
+        help="proceed when a score file carries no "
+             "`heldout_source_selection_problems` at all (written before the "
+             "field existed). ⚑ Not the same claim as the flag above — absent is "
+             "not clean — so it does not waive a set that IS recorded as "
+             "non-preregistered.")
     compare.add_argument(
         UNRECORDED_VALIDITY_WAIVER, action="store_true",
         help="proceed when a score file carries no `valid_control` field. ⚑ It "

@@ -52,6 +52,7 @@ from chess_anti_engine.eval.lc0_control_rows import (
     PREREG_HELDOUT_SOURCES,
     EmptyTrainCorpus,
     chance_level,
+    duplicate_resolved_dirs,
     exposed_rows,
     frozen_minus_exposed,
     frozen_row_set,
@@ -64,10 +65,36 @@ from chess_anti_engine.eval.lc0_control_rows import (
 
 
 def cmd_freeze(args: argparse.Namespace) -> int:
+  # ⚑ FIRST, before a single shard is read: a repeated directory is a property of
+  # the ARGUMENTS, and reading the corpus to discover it costs minutes on the real
+  # hours. Refused unconditionally, exactly as on the training side —
+  # `--allow-source-selection` declares a different NUMBER of hours, which is a
+  # legitimate smoke choice, while naming one hour twice is not a population
+  # anybody chose, so no flag reaches it.
+  #
+  # ⚑⚑ AND IT MUST PRECEDE THE ROW-ID GATE. `freeze --shards h h h h h h` was
+  # stopped by `FAIL: the frozen set contains duplicate row ids` — a gate about the
+  # ID FUNCTION, firing on an input that is wrong for an entirely different reason,
+  # so the operator is told the wrong thing and the population gate reads clean.
+    repeated = duplicate_resolved_dirs(args.shards)
+    if repeated:
+        print(
+            "FAIL: these --shards directories are named more than once "
+            "(resolved): " + ", ".join(repeated)
+            + ". One hour named N times is not N hours: it is a single net "
+            "generation's worth of a correlated stream, which is the population "
+            "the prereg's SIX exists to avoid. Name each hour once.",
+            file=sys.stderr,
+        )
+        return 1
     payload = frozen_row_set(args.shards, sample=int(args.sample), seed=int(args.seed))
-    print(f"sources ({len(payload['sources'])}):")
-    for name, rows in zip(payload["sources"], payload["source_rows"], strict=True):
-        print(f"  {name}: {rows} rows")
+  # ⚑ RESOLVED paths, not basenames: six distinct hours all called `h` printed
+  # (and banked) as `h` six times, which is unauditable against the prereg's
+  # actual claim — the LAST 6 hourly tars BY WALL-CLOCK.
+    print(f"sources ({len(payload['source_paths'])}):")
+    for path, rows in zip(payload["source_paths"], payload["source_rows"],
+                          strict=True):
+        print(f"  {path}: {rows} rows")
     print(f"pool rows              {payload['pool_rows']}")
     print(f"pool unique ids        {payload['pool_unique_ids']}")
     print(f"pool duplicate ids     {payload['pool_duplicate_ids']}  "
@@ -79,6 +106,39 @@ def cmd_freeze(args: argparse.Namespace) -> int:
           f"(unique ids {payload['frozen_unique_ids']}, unique inputs "
           f"{payload['frozen_unique_inputs']}, seed {payload['sample_seed']})")
     print(f"row id version         {payload['row_id_version']}")
+
+  # ⚑ REQUIRE THE PREREGISTERED SIX, OR STAMP THE ARTIFACT. Refusing by default
+  # is the half that matters: an unstamped artifact from a non-preregistered
+  # source selection could not exist, so nothing downstream has to guess. The
+  # stamp is not decoration either — `lc0_control_eval score` banks it and
+  # `compare` refuses it unless `--allow-non-prereg-heldout` says the operator
+  # meant it. Same shape as `--allow-arch-drift`: the deviation is possible,
+  # declared, and carried in every artifact derived from it.
+  #
+  # ⚑⚑ COUNTED AS DISTINCT RESOLVED PATHS. The first version counted the LIST, so
+  # `freeze --shards h h h h h h` — one hour named six times, the exact input the
+  # SIX exists to rule out — passed this gate and was stopped only by the
+  # unrelated duplicate-row-id refusal below. `source_selection_problems` now
+  # reads `source_paths` (resolved) and de-duplicates with
+  # `duplicate_resolved_dirs`, the same function the training driver uses for the
+  # same hazard on `--shards`; that function existed in the same commit as the
+  # defect and was not reused. Independent review of #438.
+    selection_problems = source_selection_problems(payload)
+    if selection_problems and not args.allow_source_selection:
+        print(
+            "FAIL: " + " | ".join(selection_problems)
+            + " Point --shards at the preregistered six hours, or pass "
+            "--allow-source-selection to stamp this artifact as a "
+            "non-preregistered population (every score and comparison derived "
+            "from it then carries that stamp).",
+            file=sys.stderr,
+        )
+        return 1
+    payload["source_selection_problems"] = selection_problems
+    payload["preregistered_source_selection"] = not selection_problems
+    if selection_problems:
+        print("⚑⚑ --allow-source-selection: NOT THE PREREGISTERED HELD-OUT "
+              "POPULATION — " + " | ".join(selection_problems))
 
   # ⚑ Both refusals happen BEFORE the artifact is written. Codex #1: `freeze
   # --sample 100000` on a 48,360-row pool used to write 48,360 rows, print a
@@ -98,30 +158,6 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     if payload["frozen_rows"] != payload["frozen_unique_ids"]:
         print("FAIL: the frozen set contains duplicate row ids", file=sys.stderr)
         return 1
-
-  # ⚑ REQUIRE THE PREREGISTERED SIX, OR STAMP THE ARTIFACT. Refusing by default
-  # is the half that matters: an unstamped artifact from a non-preregistered
-  # source selection could not exist, so nothing downstream has to guess. The
-  # stamp is not decoration either — `lc0_control_eval score` banks it and
-  # `compare` refuses it unless `--allow-non-prereg-heldout` says the operator
-  # meant it. Same shape as `--allow-arch-drift`: the deviation is possible,
-  # declared, and carried in every artifact derived from it.
-    selection_problems = source_selection_problems(payload)
-    if selection_problems and not args.allow_source_selection:
-        print(
-            "FAIL: " + " | ".join(selection_problems)
-            + " Point --shards at the preregistered six hours, or pass "
-            "--allow-source-selection to stamp this artifact as a "
-            "non-preregistered population (every score and comparison derived "
-            "from it then carries that stamp).",
-            file=sys.stderr,
-        )
-        return 1
-    payload["source_selection_problems"] = selection_problems
-    payload["preregistered_source_selection"] = not selection_problems
-    if selection_problems:
-        print("⚑⚑ --allow-source-selection: NOT THE PREREGISTERED HELD-OUT "
-              "POPULATION — " + " | ".join(selection_problems))
 
     digest = write_frozen(payload, Path(args.out))
     print(f"written                {args.out}")

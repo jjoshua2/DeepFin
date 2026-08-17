@@ -543,34 +543,67 @@ the sixth is a real production-code arithmetic error.
    that summary had never seen — including a disqualified one — and `compare` could pair
    two trajectories' LAST checkpoints. ⇒ the run banks a content-derived `run_id` and a
    sha256 + role per checkpoint; `score` hashes the `--checkpoint` and REFUSES a summary
-   that does not name it; `compare` requires one `run_id` with roles {mid, last}
-   (unwaivable), and refuses an artifact with no identity at all (waivable by
-   `--allow-unverified-trajectory`).
+   that does not name it; `compare` refuses a `run_id` MISMATCH and a role pair that is
+   not {mid, last} — **unwaivable, and judged on whichever artifacts carry the field** —
+   and refuses an artifact with no identity at all (waivable by
+   `--allow-unverified-trajectory`, which concedes only that the MISSING field's binding
+   is unverified).
 5. **The held-out POPULATION was ungated.** This document names it as "the LAST 6 hourly
    tars by wall-clock"; `freeze` gated the row COUNT at 100,000 and accepted any number
    of source directories, and a different number of hours carries different temporal
-   correlation. ⇒ `freeze` REFUSES unless there are exactly six, or
-   `--allow-source-selection` stamps the artifact; `score` RECOMPUTES the source count
-   from the frozen artifact (not from the stamp — a set predating the stamp would
-   otherwise read as preregistered) and `compare` refuses it, waivable by
-   `--allow-non-prereg-heldout`.
-6. **PRODUCTION CODE.** `Trainer._warn_if_value_blend_leaks_to_outcome` multiplied the
-   label shortfall by the RAW `sf_wdl_frac`/`search_wdl_frac` attributes while
-   `compute_loss` renormalises them through `normalize_value_blend_fracs`. With
-   `0.8`/`0.8` and 50% effective SF coverage the objective realizes a **0.25** leak and
-   the warning reported **0.40** — 1.6×, enough to fire the 0.01 incident bar on a leak
-   the trained objective never had. ⇒ the same helper, before the arithmetic.
+   correlation. ⇒ `freeze` REFUSES unless there are exactly six **distinct resolved
+   paths** (a repeated directory is refused with no flag at all), or
+   `--allow-source-selection` stamps the artifact; the frozen set banks resolved
+   `source_paths` rather than basenames, so "the LAST 6 hourly tars by wall-clock" is
+   auditable from the artifact; `score` RECOMPUTES the population from the frozen
+   artifact (not from the stamp — a set predating the stamp would otherwise read as
+   preregistered) and `compare` refuses it, waivable by `--allow-non-prereg-heldout`,
+   with an ABSENT record refused separately under `--allow-unrecorded-heldout`.
+6. **A production-code arithmetic error, on a path production does not visit.**
+   `Trainer._warn_if_value_blend_leaks_to_outcome` multiplied the label shortfall by the
+   RAW `sf_wdl_frac`/`search_wdl_frac` attributes while `compute_loss` renormalises them
+   through `normalize_value_blend_fracs`. With `0.8`/`0.8` and 50% effective SF coverage
+   the objective realizes a **0.25** leak and the warning reported **0.40** — 1.6×, enough
+   to fire the 0.01 incident bar on a leak the trained objective never had. ⇒ the same
+   helper, before the arithmetic.
+   ⚑⚑ **BUT IT IS LATENT ON TODAY'S PRODUCTION CONFIG, AND AN EARLIER REVISION OF THIS
+   LINE OVERSTATED THAT BY LABELLING IT "PRODUCTION CODE" WITHOUT QUALIFICATION.**
+   `normalize_value_blend_fracs` only renormalises when `sf_wdl_frac + search_wdl_frac >
+   1`, and the live `configs/pbt2_small.yaml` cannot reach it: `0.69 + 0.31` is **exactly
+   1.0** in IEEE754 (measured, not assumed) and `sf_wdl_frac_floor == sf_wdl_frac ==
+   0.69`, so `_dynamic_sf_wdl_weight` interpolates 0.69→0.69 and the PID ramp cannot lift
+   the sum. **No live TB series carries a 1.6× error and nobody should go looking for
+   one.** The states that reach it are a live-yaml edit or PB2 mutation of either frac
+   (both are `TRAINER_WEIGHT_KEYS`, pushed onto the running trainer every iteration, and
+   neither has a validator — CLAUDE.md category (c), so `search_wdl_frac: 0.8` lands
+   silently) and this control arm's own oversubscribed configs, which is where the
+   regression test lives. Found by the independent review of the fix wave; the remedy is
+   the honest label, **not** a change to the blend, which is load-bearing.
 
 Every waiver above is its OWN flag, and each refusal now carries the name of the one flag
 that clears it as a FIELD (`ProvenanceProblem.waiver`) rather than as a substring of its
 message — Amendment 5's `--allow-unrecorded-validity` scoped itself by matching prose,
-which makes a waiver's reach a property of wording.
+which makes a waiver's reach a property of wording. ⚑ A waiver-tagged refusal is still
+only as narrow as its CONTROL FLOW: the first version of finding 4's gate chained the
+three identity checks as `if/elif/elif`, so the one waivable branch shadowed the two
+unwaivable ones and the flag cleared exactly what its help text promised it could not.
+Naming the waiver is necessary and not sufficient; the branches must be independent.
+
+⚑ **`validity_problems` IS NOT A SOFT RECORD.** `valid_control = not
+validity_problems` and `compare` refuses `valid_control: false` with **no waiver**, so
+every entry — `--batch-size`, the mid fraction, `--allow-leak`, `--allow-arch-drift`, no
+purity receipt, sub-warmup budgets — is terminal for the comparison. The choice these
+entries make is LAUNCH vs ARTIFACT: the run finishes and writes its checkpoints (which is
+what a plumbing smoke needs) and is then disqualified from supplying either side of the
+primary readout. The driver's comments called this "recorded rather than refused", which
+reads as "still comparable"; it is not, and the wording is corrected in the code.
 
 ⇒ **Operational consequence for this arm:** the deciding `compare` must be run on
 artifacts whose `run_id` matches and whose roles are `mid` and `last`, from a `freeze`
-that needed no `--allow-source-selection`, at the config's own `batch_size`, with
-`--mid-checkpoint-frac` left at its default. Any of the four new banners in the output
-means the readout is not the preregistered yardstick.
+that needed no `--allow-source-selection`, at the config's own `batch_size`, with the mid
+checkpoint landing on the realized 0.5 of the budget (the knob is clamped to an interior
+step, so `--steps 3 --mid-checkpoint-frac 0.5` lands at 33% and is recorded). Any of the
+five new banners in the output means the readout is not the preregistered yardstick.
 
 ## What each outcome licenses — pre-committed
 
