@@ -367,6 +367,95 @@ recipe the slopes describe.
 - ~3.7% of T91 games are chess960/DFRC and are dropped; ~1 row in 23,000 is dropped
   for the e.p.-blind repetition divergence.
 
+## ⚑⚑ AMENDMENT 4 (2026-08-17, written BEFORE any training step): THE REPLAY BUFFER WAS NOT PRODUCTION'S, AND THE DRIVER COULD NOT PRODUCE THE PRIMARY YARDSTICK
+
+**No arm has run and no number from this arm exists**, so this cannot be threshold
+shopping. Two independent defects, both found by PR #438's review, both closed
+before any step.
+
+### 1. A THIRD AXIS OF "OUR EXACT STACK", WITH NO INSTRUMENT ON IT
+
+AMENDMENT 2 pinned the ARCHITECTURE to the live file and AMENDMENT 3 pinned the
+TRAINER. Neither can see the REPLAY BUFFER: `DiskReplayBuffer` is constructed by
+`tune/trainable_init.py` from `TrialConfig` fields that `trainer_kwargs_from_config`
+does not read. `scripts/lc0_control_train.py` passed three buffer kwargs by hand and
+took `chess_anti_engine/replay/disk_buffer.py`'s CONSTRUCTOR DEFAULTS for the rest,
+its own comment claimed two deviations, the review found three, and the measurement
+against the LIVE `configs/pbt2_small.yaml` found **seven**:
+
+| kwarg | control (was) | LIVE |
+|---|---|---|
+| `shuffle_cap` | 20,000 | **100,000** |
+| `shard_size` | 1,000 | **2,000** |
+| `refresh_interval` | 5 | **4** |
+| `refresh_shards` | 3 | **5** |
+| `diff_focus_pol_scale` | 0.0 | **3.5** |
+| `diff_focus_q_weight` | 0.0 | **6.0** |
+| `input_planes` | None | **175** |
+
+Both existing pins passed the whole time.
+
+⚑⚑ **WHY THIS IS A CONFOUND AND NOT A TOLERANCE.** The arm's hypothesis is
+*H_stack* — "the plateau is the training stack". A hot shuffle pool 5× smaller than
+production's produces a plateau of the RIG, and in the held-out top-1 slope that is
+**arithmetically indistinguishable** from the plateau H_stack is about. The
+`H_stack LIVE` cell of the primary table would have been unattributable, and it is
+the cell this document calls the most consequential result available.
+
+**Closure.** `chess_anti_engine/eval/lc0_control_replay.py` is a third pin on the
+same instrument as the other two (live file when `$CHESS_LIVE_PRODUCTION_CONFIG`
+names one, `LIVE_REPLAY_PIN` otherwise), enforced as LAUNCH guard 0d. The two
+remaining deviations are declared with reasons in `LC0_REPLAY_DEVIATIONS`, both
+about the corpus being FIXED rather than streaming and neither touching hot-pool
+size, refresh cadence or prioritisation: `shard_recency_exponent` 1.0 → 0.0 (uniform
+shard draw) and `deterministic_refresh` False → True (the draw is a pure function of
+the seed). `assert_buffer_kwargs_are_classified` reads `DiskReplayBuffer.__init__`'s
+own signature and refuses unless every parameter is classified, so a knob added
+later is a loud failure rather than a silent eighth deviation.
+
+### 2. THE PRIMARY YARDSTICK REQUIRED TWO CHECKPOINTS AND THE DRIVER EMITTED ONE
+
+This document's PRIMARY section reads the arm as the joint reading of `Δ_heldout`
+and `Δ_train`, "both measured LAST vs MID-BUDGET". `scripts/lc0_control_train.py`
+had one `train_steps` call and one `trainer.save`, so **the deciding statistic was
+not producible by the rig at all** — a gate that cannot fire, one level up from the
+gates AMENDMENT 2 and 3 fixed.
+
+⚑⚑ **AND THE OBVIOUS FIX WOULD HAVE BEEN WRONG.** Two runs, or two `train_steps`
+calls of N/2, are not ONE trajectory: with `lr_schedule: sqrt_release` and
+`lr_release_cycle_steps: 0` — what this arm and production both run — `train_steps`
+derives the release cycle from ITS OWN `steps` argument and restarts `local_step` at
+0 on every call, so two half-calls run the release ramp TWICE. MID and LAST would
+sit on different LR trajectories and part of the slope between them would be a
+schedule artifact. `--mid-checkpoint-frac` (default 0.5) therefore writes
+`checkpoint_mid.pt` from INSIDE the single call. A run that produces no mid
+checkpoint records that in `summary.json`'s `validity_problems` and is not a valid
+control.
+
+### 3. `compare` COULD REPORT GUARD 1 AS THE PRIMARY SLOPE
+
+`scripts/lc0_control_eval.py score` banks `shuffled_targets_seed` into every
+artifact — the marker that says the run is **prereg guard 1**, the permuted-target
+NEGATIVE CONTROL. `cmd_compare` loaded that metadata and used exactly one field of
+it (`checkpoint`, for a print). Measured on PR #438's HEAD: a B artifact carrying
+`shuffled_targets_seed: 0` compared against a real-target A at n=100,000 printed
+`delta +0.0400 pp, CI [+0.0123, +0.0677]` and **exited 0**. The negative control
+read as the learning slope and cleared the n floor, the halfwidth bar and the
+zero-discordance refusal — every gate this file has.
+
+`compare` now REFUSES, before the arithmetic so no number reaches the screen, when
+the two artifacts' `shuffled_targets_seed` differ, when either is a negative
+control, or when either FAILED its own negative-control gate. The first two are
+waivable by `--allow-shuffled-contrast` for the one comparison that wants them; the
+third is not, because a rig that manufactures agreement supports no verdict in
+either direction.
+
+### What this does NOT change
+
+No threshold moves. The ±0.392 pp bar, the +2.0 pp effect size, the n=100,000
+resolution point, the four guards and the outcome table are all as originally
+written. This amendment changes only what the rig is able to measure.
+
 ## What each outcome licenses — pre-committed
 
 - **PASS** ⇒ the training stack and architecture can learn. Effort routes to targets

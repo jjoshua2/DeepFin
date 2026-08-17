@@ -24,7 +24,7 @@ import pytest
 import torch
 import yaml
 
-from chess_anti_engine.eval import lc0_control_arch
+from chess_anti_engine.eval import lc0_control_arch, lc0_control_replay
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.train.target_builder import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.replay.sample import ReplaySample
@@ -639,6 +639,284 @@ def test_the_built_model_is_checked_against_the_pinned_parameter_count(
         ])
 
 
+# ── lc0_control_train: the REPLAY BUFFER (launch guard 0d) ────────────────────
+
+
+def _recording_buffer(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Capture the kwargs the driver passes AND the buffer that came out.
+
+    ⚑ Read back off the CONSTRUCTED object, never off the config — the same
+    discipline ``tune/trainable_init.py`` states for these exact keys: a config
+    echo proves the yaml parsed, not that the buffer consumed it.
+    """
+    seen: dict[str, Any] = {}
+    original = lc0_control_train.DiskReplayBuffer
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        seen["passed"] = dict(kwargs)
+        buf = original(*args, **kwargs)
+        seen["realized"] = {
+            "shuffle_cap": buf._shuffle_cap,
+            "refresh_interval": buf._refresh_interval,
+            "refresh_shards": buf._refresh_shards,
+            "shard_recency_exponent": buf._shard_recency_exponent,
+            "diff_focus_pol_scale": buf.diff_focus_pol_scale,
+            "diff_focus_q_weight": buf.diff_focus_q_weight,
+            "input_planes": buf._input_planes,
+        }
+        return buf
+
+    monkeypatch.setattr(lc0_control_train, "DiskReplayBuffer", recording)
+    return seen
+
+
+def test_the_driver_builds_productions_buffer_not_the_constructor_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ CODEX 3791327310, at the level that decides it.
+
+    The driver passed three buffer kwargs and took ``disk_buffer.py``'s
+    CONSTRUCTOR DEFAULTS for the rest, so it sampled from a 20,000-row hot pool
+    against production's 100,000 — and both existing pins passed, because
+    ``trainer_kwargs_from_config`` reads none of these keys. Seven axes off, not
+    the three the review named and not the two the driver's own comment claimed.
+
+    ⚑ Asserted against ``LIVE_REPLAY_PIN``, not against literals: a test that
+    hard-codes 100000 keeps passing after production moves, which is the failure
+    mode the pin exists for.
+    """
+    seen = _recording_buffer(monkeypatch)
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "run"
+    rc = lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "2", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ])
+    assert rc == 0
+    live = lc0_control_replay.LIVE_REPLAY_PIN["kwargs"]
+    realized = seen["realized"]
+    for key in ("shuffle_cap", "refresh_interval", "refresh_shards",
+                "diff_focus_pol_scale", "diff_focus_q_weight", "input_planes"):
+        assert realized[key] == live[key], f"{key} is not production's"
+  # And each of those is genuinely NOT the constructor default, or the assertion
+  # above would pass on the defective code too.
+    defaults = lc0_control_replay._buffer_defaults()
+    for key in ("shuffle_cap", "refresh_interval", "refresh_shards",
+                "diff_focus_pol_scale", "diff_focus_q_weight"):
+        assert realized[key] != defaults[key], (
+            f"{key} equals the DiskReplayBuffer default, so this test cannot "
+            "distinguish the fix from the defect"
+        )
+  # The two DECLARED deviations are applied, and recorded as realized.
+    assert realized["shard_recency_exponent"] == 0.0
+    assert seen["passed"]["deterministic_refresh"] is True
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["realized_replay_after_guard"]["shuffle_cap"] == live["shuffle_cap"]
+    assert summary["realized_replay_after_guard"]["shard_recency_exponent"] == 0.0
+    assert "replay" in summary["replay_judged_against"].lower() or summary[
+        "replay_judged_against"
+    ], "the artifact must name what guard 0d judged against"
+
+
+def test_the_replay_guard_refuses_a_drifted_control_at_launch(
+    tmp_path: Path,
+) -> None:
+    """A hot pool 5x smaller than production's is a plateau of the RIG, and in
+    the held-out slope it is indistinguishable from the plateau H_stack is
+    about. So it is a launch REFUSAL, not a banner."""
+    config = _tiny_config(tmp_path, tune={"shuffle_buffer_size": 20_000})
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    with pytest.raises(SystemExit) as excinfo:
+        lc0_control_train.main([
+            "--config", str(config), "--shards", str(shards),
+            "--out-dir", str(tmp_path / "drift"), "--steps", "1",
+            "--batch-size", "4", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift",
+        ])
+    message = str(excinfo.value)
+    assert "REPLAY BUFFER is NOT production" in message
+    assert "shuffle_cap: control=20000" in message
+
+
+def test_allow_leak_downgrades_the_replay_guard_to_a_banner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Same split as guard 0c: the flag exists to let a deliberately-wrong run
+    REACH the realized per-step guard, and a plumbing smoke that had to match
+    production's 100,000-row shuffle pool is not a plumbing smoke."""
+    config = _tiny_config(tmp_path, tune={"shuffle_buffer_size": 20_000})
+    shards = _write_shards(tmp_path / "rows", list(range(8)))
+    rc = lc0_control_train.main([
+        "--config", str(config), "--shards", str(shards),
+        "--out-dir", str(tmp_path / "leaky"), "--steps", "1",
+        "--batch-size", "4", "--device", "cpu", "--no-compile",
+        "--allow-arch-drift", "--allow-leak",
+    ])
+    assert rc == 0
+    assert "IGNORING launch guard" in capsys.readouterr().out
+
+
+def test_every_disk_replay_buffer_kwarg_is_classified() -> None:
+    """⚑⚑ THE ANTI-DRIFT HALF. A hand-listed set of buffer kwargs has exactly
+    the defect it closes: the next knob added to ``DiskReplayBuffer`` is
+    silently absent from the pin and every gate still reports green."""
+    lc0_control_replay.assert_buffer_kwargs_are_classified()
+
+
+def test_an_unclassified_buffer_kwarg_is_a_loud_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The check above is vacuous until it is shown to fire. Dropping a mapping
+    entry is the same event as ``DiskReplayBuffer`` gaining a parameter."""
+    mapping = dict(lc0_control_replay.CONFIG_KWARGS)
+    mapping.pop("shuffle_cap")
+    monkeypatch.setattr(lc0_control_replay, "CONFIG_KWARGS", mapping)
+    with pytest.raises(lc0_control_replay.ControlReplayDrift, match="shuffle_cap"):
+        lc0_control_replay.assert_buffer_kwargs_are_classified()
+  # ⚑ AND THROUGH THE FUNCTION EVERY CALLER USES. Testing the assert only where
+  # it is called directly leaves "somebody deletes the call from
+  # `replay_kwargs_signature`" invisible — a guard that is correct and no longer
+  # reached, which is this repo's signature defect.
+    with pytest.raises(lc0_control_replay.ControlReplayDrift, match="shuffle_cap"):
+        lc0_control_replay.replay_kwargs_signature(
+            flatten_run_config_defaults(load_yaml_file(str(CONTROL))),
+        )
+
+
+def test_a_driver_override_with_no_recorded_reason_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``LC0_REPLAY_DEVIATIONS`` is the mapping the guard reads AND the mapping
+    the driver's overrides must be keys of. Without this, "the driver quietly
+    overrides a fourth kwarg" is invisible to both."""
+    monkeypatch.setattr(
+        lc0_control_replay, "LC0_REPLAY_DEVIATIONS",
+        {"shard_recency_exponent": "..."},
+    )
+    with pytest.raises(
+        lc0_control_replay.ControlReplayDrift, match="deterministic_refresh",
+    ):
+        lc0_control_replay.apply_control_deviations(
+            lc0_control_replay.LIVE_REPLAY_PIN["kwargs"],
+        )
+
+
+# ── lc0_control_train: the prereg's LAST-vs-MID-BUDGET pair ───────────────────
+
+
+def test_the_run_writes_a_mid_budget_checkpoint_from_one_trajectory(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ CODEX 3791327305. The prereg's PRIMARY yardstick is two slopes "both
+    measured LAST vs MID-BUDGET"; the driver had one ``train_steps`` call and
+    one ``trainer.save``, so it could not produce the deciding statistic at all.
+    """
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "run"
+    rc = lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+    ])
+    assert rc == 0
+    assert (out / "checkpoint_mid.pt").is_file()
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["mid_checkpoint"]["step"] == 2
+    assert summary["mid_checkpoint"]["of_steps"] == 4
+  # ⚑ NOT THE SAME WEIGHTS. A mid checkpoint saved before any step, or after
+  # every step, would satisfy every assertion above and give `compare` a pair
+  # that is discordant on zero rows.
+    mid = torch.load(out / "checkpoint_mid.pt", map_location="cpu", weights_only=False)
+    last = torch.load(out / "checkpoint.pt", map_location="cpu", weights_only=False)
+    assert any(
+        not torch.equal(mid["model"][k].float(), last["model"][k].float())
+        for k in mid["model"] if isinstance(mid["model"][k], torch.Tensor)
+    ), "mid and last are byte-identical, so the pair carries no trajectory"
+
+
+def test_the_mid_budget_split_would_have_re_ramped_the_lr() -> None:
+    """⚑⚑ WHY THE CHECKPOINT IS TAKEN FROM INSIDE ONE ``train_steps`` CALL.
+
+    The obvious implementation — ``train_steps(N/2)`` twice, saving between —
+    is wrong, and this is the measurement rather than the argument. With
+    ``lr_schedule: sqrt_release`` and ``lr_release_cycle_steps: 0`` (what this
+    arm and production both run) ``train_steps`` derives the release cycle from
+    ITS OWN ``steps`` argument and feeds the scheduler ``local_step``, which
+    restarts at 0 every call. Two half-calls therefore run the release ramp
+    TWICE, so LAST and MID would sit on different LR trajectories and the slope
+    between them would be part schedule artifact.
+    """
+    from chess_anti_engine.train.trainer import _SqrtReleaseLRScheduler
+
+    class _Opt:
+        def __init__(self) -> None:
+            self.param_groups = [{"lr": 1.0}]
+
+    scheduler = _SqrtReleaseLRScheduler(
+        _Opt(), cycle_steps=0, release_start_frac=0.8, min_scale=0.1,
+    )
+    total = 100
+    one_call = [
+        scheduler._scale_for_window_step(i, cycle_steps=total) for i in range(total)
+    ]
+    split = [
+        scheduler._scale_for_window_step(i, cycle_steps=total // 2)
+        for _half in range(2) for i in range(total // 2)
+    ]
+    assert one_call != split, (
+        "if these agreed, splitting the call would be a valid implementation"
+    )
+  # The mechanism, named: the split ramp has already released and RECOVERED by
+  # the midpoint, which the single ramp has not.
+    assert one_call[total // 2] == 1.0
+    assert split[total // 2 - 1] < 1.0
+    assert split[total // 2] == 1.0
+
+
+def test_a_run_with_no_mid_checkpoint_is_not_a_valid_control(
+    tmp_path: Path,
+) -> None:
+    """Half the deciding statistic, recorded as such. Otherwise `compare` would
+    happily pair this run's LAST against some OTHER run's LAST."""
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "run"
+    rc = lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "2", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--mid-checkpoint-frac", "0",
+    ])
+    assert rc == 0
+    assert not (out / "checkpoint_mid.pt").exists()
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["mid_checkpoint"] is None
+    assert summary["valid_control"] is False
+    assert any("mid-budget" in p for p in summary["validity_problems"])
+
+
+def test_a_failed_realized_guard_leaves_no_mid_checkpoint_either(
+    tmp_path: Path,
+) -> None:
+    """⚑ The mid checkpoint is written DURING the run, i.e. before the realized
+    guard can have run. "No checkpoint written" has to stay literally true, or a
+    refused run leaves a scorable artifact behind whose metadata says nothing
+    about the refusal."""
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    config = _tiny_config(
+        tmp_path, train={"sf_wdl_frac": 0.69, "search_wdl_frac": 0.31},
+    )
+    out = tmp_path / "leak_run"
+    with pytest.raises(SystemExit):
+        lc0_control_train.main([
+            "--config", str(config), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "4", "--batch-size", "4",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-leak",
+        ])
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
+
+
 # ── lc0_control_heldout ───────────────────────────────────────────────────────
 
 
@@ -1249,6 +1527,151 @@ def test_score_exits_one_when_the_negative_control_does_not_collapse(
     meta = json.loads(str(np.load(tmp_path / "s.npz", allow_pickle=True)["meta"][0]))
     assert meta["shuffled_collision_rate"] == pytest.approx(1 / 3, abs=1e-6)
     assert meta["negative_control_z"] > 5.0
+  # ⚑ The BAR, banked next to the z. `compare` refuses an artifact that failed
+  # its own gate, and it cannot know which bar this run was gated at unless the
+  # run wrote it down.
+    assert meta["negative_control_max_z"] == pytest.approx(5.0)
+
+
+# ── compare: the NEGATIVE-CONTROL metadata it already loads ───────────────────
+
+
+def _paired_scores(
+    tmp_path: Path, *, meta_a: dict[str, Any], meta_b: dict[str, Any],
+    n: int = 100_000,
+) -> tuple[Path, Path]:
+    """The triage's reproduction of Codex finding 3791327309, verbatim.
+
+    ``c=120`` / ``b=80`` discordant pairs at n=100,000, which is the pair that
+    printed ``delta +0.0400 pp, CI [+0.0123, +0.0677]`` and EXITED 0 while --b
+    carried ``shuffled_targets_seed: 0``.
+    """
+    rng = np.random.default_rng(7)
+    a = (rng.random(n) < 0.30).astype(np.uint8)
+    b = a.copy()
+    b[rng.choice(np.flatnonzero(a == 0), size=120, replace=False)] = 1
+    b[rng.choice(np.flatnonzero(a == 1), size=80, replace=False)] = 0
+
+    def write(path: Path, hits: np.ndarray, meta: dict[str, Any]) -> Path:
+        np.savez_compressed(
+            path,
+            row_ids=np.array([f"id{i:06d}" for i in range(hits.size)], dtype="U32"),
+            hit=hits, meta=np.array([json.dumps(meta)], dtype=object),
+            allow_pickle=True,
+        )
+        return path
+
+    return (
+        write(tmp_path / "a.npz", a, meta_a),
+        write(tmp_path / "b.npz", b, meta_b),
+    )
+
+
+def test_compare_refuses_a_negative_control_read_as_the_primary_slope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ CODEX 3791327309. ``cmd_compare`` loaded the metadata and used exactly
+    one field of it (``checkpoint``, for a print), so prereg guard 1 — the
+    PERMUTED-TARGET negative control — differenced against a real-target score
+    read as the primary learning slope and cleared every pre-committed gate.
+
+    Three separate assertions, because they fail separately: the exit code (the
+    only thing a caller sees), the message naming the field AND both values (the
+    only thing that tells an operator what to fix), and the ABSENCE of the slope
+    from stdout — a refusal that still prints ``delta`` leaves a quotable number
+    on the screen, which is the whole failure.
+    """
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "checkpoint_mid.pt", "shuffled_targets_seed": None},
+        meta_b={"checkpoint": "checkpoint.pt", "shuffled_targets_seed": 0},
+    )
+    rc = lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "shuffled_targets_seed" in captured.err
+    assert "None" in captured.err, "the --a value must be named"
+    assert "0" in captured.err, "the --b value must be named"
+    assert "delta" not in captured.out, (
+        "the slope must not be printed for a pair that is refused"
+    )
+
+
+def test_compare_refuses_two_negative_controls(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Equal provenance is not sufficient provenance: differencing two collision
+    rates satisfies every other gate in the file and says nothing about the arm."""
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "mid", "shuffled_targets_seed": 3},
+        meta_b={"checkpoint": "last", "shuffled_targets_seed": 3},
+    )
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 1
+    assert "BOTH score files are negative controls" in capsys.readouterr().err
+
+
+def test_the_shuffled_contrast_flag_waives_the_refusal_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one comparison that DOES want the shuffled contrast still works, and
+    the run is stamped so nobody reads the output as a primary slope."""
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "mid", "shuffled_targets_seed": None},
+        meta_b={"checkpoint": "last", "shuffled_targets_seed": 0},
+    )
+    rc = lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-shuffled-contrast",
+    ])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "--allow-shuffled-contrast" in out
+    assert "delta" in out, "the waived path must still report the comparison"
+
+
+def test_the_waiver_does_not_cover_a_control_that_failed_its_own_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ "I meant to compare the shuffled control" is a statement about INTENT;
+    a control that beat its own collision floor is a statement about the RIG.
+    A rig that manufactures agreement supports no verdict in either direction,
+    including a deliberately-contrasted one, so this refusal is unwaivable."""
+    a, b = _paired_scores(
+        tmp_path,
+        meta_a={"checkpoint": "mid", "shuffled_targets_seed": None},
+        meta_b={
+            "checkpoint": "last", "shuffled_targets_seed": 0,
+            "negative_control_z": 41.7, "negative_control_max_z": 5.0,
+        },
+    )
+    assert lc0_control_eval.main([
+        "compare", "--a", str(a), "--b", str(b), "--allow-shuffled-contrast",
+    ]) == 1
+    assert "FAILED its own negative-control gate" in capsys.readouterr().err
+
+
+def test_a_z_below_the_bar_that_run_was_gated_at_is_not_a_failure() -> None:
+    """⚑ The BAR comes off the artifact, not off ``NEGATIVE_CONTROL_Z``. A run
+    given ``--negative-control-z 50`` passed at z=41.7, and re-judging its banked
+    z against this module's constant would answer a question nobody asked."""
+    meta = {"shuffled_targets_seed": 0, "negative_control_z": 41.7,
+            "negative_control_max_z": 50.0}
+    failed, z, bar = lc0_control_eval._failed_negative_control(meta)
+    assert (failed, z, bar) == (False, 41.7, 50.0)
+    assert lc0_control_eval._failed_negative_control(
+        {"shuffled_targets_seed": 0, "negative_control_z": 41.7},
+    )[0] is True, "with no banked bar it falls back to the module constant"
+
+
+def test_an_artifact_predating_the_provenance_field_still_compares(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility, and in the SAFE direction: a file written before
+    ``shuffled_targets_seed`` existed reads as real targets, so the slope gates
+    still apply to it rather than it being refused outright."""
+    a, b = _paired_scores(tmp_path, meta_a={"checkpoint": "a"}, meta_b={"checkpoint": "b"})
+    assert lc0_control_eval.main(["compare", "--a", str(a), "--b", str(b)]) == 0
 
 
 def test_compare_refuses_a_zero_discordance_comparison(

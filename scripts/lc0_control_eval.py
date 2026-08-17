@@ -19,8 +19,34 @@ subcommands:
            Paired difference on the rows BOTH files scored, with the McNemar
            discordant counts, a Wald CI on the paired difference, and the
            exact binomial p. Refuses to compare files whose row sets differ,
-           and refuses to report a slope whose halfwidth exceeds the
-           pre-committed bar.
+           files whose TARGET PROVENANCE differs (see below), and refuses to
+           report a slope whose halfwidth exceeds the pre-committed bar.
+
+⚑⚑ `compare` READS THE NEGATIVE-CONTROL METADATA, IT DOES NOT ONLY CARRY IT.
+`score` banks `shuffled_targets_seed` into every artifact, and until 2026-08-17
+`compare` loaded that metadata and then used exactly one field of it
+(`checkpoint`) for a print. Measured on this tree at HEAD c3490d9c0: a B
+artifact carrying `shuffled_targets_seed: 0` — prereg guard 1, the PERMUTED-
+TARGET NEGATIVE CONTROL — compared against a real-target A at n=100,000
+printed `delta +0.0400 pp, CI [+0.0123, +0.0677]` and **exited 0**, i.e. the
+control read as the primary learning slope and cleared every pre-committed
+gate. That is this repo's signature defect (a value accepted and then silently
+ignored) sitting inside the script written to enforce the prereg.
+
+So the provenance is now a REFUSAL, not a warning, and it is evaluated BEFORE
+the arithmetic so the number never reaches the screen to be quoted:
+
+  * the two artifacts' `shuffled_targets_seed` differ  -> refuse, naming the
+    field and BOTH values;
+  * either artifact IS a negative control (seed not None) -> refuse;
+  * either artifact FAILED its own negative-control gate (`negative_control_z`
+    above the `negative_control_max_z` that run was gated at) -> refuse, and
+    this one is NOT waivable.
+
+`--allow-shuffled-contrast` waives the first two, for the one case that wants
+them: deliberately reading the shuffled contrast. It does not waive the third,
+because "I meant to compare the shuffled control" is a statement about intent
+and a failed control is a statement about the RIG.
 
 ⚑⚑ THE NEGATIVE CONTROL'S FLOOR IS **NOT** `E[1/n_legal]`, AND IT IS NOT A
 CONSTANT. `--shuffle-targets` scores each prediction against ANOTHER ROW'S REAL
@@ -75,7 +101,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -190,6 +218,90 @@ def negative_control_problem(
         "direction. ⚑ The floor is NOT E[1/n_legal]: that is the uniform-mover "
         "reference and sits ~19x higher (prereg AMENDMENT 2)."
     )
+
+
+def target_provenance(meta: Mapping[str, Any]) -> tuple[str, Any]:
+    """``(label, shuffled_targets_seed)`` — WHICH TARGETS this artifact scored.
+
+    ⚑ The seed is the whole discriminant, and ``None`` is a value here, not a
+    missing key: ``score`` writes ``shuffled_targets_seed: null`` for a real-
+    target run and the seed for a permuted one. An artifact written before that
+    field existed also reads ``None``, which is the safe direction — it is
+    treated as real targets and the SLOPE gate still applies.
+    """
+    seed = meta.get("shuffled_targets_seed")
+    label = (
+        "real lc0 targets" if seed is None
+        else f"SHUFFLED targets (prereg guard 1, negative control), seed {seed}"
+    )
+    return label, seed
+
+
+def _failed_negative_control(meta: Mapping[str, Any]) -> tuple[bool, float, float]:
+    """``(failed, z, bar)`` for an artifact's own negative-control gate.
+
+    ⚑ The BAR is read off the artifact, not off ``NEGATIVE_CONTROL_Z``. The run
+    that wrote the file may have been given a different ``--negative-control-z``,
+    and re-judging its z against this module's constant would answer a question
+    nobody asked. ``negative_control_max_z`` is banked by ``cmd_score`` for
+    exactly this; a file predating it falls back to the constant.
+    """
+    z = meta.get("negative_control_z")
+    if z is None:
+        return False, 0.0, 0.0
+    bar = float(meta.get("negative_control_max_z", NEGATIVE_CONTROL_Z))
+    return float(z) > bar, float(z), bar
+
+
+def score_provenance_problems(
+    meta_a: Mapping[str, Any], meta_b: Mapping[str, Any],
+) -> tuple[list[str], list[str]]:
+    """``(waivable, unwaivable)`` reasons these two artifacts cannot be paired.
+
+    ⚑⚑ THE ONE THING THIS FUNCTION MUST NOT DO IS RETURN AN EMPTY LIST FOR A
+    SHUFFLED ARTIFACT. `--shuffle-targets` permutes the targets across rows, so
+    a shuffled score is a measurement of the marginal collision rate and NOT of
+    top-1 agreement. Differencing it against a real-target score produces a
+    number with the units of the primary yardstick and the meaning of noise,
+    and every downstream gate in this file (the n floor, the halfwidth bar, the
+    zero-discordance refusal) is satisfied by it.
+
+    ⚑ Both values are named in the message, per the review: "the provenance
+    differs" tells an operator to go and open two npz files, which is the step
+    at which people stop.
+    """
+    label_a, seed_a = target_provenance(meta_a)
+    label_b, seed_b = target_provenance(meta_b)
+    waivable: list[str] = []
+    unwaivable: list[str] = []
+    if seed_a != seed_b:
+        waivable.append(
+            "the two score files did not score the SAME TARGETS: field "
+            f"`shuffled_targets_seed` reads {seed_a!r} in --a ({label_a}) and "
+            f"{seed_b!r} in --b ({label_b}). A permuted-target run measures the "
+            "marginal collision rate, so differencing it against a real-target "
+            "run reports a NEGATIVE CONTROL in the units of the primary "
+            "yardstick.",
+        )
+    elif seed_a is not None:
+        waivable.append(
+            "BOTH score files are negative controls: field "
+            f"`shuffled_targets_seed` reads {seed_a!r} in --a and {seed_b!r} in "
+            "--b. Their paired difference is a difference of two collision "
+            "rates and says nothing about the arm.",
+        )
+    for label, meta in (("--a", meta_a), ("--b", meta_b)):
+        failed, z, bar = _failed_negative_control(meta)
+        if failed:
+            unwaivable.append(
+                f"{label} FAILED its own negative-control gate: field "
+                f"`negative_control_z` reads {z:+.2f} against the "
+                f"`negative_control_max_z` bar {bar:.1f} that run was gated at. "
+                "A rig that agrees with targets it was not shown manufactures "
+                "agreement, so no verdict off it is a verdict in either "
+                "direction — including this one.",
+            )
+    return waivable, unwaivable
 
 
 def _policy_logits(outputs: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -395,6 +507,13 @@ def cmd_score(args: argparse.Namespace) -> int:
   # a gate nobody can re-check.
             "shuffled_collision_rate": collision,
             "negative_control_z": z if shuffle_seed is not None else None,
+  # ⚑ The BAR, banked next to the z it judged. `compare` re-reads this pair to
+  # refuse an artifact that failed its own gate, and re-judging a banked z
+  # against whatever `NEGATIVE_CONTROL_Z` happens to be at read time would
+  # answer a different question than the run asked.
+            "negative_control_max_z": (
+                float(args.negative_control_z) if shuffle_seed is not None else None
+            ),
         })], dtype=object),
         allow_pickle=True,
     )
@@ -427,6 +546,28 @@ def _load_scores(path: Path) -> tuple[np.ndarray, np.ndarray, dict]:
 def cmd_compare(args: argparse.Namespace) -> int:
     ids_a, hit_a, meta_a = _load_scores(Path(args.a))
     ids_b, hit_b, meta_b = _load_scores(Path(args.b))
+  # ⚑⚑ BEFORE THE ARITHMETIC, DELIBERATELY. Printing the slope and refusing
+  # afterwards still puts a quotable number on the screen, and the failure this
+  # closes is precisely a number being read off a comparison that had no
+  # business producing one. Nothing below this block runs on a refused pair.
+    waivable, unwaivable = score_provenance_problems(meta_a, meta_b)
+    if args.allow_shuffled_contrast and waivable:
+        print("⚑⚑ --allow-shuffled-contrast: " + " | ".join(waivable))
+        waivable = []
+    refusals = unwaivable + waivable
+    if refusals:
+        print(
+            "FAIL: these two score files are not a valid pair. "
+            + " | ".join(refusals)
+            + (
+                ""
+                if unwaivable
+                else " Pass --allow-shuffled-contrast if reading the shuffled "
+                     "contrast IS the comparison you intend."
+            ),
+            file=sys.stderr,
+        )
+        return 1
     if list(ids_a) != list(ids_b):
         print(
             "FAIL: the two score files do not cover the same rows in the same "
@@ -447,8 +588,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
     se = float(np.sqrt(max(var, 0.0)))
     half = 1.959963985 * se
     p_exact = _exact_mcnemar_p(b, c)
-    print(f"A  {meta_a.get('checkpoint')}   top-1 {rate_a:.6f}")
-    print(f"B  {meta_b.get('checkpoint')}   top-1 {rate_b:.6f}")
+  # ⚑ PRINTED, not merely checked. "the provenance gate passed" has to be an
+  # observation in the output a reader can point at, otherwise a gate that
+  # stopped running looks identical to a gate that ran and passed.
+    print(f"A  {meta_a.get('checkpoint')}   top-1 {rate_a:.6f}   "
+          f"targets: {target_provenance(meta_a)[0]}")
+    print(f"B  {meta_b.get('checkpoint')}   top-1 {rate_b:.6f}   "
+          f"targets: {target_provenance(meta_b)[0]}")
     print(f"paired rows          {n}")
     print(f"discordant  b(A only)={b}  c(B only)={c}  "
           f"discordance={(b + c) / n:.4f}")
@@ -566,6 +712,16 @@ def build_parser() -> argparse.ArgumentParser:
              "you re-derived the bar at the n you have.",
     )
     compare.add_argument("--allow-underpowered", action="store_true")
+    compare.add_argument(
+        "--allow-shuffled-contrast", action="store_true",
+        help="⚑⚑ compare artifacts whose `shuffled_targets_seed` differ, or "
+             "which are BOTH negative controls. Without it such a pair is "
+             "REFUSED, because a permuted-target score differenced against a "
+             "real-target one reports prereg guard 1 in the units of the "
+             "primary yardstick and clears every other gate in this file. It "
+             "does NOT waive an artifact that failed its own negative-control "
+             "gate.",
+    )
     compare.set_defaults(handler=cmd_compare)
     return parser
 

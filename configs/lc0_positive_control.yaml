@@ -210,6 +210,15 @@ model:
   policy_embedding_mode: linear
 
 selfplay:
+  # ⚑ REPLAY-BUFFER keys that live in `selfplay:`, carried for the same reason
+  # as the `tune:` block at the end of this file: `DiskReplayBuffer` reads them
+  # and `trainer_kwargs_from_config` does not, so the trainer pin cannot see
+  # them. Live's values, verbatim. Inert on today's corpus — the buffer applies
+  # them only to rows carrying `priority_policy_kl` / `priority_q_delta`, which
+  # the converter does not write — and carried anyway, so a corpus that gains
+  # those columns is prioritised the way production prioritises.
+  diff_focus_q_weight: 6.0
+  diff_focus_pol_scale: 3.5
   # ⚑ These are SELFPLAY-section keys despite their sf_ / categorical_ names
   # (checked against utils/config_yaml.py's schema, which is fatal at launch on
   # a misplaced key — this file was written with them under `stockfish:` first
@@ -392,3 +401,46 @@ train:
   # diff cannot see, stated here rather than discovered in the readout.
   train_steps: 800
   lr_release_cycle_steps: 0
+
+# ── REPLAY BUFFER — production's, because the arm's hypothesis is H_stack ─────
+#
+# ⚑⚑ THESE KEYS WERE ABSENT UNTIL 2026-08-17 AND BOTH EXISTING PINS PASSED.
+# `DiskReplayBuffer` is constructed by `tune/trainable_init.py` from
+# `TrialConfig` fields that `trainer_kwargs_from_config` does not read, so the
+# trainer pin is structurally blind to them; the driver passed none of them and
+# took `disk_buffer.py`'s CONSTRUCTOR DEFAULTS. Measured deviation from the LIVE
+# file: SEVEN axes (the driver's own comment claimed two, and PR #438's review
+# found three) —
+#
+#   shuffle_cap 20000->100000 · shard_size 1000->2000 · refresh_interval 5->4
+#   refresh_shards 3->5 · diff_focus_pol_scale 0.0->3.5
+#   diff_focus_q_weight 0.0->6.0 · input_planes None->175
+#
+# A hot shuffle pool 5x smaller than production's is a plateau of the RIG, and
+# in the held-out slope it is indistinguishable from the plateau H_stack is
+# about. Now pinned by `chess_anti_engine/eval/lc0_control_replay.py` as launch
+# guard 0d, on the same instrument as the architecture and trainer pins.
+#
+# ⚑ Written out EXPLICITLY even where `TrialConfig`'s default already equals
+# live's value (`diff_focus_*`, the recency exponent, `shard_size`). A default
+# that happens to agree is not a claim about production; a value in the file is.
+#
+# ⚑ THE TWO DECLARED DEVIATIONS CARRY PRODUCTION'S VALUE HERE ON PURPOSE.
+# `replay_shard_recency_exponent: 1.0` is live's; the driver overrides it to 0.0
+# via `LC0_REPLAY_DEVIATIONS` because this corpus is fixed rather than
+# streaming, and the override is recorded in `summary.json`'s
+# `realized_replay_after_guard`. Putting 0.0 in the file instead would make the
+# deviation invisible to the guard, which is the opposite of the point.
+#
+# ⚑ `diff_focus_*` are INERT on this corpus and are carried anyway: the buffer
+# applies them only to rows with `priority_policy_kl` / `priority_q_delta`
+# columns, which `scripts/lc0_data_to_rows.py` does not write. That is a
+# property of the CONVERTER, so it is the kind of thing that changes without
+# anyone revisiting this file — carrying production's value means a corpus that
+# gains those columns gets production's prioritisation, not 0.0.
+tune:
+  shuffle_buffer_size: 100000
+  shuffle_refresh_interval: 4
+  shuffle_refresh_shards: 5
+  shard_size: 2000
+  replay_shard_recency_exponent: 1.0

@@ -60,6 +60,7 @@ from pathlib import Path
 
 import pytest
 
+from chess_anti_engine.eval import lc0_control_replay
 from chess_anti_engine.eval.lc0_control_arch import LIVE_ARCH_PIN, model_section
 from chess_anti_engine.eval.lc0_control_trainer import (
     LC0_TRAINER_DEVIATIONS,
@@ -336,12 +337,29 @@ def test_moves_left_normalisation_matches_the_converter(configs: tuple[dict, dic
 
 
 def test_no_selfplay_or_search_machinery_is_configured() -> None:
-    """The arm is supervised. A selfplay/PID knob here would be a false claim."""
+    """The arm is supervised. A selfplay/PID knob here would be a false claim.
+
+    ⚑ `tune:` is no longer forbidden OUTRIGHT, and the reason is a defect this
+    blanket ban helped hide: production's replay-buffer knobs live in `tune:`
+    and in `selfplay:`, `trainer_kwargs_from_config` reads none of them, and a
+    control config with no `tune:` section took `DiskReplayBuffer`'s
+    CONSTRUCTOR DEFAULTS — a 20,000-row hot pool against production's 100,000 —
+    while every pin passed. So the ban is now on the machinery (`gate_*`,
+    `pbt_*`, `distributed_*`, the PID) rather than on the section, and the keys
+    that ARE allowed there are exactly the ones `lc0_control_replay` maps.
+    """
     raw = load_yaml_file(str(CONTROL))
     assert "stockfish" not in raw
-    assert "tune" not in raw
+  # Every `tune:` key must be one the replay guard reads. A key that is not is
+  # either PBT/distributed machinery this arm does not have, or a buffer knob
+  # nobody wired into the guard — both are failures, and this cannot be
+  # satisfied by adding a key to the yaml alone.
+    replay_attributes = set(lc0_control_replay.CONFIG_KWARGS.values())
+    assert set(raw.get("tune", {})) - replay_attributes == set()
+    assert set(raw.get("tune", {})), "the replay-buffer keys must be PRESENT"
     forbidden = {
         key for key in raw.get("selfplay", {})
-        if key.startswith(("gumbel_", "mcts_", "sf_pid_", "diff_focus_"))
+        if key.startswith(("gumbel_", "mcts_", "sf_pid_"))
+        or (key.startswith("diff_focus_") and key not in replay_attributes)
     }
     assert forbidden == set()

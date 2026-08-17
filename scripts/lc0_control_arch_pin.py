@@ -11,11 +11,13 @@ regenerates one from the live file and `--check` compares the control straight
 against the live file. See `chess_anti_engine/eval/lc0_control_arch.py` and
 `chess_anti_engine/eval/lc0_control_trainer.py`.
 
-⚑ TWO AXES, because "our EXACT net and trainer" is two claims and they went
-stale independently — the architecture axis was re-pointed at the live file on
+⚑ THREE AXES, because "our EXACT stack" is three claims and they go stale
+independently — the architecture axis was re-pointed at the live file on
 2026-08-16 while the trainer axis stayed on `main`'s copy, thirteen
-`trainer_kwargs_from_config` entries behind it, for the rest of the same day.
-`--check` does BOTH by default.
+`trainer_kwargs_from_config` entries behind it, for the rest of the same day;
+and the REPLAY axis had no instrument at all until 2026-08-17, during which the
+control's buffer sat SEVEN kwargs off production's while both other pins passed.
+`--check` does ALL THREE by default.
 
     # print a pin block to paste into the matching module
     PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py --axis arch \
@@ -53,6 +55,12 @@ from chess_anti_engine.eval.lc0_control_arch import (
     model_section,
     unique_storage_param_count,
 )
+from chess_anti_engine.eval.lc0_control_replay import (
+    LIVE_REPLAY_PIN,
+    ControlReplayDrift,
+    assert_control_matches_live_replay,
+    replay_kwargs_signature,
+)
 from chess_anti_engine.eval.lc0_control_trainer import (
     LIVE_TRAINER_PIN,
     ControlTrainerDrift,
@@ -61,7 +69,7 @@ from chess_anti_engine.eval.lc0_control_trainer import (
 )
 from chess_anti_engine.utils import load_yaml_file
 
-AXES = ("arch", "trainer", "both")
+AXES = ("arch", "trainer", "replay", "both")
 
 
 def _emit_arch(live_config: Path) -> int:
@@ -100,6 +108,21 @@ def _emit_trainer(live_config: Path) -> int:
     return 0
 
 
+def _emit_replay(live_config: Path) -> int:
+    from chess_anti_engine.utils import flatten_run_config_defaults
+
+    flat = flatten_run_config_defaults(load_yaml_file(str(live_config)))
+    pin = {
+        "recorded": "<today>",
+        "live_branch": "<branch>",
+        "live_commit": "<commit>",
+        "provenance": "<why this changed>",
+        "kwargs": replay_kwargs_signature(flat),
+    }
+    print(json.dumps(pin, indent=4, sort_keys=True))
+    return 0
+
+
 def _check(control_config: Path, live_config: Path | None, axis: str) -> int:
     raw = load_yaml_file(str(control_config))
     failed = False
@@ -126,6 +149,19 @@ def _check(control_config: Path, live_config: Path | None, axis: str) -> int:
             failed = True
         else:
             print(f"OK: {control_config} trainer matches {provenance}")
+    if axis in ("replay", "both"):
+        from chess_anti_engine.utils import flatten_run_config_defaults
+
+        try:
+            provenance = assert_control_matches_live_replay(
+                flatten_run_config_defaults(raw), live_config=live_config,
+                context="lc0_control_arch_pin --check",
+            )
+        except ControlReplayDrift as exc:
+            print(str(exc), file=sys.stderr)
+            failed = True
+        else:
+            print(f"OK: {control_config} replay buffer matches {provenance}")
     return 1 if failed else 0
 
 
@@ -151,7 +187,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return _check(Path(args.control_config), live, str(args.axis))
     if live is None:
-        pins = {"arch": LIVE_ARCH_PIN, "trainer": LIVE_TRAINER_PIN}
+        pins = {
+            "arch": LIVE_ARCH_PIN,
+            "trainer": LIVE_TRAINER_PIN,
+            "replay": LIVE_REPLAY_PIN,
+        }
         shown = pins if args.axis == "both" else {args.axis: pins[args.axis]}
         print(
             "no --live-config and no $CHESS_LIVE_PRODUCTION_CONFIG; the recorded "
@@ -164,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
             "separate modules and printing them together would invite pasting "
             "one into the other. Emit them one at a time.",
         )
-    return _emit_arch(Path(live)) if args.axis == "arch" else _emit_trainer(Path(live))
+    emit = {"arch": _emit_arch, "trainer": _emit_trainer, "replay": _emit_replay}
+    return emit[str(args.axis)](Path(live))
 
 
 if __name__ == "__main__":

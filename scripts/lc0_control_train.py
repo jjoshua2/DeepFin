@@ -20,7 +20,7 @@ game-outcome share is **0.00**, and on a corpus with no `sf_wdl` column at all
 this arm would train **1.00** of its value target on the deep game outcome.
 Every number it produced would be about an experiment nobody chose.
 
-Five checks, at four different levels, because each can be satisfied by a run
+Six checks, at four different levels, because each can be satisfied by a run
 that still does the wrong thing:
 
   0. LAUNCH, architecture. `assert_control_matches_live_architecture` — the
@@ -35,6 +35,16 @@ that still does the wrong thing:
      banner (`preflight_trainer(..., allow_leak=...)`); the line that used to sit
      here claimed there was no downgrade flag, which overstated the guarantee to
      exactly the operator most likely to rely on it.
+  0d. LAUNCH, replay buffer. `assert_control_matches_live_replay` — the THIRD
+     half of "our exact stack", and the one neither pin above can see.
+     `DiskReplayBuffer` is constructed from `TrialConfig` fields that
+     `trainer_kwargs_from_config` does not read, so until 2026-08-17 the driver
+     hand-wrote three buffer kwargs, took `disk_buffer.py`'s constructor
+     defaults for the rest, and BOTH other pins passed while the buffer sat
+     SEVEN axes off production — `shuffle_cap` 20000 against 100000 among them.
+     A plateau produced by 5x less hot-pool diversity is a plateau of the RIG,
+     and in the held-out slope it is indistinguishable from the plateau
+     H_stack is about.
   1. LAUNCH, config-level. `assert_pid_cannot_reassert_sf_wdl` — an override
      the difficulty controller can undo is not an override.
   2. LAUNCH, corpus-level. The converter's own `run_config_problems` is REUSED
@@ -57,7 +67,7 @@ that still does the wrong thing:
 
 Check 3 fails loudly (non-zero exit, no checkpoint written).
 
-⚑ `--allow-leak` DOWNGRADES ONLY THE LAUNCH GUARDS (0c, 1 and 2). It used to skip
+⚑ `--allow-leak` DOWNGRADES ONLY THE LAUNCH GUARDS (0c, 0d, 1 and 2). It used to skip
 check 3 as well, which made check 3 — the headline of this script —
 UNREACHABLE: guard 1 refuses every `sf_wdl_frac > 0` config outright, nothing
 downstream can raise the frac, and the only way past guard 1 also skipped the
@@ -81,6 +91,15 @@ architecture at all. PR #439 removed that one; the smoke-test reason stands.)
 Both flags stamp `valid_control: false` into summary.json,
 as does omitting `--purity-receipt` — with the reason named in
 `validity_problems`.
+
+⚑⚑ AND THE RUN EMITS TWO CHECKPOINTS, NOT ONE. The prereg's PRIMARY yardstick is
+the JOINT reading of `Δ_heldout` and `Δ_train`, "both measured LAST vs
+MID-BUDGET" — so a driver with one `train_steps` call and one `trainer.save`
+could not produce the deciding statistic at all. `--mid-checkpoint-frac`
+(default 0.5) writes `checkpoint_mid.pt` from INSIDE the single `train_steps`
+call, because two calls of N/2 would run the `sqrt_release` ramp twice and put
+MID and LAST on different LR trajectories. A run with no mid checkpoint records
+that in `validity_problems` and is not a valid control.
 
 Usage
 -----
@@ -115,6 +134,12 @@ from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
+from chess_anti_engine.eval.lc0_control_replay import (
+    ControlReplayDrift,
+    apply_control_deviations,
+    assert_control_matches_live_replay,
+    replay_kwargs_signature,
+)
 from chess_anti_engine.eval.lc0_control_trainer import (
     ControlTrainerDrift,
     assert_control_matches_live_trainer,
@@ -491,6 +516,102 @@ def preflight_trainer(cfg: dict[str, Any], *, allow_leak: bool) -> str:
     return provenance
 
 
+def preflight_replay(cfg: dict[str, Any], *, allow_leak: bool) -> str:
+    """LAUNCH guard 0d — the arm must SAMPLE from production's buffer.
+
+    ⚑⚑ THE AXIS NEITHER EXISTING PIN COULD SEE. Guard 0 compares the ``model:``
+    section, guard 0c compares ``trainer_kwargs_from_config``. ``DiskReplayBuffer``
+    is built by ``tune/trainable_init.py`` from ``TrialConfig`` fields that
+    function does not read, so a driver that omitted them took the constructor
+    defaults and BOTH pins still passed — the review's "a value accepted and
+    then silently ignored", one construction site over.
+
+    ⚑ ``--allow-leak`` downgrades this to a banner, on the same reasoning as
+    guard 0c: the flag's job is to let a deliberately-wrong run REACH the
+    realized per-step guard, and a smoke run that has to match production's
+    100,000-row shuffle pool is not a smoke run. ``--allow-arch-drift`` does NOT
+    downgrade it — buffer kwargs are width-independent, exactly as trainer
+    kwargs are, so a toy model says nothing about the corpus draw.
+    """
+    try:
+        provenance = assert_control_matches_live_replay(
+            cfg, live_config=live_production_config_path(),
+            context="lc0 control launch (replay)",
+        )
+    except ControlReplayDrift as exc:
+        if not allow_leak:
+            raise SystemExit(f"REFUSING TO LAUNCH — {exc}") from exc
+        print(f"⚑ --allow-leak: IGNORING launch guard — {exc}")
+        return "DRIFTED (--allow-leak)"
+    print(f"[preflight] replay buffer matches {provenance}")
+    return provenance
+
+
+class SaveMidBudgetCheckpoint:
+    """Save a MID-BUDGET checkpoint from inside the ONE ``train_steps`` call.
+
+    ⚑⚑ THE PREREG'S DECIDING STATISTIC WAS NOT PRODUCIBLE BY THIS DRIVER.
+    `docs/lc0_positive_control_prereg.md` reads the arm as the JOINT reading of
+    two slopes, "both measured LAST vs MID-BUDGET" — and the driver had one
+    ``train_steps`` call and one ``trainer.save``, so it emitted exactly one
+    checkpoint. There was nothing to pair the last one against.
+
+    ⚑⚑ AND THE OBVIOUS FIX IS WRONG. Splitting an N-step budget into
+    ``train_steps(N/2)`` twice does NOT give one trajectory: with
+    ``lr_schedule: sqrt_release`` and ``lr_release_cycle_steps: 0`` — which is
+    what this arm and production both run — ``train_steps`` derives the release
+    cycle from ITS OWN argument (``effective_cycle_steps = max(1,
+    requested_steps)``) and feeds it ``local_step=train_steps_done``, which
+    restarts at 0 on every call. Two calls of N/2 therefore run the release ramp
+    TWICE, so MID and LAST would come off two different LR trajectories and the
+    slope between them would be partly a schedule artifact. Measured, not
+    argued: see ``test_the_mid_budget_split_would_have_re_ramped_the_lr``.
+
+    So the checkpoint is taken by wrapping ``_run_optimizer_step`` — the same
+    "wrap the real callee" idiom ``CaptureRealizedLosses`` uses one frame up —
+    and fires AFTER the optimizer has applied step ``at_step``, with the run
+    continuing into the same call. One trajectory, one LR ramp, two checkpoints.
+
+    ⚑ Counted on RETURN, so a step that raised and is being retried by
+    ``train_steps``'s CUDA-error loop is not counted twice.
+    """
+
+    def __init__(self, trainer: Trainer, *, at_step: int, path: Path) -> None:
+        self.trainer = trainer
+        self.at_step = int(at_step)
+        self.path = path
+        self.steps_done = 0
+        self.saved_at_step: int | None = None
+        self._original = trainer._run_optimizer_step
+
+    def __enter__(self) -> SaveMidBudgetCheckpoint:
+        if self.at_step <= 0:
+            return self
+        original = self._original
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            result = original(*args, **kwargs)
+            self.steps_done += 1
+            if self.steps_done == self.at_step:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.trainer.save(self.path)
+                self.saved_at_step = self.steps_done
+                print(f"\n[checkpoint] MID-BUDGET at step {self.steps_done}: "
+                      f"{self.path}")
+            return result
+
+        self.trainer._run_optimizer_step = wrapped
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: TracebackType | None,
+    ) -> None:
+        self.trainer._run_optimizer_step = self._original
+
+
 def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
     return [
         (field.name, getattr(metrics, field.name))
@@ -557,6 +678,14 @@ def main(argv: list[str] | None = None) -> int:
              "a run may be quoted as 'our stack'.",
     )
     parser.add_argument(
+        "--mid-checkpoint-frac", type=float, default=0.5,
+        help="⚑ where in the budget to write `checkpoint_mid.pt`. The prereg's "
+             "PRIMARY yardstick is two slopes 'both measured LAST vs "
+             "MID-BUDGET', so a run that emits one checkpoint cannot produce "
+             "the deciding statistic at all. 0 disables it; the run then "
+             "records that it cannot answer the prereg.",
+    )
+    parser.add_argument(
         "--purity-receipt", type=Path, default=None,
         help="the JSON written by `lc0_control_heldout.py purity --receipt`. "
              "Refuses to launch unless it covers every --shards directory, and "
@@ -571,6 +700,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     cfg = flatten_run_config_defaults(load_yaml_file(str(args.config)))
     trainer_provenance = preflight_trainer(cfg, allow_leak=bool(args.allow_leak))
+    replay_provenance = preflight_replay(cfg, allow_leak=bool(args.allow_leak))
     shard_dirs = [Path(d) for d in args.shards]
     coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
 
@@ -625,6 +755,21 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.config), allow_drift=bool(args.allow_arch_drift), model=model,
     )
 
+  # ⚑⚑ EVERY buffer kwarg comes from ONE dict, and it is the dict guard 0d
+  # judged. Until 2026-08-17 this call site hand-wrote three kwargs and passed
+  # nothing else, so `disk_buffer.py`'s CONSTRUCTOR DEFAULTS silently supplied
+  # the rest: SEVEN axes off production (shuffle_cap 20000 vs 100000, shard_size
+  # 1000 vs 2000, refresh_interval 5 vs 4, refresh_shards 3 vs 5, diff_focus
+  # 0.0/0.0 vs 3.5/6.0, input_planes None vs 175) while the comment here claimed
+  # two and both existing pins passed — `trainer_kwargs_from_config` does not
+  # read a single one of them, so the trainer pin is structurally blind.
+  #
+  # ⚑ The two DECLARED deviations are applied by `apply_control_deviations`,
+  # whose overrides are keys of `LC0_REPLAY_DEVIATIONS` — the same mapping the
+  # guard reads. A hand-written override next to a check of different values is
+  # review F6's defect (certified, then overwritten, with nothing in the
+  # artifact saying so); the realized values are banked in summary.json.
+    replay_kwargs = apply_control_deviations(replay_kwargs_signature(cfg))
     buf = DiskReplayBuffer(
         capacity=10**9,
         shard_dir=out_dir / "staged_shards",
@@ -633,27 +778,27 @@ def main(argv: list[str] | None = None) -> int:
   # window in __init__ and would delete the converted shards through the
   # symlinks.
         read_only=True,
-  # Deviations from the production buffer, both because the corpus is FIXED
-  # rather than streaming:
-  #  - recency exponent 0.0 (production 1.0) makes the shard draw UNIFORM.
-  #    Production weights newest-first because new data is the scarce thing;
-  #    here every hour is equally old and a recency weight would just
-  #    over-train the last converted hour and call it an epoch.
-  #  - deterministic_refresh makes the draw a pure function of the seed. The
-  #    production default lets a background prefetch thread race the
-  #    synchronous path, and the two consume different generators, so the same
-  #    seed gives different data. An offline ruler needs the opposite.
-        shard_recency_exponent=0.0,
-        deterministic_refresh=True,
-        input_planes=int(cfg.get("input_planes", 0)) or None,
+        **replay_kwargs,
     )
     print(f"[data] replay buffer: {len(buf)} rows in the hot shuffle pool "
           f"over {staged} shard(s)")
+    print("[data] replay kwargs (realized): "
+          + " ".join(f"{k}={v!r}" for k, v in sorted(replay_kwargs.items())))
 
+  # ⚑ `int(...)` after the multiply, and clamped to the interior: a mid point of
+  # 0 would save before any step ran and a mid point of `steps` would save the
+  # LAST checkpoint under a second name, and `compare` would then read a pair
+  # that is discordant on zero rows — refused, but only after the run cost a day.
+    mid_step = int(float(args.mid_checkpoint_frac) * int(args.steps))
+    if float(args.mid_checkpoint_frac) > 0.0:
+        mid_step = min(max(mid_step, 1), max(int(args.steps) - 1, 0))
+    mid_ckpt = out_dir / "checkpoint_mid.pt"
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
-    ) as capture:
+    ) as capture, SaveMidBudgetCheckpoint(
+        trainer, at_step=mid_step, path=mid_ckpt,
+    ) as mid:
         metrics = trainer.train_steps(
             _as_replay_buffer(buf), batch_size=batch_size, steps=int(args.steps),
         )
@@ -679,8 +824,15 @@ def main(argv: list[str] | None = None) -> int:
             capture.worst_categorical, context="realized training step",
         )
     except ValueBlendMisconfigured as exc:
+  # ⚑ The mid-budget checkpoint is written DURING the run, i.e. before this
+  # guard can have run. "No checkpoint written" has to stay literally true, or
+  # a failed run leaves a scorable artifact behind for `lc0_control_eval` to
+  # pick up — and nothing in that file's metadata would say the run was refused.
+        if mid.saved_at_step is not None:
+            mid_ckpt.unlink(missing_ok=True)
         raise SystemExit(
-            f"REALIZED VALUE-BLEND GUARD FAILED — no checkpoint written.\n{exc}",
+            f"REALIZED VALUE-BLEND GUARD FAILED — no checkpoint written "
+            f"(including the mid-budget one).\n{exc}",
         ) from exc
     print("\n[guard] PASS: no SF-to-outcome leak, no all-outcome value target, "
           "and no outcome-borne categorical rebuild on any observed step")
@@ -709,6 +861,16 @@ def main(argv: list[str] | None = None) -> int:
              f"--steps {int(args.steps)} does not exceed warmup_steps "
              f"{int(kwargs['warmup_steps'])}: the LR never reached the base "
              "value, so no slope from this run describes the trainer"),
+  # ⚑ The prereg's PRIMARY yardstick is two slopes "both measured LAST vs
+  # MID-BUDGET" on ONE trajectory. Without the mid checkpoint the run has
+  # produced half of the deciding statistic, and nothing downstream would say
+  # so — `lc0_control_eval compare` would happily pair this run's LAST against
+  # some OTHER run's LAST and report a number.
+            (mid.saved_at_step is None,
+             f"no mid-budget checkpoint (--mid-checkpoint-frac "
+             f"{float(args.mid_checkpoint_frac)}, --steps {int(args.steps)}): "
+             "the prereg's primary yardstick is LAST vs MID-BUDGET on ONE "
+             "trajectory, and this run emitted only LAST"),
   # ⚑ REVIEW F2. Judging the arm's WHOLE PREMISE — "production's net and
   # production's trainer" — against a committed pin is strictly weaker
   # evidence than judging it against the live file, because the pin is a
@@ -732,6 +894,19 @@ def main(argv: list[str] | None = None) -> int:
         "trainable_params": params,
         "architecture_judged_against": arch_provenance,
         "trainer_judged_against": trainer_provenance,
+        "replay_judged_against": replay_provenance,
+  # ⚑ The two DECLARED buffer deviations are applied after guard 0d, so the
+  # realized values go in the artifact for the same reason
+  # `realized_after_guard` does one entry down: a recipe that is certified and
+  # then changed must not be able to look identical to one that was not.
+        "realized_replay_after_guard": replay_kwargs,
+        "mid_checkpoint": (
+            None if mid.saved_at_step is None else {
+                "path": str(mid_ckpt.resolve()),
+                "step": mid.saved_at_step,
+                "of_steps": int(args.steps),
+            }
+        ),
   # ⚑ REVIEW F6. Guard 0c certifies `kwargs` against the live trainer recipe,
   # and THEN the driver overwrites these two from the CLI. Both are in
   # LIVE_TRAINER_PIN ("cuda" / True), so a run can be certified and then execute
@@ -771,6 +946,9 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if mid.saved_at_step is not None:
+        print(f"\n[checkpoint] MID  {mid_ckpt} (step {mid.saved_at_step} of "
+              f"{int(args.steps)})")
     print(f"\n[checkpoint] {ckpt}")
     print(f"[summary]    {out_dir / 'summary.json'}")
     return 0
