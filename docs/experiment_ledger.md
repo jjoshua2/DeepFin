@@ -57275,3 +57275,51 @@ showing it's promising." Correct, and the guarantee does NOT cover that:
 ⇒ Claim only what is measured: **at the root, tau >= 1/topk guarantees SF's move is
 searched.** Everything about multi-ply lines is a plausibility argument until someone
 measures a k-ply joint-inclusion rate. Filed as follow-up, not claimed as a result.
+
+### 2026-08-17 — ⚑⚑ CORRECTION to `7a1ee9148`: TRAINING SEARCH IS GUMBEL AT EVERY DEPTH, NOT PUCT
+
+`7a1ee9148` said interior nodes descend by PUCT. **That is wrong**, and the owner caught
+it: "for training we use gumbel not puct." Read the code instead of the paper —
+`gumbel.py:_select_full_gumbel_child` is the descent at EVERY non-root node:
+
+```
+score(a) = pi'(a) - N(a) / (1 + sum_b N(b))        # argmax over a
+pi'       = softmax(log_prior + sigma * Qbar)      # the improved policy
+```
+and `_collect_forced_leaf` calls it unconditionally. The file says so explicitly:
+"`cfg.full_tree` defaults True and nothing in the tree ever sets it false, so the PUCT arm
+that used to live here was **dead code** advertising c_puct/fpu_reduction as live Gumbel
+knobs (play-path audit 2026-08-03, F12). The PUCT descent is reached through
+`mcts/puct*.py` and `uci/`, not from here." ⇒ the `c_puct 2.5` I quoted is not on the
+training path at all. Same defect class as the one this project is full of: I read a knob
+that exists and assumed it was the one in force.
+
+**THE CORRECTED ANALYSIS IS STRICTER, AND IT MAKES THE OWNER'S MULTI-PLY POINT EXACT.**
+The interior rule is the same *shape* as the root's, with `topk` replaced by the node's own
+visit budget. An unvisited child has score `pi'(a)`; the visit distribution converges to
+`pi'`, so an action first gets a visit at roughly `n * pi'(a) >= 1`:
+
+> **at an interior node receiving `n` visits, a move needs `pi' >~ 1/n` to be expanded.**
+
+Root: `n` is effectively `topk = 16` ⇒ threshold `1/16 = 0.0625`. But **`n` COLLAPSES WITH
+DEPTH**. Sequential halving over 16 candidates at 100 sims (16->8->4->2->1, ~25 sims/round)
+leaves a *marginal* root candidate with only ~1-2 visits. At `n = 2` its own children need
+`pi' >~ 0.5` to be looked at at all.
+
+⇒ **A PRIOR FLOOR ALONE CANNOT ROUTE A 3-PLY LINE.** `tau = 1/topk` guarantees the ROOT
+ply only. Guaranteeing ply 2 of a marginal line would need `tau ~ 0.5`, which would destroy
+the policy. This is a real ceiling on the arm and it must not be papered over.
+
+⚑ Note `pi' = softmax(log_prior + sigma*Qbar)`: for an UNVISITED move `Qbar` is the parent/FPU
+estimate, so its `pi'` is driven essentially by the PRIOR. The floor therefore does control
+interior expandability — it just needs a much larger value at depth than at the root.
+
+**What the arm can still honestly claim**, per the owner ("fixing the current policy can
+help get enough routed another ply or two until value head is correct still, and we have
+separate supervised training for value anyway"): the floor fixes ply 1 with a guarantee,
+and improves deeper plies only through the net's policy getting better GLOBALLY — every
+node is a fresh net evaluation, so a better policy raises `pi'` everywhere, not just on
+floored rows. That is a real mechanism and an UNMEASURED one.
+
+Task #257 restated: measure the k-ply joint expansion rate under the ACTUAL Gumbel descent
+with the realized per-depth visit budgets. Do not model it as PUCT.
