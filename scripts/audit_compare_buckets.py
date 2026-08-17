@@ -27,7 +27,10 @@ provenance banner would then vouch for a cross-ruler join.
 
 ``--audit`` is deliberately NOT stamped. It is the frozen deep-SF label set, and
 it is re-parsed through the CURRENT ruler on every read, so it has no baked-in
-ruler that can go stale — it is an input to the ruler, not an output of it.
+ruler that can go stale — it is an input to the ruler, not an output of it. Its
+CONTENT DIGEST is still checked against the one the caches recorded scoring,
+because "no baked-in ruler" is not "any file will do": the caches' regret and
+bucket columns are only joinable to the labels of the set they were built from.
 """
 from __future__ import annotations
 
@@ -46,6 +49,7 @@ from chess_anti_engine.eval.audit import (
     wdl_ece,
 )
 from chess_anti_engine.eval.audit_cache import (
+    audit_set_provenance,
     read_audit_cache_by_key,
     read_audit_cache_stamp,
     require_same_audit_set,
@@ -83,6 +87,19 @@ def main() -> None:
     stamp = read_audit_cache_stamp(args.bt4)
     require_same_audit_set(
         net_stamp, stamp, label_a=str(args.net), label_b=str(args.bt4),
+    )
+    # ⚑ AND AGAINST `--audit` ITSELF. The two checks above prove only that the
+    # two derived caches were built from ONE set — they say nothing about the
+    # label file this script then opens. Point `--audit` at a replaced or
+    # regenerated set with overlapping keys and its deep-best / WDL labels are
+    # combined with the caches' regret and bucket columns under a banner that
+    # reports success. `--audit` is still not STAMPED (it is an input to the
+    # ruler, not an output of it — see the module docstring), but it does have a
+    # content digest, and the caches already record which one they scored.
+    # (Codex inline review, #442.)
+    require_same_audit_set(
+        net_stamp, audit_set_provenance(args.audit),
+        label_a=str(args.net), label_b=f"{args.audit} (the --audit label set)",
     )
 
     net = read_audit_cache_by_key(args.net)
