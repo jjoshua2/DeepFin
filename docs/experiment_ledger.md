@@ -57432,3 +57432,49 @@ differ often (played == SF best only 43.0%). Both are available at loss time.
 
 **REVISED: tau = 0.15 WITH the collar as the ship default** (squeeze 0.00%, pull +0.278),
 with tau=0.35 as a screened upgrade worth ~2x the nudge, gated on caveat 2.
+
+### 2026-08-17 — ⚑⚑ "MORE EXTREME POLICY SL" IS THE WRONG DIRECTION: THE UNBOUNDED CE LOSES TO A RANDOM FLOOR
+
+Owner asked whether the floor is different enough from the (flat) run just closed to test
+alone, or whether we need more extreme supervised policy learning. The extreme version
+already exists as a live knob — **`w_sf_own: 0.0`**, a plain CE toward SF's P0 best — and it
+had never been scored. A/B/D were regret-WEIGHTED EXPECTATIONS, a different shape. Scored it
+as arm **G** (`loss = -log p[label_top1]`, descent dir `e_top1 - p`).
+
+| population | G vs C_RANDOM | F_adapt20_t0.35 vs C_RANDOM |
+|---|---|---|
+| overall | **-0.0594** [-0.1016,-0.0181] *** | +0.3167 *** |
+| floor-INERT (SF best already searched, ~96%) | +0.1347 [+0.0651,+0.2037] *** | **+0.2781** *** |
+| **floor-ACTIVE (SF best has ~no prior)** | **-0.1801** [-0.2293,-0.1293] *** | **+0.1697** *** |
+
+G's frac>0 is **81.6%** vs F's 98.8%; `G - F_adapt20_t0.35 = -0.0669` ***.
+
+⇒ **THE UNBOUNDED CE IS WORSE THAN A RANDOM FLOOR on exactly the rows the program exists
+for.** `w_sf_own` must stay 0.0.
+
+**MECHANISM — and it is the general lesson, not a quirk of this arm.** G pushes toward the
+SHALLOW label's top-1 with unbounded force. That label disagrees with a deep ruler on
+**28.4%** of rows (`3f1ad5d39`). An unbounded loss commits FULLY to a teacher that is wrong
+more than a quarter of the time; a one-sided floor stops at `tau`, so its wrong-direction
+push is CAPPED. **Boundedness is what buys robustness to teacher error.** This retroactively
+explains `w_sf_own = 0.0`, and CLAUDE.md's "upweighting `policy_sf` hurt".
+⚑ G's DO-NO-HARM axis was not read; the pull result retires it regardless. Do not quote a
+harm number for G.
+
+**⇒ RECOMMENDATION ON HOW TO TEST THE FLOOR — do NOT point Elo at it first.**
+#244 closed FLAT at n=190, but its real lesson was RESOLUTION: 13.7 Elo of expected signal
+against a +/-19.2 band, needing **n=394** to be falsifiable. The floor is a SMALL
+intervention (22.02% coverage; strong on ~4.03% of those, weak nudge on the rest). Pointing
+the same Elo yardstick at it manufactures another unfalsifiable null.
+
+The floor has what #244 lacked: **a directly observable mechanism with far better resolution
+than Elo.** Pre-commit these, read them from a checkpoint in hours:
+1. `P(SF's best move is in the root candidate set)` — **95.6%** now, **4.03%** never searched
+   (`armF_search_inclusion.py`). Both must move.
+2. `audit_targets` row (a) net raw policy top-1 — **46.9 cp** now. Must fall.
+Escalate to a paired arena ONLY if the mechanism moves.
+
+⚑ **NAMED IN ADVANCE:** if the mechanism moves and Elo does not, that is the IMPORTANT
+result, not a disappointment — it says policy top-1 quality is not the binding constraint on
+strength, which redirects the program to value or to search depth. Pre-committing this stops
+it being read post-hoc as a failure of the arm.
