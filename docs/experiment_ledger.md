@@ -56325,3 +56325,98 @@ Any future experiment whose deciding yardstick is `wdl_regret` must publish, in 
 computation is not falsifiable and should not launch. This also re-prices task #170: the real
 Elo-per-regret calibration is worth more than it looked, because every regret-based bar depends on
 it and it is currently a two-endpoint guess.
+
+## 2026-08-17 PREREG — BT4 + deep-SF arm calibration for `w_sf_own_regret` (Josh: "fitting to bt4 to see what way of using the SF data will help correct our policy the best")
+
+Cheap, offline, **GPU only for one forward pass per position**, no training compute, no live change.
+Purpose: retire arms BEFORE any of them costs a training run. Follows the audit-first rule in
+`docs/eval_protocol.md`.
+
+### Hypothesis
+
+The four candidate ways of turning `sf_p0_regret` into a policy gradient are **not equivalent**, and
+at least one pushes our policy measurably closer to a stronger reference than the others. An arm
+whose gradient does not point toward a stronger policy cannot help, whatever its weight.
+
+### Arms (all evaluated as gradients, never as losses)
+
+For each arm, the quantity scored is the **descent direction on the policy logits**,
+`d_arm = -d(arm_term)/d(logits)`, evaluated at our net's own logits on each position.
+
+| arm | term | note |
+|---|---|---|
+| **A** | native `sf_own_regret = (p * r).sum()` over ALL 1858 entries | production's implementation; ~74% of `r` is the fitted constant fill |
+| **B** | A restricted to **surfaced** entries (PR #447's gate) | tests whether the fabricated tail helps or hurts |
+| **C** | one-sided **rank floor** on top-1/top-2 only | uses only entries that are always genuinely surfaced |
+| **D** | ΔQ via `priority_q_delta` | 99.94% real coverage; ⚑ NOT `future_sf_regret_*` (4-8% real) |
+
+Closed forms are already implemented and direction-checked in
+`scratchpad/sfpolicy_compare/arm_contrast_closed_form.py`.
+
+### ⚑⚑ NEGATIVE CONTROLS — the part that decides whether this measures SF at all
+
+Every arm above has the shape `d_j = -p_j (r_j - rbar)`, which pushes mass off our top move for ANY
+`r` that happens to be larger there. Since our policy is over-confident relative to both rulers, a
+pure entropy regularizer would score POSITIVE on this metric while containing zero SF information.
+So the arms are scored against two nulls, not against zero
+[[shuffle_the_labels_negative_control]]:
+
+- **N1 — shuffled regret.** Permute `r` within each row's surfaced set. Destroys the SF signal,
+  preserves the marginal distribution of magnitudes.
+- **N2 — anti-prior.** Set `r_j = p_ours_j`. Pure confidence-flattening, no SF input at all.
+  **This is the binding control**: N2 is what "an entropy regularizer wearing an SF costume" scores.
+
+### Rulers (two, deliberately)
+
+1. **BT4** — `d_bt4 = (p_bt4 - p_ours)`, the descent direction of `CE(p_bt4 || p_ours)`.
+   ⚑ BT4 measures **general policy quality, not the anti-SF objective**. Legitimate now (we are
+   ~2500 vs its ~3400, squarely in the weak regime per Josh's framing); it becomes ILLEGITIMATE as
+   we close, and this entry is the shelf-life notice.
+2. **deep-SF** — `d_deep = (p_deep - p_ours)`, where `p_deep` is production's `sf_policy_score_mode`
+   transform applied to the **500k-node MultiPV-40** labels in
+   `data/audit_set_v1.jsonl.shallow_sf.jsonl`. No objective mismatch; this is the SF-native ruler.
+
+Agreement between the two rulers is itself a readout. **Disagreement is reported, never averaged.**
+
+### Metric
+
+Per-row **cosine** between `d_arm` and each ruler direction, over the legal-move support.
+Aggregate = mean per-row cosine with a **paired bootstrap 95% CI** over positions (paired because
+every arm is evaluated on the same rows with the same `p_ours`).
+
+### Population
+
+The **4,000** audit positions that intersect the deep set 4,000/4,000, with their shallow
+MultiPV-40 cache. Mean 27.18 PVs; 91.2% have >=7 PVs — i.e. ground truth exists exactly where
+production fabricates.
+
+### PRE-COMMITTED DECISION RULES
+
+1. **RETIRE** any arm whose BT4 cosine 95% CI upper bound is **<= 0**. It cannot help.
+2. **RETIRE** any arm whose **paired** advantage over **N2** has a 95% CI containing 0 on **both**
+   rulers. It is an entropy regularizer, and we already have cheaper ones.
+3. **RETIRE** any arm that does not beat **N1** on both rulers. It is not reading the SF signal.
+4. Surviving arms are RANKED by mean deep-SF cosine (the SF-native ruler breaks ties, because the
+   objective is anti-SF and BT4 is only a proxy).
+5. If **every** arm fails rule 2, the finding is that **`sf_p0_regret` carries no usable policy
+   gradient at MultiPV 6**, and task #252's "turn on `w_sf_own_regret`" is KILLED before it costs a
+   training run. This outcome is explicitly allowed and is the most valuable one available.
+
+### PRECONDITIONS — both must be reported with the result, neither blocks the run
+
+- **PURITY.** The audit positions came from a replay snapshot; our net may have trained on them, and
+  `p_ours` enters the metric directly. #199's gate already failed at **5.23% exposed inputs**. This
+  biases `p_ours` toward the labels and therefore SHRINKS every cosine toward zero (we are already
+  closer to the ruler on exposed rows) — it is **conservative for rules 1-3** and **not** conservative
+  for rule 4's ranking. Report the exposed/unexposed split; if the ranking flips between them, rule 4
+  is void and the arms tie.
+- **POPULATION MISMATCH.** The cache is MultiPV **40** at 50k-500k nodes; production sees MultiPV
+  **6** at ~150-200k. Truncating 40 -> 6 yields the **deep** top-6, which understates production's
+  noise. ⇒ arm A's fill is scored against a CLEANER surfaced set than it ever sees live, which
+  **flatters A and B**. Stated as a directional bias, not corrected. [[same_name_different_population]]
+
+### Cost and blockers
+
+One forward pass per position on 4,000 positions, both nets. `data/lc0/bt4_audit_cache.jsonl` is
+**NOT on disk** and must be rebuilt first (GPU; runs in the post-stop window, no contention).
+No yaml change, no training compute, nothing live.
