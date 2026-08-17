@@ -56106,3 +56106,70 @@ Plus the 0.0 control. ⚑ POWER remains the live risk: at 24.6% coverage the fir
 indistinguishable from control by construction, so screen the FORMS on teacher-carrying rows only
 (max contrast, deliberately not production-representative) before pricing a live deploy — and note
 the look-ahead arm does NOT share that limitation, being at 100%.
+
+## 2026-08-17 ⚑⚑ CORRECTION (mine, one message old): `has_future_sf_regret_*` READS 100% AND THE VALUES ARE ZERO ON 92-96% OF ROWS. The ΔQ field is the one with real full coverage.
+
+Josh endorsed a closed-form offline contrast of the candidate `w_sf_own_regret` arms. Running it
+falsified the claim I had made immediately before, in the way this ledger keeps recording:
+**I read a presence flag and reported it as coverage.**
+
+### THE CORRECTION
+| signal | `has_*` flag | **actually NONZERO** | distinct values |
+|---|---|---|---|
+| `sf_p0_regret` (native own-move) | 24.6% | **24.6%** (real) | — |
+| `future_sf_regret_count` | 100.00% | 10.83% | 173 |
+| `future_sf_regret_sum` | 100.00% | **8.29%** | 529 |
+| `future_sf_regret_max` | 100.00% | 8.29% | 60 |
+| `future_sf_regret_h4` | 100.00% | **4.11%** | 107 |
+| `future_sf_regret_h6` | 100.00% | 5.15% | 128 |
+| `future_sf_regret_d95` / `d98` | 100.00% | 8.29% | 3,906 / 3,979 |
+| `sf_volatility_target` | 23.57% | 19.41% | 13,006 |
+| **`priority_q_delta`** | 100.00% | **99.94%** | **21,830** |
+
+⇒ **The look-ahead family's EFFECTIVE coverage is 4-8%, WORSE than the native term's 24.6% — not
+4x better as I stated.** [[a_counter_is_not_the_mechanism_behind_it]] and the standing rule *a
+presence check is not a value read*, violated by me one message after citing it.
+**`priority_q_delta` is the ONLY member of this family with genuine full coverage**, and it is
+consumed solely as a replay SAMPLING priority — never as a training target.
+
+⇒ **THE THREE IDEAS REORDER, and ΔQ inherits the coverage advantage I had misassigned:**
+1. **ΔQ via `priority_q_delta`** — 99.94% real coverage, already stored, never a target.
+2. **native / floor over `sf_p0_regret`** — 24.6% real, and A/B/C are three DISTINCT signals (below).
+3. **look-ahead `future_sf_regret_*`** — 4-8% real. Weakest on coverage.
+
+**NOT ESTABLISHED:** why `future_sf_regret_*` is sparse while its flag is set. That is a code read,
+not a guess, and it is deliberately left open rather than speculated at after three misses today.
+
+### THE A/B/C CONTRAST STANDS, and it justifies the factorial
+`scratchpad/sfpolicy_compare/arm_contrast_closed_form.py`, 200 shards, 0 unusable.
+A/B/C population 77,696 rows (`has_sf_p0_regret`); D population 356,053.
+
+| arm | mean | p50 | p90 | frac == 0 |
+|---|---|---|---|---|
+| A native, ALL legal entries | 0.12187 | 0.02974 | 0.43324 | 3.12% |
+| B native, SURFACED only (#447's gate) | 0.01885 | 0.00391 | 0.05328 | 10.54% |
+| C one-sided floor @ 0.10 | 0.01780 | 0.00000 | 0.09320 | **76.42%** |
+| C's `mass_on_top2` | 0.57680 | 0.70617 | 0.99987 | 0.02% |
+
+- **A vs B — the FABRICATED-TAIL axis is material, not cosmetic.** spearman **+0.3744**, mean
+  **B/A = 0.485**, and **52.12% of rows have B < 0.5 x A**. ⇒ the invented tail supplies over half
+  the live term's magnitude on half the rows, and the two are only weakly rank-correlated.
+  **PR #447's gate changes what is trained, substantially.**
+- **C vs B — the FUNCTIONAL-FORM axis is a DIFFERENT signal.** spearman(C,B) = **+0.0368**
+  (essentially uncorrelated); spearman(C,A) = +0.3335. The floor is NOT a restatement of the
+  surfaced magnitude.
+- **Cross-check PASSES:** C is zero on 76.42% of rows ⇒ binds on 23.6%, against the 23.0% bind rate
+  measured independently this morning by the separate floor probe. Two instruments, one number.
+
+⇒ **A, B and C are three genuinely distinct signals**, so the 2x2 factorial (tail axis x form axis)
+is justified rather than redundant, and no arm can be dropped as a duplicate.
+
+### ⚑ THE DIRECTION CHECK EARNED ITS PLACE — build it into every arm-D-shaped probe
+`future_sf_regret_{h4,h6,max}` are **NOT monotone in outcome**: means W **0.0003** / D **0.0010** /
+L **0.0003** (wdl_target 0=W 1=D 2=L, STM POV). Draws carry ~3x the future regret of BOTH decisive
+results, and all three horizons returned **bit-identical** Spearman values to 4 decimals. Both
+symptoms are explained by the sparsity above (rank correlation over ~92% ties). ⇒ the check that
+was added only because this session had already produced one INVERTED collapse measurement is what
+stopped a null field being reported as a signal. **Keep it: any probe over a look-ahead field must
+first show the field is monotone in the outcome it claims to summarise.**
+[[shuffle_the_labels_negative_control]]
