@@ -109,6 +109,83 @@ def _piece_count(fen: str) -> int:
     return sum(1 for c in fen.split(" ", 1)[0] if c.isalpha())
 
 
+def _report_encoding_vs_production(
+    enc_kwargs: dict[str, str], *, input_encoding: str,
+) -> None:
+    """Print the checkpoint's declared input layout against production's.
+
+    This ruler runs no search, so it has no search shape to drift. Its
+    production-shape dependence is entirely in the INPUT: a checkpoint built
+    for a different plane layout than the live run's is scored happily and
+    silently today, and the resulting cp number is not comparable with any
+    other reading of this ruler.
+
+    Deliberately a WARNING and not a refusal, unlike the search guards:
+    scoring a foreign or historical net (lc0/BT4, an old checkpoint, a
+    different feature version) against the frozen audit set is a legitimate
+    and frequent use of this script — see docs/bt4.md. Refusing would break
+    the comparison the eval protocol is built on. What was missing is that the
+    mismatch was never SAID, so a cross-layout number could be put in a table
+    beside a production one without anything marking it.
+    """
+    from chess_anti_engine.eval.production_shape import (
+        LIVE_CONFIG_ENV,
+        load_live_config_or_reason,
+        production_input_encoding,
+    )
+
+    live, reason = load_live_config_or_reason()
+    if live is None:
+        print(
+          # The REASON, not "unset or unreadable": four states, four operator
+          # actions (export the var / fix the path / fix the permissions /
+          # rebase onto the branch whose schema defines the live yaml's key).
+            f"[shape] checkpoint declares {enc_kwargs}; NOT compared against "
+            f"production — {reason}.",
+            flush=True,
+        )
+        return
+    want = production_input_encoding(live.flat)
+    print(live.header(), flush=True)
+    diffs = [
+        f"{k}: checkpoint {enc_kwargs.get(k, '<absent>')!r} vs production {v!r}"
+        for k, v in want.items()
+        if enc_kwargs.get(k) != v
+    ]
+  # ⚑ `authoritative`, NOT `live is None`. `load_live_config_or_reason` returns
+  # the IN-TREE fallback with `authoritative=False` when
+  # $CHESS_ANTI_ENGINE_LIVE_CONFIG is unset — the DEFAULT in every worktree —
+  # so branching on None alone printed the affirmative "MATCHES production"
+  # about a file the resolver had already decided was not the live one. The
+  # `[NOT-LIVE]` header above does not repair that: a result line is what gets
+  # copied into a report, and it travels without its header. Same fix as
+  # `probe_policy_targets.py`, which had the same defect in the same round.
+    reference = "production" if live.authoritative else (
+        "the NON-AUTHORITATIVE reference config"
+    )
+    stale_note = "" if live.authoritative else (
+        "\n[shape] ⚑ This is NOT a production check. The comparison above is "
+        "against the in-tree config, which is stale by construction outside "
+        f"the live working tree. Export ${LIVE_CONFIG_ENV} to name the live "
+        "yaml if you meant to check production."
+    )
+    if not diffs:
+        print(
+            f"[shape] checkpoint input layout MATCHES {reference}: {want} "
+            f"(scored with --input-encoding {input_encoding}){stale_note}",
+            flush=True,
+        )
+        return
+    print(
+        f"[shape] ⚑ WARNING: this checkpoint's input layout does NOT MATCH "
+        f"{reference}:\n  " + "\n  ".join(diffs)
+        + "\n  The cp figure below is a valid reading of THIS net, but it is a "
+        "different ruler from a production-layout reading and the two must not "
+        f"share a table, trend or threshold.{stale_note}",
+        flush=True,
+    )
+
+
 def value_1ply_regret(
     *, net: NetSource, positions, device: str, batch_size: int, pos_chunk: int,
     input_encoding: str = INPUT_ENCODING_DEFAULT,
@@ -145,6 +222,7 @@ def value_1ply_regret(
         device=device, gpu_mem_fraction=gpu_mem_fraction, tag="value-regret",
     )
     enc_kwargs = model_encoding_kwargs(model)
+    _report_encoding_vs_production(enc_kwargs, input_encoding=encoding)
     if matched_rows is not None and encoding == "stored":
         matched_rows.require_model_compatible(enc_kwargs)
     # Dynamic-relation checkpoints apply their attention bias only when the

@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import math
 import shlex
@@ -43,9 +42,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import chess
 import numpy as np
+
+if TYPE_CHECKING:
+    from chess_anti_engine.eval.production_shape import LiveConfig
 
 from chess_anti_engine.eval.arena_pgn import (
     ArenaGame,
@@ -59,7 +62,68 @@ from chess_anti_engine.eval.arena_pgn import (
 PgnSink = Callable[..., None]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+
+
+# The FALLBACK file, not the answer. `production_config()` below is the single
+# resolution; this is only what it lands on when the live config cannot be
+# resolved. Named for what it is so no caller mistakes it for "the production
+# config" and reads it directly — that mistake is the whole finding.
+IN_TREE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+
+# GumbelConfig fields on which an ARENA legitimately differs from production
+# selfplay. Reasons, not just names — an undocumented deviation has nowhere to
+# go. The two target_* knobs are the interesting entries: they shape the
+# STORED TRAINING TARGET only and have no effect on which move is played, so
+# an arena that omits them is still measuring production's PLAY behaviour.
+# (`scripts/audit_targets.py` scores the target itself, and there they are
+# mandatory — same knobs, opposite verdicts, because the instruments measure
+# different objects.)
+ARENA_SHAPE_DEVIATIONS: dict[str, str] = {
+    "simulations": "the arena's own budget (--sims / matched_time), not the yaml's",
+    "temperature": "arena move selection, not selfplay's stored-target temperature",
+  # ⚑ THE REASON THAT USED TO SIT HERE WAS FALSE, and the falsehood was the
+  # load-bearing part: it read "no root Gumbel noise: an arena must be
+  # deterministic per seed" while the CLI passes
+  # `gumbel_add_noise=not args.no_gumbel_noise`, i.e. noise is ON by default.
+  # Worse, the arena's scale is the `GumbelConfig` default 1.0, while
+  # production runs 0.75 selfplay / 0.25 curriculum and DECAYS both to 0 after
+  # move 12 — a per-ply schedule (`network_turn._scheduled_gumbel_scale`)
+  # applied outside `build_selfplay_gumbel_config`, so no field comparison can
+  # express it and this guard cannot see it. An exemption whose reason is
+  # wrong is worse than no exemption: it answers the question a reader would
+  # otherwise ask.
+  #
+  # Kept as an exemption rather than a refusal because the arena genuinely
+  # cannot reproduce a per-ply schedule through a flat override dict, and
+  # refusing would take `--search-shape training` away entirely. What changed
+  # is that `_warn_noise_schedule_deviation` now PRINTS the divergence with
+  # production's actual numbers on every noisy training arena. The JSONL record
+  # already banks `gumbel_add_noise` (`_result_record`), so the artifact carries
+  # which of the two regimes a row was measured in.
+    "add_noise": (
+        "arena-level flag (--no-gumbel-noise), not the yaml's. Production "
+        "selfplay always enables noise and modulates it through the per-ply "
+        "gumbel_scale schedule instead"
+    ),
+    "gumbel_scale": (
+        "production's scale is a per-PLY schedule (0.75 selfplay / 0.25 "
+        "curriculum, decaying to 0 after move 12) that a flat override dict "
+        "cannot express; the arena runs the flat GumbelConfig default. "
+        "Reported by _warn_noise_schedule_deviation rather than hidden here"
+    ),
+    "target_max_visit_cap": (
+        "TARGET-only knob — shapes the stored policy target, never the played "
+        "move, and an arena stores no targets"
+    ),
+    "target_untempered_prior": (
+        "TARGET-only knob — undoes policy_temp on the stored target's prior "
+        "term only, so it cannot change which move the arena plays"
+    ),
+    "input_history_encoding": "read off the loaded checkpoint, not the yaml",
+    "input_extra_features": "read off the loaded checkpoint, not the yaml",
+    "policy_encoding": "read off the loaded checkpoint, not the yaml",
+    "compute_relations": "read off the loaded checkpoint, not the yaml",
+}
 DEFAULT_RESULTS_PATH = REPO_ROOT / "runs" / "arena_results.jsonl"
 
 # matched_sims --compile=auto threshold: compile only when the run does enough
@@ -85,7 +149,7 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 #             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3. These are
 #             constants in mcts/gumbel.py, so they are safe to quote here.
 #   training  what production selfplay actually runs. NOT quoted here on
-#             purpose: every value is READ FROM `PRODUCTION_CONFIG` at call
+#             purpose: every value is READ FROM `production_config()` at call
 #             time (see `resolve_search_shape`), so it tracks the yaml. Fixed
 #             is the LINEAR root — the training shape leaves the root-transform
 #             sentinels at their GumbelConfig defaults and never takes play's
@@ -201,7 +265,60 @@ class SideSearch:
         )
 
 
-def production_selfplay_search_config():
+def production_config() -> LiveConfig:
+    """THE resolution. Every consumer in this file goes through it.
+
+    ⚑ There used to be two: a module constant ``PRODUCTION_CONFIG`` resolved at
+    IMPORT time, which backed the openings default, the banked config digest
+    and every provenance string, and a separate call-time
+    ``load_live_config()`` that backed the search shape. The commit that
+    introduced the second one claimed it had removed the first. It had not, and
+    a divergence between them is not cosmetic: the arena would have banked a
+    digest of file A into a result record describing a search built from file
+    B, and the record is the artifact every later reading is joined against.
+
+    So the constant is gone. What remains is this function, resolved at CALL
+    time from ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` with the in-tree copy as a
+    reported, NON-authoritative fallback. Call time rather than import time
+    because the env var is the mechanism production actually uses (see
+    ``scripts/train.sh``) and an import-time read is decided by whichever
+    module happened to import first. It is deliberately NOT memoized either:
+    a cache is a second source of truth with extra steps, and the resolution
+    is a `stat` plus a yaml parse.
+    """
+    from chess_anti_engine.eval.production_shape import (
+        load_config_file,
+        load_live_config_or_reason,
+    )
+
+    live, reason = load_live_config_or_reason()
+    if live is not None:
+        return live
+    fallback, fallback_reason = load_config_file(
+        IN_TREE_CONFIG,
+        provenance=f"in-tree fallback; the live config is unavailable ({reason})",
+        authoritative=False,
+    )
+    if fallback is None:
+        raise SystemExit(
+            f"[shape] no production config could be read: {reason}; "
+            f"{fallback_reason}"
+        )
+    return fallback
+
+
+def production_config_path() -> Path:
+    """The file ``production_config()`` resolved. Same resolution, path only."""
+    return production_config().path
+
+
+def production_config_flat() -> tuple[dict, Path, bool]:
+    """``(flat config, path it came from, is it the LIVE file)``."""
+    cfg = production_config()
+    return cfg.flat, cfg.path, cfg.authoritative
+
+
+def production_selfplay_search_config(flat: dict | None = None):
     """The selfplay ``SearchConfig`` a distributed worker actually builds.
 
     Runs the whole real channel — yaml -> live-yaml validator ->
@@ -223,13 +340,10 @@ def production_selfplay_search_config():
 
     from chess_anti_engine.model import ModelConfig
     from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
-    from chess_anti_engine.utils.config_yaml import (
-        flatten_run_config_defaults,
-        load_yaml_file,
-    )
     from chess_anti_engine.worker import WorkerSession
 
-    flat = flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG)))
+    if flat is None:
+        flat, _path, _live = production_config_flat()
     # sf_nodes / mcts_simulations are supplied by the publisher (PID budget and
     # sim ramp), not read from the config; mirror the config's own values so
     # nothing here depends on the live controller state.
@@ -253,6 +367,144 @@ def production_selfplay_search_config():
     return cfgs["search"]
 
 
+def _assert_training_shape_is_production(
+    gumbel: dict[str, float],
+    flat: dict,
+    cfg: LiveConfig | None = None,
+    *,
+    vloss_weight: int,
+    target_batch: int,
+) -> None:
+    """Prove `--search-shape training` reproduces production selfplay's search.
+
+    ``flat`` is the config the arena ITSELF read — passed in rather than
+    re-resolved, so the guard cannot end up checking against a different file
+    than the shape was built from.
+
+    Note the guard deliberately crosses production paths: the arena builds its
+    shape through the DISTRIBUTED worker channel (``build_recommended_worker``
+    -> ``WorkerSession._build_selfplay_configs``), while the reference comes
+    from the in-process channel (``TrialConfig`` -> ``_play_batch_kwargs`` ->
+    ``build_selfplay_gumbel_config``). Both are production; a knob published by
+    one and dropped by the other shows up here as a diff, which is a defect
+    worth stopping on rather than a false alarm to suppress.
+
+    The instrument being shared with the criterion is the point: ``gumbel`` is
+    the dict ``match.py`` will ``dataclasses.replace`` onto a ``GumbelConfig``,
+    so this applies it to a ``GumbelConfig`` exactly as the arena will and
+    compares the RESULT against the config production's own builder produces.
+    It never asks "is this key present" — presence proved nothing when the
+    value was a stale literal.
+
+    ``vloss_weight`` / ``target_batch`` are required keyword arguments rather
+    than optional extras: they reach the C runner as function arguments, they
+    have no ``GumbelConfig`` field, and a guard that compared only the dict
+    would be blind to exactly the pair this arena has always carried and the
+    audit did not. Making them mandatory means a caller cannot half-check.
+
+    The failing input is easy to name: set any move-affecting search key in the
+    live yaml that this dict does not carry (or leave one stale), and the diff
+    is non-empty. ``tests/test_production_shape_guard.py`` produces exactly
+    that.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.eval.production_shape import (
+        assert_matches_production,
+        format_shape_table,
+        production_search_shape,
+    )
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
+
+  # `cfg` is the resolution the CALLER already made, so the header names the
+  # file `flat` came out of. Falling back to `production_config()` when a test
+  # drives the guard directly is safe for the same reason the constant was not:
+  # it is the same resolver, so it cannot land on a different file.
+    resolved = cfg if cfg is not None else production_config()
+    print(resolved.header(), flush=True)
+    if not resolved.authoritative:
+        print(
+            "[shape] WARNING: the config above is NOT the live one "
+            f"({resolved.provenance}); it is stale by construction outside the "
+            "live working tree, so the comparison below proves only that this "
+            "arena agrees with THAT file.",
+            flush=True,
+        )
+    prod = production_search_shape(
+        flat, simulations=int(GumbelConfig().simulations),
+    )
+    realized = SelfplaySearchShape(
+        cfg=_dc.replace(GumbelConfig(), **gumbel),
+        vloss_weight=int(vloss_weight),
+        target_batch=int(target_batch),
+    )
+    print(
+        "[shape] --search-shape training: realized vs production selfplay\n"
+        + format_shape_table(realized, prod, exempt=ARENA_SHAPE_DEVIATIONS),
+        flush=True,
+    )
+    assert_matches_production(
+        realized, prod, exempt=ARENA_SHAPE_DEVIATIONS,
+        where="--search-shape training",
+    )
+
+
+def _warn_noise_schedule_deviation(base: SideSearch, *, add_noise: bool) -> None:
+    """Say what a training arena does about production's per-ply noise schedule.
+
+    ⚑ THE ONE THING THE FIELD DIFF STRUCTURALLY CANNOT CHECK. Production's root
+    noise is ``_scheduled_gumbel_scale``: 0.75 for selfplay, 0.25 for
+    curriculum, decaying to ``gumbel_scale_after`` over
+    ``gumbel_scale_decay_moves`` from ``gumbel_scale_decay_start_move``. It is
+    applied as a per-GAME, per-PLY ``per_game_gumbel_scale`` list OUTSIDE
+    ``build_selfplay_gumbel_config``, so ``GumbelConfig.gumbel_scale`` — the
+    only thing a shape diff can see — is the flat literal 1.0 on both sides
+    and the comparison passes while the arena perturbs roots on nearly every
+    move at a scale production only uses before move 12.
+
+    This does not refuse. A flat override dict cannot express a schedule, so
+    refusing would remove ``--search-shape training`` rather than fix it, and
+    ``value_regret.py`` sets the precedent for reporting an unrepresentable
+    divergence instead of pretending it is absent. What it must not do is stay
+    silent, which is what an exemption reason reading "an arena must be
+    deterministic per seed" achieved while noise was on by default.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    if base.shape != "training":
+        return
+    flat, _path, _live = production_config_flat()
+    search = production_selfplay_search_config(flat)
+    if not add_noise:
+        print(
+            "[shape] --search-shape training with --no-gumbel-noise: root "
+            "noise OFF, production runs it ON (selfplay scale "
+            f"{float(search.gumbel_scale)}, curriculum "
+            f"{float(search.curriculum_gumbel_scale)}). DELIBERATE deviation "
+            "— a deterministic-per-seed arena. Not production play behaviour.",
+            flush=True,
+        )
+        return
+    print(
+        "[shape] ⚑ --search-shape training with root noise ON: the arena uses "
+        f"the FLAT GumbelConfig scale {float(GumbelConfig().gumbel_scale)} on "
+        "every ply, while production uses a per-ply SCHEDULE it cannot "
+        f"express — selfplay {float(search.gumbel_scale)} -> "
+        f"{float(search.gumbel_scale_after)} over "
+        f"{int(search.gumbel_scale_decay_moves)} moves from move "
+        f"{int(search.gumbel_scale_decay_start_move)}, curriculum "
+        f"{float(search.curriculum_gumbel_scale)} -> "
+        f"{float(search.curriculum_gumbel_scale_after)}. The shape table above "
+        "CANNOT check this: the schedule is applied outside "
+        "build_selfplay_gumbel_config, so no GumbelConfig field carries it. "
+        "This run's root perturbations differ from production's on nearly "
+        "every move. Pass --no-gumbel-noise for a deterministic arena, or read "
+        "the result as 'the training shape with unscheduled root noise'.",
+        flush=True,
+    )
+
+
 def resolve_search_shape(shape: str) -> SideSearch:
     """Turn ``play``/``training`` into the concrete knobs each one means."""
     from chess_anti_engine.mcts.gumbel import (
@@ -273,24 +525,48 @@ def resolve_search_shape(shape: str) -> SideSearch:
             target_batch=int(PLAY_SEARCH_TARGET_BATCH),
         )
     if shape == "training":
-        search = production_selfplay_search_config()
-        # Only the knobs production actually sets from config. Everything else
-        # is left at the GumbelConfig default, which IS the selfplay shape —
-        # seeding from PLAY_SEARCH_DEFAULTS here is the original defect.
+      # ONE resolution, shared by the shape and by the guard that checks it.
+        cfg = production_config()
+        flat, config_path = cfg.flat, cfg.path
+        search = production_selfplay_search_config(flat)
+        # The knobs below are the ones that change which MOVE gets played.
+        # Everything else is left at the GumbelConfig default, which IS the
+        # selfplay shape — seeding from PLAY_SEARCH_DEFAULTS here is the
+        # original defect.
+        #
+        # ⚑ "Only the knobs production actually sets from config", which this
+        # comment used to say, was FALSE: production also sets
+        # gumbel_target_max_visit_cap and gumbel_target_untempered_prior. They
+        # are omitted on purpose (target-only, see ARENA_SHAPE_DEVIATIONS), and
+        # `_assert_training_shape_is_production` below now PROVES that the
+        # omissions are exactly those two rather than trusting this comment.
+        gumbel = {
+            "c_scale": float(search.gumbel_c_scale),
+            "topk": int(search.gumbel_topk),
+            # Carried even while production runs the 1.0 no-op: the moment
+            # the yaml raises it, `--search-shape training` would otherwise
+            # keep searching at T=1.0 and every arena — the Cheese-tail
+            # yardstick included — would measure a prior sharper than the
+            # one the live run trains on. `match.py` applies this dict via
+            # `dataclasses.replace`, so it reaches the arena search directly.
+            "policy_temp": float(search.gumbel_policy_temp),
+            "volatility_q_scale": float(search.volatility_q_scale),
+            "volatility_fpu": float(search.volatility_fpu),
+            "volatility_anchor": float(search.volatility_anchor),
+        }
+        _assert_training_shape_is_production(
+            gumbel, flat, cfg,
+            vloss_weight=int(search.gumbel_vloss_weight),
+            target_batch=int(search.gumbel_target_batch),
+        )
         return SideSearch(
             shape="training",
-            source=f"{PRODUCTION_CONFIG.name} -> reco -> worker SearchConfig",
-            gumbel={
-                "c_scale": float(search.gumbel_c_scale),
-                "topk": int(search.gumbel_topk),
-                # Carried even while production runs the 1.0 no-op: the moment
-                # the yaml raises it, `--search-shape training` would otherwise
-                # keep searching at T=1.0 and every arena — the Cheese-tail
-                # yardstick included — would measure a prior sharper than the
-                # one the live run trains on. `match.py` applies this dict via
-                # `dataclasses.replace`, so it reaches the arena search directly.
-                "policy_temp": float(search.gumbel_policy_temp),
-            },
+            source=f"{config_path.name} -> reco -> worker SearchConfig",
+          # The SAME object the guard above checked. It was briefly a second
+          # copy of the literal, which meant the guard verified a dict the
+          # arena did not use — this repo's signature defect, reintroduced by
+          # the commit that was fixing it.
+            gumbel=gumbel,
             vloss_weight=int(search.gumbel_vloss_weight),
             target_batch=int(search.gumbel_target_batch),
         )
@@ -462,12 +738,13 @@ def default_openings_path() -> Path:
     """The 8-move UHO book from the production config (opening_book_path_2)."""
     import yaml
 
-    cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+    path = production_config_path()
+    cfg = yaml.safe_load(path.read_text())
     selfplay = cfg.get("selfplay", {}) if isinstance(cfg, dict) else {}
     book = selfplay.get("opening_book_path_2") or selfplay.get("opening_book_path")
     if not book:
         raise SystemExit(
-            f"no opening_book_path(_2) in {PRODUCTION_CONFIG}; pass --openings"
+            f"no opening_book_path(_2) in {path}; pass --openings"
         )
     return Path(str(book))
 
@@ -502,7 +779,7 @@ def default_compile_cache_dir() -> Path:
     try:
         import yaml
 
-        cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+        cfg = yaml.safe_load(production_config_path().read_text())
     except (OSError, ValueError):
         return fallback
     explicit = _find_nested(cfg, "distributed_worker_shared_cache_dir")
@@ -1146,11 +1423,30 @@ def git_sha() -> str:
         return "unknown"
 
 
-def production_config_hash() -> str:
+def production_config_record() -> dict:
+    """The banked IDENTITY of the config this run's search shape came from.
+
+    One resolution, three fields, written together. A bare digest was enough
+    while the config was a fixed in-tree path; it is not now that the file can
+    be either the live yaml or the in-tree fallback, because a reader joining
+    two rows cannot tell an unrecognised digest ("a config I have not seen")
+    from a non-authoritative one ("a config that was never production's").
+    ``config_authoritative`` is the field that answers the second question, and
+    it is the one that decides whether the row belongs in a table at all.
+    """
     try:
-        return hashlib.sha256(PRODUCTION_CONFIG.read_bytes()).hexdigest()[:12]
-    except OSError:
-        return "unknown"
+        cfg = production_config()
+    except (OSError, SystemExit):
+        return {
+            "config_hash": "unknown",
+            "config_name": "unknown",
+            "config_authoritative": False,
+        }
+    return {
+        "config_hash": cfg.sha256[:12],
+        "config_name": cfg.path.name,
+        "config_authoritative": bool(cfg.authoritative),
+    }
 
 
 def build_result_record(
@@ -1188,7 +1484,7 @@ def build_result_record(
         "search_reference": None if search_reference is None else search_reference.as_record(),
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "git_sha": git_sha(),
-        "config_hash": production_config_hash(),
+        **production_config_record(),
         "mode": mode,
         "label": label,
         "volatility_candidate": volatility_candidate,
@@ -1317,7 +1613,7 @@ def run_arena(
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
             f"{{{'|'.join(SEARCH_SHAPES)}}}. 'training' is what production selfplay "
-            f"runs, read from {PRODUCTION_CONFIG.name} at run time (linear root; "
+            f"runs, read from {production_config_path().name} at run time (linear root; "
             "c_scale/topk/vloss_weight/target_batch all come from that yaml, so "
             "they are not quoted here); 'play' is the tuned UCI/match shape "
             "(c_scale 0.025, topk 32, log root, vloss_weight 3). There is no "
@@ -1370,7 +1666,7 @@ def run_arena(
         cand_search = no_shape if search_candidate is None else search_candidate.describe()
         ref_search = no_shape if search_reference is None else search_reference.describe()
         base_tags = {
-            "ConfigHash": production_config_hash(),
+            "ConfigHash": production_config_record()["config_hash"],
             "GitSha": git_sha(),
             "ArenaMode": mode,
         }
@@ -1631,7 +1927,7 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help="REQUIRED for matched_sims: which search to measure. "
                         "'training' = what production selfplay runs: linear root, "
                         "with c_scale/topk/vloss_weight/target_batch read from "
-                        f"{PRODUCTION_CONFIG.name} at run time (deliberately not "
+                        f"{production_config_path().name} at run time (deliberately not "
                         "quoted here — they change with the config; the realized "
                         "values are printed at startup and stored in the result "
                         "record). 'play' = the tuned UCI/match shape (c_scale "
@@ -1880,6 +2176,15 @@ def main() -> None:
             base, spec=args.ref_gumbel,
             vloss_weight=args.ref_vloss_weight,
             target_batch=args.ref_target_batch,
+        )
+      # AFTER the overrides, and after the shape is final: the sides are what
+      # will actually be searched with. `describe()` therefore reports the
+      # realized values including every CLI override, which is what makes the
+      # printed record downstream of every override application site.
+        for label, side in (("candidate", side_candidate), ("reference", side_reference)):
+            print(f"[shape] {label}: {side.describe()}", flush=True)
+        _warn_noise_schedule_deviation(
+            base, add_noise=not args.no_gumbel_noise,
         )
     else:
         # matched_time launches UCI subprocesses, which carry their own search.
