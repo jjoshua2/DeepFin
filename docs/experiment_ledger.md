@@ -58361,3 +58361,63 @@ policy CE worse by construction" is **too strong and is withdrawn**. It means th
 target is no longer the holdout ruler's object, so holdout CE stops being the thing being
 optimised — it MAY worsen, and it is NOT the deciding yardstick. Stating "must" would have let
 a favourable surprise be dismissed as impossible.
+
+#### 2026-08-18 — per-term logit-force accounting: F flattens, A sharpens, and the books DON'T close
+
+`scratchpad/logit_force_accounting.py`, iter-265 checkpoint, live replay window. Each
+`policy_own` term's logit-space gradient projected two ways: `G_sharp = -gL.z` (radial, EXACT
+for `log_temp`, asserted against autograd every run) and `P_H = -grad_z H(p).gL` (entropy;
+approximate — it assumes the step lands in logit space and ignores the parameter Jacobian, so
+it is a SIGN indicator, not a per-step magnitude).
+
+| term | n | `G_sharp` | frac>0 | `P_H` | weighted `G_sharp` | weighted `P_H` |
+|---|---|---|---|---|---|---|
+| main CE (`w_policy` 1.0) | 20027 | **−0.04105** | 0.649 | **+0.00860** | −0.04105 | +0.00860 |
+| arm A (`w` 0.7) | 4449 | **+0.02846** | 0.725 | **−0.00425** | **+0.01992** | −0.00298 |
+| arm F (`w` 0.8) | 4449 | **−0.04205** | **0.007** | +0.00733 | **−0.03364** | +0.00586 |
+| **weighted total** | | | | | **−0.05477** | **+0.01148** |
+
+**ARM A IS THE ONLY SHARPENING TERM ON EITHER PROJECTION.** It is the only positive `G_sharp`
+and the only negative `P_H`. **Arm F is a strong FLATTENING force** — `G_sharp` −0.0336
+weighted, negative on **99.3%** of rows — which is what a floor that lifts buried SF-approved
+moves must do. A and F therefore push logit scale in OPPOSITE directions; "A+F" is not one
+intervention.
+
+**A's contamination measured live, not inherited:** `A_tail_share_of_Ep_r` = **0.694** on
+93.6% of rows — 69.4% of arm A's expected regret comes from the imputed region. Independently
+reproduces the archived 74.5%, on production MPV6 rows at iter 265. `F_binds` = **0.534**,
+reproducing the calibration's predicted 50.8%.
+
+**⚑ THE ACCOUNTING DOES NOT CLOSE, AND THAT IS THE FINDING.** A weighted total of −0.0548
+(sem ~0.003, t≈−17) predicts `log_temp` should fall steadily. **It does not.** Measured across
+seven checkpoints:
+
+| ckpt | step | `policy_own.log_temp` | rate |
+|---|---|---|---|
+| iter190 (pre-arms) | 123297 | −0.27181 | |
+| iter231 | 128938 | −0.27277 | −1.7e−7/step |
+| 263 | 132174 | −0.27410 | −4.1e−7/step |
+| 264 / 265 / 266 | | −0.27392 / −0.27386 / −0.27369 | **+1.9e−6 / +5.9e−7 / +1.8e−6** |
+| 267 / 268 | 132557 / 132656 | −0.27408 / −0.27417 | −4.2e−6 / −9.1e−7 |
+
+⇒ **`log_temp` is OSCILLATING at ±2e−6/step around a net drift of −2.5e−7/step.** The
+step-to-step noise is ~20x the trend. The live AdamW state agrees it is not falling right now:
+`exp_avg` = −0.00206, `exp_avg_sq` = 2.58e−5, lr 3e−6, `use_aurora: False` ⇒ the instantaneous
+update is **+1.2e−6/step, UPWARD**.
+
+**⚑ SO "G_sharp < 0, and log_temp is still falling" IS WITHDRAWN.** The autograd identity is
+exact and stands; the *confirmation* I hung on it does not. I read a direction off two points
+78 iterations apart while the per-iteration noise was 20x the trend — the two-point-trend error,
+again, three hours after ledgering the matched-support version of the same mistake.
+
+**What is actually true:** `log_temp` sits at a **near-equilibrium** at −0.274 (x0.760), and the
+EQUILIBRIUM VALUE is the meaningful quantity, not its drift. The residual is the gap between
+−0.0548 over three terms and a stationary parameter: the un-modelled `policy_own` consumers
+(notably `sf_p0_ce` at `w_sf_move` 0.05, a near-one-hot SF-best target that should push
+POSITIVE) and the non-radial routes `P_H` exists to flag. **Closing that residual is owed
+before any term's projection is quoted as its net effect.**
+
+**⇒ THE ACTIONABLE RESULT IS ARM A, NOT THE SEARCH TARGET.** A is the measured radial
+sharpener, ~69% of its signal is fabricated magnitude, its earlier screens were tautological,
+and 41 iterations of A+F moved no matched-support metric. `policy_target_temp` goes BEHIND
+an A-off / SF-shape-on experiment, not ahead of it. Nothing launched today.
