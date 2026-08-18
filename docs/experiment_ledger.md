@@ -59865,3 +59865,64 @@ hypothesis, and it needs no code change.
 
 ⇒ Until then, "allocator fragmentation" is a HYPOTHESIS, not the diagnosis. The ledger entry
 `f017c0b1d` should be read with that word.
+
+---
+
+### ⚑⚑ RULER DEFECT (PRE-EXISTING, NOT F-SPECIFIC): 6 of 21 "weight" keys change the objective without moving the ruler (2026-08-18)
+
+Found by peer review and confirmed empirically by `scratchpad/ruler_shape_screen.py`
+(worktree `chess-armf`). **`TRAINER_WEIGHT_KEYS` IS NOT A LIST OF SCALAR LOSS
+MULTIPLIERS.** Several entries redefine target distributions, masks and thresholds, so a
+POSITIVE -> POSITIVE magnitude change alters the objective while membership -- and therefore
+`eval_ruler_id` -- sits still. That is the exact false-negative class the ruler exists to
+prevent, and `_EFFECTIVE_WEIGHT` (which fixed off/on normalisation) does not touch it.
+
+**Method, and the criterion is the whole point.** For each key at two positive values,
+compare the per-head losses and the ruler id. ⚑ `total` is EXCLUDED from the comparison: a
+pure multiplier moves `total` and leaves every per-head loss untouched, which is the ACCEPTED
+magnitude exclusion, not a defect. A SHAPE knob moves the per-head loss itself, because it
+redefines what that loss is computed against. My first run used `total` and wrongly flagged
+`w_soft`.
+
+| key | probe | per-head losses it moves | ruler moves? |
+|---|---|---|---|
+| `sf_wdl_frac` | 0.3->0.7 | `blended_wdl_ce`, `wdl_ce` | **NO** |
+| `search_wdl_frac` | 0.3->0.7 | (blend, in the search-target variant) | **NO** |
+| `sf_wdl_conf_power` | 0.5->1.0 | `sf_eval_ce` | **NO** |
+| `sf_wdl_draw_scale` | 0.5->1.5 | `sf_eval_ce` | **NO** |
+| `sf_wdl_temperature` | 1.0->2.0 | `sf_eval_ce` | **NO** |
+| `soft_policy_min_tv` | 0.1->0.3 | `soft_policy_ce`, `soft_mask_kept_frac` | **NO** |
+
+All 13 `w_*` scalar multipliers correctly show NO per-head movement, so the screen separates
+the two classes rather than flagging everything. `sf_search_dampen_sf_low/high` are
+**UNEXERCISED, not cleared** -- the fixture has no search-dampening data.
+
+⚑ `soft_policy_min_tv` only showed up after the fixture was fixed: with an independent random
+soft target every row's TV sits far above the probe and the threshold is inert. "Not
+exercised" masquerading as "no defect" is the same vacuity trap as everywhere else in this
+file.
+
+**THE F-ONLY SIGNAL SURVIVES, and this was MEASURED rather than assumed.** The six knobs move
+`blended_wdl_ce`/`wdl_ce`, `sf_eval_ce` and `soft_policy_ce` — **the main policy CE never
+moves**. `test_policy_loss` is the policy head against the stored target, with
+`policy_target_temp` already pinned off at eval, so the F-only frozen-holdout result is not
+contaminated by this.
+
+**THE ARCHITECTURAL CHOICE, and hashing the values is the WRONG fix.** `sf_wdl_frac` is
+recomputed every iteration by the difficulty controller (`_dynamic_sf_wdl_weight`), so hashing
+shape VALUES would move the ruler on essentially every iteration, `_update_best_model` would
+take its adopt branch every time, and the best-model comparison would stop existing — the
+defect `active_loss_terms` already argues against for magnitudes.
+
+⇒ **The right fix is CANONICAL EVALUATION PINNING, and the precedent is already in the file.**
+`_eval_loss_kwargs` pins `policy_target_temp` off for exactly this reason ("the ruler must not
+move with the arm"), while its docstring asserts "Loss WEIGHTS stay as configured". The
+finding is that several of those "weights" ARE target-shape knobs, so **the existing pin is
+incomplete by its own stated logic**. Pin the shape knobs to canonical values at eval and
+`test_loss` becomes a fixed ruler again; the cost is that `test_loss` no longer equals the
+trained objective, which is the trade already accepted for `policy_target_temp`.
+
+**SCOPE: a SEPARATE PR, not #448.** The defect predates arm F entirely (none of these keys are
+F's), and the fix is a semantic change to what `test_loss` MEASURES on a load-bearing metric.
+Bundling it into a PR that is already four commits of ruler work would make it unreviewable.
+Explicitly scoped rather than silently deferred.
