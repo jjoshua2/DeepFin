@@ -59281,3 +59281,82 @@ reset, per review.
 (primary) and iter190 (secondary) after ~75 iterations of F-only. Direction-only secondary:
 `policy_own.log_temp` should displace DOWNWARD from -0.27498 (A was the sharpener; the
 numeric target is withdrawn as a reference, not a threshold).
+
+---
+
+### TEACHER GATE: `searchmoves` IS A DIFFERENT SF, NOT A BETTER OR WORSE ONE (2026-08-18)
+
+**Why this gate exists.** The target-repair architecture needs SF scores for the
+CANDIDATE UNION {a_P (raw prior), a_RL (train search), a_PLAY (play search)}. Production
+labels come from an UNRESTRICTED MultiPV-6 search, which covers that union only by luck.
+PR #444's `searchmoves` covers it by construction. But restricting the root hands every
+candidate more nodes, so the two are NOT the same instrument until shown to be. The repair
+consumes PAIRWISE ORDER, so ORDER is what must survive; cp values shifting is expected and
+is not a failure.
+
+**Rig.** `scratchpad/teacher_searchmoves_gate.py` (worktree `chess-teacher`, off
+`origin/main` which has #444; the LIVE branch does not). Rows from
+`scratchpad/dqfull_i265.jsonl`. Production nodes 75000, syzygy pair, `nice=19`, `fresh=True`
+everywhere. Two independent runs: n=400 seed 777 (primary) and n=250 seed 20260818
+(replicate).
+
+**Controls, both runs.**
+- Unrestricted run TWICE per row: **0** mismatches. SF at 1 thread is deterministic, so
+  every flip below is real and not instrument noise.
+- `restricted_incomplete`: **0**. `searchmoves` covers the union by construction, as claimed.
+- The deep tiebreak does NOT share restriction status with either arm — BOTH teachers are
+  re-run at 10x nodes — because a deep reference that is itself unrestricted MultiPV-6 just
+  reports which arm it resembles. ⚑ My n=8 smoke used exactly that broken tiebreak and read
+  "deep agrees with unrestricted 2/2"; at n=400 with a neutral tiebreak the sign reverses.
+
+**RESULT 1 — the motivation, and it is large.** Unrestricted MultiPV-6 covers the full
+candidate union on only **61.0%** (n=400) / **67.6%** (n=250) of rows. ⇒ **a third of the
+time production's own teacher cannot score all three candidates at all.**
+
+**RESULT 2 — the two teachers disagree a lot, and the disagreement is REAL.**
+argmax flip **24.5%** (n=400) / **24.7%** (n=250); pairwise discordance **27.1%** / **25.9%**.
+Replicated to 3 significant figures across independent samples.
+
+**RESULT 3 — a shallow flip is DIAGNOSTIC, not resolution noise.** Deep teachers still
+disagree on **22.4%** of flip rows vs **4.5%** of non-flip control rows (Fisher **p=0.0121**);
+the replicate gives 35.9% vs 13.9% (**p=0.0355**). Both significant, same direction.
+
+**RESULT 4 — NEITHER TEACHER IS ESTABLISHED AS MORE ACCURATE, and this is the honest read.**
+When the two DEEP teachers converge, whose shallow answer won:
+
+| run | restricted | unrestricted | rate | 95% CI | binom p |
+|---|---|---|---|---|---|
+| n=400 (seed 777) | 26 | 15 | 0.634 | [0.481, 0.764] | 0.117 |
+| n=250 (seed 20260818) | 12 | 12 | 0.500 | [0.314, 0.686] | 1.000 |
+
+The two runs disagree and NEITHER is significant. ⇒ quote "comparable quality", never
+"searchmoves is better". Do not pool them casually: both sample the same 4000-row file, so
+the subsets overlap.
+
+**RESULT 5 — flips do NOT concentrate on near-ties, which is what makes this matter.**
+Flip rate vs the unrestricted top-2 cp gap is NON-MONOTONE: 0.250 at 0-1cp, peaking at
+**0.429 at 3-10cp**, 0.205 at 30-100cp, and only then collapsing to 0.034 above 100cp. On
+rows where the gap is **>= 30cp** — a margin the repair actually cares about — the flip rate
+is still **15.9% [10.2, 24.0]**. Median top-2 gap is 10.0cp on flipped rows vs 24.0cp on
+agreed rows.
+
+**VERDICT: `searchmoves` is USABLE and is the only option that covers the union — but it is
+a DIFFERENT teacher, and the instruments must not be mixed.**
+
+**How to apply.**
+- ⚑⚑ **Compute the repair and apply it on ONE instrument.** A repair whose order comes from
+  `searchmoves` labels, applied to targets built from production's unrestricted MultiPV-6
+  labels, imports a **24% argmax disagreement** as if it were signal. This is the binding
+  constraint on the architecture, and it was not visible before this gate.
+- The isotonic projection's "SF order" is not a stable object at production nodes. Any
+  claim of the form "SF ranks a above b" needs the instrument named.
+- Independent second indictment of MultiPV-6 as a teacher, alongside
+  `multipv6_regret_tail_is_fabricated` (74% of the `sf_p0_regret` tail fabricated at MPV6):
+  it also under-resolves low-ranked lines, which is the plausible mechanism here, since a
+  5th-ranked PV gets far less effective depth than the top line.
+- ⚑ Caveat on the inputs: these keys are 4-field FENs with no halfmove/fullmove counters, so
+  50-move and Syzygy DTZ resolution are degraded for BOTH teachers equally. That cancels for
+  an ORDER comparison; it would NOT cancel for an absolute-cp claim.
+
+**Status: gate PASSED with a constraint.** Next: re-run the graph projection on complete
+`searchmoves` labels — computed AND applied on that one instrument.
