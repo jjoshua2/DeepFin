@@ -24,6 +24,7 @@ over and the counter stops meaning anything.
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -671,8 +672,9 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `loss_shape=` to `eval_ruler_id_for`, so that frame's source digest moved
 # and every id moved with it. This is the documented contract, not a
 # regression: deploying it fires ONE best-model handover per running trial.
-# Previous value: "v1:full_pass:ba74408d1e9e98fa".
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:441d302e9fdeb0fa"
+# Previous values: "v1:full_pass:ba74408d1e9e98fa" (pre-PR), then
+# "v1:full_pass:441d302e9fdeb0fa" (loss_shape=), now the `objective=` snapshot.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:8b16fe4b481f457d"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -684,7 +686,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:441d302e9fdeb0fa"
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
 # Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
-PRE_PR277_SAMPLED_RULER = "v1:sampled:43ca561fa385763f"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:7bc9ed3c7fd30ac0"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -1033,6 +1035,58 @@ def test_an_unreadable_weight_counts_as_active_rather_than_vanishing() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_every_normalised_weight_in_losses_is_declared() -> None:
+    """SCAN `losses.py` for consumer-side normalisation; fail if the map drifts.
+
+    ⚑ `_EFFECTIVE_WEIGHT` must not be maintained by memory. Its first
+    hand-written version declared 3 of the 5 clamped keys and missed
+    `sf_wdl_conf_power` and `sf_wdl_draw_scale` -- the same false negative the
+    map exists to remove, found one review round later. The point of this test
+    is that a SIXTH such knob cannot be added silently.
+
+    ⚑ WHY A SOURCE SCAN AND NOT A BEHAVIOURAL PROBE. The obvious test is to
+    push a negative value through `compute_loss` and compare. It was written
+    first and abandoned: a knob is only observable when the TERM CARRYING IT is
+    weighted on AND its target tensor is present, and no single fixture makes
+    all of them live at once -- `sf_wdl_conf_power`'s single consumer is
+    `m_sf_eval` (which needs an `sf_eval` prediction and `w_sf_eval != 0`),
+    while adding a `search_wdl` target silences `sf_wdl_frac` because the value
+    blend's components interact. A probe that cannot see a key reports it as
+    "unaffected by sign" -- confirming the map for the wrong reason, which is
+    exactly the defect class this file exists to catch.
+
+    LIMIT, stated rather than implied: this greps for the two normalisation
+    IDIOMS the codebase actually uses. A normalisation written a third way
+    (`abs()`, a clamp helper, a branch on the sign) would not be caught, so this
+    narrows the gap rather than closing it.
+    """
+    from chess_anti_engine.train.eval_ruler import _EFFECTIVE_WEIGHT
+
+    src = (Path(__file__).resolve().parents[1]
+           / "chess_anti_engine" / "train" / "losses.py").read_text(encoding="utf-8")
+
+    normalised: set[str] = set()
+    for key in TRAINER_WEIGHT_KEYS:
+        k = re.escape(key)
+        idioms = (
+            rf"max\(\s*0\.0\s*,\s*float\(\s*{k}\s*\)\s*\)",   # max(0.0, float(key))
+            rf"max\(\s*0\.0\s*,\s*{k}\s*\)",                   # max(0.0, key)
+            rf"float\(\s*{k}\s*\)\s*>\s*0\.0",                 # float(key) > 0.0
+            rf"{k}\s*>\s*0\.0",                              # key > 0.0
+        )
+        if any(re.search(pat, src) for pat in idioms):
+            normalised.add(key)
+
+    assert normalised, "the scan found no normalised weight at all -- idioms have drifted"
+
+    missing = sorted(normalised - set(_EFFECTIVE_WEIGHT))
+    assert not missing, (
+        "losses.py normalises these weights but _EFFECTIVE_WEIGHT does not declare "
+        f"them, so a negative value would be reported ACTIVE while the consumer "
+        f"removes it from the objective: {missing}"
+    )
+
+
 def test_negative_weight_is_off_when_the_consumer_clamps_it() -> None:
     """A key its consumer clamps at 0 must leave the term set when it goes negative.
 
@@ -1044,6 +1098,14 @@ def test_negative_weight_is_off_when_the_consumer_clamps_it() -> None:
     assert "sf_wdl_frac" not in active_loss_terms({"sf_wdl_frac": -0.5})
     assert "search_wdl_frac" not in active_loss_terms({"search_wdl_frac": -1e-9})
     assert "soft_policy_min_tv" not in active_loss_terms({"soft_policy_min_tv": -0.1})
+    # the two the first hand-written version MISSED (Codex delta review of ca7d08298)
+    assert "sf_wdl_conf_power" not in active_loss_terms({"sf_wdl_conf_power": -0.5})
+    assert "sf_wdl_draw_scale" not in active_loss_terms({"sf_wdl_draw_scale": -0.5})
+    # ⚑ `sf_wdl_temperature` is a KNOWN RESIDUAL, in the safe direction: a
+    # non-positive value reverts to the neutral default 1.0, so 0.0 and 1.0 are
+    # the same objective but hash differently (one spurious handover). See the
+    # comment in `_EFFECTIVE_WEIGHT` for why it is not declared.
+    assert "sf_wdl_temperature" not in active_loss_terms({"sf_wdl_temperature": 0.0})
     # and the ruler MOVES on that transition
     on = {**NO_TERMS, "sf_wdl_frac": 0.5}
     off = {**NO_TERMS, "sf_wdl_frac": -0.5}
@@ -1139,3 +1201,42 @@ def test_ruler_loss_shape_reads_the_consumers_object_and_only_when_active() -> N
 
     # Absent entirely (a trainer built without the term) must not raise.
     assert Trainer._ruler_loss_shape(SimpleNamespace(_eval_loss_kwargs={})) == {}  # pyright: ignore[reportArgumentType]
+
+
+def test_async_eval_scores_the_snapshot_under_its_own_objective() -> None:
+    """A weight flip AFTER `start()` must not reach an in-flight evaluation.
+
+    Codex delta review of `ca7d08298`, P1. The async worker used to call
+    `work.trainer._compute_metrics(...)`, which re-read `_eval_loss_kwargs` and
+    re-derived the ruler when the worker finally ran -- an iteration later, and
+    possibly after a live flip. This asserts the objective the eval USES is the
+    one captured at `start()`, by flipping the trainer between the two and
+    requiring the snapshot to be unmoved.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.train.trainer import ObjectiveSnapshot
+
+    fake = SimpleNamespace(
+        _eval_loss_kwargs={"w_policy": 1.0, "w_sf_own_regret": 0.7},
+        _ruler_loss_weights=lambda: {**NO_TERMS, "w_sf_own_regret": 0.7},
+        _ruler_loss_shape=dict,
+    )
+    snap = Trainer.objective_snapshot(fake)  # pyright: ignore[reportArgumentType]
+    assert isinstance(snap, ObjectiveSnapshot)
+
+    # the live flip that used to leak into an in-flight eval
+    fake._eval_loss_kwargs = {"w_policy": 1.0, "w_sf_own_regret": 0.0}
+    fake._ruler_loss_weights = lambda: {**NO_TERMS, "w_sf_own_regret": 0.0}
+
+    assert snap.loss_kwargs["w_sf_own_regret"] == 0.7, "snapshot aliased the mutable dict"
+    assert snap.loss_weights["w_sf_own_regret"] == 0.7
+
+    # and the two objectives really are different rulers, so the test is not vacuous
+    before = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=snap.loss_weights)
+    after = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=fake._ruler_loss_weights())
+    assert before != after

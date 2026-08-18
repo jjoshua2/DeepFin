@@ -384,20 +384,52 @@ def call_closure(
     return out
 
 
-#: Loss weights whose CONSUMER treats a NON-POSITIVE value as off, so
-#: membership here must be decided by ``<= 0.0`` and not by ``== 0.0``.
+#: How each weight's CONSUMER normalises the raw value before using it.
 #:
-#: ⚑ This table is only correct while it mirrors the consumer, so each entry
-#: names the exact expression it mirrors. `_apply_lr_gamma_weights` accepts a
-#: negative live value and pushes it to the trainer unchanged; the consumer
-#: then normalises it away. Deciding membership on ``!= 0.0`` therefore reports
-#: a term as ACTIVE that is not in the objective at all -- the false negative
-#: this module's docstring calls "a promotion across two objectives".
-_NONPOSITIVE_IS_OFF: dict[str, str] = {
-    "sf_wdl_frac": "losses.compute_loss: max(0.0, float(sf_wdl_frac))",
-    "search_wdl_frac": "losses.compute_loss: max(0.0, float(search_wdl_frac))",
-    "soft_policy_min_tv": "losses.compute_loss: if float(soft_policy_min_tv) > 0.0",
+#: ⚑⚑ MEMBERSHIP MUST BE DECIDED ON THE EFFECTIVE VALUE, NOT THE RAW ONE.
+#: `_apply_lr_gamma_weights` accepts any float and pushes it to the trainer
+#: unchanged; the consumer then normalises it. A raw value that is non-zero but
+#: normalises to 0.0 is NOT in the objective, and calling it active freezes the
+#: ruler across exactly the event it exists to catch.
+#:
+#: Each entry names the consumer expression it mirrors, because this table is
+#: only correct while it does. `test_every_trainer_weight_keys_normalisation_is_declared`
+#: DERIVES the true predicate from `compute_loss` and fails if this map drifts,
+#: so the set is maintained by measurement rather than by memory -- the first
+#: hand-written version of this shipped with 3 of the 5 clamped keys and missed
+#: `sf_wdl_conf_power` and `sf_wdl_draw_scale`.
+_EFFECTIVE_WEIGHT: dict[str, Callable[[float], float]] = {
+    # losses.compute_loss: max(0.0, float(...))  -- non-positive removes the component
+    "sf_wdl_frac": lambda v: max(0.0, v),
+    "search_wdl_frac": lambda v: max(0.0, v),
+    "sf_wdl_conf_power": lambda v: max(0.0, v),
+    "sf_wdl_draw_scale": lambda v: max(0.0, v),
+    # losses.compute_loss: `if float(soft_policy_min_tv) > 0.0`
+    "soft_policy_min_tv": lambda v: max(0.0, v),
+    # ⚑ `sf_wdl_temperature` is DELIBERATELY ABSENT, and the reason is a
+    # direction-of-error judgement rather than an oversight.
+    # `_normalize_sf_wdl_probs` gates on `temperature != 1.0 and temperature >
+    # 0.0`, so a NON-POSITIVE value reverts to the NEUTRAL default 1.0 -- it is
+    # a SHAPE parameter mis-filed in a list called WEIGHT keys, and it is never
+    # absent from the objective. Declaring `v if v > 0 else 1.0` here would be
+    # more truthful about the objective but would make the key unable to move
+    # the ruler by MEMBERSHIP at all (0.0 and 1.0 would hash alike), which
+    # `test_every_live_pushable_weight_reaches_the_ruler_id` requires of every
+    # key in `TRAINER_WEIGHT_KEYS`.
+    # Leaving it raw keeps a FALSE POSITIVE (temperature 0.0 and 1.0 are the
+    # same objective but get different ids => one spurious handover), and this
+    # module's declared direction of error is toward false positives: "a false
+    # positive costs one best-model handover; a false negative is a promotion
+    # across two objectives". The correct end-state is to hash shape parameters
+    # in `active_shape` by VALUE instead of in membership -- that channel now
+    # exists, and moving these keys into it is a separate, reviewable change.
 }
+
+
+def effective_weight(name: str, value: float) -> float:
+    """The value the CONSUMER will actually use, given the raw pushed value."""
+    fn = _EFFECTIVE_WEIGHT.get(name)
+    return float(value) if fn is None else float(fn(float(value)))
 
 
 def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
@@ -442,16 +474,16 @@ def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
     future controller configured with a zero floor would need this
     reconsidered, which is why the floor is named here.
 
-    ⚑ ZERO IS NOT THE ONLY "OFF". Several keys in ``TRAINER_WEIGHT_KEYS`` are
-    normalised by their consumer, so a NEGATIVE value removes the component
-    from the objective while remaining non-zero here. ``sf_wdl_frac: 0.5 ->
-    -0.5`` is clamped to 0.0 by ``max(0.0, ...)`` in ``compute_loss``: the
-    component leaves ``total``, and a ``!= 0.0`` membership test would hold the
-    ruler still across exactly the event it exists to catch. The keys with a
-    non-positive off-switch are listed in ``_NONPOSITIVE_IS_OFF`` next to the
-    consumer expression each one mirrors; every other key keeps the ``== 0.0``
-    boundary, because for a plain multiplier a negative weight is still a term
-    in ``total`` (sign-flipped, but present).
+    ⚑ ZERO IS NOT THE ONLY "OFF", SO MEMBERSHIP IS DECIDED ON THE EFFECTIVE
+    VALUE. Several keys in ``TRAINER_WEIGHT_KEYS`` are normalised by their
+    consumer, so a NEGATIVE value removes the component from the objective while
+    remaining non-zero here. ``sf_wdl_frac: 0.5 -> -0.5`` is clamped to 0.0 by
+    ``max(0.0, ...)`` in ``compute_loss``: the component leaves ``total``, and a
+    ``!= 0.0`` test would hold the ruler still across exactly the event it
+    exists to catch. ``effective_weight`` applies the consumer's own
+    normalisation first; every key without an entry is its own effective value,
+    because for a plain multiplier a negative weight is still a term in
+    ``total`` (sign-flipped, but present).
 
     Never raises and never silently drops a key: a value that will not convert
     to a float counts as ACTIVE, because this module's declared direction of
@@ -466,7 +498,7 @@ def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
         except (TypeError, ValueError):
             names.append(str(name))
             continue
-        off = value <= 0.0 if name in _NONPOSITIVE_IS_OFF else value == 0.0
+        off = effective_weight(str(name), value) == 0.0
         if not off:
             names.append(str(name))
     return tuple(names)

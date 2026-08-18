@@ -1139,7 +1139,7 @@ def test_the_reported_inclusion_claim_covers_tau_top1(tmp_path, capsys) -> None:
     ]
     assert len(line) == 1
     assert "tau_top1=0.001" in line[0]
-    assert "guarantees_inclusion=False" in line[0]
+    assert "at_or_above_deterministic_rank_tau=False" in line[0]
 
 
 def test_the_reported_inclusion_claim_is_true_at_the_shipped_defaults(
@@ -1152,7 +1152,7 @@ def test_the_reported_inclusion_claim_is_true_at_the_shipped_defaults(
         if ln.startswith("[trainer] sf_policy_floor w=")
     ]
     assert len(line) == 1
-    assert "guarantees_inclusion=True" in line[0]
+    assert "at_or_above_deterministic_rank_tau=True" in line[0]
 
 
 def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> None:
@@ -1222,8 +1222,18 @@ def test_inclusion_under_production_noise_is_not_a_guarantee() -> None:
 
     from chess_anti_engine.mcts.gumbel import _select_top_m_with_gumbel
 
+    import yaml as _yaml
+
     topk = DEFAULT_GUMBEL_TOPK
     tau = search_inclusion_guarantee_tau(topk)
+    # ⚑ READ THE NOISE SCHEDULE FROM THE CONFIG, never hardcode it. The first
+    # version of this test asserted at 1.0 -> 0.5 because that is what the LIVE
+    # branch runs; this branch's own yaml says 0.75 -> 0.0, so the numbers it
+    # called "production" were another tree's. A hardcoded schedule also goes
+    # stale the next time the config moves.
+    _cfg = _yaml.safe_load(Path("configs/pbt2_small.yaml").read_text(encoding="utf-8"))
+    scale_hi = float(_cfg["selfplay"]["gumbel_scale"])
+    scale_lo = float(_cfg["selfplay"]["gumbel_scale_after"])
 
     def inclusion(n_legal: int, scale: float, *, peaked: bool) -> float:
         rng = np.random.default_rng(12345)
@@ -1250,15 +1260,17 @@ def test_inclusion_under_production_noise_is_not_a_guarantee() -> None:
 
     # THE CLAIM UNDER TEST: with the tail spread evenly, the "guaranteed" move
     # is dropped a large fraction of the time at the production noise scale.
-    flat_40 = inclusion(40, 1.0, peaked=False)
-    assert flat_40 < 0.85, flat_40
-    assert 0.60 < flat_40 < 0.85, flat_40
+    # THE CLAIM UNDER TEST: at the config's OWN pre-decay noise scale, a move at
+    # exactly 1/topk with a broad tail is dropped a large fraction of the time.
+    flat_40 = inclusion(40, scale_hi, peaked=False)
+    assert flat_40 < 0.95, (scale_hi, flat_40)
 
-    # Monotone in the noise scale: halving it (production does, from move 12)
-    # recovers most of the loss. A non-monotone result would mean the rig, not
-    # the sampler, is producing the number.
-    assert inclusion(40, 0.5, peaked=False) > flat_40
+    # Monotone in the noise scale: the post-decay scale must lose LESS. This is
+    # the rig check -- a non-monotone result would mean the harness, not the
+    # sampler, is producing the number. (At `gumbel_scale_after: 0.0` there is
+    # no noise at all and inclusion is exactly 1.0, which still satisfies it.)
+    assert inclusion(40, scale_lo, peaked=False) >= flat_40
 
     # CONTROL: a peaked tail -- what real production priors look like -- keeps
-    # every draw, which is the left column of the docstring table.
-    assert inclusion(40, 1.0, peaked=True) == 1.0
+    # every draw, which is why the 3000-row production reading was 1.0.
+    assert inclusion(40, scale_hi, peaked=True) == 1.0

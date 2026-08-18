@@ -1889,6 +1889,20 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     return kw
 
 
+@dataclasses.dataclass(frozen=True)
+class ObjectiveSnapshot:
+    """The loss + ruler inputs of ONE evaluation, frozen together.
+
+    Exists so an asynchronous evaluation cannot pair a snapshotted model with a
+    later iteration's objective. Frozen because the whole point is that nothing
+    can move between the moment it is taken and the moment the worker uses it.
+    """
+
+    loss_kwargs: Mapping[str, Any]
+    loss_weights: Mapping[str, float]
+    loss_shape: Mapping[str, float]
+
+
 class Trainer:
     def __init__(
         self,
@@ -2562,8 +2576,14 @@ class Trainer:
             f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
             f"tau_played={floor.tau_played!r} "
             f"gumbel_topk={self.sf_policy_floor_gumbel_topk!r} "
-            f"search_inclusion_tau={guarantee!r} "
-            f"guarantees_inclusion={floored >= guarantee}",
+            f"deterministic_rank_tau={guarantee!r} "
+  # ⚑ NOT "guarantees_inclusion". Under production Gumbel noise admission is a
+  # PROBABILITY, not a guarantee -- measured at 0.73 for a move at exactly
+  # 1/topk with a broad prior tail at gumbel_scale 1.0. The operator-facing
+  # string now says only what is true: tau is at or above the
+  # DETERMINISTIC-RANKING threshold. A correction note elsewhere is no defence
+  # for a line that literally prints the wrong word.
+            f"at_or_above_deterministic_rank_tau={floored >= guarantee}",
             flush=True,
         )
 
@@ -2987,6 +3007,20 @@ class Trainer:
         the one key that motivated the fix, while looking derived.
         """
         return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
+
+    def objective_snapshot(self) -> ObjectiveSnapshot:
+        """The whole objective as ONE immutable value, taken at a single instant.
+
+        Everything the holdout measurement depends on that a live yaml edit can
+        move: the kwargs the batches are scored with, and the two inputs the
+        ruler identity is derived from. Taken together so a flip landing
+        mid-iteration cannot split them across the three fields.
+        """
+        return ObjectiveSnapshot(
+            loss_kwargs=dict(self._eval_loss_kwargs),
+            loss_weights=self._ruler_loss_weights(),
+            loss_shape=self._ruler_loss_shape(),
+        )
 
     def _ruler_loss_shape(self) -> dict[str, float]:
         """Non-weight parameters that change WHAT AN ACTIVE TERM MEASURES.
@@ -3818,8 +3852,20 @@ class Trainer:
         self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
         model_override: torch.nn.Module | None = None,
         full_pass: bool = False,
+        objective: ObjectiveSnapshot | None = None,
     ) -> TrainMetrics:
         """Score ``buf`` and pool the per-batch results into one TrainMetrics.
+
+        ⚑ ``objective`` PINS THE LOSS AND THE RULER TO ONE LOGICAL TIME. The
+        async path snapshots the MODEL at ``start()`` and evaluates it on a
+        worker thread, but this method used to re-read ``self._eval_loss_kwargs``
+        and re-derive the ruler when the worker finally ran -- which can be a
+        whole iteration later, AFTER a live weight flip. The model, the loss it
+        was scored under, and the identity stamped on the result would then come
+        from three different times, and the recorded ``test_loss`` would belong
+        to no objective that ever existed. ``None`` keeps the synchronous
+        behaviour of reading current state, which is correct because there is no
+        gap to race.
 
         ``full_pass`` walks every row of ``buf`` exactly once in a fixed order
         and ignores ``steps``; otherwise ``steps`` batches are SAMPLED from it.
@@ -3862,14 +3908,27 @@ class Trainer:
                 coverage=eval_coverage,
             )
         )
+  # ⚑ ONE logical time for the whole objective. Read HERE, per evaluation,
+  # never captured at trainer construction: the weights are live-pushed every
+  # iteration, and a build-time snapshot would make the ruler blind to exactly
+  # the edit it exists to catch. The `objective` argument is NOT that mistake --
+  # it is taken per evaluation too, at `AsyncTestEval.start()`, alongside the
+  # model weights it belongs to, so the async path pairs a model with the loss
+  # it was actually scored under instead of with whatever is current when the
+  # worker gets around to it.
+        if objective is None:
+            eval_loss_kwargs = self._eval_loss_kwargs
+            ruler_weights = self._ruler_loss_weights()
+            ruler_shape = self._ruler_loss_shape()
+        else:
+            eval_loss_kwargs = objective.loss_kwargs
+            ruler_weights = objective.loss_weights
+            ruler_shape = objective.loss_shape
         ruler = type(self).eval_ruler_id_for(
             batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_p), full_pass=bool(full_pass),
-  # Read HERE, per evaluation, not captured at construction: the weights are
-  # live-pushed every iteration, and a snapshot taken at build time would make
-  # the ruler blind to exactly the edit it exists to catch.
-            loss_weights=self._ruler_loss_weights(),
-            loss_shape=self._ruler_loss_shape(),
+            loss_weights=ruler_weights,
+            loss_shape=ruler_shape,
         )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])
@@ -3878,7 +3937,7 @@ class Trainer:
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
-                losses = compute_loss(out, batch, **self._eval_loss_kwargs)
+                losses = compute_loss(out, batch, **eval_loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():

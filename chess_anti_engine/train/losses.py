@@ -622,26 +622,32 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     noise is ~10x the figure that was used to call it "very nearly
     deterministic".
 
-    MEASURED under production noise (`_select_top_m_with_gumbel`,
-    ``add_noise=True``, 4000 draws/cell, a move at exactly ``p = 1/16``):
+    MEASURED (`_select_top_m_with_gumbel`, ``add_noise=True``, a move at exactly
+    ``p = 1/16``, ``n_legal = 40``), as a function of the ROOT noise scale:
 
-    ==========  ==============  ====================  ===============
-    n_legal     gumbel_scale    peaked tail           uniform tail
-    ==========  ==============  ====================  ===============
-    17          1.0             1.0000                0.9567
-    30          1.0             1.0000                0.7680
-    40          1.0             1.0000                **0.7298**
-    40          0.5             1.0000                0.9603
-    ==========  ==============  ====================  ===============
+    ==============  ==================  ==================
+    gumbel_scale    peaked prior tail   broad/uniform tail
+    ==============  ==================  ==================
+    1.00            1.0000              **0.7250**
+    0.75            1.0000              **0.8290**
+    0.50            1.0000              0.9607
+    0.00            1.0000              1.0000
+    ==============  ==================  ==================
 
-    So the move the threshold is named for is dropped up to **27%** of the time
-    when the other legal moves share the remaining mass evenly. The earlier
-    "MIN (not mean) P(searched) is exactly 1.0000 at prior >= 1/16, and 0.1042
-    at prior >= 0.02" was measured on 3000 REAL production rows and is not
-    contradicted: real priors are peaked, which is the left column. It is a
-    property of the empirical prior distribution, NOT a bound the sampler
-    provides -- so it holds until the policy flattens, and nothing warns when
-    it stops holding.
+    ⚑ QUOTE THE SCALE, NEVER "production". The two trees differ:
+    ``configs/pbt2_small.yaml`` on this branch runs ``gumbel_scale: 0.75`` decaying
+    to ``gumbel_scale_after: 0.0``, while the live branch runs ``1.0 -> 0.5``. The
+    claim holds on both -- 17% and 27% exclusion respectively at the pre-decay
+    scale -- but a number attached to the word "production" without naming the
+    tree is how a measurement of one config gets quoted about another.
+
+    So the move the threshold is named for is dropped up to **27%** of the time when
+    the other legal moves share the remaining mass evenly. The earlier "MIN (not
+    mean) P(searched) is exactly 1.0000 at prior >= 1/16, and 0.1042 at prior >=
+    0.02" was measured on 3000 REAL production rows and is not contradicted: real
+    priors are peaked, which is the left column. It is a property of the empirical
+    prior distribution, NOT a bound the sampler provides -- so it holds until the
+    policy flattens, and nothing warns when it stops holding.
 
     `tests/test_sf_policy_floor.py::test_inclusion_under_production_noise_is_not_a_guarantee`
     pins the measured numbers, because an argument this docstring got wrong
