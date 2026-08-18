@@ -1200,3 +1200,65 @@ def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> No
             # either the whole legal set is kept (n_legal <= m) or m == topk.
             assert len(cands) == min(topk, n_legal), (sims, n_legal, len(cands))
     assert search_inclusion_guarantee_tau(topk) == pytest.approx(1.0 / topk)
+
+
+def test_inclusion_under_production_noise_is_not_a_guarantee() -> None:
+    """`1/topk` is a RANK threshold, not a probability of 1 under real noise.
+
+    Codex review of PR #448, F2: the neighbouring inclusion test pins the
+    candidate-set CARDINALITY with `add_noise=False, gumbel_scale=0.0`, which is
+    true but cannot see the claim that matters. Production ranks
+    `gumbel_scale * Gumbel + log(prior)` with `gumbel_scale: 1.0`, and Gumbel
+    noise has unbounded support, so a move at exactly `p = 1/topk` can always be
+    displaced.
+
+    This test exists to FALSIFY the word "guarantee", so it asserts the drop is
+    real rather than asserting it away. The peaked-tail column is included as
+    the control: it is why the original 3000-row production measurement read
+    1.0000 and why that reading was about the prior distribution, not the
+    sampler.
+    """
+    import numpy as np
+
+    from chess_anti_engine.mcts.gumbel import _select_top_m_with_gumbel
+
+    topk = DEFAULT_GUMBEL_TOPK
+    tau = search_inclusion_guarantee_tau(topk)
+
+    def inclusion(n_legal: int, scale: float, *, peaked: bool) -> float:
+        rng = np.random.default_rng(12345)
+        hits = 0
+        trials = 2000
+        for _ in range(trials):
+            pri = np.empty(n_legal, dtype=np.float64)
+            pri[0] = tau
+            if peaked:
+                k = min(topk - 1, n_legal - 1)
+                pri[1:1 + k] = tau - 1e-6
+                rest = n_legal - 1 - k
+                if rest > 0:
+                    pri[1 + k:] = max(1e-9, 1.0 - tau - k * (tau - 1e-6)) / rest
+            else:
+                pri[1:] = (1.0 - tau) / (n_legal - 1)
+            pri = pri / pri.sum()
+            cands, _ = _select_top_m_with_gumbel(
+                legal=np.arange(n_legal), pri=pri, sim_budget=256, topk=topk,
+                add_noise=True, gumbel_scale=scale, rng=rng,
+            )
+            hits += int(0 in cands)
+        return hits / trials
+
+    # THE CLAIM UNDER TEST: with the tail spread evenly, the "guaranteed" move
+    # is dropped a large fraction of the time at the production noise scale.
+    flat_40 = inclusion(40, 1.0, peaked=False)
+    assert flat_40 < 0.85, flat_40
+    assert 0.60 < flat_40 < 0.85, flat_40
+
+    # Monotone in the noise scale: halving it (production does, from move 12)
+    # recovers most of the loss. A non-monotone result would mean the rig, not
+    # the sampler, is producing the number.
+    assert inclusion(40, 0.5, peaked=False) > flat_40
+
+    # CONTROL: a peaked tail -- what real production priors look like -- keeps
+    # every draw, which is the left column of the docstring table.
+    assert inclusion(40, 1.0, peaked=True) == 1.0

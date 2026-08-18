@@ -667,7 +667,12 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # constant for why the golden values are deliberately weight-free.
 #   full_pass  30cfec0c574e03da -> ba74408d1e9e98fa
 #   sampled    733b900bc45f524f -> cceec01bb2efc6d9
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:ba74408d1e9e98fa"
+# ⚑ RE-PINNED 2026-08-18 (PR #448, Codex F3). `_compute_metrics` now passes
+# `loss_shape=` to `eval_ruler_id_for`, so that frame's source digest moved
+# and every id moved with it. This is the documented contract, not a
+# regression: deploying it fires ONE best-model handover per running trial.
+# Previous value: "v1:full_pass:ba74408d1e9e98fa".
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:441d302e9fdeb0fa"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -678,7 +683,8 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:ba74408d1e9e98fa"
   # it hashes a slightly different frame set (it covers
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:cceec01bb2efc6d9"
+# Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
+PRE_PR277_SAMPLED_RULER = "v1:sampled:43ca561fa385763f"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -1017,3 +1023,119 @@ def test_an_unreadable_weight_counts_as_active_rather_than_vanishing() -> None:
     """
     assert active_loss_terms({"w_policy": None}) == ("w_policy",)  # pyright: ignore[reportArgumentType]
     assert active_loss_terms({"w_policy": float("nan")}) == ("w_policy",)
+
+
+# --------------------------------------------------------------------------
+# Codex review of PR #448, findings F3 and F4: two ways the ruler could hold
+# still across an objective change. Both are the repo's signature defect --
+# a value accepted and then silently ignored -- arriving at the ruler rather
+# than at the trainer.
+# --------------------------------------------------------------------------
+
+
+def test_negative_weight_is_off_when_the_consumer_clamps_it() -> None:
+    """A key its consumer clamps at 0 must leave the term set when it goes negative.
+
+    `compute_loss` does `max(0.0, float(sf_wdl_frac))`, so -0.5 removes the
+    component from `total`. A `!= 0.0` membership test would call it ACTIVE and
+    freeze the ruler across exactly the event the ruler exists to catch.
+    """
+    assert "sf_wdl_frac" in active_loss_terms({"sf_wdl_frac": 0.5})
+    assert "sf_wdl_frac" not in active_loss_terms({"sf_wdl_frac": -0.5})
+    assert "search_wdl_frac" not in active_loss_terms({"search_wdl_frac": -1e-9})
+    assert "soft_policy_min_tv" not in active_loss_terms({"soft_policy_min_tv": -0.1})
+    # and the ruler MOVES on that transition
+    on = {**NO_TERMS, "sf_wdl_frac": 0.5}
+    off = {**NO_TERMS, "sf_wdl_frac": -0.5}
+    assert full_pass(loss_weights=on) != full_pass(loss_weights=off)
+    assert full_pass(loss_weights=off) == full_pass(loss_weights=NO_TERMS)
+
+
+def test_a_plain_multiplier_stays_active_when_negative() -> None:
+    """The <=0 rule is per-key, NOT a blanket sign rule.
+
+    `w_policy` is a plain multiplier: at -0.5 the term is still in `total`,
+    sign-flipped. Treating every negative weight as "off" would drop a term
+    that is present, which is the same defect pointing the other way.
+    """
+    assert "w_policy" in active_loss_terms({"w_policy": -0.5})
+    assert "w_policy" not in active_loss_terms({"w_policy": 0.0})
+
+
+def test_active_term_shape_moves_the_ruler() -> None:
+    """Retuning WHAT an active term measures must hand the record over."""
+    shape_a = {"sf_policy_floor_delta_cp": 20.0, "sf_policy_floor_tau": 0.15}
+    shape_b = {"sf_policy_floor_delta_cp": 40.0, "sf_policy_floor_tau": 0.15}
+    on = {**NO_TERMS, "w_sf_policy_floor": 0.8}
+    a = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape=shape_a,
+    )
+    b = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape=shape_b,
+    )
+    assert a != b
+
+
+def test_absent_shape_is_the_pre_shape_identity() -> None:
+    """An empty shape must hash identically to passing none at all.
+
+    Callers omit the shape for terms that are OFF, so the two spellings have to
+    agree or a disabled term would get its own ruler.
+    """
+    on = {**NO_TERMS, "w_policy": 1.0}
+    none_ = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on,
+    )
+    empty = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape={},
+    )
+    assert none_ == empty
+
+
+def test_weight_magnitude_still_does_not_move_the_ruler() -> None:
+    """Regression guard on the DESIGN, not on the fix.
+
+    The shape exception must not leak into weights: `sf_wdl_frac` is
+    recomputed every iteration by the difficulty controller, and hashing its
+    VALUE would move the id on essentially every production iteration and
+    abolish the best-model comparison entirely.
+    """
+    lo = {**NO_TERMS, "w_policy": 0.3, "sf_wdl_frac": 0.45}
+    hi = {**NO_TERMS, "w_policy": 0.6, "sf_wdl_frac": 0.50}
+    assert full_pass(loss_weights=lo) == full_pass(loss_weights=hi)
+
+
+def test_ruler_loss_shape_reads_the_consumers_object_and_only_when_active() -> None:
+    """The production wiring, not just the hash.
+
+    `_ruler_loss_shape` is the only thing that turns a resolved
+    `SfPolicyFloorParams` into ruler input, so an untested version of it is the
+    repo's signature defect exactly: the hash would be correct and nothing
+    would ever reach it.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.train.losses import SfPolicyFloorParams
+
+    on = SimpleNamespace(_eval_loss_kwargs={
+        "sf_policy_floor": SfPolicyFloorParams(w=0.8, delta_cp=20.0, tau=0.15),
+    })
+    shape = Trainer._ruler_loss_shape(on)  # pyright: ignore[reportArgumentType]
+    assert shape["sf_policy_floor_delta_cp"] == 20.0
+    assert shape["sf_policy_floor_tau"] == 0.15
+    # `w` is covered by MEMBERSHIP; repeating it here would reintroduce the
+    # magnitude hash `active_loss_terms` argues against.
+    assert "w_sf_policy_floor" not in shape
+
+    # OFF: the term is not in `total`, so its shape cannot move `test_loss`.
+    off = SimpleNamespace(_eval_loss_kwargs={
+        "sf_policy_floor": SfPolicyFloorParams(w=0.0, delta_cp=999.0),
+    })
+    assert Trainer._ruler_loss_shape(off) == {}  # pyright: ignore[reportArgumentType]
+
+    # Absent entirely (a trainer built without the term) must not raise.
+    assert Trainer._ruler_loss_shape(SimpleNamespace(_eval_loss_kwargs={})) == {}  # pyright: ignore[reportArgumentType]

@@ -597,7 +597,7 @@ SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
 
 
 def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
-    """The smallest tau that GUARANTEES a root-candidate slot: ``1 / topk``.
+    """The smallest tau that buys a root-candidate slot BY PRIOR RANK: ``1 / topk``.
 
     The production root sampler (`mcts/gumbel._select_top_m_with_gumbel`) keeps
     the top ``m`` of ``gumbel_scale * Gumbel + log(prior)``, where
@@ -605,13 +605,47 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
         m = 1                                            if sims <= 1
         m = max(2, min(topk, n_legal, max(2, (sims+1)//2)))  otherwise
 
-    At the production ``gumbel_c_scale = 0.1`` the noise is ~0.13 in log-prob
-    units, so that is very nearly a deterministic top-k by prior -- which makes
-    the floor a RANK criterion with an exact answer. If ``p_i >= tau`` then at
-    most ``floor(1/tau) - 1`` other moves can exceed it (they are disjoint and
-    sum to <= 1), so ``tau >= 1/topk`` puts move ``i`` inside the top-``topk``.
-    Measured on 3000 production rows: MIN (not mean) P(searched) is exactly
-    1.0000 at prior >= 1/16, and 0.1042 at prior >= 0.02.
+    ⚑⚑ "GUARANTEE" IS EXACT FOR THE DETERMINISTIC RANKING AND ONLY EMPIRICAL
+    UNDER PRODUCTION NOISE. DO NOT QUOTE IT AS A PROBABILITY OF 1.
+    If ``p_i >= tau`` then at most ``floor(1/tau) - 1`` other moves can exceed
+    it (they are disjoint and sum to <= 1), so ``tau >= 1/topk`` puts move ``i``
+    inside the top-``topk`` **by prior**. That argument is about the ranking of
+    ``log(prior)``; the sampler ranks ``gumbel_scale * Gumbel + log(prior)``,
+    and Gumbel noise has UNBOUNDED support, so no prior threshold can make
+    inclusion certain.
+
+    ⚑ AND THE KNOB THIS DOCSTRING USED TO CITE WAS THE WRONG ONE. It justified
+    near-determinism with "``gumbel_c_scale = 0.1``, noise ~0.13 in log-prob
+    units". ``gumbel_c_scale`` is the SEARCH's exploration constant; the root
+    sampler above is scaled by ``gumbel_scale``, which production runs at
+    **1.0**, decaying to ``gumbel_scale_after: 0.5`` from move 12. The real
+    noise is ~10x the figure that was used to call it "very nearly
+    deterministic".
+
+    MEASURED under production noise (`_select_top_m_with_gumbel`,
+    ``add_noise=True``, 4000 draws/cell, a move at exactly ``p = 1/16``):
+
+    ==========  ==============  ====================  ===============
+    n_legal     gumbel_scale    peaked tail           uniform tail
+    ==========  ==============  ====================  ===============
+    17          1.0             1.0000                0.9567
+    30          1.0             1.0000                0.7680
+    40          1.0             1.0000                **0.7298**
+    40          0.5             1.0000                0.9603
+    ==========  ==============  ====================  ===============
+
+    So the move the threshold is named for is dropped up to **27%** of the time
+    when the other legal moves share the remaining mass evenly. The earlier
+    "MIN (not mean) P(searched) is exactly 1.0000 at prior >= 1/16, and 0.1042
+    at prior >= 0.02" was measured on 3000 REAL production rows and is not
+    contradicted: real priors are peaked, which is the left column. It is a
+    property of the empirical prior distribution, NOT a bound the sampler
+    provides -- so it holds until the policy flattens, and nothing warns when
+    it stops holding.
+
+    `tests/test_sf_policy_floor.py::test_inclusion_under_production_noise_is_not_a_guarantee`
+    pins the measured numbers, because an argument this docstring got wrong
+    once should not be the thing defending it.
 
     ⚑ WHEN THE SIM BUDGET CAN BITE, AND WHY IT DOES NOT HERE. ``1/topk`` buys a
     slot in the top-``topk``; what the search keeps is the top-``m``. The two

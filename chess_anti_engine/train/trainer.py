@@ -2988,6 +2988,33 @@ class Trainer:
         """
         return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
 
+    def _ruler_loss_shape(self) -> dict[str, float]:
+        """Non-weight parameters that change WHAT AN ACTIVE TERM MEASURES.
+
+        ⚑ READ OFF THE CONSUMER'S OWN OBJECT, not off `self` and not off the
+        yaml. `sf_policy_floor` is resolved and validated once into a single
+        `SfPolicyFloorParams`, and that object is what `compute_loss` uses; a
+        re-derivation here would be a second source of truth for the same
+        number, which is the "announce from the consumer's own parameter" trap
+        this repo has already paid for.
+
+        ⚑ ONLY FOR TERMS THAT ARE IN THE OBJECTIVE. At `w == 0.0` the floor
+        contributes nothing to `total` (`compute_loss` adds it under an `if`),
+        so its shape cannot move `test_loss` and hashing it would fire a
+        best-model handover every time a DISABLED knob was retuned -- a false
+        positive with no hazard behind it.
+
+        `w` itself is deliberately absent: membership already covers it, and
+        including the value here would reintroduce the magnitude hash that
+        `active_loss_terms` argues against.
+        """
+        shape: dict[str, float] = {}
+        floor = self._eval_loss_kwargs.get("sf_policy_floor")
+        if floor is not None and float(getattr(floor, "w", 0.0)) != 0.0:
+            for field in ("delta_cp", "tau", "tau_top1", "tau_played"):
+                shape[f"sf_policy_floor_{field}"] = float(getattr(floor, field))
+        return shape
+
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
         # would silently underflow gradients on non-BF16 CUDA cards. The
@@ -3360,6 +3387,7 @@ class Trainer:
     def eval_ruler_id_for(
         cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
         loss_weights: Mapping[str, float],
+        loss_shape: Mapping[str, float] | None = None,
     ) -> str:
         """Identity of the measurement `_compute_metrics` performs.
 
@@ -3426,12 +3454,12 @@ class Trainer:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
                 mirror_prob=0.0, measured_by=measured_by,
-                loss_weights=loss_weights,
+                loss_weights=loss_weights, loss_shape=loss_shape,
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_prob), measured_by=measured_by,
-            loss_weights=loss_weights,
+            loss_weights=loss_weights, loss_shape=loss_shape,
         )
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -3841,6 +3869,7 @@ class Trainer:
   # live-pushed every iteration, and a snapshot taken at build time would make
   # the ruler blind to exactly the edit it exists to catch.
             loss_weights=self._ruler_loss_weights(),
+            loss_shape=self._ruler_loss_shape(),
         )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])

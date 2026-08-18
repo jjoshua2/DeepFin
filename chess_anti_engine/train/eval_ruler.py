@@ -384,6 +384,22 @@ def call_closure(
     return out
 
 
+#: Loss weights whose CONSUMER treats a NON-POSITIVE value as off, so
+#: membership here must be decided by ``<= 0.0`` and not by ``== 0.0``.
+#:
+#: ⚑ This table is only correct while it mirrors the consumer, so each entry
+#: names the exact expression it mirrors. `_apply_lr_gamma_weights` accepts a
+#: negative live value and pushes it to the trainer unchanged; the consumer
+#: then normalises it away. Deciding membership on ``!= 0.0`` therefore reports
+#: a term as ACTIVE that is not in the objective at all -- the false negative
+#: this module's docstring calls "a promotion across two objectives".
+_NONPOSITIVE_IS_OFF: dict[str, str] = {
+    "sf_wdl_frac": "losses.compute_loss: max(0.0, float(sf_wdl_frac))",
+    "search_wdl_frac": "losses.compute_loss: max(0.0, float(search_wdl_frac))",
+    "soft_policy_min_tv": "losses.compute_loss: if float(soft_policy_min_tv) > 0.0",
+}
+
+
 def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
     """The names of the loss weights that are not zero, sorted.
 
@@ -426,6 +442,17 @@ def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
     future controller configured with a zero floor would need this
     reconsidered, which is why the floor is named here.
 
+    ⚑ ZERO IS NOT THE ONLY "OFF". Several keys in ``TRAINER_WEIGHT_KEYS`` are
+    normalised by their consumer, so a NEGATIVE value removes the component
+    from the objective while remaining non-zero here. ``sf_wdl_frac: 0.5 ->
+    -0.5`` is clamped to 0.0 by ``max(0.0, ...)`` in ``compute_loss``: the
+    component leaves ``total``, and a ``!= 0.0`` membership test would hold the
+    ruler still across exactly the event it exists to catch. The keys with a
+    non-positive off-switch are listed in ``_NONPOSITIVE_IS_OFF`` next to the
+    consumer expression each one mirrors; every other key keeps the ``== 0.0``
+    boundary, because for a plain multiplier a negative weight is still a term
+    in ``total`` (sign-flipped, but present).
+
     Never raises and never silently drops a key: a value that will not convert
     to a float counts as ACTIVE, because this module's declared direction of
     error is toward announcing a new ruler (a false positive costs one
@@ -435,9 +462,11 @@ def active_loss_terms(loss_weights: Mapping[str, float]) -> tuple[str, ...]:
     names: list[str] = []
     for name in sorted(loss_weights):
         try:
-            off = float(loss_weights[name]) == 0.0
+            value = float(loss_weights[name])
         except (TypeError, ValueError):
-            off = False
+            names.append(str(name))
+            continue
+        off = value <= 0.0 if name in _NONPOSITIVE_IS_OFF else value == 0.0
         if not off:
             names.append(str(name))
     return tuple(names)
@@ -451,6 +480,7 @@ def eval_ruler_id(
     mirror_prob: float,
     measured_by: Sequence[Callable[..., Any]],
     loss_weights: Mapping[str, float],
+    loss_shape: Mapping[str, float] | None = None,
 ) -> str:
     """The identity of one holdout measurement, e.g. ``v1:full_pass:a1b2c3d4``.
 
@@ -474,8 +504,22 @@ def eval_ruler_id(
     for why the VALUES deliberately do not. Pass the map rather than a
     pre-filtered set: the rule for what counts as active then lives in exactly
     one function, so a caller cannot apply a second version of it.
+
+    ⚑ ``loss_shape`` IS THE EXCEPTION TO "MAGNITUDE DOES NOT COUNT", AND IT IS
+    NOT AN INCONSISTENCY. A weight scales a term that keeps its meaning; a
+    SHAPE parameter changes what the term MEASURES. ``sf_policy_floor_delta_cp``
+    decides which moves SF approves at all, so moving it swaps the target set
+    and makes the new ``test_loss`` incomparable to the old one -- the same
+    harm as adding a term, arriving through a key that is not a weight.
+    These keys are restart-required, which does NOT create a boundary on its
+    own: a same-trial restart RESTORES ``holdout_ruler`` and
+    ``holdout_generation`` from ``trial_meta.json``, so an id that ignores the
+    shape is recomputed identical and ``_update_best_model`` compares the new
+    shape's loss against the pre-restart record. Callers pass the shape only
+    for terms that are actually IN the objective, so retuning a disabled
+    term's knobs still moves nothing.
     """
-    descriptor = {
+    descriptor: dict[str, object] = {
         "schema": int(EVAL_RULER_SCHEMA),
         "mode": str(mode),
         "batch_size": int(batch_size),
@@ -484,5 +528,15 @@ def eval_ruler_id(
         "measured_by": [semantic_source_digest(fn) for fn in measured_by],
         "active_terms": list(active_loss_terms(loss_weights)),
     }
+  # ⚑ ADDED ONLY WHEN NON-EMPTY, so a run with no shaped term active keeps the
+  # id it had before this field existed. An unconditional `"active_shape": {}`
+  # would re-key EVERY ruler in the repo -- one gratuitous best-model handover
+  # for every trial, including those that can never have a shape -- to record
+  # the absence of something. Absent and empty therefore hash identically, and
+  # `test_absent_shape_is_the_pre_shape_identity` pins that.
+    if loss_shape:
+        descriptor["active_shape"] = {
+            str(k): float(loss_shape[k]) for k in sorted(loss_shape)
+        }
     payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
     return f"v{EVAL_RULER_SCHEMA}:{mode}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
