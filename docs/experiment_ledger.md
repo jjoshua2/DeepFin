@@ -58819,3 +58819,55 @@ therefore NOT "search is a coin flip"; it is that **SF's adjudication is strictl
 information than search's own vote**, and training on `z_M − z_P` captures the part search
 cannot supply — including the 18-20% of pairs deep SF never listed, which still need
 root-restricted `searchmoves` (merged to main by PR #444, ZERO occurrences on live).
+
+#### 2026-08-18 — ΔQ HEADROOM: an SF adjudicator can recover 36-47% of everything search discovers
+
+`scratchpad/dq_headroom.py` on the 4000-position same-model dump, production cp-logistic scale.
+`G+ = E[max(dQ,0)]`, `G- = E[max(-dQ,0)]`, `E[dQ] = G+ - G-`.
+
+| | PLAY (256 sims) | RL target (100 sims) |
+|---|---|---|
+| disagreements / scorable | 1730 / 1426 (82.4%) | 1049 / 839 (80.0%) |
+| **`G+`** search DISCOVERS | **+0.06105** [+0.05388, +0.06906] | **+0.06406** [+0.05418, +0.07509] |
+| **`G-`** search THROWS AWAY | **+0.02866** [+0.02461, +0.03302] | **+0.02320** [+0.01825, +0.02903] |
+| `E[dQ]` net | +0.03239 [+0.02321, +0.04195] | +0.04086 [+0.02902, +0.05335] |
+| **`G-`/`G+`** | **0.469** | **0.362** |
+
+**⇒ THE ADJUDICATOR HEADROOM IS LARGE, NOT MARGINAL.** An oracle choosing the better of
+`{a_P, a_M}` gains **`G-`** over always-search and **`G+`** over always-prior. Search gives back
+**47% (PLAY) / 36% (RL) of everything it discovers** through bad overrides. ⇒ pairwise SF
+supervision does **NOT** mostly duplicate the main search CE — the CE trains toward `a_M`
+unconditionally, including on the 36-47% where SF says `a_M` is the WORSE move.
+
+**⇒ THIS IS THE QUANTITATIVE CASE FOR THE CORRECTION-ONLY ARM.** A term firing only when
+`Q_P > Q_M + eps` targets exactly `G-` = **0.023-0.029 bounded-Q**, leaves search's wins to the
+ordinary CE, and so adds no duplicated gradient. Full pairwise addresses `G+ + G-` but
+re-teaches `G+` on top of an objective already doing it.
+
+**3-WAY ORACLE over the learner's OWN candidate set `{a_P, a_RL, a_PLAY}`** (1897 positions
+where the three are not all identical, 1555 fully scorable, 82.0%):
+
+| oracle gain over | value | that candidate is best-of-three |
+|---|---|---|
+| prior `a_P` | +0.05969 [+0.05261, +0.06731] | 0.475 |
+| RL `a_RL` | +0.03769 [+0.03256, +0.04337] | 0.574 |
+| PLAY `a_PLAY` | +0.02973 [+0.02592, +0.03375] | 0.603 |
+| **adding PLAY to {prior, RL}** | **+0.02526 [+0.02103, +0.03007]** | |
+
+**⇒ PLAY'S EXPLORATION IS NON-REDUNDANT AND WORTH BUYING.** Its average precision is lower
+(win-rate margin +0.147 vs RL's +0.198) yet it is best-of-three most often (0.603) and adds
+**+0.0253** to an oracle that already has prior+RL. So the candidate set for SF labelling
+should be `{a_P, a_RL, a_PLAY}` at minimum — the "PLAY is just a more expensive RL search"
+reading is wrong.
+
+**⚑ CAVEATS.** These are ORACLE gains in bounded-Q on the audit population (`fen_only`,
+curriculum-sourced, no history/castling), **not Elo**, and no trained net attains an oracle.
+They bound what the teacher could supply, not what it will. Coverage is 82.0-82.4%; the
+unscorable residue is selection-biased toward learner-important moves deep SF never surfaced.
+
+**⇒ INSTRUMENT DEBT BEFORE THE DATASET IS BUILT.** 80% of pairs are scored under unrestricted
+deep MultiPV>=10 and the missing 20% would be scored under a restricted 2-move `searchmoves`
+query, which gives SF far more effort per candidate. **Those are not the same instrument.**
+Re-score a large OVERLAP subset both ways and quantify the drift BEFORE filling only the gap;
+if the drift is negligible, gap-filling is defensible, otherwise the whole set needs the
+restricted instrument. `searchmoves` is on `main` (PR #444) and absent from live.
