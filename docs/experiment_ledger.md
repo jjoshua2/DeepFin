@@ -59693,3 +59693,42 @@ materialise; my claim to have measured its price was the overreach.**
    `526f85957`: the environment did not revert when my jobs stopped, so the jobs were not
    imposing a distinct regime over iterations 303-314. The refit on post-job iterations is
    still owed.
+
+---
+
+### OPS: the run-wide slowdown DECOMPOSED — 16% more work x 12% slower steps (2026-08-18)
+
+Chasing the drift left open by `3609a7cd3`. Over iterations 257-316 (~5h):
+
+| quantity | first 6 | last 6 | change | p |
+|---|---|---|---|---|
+| `train_time_s` | 91.79 | 120.67 | **+31.5%** | 8.9e-08 |
+| implied steps / iteration | 93.83 | 108.67 | **+15.8%** | 6.6e-04 |
+| `trainer_steps_per_s` | 1.022 | 0.904 | **-11.6%** | 1.5e-06 |
+
+**It is BOTH, and they multiply** (1.158 x 1.131 = 1.31, matching the +31.5%). The slowdown is
+in the TRAINING step, not selfplay: `matching_games` per iteration is flat (slope -0.088,
+p=0.473).
+
+- The **+15.8% work** is benign and expected: the step budget is views-targeted
+  (`train_views_per_position`), so steps track ingest VOLUME, which can rise with rows per
+  game even while games/iteration is flat.
+- The **-11.6% per-step throughput** is NOT explained by more work and is the half worth
+  watching. `iterations_since_restore` is 91 and the degradation is monotone in it, which is
+  leak-shaped.
+
+**Not thermal.** RTX 5090 at 61C, 2865/3090 MHz SM (93% of max), 410W of a 600W limit, both
+thermal-slowdown flags `Not Active`.
+
+**⚑ The likelier suspect, and it has an operational consequence: GPU memory is at
+29302/32607 MiB = 89.9%.** A caching allocator working against a nearly full pool is a
+standard cause of gradual per-step slowdown, and this repo has been OOM-crashed twice before
+(2026-06-18 concurrent 256-sim arena; 2026-08-07 `_NetRecord`).
+
+⇒ **The F-only readout audit at ~iter 375 must NOT assume free GPU.** At 90% resident it
+needs a pause window or small batch with `--gpu-mem-fraction`, per the standing rule against
+256+ sim arenas concurrent with training. Banking the readout checkpoint first (already armed
+for the midpoint at iter 338) matters more for the same reason.
+
+Not chased further: it is an unexplained ~12%/5h throughput drift, not a correctness problem,
+and the F-only comparison is at matched ITERATION counts so it does not affect the verdict.
