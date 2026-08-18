@@ -505,7 +505,15 @@ train:
   # holdout ruler id, so it re-opens the best-model freeze. Changing them needs a
   # restart. Same applies to use_adjusted_wdl_target / adjusted_wdl_regret_* /
   # wdl_terminal_outcome_* -- live-pushable and NOT ruler-covered.
-  w_sf_own_regret: 0.7   # arm A: sum p*r over the SF regret vector (was 0.0)
+  # ⚑ F-ONLY ARM, 2026-08-18 at iteration ~297 (prereg ledger 5a220c395). Arm A OFF.
+  # A+F was NULL on policy quality (n=4000 paired deep-SF audit: raw E[regret]
+  # +0.23 cp [-0.72, +1.17]). That null cannot separate "F does nothing" from
+  # "F works and A opposes it", and A is the measured radial sharpener
+  # (G_logtemp +0.027 weighted) with ~69% of its signal from the FABRICATED
+  # regret tail, while F is the flattener (-0.031) with genuine-SF membership.
+  # ⚑ 0.7 -> 0.0 is a MEMBERSHIP change, so eval_ruler_id MOVES and the
+  # best-model freeze re-opens correctly -- unlike a magnitude retune.
+  w_sf_own_regret: 0.0   # arm A: OFF (was 0.7 from 2026-08-17 iter 191)
   w_sf_policy_floor: 0.8   # arm F: SF-approved-move probability floor + collar
   sf_policy_floor_delta_cp: 20.0
   sf_policy_floor_tau: 0.15
