@@ -58924,3 +58924,54 @@ blast radius.
 
 ⚑ Do NOT read this as "the search target is bad": the same instrument says RL search DISCOVERS
 `G+` = +0.064 against `G-` = +0.023. The job is to keep the 66.5% and stop training the 33.5%.
+
+#### 2026-08-18 — ✅ TARGET REPAIR IS FEASIBLE: 96.8% of bad overrides fixable INSIDE the existing target
+
+`scratchpad/target_repair_screen.py`, 4000-position same-model dump, RL target.
+Transferring target mass `delta` from search's move M to SF's approved prior move P gives
+exactly `g'_d = g_d + 2*delta`, so `delta_neutral = max(0, -g_d/2)`.
+
+**SCOPE, WITH THE IDENTIFICATION BOUND THE REVIEW DEMANDED — do not quote 8.8% alone:**
+
+| | value |
+|---|---|
+| **OBSERVED** `P(bad RL override)` | **281/4000 = 7.03%** |
+| extrapolated at the observed 33.5% bad rate | 8.78% |
+| **identification bound** (all 210 unscored disagreements bad) | **[7.03%, 12.27%]** |
+
+The 8.78% assumes the 210 unscored disagreements have the same bad rate as the scored ones —
+and that population is selection-biased toward moves deep SF never surfaced. **Quote 7.03%
+observed / [7.03, 12.27] bound until `searchmoves` closes it.**
+
+**FEASIBILITY: `delta_neutral <= t_M` on 96.8% of rows.** The repair almost always fits inside
+the mass search already assigned to its own move — but it is MAJOR SURGERY, not a nudge:
+`mean t_M` = **0.651**, `mean delta_neutral` = **0.402**, i.e. the median row must move **59.6%**
+of the search target's own argmax mass (p10 0.291, p50 0.596, p90 0.904). This is the direct
+explanation of why a small auxiliary had no chance.
+
+| repair | mean `g'_d` | frac `g'_d > 0` (REVERSES) | frac `>= 0` | mean L1 edit |
+|---|---|---|---|---|
+| 1 swap `t_M <-> t_P` | +0.11388 | **0.605** | 0.605 | 0.917 |
+| 2 min-neutral (capped by `t_M`) | −0.00401 | 0.000 | **0.968** | 0.799 |
+| 3 full transplant M -> P | **+0.49883** | **0.968** | 0.968 | 1.302 |
+| 4 zero policy-CE on the row | 0.00000 | 0.000 | 1.000 | n/a |
+
+⇒ **Two different jobs, and they pick different repairs.** To STOP teaching the wrong move:
+min-neutral or zero-CE. To TEACH the right move: **full transplant (96.8%)**, with swap a
+distant second (60.5%) — swap fails whenever `t_M - t_P < delta_neutral`, which is 39.5% of
+rows despite its mean delta (0.459) exceeding the mean requirement (0.402). **A repair chosen
+on its mean would have looked adequate and been wrong on two rows in five.**
+
+**⚑ IMPLEMENTATION ASYMMETRY, and it decides which one can ship.** `delta_neutral` is a
+function of the CURRENT `p`, so as a live edit it must be detached, and under a ~1-day replay
+window a delta computed against the GENERATING net does not stay neutral for the later
+TRAINING net. Swap and full transplant are fixed SF-derived edits with no such drift. ⇒
+**min-neutral is a RULER, not the production implementation**; full transplant is the
+shippable form and this screen is its positive control.
+
+**CORRECTION TO MY OWN PRIOR ENTRY:** "no auxiliary could beat the CE" is too strong. The
+`2|dQ|` = 0.139 cap comes from carrying the bounded-Q MAGNITUDE into the gradient; an
+UNWEIGHTED non-vanishing pairwise hinge has an O(1) gradient and could reach parity at a
+moderate weight. It would discard the magnitude information and set two objectives fighting,
+which is why target repair is still the right design — but the design argument stands on its
+own and the mathematical claim was overstated.
