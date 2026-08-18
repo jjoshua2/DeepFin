@@ -890,6 +890,26 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # `total` multiplies by `w`, so it is what to read against the weight once the
   # term is on. Neither moves with `w` within a single step; see TrainMetrics.
     "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
+  # SF-shape conditional KL + its permanent entropy instrument (see
+  # TrainMetrics for the reading order). Every one of these is live at
+  # `w_sf_shape: 0.0` -- the entropy pair is a MONITOR that exists because our
+  # policy went sharper than its own SF teacher with no column reporting it.
+  # Read `sf_shape_surfaced_moves` before any of the rest: it is the health of
+  # the recovered SF-surfaced mask the whole family stands on.
+    "m_sf_shape": 0.0, "sf_shape_active_frac": 0.0,
+    "sf_shape_h_sf_given_s": 0.0, "sf_shape_h_ours_given_s": 0.0,
+    "sf_shape_entropy_gap": 0.0, "sf_shape_sharper_frac": 0.0,
+    "sf_shape_regret_cp_given_s": 0.0, "sf_shape_h_ours_full_legal": 0.0,
+    "sf_shape_surfaced_moves": 0.0,
+    "sf_shape_surfaced_mass": 0.0, "sf_shape_p_sf_best": 0.0,
+  # MATCHED-SUPPORT instrument for the ORDINARY policy target: is the search
+  # target itself a sharpening teacher? Every name carries its support, because
+  # the unmatched version of this comparison is a large, plausible, wrong number
+  # (see TrainMetrics). `policy_support_gap` is H(target) - H(ours), so NEGATIVE
+  # means the target is the sharper one.
+    "policy_support_h_ours": 0.0, "policy_support_h_target": 0.0,
+    "policy_support_gap": 0.0, "policy_support_size": 0.0,
+    "policy_tail_mass_ours": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -1013,6 +1033,41 @@ def _train_metrics_dict(metrics) -> dict:
         # that is the column to read against the weight.
         "m_sf_policy_floor": float(metrics.m_sf_policy_floor),
         "sf_policy_floor_binds_frac": float(metrics.sf_policy_floor_binds_frac),
+        # SF-shape term and its instrument, over the same eligible rows.
+        # `sf_shape_entropy_gap` is H(teacher) - H(ours) on the SAME conditional
+        # support, so POSITIVE means we are sharper than the teacher -- the
+        # drift this whole family was added to make visible. `total` gains
+        # `w_sf_shape * m_sf_shape`, so that is the column to read against the
+        # weight; `sf_shape_active_frac` is the selection column, invariant to
+        # `w` within a step.
+        "m_sf_shape": float(metrics.m_sf_shape),
+        "sf_shape_active_frac": float(metrics.sf_shape_active_frac),
+        "sf_shape_h_sf_given_s": float(metrics.sf_shape_h_sf_given_s),
+        "sf_shape_h_ours_given_s": float(metrics.sf_shape_h_ours_given_s),
+        "sf_shape_entropy_gap": float(metrics.sf_shape_entropy_gap),
+        "sf_shape_sharper_frac": float(metrics.sf_shape_sharper_frac),
+        # Entropy alone must not gate the term: an entropy-matched pair can still
+        # rank the surfaced moves backwards, and `m_sf_shape` (= KL(q_S||p_S))
+        # plus this expected-regret column are what see that.
+        "sf_shape_regret_cp_given_s": float(metrics.sf_shape_regret_cp_given_s),
+        "sf_shape_h_ours_full_legal": float(metrics.sf_shape_h_ours_full_legal),
+        "sf_shape_surfaced_moves": float(metrics.sf_shape_surfaced_moves),
+        # ⚑ M_S GATES ACTIVATION. The conditional KL is invariant to it by
+        # construction, so a low M_S beside a matched entropy gap means the
+        # dominant pathology is MASS ALLOCATION and this term is the wrong tool
+        # -- a wider labelling set, not a weight. `1 - M_S` is the share of our
+        # policy sitting on moves SF never scored.
+        "sf_shape_surfaced_mass": float(metrics.sf_shape_surfaced_mass),
+        "sf_shape_p_sf_best": float(metrics.sf_shape_p_sf_best),
+        # The matched-support pair for the ORDINARY policy target, over its own
+        # `policy_target_rows` population. `policy_tail_mass_ours` is what the
+        # restriction drops -- our mass on moves the search never made a
+        # candidate -- published rather than left to leak into the gap.
+        "policy_support_h_ours": float(metrics.policy_support_h_ours),
+        "policy_support_h_target": float(metrics.policy_support_h_target),
+        "policy_support_gap": float(metrics.policy_support_gap),
+        "policy_support_size": float(metrics.policy_support_size),
+        "policy_tail_mass_ours": float(metrics.policy_tail_mass_ours),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration

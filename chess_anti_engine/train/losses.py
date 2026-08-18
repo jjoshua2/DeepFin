@@ -758,6 +758,15 @@ class SfPolicyFloorParams:
         * ``tau = 1/gumbel_topk`` (0.0625 at the production topk of 16) is the
           SEARCH-INCLUSION GUARANTEE -- see ``search_inclusion_guarantee_tau``.
           BELOW it the guarantee is simply lost.
+
+          ⚑ OBSERVATION, RECORDED AND NOT ACTED ON (2026-08-18): if the term's
+          purpose is SEARCH ADMISSION -- keeping SF's move above the Gumbel
+          candidate threshold so it can be refuted -- then 0.0625 is what that
+          purpose requires and the shipped ``sf_policy_floor_tau: 0.15`` is
+          **2.40x past it**. The default is deliberately NOT changed here: the
+          ranking role below is the reason it was set above the guarantee, and
+          re-deciding between the two roles is a ledger entry of its own, not a
+          drive-by edit inside an unrelated change.
         * tau ABOVE that buys RANKING on the rows where inclusion is already
           satisfied: +0.278 [+0.237, +0.322] against the random-floor control at
           tau 0.15, +0.548 at 0.35, and 0.0% harmful rows at both -- it costs
@@ -890,6 +899,47 @@ def sf_policy_floor_deficit(
 
     ``legal=None`` means the batch had no legal mask and every action is in the
     softmax's support (see ``policy_legal_bool``).
+
+    ⚑⚑ THE GRADIENT ANALYSIS, CORRECTED 2026-08-18, AND IT UNDERCUTS THE CLAIM
+    THIS TERM WAS BUILT ON. ``relu(tau - p)`` has a constant derivative WITH
+    RESPECT TO ``p`` -- which is true and is not where training acts. Through the
+    softmax, ``dp/dz = p(1-p)``, so::
+
+        dL/dz = -p(1 - p)      ->  VANISHES linearly as p -> 0
+
+    the SAME vanishing that kills ``sum_m p_m * r_m``. Measured logit gradient on
+    SF's best move:
+
+    ====== ======== ============ ========== =============
+    p      arm A    prob-hinge   log-hinge  log^2-hinge
+    ====== ======== ============ ========== =============
+    0.05   0.00515  0.04750      0.950      0.424
+    0.01   0.00103  0.00990      0.990      3.629
+    0.003  0.00031  0.00299      0.997      6.055
+    1e-4   0.00001  0.00010      0.9999     12.874
+    ====== ======== ============ ========== =============
+
+    ⇒ this floor beats arm A by a CONSTANT ~9.7x and shares its asymptotic
+    behaviour. **It does not solve the buried-move problem it exists for.** A
+    LOG-SPACE hinge does, because ``dlog(p)/dz = 1 - p ~ 1``::
+
+        L = max(0, log(tau) - log(p))        # ~constant logit pressure at any depth
+        L = max(0, log(tau) - log(p)) ** 2   # pressure proportional to log-units below
+
+    That variant is the INTENDED SUCCESSOR and is deliberately not implemented
+    here: the A+F ablation is running against this exact arithmetic and changing
+    it mid-window would void the readout.
+
+    ⚑ AND ON ``tau``: if the term's remaining purpose is SEARCH ADMISSION, the
+    relevant threshold is ``1/gumbel_topk = 0.0625``, against the shipped 0.15 --
+    2.40x past it. A modest MARGIN (~0.07-0.08) is probably right rather than the
+    bare threshold, because "1/16 is the pigeonhole threshold for a top-16" and
+    "THIS implementation deterministically admits a move at p >= 1/16" are
+    different claims, and only the first has been established here. The
+    simulation quoted in ``search_inclusion_guarantee_tau`` measured min
+    P(searched) = 1.0000 at ``tau = 1/topk``, but it simulated the SELECTION
+    RULE, not the production path. Verifying the second claim against the real
+    root sampler is worth doing once. The default is NOT changed here.
     """
     if legal is None:
         legal = torch.ones_like(regret, dtype=torch.bool)
@@ -933,6 +983,357 @@ def sf_policy_floor_deficit(
         )
     deficit = torch.relu(floors - probs)
     return deficit.sum(-1), (deficit > 0).any(-1).to(probs.dtype)
+
+
+# Default teacher temperature of the SF-shape term, in CENTIPAWNS -- the unit
+# `sf_p0_regret` is quoted in before normalization, and the same unit
+# `sf_policy_floor_delta_cp` uses. NOT a dimensionless "temperature": the softmax
+# runs over `regret * SF_OWN_REGRET_CAP_CP`, so 100.0 means "a move 100 cp worse
+# than SF's best gets e^-1 of its weight". The units are in the NAME because the
+# repo already carries two differently-scaled quantities spelled "T"
+# (`policy_target_temp`, `gumbel_policy_temp`) and has been bitten by the
+# collision (see `_POLICY_TARGET_TEMP_MIN`).
+#
+# ⚑ IT IS A PLACEHOLDER, NOT A CALIBRATION, AND NOTHING HERE ESTABLISHES IT.
+# The knob this term turns is exactly the ENTROPY of the teacher, so it must be
+# CHOSEN so that `sf_shape_target_entropy` lands on a reference conditional
+# entropy measured on real rows -- not hand-tuned toward whatever makes the loss
+# curve look good, which is the "arm that is the gradient of the metric" trap.
+# 100.0 is a round number picked to be readable, the term ships at `w = 0.0`, and
+# the calibration is deliberately out of scope for the change that introduced it.
+# `sf_shape_target_entropy` is reported at zero weight precisely so the
+# calibration can be done from production rows before the term is ever switched on.
+SF_SHAPE_TEMP_CP_DEFAULT = 100.0
+
+
+@dataclass(frozen=True)
+class SfShapeParams:
+    """Resolved, validated parameters of the SF-shape conditional-KL term.
+
+    ONE object, resolved once and consumed as-is, for the same reason
+    ``SfPolicyFloorParams`` is: the value that gets logged must not be a second
+    derivation of the value that gets used.
+
+    ``w`` 0.0 (the default) means the term contributes NOTHING to ``total`` --
+    not "multiplied by zero", see ``compute_loss``. The entropy instrument is
+    still computed, which is the entire point of the diagnostic half: "are we
+    sharper than our own teacher" has to be readable BEFORE anyone raises the
+    weight, because that drift ran for months with no column carrying it.
+    """
+
+    w: float = 0.0
+    temp_cp: float = SF_SHAPE_TEMP_CP_DEFAULT
+
+    def __post_init__(self) -> None:
+        w = float(self.w)
+        if not math.isfinite(w) or w < 0.0:
+            raise ValueError(f"w_sf_shape must be finite and >= 0, got {self.w!r}")
+        temp = float(self.temp_cp)
+  # STRICTLY positive: it is a divisor. 0.0 is not "off" here -- the off switch
+  # is `w` -- it is an inf/NaN generator wearing the word "disabled".
+        if not math.isfinite(temp) or temp <= 0.0:
+            raise ValueError(
+                f"sf_shape_temp_cp must be finite and > 0 (it is a divisor, in "
+                f"centipawns), got {self.temp_cp!r}"
+            )
+
+    @classmethod
+    def resolve(
+        cls, *, w: float | None = None, temp_cp: float | None = None,
+    ) -> SfShapeParams:
+        """Fill the ``None`` defaults and validate. The single entry point."""
+        return cls(
+            w=0.0 if w is None else float(w),
+            temp_cp=SF_SHAPE_TEMP_CP_DEFAULT if temp_cp is None else float(temp_cp),
+        )
+
+
+def sf_surfaced_move_mask(
+    regret: torch.Tensor, legal: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The moves Stockfish ACTUALLY scored, recovered from ``sf_p0_regret`` alone.
+
+    Returns ``(surfaced, count)`` -- a bool tensor shaped like ``regret``, and its
+    per-row sum as float32.
+
+    ⚑⚑ THERE IS NO SURFACED-MASK FIELD IN THE TRAINING BATCH, AND THE ONE
+    RAW-MultiPV FIELD THAT IS THERE IS THE WRONG PLY. ``sf_multipv_raw``
+    describes the position AFTER the row's move; SF's read of THIS position is
+    the PREVIOUS row's block, which is exactly the join
+    ``_build_sf_p0_regret_vector`` is fed from. It is also gated behind
+    ``train.sf_policy_sparse_ce`` and is dropped from the H2D payload in
+    production (`replay/dataset.py`). So the mask has to be recovered from the
+    regret vector itself, and this function is that recovery.
+
+    THE RULE, and why it cannot admit a fabricated entry::
+
+        fill     = max over the FULL row of regret
+        surfaced = legal AND (regret < fill)
+
+    ``_build_sf_p0_regret_vector`` fills EVERY index of the full policy vector
+    with one scalar ``d = float32((worst_surfaced + 1) / 2)`` and then overwrites
+    only the covered ones. So every fabricated entry holds a bit-identical ``d``,
+    and ``d >= worst_surfaced >= r`` for every covered ``r``. Two consequences,
+    and only the second is a limitation:
+
+    1. **Nothing invented can enter the set.** A fabricated entry equals the row
+       max exactly and the comparison is strict. This holds WITHOUT assuming
+       ``d`` is a value no real regret can take: it is a comparison against the
+       row's own maximum, not against a magic constant.
+    2. **A surfaced move at the 1000 cp CAP is dropped.** ``d == worst`` iff
+       ``worst == 1.0``, i.e. SF surfaced a move at or beyond
+       ``SF_OWN_REGRET_CAP_CP``; those moves then tie ``d`` and fall out. The
+       error is ONE-SIDED -- the recovered set is always a SUBSET of the true one
+       -- and the moves it drops are the worst SF scored, which the teacher
+       softmax gives ~0 weight anyway. The term simply asserts nothing about
+       them, which is the contract it already has for the unsurfaced ~79%.
+
+    ``fill`` is the FULL-row max rather than the max over LEGAL entries
+    deliberately: in an endgame every legal move can be surfaced, and a
+    legal-only max would then be ``worst_surfaced`` and would drop SF's worst
+    legal move on exactly the rows where coverage is perfect. The fill covers
+    illegal indices too, so the full-row max is ``d`` on every real row.
+
+    NaN-tolerant by construction: a NaN anywhere makes ``fill`` NaN, every
+    comparison False and the set empty -- which the caller treats as "no SF
+    opinion on this row", never as a value to propagate into ``total``.
+    """
+    fill = regret.amax(dim=-1, keepdim=True)
+    surfaced = regret < fill
+    if legal is not None:
+        surfaced = surfaced & legal
+    return surfaced, surfaced.sum(-1).to(torch.float32)
+
+
+def row_entropy(probs: torch.Tensor) -> torch.Tensor:
+    """Per-row Shannon entropy in nats, safe at exact zeros.
+
+    ``0 * log(tiny) == 0`` for the zeros a legal mask or an empty set leaves
+    behind, where ``0 * log(0)`` would be NaN. ``clamp_min`` applies to the LOG's
+    argument only -- the probability itself is untouched -- so this is the limit
+    value rather than a clamped distribution.
+    """
+    p = probs.to(torch.float32)
+    return -(p * p.clamp_min(torch.finfo(torch.float32).tiny).log()).sum(-1)
+
+
+@dataclass(frozen=True)
+class MatchedSupportStats:
+    """A policy/target entropy pair over ONE EXPLICIT support, plus what it drops.
+
+    All members are per-row, shape ``(B,)``, and all are detached: this is an
+    instrument, not a loss.
+    """
+
+    h_ours: torch.Tensor
+    h_target: torch.Tensor
+    support_size: torch.Tensor
+    tail_mass_ours: torch.Tensor
+
+
+def matched_support_entropy_stats(
+    probs: torch.Tensor, target: torch.Tensor, legal: torch.Tensor | None,
+) -> MatchedSupportStats:
+    """Entropy of ``probs`` and of ``target`` over the TARGET'S OWN support.
+
+    The support is ``T = (target > 0) AND legal``. Both distributions are
+    restricted to ``T`` and renormalized there, so the two entropies are
+    comparable and their difference means what it looks like it means.
+
+    ⚑⚑ THIS EXISTS BECAUSE AN UNMATCHED-SUPPORT COMPARISON PRODUCES A LARGE,
+    PLAUSIBLE, WRONG NUMBER. `scripts/audit_targets.py` reports the net's raw
+    policy at 0.8827 nats over ~27 legal moves and the production training target
+    at 0.6255 over the ~16-move Gumbel candidate set, ZERO elsewhere. Read as a
+    gap that says "cross-entropy is actively pushing the net to concentrate",
+    which would be a major finding. But the target is zero outside the candidate
+    set while the policy spreads mass over every legal move, and a ~5% tail over
+    ~20 moves is worth ``0.05 * ln(20 / 0.05) ~ 0.30`` nats ON ITS OWN -- MORE
+    than the 0.26 gap. So the whole effect may be an artifact of support size.
+    THAT COMPARISON IS UNVERIFIED AND MUST NOT BE CITED.
+
+    ``tail_mass_ours`` is the honest home for what the restriction throws away:
+    the probability our policy places OUTSIDE the target's support. It is
+    reported as its own column instead of being allowed to leak into an entropy
+    difference, and it is independently interesting -- it is our mass on moves
+    the search never made a candidate.
+
+    ⚑ WHAT THE PAIR WOULD ANSWER, stated so the measurement has a purpose and
+    NOT answered here: if the target really is sharper than the net's own output
+    ON MATCHED SUPPORT, then the ordinary policy CE is itself a SHARPENING
+    teacher (``dL/dz = p - t``), which would explain why ``policy_own``'s
+    ``log_temp`` learned NEGATIVE -- the head trying to flatten -- while the net
+    stayed over-sharp. If the gap vanishes on matched support, the sharpening
+    story is an artifact and the search target is not the culprit. Both readings
+    are available from these columns and neither is asserted anywhere in this
+    file.
+    """
+    p = probs.to(torch.float32)
+    t = target.to(torch.float32)
+    support = t > 0.0
+    if legal is not None:
+        support = support & legal
+    sup = support.to(torch.float32)
+    tiny = torch.finfo(torch.float32).tiny
+    p_mass = (p * sup).sum(-1, keepdim=True)
+    t_mass = (t * sup).sum(-1, keepdim=True)
+  # `clamp_min` on the DIVISOR only. An empty support (a row with no policy
+  # target) then gives an all-zero conditional, whose `row_entropy` is 0.0 and
+  # whose tail mass is 1.0 -- the honest reading, and finite.
+    return MatchedSupportStats(
+        h_ours=row_entropy(p * sup / p_mass.clamp_min(tiny)),
+        h_target=row_entropy(t * sup / t_mass.clamp_min(tiny)),
+        support_size=sup.sum(-1),
+        tail_mass_ours=1.0 - p_mass.squeeze(-1),
+    )
+
+
+@dataclass(frozen=True)
+class SfShapeReadout:
+    """Per-row output of :func:`sf_shape_conditional_kl`. All shape ``(B,)``.
+
+    ``kl`` is the only member that carries a gradient; every other member is
+    detached, because they are instrument columns and nothing should be able to
+    train on them by accident.
+    """
+
+    kl: torch.Tensor
+    h_sf_given_s: torch.Tensor
+    h_ours_given_s: torch.Tensor
+    h_ours_full_legal: torch.Tensor
+    surfaced_count: torch.Tensor
+    surfaced_mass: torch.Tensor
+    p_sf_best: torch.Tensor
+    regret_cp_given_s: torch.Tensor
+
+
+def sf_shape_conditional_kl(
+    masked_logits: torch.Tensor,
+    probs: torch.Tensor,
+    regret: torch.Tensor,
+    legal: torch.Tensor | None,
+    *,
+    params: SfShapeParams,
+) -> SfShapeReadout:
+    """``KL(q_S || p_S)``: SF's shape over the surfaced set, and ours, conditioned.
+
+    Both sides are CONDITIONAL distributions over ``S``, the moves SF actually
+    scored (:func:`sf_surfaced_move_mask`)::
+
+        q_S = softmax_{i in S}( -regret_cp_i / temp_cp )   # the teacher
+        p_S = softmax_{i in S}( z_i )                      # ours, renormalized
+        L   = sum_{i in S} q_i * (log q_i - log p_i)
+
+    ⚑⚑ THE CONDITIONING IS THE DESIGN, NOT A NORMALIZATION DETAIL. Because both
+    softmaxes run over ``S`` alone, ``dL/dz_i == 0`` exactly for every ``i`` not
+    in ``S``, and ``sum_{i in S} dL/dz_i == p_S - q`` summed over ``S`` ``== 0``.
+    So the term provably CANNOT move probability into or out of ``S`` -- it only
+    ever redistributes within it. That guarantee is the whole point: at
+    ``sf_multipv: 6`` roughly 79% of the move list carries a FABRICATED
+    ``default_regret``, so any term that lets SF's opinion leak onto the
+    unsurfaced tail is training on invented data. A full-length cross-entropy
+    against a mass-preserving target looks equivalent and is not: its gradient
+    still couples to the moves outside ``S``, and the guarantee would then rest
+    on bookkeeping instead of on the arithmetic.
+
+    ⚑ WHY THIS REACHES THE TAIL WHERE ``sum_m p_m * r_m`` CANNOT. That term's
+    gradient carries a factor ``p_i``, so its pull on a move fades to nothing as
+    that move's probability goes to zero -- SF's best move at prior 0.008 gets
+    ~38x less gradient than our own top pick. A conditional KL sets RELATIVE
+    proportions, so it pulls equally hard whether SF's move sits at 0.30 or at
+    0.003.
+
+    DEGENERATE ROWS ARE EXACTLY ZERO, BY ARITHMETIC AND NOT BY A BRANCH.
+    ``|S| == 1`` gives ``q`` and ``p_S`` both one-hot on the same move, so
+    ``L == 0``; ``|S| == 0`` leaves both softmaxes over an all-``finfo.min`` row,
+    which is uniform on BOTH sides, so ``L == 0`` again. Neither can contribute
+    to ``total`` at any weight, and neither needs a special case.
+
+    Everything is computed in float32 regardless of the autocast dtype the logits
+    arrive in. The masked softmaxes are filled with ``finfo.min`` rather than
+    ``-inf``: an all-masked ``-inf`` row softmaxes to NaN, and NaN in an unused
+    branch of ``torch.where`` still poisons the gradient of the branch that IS
+    used.
+    """
+    reg = regret.to(torch.float32)
+    surfaced, count = sf_surfaced_move_mask(reg, legal)
+    neg = torch.full_like(reg, torch.finfo(torch.float32).min)
+  # cp units: `temp_cp` reads as "a move this many cp worse than SF's best gets
+  # e^-1 of its weight". Higher score = better for the mover.
+    teacher = -(reg * SF_OWN_REGRET_CAP_CP) / float(params.temp_cp)
+    log_q = torch.log_softmax(torch.where(surfaced, teacher, neg), dim=-1)
+  # ⚑ `torch.where` IS THE GRADIENT CUT. Its derivative wrt the unselected branch
+  # is exactly zero, so no logit outside `S` receives any gradient from this term
+  # -- the property the docstring above claims, expressed in the one operation
+  # that makes it true rather than asserted around it.
+    log_p = torch.log_softmax(
+        torch.where(surfaced, masked_logits.to(torch.float32), neg), dim=-1,
+    )
+    q = log_q.exp()
+    kl = (q * (log_q - log_p)).sum(-1)
+    with torch.no_grad():
+        surfaced_f = surfaced.to(torch.float32)
+        p32 = probs.to(torch.float32)
+        surfaced_mass = (p32 * surfaced_f).sum(-1)
+  # SF's single best move: the argmin of regret over LEGAL moves, with illegal
+  # entries pushed above every real regret so the argmin cannot land on one --
+  # the SAME rule `sf_policy_floor_deficit` uses for its unconditional `top1`
+  # member, so the two families name the same move. Zeroed where the set is
+  # empty, because there the argmin lands on a fabricated entry and the number
+  # would be about nothing.
+        ranked = reg if legal is None else torch.where(legal, reg, torch.full_like(reg, 2.0))
+        top1 = ranked.argmin(dim=-1, keepdim=True)
+        p_sf_best = p32.gather(-1, top1).squeeze(-1) * (count > 0).to(torch.float32)
+        return SfShapeReadout(
+            kl=kl,
+  # ⚑⚑ SAME SUPPORT, AND THE NAMES SAY SO. `h_sf_given_s` and `h_ours_given_s`
+  # are BOTH conditioned on S -- neither is a full-width entropy -- so their
+  # difference is a statement about shape and not about how many moves each
+  # distribution happens to spread over. A bare "policy entropy" compared against
+  # a teacher entropy over a different support is how three separate readings
+  # were confounded before this instrument existed; the third field below carries
+  # `full_legal` in its NAME for exactly that reason and is never differenced
+  # against either of the first two.
+            h_sf_given_s=row_entropy(q * surfaced_f),
+            h_ours_given_s=row_entropy(log_p.exp() * surfaced_f),
+            h_ours_full_legal=row_entropy(probs),
+  # Mean |S|: the mask-health column. If the recovery above ever silently
+  # collapses -- a changed fill rule, a realignment that zero-pads the row --
+  # this is what says so, and it is the first number to read before any other
+  # column in this family.
+            surfaced_count=count,
+  # ⚑⚑ M_S -- THE QUESTION THIS TERM CANNOT ANSWER, AND THE ONE THAT DECIDES
+  # WHETHER IT SHOULD EVER BE SWITCHED ON. There are two independent pathologies
+  # and the conditional KL only reaches the first:
+  #   (A) WRONG SHAPE INSIDE S -- our conditional is sharper than SF's. This term
+  #       fixes it.
+  #   (B) WRONG MASS ON S -- most of our probability sits on moves SF never
+  #       scored. The conditional KL is INVARIANT to M_S BY CONSTRUCTION and
+  #       cannot touch it; that needs a WIDER LABELLING SET (`searchmoves` over
+  #       the net's own top moves), not a loss.
+  # So a low M_S with a matched conditional shape means the loss addresses the
+  # wrong thing and must NOT be given weight. The share of our mass on moves SF
+  # never scored is exactly `1 - M_S` -- published as one quantity rather than
+  # two, so the pair cannot drift.
+  #
+  # It has to be measured on live MultiPV-6 rows: an offline attempt over banked
+  # wide-era shards read it trivially, because those labels cover 26.63 of 26.82
+  # legal moves and the set was therefore not restricted at all.
+            surfaced_mass=surfaced_mass,
+  # p_own on SF's SINGLE best move, in ABSOLUTE terms -- not conditioned on S, so
+  # unlike everything above it moves with M_S. It is the number
+  # `sf_policy_floor` is a floor on, which makes the two families readable
+  # against each other.
+            p_sf_best=p_sf_best,
+  # ⚑ THE MOST INTERPRETABLE OF THE SIX: "how bad are the moves our conditional
+  # policy prefers, in centipawns, according to SF". Entropy alone cannot see
+  # this -- two distributions with IDENTICAL entropy can rank the surfaced moves
+  # in opposite orders, and one of them is right. Reported in CP rather than in
+  # the vector's normalized units so it needs no mental multiplication by the
+  # 1000 cp cap.
+            regret_cp_given_s=(
+                (log_p.exp() * surfaced_f * reg).sum(-1) * SF_OWN_REGRET_CAP_CP
+            ),
+        )
 
 
 def terminal_outcome_transfer_taper(
@@ -1155,6 +1556,7 @@ def compute_loss(
     policy_target_temp: float = 1.0,
     sf_sparse_params: SfTargetParams | None = None,
     sf_policy_floor: SfPolicyFloorParams | None = None,
+    sf_shape: SfShapeParams | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
 
@@ -1182,6 +1584,16 @@ def compute_loss(
     as the all-default object: weight 0.0, so ``total`` is bit-identical to a
     build without the term, while ``sf_policy_floor`` / ``sf_policy_floor_binds``
     are still reported.
+
+    ``sf_shape`` is the SF-shape conditional-KL term (see ``SfShapeParams`` /
+    ``sf_shape_conditional_kl``): it matches ``policy_own``'s shape INSIDE the
+    set of moves Stockfish actually scored to SF's own, and provably asserts
+    nothing about the rest of the move list. ``None`` is the same as the
+    all-default object: weight 0.0, so ``total`` is bit-identical to a build
+    without the term, while the entropy instrument
+    (``sf_shape_target_entropy_sum`` and friends) is reported either way -- it is
+    a MONITOR first and a loss second, and the drift it watches for ran for
+    months because no column carried it.
 
     ``sf_sparse_params`` switches the ``policy_sf`` loss to sparse CE over
     gathered log-probs (train/sparse_sf_ce.py) for rows carrying sparse
@@ -1223,6 +1635,19 @@ def compute_loss(
     pol_ce = soft_cross_entropy(masked_base, pol_target)
     zero_loss = torch.zeros_like(pol_ce)
     has_policy = _get_mask(batch, "has_policy", default=1.0)
+  # The legal-masked `policy_own` distribution, computed ONCE: the SF-shape
+  # family, the floor and the matched-support instrument all read the same
+  # tensor, so no two of them can end up describing slightly different
+  # distributions.
+    base_probs = torch.softmax(masked_base, dim=-1)
+    base_legal = policy_legal_bool(batch, width=int(base_policy_logits.shape[-1]))
+  # ⚑ MATCHED-SUPPORT instrument for the ORDINARY policy target -- the one the
+  # main CE trains against, which has NOTHING to do with the SF term below. Both
+  # entropies are taken over the TARGET'S support and renormalized there, and
+  # what the restriction drops is published separately as
+  # `policy_tail_mass_ours`. See `matched_support_entropy_stats` for the
+  # confound this shape exists to make impossible.
+    pol_support = matched_support_entropy_stats(base_probs, pol_target, base_legal)
 
     has_soft = _get_mask(batch, "has_policy_soft")
     soft_logits = outputs.get("policy_soft", base_policy_logits)
@@ -1298,20 +1723,44 @@ def compute_loss(
   # moves SF ranks at or above the one we picked. Deliberately modest -- it buys
   # SF's move a SEARCH SLOT so it can be refuted, it is not a policy correction.
     floor_params = sf_policy_floor if sf_policy_floor is not None else SfPolicyFloorParams()
+  # SF-SHAPED policy target on the same head and the same rows: a DISTRIBUTION
+  # over the surfaced set, where the two terms above are a scalar penalty and a
+  # one-sided floor. `sum_m p_m * r_m` teaches ORDERING and its gradient carries
+  # a factor `p_i`, so it cannot reach a move it has already starved; the floor
+  # only ever adds mass, and only to a membership set. Neither says anything
+  # about the SHAPE of the surfaced tail, which is the quantity we are measurably
+  # wrong about (our policy is sharper than its own SF teacher on 63.8% of rows).
+    shape_params = sf_shape if sf_shape is not None else SfShapeParams()
     if sf_p0_regret_t is not None:
-        po_probs = torch.softmax(masked_base, dim=-1)
+        po_probs = base_probs
         reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
+        sf_legal = base_legal
         sf_own_regret = (po_probs * reg_vec).sum(-1)
         sf_floor, sf_floor_binds = sf_policy_floor_deficit(
-            po_probs, reg_vec,
-            policy_legal_bool(batch, width=int(base_policy_logits.shape[-1])),
+            po_probs, reg_vec, sf_legal,
             aligned_pol_target * has_policy.unsqueeze(-1),
             params=floor_params,
         )
+        shape_out = sf_shape_conditional_kl(
+            masked_base, po_probs, reg_vec, sf_legal, params=shape_params,
+        )
+  # "Did the term SELECT anything", the column that separates a weight that
+  # reaches the loss and does nothing from a dead knob. A row with fewer than two
+  # surfaced moves is EXACTLY zero at every weight (see
+  # `sf_shape_conditional_kl`), so it is a structural zero in the mean and only
+  # this rate can say so.
+        sf_shape_active = (shape_out.surfaced_count >= 2.0).to(torch.float32)
     else:
         sf_own_regret = zero_loss
         sf_floor = zero_loss
         sf_floor_binds = zero_loss
+        shape_out = SfShapeReadout(
+            kl=zero_loss, h_sf_given_s=zero_loss, h_ours_given_s=zero_loss,
+            h_ours_full_legal=zero_loss, surfaced_count=zero_loss,
+            surfaced_mass=zero_loss, p_sf_best=zero_loss,
+            regret_cp_given_s=zero_loss,
+        )
+        sf_shape_active = zero_loss
 
   # DIAGNOSTIC ONLY — hard one-hot CE against the recorded game result. The
   # optimizer never sees this term (see ``blended_wdl_ce`` below, which is the
@@ -1574,6 +2023,77 @@ def compute_loss(
   # tensor; a second count derived here could disagree with it.
     sf_policy_floor_sum, _ = masked_sum_and_count(sf_floor, sf_p0_regret_base)
     sf_policy_floor_binds_sum, _ = masked_sum_and_count(sf_floor_binds, sf_p0_regret_base)
+  # SF-shape term + its permanent entropy instrument. All nine share
+  # `sf_p0_regret_base`, so they divide by the SAME `sf_own_regret_rows` count as
+  # the floor's columns and none of them can disagree with the others about the
+  # population. Emitted as sums for the same reason the rest of this family is:
+  # the eligible count swings batch to batch, so a mean of per-batch means is the
+  # wrong estimator.
+  #
+  # ⚑⚑ THE ENTROPY PAIR IS THE POINT OF THE CHANGE, IT IS LIVE AT
+  # `w_sf_shape: 0.0`, AND IT IS SAME-SUPPORT ON PURPOSE.
+  # `sf_shape_entropy_gap_sum` is `H(q_S) - H(p_S)`, both conditioned on the SAME
+  # surfaced set, so a positive value means WE are the sharp one.
+  #
+  # ⚑ DO NOT COMPARE ACROSS SUPPORTS. The reading that motivated this change --
+  # our 0.6784 nats over ~27 legal moves against "SF's 1.0572" -- is INVALID as
+  # stated and is not repeated as a target anywhere here: those are two
+  # distributions over different supports, and the ~6.6% of the full-width SF
+  # target's mass that sits outside its top 6 was allocated by OUR fabricated
+  # `default_regret`, not by Stockfish. The genuine teacher object is the
+  # CONDITIONAL top-K distribution and nothing else; the full-distribution
+  # numbers are a historical diagnostic.
+  #
+  # `sf_shape_sharper_sum` is the gap as a ROW RATE, which the mean cannot give:
+  # a big gap on few rows and a small gap on all of them read alike.
+    sf_shape_ce_sum, _ = masked_sum_and_count(shape_out.kl, sf_p0_regret_base)
+    sf_shape_active_sum, _ = masked_sum_and_count(sf_shape_active, sf_p0_regret_base)
+    sf_shape_h_sf_given_s_sum, _ = masked_sum_and_count(
+        shape_out.h_sf_given_s, sf_p0_regret_base,
+    )
+    sf_shape_h_ours_given_s_sum, _ = masked_sum_and_count(
+        shape_out.h_ours_given_s, sf_p0_regret_base,
+    )
+    sf_shape_entropy_gap_sum, _ = masked_sum_and_count(
+        shape_out.h_sf_given_s - shape_out.h_ours_given_s, sf_p0_regret_base,
+    )
+    sf_shape_sharper_sum, _ = masked_sum_and_count(
+        (shape_out.h_ours_given_s < shape_out.h_sf_given_s).to(torch.float32),
+        sf_p0_regret_base,
+    )
+    sf_shape_regret_cp_sum, _ = masked_sum_and_count(
+        shape_out.regret_cp_given_s, sf_p0_regret_base,
+    )
+  # The FULL legal-support entropy of `policy_own`, kept as the continuity column
+  # with the ledger's historical 0.6784. ⚑ It is NOT comparable to
+  # `sf_shape_target_entropy` (support ~27 legal moves against ~5.6 surfaced);
+  # it is published so a number can be traced to its support instead of guessed.
+    sf_shape_h_ours_full_legal_sum, _ = masked_sum_and_count(
+        shape_out.h_ours_full_legal, sf_p0_regret_base,
+    )
+  # Matched-support instrument for the MAIN policy target. Its own population --
+  # `pol_base`, every row that HAS a policy target -- and therefore its own row
+  # count, because it is not an SF quantity and borrowing `sf_own_regret_rows`
+  # would silently restrict it to the ~21% of rows that carry SF regret.
+    policy_support_h_ours_sum, policy_target_rows = masked_sum_and_count(
+        pol_support.h_ours, pol_base,
+    )
+    policy_support_h_target_sum, _ = masked_sum_and_count(pol_support.h_target, pol_base)
+    policy_support_gap_sum, _ = masked_sum_and_count(
+        pol_support.h_target - pol_support.h_ours, pol_base,
+    )
+    policy_support_size_sum, _ = masked_sum_and_count(pol_support.support_size, pol_base)
+    policy_tail_mass_sum, _ = masked_sum_and_count(pol_support.tail_mass_ours, pol_base)
+    sf_shape_surfaced_sum, _ = masked_sum_and_count(
+        shape_out.surfaced_count, sf_p0_regret_base,
+    )
+    sf_shape_surfaced_mass_sum, _ = masked_sum_and_count(
+        shape_out.surfaced_mass, sf_p0_regret_base,
+    )
+    sf_shape_p_sf_best_sum, _ = masked_sum_and_count(
+        shape_out.p_sf_best, sf_p0_regret_base,
+    )
+    m_sf_shape = masked_mean(shape_out.kl, sf_p0_regret_base)
     net_rows = net_mask.to(torch.float32).sum()
     sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
         batch, has_sf_wdl=has_sf_wdl,
@@ -1651,6 +2171,13 @@ def compute_loss(
   # anyone sees what the term does.
     if float(floor_params.w) != 0.0:
         total = total + float(floor_params.w) * m_sf_policy_floor
+  # Same composition rule, same two reasons, for the SF-shape term. `kl` is
+  # non-negative by construction, so switching it on steps `total` strictly up
+  # and the holdout ruler has to hand the record over -- which is exactly why
+  # `w_sf_shape` is in `TRAINER_WEIGHT_KEYS` (`eval_ruler.active_loss_terms`
+  # hashes the SET of non-zero weights).
+    if float(shape_params.w) != 0.0:
+        total = total + float(shape_params.w) * m_sf_shape
 
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
@@ -1690,6 +2217,36 @@ def compute_loss(
         "sf_policy_floor_binds_sum": sf_policy_floor_binds_sum,
         "sf_own_regret_sum": sf_own_regret_sum,
         "sf_own_regret_rows": sf_own_regret_rows,
+  # SF-shape conditional KL + the entropy instrument, over the SAME
+  # `sf_own_regret_rows` denominator as the floor's columns. `sf_shape` is the
+  # per-batch masked mean (comparable to `sf_policy_floor`); everything ending
+  # in `_sum` feeds a row-weighted column in train/trainer.py. Read
+  # `sf_shape_active_sum` first -- below 2 surfaced moves the term is a
+  # structural zero at every weight -- and read `sf_shape_surfaced_sum` before
+  # any of it, because it is the health of the mask the whole family stands on.
+        "sf_shape": m_sf_shape,
+        "sf_shape_ce_sum": sf_shape_ce_sum,
+        "sf_shape_active_sum": sf_shape_active_sum,
+        "sf_shape_h_sf_given_s_sum": sf_shape_h_sf_given_s_sum,
+        "sf_shape_h_ours_given_s_sum": sf_shape_h_ours_given_s_sum,
+        "sf_shape_entropy_gap_sum": sf_shape_entropy_gap_sum,
+        "sf_shape_sharper_sum": sf_shape_sharper_sum,
+        "sf_shape_regret_cp_sum": sf_shape_regret_cp_sum,
+        "sf_shape_h_ours_full_legal_sum": sf_shape_h_ours_full_legal_sum,
+        "sf_shape_surfaced_sum": sf_shape_surfaced_sum,
+        "sf_shape_surfaced_mass_sum": sf_shape_surfaced_mass_sum,
+        "sf_shape_p_sf_best_sum": sf_shape_p_sf_best_sum,
+  # MATCHED-SUPPORT instrument for the ordinary policy target. Separate family,
+  # separate population, separate row count -- it answers "is the search target
+  # itself a sharpening teacher", which is a different question from anything the
+  # SF columns above measure. `policy_tail_mass_sum` is the mass the restriction
+  # drops, published rather than allowed to leak into the entropy difference.
+        "policy_support_h_ours_sum": policy_support_h_ours_sum,
+        "policy_support_h_target_sum": policy_support_h_target_sum,
+        "policy_support_gap_sum": policy_support_gap_sum,
+        "policy_support_size_sum": policy_support_size_sum,
+        "policy_tail_mass_sum": policy_tail_mass_sum,
+        "policy_target_rows": policy_target_rows,
         "net_rows": net_rows,
   # SF-label contamination detector, ALWAYS ON. Sums + row counts for the same
   # reason as the sf_p0 pair above: the trainer accumulates them over every

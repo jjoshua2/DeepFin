@@ -143,6 +143,14 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
             "sf_policy_floor_tau_played",
         )
     },
+    # SF-shape teacher temperature. Same two readers and the same split: the
+    # Trainer folds it into a frozen `SfShapeParams` at construction, and
+    # `TrialConfig.from_dict` re-reads it every iteration purely to re-run the
+    # range check and discards the result.
+    "sf_shape_temp_cp": {
+        "chess_anti_engine/train/trainer.py",
+        "chess_anti_engine/tune/trial_config.py",
+    },
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,

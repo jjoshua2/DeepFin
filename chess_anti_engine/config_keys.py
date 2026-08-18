@@ -17,6 +17,14 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
   # They are classified restart-required instead (`_STARTUP_ONLY_TRIAL_KEYS`),
   # so a live edit warns rather than no-ops.
     "w_sf_policy_floor",
+  # SF-shape conditional KL. The WEIGHT only, same split as the floor above:
+  # `sf_shape_temp_cp` is folded into a resolved, validated object at Trainer
+  # construction and is classified restart-required instead. Being HERE is what
+  # puts the term under the holdout ruler -- `eval_ruler.active_loss_terms`
+  # hashes the set of non-zero weights read off this tuple, so flipping
+  # `w_sf_shape` off 0.0 moves the ruler id and hands the best-model record over
+  # instead of freezing it against an objective that gained a term.
+    "w_sf_shape",
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",

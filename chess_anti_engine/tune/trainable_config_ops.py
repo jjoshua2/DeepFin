@@ -593,6 +593,11 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_policy_floor_tau",
     "sf_policy_floor_tau_top1",
     "sf_policy_floor_tau_played",
+  # SF-shape teacher temperature, same class and the same reason: the Trainer
+  # folds it into a frozen `SfShapeParams` at construction, so a live edit
+  # provably cannot reach the loss. The WEIGHT `w_sf_shape` is NOT here -- it is
+  # live-pushed every iteration off `TRAINER_WEIGHT_KEYS`.
+    "sf_shape_temp_cp",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is

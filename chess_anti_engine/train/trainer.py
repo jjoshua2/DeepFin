@@ -92,6 +92,7 @@ from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
     SfPolicyFloorParams,
+    SfShapeParams,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
@@ -974,6 +975,101 @@ class TrainMetrics:
   # population.
     m_sf_policy_floor: float = 0.0
     sf_policy_floor_binds_frac: float = 0.0
+  # SF-shape conditional KL (`w_sf_shape`) AND ITS PERMANENT ENTROPY INSTRUMENT.
+  # Every column here is computed BEFORE the weight is applied and is therefore
+  # live at `w_sf_shape: 0.0` -- that is not a convenience, it is the reason the
+  # instrument exists. Our selfplay policy drifted to being SHARPER than the SF
+  # target it learns from (0.6784 nats against SF's 1.0572, flatter on 63.8% of
+  # rows) and NO metric reported it, for months. ⚑ THAT HEADLINE COMPARISON IS
+  # CROSS-SUPPORT AND INVALID as a magnitude -- see `compute_loss` -- which is
+  # exactly why the pair published here is CONDITIONED ON THE SAME SET on both
+  # sides.
+  #
+  # Read them in this order:
+  #   * `sf_shape_surfaced_moves` -- mean |S|, the size of the set SF actually
+  #     scored, recovered from the regret vector (`sf_surfaced_move_mask`). It is
+  #     the health of the mask every other column here stands on; at
+  #     `sf_multipv: 6` it should sit near 5-6 against ~27 legal moves. A
+  #     collapse toward 0 or a jump toward the legal count means the recovery
+  #     broke, and every entropy below it becomes meaningless first.
+  #   * `sf_shape_active_frac` -- share of eligible rows with |S| >= 2. Below two
+  #     surfaced moves the KL is EXACTLY zero at every weight, so those rows are
+  #     structural zeros in the mean and only this rate can say so. Same role as
+  #     `sf_policy_floor_binds_frac`: it separates "reaches the loss and does
+  #     nothing" from "dead knob".
+  #   * `sf_shape_entropy_gap` = `sf_shape_h_sf_given_s` - `sf_shape_h_ours_given_s`,
+  #     both conditioned on the SAME set S, and `sf_shape_sharper_frac`, the row
+  #     rate of that gap being positive. POSITIVE GAP MEANS WE ARE THE SHARP ONE.
+  #     The rate is not redundant with the mean: a large gap on a few rows and a
+  #     small gap on all of them read alike in the mean.
+  #   * ⚑ `sf_shape_regret_cp_given_s` -- E over our CONDITIONAL policy of SF's
+  #     cp regret: "how bad are the moves we prefer among the ones SF scored".
+  #     ENTROPY ALONE MUST NOT GATE THIS TERM: two distributions with identical
+  #     entropy can rank the surfaced moves in opposite orders, and the KL
+  #     supplies SF's RANKING, not only its sharpness. `m_sf_shape` IS
+  #     KL(q_S || p_S) -- the ranking/shape disagreement itself, live at weight
+  #     zero -- so it is not published a second time under another name.
+  #   * `sf_shape_h_ours_full_legal` -- `policy_own`'s entropy over ALL legal
+  #     moves, the continuity column for the ledger's historical 0.6784. ⚑ It
+  #     carries its support in its NAME and is NEVER differenced against
+  #     `sf_shape_h_sf_given_s`, whose support is the ~5.6 surfaced moves.
+  #   * ⚑⚑ `sf_shape_surfaced_mass` (M_S) -- OUR probability mass on the set SF
+  #     scored, and THE COLUMN THAT DECIDES WHETHER `w_sf_shape` SHOULD EVER BE
+  #     RAISED. Two independent pathologies exist and this term reaches only the
+  #     first: (A) wrong SHAPE inside S, which the conditional KL fixes, and
+  #     (B) wrong MASS on S, which it is INVARIANT to by construction and cannot
+  #     fix at any weight -- that needs a WIDER LABELLING SET, not a loss. A low
+  #     M_S beside a matched `sf_shape_entropy_gap` means the loss addresses the
+  #     wrong pathology and must stay at 0.0. (The share of our mass on moves SF
+  #     never scored is exactly `1 - M_S`; one quantity, so the two cannot
+  #     drift.) It cannot be got offline from the banked wide-era shards, whose
+  #     labels cover 26.63 of 26.82 legal moves and therefore restrict nothing.
+  #   * `sf_shape_p_sf_best` -- p_own on SF's single best move, ABSOLUTE rather
+  #     than conditioned, so it moves with M_S. It is the quantity
+  #     `sf_policy_floor_tau` is a floor on, which is what makes the two families
+  #     readable against each other.
+  # Denominator is `has_sf_p0_regret_frac`'s numerator for all nine, the same
+  # eligible-row count the floor's columns use, so none of them can disagree
+  # about the population.
+    m_sf_shape: float = 0.0
+    sf_shape_active_frac: float = 0.0
+    sf_shape_h_sf_given_s: float = 0.0
+    sf_shape_h_ours_given_s: float = 0.0
+    sf_shape_entropy_gap: float = 0.0
+    sf_shape_sharper_frac: float = 0.0
+    sf_shape_regret_cp_given_s: float = 0.0
+    sf_shape_h_ours_full_legal: float = 0.0
+    sf_shape_surfaced_moves: float = 0.0
+    sf_shape_surfaced_mass: float = 0.0
+    sf_shape_p_sf_best: float = 0.0
+  # MATCHED-SUPPORT instrument for the ORDINARY policy target, and a DIFFERENT
+  # question from every column above: is the search target the main CE trains
+  # against ITSELF a sharpening teacher? `dL/dz = p - t`, so if the target is
+  # sharper than the net ON MATCHED SUPPORT then cross-entropy is directly
+  # rewarding concentration -- which would explain `policy_own`'s `log_temp`
+  # learning NEGATIVE (the head trying to flatten) while the net stayed
+  # over-sharp. If the gap vanishes on matched support, that story is an artifact
+  # and the search target is not the culprit.
+  #
+  # ⚑⚑ THE SUPPORT IS IN EVERY NAME BECAUSE THE UNMATCHED VERSION OF THIS
+  # COMPARISON IS A LARGE, PLAUSIBLE, WRONG NUMBER. `scripts/audit_targets.py`
+  # reads the raw policy at 0.8827 nats over ~27 legal moves against the training
+  # target's 0.6255 over the ~16-move candidate set (ZERO elsewhere); a ~5% tail
+  # over ~20 moves is worth ~0.30 nats by itself, MORE than the 0.26 gap. That
+  # comparison is UNVERIFIED and must not be cited. Here both entropies are taken
+  # over the TARGET'S support and renormalized there, and what the restriction
+  # drops is published on its own as `policy_tail_mass_ours` -- our probability
+  # on moves the search never made a candidate.
+  #
+  # Sign convention matches the SF family: `policy_support_gap` is
+  # H(target) - H(ours), so POSITIVE means WE are the sharper one and NEGATIVE
+  # means the TARGET is. Population is every row that has a policy target, NOT
+  # the SF-regret rows -- these divide by `policy_target_rows`.
+    policy_support_h_ours: float = 0.0
+    policy_support_h_target: float = 0.0
+    policy_support_gap: float = 0.0
+    policy_support_size: float = 0.0
+    policy_tail_mass_ours: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
@@ -1270,6 +1366,30 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # could drift; one quantity cannot.
     "m_sf_policy_floor": ("sf_policy_floor_sum", "sf_own_regret_rows"),
     "sf_policy_floor_binds_frac": ("sf_policy_floor_binds_sum", "sf_own_regret_rows"),
+  # The SF-shape family, over the SAME `sf_own_regret_rows` count and for the
+  # same reason: they are masked by the same tensor, so a separately-emitted
+  # denominator would be one quantity twice and could drift.
+    "m_sf_shape": ("sf_shape_ce_sum", "sf_own_regret_rows"),
+    "sf_shape_active_frac": ("sf_shape_active_sum", "sf_own_regret_rows"),
+    "sf_shape_h_sf_given_s": ("sf_shape_h_sf_given_s_sum", "sf_own_regret_rows"),
+    "sf_shape_h_ours_given_s": ("sf_shape_h_ours_given_s_sum", "sf_own_regret_rows"),
+    "sf_shape_entropy_gap": ("sf_shape_entropy_gap_sum", "sf_own_regret_rows"),
+    "sf_shape_sharper_frac": ("sf_shape_sharper_sum", "sf_own_regret_rows"),
+    "sf_shape_regret_cp_given_s": ("sf_shape_regret_cp_sum", "sf_own_regret_rows"),
+    "sf_shape_h_ours_full_legal": (
+        "sf_shape_h_ours_full_legal_sum", "sf_own_regret_rows",
+    ),
+    "sf_shape_surfaced_moves": ("sf_shape_surfaced_sum", "sf_own_regret_rows"),
+    "sf_shape_surfaced_mass": ("sf_shape_surfaced_mass_sum", "sf_own_regret_rows"),
+    "sf_shape_p_sf_best": ("sf_shape_p_sf_best_sum", "sf_own_regret_rows"),
+  # The matched-support family, over `policy_target_rows` -- its OWN denominator.
+  # Borrowing `sf_own_regret_rows` would silently restrict a whole-batch
+  # measurement to the ~21% of rows that carry SF regret.
+    "policy_support_h_ours": ("policy_support_h_ours_sum", "policy_target_rows"),
+    "policy_support_h_target": ("policy_support_h_target_sum", "policy_target_rows"),
+    "policy_support_gap": ("policy_support_gap_sum", "policy_target_rows"),
+    "policy_support_size": ("policy_support_size_sum", "policy_target_rows"),
+    "policy_tail_mass_ours": ("policy_tail_mass_sum", "policy_target_rows"),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
   # count varies batch to batch, so a mean of per-batch rates is the wrong
   # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
@@ -1779,6 +1899,10 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "sf_policy_floor_gumbel_topk": normalize_gumbel_topk(
             config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
         ),
+        "w_sf_shape": _f("w_sf_shape", 0.0),
+  # Literal `config.get` for the same reason as the four above: startup-only,
+  # and the classification test derives that class from LITERAL config reads.
+        "sf_shape_temp_cp": config.get("sf_shape_temp_cp"),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
@@ -1886,6 +2010,8 @@ class Trainer:
         sf_policy_floor_tau_top1: float | None = None,
         sf_policy_floor_tau_played: float | None = None,
         sf_policy_floor_gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
+        w_sf_shape: float = 0.0,
+        sf_shape_temp_cp: float | None = None,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -2323,6 +2449,15 @@ class Trainer:
             tau_top1=sf_policy_floor_tau_top1,
             tau_played=sf_policy_floor_tau_played,
             gumbel_topk=self.sf_policy_floor_gumbel_topk,
+        )
+  # SF-shape conditional KL, split exactly like the floor above: a live-pushable
+  # WEIGHT plus a SHAPE resolved and validated once here, so a bad temperature
+  # kills startup rather than the first step. `_loss_kwargs` re-stamps the live
+  # weight with `replace`, which re-runs `__post_init__`, so a live
+  # `w_sf_shape` edit is validated too instead of arriving raw at the consumer.
+        self.w_sf_shape = float(w_sf_shape)
+        self.sf_shape_params = SfShapeParams.resolve(
+            w=self.w_sf_shape, temp_cp=sf_shape_temp_cp,
         )
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
@@ -2845,6 +2980,10 @@ class Trainer:
             "sf_policy_floor": replace(
                 self.sf_policy_floor_params, w=float(self.w_sf_policy_floor),
             ),
+  # `replace` for the same reason: `w_sf_shape` is in `TRAINER_WEIGHT_KEYS` and
+  # is pushed by `setattr` every iteration, so a frozen object captured at
+  # construction would swallow the edit.
+            "sf_shape": replace(self.sf_shape_params, w=float(self.w_sf_shape)),
         }
 
     @property

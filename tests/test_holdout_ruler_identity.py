@@ -667,7 +667,16 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # constant for why the golden values are deliberately weight-free.
 #   full_pass  30cfec0c574e03da -> ba74408d1e9e98fa
 #   sampled    733b900bc45f524f -> cceec01bb2efc6d9
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:ba74408d1e9e98fa"
+  # ⚑ BOTH PINS MOVED 2026-08-18 by the SF-shape conditional-KL term
+  # (`ba74408d1e9e98fa` -> `2314f8551ad19148`, `cceec01bb2efc6d9` ->
+  # `25ae64a56c909a2f`): `compute_loss` gained a parameter and a branch, and
+  # `_loss_kwargs` gained the `sf_shape` key -- both covered frames. That is the
+  # mechanism working, not a regression: the id moving is what bumps
+  # `holdout_generation` and hands the best-model record over instead of
+  # freezing it against an objective that can gain a term. The TERM ships at
+  # `w_sf_shape: 0.0` so `total` is unchanged; the RULER SOURCE is not, and the
+  # pin is deliberately keyed on the source rather than on the objective.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:2314f8551ad19148"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -678,7 +687,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:ba74408d1e9e98fa"
   # it hashes a slightly different frame set (it covers
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:cceec01bb2efc6d9"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:25ae64a56c909a2f"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

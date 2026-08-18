@@ -12,7 +12,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
-from chess_anti_engine.train.losses import SfPolicyFloorParams
+from chess_anti_engine.train.losses import SfPolicyFloorParams, SfShapeParams
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -589,6 +589,16 @@ class TrialConfig:
             gumbel_topk=normalize_gumbel_topk(
                 config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
             ),
+        )
+  # Same contract for the SF-shape term, and NOT STORED for the same reason:
+  # `sf_shape_temp_cp` is startup-only, so a `tc.sf_shape` field would track the
+  # LIVE yaml while the loss kept the LAUNCH value. Called for its exception
+  # alone -- a decimal typo on the temperature (or a `0`, which is a divisor
+  # here) then kills the trial once, loudly, naming the key, instead of arriving
+  # raw at the consumer.
+        SfShapeParams.resolve(
+            w=config.get("w_sf_shape"),
+            temp_cp=config.get("sf_shape_temp_cp"),
         )
         return cls(
   # --- Global ---

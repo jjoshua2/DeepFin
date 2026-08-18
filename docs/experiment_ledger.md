@@ -58076,3 +58076,87 @@ reach the tail.
 **SF SCORES ONLY 21% OF THE MOVE LIST.** `sf_multipv: 6`; measured **5.57 surfaced of 26.82
 legal**. The other **79% carry a fabricated `default_regret`**. Any SF-shaped target MUST NOT
 assert anything about them.
+
+#### 2026-08-18 — PRE-REGISTERED, NOT LAUNCHED: `w_sf_shape`, an SF conditional-KL on `policy_own`, + a permanent same-support entropy instrument
+
+Follows directly from the entry above. Ships **`w_sf_shape: 0.0`** — the objective is
+bit-identical to today — and the INSTRUMENT half is live at zero weight, which is the
+point: the drift above ran for months with no column carrying it.
+
+**MECHANISM.** For each row where SF regret data exists, recover `S` (the moves SF
+actually scored), then
+
+    q_S = softmax_{i in S}( -regret_cp_i / sf_shape_temp_cp )    # the teacher
+    p_S = softmax_{i in S}( z_i )                                # ours, renormalized
+    L   = KL(q_S || p_S)
+
+Both sides CONDITIONAL on `S`, so `dL/dz_i == 0` exactly outside `S` and the on-`S`
+gradients sum to zero: the term provably cannot move mass into or out of `S`, only
+redistribute within it. That is what makes it safe against the fabricated 79% — a
+guarantee from the arithmetic, not from mass bookkeeping. It also sets RELATIVE
+proportions, so unlike arm A its pull does not vanish as a move's probability goes to
+zero.
+
+**⚑⚑ THE SURFACED MASK: NO SUCH FIELD REACHES THE BATCH.** `sf_multipv_raw` is (a) the
+WRONG PLY (it describes the position AFTER the row's move; `sf_p0_regret` at row *t* is
+built from row *t−1*'s block), (b) gated behind `train.sf_policy_sparse_ce`, and (c)
+dropped from the H2D payload in production. So the set is recovered from the regret
+vector: `surfaced = legal AND (regret < row_max)`. The writer fills every uncovered index
+with one bit-identical scalar `d = (worst_surfaced + 1)/2 >= worst`, so nothing invented
+can enter the set, without assuming `d` is a value no real regret can take. Lossy in
+exactly one direction: a surfaced move at the 1000 cp cap ties `d` and is dropped, so the
+recovered set is always a SUBSET of the truth.
+
+**⚑ THE ACTIVATION DECISION IS NOT MINE TO MAKE AND THE NUMBERS DO NOT EXIST YET.** Two
+independent pathologies, and this term reaches only the first:
+
+| reading | meaning | action |
+|---|---|---|
+| `sf_shape_entropy_gap` > 0 AND `m_sf_shape` large | sharpness AND ranking both wrong | the loss fixes both |
+| gap ~ 0 AND `m_sf_shape` large | sharpness fine, RANKING wrong | still ENABLE — entropy must not veto |
+| gap > 0 AND `m_sf_shape` small | calibration/temperature, not this | do not enable |
+| `sf_shape_surfaced_mass` (M_S) low | off-support mass dominates | conditional KL is INVARIANT to M_S; widen the LABELLING set, not the loss |
+
+**DECIDING YARDSTICK (instrument first, weight second).** Read one clean iteration's
+training row: `sf_shape_surfaced_moves` (mask health, expect ~5-6 of ~27),
+`sf_shape_h_ours_given_s` vs `sf_shape_h_sf_given_s`, `sf_shape_entropy_gap`,
+`sf_shape_sharper_frac`, `m_sf_shape` (= the KL itself), `sf_shape_regret_cp_given_s`,
+`sf_shape_surfaced_mass`, `sf_shape_p_sf_best`. Then
+`scratchpad/sfshape_population_breakdown.py` for the 3-axis (dH x M_S x conditional
+regret) cell counts. **Pre-committed kill:** if `sf_shape_surfaced_mass` is low AND
+`sf_shape_entropy_gap` is within ±0.05 nats, the dominant pathology is mass allocation,
+`w_sf_shape` stays 0.0 and the follow-up is a widened labelling set (`searchmoves`).
+
+**⚑ TWO CROSS-SUPPORT COMPARISONS ARE RETRACTED AS MAGNITUDES.** (1) The 0.6784-vs-1.0572
+headline above compares ~27 legal moves against a full-width SF target whose off-top-6
+mass was allocated by our own fabricated `default_regret`, not by Stockfish; the genuine
+teacher object is the CONDITIONAL top-K distribution. (2) `scripts/audit_targets.py`'s raw
+policy 0.8827 (~27 legal) against training target 0.6255 (~16 candidates, zero elsewhere)
+is UNVERIFIED and must not be cited: a ~5% tail over ~20 moves is worth ~0.30 nats on its
+own, more than the 0.26 gap. The new `policy_support_*` columns measure (2) properly —
+both entropies over the TARGET's support, with `policy_tail_mass_ours` published
+separately so it cannot leak into the difference. If the gap survives on matched support,
+the ordinary policy CE is itself a sharpening teacher (`dL/dz = p - t`), which would
+explain `log_temp` learning negative while the net stayed sharp.
+
+**⚑ CORRECTION TO THE EXISTING FLOOR'S RATIONALE (recorded, not acted on).**
+`relu(tau - p)` has constant gradient wrt `p` and NOT wrt the logit: `dL/dz = -p(1-p)`,
+which vanishes linearly in `p` exactly as arm A does. Measured on SF's best move, arm A
+vs prob-hinge vs log-hinge vs log²-hinge: 0.00515/0.04750/0.950/0.424 at p=0.05 and
+0.00001/0.00010/0.9999/12.874 at p=1e-4. ⇒ the shipped floor beats arm A by a CONSTANT
+~9.7x and does not solve the buried-move problem it exists for; a LOG-SPACE hinge is the
+intended successor. Separately, if the floor's purpose is SEARCH ADMISSION the threshold
+is `1/gumbel_topk = 0.0625` against the shipped `sf_policy_floor_tau: 0.15` — 2.40x past
+it, though a modest margin (~0.07-0.08) is likely right rather than the bare threshold.
+**Nothing about the floor is changed here: the A+F ablation is running against this exact
+arithmetic.**
+
+**CONFOUNDS / OPS.** The holdout ruler id MOVED (`ba74408d1e9e98fa` ->
+`2314f8551ad19148` full_pass; `cceec01bb2efc6d9` -> `25ae64a56c909a2f` sampled) because
+`compute_loss` and `_loss_kwargs` are hashed frames. An operator WILL see a best-model
+handover at the next restart. `total` is unchanged at the shipped weight; the ruler SOURCE
+is not. `w_sf_shape` is in `TRAINER_WEIGHT_KEYS`, so a later flip off 0.0 moves the id
+again and hands the record over rather than freezing it — which is the correct behaviour
+for a term that is non-negative by construction.
+
+**VERDICT: UNREAD.** Nothing has been enabled and no yardstick has been run.

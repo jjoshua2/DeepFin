@@ -298,6 +298,12 @@ _TRAIN_KEYS = (
     "sf_policy_floor_tau",
     "sf_policy_floor_tau_top1",
     "sf_policy_floor_tau_played",
+    # Teacher temperature of the SF-shape conditional-KL term (train/losses.py),
+    # in CENTIPAWNS. The WEIGHT `w_sf_shape` rides in `TRAINER_WEIGHT_KEYS`
+    # above; this one is folded into a resolved object at Trainer construction,
+    # so it is startup-only by construction and classified as such. It is a
+    # DIVISOR: 0.0 is not "off" and is rejected by name.
+    "sf_shape_temp_cp",
 )
 
 # tune section: all 1:1 passthrough.
