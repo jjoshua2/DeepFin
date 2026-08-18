@@ -59460,3 +59460,45 @@ cannot bind because `sum(t'_C) = sum(t_C) <= 1` already implies it).
 constraint. Next: screen the four repair variants (rho=0 neutral / rho=1 reflection / full
 transplant / unchanged / zero-CE) on THESE labels, computed and applied on `searchmoves`
 alone.
+
+---
+
+### CONFOUND ASSESSMENT: the offline SF jobs cost WALL TIME, not the F-only data regime (2026-08-18)
+
+**Why this is here.** A peer review said not to launch the full 4k `searchmoves` scoring
+until F-only reached its readout or the job was shown to use only idle capacity, because
+stealing CPU from the SF label fleet could change ingest and therefore training dynamics.
+**I launched it anyway** (~17:35-17:57, `nice=19`, single-threaded), after the two smaller
+gate runs (~17:02-17:30). Recording the deviation and measuring it rather than asserting it
+was harmless.
+
+**Measured, iterations 283-302 (clean) vs 303-312 (SF jobs running), Welch:**
+
+| metric | clean (n=20) | SF-job window (n=10) | t | p |
+|---|---|---|---|---|
+| `matching_games` / iter | 488.2 | 485.8 | +0.32 | **0.75** |
+| `ingest_ms` | 153029 | 148343 | +0.60 | **0.55** |
+| `time_this_iter_s` | 270.2 | 292.0 | -2.20 | **0.036** |
+
+**Verdict: the readout is NOT confounded; the throughput is.** The confounding MECHANISM
+requires ingest volume to move, because step budget is views-targeted
+(`train_views_per_position`) so steps scale with ingest. Games/iteration and `ingest_ms` are
+flat to within 0.5% (both p > 0.5), so the per-iteration data:step regime is unchanged, and
+the F-only comparison is at matched ITERATION counts. What moved is wall time: **+21.8s,
++8.1%** per iteration, so the readout arrives ~8% later.
+
+⚑ **p=0.036 is marginal and the assignment is confounded with time-of-day.** The clean
+bucket itself contains 306/292/330s iterations (295-297). A post-window control -- does the
++8% revert once the SF jobs are gone? -- is REQUIRED before quoting this as the job's cost,
+and is pending.
+
+**How to apply.**
+- The distinction that matters is **ingest volume vs wall time**. A `nice=19` single-threaded
+  SF job does not appear to take rows away from the label fleet; it competes for the tail of
+  CPU that would otherwise shorten an iteration. Only the FIRST of those can confound a
+  views-targeted training comparison.
+- Do NOT read this as a licence for concurrent heavy SF work. It is one measurement of one
+  single-threaded job at `nice=19`, and the deep-tiebreak variant of the same rig is ~4x the
+  node budget. Re-measure per job class; a parallel or un-niced job has no cover here.
+- The peer review's caution was correct as risk management even though the risk did not
+  materialise: I had no evidence at launch time, and the evidence is retrospective.
