@@ -59161,3 +59161,62 @@ and A and F are known to oppose each other strongly on the `log_temp` direction 
 "F is ineffective" from "F is useful and A opposes it" — which is exactly what the arm exists
 to separate, and the measured A/F opposition plus A's ~69% fabricated tail make the second
 hypothesis worth the compute.
+
+### PREREG — F-ONLY (A off, in place). Written BEFORE the edit.
+
+**HYPOTHESIS.** A+F is null on policy quality (verdict `8131347c0`, +0.23 cp [−0.72, +1.17] at
+n=4000). That null cannot distinguish "F is ineffective" from "F is useful and A opposes it".
+Arm A is the measured radial sharpener (`G_logtemp` +0.0270 weighted) with ~69% of its
+expected-regret signal from the fabricated tail; arm F is the measured flattener (−0.0312
+weighted) with membership drawn only from genuinely SF-scored moves. Removing A isolates F.
+
+**INTERVENTION.** ONE key: `w_sf_own_regret: 0.7 -> 0.0`. `w_sf_policy_floor` stays 0.8.
+Nothing else changes. **IN PLACE — no rewind to iter190, no optimizer reset.**
+
+**WHY IN PLACE rather than restarting from the iter190 salvage:**
+1. the powered 4k audit finds NO policy-quality displacement from iter190 (+0.23 cp, and target
+   / PLAY / all three top1-agree rates equally flat) — there is no A+F damage to roll back;
+2. the salvage holds weights + optimizer + PID + holdout + rng but **NOT the replay window**,
+   which is now ~100% A+F-era, so a rewind trains iter190 weights on an A+F window anyway;
+3. the last ~20 iterations are an unusually FLAT pre-trend immediately before a one-key change;
+4. it costs ~105 iterations (~9h) for a distinction it cannot deliver.
+**Optimizer NOT reset**: resetting is a larger confound than continuing the moments. A's
+optimizer history persists transiently — **do not overinterpret the first handful of updates.**
+
+**BOUNDARY, banked** `data/salvage/apf_endpoint_checkpoint_000297_20260818`
+(637M, checkpoint + params.json + the yaml AT intervention + the progress row). Preserves the
+A+F endpoint so the outstanding +50 Elo arena can be run LATER without a GPU pause now.
+
+| at the boundary | value |
+|---|---|
+| checkpoint / step | `checkpoint_000297` / 135363 |
+| **`policy_own.log_temp`** | **−0.27498** (`exp_avg` −0.0013280, `exp_avg_sq` 2.2753e−5) |
+| `wdl_regret` | ~0.02862, flat (last-20 sd 0.00006) |
+| `pid_ema_winrate` | ~0.4996 |
+| `sf_nodes` | 75000, pinned |
+
+**BASELINES.** PRIMARY = the intervention checkpoint (297) — the within-run discontinuity.
+SECONDARY = iter190, the pre-A/F absolute reference (4000-position audit already banked at
+`scratchpad/base4k_i190.jsonl`).
+
+**PREDICTIONS.**
+1. **`policy_own.log_temp` moves materially DOWNWARD**, frozen-checkpoint reference ~**−0.312**
+   from −0.27498. ⚑ DIRECTION + approximate reference, **not an exact CI** — the trunk, the
+   targets and the window all move during training. **Concerning outcome: sitting near −0.274
+   with no meaningful downward motion.** Free: one scalar on the existing checkpoint series.
+2. **First-order entropy direction moves toward flattening.** ⚑ **NO NUMERIC KILL CRITERION.**
+   The exact weighted `P_H` total (−0.00091 -> +0.00305) is WITHDRAWN from this prereg: it
+   inherited the CE projection that moved 3x its own sem and flipped sign between two draws
+   (`09543b3ab`). What is robust is that A's `P_H` was sharpening and F's flattening.
+3. **DECIDING — policy quality.** Paired 4000-position deep-SF audit against checkpoint 297
+   (primary) and iter190 (secondary), after a training interval comparable to the 75 iterations
+   A+F got. **KILL: raw policy / RL target / PLAY regret all within 0 +/- 3 cp** ⇒ the
+   probability-hinge F is null on policy quality, stop spending live compute on this
+   formulation and move to SF target repair.
+4. **Online.** An improving run shows the controller RAISING difficulty (`wdl_regret` resuming
+   its ramp) while `pid_wr` holds a POSITIVE offset. `pid_wr` parked near 0.50 with `wdl_regret`
+   flat is the same plateau signature A+F produced.
+
+**CONFOUNDS.** Replay window is ~100% A+F-era at the boundary and turns over during the arm.
+Optimizer moments carry A's history transiently. `game_id` is absent from the audit set, so all
+audit CIs are position-level, not game-clustered.
