@@ -58871,3 +58871,56 @@ query, which gives SF far more effort per candidate. **Those are not the same in
 Re-score a large OVERLAP subset both ways and quantify the drift BEFORE filling only the gap;
 if the drift is negligible, gap-filling is defensible, otherwise the whole set needs the
 restricted instrument. `searchmoves` is on `main` (PR #444) and absent from live.
+
+#### 2026-08-18 — ⚑⚑ CORRECTION-AS-AUXILIARY IS DEAD ON ARRIVAL. THE TARGET MUST BE REPAIRED.
+
+The screen the review demanded — project BOTH the main CE and the correction term onto the one
+direction that decides the contest, `e = +1 on a_M, -1 on a_P`, on the exact rows where deep SF
+says the override was WRONG (`dQ < 0`). `d = z_M - z_P` recovered exactly as `log(p_M/p_P)`
+(both are softmaxes over the same legal set). `scratchpad/correction_vs_ce.py`, 4000 positions.
+
+| | RL target (INCUMBENT teacher) | PLAY |
+|---|---|---|
+| bad-override rows | **281** (of 839 scorable) | 531 (of 1426) |
+| mean `grad_CE . e` | **−0.80319** | **−1.29820** |
+| rows where CE already favours the prior | **0.000** | **0.000** |
+| mean `grad_corr . e` | +0.03604 | +0.02549 |
+| mean `|dQ|` on these rows | 0.06927 | 0.07696 |
+| mean `d = log(p_M/p_P)` | **−1.2531** | **−2.4629** |
+| **`w_corr` to FLIP the combined mean** | **22.29** | **50.93** |
+
+| `w_corr` | combined mean (RL) | rows now favouring the prior |
+|---|---|---|
+| 0.10 | −0.79959 | 0.000 |
+| 0.50 | −0.78517 | 0.000 |
+| 1.00 | −0.76715 | 0.004 |
+| 2.00 | −0.73111 | 0.039 |
+| 22.29 | −0.00000 | 0.331 |
+
+**⇒ AN AUXILIARY CANNOT WIN THIS. At a sane weight it reduces the wrong pressure by 4-9% and
+reverses it on 0.0-3.9% of rows.** Reaching parity needs **22x** the main policy weight (51x for
+PLAY), which would dominate every other term on those rows.
+
+**⚑ THE MECHANISM IS THE SAME VANISHING-GRADIENT SHAPE FOR THE THIRD TIME TODAY.**
+`mean d = -1.25`, i.e. the search's chosen move sits BELOW the prior's argmax in raw
+probability by construction, so `sigmoid(d) ~ 0.22` and the correction gradient is small
+EXACTLY where it is needed — the same defect as arm A's `p_i` scaling and arm F's
+probability hinge. And fixing the hinge does not rescue it: with a perfect non-vanishing
+hinge `grad_corr . e` caps at `2|dQ|` = **0.139**, still **5.8x** smaller than the CE's 0.803.
+
+**⇒ REPAIR THE TARGET, DO NOT ADD A TERM.** The review's own aside — *"it could be repairing
+the search target on adjudicated rows so the objective doesn't simultaneously teach both sides
+of the contradiction"* — is now MEASURED as the only viable route, not a stylistic preference.
+On an adjudicated bad-override row the main CE should stop teaching `a_M` at all rather than be
+fought. Candidate repairs to screen (all touch `policy_t` on ~8.8% of rows, NOT the loss):
+1. swap the target mass of `a_M` and `a_P`;
+2. re-point the target argmax to `a_P`, redistributing `a_M`'s mass;
+3. zero the policy-CE weight on adjudicated bad rows (cheapest, loses the row's other signal).
+
+**SCOPE:** bad overrides are **281/839 = 33.5%** of scorable RL disagreements, and RL
+disagreements are 26.2% of positions ⇒ roughly **8.8% of all rows** carry a main-CE gradient
+that deep SF says points at the worse move. That is the size of the prize and the size of the
+blast radius.
+
+⚑ Do NOT read this as "the search target is bad": the same instrument says RL search DISCOVERS
+`G+` = +0.064 against `G-` = +0.023. The job is to keep the 66.5% and stop training the 33.5%.
