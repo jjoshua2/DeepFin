@@ -58294,3 +58294,70 @@ right direction for arm F, and not significant at n=256.
 supplies −0.19 nats of concentration per step, ~40x anything a one-sided auxiliary can offset.
 The fifth component (calibrated search-target temperature `T*`) is now the load-bearing one, not
 an addition.
+
+#### 2026-08-18 — ⚑⚑ RETRACTED: "the sharper target is a standing concentration force"
+
+**The entropy finding stands. The MECHANISM I attached to it is BACKWARDS, and the metric
+that caught it is the one the review asked for.** A per-step force is a gradient, not a gap
+between two distributions, so measure it in the space SGD acts in: with `p(a) = softmax(a·z)`,
+`dL/da = (p − t)·z`, so `G_sharp = −(p − t)·z` is positive exactly when descent wants to
+INCREASE logit scale.
+
+**`scripts`-side: `scratchpad/sharpening_projection.py`, checkpoint iter 265.**
+
+| quantity | mean | sem | frac>0 |
+|---|---|---|---|
+| `G_sharp` main policy CE — **SF-labelled subset**, n=13706 | **−0.0263** | 0.0036 | 0.644 |
+| `G_sharp` main policy CE — **ALL policy rows**, n=20207 | **−0.0477** | 0.0032 | — |
+| `G_sharp` arm A on the STORED regret vector | **+0.0291** | 0.0007 | 0.739 |
+| `G_sharp` arm A × `w_sf_own_regret` 0.7 | **+0.0203** | 0.0005 | 0.739 |
+| `G_sharp` arm A, GENUINE scored moves only | +0.0061 | 0.0003 | 0.644 |
+
+⇒ **THE MAIN POLICY CE IS A NET FLATTENING FORCE, NOT A SHARPENING ONE.** The claim that it
+"applies a net CONCENTRATION force every step" is withdrawn. **`arm A` is the term with
+positive sharpening pressure**, and ~79% of that pressure comes from the FABRICATED tail
+(+0.0291 stored vs +0.0061 genuine-only) — arm A sharpens mainly by pushing mass off the
+~570cp imputed moves. The two forces oppose and nearly cancel: −0.0263 + 0.0203 ≈ −0.006.
+
+**HOW BOTH READINGS ARE TRUE AT ONCE.** Entropy is orientation-free; the projection is not.
+`G_sharp = t·z − p·z`, so a target that is sharper but placed OFF the net's logit ordering
+(argmax disagreement 22.6%) can have `t·z < p·z`. Verified on a synthetic: a target that is
+*maximally* sharp but sits on the 3rd-best logit still yields `G = +0.141`, while uniform
+yields −0.477 and one-hot-on-argmax +0.805. **A sharper target does not imply a sharpening
+force — the direction matters and entropy cannot see it.**
+
+**THE VALIDATION THAT MAKES THIS MORE THAN AN ARGUMENT.** For the head's own temperature
+scalar, `z = exp(log_temp)·s` ⇒ `∂z/∂log_temp = z` ⇒ `∂L/∂log_temp = (p − t)·z = −G_sharp`.
+**`G_sharp` IS the gradient on `log_temp`, verified numerically to 6 decimals**
+(−0.141370 both ways via autograd). So `G_sharp < 0` predicts `log_temp` FALLS — and measured:
+`policy_own.log_temp` −0.2718 → **−0.2739** at iter 265, still falling.
+
+⇒ **`log_temp` going negative is the OBJECTIVE'S OWN DOING, not the net fighting it.** The
+earlier reading — "the scalar has been fighting the objective" — is retracted. It was a story
+built on a sign I had not measured.
+
+**CONSEQUENCE FOR `T*`: the mechanistic rationale for flattening the target is GONE.**
+Two candidate calibrations were root-found against the real stored distributions:
+
+| | value | status |
+|---|---|---|
+| `T_H` (entropy-neutral: `E[H(t_T)] = E[H(p|S)]`) | **1.2894** | in the validator band [0.5, 4.0] |
+| `T_G` (force-neutral: `E[G_sharp] = 0`) | **does not exist in [1, 4]** | `G_sharp` is ALREADY negative at T=1 and decreases monotonically (T=1.29 → −0.20, T=4 → −2.68) |
+
+`T_G` would be **below 1.0**, i.e. the force-neutral move is to SHARPEN the target, not flatten
+it. ⇒ **the two calibrations point in OPPOSITE directions**, which is exactly the informative
+outcome the review named. Running `policy_target_temp = 1.2894` would not remove a sharpening
+force; it would multiply an existing flattening force by ~8×.
+
+**⚑ `policy_target_temp` NEEDS NO CODE.** It is already in the live schema
+(`utils/config_yaml.py:289`), read at `trainer.py:1761`, range-validated `[0.5, 4.0]` at
+Trainer construction (`trainer.py:2303`) and re-checked in the loss, and PINNED to 1.0 in eval
+by `_eval_loss_kwargs`. `retemper_main_policy_target` is exactly `p^(1/T)` renormalised, so a
+T solved here is the T that key means. Its own docstring already forbids running it without a
+ledger entry carrying the yardstick and kill threshold. **No arm is launched on this today.**
+
+**Correction to my own prereg language:** "flattening the training target must make holdout
+policy CE worse by construction" is **too strong and is withdrawn**. It means the training
+target is no longer the holdout ruler's object, so holdout CE stops being the thing being
+optimised — it MAY worsen, and it is NOT the deciding yardstick. Stating "must" would have let
+a favourable surprise be dismissed as impossible.
