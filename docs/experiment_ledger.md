@@ -58023,3 +58023,56 @@ likely have caught it at 23:15.
 
 ⇒ **READOUT POINT MOVES: iteration 491 as pre-registered, now ~11h later in wall clock.**
 The prereg's iteration count is unchanged; only the calendar slipped.
+
+#### 2026-08-18 — ⚑⚑ WE ARE SHARPER THAN OUR OWN TEACHER, ON 64% OF ROWS
+
+Measured while reading out the A+F arm. This is the finding, not the arm.
+
+| distribution | mean entropy | source |
+|---|---|---|
+| SF soft target | **1.0572** (median 1.0167) | banked shallow-SF, 16,000 rows |
+| BT4-100 RL training target | 0.9158 (0.9700 matched to our branching) | `bt4ruler_dump_full.jsonl` |
+| **OURS (live selfplay)** | **0.6784** | `gumbel_policy_entropy_mean` |
+
+**SF's soft target is FLATTER than our policy on 63.8% of rows.** We answer "several of these
+moves are fine" with 0.75 on one of them. Matched for branching factor we also carry **30%
+less entropy than BT4** (0.678 vs 0.970) and a higher top-move probability (0.7515 vs 0.6930).
+⚑ BT4 reaches 0.707 from a **0.476 raw prior** via search; our target inherits an already-sharp
+prior, so search has far less room to do anything.
+
+**The net is already fighting this and losing.** `log_temp` is a trainable `nn.Parameter`
+initialised at 0 that MULTIPLIES the logits; the live checkpoint has learned
+`policy_own −0.2718` (x0.762), `policy_soft −0.3438`, `policy_sf −0.4036`,
+`policy_future −0.1177` — i.e. it taught itself a ~24% flattening and is STILL this sharp.
+⚑ An earlier note in this file claiming `policy_own log_temp 0.7533` (a 2.12x SHARPENING) is
+STALE and has the sign backwards.
+
+**⚑ CORRECTION, same session: the arms are a MILD aggravator, not the cause.** I first
+reported the entropy slope under the arms as **−0.0282**/30 iters, "3.4x outside historical
+range". Iterations 222-223 straddle the CUDA crash and restart and are the two lowest entropy
+points in the run (0.597, 0.551); 225 is already back to 0.694. Excluding them the slope is
+**−0.0099**/30 (historical range −0.0042 … +0.0086) and the MEAN level moved only
+**0.68623 → 0.68107, −0.75%**. ⇒ the pre-existing 0.38-nat gap to SF is ~40x the arms'
+per-30-iteration effect on it. **A finding was built on three outage-contaminated rows; check
+the outage overlap before reading any window that spans one.**
+
+**⚑ THE SOFT HEAD ALREADY LEARNS SMOOTHNESS — INTO A HEAD THAT DRIVES NOTHING.**
+`losses.py:1262` names `policy_own` as "the head MCTS reads as the search prior";
+`losses.py:1228` sends the soft target to `policy_soft`, a DIFFERENT head. Corroborated by the
+checkpoint: `policy_soft.log_temp` is flatter than `policy_own`'s. And `policy_soft_t` is NOT
+SF-shaped — `finalize.py:958` builds it as `apply_policy_temperature(eff_probs, 2.0)` where
+`eff_probs` is the same object assigned as `policy_target` at `:1047`. It is OUR OWN target
+flattened, and at T=2.0 it would land near entropy **1.60**, overshooting SF (1.057) and BT4
+(0.970) by ~50%.
+
+**WHY ARM A CANNOT FIX THIS.** Arm A is a SCALAR penalty `Σ p·r` with no target shape, and its
+gradient `−p_i(r_i − r̄)` is baselined on OUR OWN mean regret and weighted by `p_i`. So (a) it
+pushes our top-1 UP whenever that move beats our own average — and our top-1 is deep-SF-best
+only 46% of the time; (b) its pull vanishes linearly as a move's probability goes to zero
+(measured: SF's best at p=0.008 receives **38.5x less gradient** than our own top-1). It
+teaches SF's ORDERING among moves we already consider, never SF's SMOOTHNESS, and it cannot
+reach the tail.
+
+**SF SCORES ONLY 21% OF THE MOVE LIST.** `sf_multipv: 6`; measured **5.57 surfaced of 26.82
+legal**. The other **79% carry a fabricated `default_regret`**. Any SF-shaped target MUST NOT
+assert anything about them.
