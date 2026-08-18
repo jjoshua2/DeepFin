@@ -58525,3 +58525,66 @@ a consistently-signed force **13x** today's. Adam at lr 3e−6 with a consistent
   holds the equilibrium and the term set is still not closed.
 This is a free readout: it needs no extra compute, only reading `policy_own.log_temp` off the
 checkpoint series that already exists.
+
+#### 2026-08-18 — `P_H` population-matched, and the offline `log_temp` sweep predicts the F-only arm
+
+**1. `P_H` recomputed on the production mixture (full window, `surprise_mix` 0.5).** The
+caution was right: the CE's ENTROPY projection flipped too, exactly as its radial one did.
+
+| | newest-40 | window uniform | **window 50/50** | weight |
+|---|---|---|---|---|
+| `P_H_CE` | +0.00860 | −0.00204 | **−0.00211** (sem 0.00062, t=−3.4) | 1.0 |
+| `P_H_A` | −0.00425 | −0.00548 | **−0.00565** (sem 0.00032) | 0.7 |
+| `P_H_F` | +0.00733 | +0.00621 | **+0.00645** (sem 0.00024) | 0.8 |
+| **weighted total** | **+0.01149** | | **−0.00091** | |
+
+⇒ **"the main CE flattens the output policy" is WITHDRAWN — it mildly SHARPENS it** (t=−3.4)
+while being NEUTRAL on logit scale (`G_CE` +0.0044, t=1.5). Those are consistent: the CE moves
+mass onto the target's moves, cutting entropy, without changing the radial scale — the
+"sharper target aimed at different moves" picture, now measured on both axes. **A and F kept
+their signs across all three populations**, as suspected: A sharpens, F flattens.
+
+⇒ **The objective as a whole is mildly SHARPENING the output policy**, weighted `P_H` = −0.00091.
+Decomposed: CE −0.00211 and A −0.00396 sharpen, F +0.00516 flattens. **Removing A flips the
+sign: F-only would make the total `P_H` = +0.00305, net FLATTENING.** Second free prereg.
+
+**2. Offline `log_temp` sweep** (`scratchpad/logtemp_sweep.py`, frozen iter-265 checkpoint,
+12000 production-mixture rows, logits rescaled by `exp(l − l_ckpt)`):
+
+| `log_temp` | `G_CE` | `G_F`×0.8 | **F-only** | `G_A`×0.7 | **A+F** | `F_binds` | deficit |
+|---|---|---|---|---|---|---|---|
+| −0.360 | +0.06661 | −0.03095 | +0.03566 | +0.03030 | +0.06596 | 0.481 | 0.1007 |
+| −0.320 | +0.03693 | −0.03115 | +0.00578 | +0.02880 | +0.03458 | 0.483 | 0.1023 |
+| −0.280 | +0.00677 | −0.03154 | −0.02476 | +0.02736 | +0.00260 | 0.488 | 0.1038 |
+| **−0.270** | −0.00084 | −0.03158 | −0.03242 | +0.02701 | **−0.00541** | 0.488 | 0.1042 |
+| −0.220 | −0.03941 | −0.03174 | −0.07115 | +0.02531 | −0.04584 | 0.491 | 0.1062 |
+| −0.180 | −0.07087 | −0.03155 | −0.10242 | +0.02401 | −0.07841 | 0.493 | 0.1078 |
+
+**⚑ THE CHECKPOINT SITS AT THE OBJECTIVE'S OWN EQUILIBRIUM.** A+F crosses zero at ≈ **−0.2767**
+against a checkpoint `log_temp` of **−0.27386**. Interpolated at the checkpoint's own value,
+A+F = **−0.0023** versus the live AdamW `exp_avg` of **−0.00206** — the accounting closing a
+SECOND time, independently, to 11%.
+
+**⚑ THE CE IS THE SPRING; A AND F ARE NEAR-CONSTANT BIASES.** `G_CE` sweeps +0.0666 → −0.0709
+across the range (slope ~ −0.76 per unit `log_temp`) while `G_A`×0.8 moves only
++0.0303 → +0.0240 and `G_F`×0.8 is **flat at ≈ −0.0316**. So the main CE supplies the entire
+restoring force that FIXES the equilibrium, and the auxiliaries only SHIFT where it sits. This
+is a better description than anything the point measurements supported, and it is why every
+earlier single-population reading of "what the CE does" was unstable.
+
+**⚑ F IS ESSENTIALLY NOT SELF-LIMITING — MEASURED, NOT ASSUMED.** The expected feedback
+(flatter policy ⇒ buried moves gain ⇒ deficits shrink ⇒ F weakens) is present but negligible:
+over a 0.18 swing in `log_temp`, `F_binds` moves 0.493 → 0.481 and mean deficit 0.1078 →
+0.1007, ~7%. `G_F` is flat to three decimals. ⇒ **do NOT price F-only's displacement as
+self-arresting; the CE spring is what stops it.**
+
+**PREREG FOR THE F-ONLY ARM (A=0, F unchanged, everything else identical):**
+- **`policy_own.log_temp` should move −0.27386 → ≈ −0.3124, a displacement of −0.0385**
+  (head temperature ×0.7605 → ×0.7317, a further ~3.8% flattening), then STOP.
+- Weighted `P_H` should flip from −0.00091 to **+0.00305** (objective becomes net flattening).
+- **FALSIFIER:** no material downward displacement of `log_temp` in the early window despite a
+  production-matched `G_F-only` of −0.032 at the starting point ⇒ the accounting is wrong or
+  the population is still mismatched. Do NOT read "flat at exactly 5000 steps" as the test —
+  it can move fast then settle; the displacement, not the rate, is the quantity.
+- Costs nothing: `policy_own.log_temp` is one scalar on the checkpoint series already written.
+- ⚑ Judge F itself by PLAY-settings regret / Elo / SF-routing, NOT by whether it flattens.
