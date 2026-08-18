@@ -58421,3 +58421,61 @@ before any term's projection is quoted as its net effect.**
 sharpener, ~69% of its signal is fabricated magnitude, its earlier screens were tautological,
 and 41 iterations of A+F moved no matched-support metric. `policy_target_temp` goes BEHIND
 an A-off / SF-shape-on experiment, not ahead of it. Nothing launched today.
+
+#### 2026-08-18 — ⚑ THE `policy_own` TERM SET IS CLOSED. THE RESIDUAL IS POPULATION, NOT A MISSING LOSS.
+
+My "the residual is `sf_p0_ce` at `w_sf_move` 0.05, plus non-radial routes" is **wrong twice**,
+and review caught both. Verified in the source, not argued:
+
+- **`sf_p0_ce` is multiplied by `w_sf_own`, not `w_sf_move`** (`losses.py:1562` builds
+  `m_sf_own = masked_mean(sf_p0_ce, ...)`, `:1631` adds `w_sf_own * m_sf_own`). The live yaml
+  has **`w_sf_own: 0.0`** ⇒ `sf_p0_ce` contributes **exactly nothing**. `w_sf_move` 0.05
+  multiplies `m_sf_move`, which trains **`policy_sf`** — a different head with its own
+  `log_temp` (−0.4127).
+- **Non-radial routes cannot close the `log_temp` books at all.** `log_temp` is ONE SCALAR; its
+  gradient can only come from terms with a computational path through it. `P_H` explains
+  entropy moves that `G_sharp` misses — it cannot supply a `log_temp` force. Citing it there
+  was a category error.
+- Weight decay is not the missing force either: `log_temp` is 1-D and sits in the no-decay
+  group (`weight_decay: 0.0`, `use_aurora: False`, confirmed in the live optimizer state).
+
+**⇒ THE TERM SET IS COMPLETE AND IT IS THE THREE I MEASURED.** `policy_soft` / `policy_future`
+/ `policy_sf` all resolve to their OWN heads (all four exist in the checkpoint), so
+`outputs.get(..., base_policy_logits)` never falls back. Everything touching
+`policy_own.log_temp`: `w_policy` 1.0 (CE), `w_sf_own` **0.0** (inert), `w_sf_own_regret` 0.7
+(A), `w_sf_policy_floor` 0.8 (F).
+
+**⇒ SO THE DISCREPANCY IS REAL AND IS ABOUT THE POPULATION.** Offline: weighted
+`G_sharp` = −0.0548 (sem 0.003) ⇒ `dL/dlog_temp` = +0.0548, log_temp should fall. Live AdamW
+moment: `exp_avg` = **−0.00206** — opposite sign and 27x smaller. Sampling noise cannot bridge
+it: per-row sd 0.46 ⇒ per-batch-512 sd 0.020 ⇒ a 10-step EMA (β₁=0.9) has sd ~0.0065, so
+−0.002 against a mean of +0.055 is ~9 sd. **Something differs between the two populations, and
+the leading candidate is that production samples the 1.5M window by PRIORITY (CV 0.94, top
+decile 31.5% of mass) with mirror augmentation, while I sampled the newest 40 shards
+UNIFORMLY** — plus per-batch masked-mean for A/F (mean-of-means ≠ pooled mean) and zclip.
+
+⇒ **NO PROJECTION MAY BE QUOTED AS A NET EFFECT UNTIL IT IS MEASURED INSIDE THE REAL BATCH
+PATH**, per batch: `dL/dlog_temp` by term → total → pre-clip → post-clip → `exp_avg` →
+realised Δlog_temp. That closes exactly or it names the gap.
+
+**REVISED ORDER (adopted):** 1 finish A+F untouched · 2 close per-batch `log_temp` accounting
+· 3 next arm **A=0, F unchanged, `w_sf_shape`=0** · 4 SF-shape as addition/replacement
+· 5 log-space/low-τ F successor · 6 `policy_target_temp` stays 1.0 throughout.
+**F-only, not T\*.** A's indictment: only sharpener on BOTH projections, ~69% of its signal
+fabricated, structurally weak on buried moves, no measured repair in 41 iterations. F has
+genuine membership and a search-routing purpose, and A's opposing pressure could have been
+hiding it — `G_sharp` F −0.0336 vs A +0.0199 at live weights.
+
+**F is simultaneously too broad and too weak**, which the successor design must fix: it binds
+on 53.4% of SF rows and flattens strongly, yet its gradient still vanishes as p→0, so it
+spends its budget lifting moderately-underweighted moves to 0.15 while staying weakest on the
+p≈0.003 case that motivated it. ⇒ `max(0, log τ − log p)` at a τ near the actual search-routing
+requirement, with the conditional KL taking over the ranking role 0.15 was standing in for.
+
+**BACKUP (local only, nothing published):**
+`/mnt/c/Users/jjosh/DeepFin-backups/2026-08-18/deepfin-live-20260818-1443.*` — bundle (24.9M,
+`git bundle verify` PASSED), sha256, HEAD, uncommitted-tracked patch, status, source-only
+untracked tarball (1366 files) and a FULL 151k-path manifest naming the 74G of regenerable
+output deliberately NOT archived. **Restore-tested**: cloned from the bundle, HEAD matches
+`9f1ba8a4e`, 2125 commits, arm F present in `losses.py`, live arm weights intact. A backup
+that has not been restored from is not a backup.
