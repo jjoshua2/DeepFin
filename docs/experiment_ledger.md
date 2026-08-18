@@ -58217,3 +58217,80 @@ pre-registration, and the now-tested command is frozen as canonical for later ch
 Linear already gives ~1.0 logit gradient at p=0.003 versus 0.003 today (333x); the squared form
 gives ~6 there and ~13 at 1e-4, letting a handful of spectacularly buried moves dominate a
 minibatch. Huberise if more pressure is wanted later.
+
+#### 2026-08-18 — ✅ VERIFIED: the policy target IS sharper than the net, on matched support
+
+The support confound flagged in the entry above is **measured and rejected**. Two independent
+instruments, one of which reads the exact tensor the loss consumes.
+
+**Instrument 1 — production shards (`scratchpad/shard_target_sharpness.py`), n=8344.**
+The stored `policy_target` from the live replay window, i.e. `batch["policy_t"]` itself
+(`policy_target_temp` is absent from the live yaml ⇒ `retemper_main_policy_target` is the
+identity), against `policy_own` on the SAME rows, the SAME 175-plane v2_threats input WITH
+history, restricted to the SAME support:
+
+| metric | mean | sem |
+|---|---|---|
+| `n_legal` / `n_S_target` | 27.29 / 22.08 | |
+| `H_net_FULLlegal` | 0.9256 | 0.0072 |
+| `H_net_on_Starget` | 0.9253 | 0.0072 |
+| `H_target_on_Starget` | **0.7345** | 0.0068 |
+| **`dH(target − net | S_target)`** | **−0.1907 [−0.1977, −0.1838]**, t=**−54.0** | |
+| `tail_mass_net_outside_S` | **0.0003** | 0.0001 |
+| `KL(target ‖ net) on S` | 0.2504 | 0.0045 |
+| `target_top1` / `net_top1_on_S` | 0.7328 / 0.6689 | |
+| `argmax_agree` | 0.7631 | |
+
+**⚑ THE ARTIFACT HYPOTHESIS IS DEAD ON ITS OWN ARITHMETIC.** I estimated the discarded tail at
+~5% over ~20 moves (~0.30 nats, enough to explain everything). It is **0.03%**. Restricting the
+net to the target's support moves its entropy 0.9256 → 0.9253. There is no support gap to blame.
+Target sharper on **78.4%** of rows.
+
+**Instrument 2 — audit set, matched support (`scratchpad/matched_support_entropy.py`), n=256/ckpt.**
+Fresh Gumbel search at RL settings, so the target and the prior come from the SAME net (no
+checkpoint-drift confound), fen_only:
+
+| | base190 | arm231 |
+|---|---|---|
+| `H_raw_on_Strain` | 0.9764 | 0.9744 |
+| `H_train_on_Strain` | 0.6974 | 0.6748 |
+| `dH` | **−0.2791 [−0.3300, −0.2281]** t=−10.7 | **−0.2995 [−0.3622, −0.2369]** t=−9.4 |
+| `tail_mass_raw_outside_Strain` | 0.0036 | 0.0041 |
+| frac target sharper | 0.781 | 0.754 |
+
+The two instruments **differ in the direction that rules out the remaining confound**. Instrument 1
+scores a current net against targets made by SLIGHTLY OLDER nets (that is the real training
+condition, a ~1-day window) and reads −0.19; instrument 2 removes the drift entirely and reads a
+LARGER −0.28. ⇒ checkpoint drift is not manufacturing the effect, it is DILUTING it.
+
+**MECHANISM, now stated as fact rather than hypothesis.** Policy CE has `∂L/∂z_i = p_i − t_i`.
+A target sharper than the net's own output on the same support applies a net CONCENTRATION
+force every step. This is the missing half of `log_temp` learning NEGATIVE (−0.2718 on
+`policy_own`, a ~24% FLATTENING): the scalar has been fighting the objective, not expressing a
+preference. Both readings are consistent and neither was interpretable alone.
+
+**SF's entropy is NOT inflated by fabricated entries — question closed.** `_build_sf_policy_target`
+applies `sf_policy_label_smooth: 0.01` over the legal set only when SF's candidates do not already
+cover it (with `sf_multipv: 6` vs ~27 legal, essentially always). Measured: `sf_soft` carries
+**10.34 entries** but only **7.46** above the floor, and the fabricated tail is **0.06% of the
+mass** (`sf_mass_outside_Ssf` = 0.0006). ⇒ **the ENTRY COUNT is fabricated, the MASS is not.**
+Reading a support size as evidence of a soft teacher is the same mistake in miniature. This also
+retires the earlier "`sf_soft` covers 26.63 of 26.82 legal moves, so `S` was everything" note,
+which measured the floor.
+
+**Third axis, on SF's OWN support** (matched, n=256): `H_raw_on_Ssf` **0.7256** vs `H_sf_on_Ssf`
+**1.1338** ⇒ we are **0.408 nats sharper than SF inside SF's own candidate set**, and
+`M_S_raw_mass_on_Ssf` = **0.7846** ⇒ 21.5% of our mass sits on moves SF never scored. Josh's two
+failure modes are both real and they are **separable**: wrong SHAPE inside S (0.41 nats) and wrong
+MASS on S (21.5%). A temperature servo addresses only the first.
+
+**41 iterations of arms A+F moved NONE of this** (paired, same 256 positions, base190 → arm231):
+`dH` −0.0205 [−0.0741, +0.0331] · `KL_train_from_raw` −0.0027 [−0.073, +0.068] ·
+`dH_sf_minus_raw_on_Ssf` +0.0002 [−0.024, +0.024] · `M_S` +0.0099 [−0.002, +0.022]. Every CI
+straddles zero. The one non-trivial trend is `M_S` (our mass on SF's candidates, ~+1pp) — the
+right direction for arm F, and not significant at n=256.
+
+⇒ **the arms are not the lever on over-sharpness, and were never going to be**: the target itself
+supplies −0.19 nats of concentration per step, ~40x anything a one-sided auxiliary can offset.
+The fifth component (calibrated search-target temperature `T*`) is now the load-bearing one, not
+an addition.
