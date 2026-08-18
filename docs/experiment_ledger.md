@@ -58118,3 +58118,52 @@ gives constant gradient — relevant because the motivating case is p≈0.003.
 measured on the SAME position sample and legal-move support, not `H_ours(x) → 1.693 ∀x`: forced
 tactical positions SHOULD be sharp, and a per-position servo would destroy them. Log the
 pre-servo raw-logit entropy separately or the metric stops being a diagnostic once the servo is on.
+
+#### 2026-08-18 — ⚑⚑ CORRECTION: THE PROBABILITY FLOOR'S GRADIENT VANISHES TOO. IT IS NOT A DIFFERENT MECHANISM FROM ARM A.
+
+I claimed `relu(tau - p)` has "constant gradient below the threshold, so it does not care whether
+p is 0.008 or 0.0001 — it is strongest exactly where arm A is weakest." **That is true w.r.t. `p`
+and FALSE w.r.t. the LOGIT, which is where training acts.**
+
+`dL/dp = -1`, `dp/dz = p(1-p)` ⇒ **`dL/dz = -p(1-p)`, which vanishes linearly as p → 0** — the
+same rate as arm A's `-p_i(r_i - r̄)`.
+
+Logit gradient on SF's best move (regret 0, our mean regret 0.103, tau 0.0625):
+
+| p | arm A | F prob-hinge | F log-hinge | F log²-hinge |
+|---|---|---|---|---|
+| 0.05 | 0.00515 | 0.04750 | 0.950 | 0.424 |
+| 0.01 | 0.00103 | 0.00990 | 0.990 | 3.629 |
+| **0.003** | 0.00031 | **0.00299** | **0.997** | 6.055 |
+| 0.0001 | 0.00001 | 0.00010 | 0.9999 | 12.874 |
+
+⇒ **The floor beats arm A by a CONSTANT ~9.7x and shares its vanishing behaviour.** It is not the
+categorically different mechanism I described; it attenuates the same failure less. At p=0.003 a
+log-space hinge delivers **333x** the logit pressure of the probability hinge.
+
+**THE FIX** (successor, NOT applied live — the A+F ablation is running): `dlog(p)/dz = 1-p ≈ 1`, so
+`L = max(0, log tau - log p)` holds ~constant logit pressure at any depth, and
+`L = [max(0, log tau - log p)]²` scales with log-units below the floor (p=0.05 → 0.22 nats;
+0.01 → 1.83; 0.003 → 3.04; 1e-4 → 6.44). That is the right shape for an emergency
+search-visibility loss.
+
+**⚑ ALSO: ENTROPY AGREEMENT MUST NOT VETO THE CONDITIONAL KL.** My previous gate ("stay at 0.0
+unless ours|S is sharper than SF|S") was too narrow — two distributions can have IDENTICAL entropy
+and OPPOSITE rankings, e.g. `p^S = (.40,.30,.15,.08,.05,.02)` vs `q^S = (.02,.05,.08,.15,.30,.40)`.
+The KL supplies RANKING supervision, not only sharpness. ⇒ the instrument reports **six** numbers,
+not four: add `KL(q^S ‖ p^S)` and `E_{m~p^S}[r_SF(m)]` (conditional expected SF regret under OUR
+policy — the most interpretable of the six; an entropy-perfect distribution can still have terrible
+expected regret).
+
+| ΔH | KL | reading |
+|---|---|---|
+| bad | bad | the loss fixes sharpness AND ranking |
+| ~0 | bad | sharpness fine, SF supervision still valuable ⇒ ENABLE |
+| bad | small | a calibration/temperature problem, not this loss |
+| — | — | `M_S` low ⇒ off-support mass dominates; widened labelling is the priority |
+
+**On the floor threshold:** "1/16 is the pigeonhole threshold for top-16" and "this implementation
+DETERMINISTICALLY admits a move at p ≥ 1/16" are DIFFERENT claims. The second is the property the
+floor exists to enforce and is worth verifying against the production path once — an earlier
+simulation measured min P(searched) = 1.0000 at tau = 1/topk, but that simulated the selection rule,
+not the shipped code. A modest margin (~0.07-0.08) is likely right rather than the bare 0.0625.
