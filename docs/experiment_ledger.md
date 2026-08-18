@@ -59603,3 +59603,50 @@ what the repair consumes.
 feasibility survived a violent instrument change: `c43cae109`). It is narrower:
 **how much SF compute makes the ordering trustworthy enough to repair individual rows?**
 Credit: peer review, 2026-08-18.
+
+---
+
+### F-ONLY: `log_temp` prediction CONFIRMED against a real baseline — and my earlier "oscillating, t=1.6" was an ESTIMATOR ARTIFACT (2026-08-18)
+
+Supersedes the interim entry `3541baa54`. Two things changed: a denser post-flip series
+(12 points, from `scratchpad/dump_logtemp_trajectory.py`) and a REAL pre-flip baseline
+recovered from banked salvage pools that Ray had not pruned
+(`sfsl_gate_iter231_20260818`, `scratchpad/pinned_ckpt` @265, the banked boundary @297).
+
+| era | n | iters | slope / iteration | t | r^2 |
+|---|---|---|---|---|---|
+| A+F (arm A ON) | 3 | 231-297 | -3.349e-05 | -39.9 | 0.999 |
+| F-only (arm A OFF) | 12 | 303-314 | **-2.223e-04** | -12.0 | 0.935 |
+
+**Difference -1.888e-04, t = -10.17, dof 11, p < 0.0001, 95% CI [-2.30e-04, -1.48e-04].
+Ratio 6.6x.** Sign as pre-registered: arm A was the only sharpening term on both projections,
+so removing it lets `log_temp` fall faster.
+
+⚑⚑ **CORRECTION TO MY OWN INTERIM READ.** I reported the post-flip series as "OSCILLATING
+with amplitude comparable to its drift, t = 1.6". That was an **estimator artifact**: I
+estimated the trend from FIRST DIFFERENCES of 5 consecutive points. Differencing amplifies
+noise relative to a linear trend, so it is close to the worst available estimator here. OLS
+on LEVELS over the same kind of data gives **t = -12.0 with r^2 = 0.935** — 93.5% of the
+variance IS the trend, not oscillation. **A "no trend" verdict from first differences is not
+evidence of no trend.**
+
+**⚑ CONFOUND, AND IT IS MINE: the F-only window I fitted is the SAME window my offline SF
+jobs ran in.** Those jobs occupied 17:02-17:57 = iterations 303-313; the F-only fit is
+303-314. Ingest and games/iteration were unaffected (`b2b8b57fc`, both p > 0.5), and it is
+hard to construct a mechanism by which a `nice=19` Stockfish process changes a gradient — but
+"hard to construct" is not a control. **The trend must be re-fitted on post-job iterations
+(315+) before this is banked as a clean result.** First post-job point is iter 315.
+
+**Remaining limits, unchanged:**
+- The A+F baseline is n=3 with 1 dof. r^2 = 0.999 is NOT evidence of linearity at n=3 —
+  three points nearly always fit a line.
+- There is also a LEVEL step across the boundary: 297 -> 303 is -0.002033 over 6 iterations
+  (-3.39e-04/iter), faster than the fitted F-only slope. A step PLUS a slope change is
+  consistent with the intervention but is not separated by this fit.
+- `log_temp` is ONE scalar projection of the network. It is not evidence that F is producing
+  a better net, and the deciding readout is still the paired deep-SF audit.
+
+**Ops fix now in place:** `scratchpad/f_only_logtemp_trajectory.jsonl` is append-only and
+idempotent, and Ray's ~6-checkpoint window (~29 min) is sampled well inside its retention. The
+14-point series above only exists because banked pools happened to survive; the record now
+does not depend on that luck.
