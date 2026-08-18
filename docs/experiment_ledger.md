@@ -59115,3 +59115,49 @@ pushes it past ~20% that is itself a finding against the architecture.
 **Required production instrumentation:** feasible fraction, pre/post violated-edge count,
 candidate mass `M_C`, L1 edit, and infeasibility **versus replay age** — the last one because
 this whole entry exists because a quantity moved with checkpoint distance.
+
+#### 2026-08-18 — A+F VERDICT (policy-quality axis): NULL at +/-1 cp over 75 iterations
+
+Paired deep-SF audit, **n = 4000** identical positions, iter190 (PRE-arms) vs iter265
+(+75 iterations of arms A+F). `scratchpad/base4k_i190.jsonl` vs `scratchpad/dqfull_i265.jsonl`.
+
+| metric | iter190 | iter265 | delta | 95% CI | t |
+|---|---|---|---|---|---|
+| raw policy E[regret] | 52.54 | 52.76 | **+0.23** | [−0.72, +1.17] | +0.47 |
+| raw policy top1 regret | 46.92 | 48.38 | +1.46 | [−0.69, +3.60] | +1.33 |
+| train target E[regret] | 40.44 | 40.06 | −0.38 | [−1.93, +1.16] | −0.49 |
+| train target top1 regret | 37.32 | 36.65 | −0.68 | [−2.98, +1.62] | −0.58 |
+| PLAY search E[regret] | 37.51 | 37.52 | +0.01 | [−1.82, +1.85] | +0.02 |
+| PLAY search top1 regret | 36.38 | 36.09 | −0.29 | [−2.55, +1.96] | −0.25 |
+| raw policy top1-agree | 0.4572 | 0.4555 | −0.0018 | [−0.0101, +0.0066] | −0.41 |
+| train target top1-agree | 0.4913 | 0.4948 | +0.0035 | [−0.0069, +0.0139] | +0.66 |
+| PLAY search top1-agree | 0.5058 | 0.5090 | +0.0032 | [−0.0087, +0.0152] | +0.53 |
+
+**EVERY metric straddles zero, and the instrument is now sharp: the raw-policy E[regret] CI is
+[−0.72, +1.17], i.e. +/- ~1 cp.** Against the pre-committed rule ("0 +/- 3 cp earns a fairly
+strong negative verdict"), **A+F is NULL on policy quality.**
+
+**⚑ THE n=256 READ WAS NOISE, IN THE FLATTERING DIRECTION.** At 256 positions the same
+comparison showed raw E[regret] **−2.60 cp [−9.53, +4.32]** — a point estimate that looked like
+a small improvement. At 4000 it is **+0.23 [−0.72, +1.17]**. Had the 15-minute powered run been
+skipped, the recorded story would have been "a small improvement we cannot resolve" rather than
+"no improvement, resolved." **Underpowered point estimates were the single most repeated error
+of this session; this is the cheapest possible fix for it.**
+
+**SCOPE — this is the policy-quality axis ONLY.** The original prereg's deciding yardstick is a
+paired arena for +50 Elo at n=820, and that has NOT been run. This does not formally close the
+prereg on its own terms. It does make +50 Elo very implausible: an Elo gain of that size
+without any movement in deep-SF policy regret, target regret, or search regret would require a
+mechanism none of the instruments here can see.
+
+**CORRECTION TO MY OWN SUMMARY:** I wrote "three independent instruments prove A+F is not
+moving the net". `G_logtemp` is ONE SCALAR PARAMETER PROJECTION and does not establish that A
+and F cancel throughout the network. The supported statement is: **online agent performance has
+plateaued (`wdl_regret` 0.0309 -> 0.0286 then flat at sd 0.00006 with `pid_wr` back to 0.4974
+and `sf_nodes` pinned at 75000); the powered policy audit detects no improvement at +/-1 cp;
+and A and F are known to oppose each other strongly on the `log_temp` direction specifically.**
+
+⇒ **F-ONLY IS THE RIGHT NEXT ARM AND ITS RATIONALE IS UNCHANGED.** This null cannot distinguish
+"F is ineffective" from "F is useful and A opposes it" — which is exactly what the arm exists
+to separate, and the measured A/F opposition plus A's ~69% fabricated tail make the second
+hypothesis worth the compute.
