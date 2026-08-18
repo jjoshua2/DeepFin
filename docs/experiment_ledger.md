@@ -60042,3 +60042,52 @@ across a generation boundary. **Never compare `best_loss` across a `holdout_gene
 The F-only evidence that STANDS is unaffected and is the loss identity at iter 301 (`22f4810d5`):
 the A-excluded reconstruction closes against `train_loss` to residual -0.0000 while the
 A-included one is 0.10 wrong. That is a take-effect proof and never depended on `best_loss`.
+
+---
+
+### `log_temp`: the FROZEN FORCE CURVE, not an extrapolation (2026-08-18)
+
+Replaces the withdrawn linear extrapolation (correction 3 of `849591754`). Per the peer's
+instruction: plot Δ`log_temp` against **cumulative optimizer steps** and overlay the frozen
+force curve `G(log T)`, instead of projecting a line. Figure:
+`scratchpad/logtemp_force_overlay.png`; script `scratchpad/logtemp_force_plot.py`.
+
+⚑ x is **optimizer steps, not iterations** — views-targeting moved steps/iter across 87..100
+in this very window, so an iteration axis rescales x by ~15% for free.
+
+**⚑ SIGN CONVENTION READ OFF THE GENERATOR, NOT INFERRED.** `logtemp_sweep.py` computes
+`gce += -((p - t) * z).sum()` — MINUS dCE/d(log T). `G` is already the DESCENT direction, so
+the update is `dl/dstep = +eta * G(l)`. My first overlay assumed `-eta * G`, the least-squares
+absorbed it as `eta = -7.3e-5`, and I was one step from reporting "the trajectory moves
+opposite to the frozen force". It does not; the signs AGREE. A fitted rate coming back
+negative is a bug in the overlay, and that is the only reason it was caught.
+
+**The result with teeth — ZERO free parameters.** Taking `eta = lr = 3e-5` straight off the
+run, integrating the frozen curve along the realized trajectory:
+
+| | |
+|---|---|
+| predicted displacement over the window | **-0.00258** |
+| measured (iter 303 -> 335, 3399 steps) | **-0.00374** |
+| ratio | **1.45x** |
+
+An offline sweep run BEFORE the arm was flipped predicts the realized drift within ~45% with
+nothing fitted. Separately, the best-fit rate is `eta = 7.3e-5 = 2.43x lr` — the right order,
+and 2.4x is unremarkable under Aurora, which is not plain SGD.
+
+**⚑ WHAT THIS DOES NOT TEST: the deceleration.** R²(shape) = **0.009**. That is NOT a
+refutation — across the traversed range the frozen curve's predicted slope varies only
+-1.96e-6 -> -1.78e-6 (**~10%**), while per-point scatter is ~5e-6, i.e. ~3x the mean. The
+window is structurally incapable of resolving curvature. Do not quote the R² as evidence
+either way; quote the displacement.
+
+**⚑⚑ THE OPERATIONAL CONSEQUENCE, AND THE REASON THE LINE HAD TO GO.** Integrating the frozen
+model as the ODE it is (`dl/dstep = lr * G(l)`), from the current -0.28076 to within 0.001 of
+the root -0.31237 takes **~151,000 more optimizer steps ~ 1,589 more iterations**. The
+withdrawn linear extrapolation said iter ~459, i.e. ~124 iterations — **the line was ~13x too
+fast**, exactly the direction a relaxing system fails a linear model.
+
+⇒ **At the iter-375 readout the trajectory will have covered a few percent of the remaining
+gap, and that is the PREDICTED behaviour.** "log_temp has not reached -0.312" is not a
+failure signal, must not be a kill criterion, and must not appear in the readout as a
+disappointment. Only 10.6% of the initial gap has been covered so far, in ~34 iterations.
