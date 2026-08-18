@@ -59220,3 +59220,64 @@ SECONDARY = iter190, the pre-A/F absolute reference (4000-position audit already
 **CONFOUNDS.** Replay window is ~100% A+F-era at the boundary and turns over during the arm.
 Optimizer moments carry A's history transiently. `game_id` is absent from the audit set, so all
 audit CIs are position-level, not game-clustered.
+
+---
+
+### F-ONLY TAKE-EFFECT VERIFIED ON A REAL TRAINING ROW — iteration 301 (2026-08-18)
+
+**What was required.** The yaml dry-run and the absence of a `YAML reload failed` line are
+NOT verification: `resume_deploys_new_keys_not_changed_ones` burned this exact key once,
+with four green pre-flight checks on a value the trial did not run. The take-effect claim
+had to be made on a training row.
+
+**Method — the loss identity, not the step size.** `losses.py:1627-1639` sums the terms
+with no ramp: `+ float(w_sf_own_regret) * m_sf_own_regret`. So `train_loss` is
+reconstructible from the reported per-term columns and the yaml weights, and the arm's
+membership is decidable by which reconstruction closes.
+
+Reconstruction with `w_sf_own_regret = 0.0`, residual `train_loss - recon`:
+
+| iter | train_loss | recon(A=0) | recon + 0.7*m_A | residual vs train_loss |
+|---|---|---|---|---|
+| 297 | 5.0139 | 4.9176 | 5.0140 | +0.0964 |
+| 298 | 5.0299 | 4.9328 | 5.0299 | +0.0971 |
+| 299 | 5.0060 | 4.9111 | 5.0060 | +0.0948 |
+| 300 | 5.0179 | 4.9236 | 5.0181 | +0.0943 |
+| **301** | **4.9465** | **4.9466** | 5.0470 | **-0.0000** |
+
+Through iter 300 the A-INCLUDED reconstruction closes to 4 decimals; at iter 301 the
+A-EXCLUDED one closes and the A-included one is 0.10 wrong. **The term left the objective
+at iteration 301.**
+
+**The point prediction MISSED and that is informative.** Pre-registered drop was
+`0.7 * 0.13508 = 0.0946`; observed was `0.0714`. Cause: `m_sf_own_regret` ROSE
+`0.13508 -> 0.14343` the moment nothing was minimising it. ⇒ **a weighted-term removal does
+NOT drop the total by its last weighted value** — the unweighted term relaxes in the same
+step. The identity is the sound test; the step-size prediction is confounded by the arm's
+own relaxation.
+
+**F unaffected, as designed (single-key edit).** `m_sf_policy_floor` 0.10292 -> 0.10271 and
+`sf_policy_floor_binds_frac` 0.4839 -> 0.4871 across the boundary — F is still active and
+still binding on ~48% of rows.
+
+**Ruler handover fired.** `holdout_generation` 3 -> 4 and `best_loss` 7.193094 -> 7.158949
+on the SAME row (iter 301). This is review finding N1 (`e7e60f382`, "a live loss-weight flip
+must MOVE the holdout ruler, not freeze the best model") executing end to end: membership
+change -> `eval_ruler_id` change -> generation bump -> frozen best-model reference released.
+`active_loss_terms` hashes weight MEMBERSHIP, and 0.7 -> 0.0 is a membership change.
+
+⚑ **Correction to an in-session claim.** I briefly reported `holdout_generation` as "the
+wrong observable" because it still read 3 at iteration 300. It was the right observable; the
+edit landed ~16:44 and iteration 300 had already started. **A take-effect check on an
+iteration that began before the edit is a false negative** — read the first iteration that
+STARTED after the write, not the first that FINISHED.
+
+**Boundary state (banked).** `data/salvage/apf_endpoint_checkpoint_000297_20260818` (637M);
+`step 135363`, `policy_own.log_temp = -0.27497851848602295`,
+`exp_avg = -0.0013279905542731285`, `exp_avg_sq = 2.2753141820430756e-05`. Optimizer NOT
+reset, per review.
+
+**Status: LIVE-UNREAD.** Readout is the paired 4000-position deep-SF audit vs ckpt297
+(primary) and iter190 (secondary) after ~75 iterations of F-only. Direction-only secondary:
+`policy_own.log_temp` should displace DOWNWARD from -0.27498 (A was the sharpener; the
+numeric target is withdrawn as a reference, not a threshold).
