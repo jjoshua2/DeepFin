@@ -226,6 +226,12 @@ def test_the_eval_path_is_wired_to_the_pinned_kwargs() -> None:
     constructed Trainer, a model and a replay buffer. Both ``compute_loss`` call
     sites are named, so a future edit that points the eval at ``_loss_kwargs``
     (or adds a third call site with neither) fails here.
+
+    ⚑ The eval site now stars a LOCAL (``eval_loss_kwargs``), because the async
+    path scores a snapshot under the objective captured at ``start()``. Pinning
+    the local's NAME alone would make this test vacuous for its own regression --
+    a local can be bound to anything, ``self._loss_kwargs`` included. So the
+    binding SET is pinned too, and both branches must resolve to a pinned object.
     """
     import ast
     import inspect
@@ -241,9 +247,23 @@ def test_the_eval_path_is_wired_to_the_pinned_kwargs() -> None:
         if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "compute_loss"
     }
     assert sites == {
-        "_compute_metrics": ["self._eval_loss_kwargs"],
+        "_compute_metrics": ["eval_loss_kwargs"],
         "_run_optimizer_step": ["self._loss_kwargs"],
     }, f"compute_loss call sites moved: {sites}"
+
+    metrics_fn = next(
+        fn for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef) and fn.name == "_compute_metrics"
+    )
+    bound = {
+        ast.unparse(node.value)
+        for node in ast.walk(metrics_fn)
+        if isinstance(node, ast.Assign)
+        and any(getattr(t, "id", None) == "eval_loss_kwargs" for t in node.targets)
+    }
+    assert bound == {"self._eval_loss_kwargs", "objective.loss_kwargs"}, (
+        f"the eval kwargs local must resolve to a PINNED object on every branch: {bound}"
+    )
 
 
 def test_the_pinned_kwargs_override_only_the_target_shape() -> None:
