@@ -59732,3 +59732,69 @@ for the midpoint at iter 338) matters more for the same reason.
 
 Not chased further: it is an unexplained ~12%/5h throughput drift, not a correctness problem,
 and the F-only comparison is at matched ITERATION counts so it does not affect the verdict.
+
+---
+
+### THREE CORRECTIONS from peer review: log_temp normalisation, the rho ranking, and a denominator (2026-08-18)
+
+**(1) The `log_temp` p-value is WITHDRAWN as a significance claim.** Corrects `526f85957`,
+which quoted t=-11.98, p=3e-7. Those 12 values are a **serial time series of checkpoints, not
+12 independent observations**, and the A+F baseline is n=3. An OLS slope-difference t-test
+assumes independence it does not have, so the p-value overstates confidence by an unknown
+factor. ⚑ Having just corrected two other statistics for exactly this class of error
+(first-differencing a trend; bucket-averaging a trending series), quoting a third
+independence-assuming test was the same mistake a third time.
+
+**Restated on the right x-axis.** Steps/iteration rose 15.8% over this window, so an
+iteration-indexed slope is the wrong normalisation. Against **cumulative optimizer steps
+since the flip** (`trainer_steps_done`, cumsum; iter 301 = step 12345):
+
+| era | n | slope per OPTIMIZER STEP | r^2 |
+|---|---|---|---|
+| A+F (arm A ON) | 3 | -3.430e-07 | 0.998 |
+| F-only (arm A OFF) | 12 | **-2.073e-06** | 0.931 |
+
+**Ratio 6.0x** (was 6.6x iteration-indexed). ⇒ the step-count growth shaves the ratio slightly
+and comes nowhere near explaining it. **The persuasive content is MAGNITUDE AND CONSISTENCY,
+not a p-value**: 12 consecutive checkpoints move monotonically downward at ~6x the recovered
+A+F rate.
+
+**Against the frozen reference.** The prereg's approximate reference was `log_temp ~ -0.312`.
+At the observed rate, from -0.27498 at the flip, the projected value at the ~iter 375 readout
+(~7500 steps) is **~-0.290** — roughly 30% of the way to the reference, which would not be
+reached until ~iter 459. Stated as a falsifiable interim trajectory, not a threshold.
+
+**(2) The static drift ranking does NOT promote rho=1.** Corrects the framing in `c1cc6e9b2`.
+That screen measured STATIC repairs — computed once and stored — and found rho=0 durable on
+0.442 vs rho=1's 0.510 per originally-violated row. ⚑ **But the architecture we intend to
+train recomputes `t' = Pi(t; p_current.detach())` at CONSUMPTION time, and for that design
+static survival is DELIBERATELY IRRELEVANT.** The load-bearing comparison is DYNAMIC
+feasibility, previously measured at **~88-98% for rho=0 vs ~47-55% for rho=1** (`dc642a186`).
+⇒ **rho=0 remains the leading live design.** The static screen's real contribution is a clean
+replication of *why stored neutral repairs are bad* (47.7% survival), which is an argument FOR
+dynamic recomputation, not for rho=1 — that variant solves a problem dynamic projection
+removes, while keeping a very large feasibility penalty. rho=1 is reconsidered only if an
+offline QUALITY screen shows that merely vetoing wrong CE pressure is too weak.
+
+**(3) The 1897 -> 1640 denominator, accounted exactly.**
+
+    4000  rows in dqfull_i265.jsonl
+    -2103  |union| < 2 (no pair to order)
+    = 1897  eligible and labelled (0 label failures, 0 missing candidates,
+            0 undefined q, 0 zero-mass targets -- ALL verified zero)
+    -  257  ⚑ SF TIES: no strict edge q_i > q_j anywhere in the union
+    = 1640  screened
+
+**All of the gap is ties, and ties are exactly the rows that CANNOT be violated**, so
+excluding them inflates prevalence:
+
+| denominator | violated | rate |
+|---|---|---|
+| 1640 (tie-excluded, as I reported) | 731 | **0.4457** |
+| 1897 (tie-included) | 731 | **0.3853** |
+| paired projection arm B: 1555 | 597 | **0.3839** |
+
+⇒ **the 44.6% vs 38.4% discrepancy was entirely a denominator, and on a common one the two
+screens agree to 0.001.** The 0.446 figure must not be compared to the 0.384/0.407 projection
+numbers. 257/1897 = 13.5% of labelled rows have SF indifferent across the whole candidate
+union — worth knowing in its own right: on those rows there is nothing for a repair to do.
