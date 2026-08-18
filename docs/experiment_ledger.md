@@ -58672,3 +58672,52 @@ its intercept, so predict the DISPLACEMENT, not the level:
 all legal logits; **`G_logtemp` = −dL/dlog_temp**, which requires the normal-moves-only
 restriction. They are numerically close here ONLY because `ft_bias` is absent and the
 underpromotion errors cancel in aggregate — neither is guaranteed in another net.
+
+#### 2026-08-18 — SAME-MODEL ΔQ: the NULL replicates, the POSITIVE does not
+
+**`prior_top1_index` never blocked this.** Both sides are generated NOW from one frozen theta,
+so nothing had to be stored at selfplay time: `a_P` = argmax of the net's raw policy, `a_M` =
+argmax of Gumbel search on the SAME net, both scored by the FROZEN DEEP-SF audit labels
+(>=1M nodes, MultiPV >= 10). The banked `scratchpad/dumpsup_*.jsonl` dumps already contained it.
+
+| instrument | search better | worse | dQ mean | 95% CI |
+|---|---|---|---|---|
+| production window, shallow MPV6 (n=2343) | **0.553** | 0.265 | +34.5 cp | [+25.8, +43.3] |
+| same-model deep-SF, PLAY search, iter231 (n=117) | **0.410** | **0.436** | +21.2 cp | [−36.2, +78.6] |
+| same-model deep-SF, RL target, iter231 (n=84) | 0.393 | 0.381 | +68.9 cp | [+1.1, +136.6] |
+| same-model deep-SF, PLAY, iter190 (n=120) | 0.392 | 0.383 | +32.8 cp | [−13.2, +78.8] |
+| same-model deep-SF, RL target, iter190 (n=75) | 0.347 | 0.333 | +42.6 cp | [−28.3, +113.5] |
+
+**⚑ "SEARCH IMPROVES THE MOVE ON AVERAGE" DOES NOT REPLICATE ON THE CLEAN INSTRUMENT.** On
+same-model deep SF the win rate is a coin flip (0.35-0.41 better vs 0.33-0.44 worse; PLAY at
+iter231 is WORSE more often than better), every median is **+0.00**, and three of four CIs
+include zero. The means are entirely tail-driven.
+
+**THE LEADING EXPLANATION IS A SELECTION EFFECT IN THE ORIGINAL RUN, NOT NOISE.** The
+production-window ΔQ could only score disagreements where **BOTH** moves happened to be in
+SF's MultiPV-6 list — 55.7% of them. That restriction conditions on search having picked
+something SF already liked, which is exactly the direction that manufactures "search agrees
+with SF more than the prior does". The deep audit has no such conditioning. ⇒ the +34.5 cp
+headline is **suspect**, and the 44.3% it discarded (the S x T / T x T population) is not a
+missing extension of that result — it may be the half that would have reversed it.
+
+**THE NULL REPLICATES AND IS THE ROBUST FINDING.** `r(dH_search, dQ)` across four same-model
+readouts: pearson −0.187, −0.027, −0.008, +0.100; spearman −0.198, −0.074, −0.088, +0.199.
+All straddle zero, as did the production-window +0.019 / −0.007 at n=2343. ⇒
+**the AMOUNT search sharpens carries no information about whether the change is correct** —
+now established on two instruments with opposite selection properties.
+
+**⚑ CAVEATS, and they are large.** n = 75-120 disagreements per cell; the audit set is 256
+sampled positions of `fen_only` encoding (NO history, NO castling) from a curriculum-sourced
+population; heavy tails with zero medians make these CIs optimistic. **This does not establish
+that search fails to improve the move — it establishes that the earlier claim it does is not
+supported once the SF6 conditioning is removed.** Settling it needs a same-model dump over
+far more positions.
+
+⇒ **DIRECT CONSEQUENCE FOR THE ROADMAP.** Pairwise ΔQ supervision `CE(sigma((Q_M-Q_P)/tau),
+sigma(z_M - z_P))` is now MORE attractive, not less: if search's own choice is a coin flip on
+deep SF, then SF's pairwise verdict is exactly the information the loop does not already have,
+and training on `z_M - z_P` supplies it directly instead of using SF to re-weight a self-search
+target that may carry no edge. It also inherits none of arm A's fabricated tail and, unlike A,
+its gradient does not vanish when the SF-preferred move has tiny absolute prior — the two-way
+conditional softmax sees only the logit DIFFERENCE.
