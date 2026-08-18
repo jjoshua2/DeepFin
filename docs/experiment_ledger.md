@@ -59360,3 +59360,45 @@ a DIFFERENT teacher, and the instruments must not be mixed.**
 
 **Status: gate PASSED with a constraint.** Next: re-run the graph projection on complete
 `searchmoves` labels — computed AND applied on that one instrument.
+
+---
+
+### F-ONLY interim: `policy_own.log_temp` moved DOWN as predicted — and the read is UNDERPOWERED (2026-08-18)
+
+Direction-only secondary from the F-only prereg (`5a220c395`). Arm A was the only
+sharpening term on both projections, so removing it should let `log_temp` FALL.
+
+| era | iter | `policy_own.log_temp` |
+|---|---|---|
+| A ON | 265 (pinned) | -0.273858 |
+| A ON | 297 (boundary, banked) | -0.274979 |
+| **A OFF** | 303 | -0.277012 |
+| A OFF | 304 | -0.277517 |
+| A OFF | 305 | -0.277329 |
+| A OFF | 306 | -0.277989 |
+| A OFF | 307 | -0.277845 |
+| A OFF | 308 | -0.278377 |
+
+Rates: A-ON **-3.50e-5 / iteration** (265->297); A-OFF **-2.73e-4 / iteration** (303->308).
+~**7.8x faster**, sign as predicted, cumulative displacement -0.00340 over 11 iterations vs
+the -0.00039 the A-ON rate would have produced.
+
+⚑⚑ **DO NOT BANK THIS AS A RESULT, FOR THREE REASONS, AND I HAVE ALREADY RETRACTED ONE
+`log_temp` TREND CLAIM THIS WEEK ON THE FIRST OF THEM.**
+1. **The A-ON baseline is TWO POINTS 32 iterations apart** — the exact shape of the withdrawn
+   "log_temp is still falling" claim. It is a slope drawn through two dots.
+2. **The A-OFF rate is not individually significant.** The 5 per-iteration deltas are
+   -5.05e-4, +1.88e-4, -6.61e-4, +1.44e-4, -5.32e-4: mean -2.73e-4, sd 3.75e-4,
+   SEM 1.68e-4 ⇒ **t = 1.6**. The series OSCILLATES with amplitude comparable to its drift.
+3. `log_temp` is ONE scalar projection of the network, not network-wide evidence — the same
+   caveat that applies to `G_logtemp`.
+
+⇒ Read as **consistent with the prereg's direction, and nothing more**. The deciding readout
+is unchanged: the paired 4000-position deep-SF audit vs ckpt297 (primary) / iter190
+(secondary) after ~75 iterations of F-only.
+
+⚑ **OPS CONSEQUENCE — Ray keeps only SIX checkpoints.** At iteration 308 the surviving set
+was 303-308 inclusive; every pre-flip checkpoint except the two BANKED ones was already
+gone. A dense pre/post series for any scalar is therefore unrecoverable after the fact.
+**Bank a checkpoint at the flip AND at the readout**, or the comparison ends up being two
+dots again. The readout checkpoint (~iter 375) is not yet banked.
