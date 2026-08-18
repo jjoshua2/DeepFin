@@ -59926,3 +59926,39 @@ trained objective, which is the trade already accepted for `policy_target_temp`.
 F's), and the fix is a semantic change to what `test_loss` MEASURES on a load-bearing metric.
 Bundling it into a PR that is already four commits of ruler work would make it unreviewable.
 Explicitly scoped rather than silently deferred.
+
+---
+
+### THREE WORDING CORRECTIONS to the F-only readouts (2026-08-18)
+
+**(1) "Narrowing generalisation gap" is WITHDRAWN.** I reported `test_policy_loss` falling
+while train `policy_loss` rose and called it a narrowing generalisation gap. **The two losses
+are not estimates on the same distribution**: `test_policy_loss` is a FROZEN holdout, while
+`policy_loss` is measured on an EVOLVING replay population that turns over continuously. A
+gap between them is not a generalisation gap; it is partly a distribution difference.
+
+The safe statement, which is what the observation supports:
+
+> Frozen-holdout policy CE has begun improving under F-only while CE on the current replay
+> stream has not. This is consistent with reduced overfitting; it does NOT establish a
+> shrinking generalisation gap.
+
+**(2) Window-comparison p-values are DROPPED**, for the same serial-correlation reason already
+applied to `log_temp` (`a5003795f`). The `p=0.999` on "no policy-loss spike" and the `p<1e-4`
+on the `m_F` / `binds_frac` shift are pre/post window comparisons on autocorrelated series and
+assume independence they do not have. ⚑ The absence of a boundary spike needs no p-value at
+all — `policy_loss` reads 0.89695 on both sides of the flip, and that is the whole content.
+State the numbers, not the tests.
+
+**(3) ⚑ The `log_temp` LINEAR EXTRAPOLATION IS MECHANISTICALLY WRONG.** I wrote that at the
+observed rate the frozen reference `-0.312` "would not be reached until ~iter 459". That
+treats the trajectory as a line. It is not: the frozen sweep predicts a RESTORING CE force as
+`log_temp` approaches its new root, so the expected path DECELERATES toward equilibrium —
+relaxation toward a fixed point, not linear travel through it. A linear extrapolation
+systematically overstates the time to reach a target it should asymptotically approach.
+
+- KEEP: "projected ~-0.290 at iter 375 **if the early slope persisted**" — a descriptive
+  extrapolation, labelled as one.
+- DROP: "reaches -0.312 at ~iter 459". That must not become a prediction, and above all must
+  not become a FALSIFIER — failing to arrive at a fixed point on a linear schedule is the
+  expected behaviour of a relaxing system, so a test built on it would reject a correct model.
