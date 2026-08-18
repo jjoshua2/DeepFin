@@ -58479,3 +58479,49 @@ untracked tarball (1366 files) and a FULL 151k-path manifest naming the 74G of r
 output deliberately NOT archived. **Restore-tested**: cloned from the bundle, HEAD matches
 `9f1ba8a4e`, 2125 commits, arm F present in `losses.py`, live arm weights intact. A backup
 that has not been restored from is not a backup.
+
+#### 2026-08-18 — ✅ THE `log_temp` BOOKS CLOSE. THE MAIN CE IS NEUTRAL; A vs F IS THE WHOLE FORCE.
+
+`scratchpad/force_by_population.py`, iter-265 checkpoint. Same three projections, three
+populations. Production samples `surprise_mix = 0.5` — 50% uniform / 50% priority
+(`disk_buffer.py:545`) — across the full ~1.5M window.
+
+| population | `G_CE` | `G_A` × 0.7 | `G_F` × 0.8 | weighted total | ⇒ `dL/dlog_temp` |
+|---|---|---|---|---|---|
+| newest 40 shards, UNIFORM | **−0.04105** | +0.01992 | −0.03364 | −0.05477 | **+0.0548** |
+| full window (750 shards), uniform | **+0.01095** | +0.02460 | −0.02847 | +0.00708 | −0.00708 |
+| full window, **priority 50/50** | **+0.00440** | +0.02637 | −0.02895 | **+0.00183** | **−0.00183** |
+| **live AdamW `exp_avg`** | | | | | **−0.00206** |
+
+**−0.00183 against a live −0.00206: same sign, 11% apart.** With no missing term, no clipping
+model, no mirror augmentation and no shuffle-buffer warm-up, that is the residual closing.
+
+**⚑ THE DOMINANT FACTOR IS THE WINDOW, NOT THE PRIORITY WEIGHTING — my own hypothesis was
+half wrong.** Newest-40 → full-window flips the total's sign on its own (−0.0548 → +0.0071);
+priority then moves it +0.0071 → +0.0018. I named priority skew as the leading candidate;
+**recency was the larger distorter.** Window stats: CV 0.975, top-decile mass 0.340, sampled
+priority ×1.464 the window mean, `H_prior` 0.911 priority vs 0.874 uniform (priority selects
+higher-entropy positions, as surprise weighting should).
+
+**⇒ THE MAIN POLICY CE IS NEUTRAL ON LOGIT SCALE: `G_CE` = +0.0044 [sem 0.0030], t = 1.5.**
+Indistinguishable from zero on the population the optimiser actually sees. **BOTH of my earlier
+claims are dead** — "standing concentration force" (retracted `ba94ebb31`) and "net flattening
+force" (retracted here). Each was a recency-biased subsample of the same quantity. **Third
+population artifact in one session, and the first two were caught by review, not by me.**
+
+**⇒ A AND F CARRY THE ENTIRE `log_temp` FORCE AND NEARLY CANCEL: +0.0264 vs −0.0290.**
+The near-stationary `log_temp` (−0.274, drifting −2.5e−7/step) is exactly this cancellation.
+A's character is unchanged across all three populations — `A_tail_share` 0.688–0.694,
+`F_binds` 0.475–0.534 — so the *contamination* finding was never population-dependent, only
+the CE's sign was.
+
+**PRE-REGISTERED, FALSIFIABLE PREDICTION FOR THE F-ONLY ARM (A=0, F unchanged):**
+removing A leaves `G_total` = +0.0044 − 0.0290 = **−0.0246**, i.e. `dL/dlog_temp` = **+0.0246**,
+a consistently-signed force **13x** today's. Adam at lr 3e−6 with a consistent sign moves
+`log_temp` at up to −3e−6/step ⇒ **`policy_own.log_temp` should fall by roughly −0.010 to
+−0.015 over the first ~5000 steps (~33 iterations), against today's −2.5e−7/step drift.**
+- **CONFIRMS** the accounting if observed.
+- **FALSIFIES** it if `log_temp` stays flat — which would mean the A/F cancellation is not what
+  holds the equilibrium and the term set is still not closed.
+This is a free readout: it needs no extra compute, only reading `policy_own.log_temp` off the
+checkpoint series that already exists.
