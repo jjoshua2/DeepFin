@@ -58167,3 +58167,53 @@ DETERMINISTICALLY admits a move at p ≥ 1/16" are DIFFERENT claims. The second 
 floor exists to enforce and is worth verifying against the production path once — an earlier
 simulation measured min P(searched) = 1.0000 at tau = 1/topk, but that simulated the selection rule,
 not the shipped code. A modest margin (~0.07-0.08) is likely right rather than the bare 0.0625.
+
+#### 2026-08-18 — ⚑ UNVERIFIED, DO NOT CITE: "the training target is sharper than the net"
+
+`scripts/audit_targets.py` reports on the same audit positions:
+
+| row | entropy | support |
+|---|---|---|
+| (a) net raw policy | **0.8827** | all ~27 legal |
+| (d) production training target | **0.6255** | Gumbel candidate set (~16), ZERO elsewhere |
+| (c) SF MultiPV soft target | 1.1841 | see caveat |
+
+**IF that survives a matched-support check it is a primary finding**, because policy CE has
+`∂L/∂z_i = p_i − t_i`: a target sharper than the net's own output is DIRECTLY rewarding
+concentration, which would explain the otherwise strange fact that `log_temp` learned NEGATIVE
+(trying to flatten) while the net stayed over-sharp — the scalar fighting the objective.
+
+**⚑ IT IS NOT YET VERIFIED, AND THE ARITHMETIC SAYS IT MAY BE PURE ARTIFACT.** The target is zero
+outside the candidate set while the raw policy spreads mass over every legal move. A tail of ~5%
+spread over ~20 moves contributes `0.05·ln(20/0.05) ≈ 0.30 nats` — **larger than the 0.26 gap.**
+⇒ the entire effect could be support-size, not sharpness. Third mismatched-support confound in
+one session; the instrument is being hardened to make matched support structural rather than a
+convention, with `tail_mass_ours` as the honest home for what the restriction discards.
+
+**⚑ SAME CAVEAT ON (c) 1.1841**: unknown whether it is over genuine MultiPV entries only or over a
+full vector containing `default_regret` pseudo-labels. `sf_soft` in the banked BT4 dump carried
+26.63 entries against 26.82 legal — i.e. essentially all legal moves — so the fabricated-tail
+inflation is a live possibility here too. Not a clean SF-teacher entropy measurement until checked.
+
+**IF CONFIRMED, it adds a FIFTH component to the architecture**: calibrate the SEARCH TARGET's
+temperature. `t_T = softmax(log t / T)` with `T*` chosen from a held-out population, blended
+`t_final = (1−α)·t_search + α·t_T*`. This retains search's RANKING and its ~100% row coverage and
+changes only confidence. ⇒ fix the training signal itself rather than asking a servo to fight the
+optimizer forever: a servo alone lets the net drive internal logits ever sharper while the scalar
+flattens ever harder, both fighting indefinitely with a calibrated-looking output.
+
+**PRIORITY ORDER:** (1) confirm 0.6255 on matched support; (2) the six same-support SF metrics;
+(3) find WHERE search sharpens 0.88 → 0.63 — completed-Q transform, visit construction, or a
+target-finalisation step. If target GENERATION is the dominant sharpness source, fixing it buys
+more than any auxiliary loss.
+
+**PROTOCOL:** the prereg's "exact command" (`--compare --paired --report-top1
+--report-cp-regret`) **does not exist** — invented, never run, exactly what the "an exact command
+means it was RUN" rule exists to prevent. The paired 512-position run at a fixed seed is kept and
+relabelled **"paired post-hoc reconstruction of the intended gate"**, NOT a satisfied
+pre-registration, and the now-tested command is frozen as canonical for later checkpoints.
+
+**F successor: start with the LINEAR log hinge**, `max(0, log τ − log p)`, not the squared form.
+Linear already gives ~1.0 logit gradient at p=0.003 versus 0.003 today (333x); the squared form
+gives ~6 there and ~13 at 1e-4, letting a handful of spectacularly buried moves dominate a
+minibatch. Huberise if more pressure is wanted later.
