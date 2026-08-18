@@ -59402,3 +59402,61 @@ was 303-308 inclusive; every pre-flip checkpoint except the two BANKED ones was 
 gone. A dense pre/post series for any scalar is therefore unrecoverable after the fact.
 **Bank a checkpoint at the flip AND at the readout**, or the comparison ends up being two
 dots again. The readout checkpoint (~iter 375) is not yet banked.
+
+---
+
+### TARGET REPAIR ON COMPLETE LABELS: the architecture SURVIVES the instrument, the PER-ROW verdict does not (2026-08-18)
+
+Follow-up to the teacher gate (`423a7fc9a`). The graph projection's headline
+"40.7% violated, 97.1% repairable" (`1e3774661`) was computed against the frozen audit set
+and SKIPPED every row where a candidate was missing from its MultiPV list. Both halves of
+that are now measured.
+
+**Labels.** `scratchpad/label_union_sm.jsonl` (worktree `chess-teacher`): one restricted
+`searchmoves` search per row over the candidate union, production nodes 75000, syzygy pair.
+**1897 rows labelled from 4000 scanned (2103 have |union| < 2), 0 errors, and
+`INCOMPLETE_rows: 0`** — the completeness claim is measured, not assumed.
+
+**⚑ THREE INSTRUMENTS, NOT TWO — do not collapse them.** The gate compared `searchmoves`
+against production's MultiPV-6 @ 75k. THIS comparison's arm A is the FROZEN AUDIT SET
+(>=1M nodes, MultiPV >=10), a deeper and wider instrument again. That is why coverage here
+reads 82.0% while the gate read 61-68%: different arm, not a contradiction.
+
+**Coverage.** audit set covers **82.0%** of |union|>=2 rows; `searchmoves` **100.0%**.
+
+**PAIRED (same 1555 rows both instruments can score):**
+
+| arm | edges/row | VIOLATED | LP feasible / violated | infeasible / ALL rows | mean L1 |
+|---|---|---|---|---|---|
+| A audit (MPV>=10) | 1.10 | 633 = **0.407** | 588/633 = 0.929 | 45/1555 = 0.0289 | 0.4625 |
+| B `searchmoves` | 1.08 | 597 = **0.384** | 555/597 = 0.930 | 42/1555 = 0.0270 | 0.4471 |
+
+**RESULT 1 — the aggregate architecture is ROBUST to the teacher.** Violation rate
+0.407 -> 0.384; feasibility 0.929 -> 0.930; L1 cost 0.4625 -> 0.4471. Swapping the SF
+instrument moves nothing that the design rests on.
+
+**RESULT 2 — ⚑⚑ the PER-ROW verdict is NOT robust: 22.8% disagreement.** Of 1555 paired
+rows, **159 are clean under A and violated under B, and 195 the reverse (354 = 0.228)**.
+Same shape as the gate: aggregate stable, per-row unstable. Since the repair is APPLIED per
+row, a repair computed on B's edges is, on ~23% of rows, fixing a violation A does not see
+or missing one A does. ⇒ **the one-instrument rule from the gate is confirmed at the point
+of use, not just in principle.**
+
+**RESULT 3 — the rows the audit set cannot score are NOT special (a useful null).** The 342
+B-only rows read 0.392 violated and 0.910 feasible, statistically indistinguishable from the
+paired population's 0.384/0.930. ⇒ the old 18% coverage loss cost POWER, not validity; it
+was not selecting an easy or hard subpopulation.
+
+**⚑ RECONCILED: "97.1% repairable" and "92.9% repairable" are the SAME RUN, different
+denominators.** A has 45 infeasible rows; 45/1555 = 2.89% of ALL rows, so `1 - 0.0289 =`
+**0.9711** — the earlier figure exactly. Per rows that actually NEED repair it is
+588/633 = **0.9289**. Both are correct and they answer different questions; the second is
+the one a repair mechanism is judged on. This is a same-name-different-population trap, and
+it cost a transcription audit of `project()` to rule out a code difference first (there is
+none: the only textual delta is a `(0.0, 1.0)` vs `(0.0, None)` upper bound on `t'`, which
+cannot bind because `sum(t'_C) = sum(t_C) <= 1` already implies it).
+
+**Status.** The repair architecture is GO on complete labels, under the one-instrument
+constraint. Next: screen the four repair variants (rho=0 neutral / rho=1 reflection / full
+transplant / unchanged / zero-CE) on THESE labels, computed and applied on `searchmoves`
+alone.
