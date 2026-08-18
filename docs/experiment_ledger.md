@@ -59798,3 +59798,70 @@ excluding them inflates prevalence:
 screens agree to 0.001.** The 0.446 figure must not be compared to the 0.384/0.407 projection
 numbers. 257/1897 = 13.5% of labelled rows have SF indifferent across the whole candidate
 union — worth knowing in its own right: on those rows there is nothing for a repair to do.
+
+---
+
+### DESIGN: the convergence ladder is now an ADAPTIVE-TEACHER experiment (2026-08-18, HELD not launched)
+
+`scratchpad/order_convergence_ladder.py` (worktree `chess-teacher`). Upgraded per peer review
+from "measure a convergence curve" to "measure a STOPPING POLICY", because a curve tells you
+how noisy the teacher is and a policy tells you what to DO about it.
+
+**Measures, on an UNCONDITIONAL sample** (not conditioned on the shallow instruments
+disagreeing — that conditioning is exactly why the 26-vs-15 tiebreak cannot give an absolute
+error rate):
+
+    P(R_N == R_10N),  P(U_N == U_10N)      each instrument vs ITS OWN 10N
+                                            (never the other's -- that would fold the
+                                             restriction difference into a convergence read)
+
+and per-edge signs at N, 2N, 4N, 10N, giving the stopping quantities:
+
+    P(s_10N == s_2N | s_N == s_2N)          stop after the N->2N agreement
+    P(s_10N == s_4N | s_2N == s_4N)         stop after the 2N->4N agreement
+    fraction of edges stopping at each stage
+
+⇒ **the deliverable is an adaptive SF teacher**: score {P, RL, PLAY} at N; accept the ordering
+if it is unchanged at 2N; else escalate to 4N, then 10N. This is #425's adaptive label
+allocation with the allocated quantity changed from generic root value to **confidence in
+candidate ORDERING**, which is what the repair actually consumes.
+
+Reports both argmax and per-EDGE sign stability, since the repair consumes edges.
+
+**Why it is expected to be cheap:** the union is 2-3 moves, so a restricted search spends its
+whole budget separating exactly the moves in question, while MultiPV-k spreads it over k lines
+and under-resolves the low-ranked ones. Restricted may reach high ordering stability at a much
+lower budget than unrestricted MultiPV-10.
+
+**HELD.** Not launched until the F-only operational situation is safe (midpoint bank at iter
+338 armed; readout bank at ~375 owed; GPU at 89.9% memory).
+
+**This is now the gating question for the whole target-repair programme:**
+**at what restricted-SF node budget does candidate-edge ordering become reliable enough to veto
+CE supervision?** Everything else about the target transform waits behind it.
+
+---
+
+### GAP: the allocator diagnostic CANNOT be run without a restart (2026-08-18)
+
+Peer review is right that "GPU at 29.3/32.6 GB" is *consistent with* fragmentation but does
+not identify it, and that the discriminating read is torch's own counters:
+
+    reserved UP + allocated FLAT + inactive_split_bytes UP   => fragmentation / caching
+    allocated UP                                             => something RETAINS tensors/state
+    both FLAT while steps/s falls                            => the memory story is wrong
+
+⚑ **None of these are instrumented.** `grep` over `chess_anti_engine/` finds **zero**
+occurrences of `memory_stats`, `memory_allocated`, `memory_reserved`, `num_alloc_retries` or
+`inactive_split`, and `progress.csv` has no memory column. So the diagnostic needs a trainer
+code change ⇒ a restart ⇒ mutating the live F-only run mid-experiment, which is exactly what
+must not happen. **It waits for the next natural restart, and the counters should be added
+then.**
+
+Non-invasive substitute running meanwhile: `scratchpad/sample_gpu_proc_mem.sh` samples
+per-PROCESS device memory every 60s for 12 minutes. It is RESERVED-side only and **cannot**
+separate fragmentation from retention — but flat-vs-growing already discriminates one
+hypothesis, and it needs no code change.
+
+⇒ Until then, "allocator fragmentation" is a HYPOTHESIS, not the diagnosis. The ledger entry
+`f017c0b1d` should be read with that word.
