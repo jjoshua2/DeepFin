@@ -57961,3 +57961,65 @@ Ported to the live branch by **cherry-pick, NOT by merging main** — main is 78
 `selfplay/finalize.py`, `replay/sample.py`, `model/transformer.py` and `stockfish/uci.py`.
 Merging them would have made a +50 Elo reading unattributable. All three commits cherry-picked
 with ZERO code conflicts; the only conflict was this file.
+
+#### LAUNCHED 2026-08-17 19:02 — and the take-effect check EARNED ITS KEEP
+
+Live at `5af3b1e8a` on `ops/live-20260725`, resumed from iteration 191.
+Ported by CHERRY-PICK, not by merging main (main is 78 commits ahead and touches 25 files
+under `chess_anti_engine/` incl. `selfplay/finalize.py`, `replay/sample.py`,
+`model/transformer.py`, `stockfish/uci.py` — merging them would have made a +50 Elo reading
+unattributable). Zero code conflicts; only this file collided. Lint exit 0 whole-repo;
+test delta vs the parent = **0 new failures** (the one failure,
+`test_restart_required_keys_match_the_reloader`, was PROVEN pre-existing by running it in a
+detached worktree at the parent commit).
+
+**⚑⚑ THE CONFIG SAID 0.7 AND THE TRIAL RAN 0.0. FOUR GREEN PRE-FLIGHT CHECKS MISSED IT.**
+Schema check, `TrialConfig.from_dict` validator, a resolved-`SfPolicyFloorParams` dry-run,
+and a committed yaml diff ALL passed, and the Ray launch table still read:
+
+```
+w_sf_policy_floor      0.8      <- took
+w_sf_own_regret        0.       <- did NOT take
+```
+
+Cause, from the run's own log lines 6-7: on `--resume`, `run_tune` patches ONLY the keys
+**ABSENT** from the restored trial state — `Patched 4 config keys in restored trial state:
+['sf_policy_floor_delta_cp', 'sf_policy_floor_tau', 'sf_policy_floor_tau_top1',
+'w_sf_policy_floor']`. The four floor keys were new, so they were patched.
+`w_sf_own_regret` was ALREADY in the restored state at 0.0, so **the saved state won and the
+yaml's 0.7 was silently discarded at launch.** A NEW key deploys on resume; a CHANGED
+existing key does not.
+
+⇒ **On a `--resume`, the launch table is NOT evidence that a changed weight took effect.**
+It is rescued one iteration later by `_reload_yaml_into_config(live_reload=True)`
+(`trainable.py:1048`) → `_sync_trainer_weights` (`:1152`) → `_apply_lr_gamma_weights` walking
+`TRAINER_WEIGHT_KEYS` (`trainable_config_ops.py:1340`) — but that is a SECOND mechanism, and
+believing the first would have been believing a value that was not applied.
+
+**VERIFIED ON REAL TRAINING ROWS (the only acceptable evidence):**
+
+| column | iter 192 | iter 222 | nonzero rows |
+|---|---|---|---|
+| `m_sf_own_regret` | 0.1592 | 0.1420 | **31/31** |
+| `m_sf_policy_floor` | 0.1181 | 0.1089 | **31/31** |
+| `sf_policy_floor_binds_frac` | 0.520 | 0.495 | 31/31 |
+
+⚑ `binds_frac ≈ 0.50` independently REPRODUCES the offline calibration's predicted **50.8%**
+binding rate on covered rows — a cross-check between two rigs that share no code.
+`holdout_generation` bumped **2 → 3** on the flip, so the N1 fix worked exactly as designed:
+the ruler moved, the record was handed over, and `test_loss` rose 7.213 → 7.233 as a
+non-negative term switching on must.
+
+**OUTAGE: 2026-08-17 23:14:51 → 2026-08-18 10:08, ~10h53m lost.**
+`torch.AcceleratorError: CUDA error: unknown error` at `torch.cuda.synchronize()`
+(`trainer.py:4017`) after 3 internal retries — the WSL2 GPU vmbus wedge signature, at
+iteration 222 after 4h12m of clean running.
+**NOT attributable to the arms:** 31 iterations ran clean with both active, the failure is in
+the CUDA runtime rather than in a loss or a NaN guard, and every metric was healthy in the
+final row (`wdl_regret` 0.0304, losses nominal). GPU verified healthy before restart by an
+actual matmul + `synchronize()`, not by `nvidia-smi` (which is not an ownership test).
+Restarted 10:08 from `checkpoint_000221`; the watchdog is running this time and would very
+likely have caught it at 23:15.
+
+⇒ **READOUT POINT MOVES: iteration 491 as pre-registered, now ~11h later in wall clock.**
+The prereg's iteration count is unchanged; only the calendar slipped.
