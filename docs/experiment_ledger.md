@@ -59502,3 +59502,69 @@ and is pending.
   node budget. Re-measure per job class; a parallel or un-niced job has no cover here.
 - The peer review's caution was correct as risk management even though the risk did not
   materialise: I had no evidence at launch time, and the evidence is retrospective.
+
+---
+
+### REPAIR-VARIANT MECHANISM SCREEN on complete common-instrument labels (2026-08-18)
+
+⚑ **SCREENING ONLY, per peer review.** The labels are complete and single-instrument, which
+makes the MECHANISM comparison valid. It does NOT authorise training on them: the teacher's
+own order stability vs node budget is a separate and still-unmeasured gate.
+
+**Population.** 1640 rows with >=1 SF-confirmed edge, all scored by `searchmoves_mpv3`
+(`scratchpad/union_labels_sm.jsonl`). **731 = 0.446 violated before repair.**
+
+**Variants.** All preserve `sum(t'_C) = sum(t_C)` and `t' >= 0`, so none can smuggle in extra
+mass. `rho` generalises the LP constraint to `g'_ij <= -rho*g_ij - eps`, so **rho=0 is exactly
+the neutral "SF veto"** and **rho=1 is "reflection" — make the edge as RIGHT as it currently
+is WRONG**. `transplant` re-assigns the multiset of `t` values on C into SF's order (pure
+ORDER surgery: invents no values, needs no teacher temperature).
+
+| variant | repaired | of 731 | mean L1 | infeasible | **survives drift .25** | **.50** |
+|---|---|---|---|---|---|---|
+| unchanged | 0 | -- | 0.0000 | 0 | -- | -- |
+| rho=0 | **677** | 0.926 | 0.2001 | 54 | **0.477** | 0.465 |
+| rho=1 | 404 | 0.553 | 0.1509 | 300 | **0.923** | 0.849 |
+| transplant | 391 | 0.535 | 0.4826 | 0 | **0.954** | 0.916 |
+| zero_CE | 296 | -- | 0.5600 | 0 | 0.655 | 0.632 |
+
+Drift = Gaussian noise in logit space on C, NOT p moving toward t' (which would flatter every
+repair by construction). Survival is **CONDITIONAL on rows the variant actually repaired** —
+unconditional drift numbers flatter a variant that failed to repair rows at all, since an
+unrepaired row cannot lose a repair it never had.
+
+**RESULT — a COVERAGE vs DURABILITY trade, and the naive ranking INVERTS.** Multiplying out
+to durable repairs (repaired AND still repaired after drift), of 731 violated rows:
+
+| variant | durable @ .25 | durable @ .50 |
+|---|---|---|
+| rho=0 | 323 = **0.442** | 315 = 0.431 |
+| rho=1 | 373 = **0.510** | 343 = 0.469 |
+| transplant | 373 = **0.510** | 358 = **0.490** |
+
+**rho=0 repairs 73% more rows than rho=1 and ends up with FEWER durable repairs.** It is
+minimal by construction, so it lands exactly on the constraint boundary (margin `eps=1e-3`)
+and any drift breaks it. rho=1 and transplant buy margin and keep it.
+
+**Replicates the earlier drift result on better labels.** Static rho=0 surviving **0.477**
+sits inside the previously recorded 36-49% band (`49bb74bbf`), now measured on complete,
+single-instrument labels. ⇒ the case for **DYNAMIC recomputation** (recompute the repair each
+time the row is sampled) is unchanged and is what buys rho=0's coverage without its fragility.
+
+⚑⚑ **THE VARIANT THAT WINS ON DRIFT IS THE MOST EXPOSED TO THE TEACHER PROBLEM.**
+`transplant` adopts SF's ORDER wholesale — and the teacher gate measured that order as ~24%
+instrument-dependent, with 22.8% per-row verdict disagreement in this very projection. So
+transplant maximises exposure to exactly the noise the peer review named as the gating
+question. Its drift durability is therefore NOT a reason to prefer it until the teacher's
+order stability vs node budget is measured. rho=1 gets ~the same durable rate at **1/3 the
+L1 cost** (0.1509 vs 0.4826) and does not import the ordering wholesale.
+
+⚑ **`zero_CE`'s number is NOT comparable and must not be quoted.** Setting `t'_C = p_C` drives
+`g -> 0`, and the violation test is `g >= 0`, so "no push either way" is scored as VIOLATED.
+The 0.591 figure is a definitional artifact of the `>=` convention, not a finding about
+zero-CE. Judging it needs a different criterion (e.g. strict `> 0`, or a direct gradient-norm
+read) and it did not get one here.
+
+**Status: mechanism screened, not authorised.** Ranking for a STATIC repair is
+rho=1 >= transplant > rho=0; for a DYNAMIC one rho=0 remains the principled choice. Deciding
+between them requires the teacher-stability gate first.
