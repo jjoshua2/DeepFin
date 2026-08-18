@@ -59962,3 +59962,83 @@ systematically overstates the time to reach a target it should asymptotically ap
 - DROP: "reaches -0.312 at ~iter 459". That must not become a prediction, and above all must
   not become a FALSIFIER — failing to arrive at a fixed point on a linear schedule is the
   expected behaviour of a relaxing system, so a test built on it would reject a correct model.
+
+---
+
+### THE RULER'S BLIND SPOT IS EIGHT KEYS, NOT SIX — and the screen that found six was vacuous (2026-08-18)
+
+**Peer prediction, confirmed:** the two `sf_search_dampen_*` knobs are the 7th and 8th ruler
+false negatives. `scratchpad/ruler_shape_screen.py`, every `TRAINER_WEIGHT_KEYS` entry at two
+POSITIVE values, comparing per-head losses with `total` EXCLUDED (a pure multiplier moves
+`total` and nothing else — that is the accepted magnitude exclusion, not a defect):
+
+| result | keys |
+|---|---|
+| pure multiplier — magnitude exclusion correct | the 13 `w_*` keys |
+| **⚑ shape knob: objective moves, ruler id does not** | `sf_wdl_frac`, `search_wdl_frac`, `sf_wdl_conf_power`, `sf_wdl_draw_scale`, `sf_wdl_temperature`, `sf_search_dampen_sf_low`, `sf_search_dampen_sf_high`, `soft_policy_min_tv` |
+
+**⚑⚑ THE PROBE WAS VACUOUS AND READ AS A CLEAN PASS — TWICE, BY TWO DIFFERENT MECHANISMS.**
+This is the finding worth more than the count.
+
+1. First the dampen pair read "not exercised" because a random fixture contains ~no SF/search
+   disagreement rows. Fixed by building one row of each direction (`dis_sf_low`, `dis_sf_high`).
+   Still "not exercised".
+2. Then, with the fixture provably correct, it STILL read "not exercised" — and the reason was
+   in my baseline, not the code. **Both blend fractions default to `0.0`** (`losses.py:1179-1180`)
+   and the entire SF/search component enters the target as `target += sf_wdl_frac_f * sf_component`.
+   My `ON` dict never set them, so `sf_component` was multiplied by ZERO. Instrumenting
+   `losses.py` showed `keep` moving **1.0 → 0.1** and `sf_effective` with it, while
+   `sf_frac_f == 0.0` — the knob working perfectly into a term weighted out of existence.
+
+⇒ **"not exercised" is not a null result; it is an uninterpreted one.** Both times the screen
+printed a clean-looking row for a knob it was structurally incapable of moving. This is
+[[new_tests_here_are_vacuous_until_mutated]] and the `soft_policy_min_tv` vacuity from the same
+screen, now three instances in one rig. ⚑ The tell that resolved it was instrumenting the
+INTERMEDIATE (`keep`, `sf_effective`) rather than the output: an intermediate that moves while
+the output does not localises the vacuity to the path between them in one reading.
+
+**Method rule this earns:** when a probe reports "no effect", the next step is to prove the
+knob's own intermediate value CHANGED under the probe. If it did not, the reading is about the
+harness. If it did and the output did not, the term is weighted or masked out — also about the
+harness. Only when the intermediate moves and reaches a nonzero-weighted term is "no effect"
+a statement about the code.
+
+**Scoping (decided, not deferred):** NOT fixed in #448. All 8 pre-date the branch; #448's own
+key (`w_sf_policy_floor`) is a pure multiplier; `main` has the identical gap on 20 keys, so
+holding #448 reduces live exposure by zero keys; and the fix is a DIFFERENT instrument (hash a
+canonical target-construction descriptor, not a weight set). #448's body now states the gap
+and explicitly does not claim ruler completeness. Successor to G16, which it strictly contains
+— G16 is the magnitude gap on a multiplier, this is the shape gap on a non-multiplier.
+
+**⚑ DESIGN RULE FOR THE FIX (pinned here so the successor cannot re-derive it wrong):**
+
+> **Holdout ruler inputs = fixed canonical target/mask semantics + the CURRENT MODEL.**
+
+The **training objective** and the **evaluation ruler** are separate concepts that happen to
+share `compute_loss` today, and that sharing IS the root cause: every knob that legitimately
+steers TRAINING silently re-specifies the RULER. The ruler must score the model against a
+target built from PINNED canonical semantics, so a training-side shape knob cannot move it at
+all — at which point hashing weights is unnecessary rather than merely incomplete. Name them
+apart in code (`training_objective` vs `evaluation_ruler`); a shared helper that reads live
+knobs is the defect, not the abbreviation.
+
+---
+
+### WITHDRAWN: "`best_loss` improved under F-only" is NOT evidence for F (2026-08-18)
+
+I cited `best_loss` improving as supporting evidence in the F-only readout. **Withdraw it.**
+
+`best_loss` is the best-so-far value of the holdout metric, and the F-only flip **moved the
+ruler id**, which bumped `holdout_generation` and handed the record over — `_update_best_model`
+takes its "new ruler → ADOPT" branch rather than comparing. So the post-flip `best_loss` is a
+value ADOPTED under a new ruler, not a value that WON a comparison against the pre-flip record.
+It is guaranteed to be "an improvement" in the sense of being the new record, whatever the model
+did. A monotone-by-construction quantity cannot be evidence for the intervention that reset it.
+
+⚑ This is the ruler machinery working exactly as designed and my reading of it being wrong —
+the handover is the FIX for a frozen record, and its cost is that `best_loss` is not comparable
+across a generation boundary. **Never compare `best_loss` across a `holdout_generation` bump.**
+
+The F-only evidence that STANDS is unaffected and is the loss identity at iter 301 (`22f4810d5`):
+the A-excluded reconstruction closes against `train_loss` to residual -0.0000 while the
+A-included one is 0.10 wrong. That is a take-effect proof and never depended on `best_loss`.
