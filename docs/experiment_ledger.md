@@ -58975,3 +58975,50 @@ UNWEIGHTED non-vanishing pairwise hinge has an O(1) gradient and could reach par
 moderate weight. It would discard the magnitude information and set two objectives fighting,
 which is why target repair is still the right design — but the design argument stands on its
 own and the mathematical claim was overstated.
+
+#### 2026-08-18 — COMPARISON-GRAPH TARGET PROJECTION: 97.1% repairable, and the prize is ~2x the pairwise view
+
+`scratchpad/graph_repair_projection.py` — the review's step 4, solved as an LP per row on the
+4000-position same-model dump. `C = {a_P, a_RL, a_PLAY}`; for each SF-confirmed ordering edge
+`i > j` the condition that the ORDINARY main CE pushes the SF-correct way is
+`(p_i - p_j) - (t'_i - t'_j) < 0`. Solve
+`min ||t' - t_search||_1` s.t. every such edge holds, `t' >= 0`, `sum(t'_C) = sum(t_C)`
+(all mass outside `C` untouched). For a single pair this reduces EXACTLY to the
+`delta_neutral` transfer, so it is the generalisation rather than a new mechanism.
+
+| | value |
+|---|---|
+| positions with >= 2 distinct candidates | 1897 |
+| fully SF-scored | 1555 (82.0%) |
+| SF-confirmed ordering edges per row | 1.10 |
+| **rows with >= 1 VIOLATED edge** | **633 (40.7%)** |
+| violated edges on those rows | 1.16 |
+| **LP feasible / fully repaired** | **97.1%** (1510/1555) |
+| mean L1 target edit on repaired rows | **0.4625** (median 0.3406, p90 1.137) |
+| mass held by `C` | 0.8723 |
+| violated edges remaining after projection | 0.0354 |
+
+**⇒ THE PRIZE IS ROUGHLY DOUBLE THE PAIRWISE ESTIMATE.** 633/4000 = **15.8% of all positions**
+carry at least one SF-confirmed edge among the learner's OWN candidates that the main CE is
+currently teaching backwards — against **7.03%** from the `{a_P, a_RL}` pair alone. The extra
+comes from the `a_PLAY` edges, which is the same non-redundancy the 3-way oracle measured
+(+0.0253 bounded-Q over a prior+RL oracle). ⇒ **the candidate set must include PLAY**, on two
+independent instruments now.
+
+**FEASIBILITY MATCHES THE PAIR RESULT: 97.1% vs 96.8%.** The 2.9% that fail are rows where `C`
+does not hold enough mass — the multi-candidate analogue of `delta_neutral > t_M`. The edit is
+substantial (median L1 0.34) and again explains why an auxiliary at any sane weight was never
+going to compete.
+
+**⚑ A SIGN BUG IN MY OWN CHECKER, CAUGHT ONLY BY AN IMPOSSIBLE VALUE.** The first run reported
+the LP as FEASIBLE on 99.4% of rows while ALSO reporting 0.73 violated edges remaining per row
+— which cannot both be true of a solved constraint. The LP was correct; the violation counter
+tested `<= 0` where descent raises `z_i - z_j` iff `(p_i - p_j) - (t_i - t_j) < 0`, so violated
+is `>= 0`. Same family as the P0 join: **only a mutually impossible pair of printed numbers
+separated a right answer from a wrong one.** Print quantities that cannot co-occur if the code
+is wrong.
+
+⇒ This is the destination architecture, stated precisely: **search determines most of the
+target; SF supplies ordering constraints that MINIMALLY repair the parts search demonstrably
+got backwards.** No teacher temperature, no fabricated values for unsurfaced moves, no
+auxiliary fighting the incumbent CE, and mass outside `C` is untouched by construction.
