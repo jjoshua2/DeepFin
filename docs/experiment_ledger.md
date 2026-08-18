@@ -58721,3 +58721,41 @@ and training on `z_M - z_P` supplies it directly instead of using SF to re-weigh
 target that may carry no edge. It also inherits none of arm A's fabricated tail and, unlike A,
 its gradient does not vanish when the SF-preferred move has tiny absolute prior — the two-way
 conditional softmax sees only the logit DIFFERENCE.
+
+#### 2026-08-18 — ΔQ measurement scale: native SF WDL SATURATES; use the cp-logistic
+
+Q-space was proposed to fix centipawns' heavy tail. It does, but SF's **native** deep WDL
+introduces the opposite failure on this population: it **ties 82.2% of pairs**, because two
+different moves in an already-decided position map to the same (W,D,L). That is the same
+property already on record — native `UCI_ShowWDL` is ~72% one-hot, which is why production
+sets `sf_wdl_use_cp_logistic: true` for value targets.
+
+⇒ **PRIMARY SCALE IS THE PRODUCTION cp-LOGISTIC**, `cp_to_wdl(cp, mate, slope=0.006,
+draw_width_cp=120.0)` at the LIVE parameters, reported as `W − L`. Bounded like WDL, smooth
+like cp, and the mapping production already trusts. Ties drop **82.2% → 21.8%**. Native WDL
+and raw cp are kept as secondary columns, cp with a 10% trimmed mean so "+70 cp" can be checked
+against "four tactical explosions" (it survives trimming at +47.9, so it is not purely that).
+
+**Same-model, iter231, 256 audit positions — all three scales agree on the SHAPE:**
+
+| | PLAY search | RL target |
+|---|---|---|
+| disagreements | 117 (0.457) | 84 (0.328) |
+| **both moves deep-SF listed** | **86.3%** | **79.8%** |
+| cp-logistic `P(better) − P(worse)` | **−0.0495** [−0.228, +0.129] | **−0.0448** [−0.254, +0.164] |
+| cp-logistic mean | +0.0317 [−0.005, +0.080] | +0.0510 [+0.002, +0.121] |
+| native WDL `P(better) − P(worse)` | −0.0594 [−0.139, +0.020] | −0.0746 [−0.164, +0.015] |
+| cp mean / median / 10%-trimmed | +12.2 / 0.0 / +12.1 | +70.3 / 0.0 / +47.9 |
+
+**⚑ THE SIGN RATE LEANS AGAINST SEARCH WHILE THE MEAN LEANS FOR IT, ON EVERY SCALE.** Search's
+wins are RARER but LARGER. Reporting only the mean says "search improves the move"; reporting
+only the win rate says the opposite. Both are true and neither is significant at n=101/67.
+This is the same structure the production-window binning showed (highest-sharpening bin had
+the largest mean dR and the WORST hit rate) — now visible on the clean instrument.
+
+**⚑ COVERAGE IS 86.3% / 79.8%, NOT 100%** — 13.7% / 20.2% of disagreements are UNSCORABLE
+because deep SF never listed one of the two moves. That residue is selection-biased in exactly
+the direction that matters, and it is what root-restricted `searchmoves` exists to fill.
+**`searchmoves` is MERGED TO MAIN** (PR #444: `stockfish/uci.py` 17 occurrences,
+`stockfish/pool.py` 7) and has **ZERO occurrences on the live branch** — so the forward-port is
+a concrete, well-scoped task, not new development.
