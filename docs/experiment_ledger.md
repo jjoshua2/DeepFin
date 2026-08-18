@@ -59069,3 +59069,49 @@ that `G-` = 0.023 is RECOVERED. Screen `rho = 0` and `rho = 1` as the two mechan
 meaningful settings — `rho` has an exact interpretation where a teacher temperature does not —
 with full transplant retained only as an aggressive positive control (it overshoots by an
 arbitrary amount: mean `g'_d` +0.499 against a requirement of 0).
+
+#### 2026-08-18 — DYNAMIC PROJECTION KEEPS ITS FEASIBILITY, AND THE LP IS AN ISOTONIC PROJECTION
+
+**1. I asserted the feasibility claim rather than measuring it.** "Because it is recomputed
+every step, `rho = 0` is always satisfied, so you keep the 97.1% feasibility" — the first half
+is true *conditional on feasibility*, and the second half was not established: the mass inside
+`C` is FIXED by the stored target while the RHS `p_i - p_j` moves. Measured
+(`scratchpad/dynamic_feasibility.py`) by running the actual production algorithm,
+`t'_{A->B} = Pi_SF(t_A ; p_B)` — stale target and stale SF edges, CURRENT policy:
+
+| rho | target+edges from | policy from | static feasibility (own net) | **dynamic feasibility** | violations left | mean L1 |
+|---|---|---|---|---|---|---|
+| 0 | 190 | 231 | 0.857 | **0.980** | 0.0000 | 0.5011 |
+| 0 | 231 | 190 | 0.843 | **0.882** | 0.0000 | 0.5421 |
+| 1 | 190 | 231 | 0.510 | 0.551 | 0.0000 | 0.3643 |
+| 1 | 231 | 190 | 0.471 | 0.471 | 0.0000 | 0.3055 |
+
+⇒ **`rho = 0` DYNAMIC FEASIBILITY IS 0.882-0.980, at or ABOVE the own-net static figure**, and
+violations left are exactly 0 by construction. **Staleness of the stored target and candidate
+set does not cost feasibility at 41 iterations of drift** — the concern was worth testing and
+the answer is favourable. Contrast the STATIC repair, which survived on only 35.7-48.8%: the
+whole gap is the missing recomputation, not the staleness of `t` or `C`.
+
+⇒ **`rho = 1` costs roughly half the rows regardless** (0.471-0.551 dynamic). Since dynamic
+recomputation removes the NEED for a drift margin, `rho = 0` is the shipping design and
+`rho = 1` an aggressive experimental control — the reverse of what the static drift numbers
+alone would have suggested.
+
+**2. NO LP BELONGS IN THE TRAINING LOOP.** With `r_i = t'_i - p_i`,
+`g_ij <= 0  <=>  r_i >= r_j`, so neutral repair is exactly **bounded isotonic projection of
+`t - p_detach` in SF's order**, subject to `sum(t'_C) = sum(t_C)` and `t' >= 0`. **Verified: the
+characterisation holds on 93/93 LP solutions (1.000).** With <= 3 learner candidates this is a
+tiny deterministic vectorised op (PAVA under squared-L2, or a 3-variable specialised solver to
+keep the L1-minimal-mass interpretation), not a solver call.
+
+Production shape:
+`r = t_C - p_C.detach()` -> `r' = BoundedIsotonicProject_SF(r)` -> `t'_C = p_C.detach() + r'`
+-> `L = CE(t', p)`. No gradient through the projection.
+
+**PRE-REGISTERED FALLBACK for infeasible rows: ZERO the ordinary policy CE on that row.** Do
+NOT leave the original SF-contradicting target active, and do NOT borrow mass from moves
+outside `C` whose SF values are unknown. At ~2-12% infeasible this is cheap; if replay drift
+pushes it past ~20% that is itself a finding against the architecture.
+**Required production instrumentation:** feasible fraction, pre/post violated-edge count,
+candidate mass `M_C`, L1 edit, and infeasibility **versus replay age** — the last one because
+this whole entry exists because a quantity moved with checkpoint distance.
