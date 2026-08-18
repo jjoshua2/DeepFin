@@ -59568,3 +59568,38 @@ read) and it did not get one here.
 **Status: mechanism screened, not authorised.** Ranking for a STATIC repair is
 rho=1 >= transplant > rho=0; for a DYNAMIC one rho=0 remains the principled choice. Deciding
 between them requires the teacher-stability gate first.
+
+---
+
+### CORRECTION to the teacher gate: a SHALLOW-MARGIN GATE CANNOT FIX SHALLOW ERROR (2026-08-18)
+
+The teacher gate (`423a7fc9a`) measured a 15.9% argmax flip rate even at >=30cp shallow gaps
+and I concluded "a margin gate or a larger restricted node budget is indicated". **The margin
+half of that is wrong, and the reason is worth stating because it is a general trap.**
+
+⚑ **The 30cp gap is itself measured by one of the two instruments under suspicion.** If a
+shallow search is wrong because its tree has not converged, it is not wrong *and uncertain* —
+it can be **confidently wrong**, reporting a large `|Δcp|` for an ordering it would reverse
+given more nodes. So a confidence gate keyed on shallow `|Δcp|` fails on exactly the rows it
+is meant to catch, and the observed non-monotone flip curve (peak 0.429 at 3-10cp, still
+0.205 at 30-100cp) is what that failure looks like.
+
+⇒ **A confidence indicator must be a stability-across-compute measure, not a magnitude
+measure.** The candidates:
+
+    a_N == a_2N                              (argmax stable under a doubling)
+    sign(dQ_N) == sign(dQ_2N)                (edge direction stable)
+
+Both cost extra SF, and both measure the thing actually at issue. A magnitude read is free
+and measures the wrong thing.
+
+**This points at an ADAPTIVE teacher rather than a fixed budget**: score {P, RL, PLAY} at N;
+accept the ordering if it is unchanged at 2N; otherwise escalate to 4N or deeper. That is
+#425's adaptive-label-allocation idea with the allocated quantity changed from generic root
+value to **confidence in candidate ORDERING** — a better-posed target, because ordering is
+what the repair consumes.
+
+⇒ The open question is no longer "does target repair exist" (aggregate prevalence and
+feasibility survived a violent instrument change: `c43cae109`). It is narrower:
+**how much SF compute makes the ordering trustworthy enough to repair individual rows?**
+Credit: peer review, 2026-08-18.
