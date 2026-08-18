@@ -58759,3 +58759,63 @@ the direction that matters, and it is what root-restricted `searchmoves` exists 
 **`searchmoves` is MERGED TO MAIN** (PR #444: `stockfish/uci.py` 17 occurrences,
 `stockfish/pool.py` 7) and has **ZERO occurrences on the live branch** — so the forward-port is
 a concrete, well-scoped task, not new development.
+
+#### 2026-08-18 — ⚑⚑ CORRECTION: search DOES improve the move. My 256-position null was underpowered.
+
+**Full same-model run, 4000 audit positions, iter-265 checkpoint** (`scratchpad/dqfull_i265.jsonl`).
+This SUPERSEDES the 256-position cells in `29c642572`, which reported that "search improves the
+move" fails to replicate. **It replicates, decisively.**
+
+| | PLAY search (256 sims) | RL target (100 sims) |
+|---|---|---|
+| disagreements | **1730 / 4000 (0.432)** | **1049 / 4000 (0.262)** |
+| both moves deep-SF listed | 1426 (82.4%) | 839 (80.0%) |
+| cp-logistic `P(better) − P(worse)` | **+0.1473 [+0.0982, +0.1957]** | **+0.1979 [+0.1359, +0.2586]** |
+| cp-logistic mean | **+0.0324 [+0.0232, +0.0418]** | **+0.0409 [+0.0289, +0.0538]** |
+| cp-logistic median | +0.0026 [0.0000, +0.0056] | +0.0037 [0.0000, +0.0078] |
+| native WDL `P(b) − P(w)` | +0.1052 [+0.0673, +0.1424] | +0.1371 [+0.0929, +0.1824] |
+| cp mean / median / 10%-trimmed | +22.2 / +3.0 / **+12.2** | +36.0 / +4.0 / **+17.1** |
+
+**All three scales agree, all CIs exclude zero, and the 10% trimmed cp mean survives** (+12.2 /
++17.1) ⇒ **not tail-driven.**
+
+**⚑ MY ERROR, AND IT IS THE DAY'S OWN LESSON APPLIED BACKWARDS.** I read "does not replicate"
+off cells with n = 101 and 67 scorable pairs and 82% native-WDL ties — an instrument with
+almost no power — and promoted it to a headline plus a causal story (a selection effect in the
+MPV6 run). **The selection-effect hypothesis is now UNSUPPORTED**: the clean instrument, with
+much weaker conditioning (deep SF MultiPV >= 10, 82.4% coverage vs the MPV6 run's 55.7%), shows
+the SAME DIRECTION. I have spent the session correcting others' single-population claims and
+then published an underpowered null of my own.
+
+**⇒ THE ORIGINAL FRAMING WAS RIGHT ALL ALONG:** *search is useful for move selection, but the
+amount of confidence it adds is not calibrated to the amount of value it adds.*
+
+**THE NULL SURVIVES AT FULL POWER, AND IT IS THE REAL FINDING.** `r(dH_search, dQ)` at
+n = 1730 / 1049: pearson **−0.0199 / +0.0664**, spearman **+0.0221 / +0.0312**. The terciles
+show why it is a genuine null and not merely a weak effect — **the two search profiles move in
+OPPOSITE directions on both statistics:**
+
+| dH tercile | PLAY dQ cp | PLAY better | RL dQ cp | RL better |
+|---|---|---|---|---|
+| low | +37.80 | 0.499 | +35.81 | 0.583 |
+| mid | +26.71 | 0.547 | +38.54 | 0.562 |
+| high | +20.77 | 0.556 | +59.85 | 0.540 |
+
+PLAY's mean dQ FALLS with sharpening while its win rate RISES; RL's mean RISES while its win
+rate FALLS. No consistent relationship in either the mean or the sign rate. ⇒
+**sharpening carries no information about correctness — established twice, on two instruments
+with opposite selection properties, at full power.**
+
+**⚑ RL TARGET (100 sims) BEATS PLAY (256 sims) ON dQ**: +0.198 vs +0.147 win-rate margin,
++44.7 vs +28.4 cp. PLAY deviates from the prior far more often (0.432 vs 0.262) and its extra
+deviations are on average worthless — consistent with `c_scale` 0.025 exploring more and
+diluting. This is the split worth watching: the training target's choice is the BETTER one, so
+the RL search profile is not merely a cheaper PLAY.
+
+**⇒ CONSEQUENCE FOR THE TEACHER TRACK.** "Search proposes, Stockfish decides" stands, but the
+proposal is genuinely better than the prior — MCTS is a real if modest ranking teacher
+(+0.15-0.20 win-rate margin, ~+12-17 cp trimmed). The case for pairwise ΔQ supervision is
+therefore NOT "search is a coin flip"; it is that **SF's adjudication is strictly more
+information than search's own vote**, and training on `z_M − z_P` captures the part search
+cannot supply — including the 18-20% of pairs deep SF never listed, which still need
+root-restricted `searchmoves` (merged to main by PR #444, ZERO occurrences on live).
