@@ -59022,3 +59022,50 @@ is wrong.
 target; SF supplies ordering constraints that MINIMALLY repair the parts search demonstrably
 got backwards.** No teacher temperature, no fabricated values for unsurfaced moves, no
 auxiliary fighting the incumbent CE, and mass outside `C` is untouched by construction.
+
+#### 2026-08-18 — ⚑⚑ REPLAY DRIFT DECIDES THE ARCHITECTURE: the projection MUST run inside training
+
+`scratchpad/repair_drift_test.py`. Build the graph repair on checkpoint A's target and A's
+policy, then evaluate the FIXED repaired target against a DIFFERENT checkpoint's policy on the
+same positions and moves. iter190 <-> iter231 (41 iterations, ~5641 steps — within the live
+replay window's own span, so this is a realistic drift magnitude, not an extreme).
+
+| rho | built on -> eval on | rows needing repair | feasible | non-wrong under the SAME net | **non-wrong under the OTHER net** | mean violations left |
+|---|---|---|---|---|---|---|
+| **0** | 190 -> 231 | 49 | 42 (86%) | 1.000 | **0.357** | 0.667 |
+| **0** | 231 -> 190 | 51 | 43 (84%) | 1.000 | **0.488** | 0.628 |
+| **1** | 190 -> 231 | 49 | 25 (51%) | 1.000 | **0.760** | 0.240 |
+| **1** | 231 -> 190 | 51 | 24 (47%) | 1.000 | **0.875** | 0.167 |
+
+**⇒ A NEUTRAL REPAIR BAKED INTO THE SHARD IS WRONG AGAIN FOR THE MAJORITY OF ROWS — only
+35.7% / 48.8% survive.** The review's objection is confirmed on data, and the MECHANISM is
+sharper than "drift is large": the minimal-edit projection lands **exactly on the constraint
+boundary** (`g_ij = 0`) by construction, so it has **zero margin** and any movement in `p`
+pushes it back across. It is not that the net changed a lot; it is that the repair was built
+with no slack at all.
+
+**⇒ `rho` IS A DRIFT MARGIN, and it trades against feasibility.** Reflecting the wrong gradient
+with equal strength (`rho = 1`) survives on **76.0% / 87.5%** of rows — but feasibility inside
+`C` falls from 84-86% to **47-51%**, because overshooting the boundary costs mass the candidate
+set may not have.
+
+**⇒ ADOPTED ARCHITECTURE — one loss, no auxiliary, no baked target:**
+1. shard stores the ORIGINAL search target, unmodified;
+2. shard stores the SF-adjudicated candidate indices and their ORDERING (not a distribution,
+   not scores that need a temperature);
+3. at training time compute the current `p`, **detach it**;
+4. project the search target minimally onto the SF edges under that detached `p`;
+5. feed `t'` to the ordinary policy CE.
+
+`L = CE(t'(p_detach), p)`. Gradient never flows through the projection, replay drift is
+handled by construction, `rho = 0` is then always exactly satisfied so the 97.1% feasibility
+holds rather than the 47-51% that `rho = 1` would cost. **The static shard-time repair — which
+is what I proposed one entry ago — is retired on this evidence.**
+
+**⚑ AND THE NEUTRAL PROJECTION IS "DO NO HARM", NOT "TEACH THE TRUTH".** Minimising the edit
+puts active edges at `g_ij = 0` exactly, which STOPS the CE teaching the backwards relation but
+does not teach the correct one. So the 97.1% figure proves the bad gradient can be REMOVED, not
+that `G-` = 0.023 is RECOVERED. Screen `rho = 0` and `rho = 1` as the two mechanistically
+meaningful settings — `rho` has an exact interpretation where a teacher temperature does not —
+with full transplant retained only as an aggressive positive control (it overshoots by an
+arbitrary amount: mean `g'_d` +0.499 against a requirement of 0).
