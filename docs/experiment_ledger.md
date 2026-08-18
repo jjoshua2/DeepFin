@@ -58076,3 +58076,45 @@ reach the tail.
 **SF SCORES ONLY 21% OF THE MOVE LIST.** `sf_multipv: 6`; measured **5.57 surfaced of 26.82
 legal**. The other **79% carry a fabricated `default_regret`**. Any SF-shaped target MUST NOT
 assert anything about them.
+
+#### 2026-08-18 — ⚑ RETRACTION: "2.5x sharper than SF" was a DIFFERENT-SUPPORT comparison
+
+I compared `H(ours)` over all ~27 legal moves (**0.6784**) against `H(SF)` over SF's genuine top
+6 (**0.9289**), normalised by `ln 27` and `ln 6`, and reported "we are ~2.5x sharper in
+normalised terms". **That is invalid** — two distributions over different supports. **The number
+is withdrawn and must not be quoted.**
+
+**THE COMPARISON THAT WOULD BE VALID IS NOT YET MEASURED:** `H(p_ours | S_SF6)` vs
+`H(q_SF | S_SF6)` on exactly the same six moves per row, plus `M_S = Σ_{i∈S} p_ours`.
+
+⚑ **THIS SPLITS INTO TWO INDEPENDENT FAILURE MODES, AND THE PLANNED LOSS FIXES ONLY ONE:**
+- **(A) wrong SHAPE inside S** — e.g. ours|S `(.85,.07,.04,.02,.01,.01)` vs SF|S
+  `(.55,.20,.12,.07,.04,.02)`. The conditional KL fixes this.
+- **(B) wrong MASS on S** — e.g. `M_S = 0.30` because 70% of our probability sits on moves SF
+  never scored. **The conditional KL is INVARIANT to the total mass on S and cannot fix this by
+  construction.** That needs a widened labelling set, not this loss.
+
+⇒ There is a live possibility that our global entropy of 0.68 is produced by mass on a garbage
+move OUTSIDE the teacher set, while ours|S is already about as flat as SF|S. In that world the
+conditional KL would SHARPEN the six good moves and do nothing about the actual pathology.
+**⇒ `w_sf_shape` stays 0.0 until `H_ours|S`, `H_SF|S`, `M_S` and `p_ours(SF-best)` are read out.**
+The instrument now reports all four at weight 0.
+
+**SEMANTIC CORRECTION on the fabricated tail.** "Only 6.6% of SF's mass sits outside its top 6"
+is true of OUR full-distribution construction, not of Stockfish: SF never allocated that mass,
+our fabricated `default_regret` did. ⇒ **the full-distribution SF entropy (~1.10) is retired as a
+teacher property or calibration target** — historical diagnostic only. The genuine teacher object
+is the CONDITIONAL top-K distribution.
+
+**`sf_policy_floor` — the functional form is already right, the THRESHOLD is not.**
+`deficit = relu(floors - probs)` is already a hinge that is exactly zero once `p ≥ τ`, so it does
+not "keep pushing after its job is done". But if its remaining purpose is SEARCH ADMISSION, the
+threshold that matters is `1/gumbel_topk = 0.0625` while `sf_policy_floor_tau: 0.15` — **2.40x
+past what that purpose requires.** Not changed live (the A+F ablation is running); recorded for
+the next revision. A log-space hinge would also give rising gradient as p→0, where a linear relu
+gives constant gradient — relevant because the motivating case is p≈0.003.
+
+**TEMPERATURE SERVO — servo the POPULATION MEAN, not each position.** `E[H_ours] → E[H_BT4]`
+measured on the SAME position sample and legal-move support, not `H_ours(x) → 1.693 ∀x`: forced
+tactical positions SHOULD be sharp, and a per-position servo would destroy them. Log the
+pre-servo raw-logit entropy separately or the metric stops being a diagnostic once the servo is on.
