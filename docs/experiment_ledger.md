@@ -59650,3 +59650,46 @@ hard to construct a mechanism by which a `nice=19` Stockfish process changes a g
 idempotent, and Ray's ~6-checkpoint window (~29 min) is sampled well inside its retention. The
 14-point series above only exists because banked pools happened to survive; the record now
 does not depend on that luck.
+
+---
+
+### CORRECTION: the "8% wall-time cost of the SF jobs" DOES NOT SURVIVE A TREND CONTROL (2026-08-18)
+
+Corrects `b2b8b57fc`, written ~1h earlier, which reported the offline SF jobs as costing
+**+8.1% iteration wall time (p=0.036)** from a bucket comparison of clean vs job-window
+iterations. **That comparison omitted a run-wide drift and the attribution is withdrawn.**
+
+**What the post-job control actually showed: NO SNAP-BACK.** Iterations 315-316 (first after
+the jobs ended at ~17:57) average **284.6s** — indistinguishable from the job window's 290.9s
+(**p=0.287**) and still above pre-job 265.2s (p=0.005). If the jobs had caused the slowdown,
+removing them should have restored it. It did not.
+
+**Iteration time has been rising RUN-WIDE and predates the jobs.** OLS over the last 60
+iterations (257-316): **+0.638 s per iteration, t=+3.51, p=0.0009**. Bucket means show the
+climb starting well before 17:02: 260.6 (277-290) -> 270.7 (291-302) -> 290.9 (303-314).
+
+**Fitting both together, neither is identified:**
+
+    time ~ 1 + iter + I(SF job window),  n=60, dof=57
+      trend           +0.412 s/iter   t=+1.77   p=0.0824
+      SF-JOB step    +15.415 s        t=+1.53   p=0.1321
+
+The job window is a CONTIGUOUS BLOCK AT THE END of the series, so it is collinear with any
+monotone trend and **this design cannot separate a step from a ramp** — the repo already has
+this lesson recorded as "a step is not a ramp" and "a window-mean CI cannot detect a step". I
+reached for a two-bucket t-test on data with an obvious time trend.
+
+**What SURVIVES, and it is the part that mattered:** `matching_games` per iteration and
+`ingest_ms` are unaffected (both p > 0.5, and games shows no trend at all: slope -0.088,
+p=0.473). The F-only readout is judged at matched ITERATION counts and the step budget is
+views-targeted, so the data:step regime is unchanged. **The peer review's confound did not
+materialise; my claim to have measured its price was the overreach.**
+
+**Two consequences.**
+1. ⚑ **An unexplained run-wide slowdown is open** (~+0.4-0.64 s/iter over 60 iterations,
+   ~+10% in 4 hours) with games/iteration flat. Not chased here; flagged because a
+   throughput drift with constant output is the shape of a leak or a growing structure.
+2. It WEAKENS (does not erase) the confound flagged against the `log_temp` result in
+   `526f85957`: the environment did not revert when my jobs stopped, so the jobs were not
+   imposing a distinct regime over iterations 303-314. The refit on post-job iterations is
+   still owed.
