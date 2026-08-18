@@ -58588,3 +58588,87 @@ self-arresting; the CE spring is what stops it.**
   it can move fast then settle; the displacement, not the rate, is the quantity.
 - Costs nothing: `policy_own.log_temp` is one scalar on the checkpoint series already written.
 - ⚑ Judge F itself by PLAY-settings regret / Elo / SF-routing, NOT by whether it flattens.
+
+#### 2026-08-18 — ⚑⚑ WITHDRAWN: "the books close". `G_CE` IS NOT RESOLVABLE; A AND F ARE.
+
+**1. The `log_temp` identity was verified against my own assumption, not the head.**
+`transformer.py:288-298`: `normal_logits = (q.k) * scale * exp(log_temp)`, then `ft_bias` is
+added, and **underpromotion logits come from a separate `underpromo` projection that bypasses
+`log_temp` entirely**. So `dz_i/dlog_temp` is `z_i - bias_i` on normal moves and **0** on
+underpromotions — not `z_i` on everything. My "verified to 6 decimals" autograded a SYNTHETIC
+`CE(softmax(z*exp(l)))`, i.e. it confirmed the algebra of the architecture I ASSUMED.
+Textbook [[internal_equivalence_cannot_find_a_shared_wrong_rule]].
+
+Re-tested against the REAL head. `ft_bias` is **None** in this net (no `policy_relation_weight`
+key), so the additive term does not arise here. On a batch with no legal underpromotion the
+formula is exact (0.00%). **On rows that HAVE one — 3.4-5.1% of the population — including
+underpromotions in the sum is a 200.4% error that FLIPS THE SIGN** (+0.03203 true vs −0.03216).
+The first test was VACUOUS: 32 rows, zero underpromotions, so the defect could not appear. The
+non-vacuous version predicts the count first (66 of 1858 compact indices are underpromotions;
+3.40% of rows carry a legal one) and then tests there. Correct form (normal moves only) reads
+0.0001%.
+
+**⇒ POPULATION-LEVEL IMPACT OF THAT FIX: NEGLIGIBLE (~0.2%).** `Gradial` vs `G` on the same
+sample: CE −0.00544 vs −0.00527, A +0.03860 vs +0.03852, F −0.03895 vs −0.03894. The per-row
+errors cancel. **The bug was real, the correction is required, and it is not what moved the
+number.**
+
+**2. ⚑⚑ WHAT MOVED THE NUMBER IS RUN-TO-RUN INSTABILITY, AND IT KILLS THE "BOOKS CLOSE" CLAIM.**
+The same measurement, same code, same seed, ~40 minutes apart on the live (evolving) window:
+
+| | run 1 (1,411,872 rows) | run 2 (1,409,227 rows) | own sem |
+|---|---|---|---|
+| `G_CE` | **+0.00440** | **−0.00527** | 0.0032 |
+| `G_A` × 0.7 | +0.02637 | +0.02696 | 0.0009 |
+| `G_F` × 0.8 | −0.02895 | −0.03115 | 0.0009 |
+| **weighted total** | **+0.00183** | **−0.00946** | |
+| live AdamW `exp_avg` | −0.00206 | −0.00206 | |
+
+`G_CE` moved by 0.0097 — **3x its own sem, and it changed sign.** The window itself advanced
+(~2600 rows of churn) and the sample is redrawn over a different index space, but the deeper
+cause is that the sem treats 16000 rows as independent when rows within a game are strongly
+correlated — the same rows-per-cluster failure recorded in
+[[multipv6_regret_tail_is_fabricated]]. **The sem understates the real uncertainty by ~3x.**
+
+⇒ **"THE BOOKS CLOSE TO 11%" IS WITHDRAWN.** Run 1's +0.00183 against a live −0.00206 was a
+COINCIDENCE; run 2 gives +0.00946 with the opposite sign. The same applies to the sweep's
+"the checkpoint sits at the objective's equilibrium" — one sample of an unstable quantity.
+
+⇒ **"THE MAIN CE IS NEUTRAL" IS ALSO NOT ESTABLISHED.** It is the third claim about `G_CE` and
+it dies the same way as the first two. The defensible statement is a BOUND: **|`G_CE`| is
+under ~0.01 and its sign is not determined at this sample size.** Likewise `P_H_CE` moved
+−0.00211 → +0.00038 and straddles zero.
+
+**3. WHAT SURVIVES — AND IT IS THE ACTIONABLE PART.** Stable across every population and both
+runs:
+
+| | run 1 | run 2 | verdict |
+|---|---|---|---|
+| `G_A` (weighted) | +0.0264 | +0.0270 | **robustly POSITIVE — A sharpens** |
+| `G_F` (weighted) | −0.0290 | −0.0312 | **robustly NEGATIVE — F flattens** |
+| `P_H_A` | −0.00565 | −0.00596 | robustly negative |
+| `P_H_F` | +0.00645 | +0.00717 | robustly positive |
+| `A_tail_share` | 0.6926 | 0.6881 | stable ~69% fabricated |
+| `F_binds` | 0.480 | 0.488 | stable |
+
+**The A-vs-F opposition is the finding. The CE's projection is below this instrument's
+resolution** — which is itself the reason every single-sample story about the CE (sharpening,
+then flattening, then neutral) was wrong.
+
+**4. THE F-ONLY PREREG SURVIVES, RESTATED AS A DISPLACEMENT.** `G_F-only = G_CE + 0.8*G_F` is
+≈ **−0.030 ± 0.010**, robustly negative because it is dominated by the stable term. The sweep's
+CE slope (−0.76 per unit `log_temp`, measured over a 0.18 range) is far better determined than
+its intercept, so predict the DISPLACEMENT, not the level:
+**Δ`log_temp` ≈ −0.030/0.76 ≈ −0.039 [−0.026, −0.052]**, consistent with the sweep's −0.0385.
+- **VERY STRONG:** shortly after A is removed, `log_temp` moves materially DOWNWARD.
+- **STRONG:** the new resting point is substantially below −0.274.
+- **REFERENCE ONLY:** frozen-checkpoint mechanics say ≈ −0.312. Do NOT kill the hypothesis at
+  −0.300 or −0.325; the trunk, the targets and the window all move during training.
+- **FALSIFIED BY:** no material downward displacement in the early window.
+- Repeating the sweep DURING F-only separates "parameter moving toward its root" from "root
+  moving as the net learns".
+
+**5. NAMING.** `G_sharp` is retired as a name. `G_radial` = the projection onto `z -> az` over
+all legal logits; **`G_logtemp` = −dL/dlog_temp**, which requires the normal-moves-only
+restriction. They are numerically close here ONLY because `ft_bias` is absent and the
+underpromotion errors cancel in aggregate — neither is guaranteed in another net.
