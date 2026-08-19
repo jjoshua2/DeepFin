@@ -61639,3 +61639,93 @@ answer is a short GPU pause on the production inference path, NOT a weakened gua
 enough" here yields a precise-looking meaningless entropy.
 
 **Running on CPU. No GPU pause taken. Training untouched.**
+
+### 2026-08-19 RESULT — matched-support NET entropy, checkpoint 542. `alpha_max = 0.25`.
+### The arm is ALIVE but needs `f >= 0.60`, and my support-mismatch premise was WRONG
+
+Probe `scratchpad/sfsoft_net_entropy_probe.py` on the BANKED
+`data/banked/sfsoft_entropy_probe_iter542`, CPU, 5837 eligible rows from the 6 newest
+shards. Criterion frozen in `2f4d1ee2a` + `7d6d44401` BEFORE this ran.
+
+**HEADLINE**
+
+    H(p_net) on matched support = 0.9678
+    alpha_max at the frozen +0.05 budget = 0.25   (the 1/3 reweight ceiling does NOT bind)
+
+The net is FLATTER than either candidate reading: A assumed 0.7819, B assumed 0.9215,
+measured **0.9678**. ⇒ **reading A would have killed a live arm.** Its `alpha_max` of
+0.05-0.10 was an artifact of reusing an audit-population number, exactly as suspected --
+but the size of the error was not guessable, which is why the probe was worth running.
+
+| alpha | H(t_alpha) | dH vs net | p50 | p90 | p99 | @ +0.05 |
+|---|---|---|---|---|---|---|
+| 0.00 | 0.7425 | −0.2253 | −0.168 | +0.084 | +0.518 | PASS |
+| 0.15 | 0.9324 | −0.0353 | −0.008 | +0.348 | +0.714 | PASS |
+| 0.20 | 0.9740 | +0.0063 | +0.018 | +0.419 | +0.760 | PASS |
+| **0.25** | **1.0093** | **+0.0416** | +0.033 | +0.481 | +0.844 | **PASS** |
+| 0.30 | 1.0391 | +0.0713 | +0.057 | +0.533 | +0.924 | (sens) |
+| 0.40 | 1.0841 | +0.1163 | +0.093 | +0.634 | +1.078 | fail |
+
+Entropy binds first, at 0.25, well under the 1/3 ceiling -- as predicted.
+
+**⚑⚑ MY SUPPORT-MISMATCH PREMISE WAS WRONG ON THIS POPULATION, AND THE PROBE SAYS SO.**
+I argued the target lives on ~22 moves while the net is nonzero on all ~30-40 legal, "a
+difference of order 0.2 nats, the size of the effect under test". Measured:
+
+| | |
+|---|---|
+| mean \|legal_mask\| | 26.72 |
+| mean \|S\| = \|supp(t0) U supp(q)\| | **26.71** |
+| legal moves OUTSIDE S | **0.015 per row**; only 60 of 5764 rows have any |
+| `tail_mass_net` | **0.0000** at mean, p90 AND max |
+
+**S IS ESSENTIALLY THE LEGAL MOVE SET**, because `q_SF` alone already covers 26.23 of
+26.72 legal moves. So the restriction is a NO-OP and the net was never being charged for
+unusable mass. The matched-support correction was still the right call -- it is what let
+us MEASURE `H(p_net)` on this population instead of reusing the contaminated 0.7819, and
+the target side (22.0 vs 26.7) genuinely is cross-support -- but the mechanism I claimed
+for it does not exist here. Stated because a correct conclusion reached through a wrong
+premise will be mis-generalised later.
+
+**THE `min positive` SANITY CHECK EARNED ITS PLACE.** Both targets bottom out at
+**5.96e-08 = 2^-24**, the float32 ULP. **8.26% of `supp(t0)` entries (1.83 per row) sit at
+that quantization floor** -- they are representation residue, not candidates. They inflate
+the support COUNTS slightly and contribute ~2e-6 nats of entropy, i.e. nothing. The exact
+`> 0` test is therefore sound for the entropy numbers and mildly generous for the geometry
+numbers. Had this been an epsilon cutoff we would not know which.
+
+**CROSS-CHECK, unprompted and it passes.** The net is 0.2253 nats FLATTER than its own
+target here. [[the_training_target_is_sharper_than_the_net]] measured −0.19 nats on the
+exact tensor, on a different population. Same sign, same magnitude. ⇒ blending toward SF
+does not immediately "flatten" us: it CLOSES a gap in which the target is sharper than the
+net, and only crosses the net's own entropy at `alpha ~ 0.20`.
+
+**VIABILITY -- the arm is NOT dead, but it is not launchable now.**
+
+    required f at alpha=0.25, S_R=20  =  3.0 / (20 * 0.25)  =  0.60
+
+| `f` | cp @ alpha_max=0.25, S_R=20 | |
+|---|---|---|
+| 0.4017 (iter 544, today) | **2.01** | FAILS the 3.0 bar |
+| 0.60 | 3.00 | threshold |
+| 0.63 (fresh-shard asymptote) | 3.15 | clears by 0.15 |
+
+⇒ **the arm needs coverage ~0.60, which is at the TOP of the estimated asymptote range
+(0.51-0.66).** It is marginal, it is not refuted, and the deciding quantity is still
+rising on its own. `S_R = 20` remains the AUDIT population's slope, carried here as an
+explicitly labelled historical sensitivity -- NOT a measurement. Buying today's `S_R` with
+deep-SF labels is justified ONLY if coverage actually reaches ~0.60.
+
+**TAIL, reported as pre-committed and NOT thresholded.** At `alpha = 0.25` the median row
+is essentially neutral (+0.033) while p99 is +0.844: the mean is carried by a minority
+that flattens hard. Descriptive by prior agreement; no criterion invented after the fact.
+
+**⚑ COST I GOT WRONG: "CPU IS FREE" IS FALSE.** s/iter went **336 -> 427 (+27%)** while
+this ran. `CAE_TEST_THREADS=2` is a PYTEST variable and caps nothing in a plain script; I
+should have set `torch.set_num_threads` explicitly. The probe was minutes and I let it
+finish, but a CPU probe is NOT a zero-cost alternative to a GPU pause window
+([[agent_test_suites_can_kill_production]], [[loop_is_gpu_bound_cpu_two_thirds_idle]]).
+Any re-run pins threads first.
+
+**VALID FOR THIS NET AT ITERATION 542 ONLY.** Re-run at any actual launch checkpoint.
+Nothing flipped; training untouched throughout.
