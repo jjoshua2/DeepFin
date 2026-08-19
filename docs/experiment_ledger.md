@@ -60153,3 +60153,69 @@ and is noise-dominated; checkpoints are written at the same phase of the iterati
 sample is both noisy AND biased. Instantaneous `-lr * m/sqrt(v)` gets the SIGN of the realized
 drift wrong on 4 of 4 long segments. **The realized displacement between checkpoints is the
 measurement; the stored moments are not.**
+
+---
+
+### ⚑⚑ VERDICT — F-ONLY IS **NULL** ON POLICY QUALITY. THE PRE-COMMITTED KILL FIRES. (2026-08-19)
+
+Judged by the rule written in `PREREG — F-ONLY` BEFORE the edit, not post hoc.
+
+**KILL AS WRITTEN:** "raw policy / RL target / PLAY regret all within 0 +/- 3 cp ⇒ the
+probability-hinge F is null on policy quality, stop spending live compute on this formulation
+and move to SF target repair."
+
+**Paired 4000-position deep-SF audit, ckpt297 (primary) vs iter487.** Same frozen audit set,
+same instrument as the banked baseline (batch 32, `--max-positions 4000`), joined on `key`,
+0 unmatched on either side. Dumps: `scratchpad/f4k_i297.jsonl`, `scratchpad/f4k_i487.jsonl`.
+
+| metric | field | ckpt297 | iter487 | paired delta (A-B) | 95% CI | |
+|---|---|---|---|---|---|---|
+| raw policy | `cand.raw.exp` | 52.14 | 52.41 | **-0.26** | [-1.44, +0.93] | ns |
+| RL target | `cand.train.exp` | 40.99 | 40.01 | **+0.98** | [-0.89, +2.88] | ns |
+| PLAY | `cand.search.exp` | 38.43 | 38.74 | **-0.30** | [-2.69, +2.01] | ns |
+
+**All three point estimates inside +/-3 cp; all three CIs contain 0.** Raw policy's CI
+`[-1.44, +0.93]` EXCLUDES +/-3 entirely — this is a measured null, not an underpowered one.
+
+⚑ **The interval is +190 iterations (297 -> 487), not the 75 the prereg required.** The test is
+therefore BETTER powered than pre-committed, not worse. F ran 2.5x its own required window and
+produced nothing on the deciding ruler.
+
+**THE OTHER PREDICTIONS, judged the same way:**
+
+| # | prediction | outcome |
+|---|---|---|
+| 1 | `policy_own.log_temp` moves materially DOWNWARD | **CONFIRMED.** -0.27498 -> -0.28712. Ran at 0.44 of the `lr` bound early (see the AdamW retraction entry). The "concerning outcome" (sitting near -0.274 with no motion) did NOT occur. |
+| 3 | **DECIDING** — policy quality | **NULL.** Table above. |
+| 4 | online: controller RAISING difficulty (`wdl_regret` resuming its ramp) | **FAILED, mildly NEGATIVE.** `wdl_regret` 0.02862 -> 0.03002 over 188 iterations with `sf_nodes` PINNED at 75000 (so difficulty is 1-D and the reading is clean). Regret RISING = the PID LOWERING difficulty = the airbag = the agent winning LESS. This is the plateau signature A+F produced, with a slight downward tilt. |
+
+**⇒ THE MECHANISM ENGAGED AND THE QUALITY DID NOT FOLLOW.** F demonstrably did what it was
+designed to do — it bound on ~48.7% of rows throughout, and it moved the scalar it was
+predicted to move, in the predicted direction, at a rate near the optimiser's own bound. The
+deep-SF ruler reads zero. This is [[absorption_works_fit_does_not_buy_elo]] again, now with a
+pre-registered kill attached to it.
+
+**⚑⚑ AND THE SHARPEST FINDING IS THE HOLDOUT DECOUPLING.** Over the SAME window:
+
+| | iter 301 | iter 488 |
+|---|---|---|
+| `test_policy_loss` (FROZEN holdout) | 1.72937 | **1.68663** |
+| `policy_loss` (replay stream) | 0.90334 | 0.94022 |
+
+Frozen-holdout policy CE improved by **0.043 nats** — the one signal that looked genuinely
+encouraging at the +37 read — and bought **-0.26 cp of raw policy quality, CI excluding 3 cp**.
+⇒ **a 0.043-nat frozen-holdout CE gain is worth approximately zero deep-SF cp.** Do not treat
+frozen-holdout CE as a strength proxy again; it is the third instrument to earn that caveat
+after `wdl_regret` and `best_loss`. Related: [[losses_are_decoupled_from_strength]].
+
+**CONSEQUENCE (pre-committed, executing):** stop spending live compute on the probability-hinge
+formulation. `w_sf_policy_floor` should come off the training objective, and the next arm is SF
+TARGET REPAIR, which needs its own prereg before any edit. ⚑ Do NOT read this null as
+"the floor is harmless, leave it on" — it costs ~0.9 ms/step and binds on half the rows for a
+measured zero.
+
+**Banked:** `data/salvage/f_only_readout_iter487_20260819` (readout), midpoint
+`data/salvage/f_only_midpoint_20260818`, boundary `data/salvage/apf_endpoint_checkpoint_000297_20260818`.
+**Confounds:** replay window turned over from ~100% A+F-era to ~100% F-only-era across the arm
+(as pre-registered); optimiser moments carried A's history transiently at the boundary;
+`game_id` absent from the audit set so all CIs are position-level, not game-clustered.
