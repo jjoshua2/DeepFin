@@ -61058,3 +61058,52 @@ exactly the size of the bug's radius**, structurally unable to see a violation i
 review limit), so there is exactly ONE fresh independent review of this delta, and it found two
 survived-mutant classes on its own first pass. Not deployed; the live pairing window untouched
 throughout.
+
+### 2026-08-19 — #448: the floor's activation path, traced because it was a P1-shaped question
+
+**QUESTION:** the new validator raises on an infeasible mandatory pair only when `w != 0.0`, so
+that an INERT term cannot kill a live trial. That gate creates an obvious hazard: accept an
+impossible floor while OFF, then live-push `w_sf_policy_floor` above zero and have it enter the
+objective **without ever being re-validated**. If that path existed it would be a P1.
+
+**IT DOES NOT — and the reason is NOT where I first said it was.** I wrote that
+"`_apply_lr_gamma_weights` and `dataclasses.replace` both re-enter the constructor". ⚑ **The
+first half is FALSE.** `_apply_lr_gamma_weights` (`tune/trainable_config_ops.py:1343`) does a
+bare
+
+    setattr(trainer, wk, float(config[wk]))
+
+for every trainer weight. **No reconstruction, no validation, nothing.** The raw scalar just
+lands on the attribute.
+
+**THE VALIDATOR RE-RUNS AT THE CONSUMER, NOT AT THE PUSH.** `Trainer._loss_kwargs` rebuilds the
+frozen object on every read:
+
+    "sf_policy_floor": replace(self.sf_policy_floor_params, w=float(self.w_sf_policy_floor))
+
+and `dataclasses.replace` re-enters `__post_init__`. Both `compute_loss` call sites go through
+it — training splats `**self._loss_kwargs` (`trainer.py:4058`) and eval uses
+`eval_loss_kwargs`, built from `_loss_kwargs` (`trainer.py:3986`). So the sequence is
+
+    w > 0  ->  _loss_kwargs  ->  replace(...)  ->  __post_init__  ->  RAISE, before compute_loss
+
+**EXECUTED, not argued:** resolve an infeasible pair at `w=0.0` (1 warning, no raise), push the
+raw attribute to 0.8 (still no validation), then re-stamp as `_loss_kwargs` does — raises.
+
+Even the awkward simultaneous case is safe: `_apply_lr_gamma_weights` writes the raw weight
+first and `sync_search_width` may manipulate the stored object while its `w` is still zero, but
+the subsequent `_loss_kwargs` reconstruction stamps the live weight on and re-validates before
+training uses it.
+
+**⚑ THE METHOD POINT, which is the reusable part.** "Is this knob re-validated on activation?"
+has an answer one frame further out than the natural place to look. Validation lives at the
+CONSUMER's reconstruction, not at the live-push site, and the push site looks completely inert
+if you stop there — which is precisely how this repo's signature defect usually presents. Trace
+to the `compute_loss` call site, not to the setter. Related: [[a_counter_is_not_the_mechanism]],
+[[announce_from_the_consumers_own_parameter]].
+
+**RESIDUAL, accepted and not fixed:** while `w == 0.0` an infeasible mandatory configuration IS
+permitted, so its diagnostic mass columns describe an impossible hypothetical floor. That is
+acceptable because it cannot enter the objective silently — but it means **the WARNING, not
+`truncated_frac`, is the authoritative signal for mandatory-only infeasibility while the term is
+off**, since the cap never truncates a mandatory role and so `truncated_frac` stays 0.
