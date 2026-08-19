@@ -60091,3 +60091,65 @@ fast**, exactly the direction a relaxing system fails a linear model.
 gap, and that is the PREDICTED behaviour.** "log_temp has not reached -0.312" is not a
 failure signal, must not be a kill criterion, and must not appear in the readout as a
 disappointment. Only 10.6% of the initial gap has been covered so far, in ~34 iterations.
+
+---
+
+### ⚑⚑ RETRACTED: the `log_temp` "zero-parameter" prediction and the 1,589-iteration timescale (2026-08-19)
+
+Both numbers from `335fff030` are **WITHDRAWN**. Peer review caught the first error and the
+investigation it forced surfaced a second, larger one.
+
+**Error 1 (peer).** I wrote the update as `dl/dstep = lr * G(l)`. That is the **SGD** equation.
+`policy_own.log_temp` is updated by the **AdamW fallback** inside Aurora (`aurora.py:624`;
+`use_aurora=False` on its group), so the actual step is
+
+`dl = -lr * m_hat / (sqrt(v_hat) + eps)`,  `m,v` EMAs of the gradient at betas (0.9, 0.95).
+
+The learning rate multiplies the **moment-normalised** gradient. In the stationary limit
+`m/sqrt(v) -> sign(g)` and the MAGNITUDE of `G` drops out of the step size entirely. So
+"eta = lr, therefore zero free parameters" was not zero-parameter physics — it was the wrong
+equation for the optimiser this parameter actually uses.
+
+**Error 2 (found while fixing error 1, and worse).** ⚑ **The `lr` I used was 10x too large.**
+`policy_own.log_temp` is param 449 in **group 3**, whose `lr` is **3.00e-06**. The `lr` column
+in the Ray status table reads **3e-05**, and the Aurora matrix group runs **6e-05**. Three
+different numbers; I took the one on the screen. Verified identical (3.00e-06) at all ten
+surviving checkpoints, `weight_decay` 0.0, `eps` 1e-8.
+
+⇒ **the "predicted -0.00258 vs measured -0.00374, ratio 1.45x" was two compensating errors**,
+a 10x-too-large lr against a raw-gradient update that under-predicts. Do not quote it. The
+"~1,589 iterations to the root" integrated the same wrong ODE and is withdrawn with it.
+
+**WHAT SURVIVES, and it is still worth having:** the trajectory moves in the direction the
+frozen raw-gradient curve predicts, and that curve has a restoring zero below the present
+value. A mechanistic consistency check, not a rate prediction.
+
+**MEASURED REPLACEMENT — the realized moment ratio** (`scratchpad/logtemp_adamw_state.py`,
+`logtemp_adamw_state.json`). The step size is bounded by `lr` in absolute value, so the
+sign-limit bound is exact and needs no model:
+
+| window | arm | d(step) | realized dl/step | as a fraction of the `lr` bound |
+|---|---|---|---|---|
+| 190 -> 231 | A+F | 5641 | -1.70e-07 | 0.057 |
+| 231 -> 297 | A+F | 6425 | -3.44e-07 | 0.115 |
+| **297 -> 338** | **F-only** | 4225 | **-1.32e-06** | **0.440** |
+| **338 -> 482** | **F-only** | 16481 | **-3.83e-07** | **0.128** |
+
+Total F-only: **-0.27498 -> -0.28712** over 21,136 steps = **19% of the `lr` bound**.
+
+**⇒ THE EARLY MOVEMENT WAS NOT SURPRISING, AND IT HAS SINCE DECELERATED 3.4x.** The answer to
+"is the fast early motion surprising" is **no**: it sits at 0.44 of a bound the optimiser
+cannot exceed. ⚑ But the frozen curve does NOT explain the deceleration — `|G|` falls only
+~10-15% between `log_temp` -0.275 and -0.287, while the realized rate fell **3.4x**. So the
+slowdown is NOT relaxation along a fixed curve. **Repeating the sweep at the iter-338 midpoint
+bank is now the deciding measurement** for whether the ROOT MOVED (evolving trunk / targets /
+replay) versus the optimiser's noise floor rising. Queued behind the deciding audit.
+
+**⚑ A TRAP FOR THE SWEEP-COMPARISON: the checkpointed moments are PHASE-LOCKED.** Do not read
+`exp_avg` off a single checkpoint as "the current gradient". Consecutive checkpoints read
+-1.351e-03, +9.969e-04, -1.021e-03, +1.123e-03, -5.729e-04, -9.433e-04 — **the sign flips
+almost every checkpoint** while `sqrt(v)` sits stable at ~5e-03. `m` is an EMA over ~10 steps
+and is noise-dominated; checkpoints are written at the same phase of the iteration loop, so the
+sample is both noisy AND biased. Instantaneous `-lr * m/sqrt(v)` gets the SIGN of the realized
+drift wrong on 4 of 4 long segments. **The realized displacement between checkpoints is the
+measurement; the stored moments are not.**
