@@ -1398,6 +1398,11 @@ def test_the_floor_set_is_capped_to_a_feasible_probability_budget() -> None:
     bare = sf_policy_floor_deficit(probs, regret, legal, played, params=no_collar)
     assert _bound_members(probs, regret, legal, played, no_collar) == [0, 1, 2, 3, 4, 5]
     assert float(bare.member_count_applied) == 6.0
+  # ⚑ AND raw MUST STILL READ 7. The whole justification for shipping the pair
+  # is that they can disagree; without this, `member_count_raw = (floors > 0)`
+  # -- i.e. raw silently aliased to applied -- passes every other assertion here
+  # (reviewer mutant M8, PR #448).
+    assert float(bare.member_count_raw) == 7.0
     assert float(bare.applied_mass) == pytest.approx(6 * 0.15, abs=1e-6)
     assert float(out.applied_mass) - float(bare.applied_mass) == pytest.approx(
         1.0 / 16, abs=1e-6,
@@ -1481,6 +1486,24 @@ def test_the_budget_has_no_positive_slack_at_the_float32_boundary() -> None:
     assert float(fit.member_count_applied) == 4.0
     assert float(fit.applied_mass) == 1.0
 
+    # ⚑⚑ AND THE CASE WITH A MANDATORY OVERLAP, which the fixture above cannot
+    # reach: `tau = 0.5, tau_top1 = 0.1` makes SF's top-1 cost only its
+    # INCREMENT. Doing that subtraction in float32 before widening rounds it UP
+    # by 7.5e-9, and this exactly-feasible pair (0.5 + 0.5 = 1.0) then loses a
+    # member. Reviewer finding P3-3: without this leg the mutants "float64 ->
+    # float32" and "subtract outside the float64 block" both survive the new
+    # tests and are caught only by a test named for something else entirely.
+    overlap = SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.1, tau_played=0.0)
+    regret, legal, probs = _k_member_row(2)
+    pair = sf_policy_floor_deficit(probs, regret, legal, None, params=overlap)
+    assert float(pair.requested_mass) == 1.0
+    assert float(pair.truncated) == 0.0, (
+        "the exactly-feasible pair lost a member: the tau - mandatory "
+        "subtraction is being rounded in float32 before it is widened"
+    )
+    assert float(pair.member_count_applied) == 2.0
+    assert float(pair.applied_mass) == 1.0
+
 
 def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
     """`applied_mass <= 1` for every reachable config, not just the fixtures.
@@ -1495,6 +1518,8 @@ def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
     for tau in taus:
         for k in range(1, 13):
             for collar in (0.0, 1.0 / 16):
+                # `resolve(tau=tau, ...)` leaves tau_top1 == tau, so this is the
+                # same worst case the validator applies.
                 if max(tau, tau) + collar > 1.0:
                     continue  # rejected at resolve time; its own test covers it
                 params = SfPolicyFloorParams.resolve(tau=tau, tau_played=collar)
@@ -1519,6 +1544,161 @@ def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
     assert checked > 200, checked
 
 
+def test_members_are_retained_by_SF_REGRET_and_not_by_index_or_probability() -> None:
+    """⚑⚑ THE CENTRAL DESIGN DECISION, ON A FIXTURE THAT CAN SEE IT.
+
+    "the moves SF likes best are the ones that survive" was previously pinned
+    only against a full REVERSAL of the order, because the seven-member fixture
+    has regret order == index order == probability order. Reviewer mutants:
+    sorting by INDEX (ignoring regret entirely) and sorting by PROBABILITY both
+    SURVIVED (M10, M5, PR #448).
+
+    So here all three orders are mutually different, and the assertion is on
+    WHICH member gets demoted rather than on how many do.
+    """
+    # regret order  : 2, 4, 0, 1, 6, 3, 5   (index 2 is SF's best)
+    # index order   : 0, 1, 2, 3, 4, 5, 6
+    # ascending prob: 6, 1, 3, 5, 2, 0, 4
+    cps = [4.0, 6.0, 0.0, 10.0, 2.0, 12.0, 8.0]
+    regret = torch.tensor([[*[R(c) for c in cps], R(300), 0.55, 0.55]])
+    legal = torch.ones(1, 10, dtype=torch.bool)
+    probs = torch.softmax(
+        torch.tensor([[0.5, 0.1, 0.4, 0.2, 0.6, 0.3, 0.0, 8.0, 0.0, 0.0]]), dim=-1,
+    )
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=0.0)
+    out = sf_policy_floor_deficit(probs, regret, legal, None, params=params)
+
+    # Seven members at 0.15 request 1.05; top1 (index 2) is free, so six of the
+    # remaining increments fit in the 0.85 budget and exactly one is demoted.
+    assert float(out.member_count_raw) == 7.0
+    assert float(out.truncated) == 1.0
+    assert float(out.member_count_applied) == 6.0
+
+    # ⚑ THE ONE DEMOTED MEMBER IS INDEX 5 -- the WORST SF regret (12cp). Sorting
+    # by index would drop 6; sorting by probability would drop 4; sorting by
+    # DESCENDING regret would drop 4. Only ascending SF regret drops 5.
+    assert _bound_members(probs, regret, legal, None, params) == [0, 1, 2, 3, 4, 6]
+
+
+def test_the_admission_order_is_pinned_to_a_STABLE_sort() -> None:
+    """Tied regrets must break the same way on every backend.
+
+    SF regret is integer-cp quantised and this module's own docstring says ties
+    are common, so an unstable sort makes WHICH tied member is demoted depend on
+    the sort backend -- CPU and CUDA disagree, and the loss stops being
+    reproducible across devices. Nothing observable distinguishes the two on
+    CPU, where torch's sort happens to be stable anyway, so this asserts the
+    source: dropping `stable=True` survived every behavioural test (reviewer
+    mutant M3, PR #448).
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.train import losses as losses_mod
+
+    fn = next(
+        node for node in ast.walk(ast.parse(inspect.getsource(losses_mod)))
+        if isinstance(node, ast.FunctionDef) and node.name == "sf_policy_floor_deficit"
+    )
+    sorts = [
+        call for call in ast.walk(fn)
+        if isinstance(call, ast.Call)
+        and ast.unparse(call.func) in {"torch.argsort", "torch.sort"}
+    ]
+    assert len(sorts) == 1, f"expected exactly one sort in the floor: {len(sorts)}"
+    stable = [ast.unparse(kw.value) for kw in sorts[0].keywords if kw.arg == "stable"]
+    assert stable == ["True"], (
+        "the admission sort must be stable=True: regret is integer-cp "
+        f"quantised, so an unstable tie-break is backend-dependent: {stable}"
+    )
+
+
+def test_a_mandatory_pair_that_is_infeasible_ONLY_AFTER_QUANTIZATION_is_rejected() -> None:
+    """⚑⚑ THE VALIDATOR MUST ASK THE QUESTION THE LOSS WILL ASK.
+
+    `tau = tau_top1 = 0.6, tau_played = 0.4` sums to EXACTLY 1.0 as Python
+    doubles and to 1.0000000298 once materialized in float32. A double-precision
+    validator accepts it, and nothing downstream can catch it:
+
+    * the cap only ever drops OPTIONAL members, and both roles here are
+      MANDATORY, so there is nothing to truncate;
+    * `applied_mass` sums correctly in float64 and is then narrowed back to
+      float32, where 1.0000000298 rounds to a clean `1.0`.
+
+    So every counter reads healthy over a false invariant -- this repo's
+    signature defect. Reviewer finding, PR #448. The fix is that
+    `SfPolicyFloorParams` validates in `_FLOOR_THRESHOLD_DTYPE`, the same
+    representation `sf_policy_floor_deficit` materializes.
+    """
+    from chess_anti_engine.train.losses import _as_floor_threshold
+
+    # The premise, stated as an executable fact rather than as a comment.
+    assert 0.6 + 0.4 == 1.0
+    assert _as_floor_threshold(0.6) + _as_floor_threshold(0.4) > 1.0
+
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_top1=0.6, tau_played=0.4, w=0.5)
+
+    # ...and the pair that is exact in BOTH representations still resolves.
+    assert _as_floor_threshold(0.5) + _as_floor_threshold(0.5) == 1.0
+    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5, w=0.5)
+
+    # ⚑ AND THE SOURCE, because the values alone cannot pin it. A validator that
+    # rounds only SOME of the three legs is behaviourally IDENTICAL to one that
+    # rounds all three: searched 110k triples over a dense grid and found ZERO
+    # where reverting one leg to a double flips the verdict, because a
+    # double-sum at the boundary forces the legs to be dyadic together or
+    # inexact together. So the whole-revert mutant dies on the assertions above
+    # and a partial revert cannot be caught by any value. This closes that.
+    import ast
+    import inspect
+
+    from chess_anti_engine.train import losses as losses_mod
+
+    post_init = next(
+        node for node in ast.walk(ast.parse(inspect.getsource(losses_mod)))
+        if isinstance(node, ast.FunctionDef) and node.name == "__post_init__"
+    )
+    rounded = {
+        ast.unparse(node.args[0])
+        for node in ast.walk(post_init)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "_as_floor_threshold"
+    }
+    assert rounded == {"self.tau", "self.tau_top1", "self.tau_played"}, (
+        "every threshold in the feasibility check must be rounded to the dtype "
+        f"the loss materializes; these were: {rounded}"
+    )
+
+
+def test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar() -> None:
+    """⚑⚑ `gumbel_topk: 1` reached the new validator with NO floor key set.
+
+    `tau_played` DEFAULTS to `1/gumbel_topk`, and `normalize_gumbel_topk` allows
+    1, so `gumbel_topk: 1` makes the shipped 0.15/0.15 defaults sum to 1.15.
+    `gumbel_topk` is a LIVE selfplay key, so before this gate the raise landed as
+    a CLAUDE.md category (b) death -- the yaml reload SUCCEEDS, `from_dict`
+    raises inside `train_trial`'s iteration loop, and that loop has a `finally:`
+    and zero `except:`. A term contributing NOTHING to `total` would have taken
+    the run down. Reviewer finding P2-1, PR #448.
+
+    At `w == 0.0` it warns; at any non-zero weight it still raises, because then
+    the infeasible floor really is in the objective.
+    """
+    with pytest.warns(RuntimeWarning, match="gumbel_topk"):
+        params = SfPolicyFloorParams.resolve(gumbel_topk=1)
+    assert params.tau_played == 1.0
+    assert params.w == 0.0
+
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(gumbel_topk=1, w=0.8)
+
+    # The message has to name the key the operator can actually change. The
+    # three it names by value are all at their defaults here.
+    with pytest.raises(ValueError, match="gumbel_topk"):
+        SfPolicyFloorParams.resolve(gumbel_topk=1, w=0.8)
+
+
 def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
     """SF top-1 and the collar are never truncated, so they must fit by config.
 
@@ -1527,10 +1707,17 @@ def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
     unsatisfiable on any row where they land on different moves, and resolve
     time is the only honest place to catch that.
     """
+    # ⚑ `w` IS NON-ZERO ON PURPOSE. The raise is gated on the term actually
+    # being in the objective, so that an INERT floor cannot kill a live trial
+    # (see `test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar`).
+    # Omitting `w` here would silently test the warning path instead.
     with pytest.raises(ValueError, match=r"exceeds 1\.0"):
-        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5)
+        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5, w=0.8)
     with pytest.raises(ValueError, match=r"exceeds 1\.0"):
-        SfPolicyFloorParams.resolve(tau=0.1, tau_top1=0.7, tau_played=0.4)
+        SfPolicyFloorParams.resolve(tau=0.1, tau_top1=0.7, tau_played=0.4, w=0.8)
+    # The same configuration with the term OFF warns rather than raising.
+    with pytest.warns(RuntimeWarning, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5, w=0.0)
     # Exactly 1.0 is satisfiable (two moves, nothing left over) and is therefore
     # allowed: the boundary belongs to the feasible side.
-    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5)
+    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5, w=0.8)

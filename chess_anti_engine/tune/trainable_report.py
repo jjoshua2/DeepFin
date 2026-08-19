@@ -890,13 +890,17 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # `total` multiplies by `w`, so it is what to read against the weight once the
   # term is on. Neither moves with `w` within a single step; see TrainMetrics.
     "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
-  # Feasibility cap. The floors are simultaneous lower bounds on one
-  # distribution, so `sf_policy_floor_requested_mass` above 1.0 is an EMPTY
-  # constraint set and a residual no net can clear; the loss caps the SET (see
-  # losses.sf_policy_floor_deficit) and `..._truncated_frac` says how often it
-  # bit. Read raw against applied -- the pair is what separates a term whose
-  # strength came from the configured tau from one whose strength came from a
-  # `|F| * tau` nobody set.
+  # Feasibility cap. The floors are simultaneous lower bounds on ONE
+  # distribution, so a per-row mass above 1.0 would be an EMPTY constraint set
+  # and a residual no net can clear; the loss caps the SET (see
+  # losses.sf_policy_floor_deficit). ⚑⚑ READ `..._truncated_frac` FOR WHETHER
+  # THE CAP FIRED -- it is the only column that answers that. These are ROW
+  # MEANS, so `..._requested_mass` above 1.0 is nearly unreachable even when a
+  # large minority of rows are infeasible (0.552 measured against a
+  # `truncated_frac` of 0.333), and the float32 narrowing costs it another ULP.
+  # Read raw against applied for the MAGNITUDE -- that pair is what separates a
+  # term whose strength came from the configured tau from one whose strength
+  # came from a `|F| * tau` nobody set.
     "sf_policy_floor_member_count_raw": 0.0,
     "sf_policy_floor_requested_mass": 0.0,
     "sf_policy_floor_truncated_frac": 0.0,

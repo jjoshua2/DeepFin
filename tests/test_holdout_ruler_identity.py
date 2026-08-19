@@ -1056,18 +1056,41 @@ def _weights_normalised_by_losses() -> set[str]:
     the name: seed on the key, then propagate through local aliases and through
     calls to other functions in the file, renaming at each parameter binding.
 
+    ⚑ TWO REGRESSIONS AGAINST THE REGEX IT REPLACED, both found by review and
+    both closed here (PR #448):
+
+    * `funcs` was keyed by BARE NAME, so two same-named functions shadowed each
+      other. `losses.py` has exactly one `__post_init__` today, and this PR's
+      own direction makes a second dataclass likely -- adding one would have
+      silently blinded the scan. Keyed by `id(node)` now, with the name kept
+      only for the call-graph lookup, which is where a bare name is correct.
+    * Only `FunctionDef` bodies were walked, so a MODULE-LEVEL normalisation was
+      invisible. The old regex saw it. Module-level statements are scanned too.
+
     LIMIT, stated rather than implied: it recognises the two normalisation
     IDIOMS this codebase uses (`max(0.0, x)` and `x > 0.0`, with `float(...)`
-    transparent), follows only module-level functions defined in `losses.py`,
-    and does not model conditionals or reassignment. A normalisation written a
-    third way, or one that crosses into another module, is still invisible.
+    transparent), follows calls only to functions defined in `losses.py`, and
+    does not model conditionals or reassignment. A normalisation written a third
+    way, or one that crosses into another module, is still invisible.
     """
     import ast
 
     src = (Path(__file__).resolve().parents[1]
            / "chess_anti_engine" / "train" / "losses.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+  # Keyed by identity, NOT by name: two functions can share a name (this file
+  # already has one `__post_init__` and could easily gain a second), and a
+  # name-keyed dict silently drops all but the last.
+    scopes: dict[int, ast.AST] = {
+        id(n): n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+    }
+  # ...plus the module itself, so a normalisation written at module level -- which
+  # the regex this replaced DID catch -- is not invisible.
+    scopes[id(tree)] = tree
+    by_name: dict[str, list[ast.FunctionDef]] = {}
+    for node in scopes.values():
+        if isinstance(node, ast.FunctionDef):
+            by_name.setdefault(node.name, []).append(node)
 
     def unwrap(node: ast.expr) -> ast.expr:
         """`float(x)` and `(x)` are transparent to every idiom below."""
@@ -1107,17 +1130,18 @@ def _weights_normalised_by_losses() -> set[str]:
         # Seed everywhere the key's own spelling is bound: `compute_loss`'s
         # parameter, and any other function in the file that names it.
         seen = {
-            (fname, key) for fname, fn in funcs.items()
+            (sid, key) for sid, fn in scopes.items()
+            if isinstance(fn, ast.FunctionDef)
             for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
             if a.arg == key
         }
-        seen |= {(fname, key) for fname, fn in funcs.items()
+        seen |= {(sid, key) for sid, fn in scopes.items()
                  for n in ast.walk(fn)
                  if isinstance(n, ast.Name) and n.id == key}
         work = list(seen)
         while work:
-            fname, local = work.pop()
-            fn = funcs.get(fname)
+            sid, local = work.pop()
+            fn = scopes.get(sid)
             if fn is None:
                 continue
             for node in ast.walk(fn):
@@ -1127,24 +1151,25 @@ def _weights_normalised_by_losses() -> set[str]:
                 if (isinstance(node, ast.Assign)
                         and getattr(unwrap(node.value), "id", None) == local):
                     for t in node.targets:
-                        nxt = (fname, getattr(t, "id", ""))
+                        nxt = (sid, getattr(t, "id", ""))
                         if nxt[1] and nxt not in seen:
                             seen.add(nxt)
                             work.append(nxt)
                 # interprocedural: the value crosses a parameter binding and
                 # is RENAMED, which is the case a name scan cannot see.
                 if isinstance(node, ast.Call):
-                    callee = funcs.get(getattr(node.func, "id", ""))
-                    if callee is None:
-                        continue
-                    for arg in [*node.args, *(k.value for k in node.keywords)]:
-                        if getattr(unwrap(arg), "id", None) != local:
-                            continue
-                        param = param_for(callee, node, arg)
-                        nxt = (callee.name, param or "")
-                        if param and nxt not in seen:
-                            seen.add(nxt)
-                            work.append(nxt)
+  # A call names its callee, so the bare name is the right lookup here --
+  # but it can resolve to several definitions, and every one of them is a
+  # scope the value might flow into.
+                    for callee in by_name.get(getattr(node.func, "id", ""), ()):
+                        for arg in [*node.args, *(k.value for k in node.keywords)]:
+                            if getattr(unwrap(arg), "id", None) != local:
+                                continue
+                            param = param_for(callee, node, arg)
+                            nxt = (id(callee), param or "")
+                            if param and nxt not in seen:
+                                seen.add(nxt)
+                                work.append(nxt)
     return normalised
 
 

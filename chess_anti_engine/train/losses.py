@@ -595,6 +595,30 @@ def policy_legal_bool(batch: dict[str, torch.Tensor], *, width: int) -> torch.Te
 # sits ABOVE the deterministic prior-rank threshold rather than at it.
 SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
 
+# ⚑⚑ THE FLOOR THRESHOLDS HAVE THEIR OWN DTYPE, PINNED, AND IT IS NOT `probs`'.
+# The feasibility rule is a statement about the numbers the loss ACTUALLY
+# materializes, so config validity must not depend on what dtype some future
+# policy softmax happens to produce. Pinning it here means the value
+# `SfPolicyFloorParams` validates and the value `sf_policy_floor_deficit`
+# subtracts from `probs` are the same representation, by construction rather
+# than by coincidence. (`po_probs` is fp32 in production today -- softmax is on
+# autocast's fp32 list -- so this is currently a no-op that stays a no-op.)
+_FLOOR_THRESHOLD_DTYPE = torch.float32
+
+
+def _as_floor_threshold(value: float) -> float:
+    """`value` as the loss will actually represent it, widened back to a double.
+
+    Configuration arrives as Python doubles and is validated as doubles, but the
+    loss materializes it in `_FLOOR_THRESHOLD_DTYPE`. Those disagree, and near
+    the feasibility boundary the disagreement is the whole question:
+    `0.6 + 0.4 == 1.0` exactly as doubles, while the float32 pair sums to
+    1.0000000298 -- an infeasible mandatory set that a double-precision
+    validator waves through. Round-tripping through the consumer's own dtype is
+    what makes the validator answer the question the loss will ask.
+    """
+    return float(torch.tensor(float(value), dtype=_FLOOR_THRESHOLD_DTYPE))
+
 
 def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     """The smallest tau that buys a top-k slot BY PRIOR RANK: ``1 / topk``.
@@ -754,15 +778,54 @@ class SfPolicyFloorParams:
   # window, where the max rule floors it at `max(tau, tau_top1)`. Rejected at
   # resolve time rather than clamped at loss time, because a floor the net can
   # never clear is a permanent gradient the operator did not ask for.
-        mandatory = max(float(self.tau), float(self.tau_top1)) + float(self.tau_played)
+  # ⚑ ROUNDED TO THE CONSUMER'S DTYPE FIRST. Validating the Python doubles
+  # answers a different question than the one the loss asks: `0.6 + 0.4` is
+  # exactly 1.0 as doubles and 1.0000000298 as float32, so a double-precision
+  # check accepts a mandatory pair that is INFEASIBLE once materialized. And
+  # this failure is invisible downstream -- neither role is ever truncated (the
+  # cap only drops OPTIONAL members), and `applied_mass` narrows 1.0000000298
+  # back to a clean `1.0`, so every counter reads healthy over a false
+  # invariant. Reviewer finding, PR #448.
+        tau_r = _as_floor_threshold(self.tau)
+        top1_r = _as_floor_threshold(self.tau_top1)
+        played_r = _as_floor_threshold(self.tau_played)
+        mandatory = max(tau_r, top1_r) + played_r
         if mandatory > 1.0:
-            raise ValueError(
+            msg = (
                 "max(sf_policy_floor_tau, sf_policy_floor_tau_top1) + "
-                f"sf_policy_floor_tau_played = {mandatory!r} exceeds 1.0 "
-                f"(tau={self.tau!r}, tau_top1={self.tau_top1!r}, "
-                f"tau_played={self.tau_played!r}); the mandatory top-1 and "
-                "collar floors cannot both be satisfied on a row where they "
-                "land on different moves."
+                f"sf_policy_floor_tau_played = {mandatory!r} exceeds 1.0 as "
+                f"{_FLOOR_THRESHOLD_DTYPE} (tau={self.tau!r}, "
+                f"tau_top1={self.tau_top1!r}, tau_played={self.tau_played!r}); "
+                "the mandatory top-1 and collar floors cannot both be satisfied "
+                "on a row where they land on different moves. Neither role is "
+                "ever truncated, so this cannot be repaired at loss time. "
+                "⚑ If no sf_policy_floor_tau_played was configured it is DERIVED "
+                "as 1/gumbel_topk, so the key to change is probably gumbel_topk."
+            )
+  # ⚑⚑ AN INERT TERM MUST NOT BE ABLE TO KILL THE RUN. At `w == 0.0` this term
+  # contributes nothing to `total` (`compute_loss` adds it under an `if`), so
+  # raising here would take down a trial over a configuration that changes no
+  # objective. And it is REACHABLE WITHOUT ANY sf_policy_floor KEY BEING SET:
+  # `tau_played` defaults to `1/gumbel_topk`, and `gumbel_topk: 1` makes it 1.0,
+  # so the shipped 0.15/0.15 defaults sum to 1.15. `gumbel_topk` is a LIVE
+  # selfplay key, so that lands as a CLAUDE.md category (b) death --
+  # `_reload_yaml_into_config` succeeds, `from_dict` raises inside the iteration
+  # loop, and the loop has a `finally:` and zero `except:`. `sync_search_width`
+  # reaches the same constructor through `dataclasses.replace`.
+  #
+  # So the raise is gated on the term actually being in the objective. The
+  # warning still fires at `w == 0.0`, because the DIAGNOSTIC columns are
+  # computed either way and would be reporting an infeasible set.
+  # Reviewer finding P2-1, PR #448.
+            if float(self.w) != 0.0:
+                raise ValueError(msg)
+            warnings.warn(
+                f"{msg} The term is OFF (w_sf_policy_floor=0.0), so this is a "
+                "warning rather than a fatal error -- but the sf_policy_floor_* "
+                "diagnostic columns will describe an infeasible set, and raising "
+                "the weight will make it fatal.",
+                RuntimeWarning,
+                stacklevel=3,
             )
 
     @classmethod
@@ -829,13 +892,23 @@ class SfPolicyFloorOutputs(NamedTuple):
     and they exist to make the feasibility cap readable rather than silent:
 
     * ``member_count_raw`` / ``requested_mass`` -- the set and the probability
-      mass the UNCAPPED rule would have demanded. ``requested_mass > 1`` is the
-      infeasible case: the floors could not all be satisfied by any
-      distribution, so the residual deficit was a permanent gradient.
+      mass the UNCAPPED rule would have demanded, i.e. the size of the demand
+      the cap had to cut down. ⚑ NOT an infeasibility test -- see below.
     * ``truncated`` -- 0/1, did the cap actually drop a member on this row.
     * ``member_count_applied`` / ``applied_mass`` -- the set and mass after the
       cap. ``applied_mass <= 1`` EXACTLY, not to within a slack: the admission
       budget is compared in float64 with no positive epsilon.
+
+    ⚑ TWO THINGS THESE COLUMNS DO NOT MEAN.
+    (1) `requested_mass > 1` is SUFFICIENT to expect truncation, not NECESSARY:
+        the admission test is exact (float64) but the mass columns are narrowed to
+        float32, so ten floors of 0.1 (true sum 1.0000000149) truncate while the
+        column reads 1.0.
+    (2) ⚑⚑ AND THESE ARE ROW MEANS over `sf_own_regret_rows`, not per-row values,
+        so `requested_mass > 1.0` is nearly UNREACHABLE at the column level even
+        when a large minority of rows are infeasible -- measured 0.552 on a batch
+        whose `truncated_frac` was 0.333.
+    ⇒ `truncated_frac` is the ONLY column that answers "did the cap fire".
 
     ⚑ READ ``requested_mass`` AGAINST ``applied_mass``, NOT ALONE. The whole
     point of the pair is to answer, after the fact, whether F's flattening was
@@ -1018,9 +1091,17 @@ def sf_policy_floor_deficit(
   # feasibility cap below may drop an adaptive member and may never drop these.
   # `scatter_reduce(amax)` rather than a sum: a move in two roles gets ONE
   # floor, at the max of its thresholds (see the docstring).
-    mandatory = torch.zeros_like(probs)
+  # ⚑ THE THRESHOLDS ARE MATERIALIZED IN `_FLOOR_THRESHOLD_DTYPE`, NOT
+  # `probs.dtype`. That is the representation `SfPolicyFloorParams` validated
+  # against, so the feasibility guarantee holds by construction instead of
+  # depending on what dtype the policy softmax happens to return. `relu(floors -
+  # probs)` promotes, so a narrower `probs` costs nothing here.
+    mandatory = torch.zeros(
+        probs.shape, dtype=_FLOOR_THRESHOLD_DTYPE, device=probs.device,
+    )
     mandatory = mandatory.scatter_reduce(
-        -1, top1, torch.full_like(top1, float(params.tau_top1), dtype=probs.dtype),
+        -1, top1,
+        torch.full_like(top1, float(params.tau_top1), dtype=_FLOOR_THRESHOLD_DTYPE),
         reduce="amax", include_self=True,
     )
     if played_target is not None:
@@ -1028,13 +1109,13 @@ def sf_policy_floor_deficit(
   # A row whose policy target carries no mass has no played move to protect
   # (an absent or masked-out target argmaxes to index 0), so its collar
   # threshold is 0.0 -- the same no-op the ablation uses.
-        has_target = (played_target.sum(-1, keepdim=True) > 0).to(probs.dtype)
+        has_target = (played_target.sum(-1, keepdim=True) > 0).to(_FLOOR_THRESHOLD_DTYPE)
         mandatory = mandatory.scatter_reduce(
             -1, played, has_target * float(params.tau_played),
             reduce="amax", include_self=True,
         )
 
-    tau_t = torch.full_like(probs, float(params.tau))
+    tau_t = torch.full_like(mandatory, float(params.tau))
   # What the UNCAPPED rule asked for. Kept as its own tensor because it is the
   # diagnostic pair's numerator and because the cap is defined as the
   # difference between the two.
@@ -1073,9 +1154,19 @@ def sf_policy_floor_deficit(
   # a smaller radius. The sums are done in float64, which represents each
   # float32 floor EXACTLY, so the comparison is the real one and the rounding
   # bias runs the safe way: a set that overflows by one ULP loses its last
-  # optional member instead of being kept. `autocast` is disabled around it
-  # because cumsum sits on autocast's fp32 cast list, which would silently
-  # narrow float64 back to float32 and reinstate the loophole under AMP.
+  # optional member instead of being kept.
+  #
+  # ⚑ THE `autocast(enabled=False)` GUARD BELOW IS BELT-AND-BRACES, AND AN
+  # EARLIER VERSION OF THIS COMMENT JUSTIFIED IT WITH A FALSE CLAIM: that cumsum
+  # sits on autocast's fp32 cast list and would narrow float64 back to float32.
+  # It does not. Autocast's cast policies apply only to ELIGIBLE dtypes, and
+  # `float64` is not one -- the fp32 policy PROMOTES lower precision and never
+  # demotes. MEASURED (torch 2.11.0+cu128, bf16 autocast, cpu AND cuda):
+  # `float64.cumsum -> float64`, `float64.sum -> float64`, while
+  # `float32.cumsum -> float32`. So the guard is currently INERT and is kept
+  # only so this block's exactness does not silently depend on that staying
+  # true. Reviewer finding P3-4, PR #448: do not re-derive a reason for it from
+  # the old comment, because the old comment was wrong.
   # ⚑ THE SUBTRACTION IS PART OF THE ARITHMETIC, NOT A PRE-STEP. Widening an
   # increment that was already rounded in float32 does not recover it: at
   # `tau = 0.5, tau_top1 = 0.1` the float32 `tau - mandatory` rounds UP by
@@ -1115,7 +1206,10 @@ def sf_policy_floor_deficit(
         requested_mass = raw_floors.to(torch.float64).sum(-1).to(probs.dtype)
         applied_mass = floors.to(torch.float64).sum(-1).to(probs.dtype)
     return SfPolicyFloorOutputs(
-        deficit=deficit.sum(-1),
+  # Narrowed back so every field of this tuple is in the caller's dtype, as it
+  # was before the thresholds were pinned. A no-op in production, where
+  # `po_probs` is already fp32.
+        deficit=deficit.sum(-1).to(probs.dtype),
         binds=(deficit > 0).any(-1).to(probs.dtype),
         member_count_raw=(raw_floors > 0).sum(-1).to(probs.dtype),
         requested_mass=requested_mass,

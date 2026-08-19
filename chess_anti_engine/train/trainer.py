@@ -1040,11 +1040,22 @@ class TrainMetrics:
   # loss admits members in ascending SF regret and stops at the budget; these
   # five columns are what make that cap readable instead of silent.
   #   * `..._member_count_raw` / `..._requested_mass` -- the UNCAPPED set and
-  #     its mass. `requested_mass > 1.0` is the infeasible population.
+  #     its mass: how big a demand the cap had to cut down.
   #   * `..._truncated_frac` -- share of eligible rows where the cap dropped a
   #     member. Exactly 0.0 means the cap is currently inert on this data.
+  #     ⚑⚑ THIS IS THE ONLY COLUMN THAT ANSWERS "DID THE CAP FIRE", and the two
+  #     reasons are independent. (a) The admission test is exact (float64) while
+  #     the mass columns are narrowed to float32, so ten floors of 0.1 truncate
+  #     while `requested_mass` reads exactly 1.0 -- `> 1` is sufficient, not
+  #     necessary. (b) EVERY COLUMN HERE IS A ROW MEAN over
+  #     `sf_own_regret_rows`, so `requested_mass > 1.0` is nearly unreachable at
+  #     the column level even when a large minority of ROWS are infeasible
+  #     (measured: 0.552 on a batch whose `truncated_frac` was 0.333).
   #   * `..._member_count_applied` / `..._applied_mass` -- after the cap.
-  #     `applied_mass <= 1.0` by construction.
+  #     `applied_mass <= 1.0` EXACTLY, not to within a slack. ⚑ But
+  #     `member_count_applied == member_count_raw` does NOT mean "not
+  #     truncated": a demoted move that still carries a mandatory floor stays in
+  #     the count. Read the MASS pair, or `truncated_frac`.
   # ⚑ Read raw AGAINST applied. The pair is the only way to tell whether the
   # term's strength came from the configured tau or from a `|F| * tau` that
   # nobody set. Same `sf_own_regret_rows` denominator as the two columns above.
