@@ -60792,3 +60792,64 @@ crossing is **alpha ~ 0.30**, NOT the 0.5 I quoted — matched weight
 While old shards remain, `f_t` LAGS fresh coverage — so either track `f_t` or wait for it to
 settle before starting a teacher arm. Setting 0.21 immediately after enabling pairing would
 over-weight the SF term against the coverage actually present in the batches.
+
+---
+
+### ⚑⚑ PR #448 — REAL MECHANISM HOLE FOUND BY INDEPENDENT REVIEW: the floor's AGGREGATE mass is unconstrained (2026-08-19)
+
+Two independent reviewers on head `ec0fa43dc`. Both APPROVE-WITH-CHANGES on the delta; one
+found a mechanism-level hole neither the tests nor I had considered. **MEASURED HERE, not
+argued.**
+
+**THE HOLE.** `floors = where(adaptive, tau, 0.0)` (`losses.py:919`) applies `tau` INDEPENDENTLY
+to every member of `F`, and `SfPolicyFloorParams` validates each `tau` only against `[0,1]`.
+**Nothing constrains `floors.sum(-1)`.** So the requested probability mass is `|F| * tau`, and
+at the shipped `tau = 0.15`:
+
+| \|F\| | 1 | 3 | 5 | 6 | **7** |
+|---|---|---|---|---|---|
+| requested mass | 0.15 | 0.45 | 0.75 | **0.90** | **1.05 — IMPOSSIBLE** |
+
+**MEASURED on 5881 real production rows** (14 recent shards; `|F|` computed as an UPPER BOUND by
+dropping the `regret < our_r` condition, which can only shrink `F` — the right side to err on):
+
+| \|F\| | rows | share | mass |
+|---|---|---|---|
+| 1 | 2561 | 0.4355 | 0.15 |
+| 2-5 | 2551 | 0.4338 | 0.30-0.75 |
+| **6** | **769** | **0.1308** | **0.90** |
+
+mean mass 0.3731, **max 0.900, infeasible fraction 0.000000.**
+
+**⇒ IT NEVER HAPPENS ON THE LIVE TREE — AND THE SAFETY IS ACCIDENTAL.** `|F|` is capped at 6
+purely because live runs `sf_multipv: 6`, and `6 * 0.15 = 0.90 < 1`. No validator, no clamp, no
+test produces that bound. **⚑ `main` AND THE PR BRANCH BOTH RUN `sf_multipv: 40`** (`:97`), where
+that accident does not hold.
+
+**⚑⚑ AND THE 13.1% BUCKET IS RIGHT-CENSORED, WHICH TURNS THIS INTO A LOWER BOUND.** Those 769
+rows have ALL SIX surfaced moves inside the 20cp window — their true within-20cp count is
+unknown and `>= 6`. At MultiPV 40 they surface more, so **at least 13.1% of labelled rows become
+`|F| >= 7` and therefore INFEASIBLE on the PR's own target config.** Not an estimate — a bound.
+
+**THE FAILURE MODE IS WORSE THAN "a loss that cannot reach zero".** As mass concentrates inside
+`F`, `L_F -> |F|*tau - 1 > 0` while `grad(sum_{i in F} p_i) -> 0`. So the term ends up with a
+POSITIVE irreducible loss, `binds_frac = 1`, and **~zero useful gradient** — a counter reporting
+"binding" over a dead mechanism, this repo's signature defect in its purest form.
+
+**⚑ AND IT NAMES A HIDDEN STRENGTH KNOB THAT MAY EXPLAIN ARM F's BEHAVIOUR.** The intervention's
+real magnitude is `|F| * tau`, not `tau`. On 13.1% of live rows the floor already demands **90%
+of the probability mass spread across 6 moves** — a near-uniform 6-way target. That is an
+enormous, cardinality-dependent FLATTENING force that nobody chose and no config expresses. It
+is a candidate mechanism for why F flattened the policy, and it means `tau` alone never
+described the arm's strength.
+
+**REQUIRED BEFORE MERGE** (author's list, from the reviewers' challenge): diagnostics
+`sf_policy_floor_member_count`, `sf_policy_floor_requested_mass = floors.sum(-1)`,
+`sf_policy_floor_infeasible_frac`; a deliberate SEVEN-member regression test; and a feasibility
+rule — preferred repair is **capping `F` to the best K SF moves that keep the request feasible**,
+which preserves "these best SF-approved moves each deserve >= tau" rather than silently
+retuning `tau` per position. ⚑ Each new guard must be mutation-tested; a diagnostic that cannot
+fail is what allowed this to ship.
+
+**NOT a live-tree defect** (infeasible fraction is exactly 0 at MPV6), so no live action and no
+revert. It blocks the MERGE, not the run.
