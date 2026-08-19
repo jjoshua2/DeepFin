@@ -255,15 +255,32 @@ def test_the_eval_path_is_wired_to_the_pinned_kwargs() -> None:
         fn for fn in ast.walk(tree)
         if isinstance(fn, ast.FunctionDef) and fn.name == "_compute_metrics"
     )
-    bound = {
-        ast.unparse(node.value)
-        for node in ast.walk(metrics_fn)
-        if isinstance(node, ast.Assign)
-        and any(getattr(t, "id", None) == "eval_loss_kwargs" for t in node.targets)
-    }
-    assert bound == {"self._eval_loss_kwargs", "objective.loss_kwargs"}, (
-        f"the eval kwargs local must resolve to a PINNED object on every branch: {bound}"
-    )
+
+    def _bindings(name: str) -> set[str]:
+        return {
+            ast.unparse(node.value)
+            for node in ast.walk(metrics_fn)
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", None) == name for t in node.targets)
+        }
+
+  # ⚑ ALL THREE LOCALS, not just the kwargs. `ObjectiveSnapshot` carries the
+  # loss AND the two ruler inputs precisely so they cannot come from different
+  # logical times; pinning only the kwargs here would let a ruler leg drift back
+  # to a live read and still pass, and the result would be a `test_loss`
+  # measured under objective A stamped with objective B's identity -- internally
+  # consistent-looking and wrong. `tests/test_holdout_ruler_identity.py::
+  # test_a_pinned_objective_survives_a_live_flip_in_BOTH_legs` executes the
+  # same three legs; this one keeps the CALL SITES honest.
+    for local, pinned, live in (
+        ("eval_loss_kwargs", "objective.loss_kwargs", "self._eval_loss_kwargs"),
+        ("ruler_weights", "objective.loss_weights", "self._ruler_loss_weights()"),
+        ("ruler_shape", "objective.loss_shape", "self._ruler_loss_shape()"),
+    ):
+        assert _bindings(local) == {live, pinned}, (
+            f"`{local}` must resolve to a PINNED object on the objective branch "
+            f"and to live state only when `objective is None`: {_bindings(local)}"
+        )
 
 
 def test_the_pinned_kwargs_override_only_the_target_shape() -> None:

@@ -24,7 +24,6 @@ over and the counter stops meaning anything.
 from __future__ import annotations
 
 import inspect
-import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -1035,17 +1034,131 @@ def test_an_unreadable_weight_counts_as_active_rather_than_vanishing() -> None:
 # --------------------------------------------------------------------------
 
 
+# `sf_wdl_temperature` is normalised by its consumer and deliberately NOT in
+# `_EFFECTIVE_WEIGHT`; `eval_ruler._EFFECTIVE_WEIGHT` carries the full reasoning
+# (a non-positive value reverts to the NEUTRAL default 1.0, so the key is a
+# shape parameter mis-filed among the weight keys and is never absent from the
+# objective). Declared here as an EXCEPTION rather than left to be missed: the
+# scan below now sees it, and a silent pass would mean the scan had gone blind
+# again.
+_UNDECLARED_BY_DESIGN = {"sf_wdl_temperature"}
+
+
+def _weights_normalised_by_losses() -> set[str]:
+    """Weight keys `losses.py` normalises, followed THROUGH its own call graph.
+
+    ⚑ A NAME SCAN OVER `compute_loss` IS NOT ENOUGH, AND THE PROOF IS IN THE
+    REPO. `sf_wdl_temperature` is normalised by `temperature > 0.0` inside
+    `_normalize_sf_wdl_probs`, under a RENAMED parameter -- so every version of
+    this check that grepped for the key's own spelling reported it as
+    un-normalised, which is the same false negative the map exists to remove,
+    one abstraction boundary further down. The fix is to follow the value, not
+    the name: seed on the key, then propagate through local aliases and through
+    calls to other functions in the file, renaming at each parameter binding.
+
+    LIMIT, stated rather than implied: it recognises the two normalisation
+    IDIOMS this codebase uses (`max(0.0, x)` and `x > 0.0`, with `float(...)`
+    transparent), follows only module-level functions defined in `losses.py`,
+    and does not model conditionals or reassignment. A normalisation written a
+    third way, or one that crosses into another module, is still invisible.
+    """
+    import ast
+
+    src = (Path(__file__).resolve().parents[1]
+           / "chess_anti_engine" / "train" / "losses.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+    def unwrap(node: ast.expr) -> ast.expr:
+        """`float(x)` and `(x)` are transparent to every idiom below."""
+        while (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "float"
+               and len(node.args) == 1):
+            node = node.args[0]
+        return node
+
+    def is_normalised(node: ast.expr, name: str) -> bool:
+        target = unwrap(node)
+        if (isinstance(target, ast.Call)
+                and getattr(target.func, "id", None) == "max"
+                and len(target.args) == 2
+                and isinstance(unwrap(target.args[0]), ast.Constant)
+                and float(getattr(unwrap(target.args[0]), "value", 1)) == 0.0):
+            return getattr(unwrap(target.args[1]), "id", None) == name
+        if (isinstance(target, ast.Compare) and len(target.ops) == 1
+                and isinstance(target.ops[0], ast.Gt)
+                and isinstance(unwrap(target.comparators[0]), ast.Constant)
+                and float(getattr(unwrap(target.comparators[0]), "value", 1)) == 0.0):
+            return getattr(unwrap(target.left), "id", None) == name
+        return False
+
+    def param_for(callee: ast.FunctionDef, call: ast.Call, arg: ast.expr) -> str | None:
+        """Which of `callee`'s parameters the expression `arg` binds to."""
+        for kw in call.keywords:
+            if kw.value is arg and kw.arg is not None:
+                return kw.arg
+        positional = [*callee.args.posonlyargs, *callee.args.args]
+        for i, actual in enumerate(call.args):
+            if actual is arg and i < len(positional):
+                return positional[i].arg
+        return None
+
+    normalised: set[str] = set()
+    for key in TRAINER_WEIGHT_KEYS:
+        # Seed everywhere the key's own spelling is bound: `compute_loss`'s
+        # parameter, and any other function in the file that names it.
+        seen = {
+            (fname, key) for fname, fn in funcs.items()
+            for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+            if a.arg == key
+        }
+        seen |= {(fname, key) for fname, fn in funcs.items()
+                 for n in ast.walk(fn)
+                 if isinstance(n, ast.Name) and n.id == key}
+        work = list(seen)
+        while work:
+            fname, local = work.pop()
+            fn = funcs.get(fname)
+            if fn is None:
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.expr) and is_normalised(node, local):
+                    normalised.add(key)
+                # local alias: `y = x` / `y = float(x)`
+                if (isinstance(node, ast.Assign)
+                        and getattr(unwrap(node.value), "id", None) == local):
+                    for t in node.targets:
+                        nxt = (fname, getattr(t, "id", ""))
+                        if nxt[1] and nxt not in seen:
+                            seen.add(nxt)
+                            work.append(nxt)
+                # interprocedural: the value crosses a parameter binding and
+                # is RENAMED, which is the case a name scan cannot see.
+                if isinstance(node, ast.Call):
+                    callee = funcs.get(getattr(node.func, "id", ""))
+                    if callee is None:
+                        continue
+                    for arg in [*node.args, *(k.value for k in node.keywords)]:
+                        if getattr(unwrap(arg), "id", None) != local:
+                            continue
+                        param = param_for(callee, node, arg)
+                        nxt = (callee.name, param or "")
+                        if param and nxt not in seen:
+                            seen.add(nxt)
+                            work.append(nxt)
+    return normalised
+
+
 def test_every_normalised_weight_in_losses_is_declared() -> None:
-    """SCAN `losses.py` for consumer-side normalisation; fail if the map drifts.
+    """DERIVE consumer-side normalisation from `losses.py`; fail if the map drifts.
 
     ⚑ `_EFFECTIVE_WEIGHT` must not be maintained by memory. Its first
     hand-written version declared 3 of the 5 clamped keys and missed
     `sf_wdl_conf_power` and `sf_wdl_draw_scale` -- the same false negative the
     map exists to remove, found one review round later. The point of this test
-    is that a SIXTH such knob cannot be added silently.
+    is that a further such knob cannot be added silently.
 
-    ⚑ WHY A SOURCE SCAN AND NOT A BEHAVIOURAL PROBE. The obvious test is to
-    push a negative value through `compute_loss` and compare. It was written
+    ⚑ WHY A SOURCE DERIVATION AND NOT A BEHAVIOURAL PROBE. The obvious test is
+    to push a negative value through `compute_loss` and compare. It was written
     first and abandoned: a knob is only observable when the TERM CARRYING IT is
     weighted on AND its target tensor is present, and no single fixture makes
     all of them live at once -- `sf_wdl_conf_power`'s single consumer is
@@ -1054,36 +1167,34 @@ def test_every_normalised_weight_in_losses_is_declared() -> None:
     blend's components interact. A probe that cannot see a key reports it as
     "unaffected by sign" -- confirming the map for the wrong reason, which is
     exactly the defect class this file exists to catch.
-
-    LIMIT, stated rather than implied: this greps for the two normalisation
-    IDIOMS the codebase actually uses. A normalisation written a third way
-    (`abs()`, a clamp helper, a branch on the sign) would not be caught, so this
-    narrows the gap rather than closing it.
     """
     from chess_anti_engine.train.eval_ruler import _EFFECTIVE_WEIGHT
 
-    src = (Path(__file__).resolve().parents[1]
-           / "chess_anti_engine" / "train" / "losses.py").read_text(encoding="utf-8")
+    normalised = _weights_normalised_by_losses()
+    assert normalised, "the derivation found no normalised weight at all -- idioms have drifted"
 
-    normalised: set[str] = set()
-    for key in TRAINER_WEIGHT_KEYS:
-        k = re.escape(key)
-        idioms = (
-            rf"max\(\s*0\.0\s*,\s*float\(\s*{k}\s*\)\s*\)",   # max(0.0, float(key))
-            rf"max\(\s*0\.0\s*,\s*{k}\s*\)",                   # max(0.0, key)
-            rf"float\(\s*{k}\s*\)\s*>\s*0\.0",                 # float(key) > 0.0
-            rf"{k}\s*>\s*0\.0",                              # key > 0.0
-        )
-        if any(re.search(pat, src) for pat in idioms):
-            normalised.add(key)
-
-    assert normalised, "the scan found no normalised weight at all -- idioms have drifted"
-
-    missing = sorted(normalised - set(_EFFECTIVE_WEIGHT))
+    missing = sorted(normalised - set(_EFFECTIVE_WEIGHT) - _UNDECLARED_BY_DESIGN)
     assert not missing, (
         "losses.py normalises these weights but _EFFECTIVE_WEIGHT does not declare "
-        f"them, so a negative value would be reported ACTIVE while the consumer "
+        "them, so a negative value would be reported ACTIVE while the consumer "
         f"removes it from the objective: {missing}"
+    )
+
+
+def test_the_normalisation_scan_follows_a_renamed_parameter() -> None:
+    """⚑⚑ NON-VACUITY, and the exact regression that motivated the rewrite.
+
+    `sf_wdl_temperature` reaches its `> 0.0` gate as `_normalize_sf_wdl_probs`'s
+    `temperature` parameter. Every name-based version of the scan above reported
+    it as un-normalised and therefore agreed with `_EFFECTIVE_WEIGHT` FOR THE
+    WRONG REASON -- the map's omission is deliberate and documented, but the
+    scan could not tell that from not looking. If this assertion ever fails, the
+    interprocedural half of the derivation has stopped working and the test
+    above has quietly become a name grep again.
+    """
+    assert "sf_wdl_temperature" in _weights_normalised_by_losses()
+    assert _weights_normalised_by_losses() >= _UNDECLARED_BY_DESIGN, (
+        "an exception is declared for a key the scan does not even find"
     )
 
 
@@ -1240,3 +1351,131 @@ def test_async_eval_scores_the_snapshot_under_its_own_objective() -> None:
         mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
         measured_by=FULL_PASS_FNS, loss_weights=fake._ruler_loss_weights())
     assert before != after
+
+
+class _EchoModel(torch.nn.Module):
+    """Returns outputs shaped for the batch it is handed, deterministically.
+
+    `_TinyModel` above is fixed-shape and cannot score a real batch; this one
+    can, which is what lets the test below read a LOSS VALUE rather than only a
+    ruler string.
+    """
+
+    def __init__(self, width: int) -> None:
+        super().__init__()
+        self.width = int(width)
+        self.head = torch.nn.Linear(4, 4, bias=False)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        rows = int(x.shape[0])
+        g = torch.Generator().manual_seed(20260819)
+        return {
+            "policy": torch.randn(rows, self.width, generator=g),
+            "wdl": torch.randn(rows, 3, generator=g),
+        }
+
+
+def _objective_batch(width: int = 32, rows: int = 8) -> dict[str, torch.Tensor]:
+    """One real eval batch, with the fields the weighted terms below need."""
+    g = torch.Generator().manual_seed(20260819)
+    legal = (torch.rand(rows, width, generator=g) < 0.5).to(torch.float32)
+    legal[:, 0] = 1.0
+    target = torch.softmax(torch.randn(rows, width, generator=g), dim=-1) * legal
+    return {
+        "x": torch.zeros(rows, 175, 8, 8),
+        "legal_mask": legal,
+        "has_legal_mask": torch.ones(rows),
+        "policy_t": target / target.sum(-1, keepdim=True),
+        "wdl_t": torch.randint(0, 3, (rows,), generator=g),
+        "sf_p0_regret_t": torch.rand(rows, width, generator=g),
+        "has_sf_p0_regret": torch.ones(rows),
+    }
+
+
+def _score_with(
+    trainer: Trainer, monkeypatch: pytest.MonkeyPatch, *, objective: Any,
+) -> tuple[str, float]:
+    """Run the REAL `_compute_metrics` body over one batch; return (ruler, loss).
+
+    Only the pooling tail is stubbed, and only to read what the real body
+    computed: the objective branch, the `eval_ruler_id_for` call and the
+    `compute_loss(out, batch, **eval_loss_kwargs)` call are all executed.
+    """
+    batch = _objective_batch()
+    captured: dict[str, Any] = {}
+
+    def _capture(sums: dict[str, float], _acc: Any, _n: float, **kw: Any) -> Any:
+        captured["sums"] = dict(sums)
+        captured["ruler"] = str(kw["eval_ruler"])
+        return None
+
+    monkeypatch.setattr(Trainer, "_build_metrics", staticmethod(_capture))
+    monkeypatch.setattr(Trainer, "_log_metrics", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        trainer, "_iter_full_pass_batches", lambda *_a, **_k: iter([batch]),
+    )
+    trainer._compute_metrics(
+        buf=None,  # pyright: ignore[reportArgumentType]
+        batch_size=8, steps=0, tag="test", full_pass=True,
+        model_override=_EchoModel(width=32), objective=objective,
+    )
+    return captured["ruler"], float(captured["sums"]["loss"])
+
+
+def test_a_pinned_objective_survives_a_live_flip_in_BOTH_legs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ EXECUTED. The snapshot must pin the LOSS and the RULER, not one of them.
+
+    `ObjectiveSnapshot` carries three fields and `_compute_metrics` binds all
+    three from it, but until now nothing ran the mechanism: the wiring test in
+    `tests/test_async_test_eval.py` proves the object REACHES the worker, and
+    the AST pin in `tests/test_policy_target_reshape.py` proves where the names
+    are bound. Neither would fail if one leg silently re-read live state -- and
+    a half-pinned objective is worse than none, because the recorded
+    `test_loss` and the id stamped on it would then belong to different
+    objectives while looking perfectly consistent.
+
+    Shape of the test: score under objective A, flip the live trainer to B
+    through the REAL per-iteration push path, then score again with A pinned.
+    The negative control is the same second scoring with `objective=None` --
+    without it, a flip that changed nothing would pass every assertion here.
+    """
+    trainer = _trainer(
+        {"w_sf_own_regret": 0.7, "w_policy": 1.0, "w_sf_policy_floor": 0.5},
+        tmp_path,
+    )
+    snapshot = trainer.objective_snapshot()
+    ruler_a, loss_a = _score_with(trainer, monkeypatch, objective=snapshot)
+
+    # B moves ALL THREE fields of the snapshot, because a flip that moved only
+    # one would leave the other legs' mutants alive:
+    #   * `w_sf_own_regret -> 0.0` drops a term out of the objective, moving
+    #     `loss_kwargs` AND `loss_weights` (membership);
+    #   * a live search-width edit re-derives the collar, moving `loss_shape`
+    #     (and the loss with it).
+    _push(trainer, w_sf_own_regret=0.0)
+    with pytest.warns(RuntimeWarning, match="deterministic prior-rank threshold"):
+        trainer.sync_search_width(4)
+    assert trainer._ruler_loss_shape() != snapshot.loss_shape, (
+        "setup: the live flip did not move the shape leg"
+    )
+
+    # NEGATIVE CONTROL first: prove the flip is visible at all. If this were
+    # equal, the two assertions below would be vacuous.
+    ruler_live, loss_live = _score_with(trainer, monkeypatch, objective=None)
+    assert ruler_live != ruler_a, "setup: the live flip did not move the ruler"
+    assert loss_live != pytest.approx(loss_a, abs=1e-9), (
+        "setup: the live flip did not move the loss"
+    )
+
+    # ...and now the pinned objective, over the SAME flipped trainer.
+    ruler_pinned, loss_pinned = _score_with(trainer, monkeypatch, objective=snapshot)
+    assert ruler_pinned == ruler_a, (
+        "the RULER leg re-read live state: a model scored under objective A was "
+        f"stamped with B's identity ({ruler_pinned} != {ruler_a})"
+    )
+    assert loss_pinned == pytest.approx(loss_a, abs=1e-9), (
+        "the LOSS leg re-read live state: the pinned eval scored under B "
+        f"({loss_pinned} != {loss_a})"
+    )
