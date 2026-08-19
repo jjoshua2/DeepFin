@@ -62189,9 +62189,11 @@ Protocol is one data-affecting change per readout window, so this must be record
 entries' Confounds line. And the interaction is not merely bookkeeping: **targeted
 re-labelling spends the SAME SF resource pairing needs.** A 1.265x SF cost that reduces
 paired-label production would SLOW coverage growth and directly damage the SF-soft option
-this arm is supposed to run alongside. ⇒ `has_sf_p0_frac` and games/h are MONITORED
-THROUGHOUT; a sustained fall in the coverage TRAJECTORY is a mechanism-failure kill, not an
-acceptable cost.
+this arm is supposed to run alongside. ⇒ MONITORED THROUGHOUT, but keyed on FRESH PRODUCTION,
+not on the replay statistic: `has_sf_p0_frac` is a WINDOW quantity -- noisy and lagged --
+and killing on a few of its iterations would false-fire on ordinary replay noise. The guard
+is **games/h, full-ply and SF-label production RATE, and teacher backlog/blocking**, with
+the `has_sf_p0_frac` trajectory as CORROBORATING evidence only.
 
 **PRE-COMMITTED CONSEQUENCES.** PASS ⇒ keep, and re-run the SF-soft funnel against the new
 baseline. HARM ⇒ revert to the salvage point. NULL ⇒ stop at 75, revert, and record that a
