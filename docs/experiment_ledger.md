@@ -62018,3 +62018,82 @@ F-only engaged perfectly, delivered zero, and ran to 2.5x its stated window.
 
 **STATE UNCHANGED: nothing to do. Live `has_sf_p0_frac` ~0.39, trigger 0.53.** The gap is
 the point -- the run is raising the value of the eventual experiment at no extra cost.
+
+### ⚑⚑ 2026-08-19 — "TAKE THE BEST PARTS OF THE WINDOW" IS **NOT** THE CLOSED ROW-FILTERING
+### ARM. It maps to the TARGETED RE-LABEL, whose economics were unblocked 08-16 and which
+### has never been launched — and it does NOT wait on coverage
+
+Josh, twice: waiting is not acceptable, the run is flat, the compute is being spent for
+little. The premise is correct ([[no_rollback_target_the_run_is_a_plateau]],
+[[regret_does_not_track_strength_run_regressed]]). Checked whether the proposal is already
+closed. **It is not, and the confusion is a genuine near-collision of two different arms:**
+
+| arm | question | status |
+|---|---|---|
+| row filtering / screening | given a target TRANSFORM, which rows to apply it to | **CLOSED** — oracle headroom +1.95 cp, realizable screens capture NONE (an imperfect screen drops more winners than losers) |
+| **targeted re-label** | spend the EXPENSIVE FULL-WIDTH TEACHER only where it changes the target | **OPEN — economics unblocked 08-16, NEVER LAUNCHED, needs an explicit go** |
+
+⇒ quoting "+1.95, closed" at Josh's proposal would be
+[[same_name_different_population]] at the level of the QUESTION rather than the data.
+
+**WHY THE SECOND ONE IS LIVE.** The blanket re-label was blocked on cost; the 08-16 entry
+attacked the cost and won:
+
+    sel   bad_capt  deficit repaired   loop cost
+    0.15     0.366        0.486          1.265x
+    1.00     1.000        1.000          2.764x   <- blanket, the thing to beat
+
+⇒ **48.6% of the bad tail's dQ deficit for a 1.265x loop cost — ~3.2x more efficient per
+unit repaired than the blanket.** OOF AUC 0.7371 [0.697, 0.777] on four ALREADY-STORED
+features, shuffled-label control 0.479 (procedure clean).
+
+**AND THE TARGET IT REPAIRS IS ONE THE NET DEMONSTRABLY ABSORBS:**
+[[the_policy_target_is_sharp_and_wrong]] — the net learns the target's bad tail at
+**91.5%**. So this is not a target-quality nicety; it is removing something we have
+measured the net actually eating.
+
+**⚑ THE HONEST CASE AGAINST, stated at full strength:**
+1. The screen is **WEAKER than its own pre-registered operating point** — 0.366 bad-capture
+   at top-15% against a pre-committed >=0.50. The 08-16 verdict was **UNCLASSIFIED**: both
+   prereg clauses evaluated FALSE and the result landed in a hole in the rule. That is on
+   the record and must not be quietly rounded up to "SCREENABLE".
+2. `1.265x loop cost` is a REAL, ONGOING SF spend, not a one-off.
+3. Target-side gains have not transferred: main policy target **+0.00004**; A+F null;
+   F-only null at 2.5x its window.
+
+**⚑ WHY IT IS STILL THE RIGHT NEXT ARM GIVEN THE STATED ALTERNATIVE.** Point 3 is the
+standing caveat on EVERY target-side arm including SF-soft, and by the screen/decision
+split already frozen this session it is an argument about the EVIDENCE bar, not the
+DECISION. The decision is against a lineage expected to plateau. Against that alternative:
+- it is available **NOW** — no coverage trigger, no `f >= 0.53` wait, no deep-SF purchase;
+- its cost is **1.265x on the SF leg**, not a GPU arm competing with training;
+- unlike SF-soft it needs **no new knob**: the features are already stored on every row;
+- and unlike row filtering its ceiling is not a measured +1.95 — the deficit it repairs is
+  48.6% of a quantity the net absorbs at 91.5%.
+
+**NOT LAUNCHED. Requires, before anything runs:** a prereg with ONE deciding yardstick as
+an exact command, a pre-committed kill threshold, a pre-committed MAXIMUM window
+(mechanism engagement is a sanity check, never an extension criterion), and a salvage
+snapshot as the revert point. The 08-16 prereg's hole is the specific thing to avoid
+repeating: **write clauses that TILE THE SPACE.**
+
+### Sampling-law corrections adopted (peer, and they are right)
+
+1. **`0.5 U + 0.5 Q` restricted to E is NOT `P(.|E)`.** Conditioning reweights the
+   components by their own eligibility rates: `P(U|E) = f_U/(f_U+f_Q)`, which is 0.5 only
+   if `f_U = f_Q`. ⇒ **FROZEN: draw from the ordinary full live sampler and FILTER on
+   eligibility** (rejection), never construct a fresh "50% uniform-eligible / 50%
+   priority-eligible" sampler. If rejection is impractical, estimate `f_U`, `f_Q` and
+   weight by the induced mixture — but the first is much harder to get subtly wrong.
+2. **TRIGGER-`f` != SCREEN-`f`.** `trailing20 >= 0.53` decides WHEN TO FREEZE. The `f`
+   that multiplies the measured `S_R` is `f_bank = P_bank(E)` computed on the frozen bank
+   under the exact frozen sampler, at far better precision than 20 stochastic batches. If
+   trailing-20 fires at 0.531 and `f_bank` is 0.524, that is fine — the trigger is not
+   retroactively invalidated, and the measurement uses `f_bank`.
+3. **PIN `E` TO THE LOSS'S OWN PREDICATE**, `net_mask * has_sf_p0` (`losses.py:1560`), not
+   the stored field name — and relative to the `m_policy` denominator it is compared
+   against. `net_mask` may be all-ones today; writing the predicate stops a future config
+   change from silently redefining `f`.
+
+The invariant all three protect: **`f * E[S_R | E] = E[1_E * S_R]`, and every term must
+refer to the SAME probability measure.**
