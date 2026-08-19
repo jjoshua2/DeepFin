@@ -61356,3 +61356,68 @@ audit set with no history or castling planes. It scores the TARGET, not the mode
 projection, so the next step is the cheap SF-soft check on the current eligible
 population -- run at a candidate weight that could plausibly clear (~0.25), and scored
 against 3.0 cp. Nothing is flipped and the live run is untouched.
+
+### ⚑⚑ 2026-08-19 — THE 3.0 cp BAR CANNOT FAIL ONCE `alpha` IS A FREE PARAMETER. The
+### binding constraint is flattening, and the cp screen at `alpha=0.42` measures an IDENTITY
+
+Setting up the proposed screen surfaced a defect in the plan I had just endorsed, mine
+included.
+
+**1. `Delta_cp` IS EXACTLY LINEAR IN `alpha`. Algebraically, not empirically.**
+
+    Delta(alpha) = SUM_m [ t0_m - ((1-alpha) t0_m + alpha q_m) ] r_m
+                 = alpha * SUM_m (t0_m - q_m) r_m
+
+The bracket is a property of the POPULATION, not of `alpha`. The anchor pins it: `alpha
+= 0.25 -> +5.00` cp eligible-only ⇒ bracket = **20.0 cp exactly**, which is the origin of
+the `f*alpha*20` model and of the ledger's own "the effect is exactly linear in `w`".
+
+⇒ **running the screen at `alpha = 0.42` to "measure" `8.4` cp evaluates an identity.**
+It cannot come back other than `0.42 * 20.0`, up to the population's own sampling noise.
+It is not a gate. [[an_exact_command_means_it_was_run]] has a sibling: an exact command
+that is arithmetically determined before you run it is not evidence either.
+
+**2. ⇒ THE PRE-COMMITTED 3.0 cp BAR IS NOW VACUOUS.** With `Delta = f * alpha * 20` and
+`alpha` free up to 1, ANY bar below `f * 20` is cleared by choosing `alpha` large enough.
+Solving `alpha_min = 3.0/(f*20)` and then reporting that the arm makes 3.0 cp is
+[[an_arm_that_is_the_gradient_of_the_metric_always_wins]] in its purest form -- we are not
+testing the arm, we are inverting the criterion. The bar was meaningful when `alpha` was
+FIXED at 0.25 and COVERAGE was the unknown. It stopped being meaningful the moment we
+started solving for `alpha`.
+
+**3. ⇒ FLATTENING IS THE ONLY CONSTRAINT LEFT THAT CAN BIND**, so its status must be
+upgraded from the proposal's "I wouldn't make entropy another pass/fail criterion" to THE
+decision variable. Recorded at `alpha = 0.25`: target entropy **0.5738 -> 0.8629**,
+against the net's own **0.7819** -- i.e. `alpha = 0.25` ALREADY takes the target from
+sharper than the net to flatter than it. Mixture entropy is concave, so `H(0.42)` is
+bounded below by the chord and lands near ~1.0 (ESTIMATE, not measured): roughly **0.25
+nats flatter than the net, versus 0.081 at `alpha = 0.25`** -- about 3x the overshoot.
+[[training_temp_exceeds_strength_optimal_temp]] says we are already above the strength
+optimum before any of this.
+
+⇒ **INVERT THE SEARCH.** Choose `alpha` from a pre-committed FLATTENING budget, then check
+the implied cp clears 3.0 with margin. That restores a criterion that can fail. Picking
+`alpha` from the cp bar and reporting entropy afterwards cannot.
+
+**4. A NEW CONFOUND AT 0.42 THAT WAS MINOR AT 0.25.** The additive `w_sf_own` form
+overweights eligible rows by `1/(1-alpha)`: **1.33x at 0.25, 1.71x at 0.414**. Eligibility
+is set by the PLY SCHEDULE (one-ply adjacency under `playout_cap_fraction`), so this is a
+systematic reweighting of the training distribution toward paired plies -- which are
+exactly the plies where full search ran. Literal blended targets would not do this. Peer
+raised the factor; the distributional consequence is the part that matters.
+
+**WHAT IS STILL WORTH MEASURING** (i.e. not determined by the arithmetic above):
+1. **Entropy `H(alpha)` on the same eligible population** -- nonlinear, currently an
+   extrapolation from two points.
+2. **Whether the 20.0 cp slope still holds on TODAY's eligible population.** The anchor is
+   on the FROZEN audit set; `full_ply_pair_fraction: 1.0` changed WHICH plies are eligible,
+   and the slope is a property of that population. This is the only part of "does it still
+   reproduce" that is not arithmetic.
+3. NOT worth measuring: the teacher-wrong safety margin, which scales linearly too
+   (+0.64 [-0.31,+1.56] at 0.25) and stays non-harmful by the same identity.
+
+**NOT LAUNCHED. No flip.** The instrument for (1) and (2) is the frozen audit set plus
+`rebuild_sf_policy_target`'s production softmax (`target_builder.py:122`, temp from the
+live `SfTargetParams`) -- the teacher distribution must be built the way PRODUCTION builds
+it, not by a fresh softmax over teacher Q, or the entropy number describes a target we do
+not train on.
