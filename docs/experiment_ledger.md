@@ -62249,3 +62249,71 @@ on the same position cheaply (warm TT/pondering) or whether the second pass genu
 full 500k from cold. The cost model assumes the latter (`node_ratio` on the escalated rows),
 so a warm re-query would make it CHEAPER than modelled, never dearer. Confirm rather than
 assume.
+
+### ⚑⚑ 2026-08-19 IMPLEMENTATION AUDIT — I mispriced the two-pass design, and the clean
+### design is BLOCKED by a missing UCI primitive. Shipping cost is **1.407x loop, NOT 1.265x**
+
+Peer caught a load-bearing arithmetic error of mine. Confirmed and owned:
+
+    cumulative (selected = 500k TOTAL):  0.85*175 + 0.15*500 = 223.75  -> 1.279x
+    two-pass  (selected = 175k + 500k):  0.85*175 + 0.15*675 = 250.00  -> 1.429x
+
+`1 + frac*(ratio-1)` prices the FIRST one. My claim that it "already models" the two-pass
+design was wrong: it assigns the selected row an incremental **325k**, i.e. CONTINUATION to
+a cumulative 500k, not a second full search. Loop: `1 + 0.95*0.429 = 1.407x`.
+
+**ANSWER TO IMPLEMENTATION QUESTION 1 — the clean design is not reachable with today's
+UCI layer.**
+- ✅ the read loop ALREADY streams `info` lines (`uci.py:592`, `info.consume(...)`), so the
+  ~175k state IS observable mid-search;
+- ❌ **`stop` is NOT implemented anywhere in the UCI layer** — no `_send("stop")` exists.
+  UCI has no "extend a finished search" verb either, so cumulative escalation REQUIRES
+  launching at 500k and stopping unselected rows early. That is new protocol machinery
+  inside the locked `_protocol_section()`.
+
+**⚑ AND THE CLEAN DESIGN HAS A WORSE PROBLEM THAN ITS COST.** Launching every row at 500k
+and stopping the unselected at ~175k changes **85% of rows' labels** from "a 175k search" to
+"a 500k-budgeted search truncated at 175k". Those are not guaranteed identical -- SF checks
+its node limit periodically, so the overshoot differs -- and it would perturb the
+overwhelming majority of the population the arm is not supposed to touch. A cheaper
+intervention that silently alters 85% of labels is the wrong trade for an exploratory arm
+whose readout has to be attributable.
+
+**⇒ BUILD THE TWO-PASS COLD RE-QUERY, AND PRICE IT HONESTLY AT 1.407x LOOP.**
+- it uses the **EXISTING** `fresh=True` path, already plumbed `uci.py:564` ->
+  `pool.py:146,152,199` and already exercised by `scripts/harvest_gate_step.py:399`;
+- ⚑ **the codebase ALREADY ANTICIPATED THIS ARM and already ruled on the hygiene.**
+  `fresh`'s own docstring: *"Required when re-querying a position the engine may have just
+  searched at a shallower budget (LABEL ESCALATION): a warm TT would let the shallow pass
+  steer the deep one and overstate their agreement."* ⇒ **the "175k -> warm 325k" variant
+  that would preserve the 1.279x arithmetic is EXPLICITLY REJECTED by existing reasoning**,
+  not merely untested. Do not resurrect it to recover the nicer number.
+- unselected rows stay **BIT-IDENTICAL** to today;
+- selected rows get a genuine COLD 500k, which is what the offline rig's teacher was;
+- no new state machine inside a locked protocol section — where a desync would live, and
+  this repo already carries `data/desync_quarantine_20260801/`.
+
+**THE 1.265x FIGURE DOES NOT DESCRIBE THE SHIPPED ARM.** Every future citation must say
+**1.407x loop / 1.429x label** for the two-pass build. The 48.6% deficit-repair figure is
+unaffected — it is an efficacy number and does not depend on how the nodes are bought.
+
+**REALIZED MULTIPLIER IS MEASURED, NOT ASSUMED.** Production's budget is a RANGE,
+`sf_label_nodes_floor: 150000` .. `sf_label_nodes_cap: 200000`, not a constant 175k. For
+the two-pass build the realized figure is
+
+    M_label = 1 + (SUM over selected of E) / (SUM over all of B_i),  E = 500k
+
+and the selector may CORRELATE with `B_i`. Realized incremental nodes, realized selection
+fraction and realized `M_label` are all diagnostics; the dry run establishes the number and
+**1.429 is not baked into production as an assumption.**
+
+**REVISED IMPLEMENTATION ORDER (peer's, with Q1 now answered):**
+1. ~~can we observe and continue the same search~~ — **ANSWERED: observe yes, continue no.**
+2. ⇒ two-pass cold re-query on the existing `fresh` path.
+3. Calibration on frozen positions BEFORE the selector plumbing: **cold 500k** vs
+   **175k -> cold 500k** (the shipped path), confirming the second-pass label matches the
+   offline 500k teacher the 48.6% was measured against. The warm variants are excluded by
+   the hygiene rule above, so this is a 2-arm check, not 3.
+4. Then selector + config + diagnostics + tests.
+
+**Live run untouched. No code written yet. No restart.**
