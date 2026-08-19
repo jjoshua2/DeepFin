@@ -61421,3 +61421,84 @@ raised the factor; the distributional consequence is the part that matters.
 live `SfTargetParams`) -- the teacher distribution must be built the way PRODUCTION builds
 it, not by a fresh softmax over teacher Q, or the entropy number describes a target we do
 not train on.
+
+### 2026-08-19 SCREEN RESULT — SF-soft blend `H(alpha)` on TODAY's eligible population.
+### FAILS the pre-committed budgets in every cell but one, and that one needs three
+### favourable assumptions at once
+
+Run: `scratchpad/sfsoft_alpha_screen.py`, 6 newest live shards, **5329 eligible rows**,
+policy width 1858. Read-only, CPU-only, no GPU contention, live run untouched.
+
+**⚑ INSTRUMENT CORRECTION vs my own note one entry above.** I said the teacher had to be
+rebuilt through `rebuild_sf_policy_target` (`target_builder.py:122`). WRONG for this
+config: `train.rebuild_sf_targets` is **absent from the live yaml** and defaults False, so
+production trains against the **STORED `sf_p0_policy_target` array**. The screen reads the
+stored array, which is both simpler and more faithful. A reconstruction would have
+measured a target we do not train on -- the exact error the note was trying to prevent.
+
+**MEASURED**
+
+| | today (5329 eligible rows) | audit population (recorded anchor) |
+|---|---|---|
+| `H(t0)` | **0.7134** | 0.5738 |
+| `H(q_SF)` | 0.9469 | -- |
+| support | t0 22.4 moves, q 26.5 | -- |
+| `H(0.25)` | 0.9917 | 0.8629 |
+
+⇒ **today's targets are already 0.14 nats FLATTER than the audit population's**, so the
+headroom before the blend crosses the net is much smaller than the anchor implies.
+
+**⚑ THE PER-ROW TAIL IS REAL — the peer's worry, confirmed.** At `alpha = 0.25` the median
+row flattens `+0.263` nats but **p90 = +0.609 and p99 = +0.825**. A minority class flattens
+~3x the median. A mean would have hidden it. At `alpha = 0` already **41%** of eligible
+rows sit above the audit net entropy.
+
+**⚑⚑ THE DECISION HINGES ON ONE NUMBER WE DO NOT HAVE: today's NET entropy.** The recorded
+`H_net = 0.7819` is the net measured on the AUDIT population. Comparing today's `H(alpha)`
+to it is a cross-population read ([[same_name_different_population]]). Two defensible
+readings, and they differ by 2.5x in `alpha_max`:
+
+- **A** -- use the audit net directly: `H_net = 0.7819`.
+- **B** -- preserve the relationship instead of the value: the net was `+0.2081` flatter
+  than `t0` on the audit population, so `H_net_today ~= 0.7134 + 0.2081 = 0.9215`.
+
+| budget | reading | `alpha_max` | cp @ f=0.362 | cp @ f=0.63 |
+|---|---|---|---|---|
+| +0.05 | A | 0.05 | 0.36 | 0.63 |
+| +0.10 | A | 0.10 | 0.72 | 1.26 |
+| +0.05 | B | 0.20 | 1.45 | 2.52 |
+| +0.10 | B | 0.25 | 1.81 | **3.15** |
+
+**VERDICT: the screen FAILS.** Against the 3.0 cp bar, **every cell fails except B /
++0.10 / f = 0.63** -- which needs the optimistic net reading AND the looser budget AND
+coverage at the fresh-shard asymptote we have not reached (today `f = 0.362`), and clears
+by 0.15 cp. Per the pre-committed rule this is a screen failure and **NOT** a reason to
+raise `alpha` until it passes.
+
+The reweight budget `1/(1-alpha) <= 1.5` (`alpha <= 1/3`) is NOT binding: entropy binds
+first under both readings.
+
+**⚑ LITERAL BLENDING DOES NOT RESCUE THIS.** Switching from additive `w_sf_own` to a
+literal blended target removes the `1/(1-alpha)` overweight of paired plies -- a real
+gain -- but the flattening is a property of the target DIRECTION, not of the
+implementation. Both forms move the target toward `q_SF` by the same amount. The
+constraint that actually binds is untouched by that redesign.
+
+**THE ONE MEASUREMENT THAT COULD CHANGE THE VERDICT:** today's net entropy on these same
+5329 eligible rows. That needs a forward pass (GPU) and is minutes of work, but it is the
+difference between `alpha_max = 0.10` and `0.25`. Do it in a PAUSE WINDOW
+([[pause_and_run_beats_concurrent_gpu_work]], [[batch_gpu_work_into_pause_windows]]),
+never side-by-side.
+
+**S_R IS STILL UNMEASURED ON TODAY'S POPULATION AND CANNOT BE MEASURED CHEAPLY.** The cp
+slope needs DEEP per-move regret (>=1M nodes, MPV>=10). Today's shards carry only the
+MultiPV-6 teacher, whose tail is largely fabricated
+([[multipv6_regret_tail_is_fabricated]]), so scoring the slope off shard `sf_p0_regret`
+would inflate it 2.1-2.9x. Every cp figure above therefore still uses the AUDIT
+population's `S_R = 20.0`. If the entropy question resolves favourably, `S_R` on today's
+rows becomes the next thing to buy -- and it is a new deep-SF labelling run, not a cheap
+screen.
+
+**NO GPU INTERVENTION. NOTHING FLIPPED.** Keeping training running is itself the highest-
+value action available: coverage is the only term in `f * alpha * S_R` still improving on
+its own.
