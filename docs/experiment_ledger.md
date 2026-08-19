@@ -61959,3 +61959,62 @@ reason to extend** -- F engaged perfectly and delivered zero.
 **STATE:** now — nothing, maximise coverage. `f >= 0.53` — freeze the population and buy
 Stage 1. Stage 1 not futile — independent Stage 2. Then the strong-screen verdict and the
 GPU decision, separately.
+
+### 2026-08-19 PROTOCOL CLOSE-OUT — the `f` trigger statistic, `f`/`S_R` pairing, and a
+### ⚑ SAMPLING-LAW hazard INSIDE the product
+
+Closes the last protocol hole. Everything below is frozen before any deep-SF compute.
+
+**1. THE TRIGGER STATISTIC, frozen.** A single row must not fire it -- the live series
+just went 0.4017 -> 0.3896 on consecutive iterations.
+
+    TRIGGER: trailing-20-iteration mean of `has_sf_p0_frac` >= 0.53,
+             fire on the FIRST iteration satisfying it.
+
+No trend requirement, no "wait until it looks settled", no discretionary hold. `0.53` is
+now reproducible rather than a judgement call. (Futility boundary, peer's closed form:
+`S_futile(f) = 3 / (0.25 f (1+0.168)) = 10.27 / f` -- 20.54 at 0.50, 19.38 at 0.53, 18.68
+at 0.55. Verified.)
+
+**2. `f` AND `S_R` TRAVEL TOGETHER. NO SPLICING.** If Stage 1 freezes at `f = 0.53`, the
+strong-screen quantity for THAT population is `G = 0.53 * 0.25 * S_R`. Taking an `S_R`
+measured there and multiplying it by a later live `f = 0.60` combines the eligibility RATE
+of one population with the conditional SLOPE of another. Forbidden. Consequently:
+- Stage 2 as a DISJOINT draw from the Stage-1 frozen population — iff coverage has not
+  materially moved.
+- Otherwise **re-bank the then-current population** and declare Stage 2 a NEW measurement,
+  reporting its own `f_2` and `S_R,2` as a pair: `G_2 = f_2 * 0.25 * S_R,2`.
+This avoids forcing the definitive screen to evaluate an obsolete 0.53 population if
+pairing has since reached 0.58-0.62.
+
+**3. ⚑⚑ NEW HAZARD — THE SAMPLING LAW IS PART OF THE POPULATION, AND IT SITS INSIDE THE
+PRODUCT.** `has_sf_p0_frac` is measured on TRAINING BATCHES, and production does not draw
+them uniformly: `disk_buffer.py:545`, **KataGo-style `surprise_mix = 0.5` — 50% uniform,
+50% priority.** Priority is a difficulty/surprise score and it is NOT independent of row
+type (`finalize.py`: policy rows carry `rec.priority`, fast value-only rows are pinned to a
+neutral 1.0).
+
+⇒ if the 2,500 deep-label positions are drawn UNIFORMLY from eligible rows while `f` is the
+MIXTURE-weighted eligibility rate, then `G = f * 0.25 * S_R` multiplies a rate from one
+sampling law by a conditional slope from another. Same defect as #2, one level down, and
+invisible because both factors would be individually correct.
+
+    FROZEN: draw the deep-label sample under the SAME law that produces the `f` it will be
+    multiplied by -- the live 50/50 uniform/priority mixture, restricted to eligible rows.
+    Record the realized `surprise_mix` and any live priority-shaping weights
+    (`sf_gap_priority_weight`, diff-focus) in the trigger-time bank record.
+
+If that turns out to be impractical, the ALTERNATIVE is to redefine `f` to match a uniform
+draw and recompute it that way -- **not** to pair a uniform `S_R` with the mixture `f`. One
+law, both factors, stated explicitly.
+
+**4. MAXIMUM WINDOW — restated as the operative rule, not an aspiration.**
+
+    Mechanism engagement is a SANITY CHECK, never an EXTENSION criterion.
+
+A fixed N-iteration readout means: reaching N with perfect `m_sf_own` engagement and no
+policy-quality improvement is a STOP at N. Not "another N because the loss is working."
+F-only engaged perfectly, delivered zero, and ran to 2.5x its stated window.
+
+**STATE UNCHANGED: nothing to do. Live `has_sf_p0_frac` ~0.39, trigger 0.53.** The gap is
+the point -- the run is raising the value of the eventual experiment at no extra cost.
