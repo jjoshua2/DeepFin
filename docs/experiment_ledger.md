@@ -60853,3 +60853,73 @@ fail is what allowed this to ship.
 
 **NOT a live-tree defect** (infeasible fraction is exactly 0 at MPV6), so no live action and no
 revert. It blocks the MERGE, not the run.
+
+### 2026-08-19 — #448 floor feasibility: IMPLEMENTED, and the "inert on live" claim has EXACTLY ONE member of margin
+
+`ec0fa43dc..4595c03aa` on `feat/sf-policy-floor`. Closes the three findings the two reviewers
+left on #448. **Nothing deployed** — the live pairing window (iter 504→509, `has_sf_p0_frac`
+climbing 0.219 → 0.250) ran untouched throughout.
+
+**The repair is a SET cap, not a rescale.** Rescaling every `tau` when the request exceeds 1
+would move the calibrated bar on rows that were already satisfiable — a silent global retune
+triggered by the *cardinality* of other rows. Instead: the two structural roles (SF top-1,
+played-move collar) are paid first, then the remaining adaptive members are admitted in
+**ascending SF regret** until the budget is spent. A move already carrying a mandatory floor
+costs only `max(tau, mandatory) - mandatory` to admit, so **the collar is never dropped — only
+its upgrade to `tau` can be.** `SfPolicyFloorParams` refuses at resolve time any config with
+`max(tau, tau_top1) + tau_played > 1`.
+
+**EQUIVALENCE, measured not argued: the cap bites IFF `requested_mass > 1`.** If the raw request
+fits, every prefix of the greedy fits, so nothing is dropped — verified by
+`test_a_feasible_row_is_untouched_by_the_cap`.
+
+**⚑ AT THE LIVE CONFIG (`0.15 / 0.15 / 0.0625`) TRUNCATION FIRST BITES AT `|F| = 7`, NOT 8.**
+Executed against the shipped code, collar on a distinct non-member:
+
+| \|F\| | 5 | **6** | **7** | 8 |
+|---|---|---|---|---|
+| requested | 0.8125 | **0.9625** | **1.1125** | 1.2625 |
+| applied | 0.8125 | **0.9625** | **0.9625** | 0.9625 |
+| truncated | 0 | **0** | **1** | 1 |
+
+Measured live max is `|F| = 6`. **⇒ "inert on the live arm" is TRUE and the margin is ONE
+MEMBER.** Combined with the right-censoring already recorded above — 13.1% of live rows sit AT
+6 with an unknown true count — the correct reading is *not* "the cap will never fire": it is
+"the cap is one MultiPV widening away from firing on at least 13.1% of rows". Do not quote the
+inertness without the margin.
+
+**The five diagnostics that make it readable:** `sf_policy_floor_member_count_raw`,
+`..._requested_mass`, `..._truncated_frac`, `..._member_count_applied`, `..._applied_mass`, all
+over the SAME `sf_own_regret_rows` denominator as the existing two floor columns. Read raw
+AGAINST applied — that pair is the only instrument that can answer, after the fact, whether arm
+F's flattening came from the configured `tau` or from the `|F| * tau` nobody set.
+
+**⚑ THE NaN TRAP, CAUGHT MID-IMPLEMENTATION.** The admission test is written `~(cum > budget)`,
+NOT `cum <= budget`. The two agree on every real number and disagree on NaN: the natural form
+admits nothing on a poisoned `tau` and folds it into a finite, plausible-looking loss —
+signature defect. `test_a_nan_in_the_term_cannot_reach_total_at_weight_zero` failed on the first
+draft and is what found it. The cap is a feasibility rule, not a validator.
+
+**Also closed, and both were tests that passed for the wrong reason:**
+- `ObjectiveSnapshot` had never been EXECUTED. The async test proved the object reaches the
+  worker; the AST pin proved where ONE of its three names is bound. A ruler leg could re-read
+  live state and both would stay green — leaving `test_loss` measured under objective A and
+  stamped with B's identity, internally consistent and wrong. The new test flips the live
+  trainer under a pinned snapshot, with `objective=None` as the negative control. ⚑ Its FIRST
+  version flipped only a weight and the `ruler_shape` mutant SURVIVED (`_ruler_loss_shape` is
+  empty unless `w_sf_policy_floor != 0`); the fixture now enables the floor and edits the search
+  width so all three mutants die.
+- The `_EFFECTIVE_WEIGHT` completeness check was a NAME GREP. `sf_wdl_temperature` is normalised
+  by `temperature > 0.0` inside `_normalize_sf_wdl_probs`, under a RENAMED parameter, so the
+  scan agreed with the map FOR THE WRONG REASON. Replaced with an AST derivation that follows
+  the VALUE across parameter bindings; it now finds the key and the map's omission is declared
+  as an explicit exception rather than missed.
+
+**Verification:** `tests/test_sf_policy_floor.py` 69 passed; a 49-file affected sweep exit 0;
+`./scripts/lint.sh` bare — ruff clean, basedpyright **delta vs `ec0fa43dc` = 0** (13 pre-existing,
+confirmed by linting a pristine worktree at the parent and diffing the error sites). Mutation-
+verified: cap removed, admission order reversed, mandatory-overlap term dropped, validator
+removed, and each of the three snapshot legs reverted to a live read — all killed.
+
+**STILL BLOCKS MERGE:** awaiting an independent delta review of `ec0fa43dc..4595c03aa` (a fresh
+reviewer who did not author it, plus `@codex review` on the same range).
