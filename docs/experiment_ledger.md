@@ -61221,3 +61221,87 @@ classifier** (both inline and as a script file). The number above is therefore a
 INFERENCE from window mixing, not a read of `has_sf_p0` on disk. It is robust across
 boundary choices and the decision does not turn on it, but it has not been confirmed
 against the array. Close that if the arm's verdict is ever contested.
+
+### 2026-08-19 CORRECTION to the entry above — three estimators of `c` reported as one
+
+Peer caught an internal inconsistency in the coverage table. It is real and it is mine.
+
+The table's row quoted the **raw** iter-536 window mean `0.372`, while `c` was computed
+from the **smoothed** endpoint `0.3599`. With the same `S = 0.655` and `m0 = 0.2177`:
+
+| estimator | `c` |
+|---|---|
+| two-point, RAW endpoint 0.372 (what the table's own numbers imply) | **0.664** |
+| two-point, SMOOTHED endpoint 0.3599 (what was actually computed) | 0.630 |
+| least squares over the whole post-boundary trajectory | 0.51-0.65 |
+
+The LS fit sits lower because it weights early post-boundary iterations, where the
+accumulated signal is small against batch noise. All three clear 0.42 by a wide margin,
+so the gate verdict is unchanged -- but they are three estimators and were presented as
+one range. State the estimator with the number.
+
+Peer's margin statement, which is the durable form: at a window mean of 0.372, fresh
+coverage would have to be below 0.42 only if LESS THAN ~24% of the window were old
+0.218 data. ~65.5% is old. The conclusion is insensitive to all of the above.
+
+### `w_sf_own = f * alpha/(1-alpha)` is CORRECT HERE, and for a non-obvious reason
+
+Checked rather than assumed, because the same formula is WRONG under the other plausible
+normalization and this repo's signature defect is a value that means something other than
+its name.
+
+Both terms are `masked_mean`, whose denominator is the **eligible-row count, not the
+batch**:
+
+    m_sf_own = masked_mean(sf_p0_ce, net_mask * has_sf_p0)    # denom = f*N
+    m_policy = masked_mean(pol_ce,   net_mask * has_policy)   # denom = N
+
+So an eligible row is ALREADY amplified by `1/f` in the SF term relative to the policy
+term. The `f` in the formula is exactly what cancels that amplification -- the formula is
+right BECAUSE of the masked-mean normalization, not despite it. Had the terms been sums
+over all rows divided by batch size, `f` would NOT appear and the correct weight would be
+`alpha/(1-alpha) = 0.4286`, a factor of 2.7 different.
+
+Live values confirmed: `w_policy: 1.0` (yaml:502) and `replay_has_policy_frac = 1.0000`,
+so both the `w_policy` and `f_policy` factors drop out.
+
+    alpha_eff = w / (f * w_policy + w) = w / (f + w)
+
+At the last-10-iteration `f = 0.3618`: **`w_sf_own = 0.1551`**. At `f = 0.372`: 0.1594.
+⇒ **0.16**, and the choice is insensitive to which `f` is used.
+
+### ⚑⚑ #448's ObjectiveSnapshot IS NOT IN THE RUNNING PROCESS — the protection that
+### covers a live `w_sf_own` flip is a DIFFERENT commit, and it predates #448 by two days
+
+The proposal to flip `w_sf_own` was argued on the grounds that #448's ruler-membership
+fix now handles the 0->positive transition. **That premise is inverted.**
+
+`ObjectiveSnapshot` does not exist anywhere in the live tree (`grep` returns zero hits).
+It exists only on `main`, as of tonight's merge, and a merge does not change a RUNNING
+process. What actually covers the flip:
+
+| fact | evidence |
+|---|---|
+| `active_loss_terms` + `_ruler_loss_weights` on the live branch | `e7e60f382`, 2026-08-17 18:38 |
+| the process restarted AFTER that | progress.csv rotated 2026-08-17 19:15, iter 191->192 |
+| the rotation proves NEW CODE, not a weight flip | it added `m_sf_policy_floor` / `sf_policy_floor_binds_frac`, which `losses.py:1568,1576` compute UNCONDITIONALLY, outside the `w != 0` gate at 1653 |
+| `w_sf_own` is covered by the ruler | `_ruler_loss_weights` derives from `TRAINER_WEIGHT_KEYS`, which lists it |
+
+⇒ the ruler ID WILL move on a 0 -> 0.16 flip, so `best_loss` cannot be compared across
+the boundary. That guarantee is real and it is running.
+
+**UNPROTECTED, and this is the operational consequence:** the ruler weights are read
+PER-EVALUATION, not pinned, and `distributed_async_test_eval` is on -- so a holdout eval
+in flight across the flip can score against a mismatched objective. That is exactly the
+race #448 closes and it is NOT running. ⇒ **DISCARD the first post-flip holdout reading**
+rather than interpret it.
+
+⚑ **The running process also has the PRE-#448 FLOOR CODE** -- uncapped, no feasibility
+guard, none of the five diagnostics. "#448 is merged" must NOT be read as "the floor is
+safe live": flipping `w_sf_policy_floor` on this process runs the version whose floor set
+can request more than 1.0 of probability mass. Irrelevant to `w_sf_own`; recorded because
+it is precisely the assumption that gets made later.
+
+**NOT LAUNCHED.** Per protocol #1 a training-affecting flip needs its own entry with one
+deciding yardstick as an exact command and a pre-committed threshold. The cheap SF-soft
+check on the current eligible population comes first.
