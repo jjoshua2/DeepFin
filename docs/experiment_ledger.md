@@ -60219,3 +60219,70 @@ measured zero.
 **Confounds:** replay window turned over from ~100% A+F-era to ~100% F-only-era across the arm
 (as pre-registered); optimiser moments carried A's history transiently at the boundary;
 `game_id` absent from the audit set so all CIs are position-level, not game-clustered.
+
+---
+
+### PREREG — SF TARGET REPAIR, **AUDIT-FIRST GATE**. Written BEFORE the measurement. (2026-08-19)
+
+Successor arm named by the F-only kill (`d1542bc7d`). ⚑ **NO TRAINING COMPUTE IS AUTHORISED BY
+THIS ENTRY.** `docs/eval_protocol.md`'s audit-first rule governs: a training-target candidate is
+scored against the frozen deep-SF audit set BEFORE any training, and one that loses is killed
+without training. This entry pre-commits that gate.
+
+**HYPOTHESIS.** The policy target carries pairwise ORDER violations against SF
+(`g_ij = (p_i - p_j) - (t_i - t_j) >= 0` on an SF-confirmed edge), the net LEARNS that bad tail
+(91.5%, `the_policy_target_is_sharp_and_wrong`), and repairing the order should raise target
+quality against a deep ruler. The mechanism screen (`c1cc6e9b2`) established the variants on
+complete single-instrument labels but explicitly did NOT authorise training, because the
+teacher's own order stability was unmeasured.
+
+**⚑ THE GATE SUBSUMES THE TEACHER-STABILITY BLOCKER, WHICH IS WHY IT IS THE FAST PATH.** The
+open question was "is SF's order stable enough to import". Scoring a repair BUILT FROM THE
+PRODUCTION TEACHER against the DEEP ruler answers exactly that: if the shallow teacher's order
+is noise, importing it moves the target AWAY from deep SF and the gate kills it. No separate
+stability study is needed to make the go/no-go.
+
+**INSTRUMENT.** 4000 frozen audit positions. Deep ruler = the audit set's own MultiPV
+(>=1M nodes, MPV>=10). Scored with `chess_anti_engine.eval.audit.move_regrets` +
+`expected_and_top1_regret` — **the audit's own functions, imported, not re-derived.**
+⚑ Reproduction check RUN FIRST: rebuilding `cand.train.exp` from the dumped distributions
+matched the audit's own value to **max 9.8e-03 cp, mean 3.6e-04, zero rows above 0.05 cp**
+(residual is float32 dump rounding; prob sums 0.99998552..1.00000004). 300x finer than the
+decision band.
+
+**⚑⚑ THE TEACHER MUST BE THE PRODUCTION ONE.** The existing dumps' `cand.sf_soft` is
+**500,000 nodes / MultiPV 40** — NOT what production labels with. Building the repair from it
+would test a teacher the loop never sees and would flatter the result
+(`same_name_different_population`). The gate re-runs `audit_targets.py` with
+`--sf-soft-nodes 75000 --sf-soft-multipv 6` so the repair is built from the production teacher.
+
+**ARMS** (all preserve `sum(t'_C) = sum(t_C)` and `t' >= 0`):
+
+| arm | what it is |
+|---|---|
+| `unchanged` | the production training target, the baseline |
+| `rho=0` | neutral SF veto (minimal repair) |
+| `rho=1` | reflection — make the edge as right as it is wrong |
+| `transplant` | re-assign `t`'s value multiset into SF's order |
+| **`blend`** | **NAIVE CONTROL** — move `t` toward the production teacher by the same mean L1 as the winning repair. ⚑ If blending does as well, the order surgery buys NOTHING and the machinery is not justified. |
+| **`shuffled`** | **NEGATIVE CONTROL** — `rho=1` against a teacher whose move-to-regret map is permuted within the row. MUST show no gain. |
+
+**PRE-COMMITTED DECISION RULE.**
+- **PASS (proceed to a training prereg):** some repair arm lowers mean E[deep regret] vs
+  `unchanged` by **>= 3.0 cp** with the **95% paired CI excluding 0**, AND beats `blend` by a
+  CI excluding 0, AND `shuffled` shows **no** significant gain.
+- **KILL (no training compute):** every arm is under 3.0 cp, or the winner does not separate
+  from `blend`, or `shuffled` gains.
+
+**WHY 3.0 cp AND NOT LESS.** This is a TARGET-side measurement and target gains do not transfer
+1:1 — `the_main_policy_target_buys_nothing` measured the main policy direction at **+0.00004**
+on the ruler despite 0.35 of L1 distance left to travel. A sub-3 cp target gain has no
+plausible route to model gain, and the F-only null just cost 190 iterations proving that a
+mechanism can engage perfectly and deliver zero. Headroom for scale: `train` reads 40.0 cp
+against an 18.6 cp soft-target ceiling at 500k/MPV40.
+
+**CONFOUNDS / KNOWN LIMITS.** The audit set has no history or castling planes
+(`audit_set_has_no_history_or_castling`) and is FEN-only, so this scores the TARGET, not the
+trained model. `game_id` is absent so CIs are position-level. The repair is evaluated STATIC
+here; a live arm would recompute dynamically per sample, which the screen showed favours
+`rho=0` — so a `rho=0` result at this gate is a LOWER bound on its dynamic form.
