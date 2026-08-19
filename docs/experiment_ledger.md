@@ -60530,3 +60530,77 @@ search's VALUE profile is a genuinely different operation from adopting SF's DIS
 the whole of its measured value is a bet on shallow/deep SF agreement at a fixed ~1.2:1 odds.
 That bet is not improvable by shape or by row selection with the features available. Any future
 attempt must beat the 1.2–1.8 ratio, and that number is the falsifier to quote at it.
+
+---
+
+### ⚑⚑ CORRECTION + NEW CANDIDATE: SF SOFT MASS INTO `policy_own`'s TARGET (2026-08-19)
+
+**FIRST, A CORRECTION THAT REVERSES A ROADMAP DECISION.** The previous gate's `blend` control
+scored −5.48 cp and I concluded — and the peer's roadmap adopted — "do not go back to SF
+distribution blending." **That control was BROKEN.** It blended toward `softmax(4*q)`, a
+reconstruction I invented from the teacher's cp values, NOT toward the actual `sf_soft`
+distribution. `E[regret]` is linear in the target, so a real blend is exactly predictable and
+cannot be negative when the teacher is better:
+
+| blend w | R (cp) | delta vs train | linear prediction |
+|---|---|---|---|
+| 0.10 | 37.81 | +2.001 | +2.001 |
+| 0.25 | 34.81 | **+5.001** | +5.001 |
+| 0.50 | 29.81 | +10.003 | +10.003 |
+| 1.00 | 19.80 | +20.006 | +20.006 |
+
+Measured at **PRODUCTION teacher depth** (75k/MPV6): production training target **39.81 cp**,
+`sf_soft` **19.80 cp**. ⇒ **"SF blending loses" was an artifact of my control. Withdraw it.**
+
+**THE ASYMMETRY THAT IS THE CANDIDATE.** `policy_own` — the ONLY policy head MCTS uses — trains
+purely on the search-visit target at 39.81 cp. The 19.80 cp SF soft distribution is fed only to
+`policy_soft` (`w_soft: 1.0`), an auxiliary head that [[we_are_sharper_than_our_own_teacher]]
+records as driving NOTHING. Meanwhile in VALUE we DO blend SF in, and
+**that blend is load-bearing — removing it crashed winrate 0.64 -> 0.40.** The same blend has
+never been tried in POLICY. `grep` confirms no such key exists in the production yaml.
+
+**⚑ AND IT IS NOT THE SAME BET AS `transplant`.** Split at w=0.25 by whether the shallow
+teacher's top-1 IS the deep best move:
+
+| subset | share | blend w=0.25 | (transplant, for contrast) |
+|---|---|---|---|
+| teacher-CORRECT | 0.630 | **+7.56** [+6.64, +8.54] | +18.03 |
+| teacher-WRONG | 0.370 | **+0.64** [−0.31, +1.56] | **−5.00** |
+| **upside/|downside| ratio** | | **11.75** | 1.19–1.76 |
+
+The peer's stricter criterion (teacher-wrong >= −1.0 cp AND aggregate > +3.0 with CI excluding
+0) is met **decisively** — the criterion that every top-1 shape failed. Mechanism: a blend
+redistributes mass in proportion to the teacher's WHOLE distribution, so where the teacher is
+wrong its own uncertainty spreads the mass and does no harm; `transplant` bet everything on the
+teacher's argmax. **This also answers the definitional objection**: a purely definitional gain
+would damage the disagree rows, as `transplant` did. It does not.
+
+**Consistent across the frozen split** (no selection performed — `w` is not tuned, the effect is
+exactly linear in `w`, and only one transformation was evaluated):
+
+| half | n | aggregate | teacher-WRONG |
+|---|---|---|---|
+| DEV | 1977 | +5.445 [+4.45, +6.51] | +1.185 [−0.02, +2.32] |
+| SEALED | 2021 | +4.568 [+3.64, +5.58] | +0.086 [−1.43, +1.56] |
+
+**ENTROPY, the main risk.** Target 0.5738 -> 0.8629 at w=0.25, against the net's own 0.7819. It
+moves the target from SHARPER than the net to slightly FLATTER. That is directionally what
+[[we_are_sharp_and_wrong_not_flat]] and [[the_training_target_is_sharper_than_the_net]] ask for,
+but [[training_temp_exceeds_strength_optimal_temp]] warns the training temperature is ALREADY
+above the strength optimum, so further flattening could cost play sharpness. **This is the
+mechanism most likely to make the arm fail and is the thing to watch.**
+
+**HONEST PRIOR.** This is the FOURTH target-side intervention. Three transferred nothing
+(main policy target +0.00004; A+F null; F-only null at 2.5x its window). What distinguishes
+this one: its offline margin is **5–20 cp** rather than <1 cp, it is the only one that is
+HARMLESS where the teacher errs, and it has a direct working precedent in the value head.
+
+**PROPOSED — NOT LAUNCHED. Requires, in order:** (1) a code change building the blend into
+`policy_own`'s target behind a NEW default-OFF key; (2) a PR merged to `main` **BEFORE** the
+live yaml gains the key — the category (a) trap makes a restart onto code lacking the key
+FATAL AT LAUNCH; (3) a salvage snapshot as the revert point; (4) a restart.
+**DECIDING YARDSTICK** (identical instrument to the F-only kill, so the two are comparable):
+paired 4000-position deep-SF audit vs the launch checkpoint after ~150 iterations.
+**KILL:** raw policy / RL target / PLAY regret all within 0 +/- 3 cp.
+**SECONDARY:** `wdl_regret` must not rise (search stays frozen); target entropy watched against
+the play-sharpness risk above.
