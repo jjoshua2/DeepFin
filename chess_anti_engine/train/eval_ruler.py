@@ -399,7 +399,20 @@ def call_closure(
 #: hand-written version of this shipped with 3 of the 5 clamped keys and missed
 #: `sf_wdl_conf_power` and `sf_wdl_draw_scale`.
 _EFFECTIVE_WEIGHT: dict[str, Callable[[float], float]] = {
-    # losses.compute_loss: max(0.0, float(...))  -- non-positive removes the component
+    # All four are clamped by `max(0.0, float(...))` in `losses.compute_loss`,
+    # so the consumer sees 0.0 for any negative push and the map is the same
+    # lambda. What 0.0 MEANS differs by key, and the two halves are not
+    # interchangeable -- an earlier version of this comment said "non-positive
+    # removes the component" of all four, which is true of the first pair only:
+    #   * `sf_wdl_frac` / `search_wdl_frac` are BLEND WEIGHTS. At 0.0 the
+    #     component is genuinely absent from the value target.
+    #   * `sf_wdl_conf_power` / `sf_wdl_draw_scale` shape the `m_sf_eval` ROW
+    #     MASK (`_compute_sf_wdl_mask`; read its docstring before tuning them --
+    #     they do NOT scale the SF component of the value blend, despite the
+    #     names). `conf_power: 0.0` is the NEUTRAL setting, not an off switch;
+    #     `draw_scale: 0.0` drops draw rows from that one mask.
+    # They are declared here for the same reason regardless: the clamp means a
+    # NEGATIVE push and 0.0 are the same objective, so membership must agree.
     "sf_wdl_frac": lambda v: max(0.0, v),
     "search_wdl_frac": lambda v: max(0.0, v),
     "sf_wdl_conf_power": lambda v: max(0.0, v),
