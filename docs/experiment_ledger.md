@@ -60673,3 +60673,74 @@ Inverting the mapping, `w_sf_own = 0.1` at `f = 0.217` corresponds to `alpha = 0
 withdrawn — but the realizable version is a CONFIG-ONLY `w_sf_own` change worth ~1.1-1.4 cp at
 historical weights, not a new knob and not obviously above the bar.** No PR. No restart. The
 live run is untouched at `checkpoint_000487`.
+
+---
+
+### PREREG — `full_ply_pair_fraction`: 2.28x the SF-teacher coverage at ZERO label cost. NOT LAUNCHED. (2026-08-19)
+
+Peer roadmap item 3: "why was `full_ply_pair_fraction` stopped/omitted, and was it ever read
+out?" **Answer: it was NEVER enabled and NEVER read out. It was not stopped.** The ledger
+(#17567) excluded it from one offline screen for a correct reason:
+
+> "It is a DATA-GENERATION knob... its effect only exists in shards produced under it. Every
+> shard on disk was generated at `pair_fraction=0`. **No offline retrain on existing shards can
+> screen it** — an arm that set the key would change nothing and report a null, which is the
+> 'gate that cannot fail' pattern."
+
+⇒ it is unscreenable offline BY CONSTRUCTION, which is exactly why it has sat at its 0.0
+default for four months while looking available. It is absent from EVERY config file.
+
+**⚑ THE "FREE" CLAIM IS VERIFIED ON TODAY'S CODE, NOT INHERITED.** Simulated by IMPORTING the
+production `_draw_is_full` (`network_turn.py:327`), 4000 slots x 400 plies, `f = 0.25`:
+
+| `p_pair` | full fraction | vs `f` | adjacency `P(t-1 full \| t full)` | coverage |
+|---|---|---|---|---|
+| 0.00 | 0.2504 | +0.0004 | 0.2502 | 1.00x |
+| 0.25 | 0.2501 | +0.0001 | 0.3698 | 1.48x |
+| 0.50 | 0.2499 | −0.0001 | 0.4554 | 1.82x |
+| 0.75 | 0.2497 | −0.0003 | 0.5203 | 2.08x |
+| **1.00** | **0.2494** | **−0.0006** | **0.5714** | **2.28x** |
+
+**The full-ply fraction is invariant to ±0.0006 across the whole range** ⇒ search cost and SF
+label volume genuinely do not move. Adjacency lands exactly on the docstring's ~0.57.
+
+**PREDICTED END-TO-END COVERAGE.** Measured live `has_sf_p0_frac = 0.217` against a theoretical
+0.250 ⇒ a 0.868 realization factor (game starts, shard boundaries, gating). Applying it:
+**0.5714 * 0.868 = 0.496.** ⚑ This factor is an ASSUMPTION carried from p=0 to p=1 and is the
+single thing the arm must check.
+
+**WHY THIS IS THE ENABLER, NOT A STRENGTH BET.** It changes no objective. Its value is that it
+moves `f` in `w_sf_own = f*alpha/(1-alpha)`, which is what makes the corrected SF-blend result
+reachable:
+
+| alpha | all-rows @ f=0.217 | all-rows @ f≈0.50 |
+|---|---|---|
+| 0.25 | +1.09 | **+2.48** |
+| 0.50 | +2.17 | **+4.95** |
+
+**⚑⚑ THE PROPERTY THAT MAKES THIS AN UNUSUALLY GOOD ARM: ITS PRIMARY READOUT IS A DIRECT COUNT
+THAT CANNOT BE CONFOUNDED.** `has_sf_p0_frac` is already a logged progress column. The arm
+succeeds or fails on whether that number rises from 0.217 toward ~0.50 — no ruler, no CI, no
+Elo, no PID interaction. Contrast every arm this session, each of which needed a 4000-position
+paired audit to say anything at all.
+
+**DEPLOYMENT.** `full_ply_pair_fraction` is IN the yaml schema (`config_yaml.py:164`), rides the
+reco to the workers (`distributed_runtime.py:302`), and is NOT in `_STARTUP_ONLY_TRIAL_KEYS`.
+⇒ **config-only, mid-run safe, no PR, no merge, no restart.** Adding a key that is already in
+the schema is category (b)/(c), never the fatal category (a).
+
+**PRE-COMMITTED READOUT.** Set `full_ply_pair_fraction: 1.0`. Read after the replay window turns
+over (~1.5M positions, ~a day):
+- **PRIMARY:** `has_sf_p0_frac` rises 0.217 -> **>= 0.42** (allowing the realization factor to
+  degrade to 0.75). Below 0.42 ⇒ the free-coverage claim does NOT hold end-to-end; revert.
+- **GUARD 1 (the "free" claim):** full-ply/SF-label volume unchanged — `sf_nodes` pinned, and
+  games/h and s/iter within the run's existing noise band. Any throughput regression ⇒ revert,
+  because bursty clustered full plies could cost batching efficiency even at constant total.
+- **GUARD 2:** `wdl_regret` must not move (search config frozen; this is a schedule change).
+
+**CONFOUND / SEQUENCING.** This is a DATA-affecting change, so it owns its readout window alone
+(protocol rule 4). `w_sf_own` stays at 0.0 for it — enabling both at once would confound the
+coverage measurement with an objective change. ⚑ And a revert is NOT instant: the window holds
+~a day of shards made under the old schedule.
+
+**STATUS: PROPOSED, NOT LAUNCHED.** Requires a salvage snapshot as the revert point first.
