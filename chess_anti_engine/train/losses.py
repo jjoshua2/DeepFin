@@ -592,35 +592,32 @@ def policy_legal_bool(batch: dict[str, torch.Tensor], *, width: int) -> torch.Te
 
 # Default floor for the SF-approved set. Calibrated, not a round number: see
 # `SfPolicyFloorParams.resolve` for the two separable roles of tau and why this
-# sits ABOVE the search-inclusion guarantee rather than at it.
+# sits ABOVE the deterministic prior-rank threshold rather than at it.
 SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
 
 
 def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
-    """The smallest tau that buys a root-candidate slot BY PRIOR RANK: ``1 / topk``.
+    """The smallest tau that buys a top-k slot BY PRIOR RANK: ``1 / topk``.
 
-    The production root sampler (`mcts/gumbel._select_top_m_with_gumbel`) keeps
-    the top ``m`` of ``gumbel_scale * Gumbel + log(prior)``, where
+    The root sampler (`mcts/gumbel._select_top_m_with_gumbel`) keeps the top
+    ``m`` of ``gumbel_scale * Gumbel + log(prior)``, where
 
         m = 1                                            if sims <= 1
         m = max(2, min(topk, n_legal, max(2, (sims+1)//2)))  otherwise
 
-    ⚑⚑ "GUARANTEE" IS EXACT FOR THE DETERMINISTIC RANKING AND ONLY EMPIRICAL
-    UNDER PRODUCTION NOISE. DO NOT QUOTE IT AS A PROBABILITY OF 1.
-    If ``p_i >= tau`` then at most ``floor(1/tau) - 1`` other moves can exceed
-    it (they are disjoint and sum to <= 1), so ``tau >= 1/topk`` puts move ``i``
-    inside the top-``topk`` **by prior**. That argument is about the ranking of
-    ``log(prior)``; the sampler ranks ``gumbel_scale * Gumbel + log(prior)``,
-    and Gumbel noise has UNBOUNDED support, so no prior threshold can make
-    inclusion certain.
+    ⚑⚑ ``1/topk`` IS AN EXACT DETERMINISTIC PRIOR-RANK THRESHOLD, NOT A
+    STOCHASTIC ADMISSION GUARANTEE. If ``p_i >= tau`` then at most
+    ``floor(1/tau) - 1`` other moves can exceed it, so ``tau >= 1/topk`` puts
+    move ``i`` inside the top-``topk`` **by prior**. The sampler instead ranks
+    ``gumbel_scale * Gumbel + log(prior)``, and Gumbel noise has UNBOUNDED
+    support, so no prior threshold can make noisy admission certain.
 
     ⚑ AND THE KNOB THIS DOCSTRING USED TO CITE WAS THE WRONG ONE. It justified
     near-determinism with "``gumbel_c_scale = 0.1``, noise ~0.13 in log-prob
     units". ``gumbel_c_scale`` is the SEARCH's exploration constant; the root
-    sampler above is scaled by ``gumbel_scale``, which production runs at
-    **1.0**, decaying to ``gumbel_scale_after: 0.5`` from move 12. The real
-    noise is ~10x the figure that was used to call it "very nearly
-    deterministic".
+    sampler above is scaled by ``gumbel_scale``. The two relevant trees differ,
+    which is why measured numbers below name the scale rather than saying
+    "production".
 
     MEASURED (`_select_top_m_with_gumbel`, ``add_noise=True``, a move at exactly
     ``p = 1/16``, ``n_legal = 40``), as a function of the ROOT noise scale:
@@ -634,51 +631,36 @@ def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     0.00            1.0000              1.0000
     ==============  ==================  ==================
 
-    ⚑ QUOTE THE SCALE, NEVER "production". The two trees differ:
-    ``configs/pbt2_small.yaml`` on this branch runs ``gumbel_scale: 0.75`` decaying
-    to ``gumbel_scale_after: 0.0``, while the live branch runs ``1.0 -> 0.5``. The
-    claim holds on both -- 17% and 27% exclusion respectively at the pre-decay
-    scale -- but a number attached to the word "production" without naming the
-    tree is how a measurement of one config gets quoted about another.
+    ⚑ QUOTE THE SCALE, NEVER "production". ``configs/pbt2_small.yaml`` on this
+    branch runs ``gumbel_scale: 0.75`` decaying to ``gumbel_scale_after: 0.0``,
+    while the live branch runs ``1.0 -> 0.5``. The broad-tail exclusion is about
+    17% and 27% respectively at the pre-decay scale; neither number is a theorem
+    about real peaked priors.
 
-    So the move the threshold is named for is dropped up to **27%** of the time when
-    the other legal moves share the remaining mass evenly. The earlier "MIN (not
-    mean) P(searched) is exactly 1.0000 at prior >= 1/16, and 0.1042 at prior >=
-    0.02" was measured on 3000 REAL production rows and is not contradicted: real
-    priors are peaked, which is the left column. It is a property of the empirical
-    prior distribution, NOT a bound the sampler provides -- so it holds until the
-    policy flattens, and nothing warns when it stops holding.
+    The earlier "MIN (not mean) P(searched) is exactly 1.0000 at prior >= 1/16"
+    measured on 3000 real rows is not contradicted: those priors were peaked.
+    It is an empirical property of that prior distribution and search config,
+    NOT a bound the sampler provides.
 
     `tests/test_sf_policy_floor.py::test_inclusion_under_production_noise_is_not_a_guarantee`
-    pins the measured numbers, because an argument this docstring got wrong
-    once should not be the thing defending it.
+    pins the measured noisy-admission effect, because an argument this docstring
+    got wrong once should not be the thing defending it.
 
-    ⚑ WHEN THE SIM BUDGET CAN BITE, AND WHY IT DOES NOT HERE. ``1/topk`` buys a
-    slot in the top-``topk``; what the search keeps is the top-``m``. The two
-    differ only when ``m < topk`` AND ``n_legal > m``, and each half is worth
-    stating because a review of this branch got both backwards:
+    ⚑ WHEN THE SIM BUDGET CAN BITE. ``1/topk`` is a statement about top-``topk``
+    by prior; the search keeps top-``m``. If ``m < topk`` and ``n_legal > m``,
+    the corresponding deterministic prior-rank threshold is ``1/m`` instead.
+    If ``n_legal <= m``, every legal move is a candidate regardless of prior or
+    Gumbel noise.
 
-    * ``n_legal <= m``: EVERY legal move is a candidate, so inclusion is
-      trivially guaranteed and ``tau`` is irrelevant. The narrow case is the
-      SAFE one, not the broken one.
-    * ``m < topk`` needs ``(sims+1)//2 < topk``, i.e. ``sims < 2*topk - 1 = 31``
-      at ``gumbel_topk: 16``. PRODUCTION NEVER GETS THERE. `configs/pbt2_small.yaml`
-      runs ``mcts_simulations: 256`` (ramped down to 100 by `progressive_mcts`,
-      still >= 31) and ``fast_simulations: 32``, so a FAST ply gives
-      ``m = min(16, n_legal, 16) = 16`` -- the guarantee holds on fast plies
-      exactly as on full ones, which is the case the review claimed was broken.
-
-    So the guarantee is exact at every sim budget production runs. It would
-    weaken only under a deliberate sub-31-sim configuration, and then the honest
-    floor is ``1/m``, not ``1/topk``.
+    At ``gumbel_topk: 16``, ``m < topk`` needs ``sims < 31``. The branch config's
+    full and fast budgets stay at or above that, so its deterministic threshold
+    is still ``1/16`` at those budgets. **That says nothing about stochastic
+    admission under positive Gumbel noise.**
 
     ⚑ THE FLOOR IS ON THE RAW PROBABILITY; THE SEARCH SELECTS ON THE TEMPERED
-    ONE (``logits / gumbel_policy_temp``, production 1.5). The two bars coincide
-    at the realized legal-move count (mean 27.3) -- raw ``1/16`` is the smallest
-    raw floor whose whole measured population clears the tempered ``1/16`` bar --
-    but that is a COINCIDENCE OF THIS OPERATING POINT, not an identity.
-    Re-derive it if ``gumbel_policy_temp``, ``gumbel_topk`` or the policy
-    encoding changes.
+    ONE (``logits / gumbel_policy_temp``). The two bars happened to coincide at
+    one measured operating point; that is not an identity. Re-derive it if
+    ``gumbel_policy_temp``, ``gumbel_topk`` or the policy encoding changes.
     """
     return 1.0 / float(normalize_gumbel_topk(gumbel_topk))
 
@@ -687,37 +669,22 @@ def warn_if_below_search_inclusion(
     *, tau: float, tau_top1: float, tau_played: float,
     gumbel_topk: object, context: str,
 ) -> float:
-    """Warn for each floor that has quietly stopped guaranteeing root inclusion.
+    """Warn when a floor drops below the deterministic prior-rank threshold.
 
-    ⚑ IT CHECKS ALL THREE, AND `tau_played` IS THE ONE THAT MATTERS. The first
-    version of this guard checked `tau` only -- the RANKING knob, default 0.15,
-    which is 2.4x the production guarantee and therefore essentially never trips
-    -- while `tau_played`, the one parameter whose documented sole job IS the
-    inclusion guarantee, was never looked at. `resolve(tau=0.15,
-    tau_played=0.001, gumbel_topk=16)` returned silently. A guard aimed at the
-    parameter that cannot lose the property, and blind on the parameter that
-    can, is the "gate that cannot fail" shape: present, green, and inert.
+    This guard is deliberately NOT a noisy-search admission guarantee. It checks
+    whether each floor is at least ``1/gumbel_topk``, which is enough to put a
+    move inside the deterministic top-k **by prior rank** when the sim budget
+    allows ``m == topk``. Under positive Gumbel noise admission remains
+    probabilistic even above the threshold.
 
-    ⚑ `tau_top1` JOINED IT for the same reason one level down. It is the floor
-    SF's top-1 gets on the rows where our argmax already IS that move -- the
-    strict `regret < our_r` clause keeps a move out of its own comparison, so
-    `adaptive` is empty there and `max(tau, tau_top1)` reduces to `tau_top1`
-    alone. Those are the rows invariant 1 calls the whole mechanism, and a
-    sub-guarantee `tau_top1` revokes the root slot on exactly them. Nothing
-    makes our own argmax safe: at the realized mean of 27.3 legal moves a
-    flat-ish policy can put its top move under `1/16`. The reporting line in
-    `Trainer` used to print `guarantees_inclusion=True` beside
-    `tau_top1=0.001`; the mechanism was right and the BOOLEAN was lying,
-    because it took a min over the two thresholds this guard happened to check.
-    Guard and printed claim now read the same three.
+    All three thresholds are checked because each can be the only floor applied
+    to a move on some row. ``tau_played == 0.0`` stays silent because that is the
+    documented collar-ablation arm; zero is not a corresponding ablation for
+    ``tau`` or ``tau_top1``.
 
-    ``tau_played == 0.0`` stays SILENT: that is the documented collar-ablation
-    arm, a deliberate off switch rather than a floor that has stopped working.
-    Hence ``0 < tau_played < guarantee``, not ``tau_played < guarantee``. There
-    is no equivalent for `tau_top1`: zero there is not an ablation, it is SF's
-    best move losing its unconditional floor on the rows above.
-
-    Returns the guarantee so callers can report it without re-deriving it.
+    Returns the deterministic rank threshold so callers can report it without
+    re-deriving it. The internal helper name is historical; operator-facing
+    messages must call this a threshold, never an inclusion guarantee.
     """
     guarantee = search_inclusion_guarantee_tau(gumbel_topk)
     topk = normalize_gumbel_topk(gumbel_topk)
@@ -729,12 +696,13 @@ def warn_if_below_search_inclusion(
         if value >= guarantee or (silent_at_zero and value == 0.0):
             continue
         warnings.warn(
-            f"{name}={value!r} is BELOW the root-search inclusion guarantee "
-            f"1/gumbel_topk={guarantee!r} (gumbel_topk={topk}, {context}): the "
-            "floored move is no longer guaranteed a root-candidate slot, so the "
-            "term stops buying the search routing it exists for and becomes a "
-            "ranking nudge only. Raise it, or widen gumbel_topk, if that was not "
-            "the intent.",
+            f"{name}={value!r} is BELOW the deterministic prior-rank threshold "
+            f"1/gumbel_topk={guarantee!r} (gumbel_topk={topk}, {context}). "
+            "Prior rank alone therefore no longer puts the floored move in the "
+            "top-k candidate band. No tau guarantees admission under Gumbel "
+            "noise; this warning is only about deterministic prior-rank coverage. "
+            "Raise the floor, or widen gumbel_topk, if falling below that "
+            "threshold was not intended.",
             RuntimeWarning,
             stacklevel=3,
         )
@@ -788,39 +756,24 @@ class SfPolicyFloorParams:
         tau_played: float | None = None,
         gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
     ) -> SfPolicyFloorParams:
-        """Fill the ``None`` defaults, validate, and check the search guarantee.
+        """Fill defaults, validate, and check the deterministic rank threshold.
 
-        ⚑ TAU HAS TWO SEPARABLE ROLES, AND THE DEFAULT SERVES THE SECOND ONE.
-        Partitioning the arm contrast by whether the floor is already inert for
-        SEARCH purposes (rows where our prior on deep-SF's best move already
-        clears ``1/topk``) splits them cleanly:
+        ``tau`` has two separable roles. ``1/gumbel_topk`` is the deterministic
+        prior-rank threshold: above it, prior rank alone places the move inside
+        top-k when ``m == topk``. It is NOT a noisy-admission guarantee. Tau above
+        that threshold additionally changes ranking pressure; the calibrated
+        default remains 0.15.
 
-        * ``tau = 1/gumbel_topk`` (0.0625 at the production topk of 16) is the
-          SEARCH-INCLUSION GUARANTEE -- see ``search_inclusion_guarantee_tau``.
-          BELOW it the guarantee is simply lost.
-        * tau ABOVE that buys RANKING on the rows where inclusion is already
-          satisfied: +0.278 [+0.237, +0.322] against the random-floor control at
-          tau 0.15, +0.548 at 0.35, and 0.0% harmful rows at both -- it costs
-          nothing where we are already right.
+        A resolved floor below ``1/topk`` warns rather than raises because a
+        deliberate sub-threshold floor is a legitimate experiment. The warning
+        says exactly what is lost: deterministic prior-rank coverage, not
+        stochastic search inclusion.
 
-        So the default is **0.15**, comfortably above the 0.0625 guarantee, and
-        the derivation survives as a GUARD rather than as the default: a
-        resolved tau BELOW ``1/topk`` warns loudly, naming both numbers. It
-        warns rather than raises because a deliberate sub-guarantee tau is a
-        legitimate experiment -- but a tau that has quietly stopped guaranteeing
-        anything is the "accepted, then silently meaningless" defect this
-        codebase is full of, and it does not get to be silent.
-
-        ⚑ `tau_played` -- THE COLLAR -- DEFAULTS TO THAT GUARANTEE, `1/topk`,
-        because it is doing the opposite job. The floor's mass comes out of every
-        non-member proportionally, and the biggest absolute loser is our own top
-        move; if the move SEARCH ACTUALLY PLAYED lands under `1/topk` it drops out
-        of the root candidate set entirely. Measured on 3072 production rows, the
-        share of rows whose played move is squeezed below the bar by an
-        UNCOLLARED floor: 0.26% at tau 0.10, **2.67% at tau 0.15**, 12.17% at
-        0.35 -- against the 4.03% of rows the floor exists to fix. It would hand
-        back most of its own win. With the collar the squeeze is 0.00% at every
-        tau, and the collar itself fires on 0.81%-12.73% of rows.
+        ``tau_played`` -- the collar -- defaults to ``1/topk`` because its job is
+        to keep the played move above that deterministic prior-rank bar while
+        the SF floor redistributes mass. Under Gumbel noise actual admission is
+        still empirical. ``tau_played: 0.0`` disables the collar as a clean
+        ablation arm.
 
         ``gumbel_topk`` is the width the trial ACTUALLY runs with, so callers
         must pass their own rather than let it default.
@@ -835,15 +788,12 @@ class SfPolicyFloorParams:
             # `tau_top1: null` tracks an explicit `tau` instead of silently
             # flooring SF's own best move at a different bar than the rest of F.
             tau_top1=resolved_tau if tau_top1 is None else float(tau_top1),
-            # The collar's job is exactly "stay a root candidate", so its default
-            # IS the inclusion guarantee -- not `tau`, which is calibrated for a
-            # different job (ranking). 0.0 disables the collar; that is the
-            # ablation arm and it is a clean no-op, not a special case.
+            # The collar defaults to the deterministic prior-rank threshold.
+            # It does not make noisy admission certain; 0.0 disables the collar.
             tau_played=guarantee if tau_played is None else float(tau_played),
         )
-  # AFTER the range check, deliberately: an out-of-range value must RAISE, and a
-  # warning emitted first would put "your tau is below the guarantee" on the log
-  # ahead of the error that actually explains the failure.
+  # AFTER the range check, deliberately: an out-of-range value must RAISE before
+  # the threshold warning, so the log names the actual configuration error first.
         warn_if_below_search_inclusion(
             tau=params.tau, tau_top1=params.tau_top1, tau_played=params.tau_played,
             gumbel_topk=gumbel_topk, context="at config load",
@@ -873,9 +823,10 @@ def sf_policy_floor_deficit(
 
     with ``ours = argmax p``. Three properties, each pinned by a test:
 
-    1. ``top1`` IS IN F UNCONDITIONALLY. That is the whole mechanism: MCTS never
-       expands a move at ~0 prior, so the net never learns why SF's move beats
-       its own. Guaranteeing a small prior gets the move SEARCHED and refutable.
+    1. ``top1`` IS IN F UNCONDITIONALLY. That is the whole mechanism: MCTS can
+       never learn about a move it never expands, so the floor raises SF's move
+       toward search visibility. Crossing ``1/topk`` guarantees only its
+       deterministic prior rank; Gumbel-noisy admission remains probabilistic.
     2. THE `regret_m < regret_ours` CLAUSE, STRICT. When our argmax already IS
        SF's best the second set is EMPTY, so ``F = {our own move}`` and the term
        is either silent (p >= tau) or pushes mass ONTO the move we got right --
@@ -893,9 +844,8 @@ def sf_policy_floor_deficit(
     argmax of the SEARCH's own policy target, floored at ``tau_played``. It is
     not part of F -- it is the counterweight. The mass the floor adds comes out
     of every non-member proportionally and the biggest absolute loser is our own
-    top move, so an uncollared floor squeezes the move search actually PLAYED out
-    of the root candidate set on 2.67% of production rows at ``tau = 0.15``,
-    against the 4.03% it exists to fix. See ``SfPolicyFloorParams.resolve``.
+    top move, so an uncollared floor can push the move search actually PLAYED
+    below the deterministic rank bar. See ``SfPolicyFloorParams.resolve``.
 
     ⚑ IT IS THE `policy_target` ARGMAX, NOT THE NET'S. The net's argmax is by
     construction the highest-probability move and essentially cannot be squeezed
@@ -1335,8 +1285,9 @@ def compute_loss(
   # the same rows. Complementary to the term above rather than a variant of it:
   # `sf_own_regret` is a whole-distribution pull that a confident wrong argmax
   # can pay for out of the tail, while this one only ever ADDS mass, and only to
-  # moves SF ranks at or above the one we picked. Deliberately modest -- it buys
-  # SF's move a SEARCH SLOT so it can be refuted, it is not a policy correction.
+  # moves SF ranks at or above the one we picked. Deliberately modest -- it
+  # raises SF's move toward search visibility; noisy admission remains empirical,
+  # so this is not itself a policy correction or a search-inclusion theorem.
     floor_params = sf_policy_floor if sf_policy_floor is not None else SfPolicyFloorParams()
     if sf_p0_regret_t is not None:
         po_probs = torch.softmax(masked_base, dim=-1)
