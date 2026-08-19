@@ -130,13 +130,23 @@ def test_train_path_pools_a_masked_head_by_step_count_not_by_row_count() -> None
     assert not any(k.startswith("sf_volatility") and k.endswith("_rows") for k in out)
 
 
-def test_only_the_two_sf_p0_heads_are_pooled_as_ratios_of_sums() -> None:
-    """The row-weighted correction exists and is applied to 2 loss heads.
+def test_only_the_sf_p0_heads_are_pooled_as_ratios_of_sums() -> None:
+    """The row-weighted correction exists and is applied to 3 loss heads.
 
     `_RATIO_METRIC_FIELDS` also carries `*_frac` coverage columns and the
     desync-contamination detector; the LOSS entries are the ones this
     characterization is about. Extending them is exactly the B1 fix, so this
     assertion is the tripwire: it fails the moment another head is corrected.
+
+    ⚑ WENT 2 -> 3 with `m_sf_policy_floor` (the SF-approved-move floor). That is
+    the tripwire doing its job, not a regression: the new head is masked by the
+    SAME `sf_p0_regret_base` tensor as `m_sf_own_regret` and divides by the SAME
+    `sf_own_regret_rows` count, so it is row-weighted by construction and was
+    never on the per-batch-mean path this file characterizes. Nothing that
+    existed before moved: the two names below are still here.
     """
     loss_heads = {k for k in _RATIO_METRIC_FIELDS if k.startswith("m_")}
-    assert loss_heads == {"m_sf_own", "m_sf_own_regret"}
+    assert loss_heads == {"m_sf_own", "m_sf_own_regret", "m_sf_policy_floor"}
+    # The heads this file says are STILL wrong (per-batch means) must stay wrong
+    # here, or the characterization has silently stopped characterizing.
+    assert "m_sf_volatility" not in _RATIO_METRIC_FIELDS

@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_history,
     uses_lc0_root_legacy_meta,
 )
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.train.eval_ruler import call_closure, eval_ruler_id
 from chess_anti_engine.train.target_builder import (
@@ -88,12 +89,16 @@ from chess_anti_engine.replay.shard import (
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
+from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
+    SfPolicyFloorParams,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
     policy_target_temp_active,
     retemper_main_policy_target,
+    search_inclusion_guarantee_tau,
+    warn_if_below_search_inclusion,
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
@@ -1004,6 +1009,67 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # SF-approved-move probability floor (`w_sf_policy_floor`). `m_sf_policy_floor`
+  # is the masked mean deficit; `sf_policy_floor_binds_frac` is the share of the
+  # SAME eligible rows on which the floor actually bound on at least one move.
+  # ⚑ NEITHER IS A FUNCTION OF `w`, AND EACH ANSWERS A DIFFERENT QUESTION. Both
+  # are computed from the deficit tensor BEFORE the weight is applied -- which is
+  # deliberate, it is what makes the term's reach readable at
+  # `w_sf_policy_floor: 0.0`, before it is ever switched on -- and
+  # `test_a_positive_weight_moves_total_and_the_columns_report_it` asserts that
+  # both are bit-equal at w=0.0 and w=1.0 on one batch. So:
+  #   * "does the term SELECT anything on this data?" -> binds_frac. At 0.0 the
+  #     term cannot contribute at ANY weight: the set is empty or the net already
+  #     clears every floor. This is the one that separates "reaches the loss and
+  #     never binds" from "dead knob", which the mean alone cannot (both read 0).
+  #   * "is the term IN the objective, and is it working?" -> m_sf_policy_floor,
+  #     because `total` gains exactly `w * m_sf_policy_floor` (losses.py). Once
+  #     `w > 0` it is the column whose TRAJECTORY over a training window reads
+  #     the effect, and the column to read against the weight.
+  # An earlier version of this comment called binds_frac "the one that answers
+  # 'did it take effect'" full stop; it answers the selection half only, and the
+  # take-effect question does not have a single-column answer within one step.
+  # Denominator is `has_sf_p0_regret_frac`'s numerator, the same
+  # eligible-row count, so the three columns cannot disagree about the
+  # population.
+    m_sf_policy_floor: float = 0.0
+    sf_policy_floor_binds_frac: float = 0.0
+  # FEASIBILITY CAP (losses.SfPolicyFloorOutputs). The floors are simultaneous
+  # lower bounds on one distribution, so a requested mass above 1.0 describes an
+  # EMPTY constraint set -- a residual deficit that no net can ever clear. The
+  # loss admits members in ascending SF regret and stops at the budget; these
+  # five columns are what make that cap readable instead of silent.
+  #   * `..._member_count_raw` / `..._requested_mass` -- the UNCAPPED set and
+  #     its mass: how big a demand the cap had to cut down.
+  #   * `..._truncated_frac` -- share of eligible rows where the cap dropped a
+  #     member. Exactly 0.0 means the cap is currently inert on this data.
+  #     ⚑⚑ THIS IS THE ONLY COLUMN THAT ANSWERS "DID THE CAP FIRE", and the two
+  #     reasons are independent. (a) The admission test is exact (float64) while
+  #     the mass columns are narrowed to float32, so ten floors of 0.1 truncate
+  #     while `requested_mass` reads exactly 1.0 -- `> 1` is sufficient, not
+  #     necessary. (b) EVERY COLUMN HERE IS A ROW MEAN over
+  #     `sf_own_regret_rows`, so `requested_mass > 1.0` is nearly unreachable at
+  #     the column level even when a large minority of ROWS are infeasible
+  #     (measured: 0.552 on a batch whose `truncated_frac` was 0.333).
+  #   * `..._member_count_applied` / `..._applied_mass` -- after the cap.
+  #     `applied_mass <= 1.0` EXACTLY, not to within a slack -- ⚑ CONDITIONAL
+  #     on `w_sf_policy_floor != 0.0`. At weight 0 an infeasible MANDATORY pair
+  #     is permitted with a warning so an inert term cannot kill a live trial,
+  #     and the cap cannot repair that (it only drops OPTIONAL members), so
+  #     these columns then correctly describe an impossible floor. On that
+  #     population the resolve-time WARNING, not `truncated_frac`, is the
+  #     signal. ⚑ And separately: 
+  #     `member_count_applied == member_count_raw` does NOT mean "not
+  #     truncated": a demoted move that still carries a mandatory floor stays in
+  #     the count. Read the MASS pair, or `truncated_frac`.
+  # ⚑ Read raw AGAINST applied. The pair is the only way to tell whether the
+  # term's strength came from the configured tau or from a `|F| * tau` that
+  # nobody set. Same `sf_own_regret_rows` denominator as the two columns above.
+    sf_policy_floor_member_count_raw: float = 0.0
+    sf_policy_floor_requested_mass: float = 0.0
+    sf_policy_floor_truncated_frac: float = 0.0
+    sf_policy_floor_member_count_applied: float = 0.0
+    sf_policy_floor_applied_mass: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
@@ -1294,6 +1360,28 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
+  # The floor's two columns, over the sf_p0-regret eligible rows -- literally
+  # `sf_own_regret_rows`, because both terms are masked by the same tensor. A
+  # separately-emitted count for the floor would be the same quantity twice and
+  # could drift; one quantity cannot.
+    "m_sf_policy_floor": ("sf_policy_floor_sum", "sf_own_regret_rows"),
+    "sf_policy_floor_binds_frac": ("sf_policy_floor_binds_sum", "sf_own_regret_rows"),
+  # Feasibility-cap diagnostics, same denominator for the same reason.
+    "sf_policy_floor_member_count_raw": (
+        "sf_policy_floor_raw_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_requested_mass": (
+        "sf_policy_floor_requested_mass_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_truncated_frac": (
+        "sf_policy_floor_truncated_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_member_count_applied": (
+        "sf_policy_floor_applied_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_applied_mass": (
+        "sf_policy_floor_applied_mass_sum", "sf_own_regret_rows",
+    ),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
   # count varies batch to batch, so a mean of per-batch rates is the wrong
   # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
@@ -1804,6 +1892,23 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
+        "w_sf_policy_floor": _f("w_sf_policy_floor", 0.0),
+  # Literal `config.get` for the same reason `policy_target_temp` is one: these
+  # four are Trainer-construction-only and `tests/test_startup_only_config_keys.py`
+  # derives that class from LITERAL config reads. Routed through `_f` they would
+  # be invisible to it, and the classification in `_STARTUP_ONLY_TRIAL_KEYS`
+  # would be a hand assertion the instrument cannot check.
+  #
+  # `gumbel_topk` is read here as the tau DEFAULT's input, not as a training
+  # knob -- see `SfPolicyFloorParams.resolve`. It is a live selfplay key, so it
+  # is NOT startup-only; only the value the floor was resolved against is.
+        "sf_policy_floor_delta_cp": config.get("sf_policy_floor_delta_cp"),
+        "sf_policy_floor_tau": config.get("sf_policy_floor_tau"),
+        "sf_policy_floor_tau_top1": config.get("sf_policy_floor_tau_top1"),
+        "sf_policy_floor_tau_played": config.get("sf_policy_floor_tau_played"),
+        "sf_policy_floor_gumbel_topk": normalize_gumbel_topk(
+            config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
+        ),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
@@ -1834,6 +1939,20 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     if log_dir is not None:
         kw["log_dir"] = log_dir
     return kw
+
+
+@dataclasses.dataclass(frozen=True)
+class ObjectiveSnapshot:
+    """The loss + ruler inputs of ONE evaluation, frozen together.
+
+    Exists so an asynchronous evaluation cannot pair a snapshotted model with a
+    later iteration's objective. Frozen because the whole point is that nothing
+    can move between the moment it is taken and the moment the worker uses it.
+    """
+
+    loss_kwargs: Mapping[str, Any]
+    loss_weights: Mapping[str, float]
+    loss_shape: Mapping[str, float]
 
 
 class Trainer:
@@ -1905,6 +2024,12 @@ class Trainer:
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
+        w_sf_policy_floor: float = 0.0,
+        sf_policy_floor_delta_cp: float | None = None,
+        sf_policy_floor_tau: float | None = None,
+        sf_policy_floor_tau_top1: float | None = None,
+        sf_policy_floor_tau_played: float | None = None,
+        sf_policy_floor_gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -2323,6 +2448,26 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
+  # SF-approved-move floor. The WEIGHT is a plain live-pushable attribute like
+  # every other `w_*` (`TRAINER_WEIGHT_KEYS`); the SHAPE is resolved ONCE, here,
+  # and validated at construction so a bad tau kills startup rather than the
+  # first step. `_loss_kwargs` re-stamps the live weight onto this object each
+  # step, and `replace` re-runs `__post_init__`, so a live `w_sf_policy_floor`
+  # edit is validated too instead of arriving raw at the consumer.
+        self.w_sf_policy_floor = float(w_sf_policy_floor)
+        self.sf_policy_floor_gumbel_topk = normalize_gumbel_topk(sf_policy_floor_gumbel_topk)
+  # Whether `tau_played` is DERIVED from the search width or PINNED by the yaml.
+  # `sync_search_width` re-derives only the former; a number an operator typed is
+  # theirs to keep, and silently moving it would be a config edit nobody made.
+        self._sf_policy_floor_tau_played_derived = sf_policy_floor_tau_played is None
+        self.sf_policy_floor_params = SfPolicyFloorParams.resolve(
+            w=self.w_sf_policy_floor,
+            delta_cp=sf_policy_floor_delta_cp,
+            tau=sf_policy_floor_tau,
+            tau_top1=sf_policy_floor_tau_top1,
+            tau_played=sf_policy_floor_tau_played,
+            gumbel_topk=self.sf_policy_floor_gumbel_topk,
+        )
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
         self.w_sf_eval = float(w_sf_eval)
@@ -2453,6 +2598,85 @@ class Trainer:
             f"[trainer] policy_target_temp={self.policy_target_temp!r} "
             f"reshape_active={policy_target_temp_active(self.policy_target_temp)} "
             f"eval_pinned_temp={self._eval_loss_kwargs['policy_target_temp']!r}",
+            flush=True,
+        )
+
+  # ⚑ ANNOUNCED OFF `_loss_kwargs`, THE DICT `compute_loss` IS ACTUALLY CALLED
+  # WITH -- not off `self.sf_policy_floor_params`, and emphatically not by
+  # re-deriving `1 / topk` here. "Resolve and print in one place, re-derive the
+  # default at the call site" is a mutant that survives every executing wiring
+  # test we have, because both halves are individually right. Reading the
+  # consumer's own parameter is the only phrasing that cannot express it.
+  # The root-search inclusion guarantee `1/gumbel_topk` is printed NEXT TO the
+  # tau actually installed, so the comparison the guard makes is on the record
+  # even in the (normal) case where it does not fire.
+  #
+  # ⚑ `guarantees_inclusion` TOOK ITS MIN OVER TWO OF THE THREE THRESHOLDS AND
+  # PRINTED A CLAIM ABOUT ALL OF THEM. `tau_top1` was omitted, so the line read
+  # `guarantees_inclusion=True` next to `tau_top1=0.001` -- and that is the one
+  # threshold SF's best move gets ALONE, on the rows where our argmax already is
+  # it (`adaptive` is empty there, so the running max reduces to `tau_top1`).
+  # The floor was behaving correctly; the boolean was lying, which is the worse
+  # of the two because it is the half an operator reads. It now takes the min
+  # over the same three keys `warn_if_below_search_inclusion` checks, so the
+  # printed claim and the guard cannot disagree.
+        floor = self._loss_kwargs["sf_policy_floor"]
+        guarantee = search_inclusion_guarantee_tau(self.sf_policy_floor_gumbel_topk)
+        floored = min(floor.tau, floor.tau_top1, floor.tau_played or 1.0)
+        print(
+            f"[trainer] sf_policy_floor w={floor.w!r} delta_cp={floor.delta_cp!r} "
+            f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
+            f"tau_played={floor.tau_played!r} "
+            f"gumbel_topk={self.sf_policy_floor_gumbel_topk!r} "
+            f"deterministic_rank_tau={guarantee!r} "
+  # ⚑ NOT "guarantees_inclusion". Under production Gumbel noise admission is a
+  # PROBABILITY, not a guarantee -- measured at 0.73 for a move at exactly
+  # 1/topk with a broad prior tail at gumbel_scale 1.0. The operator-facing
+  # string now says only what is true: tau is at or above the
+  # DETERMINISTIC-RANKING threshold. A correction note elsewhere is no defence
+  # for a line that literally prints the wrong word.
+            f"at_or_above_deterministic_rank_tau={floored >= guarantee}",
+            flush=True,
+        )
+
+    def sync_search_width(self, gumbel_topk: object) -> None:
+        """Re-point the SF-policy floor at the LIVE root width.
+
+        ⚑ `gumbel_topk` IS LIVE AND THE FLOOR'S DERIVED `tau_played` WAS NOT.
+        `gumbel_topk` is deliberately NOT in `_STARTUP_ONLY_TRIAL_KEYS` -- the
+        loop re-reads it off `tc` every iteration and it reaches selfplay
+        immediately -- while `tau_played = 1/topk` was resolved ONCE, at
+        construction. A live width edit therefore moved the search and left the
+        collar guaranteeing inclusion in a top-k that no longer exists, and the
+        startup-only machinery structurally could not warn, because the key
+        genuinely IS live for its other consumer. That is this repo's signature
+        defect wearing the opposite mask: not a knob that never arrives, but a
+        DERIVED value that stops tracking the thing it was derived from.
+
+        Called from `trainable_config_ops._sync_trainer_weights`, beside the
+        other per-iteration pushes, so it runs on the same cadence as the edit
+        it is reacting to. A PINNED `tau_played` is never moved -- it is
+        re-CHECKED instead, through the same `warn_if_below_search_inclusion`
+        the config loader uses, so the guard and the criterion cannot drift.
+        """
+        topk = normalize_gumbel_topk(gumbel_topk)
+        if topk == self.sf_policy_floor_gumbel_topk:
+            return
+        previous = self.sf_policy_floor_gumbel_topk
+        self.sf_policy_floor_gumbel_topk = topk
+        floor = self.sf_policy_floor_params
+        if self._sf_policy_floor_tau_played_derived:
+            floor = replace(floor, tau_played=search_inclusion_guarantee_tau(topk))
+            self.sf_policy_floor_params = floor
+        warn_if_below_search_inclusion(
+            tau=floor.tau, tau_top1=floor.tau_top1, tau_played=floor.tau_played,
+            gumbel_topk=topk,
+            context=f"live gumbel_topk edit {previous} -> {topk}",
+        )
+        print(
+            f"[trainer] sf_policy_floor gumbel_topk {previous} -> {topk}: "
+            f"tau_played={self._loss_kwargs['sf_policy_floor'].tau_played!r} "
+            f"(derived={self._sf_policy_floor_tau_played_derived})",
             flush=True,
         )
 
@@ -2762,6 +2986,15 @@ class Trainer:
             "wdl_terminal_outcome_sf_frac": self.wdl_terminal_outcome_sf_frac,
             "moves_left_max_plies": self.moves_left_max_plies,
             "sf_sparse_params": self.sf_target_params if self.sf_policy_sparse_ce else None,
+  # `replace`, not the stored object: `w_sf_policy_floor` is live-pushed by
+  # `_apply_lr_gamma_weights` (it is in `TRAINER_WEIGHT_KEYS`), and a frozen
+  # object captured at construction would swallow that edit -- a knob that is
+  # accepted, echoed back correct in the result row, and never reaches the
+  # consumer. The SHAPE fields stay as resolved at construction; they are
+  # classified restart-required in `_STARTUP_ONLY_TRIAL_KEYS`.
+            "sf_policy_floor": replace(
+                self.sf_policy_floor_params, w=float(self.w_sf_policy_floor),
+            ),
         }
 
     @property
@@ -2781,12 +3014,92 @@ class Trainer:
         invalidate its records". Eval scores the model against the target the
         shards ACTUALLY carry, identically in every arm.
 
-        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured:
-        they scale a term without redefining it, so they leave the per-term
-        columns (`policy_ce`, `wdl_ce`, ...) comparable, and pinning them would
-        make `total` stop matching the trained objective.
+        Only the target-SHAPE knob is pinned. Loss WEIGHTS stay as configured,
+        so that `total` keeps matching the trained objective and the per-term
+        columns (`policy_ce`, `wdl_ce`, ...) stay comparable.
+
+        ⚑⚑ THE REASON THAT USED TO BE GIVEN FOR IT WAS HALF FALSE, AND THE
+        FALSE HALF COST A FROZEN BEST-MODEL RECORD. It read "they scale a term
+        without redefining it", which is true of a weight moving 0.3 -> 0.6 and
+        silently FALSE of a weight moving 0.0 -> anything: `compute_loss` adds
+        these terms under an `if`, not by multiplying, so a zero weight means
+        the term is NOT IN `total`. Flip one live and `total` gains a whole
+        term -- and for a non-negative term (`sf_policy_floor` is a sum of
+        `relu`; `sf_own_regret` is `sum p*r`) it steps strictly UP and can
+        never come back, so `_update_best_model` compares the new objective
+        against a record made under the old one and never promotes again.
+        Nothing re-checked this sentence when such a weight was added, which is
+        why the guarantee now lives in code: `eval_ruler_id_for` hashes the SET
+        of non-zero weights (`eval_ruler.active_loss_terms`), so a membership
+        flip moves the ruler id, bumps `holdout_generation` and HANDS THE
+        RECORD OVER instead of freezing it. Weight MAGNITUDES are still
+        excluded, deliberately -- see `active_loss_terms` for why hashing them
+        would abolish the comparison rather than tighten it.
         """
         return {**self._loss_kwargs, "policy_target_temp": 1.0}
+
+    def _ruler_loss_weights(self) -> dict[str, float]:
+        """The loss weights the holdout ruler's identity is keyed on.
+
+        ⚑ DERIVED FROM `TRAINER_WEIGHT_KEYS`, WHICH IS THE ONE SOURCE OF TRUTH
+        FOR "WHICH ATTRIBUTE CAN A LIVE YAML EDIT MOVE". That tuple IS the
+        per-iteration live-push list -- `_apply_lr_gamma_weights` walks it and
+        does `setattr(trainer, key, float(config[key]))` -- so reading the same
+        tuple back off `self` covers exactly the surface the hazard has, and a
+        weight added there is covered by the ruler on the day it is added. A
+        second, hand-copied list of weight names would have to be re-drawn at
+        every addition, and this repo has already lost a ruler boundary twice
+        to exactly that (see `eval_ruler.call_closure`).
+
+        ⚑ AND IT MUST BE THE TRAINER'S ATTRIBUTES, NOT `_eval_loss_kwargs`'
+        KEYS. `w_sf_policy_floor` -- the weight this defect was found on --
+        does not appear in that dict under its own name at all: it is folded
+        into the `sf_policy_floor` params object by `_loss_kwargs`. An
+        intersection with the kwargs keys would therefore have silently omitted
+        the one key that motivated the fix, while looking derived.
+        """
+        return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
+
+    def objective_snapshot(self) -> ObjectiveSnapshot:
+        """The whole objective as ONE immutable value, taken at a single instant.
+
+        Everything the holdout measurement depends on that a live yaml edit can
+        move: the kwargs the batches are scored with, and the two inputs the
+        ruler identity is derived from. Taken together so a flip landing
+        mid-iteration cannot split them across the three fields.
+        """
+        return ObjectiveSnapshot(
+            loss_kwargs=dict(self._eval_loss_kwargs),
+            loss_weights=self._ruler_loss_weights(),
+            loss_shape=self._ruler_loss_shape(),
+        )
+
+    def _ruler_loss_shape(self) -> dict[str, float]:
+        """Non-weight parameters that change WHAT AN ACTIVE TERM MEASURES.
+
+        ⚑ READ OFF THE CONSUMER'S OWN OBJECT, not off `self` and not off the
+        yaml. `sf_policy_floor` is resolved and validated once into a single
+        `SfPolicyFloorParams`, and that object is what `compute_loss` uses; a
+        re-derivation here would be a second source of truth for the same
+        number, which is the "announce from the consumer's own parameter" trap
+        this repo has already paid for.
+
+        ⚑ ONLY FOR TERMS THAT ARE IN THE OBJECTIVE. At `w == 0.0` the floor
+        contributes nothing to `total` (`compute_loss` adds it under an `if`),
+        so its shape cannot move `test_loss` and hashing it would fire a
+        best-model handover every time a DISABLED knob was retuned -- a false
+        positive with no hazard behind it.
+
+        `w` itself is deliberately absent: membership already covers it, and
+        including the value here would reintroduce the magnitude hash that
+        `active_loss_terms` argues against.
+        """
+        shape: dict[str, float] = {}
+        floor = self._eval_loss_kwargs.get("sf_policy_floor")
+        if floor is not None and float(getattr(floor, "w", 0.0)) != 0.0:
+            for field in ("delta_cp", "tau", "tau_top1", "tau_played"):
+                shape[f"sf_policy_floor_{field}"] = float(getattr(floor, field))
+        return shape
 
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
@@ -3159,11 +3472,13 @@ class Trainer:
     @classmethod
     def eval_ruler_id_for(
         cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
+        loss_weights: Mapping[str, float],
+        loss_shape: Mapping[str, float] | None = None,
     ) -> str:
         """Identity of the measurement `_compute_metrics` performs.
 
         A CLASSMETHOD, and that is load-bearing rather than tidiness: the id
-        depends on nothing but code and the four arguments, so an operator's
+        depends on nothing but code and its arguments, so an operator's
         deploy check (and every test here) can ask for it without building a
         Trainer, a model or a device. The earlier instance form forced callers
         to assemble a stand-in object whose attributes had to be kept in step
@@ -3191,11 +3506,18 @@ class Trainer:
         because the ones on this path include `_TRAIN_METRICS_FIELDS`, derived
         from the `TrainMetrics` dataclass -- hashing it would bump the ruler
         every time an unrelated diagnostic FIELD is added, which provably
-        cannot change `loss`. And the loss WEIGHTS are excluded for the reason
-        in docs/rl_loop_audit.md L15: `_loss_kwargs` carries the PID's
-        realized `sf_wdl_frac`, so hashing it cannot tell a 0.006 controller
-        excursion from a 0.10 config step. All of these are named in the
-        ledger's not-covered list; none of them is implied to be covered here.
+        cannot change `loss`.
+
+        **Loss weights: MEMBERSHIP covered, MAGNITUDE not.** `_loss_kwargs` is
+        on the call graph but only its SOURCE is hashed, so until 2026-08-17 a
+        weight could switch a term on live and the id sat still -- see
+        `_eval_loss_kwargs` for what that cost. `loss_weights` closes it: the
+        SET of non-zero names (`eval_ruler.active_loss_terms`) is in the
+        descriptor. The VALUES stay out, for the reason docs/rl_loop_audit.md
+        L15 gives -- the PID recomputes `sf_wdl_frac` every iteration, so a
+        value hash could not tell a 0.006 controller excursion from a 0.10
+        config step, and would move the id on every iteration of a production
+        run. Named in the ledger's not-covered list, like the rest.
 
         Two arguments are PINNED in the full-pass branch rather than passed
         through, because neither reaches that measurement: ``steps`` is a
@@ -3218,10 +3540,12 @@ class Trainer:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
                 mirror_prob=0.0, measured_by=measured_by,
+                loss_weights=loss_weights, loss_shape=loss_shape,
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_prob), measured_by=measured_by,
+            loss_weights=loss_weights, loss_shape=loss_shape,
         )
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -3580,8 +3904,20 @@ class Trainer:
         self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
         model_override: torch.nn.Module | None = None,
         full_pass: bool = False,
+        objective: ObjectiveSnapshot | None = None,
     ) -> TrainMetrics:
         """Score ``buf`` and pool the per-batch results into one TrainMetrics.
+
+        ⚑ ``objective`` PINS THE LOSS AND THE RULER TO ONE LOGICAL TIME. The
+        async path snapshots the MODEL at ``start()`` and evaluates it on a
+        worker thread, but this method used to re-read ``self._eval_loss_kwargs``
+        and re-derive the ruler when the worker finally ran -- which can be a
+        whole iteration later, AFTER a live weight flip. The model, the loss it
+        was scored under, and the identity stamped on the result would then come
+        from three different times, and the recorded ``test_loss`` would belong
+        to no objective that ever existed. ``None`` keeps the synchronous
+        behaviour of reading current state, which is correct because there is no
+        gap to race.
 
         ``full_pass`` walks every row of ``buf`` exactly once in a fixed order
         and ignores ``steps``; otherwise ``steps`` batches are SAMPLED from it.
@@ -3624,9 +3960,27 @@ class Trainer:
                 coverage=eval_coverage,
             )
         )
+  # ⚑ ONE logical time for the whole objective. Read HERE, per evaluation,
+  # never captured at trainer construction: the weights are live-pushed every
+  # iteration, and a build-time snapshot would make the ruler blind to exactly
+  # the edit it exists to catch. The `objective` argument is NOT that mistake --
+  # it is taken per evaluation too, at `AsyncTestEval.start()`, alongside the
+  # model weights it belongs to, so the async path pairs a model with the loss
+  # it was actually scored under instead of with whatever is current when the
+  # worker gets around to it.
+        if objective is None:
+            eval_loss_kwargs = self._eval_loss_kwargs
+            ruler_weights = self._ruler_loss_weights()
+            ruler_shape = self._ruler_loss_shape()
+        else:
+            eval_loss_kwargs = objective.loss_kwargs
+            ruler_weights = objective.loss_weights
+            ruler_shape = objective.loss_shape
         ruler = type(self).eval_ruler_id_for(
             batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_p), full_pass=bool(full_pass),
+            loss_weights=ruler_weights,
+            loss_shape=ruler_shape,
         )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])
@@ -3635,7 +3989,7 @@ class Trainer:
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
-                losses = compute_loss(out, batch, **self._eval_loss_kwargs)
+                losses = compute_loss(out, batch, **eval_loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():

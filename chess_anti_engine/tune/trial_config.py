@@ -11,6 +11,8 @@ from chess_anti_engine.mcts.gumbel import (
     SELFPLAY_GUMBEL_C_SCALE,
 )
 from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
+from chess_anti_engine.train.constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
+from chess_anti_engine.train.losses import SfPolicyFloorParams
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -563,6 +565,32 @@ class TrialConfig:
             return default if v is None else v
 
         num_layers = int(config.get("num_layers", 6))
+
+  # ⚑ CALLED FOR ITS EXCEPTION, AND THE RESULT IS DELIBERATELY DISCARDED.
+  # `from_dict` runs every iteration on the reloaded yaml, so this is what turns
+  # a bad live `sf_policy_floor_*` value into CLAUDE.md category (b) -- the trial
+  # dies once, loudly, naming the key -- instead of category (c), a value the
+  # schema accepts and the consumer receives raw. Both this call and the
+  # Trainer's own use the SAME `resolve`, so the check here and the object the
+  # loss actually holds cannot disagree about what is in range.
+  #
+  # NOT STORED AS A FIELD ON PURPOSE. The keys are startup-only (the Trainer
+  # folds them into one frozen object at construction), so a `tc.sf_policy_floor`
+  # would track the LIVE yaml while the loss kept the LAUNCH value -- two sources
+  # of truth for one number, and the one that is easier to read would be the
+  # wrong one. There is nothing here to read; there is only a value to reject.
+        SfPolicyFloorParams.resolve(
+            w=config.get("w_sf_policy_floor"),
+            delta_cp=config.get("sf_policy_floor_delta_cp"),
+            tau=config.get("sf_policy_floor_tau"),
+            tau_top1=config.get("sf_policy_floor_tau_top1"),
+            tau_played=config.get("sf_policy_floor_tau_played"),
+  # The SAME normalization the search publishes, off the same key, so the
+  # inclusion guarantee is checked against the width the trial actually runs.
+            gumbel_topk=normalize_gumbel_topk(
+                config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
+            ),
+        )
         return cls(
   # --- Global ---
             seed=int(config.get("seed", 0)),
@@ -666,7 +694,9 @@ class TrialConfig:
             fast_simulations=int(config.get("fast_simulations", 8)),
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
-            gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            gumbel_topk=normalize_gumbel_topk(
+                config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
+            ),
             gumbel_policy_temp=_policy_temperature(
                 config.get("gumbel_policy_temp", 1.0), name="gumbel_policy_temp",
             ),

@@ -288,6 +288,17 @@ _TRAIN_KEYS = (
     # Startup-only, so a mid-run edit warns instead of silently re-shaping the
     # target under a half-finished readout window.
     "policy_target_temp",
+    # Shape of the SF-approved-move probability floor (train/losses.py). The
+    # WEIGHT `w_sf_policy_floor` rides in `TRAINER_WEIGHT_KEYS` above; these
+    # three are folded into one resolved object at Trainer construction, so they
+    # are startup-only by construction and classified as such. `_tau` defaults to
+    # 0.15 (a ranking-calibrated value, comfortably above the `1 / gumbel_topk`
+    # root-search inclusion guarantee); setting it BELOW that guarantee is
+    # accepted but WARNS, naming both numbers.
+    "sf_policy_floor_delta_cp",
+    "sf_policy_floor_tau",
+    "sf_policy_floor_tau_top1",
+    "sf_policy_floor_tau_played",
 )
 
 # tune section: all 1:1 passthrough.

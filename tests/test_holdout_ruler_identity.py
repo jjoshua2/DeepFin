@@ -24,12 +24,17 @@ over and the counter stops meaning anything.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
+import torch
+
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
 from chess_anti_engine.train.eval_ruler import (
     _UNAVAILABLE,
+    active_loss_terms,
     call_closure,
     digest_source,
     eval_ruler_id,
@@ -51,24 +56,54 @@ SAMPLED_FNS: tuple[Callable[..., Any], ...] = call_closure(
     Trainer._compute_metrics, owner=Trainer, skip=(Trainer._iter_full_pass_batches,),
 )
 
+  # ⚑ THE PINS BELOW ARE TAKEN WITH EVERY LOSS WEIGHT AT ZERO, ON PURPOSE.
+  # The id now depends on the SET of non-zero weights as well as on the covered
+  # source (see `eval_ruler.active_loss_terms`), and the golden constants exist
+  # to catch a SOURCE change. Pinning them against a live weight map would make
+  # CI red whenever an operator edits a weight in `configs/pbt2_small.yaml` --
+  # a real edit to the live yaml, reported as a code regression. With the map
+  # empty the weight field of the descriptor is constant, so these two values
+  # move if and only if the measurement code moves, which is exactly the
+  # property they had before the weights entered the id at all.
+NO_TERMS: dict[str, float] = dict.fromkeys(TRAINER_WEIGHT_KEYS, 0.0)
+
 
 def full_pass(
     *, batch_size: int = 512, steps: int = 0,
     measured_by: Sequence[Callable[..., Any]] = FULL_PASS_FNS,
+    loss_weights: Mapping[str, float] = NO_TERMS,
 ) -> str:
     """The production ruler: a deterministic pass at the production batch size."""
     return eval_ruler_id(
         mode="full_pass", batch_size=batch_size, steps=steps, mirror_prob=0.0,
-        measured_by=measured_by,
+        measured_by=measured_by, loss_weights=loss_weights,
     )
 
 
-def sampled(*, batch_size: int = 512, steps: int = 5) -> str:
+def sampled(
+    *, batch_size: int = 512, steps: int = 5,
+    loss_weights: Mapping[str, float] = NO_TERMS,
+) -> str:
     """The pre-PR-277 ruler: `steps` x `batch_size` draws with replacement."""
     return eval_ruler_id(
         mode="sampled", batch_size=batch_size, steps=steps, mirror_prob=0.0,
-        measured_by=SAMPLED_FNS,
+        measured_by=SAMPLED_FNS, loss_weights=loss_weights,
     )
+
+
+def _ruler_at(loss_weights: Mapping[str, float]) -> Callable[..., str]:
+    """`Trainer.eval_ruler_id_for` with one weight map held fixed.
+
+    Written as a closure rather than a `functools.partial` so the four
+    descriptor arguments stay spelled out at every call site below -- they are
+    what those tests vary.
+    """
+    def call(*, batch_size: int, steps: int, mirror_prob: float, full_pass: bool) -> str:
+        return Trainer.eval_ruler_id_for(
+            batch_size=batch_size, steps=steps, mirror_prob=mirror_prob,
+            full_pass=full_pass, loss_weights=loss_weights,
+        )
+    return call
 
 
 # --- the identity itself --------------------------------------------------
@@ -102,7 +137,7 @@ def test_the_trainer_covers_exactly_the_documented_measurement_set() -> None:
     """The production method must hash the frames this module says it does.
     Drop one there and this fails, rather than the coverage quietly shrinking
     while the docstring still promises it."""
-    ruler = Trainer.eval_ruler_id_for
+    ruler = _ruler_at(NO_TERMS)
 
     assert ruler(batch_size=512, steps=0, mirror_prob=0.0, full_pass=True) == full_pass()
     assert ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=False) == sampled()
@@ -213,7 +248,7 @@ def test_knobs_that_cannot_reach_the_full_pass_cannot_move_its_ruler() -> None:
     assert full_pass(steps=99) != full_pass(), (
         "both are in the descriptor; the pin belongs at the call site"
     )
-    ruler = Trainer.eval_ruler_id_for
+    ruler = _ruler_at(NO_TERMS)
     baseline = ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=True)
 
     assert ruler(batch_size=512, steps=99, mirror_prob=0.0, full_pass=True) == baseline
@@ -605,7 +640,40 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # tree `sampled(steps=0)` is e0f28fe544f1cbac, and the pin below is not it.
 # Nothing the best-model comparison reads (`test_loss` and the per-head losses)
 # changed on either side, so records stay comparable across the handover.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
+# ⚑ MOVED AGAIN by the `sf_policy_floor` term (this PR): `compute_loss` and
+# `Trainer._loss_kwargs` are both covered frames, and the term adds a parameter,
+# a computation and two reported scalars to the first plus one key to the second.
+#
+# THE MEASUREMENT IS SOURCE-HASH-ONLY, AND HERE THAT CLAIM IS EXECUTED RATHER
+# THAN ARGUED: at the shipped default `w_sf_policy_floor: 0.0` the term is not
+# added to `total` at all (an `if`, not a `* 0.0`), and
+# `tests/test_sf_policy_floor.py::test_total_is_bit_identical_at_the_default_weight`
+# asserts BIT equality of `total` against a call with the term's parameter
+# absent. So `test_loss` and every per-head loss the best-model comparison reads
+# are numerically unchanged and records stay comparable across the handover --
+# but the id moved, so an operator WILL see a `holdout_generation` bump and a
+# best-model handover at the next restart. That is the mechanism working.
+#   full_pass  73ff47d368fbe10e -> 30cfec0c574e03da
+#   sampled    f41625e40b98e987 -> 733b900bc45f524f
+#
+# ⚑ MOVED AGAIN by the N1 fix in the same PR: the descriptor gains an
+# `active_terms` field (the SET of non-zero loss weights), so the id moves even
+# with every weight at zero, because the field itself is new. This is the NINTH
+# declared false positive and it is the cheapest to argue: the field is
+# ADDITIVE and `_compute_metrics` gained one call
+# (`loss_weights=self._ruler_loss_weights()`), which reads attributes and
+# performs no arithmetic on the batch. Nothing the best-model comparison reads
+# changed. The pins below are taken at `NO_TERMS` -- see the note beside that
+# constant for why the golden values are deliberately weight-free.
+#   full_pass  30cfec0c574e03da -> ba74408d1e9e98fa
+#   sampled    733b900bc45f524f -> cceec01bb2efc6d9
+# ⚑ RE-PINNED 2026-08-18 (PR #448, Codex F3). `_compute_metrics` now passes
+# `loss_shape=` to `eval_ruler_id_for`, so that frame's source digest moved
+# and every id moved with it. This is the documented contract, not a
+# regression: deploying it fires ONE best-model handover per running trial.
+# Previous values: "v1:full_pass:ba74408d1e9e98fa" (pre-PR), then
+# "v1:full_pass:441d302e9fdeb0fa" (loss_shape=), now the `objective=` snapshot.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:8b16fe4b481f457d"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -616,7 +684,8 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:73ff47d368fbe10e"
   # it hashes a slightly different frame set (it covers
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:f41625e40b98e987"
+# Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
+PRE_PR277_SAMPLED_RULER = "v1:sampled:7bc9ed3c7fd30ac0"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -649,7 +718,789 @@ def test_the_production_ruler_id_is_pinned() -> None:
     """
     assert Trainer.eval_ruler_id_for(
         batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
+        loss_weights=NO_TERMS,
     ) == PRODUCTION_FULL_PASS_RULER
     assert Trainer.eval_ruler_id_for(
         batch_size=512, steps=5, mirror_prob=0.0, full_pass=False,
+        loss_weights=NO_TERMS,
     ) == PRE_PR277_SAMPLED_RULER
+
+
+# --- N1: a live weight flip must move the ruler ---------------------------
+#
+# ⚑⚑ THE DEFECT. Flipping a loss weight live changed WHAT `test_loss` measures
+# and did NOT change the ruler id, so `_update_best_model` took its "same ruler
+# -> ordinary improvement test" branch and compared a number produced under the
+# new objective against a record produced under the old one. `compute_loss`
+# adds these terms under an `if` rather than multiplying by the weight, so a
+# zero weight means the term is NOT IN `total`; switch on a term that is
+# non-negative by construction (`sf_policy_floor` is a sum of `relu`,
+# `sf_own_regret` is `sum p*r`) and `test_loss` steps strictly UP with no route
+# back down. The best-model record then freezes at the pre-flip checkpoint for
+# the rest of the run.
+#
+# It was PRE-EXISTING, not new: `w_sf_own_regret` has been in
+# `TRAINER_WEIGHT_KEYS` throughout and carries the identical hazard.
+#
+# The tests below assert on BEHAVIOUR -- that ids differ across a flip and hold
+# across a no-op -- rather than re-deriving an expected id from the same helper
+# the production code calls, which would agree with an implementation that had
+# the rule wrong in both places.
+
+
+class _TinyModel(torch.nn.Module):
+    """Smallest model a `Trainer` will build an optimizer over.
+
+    Same shape as `tests/test_sf_policy_floor.py`'s and
+    `tests/test_wdl_terminal_outcome.py`'s, which is the in-repo template for a
+    config -> Trainer wiring test.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.head = torch.nn.Linear(4, 4, bias=False)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        del x
+        return {
+            "policy": self.head.weight[:1],
+            "wdl": torch.zeros((1, 3), dtype=torch.float32),
+        }
+
+
+def _trainer(overrides: dict[str, Any], tmp_path: Path) -> Trainer:
+    from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    flat = flatten_run_config_defaults({
+        "train": {"device": "cpu", "lr": 1e-3, "no_amp": True, **overrides},
+    })
+    ctor = trainer_kwargs_from_config(flat, log_dir=tmp_path)
+    return Trainer(_TinyModel(), prefetch_batches=False, **ctor)
+
+
+def _live_ruler(trainer: Trainer) -> str:
+    """The full-pass id for the trainer's CURRENT weights.
+
+    Reads `_ruler_loss_weights()` off the instance, which is what the eval path
+    does; `test_the_eval_path_hands_the_ruler_the_live_weights` pins that the
+    production call site spells it the same way.
+    """
+    return type(trainer).eval_ruler_id_for(
+        batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
+        loss_weights=trainer._ruler_loss_weights(),
+    )
+
+
+def _push(trainer: Trainer, **weights: float) -> None:
+    """The REAL per-iteration live-push path, not a `setattr` stand-in."""
+    from chess_anti_engine.tune.trainable_config_ops import _apply_lr_gamma_weights
+
+    _apply_lr_gamma_weights(trainer, dict(weights), rescale_current_lr=True)
+
+
+def test_switching_a_loss_term_on_live_moves_the_ruler_id(tmp_path: Path) -> None:
+    """⚑⚑ THE N1 REGRESSION. Without the fix these two ids are identical.
+
+    Same weights, same code, same holdout set -- and after the push `total`
+    contains a term it did not contain before. If the id does not move,
+    `holdout_generation` does not bump, `_update_best_model` compares across
+    two objectives, and (the term being non-negative) the record freezes.
+    """
+    trainer = _trainer({}, tmp_path)
+    assert trainer.w_sf_policy_floor == 0.0, "setup: the term ships OFF"
+    before = _live_ruler(trainer)
+
+    _push(trainer, w_sf_policy_floor=0.5)
+
+    assert trainer._loss_kwargs["sf_policy_floor"].w == 0.5, "setup: the push landed"
+    assert _live_ruler(trainer) != before
+
+
+def test_switching_a_loss_term_off_live_also_moves_the_ruler_id(tmp_path: Path) -> None:
+    """The same event in the other direction: `total` LOSES a term.
+
+    Asserted separately because a rule keyed on "did any weight become
+    non-zero" would pass the test above and miss this one, and dropping a
+    non-negative term steps `test_loss` DOWN -- which promotes a model for the
+    edit rather than for learning, the PR #277 failure exactly.
+    """
+    trainer = _trainer({"w_sf_own_regret": 0.7}, tmp_path)
+    assert trainer.w_sf_own_regret == 0.7, "setup: the term starts ON"
+    before = _live_ruler(trainer)
+
+    _push(trainer, w_sf_own_regret=0.0)
+
+    assert _live_ruler(trainer) != before
+
+
+def test_a_no_op_weight_push_leaves_the_ruler_id_alone(tmp_path: Path) -> None:
+    """The failure mode in the other direction, and it is the expensive one.
+
+    `_apply_lr_gamma_weights` re-pushes every weight EVERY iteration. An id
+    that moved on a push rather than on a change would bump
+    `holdout_generation` every iteration, `_update_best_model` would take its
+    ADOPT branch forever, and the best-model comparison would stop existing.
+    """
+    trainer = _trainer({"w_sf_own_regret": 0.7, "w_policy": 1.0}, tmp_path)
+    before = _live_ruler(trainer)
+
+    _push(trainer, w_sf_own_regret=0.7, w_policy=1.0)
+
+    assert _live_ruler(trainer) == before
+
+
+def test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE DESIGN RISK, EXECUTED. `sf_wdl_frac` is a loss weight in
+    `TRAINER_WEIGHT_KEYS` that the difficulty controller RECOMPUTES EVERY
+    ITERATION from the realized `wdl_regret`, so a rule that hashed weight
+    VALUES would move the id on essentially every production iteration -- not a
+    noisy handover but the end of the best-model comparison.
+
+    Driven here through `_dynamic_sf_wdl_weight` itself, at the production band
+    (`sf_wdl_frac: 0.50`, `sf_wdl_frac_floor: 0.45`,
+    `sf_wdl_floor_at_regret: 0.10`), so this reads the controller's real output
+    range rather than a hand-picked pair of numbers.
+    """
+    from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
+
+    trainer = _trainer({}, tmp_path)
+    realized = [
+        _dynamic_sf_wdl_weight(
+            sf_wdl_start=0.50, sf_wdl_floor=0.45, sf_wdl_floor_at_regret=0.10,
+            regret_max=0.30, wdl_regret_used=r,
+        )
+        for r in (0.02, 0.05, 0.10, 0.15, 0.20, 0.30, 0.45)
+    ]
+    assert len({v for v in realized if v is not None}) > 1, "setup: the band must vary"
+
+    ids = set()
+    for value in realized:
+        assert value is not None
+        _push(trainer, sf_wdl_frac=float(value))
+        ids.add(_live_ruler(trainer))
+
+    assert len(ids) == 1, f"the PID's own band moved the ruler id: {ids}"
+
+
+def test_a_magnitude_change_on_an_active_term_does_not_move_the_ruler_id(
+    tmp_path: Path,
+) -> None:
+    """The other half of the rule, stated as a property rather than as a band.
+
+    Doubling a weight REWEIGHTS the objective; it does not change which terms
+    it contains, every per-term column stays comparable, and `total` moves by a
+    bounded signed amount. That is the definitional drift
+    docs/rl_loop_audit.md L15 already accepts. Membership is the unbounded,
+    one-way event, and it is the one the id keys on.
+    """
+    trainer = _trainer({"w_categorical": 0.30}, tmp_path)
+    before = _live_ruler(trainer)
+
+    _push(trainer, w_categorical=0.60)
+
+    assert trainer.w_categorical == 0.60, "setup: the push landed"
+    assert _live_ruler(trainer) == before
+
+
+@pytest.mark.parametrize("key", TRAINER_WEIGHT_KEYS)
+def test_every_live_pushable_weight_reaches_the_ruler_id(key: str) -> None:
+    """⚑ THE ANTI-HAND-LIST TEST, and the reason the covered set is DERIVED.
+
+    Parametrized over `TRAINER_WEIGHT_KEYS` itself -- the one source of truth
+    for "which attribute can a live yaml edit move" -- so an implementation
+    that hashed a hand-copied subset fails here on precisely the key it
+    omitted, with that key's name in the test id. Two hand-written lists have
+    already been wrong in this module's history; this makes a third impossible
+    to add silently.
+    """
+    flipped = dict(NO_TERMS)
+    flipped[key] = 1.0
+
+    assert full_pass(loss_weights=flipped) != full_pass(loss_weights=NO_TERMS), (
+        f"{key} is live-pushable but does not reach the holdout ruler id"
+    )
+
+
+def test_every_live_pushable_weight_is_readable_off_a_real_trainer(
+    tmp_path: Path,
+) -> None:
+    """`_ruler_loss_weights` reads by plain `getattr`, on the eval path.
+
+    A key in `TRAINER_WEIGHT_KEYS` that is not a Trainer attribute would raise
+    there -- inside the holdout evaluation, every iteration. The alternative
+    (a defaulted `getattr`) would silently drop a renamed weight OUT of the
+    ruler, which is the defect class this whole fix is about, so the read stays
+    strict and the coverage is asserted here instead.
+    """
+    weights = _trainer({}, tmp_path)._ruler_loss_weights()
+
+    assert set(weights) == set(TRAINER_WEIGHT_KEYS)
+    assert all(isinstance(v, float) for v in weights.values())
+
+
+def test_the_eval_path_stamps_the_live_weights_onto_the_metrics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ EXECUTED, not grepped. The whole fix is inert unless the eval path
+    hands the classmethod the LIVE map -- it is a classmethod and cannot reach
+    the instance itself, so a constant `{}` there would pass every test that
+    only calls `eval_ruler_id_for` directly.
+
+    `_compute_metrics` computes the ruler BEFORE it iterates batches, so an
+    empty buffer runs the real call site (line for line, including
+    `self._ruler_loss_weights()`) and stops short of the pooling tail. Only
+    that tail is stubbed, and only to reach the `eval_ruler` it is handed.
+
+    Read per evaluation, not captured at construction: the second half asserts
+    that a push AFTER the first eval moves the stamped id.
+    """
+    seen: list[str] = []
+
+    def _capture(*_a: Any, **kw: Any) -> Any:
+        seen.append(str(kw["eval_ruler"]))
+        return None
+
+    class _EmptyBuf:
+        def batch_row_bounds(self, _n: int) -> list[tuple[int, int]]:
+            return []
+
+        def __len__(self) -> int:
+            return 0
+
+    trainer = _trainer({}, tmp_path)
+    monkeypatch.setattr(Trainer, "_build_metrics", staticmethod(_capture))
+    monkeypatch.setattr(Trainer, "_log_metrics", lambda *_a, **_k: None)
+
+    trainer._compute_metrics(
+        buf=_EmptyBuf(),  # pyright: ignore[reportArgumentType]
+        batch_size=8, steps=0, tag="test", full_pass=True,
+    )
+    _push(trainer, w_sf_policy_floor=0.5)
+    trainer._compute_metrics(
+        buf=_EmptyBuf(),  # pyright: ignore[reportArgumentType]
+        batch_size=8, steps=0, tag="test", full_pass=True,
+    )
+
+    assert len(seen) == 2
+    assert all(s.startswith("v1:full_pass:") for s in seen)
+    assert seen[0] != seen[1], (
+        "the eval path is not reading the live weights -- a constant or a "
+        "construction-time snapshot would produce the same id twice"
+    )
+
+
+def test_a_zero_weight_and_an_absent_key_are_the_same_ruler() -> None:
+    """A term that is off is a term that is not there. Both are 'not in total'.
+
+    Without this, adding a key to `TRAINER_WEIGHT_KEYS` at its inert default
+    would move the ruler and hand the best model over for a no-op.
+    """
+    assert active_loss_terms(NO_TERMS) == ()
+    assert full_pass(loss_weights={}) == full_pass(loss_weights=NO_TERMS)
+
+
+def test_the_active_set_is_order_and_type_insensitive() -> None:
+    """The id must key on the SET, not on dict order or on int-vs-float.
+
+    A yaml writes `w_policy: 1` and a PB2 perturbation writes `1.0`; a reload
+    can reorder the dict. Neither is a new objective, and either moving the id
+    would fire the handover on nothing.
+    """
+    a = {"w_policy": 1.0, "w_wdl": 0.0, "w_soft": 2.0}
+    b = {"w_soft": 2, "w_policy": 1, "w_wdl": 0}
+
+    assert active_loss_terms(a) == active_loss_terms(b) == ("w_policy", "w_soft")
+
+
+def test_an_unreadable_weight_counts_as_active_rather_than_vanishing() -> None:
+    """The declared direction of error, applied to the weight half too.
+
+    A false positive costs one best-model handover; a false negative is a
+    promotion across two objectives. So a value that will not convert to a
+    float is treated as a term that is present, and never silently dropped.
+    """
+    assert active_loss_terms({"w_policy": None}) == ("w_policy",)  # pyright: ignore[reportArgumentType]
+    assert active_loss_terms({"w_policy": float("nan")}) == ("w_policy",)
+
+
+# --------------------------------------------------------------------------
+# Codex review of PR #448, findings F3 and F4: two ways the ruler could hold
+# still across an objective change. Both are the repo's signature defect --
+# a value accepted and then silently ignored -- arriving at the ruler rather
+# than at the trainer.
+# --------------------------------------------------------------------------
+
+
+# `sf_wdl_temperature` is normalised by its consumer and deliberately NOT in
+# `_EFFECTIVE_WEIGHT`; `eval_ruler._EFFECTIVE_WEIGHT` carries the full reasoning
+# (a non-positive value reverts to the NEUTRAL default 1.0, so the key is a
+# shape parameter mis-filed among the weight keys and is never absent from the
+# objective). Declared here as an EXCEPTION rather than left to be missed: the
+# scan below now sees it, and a silent pass would mean the scan had gone blind
+# again.
+_UNDECLARED_BY_DESIGN = {"sf_wdl_temperature"}
+
+
+def _weights_normalised_by_losses() -> set[str]:
+    """Weight keys `losses.py` normalises, followed THROUGH its own call graph.
+
+    ⚑ A NAME SCAN OVER `compute_loss` IS NOT ENOUGH, AND THE PROOF IS IN THE
+    REPO. `sf_wdl_temperature` is normalised by `temperature > 0.0` inside
+    `_normalize_sf_wdl_probs`, under a RENAMED parameter -- so every version of
+    this check that grepped for the key's own spelling reported it as
+    un-normalised, which is the same false negative the map exists to remove,
+    one abstraction boundary further down. The fix is to follow the value, not
+    the name: seed on the key, then propagate through local aliases and through
+    calls to other functions in the file, renaming at each parameter binding.
+
+    ⚑ TWO REGRESSIONS AGAINST THE REGEX IT REPLACED, both found by review and
+    both closed here (PR #448):
+
+    * `funcs` was keyed by BARE NAME, so two same-named functions shadowed each
+      other. `losses.py` has exactly one `__post_init__` today, and this PR's
+      own direction makes a second dataclass likely -- adding one would have
+      silently blinded the scan. Keyed by `id(node)` now, with the name kept
+      only for the call-graph lookup, which is where a bare name is correct.
+    * Only `FunctionDef` bodies were walked, so a MODULE-LEVEL normalisation was
+      invisible. The old regex saw it. Module-level statements are scanned too.
+
+    LIMIT, stated rather than implied: it recognises the two normalisation
+    IDIOMS this codebase uses (`max(0.0, x)` and `x > 0.0`, with `float(...)`
+    transparent), follows calls only to functions defined in `losses.py`, and
+    does not model conditionals or reassignment. A normalisation written a third
+    way, or one that crosses into another module, is still invisible.
+    """
+    import ast
+
+    src = (Path(__file__).resolve().parents[1]
+           / "chess_anti_engine" / "train" / "losses.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+  # Keyed by identity, NOT by name: two functions can share a name (this file
+  # already has one `__post_init__` and could easily gain a second), and a
+  # name-keyed dict silently drops all but the last.
+    scopes: dict[int, ast.AST] = {
+        id(n): n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+    }
+  # ...plus the module itself, so a normalisation written at module level -- which
+  # the regex this replaced DID catch -- is not invisible.
+    scopes[id(tree)] = tree
+    by_name: dict[str, list[ast.FunctionDef]] = {}
+    for node in scopes.values():
+        if isinstance(node, ast.FunctionDef):
+            by_name.setdefault(node.name, []).append(node)
+
+    def unwrap(node: ast.expr) -> ast.expr:
+        """`float(x)` and `(x)` are transparent to every idiom below."""
+        while (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "float"
+               and len(node.args) == 1):
+            node = node.args[0]
+        return node
+
+    def is_normalised(node: ast.expr, name: str) -> bool:
+        target = unwrap(node)
+        if (isinstance(target, ast.Call)
+                and getattr(target.func, "id", None) == "max"
+                and len(target.args) == 2
+                and isinstance(unwrap(target.args[0]), ast.Constant)
+                and float(getattr(unwrap(target.args[0]), "value", 1)) == 0.0):
+            return getattr(unwrap(target.args[1]), "id", None) == name
+        if (isinstance(target, ast.Compare) and len(target.ops) == 1
+                and isinstance(target.ops[0], ast.Gt)
+                and isinstance(unwrap(target.comparators[0]), ast.Constant)
+                and float(getattr(unwrap(target.comparators[0]), "value", 1)) == 0.0):
+            return getattr(unwrap(target.left), "id", None) == name
+        return False
+
+    def param_for(callee: ast.FunctionDef, call: ast.Call, arg: ast.expr) -> str | None:
+        """Which of `callee`'s parameters the expression `arg` binds to."""
+        for kw in call.keywords:
+            if kw.value is arg and kw.arg is not None:
+                return kw.arg
+        positional = [*callee.args.posonlyargs, *callee.args.args]
+        for i, actual in enumerate(call.args):
+            if actual is arg and i < len(positional):
+                return positional[i].arg
+        return None
+
+    normalised: set[str] = set()
+    for key in TRAINER_WEIGHT_KEYS:
+        # Seed everywhere the key's own spelling is bound: `compute_loss`'s
+        # parameter, and any other function in the file that names it.
+        seen = {
+            (sid, key) for sid, fn in scopes.items()
+            if isinstance(fn, ast.FunctionDef)
+            for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+            if a.arg == key
+        }
+        seen |= {(sid, key) for sid, fn in scopes.items()
+                 for n in ast.walk(fn)
+                 if isinstance(n, ast.Name) and n.id == key}
+        work = list(seen)
+        while work:
+            sid, local = work.pop()
+            fn = scopes.get(sid)
+            if fn is None:
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.expr) and is_normalised(node, local):
+                    normalised.add(key)
+                # local alias: `y = x` / `y = float(x)`
+                if (isinstance(node, ast.Assign)
+                        and getattr(unwrap(node.value), "id", None) == local):
+                    for t in node.targets:
+                        nxt = (sid, getattr(t, "id", ""))
+                        if nxt[1] and nxt not in seen:
+                            seen.add(nxt)
+                            work.append(nxt)
+                # interprocedural: the value crosses a parameter binding and
+                # is RENAMED, which is the case a name scan cannot see.
+                if isinstance(node, ast.Call):
+  # A call names its callee, so the bare name is the right lookup here --
+  # but it can resolve to several definitions, and every one of them is a
+  # scope the value might flow into.
+                    for callee in by_name.get(getattr(node.func, "id", ""), ()):
+                        for arg in [*node.args, *(k.value for k in node.keywords)]:
+                            if getattr(unwrap(arg), "id", None) != local:
+                                continue
+                            param = param_for(callee, node, arg)
+                            nxt = (id(callee), param or "")
+                            if param and nxt not in seen:
+                                seen.add(nxt)
+                                work.append(nxt)
+    return normalised
+
+
+def test_every_normalised_weight_in_losses_is_declared() -> None:
+    """DERIVE consumer-side normalisation from `losses.py`; fail if the map drifts.
+
+    ⚑ `_EFFECTIVE_WEIGHT` must not be maintained by memory. Its first
+    hand-written version declared 3 of the 5 clamped keys and missed
+    `sf_wdl_conf_power` and `sf_wdl_draw_scale` -- the same false negative the
+    map exists to remove, found one review round later. The point of this test
+    is that a further such knob cannot be added silently.
+
+    ⚑ WHY A SOURCE DERIVATION AND NOT A BEHAVIOURAL PROBE. The obvious test is
+    to push a negative value through `compute_loss` and compare. It was written
+    first and abandoned: a knob is only observable when the TERM CARRYING IT is
+    weighted on AND its target tensor is present, and no single fixture makes
+    all of them live at once -- `sf_wdl_conf_power`'s single consumer is
+    `m_sf_eval` (which needs an `sf_eval` prediction and `w_sf_eval != 0`),
+    while adding a `search_wdl` target silences `sf_wdl_frac` because the value
+    blend's components interact. A probe that cannot see a key reports it as
+    "unaffected by sign" -- confirming the map for the wrong reason, which is
+    exactly the defect class this file exists to catch.
+    """
+    from chess_anti_engine.train.eval_ruler import _EFFECTIVE_WEIGHT
+
+    normalised = _weights_normalised_by_losses()
+    assert normalised, "the derivation found no normalised weight at all -- idioms have drifted"
+
+    missing = sorted(normalised - set(_EFFECTIVE_WEIGHT) - _UNDECLARED_BY_DESIGN)
+    assert not missing, (
+        "losses.py normalises these weights but _EFFECTIVE_WEIGHT does not declare "
+        "them, so a negative value would be reported ACTIVE while the consumer "
+        f"removes it from the objective: {missing}"
+    )
+
+
+def test_the_normalisation_scan_follows_a_renamed_parameter() -> None:
+    """⚑⚑ NON-VACUITY, and the exact regression that motivated the rewrite.
+
+    `sf_wdl_temperature` reaches its `> 0.0` gate as `_normalize_sf_wdl_probs`'s
+    `temperature` parameter. Every name-based version of the scan above reported
+    it as un-normalised and therefore agreed with `_EFFECTIVE_WEIGHT` FOR THE
+    WRONG REASON -- the map's omission is deliberate and documented, but the
+    scan could not tell that from not looking. If this assertion ever fails, the
+    interprocedural half of the derivation has stopped working and the test
+    above has quietly become a name grep again.
+    """
+    assert "sf_wdl_temperature" in _weights_normalised_by_losses()
+    assert _weights_normalised_by_losses() >= _UNDECLARED_BY_DESIGN, (
+        "an exception is declared for a key the scan does not even find"
+    )
+
+
+def test_negative_weight_is_off_when_the_consumer_clamps_it() -> None:
+    """A key its consumer clamps at 0 must leave the term set when it goes negative.
+
+    `compute_loss` does `max(0.0, float(sf_wdl_frac))`, so -0.5 removes the
+    component from `total`. A `!= 0.0` membership test would call it ACTIVE and
+    freeze the ruler across exactly the event the ruler exists to catch.
+    """
+    assert "sf_wdl_frac" in active_loss_terms({"sf_wdl_frac": 0.5})
+    assert "sf_wdl_frac" not in active_loss_terms({"sf_wdl_frac": -0.5})
+    assert "search_wdl_frac" not in active_loss_terms({"search_wdl_frac": -1e-9})
+    assert "soft_policy_min_tv" not in active_loss_terms({"soft_policy_min_tv": -0.1})
+    # the two the first hand-written version MISSED (Codex delta review of ca7d08298)
+    assert "sf_wdl_conf_power" not in active_loss_terms({"sf_wdl_conf_power": -0.5})
+    assert "sf_wdl_draw_scale" not in active_loss_terms({"sf_wdl_draw_scale": -0.5})
+    # ⚑ `sf_wdl_temperature` is a KNOWN RESIDUAL, in the safe direction: a
+    # non-positive value reverts to the neutral default 1.0, so 0.0 and 1.0 are
+    # the same objective but hash differently (one spurious handover). See the
+    # comment in `_EFFECTIVE_WEIGHT` for why it is not declared.
+    assert "sf_wdl_temperature" not in active_loss_terms({"sf_wdl_temperature": 0.0})
+    # and the ruler MOVES on that transition
+    on = {**NO_TERMS, "sf_wdl_frac": 0.5}
+    off = {**NO_TERMS, "sf_wdl_frac": -0.5}
+    assert full_pass(loss_weights=on) != full_pass(loss_weights=off)
+    assert full_pass(loss_weights=off) == full_pass(loss_weights=NO_TERMS)
+
+
+def test_a_plain_multiplier_stays_active_when_negative() -> None:
+    """The <=0 rule is per-key, NOT a blanket sign rule.
+
+    `w_policy` is a plain multiplier: at -0.5 the term is still in `total`,
+    sign-flipped. Treating every negative weight as "off" would drop a term
+    that is present, which is the same defect pointing the other way.
+    """
+    assert "w_policy" in active_loss_terms({"w_policy": -0.5})
+    assert "w_policy" not in active_loss_terms({"w_policy": 0.0})
+
+
+def test_active_term_shape_moves_the_ruler() -> None:
+    """Retuning WHAT an active term measures must hand the record over."""
+    shape_a = {"sf_policy_floor_delta_cp": 20.0, "sf_policy_floor_tau": 0.15}
+    shape_b = {"sf_policy_floor_delta_cp": 40.0, "sf_policy_floor_tau": 0.15}
+    on = {**NO_TERMS, "w_sf_policy_floor": 0.8}
+    a = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape=shape_a,
+    )
+    b = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape=shape_b,
+    )
+    assert a != b
+
+
+def test_absent_shape_is_the_pre_shape_identity() -> None:
+    """An empty shape must hash identically to passing none at all.
+
+    Callers omit the shape for terms that are OFF, so the two spellings have to
+    agree or a disabled term would get its own ruler.
+    """
+    on = {**NO_TERMS, "w_policy": 1.0}
+    none_ = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on,
+    )
+    empty = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=on, loss_shape={},
+    )
+    assert none_ == empty
+
+
+def test_weight_magnitude_still_does_not_move_the_ruler() -> None:
+    """Regression guard on the DESIGN, not on the fix.
+
+    The shape exception must not leak into weights: `sf_wdl_frac` is
+    recomputed every iteration by the difficulty controller, and hashing its
+    VALUE would move the id on essentially every production iteration and
+    abolish the best-model comparison entirely.
+    """
+    lo = {**NO_TERMS, "w_policy": 0.3, "sf_wdl_frac": 0.45}
+    hi = {**NO_TERMS, "w_policy": 0.6, "sf_wdl_frac": 0.50}
+    assert full_pass(loss_weights=lo) == full_pass(loss_weights=hi)
+
+
+def test_ruler_loss_shape_reads_the_consumers_object_and_only_when_active() -> None:
+    """The production wiring, not just the hash.
+
+    `_ruler_loss_shape` is the only thing that turns a resolved
+    `SfPolicyFloorParams` into ruler input, so an untested version of it is the
+    repo's signature defect exactly: the hash would be correct and nothing
+    would ever reach it.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.train.losses import SfPolicyFloorParams
+
+    on = SimpleNamespace(_eval_loss_kwargs={
+        "sf_policy_floor": SfPolicyFloorParams(w=0.8, delta_cp=20.0, tau=0.15),
+    })
+    shape = Trainer._ruler_loss_shape(on)  # pyright: ignore[reportArgumentType]
+    assert shape["sf_policy_floor_delta_cp"] == 20.0
+    assert shape["sf_policy_floor_tau"] == 0.15
+    # `w` is covered by MEMBERSHIP; repeating it here would reintroduce the
+    # magnitude hash `active_loss_terms` argues against.
+    assert "w_sf_policy_floor" not in shape
+
+    # OFF: the term is not in `total`, so its shape cannot move `test_loss`.
+    off = SimpleNamespace(_eval_loss_kwargs={
+        "sf_policy_floor": SfPolicyFloorParams(w=0.0, delta_cp=999.0),
+    })
+    assert Trainer._ruler_loss_shape(off) == {}  # pyright: ignore[reportArgumentType]
+
+    # Absent entirely (a trainer built without the term) must not raise.
+    assert Trainer._ruler_loss_shape(SimpleNamespace(_eval_loss_kwargs={})) == {}  # pyright: ignore[reportArgumentType]
+
+
+def test_async_eval_scores_the_snapshot_under_its_own_objective() -> None:
+    """A weight flip AFTER `start()` must not reach an in-flight evaluation.
+
+    Codex delta review of `ca7d08298`, P1. The async worker used to call
+    `work.trainer._compute_metrics(...)`, which re-read `_eval_loss_kwargs` and
+    re-derived the ruler when the worker finally ran -- an iteration later, and
+    possibly after a live flip. This asserts the objective the eval USES is the
+    one captured at `start()`, by flipping the trainer between the two and
+    requiring the snapshot to be unmoved.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.train.trainer import ObjectiveSnapshot
+
+    fake = SimpleNamespace(
+        _eval_loss_kwargs={"w_policy": 1.0, "w_sf_own_regret": 0.7},
+        _ruler_loss_weights=lambda: {**NO_TERMS, "w_sf_own_regret": 0.7},
+        _ruler_loss_shape=dict,
+    )
+    snap = Trainer.objective_snapshot(fake)  # pyright: ignore[reportArgumentType]
+    assert isinstance(snap, ObjectiveSnapshot)
+
+    # the live flip that used to leak into an in-flight eval
+    fake._eval_loss_kwargs = {"w_policy": 1.0, "w_sf_own_regret": 0.0}
+    fake._ruler_loss_weights = lambda: {**NO_TERMS, "w_sf_own_regret": 0.0}
+
+    assert snap.loss_kwargs["w_sf_own_regret"] == 0.7, "snapshot aliased the mutable dict"
+    assert snap.loss_weights["w_sf_own_regret"] == 0.7
+
+    # and the two objectives really are different rulers, so the test is not vacuous
+    before = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=snap.loss_weights)
+    after = eval_ruler_id(
+        mode="full_pass", batch_size=512, steps=0, mirror_prob=0.0,
+        measured_by=FULL_PASS_FNS, loss_weights=fake._ruler_loss_weights())
+    assert before != after
+
+
+class _EchoModel(torch.nn.Module):
+    """Returns outputs shaped for the batch it is handed, deterministically.
+
+    `_TinyModel` above is fixed-shape and cannot score a real batch; this one
+    can, which is what lets the test below read a LOSS VALUE rather than only a
+    ruler string.
+    """
+
+    def __init__(self, width: int) -> None:
+        super().__init__()
+        self.width = int(width)
+        self.head = torch.nn.Linear(4, 4, bias=False)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        rows = int(x.shape[0])
+        g = torch.Generator().manual_seed(20260819)
+        return {
+            "policy": torch.randn(rows, self.width, generator=g),
+            "wdl": torch.randn(rows, 3, generator=g),
+        }
+
+
+def _objective_batch(width: int = 32, rows: int = 8) -> dict[str, torch.Tensor]:
+    """One real eval batch, with the fields the weighted terms below need."""
+    g = torch.Generator().manual_seed(20260819)
+    legal = (torch.rand(rows, width, generator=g) < 0.5).to(torch.float32)
+    legal[:, 0] = 1.0
+    target = torch.softmax(torch.randn(rows, width, generator=g), dim=-1) * legal
+    return {
+        "x": torch.zeros(rows, 175, 8, 8),
+        "legal_mask": legal,
+        "has_legal_mask": torch.ones(rows),
+        "policy_t": target / target.sum(-1, keepdim=True),
+        "wdl_t": torch.randint(0, 3, (rows,), generator=g),
+        "sf_p0_regret_t": torch.rand(rows, width, generator=g),
+        "has_sf_p0_regret": torch.ones(rows),
+    }
+
+
+def _score_with(
+    trainer: Trainer, monkeypatch: pytest.MonkeyPatch, *, objective: Any,
+) -> tuple[str, float]:
+    """Run the REAL `_compute_metrics` body over one batch; return (ruler, loss).
+
+    Only the pooling tail is stubbed, and only to read what the real body
+    computed: the objective branch, the `eval_ruler_id_for` call and the
+    `compute_loss(out, batch, **eval_loss_kwargs)` call are all executed.
+    """
+    batch = _objective_batch()
+    captured: dict[str, Any] = {}
+
+    def _capture(sums: dict[str, float], _acc: Any, _n: float, **kw: Any) -> Any:
+        captured["sums"] = dict(sums)
+        captured["ruler"] = str(kw["eval_ruler"])
+        return None
+
+    monkeypatch.setattr(Trainer, "_build_metrics", staticmethod(_capture))
+    monkeypatch.setattr(Trainer, "_log_metrics", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        trainer, "_iter_full_pass_batches", lambda *_a, **_k: iter([batch]),
+    )
+    trainer._compute_metrics(
+        buf=None,  # pyright: ignore[reportArgumentType]
+        batch_size=8, steps=0, tag="test", full_pass=True,
+        model_override=_EchoModel(width=32), objective=objective,
+    )
+    return captured["ruler"], float(captured["sums"]["loss"])
+
+
+def test_a_pinned_objective_survives_a_live_flip_in_BOTH_legs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ EXECUTED. The snapshot must pin the LOSS and the RULER, not one of them.
+
+    `ObjectiveSnapshot` carries three fields and `_compute_metrics` binds all
+    three from it, but until now nothing ran the mechanism: the wiring test in
+    `tests/test_async_test_eval.py` proves the object REACHES the worker, and
+    the AST pin in `tests/test_policy_target_reshape.py` proves where the names
+    are bound. Neither would fail if one leg silently re-read live state -- and
+    a half-pinned objective is worse than none, because the recorded
+    `test_loss` and the id stamped on it would then belong to different
+    objectives while looking perfectly consistent.
+
+    Shape of the test: score under objective A, flip the live trainer to B
+    through the REAL per-iteration push path, then score again with A pinned.
+    The negative control is the same second scoring with `objective=None` --
+    without it, a flip that changed nothing would pass every assertion here.
+    """
+    trainer = _trainer(
+        {"w_sf_own_regret": 0.7, "w_policy": 1.0, "w_sf_policy_floor": 0.5},
+        tmp_path,
+    )
+    snapshot = trainer.objective_snapshot()
+    ruler_a, loss_a = _score_with(trainer, monkeypatch, objective=snapshot)
+
+    # B moves ALL THREE fields of the snapshot, because a flip that moved only
+    # one would leave the other legs' mutants alive:
+    #   * `w_sf_own_regret -> 0.0` drops a term out of the objective, moving
+    #     `loss_kwargs` AND `loss_weights` (membership);
+    #   * a live search-width edit re-derives the collar, moving `loss_shape`
+    #     (and the loss with it).
+    _push(trainer, w_sf_own_regret=0.0)
+    with pytest.warns(RuntimeWarning, match="deterministic prior-rank threshold"):
+        trainer.sync_search_width(4)
+    assert trainer._ruler_loss_shape() != snapshot.loss_shape, (
+        "setup: the live flip did not move the shape leg"
+    )
+
+    # NEGATIVE CONTROL first: prove the flip is visible at all. If this were
+    # equal, the two assertions below would be vacuous.
+    ruler_live, loss_live = _score_with(trainer, monkeypatch, objective=None)
+    assert ruler_live != ruler_a, "setup: the live flip did not move the ruler"
+    assert loss_live != pytest.approx(loss_a, abs=1e-9), (
+        "setup: the live flip did not move the loss"
+    )
+
+    # ...and now the pinned objective, over the SAME flipped trainer.
+    ruler_pinned, loss_pinned = _score_with(trainer, monkeypatch, objective=snapshot)
+    assert ruler_pinned == ruler_a, (
+        "the RULER leg re-read live state: a model scored under objective A was "
+        f"stamped with B's identity ({ruler_pinned} != {ruler_a})"
+    )
+    assert loss_pinned == pytest.approx(loss_a, abs=1e-9), (
+        "the LOSS leg re-read live state: the pinned eval scored under B "
+        f"({loss_pinned} != {loss_a})"
+    )
