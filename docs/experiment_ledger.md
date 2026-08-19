@@ -60604,3 +60604,72 @@ paired 4000-position deep-SF audit vs the launch checkpoint after ~150 iteration
 **KILL:** raw policy / RL target / PLAY regret all within 0 +/- 3 cp.
 **SECONDARY:** `wdl_regret` must not rise (search stays frozen); target entropy watched against
 the play-sharpness risk above.
+
+---
+
+### ⚑⚑ RETRACTION: the "new SF-blend knob" proposal is a REDISCOVERED DUPLICATE. Peer review, verified. (2026-08-19)
+
+My proposal one entry above was wrong in its premise, twice, and the peer caught both. Both
+verified here against the repo, not accepted on assertion.
+
+**1. `policy_soft_t` is NOT the SF distribution.** I claimed "the SF distribution already goes
+to `policy_soft`, just not to `policy_own`" and cited
+[[we_are_sharper_than_our_own_teacher]]. On ordinary selfplay rows `policy_soft_t` is a
+TEMPERATURE-SMOOTHED COPY OF THE SEARCH POLICY (`apply_policy_temperature(eff_probs,
+soft_policy_temp)`, `soft_policy_temp: 2.0`). **The asymmetry I described does not exist.**
+
+**2. The knob was already built and DELIBERATELY REMOVED.** `51c425f88` added
+`policy_target_sf_blend`; `64283b7c9` removed it. Its own rationale, quoted:
+
+> "The knob is REMOVED rather than repointed at `sf_p0_policy_t`. Soft cross-entropy is LINEAR
+> in the target, so mixing a distribution into the target is identical to adding a weighted CE
+> term against it — which is exactly what the existing `w_sf_own` leg already does, on the
+> correct same-position field, with the correct `has_sf_p0` mask... The sfblend arm
+> re-specifies as `w_sf_own` (config-only, no code)."
+
+⇒ **DO NOT BUILD IT.** The live path already exists: `total += w_sf_own * m_sf_own`
+(`losses.py:1631`), `m_sf_own = masked_mean(sf_p0_ce, sf_p0_base)` (`:1562`), gated by
+`has_sf_p0`. Live value **`w_sf_own: 0.0`** — the path is present and OFF.
+
+**THE EXACT MAPPING, verified numerically against the REAL `compute_loss`.** `m_sf_own` is
+normalised by M (eligible rows) while policy CE is normalised by N, so the two forms differ by
+a population factor. With `f = M/N`, setting `w_sf_own = f * alpha/(1-alpha)` makes them the
+same intervention:
+
+| rows | cosine | \|\|w_sf_own\|\| / \|\|gated blend\|\| |
+|---|---|---|
+| eligible | **1.000000** | **1.333333** = 1/(1-alpha) |
+| non-eligible | 1.000000 | 1.000000 |
+
+Predicted analytically BEFORE running, matched to six decimals. The only residual difference is
+a 4/3 magnitude overweight on eligible rows — **not a different direction.**
+
+**⚑⚑ THE COVERAGE TRAP KILLS THE HEADLINE NUMBER. MEASURED, NOT ASSUMED.**
+`has_sf_p0_frac` on the last five live iterations: **0.2145, 0.2159, 0.2166, 0.2194, 0.2216**
+⇒ **f = 0.217**. The +5.00 cp audit result queried a same-position teacher on 100% of frozen
+positions; the shipping teacher exists on ~a fifth of rows. Eligibility is set by the one-ply
+adjacency requirement under `playout_cap_fraction: 0.25`, i.e. it is a property of the PLY
+SCHEDULE and ~independent of position content, so the first-order multiplication is sound:
+
+| alpha | eligible-only | **all-rows realizable** | matched `w_sf_own` = f*a/(1-a) |
+|---|---|---|---|
+| 0.25 | +5.00 | **+1.09** | 0.072 |
+| 0.50 | +10.00 | **+2.17** | 0.217 |
+| 0.75 | +15.00 | **+3.26** | 0.652 |
+| 1.00 | +20.00 | +4.34 | **unreachable** — an additive CE term cannot fully replace the search target |
+
+⇒ **AT THE MATCHED WEIGHT THE ARM DELIVERS ~1.1 cp ALL-ROWS, BELOW THE PRE-COMMITTED 3.0 cp
+BAR.** Clearing the bar at today's coverage needs `alpha >= ~0.69` (`w_sf_own >= ~0.49`), which
+is an aggressive blend and carries the flattening risk in full. The alternative is raising
+coverage (a selfplay-side change) before spending a policy arm.
+
+**AND `w_sf_own` IS NOT UNTESTED.** `3b4ca4737` ("RESTORE the sf_p0 teacher — the June policy
+win has been OFF for a month") set it to 0.1 bundled WITH `w_sf_own_regret: 0.7`, reporting
+net+search regret 56.7 -> 49.6 cp. **Bundled ⇒ does not isolate the soft SF CE term.**
+Inverting the mapping, `w_sf_own = 0.1` at `f = 0.217` corresponds to `alpha = 0.315`, i.e. a
+**~1.37 cp** all-rows target improvement — consistent with it not being individually decisive.
+
+**STATUS: the corrected +5 cp blend result STANDS and the "SF blending loses" conclusion stays
+withdrawn — but the realizable version is a CONFIG-ONLY `w_sf_own` change worth ~1.1-1.4 cp at
+historical weights, not a new knob and not obviously above the bar.** No PR. No restart. The
+live run is untouched at `checkpoint_000487`.
