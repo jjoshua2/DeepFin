@@ -60973,3 +60973,78 @@ removed, and each of the three snapshot legs reverted to a live read — all kil
 
 **STILL BLOCKS MERGE:** awaiting an independent delta review of `ec0fa43dc..4595c03aa` (a fresh
 reviewer who did not author it, plus `@codex review` on the same range).
+
+### 2026-08-19 — #448 review round 2: TWO more reachable defects, and one was a REGRESSION I ADDED
+
+`8a8d7a4ca..4d17c41b2`. Independent delta review returned APPROVE WITH CHANGES, no P1; a peer
+reviewer found a second exactness defect in parallel. Both are the same shape as everything else
+in this entry — **a counter reading healthy over a false invariant.**
+
+**1. The mandatory pair was validated BEFORE quantization.** `__post_init__` checked
+`max(tau, tau_top1) + tau_played <= 1` in PYTHON DOUBLES; the loss materializes the thresholds
+in the probs dtype. `0.6 / 0.6 / 0.4` is EXACTLY 1.0 as doubles and **1.0000000298** as float32.
+⚑ Nothing downstream could catch it: the cap only drops OPTIONAL members and both roles here are
+MANDATORY, and `applied_mass` narrows 1.0000000298 back to a clean `1.0`. Fixed by pinning
+`_FLOOR_THRESHOLD_DTYPE = torch.float32` and validating in it.
+- **⚑⚑ A VALUE-LEVEL TEST CANNOT PIN THIS.** Searched 110k triples: there is **ZERO** config
+  where reverting ONE of the three legs to a double flips the verdict — a double-sum at the
+  boundary forces the legs to be dyadic together or inexact together. The whole-revert mutant
+  dies on values; the partial revert needed an AST assertion. **Record this as a method fact:
+  when a rounding fix has no isolating input, the source IS the only available pin.**
+
+**2. ⚑⚑ MY OWN VALIDATOR ADDED A NEW WAY TO KILL THE LIVE TRIAL, FOR A TERM THAT IS OFF.**
+`tau_played` DEFAULTS to `1/gumbel_topk` and `normalize_gumbel_topk` allows 1, so `gumbel_topk: 1`
+with **no `sf_policy_floor_*` key set anywhere** makes the shipped 0.15/0.15 defaults sum to 1.15
+and the validator raised. `gumbel_topk` is a LIVE selfplay key ⇒ **category (b) death**: reload
+SUCCEEDS, `from_dict` raises inside `train_trial`'s loop, `finally:` and zero `except:`.
+`sync_search_width` reaches the same constructor via `dataclasses.replace`. The message named
+three keys the operator never set and never mentioned `gumbel_topk`.
+⇒ **the raise is now gated on `w != 0.0`.** A term contributing nothing to `total` must not be
+able to take production down. **This generalises: any validator added to a default-OFF feature
+inherits the category (b) hazard of every key that feeds its defaults.**
+
+**3. ⚑ A COMMENT ASSERTED PYTORCH BEHAVIOUR THAT DOES NOT EXIST.** The `autocast(enabled=False)`
+guard was justified with "cumsum sits on autocast's fp32 cast list and would narrow float64 back
+to float32". Autocast's cast policies apply only to ELIGIBLE dtypes; float64 is not one, and the
+fp32 policy PROMOTES and never demotes. MEASURED (torch 2.11.0+cu128, bf16 autocast, cpu AND
+cuda): `float64.cumsum -> float64`, `float64.sum -> float64`, `float32.cumsum -> float32`. The
+guard is INERT. Kept as belt-and-braces, with the false claim replaced by the measurement.
+
+**4. FIVE TEST GAPS, every surviving mutant now killed.** The one that matters most: "admitted in
+ASCENDING SF REGRET" — the central design decision — was pinned only against a full REVERSAL,
+because the seven-member fixture had regret order == index order == probability order. **Sorting
+by INDEX (regret ignored entirely) and sorting by PROBABILITY both SURVIVED.** ⇒ **a fixture
+whose orderings coincide cannot test an ordering.** Also: `member_count_raw <- applied` survived
+(the pair's whole justification is that they can disagree, and nothing asserted it); dropping
+`stable=True` survived; and the exact-fit leg used a fixture with NO mandatory overlap, so it
+never exercised the very subtraction the previous commit was about.
+
+**5. THE OPERATOR-FACING COLUMNS POINTED AT THE WRONG ONE.** Beyond the ULP issue already
+recorded: **these are ROW MEANS** over `sf_own_regret_rows`, so `requested_mass > 1.0` is nearly
+unreachable at the column level even when a large minority of ROWS are infeasible — **0.552
+measured against a `truncated_frac` of 0.333**. ⇒ `truncated_frac` is the ONLY column that
+answers "did the cap fire", and `member_count_applied == member_count_raw` does NOT mean "not
+truncated".
+
+**COST, CORRECTED DOWNWARD.** The paired same-process measurement is **+0.075 ms/call** for the
+fp64 + guards (head 4.311 vs 4.236) and **~+2.2 ms** for the whole cap — not the +4.4 ms recorded
+above, which compared two worktrees in separate processes. Conclusion unchanged: **0.126% of a
+~300 s iteration**, no fast path. ⚑ And one leg of that decision was wrong: the graph-break
+argument does not apply, because `torch.compile` wraps only `self.model`, not `compute_loss`. The
+host-sync cost and the silent-member-drop risk are the reasons that survive. This SUPERSEDES the
+"~0.9 ms/step at w=0" figure pre-registered earlier in this entry, which predates the cap.
+
+**⚑ THE FIVE NEW COLUMNS ROTATE THE `progress.csv` SCHEMA.** `sf_policy_floor_member_count_raw`,
+`..._requested_mass`, `..._truncated_frac`, `..._member_count_applied`, `..._applied_mass` are in
+`_TRAIN_METRIC_DEFAULTS`, so the header is stable within a run — but any script that pins column
+positions across the deploy boundary needs re-checking.
+
+**⚑ THE REVIEW METHOD FAILED FIRST, AND SAID SO.** The independent reviewer's own sweep missed
+the `1e-6` defect because its brief told it to assert `applied_mass <= 1 + 1e-6` — **a tolerance
+exactly the size of the bug's radius**, structurally unable to see a violation in `(1, 1+1e-6]`.
+⇒ **A TOLERANCE COPIED FROM THE CODE UNDER TEST IS NOT A TEST.** Add to the standing rules.
+
+**MERGE STILL BLOCKED**, and on a thinner basis than it looks: `@codex review` never ran (account
+review limit), so there is exactly ONE fresh independent review of this delta, and it found two
+survived-mutant classes on its own first pass. Not deployed; the live pairing window untouched
+throughout.
