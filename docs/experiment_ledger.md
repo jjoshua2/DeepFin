@@ -60744,3 +60744,51 @@ coverage measurement with an objective change. ⚑ And a revert is NOT instant: 
 ~a day of shards made under the old schedule.
 
 **STATUS: PROPOSED, NOT LAUNCHED.** Requires a salvage snapshot as the revert point first.
+
+**AMENDMENT before the edit (2026-08-19), three peer corrections — all VERIFIED IN CODE, not accepted on assertion.**
+
+**(1) "No restart" was WRONG. It is RESTART-GATED at the selfplay session.**
+`full_ply_pair_fraction` is in **`_RECO_RESTART_KEYS`** (`worker.py:3893`), NOT `_RECO_LIVE_KEYS`
+(`:3795`); `_RECO_WATCH_KEYS` is the union (`:3912`). A restart key does not mutate the frozen
+`SearchConfig` in place — the worker stops and rebuilds the selfplay session. Accurate statement:
+**no trainer/process restart is required; the yaml edit triggers an automatic SELFPLAY-SESSION
+restart.** This matters for reading the first post-switch shards and for a throughput transient.
+
+**⚑ (2) THE COVERAGE GATE MOVES TO FRESH SHARDS, NOT `progress.csv`.** `has_sf_p0_frac` in
+`progress.csv` is sampled THROUGH THE REPLAY WINDOW, so it stays diluted by the old ~0.22
+population and rises only gradually — judging the scheduler on it would confound a working
+scheduler with window turnover, and would take ~a day to say what fresh data says immediately.
+⚑ And `full_ply_pair_fraction` is in **`_RESUME_COMPAT_EXEMPT_KEYS`** (`worker.py:3983`), so
+**in-flight games SURVIVE the session transition** — the first partial post-boundary shard can
+contain pre-boundary plies and MUST NOT be judged. **Gate: `has_sf_p0` >= 0.42 on rows from
+shards generated wholly AFTER the boundary, with realized full-ply fraction ~0.25.**
+Do NOT wait for replay turnover to decide whether the scheduler worked. Turnover matters later,
+only if `w_sf_own` is actually enabled.
+
+**(3) "Changes no objective" softened to "CHANGES NO CONFIGURED LOSS."** It does change the
+data-generating process. A full ply is now much more likely to FOLLOW another full ply, and the
+board at the second ply was reached using the previous ply's DEEPER search. So the marginal
+COUNT of full plies is fixed while the POPULATION of positions receiving full-search targets
+need not be identical. That is not a reason to skip it — it is exactly why it needs a live arm —
+but it earns a guard: **GUARD 3 — the new full-policy rows must not show a conspicuous
+phase / game-length / target-quality shift beyond the intended adjacency change.**
+
+**⚑ ARM F IS STILL ON (`w_sf_policy_floor: 0.8`), so this window is pairing x F, not pure
+pairing.** Pairing also changes which rows carry `sf_p0_regret`, which is F's input. Rather than
+flip two things at once, **this window's verdict is EXPLICITLY RESTRICTED to COVERAGE and
+THROUGHPUT.** No chess-quality claim may be drawn from it. Turning F off gets its own separately
+identifiable boundary later.
+
+**Baseline pinned before the edit:** `has_sf_p0_frac` = 0.2203 / 0.2219 / 0.2205 at iters
+499 / 500 / 501 ⇒ **f0 = 0.221**. Live iter 501.
+
+**⚑ AND A CORRECTION TO MY OWN ARITHMETIC, in the peer's favour — I OVERSOLD THE REQUIRED alpha.**
+With `Delta R_all ~ f * alpha * 20` and `f ~ 0.50`, that is `~10*alpha` cp, so the nominal 3 cp
+crossing is **alpha ~ 0.30**, NOT the 0.5 I quoted — matched weight
+`lambda = f*alpha/(1-alpha) ~ 0.50 * 0.30/0.70 ~ 0.21`, far less aggressive than the
+`w_sf_own ~ 0.5` I implied, and therefore much less exposed to the flattening risk.
+⚑ **But the mapping must use the REALIZED BATCH coverage, not fresh-shard coverage:**
+`w_sf_own(t) = f_t * alpha/(1-alpha)` where `f_t` is the replay/batch coverage at that time.
+While old shards remain, `f_t` LAGS fresh coverage — so either track `f_t` or wait for it to
+settle before starting a teacher arm. Setting 0.21 immediately after enabling pairing would
+over-weight the SF term against the coverage actually present in the batches.
