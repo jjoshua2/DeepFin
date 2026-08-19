@@ -459,11 +459,19 @@ def test_the_guard_warns_when_tau_falls_below_the_inclusion_guarantee() -> None:
     silently revoking the guarantee is the whole failure this warns about.
     topk 4 -> guarantee 0.25, above the default tau of 0.15.
     """
-    with pytest.warns(RuntimeWarning, match="BELOW the root-search inclusion guarantee"):
+    with pytest.warns(RuntimeWarning, match="BELOW the deterministic prior-rank threshold") as rec:
         SfPolicyFloorParams.resolve(gumbel_topk=4)
-    # And the direct route: an explicit sub-guarantee tau at the production width.
+    # And the direct route: an explicit sub-threshold tau at the production width.
     with pytest.warns(RuntimeWarning, match="gumbel_topk=16"):
         SfPolicyFloorParams.resolve(tau=0.02, gumbel_topk=16)
+
+    # ⚑ The WORDING is the contract, not incidental prose. `40c937f24` rewrote this
+    # message precisely because "inclusion guarantee" claimed something the sampler
+    # does not provide (F2). Matching only "BELOW the ..." would let the guarantee
+    # language creep back in the next sentence, so pin the disclaimer too.
+    msg = str(rec[0].message)
+    assert "No tau guarantees admission under Gumbel" in msg, msg
+    assert "inclusion guarantee" not in msg, msg
 
 
 def test_the_guard_fires_on_tau_played_the_parameter_it_exists_for() -> None:
