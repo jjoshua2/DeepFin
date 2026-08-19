@@ -60312,3 +60312,89 @@ untested and must not be assumed.
 **Decision rule is UNCHANGED and applies only to SHIPPABLE arms** (`rho=0`, `rho=1`,
 `transplant`, `screened`). `strong_oracle` and `blend` and `shuffled` are diagnostics and
 controls; a `strong_oracle` win is explicitly NOT a pass.
+
+---
+
+### GATE RESULT — SF TARGET REPAIR (2026-08-19). The proposal FAILS; a DIFFERENT arm passes.
+
+Prereg `039fe82dd` + amendment. 3734 usable of 4000 audit rows. Production teacher
+75k/MPV6 (provenance line: `shallow SF: 75000 nodes MultiPV 6`). **91.6% of rows carry >=1
+order violation** at this candidate width (teacher's listed moves, <=6), vs 44.6% on the
+screen's 2-3 move set — the candidate set makes the intervention far more aggressive.
+
+| arm | E[deep regret] | delta vs unchanged | 95% CI | meanL1 | infeas |
+|---|---|---|---|---|---|
+| unchanged | 39.874 | — | — | 0 | 0 |
+| `rho=0` | 40.529 | −0.654 | [−1.86, +0.59] | 0.224 | 1049 |
+| `rho=1` | 42.353 | **−2.479** | [−3.41, −1.58] | 0.259 | 1384 |
+| `transplant` | 30.842 | **+9.032** | [+6.88, +11.25] | 0.721 | 0 |
+| `blend` (control) | 45.358 | −5.483 | [−6.07, −4.91] | 0.255 | 0 |
+| `shuffled` (control) | 48.812 | −8.937 | [−10.45, −7.56] | 0.320 | 1230 |
+| `strong_oracle` | 41.638 | −1.764 | [−2.46, −1.07] | 0.252 | 1347 |
+| `screened` | 41.691 | −1.817 | [−2.46, −1.21] | 0.115 | 640 |
+| `transplant_shuffled` | 82.153 | −42.279 | [−46.4, −38.5] | 1.225 | 0 |
+| `transplant_strong` | 28.622 | **+11.253** | [+9.30, +13.28] | 0.673 | 0 |
+| `top1_only` | 31.966 | **+7.908** | [+5.88, +10.03] | 0.604 | 0 |
+
+**⇒ THE LP REPAIR — THE ACTUAL PROPOSAL — FAILS, AND IS NOT TEACHER-LIMITED.** `rho=0` is a
+null, `rho=1` is significantly WORSE, and **`strong_oracle` (rho=1 with the 500k/MPV40 teacher)
+is also significantly worse (−1.76)**. Better labels cannot rescue it. Pairwise-violation
+repair does not improve target quality against a deep ruler. **Close this line.**
+
+**⚑ A DEFECT IN MY OWN PREREG, found by a control added AFTER the first run.** `shuffled` was
+matched to the LP path, so the arm that won (`transplant`) had **no matched negative control**.
+Adding `transplant_shuffled` (−42.3) closes it: the teacher's order does carry real signal.
+⚑ And the first patch of the new arms silently no-op'd into an `else: # screened` catch-all
+that would have scored all three new arms AS `screened` and printed a clean table. Replaced
+with explicit dispatch + `raise ValueError` on fallthrough.
+
+**⚑⚑ AND THE PASSING ARM'S MARGIN IS LARGELY DEFINITIONAL.** The audit's own header warns that
+a shallow-SF object scored against a deep-SF ruler carries a definitional margin. Splitting
+`transplant` by whether the teacher's top-1 IS the deep ruler's best move:
+
+| subset | share | transplant | top1_only |
+|---|---|---|---|
+| teacher top-1 **=** deep best | 0.609 | **+18.03** [+15.4, +21.1] | +17.08 |
+| teacher top-1 **≠** deep best | 0.391 | **−5.00** [−8.1, −2.3] | −6.39 |
+
+`0.609*18.03 + 0.391*(−5.00) = +9.03` — reproduces the headline exactly. **The entire gain is
+"the teacher is right 61% of the time".** And `top1_only` alone is **87.6%** of `transplant`,
+so the pairwise order surgery beyond relocating the peak is ~1.1 cp — under the 3.0 bar.
+
+**THE ONE GENUINELY NEW MECHANISM RESULT:** adopting SF's **ORDER** while keeping the search's
+**VALUE profile** (+9.03) beats **blending toward SF's distribution** (−5.48) by **14.5 cp**.
+Order-adoption is NOT distribution-blending, which is why prior SF-blend settings never found
+this. ⚑ CAVEAT: `blend`'s softmax temperature (4.0) was arbitrary and un-tuned, so it is a WEAK
+control; the 14.5 cp gap is an upper bound on the true separation.
+
+**THE USER'S QUESTION — "use the better dataset to tune the weaker one" — ANSWERED: the
+mechanism WORKS but does not pay here.** A screen fit out-of-fold against the STRONG teacher,
+reading only production-observable features, transfers to the ruler it never saw:
+**OOF AUC 0.758 vs the DEEP label** (0.766 vs its own strong label). But gating loses:
+
+| policy | coverage | mean delta over ALL rows |
+|---|---|---|
+| apply everywhere | 1.000 | **+9.03** |
+| screen top 75% | 0.750 | +7.85 |
+| screen top 60% | 0.600 | +7.50 |
+| screen top 25% | 0.250 | +4.18 |
+| ORACLE (knows the deep ruler) | 0.609 | **+10.98** |
+
+Perfect screening is worth only **+1.95 cp** over applying everywhere, and no realizable
+threshold captures any of it — an imperfect screen drops more winners than losers. ⇒ **do not
+build the screen for this purpose.** The transfer result is worth keeping; the application is not.
+
+**VERDICT BY THE PRE-COMMITTED RULE: `transplant` PASSES all four checks.** Recorded as written.
+**BUT the rule was MIS-SPECIFIED** — it did not exclude an arm whose margin is definitional, and
+the decomposition above shows it is. My judgement: this does NOT authorise training compute on
+`transplant` as-is, for three reasons that are on the record already:
+1. it makes 39% of rows **worse by 5 cp**, importing precisely the sharp-and-wrong tail the net
+   absorbs at 91.5% ([[the_policy_target_is_sharp_and_wrong]]);
+2. target-side gains have not transferred — main policy target **+0.00004**, and F-only just
+   spent 190 iterations proving a perfectly-engaged mechanism can deliver zero;
+3. part of the margin is definitional and the honest size of the non-definitional part is the
+   ~1.1 cp of order surgery beyond top-1 relocation.
+
+**WHAT WOULD MAKE IT A REAL CANDIDATE:** a variant that adopts SF's order only where doing so
+does not concentrate mass on a single move — i.e. capture the +18 without the −5 by SHAPE
+rather than by row selection (row selection is now measured as worth at most +1.95). Untested.

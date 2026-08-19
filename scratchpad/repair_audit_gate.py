@@ -42,7 +42,14 @@ DUMP = "scratchpad/repairgate_prodteacher.jsonl"
 CACHE = "data/audit_set_v1.jsonl.shallow_sf.jsonl"
 
 ARMS = ["unchanged", "rho=0", "rho=1", "transplant", "blend", "shuffled",
-        "strong_oracle", "screened"]
+        "strong_oracle", "screened",
+        # ⚑ ADDED AFTER THE FIRST RUN, because the first run exposed a DEFECT IN
+        # THE PREREG: `shuffled` is matched to the LP path, so the arm that won
+        # (`transplant`) had NO matched negative control. These three close that
+        # and decompose the win:
+        "transplant_shuffled",  # THE MATCHED NEGATIVE CONTROL. Must not win.
+        "transplant_strong",    # same operation, better teacher -> does teacher quality matter?
+        "top1_only"]            # move the peak to the teacher's top-1 and nothing else
 
 # ⚑ STRONG_ORACLE IS THE CEILING ARM AND IS **NOT SHIPPABLE**. rho=1 against the
 # 500k/MPV40 teacher. Its job is the question the weak-teacher result cannot
@@ -230,11 +237,30 @@ def main() -> None:
                     tp[m] = sub
                     tp *= t.sum() / max(tp.sum(), 1e-12)
                     ok = okk
-            else:  # screened
+            elif arm == "screened":
                 if pred[k] >= thr:
                     tp, ok = lp_repair(t, p, edges, 1.0)
                 else:
                     tp = t.copy()
+            elif arm == "transplant_shuffled":
+                tp = transplant(t, qP[RNG.permutation(len(qP))])
+            elif arm == "transplant_strong":
+                m = np.isfinite(qS)
+                if m.sum() < 2 or len(np.unique(qS[m])) < 2:
+                    tp = t.copy()
+                else:
+                    tp = t.copy()
+                    tp[m] = transplant(t[m], qS[m])
+            elif arm == "top1_only":
+                # move the PEAK onto the teacher's top-1 and change nothing else
+                tp = t.copy()
+                a, b = int(np.argmax(qP)), int(np.argmax(t))
+                tp[a], tp[b] = t[b], t[a]
+            else:
+                # ⚑ LOUD, not silent. The previous `else: # screened` catch-all
+                # would have scored every new arm AS `screened` and reported a
+                # clean-looking table -- this repo's signature defect.
+                raise ValueError(f"unhandled arm: {arm}")
             if not ok:
                 infeas[arm] += 1
             l1[arm].append(float(np.abs(tp - t).sum()))
@@ -263,7 +289,8 @@ def main() -> None:
 
     print("\n--- PRE-COMMITTED RULE (ledger 039fe82dd) ---")
     ship = {k: v for k, v in out.items()
-            if k not in ("blend", "shuffled", "strong_oracle")}
+            if k not in ("blend", "shuffled", "strong_oracle",
+                         "transplant_shuffled", "transplant_strong", "top1_only")}
     best = max(ship, key=lambda k: ship[k][0])
     d, lo, hi = ship[best]
     sd, slo, shi = out["shuffled"]
