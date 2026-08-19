@@ -61107,3 +61107,43 @@ permitted, so its diagnostic mass columns describe an impossible hypothetical fl
 acceptable because it cannot enter the objective silently — but it means **the WARNING, not
 `truncated_frac`, is the authoritative signal for mandatory-only infeasibility while the term is
 off**, since the cap never truncates a mandatory role and so `truncated_frac` stays 0.
+
+### 2026-08-19 — #448: A TEST THAT CANNOT SEE ITS OWN MUTANT, AND A MUTANT THAT DIED OF A CRASH
+
+`7f11f5d37`. Two method failures in one, both mine, both caught by review. Recorded because
+the shapes are general and this session produced them twice each.
+
+**1. ⚑⚑ THE RETURN NARROWING HID THE DEFECT THE TEST WAS WRITTEN FOR.** The test pinning the
+consumer half of the floor's dtype pin compared `applied_mass` across float32/bf16/fp16 and
+asserted the three agree. **They agree under the mutant too.** Every field of
+`SfPolicyFloorOutputs` is deliberately narrowed BACK to the caller's dtype, and that narrowing
+rounds the overflow away: with `zeros_like(probs)` and bf16 `probs`, `0.51 -> 0.51171875` and
+`0.49 -> 0.490234375` give an internal mandatory mass of **1.001953125 > 1**, which narrows to
+bf16 as **exactly 1.0**. Invariant violated internally, column clean.
+
+⇒ **A TEST THAT READS A VALUE THROUGH A LOSSY CONVERSION CANNOT PIN ANYTHING FINER THAN THAT
+CONVERSION.** The fix is to observe where the conversion is a no-op: a **float64 `probs` probe**,
+whose expected value is DERIVED through `_as_floor_threshold` (never a literal — a literal agrees
+with a helper that was itself changed):
+
+    pinned (correct):  fp32(0.2) + fp32(0.1) = 0.30000000447034836
+    zeros_like(probs): float64 0.2 + 0.1     = 0.30000000000000004
+
+Two distinct doubles ⇒ exact assertion, no tolerance. This is the SECOND time this session that
+a tolerance-or-conversion swallowed the exact defect under test; the first was the reviewer's
+own `<= 1 + 1e-6` sweep against a bug of radius 1e-6.
+
+**2. ⚑⚑ MY MUTATION RUN REPORTED "2 failed" AND MEANT NOTHING.** The mutant I ran reverted the
+ALLOCATION only and left both `scatter_reduce` sources pinned, so it died on
+`RuntimeError: scatter(): Expected self.dtype to be equal to src.dtype` — **a crash, not an
+assertion.** The COHERENT revert (allocation + both scatter sources + the `has_target` cast —
+what anyone "simplifying" would actually write) **passed all 78 tests.**
+
+⇒ **A MUTANT THAT CRASHES IS NOT A KILLED MUTANT.** A red suite proves the mutant was *reached*,
+not that any claim was *checked*. Two rules follow, and both are cheap:
+- **Read WHICH test failed and on WHICH assertion**, never just the pass/fail tally. "2 failed"
+  was consistent with the test being entirely vacuous, which it was.
+- **Mutate COHERENTLY.** A one-line revert that leaves the rest of a multi-site invariant intact
+  is a *different* edit from the one a future maintainer would make. Ask what the realistic
+  regression looks like — here, a "tidy-up" reverting all four sites together — and mutate that.
+  Related: [[a_new_test_is_vacuous_until_mutated]], [[a_property_test_can_be_vacuous_for_its_own_regression]].
