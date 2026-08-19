@@ -61572,3 +61572,70 @@ written and NOT executed):
 **STATUS: no GPU intervention, nothing flipped, training continues.** Live branch is 128
 commits ahead of its remote, so every measurement here is local; `main` is not a
 substitute for any of it.
+
+### 2026-08-19 PREREG AMENDMENT — freeze the REWEIGHT ceiling too, and pin the probe's
+### checkpoint. ⚑ At today's coverage the arm is ALREADY infeasible before entropy enters
+
+**1. THE REWEIGHT CEILING WAS NEVER FROZEN, AND IT JUST BECAME BINDING.** `2f4d1ee2a`
+froze only the ENTROPY budget. The `1/(1-alpha) <= 1.5` ceiling has been discussed since
+it was first proposed but never pre-committed -- and this turn it started deciding the
+answer. Adopting a constraint at the moment it begins to bind is how a criterion becomes
+post-hoc. Frozen now, at the value proposed BEFORE any of today's numbers existed:
+
+    CEILING:  1/(1-alpha) <= 1.5   <=>   alpha <= 1/3
+
+Rationale, unchanged from when it was proposed: the additive `w_sf_own` form overweights
+eligible rows by `1/(1-alpha)`, and eligibility is set by the PLY SCHEDULE, so this
+reweights training toward paired plies -- a distributional change, not just a strength
+knob.
+
+**2. ⚑ AT TODAY'S COVERAGE THE ARM FAILS ON THESE TWO CONSTRAINTS ALONE.** With
+`f = 0.3924` (iter 543) and the historical `S_R = 20`:
+
+    alpha needed for 3.0 cp = 3.0 / (0.3924 * 20) = 0.382   >   1/3 ceiling
+
+⇒ **infeasible today BEFORE the entropy probe reports.** Entropy can only lower
+`alpha_max` further; it cannot rescue this. The probe is therefore a FUTURE-VIABILITY
+test, not a launch gate -- which is the right framing, because the quantity that fixes it
+is still moving:
+
+| `f` | alpha needed for 3.0 cp @ S_R=20 | vs 1/3 ceiling |
+|---|---|---|
+| 0.3924 (today) | 0.382 | **EXCEEDS** |
+| 0.50 | 0.300 | fits |
+| 0.63 (fresh asymptote) | 0.238 | fits |
+
+⇒ the arm becomes constraint-feasible somewhere around `f ~ 0.46`. Coverage is rising on
+its own, so **waiting is the action with positive expected value** and no compute cost.
+
+**3. FUNNEL, pre-committed.** `alpha_max = min(entropy budget, 1/3)`, then
+`G_old_anchor = 20 * f * alpha_max` as an EXPLICITLY LABELLED HISTORICAL SENSITIVITY (not
+a measurement -- `S_R = 20` is the audit population's). If that cannot reach 3.0 even at
+`S_R = 20`, the arm is dead WITHOUT buying deep-SF labels. Only if it can does the
+deep-MPV `S_R` job become justified. This avoids both an unnecessary GPU training arm and
+an unnecessary 1M-node relabelling run.
+
+**4. PROBE PINNED.** `data/banked/sfsoft_entropy_probe_iter542` -- checkpoint_000542
+COPIED OUT of the tune dir (637M) before use, because Ray prunes live checkpoints
+([[bank_a_checkpoint_before_every_audit]]). Result is valid FOR THIS NET at iteration 542
+and must be re-run at any actual launch checkpoint
+([[pin_the_start_checkpoint_by_path_and_step]]).
+
+**5. PROBE REFINEMENTS, all three adopted before running:**
+- support geometry reported: `|supp(t0)|`, `|supp(q_SF)|`, `|S|`, intersection, Jaccard,
+  q-only moves, `tail_mass_net`. A blend that ADDS support raises entropy for a REAL
+  reason; the net must simply not be charged for mass the target can never use.
+- the union support is computed ONCE and used at EVERY alpha INCLUDING alpha=0, where the
+  target's own support would otherwise collapse to `supp(t0)` and move the reference
+  distribution along the sweep.
+- membership is EXACT (`> 0`), never an epsilon: non-candidates are written as exact 0.0
+  by the scatter-add that builds these targets. `min positive` is reported as the sanity
+  check on that claim -- if those values were denormal noise the exact test would be
+  silently wrong.
+
+**6. IF EITHER FIDELITY GUARD FIRES, STOP.** A stored-plane encoding mismatch or a
+dynamic-relation checkpoint means the CPU path cannot produce a faithful number; the
+answer is a short GPU pause on the production inference path, NOT a weakened guard. "Close
+enough" here yields a precise-looking meaningless entropy.
+
+**Running on CPU. No GPU pause taken. Training untouched.**
