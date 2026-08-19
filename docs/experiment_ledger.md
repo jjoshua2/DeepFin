@@ -61502,3 +61502,73 @@ screen.
 **NO GPU INTERVENTION. NOTHING FLIPPED.** Keeping training running is itself the highest-
 value action available: coverage is the only term in `f * alpha * S_R` still improving on
 its own.
+
+### ⚑⚑ 2026-08-19 PREREG (frozen BEFORE the measurement exists) — the SF-soft entropy
+### criterion, RESTATED ON MATCHED SUPPORT because the proposed form measures support
+
+Peer asked to freeze the entropy rule before seeing `H_net`, so that a budget cannot be
+chosen after the fact. Correct, and adopted. But the rule as proposed cannot be frozen in
+that form, for a reason already documented in this repo.
+
+**⚑⚑ THE PROPOSED CRITERION MEASURES SUPPORT, NOT FLATTENING.**
+`scratchpad/matched_support_entropy.py`, verbatim:
+
+> "The reported audit entropies are computed over each candidate's OWN support, so the raw
+> policy (all legal moves) and the search target (zero outside the Gumbel candidate set)
+> are not comparable."
+
+The target lives on ~22.4 moves (Gumbel candidate set); the net's softmax is nonzero on
+ALL legal moves, ~30-40. That difference ALONE is order 0.2 nats -- the same size as the
+entire effect under test. ⇒
+
+1. **`H_net = 0.7819` vs `H(t0) = 0.5738` is not a sharpness comparison.** The `+0.2081`
+   gap is contaminated by the support mismatch and may be dominated by it.
+2. ⇒ **READING B IS UNSOUND AS CONSTRUCTED.** It preserves exactly that contaminated
+   shift. The favourable half of the previous entry's table is therefore not evidence, and
+   the "0.90-0.93 ⇒ arm survives" branch cannot be evaluated in those terms.
+3. ⇒ A criterion written as `mean[H(t_alpha) - H(p_net)]` on own-supports would be a
+   [[a_statistic_over_a_padded_array_measures_the_padding]] instance: we would be
+   pass/failing an arm on how many legal moves the position has.
+
+**THE FROZEN RULE.** Support = `supp(t0) UNION supp(q_SF)`, which is exactly `supp(t_alpha)`
+for any `alpha` in (0,1), so the targets are unchanged by the restriction (zeros contribute
+nothing and the mass already sums to 1 on that set). The NET is restricted onto that same
+support and RENORMALISED, with the discarded mass reported as `tail_mass_net` rather than
+silently dropped -- the method `restrict()` already implements.
+
+    PASS:  mean[ H(t_alpha) - H(p_net) ] <= +0.05 nats,  both on supp(t0) U supp(q_SF)
+
+- `+0.10` is reported as SENSITIVITY ONLY, never as an alternative criterion.
+- p50/p90/p99 of the per-row difference are REPORTED, and **no tail threshold is invented
+  after seeing them** -- pre-committed here as descriptive.
+- `tail_mass_net` is reported. If the net routinely puts large mass outside the target's
+  support, the restriction is doing real work and that must be visible.
+- The rule is frozen NOW, before `H_net` on today's rows exists.
+
+**WHY +0.05 AND NOT +0.10.** [[training_temp_exceeds_strength_optimal_temp]]: the training
+temperature is ALREADY above the strength optimum, so the prior is that flattening costs
+play strength before it buys target quality. Peer's reasoning, adopted unchanged.
+
+**THE PROBE, specified before it is run** (`scratchpad/sfsoft_net_entropy_probe.py`,
+written and NOT executed):
+- the SAME 5329 eligible rows, from the same 6 shards, in shard order;
+- the CURRENT checkpoint's `policy_own` head;
+- the production input representation READ FROM THE SHARDS (`x`, 175 planes) -- no FEN
+  reconstruction, no re-encoding;
+- legal masking from the shard's own `legal_mask`;
+- entropy on the matched support defined above.
+- **RUN IN A PAUSE WINDOW, never side-by-side** ([[pause_and_run_beats_concurrent_gpu_work]]).
+
+**DECISION TREE (pre-committed).**
+- `alpha_max` from the frozen rule, then `f * alpha_max * S_R >= 3.0` decides the arm.
+- entropy FAILS ⇒ **drop the SF-soft arm.** Do not raise `alpha`, do not re-cut the budget.
+- entropy PASSES ⇒ the next unknown is today's `S_R`, and it must be bought with a DEEP-SF
+  sample. **Not from MPV6 shard regret** -- a 2.1-2.9x inflated tail would turn the one
+  remaining independent criterion back into an instrument artifact.
+- **Re-run the entropy probe at the ACTUAL launch checkpoint** if it ever gets that far.
+  Today's answers "is this direction worth pursuing", not "is this true forever"; the net
+  is still training and its entropy moves.
+
+**STATUS: no GPU intervention, nothing flipped, training continues.** Live branch is 128
+commits ahead of its remote, so every measurement here is local; `main` is not a
+substitute for any of it.
