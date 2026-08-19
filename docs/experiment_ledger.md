@@ -82,7 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
-| `data/salvage/pre_stop_iter190_20260817` | 2026-08-17 13:57–14:07, trial **dea5e iter 190** (ckpt_000189, **786 shards, ~2.9G**) — banked immediately before the **user-authorised early STOP** of the bt4heads arm-B run (Josh: *"we're close enough to the 200 iter to end early, we have more promising fixes"*). This is the FINAL state of the lineage, so it is the rollback target for anything that follows. Export guard verified BY THE EXPORTER'S OWN LINE: `metric=190.000 iter=190` (so `--metric training_iteration` selected CURRENT state, not the best-metric row) and `newest on disk: checkpoint_000189` matched the exported ckpt. ⛑ Independently cross-checked against the live row: `pid_state.json` `ema_winrate` = **0.5015336232916918**, **bit-exact** against `progress.csv`'s `pid_ema_winrate` at iter 190 — a second, non-exporter witness that the bank is current state. ⛑ Shard count verified by LISTING (786 `.zarr`), never by the exit code, because the #290 zero-shard failure mode reports success; and the wrapper's exit code is not the job's [[background_task_notifications_report_the_wrappers_exit]]. Contains `trainer.pt` (666M, weights+optimizer), `pid_state.json`, `gate_state.json`, `best.json`, `holdout.npz`, `rng_state.json`, `trial_meta.json` (`global_iter` 1181, `current_window` 1500000, `holdout_generation` 2). State at bank time: `wdl_regret` **0.030888**, `sf_nodes` **75000** (pinned for all 190 iters), replay window at the 1.5M cap, `pid_ema_winrate` 0.5015, PID in `deadband`. ⚠ The search config was **NOT** frozen across this whole run: `mcts_ramp_steps` defaults to 10,000 steps so the 256→100 ramp (task #251) was still moving until iter ~114 — only iters 114–190 are readable as a net signal (VERDICT #244, `2435d5b56`). | `./scripts/train.sh salvage-restart data/salvage/pre_stop_iter190_20260817` |
+| `data/salvage/pre_stop_iter190_20260817` | 2026-08-17 13:57–14:07, trial **dea5e iter 190** (ckpt_000189, **786 shards, ~2.9G**) — banked immediately before the **user-authorised early STOP** of the bt4heads arm-B run (Josh: *"we're close enough to the 200 iter to end early, we have more promising fixes"*). This is the FINAL state of the lineage, so it is the rollback target for anything that follows. Export guard verified BY THE EXPORTER'S OWN LINE: `metric=190.000 iter=190` (so `--metric training_iteration` selected CURRENT state, not the best-metric row) and `newest on disk: checkpoint_000189` matched the exported ckpt. ⚑ Independently cross-checked against the live row: `pid_state.json` `ema_winrate` = **0.5015336232916918**, **bit-exact** against `progress.csv`'s `pid_ema_winrate` at iter 190 — a second, non-exporter witness that the bank is current state. ⚑ Shard count verified by LISTING (786 `.zarr`), never by the exit code, because the #290 zero-shard failure mode reports success; and the wrapper's exit code is not the job's [[background_task_notifications_report_the_wrappers_exit]]. Contains `trainer.pt` (666M, weights+optimizer), `pid_state.json`, `gate_state.json`, `best.json`, `holdout.npz`, `rng_state.json`, `trial_meta.json` (`global_iter` 1181, `current_window` 1500000, `holdout_generation` 2). State at bank time: `wdl_regret` **0.030888**, `sf_nodes` **75000** (pinned for all 190 iters), replay window at the 1.5M cap, `pid_ema_winrate` 0.5015, PID in `deadband`. ⚠ The search config was **NOT** frozen across this whole run: `mcts_ramp_steps` defaults to 10,000 steps so the 256→100 ramp (task #251) was still moving until iter ~114 — only iters 114–190 are readable as a net signal (VERDICT #244, `2435d5b56`). | `./scripts/train.sh salvage-restart data/salvage/pre_stop_iter190_20260817` |
 | `data/salvage/bt4heads_iter112_20260817` | 2026-08-17 02:50–02:56, trial **dea5e iter 112** (ckpt_000111, **808 shards, 3.7G**) — the bt4heads arm-B run's FIRST revert point of its own. Banked for ABSENCE, not for a change: the automatic rolling banker has been dead since 2026-07-31 12:46 (newest `data/salvage/rolling` entry is `checkpoint_000475`), so this lineage had no snapshot at all and protocol rule 2 could not have been satisfied for ANY change to it. Taken in a quiet window, concurrent with training, no pause, no GPU work. Export guard verified BY THE EXPORTER'S OWN LINE: `metric=112.000 iter=112` (so `--metric training_iteration` selected CURRENT state, not the best-metric row) and `newest on disk: checkpoint_000111` matched the exported ckpt; the dry-run reported `stale_result_rows=False`. ⚑ Shard count verified NON-EMPTY by LISTING the directory (808 `.zarr`), not by the exit code — the #290 zero-shard failure mode is ruled out by counting. Contains `trainer.pt` (weights+optimizer), `pid_state.json`, `gate_state.json`, `best.json`, `holdout.npz`, `rng_state.json`, `trial_meta.json`. NOT exported, and the manifest says so itself: `best/`, `best_regret/`, `gate_promoted_model.pt`. State at bank time: `wdl_regret` ~0.0303, `sf_nodes` 75000, replay window at the 1.5M cap, search config FROZEN since 2026-08-09 20:58 (`gumbel_c_scale` 0.1) — so the regret series across this point stays readable as a net signal. | `./scripts/train.sh salvage-restart data/salvage/bt4heads_iter112_20260817` |
 | `data/salvage/pre_search_authority_20260809` | 2026-08-09 14:13–14:2x, trial **379f6 iter 672** (ckpt_000671, **817 shards, 2.9G**) — banked as the pre-registered revert point for the **search-authority bundle** (`gumbel_c_scale` 0.025 → 0.1 + `gumbel_policy_temp` 1.0 → 1.5), prereg `8fec387a3` + Amendment 2 `99031d9af`. Export guard verified: the exporter printed `metric=672.000 iter=672` (so `--metric training_iteration` selected CURRENT state, not the best-metric row) and `newest on disk: checkpoint_000671` matched the exported ckpt. **Shard count verified NON-EMPTY against live: 817 banked vs 816 in `runs/pbt2_small/replay/<trial>/replay_shards` at bank time** — the #290 zero-shard failure mode is ruled out by counting, not by the exit code. Contains `trainer.pt` 654M (weights+optimizer), `pid_state.json`, `rng_state.json`, `holdout.npz`, `gate_state.json`, `best.json`. ⚠ `trial_meta.json` is an EMPTY dict `{}` — provenance comes from the exporter log line and this row, not from that file. State at bank time: the **08-06 reduced-SF relaunch bundle** — `gumbel_c_scale: 0.025`, `gumbel_topk: 32`, `gumbel_scale: 1.0 → gumbel_scale_after: 0.5` (root noise ON all game), `mcts_simulations: 256`, `playout_cap_fraction: 0.25`, `fast_simulations: 32`, `selfplay_fraction: 0.8`, `sf_nodes: 75000`, `sf_multipv: 6`, `zclip_max_norm: 6.5`, `diff_focus_enabled: true` / `pol_scale 3.5`, seeding ON (`dole_per_iter: 1`, `max_fraction: 0.08`). **This is the pool to restore if the search-authority bundle goes wrong**, and it is genuinely data-affecting-capable: the bundle changes the STORED policy target, so a yaml revert alone would leave ~a day of tempered-target rows in the replay window. | `./scripts/train.sh salvage-restart data/salvage/pre_search_authority_20260809` |
 | `data/salvage/pre_restart_bundle_20260731` | 2026-07-31 12:54, trial 13a9f **iter 477** (ckpt_000476, **833 shards, 4.0G**) — banked immediately before the restart that deploys the merged bundle: **#291** (`train.sh stop` drains selfplay workers instead of discarding in-flight games) and **#289** (`sp=` harvest provenance tag). No yaml keys change, so the all-or-nothing live validator is not exercised. **⚑ THIS IS THE FIRST COMPLETE REVERT POINT SINCE 2026-07-27.** Every snapshot from 07-27 to 07-30 is weights-only (0 shards, 656M) because `salvage.py` chose its source by `is_dir()` on an EMPTY decoy directory and reported `shards=0` as success — fixed in **#290**, and this export is the end-to-end proof on production: 833 of the real shards copied, `iter=477` matched live, `newest on disk: checkpoint_000476` matched the exported ckpt. State at bank time: seeding ON (`opening_fen_dole_per_iter: 1`, `opening_fen_dole_max_fraction: 0.08`, realized 6.67% of games / 4.14% of rows), pool `blindspot_fens_retire_474.txt`, `zclip_max_norm: 6.5`, `selfplay_resume_inflight_games: true`. **This is the pool to restore if the bundle goes wrong**, and unlike its recent predecessors it can serve a genuinely data-affecting rollback. | `./scripts/train.sh salvage-restart data/salvage/pre_restart_bundle_20260731` |
@@ -60869,9 +60869,45 @@ costs only `max(tau, mandatory) - mandatory` to admit, so **the collar is never 
 its upgrade to `tau` can be.** `SfPolicyFloorParams` refuses at resolve time any config with
 `max(tau, tau_top1) + tau_played > 1`.
 
-**EQUIVALENCE, measured not argued: the cap bites IFF `requested_mass > 1`.** If the raw request
-fits, every prefix of the greedy fits, so nothing is dropped — verified by
-`test_a_feasible_row_is_untouched_by_the_cap`.
+**⚑ CORRECTION, same session — "the cap bites IFF `requested_mass > 1`" IS FALSE AS WRITTEN, and
+it was false for TWO separate reasons.** Recorded rather than quietly edited, because both are
+the kind of thing that gets re-derived wrong later.
+
+1. **A `1e-6` slack in the admission budget.** The first implementation compared against
+   `budget + 1e-6` so a set fitting EXACTLY would not be rejected by float32 rounding. That
+   admitted genuinely INFEASIBLE sets whose mass lands in `(1, 1+1e-6]` — the cap reported
+   `truncated = 0` and an `applied_mass` ABOVE 1, defeating the exact invariant it was added to
+   enforce. **Reproduced** at `tau = tau_top1 = 0.3333334`, collar off, three members: float32
+   mass **1.000000238**, all three admitted. Peer-reviewer finding; the 7 × 0.15 fixture sits far
+   too far from 1 to see it. ⚑ **A smaller epsilon is the same bug with a smaller radius** — the
+   repair is exact float64 arithmetic with NO positive slack (`8a8d7a4ca`).
+   - ⚑⚑ AND THE FIRST DRAFT OF THAT REPAIR BROKE THE OTHER DIRECTION. Widening an increment that
+     was ALREADY rounded in float32 does not recover it: at `tau = 0.5, tau_top1 = 0.1` the
+     float32 `tau - mandatory` rounds UP by 7.5e-9 and the exactly-feasible pair `0.5 + 0.5 = 1.0`
+     lost a member. **The subtraction itself has to be inside the float64 block.** Caught by an
+     EXISTING test, not by the new one.
+   - `autocast` is disabled around the block: `cumsum` is on autocast's fp32 cast list and would
+     narrow float64 straight back to float32 under AMP, reinstating the loophole exactly where
+     production runs.
+2. **The DIAGNOSTIC is narrower than the decision.** `requested_mass` is cast to the probs dtype
+   to join the float32 metric accumulators, so it is accurate only to a float32 ULP. Ten floors
+   of `0.1` sum to `1.0000000149`, are CORRECTLY truncated, and the column reports `1.0`. ⇒
+   **`requested_mass > 1` is SUFFICIENT to expect truncation and NOT NECESSARY.** `truncated_frac`
+   is the exact event column; the mass pair is for magnitude only.
+
+**Verified after the repair:** the counterexample truncates to 2 members / 0.6666668; `tau = 0.25`
+with four members is exactly 1.0 and is NOT dropped; a **4,678-config sweep** over
+tau / tau_top1 / collar / member-count finds **ZERO** rows with `applied_mass > 1`.
+
+**⚑ COST, measured because the sort runs even at `w_sf_policy_floor: 0`** (the diagnostics are
+deliberately live before the weight is raised, so this is permanent work on the training path).
+B=512, W=1858, contended GPU: parent **2.49 ms/call** → new head **6.85 ms/call**, **+4.4 ms**.
+Components: `argsort(stable=True)` 1.02 ms; fp64 cumsum 0.153 ms vs fp32 0.089 ms (exactness
+costs 0.06 ms and is kept); `topk(k=9)` 0.118 ms. At `accum_steps: 1` and ~88 optimizer
+steps/iter that is **~0.39 s on a ~300 s iteration = 0.13%**. **DECIDED, not deferred: no fast
+path.** `topk` would remove most of the sort, but its correctness rests on
+`admitted <= 2 + floor(1/tau)`, and a wrong K silently DROPS floor members — this repo's
+signature defect class — to buy back a tenth of a percent.
 
 **⚑ AT THE LIVE CONFIG (`0.15 / 0.15 / 0.0625`) TRUNCATION FIRST BITES AT `|F| = 7`, NOT 8.**
 Executed against the shipped code, collar on a distinct non-member:
@@ -60883,10 +60919,24 @@ Executed against the shipped code, collar on a distinct non-member:
 | truncated | 0 | **0** | **1** | 1 |
 
 Measured live max is `|F| = 6`. **⇒ "inert on the live arm" is TRUE and the margin is ONE
-MEMBER.** Combined with the right-censoring already recorded above — 13.1% of live rows sit AT
-6 with an unknown true count — the correct reading is *not* "the cap will never fire": it is
-"the cap is one MultiPV widening away from firing on at least 13.1% of rows". Do not quote the
-inertness without the margin.
+MEMBER.** Do not quote the inertness without the margin.
+
+**⚑ CORRECTION — the MPV40 claim above ran the WRONG WAY, and "at least 13.1%" is WITHDRAWN.**
+13.1% of live rows sit AT `|F| = 6` and are RIGHT-CENSORED by `sf_multipv: 6`, which makes them
+the **CANDIDATE population** in which a seventh qualifying move *could* exist — not a set known
+to acquire one. MultiPV is enumerated best-to-worst, so a row whose sixth move already fails the
+`<= delta_cp` / `< our_r` test gains nothing from moves 7..40. From this measurement alone
+
+    0% <= P_MPV40(|F| >= 7) <= 13.1%
+
+and the actual rate at `sf_multipv: 40` is **UNMEASURED**. "The cap is load-bearing on MPV40"
+was asserting the upper bound as the value; the supportable statement is "potentially
+load-bearing, and worth protecting because the upper end of that interval is not small".
+
+**⚑ AND `0.900` IS NOT THIS DIAGNOSTIC'S MAXIMUM.** The shard scan measured the ADAPTIVE set
+only, so its max of `0.900 = 6 * tau` excludes the collar. The new `requested_mass` column
+carries the collar too, so the same row reports up to **0.9625**. Two different populations
+behind one number — quote which.
 
 **The five diagnostics that make it readable:** `sf_policy_floor_member_count_raw`,
 `..._requested_mass`, `..._truncated_frac`, `..._member_count_applied`, `..._applied_mass`, all
