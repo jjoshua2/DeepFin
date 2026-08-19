@@ -1034,6 +1034,25 @@ class TrainMetrics:
   # population.
     m_sf_policy_floor: float = 0.0
     sf_policy_floor_binds_frac: float = 0.0
+  # FEASIBILITY CAP (losses.SfPolicyFloorOutputs). The floors are simultaneous
+  # lower bounds on one distribution, so a requested mass above 1.0 describes an
+  # EMPTY constraint set -- a residual deficit that no net can ever clear. The
+  # loss admits members in ascending SF regret and stops at the budget; these
+  # five columns are what make that cap readable instead of silent.
+  #   * `..._member_count_raw` / `..._requested_mass` -- the UNCAPPED set and
+  #     its mass. `requested_mass > 1.0` is the infeasible population.
+  #   * `..._truncated_frac` -- share of eligible rows where the cap dropped a
+  #     member. Exactly 0.0 means the cap is currently inert on this data.
+  #   * `..._member_count_applied` / `..._applied_mass` -- after the cap.
+  #     `applied_mass <= 1.0` by construction.
+  # ⚑ Read raw AGAINST applied. The pair is the only way to tell whether the
+  # term's strength came from the configured tau or from a `|F| * tau` that
+  # nobody set. Same `sf_own_regret_rows` denominator as the two columns above.
+    sf_policy_floor_member_count_raw: float = 0.0
+    sf_policy_floor_requested_mass: float = 0.0
+    sf_policy_floor_truncated_frac: float = 0.0
+    sf_policy_floor_member_count_applied: float = 0.0
+    sf_policy_floor_applied_mass: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
@@ -1330,6 +1349,22 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # could drift; one quantity cannot.
     "m_sf_policy_floor": ("sf_policy_floor_sum", "sf_own_regret_rows"),
     "sf_policy_floor_binds_frac": ("sf_policy_floor_binds_sum", "sf_own_regret_rows"),
+  # Feasibility-cap diagnostics, same denominator for the same reason.
+    "sf_policy_floor_member_count_raw": (
+        "sf_policy_floor_raw_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_requested_mass": (
+        "sf_policy_floor_requested_mass_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_truncated_frac": (
+        "sf_policy_floor_truncated_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_member_count_applied": (
+        "sf_policy_floor_applied_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_applied_mass": (
+        "sf_policy_floor_applied_mass_sum", "sf_own_regret_rows",
+    ),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
   # count varies batch to batch, so a mean of per-batch rates is the wrong
   # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 import torch.nn.functional as F
@@ -595,6 +595,13 @@ def policy_legal_bool(batch: dict[str, torch.Tensor], *, width: int) -> torch.Te
 # sits ABOVE the deterministic prior-rank threshold rather than at it.
 SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
 
+# Slack on the floor-feasibility budget in `sf_policy_floor_deficit`. It exists
+# only so a member whose mass fits EXACTLY (`|F| * tau == 1` on the nose) is not
+# rejected by float32 rounding in the cumulative sum. It is deliberately far
+# below any tau anyone would configure, so it can never admit a member that
+# genuinely does not fit.
+_FLOOR_BUDGET_EPS = 1e-6
+
 
 def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     """The smallest tau that buys a top-k slot BY PRIOR RANK: ``1 / topk``.
@@ -744,6 +751,26 @@ class SfPolicyFloorParams:
             if bad:
                 band = "[0, 1]" if hi is not None else ">= 0"
                 raise ValueError(f"{name} must be finite and {band}, got {value!r}")
+  # ⚑ THE MANDATORY ROLES MUST FIT IN A PROBABILITY BUDGET OF 1. Every other
+  # member of F is optional -- `sf_policy_floor_deficit` admits them in
+  # ascending SF regret and stops before the budget is exceeded -- but SF's
+  # top-1 and the played-move collar are structural and are ALWAYS applied, so
+  # a configuration whose two mandatory floors alone cannot coexist is
+  # unsatisfiable on some row no matter what the net does. The worst case is
+  # top1 and played being DISTINCT moves with top1 also inside the adaptive
+  # window, where the max rule floors it at `max(tau, tau_top1)`. Rejected at
+  # resolve time rather than clamped at loss time, because a floor the net can
+  # never clear is a permanent gradient the operator did not ask for.
+        mandatory = max(float(self.tau), float(self.tau_top1)) + float(self.tau_played)
+        if mandatory > 1.0:
+            raise ValueError(
+                "max(sf_policy_floor_tau, sf_policy_floor_tau_top1) + "
+                f"sf_policy_floor_tau_played = {mandatory!r} exceeds 1.0 "
+                f"(tau={self.tau!r}, tau_top1={self.tau_top1!r}, "
+                f"tau_played={self.tau_played!r}); the mandatory top-1 and "
+                "collar floors cannot both be satisfied on a row where they "
+                "land on different moves."
+            )
 
     @classmethod
     def resolve(
@@ -801,6 +828,36 @@ class SfPolicyFloorParams:
         return params
 
 
+class SfPolicyFloorOutputs(NamedTuple):
+    """Per-row outputs of ``sf_policy_floor_deficit``. All shaped ``(B,)``.
+
+    ``deficit`` and ``binds`` are the loss and the binding indicator. The five
+    that follow are DIAGNOSTIC ONLY -- nothing multiplies them into ``total`` --
+    and they exist to make the feasibility cap readable rather than silent:
+
+    * ``member_count_raw`` / ``requested_mass`` -- the set and the probability
+      mass the UNCAPPED rule would have demanded. ``requested_mass > 1`` is the
+      infeasible case: the floors could not all be satisfied by any
+      distribution, so the residual deficit was a permanent gradient.
+    * ``truncated`` -- 0/1, did the cap actually drop a member on this row.
+    * ``member_count_applied`` / ``applied_mass`` -- the set and mass after the
+      cap. ``applied_mass <= 1`` by construction.
+
+    ⚑ READ ``requested_mass`` AGAINST ``applied_mass``, NOT ALONE. The whole
+    point of the pair is to answer, after the fact, whether F's flattening was
+    driven by the hidden ``|F| * tau`` strength rather than by the tau the
+    operator set -- a question a single column cannot answer.
+    """
+
+    deficit: torch.Tensor
+    binds: torch.Tensor
+    member_count_raw: torch.Tensor
+    requested_mass: torch.Tensor
+    truncated: torch.Tensor
+    member_count_applied: torch.Tensor
+    applied_mass: torch.Tensor
+
+
 def sf_policy_floor_deficit(
     probs: torch.Tensor,
     regret: torch.Tensor,
@@ -808,8 +865,8 @@ def sf_policy_floor_deficit(
     played_target: torch.Tensor | None = None,
     *,
     params: SfPolicyFloorParams,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """One-sided probability floor on SF-approved moves. Returns (deficit, binds).
+) -> SfPolicyFloorOutputs:
+    """One-sided probability floor on SF-approved moves. See ``SfPolicyFloorOutputs``.
 
     ``deficit`` is per-row ``sum_{m in F} relu(tau_m - p_m)``; ``binds`` is the
     per-row 0/1 indicator that at least one move in ``F`` was actually below its
@@ -878,6 +935,37 @@ def sf_policy_floor_deficit(
     the floor top-1 "already earns" is ``tau_top1``. Set ``tau_top1 >= tau`` if
     you want a strictly stronger floor on SF's best move.
 
+    ⚑⚑ F IS CAPPED SO THE CONSTRAINT SET IS NEVER EMPTY. The floors are a set of
+    simultaneous lower bounds on a distribution; if their sum exceeds 1 NO
+    distribution satisfies them, so ``relu(tau - p)`` leaves a residual on that
+    row at every step forever and the gradient can never resolve. The uncapped
+    rule had no such bound: ``|F|`` is data-dependent and the requested mass is
+    ``~|F| * tau``.
+
+    The cap does NOT rescale the thresholds -- that would move the calibrated
+    bar on rows that were already satisfiable. It shrinks the SET instead:
+
+    1. the two MANDATORY roles are paid first -- SF's top-1 and the played-move
+       collar -- and ``SfPolicyFloorParams`` refuses at resolve time any config
+       where those two alone can exceed 1;
+    2. the remaining adaptive members are admitted in ASCENDING SF REGRET, so
+       the moves SF likes best are the ones that survive;
+    3. admission stops before the running total would exceed 1.
+
+    A move already carrying a mandatory floor costs only the DIFFERENCE
+    ``max(tau, mandatory) - mandatory`` to admit, which is the same max rule
+    stated as an increment; the collar is therefore never dropped, only its
+    upgrade to ``tau`` can be.
+
+    ``member_count_raw`` / ``requested_mass`` report the uncapped set and
+    ``truncated`` says whether the cap bit, so the cap cannot be silent.
+
+    MEASURED on 5,881 live rows (2026-08-19): ``|F|`` max 6, mean 2.487, max
+    requested mass 0.900, infeasible fraction 0.000000 -- but 13.1% of those
+    rows sat AT ``|F| = 6`` and are RIGHT-CENSORED by the live ``sf_multipv: 6``.
+    On a ``sf_multipv: 40`` config the same positions can surface more members,
+    so the cap is load-bearing there rather than defensive.
+
     ``legal=None`` means the batch had no legal mask and every action is in the
     softmax's support (see ``policy_legal_bool``).
     """
@@ -906,8 +994,13 @@ def sf_policy_floor_deficit(
   # is needed and a threshold of 0.0 (`tau_played: 0.0`, the collar ablation) is
   # a clean no-op rather than a branch.
     adaptive = (regret <= thr) & legal & (regret < our_r)
-    floors = torch.where(adaptive, torch.full_like(probs, float(params.tau)), 0.0)
-    floors = floors.scatter_reduce(
+
+  # MANDATORY floors first, and SEPARATELY from the adaptive ones, because the
+  # feasibility cap below may drop an adaptive member and may never drop these.
+  # `scatter_reduce(amax)` rather than a sum: a move in two roles gets ONE
+  # floor, at the max of its thresholds (see the docstring).
+    mandatory = torch.zeros_like(probs)
+    mandatory = mandatory.scatter_reduce(
         -1, top1, torch.full_like(top1, float(params.tau_top1), dtype=probs.dtype),
         reduce="amax", include_self=True,
     )
@@ -917,12 +1010,64 @@ def sf_policy_floor_deficit(
   # (an absent or masked-out target argmaxes to index 0), so its collar
   # threshold is 0.0 -- the same no-op the ablation uses.
         has_target = (played_target.sum(-1, keepdim=True) > 0).to(probs.dtype)
-        floors = floors.scatter_reduce(
+        mandatory = mandatory.scatter_reduce(
             -1, played, has_target * float(params.tau_played),
             reduce="amax", include_self=True,
         )
+
+    tau_t = torch.full_like(probs, float(params.tau))
+  # What the UNCAPPED rule asked for. Kept as its own tensor because it is the
+  # diagnostic pair's numerator and because the cap is defined as the
+  # difference between the two.
+    raw_floors = torch.maximum(mandatory, torch.where(adaptive, tau_t, mandatory.new_zeros(())))
+
+  # ⚑ FEASIBILITY. `sum_m floor_m > 1` is not merely a large penalty -- it is a
+  # constraint set with no distribution in it, so `relu(floor - p)` keeps a
+  # residual on EVERY row of that shape forever and the gradient never resolves.
+  # Measured on 5,881 live production rows the infeasible fraction was
+  # 0.000000 with |F| <= 6, but 13.1% of those rows sat AT |F| = 6 and were
+  # right-censored by the live `sf_multipv: 6`; at `sf_multipv: 40` the same
+  # rows can carry more members, so the cap is load-bearing on the target
+  # config rather than defensive.
+  #
+  # The cap is NOT a rescaling of the floors: shrinking every tau would change
+  # the calibrated bar on the rows that were already fine. Instead the SET is
+  # made structurally feasible -- the two mandatory roles are paid first (the
+  # resolve-time validator guarantees they fit), then adaptive members are
+  # admitted in ASCENDING SF REGRET, best move first, until admitting another
+  # would exceed the budget.
+    increment = torch.where(adaptive, torch.clamp(tau_t - mandatory, min=0.0), tau_t.new_zeros(()))
+  # Non-members sort last (their regret key is 2.0, above every real regret),
+  # and carry a zero increment, so where they land cannot change the outcome.
+    order = torch.argsort(
+        torch.where(adaptive, regret, torch.full_like(regret, 2.0)), dim=-1, stable=True,
+    )
+    cumulative = increment.gather(-1, order).cumsum(-1)
+  # The mandatory mass is already committed; `_FLOOR_BUDGET_EPS` keeps a member
+  # that fits EXACTLY from being rejected by float error.
+    budget = (1.0 - mandatory.sum(-1, keepdim=True)) + _FLOOR_BUDGET_EPS
+  # ⚑ `~(cum > budget)`, NOT `cum <= budget`. The two agree on every real number
+  # and DISAGREE on NaN: `NaN <= budget` is False, so a NaN tau would admit
+  # nothing and the cap would silently swallow a poisoned parameter into a
+  # finite, plausible-looking loss -- this repo's signature defect, and exactly
+  # what `test_a_nan_in_the_term_cannot_reach_total_at_weight_zero` exists to
+  # catch. The negated form admits the NaN member and lets it propagate to the
+  # loss, where the trainer's own NaN guards can see it. The cap is a
+  # feasibility rule, not a validator.
+    keep = torch.zeros_like(adaptive).scatter(-1, order, ~(cumulative > budget))
+    admitted = adaptive & keep
+
+    floors = torch.maximum(mandatory, torch.where(admitted, tau_t, mandatory.new_zeros(())))
     deficit = torch.relu(floors - probs)
-    return deficit.sum(-1), (deficit > 0).any(-1).to(probs.dtype)
+    return SfPolicyFloorOutputs(
+        deficit=deficit.sum(-1),
+        binds=(deficit > 0).any(-1).to(probs.dtype),
+        member_count_raw=(raw_floors > 0).sum(-1).to(probs.dtype),
+        requested_mass=raw_floors.sum(-1),
+        truncated=(admitted != adaptive).any(-1).to(probs.dtype),
+        member_count_applied=(floors > 0).sum(-1).to(probs.dtype),
+        applied_mass=floors.sum(-1),
+    )
 
 
 def terminal_outcome_transfer_taper(
@@ -1293,16 +1438,19 @@ def compute_loss(
         po_probs = torch.softmax(masked_base, dim=-1)
         reg_vec = align_action_values(sf_p0_regret_t, int(base_policy_logits.shape[-1]))
         sf_own_regret = (po_probs * reg_vec).sum(-1)
-        sf_floor, sf_floor_binds = sf_policy_floor_deficit(
+        floor_out = sf_policy_floor_deficit(
             po_probs, reg_vec,
             policy_legal_bool(batch, width=int(base_policy_logits.shape[-1])),
             aligned_pol_target * has_policy.unsqueeze(-1),
             params=floor_params,
         )
+        sf_floor = floor_out.deficit
+        sf_floor_binds = floor_out.binds
     else:
         sf_own_regret = zero_loss
         sf_floor = zero_loss
         sf_floor_binds = zero_loss
+        floor_out = SfPolicyFloorOutputs(*([zero_loss] * 7))
 
   # DIAGNOSTIC ONLY — hard one-hot CE against the recorded game result. The
   # optimizer never sees this term (see ``blended_wdl_ce`` below, which is the
@@ -1565,6 +1713,23 @@ def compute_loss(
   # tensor; a second count derived here could disagree with it.
     sf_policy_floor_sum, _ = masked_sum_and_count(sf_floor, sf_p0_regret_base)
     sf_policy_floor_binds_sum, _ = masked_sum_and_count(sf_floor_binds, sf_p0_regret_base)
+  # FEASIBILITY-CAP diagnostics, over the SAME `sf_own_regret_rows` denominator
+  # as the two columns above -- one population for the whole term.
+    sf_policy_floor_raw_members_sum, _ = masked_sum_and_count(
+        floor_out.member_count_raw, sf_p0_regret_base,
+    )
+    sf_policy_floor_requested_mass_sum, _ = masked_sum_and_count(
+        floor_out.requested_mass, sf_p0_regret_base,
+    )
+    sf_policy_floor_truncated_sum, _ = masked_sum_and_count(
+        floor_out.truncated, sf_p0_regret_base,
+    )
+    sf_policy_floor_applied_members_sum, _ = masked_sum_and_count(
+        floor_out.member_count_applied, sf_p0_regret_base,
+    )
+    sf_policy_floor_applied_mass_sum, _ = masked_sum_and_count(
+        floor_out.applied_mass, sf_p0_regret_base,
+    )
     net_rows = net_mask.to(torch.float32).sum()
     sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
         batch, has_sf_wdl=has_sf_wdl,
@@ -1679,6 +1844,16 @@ def compute_loss(
         "sf_policy_floor": m_sf_policy_floor,
         "sf_policy_floor_sum": sf_policy_floor_sum,
         "sf_policy_floor_binds_sum": sf_policy_floor_binds_sum,
+  # ⚑ THE CAP MUST NOT BE SILENT. `requested_mass` is what the uncapped rule
+  # asked for and `applied_mass` is what a distribution can actually carry;
+  # `truncated_frac` is the share of eligible rows where they differ. Read the
+  # raw/applied member pair to answer whether F's flattening came from the
+  # hidden `|F| * tau` strength rather than from the configured tau.
+        "sf_policy_floor_raw_members_sum": sf_policy_floor_raw_members_sum,
+        "sf_policy_floor_requested_mass_sum": sf_policy_floor_requested_mass_sum,
+        "sf_policy_floor_truncated_sum": sf_policy_floor_truncated_sum,
+        "sf_policy_floor_applied_members_sum": sf_policy_floor_applied_members_sum,
+        "sf_policy_floor_applied_mass_sum": sf_policy_floor_applied_mass_sum,
         "sf_own_regret_sum": sf_own_regret_sum,
         "sf_own_regret_rows": sf_own_regret_rows,
         "net_rows": net_rows,

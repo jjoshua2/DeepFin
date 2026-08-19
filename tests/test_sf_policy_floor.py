@@ -76,7 +76,7 @@ def floor_loss(
     )
     deficit, binds = sf_policy_floor_deficit(
         probs, regret, legal, played_target, params=params,
-    )
+    )[:2]
     mask = torch.ones(regret.shape[0]) if have is None else have.to(torch.float32)
     denom = mask.sum().clamp_min(1.0)
     loss = (deficit * mask).sum() / denom
@@ -233,7 +233,12 @@ def test_illegal_moves_are_excluded_even_at_an_absurd_delta() -> None:
     regret = torch.tensor([[R(300), R(0), R(10), R(20), R(30), R(40)]])
     legal = torch.tensor([[True, False, False, True, True, True]])
     logits = torch.zeros(1, 6)
-    loss, _, _ = floor_loss(regret, logits, delta_cp=CAP, legal=legal, tau=0.5)
+    # ⚑ tau is 0.3, NOT 0.5. This fixture admits THREE members, and at 0.5 the
+    # requested mass would be 1.5 -- an infeasible constraint set that the
+    # feasibility cap now truncates (see `sf_policy_floor_deficit`). The cap has
+    # its own tests; letting it fire here would mean this one silently measured
+    # truncation instead of legality. 3 * 0.3 = 0.9 <= 1, so it does not fire.
+    loss, _, _ = floor_loss(regret, logits, delta_cp=CAP, legal=legal, tau=0.3)
     # Moves 1 and 2 carry the two LOWEST regrets in the row (0cp and 10cp) and
     # are illegal, so they are the ones an unguarded argmin or an unguarded
     # window would seize on -- and they sit at p == 0, so admitting either shows
@@ -243,8 +248,8 @@ def test_illegal_moves_are_excluded_even_at_an_absurd_delta() -> None:
     assert float(p[2]) == 0.0
     # legal = {0, 3, 4, 5} at p = 0.25 each; ours = 0 (300cp); top1 = 3 (20cp);
     # the window is wide open, so F = {3, 4, 5} -- all three better than ours.
-    assert loss == pytest.approx(3 * float(torch.relu(0.5 - p[3])), abs=1e-6)
-    assert loss == pytest.approx(0.75, abs=1e-6)
+    assert loss == pytest.approx(3 * float(torch.relu(0.3 - p[3])), abs=1e-6)
+    assert loss == pytest.approx(0.15, abs=1e-6)
 
 
 def test_top1_can_carry_its_own_floor() -> None:
@@ -1273,12 +1278,163 @@ def test_inclusion_under_production_noise_is_not_a_guarantee() -> None:
     flat_40 = inclusion(40, scale_hi, peaked=False)
     assert flat_40 < 0.95, (scale_hi, flat_40)
 
-    # Monotone in the noise scale: the post-decay scale must lose LESS. This is
-    # the rig check -- a non-monotone result would mean the harness, not the
-    # sampler, is producing the number. (At `gumbel_scale_after: 0.0` there is
-    # no noise at all and inclusion is exactly 1.0, which still satisfies it.)
+    # RIG CHECK: inclusion must be monotone in the noise scale -- a
+    # non-monotone result would mean the harness, not the sampler, is producing
+    # the number.
+    #
+    # ⚑⚑ IT MUST BE MEASURED BETWEEN TWO NONZERO SCALES. The first version of
+    # this check compared against `gumbel_scale_after`, which is 0.0 on this
+    # branch, so it reduced to `1.0 >= 0.819` -- true for ANY sampler, including
+    # one that ignores the scale entirely, because at zero noise the answer is 1
+    # by construction rather than by measurement. A rig check that its own rig
+    # cannot fail is not a rig check. So the monotone step below runs between
+    # `scale_hi` and HALF of it: both carry real Gumbel noise, and a sampler
+    # that ignored `gumbel_scale` would return the same number twice and fail.
+    assert scale_hi > 0.0, (
+        "the config's pre-decay noise scale is 0.0, so this whole test measures "
+        "a noiseless sampler and cannot falsify the word 'guarantee'"
+    )
+    scale_mid = scale_hi / 2.0
+    flat_mid = inclusion(40, scale_mid, peaked=False)
+    assert flat_mid > flat_40, (scale_hi, flat_40, scale_mid, flat_mid)
+    assert flat_mid < 1.0, (
+        "halving the noise already reaches certain admission, so the step above "
+        f"is measuring saturation rather than the scale: {scale_mid}, {flat_mid}"
+    )
+    # ENDPOINT, not the monotone claim: the post-decay scale must lose no more
+    # than the pre-decay one. At `gumbel_scale_after: 0.0` this is exactly 1.0.
     assert inclusion(40, scale_lo, peaked=False) >= flat_40
 
     # CONTROL: a peaked tail -- what real production priors look like -- keeps
     # every draw, which is why the 3000-row production reading was 1.0.
     assert inclusion(40, scale_hi, peaked=True) == 1.0
+
+
+# --------------------------------------------------------------------------
+# Feasibility. The floors are simultaneous lower bounds on ONE distribution.
+# --------------------------------------------------------------------------
+
+
+def _seven_member_row() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """A row whose UNCAPPED floor set asks for more probability than exists.
+
+    Ten actions. 0..6 are legal and inside the 20cp window, ordered by regret;
+    7 is our own (bad) pick at 300cp; 8 and 9 are unsurfaced. Our argmax is 7,
+    so the strict `regret < our_r` clause admits all seven of 0..6 -- and at
+    `tau = 0.15` that is a requested mass of 1.05, which no distribution can
+    satisfy.
+
+    The COLLAR is deliberately pointed at move 6, the WORST-regret member and
+    therefore the first one the cap drops. That is the case that separates
+    "shrink the set" from "shrink the set correctly": the collar is structural
+    and must survive at `tau_played` even when its upgrade to `tau` does not.
+    """
+    regret = torch.tensor(
+        [[R(0), R(2), R(4), R(6), R(8), R(10), R(12), R(300), 0.55, 0.55]],
+    )
+    legal = torch.ones(1, 10, dtype=torch.bool)
+    # Our argmax is 7 by a wide margin; the rest are uniform and far below any
+    # tau, so every member of F binds and the deficit cannot be cleared by luck.
+    probs = torch.softmax(torch.tensor([[0.0] * 7 + [8.0, 0.0, 0.0]]), dim=-1)
+    played = torch.zeros(1, 10)
+    played[0, 6] = 1.0
+    return regret, legal, probs.detach(), played
+
+
+def _bound_members(
+    probs: torch.Tensor,
+    regret: torch.Tensor,
+    legal: torch.Tensor,
+    played: torch.Tensor | None,
+    params: SfPolicyFloorParams,
+) -> list[int]:
+    """Which moves the loss actually floored, read off its own gradient.
+
+    d(deficit)/dp is exactly -1 on a move whose floor bound and 0 elsewhere, so
+    this identifies the APPLIED set through the production code path. It is
+    deliberately not a second implementation of the admission rule: a
+    re-derivation here would agree with a wrong loss and pass.
+    """
+    p = probs.clone().requires_grad_(True)
+    out = sf_policy_floor_deficit(p, regret, legal, played, params=params)
+    (grad,) = torch.autograd.grad(out.deficit.sum(), [p])
+    return [int(i) for i in (grad[0] != 0).nonzero().flatten()]
+
+
+def test_the_floor_set_is_capped_to_a_feasible_probability_budget() -> None:
+    """⚑⚑ Seven members at tau 0.15 request 1.05. The cap makes the set feasible.
+
+    Without a cap this row carries a residual deficit at EVERY step for the
+    whole run -- not merely a strong penalty, an EMPTY constraint set -- so the
+    gradient can never resolve and is permanently uninformative.
+    """
+    regret, legal, probs, played = _seven_member_row()
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=1.0 / 16)
+    out = sf_policy_floor_deficit(probs, regret, legal, played, params=params)
+
+    # What the UNCAPPED rule asked for: seven members, 7 * 0.15.
+    assert float(out.member_count_raw) == 7.0
+    assert float(out.requested_mass) == pytest.approx(1.05, abs=1e-6)
+    assert float(out.requested_mass) > 1.0, "setup: the fixture must be infeasible"
+    assert float(out.truncated) == 1.0
+
+    # What a distribution can actually carry. Six full-tau members plus the
+    # collar; the seventh member's UPGRADE to tau is what the cap withdrew.
+    assert float(out.applied_mass) <= 1.0
+    assert float(out.applied_mass) == pytest.approx(6 * 0.15 + 1.0 / 16, abs=1e-6)
+    assert float(out.member_count_applied) == 7.0
+    assert float(out.binds) == 1.0
+
+    # WHICH members, which is the design decision itself. Every member of the
+    # window is still floored -- move 6 only because the collar protects it --
+    # and nothing outside the window ever is.
+    assert _bound_members(probs, regret, legal, played, params) == [0, 1, 2, 3, 4, 5, 6]
+
+    # The proof that move 6 is in on the COLLAR and not on tau: switch the
+    # collar off and it is the one member that disappears, and the mass falls by
+    # exactly `tau_played`. So retention among the adaptive members runs in
+    # ascending SF regret -- the six best keep tau, the seventh is demoted.
+    no_collar = SfPolicyFloorParams.resolve(tau=0.15, tau_played=0.0)
+    bare = sf_policy_floor_deficit(probs, regret, legal, played, params=no_collar)
+    assert _bound_members(probs, regret, legal, played, no_collar) == [0, 1, 2, 3, 4, 5]
+    assert float(bare.member_count_applied) == 6.0
+    assert float(bare.applied_mass) == pytest.approx(6 * 0.15, abs=1e-6)
+    assert float(out.applied_mass) - float(bare.applied_mass) == pytest.approx(
+        1.0 / 16, abs=1e-6,
+    )
+    # top1 is never a candidate for truncation: it sorts first by construction.
+    assert 0 in _bound_members(probs, regret, legal, played, no_collar)
+
+
+def test_a_feasible_row_is_untouched_by_the_cap() -> None:
+    """The cap must be INERT below the budget, or it is a silent global rescale.
+
+    Same fixture, tau low enough that all seven members fit. Requested and
+    applied must agree exactly, and `truncated` must read 0.
+    """
+    regret, legal, probs, played = _seven_member_row()
+    params = SfPolicyFloorParams.resolve(tau=0.12, tau_played=1.0 / 16)
+    out = sf_policy_floor_deficit(probs, regret, legal, played, params=params)
+    assert float(out.requested_mass) == pytest.approx(6 * 0.12 + 0.12, abs=1e-6)
+    assert float(out.requested_mass) <= 1.0
+    assert float(out.truncated) == 0.0
+    assert float(out.member_count_applied) == float(out.member_count_raw) == 7.0
+    assert float(out.applied_mass) == pytest.approx(float(out.requested_mass), abs=1e-6)
+    assert _bound_members(probs, regret, legal, played, params) == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
+    """SF top-1 and the collar are never truncated, so they must fit by config.
+
+    Every other member is optional -- the cap drops it. These two are
+    structural, so a config where `max(tau, tau_top1) + tau_played > 1` is
+    unsatisfiable on any row where they land on different moves, and resolve
+    time is the only honest place to catch that.
+    """
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5)
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.1, tau_top1=0.7, tau_played=0.4)
+    # Exactly 1.0 is satisfiable (two moves, nothing left over) and is therefore
+    # allowed: the boundary belongs to the feasible side.
+    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5)

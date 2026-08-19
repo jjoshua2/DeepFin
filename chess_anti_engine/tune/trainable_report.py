@@ -890,6 +890,18 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # `total` multiplies by `w`, so it is what to read against the weight once the
   # term is on. Neither moves with `w` within a single step; see TrainMetrics.
     "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
+  # Feasibility cap. The floors are simultaneous lower bounds on one
+  # distribution, so `sf_policy_floor_requested_mass` above 1.0 is an EMPTY
+  # constraint set and a residual no net can clear; the loss caps the SET (see
+  # losses.sf_policy_floor_deficit) and `..._truncated_frac` says how often it
+  # bit. Read raw against applied -- the pair is what separates a term whose
+  # strength came from the configured tau from one whose strength came from a
+  # `|F| * tau` nobody set.
+    "sf_policy_floor_member_count_raw": 0.0,
+    "sf_policy_floor_requested_mass": 0.0,
+    "sf_policy_floor_truncated_frac": 0.0,
+    "sf_policy_floor_member_count_applied": 0.0,
+    "sf_policy_floor_applied_mass": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -1013,6 +1025,16 @@ def _train_metrics_dict(metrics) -> dict:
         # that is the column to read against the weight.
         "m_sf_policy_floor": float(metrics.m_sf_policy_floor),
         "sf_policy_floor_binds_frac": float(metrics.sf_policy_floor_binds_frac),
+        # Feasibility cap; see the defaults block above for how to read the pair.
+        "sf_policy_floor_member_count_raw": float(
+            metrics.sf_policy_floor_member_count_raw,
+        ),
+        "sf_policy_floor_requested_mass": float(metrics.sf_policy_floor_requested_mass),
+        "sf_policy_floor_truncated_frac": float(metrics.sf_policy_floor_truncated_frac),
+        "sf_policy_floor_member_count_applied": float(
+            metrics.sf_policy_floor_member_count_applied,
+        ),
+        "sf_policy_floor_applied_mass": float(metrics.sf_policy_floor_applied_mass),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration
