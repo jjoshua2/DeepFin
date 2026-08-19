@@ -61147,3 +61147,77 @@ not that any claim was *checked*. Two rules follow, and both are cheap:
   is a *different* edit from the one a future maintainer would make. Ask what the realistic
   regression looks like — here, a "tidy-up" reverting all four sites together — and mutate that.
   Related: [[a_new_test_is_vacuous_until_mutated]], [[a_property_test_can_be_vacuous_for_its_own_regression]].
+
+## 2026-08-19 — #448 MERGED (default OFF, NOT deployed); the pairing gate is passed on
+## fresh shards, and truncating the window would not have reached it
+
+**#448 merged to `main` as `3587ffab4`** (squash). Gate as pre-registered by the peer
+was four items and all four are closed: PR-body invariants corrected without moving
+HEAD; independent confirming review of `ec8a3cf67..7f11f5d37` returned APPROVE; CI green
+on that exact SHA (test SUCCESS, lint SUCCESS); merge.
+
+The confirming review's decisive result is the one worth keeping: the COHERENT dtype-pin
+mutant (all sites reverted together) dies on the float64 probe's own assertion
+`0.30000000000000004 == 0.30000000447034836` -- not on a crash, and not on the
+cross-dtype equality line, which passes under the mutant. It also confirmed by AST that
+across the whole range NOT ONE executable production line changed. The reviewer's one
+open P3 is recorded and DECLINED below.
+
+**NOT DEPLOYED.** `main` is not the live branch. `w_sf_policy_floor` defaults to 0.0 and
+the live yaml sets no `sf_policy_floor_*` key, so a future restart onto this code changes
+no training behaviour by itself. Two things to remember at that restart: the five new
+diagnostics ROTATE `progress.csv` (`_rotate_progress_csv_if_schema_changed`), and
+`tau_played` derives from `1/gumbel_topk`, so a live `gumbel_topk: 1` makes the shipped
+0.15/0.15 defaults sum to 1.15 -- which WARNS rather than raising precisely because the
+term is off. That gate is the P2-1 regression fix, not decoration.
+
+### Live pairing arm (`full_ply_pair_fraction: 1.0`, trial `dea5e`) -- coverage read
+
+The 0.42 gate is on FRESH POST-BOUNDARY SHARDS, not on the window mean, and the two are
+not the same number: `has_sf_p0_frac` in `progress.csv` is what TRAINING sees, i.e. a
+1.5M-position window still 65.5% full of pre-boundary data.
+
+| quantity | value |
+|---|---|
+| window mean `has_sf_p0_frac`, iter 536 | 0.372 (from 0.218 at the boundary, ~iter 492) |
+| pre-boundary share still resident | 0.655 (34.5% replaced) |
+| turnover `f` | 0.0095 /iter (~13.5k ingested into a saturated 1.5M window) |
+| **implied fresh-shard coverage `c`** | **0.51-0.65** (least squares over the whole post-boundary trajectory; range is across boundary choices 486-498) |
+| window mean reaches 0.42 unaided | ~26 iters, ~2.4 h at 323 s/iter |
+
+⇒ **the gate is passed on the population it was written about.** `c` clears 0.42 by a
+wide margin at every boundary choice.
+
+⚑ **A per-iteration estimator of `c` is worthless here and I nearly quoted it.** From
+`dm/dt = f(c - m)` it divides batch noise by `f = 0.0095`, and its interquartile range
+came out **0.68-1.16** -- straddling values IMPOSSIBLE for a fraction. That impossibility
+is the only reason the noise was caught. The cumulative form is properly conditioned
+because the same division does not appear. Prefer the integrated form whenever the
+per-step change is small against the measurement noise.
+
+**DECLINED: truncating the oldest ~20% of the replay window to reach the gate sooner.**
+Three reasons, in order of weight:
+1. **It does not work.** The oldest 20% is entirely pre-boundary at coverage 0.218, so
+   dropping it moves the window mean 0.360 -> **0.3954**. That is still BELOW 0.42. It
+   buys ~6 iterations (~35 min) of a ~2.4 h wait and then still waits.
+2. **The gate is already answerable without it** -- see `c` above. Deleting the data that
+   dilutes the mixture makes the window mean cross a threshold by construction rather
+   than by the shards carrying coverage, which is conditioning the readout on the
+   intervention.
+3. It is an irreversible delete of ~300k positions, and window size feeds the
+   views-targeting step budget (`train_views_per_position`), so it perturbs steps/iter
+   on an arm whose verdict is restricted to coverage and throughput.
+
+**DECLINED (reviewer P3): hardening the sweep's `checked > 200` bound to `>= 252` and
+asserting the message text in its `except ValueError`.** The bound is genuinely looser
+than its comment -- a validator threshold moved to 0.85 or even 0.5 still leaves 216/204
+checked and passes. But both of those mutants are killed by the full file (6 tests,
+including the one asserting the exactly-1.0 boundary config is ALLOWED), so the marginal
+coverage is zero, and taking it would move HEAD and void a confirming review and a CI run
+already green on that exact SHA. Recorded here rather than left in a comment.
+
+⚑ Direct verification of `c` off the shards themselves was **blocked by the sandbox
+classifier** (both inline and as a script file). The number above is therefore an
+INFERENCE from window mixing, not a read of `has_sf_p0` on disk. It is robust across
+boundary choices and the decision does not turn on it, but it has not been confirmed
+against the array. Close that if the arm's verdict is ever contested.
