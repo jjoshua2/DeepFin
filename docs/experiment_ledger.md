@@ -60286,3 +60286,29 @@ against an 18.6 cp soft-target ceiling at 500k/MPV40.
 trained model. `game_id` is absent so CIs are position-level. The repair is evaluated STATIC
 here; a live arm would recompute dynamically per sample, which the screen showed favours
 `rho=0` — so a `rho=0` result at this gate is a LOWER bound on its dynamic form.
+
+**AMENDMENT to the repair gate, written BEFORE the gate was run (2026-08-19).** User
+question: "can you use the better dataset to tune the weaker one, instead of ignoring it
+because it's stronger than we will have?" Correct, and it turns a discarded asset into two
+arms. THREE tiers exist on the SAME 4000 frozen positions — DEEP ruler (>=1M nodes, MPV>=10),
+STRONG teacher (500k / MPV40, already cached, 10000 rows), PROD teacher (75k / MPV6, 4000 rows
+built for this gate).
+
+| added arm | what it settles |
+|---|---|
+| **`strong_oracle`** | `rho=1` against the STRONG teacher. **NOT SHIPPABLE** — MPV40 alone is ~7x. It answers the question the weak-teacher result cannot: repair wins with a strong teacher and loses with the production one ⇒ **the TEACHER is the bottleneck** and a screen/correction is worth building; loses with BOTH ⇒ the repair idea is dead independent of label quality. Free — the labels were already cached. |
+| **`screened`** | `rho=1` with the PRODUCTION teacher, applied only where an **out-of-fold** screen predicts the weak teacher is reliable. The screen is FIT against the strong teacher (offline, once) and READS ONLY production-observable features (listed count, top-1 margin, q spread, teacher entropy, n_legal), so it is deployable. This is [[bad_tail_is_screenable_at_label_time]] (OOF AUC 0.737) applied to the repair decision. |
+
+⚑ **WHY THIS IS NOT CIRCULAR.** The screen is fit to the STRONG SHALLOW teacher and scored on
+the DEEP ruler — a third instrument neither the screen nor the repair was fit to. And no arm is
+the gradient of the scoring functional ([[an_arm_that_is_the_gradient_of_the_metric_always_wins]]).
+⚑ **THE HONEST LIMIT:** strong-shallow and deep are both SF, so they correlate; a screen fit to
+one partly predicts the other by construction. That is the POINT (the strong teacher is a proxy
+for depth) but it means `screened`'s margin is not evidence that ANY cheap feature set works —
+only that this one does, on audit-set positions, which are FEN-only and have no history or
+castling ([[audit_set_has_no_history_or_castling]]). External validity to production rows is
+untested and must not be assumed.
+
+**Decision rule is UNCHANGED and applies only to SHIPPABLE arms** (`rho=0`, `rho=1`,
+`transplant`, `screened`). `strong_oracle` and `blend` and `shuffled` are diagnostics and
+controls; a `strong_oracle` win is explicitly NOT a pass.
