@@ -60933,6 +60933,16 @@ and the actual rate at `sf_multipv: 40` is **UNMEASURED**. "The cap is load-bear
 was asserting the upper bound as the value; the supportable statement is "potentially
 load-bearing, and worth protecting because the upper end of that interval is not small".
 
+**⚑ SECOND CORRECTION TO THE SAME NUMBER (2026-08-19, review round 2): EVEN THAT INTERVAL IS AN
+APPROXIMATION.** The prefix argument holds only if the top-six cp scores are INVARIANT to MultiPV
+width. They are not: at a shared node budget MPV 40 searches each line shallower than MPV 6, so a
+borderline sixth move can cross `delta_cp` in EITHER direction and the MPV40 population is not a
+superset of a re-scored MPV6 one. ⇒ **quote 13.1% as the MPV6 right-censored CANDIDATE SHARE
+under a score-stability approximation**, never as a rigorous bound on an independently recomputed
+MPV40 population. Only a measurement on MPV40-labelled rows settles it. Raised by the independent
+reviewer, who verified the prefix argument against `_build_sf_p0_regret_vector` and then flagged
+its own premise -- the useful move, and one worth copying.
+
 **⚑ AND `0.900` IS NOT THIS DIAGNOSTIC'S MAXIMUM.** The shard scan measured the ADAPTIVE set
 only, so its max of `0.900 = 6 * tau` excludes the collar. The new `requested_mass` column
 carries the collar too, so the same row reports up to **0.9625**. Two different populations
