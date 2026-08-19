@@ -1052,7 +1052,13 @@ class TrainMetrics:
   #     the column level even when a large minority of ROWS are infeasible
   #     (measured: 0.552 on a batch whose `truncated_frac` was 0.333).
   #   * `..._member_count_applied` / `..._applied_mass` -- after the cap.
-  #     `applied_mass <= 1.0` EXACTLY, not to within a slack. ⚑ But
+  #     `applied_mass <= 1.0` EXACTLY, not to within a slack -- ⚑ CONDITIONAL
+  #     on `w_sf_policy_floor != 0.0`. At weight 0 an infeasible MANDATORY pair
+  #     is permitted with a warning so an inert term cannot kill a live trial,
+  #     and the cap cannot repair that (it only drops OPTIONAL members), so
+  #     these columns then correctly describe an impossible floor. On that
+  #     population the resolve-time WARNING, not `truncated_frac`, is the
+  #     signal. ⚑ And separately: 
   #     `member_count_applied == member_count_raw` does NOT mean "not
   #     truncated": a demoted move that still carries a mandatory floor stays in
   #     the count. Read the MASS pair, or `truncated_frac`.

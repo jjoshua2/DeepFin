@@ -770,9 +770,12 @@ class SfPolicyFloorParams:
                 raise ValueError(f"{name} must be finite and {band}, got {value!r}")
   # ⚑ THE MANDATORY ROLES MUST FIT IN A PROBABILITY BUDGET OF 1, AS REPRESENTED.
   # The rule is not raw `max(tau, tau_top1) + tau_played <= 1` on the configured
-  # Python doubles -- it is that sum AFTER conversion to `_FLOOR_THRESHOLD_DTYPE`,
+  # Python doubles -- each OPERAND is first rounded to `_FLOOR_THRESHOLD_DTYPE`,
   # because that is what the loss materializes and therefore what feasibility is
-  # a statement about. `0.6 + 0.4` is exactly 1.0 as doubles and 1.0000000298 as
+  # a statement about. ⚑ THE ADDITION THEN STAYS IN DOUBLE, and that is not a
+  # detail: it is what makes this bit-exact against the loss's own float64
+  # `mandatory.sum()` over float32 entries. Adding in float32 instead would round
+  # 0.6+0.4, 0.9+0.1 and 1/3+2/3 all back to a clean 1.0 and REOPEN the hole. `0.6 + 0.4` is exactly 1.0 as doubles and 1.0000000298 as
   # float32; only the second is the question being asked. Every other
   # member of F is optional -- `sf_policy_floor_deficit` admits them in
   # ascending SF regret and stops before the budget is exceeded -- but SF's
@@ -824,6 +827,11 @@ class SfPolicyFloorParams:
   # Reviewer finding P2-1, PR #448.
             if float(self.w) != 0.0:
                 raise ValueError(msg)
+  # ⚑ `stacklevel=3` is right for `resolve()` and WRONG via `dataclasses.replace`,
+  # where it blames `dataclasses.py`. Left as is deliberately: the two entry paths
+  # have different depths so NO single value is correct for both, and the message
+  # already names every key an operator needs -- the attribution line would not
+  # change what they do. Decided, not deferred (reviewer P3-E, PR #448).
             warnings.warn(
                 f"{msg} The term is OFF (w_sf_policy_floor=0.0), so this is a "
                 "warning rather than a fatal error -- but the sf_policy_floor_* "
@@ -865,6 +873,22 @@ class SfPolicyFloorParams:
 
         ``gumbel_topk`` is the width the trial ACTUALLY runs with, so callers
         must pass their own rather than let it default.
+
+        ⚑⚑ AND IT CAN RAISE, WHICH THE REST OF THIS DOCSTRING USED NOT TO SAY.
+        ``__post_init__`` refuses a config whose two MANDATORY floors cannot
+        coexist -- ``max(tau, tau_top1) + tau_played > 1`` once each operand is
+        rounded to the dtype the loss materializes. That is the one behaviour here
+        that can take down a trial, and it was documented nowhere, while four
+        sentences above describe the OTHER, harmless warn-not-raise decision.
+
+        The raise is gated on ``w != 0.0``: an inert term warns instead, because a
+        term contributing nothing to ``total`` must not be able to kill a run. ⚑ It
+        is reachable with NO ``sf_policy_floor_*`` key set at all -- ``tau_played``
+        derives from ``1/gumbel_topk``, and ``gumbel_topk: 1`` makes it 1.0, so the
+        shipped defaults sum to 1.15. Re-validation on ACTIVATION happens at
+        ``Trainer._loss_kwargs``, which rebuilds this object with
+        ``dataclasses.replace`` on every read -- NOT at the live-push site, which
+        does a bare ``setattr`` and validates nothing.
         """
         resolved_tau = SF_POLICY_FLOOR_TAU_DEFAULT if tau is None else float(tau)
         guarantee = search_inclusion_guarantee_tau(gumbel_topk)
@@ -901,7 +925,11 @@ class SfPolicyFloorOutputs(NamedTuple):
       the cap had to cut down. ⚑ NOT an infeasibility test -- see below.
     * ``truncated`` -- 0/1, did the cap actually drop a member on this row.
     * ``member_count_applied`` / ``applied_mass`` -- the set and mass after the
-      cap. ``applied_mass <= 1`` EXACTLY, not to within a slack: the admission
+      cap. ``applied_mass <= 1`` EXACTLY, not to within a slack -- ⚑ CONDITIONAL
+      on ``w != 0.0``; at weight 0 an infeasible MANDATORY pair is permitted with
+      a warning and these columns then correctly describe an impossible floor,
+      where the resolve-time WARNING rather than ``truncated`` is the signal. The
+      admission
       budget is compared in float64 with no positive epsilon.
 
     ⚑ TWO THINGS THESE COLUMNS DO NOT MEAN.
@@ -1007,7 +1035,11 @@ def sf_policy_floor_deficit(
     the floor top-1 "already earns" is ``tau_top1``. Set ``tau_top1 >= tau`` if
     you want a strictly stronger floor on SF's best move.
 
-    ⚑⚑ F IS CAPPED SO THE CONSTRAINT SET IS NEVER EMPTY. The floors are a set of
+    ⚑⚑ F IS CAPPED SO THE CONSTRAINT SET IS NEVER EMPTY -- WHENEVER THE TERM IS IN
+    THE OBJECTIVE. (At ``w == 0.0`` an infeasible MANDATORY pair is admitted with
+    a warning instead of refused, so an inert term cannot kill a live trial; the
+    cap cannot repair that case and is not claimed to, because it only ever drops
+    OPTIONAL members. See ``SfPolicyFloorParams``.) The floors are a set of
     simultaneous lower bounds on a distribution; if their sum exceeds 1 NO
     distribution satisfies them, so ``relu(tau - p)`` leaves a residual on that
     row at every step forever and the gradient can never resolve. The uncapped
@@ -1018,7 +1050,8 @@ def sf_policy_floor_deficit(
     bar on rows that were already satisfiable. It shrinks the SET instead:
 
     1. the two MANDATORY roles are paid first -- SF's top-1 and the played-move
-       collar -- and ``SfPolicyFloorParams`` refuses at resolve time any config
+       collar, NEITHER of which is ever truncated -- and ``SfPolicyFloorParams``
+       refuses (only when ``w != 0.0``; otherwise warns) at resolve time any config
        where those two alone can exceed 1;
     2. the remaining adaptive members are admitted in ASCENDING SF REGRET, so
        the moves SF likes best are the ones that survive;
@@ -1148,7 +1181,9 @@ def sf_policy_floor_deficit(
   # The cap is NOT a rescaling of the floors: shrinking every tau would change
   # the calibrated bar on the rows that were already fine. Instead the SET is
   # made structurally feasible -- the two mandatory roles are paid first (the
-  # resolve-time validator guarantees they fit), then adaptive members are
+  # resolve-time validator guarantees they fit WHEN THE TERM IS ON; at w == 0.0 it
+  # only warns, and that is the one case this cap cannot repair), then adaptive
+  # members are
   # admitted in ASCENDING SF REGRET, best move first, until admitting another
   # would exceed the budget.
   # Non-members sort last (their regret key is 2.0, above every real regret),
@@ -1175,8 +1210,12 @@ def sf_policy_floor_deficit(
   # EARLIER VERSION OF THIS COMMENT JUSTIFIED IT WITH A FALSE CLAIM: that cumsum
   # sits on autocast's fp32 cast list and would narrow float64 back to float32.
   # It does not. Autocast's cast policies apply only to ELIGIBLE dtypes, and
-  # `float64` is not one -- the fp32 policy PROMOTES lower precision and never
-  # demotes. MEASURED (torch 2.11.0+cu128, bf16 autocast, cpu AND cuda):
+  # `float64` is not one, so float64 is never touched. (⚑ The broader claim "the
+  # fp32 policy promotes and never demotes" is only half right and is NOT what
+  # this rests on: the cast lists differ BY DEVICE -- measured, `bf16.cumsum`
+  # stays bf16 on cpu and becomes float32 on cuda. Float64 ineligibility is the
+  # load-bearing fact, and it holds on both.) MEASURED (torch 2.11.0+cu128, bf16
+  # autocast, cpu AND cuda):
   # `float64.cumsum -> float64`, `float64.sum -> float64`, while
   # `float32.cumsum -> float32`. So the guard is currently INERT and is kept
   # only so this block's exactness does not silently depend on that staying

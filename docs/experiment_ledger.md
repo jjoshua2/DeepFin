@@ -1144,7 +1144,7 @@ move is source-hash-only in the measurement sense — `test_loss` and every per-
 are numerically unchanged at the shipped default, which is what the bit-identity test
 proves — so records stay comparable across the handover.
 
-### CONSEQUENCE 2 — ~0.9 ms/step, paid at `w = 0`
+### CONSEQUENCE 2 — ~0.9 ms/step, paid at `w = 0` ⚑ SUPERSEDED, see below: ~0.126%/iter
 
 RTX 5090, batch 512 x 1858, 200 iters after 50 warmup, `cuda.synchronize`, GPU verified
 idle. `sf_policy_floor` **fwd+bwd 0.93 ms**; forward-only median 0.68 ms over 5 repeats.
@@ -1155,6 +1155,30 @@ live at `w = 0`, so the term's reach is measurable BEFORE anyone proposes raisin
 idle card** — launch-overhead-bound, below the instrument's resolution. Do not read
 those ratios; the 0.93 ms figure is well above the noise floor and is the one that
 carries the conclusion.
+
+**⚑⚑ SUPERSEDED (2026-08-19) — THIS PRE-REGISTERED FIGURE IS NOW ~4x LOW, AND SO IS THE
+"single operator-visible effect" LINE BELOW.** Five review rounds added a FEASIBILITY CAP to
+this term (`ec0fa43dc..HEAD`), which runs a full-width `argsort(stable=True)` plus a gather,
+a float64 cumsum and a scatter **on every microbatch, also at `w = 0`**, because the
+diagnostics are deliberately live before the weight is raised. Re-measured, paired and
+same-process, B=512 W=1858 on a CONTENDED card (the pre-registered 0.93 ms was on an idle
+one, so these are not directly comparable in absolute terms — the ratio is what carries):
+
+| | ms/call |
+|---|---|
+| whole cap, vs a pre-cap baseline | **~+2.2** |
+| the float64 exactness + the autocast guard alone | **+0.075** (4.311 vs 4.236) |
+
+At `accum_steps: 1` and ~88 optimizer steps/iter that is **~0.38 s on a ~300 s iteration =
+0.126%**, not 0.03%. The holdout eval does not move it (`holdout_capacity: 2000` at batch 512
+is ~4 extra calls). **The trade is unchanged and still deliberate** — 0.126% to make the
+term's reach and its hidden `|F| * tau` strength readable before anyone raises the weight —
+but the pre-committed number was wrong by 4x and a pre-registration that is wrong by 4x is
+not a pre-registration.
+
+⚑ A `topk(k=9)` fast path (0.118 ms vs 1.02 ms for the sort) was **considered and DECLINED**:
+its correctness rests on `admitted <= 2 + floor(1/tau)`, and a wrong K silently DROPS floor
+members — this repo's signature defect class — to buy back a tenth of a percent.
 
 ### ⚑⚑ N1 — THE DEFECT THIS PR EXPOSED, AND IT IS PRE-EXISTING
 
@@ -1267,11 +1291,30 @@ Two additional rows to read once, on the first post-restart iteration:
 ### CONFOUNDS
 
 * Merges alongside nothing else data-affecting; the term is off and the ruler move is
-  source/descriptor-only. The handover is the single operator-visible effect.
+  source/descriptor-only. ⚑ **"The handover is the single operator-visible effect" is
+  SUPERSEDED**: the feasibility cap added FIVE report keys
+  (`sf_policy_floor_member_count_raw`, `..._requested_mass`, `..._truncated_frac`,
+  `..._member_count_applied`, `..._applied_mass`), which ROTATE `progress.csv` via
+  `_rotate_progress_csv_if_schema_changed`. That is a second operator-visible effect, and
+  any script pinning column POSITIONS across the deploy boundary needs re-checking.
 * The four `sf_policy_floor_*` SHAPE keys are startup-only (`_STARTUP_ONLY_TRIAL_KEYS`)
   and are NOT in the ruler. A shape edit needs a restart, and a restart re-reads the
   code, so it cannot silently redefine `total` mid-window the way a weight flip could —
   but it also will not announce itself. Noted, not fixed.
+* **⚑⚑ AND "startup-only" NO LONGER MEANS THE SHAPE IS INERT MID-RUN.** The cap added a
+  resolve-time FEASIBILITY check on that frozen shape, and the shape's feasibility is
+  coupled to **two LIVE keys**:
+  - `gumbel_topk` — re-derives `tau_played` as `1/gumbel_topk` through `sync_search_width`.
+    `gumbel_topk: 1` makes it 1.0, and the shipped 0.15/0.15 defaults then sum to 1.15.
+  - `w_sf_policy_floor` — flips the check from WARN to RAISE.
+
+  ⇒ **a live edit to either can turn a shape that booted cleanly into a fatal mid-run
+  error**, which is a CLAUDE.md category (b) death: the yaml reload succeeds,
+  `TrialConfig.from_dict` raises inside `train_trial`'s iteration loop, and that loop has a
+  `finally:` and zero `except:`. The `w != 0.0` gate is what keeps the INERT case
+  non-fatal. Re-validation on activation is at `Trainer._loss_kwargs`
+  (`dataclasses.replace` re-runs `__post_init__` on every read), **not** at the live-push
+  site, which does a bare `setattr` and validates nothing.
 * `sf_policy_floor_binds_frac` is the SELECTION column, not the take-effect column: it is
   invariant to `w` within a step, as this branch's own
   `test_a_positive_weight_moves_total_and_the_columns_report_it` asserts. The column

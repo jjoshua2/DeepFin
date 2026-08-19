@@ -1518,11 +1518,20 @@ def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
     for tau in taus:
         for k in range(1, 13):
             for collar in (0.0, 1.0 / 16):
-                # `resolve(tau=tau, ...)` leaves tau_top1 == tau, so this is the
-                # same worst case the validator applies.
-                if max(tau, tau) + collar > 1.0:
-                    continue  # rejected at resolve time; its own test covers it
-                params = SfPolicyFloorParams.resolve(tau=tau, tau_played=collar)
+  # ⚑ `w=1.0`, NOT the default 0.0. The mandatory-feasibility check RAISES
+  # only when the term is in the objective; at `w=0.0` it warns and lets the
+  # config through (see
+  # `test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar`), so a
+  # sweep at the default weight would be quietly asserting the invariant over
+  # a population that includes configs the invariant is not claimed for.
+  # An earlier version of this loop skipped those configs with the comment
+  # "rejected at resolve time" -- which was FALSE at its own `w=0.0`.
+                try:
+                    params = SfPolicyFloorParams.resolve(
+                        tau=tau, tau_played=collar, w=1.0,
+                    )
+                except ValueError:
+                    continue  # genuinely refused at this weight; its own test covers it
                 regret, legal, probs = _k_member_row(k)
                 played = None
                 if collar > 0.0:
@@ -1542,6 +1551,46 @@ def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
                     or float(out.applied_mass) != float(out.requested_mass)
                 ), f"tau={tau} k={k} collar={collar}: truncated flag disagrees"
     assert checked > 200, checked
+
+
+def test_at_weight_zero_an_infeasible_mandatory_pair_IS_reported_not_capped() -> None:
+    """⚑⚑ THE COMPLEMENT OF THE SWEEP, AND THE HONEST LIMIT OF `applied_mass <= 1`.
+
+    Closing P2-1 made that invariant CONDITIONAL: at `w == 0.0` an infeasible
+    mandatory pair is permitted with a warning rather than refused, precisely so
+    an inert term cannot kill a live trial. The cap cannot repair it either --
+    it only ever drops OPTIONAL members, and both mandatory roles are applied
+    unconditionally.
+
+    So on this population `applied_mass` EXCEEDS 1, and that is correct
+    behaviour, not a defect: the columns are doing their job by describing the
+    impossible floor the operator configured. Asserted here so the guarantee is
+    stated where it holds and the exception is stated where it does not --
+    rather than being an unqualified claim with a silent counterexample.
+
+    ⚑ AND `truncated_frac` IS NOT THE SIGNAL HERE. The cap never truncates a
+    mandatory role, so a mandatory-only infeasibility can leave it at 0. The
+    RESOLVE-TIME WARNING is the authoritative signal while the term is off.
+    """
+    with pytest.warns(RuntimeWarning, match="gumbel_topk"):
+        params = SfPolicyFloorParams.resolve(gumbel_topk=1)
+    assert params.w == 0.0
+    assert params.tau_played == 1.0
+
+    # top1 and played on different moves, our argmax already SF's best, so the
+    # adaptive set is empty and every bit of the infeasibility is mandatory.
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    probs = torch.softmax(torch.tensor([[8.0, 0.0, 0.0, 0.0]]), dim=-1)
+    played = torch.zeros(1, 4)
+    played[0, 1] = 1.0
+    out = sf_policy_floor_deficit(
+        probs, regret, torch.ones(1, 4, dtype=torch.bool), played, params=params,
+    )
+    assert float(out.applied_mass) > 1.0, (
+        "setup: this fixture must be the documented exception to applied_mass <= 1"
+    )
+    assert float(out.applied_mass) == pytest.approx(0.15 + 1.0, abs=1e-6)
+    assert float(out.member_count_applied) == 2.0
 
 
 def test_members_are_retained_by_SF_REGRET_and_not_by_index_or_probability() -> None:
@@ -1697,6 +1746,77 @@ def test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar() -> None:
     # three it names by value are all at their defaults here.
     with pytest.raises(ValueError, match="gumbel_topk"):
         SfPolicyFloorParams.resolve(gumbel_topk=1, w=0.8)
+
+
+def test_the_thresholds_are_materialized_in_the_PINNED_dtype_not_the_probs_dtype() -> None:
+    """⚑⚑ THE CONSUMER HALF OF THE PIN. Reverting it survived every other test.
+
+    The validator rounds to `_FLOOR_THRESHOLD_DTYPE` and the loss must
+    materialize in the SAME representation -- that is the whole point of pinning
+    it: "by construction rather than by coincidence". But every other fixture in
+    this file uses float32 `probs`, where the pinned dtype and `probs.dtype`
+    COINCIDE. So `torch.zeros(..., dtype=_FLOOR_THRESHOLD_DTYPE)` reverting to
+    the shorter, simpler-reading `torch.zeros_like(probs)` was invisible
+    (reviewer mutant, PR #448) -- and it reads as a tidy-up, which is how it
+    would come back.
+
+    The failing scenario: `tau_top1 = 0.51, tau_played = 0.49` sums to EXACTLY
+    1.0 in float32, so the validator accepts it at any weight. In bfloat16 both
+    round UP to 0.51172 and 0.49219, and the materialized mandatory mass is
+    1.00391 > 1 -- the invariant broken by the dtype of a tensor that has
+    nothing to do with the thresholds.
+    """
+    from chess_anti_engine.train.losses import _FLOOR_THRESHOLD_DTYPE, _as_floor_threshold
+
+    assert _as_floor_threshold(0.51) + _as_floor_threshold(0.49) == 1.0
+    params = SfPolicyFloorParams.resolve(tau_top1=0.51, tau_played=0.49, w=1.0)
+
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    played = torch.zeros(1, 4)
+    played[0, 1] = 1.0
+    logits = torch.tensor([[8.0, 0.0, 0.0, 0.0]])
+    legal = torch.ones(1, 4, dtype=torch.bool)
+
+    masses = {}
+    for dtype in (torch.float32, torch.bfloat16, torch.float16):
+        out = sf_policy_floor_deficit(
+            torch.softmax(logits.to(dtype), dim=-1), regret, legal,
+            played.to(dtype), params=params,
+        )
+        masses[dtype] = float(out.applied_mass)
+        assert float(out.applied_mass) <= 1.0, (
+            f"probs dtype {dtype} leaked into the thresholds: "
+            f"applied_mass={float(out.applied_mass)!r}"
+        )
+  # ⚑ IDENTICAL, not merely each <= 1: the floors must not be a function of the
+  # probs dtype at all. Equality is what a `zeros_like(probs)` revert breaks;
+  # `<= 1` alone would still pass for fp32 and fp16.
+    assert len(set(masses.values())) == 1, masses
+    assert masses[torch.float32] == pytest.approx(1.0, abs=1e-6)
+
+    # ...and the direct statement, so the reason survives even if a future
+    # fixture stops covering the dtypes.
+    assert _FLOOR_THRESHOLD_DTYPE is torch.float32
+
+
+def test_every_returned_field_is_in_the_callers_dtype() -> None:
+    """The tuple's stated contract, which the `deficit` narrowing exists for.
+
+    Reverting `deficit.sum(-1).to(probs.dtype)` to a bare `deficit.sum(-1)` is a
+    no-op in production (`po_probs` is fp32) and survived every other test
+    (reviewer mutant, PR #448) -- but it makes the tuple's dtypes disagree with
+    each other the moment `probs` is not float32, which is exactly when someone
+    would be debugging something else.
+    """
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    legal = torch.ones(1, 4, dtype=torch.bool)
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=1.0 / 16)
+    for dtype in (torch.float32, torch.bfloat16, torch.float16):
+        probs = torch.softmax(torch.tensor([[0.0, 0.0, 0.0, 8.0]], dtype=dtype), dim=-1)
+        out = sf_policy_floor_deficit(probs, regret, legal, None, params=params)
+        assert [f.dtype for f in out] == [dtype] * len(out), (
+            f"{dtype}: {[(n, f.dtype) for n, f in zip(out._fields, out)]}"
+        )
 
 
 def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
