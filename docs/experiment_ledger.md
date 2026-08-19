@@ -61729,3 +61729,77 @@ Any re-run pins threads first.
 
 **VALID FOR THIS NET AT ITERATION 542 ONLY.** Re-run at any actual launch checkpoint.
 Nothing flipped; training untouched throughout.
+
+### 2026-08-19 PREREG — the MARGIN rule, specified before `S_R` is bought. ⚑ It moves the
+### purchase trigger from `f = 0.60` to `f ~ 0.655`, because `f = 0.60` CANNOT PASS
+
+Peer asked for the statistical margin rule to be fixed before the deep-SF measurement
+rather than after. Doing that surfaces a resolution problem
+([[compute_instrument_resolution_before_the_threshold]]).
+
+**THE INSTRUMENT'S PRECISION IS KNOWN.** Anchor DEV half: `n = 1977`, `+5.445
+[+4.45, +6.51]` ⇒ halfwidth 1.030, **relative halfwidth 18.9%**. Relative precision is
+scale-free, so multiplying by `f` to reach all-rows leaves it unchanged.
+
+**THE RULE.** Point-estimate-vs-3.0 is too weak given how badly target-space gains have
+transferred (main policy target +0.00004; A+F null; F-only null at 2.5x its window). So:
+
+    PASS:  the 95% CI on G = f * 0.25 * S_R has LOWER BOUND > 3.0
+    (alpha stays pinned at 0.25 by the already-frozen entropy budget)
+
+**⚑ WHAT THAT COSTS, AND WHY `f = 0.60` IS NOT A USABLE TRIGGER.** At `f = 0.60` the point
+estimate is EXACTLY 3.00, so the CI straddles 3.0 by construction at ANY sample size. A
+measurement bought at `f = 0.60` cannot pass whatever it returns -- spending deep-SF
+compute on a test that cannot fire.
+
+| deep-labelled `n` | rel. halfwidth | `G` needed | **`f` needed** | vs 0.63 asymptote |
+|---|---|---|---|---|
+| 1,977 (anchor DEV) | 18.9% | 3.70 | 0.740 | above |
+| 4,000 (full audit set) | 13.3% | 3.46 | 0.692 | above |
+| **10,000** | 8.4% | 3.28 | **0.655** | above |
+| 20,000 | 5.9% | 3.19 | 0.638 | above |
+| 40,000 | 4.2% | 3.13 | 0.626 | REACHABLE |
+
+**FROZEN: `n = 10,000` deep-labelled eligible positions, trigger `f >= 0.655`** sustained
+over >=20 consecutive iterations (not a spike). 40,000 would reach `f = 0.626` but is 10x
+the existing audit set at >=1M nodes / MPV>=10 and is not proportionate to one arm.
+
+⇒ **REVISED TREE** (supersedes the `f = 0.60` trigger):
+- `f < 0.60` — do nothing, keep collecting. No probes.
+- `0.60 <= f < 0.655` — re-estimate the asymptote only. Do NOT buy labels: the test
+  cannot pass in this band.
+- `f >= 0.655` sustained — buy `S_R` on the CURRENT eligible population, then apply the
+  rule above. `>3.0` lower bound ⇒ GPU arm. Else ⇒ **close the arm.**
+
+**⚑ HONEST ODDS: THE TRIGGER IS AT OR ABOVE THE TOP OF THE ASYMPTOTE RANGE.** Fresh-shard
+coverage was estimated at 0.51-0.66 (three estimators, entry above). The trigger is 0.655.
+⇒ **the most likely outcome is that coverage never reaches it and the arm closes without
+deep-SF compute ever being bought.** That is a legitimate, cheap ending and it is stated
+now so it cannot later be read as a disappointment that justifies loosening the rule.
+
+**⚑ THE CATCH-22, AND A CHEAP PARTIAL WAY OUT.** All of the above pins `S_R = 20`, the
+AUDIT population's slope. If today's eligible population has a HIGHER slope the required
+`f` falls -- but the only way to know is the measurement we are gating. A cheap directional
+read exists and is NOT yet run:
+
+> compute `S_R` on the audit set from its cached **MultiPV-6 PROD teacher** tier, and on
+> today's shards from their own `sf_p0_regret` (also MPV6). Both carry the SAME 2.1-2.9x
+> fabricated-tail inflation ([[multipv6_regret_tail_is_fabricated]]), so their RATIO
+> estimates how today's population compares to the audit's with much of the shared bias
+> cancelling.
+
+⚑ It is SUGGESTIVE, NOT DECISIVE: the inflation depends on move count and score spread,
+which differ between populations, so the bias is not guaranteed population-independent
+([[a8_polar_steps_aborted_cross_run_ratio]], [[same_name_different_population]]). Usable
+to decide whether the 0.655 trigger should move, never as a substitute for `S_R` itself.
+
+**TAIL: recorded as a RISK, explicitly NOT a veto.** p90 +0.481 / p99 +0.844 nats at
+`alpha = 0.25`. No tail threshold was preregistered and none is invented now. If the GPU
+arm ever runs, inspect this class first.
+
+**RETAINED OPS FACT:** plain PyTorch CPU inference is not free beside training --
+`torch.set_num_threads` must be pinned explicitly; `CAE_TEST_THREADS` is a pytest variable
+and caps nothing in a script.
+
+**ACTION: NONE. Let coverage climb.** The experiment is down to one moving variable and it
+improves on its own.
