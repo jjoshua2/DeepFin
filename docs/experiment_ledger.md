@@ -62097,3 +62097,103 @@ repeating: **write clauses that TILE THE SPACE.**
 
 The invariant all three protect: **`f * E[S_R | E] = E[1_E * S_R]`, and every term must
 refer to the SAME probability measure.**
+
+## ⚑ PREREG (2026-08-19) — TARGETED RE-LABEL, top-15% operating point. NOT LAUNCHED, AND
+## ⚑⚑ NOT LAUNCHABLE TODAY: the production path DOES NOT EXIST
+
+**HYPOTHESIS.** Spending the full-width SF teacher only on the ~15% of rows the stored-
+feature screen flags repairs 48.6% of the bad tail's dQ deficit at 1.265x loop cost
+(vs 2.764x blanket), and the bad tail is something the net demonstrably absorbs at 91.5%
+([[the_policy_target_is_sharp_and_wrong]]). If target quality transfers at all, this is
+where it should.
+
+**⚑⚑ STATUS CHECK BEFORE ANY PLAN: THE MECHANISM IS NOT BUILT.** `configs/pbt2_small.yaml`
+carries `sf_multipv: 6` as a **single global scalar**; `grep` finds NO per-row, adaptive,
+escalating or selector-driven MultiPV anywhere in `chess_anti_engine/`. The tailscreen work
+is OFFLINE RIGS ONLY (`scratchpad/tailscreen/*.py`, reading banked artifacts). ⇒ **"go and
+launch it" is not a yaml flip.** It requires, in this order:
+1. implement per-row selector + adaptive MultiPV on the LABELLING path;
+2. new config keys, in a PR **MERGED TO `main` BEFORE the live yaml gains them** — the
+   category (a) trap makes a restart onto code lacking a live key **FATAL AT LAUNCH**, not
+   a soft revert;
+3. an independent review — **REVIEWER != AUTHOR**;
+4. a salvage snapshot as the revert point;
+5. a **RESTART**, which is itself a large intervention (PID state, era boundary,
+   progress.csv schema rotation).
+Anyone reading "1.265x for 48.6%" as shovel-ready is reading the ECONOMICS, not the
+PLUMBING. Stated here because both the proposal and its endorsement assumed otherwise.
+
+**OPERATING POINT: top-15%. FROZEN, NOT RETUNED.** Selecting the percentile from the same
+evidence that motivated the launch is [[an_arm_that_is_the_gradient_of_the_metric_always_wins]].
+
+**1. PRIMARY READOUT — the EXISTING instrument, pasted literally, unchanged:**
+
+    PYTHONPATH=. python3 scripts/audit_targets.py \
+      --checkpoint <arm-ckpt> --audit-set data/audit_set_v1.jsonl \
+      --compare <banked-baseline>/trainer.pt \
+      --paired --report-top1 --report-cp-regret
+
+Same command shape as the prior arm verdicts, so this arm is COMPARABLE to the A+F and
+F-only nulls. **The question is: does the trained policy improve against the banked pre-arm
+baseline.** Selector AUC, teacher utilisation, repaired-deficit fraction and "the labels
+look better" are MECHANISM DIAGNOSTICS and CANNOT declare victory.
+
+**⚑ PRE-LAUNCH RESOLUTION CHECK, mandatory, BEFORE spending 75 iterations**
+([[compute_instrument_resolution_before_the_threshold]]): compute the paired CI halfwidth
+this command delivers on 4000 audit rows. **If the halfwidth is not comfortably inside the
+effect we could plausibly see, the NULL region swallows every outcome and the arm is
+unreadable before it starts.** Do not launch on an instrument that cannot resolve.
+
+**2. MAXIMUM WINDOW: 75 iterations. NON-EXTENDABLE.**
+
+> At iteration 75, stop and classify using the preregistered readout. Successful selector
+> operation, increased full-width labelling, repaired targets, or continued loss engagement
+> are **NOT** grounds for extending beyond 75.
+
+F-only ran to 2.5x its stated window on exactly that reasoning and delivered zero.
+
+**3. VERDICT PARTITION — TILES THE SPACE. No fourth region.**
+
+| verdict | condition |
+|---|---|
+| **PASS** | `dQ > 0` with the 95% paired CI excluding 0 |
+| **HARM** | `dQ < 0` with the 95% paired CI excluding 0 |
+| **NULL** | the CI includes 0 |
+
+Exactly one applies to every possible result. This is the 08-16 rule-hole fix: that prereg's
+two clauses both evaluated FALSE and the result landed between them. ⚑ **NO >=3 cp
+target-side threshold here** — that bar belongs to the SF-soft strong screen. This arm
+TRAINS, so the policy-quality endpoint decides directly. **NULL at 75 means STOP, not
+extend.**
+
+**4. SALVAGE + INTERVENTION BOUNDARY.** Before enabling: bank checkpoint, optimizer state,
+iteration, window/shard state, selector config and teacher settings
+(`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out
+data/salvage/<label>`). Then IDENTIFY THE FIRST SHARDS actually produced under the new
+policy — a yaml revert is not a rollback, the window holds ~a day of old-policy data, and
+without the boundary the readout is mixed-era.
+
+**MECHANISM DIAGNOSTICS (recorded, never decisive):** realized selection rate (expect
+~0.15), realized loop-cost multiplier (expect ~1.265x), full-width teacher calls and
+backlog, repaired-deficit fraction, share of training rows from targeted re-labelling, plus
+the standing policy/value/regret columns.
+
+**MECHANISM-FAILURE KILL (distinct from the quality verdict), fires at ANY time:** selection
+rate far from 0.15, SF backlog growing without bound, or full-width labels not appearing in
+shards. That is "the implementation is not doing what was preregistered" and it voids the
+run rather than producing a verdict.
+
+**⚑⚑ CONFOUND — THIS IS A SECOND DATA-AFFECTING CHANGE INSIDE AN OPEN READOUT WINDOW.** The
+`full_ply_pair_fraction: 1.0` arm is STILL ACCUMULATING toward its `f >= 0.53` trigger.
+Protocol is one data-affecting change per readout window, so this must be recorded in BOTH
+entries' Confounds line. And the interaction is not merely bookkeeping: **targeted
+re-labelling spends the SAME SF resource pairing needs.** A 1.265x SF cost that reduces
+paired-label production would SLOW coverage growth and directly damage the SF-soft option
+this arm is supposed to run alongside. ⇒ `has_sf_p0_frac` and games/h are MONITORED
+THROUGHOUT; a sustained fall in the coverage TRAJECTORY is a mechanism-failure kill, not an
+acceptable cost.
+
+**PRE-COMMITTED CONSEQUENCES.** PASS ⇒ keep, and re-run the SF-soft funnel against the new
+baseline. HARM ⇒ revert to the salvage point. NULL ⇒ stop at 75, revert, and record that a
+third target-side intervention did not transfer — which would itself be a substantive
+result about this loop rather than about this arm.
