@@ -61305,3 +61305,54 @@ it is precisely the assumption that gets made later.
 **NOT LAUNCHED.** Per protocol #1 a training-affecting flip needs its own entry with one
 deciding yardstick as an exact command and a pre-committed threshold. The cheap SF-soft
 check on the current eligible population comes first.
+
+### ⚑⚑ 2026-08-19 — `w_sf_own = 0.16` IS BELOW THIS ARM'S OWN PRE-COMMITTED BAR. The
+### right number at today's coverage is ~0.25, and the pairing arm is what made that cheap
+
+The proposal to flip `w_sf_own: 0 -> ~0.16` (alpha = 0.30) was made without reference to
+the bar this arm already carries. Both numbers in the proposal are correct; neither was
+compared to the threshold.
+
+**THE BAR** (#60272, pre-committed, target-side): PASS needs `>= 3.0 cp` mean improvement
+with the 95% paired CI excluding 0. Its stated rationale is not arbitrary -- target gains
+do not transfer 1:1 (`the_main_policy_target_buys_nothing` measured the main policy
+direction at **+0.00004** on the ruler with 0.35 of L1 left to travel), and the F-only
+null just cost **190 iterations** proving a mechanism can engage perfectly and deliver
+zero.
+
+**THE MODEL IS THE LEDGER'S OWN**, all-rows cp `~= f * alpha * 20`. It reproduces the
+recorded table at `f = 0.217` to the digit (alpha 0.25 -> +1.09, 0.50 -> +2.17, 0.75 ->
++3.26) and reproduces its recorded conclusion "clearing the bar needs `alpha >= ~0.69`
+(`w_sf_own >= ~0.49`)" exactly. So this is not a competing projection.
+
+| coverage `f` | proposal's alpha=0.30 -> | needed to clear 3.0 cp |
+|---|---|---|
+| 0.217 (when the bar was set) | 1.30 cp (w=0.093) | alpha >= 0.691, **w >= 0.486** |
+| **0.362 (batch, last 10 iters)** | **2.17 cp (w=0.155)** | alpha >= 0.414, **w >= 0.256** |
+| 0.372 | 2.23 cp (w=0.159) | alpha >= 0.403, w >= 0.251 |
+| 0.50 | 3.00 cp (w=0.214) | alpha >= 0.300, w >= 0.214 |
+| 0.63 (fresh-shard asymptote) | 3.78 cp (w=0.270) | alpha >= 0.238, w >= 0.197 |
+
+⇒ **the proposed `w = 0.16` projects 2.17 cp and is UNDER the bar**, as is the proposal's
+own `f = 0.50` figure of 2.42 cp. The proposal's stability argument -- that a fixed 0.16
+holds roughly constant in aggregate as `f` rises -- is arithmetically right and is the
+problem: it holds it constant BELOW the bar.
+
+**WHAT THE PAIRING ARM ACTUALLY BOUGHT, and it is the better headline.** The alpha needed
+to clear the bar fell **0.69 -> 0.41** (`w` 0.49 -> 0.26), and at the fresh-shard
+asymptote it is **0.24** (`w` 0.20). The ledger's earlier verdict called alpha 0.69
+"aggressive and carries the flattening risk in full"; 0.41 is a different proposition.
+Coverage was named there as the alternative to spending a policy arm -- and coverage is
+what we then raised.
+
+**FLATTENING RISK IS NOT ELIMINATED, ONLY REDUCED.** We are already SHARPER than the
+teacher we would be blending toward (ours 0.678 vs SF 1.057; SF is FLATTER on 64% of
+rows), so alpha = 0.41 is a real trade, not a free lunch.
+
+**CONFOUND, unchanged:** the +5.00 cp eligible-only anchor was measured on the FEN-only
+audit set with no history or castling planes. It scores the TARGET, not the model.
+
+**VERDICT: DO NOT FLIP AT 0.16.** The bar's rule requires a MEASURED paired CI, not a
+projection, so the next step is the cheap SF-soft check on the current eligible
+population -- run at a candidate weight that could plausibly clear (~0.25), and scored
+against 3.0 cp. Nothing is flipped and the live run is untouched.
