@@ -61803,3 +61803,82 @@ and caps nothing in a script.
 
 **ACTION: NONE. Let coverage climb.** The experiment is down to one moving variable and it
 improves on its own.
+
+### ⚑⚑ 2026-08-19 RETRACTION + RESTRUCTURE — the `f >= 0.655` trigger is WITHDRAWN, and
+### the cheap MPV6 ratio diagnostic is DEAD ON ARRIVAL (86.7% fabricated)
+
+**1. RETRACTED: "at `f = 0.60` the measurement cannot pass whatever it returns."** That
+sentence assumed the answer to the question the measurement asks. `f_needed` was derived
+by PINNING `S_R = 20`, but `S_R` is the unknown; the CI sits around the MEASURED `G`, not
+around 3.0. If today's slope is 23, `f = 0.60` gives `G = 3.45`, lower bound ~3.16 -- it
+PASSES. The table is a sample-size PLANNING aid and I promoted it to an eligibility gate.
+
+Second defect in the same number: the `18.9%/sqrt(n)` extrapolation assumes the OLD
+population's variance structure, and we have MEASURED that the population moved
+(`H(t0)` 0.574 -> 0.713). Freezing a trigger to three decimals off that CV gives the
+instrument authority it does not have -- [[same_name_different_population]] applied to my
+own arithmetic. **`f >= 0.655` is withdrawn as a gate; it survives only as planning.**
+
+**2. ⚑⚑ THE CHEAP MPV6 RATIO DIAGNOSTIC IS DEAD. MEASURED, NOT ARGUED.** I proposed it and
+the peer endorsed it; it does not work, and the reason is in
+`_build_sf_p0_regret_vector`'s own docstring: legal moves SF surfaced no PV for **all get
+the SAME value** -- "the midpoint between the worst scored regret and the max (1.0)".
+Those entries are detectable as the repeated row maximum. On 5456 of today's eligible rows:
+
+| | |
+|---|---|
+| mean legal moves | 26.56 |
+| **fabricated entries (tied at row max)** | **21.12 per row = 79.5% of legal** |
+| rows with NO fabricated tail | **8.6%** |
+| `S_R` proxy, TOTAL | +117.6 (cp-scaled) |
+| `S_R` proxy, scored moves only | +15.6 |
+| **`S_R` proxy, FABRICATED part** | **+102.0 = 86.7% of the total** |
+
+⇒ **a ratio on this proxy would compare the FABRICATION RULE across two populations, not
+the SF teacher.** And the shared bias cannot cancel: the default is POSITION-DEPENDENT
+(it keys off the worst scored regret), so it moves with exactly the score-spread
+properties that differ between the populations. Do not run it.
+[[multipv6_regret_tail_is_fabricated]] said the tail was worth 2.1-2.9x too much; on the
+`S_R` functional specifically it is worth **6.5x**.
+
+**WEAK, NON-COMPARABLE HINT (explicitly not evidence):** the SCORED-only part is **+15.6
+cp** against the audit's DEEP `S_R = 20.0`. Different instrument depth and different move
+coverage, so the level means little -- but nothing here suggests today's slope is
+DRAMATICALLY higher, which is the hypothesis that would have rescued a low-`f` launch.
+
+**3. ⇒ THE STAGED PILOT IS NOW THE ONLY PATH, which raises its value.** Adopted:
+- **Stage 1: 2,000-3,000 deep-SF positions** sampled from the CURRENT paired eligible
+  population, once `f` reaches ~0.50-0.55. Purpose: estimate today's `S_R` (is it ~15,
+  ~20, or ~25-30?). **Go/no-go ONLY.**
+- **Stage 2: an INDEPENDENT sample** for the reported CI. The final interval is computed
+  on Stage 2 alone, never on the accumulated pool -- otherwise this becomes
+  [[rolling_arena_optional_stopping_faked_112_elo]] with a Stockfish bill attached.
+- `f = 0.55` needs `S_R = 21.8`, only ~9% above historical. That is NOT a remote
+  hypothesis on a population we have already shown to have moved.
+
+**4. ⇒ SEPARATE THE EVIDENCE QUESTION FROM THE DECISION QUESTION.** Josh's stated position
+(2026-08-19): no better options, the alternatives are known or strongly suspected to
+plateau, and he does not want ideas dismissed merely for being unlikely. That is a
+statement about OPPORTUNITY COST, and it is his call. So:
+
+    STRONG SCREEN (preregistered, UNCHANGED): 95% CI lower bound on G > 3.0.
+      Report PASS or FAIL plainly. The bar is NOT loosened, NOT re-cut, NOT re-derived.
+
+    EXPLORATORY DECISION (separate, explicitly labelled): given a FAIL, is an
+      alpha = 0.25 arm still better than continuing a known plateau?
+
+**The screen stops being a veto machine and goes back to being a measurement.** "FAILS the
+strong screen" replaces "close the arm" everywhere above. The justification is real and
+not a rationalisation: F taught us that "the mechanism engages" does not imply model
+quality -- and the CONVERSE is equally unproven. A target-space screen landing 10-20%
+short of a bar chosen for a DIFFERENT question does not establish that the live arm has
+zero value. The live arm answers something the target-space ruler structurally cannot:
+whether this gradient direction improves the LEARNED POLICY.
+
+⚑ The exploratory route must still be launched as a PREREG with its own kill rule and a
+salvage revert point. "Exploratory" licenses a lower evidence bar for STARTING, never a
+weaker readout.
+
+**ACTION: still none. Coverage keeps climbing.** Next decision point is `f ~ 0.50-0.55`
+for the Stage 1 pilot -- earlier than the withdrawn 0.655, and now the only informative
+purchase available.
