@@ -60398,3 +60398,72 @@ the decomposition above shows it is. My judgement: this does NOT authorise train
 **WHAT WOULD MAKE IT A REAL CANDIDATE:** a variant that adopts SF's order only where doing so
 does not concentrate mass on a single move — i.e. capture the +18 without the −5 by SHAPE
 rather than by row selection (row selection is now measured as worth at most +1.95). Untested.
+
+---
+
+### PREREG — TOP-1 PROMOTION SHAPE SCREEN. Split + criterion frozen BEFORE the measurement. (2026-08-19)
+
+Peer roadmap after the repair gate: LP/graph repair STOP, row filtering STOP, SF-soft blending
+DEPRIORITISE. One final offline question: **can a minimal / risk-limited top-1 promotion keep
+most of the +17.08 cp teacher-correct upside without the −6.39 cp teacher-wrong penalty?**
+
+**⚑⚑ SEALED SPLIT, FROZEN NOW.** The previous gate is a post-hoc mechanism search — I have
+already seen the deep labels, the agree/disagree split, the AUC and several thresholds. A
+shape optimised on all 3734 rows and evaluated on the same 3734 would be a **fourth** way for
+the audit set to flatter us. Split rule, deterministic and content-based (NOT an RNG whose
+order depends on the read):
+
+    dev  = sha1(key) hex parity 0..7  -> first nibble < 8
+    seal = otherwise
+
+Design and select on **dev only**. The sealed half is touched **ONCE**, for the go/no-go.
+
+**⚑ THE LINEARITY SHORTCUT (peer, correct and load-bearing).** `E[regret] = sum_m t_m r_m` is
+LINEAR in the target, so transferring mass `d` from `m` to `s` changes regret by exactly
+`d * (r_s - r_m)`. Therefore any variant whose transfer is a FIXED MULTIPLE of another's is a
+global rescaling and **cannot change the +17/−6 ratio** — it only scales both.
+
+⇒ **THIS KILLS `tie promotion` A PRIORI, and it was on the proposed list.** With
+`m = argmax t` we always have `t_m >= t_s`, so
+`d_tie = (t_m - t_s)/2 ≡ d_swap/2` **identically on every row**. Tie promotion IS a global
+alpha = 0.5. **PREDICTION, to be checked as a rig test:** `tie` must score exactly
+`0.5 * top1_swap` on both subsets, to floating point. If it does not, the rig is wrong.
+
+**ARMS** (donor `m = argmax t_search`, receiver `s = SF top-1`; all other entries untouched):
+
+| arm | transfer `d` | can it change the ratio? |
+|---|---|---|
+| `unchanged` | 0 | control |
+| `top1_swap` | `t_m - t_s` (the gate's `top1_only`) | reference |
+| `tie` | `(t_m - t_s)/2` | **NO — provably a global 0.5** |
+| `veto` | `max(0, g/2)+eps`, `g = (p_s-p_m)-(t_s-t_m)` | **YES** — depends on `p` |
+| `capped(c)` | `min(d_swap, c * t_m)` | **YES** — threshold is row-dependent |
+| `regcap` | `d_swap * sigmoid(f(x))`, `f` fit OOF on dev to predict the SIGNED benefit | **YES** |
+| `shuffled_top1` | promote a RANDOM listed move | negative control, must lose |
+| `blend_L1` | matched-L1 move toward the teacher distribution | control |
+
+**⚑ Sign check on `veto`, derived not copied.** Violated when `g_{s,m} >= 0`. Transferring `d`
+gives `t'_s - t'_m = (t_s - t_m) + 2d`, and we need `(p_s - p_m) - (t'_s - t'_m) < 0`, i.e.
+`2d > g_{s,m}`. So `d_veto = max(0, g/2) + eps`. Matches the proposed formula.
+
+**PRE-COMMITTED GO/NO-GO (stricter than the aggregate +3 cp rule the last gate used, because
+that rule let a definitional-margin arm through):** on the SEALED half, one selected arm must
+show BOTH
+
+1. **teacher-WRONG subset mean >= -1.0 cp** (from −6.39), and
+2. **aggregate gain > +3.0 cp** with the 95% CI excluding 0.
+
+Failing either ⇒ **close SF target manipulation entirely for this run.** Passing both ⇒ it is
+finally a mechanism distinct from "monetise shallow/deep SF agreement" and earns a small live arm.
+
+**⚑ The prediction target changes too** (peer): the binary row-selection oracle was worth only
++1.95 cp, so classification is the wrong objective. `regcap` predicts the SIGNED BENEFIT of the
+transfer from production-observable features and converts it to a CONTINUOUS cap — which can
+express "move a lot" vs "move almost none" rather than keep/drop. Expectations stay modest: the
+binary oracle result says row-level features are probably not hiding another 10 cp.
+
+**AND A STANDING CONCLUSION FROM THE PREVIOUS GATE:** do NOT return to SF distribution
+blending. Preserving the search target's confidence profile while changing its ORDER (+9.03) is
+fundamentally different from adopting SF's distribution (−5.48). The blend control's
+temperature was arbitrary so the 14.5 cp size is not sacred, but the SIGN is enough that
+tuning SF-soft temperature is not the next experiment.
