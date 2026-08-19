@@ -595,13 +595,6 @@ def policy_legal_bool(batch: dict[str, torch.Tensor], *, width: int) -> torch.Te
 # sits ABOVE the deterministic prior-rank threshold rather than at it.
 SF_POLICY_FLOOR_TAU_DEFAULT = 0.15
 
-# Slack on the floor-feasibility budget in `sf_policy_floor_deficit`. It exists
-# only so a member whose mass fits EXACTLY (`|F| * tau == 1` on the nose) is not
-# rejected by float32 rounding in the cumulative sum. It is deliberately far
-# below any tau anyone would configure, so it can never admit a member that
-# genuinely does not fit.
-_FLOOR_BUDGET_EPS = 1e-6
-
 
 def search_inclusion_guarantee_tau(gumbel_topk: object) -> float:
     """The smallest tau that buys a top-k slot BY PRIOR RANK: ``1 / topk``.
@@ -841,7 +834,8 @@ class SfPolicyFloorOutputs(NamedTuple):
       distribution, so the residual deficit was a permanent gradient.
     * ``truncated`` -- 0/1, did the cap actually drop a member on this row.
     * ``member_count_applied`` / ``applied_mass`` -- the set and mass after the
-      cap. ``applied_mass <= 1`` by construction.
+      cap. ``applied_mass <= 1`` EXACTLY, not to within a slack: the admission
+      budget is compared in float64 with no positive epsilon.
 
     ⚑ READ ``requested_mass`` AGAINST ``applied_mass``, NOT ALONE. The whole
     point of the pair is to answer, after the fact, whether F's flattening was
@@ -960,11 +954,36 @@ def sf_policy_floor_deficit(
     ``member_count_raw`` / ``requested_mass`` report the uncapped set and
     ``truncated`` says whether the cap bit, so the cap cannot be silent.
 
-    MEASURED on 5,881 live rows (2026-08-19): ``|F|`` max 6, mean 2.487, max
-    requested mass 0.900, infeasible fraction 0.000000 -- but 13.1% of those
-    rows sat AT ``|F| = 6`` and are RIGHT-CENSORED by the live ``sf_multipv: 6``.
-    On a ``sf_multipv: 40`` config the same positions can surface more members,
-    so the cap is load-bearing there rather than defensive.
+    ⚑ ``truncated`` IS THE EXACT ANSWER TO "DID IT FIRE"; ``requested_mass`` IS
+    NOT, WITHIN ONE FLOAT32 ULP. The admission test is exact (float64 over the
+    float32 floors), but the mass columns are narrowed to the probs dtype so
+    they can join the float32 metric accumulators. Ten floors of ``0.15``... or,
+    concretely, ten of ``0.1``: the true sum is ``1.0000000149``, the cap
+    correctly drops a member, and the reported ``requested_mass`` rounds to
+    ``1.0``. So "``requested_mass > 1``" is SUFFICIENT to expect truncation and
+    not NECESSARY. Read ``truncated_frac`` for the event and the mass pair for
+    the magnitude; a disagreement between them at the fourth decimal is this
+    rounding and nothing else.
+
+    MEASURED on 5,881 live rows (2026-08-19): ``|F|`` max 6, mean 2.487,
+    infeasible fraction 0.000000. ⚑ That scan measured the ADAPTIVE set only --
+    its max mass of 0.900 is ``6 * tau``; the ``requested_mass`` column here
+    also carries the collar, so the same row reports up to ``0.9625``. Do not
+    quote 0.900 as this diagnostic's maximum.
+
+    ⚑⚑ AND THE MPV40 CLAIM IS A BOUND IN THE OTHER DIRECTION FROM THE ONE THIS
+    COMMENT FIRST STATED. 13.1% of those rows sat AT ``|F| = 6`` and are
+    RIGHT-CENSORED by the live ``sf_multipv: 6``, so they are the CANDIDATE
+    population in which a seventh qualifying move could exist -- not a set that
+    is known to acquire one. MultiPV is enumerated best-to-worst, so a row whose
+    sixth move already fails the ``<= delta_cp`` / ``< our_r`` test gains
+    nothing from moves 7..40. From this measurement alone
+
+        0% <= P_MPV40(|F| >= 7) <= 13.1%
+
+    and the actual rate at ``sf_multipv: 40`` is UNMEASURED. The cap is worth
+    having because the upper end of that interval is not small; calling it
+    "load-bearing there" would be asserting the upper bound as the value.
 
     ``legal=None`` means the batch had no legal mask and every action is in the
     softmax's support (see ``policy_legal_bool``).
@@ -1036,16 +1055,43 @@ def sf_policy_floor_deficit(
   # resolve-time validator guarantees they fit), then adaptive members are
   # admitted in ASCENDING SF REGRET, best move first, until admitting another
   # would exceed the budget.
-    increment = torch.where(adaptive, torch.clamp(tau_t - mandatory, min=0.0), tau_t.new_zeros(()))
   # Non-members sort last (their regret key is 2.0, above every real regret),
   # and carry a zero increment, so where they land cannot change the outcome.
     order = torch.argsort(
         torch.where(adaptive, regret, torch.full_like(regret, 2.0)), dim=-1, stable=True,
     )
-    cumulative = increment.gather(-1, order).cumsum(-1)
-  # The mandatory mass is already committed; `_FLOOR_BUDGET_EPS` keeps a member
-  # that fits EXACTLY from being rejected by float error.
-    budget = (1.0 - mandatory.sum(-1, keepdim=True)) + _FLOOR_BUDGET_EPS
+  # ⚑⚑ THE BUDGET ARITHMETIC IS EXACT, AND A POSITIVE SLACK IS NOT AN OPTION.
+  # An earlier version added `+1e-6` here so a set that fits EXACTLY would not
+  # be rejected by float32 rounding. That defeated the invariant the cap exists
+  # to enforce: it admitted genuinely infeasible sets whose mass lands in
+  # `(1, 1+1e-6]`. MEASURED -- `tau = tau_top1 = 0.3333334`, collar off, three
+  # members: float32 mass 1.000000238 > 1, and every member was admitted, so
+  # the reported `applied_mass` exceeded 1 while the docstring promised it
+  # could not. Reviewer finding, PR #448.
+  #
+  # The fix is not a smaller epsilon -- any positive slack is the same bug with
+  # a smaller radius. The sums are done in float64, which represents each
+  # float32 floor EXACTLY, so the comparison is the real one and the rounding
+  # bias runs the safe way: a set that overflows by one ULP loses its last
+  # optional member instead of being kept. `autocast` is disabled around it
+  # because cumsum sits on autocast's fp32 cast list, which would silently
+  # narrow float64 back to float32 and reinstate the loophole under AMP.
+  # ⚑ THE SUBTRACTION IS PART OF THE ARITHMETIC, NOT A PRE-STEP. Widening an
+  # increment that was already rounded in float32 does not recover it: at
+  # `tau = 0.5, tau_top1 = 0.1` the float32 `tau - mandatory` rounds UP by
+  # 7.5e-9, and the exactly-feasible pair `0.5 + 0.5 = 1.0` then reads as
+  # infeasible and loses a member. Every term below is the float32 floor value
+  # WIDENED, with the subtraction done in float64, so `mandatory + increment`
+  # reproduces the applied floor bit for bit and the comparison is the real one.
+    with torch.amp.autocast(device_type=probs.device.type, enabled=False):
+        mandatory64 = mandatory.to(torch.float64)
+        increment = torch.where(
+            adaptive,
+            (tau_t.to(torch.float64) - mandatory64).clamp(min=0.0),
+            mandatory64.new_zeros(()),
+        )
+        cumulative = increment.gather(-1, order).cumsum(-1)
+        budget = 1.0 - mandatory64.sum(-1, keepdim=True)
   # ⚑ `~(cum > budget)`, NOT `cum <= budget`. The two agree on every real number
   # and DISAGREE on NaN: `NaN <= budget` is False, so a NaN tau would admit
   # nothing and the cap would silently swallow a poisoned parameter into a
@@ -1059,14 +1105,23 @@ def sf_policy_floor_deficit(
 
     floors = torch.maximum(mandatory, torch.where(admitted, tau_t, mandatory.new_zeros(())))
     deficit = torch.relu(floors - probs)
+  # The two MASS columns are summed in float64 for the same reason the budget
+  # is: a float32 reduction over a different order than the cumulative sum can
+  # disagree with it by an ULP, and `applied_mass <= 1` would then be a
+  # contract the diagnostic itself could break. Narrowed back to the probs
+  # dtype on the way out -- rounding to nearest cannot carry a value at or
+  # below 1.0 above it, because 1.0 is exactly representable.
+    with torch.amp.autocast(device_type=probs.device.type, enabled=False):
+        requested_mass = raw_floors.to(torch.float64).sum(-1).to(probs.dtype)
+        applied_mass = floors.to(torch.float64).sum(-1).to(probs.dtype)
     return SfPolicyFloorOutputs(
         deficit=deficit.sum(-1),
         binds=(deficit > 0).any(-1).to(probs.dtype),
         member_count_raw=(raw_floors > 0).sum(-1).to(probs.dtype),
-        requested_mass=raw_floors.sum(-1),
+        requested_mass=requested_mass,
         truncated=(admitted != adaptive).any(-1).to(probs.dtype),
         member_count_applied=(floors > 0).sum(-1).to(probs.dtype),
-        applied_mass=floors.sum(-1),
+        applied_mass=applied_mass,
     )
 
 

@@ -1423,6 +1423,102 @@ def test_a_feasible_row_is_untouched_by_the_cap() -> None:
     assert _bound_members(probs, regret, legal, played, params) == [0, 1, 2, 3, 4, 5, 6]
 
 
+def _k_member_row(k: int, width: int = 16) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """`k` legal moves inside the 20cp window, our argmax elsewhere and wrong."""
+    regret = torch.full((1, width), 0.55)
+    for i in range(k):
+        regret[0, i] = R(2.0 * i)
+    regret[0, k] = R(300)
+    probs = torch.softmax(
+        torch.tensor([[0.0] * k + [8.0] + [0.0] * (width - k - 1)]), dim=-1,
+    )
+    return regret, torch.ones(1, width, dtype=torch.bool), probs
+
+
+def test_the_budget_has_no_positive_slack_at_the_float32_boundary() -> None:
+    """⚑⚑ A SLACK OF 1e-6 IS THE SAME BUG WITH A SMALLER RADIUS.
+
+    The first version of the cap compared against `budget + 1e-6`, so that a
+    set fitting EXACTLY would not be rejected by float32 rounding. That admitted
+    genuinely infeasible sets whose mass lands in `(1, 1 + 1e-6]` -- the cap
+    reported `truncated = 0` and an `applied_mass` above 1 while its own
+    docstring promised that could not happen. Reviewer finding, PR #448; the
+    seven-member fixture at `tau = 0.15` sits far too far from 1 to see it.
+
+    `0.3333334` is the counterexample: three of them is 1.000000238 in float32,
+    infeasible by 2.4e-7 -- inside the old slack, outside the real constraint.
+
+    The two directions are asserted together because a fix that simply removed
+    the epsilon would be over-conservative in the other one, dropping members
+    from sets that genuinely fit. `tau = 0.25` with four members is exactly 1.0
+    and must survive intact.
+    """
+    over = SfPolicyFloorParams.resolve(tau=0.3333334, tau_played=0.0)
+    regret, legal, probs = _k_member_row(3)
+    out = sf_policy_floor_deficit(probs, regret, legal, None, params=over)
+    assert float(out.member_count_raw) == 3.0
+    assert float(out.requested_mass) > 1.0, (
+        "setup: float32 must make three of these infeasible, "
+        f"got {float(out.requested_mass)!r}"
+    )
+    assert float(out.requested_mass) < 1.0 + 1e-6, (
+        "setup: the overflow must land INSIDE the old 1e-6 slack, or this "
+        f"fixture does not test the loophole: {float(out.requested_mass)!r}"
+    )
+    assert float(out.truncated) == 1.0
+    assert float(out.member_count_applied) == 2.0
+    assert float(out.applied_mass) <= 1.0, (
+        "the admission budget carries a positive slack: an infeasible set was "
+        f"admitted whole, applied_mass={float(out.applied_mass)!r}"
+    )
+
+    # ...and the opposite direction: an EXACT fit is not collateral damage.
+    exact = SfPolicyFloorParams.resolve(tau=0.25, tau_played=0.0)
+    regret, legal, probs = _k_member_row(4)
+    fit = sf_policy_floor_deficit(probs, regret, legal, None, params=exact)
+    assert float(fit.requested_mass) == 1.0
+    assert float(fit.truncated) == 0.0
+    assert float(fit.member_count_applied) == 4.0
+    assert float(fit.applied_mass) == 1.0
+
+
+def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
+    """`applied_mass <= 1` for every reachable config, not just the fixtures.
+
+    The boundary test above pins ONE counterexample, which is exactly the shape
+    of guard that a future edit can walk around. This sweeps tau values,
+    member counts and the collar together and asserts the invariant itself.
+    """
+    rng = torch.Generator().manual_seed(20260819)
+    taus = [0.05, 0.1, 0.15, 0.2, 0.25, 1.0 / 3.0, 0.3333334, 0.4, 0.5, 0.9, 1.0]
+    checked = 0
+    for tau in taus:
+        for k in range(1, 13):
+            for collar in (0.0, 1.0 / 16):
+                if max(tau, tau) + collar > 1.0:
+                    continue  # rejected at resolve time; its own test covers it
+                params = SfPolicyFloorParams.resolve(tau=tau, tau_played=collar)
+                regret, legal, probs = _k_member_row(k)
+                played = None
+                if collar > 0.0:
+                    played = torch.zeros(1, 16)
+                    played[0, int(torch.randint(0, 16, (1,), generator=rng))] = 1.0
+                out = sf_policy_floor_deficit(
+                    probs, regret, legal, played, params=params,
+                )
+                checked += 1
+                assert float(out.applied_mass) <= 1.0, (
+                    f"tau={tau} k={k} collar={collar} -> "
+                    f"applied_mass={float(out.applied_mass)!r}"
+                )
+                # ...and truncation is reported exactly when it happened.
+                assert (float(out.truncated) == 1.0) == (
+                    float(out.member_count_applied) != float(out.member_count_raw)
+                    or float(out.applied_mass) != float(out.requested_mass)
+                ), f"tau={tau} k={k} collar={collar}: truncated flag disagrees"
+    assert checked > 200, checked
+
+
 def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
     """SF top-1 and the collar are never truncated, so they must fit by config.
 
