@@ -60467,3 +60467,66 @@ blending. Preserving the search target's confidence profile while changing its O
 fundamentally different from adopting SF's distribution (−5.48). The blend control's
 temperature was arbitrary so the 14.5 cp size is not sacred, but the SIGN is enough that
 tuning SF-soft temperature is not the next experiment.
+
+---
+
+### RESULT — TOP-1 PROMOTION SHAPE SCREEN: **NO ARM QUALIFIES ON DEV. SF TARGET MANIPULATION IS CLOSED.** (2026-08-19)
+
+Prereg `6e576e8a5`. DEV half only: **1850 of 3734** rows (sha1-parity split). Teacher-correct
+rate 0.598. ⚑ **47.7% of rows are NO-OPS** — the search target's peak already IS the SF top-1,
+so the intervention can only touch 52.3% of rows at all.
+
+**⚑ RIG TEST PASSED, AND IT WAS PREDICTED BEFORE RUNNING.** The prereg predicted
+`d_tie ≡ d_swap/2` identically, so `tie` must score EXACTLY half of `top1_swap`.
+Measured `max|tie − 0.5*swap| = 0.000e+00`. The rig is sound and the linearity argument is
+confirmed on real data, not just on paper.
+
+| arm | aggregate | 95% CI | teacher-correct | teacher-WRONG | **ratio** |
+|---|---|---|---|---|---|
+| `top1_swap` | +8.15 | [+5.19, +11.33] | +18.19 | −6.80 | 1.20 |
+| `tie` | +4.07 | [+2.59, +5.66] | +9.09 | −3.40 | 1.20 |
+| `veto` | +2.54 | [+1.19, +4.31] | +5.21 | **−1.44** | **1.76** |
+| `capped(0.02)` | +0.19 | [+0.12, +0.25] | +0.41 | −0.15 | 1.27 |
+| `capped(0.05)` | +0.47 | [+0.31, +0.63] | +1.03 | −0.37 | 1.27 |
+| `capped(0.10)` | +0.93 | [+0.61, +1.27] | +2.05 | −0.73 | 1.27 |
+| `capped(0.25)` | +2.34 | [+1.55, +3.17] | +5.09 | −1.76 | 1.33 |
+| `capped(0.50)` | +4.55 | [+3.00, +6.17] | +9.91 | −3.45 | 1.32 |
+| `regcap` | +8.00 | [+5.03, +11.17] | +17.87 | −6.71 | 1.19 |
+| `shuffled_top1` (control) | −3.29 | [−6.11, −0.42] | −0.56 | −7.36 | — |
+
+**⇒ THE CONSTRAINT SET IS EMPTY, AND IT IS EMPTY GEOMETRICALLY, NOT MARGINALLY.** The
+criterion (`wrong >= −1.0` AND `aggregate > +3.0`) requires an upside/downside **ratio >= 3.0**.
+**Every variant sits at 1.19–1.76.** The frontier is essentially ratio-invariant: reducing the
+wrong-teacher tail costs proportionally in the upside, which is exactly what linearity predicts
+for anything close to a rescaling. Scaling ANY arm to `wrong = −1.0` yields an aggregate of
+**1.19–1.76 cp**, less than half the required 3.0. There is no point on this frontier that
+satisfies both constraints — and `veto`, the best-shaped arm and the only one meaningfully off
+the rescaling line (1.76), still fails on aggregate at +2.54.
+
+**`regcap` — the signed-benefit regression — CARRIES ALMOST NO SIGNAL.** OOF
+`corr(pred, actual) = 0.155`, and both sigmoid sharpnesses leave the result statistically
+identical to `top1_swap` (+8.00 vs +8.15). ⇒ **changing the prediction target from
+classification to signed magnitude did NOT help**, and this now agrees with the binary result
+(oracle headroom +1.95 cp) from a second, independent direction. Production-observable row
+features do not know which rows the shallow teacher gets right.
+
+**⚑ THE SEALED HALF WAS NOT TOUCHED, DELIBERATELY.** Selection failed on dev, so no candidate
+was carried forward and there was nothing to confirm. The seal remains **unspent** and is still
+available for a genuinely new question. Spending it to confirm a dev-half failure would burn
+the only clean half of this audit set for no information.
+
+**VERDICT — the pre-committed consequence fires: CLOSE SF TARGET MANIPULATION FOR THIS RUN.**
+The full roadmap is now resolved:
+
+| line | status |
+|---|---|
+| LP / graph / isotonic repair | **CLOSED** — loses with both teachers, not teacher-limited |
+| row filtering / screening | **CLOSED** — oracle headroom +1.95 cp, realizable screens capture none |
+| SF-soft distribution blending | **DEPRIORITISED** — order-adoption (+9.03) vs blending (−5.48) |
+| top-1 promotion shapes | **CLOSED** — frontier ratio 1.2–1.8, criterion needs >= 3.0 |
+
+**WHAT SURVIVES AS KNOWLEDGE (not as a candidate):** adopting SF's ORDER while keeping the
+search's VALUE profile is a genuinely different operation from adopting SF's DISTRIBUTION, and
+the whole of its measured value is a bet on shallow/deep SF agreement at a fixed ~1.2:1 odds.
+That bet is not improvable by shape or by row selection with the features available. Any future
+attempt must beat the 1.2–1.8 ratio, and that number is the falsifier to quote at it.
