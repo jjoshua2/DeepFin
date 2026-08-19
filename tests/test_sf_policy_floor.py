@@ -1760,11 +1760,26 @@ def test_the_thresholds_are_materialized_in_the_PINNED_dtype_not_the_probs_dtype
     (reviewer mutant, PR #448) -- and it reads as a tidy-up, which is how it
     would come back.
 
-    The failing scenario: `tau_top1 = 0.51, tau_played = 0.49` sums to EXACTLY
-    1.0 in float32, so the validator accepts it at any weight. In bfloat16 both
-    round UP to 0.51172 and 0.49219, and the materialized mandatory mass is
-    1.00391 > 1 -- the invariant broken by the dtype of a tensor that has
-    nothing to do with the thresholds.
+    ⚑⚑ AND THE OBVIOUS TEST FOR IT CANNOT SEE IT. A first version compared
+    `applied_mass` across float32/bfloat16/float16 and asserted the three agree.
+    They do -- even under the mutant -- because every field of
+    `SfPolicyFloorOutputs` is deliberately narrowed BACK to the caller's dtype,
+    and that narrowing rounds the overflow away: bf16 materializes
+    `0.51 -> 0.51171875` and `0.49 -> 0.490234375`, an internal mandatory mass of
+    **1.001953125 > 1**, which then narrows to bf16 as exactly **1.0**. The
+    invariant is violated internally and the returned column is clean. (The
+    mutant appeared to die only because a PARTIAL revert crashed on a
+    `scatter_reduce` dtype mismatch; the coherent revert -- allocation and both
+    scatter sources together -- passed all 78 tests.)
+
+    So the probe below uses **float64** `probs`, where the narrowing is a no-op
+    and the internal value is observable exactly, against an expected value
+    derived from `_as_floor_threshold` rather than written as a literal:
+
+    * pinned (correct): fp32(0.2) + fp32(0.1) = 0.30000000447034836
+    * `zeros_like(probs)` (mutant): float64 0.2 + 0.1 = 0.30000000000000004
+
+    Two distinct doubles, so the assertion is exact and needs no tolerance.
     """
     from chess_anti_engine.train.losses import _FLOOR_THRESHOLD_DTYPE, _as_floor_threshold
 
@@ -1788,14 +1803,36 @@ def test_the_thresholds_are_materialized_in_the_PINNED_dtype_not_the_probs_dtype
             f"probs dtype {dtype} leaked into the thresholds: "
             f"applied_mass={float(out.applied_mass)!r}"
         )
-  # ⚑ IDENTICAL, not merely each <= 1: the floors must not be a function of the
-  # probs dtype at all. Equality is what a `zeros_like(probs)` revert breaks;
-  # `<= 1` alone would still pass for fp32 and fp16.
+  # A reasonable invariant in its own right -- the floors must not be a function
+  # of the probs dtype -- but ⚑ IT IS NOT WHAT PINS THE ALLOCATION. All three
+  # read 1.0 under the mutant too, for the narrowing reason in the docstring.
+  # Kept because it is cheap and true, NOT relied on.
     assert len(set(masses.values())) == 1, masses
     assert masses[torch.float32] == pytest.approx(1.0, abs=1e-6)
 
-    # ...and the direct statement, so the reason survives even if a future
-    # fixture stops covering the dtypes.
+  # ⚑⚑ THE ASSERTION THAT ACTUALLY KILLS THE REVERT. float64 `probs` makes the
+  # return narrowing a no-op, so `applied_mass` reports the materialized
+  # thresholds exactly. The expected value is DERIVED through
+  # `_as_floor_threshold`, never written as a literal -- a literal would agree
+  # with a helper that had itself been changed.
+    m_pinned = _as_floor_threshold(0.2) + _as_floor_threshold(0.1)
+    assert m_pinned != 0.2 + 0.1, (
+        "setup: the fp32-rounded pair must differ from the float64 pair, or "
+        "this probe cannot distinguish the two implementations"
+    )
+    params64 = SfPolicyFloorParams.resolve(tau_top1=0.2, tau_played=0.1, w=1.0)
+    out64 = sf_policy_floor_deficit(
+        torch.softmax(logits.to(torch.float64), dim=-1), regret, legal,
+        played.to(torch.float64), params=params64,
+    )
+  # Our argmax IS SF's top-1, so the strict `regret < our_r` clause leaves the
+  # adaptive set EMPTY and the whole mass is the two mandatory roles.
+    assert float(out64.member_count_applied) == 2.0
+    assert float(out64.applied_mass) == m_pinned, (
+        "the mandatory thresholds were materialized in probs.dtype, not in "
+        f"_FLOOR_THRESHOLD_DTYPE: got {float(out64.applied_mass)!r}, pinned "
+        f"would be {m_pinned!r}, probs-dtype would be {0.2 + 0.1!r}"
+    )
     assert _FLOOR_THRESHOLD_DTYPE is torch.float32
 
 
