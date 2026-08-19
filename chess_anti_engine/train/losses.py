@@ -768,7 +768,12 @@ class SfPolicyFloorParams:
             if bad:
                 band = "[0, 1]" if hi is not None else ">= 0"
                 raise ValueError(f"{name} must be finite and {band}, got {value!r}")
-  # ⚑ THE MANDATORY ROLES MUST FIT IN A PROBABILITY BUDGET OF 1. Every other
+  # ⚑ THE MANDATORY ROLES MUST FIT IN A PROBABILITY BUDGET OF 1, AS REPRESENTED.
+  # The rule is not raw `max(tau, tau_top1) + tau_played <= 1` on the configured
+  # Python doubles -- it is that sum AFTER conversion to `_FLOOR_THRESHOLD_DTYPE`,
+  # because that is what the loss materializes and therefore what feasibility is
+  # a statement about. `0.6 + 0.4` is exactly 1.0 as doubles and 1.0000000298 as
+  # float32; only the second is the question being asked. Every other
   # member of F is optional -- `sf_policy_floor_deficit` admits them in
   # ascending SF regret and stops before the budget is exceeded -- but SF's
   # top-1 and the played-move collar are structural and are ALWAYS applied, so
@@ -1058,6 +1063,15 @@ def sf_policy_floor_deficit(
     having because the upper end of that interval is not small; calling it
     "load-bearing there" would be asserting the upper bound as the value.
 
+    ⚑ AND THAT INTERVAL IS AN APPROXIMATION, NOT A CROSS-WIDTH THEOREM. The
+    prefix argument holds only if the top-six cp scores are INVARIANT to MultiPV
+    width. They are not exactly: at a shared node budget MultiPV 40 searches each
+    line shallower than MultiPV 6, so a borderline sixth move can cross
+    ``delta_cp`` in EITHER direction and the MPV40 population is not a superset
+    of a re-scored MPV6 one. So read 13.1% as the MPV6 right-censored CANDIDATE
+    SHARE under a score-stability approximation. Only a measurement on
+    MPV40-labelled rows settles it.
+
     ``legal=None`` means the batch had no legal mask and every action is in the
     softmax's support (see ``policy_legal_bool``).
     """
@@ -1125,10 +1139,11 @@ def sf_policy_floor_deficit(
   # constraint set with no distribution in it, so `relu(floor - p)` keeps a
   # residual on EVERY row of that shape forever and the gradient never resolves.
   # Measured on 5,881 live production rows the infeasible fraction was
-  # 0.000000 with |F| <= 6, but 13.1% of those rows sat AT |F| = 6 and were
-  # right-censored by the live `sf_multipv: 6`; at `sf_multipv: 40` the same
-  # rows can carry more members, so the cap is load-bearing on the target
-  # config rather than defensive.
+  # 0.000000 with |F| <= 6, and 13.1% of those rows sat AT |F| = 6, right-
+  # censored by the live `sf_multipv: 6`. ⚑ DO NOT READ THAT AS "load-bearing at
+  # sf_multipv: 40" -- an earlier version of this comment did, and it
+  # contradicted the docstring above. See the docstring for the interval and its
+  # caveat; the MPV40 rate is UNMEASURED.
   #
   # The cap is NOT a rescaling of the floors: shrinking every tau would change
   # the calibrated bar on the rows that were already fine. Instead the SET is
