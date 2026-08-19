@@ -61882,3 +61882,80 @@ weaker readout.
 **ACTION: still none. Coverage keeps climbing.** Next decision point is `f ~ 0.50-0.55`
 for the Stage 1 pilot -- earlier than the withdrawn 0.655, and now the only informative
 purchase available.
+
+### 2026-08-19 FROZEN PROTOCOL — staged deep-SF for `S_R`, and the three separate verdicts
+
+All of this is fixed BEFORE any deep-SF compute is bought. Supersedes the withdrawn
+`f >= 0.655` gate.
+
+**0. THE MPV6 PROXY IS RETIRED, NOT CORRECTED.** 86.7% of its `S_R` signal is the
+imputation rule. The scored-only `+15.6` is a NOTE and explicitly **not a lower bound** on
+the deep `S_R`: the omitted moves change both target mass and regret contribution, and
+neither direction is guaranteed. Do not cite it as a bound.
+
+**1. STAGE 1 — 2,500 deep-SF positions, and it may decide ONLY "is Stage 2 worth buying".**
+It is deliberately underpowered and is NOT asked to look like a pass.
+
+    PROCEED to Stage 2  iff  UCB95( G ) > 3.0 cp,   G = f_trigger * 0.25 * S_R,1
+    FUTILE (stop)       otherwise
+
+Asymmetric in the useful direction: it halts a large SF bill only when the data ALREADY
+say the strong screen is implausible.
+
+**⚑ THE TRIGGER BAND'S LOWER HALF IS SELF-DEFEATING.** At the anchor's CV the futility
+threshold is the slope BELOW which Stage 1 stops:
+
+| `f` at trigger | `S_hat` below which Stage 1 calls FUTILE (n=2500) | |
+|---|---|---|
+| 0.50 | **20.54** | ⚑ ABOVE historical 20 — kills at the very slope the anchor measured |
+| 0.53 | 19.38 | permissive |
+| **0.55** | **18.68** | permissive |
+| 0.60 | 17.12 | permissive |
+
+⇒ **fire Stage 1 at `f >= 0.53`, not 0.50.** At 0.50 a pilot returning exactly the
+historical slope would declare its own futility.
+
+⚑ **AND THESE ARE PLANNING NUMBERS, NOT A GATE** — the same error as `0.655`, so it is
+named here rather than repeated. They use the OLD population's CV (18.9% at n=1977) and
+the population has demonstrably moved. Note the direction of the sensitivity: a NOISIER
+pilot makes this rule MORE permissive (a wider UCB clears 3.0 more easily), so the
+threshold flips below 20 at `f = 0.50` if today's relative halfwidth is >=20% -- which we
+cannot know until Stage 1 runs. Waiting to 0.53 costs nothing because coverage is climbing
+regardless; that is the whole reason to prefer it.
+
+**2. FREEZE THE POPULATION AT TRIGGER.** Pairing is still changing eligibility, so a
+sample drawn while `f` drifts from 0.53 to 0.60 is not a population. Bank the shard/window
+state and draw from THAT. Record, in the ledger, at trigger time:
+checkpoint + iteration · actual `has_sf_p0_frac` · shard range · the exact eligibility
+predicate · sampling seed · deep-SF nodes and MultiPV · which target arrays were used
+(stored vs rebuilt -- today: STORED, `rebuild_sf_targets` is off).
+Without these, `S_R` becomes another [[same_name_different_population]] number.
+
+**3. STAGE 2 IS INDEPENDENT, AND THE CI COMES FROM IT ALONE.** Either a disjoint draw from
+the SAME frozen population (a clean estimate of that population's `S_R`), or a
+deliberately re-banked later population DECLARED as a new measurement. Never silently
+mixed, and never an accumulating pool with repeated looks --
+[[rolling_arena_optional_stopping_faked_112_elo]] cost us 112 phantom Elo without a
+Stockfish bill attached; this version has one.
+
+**4. THREE VERDICTS, KEPT DISTINCT.**
+- **STRONG-SCREEN PASS:** `LCB95(f * 0.25 * S_R) > 3.0 cp`.
+- **STRONG-SCREEN FAIL:** anything else. Reported plainly. **The bar does not move.**
+- **GPU DECISION:** a SEPARATE expected-value call against the actual alternative, which
+  Josh states is a lineage already expected to plateau.
+
+A FAIL does NOT establish "SF-soft does not work" -- we would not have trained it. The
+live arm answers what the target-space ruler structurally cannot: whether this gradient
+direction improves the LEARNED POLICY.
+
+**5. THE EXPLORATORY ARM'S TERMS, fixed now so they cannot soften later.**
+**Lower admission standard, NOT a lower evaluation standard.** Before launch: a salvage
+snapshot as the revert point, and a prereg carrying (a) the deciding yardstick as an exact
+command, (b) the kill threshold, and (c) ⚑ **a pre-committed MAXIMUM window**. (c) is the
+specific lesson of F-only, which ran to 2.5x its stated window before being called: the
+failure was not a missing kill rule but an extended one. **"The loss is engaging" is NOT a
+reason to extend** -- F engaged perfectly and delivered zero.
+
+**STATE:** now — nothing, maximise coverage. `f >= 0.53` — freeze the population and buy
+Stage 1. Stage 1 not futile — independent Stage 2. Then the strong-screen verdict and the
+GPU decision, separately.
