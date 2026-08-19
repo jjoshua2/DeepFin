@@ -62199,3 +62199,53 @@ the `has_sf_p0_frac` trajectory as CORROBORATING evidence only.
 baseline. HARM ⇒ revert to the salvage point. NULL ⇒ stop at 75, revert, and record that a
 third target-side intervention did not transfer — which would itself be a substantive
 result about this loop rather than about this arm.
+
+### ⚑⚑ 2026-08-19 COST-MODEL VERIFICATION — the intervention is an adaptive **NODE BUDGET**,
+### NOT adaptive MultiPV width. My prereg one entry above was WRONG about the mechanism
+
+Peer asked for the SF cost model to be verified before building. Doing so found that the
+prereg I wrote this session named the wrong knob.
+
+**TWO RIGS DISAGREE, AND THE LEDGER QUOTES THE RIGHT ONE.**
+`scratchpad/tailscreen/tailscreen.py` costs escalation as `1.0 + frac*6.0` ⇒ **1.90x** at
+15%. `tailscreen_cv.py` costs it as a NODE RATIO ⇒ **label 1.279x, loop 1.265x**, which is
+what the ledger quotes. The cv rig carries the correction explicitly:
+
+> "COST AXIS CORRECTED. My first pass costed this as `1 + f*6`, reading
+> [[sf_multipv_width_costs_7x]] as 'width costs 7x'. It says the OPPOSITE: at a fixed
+> `go nodes N` budget both settings spend N nodes, so **MultiPV width costs ZERO CPU**
+> ([[sf_cpu_cost_split]]: 'sf_multipv is not a CPU lever at all'). The 7x is the SAVING
+> from NARROWING... **Width is paid for in DEPTH, and depth is bought with NODES.**"
+
+Reproduced exactly: `node_ratio = 500000/175000 = 2.857`;
+`label = 1 + 0.15*1.857 = 1.279`; `loop = 1 + 0.95*0.279 = 1.265`. ✓ The ledger's economics
+are sound; **`tailscreen.py`'s cost column is STALE and must not be quoted.**
+
+**⇒ DESIGN CORRECTION TO THE PREREG ABOVE.** It says "per-row selector + adaptive MultiPV"
+and calls `sf_multipv: 6` the missing knob. That is the wrong lever: raising MultiPV at a
+fixed node budget costs nothing and buys nothing here -- it spends the SAME nodes across
+MORE lines, i.e. it makes each line SHALLOWER, which is the opposite of repairing an
+unconverged label. **The escalation is `sf_label_nodes` 175k -> 500k on selected rows.**
+Width may still be worth raising alongside it (`not_listed` is one of the four selector
+features, and coverage is a width property), but it is NOT the cost axis and NOT the
+primary mechanism.
+
+**THE PLUMBING IS PARTLY PRESENT.** `configs/pbt2_small.yaml` already carries
+`sf_label_nodes_floor: 150000` / `sf_label_nodes_cap: 200000`, threaded through
+`trial_config.py:375-376` -> `trainable_config_ops.py:260-261` -> `worker.py:1938-1939,
+4305-4306`. So a per-label node budget mechanism EXISTS. ⚑ **500k exceeds the live cap of
+200k**, so escalation needs a DISTINCT escalated budget, not a widened cap -- widening the
+cap would raise the budget on EVERY row and silently become the blanket re-label at 2.857x.
+
+**⚑ AND THE SELECTOR IS NECESSARILY TWO-PASS.** Two of its four features (`log_sf_regret`,
+`not_listed`) do not exist until an SF query has run. So escalated rows pay base + escalated,
+which is exactly what `1 + frac*(ratio-1)` already models -- the arithmetic is right, and the
+IMPLEMENTATION must match it: query at the production budget, score, then RE-QUERY the
+selected rows at 500k. A design that tried to decide before the first query cannot compute
+its own features.
+
+**REMAINING IMPLEMENTATION RISK TO CHECK BEFORE CODING:** whether Stockfish can be re-queried
+on the same position cheaply (warm TT/pondering) or whether the second pass genuinely costs a
+full 500k from cold. The cost model assumes the latter (`node_ratio` on the escalated rows),
+so a warm re-query would make it CHEAPER than modelled, never dearer. Confirm rather than
+assume.
