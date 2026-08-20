@@ -63002,3 +63002,74 @@ the UNCHANGED 3.0 cp bar to the RESOLVED result; (7) report the old-ruler verdic
 labelled historical secondary.
 
 **STATE: pairing continues (0.4661, iter 578). PR on hold. No SF spent.**
+
+### ⚑⚑ 2026-08-19 FINAL PRE-TRIGGER AMENDMENTS — three fixes, and the verdict at `f = 0.53`
+### now reduces to ONE number: whether the mean unlisted-tail excess exceeds **~101 cp**
+
+Three amendments accepted and frozen. All predate the trigger and any Stage-1 measurement.
+
+**1. HOMOGENEOUS `delta` IS A PREDICTION, NOT A SIGN PROOF.** Corrected wording, adopted
+verbatim: *under homogeneous unresolved-tail error the predicted correction is positive; **no
+sign claim is made for the actual resolved correction**.* `Delta = SUM_U (t_m - q_m) delta_m`
+with heterogeneous `delta_m` is genuinely unsigned — which is the same error I already made
+once from aggregate mass and must not repeat via a modelling assumption. **After resolution,
+report the ACTUAL `Delta_instrument = S_R^resolved - S_R^historical` directly.** The special
+rule stands: a PASS that would have FAILED on the historical ruler is reported as such.
+
+**2. ⚑ THE STOPPING TOLERANCE IS IN `G`-SPACE, NOT `S_R`-SPACE. This was a real error and it
+would have cost ~7.5x the necessary searches.**
+
+    G = f_bank * alpha * S_R ;  at f_bank = 0.53, alpha = 0.25  =>  f*alpha = 0.1325
+
+| | `S_R`-space | `G`-space |
+|---|---|---|
+| current identification interval | `[-2.24, +63.77]`, width **66.01** | `[-0.297, +8.450]`, width **8.746** |
+| stopping tolerance 0.5 cp in `G` | permits width **3.77** | 0.5 |
+
+⇒ reading "0.5 cp" in `S_R`-space would have demanded **7.5x tighter** resolution than the
+decision needs. **FROZEN: resolve in descending `|t0(m) - q(m)| * (r_max - r_floor)` until
+`G_max - G_min <= 0.5 cp`, OR the whole interval lies on one side of the 3.0 cp boundary.**
+Required shrink from today: **17.5x** in width — substantial, and exactly why the ordering
+must be by identification-width contribution rather than by probability.
+
+**3. ⚑ BOOTSTRAP COMBINES SAMPLING AND UNRESOLVED-TAIL UNCERTAINTY. The identification
+interval does NOT replace the 2,500-position sampling error.** Frozen: bootstrap over sampled
+positions; within each replicate compute `S_min^(b)` / `S_max^(b)` from the RESOLVED moves
+plus the valid bounds on the unresolved ones; map to `G^(b)`. Then
+
+    STAGE-1 FUTILITY (asymmetric, favours continuing):  FUTILE iff  Q_0.95( G_max^(b) ) <= 3.0
+    STRONG PASS      (conservative opposite side):      PASS   iff  Q_0.05( G_min^(b) ) >  3.0
+
+Both uncertainties are allowed to favour buying Stage 2; neither is allowed to manufacture a
+PASS. This supersedes the plain `UCB95(G) > 3.0` wording wherever it appears above — the
+THRESHOLD and the ASYMMETRY are unchanged, only the uncertainty object is now correct.
+
+**4. `searchmoves` CALIBRATION STAYS IN RULER SEMANTICS.** Given the mate-sentinel result,
+compare `r_historical(m)` against `r_searchmoves(m)` **after identical mate handling and
+`[0, 1000]` clipping** — never raw cp, which is where the +839.5-vs-+14.5 blow-up came from.
+Raw cp and depth are diagnostics only. ⚑ **If a systematic offset appears, do NOT invent a
+correction formula.** At that point `searchmoves` is demonstrably a NEW ruler and adopting it
+is an explicit decision, not a calibration.
+
+**⚑⚑ AND THE WHOLE FUNNEL NOW REDUCES TO ONE NUMBER.** At the trigger `f = 0.53`:
+
+| | |
+|---|---|
+| decision boundary in `S_R` terms | `3.0 / 0.1325` = **22.64 cp** |
+| historical anchor 20.0 ⇒ `G` | **2.650 cp — BELOW the 3.0 bar** |
+| correction needed to reach 3.0 | **+2.64 cp** |
+| ⇒ under homogeneous `delta`, the flipping value | **`delta` ~ 101 cp** |
+
+⇒ **at `f = 0.53` the historical ruler already says FAIL (G = 2.65), and the entire verdict
+turns on whether the mean regret excess of unlisted moves is above or below ~101 cp.** That
+is a physically meaningful, directly measurable quantity — "how much worse than the 9th-best
+line is a move a 1M-node MPV10 search declined to list" — and it is precisely what the
+targeted `searchmoves` resolution measures. **Recorded BEFORE the measurement so the answer
+cannot be reverse-engineered from the verdict.**
+
+⚑ Note this also means coverage still matters and `0.53` is a floor, not a target: at
+`f = 0.60` the boundary drops back to `S_R = 20.0` and the historical anchor sits exactly ON
+it. Waiting longer costs nothing and strictly widens the passing region.
+
+**STATE: all pre-trigger amendments frozen. Pairing continues (0.4661, iter 578). PR on hold.
+No SF spent. Ready for the trigger.**
