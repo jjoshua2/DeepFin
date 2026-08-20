@@ -63903,3 +63903,44 @@ process; it becomes load-bearing at the next trial process start. The restart al
 `792fde4d6` (`target_q_rescale`, default True = bit-identical) and `b1cb60cad` (script-side
 only). Restart-eligibility per the standing rule: live-yaml KEYS diffed against the target
 code's SCHEMA before restarting — same branch, no new keys, trivially green.
+
+## 2026-08-20 — ⚑⚑ INCIDENT: the watchdog's age bound deleted the LIVE window's marker at minute 185 and force-restarted production BESIDE the control train; fixed (`42e72d6cb`), both jobs left running pending an operator call
+
+**What happened (all timestamps from `scratchpad/watchdog_alerts.log` / `recover_stall.log`):**
+`scripts/watchdog_loop.sh` (pid 3147, running since 08-19 11:51) polls `train_watchdog.py`
+every 600 s. At **16:02:16** the PAUSE-ABANDONED age criterion (`--pause-max-minutes 180`,
+sized to the 120-min ratchet windows) fired on the lc0-control window's marker at age 184.7
+min — on a verdict whose own details read **`pause_owner_alive=1`** — and the loop deleted
+`pause.txt`. At **16:12:16**, marker now absent, the same trial read as STALLED (180 min
+flat) and the loop fired `recover_stall.sh`: SIGKILLed the parked trial (pid 3144) and the
+Ray stack, then `train.sh start --resume` → new production run pid 617057 (fresh Ray session
+16:13). My replacement lease watchdog saw the marker vanish and exited as designed ("normal
+completion releases the marker") — two guards, two clocks, never reconciled. The module's own
+docstring warned the age branch "fires on a HEALTHY window" if the bound lags the window; the
+window grew instead, same failure.
+
+**Consequences, measured:**
+- Control train (#438) SURVIVED — recover_stall's kill patterns don't match
+  `lc0_control_train.py` — but is now host+GPU-contended: implied ~**0.24 steps/s** vs the
+  drained 0.9–1.05 (~9.7k/38,544 steps done at 18:10; remaining ≈ **33 h** if left contended).
+  Verdict VALIDITY is unaffected: the budget is frozen in STEPS and the single-thread
+  prefetch draws the same batch sequence regardless of wall time — only the finish moves.
+- Production resumed and is training (rows 526→532 by 18:32, ~20–23 min/iter vs the 313–520 s
+  band — mutually degraded, the known ~1.9× concurrent tax, here worse).
+- The violent restart **de-facto deployed** the park-`empty_cache` fix (`f224e80db`) and
+  `target_q_rescale` default-on (bit-identical): the queued graceful restart in the previous
+  entry is now moot. Restart-eligibility was pre-cleared there (same branch, no new keys).
+- The parked trial's ~30 G allocator residue died with pid 3144.
+
+**Fix, live as of the next 600 s poll (`42e72d6cb` — the loop re-invokes both scripts fresh):**
+age NEVER clears a marker (dead owner only; unknown liveness never); overheld live windows get
+a `pause_overheld` log annotation instead; `recover_stall.sh` fail-closed on operator markers
+(exit 7) unless `--force`, and only `--force` removes a pause marker. Incident regression
+tests at unit + loop level plus 4 sandboxed guard tests; both fixes mutation-verified.
+
+**Standing decision — OPERATOR'S CALL, deliberately not taken autonomously:** (a) leave both
+running (control lands ~Fri 04:00, production degraded meanwhile); (b) re-park production
+(marker + drain) so control finishes ~8 h sooner and production resumes clean after — the
+sequential plan this window was designed as; (c) abort the control train (loses ~10k steps,
+no checkpoint exists before MID). Recommendation: (b); but production is now live and
+re-parking kills/parks a running stack, so it waits for Josh.
