@@ -63875,3 +63875,31 @@ the deep re-query); the ladder measures the realized training effect directly.
 **Correlation note:** these are one question at three depths — can information we already
 possess get into the net? — so the outcomes are correlated, and a #438 H_stack look should
 raise the ladder's regret-flat cell to favourite before it runs.
+
+## 2026-08-20 — task #258 (queued): trainer is LOADER-bound at ~1 step/s with the GPU 40% idle; and the planned restart that deploys the park fix
+
+Two items banked mid-window-5, neither actionable until #438 completes. No training-affecting
+change here; this entry is the evidence snapshot and the queue.
+
+**1. Task #258 — single-threaded host sampler caps the trainer at ~1 step/s.** Tonight's window
+is the clean measurement (selfplay fully drained, so nothing else competes for the host):
+realized **0.9–1.05 steps/s**, GPU **~59% / ~219 W**. Decomposition: host-side batch sampling
+~0.6 s/batch vs GPU step ~0.35 s, and `trainer.py _iter_prefetched_batches` prefetches with
+`ThreadPoolExecutor(max_workers=1)` — the GPU waits on a serial Python sampler. This is not a
+window-5 quirk: the live run's own `trainer_steps_per_s` reads 0.6522/0.6235, so production
+pays the same tax with selfplay contention on top.
+⚑ The obvious fix is NOT free: raising prefetch depth/workers changes WHICH buffer state each
+draw samples (the buffer refreshes statefully between draws), so it is not automatically
+distribution-neutral. A fix must either argue equivalence at the sampler level or ship behind
+a ledgered readout like any data-affecting change. Yardstick when taken up: drained steps/s on
+this exact window shape (88-step windows, batch 512), baseline 0.9–1.05.
+
+**2. Queued ops action — graceful production restart AFTER window 5 completes and the
+recovery check passes (313–520 s/iter band).** Purpose: deploy `f224e80db`
+(`_wait_if_paused` calls `torch.cuda.empty_cache()` at park). The running trial predates it,
+which is why tonight's window ran beside ~30 G of parked allocator residue (two CUDA contexts;
+the control train fit only via WSL2 paravirtual memory). The fix cannot reach the running
+process; it becomes load-bearing at the next trial process start. The restart also picks up
+`792fde4d6` (`target_q_rescale`, default True = bit-identical) and `b1cb60cad` (script-side
+only). Restart-eligibility per the standing rule: live-yaml KEYS diffed against the target
+code's SCHEMA before restarting — same branch, no new keys, trivially green.
