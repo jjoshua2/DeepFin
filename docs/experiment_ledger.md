@@ -63132,3 +63132,67 @@ is not the quantity being measured.**
 `searchmoves` available off `main` in a worktree · watcher running (0.4700, iter 580, trigger
 0.53). Next expenditure is the frozen-population Stage 1, not a training tweak. Live run
 untouched.
+
+### 2026-08-19 — LAST TWO PRE-TRIGGER ITEMS. Engine STAMPED, mate strata SIZED. **No further
+### gates. The protocol is closed.**
+
+Peer: *"I would not add more gates now ... endlessly finding new preconditions can become its
+own way of never running anything."* Correct, and taken. These two are implemented and the
+protocol is CLOSED to further additions.
+
+**1. STAGE-1 ENGINE STAMP — recorded now so the new measurement is exact, unlike the
+historical one.** The historical build is only INFERRED (`--stockfish` is `required=True`, no
+default, and the artifact carries no stamp); that provenance cannot be repaired
+retrospectively, but the new one need not inherit the ambiguity.
+
+    path    /home/josh/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+    sha256  2764e7ef36bee844347586c8025ba81464315352128ef250f8c609f76044a68e
+    version Stockfish dev-20260420-ed651aab
+    nodes 1,000,000 | MultiPV 10 | Threads 1 | Hash 256
+
+⚑ The stamp MATCHES the version the historical recipe was inferred to use, so Stage 1's
+continuity arm runs on the same binary — inferred on the old side, **verified on the new**.
+
+**2. MATE STRATIFICATION ADOPTED, AND THE STRATA ARE SIZED IN ADVANCE.** Mate handling is
+load-bearing (the `+/-100k` sentinel is the reason the cap exists and the reason raw-cp
+algebra exploded), so a calibration that looks excellent in aggregate could hide a systematic
+disagreement on exactly the rows with the largest pre-clamp effects. **FROZEN: compare
+`r_historical(m)` vs `r_searchmoves(m)` — in the CLIPPED regret quantity, as already frozen —
+separately for three strata**, measured over all 4000 historical rows / 37,658 listed pairs:
+
+| stratum | listed pairs | share | expected at a 2,500-row Stage 1 |
+|---|---|---|---|
+| moves whose OWN PV reports mate | 1,740 | **4.62%** | ~1,088 |
+| cp moves living in a mate-containing row | 763 | **2.03%** | ~477 |
+| cp moves in pure-cp rows | 35,155 | **93.35%** | ~21,972 |
+
+⇒ **all three strata are adequately powered at 2,500 rows** — the smallest is ~477 listed
+moves, not a handful. Sizing this BEFORE the run means the calibration cannot come back
+"inconclusive on mate rows" as a surprise
+([[predict_the_exact_count_before_running]], [[compute_instrument_resolution_before_the_threshold]]).
+The third stratum (cp move, mate elsewhere in the row) is the subtle one: its regret is
+measured against a `best_cp` that is a mate sentinel, so it is the stratum where a
+`searchmoves` re-score is most likely to disagree.
+
+**⇒ THE PROTOCOL IS FROZEN AND COMPLETE.** For the record, in one place:
+
+    TRIGGER   trailing-20 mean `has_sf_p0_frac` >= 0.53, fire on the first satisfying iteration
+    BANK      freeze checkpoint/iteration/shards/window/sampler knobs; compute precise
+              `f_bank = P_bank(E)` under the frozen live sampler, E = `net_mask * has_sf_p0`
+    SAMPLE    2,500 rows drawn from the ORDINARY full live sampler, then FILTERED on E
+              (never a reconstructed "50% uniform-eligible / 50% priority-eligible" sampler)
+    t0, q     STORED — zero SF cost
+    CONTINUITY  reproduce the pinned historical ruler => `S_hat_R^historical`
+    CALIBRATE   searchmoves vs MPV10 on ALREADY-LISTED moves, in clipped-regret space,
+                STRATIFIED by the three mate strata above. A systematic offset makes
+                searchmoves a NEW ruler — an explicit adoption decision, not a correction formula
+    RESOLVE   unlisted moves in descending `|t0(m)-q(m)| * (r_max - r_floor)` until
+              `G_max - G_min <= 0.5 cp` (G-SPACE) or the interval lies wholly one side of 3.0
+    DECIDE    bootstrap rows; FUTILE iff `Q_0.95(G_max^(b)) <= 3.0`;
+              strong PASS iff `Q_0.05(G_min^(b)) > 3.0`
+    REPORT    both rulers always; `Delta_instrument = S_R^resolved - S_R^historical` explicitly;
+              a PASS that would have FAILED historically is labelled as such
+    SEPARATE  the strong-screen verdict does NOT decide the exploratory GPU question
+
+**NOTHING FURTHER IS ADDED. Next expenditure is Stage 1 itself.** Watcher at 0.4700 / iter
+580. Live run untouched throughout; no training change has been made this session.
