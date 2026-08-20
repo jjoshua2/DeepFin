@@ -62680,3 +62680,60 @@ It separates the node effect (`E6 - P`) from the width effect (`W - P`) and thei
 (`(E40 - E6) - (W - P)`), and answers the question the depth result raised: **if
 `175k/MPV40 ~= 500k/MPV40` on the quantities `w_sf_own` cares about, the wide teacher is
 available at ~1x cost rather than 2.86x.**
+
+### 2026-08-19 — THE 2x2 IS COMPLETE. `500k` IS EXACTLY THE ISO-DEPTH PRICE OF MPV40, and
+### the cheap-wide-teacher hope is REFUTED: `175k/MPV40` is 4.4 ply BELOW production
+
+Missing corner filled (`W = 175k/MPV40`), same 40 frozen rows, same nice'd worker, one run.
+Depth means:
+
+| | MPV6 | MPV40 |
+|---|---|---|
+| **175k** | **P 18.00** | **W 13.60** |
+| **500k** | **E6 24.15** | **E40 17.88** |
+
+**DECOMPOSITION**
+
+| effect | value |
+|---|---|
+| node effect @ MPV6 (`E6-P`) | **+6.15** |
+| node effect @ MPV40 (`E40-W`) | +4.28 |
+| width effect @ 175k (`W-P`) | **-4.40** |
+| width effect @ 500k (`E40-E6`) | **-6.27** |
+| interaction | **-1.87** — widening costs MORE depth at the higher budget |
+
+**⇒ ANSWER TO "HOW MANY NODES DOES MPV40 ACTUALLY NEED?": ~500k, AND THE CHEAP-WIDE HOPE IS
+DEAD.** Peer asked whether `175k/MPV40 ~= 500k/MPV40`, which would put the wide teacher at ~1x
+cost. **It does not: W is 13.60 vs E40's 17.88, a 4.28-ply gap, and 4.40 ply BELOW production
+itself.** A 175k wide teacher is a genuinely degraded search, not a cheap one.
+
+**⇒ AND THE ORIGINAL 500k/MPV40 CHOICE IS VINDICATED — FOR THE RIGHT REASON, WHICH IS NOT THE
+ONE ANYONE GAVE.** 500k is precisely the ISO-DEPTH price of MPV40: it restores production
+depth (17.88 vs 18.00) while returning 23.5 lines instead of 5.8. So
+
+    the cost of un-fabricating the tail AT NO DEPTH LOSS is exactly 2.86x nodes
+
+That is a clean, well-defined number, and it is what `500k/MPV40` has always been. It was
+never "the deep teacher"; it is **the wide teacher at production depth**. Every earlier use of
+it was numerically fine and verbally wrong, which is why the error survived so long.
+
+**⚑ THE NAIVE MODEL FAILS AGAIN, HARDER, AND IN THE OTHER DIRECTION.** `nodes/MultiPV` puts W
+at 4.4k/line against P's 29.2k — a ~6.6x per-line deficit that should cost far more than 4.40
+ply. MultiPV shares one tree, so the true width penalty is roughly LOGARITHMIC in the line
+count, not linear. **Do not price any future (nodes, width) pair by division — measure the
+corner.** The 2x2 cost ~4 minutes of one nice'd worker; the arithmetic would have been wrong
+in both directions.
+
+**PRACTICAL UPSHOT FOR ANY FUTURE TEACHER WORK:**
+- want DEPTH (value / `sf_wdl`, the LIVE route): raise nodes at FIXED width. 500k/MPV6 is
+  +6.15 ply for 2.86x.
+- want WIDTH (policy support / un-fabricated regret, the OFF routes): 500k/MPV40 for 2.86x,
+  and there is no cheaper iso-depth point.
+- want BOTH: not measured, and it is not 2.86x. `1M/MPV40` would be the corner to test, which
+  is also roughly where the DEEP ruler already sits (`>=1M / MPV>=10`).
+
+⚑ Whether depth 13.60 is ADEQUATE for a policy teacher is a separate, unmeasured question —
+this measures search depth, not target quality. `W` is not refuted as a teacher, only as a
+free lunch.
+
+**STATE: unchanged. Pairing continues (trigger 0.4639 at iter 577, 0.53 frozen). PR on hold.**

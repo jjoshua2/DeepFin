@@ -34,7 +34,7 @@ SYZYGY = (
     "/home/josh/projects/chess/data/syzygy_3-4-5"
     ":/home/josh/projects/chess/data/syzygy_6"
 )
-ARMS = (("P", 175_000, 6), ("E6", 500_000, 6), ("E40", 500_000, 40))
+ARMS = (("P", 175_000, 6), ("W", 175_000, 40), ("E6", 500_000, 6), ("E40", 500_000, 40))
 
 
 def wdl_of(r) -> np.ndarray | None:
