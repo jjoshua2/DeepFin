@@ -62527,3 +62527,81 @@ yields a genuine cold deep query even on the same engine. It sits banked until t
 quality data justifies using it.
 
 **STATE: PR on hold. Pairing continues. Next action is the 0.53 trigger.**
+
+### ⚑⚑⚑ 2026-08-19 — JOSH WAS RIGHT: `500k @ MPV40` IS **NOT A DEEPER TEACHER**. It is the
+### SAME DEPTH as production, 6.7x wider. ⇒ WIDTH and DEPTH are two DIFFERENT escalations
+### feeding two DIFFERENT routes, and I had them fused
+
+Josh: *"im not sure that the 500k is directly comparable to 150k if it was multipv 40 that
+makes it a lot weaker so its actually similar strength to 150k at 6."* **Measured on 40
+frozen disagreement rows, one nice'd worker** (`scratchpad/width_depth_tradeoff.py`):
+
+| arm | nodes / width | depth mean | depth median | lines returned |
+|---|---|---|---|---|
+| **P** | 175k / MPV6 (production label) | **18.00** | 13.0 | 5.8 |
+| **E6** | 500k / MPV6 | **24.15** | 16.0 | 5.8 |
+| **E40** | 500k / MPV40 | **17.88** | 13.0 | 23.5 |
+
+| comparison | depth delta | best-move change | mean \|dWDL\| | frac \|dWDL\| >= 0.20 |
+|---|---|---|---|---|
+| P -> E6 | **+6.15** | 0.225 | **0.0293** | 0.025 |
+| P -> E40 | **-0.12** | 0.375 | 0.0145 | 0.025 |
+
+**⇒ HIS CLAIM IS EXACTLY RIGHT: `500k/MPV40` and `175k/MPV6` are the SAME SEARCH DEPTH**
+(17.88 vs 18.00, medians identical at 13). Calling MPV40 "the deep teacher" and pricing it
+as an escalation was wrong on the physics.
+
+**BUT IT IS NOT WORTHLESS — IT IS A DIFFERENT UPGRADE.** At equal depth it returns **23.5
+lines instead of 5.8**, for 2.86x the nodes. So:
+
+| escalation | what it buys | what it does NOT buy |
+|---|---|---|
+| **500k @ MPV6** (nodes, width fixed) | **DEPTH +6.15**; mean \|dWDL\| **0.0293** | no extra lines — the fabricated regret tail stays fabricated |
+| **500k @ MPV40** (width, depth fixed) | **~24 real listed moves instead of ~6** — un-fabricates the tail | **NOTHING on value**: mean \|dWDL\| **0.0145**, HALF of E6's |
+
+**⇒ AND THE TWO ROUTES WANT OPPOSITE THINGS. This is the finding.**
+
+    VALUE route  (sf_wdl -> 0.69 blend -> wdl head -> MCTS)   is LIVE   -> wants E6 (DEPTH)
+    POLICY route (w_sf_own / w_sf_own_regret)                 are 0.0   -> wants E40 (WIDTH)
+
+The whole targeted-relabel case was built on "a full-width, non-fabricated teacher"
+(= WIDTH, = the OFF route) while I justified it by pointing at `sf_wdl_frac: 0.69`
+(= the LIVE route, which width does not help). **Those are two different interventions and I
+had fused them into one.** Width helps only the legs that are switched off; depth helps the
+leg that is on.
+
+**⚑ THIRD WIDTH IN THE SAME ARGUMENT: THE 2.92% LADDER RAN AT MultiPV 1.** Verified —
+`scripts/blindspot_deepsf_scaling.py:51` constructs `StockfishUCI(args.stockfish, nodes=...)`
+with **no `multipv` argument**, and `uci.py:325` defaults it to `1`. So that ladder is
+150k/MPV1 -> 500k/MPV1: all nodes on ONE line, i.e. FAR deeper per line than production's
+MPV6. ⇒ **the 2.92% is not measured at production width either**, and since its baseline arm
+is stronger than production's actual label, the true production unconvergedness is plausibly
+HIGHER than 2.92%. Three different widths (1, 6, 40) were being compared as if only nodes
+mattered.
+
+**CROSS-CHECK THAT PASSES:** P -> E6 at production width gives **frac \|dWDL\| >= 0.20 = 0.025**
+on n=40, against the MPV1 ladder's 2.92% [2.04%, 4.03%]. Consistent (n=40 is 1 row, so this is
+corroboration, not confirmation).
+
+**⚑ NOTE THE NAIVE ARITHMETIC WOULD HAVE MISLED TOO.** `nodes/MultiPV` predicts E40 at
+12.5k/line vs P's 29.2k/line — i.e. E40 much shallower. Measured, it is level (-0.12 ply),
+because MultiPV shares one tree rather than running N independent searches. **The
+per-line-division intuition is wrong; only the measurement settles it.**
+
+**⚑ AND E40 CHANGES THE BEST MOVE MORE (0.375 vs 0.225) WHILE MOVING THE WDL LESS (0.0145
+vs 0.0293).** More best-move churn at unchanged depth is a MultiPV search-behaviour effect
+(root moves are pruned less unevenly), NOT evidence of a better verdict. Do not read that
+0.375 as "the deep teacher corrects 37.5% of rows".
+
+**CONSEQUENCES.**
+1. Every cost/benefit figure for the targeted-relabel arm must now name its WIDTH. "500k"
+   alone is not a specification.
+2. The calibration `39a34878d` ran at MPV40, so what it validated acquiring was a
+   same-depth/wider label. Its determinism result (0/40 both arms) is UNAFFECTED — it is
+   about TT isolation, not teacher strength — and holds for any (nodes, width) pair.
+3. The `f >= 0.53` SF-soft plan is untouched by all of this: it consumes `sf_p0_policy_target`
+   coverage, not teacher depth.
+
+**PR REMAINS ON HOLD, now for a better-understood reason: the arm's stated mechanism
+(un-fabricate the tail = WIDTH) feeds only legs that are set to 0.0, and the leg that is live
+wants DEPTH instead.**
