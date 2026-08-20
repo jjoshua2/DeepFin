@@ -411,3 +411,97 @@ def test_production_leaves_the_cap_off() -> None:
         load_yaml_file(str(repo / "configs" / "pbt2_small.yaml")),
     )
     assert int(flat.get("gumbel_target_max_visit_cap", 0) or 0) == 0
+
+# ---------------------------------------------------------------------------
+# target_q_rescale: sigma's UNITS (mctx rescale_values), store-arm only
+# ---------------------------------------------------------------------------
+
+
+def test_rescale_default_is_on_and_matches_mctx_exactly() -> None:
+    """True is the default, and the default path IS the mctx formula, verified
+    against an in-test reimplementation rather than a banked golden."""
+    assert GumbelConfig().target_q_rescale is True
+    cfg = GumbelConfig(c_scale=0.1, c_visit=50.0)
+    got = _completed_q_transform(
+        actions=_ACTIONS, priors=_PRIORS, visits=_VISITS, qvalues=_QVALUES,
+        raw_value=0.0, cfg=cfg, root=True,
+    )
+    completed = _QVALUES.astype(np.float64)  # every child visited
+    norm = (completed - completed.min()) / max(
+        completed.max() - completed.min(), 1e-8,
+    )
+    expected = 0.1 * (50.0 + _VISITS.max()) * norm
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_absolute_q_gives_authority_proportional_to_the_real_gap() -> None:
+    """THE indictment, stated as an assertion: under the rescale, a decisive Q
+    spread and 1/100th of it produce the IDENTICAL sigma vector -- noise gets
+    the full c_scale*(c_visit+max_visit) logits. Absolute units restore
+    proportionality exactly."""
+    cfg = GumbelConfig(c_scale=0.1, c_visit=50.0)
+    noise_q = _QVALUES * 0.01  # same pattern, 1/100th the real distinction
+
+    def _sigma(q: np.ndarray, *, rescale: bool) -> np.ndarray:
+        return _completed_q_transform(
+            actions=_ACTIONS, priors=_PRIORS, visits=_VISITS, qvalues=q,
+            raw_value=0.0, cfg=cfg, root=True, rescale=rescale,
+        )
+
+    # mathematically identical (min-max wipes the scale); ulp-level noise from
+    # the 0.01 factor is not the claim, so allclose rather than array_equal
+    np.testing.assert_allclose(
+        _sigma(_QVALUES, rescale=True), _sigma(noise_q, rescale=True),
+        rtol=1e-12,
+    )
+    sharp = _sigma(_QVALUES, rescale=False)
+    noisy = _sigma(noise_q, rescale=False)
+    np.testing.assert_allclose(noisy, sharp * 0.01, rtol=1e-12)
+    # and the absolute arm keeps sigma in Q units: the full-spread vector spans
+    # exactly scale * (max_q - min_q), not scale * 1.0
+    span = float(sharp.max() - sharp.min())
+    assert span == pytest.approx(0.1 * (50.0 + _VISITS.max()) * 1.7)
+
+
+@pytest.mark.parametrize("path", ["python", "c"])
+def test_rescale_off_is_store_only_on_both_paths(path: str) -> None:
+    """Same contract as the cap: the flag must change the STORED row and must
+    not move the played move, on the path production actually runs.
+
+    Run at cap=0 deliberately: the off-arm shortcut reuses q_play whenever the
+    cap alone is off, so this leg goes red if the reuse condition forgets
+    `target_q_rescale` -- the accepted-then-ignored shape, killed by execution.
+    """
+    from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+
+    runner = run_gumbel_root_many if path == "python" else run_gumbel_root_many_c
+
+    def _run(rescale: bool):
+        cfg = GumbelConfig(
+            simulations=32, topk=8, c_scale=0.1, temperature=0.0,
+            add_noise=False, target_max_visit_cap=0, target_q_rescale=rescale,
+        )
+        out = runner(
+            None, [chess.Board(_BOARD_FEN)], device="cpu",
+            rng=np.random.default_rng(7), cfg=cfg,
+            evaluator=cast("Any", _Evaluator()),
+        )
+        return out[0][0], int(out[1][0])
+
+    base_probs, base_action = _run(True)
+    probs, action = _run(False)
+
+    assert action == base_action, (
+        f"[{path}] target_q_rescale changed the PLAYED move "
+        f"({base_action} -> {action})"
+    )
+    assert not np.array_equal(probs, base_probs), (
+        f"[{path}] target_q_rescale=False changed NOTHING -- the q_play reuse "
+        f"shortcut swallowed it (accepted-then-ignored)"
+    )
+    assert _entropy(probs) > _entropy(base_probs), (
+        f"[{path}] absolute-Q sigma sharpened the stored target; at 32 sims the "
+        f"real Q spread carries less authority than the rescaled one, so the "
+        f"target must move toward the prior"
+    )

@@ -289,6 +289,23 @@ class GumbelConfig:
     # the tempered arm, so an arena cannot see it -- the yardstick is target
     # quality against the deep-SF audit set.
     target_untempered_prior: bool = False
+    # ── the THIRD target-only knob: sigma's UNITS, not its size ───────────
+    # mctx's `rescale_values`, store-arm only. True (default, production) =
+    # completed-Q is min-max stretched to [0,1] before sigma, so the locally
+    # best move gets the full c_scale*(c_visit+max_visit) logits of authority
+    # whether the Q spread is a decisive 0.5 or 0.01 of 1-3-visit noise --
+    # at 100 sims / topk 16 most candidates hold 1-3 visits, so noise gets
+    # decisive weight on top of an already-sharp prior (the 2026-08-20 audit's
+    # mechanism for "target sharper than the net and right only 46%").
+    # False = sigma in ABSOLUTE Q units: authority proportional to the real
+    # value distinction. Play arm always rescales (the search is frozen);
+    # like the two knobs above, an arena is structurally blind to this one and
+    # the yardstick is target quality against the deep-SF audit set.
+    # ⚑ PROBE-ONLY: not yaml-wired. If it is ever wired, it MUST join the
+    # positive-move-temperature refusal in utils/config_yaml.py (:~646)
+    # alongside the cap/untempered pair, for the identical
+    # _resample_actions_with_temperature reason.
+    target_q_rescale: bool = True
     # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
     # 2 = standard halving (keep top half; default). 3/4 = more aggressive
     # elimination (fewer rounds, visits concentrate on survivors sooner).
@@ -636,8 +653,19 @@ def _completed_q_transform(
     fpu_penalty: float = 0.0,
     root: bool = False,
     max_visit_cap: int = 0,
+    rescale: bool = True,
 ) -> np.ndarray:
     """DeepMind mctx completed-by-mix-value Q transform for Gumbel scores.
+
+    ``rescale`` is mctx's ``rescale_values``: True (the default, and the only
+    production behaviour) min-max stretches completed-Q to [0,1] BEFORE the
+    sigma scale, so the locally-best move gets the full
+    ``c_scale*(c_visit+max_visit)`` logits of authority regardless of the
+    ABSOLUTE Q spread -- a 0.01 spread of 1-3-visit noise and a decisive 0.5
+    spread get identical weight. False keeps sigma in absolute Q units
+    (only the softmax-invariant min shift is applied), so authority is
+    proportional to the real value distinction. Used only by the stored-target
+    arm (``GumbelConfig.target_q_rescale``); the play arm always rescales.
 
     ``sigma_factor`` scales the sigma(q) constant (volatility_q_scale) and
     ``fpu_penalty`` is subtracted from the unvisited-children mix value
@@ -679,7 +707,9 @@ def _completed_q_transform(
     completed = np.where(visited, q, mixed_value - float(fpu_penalty))
     min_q = float(completed.min())
     max_q = float(completed.max())
-    completed = (completed - min_q) / max(max_q - min_q, float(epsilon))
+    completed = completed - min_q
+    if rescale:
+        completed = completed / max(max_q - min_q, float(epsilon))
     max_visit = int(visits_f.max(initial=0.0))
     if max_visit_cap > 0 and max_visit > max_visit_cap:
         max_visit = int(max_visit_cap)
@@ -1146,11 +1176,15 @@ def _build_improved_policy_for_board(
   # arm reuses the play-side value rather than recomputing an identical one, so
   # turning on only one of them costs only that one.
     target_cap = int(cfg.target_max_visit_cap)
+    store_rescale = bool(cfg.target_q_rescale)
     log_prior_store = target_log_prior(log_prior, cfg=cfg)
-    if target_cap <= 0 and log_prior_store is log_prior:
+    if target_cap <= 0 and store_rescale and log_prior_store is log_prior:
         imp_store = imp_all
     else:
-        q_store = q_play if target_cap <= 0 else _completed_q_transform(
+  # The q_play reuse is only an identity while BOTH sigma knobs are off --
+  # reusing it with `target_q_rescale` False would silently ignore the flag
+  # (the accepted-then-ignored shape), so the reuse condition names both.
+        q_store = q_play if (target_cap <= 0 and store_rescale) else _completed_q_transform(
             actions=legal,
             priors=pri[legal],
             visits=visits,
@@ -1161,6 +1195,7 @@ def _build_improved_policy_for_board(
             fpu_penalty=fpu_penalty,
             root=True,
             max_visit_cap=target_cap,
+            rescale=store_rescale,
         )
         imp_store = _softmax(log_prior_store + q_store)
     probs = np.zeros((POLICY_SIZE,), dtype=np.float32)

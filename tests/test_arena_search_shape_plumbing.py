@@ -686,6 +686,9 @@ _EXPECTED_CARRIED_FIELDS = {
     "q_visit_floor",
     "target_max_visit_cap",
     "target_untempered_prior",
+    # target-construction property like the two above: a TRAINING-shape fact
+    # the arena carries on both sides, owned by neither arm (2026-08-20 probe).
+    "target_q_rescale",
     "halving_div",
     "c_visit_root",
     "c_scale_root",
