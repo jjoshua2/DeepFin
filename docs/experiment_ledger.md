@@ -63073,3 +63073,62 @@ it. Waiting longer costs nothing and strictly widens the passing region.
 
 **STATE: all pre-trigger amendments frozen. Pairing continues (0.4661, iter 578). PR on hold.
 No SF spent. Ready for the trigger.**
+
+### 2026-08-19 — THE HISTORICAL DEEP RULER, PINNED EXACTLY. Plus: `searchmoves` IS ALREADY
+### ON `main` (my "needs merging" was wrong — I checked the pre-squash commits)
+
+**1. ⚑ CORRECTION, MINE: `searchmoves` NEEDS NO PR.** I reported `a004347b3` / `101015309`
+as "not in the live branch" and concluded the resolver was blocked. Those are the PRE-SQUASH
+BRANCH commits. The merged artifact is **PR #444 = `30d55c731`**, and:
+
+    30d55c731 on origin/main?      YES
+    30d55c731 in the live branch?  NO
+    searchmoves in StockfishPool at 30d55c731?  YES (pool.py:148,162,209)
+
+⇒ **an offline audit worktree off `main` can use it TODAY**, no PR, no merge, no restart, and
+nothing touches the running tree. The live branch simply has not incorporated that mainline
+commit. Checking a squash-merged PR by its branch commits is a false negative — same shape as
+the `reviewDecision` trap, one layer down.
+
+**2. THE EXACT HISTORICAL RULER RECIPE** — recovered from the builder, the artifact itself and
+the scorer, replacing the inequality ">=1M / MPV>=10":
+
+| element | value | source |
+|---|---|---|
+| node budget | `--nodes` default **1,000,000** | `build_audit_set.py:184` |
+| **realized** nodes | mean **993,912** (min 1,522 — TB/mate early exits; max 1,001,333) | measured over all 4000 rows |
+| MultiPV | `--multipv` default **10** | `build_audit_set.py:185` |
+| **realized** listed lines | mean **9.41** (min 2, max 10) | measured |
+| realized depth | mean **17.5** (min 10, max 245) | measured |
+| Hash | **256 MB** | `build_audit_set.py:186` |
+| Threads | **1** (`uci.py:405`, unconditional) | code |
+| Stockfish build | **dev-20260420-ed651aab**, ubuntu-x86-64-bmi2 | engine `uci` handshake |
+| mate → cp | `mate_to_effective_cp`: `sign * (100000 - min(|mate|,500) * 100)` | `wdl.py:20-25,43` |
+| rows carrying any mate line | **8.1%** (324/4000) | measured |
+| regret cap | `AUDIT_REGRET_CAP_CP` = **1000.0 cp**, clipped to `[0, 1000]` | `audit.py:249,271` |
+| unlisted-move floor | regret of the **worst LISTED** line | `audit.py:265-270` |
+| unscoreable lines | skipped, not crashed | `audit.py:181` |
+
+⚑ Two facts here are load-bearing and were NOT in the inequality: **the mate band sits near
++/-100000**, which is exactly why the 1000cp cap exists (`audit.py:241-242`: an uncapped
+regret on a mate row is ~97,000 cp) and exactly why raw-cp algebra exploded earlier; and
+**realized MultiPV is 9.41, not 10**, so "MPV>=10" overstates the actual listed width.
+
+⚑ **`--stockfish` is `required=True` with no default and the artifact stores no build stamp**,
+so the engine identity above is the CURRENT binary at the recorded path, not a value read back
+from the audit file. The file was written **2026-06-14**; the binary symlink dates from
+**2026-04-23** and reports `dev-20260420`, so it is consistent, but this is the one element of
+the recipe that is INFERRED rather than recorded. Any Stage-1 continuity claim should state
+that.
+
+**3. WORDING CORRECTED — "~101 cp" IS A REFERENCE POINT, NOT THE SUFFICIENT STATISTIC.** My
+sentence "the entire verdict turns on whether the mean regret excess exceeds ~101 cp"
+overstated it. `101 = 2.64 / 0.02613` is the HOMOGENEOUS-`delta` tipping point. What actually
+decides the verdict is the WEIGHTED functional `SUM_{m in U} (t_m - q_m) delta_m`, which the
+targeted resolver estimates directly. **101 cp is kept as a pre-registered intuition pump; it
+is not the quantity being measured.**
+
+**STATE: every pre-trigger item is now closed.** Recipe pinned · amendments frozen ·
+`searchmoves` available off `main` in a worktree · watcher running (0.4700, iter 580, trigger
+0.53). Next expenditure is the frozen-population Stage 1, not a training tweak. Live run
+untouched.
