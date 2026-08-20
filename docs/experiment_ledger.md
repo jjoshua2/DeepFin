@@ -62823,3 +62823,80 @@ a >=1M-node MPV>=28 judge is a materially bigger buy than the >=1M/MPV>=10 one, 
 fit — the width penalty is -4.40 at 175k and -6.27 at 500k, interaction **-1.87**.
 
 **STATE: unchanged. Pairing continues (0.4639, iter 577). PR on hold. No SF bought.**
+
+### ⚑⚑⚑ 2026-08-19 — `S_R` IS NOT SIGN-IDENTIFIED. The sharp interval is **[−2.24, +63.77]**
+### around an anchor of 20.0, and my "+21.53 worst case" was NOT A BOUND
+
+Peer rejected two of my statements. Both rejections are correct; the second exposed an
+arithmetic error, not just an overclaim.
+
+**1. "BOTH CARRY THE SAME BIAS" → WITHDRAWN.** Reproducing the historical ruler preserves
+the **DEFINITION** of `S_R`, not its systematic error. The magnitude depends on the
+population's `t0`, `q`, which moves are unlisted and their unknown true regrets — and we
+have already measured that today's eligible population differs materially from the
+historical one. Correct phrasing: **same ruler definition**, unknown relative bias.
+
+**2. "t0 HAS MORE UNLISTED MASS ⇒ `S_R` IS UNDERSTATED" → WITHDRAWN, AND THE ARITHMETIC WAS
+WRONG.** With `r_m = f_i + delta_m`, `delta_m >= 0`:
+
+    S_true - S_audit = SUM_i SUM_{m in U_i} (t_m - q_m) * delta_m
+
+`SUM_U t > SUM_U q` in aggregate does NOT sign that expression: individual moves can have
+`q_m > t_m`, and if those carry the largest `delta_m` the correction is negative. Aggregate
+mass asymmetry makes understatement PLAUSIBLE; it does not prove it.
+
+⚑ **AND MY "+21.53 cp WORST CASE" WAS `D_i * SUM_U (t-q)` — ALL unlisted moves at the cap.**
+That nets the positive and negative coefficients against each other, so it is **neither
+bound**. Since each `delta_m` is free in `[0, D_i]` INDEPENDENTLY, the extremes raise ONLY
+the coefficients of the wanted sign. Computed on all 4000 historical rows
+(`scratchpad/sr_partial_identification.py`, no SF, no GPU):
+
+| quantity | cp |
+|---|---|
+| mean headroom `D_i = C - f_i` | 766.6 |
+| **`Delta^min`** (only `q>t` unlisted at cap) | **−22.24** |
+| **`Delta^max`** (only `t>q` unlisted at cap) | **+43.77** |
+| superseded "+21.53" | between them ⇒ not a bound |
+
+    S_R identification interval, no-assumption:  [ -2.24 , +63.77 ]   width 66.00 cp
+    SIGN NOT DETERMINED — the interval straddles 0.
+
+**⇒ THE ANCHOR THE ENTIRE SF-SOFT FUNNEL RESTS ON CANNOT BE SIGNED BY ITS OWN INSTRUMENT.**
+`S_R = 20` sits inside an identified set that includes NEGATIVE values, i.e. a world in
+which blending `policy_own` toward the SF teacher makes the target WORSE. Only **20.5%** of
+rows have a positive net correction, so the `+0.0261` aggregate asymmetry is carried by a
+minority — precisely the heterogeneity the peer predicted.
+
+⚑ **HOW LOOSE IS THIS?** It is a NO-ASSUMPTION identified set: it lets every unlisted move
+be a 1000cp blunder. Moves are unlisted because a >=1M-node MPV>=10 search did not rank them
+top-9, so their true regrets are plausibly clustered a little above the floor, not at the
+cap. So the honest statement is **not** "S_R might be negative" but **"the instrument, taken
+at its own admitted precision, cannot exclude it."** Narrowing needs a MODEL of `delta` or a
+MEASUREMENT of it — nothing else.
+
+**3. CONSEQUENCE FOR THE FROZEN RULE — the peer's disposition, adopted exactly.** Stage 1's
+PRIMARY instrument remains **(a)**, the historical construction, and the rule stays
+`UCB95(f_bank * 0.25 * S_hat_R) > 3.0`. Changing the ruler while keeping the 3.0 would
+change the meaning of the bar ([[a_guard_must_share_the_criterion_instrument]]).
+`[S_R^min, S_R^max]` is **REPORTED ALONGSIDE and is NOT a decision input** — giving an honest
+split between *instrument result* (comparable to 20, comparable to the bar) and *possible
+true result* (bounded given a known defect). ⚑ It matters most exactly where it is least
+welcome: **if Stage 1 lands near the boundary, the bound is what says the instrument cannot
+resolve it.**
+
+**4. PIN THE HISTORICAL RULER EXACTLY, NOT AS INEQUALITIES — OWED BEFORE STAGE 1 FIRES.**
+`>=1M / MPV>=10` is too loose now that `75k/MPV6`, `175k/MPV6`, `500k/MPV6`, `500k/MPV40` and
+`1M/MPV10` are all demonstrated to be qualitatively different instruments. Recover and record:
+exact node budget · exact MultiPV · Stockfish version · cp→WDL conversion · mate handling ·
+the exact unlisted-floor construction. **Open task, no SF cost.**
+
+**5. ⚑ THE CHEAP WAY TO NARROW THE BOUND IS NOT A WIDER RULER — and it is NOT AVAILABLE ON
+THIS BRANCH.** `delta_m` only needs measuring for unlisted moves that CARRY `t`/`q` mass —
+a handful per position, not all 18.6. UCI `searchmoves` scores exactly those, at a fraction
+of a full MPV>=28 widening. That capability EXISTS (`a004347b3` "forward `searchmoves`
+through StockfishPool, proven end-to-end"; `101015309`) but **`git merge-base --is-ancestor`
+says NEITHER is in the live branch**, and `grep` finds no `searchmoves` in
+`chess_anti_engine/stockfish/`. ⇒ narrowing this bound needs that PR merged first. Recorded
+as the concrete unblocker, not scheduled.
+
+**STATE: unchanged. Pairing continues. PR on hold. No SF spent on any of this.**
