@@ -105,9 +105,52 @@ JOINT reading of two slopes, both measured LAST vs MID-BUDGET on frozen row sets
 | within ±0.392 pp | within ±0.392 pp | **CONVERGED / CAPACITY-LIMITED — INCONCLUSIVE for H_stack.** Not a pass and not a failure. Pre-committed response: one 2× budget extension; if both slopes stay flat, the arm cannot answer the question and says so. |
 | anything else | anything else | **AMBIGUOUS** — one 2× budget extension, then read once. No second extension; that is optional stopping. |
 
+### FROZEN STEP BUDGET — recorded 2026-08-19, before any `--steps` was passed
+
+| | windows (×88) | `--steps` | sampled examples | corpus-size exposure |
+|---|---|---|---|---|
+| **initial** | 438 (MID at 219) | **38,544** | 19,734,528 | **0.25130×** |
+| **single preregistered 2× extension** | 876 (MID at 438) | **77,088** | 39,469,056 | **0.50259×** |
+
+Denominator is the **realized** training-corpus row count, **78,531,074**, summed
+from every shard's `.zarray` shape across all 9,653 shards and cross-checked on
+three independent arrays. The nominal `9653 × 8192 = 79,077,376` overstates by
+0.69% (9,531 full shards + 122 partial) and must not be used.
+
+**⚑ These are nominal corpus-size SAMPLE-EXPOSURE equivalents. They are NOT
+epochs and NOT a unique-row fraction, and no claim about memorisation may be
+built on them.** `DiskReplayBuffer` samples WITH REPLACEMENT on both halves —
+uniform at `replay/disk_buffer.py:1666`, priority at `:1674`/`:1678`/`:1706`,
+split `surprise_mix = 0.5` — drawing from a 100,000-row hot pool refreshed 5
+shards every 4 batches, so rows repeat long before one corpus-equivalent
+elapses. Independently, the `Δ_train` readout scores rows the net has already
+trained on, and one exposure suffices to fit a row; no sub-epoch budget makes
+`Δ_train` vs `Δ_heldout` divergence immune to memorisation. That is a property
+of the verdict table, which is why the table reads the two slopes JOINTLY
+rather than treating either alone as evidence.
+
+**What justifies this budget:**
+1. It is exactly 438 whole `--train-window-steps` windows, so MID lands on a
+   window boundary (219) and MID and LAST are read at the SAME phase of the
+   `sqrt_release` LR ramp. Reading them at different phases was a real defect
+   in an earlier revision of this driver: `lr_release_min_scale: 0.1` means the
+   end-of-window LR is 10× below base, so a LAST read at the trough against a
+   MID read at full base compares two different training regimes.
+2. ~38.5k optimizer steps is far past the 1,000-step `warmup_steps`, which the
+   prereg elsewhere guards against under-running.
+3. It stays below a single corpus-size exposure equivalent, which BOUNDS how
+   much sampler reuse can have accumulated without claiming there is none.
+
+**⚑ The budget is frozen. `--steps` takes 38,544 and nothing else.** The single
+2× extension to 77,088 is available only for the CONVERGED/INCONCLUSIVE and
+AMBIGUOUS rows of the table above. There is no second extension.
+
 2.0 pp is ~10× the resolution, deliberately far above the noise floor: a stack
-genuinely learning from 87M fresh positions should not be arguing in the third
-decimal. Both slopes use the same n and the same estimator so the ±0.392 pp bar
+genuinely learning from ~20M sampled positions drawn from a 78.5M-row external
+corpus should not be arguing in the third decimal. (An earlier draft said "87M
+fresh positions". Both halves were wrong: the corpus is 78,531,074 realized
+rows, not 87M or the nominal 79.08M, and nothing about the run is "fresh" —
+see the frozen budget below.) Both slopes use the same n and the same estimator so the ±0.392 pp bar
 applies to both.
 
 ## Guards that must pass before the primary is read
