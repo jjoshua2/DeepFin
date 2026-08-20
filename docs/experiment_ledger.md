@@ -63456,3 +63456,112 @@ refused without `--allow-invalid-control`. So the split is deliberate and sound:
 in-tree tests may judge against the pin; a VALID experimental run must read the live file.** A
 pin that has gone stale together with the control can fail a unit test's purpose but cannot
 produce a run that claims validity. No change made.
+
+## 2026-08-19 — ⚑⚑ `w_sf_own` WAS TURNED OFF TWICE WITHOUT A VERDICT (finding, not an experiment)
+
+Traced while answering "why haven't we already gotten gains from Stockfish?". The answer is
+not that the dose was timid. **The only direct SF -> `policy_own` teacher in the loop has a
+recorded WORKED verdict, and it is off — for the second time, and neither time was it killed
+by a readout.**
+
+```
+git log -G "w_sf_own" -- configs/pbt2_small.yaml     (⚑ -G, not -S: 0.1 -> 0.0 is invisible to -S)
+
+3b4ca4737  w_sf_own: 0.1   "RESTORE the sf_p0 teacher — the June policy win has been OFF for a month"
+67191f995  w_sf_own: 0.1
+ed9de8ee9  w_sf_own: 0.0   "reduced-SF relaunch bundle (labels 150k-200k, multipv 6, sp 0.8,
+                            gumbel 0.025/32/1.0->0.5, recipe losses)"
+5af3b1e8a  w_sf_own: 0.0
+90c4010d0  w_sf_own: 0.0   <- current
+```
+
+- **Loss #1 (silent).** `3b4ca4737`'s own message records it: all four sf_p0 keys were ABSENT
+  from the yaml and sat at code defaults, so the feature "was not merely unweighted but NOT
+  RECORDED — no live shard carries a has_sf_p0 key." `git log --all -S` found the keys in no
+  commit on any branch, ever: a checkout or file rewrite wiped uncommitted live edits. It ran
+  off for a month before anyone noticed. Same class as the 2026-07-02 branch-switch incident.
+- **Loss #2 (bundled).** `ed9de8ee9` set it 0.1 -> 0.0 inside a bundle that also moved label
+  nodes, MultiPV, selfplay fraction and four Gumbel parameters. Its ledger entry names
+  `w_sf_own` **only as a line item in a "Losses (recipe of record)" list.** No readout, no
+  threshold, no verdict.
+
+**What was lost.** The ledger lists it under WORKED: *"sf_p0 policy teacher + regret-weighted
+SF teacher (PR #78) | the June policy win: net+search E[regret] **56.7 -> 49.6 cp**"*, and the
+revert-points table says **"proven; leave alone"**.
+
+⇒ Weeks of SF-soft design have been about how cautiously to re-approach a setting that
+previously ran at 0.1 with a recorded 7.1 cp win. The `alpha = 0.25` cap is a
+**production-safety limit that was mistaken for an efficacy limit**, and `f*alpha = 0.1325`
+describes our timidity, not Stockfish. This is
+[[a_bundle_zeroing_destroys_n_verdicts]] firing a second time on the same file.
+
+## 2026-08-19 — PREREG: SF policy-teacher DOSE LADDER (offline, not launched)
+
+**Hypothesis.** The main policy head can learn substantially more from the SF soft teacher than
+the frozen `alpha = 0.25` arm can show, and the ceiling we have been reasoning about is a dose
+we chose, not a property of the teacher. Production already grants SF **0.69 authority on the
+value target** (`sf_wdl_frac: 0.69`) while granting it **0.00 on `policy_own`** — an asymmetry
+no entry in this ledger ever argued for; it is residue from `ed9de8ee9`'s bundle.
+
+**Design — TARGET blend, not loss blend.** On eligible rows only:
+
+```
+t_i = (1 - alpha) * t0_i + alpha * q_i     if E_i   (has_sf_p0)
+    =              t0_i                    otherwise
+```
+
+then the ordinary policy CE against `t_i`. ⚑ NOT `w_sf_own`. The separate-loss route needs
+`lambda = f*alpha/(1-alpha)` and, because both terms are `masked_mean` over their own row
+counts, also hands eligible rows `1/(1-alpha)` — **3.33x at alpha=0.7** — of the total policy
+gradient. That is a confound with nothing to recommend it, and it is avoidable by construction.
+
+**Ladder:** `alpha in {0, 0.25, 0.5, 0.7, 1.0}`. `alpha = 0` is the control arm — same code
+path, same corpus, same steps, same seed — NOT "production", which differs on other keys.
+`alpha = 0.7` is chosen to match the authority SF already holds on value, so it is a stated
+rationale rather than hyperparameter fishing. `alpha = 1.0` is a DIAGNOSTIC leg, not a
+candidate (see the predicted non-monotonicity below).
+
+**Why this is a better instrument than the Stage-1 funnel.** Stage 1 estimates `S_R` and
+multiplies by a dose. `S_R`'s sharp identification interval under the deep ruler's tail
+imputation is **[-2.24, +63.77]**, so every projected cp figure inherits that interval scaled —
+high dose could be much better OR actively harmful and the arithmetic cannot say which. The
+ladder measures the REALIZED held-out effect directly and never needs `S_R` identified.
+
+**DECIDING YARDSTICK** — held-out deep-SF top-1 policy regret on the frozen audit set, each arm
+against the `alpha = 0` arm, same checkpoint, same steps:
+
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --net <arm_ckpt> --audit data/audit_set_v1.jsonl
+```
+
+**PRE-COMMITTED VERDICT TABLE** (train CE = the arm's own SF-blended training CE):
+
+| train CE | held-out deep-SF regret | verdict |
+|---|---|---|
+| falls | falls, rising with alpha | **TEACHER WORKS, DOSE WAS THE LIMIT.** Take the best alpha to a live arm with a fresh prereg. |
+| falls | flat | **⚑ H_stack ON A SECOND CORPUS.** The stack fits policy supervision and does not generalise it. Corroborates #438's most consequential cell and satisfies the prereg's own "confirm on a second external corpus" requirement. |
+| flat | flat | **PLUMBING / OPTIMISATION DEFECT.** Sharpest outcome available — the teacher is not reaching the objective at all. |
+| falls | falls, PEAKS at 0.5-0.7 and drops at 1.0 | **TEACHER WORKS AND ITS SUPPORT IS THE LIMIT.** MultiPV width becomes the lever, not dose. |
+
+**⚑ The non-monotone row is a PREDICTION, made before the run.** `finalize.py:1005-1020` builds
+`q` from the PREVIOUS ply's `sf_policy_target`, POV-shifted, and only where two consecutive
+full plies exist — so `q` is **selfplay-only by construction** (it can never cover curriculum
+rows) and its support is MultiPV-wide (~6 moves) against ~28 legal. At `alpha = 1.0` the net is
+being trained onto a 6-move distribution over a 28-move legal set. If the ladder is monotone
+through 1.0 that prediction is WRONG and should be recorded as such.
+
+**KILL.** If `alpha = 0.7` does not beat `alpha = 0` by **>= 3.0 cp** on the deciding yardstick,
+the high-dose hypothesis is dead in its tested form and no live `w_sf_own` flip follows from
+it. (3.0 cp is the same bar the frozen Stage-1 screen uses, so the two are comparable.)
+
+**Resources / confounds.**
+- Offline, from a banked checkpoint, fixed corpus. Needs GPU ⇒ pause-and-run, and it COMPETES
+  WITH #438 for the same isolated window. #438 keeps priority: it is the cheaper question and
+  its result changes how this one is read.
+- Snapshot required before running (revert points table).
+- `alpha = 0` is the control; do NOT compare any arm to the live run, which differs on
+  `w_sf_move`, `w_sf_policy_floor` and the categorical bundle.
+- Coverage `f` is a property of the banked corpus and must be REPORTED with every arm, never
+  spliced across arms.
+
+**NOT LAUNCHED.** Prereg only. No GPU work, no config change, no live edit.
