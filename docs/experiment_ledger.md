@@ -63252,3 +63252,96 @@ Running it before spending a restart on the bundle is strictly cheaper than the 
 **Disposition.** No arm launched, no training change, no restart. The SF-soft Stage-1 trigger
 watcher stays running (iter 583, trailing-20 `has_sf_p0_frac` = 0.4757 against the frozen 0.53
 trigger, ~25 iterations out). Queue order recorded above; nothing is promoted by this entry.
+
+## 2026-08-19 — `log_temp @ 3e-06` is REFUTED; and an exposure-derived budget for #438
+
+**Two results, both measurement, no launch.**
+
+### 1. The "log_temp runs at one-tenth its intended LR" claim is wrong
+
+A peer flagged this as a near-zero-cost check worth running immediately. It was run. The
+finding does not survive, and the reason is instructive.
+
+`policy_own.log_temp` is `nn.Parameter(torch.zeros(1))` (`model/transformer.py:181`), so it is
+1-D and lands in param group 3 (`and_`, aux/no-decay, `use_aurora=False`), not the Aurora
+matrix group 0 which gets `lr * matrix_lr_multiplier` (`trainer.py:2045-2056`). That part of
+the original finding is correct.
+
+The 3e-06 is not. Reading `data/banked/sfsoft_entropy_probe_iter542/trainer.pt`:
+
+```
+base_lrs = [6.0e-04, 3.0e-05, 3.0e-05, 3.0e-05]   <- the SETTING, exactly the yaml
+_last_lr = [6.0e-05, 3.0e-06, 3.0e-06, 3.0e-06]   <- 0.1x base on EVERY group
+```
+
+Every group is at exactly `0.1 x base`, which is `lr_release_min_scale: 0.1`. Production runs
+`lr_schedule: sqrt_release` with `lr_release_cycle_steps: 0` and
+`lr_release_start_frac: 0.8`: LR is flat at base for 80% of each train window, then decays to
+0.1x at the window's last step — **which is exactly when a checkpoint is written.** Every
+checkpoint samples the trough.
+
+Live at iter 583, `progress.csv` reports all three phases and settles it:
+
+| metric | value | what it is |
+|---|---|---|
+| `peak_lr` | 3.0e-05 | config base, pre-multiplier |
+| `opt_lr_max` | **6.0e-04** | trunk at full base (3e-5 x 20) |
+| `opt_lr_mean` | **5.28e-04** | iteration MEAN, 88% of base |
+| `opt_lr_final` | 6.0e-05 | end-of-window trough — what a checkpoint stores |
+
+⇒ the aux group trains at **mean ~2.64e-05**, max 3.0e-05, and touches 3e-06 only at the last
+step of each window. **No LR bug. Nothing to fix. The item leaves the queue.**
+
+⚑ `trainer.py:1161-1165` already says this in a comment ("the end-of-iteration LR reported
+elsewhere is the TROUGH of the sqrt_release ramp, ~9x below the LR the trunk actually trains at
+(I19)"), and `docs/lc0_positive_control_prereg.md` **independently rediscovered it** — #438's
+MID-vs-LAST slope contrast was invalid until its driver was changed to run whole
+`--train-window-steps` windows (default 88) so both reads land at the same schedule phase. Two
+instruments, same trap, found separately. A param group's `lr` is not a setting; it is a
+reading of a time-varying quantity, and checkpoints sample it at one phase.
+
+### 2. #438's step budget, derived from corpus exposure rather than from `249 x 144`
+
+The objection is accepted: an external supervised run has a different corpus, sampling, and no
+selfplay/PID, so the RL run's iteration-249 step count carries no information about when to
+read it. Measured the corpus instead.
+
+- `data/lc0_rows`: 124 dirs, **9,653 shards x 8,192 = 79,077,376 rows** (175-plane v2_threats,
+  already in our encoding).
+- `data/lc0_rows_heldout`: 6 dirs, 484 shards, **3,964,928 rows**, disjoint by date
+  (20260815 vs 20260810).
+- At `batch_size: 512`, **1 epoch = 154,448 optimizer steps**.
+
+The driver runs the budget in whole windows of `--train-window-steps` (default 88), so the
+budget must be an even window count. Proposed frozen initial budget:
+
+| | windows | steps | rows seen | epoch fraction | wall clock @ 3.01 steps/s |
+|---|---|---|---|---|---|
+| initial | 438 | **38,544** | 19.73M | **0.249** | ~3.6 h |
+| after the ONE preregistered 2x extension | 876 | 77,088 | 39.47M | 0.499 | ~7.1 h total |
+
+The 3.01 steps/s is the *live* rate with selfplay contending; a paused-GPU dedicated run should
+beat it, so treat the hours as an upper bound.
+
+**Why this budget and not another.** At 38,544 steps the run sees 24.9% of the corpus, so
+**every training row is unseen at the moment it is trained on**. That matters for the
+inference, not just the cost: in a strictly fresh-row regime a train/held-out generalization
+gap cannot be attributed to memorisation. So an H_stack-looking signature (train agreement
+rising, held-out flat) is *stronger* evidence here than the same signature would be after
+multiple epochs. The number lands within 7% of the `249 x 144` figure, but the justification is
+now an exposure argument that also states a property of the regime, rather than an analogy to
+an RL run that shares none of its mechanics.
+
+⚑ This is a proposed budget, not a launched one. It must be written into the prereg and frozen
+BEFORE `--steps` is passed, or it is optional stopping.
+
+### Disposition
+
+Ordering accepted as revised: **run #438 before spending the production restart** — it is an
+offline supervised arm needing only a paused GPU, so it does not compete with the restart at
+all. The restart, when it comes, deploys *machinery* (#445's passive `prior_top1_index`
+capture, other reviewed default-off infrastructure) and activates *at most one* causal
+intervention; Arm G, #440's teacher, and `parametric_q` are three separate interventions and
+must not share a readout window. FFN widening: **generic capacity is refuted** (31M beats us by
+11.4 pp), a localized FFN-geometry bottleneck is not refuted but is unsupported and
+low-priority. No launch, no training change, no restart.
