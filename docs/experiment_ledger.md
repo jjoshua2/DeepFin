@@ -62397,3 +62397,71 @@ I have not identified, and that is a finding in its own right.
 
 **Live run untouched. No code written. Load average is 42 on 32 CPUs, so any SF calibration
 runs at ONE nice'd worker.**
+
+### 2026-08-19 CALIBRATION RESULT — `fresh=True` ISOLATES EXACTLY. Prediction hit, 0/40.
+### ⚑ And the peer's sharpening is RIGHT but its conclusion is TOO STRONG: the live SF
+### route into search is the VALUE head, at `sf_wdl_frac: 0.69`
+
+**CALIBRATION: PASS, and the pre-registered prediction was exact.**
+`scratchpad/relabel_calibration.py`, 40 target/SF disagreement rows, one nice'd worker,
+worst-case design (num_workers=1 so the shallow pass lands on the SAME engine as the deep
+one; production's pool would usually hand it to a different one).
+
+| comparison | positions differing |
+|---|---|
+| **A1 vs A2** (cold 500k twice — determinism control) | **0 / 40** |
+| **A1 vs B** (175k, then `fresh=True` 500k, same engine) | **0 / 40** |
+
+Compared on bestmove, cp, mate, full MultiPV move list AND per-line cp. Effort at
+500k/MPV40: nodes 488,896, depth 17.9. ⇒ **`ucinewgame`+`isready`+`readyok` fully isolates
+the deep re-query**, and the shipped two-pass cold path yields a genuine cold 500k label.
+The prediction `A1 == A2 == B` bit-for-bit was registered BEFORE the run and hit exactly
+([[predict_the_exact_count_before_running]]). ⚑ This settles ONLY the acquisition semantics;
+it says nothing about efficacy and does NOT revive the PR.
+
+**⚑ PEER SHARPENING CONFIRMED — `w_sf_move` DOES NOT TRAIN `policy_own`.** Verified at
+`losses.py:1326`: `sf_pol_logits = outputs.get("policy_sf")`. It trains the SEPARATE
+`policy_sf` head. My table one entry above listed it as "the only live one" in a column
+about routes into the search policy; that was wrong. Corrected: **no live leg carries SF
+POLICY labels into `policy_own`** — only the shared trunk, which is an indirect
+representation effect, not a gradient on the search policy's output distribution.
+
+**⚑⚑ BUT "STRUCTURALLY INCAPABLE" OVERSHOOTS, AND THE REASON MATTERS.** There IS a live,
+heavily-weighted SF route into the policy the search uses — it runs through VALUE, not
+policy:
+
+    sf_wdl  ->  blended wdl target (sf_wdl_frac: 0.69 of w_wdl: 1.0)  ->  `wdl` head
+            ->  MCTS value  ->  search  ->  policy_target
+
+`wdl` is the ONLY value head MCTS uses, and **69% of its target is SF-derived**. A 500k
+label improves that WDL as surely as it improves the policy rows. So deeper labels are NOT
+disconnected from the loop; they are disconnected from `policy_own`'s POLICY gradient.
+
+**⇒ THE REAL DEFECT IS A ROUTE/SELECTOR MISMATCH, WHICH IS SHARPER AND MORE ACTIONABLE
+THAN "IT IS UNCONNECTED":**
+
+| | |
+|---|---|
+| what the selector predicts | a **POLICY** deficit — `dQ = Q_BT4(target move) - Q_BT4(SF move)` |
+| what is actually live | a **VALUE** route — `sf_wdl` at 0.69 blend weight |
+
+The selector was fit to rank rows by policy-target disagreement. Nothing establishes those
+are the rows whose **WDL** is unconverged, and that is the population the live route would
+actually consume. ⇒ **a targeted re-label aimed at the live route needs a DIFFERENT
+selector** — one predicting SF WDL unconvergedness ([[sf_teacher_is_unconverged_on_3pct_of_labels]]
+already measures that population at 2.92% of labels), not policy disagreement.
+
+⇒ **PR STAYS ON HOLD.** Three distinct bottlenecks, now cleanly separated, and the arm as
+proposed conflated them:
+
+    coverage        pairing (LIVE, working)
+    consumption     w_sf_own -- the SF-soft arm, currently 0.0
+    teacher quality targeted deeper labels -- UNMEASURED efficacy, and mis-selected for
+                    the only route that is live
+
+**⚑ COVERAGE IS CLOSING ON THE STAGE-1 TRIGGER FASTER THAN EXPECTED.** At iter 574 the
+frozen trigger statistic (trailing-20 mean `has_sf_p0_frac`) reads **0.4570**, with the last
+five rows 0.472-0.481 and a rate of **+0.0029/iter** ⇒ **~25 iterations, ~2.7 h to 0.53**.
+The `f >= 0.53` Stage-1 decision point is imminent, which reorders the queue: the SF-soft
+funnel is about to become actionable, and it is the CONSUMPTION lever the teacher-quality
+lever depends on.
