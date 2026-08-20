@@ -63707,3 +63707,31 @@ was a worktree at HEAD. Also owned: running the OLD pause_window.sh at all viola
 standing pgrep-scripts ban — its header was read, its internals were not.
 
 **NOT RETRIED. #438 remains staged and blocked on Josh's go after this fix is reviewed.**
+
+## 2026-08-20 — REGISTERED PREDICTIONS for the three queued readouts (before any reads out)
+
+Recorded so post-hoc interpretation is constrained. Subjective probabilities, not commitments;
+the preregs' verdict tables remain the deciders.
+
+**#438 (lc0 positive control):** PASS ~55-60% (the stack has demonstrably learned — value head
++17.8%, real early-lineage Elo, supervised pretrain worked; 20M fresh strongly-taught rows
+should clear a +2.0 pp bar). H_stack signature ~15-20% (our fit-without-transfer evidence all
+comes from our OWN recycled data, the easiest regime to memorise). Flat/flat ~15% (most likely
+via Aurora/LR mistuned for a cold distribution, not incapacity). Ambiguous ~10%.
+
+**SF policy dose ladder:** train CE falls in every arm, near-certainly. Held-out deep-SF
+regret: teacher works (>=3 cp at alpha 0.7) ~45%; CE-falls-regret-flat (the F-only pattern,
+0.043 nats for zero cp) ~25% — and this cell doubles as #438's required second-corpus
+confirmation; positive-below-kill ~20%. ⚑ Registered: the ladder PEAKS at 0.5-0.7 and FALLS at
+1.0 (q's support is MultiPV ~6 of ~28 legal). Monotone through 1.0 = I was wrong, record it.
+
+**Stage 1 (SF-soft screen):** ~50% the 0.53 trigger never fires (f sideways at 0.5008 for ~90
+iters) — that outcome is a finding about pairing and forces a re-freeze decision, not a
+measurement. If run: S_R positive ~70% but BELOW the historical ~20 cp (5-15 more likely; the
+20 sat on the fabricated MultiPV tail + imputed ruler); clears the 3 cp UCB bar ~55%. Standing:
+the dose ladder has demoted Stage 1 to label-quality diagnosis (does the stored teacher deserve
+the deep re-query); the ladder measures the realized training effect directly.
+
+**Correlation note:** these are one question at three depths — can information we already
+possess get into the net? — so the outcomes are correlated, and a #438 H_stack look should
+raise the ladder's regret-flat cell to favourite before it runs.
