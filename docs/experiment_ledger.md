@@ -62900,3 +62900,105 @@ says NEITHER is in the live branch**, and `grep` finds no `searchmoves` in
 as the concrete unblocker, not scheduled.
 
 **STATE: unchanged. Pairing continues. PR on hold. No SF spent on any of this.**
+
+### ⚑⚑ 2026-08-19 — RULER SWITCH ADOPTED, WITH THE DIRECTION PRE-REGISTERED. The `3.0 cp`
+### bar SURVIVES (provenance checked). The algebraic cancellation is REFUTED — it is VACUOUS
+### and, on this implementation, catastrophic
+
+**1. THE SWITCH IS ACCEPTED, AND THE ARGUMENT FOR IT IS SOUND.** Preregistration should not
+force retention of an instrument discovered — BEFORE the measurement, adversarially, without
+knowing today's `S_R` — to be unable to identify the SIGN of what it measures. A rule that
+locks in a broken ruler is not rigour. Stage 1 will therefore produce BOTH:
+
+    S_hat_R^historical   exact old MPV/floor construction — continuity with the 20 cp anchor
+    S_R^resolved         targeted evaluation of the consequential unlisted moves — THE EFFICACY RULER
+
+**2. ⚑⚑ BUT THE SWITCH IS NOT DIRECTION-NEUTRAL, AND THE DIRECTION IS PRE-REGISTERED HERE,
+BEFORE ANY OF IT IS MEASURED.** Resolving the tail raises unlisted regrets, `t0` carries more
+unlisted mass than `q` (`+0.02613`), so under ANY homogeneous prior on `delta` the correction
+is POSITIVE — `Delta = delta * 0.02613`:
+
+| assumed mean `delta` (cp) | `S_R` correction | resolved `S_R` |
+|---|---|---|
+| 50 | +1.31 | 21.31 |
+| 100 | +2.61 | 22.61 |
+| 200 | +5.23 | 25.23 |
+| 766.6 (the cap headroom) | +20.03 | 40.03 |
+
+⇒ **at plausible `delta` (50-200 cp) the switch alone is worth +1.3 to +5.2 cp against a
+3.0 cp bar.** That is the same shape as
+[[an_arm_that_is_the_gradient_of_the_metric_always_wins]]: we are changing the instrument in
+a direction we can PREDICT favours passing. It is legitimate here — the resolved ruler
+MEASURES where the old one IMPUTED, and correcting an optimistic bias necessarily moves
+things the bias's way — but "legitimate" and "neutral" are different, and this is exactly
+when a pre-commitment is required. **PRE-COMMITTED: a Stage-1 PASS that would have FAILED on
+`S_hat_R^historical` must be REPORTED AS SUCH, with the ruler-switch contribution stated
+separately.** Both numbers are reported regardless of which way they fall.
+
+**3. THE `3.0 cp` BAR SURVIVES — PROVENANCE CHECKED, NOT ASSUMED.** `#60277`, verbatim:
+*"This is a TARGET-side measurement and target gains do not transfer 1:1 —
+[[the_main_policy_target_buys_nothing]] measured the main policy direction at +0.00004 ... A
+sub-3 cp target gain has no plausible route to model gain, and the F-only null just cost 190
+iterations."* ⇒ **3.0 was chosen from TRANSFER evidence, not calibrated off the 20 cp
+anchor.** It is a practical-significance threshold in cp of deep-SF regret, so a more
+accurate cp measurement does not change what it means. **The bar is NOT edited.**
+
+**4. ⚑⚑ THE ALGEBRAIC CANCELLATION IS REFUTED — TWICE, AND THE SECOND IS FATAL.** Peer
+proposed that with `SUM_m (t_m - q_m) = 0`, `S_R = -SUM (t-q) cp_m`, so `cp_best` cancels and
+only consequential moves need accurate scores. **Measured on 3958 rows:**
+
+| | |
+|---|---|
+| `S_R` via clipped regret | **+14.515** |
+| `S_R` via `-SUM(t-q)cp` | **+839.534** |
+| max per-row difference | **98,998.8** |
+
+**(a) IT IS VACUOUS EVEN WHERE IT HOLDS.** `SUM(t-q) = 0` only over the FULL support. Over the
+LISTED support it is **-0.02641** — precisely the unlisted-mass asymmetry. To use the identity
+you need `cp_m` for the unlisted moves, which is the same unknown as needing `r_m`. It
+eliminates `cp_best`, not the missing scores. **No information is saved.**
+
+**(b) IT IS CATASTROPHIC ON THIS IMPLEMENTATION.** `best_cp` carries MATE-SENTINEL values
+(observed `-99500.0`). Clipping regret to `[0, 1000]` tames that in `r`, but any linear algebra
+on RAW cp multiplies a `+/-99500` sentinel by the residual `-0.0264` — hence the 839 mean and
+the 98,999 max. **Do not do arithmetic on this ruler's raw cp.**
+*(The cap itself is minor on listed support: it binds on 1.91% of pairs carrying 0.0066 of
+`|t-q|` per row. The mate sentinel, not the cap, is what breaks the identity.)*
+
+**5. `searchmoves` UNBLOCKED VIA A WORKTREE — CORRECT, ADOPTED.** The Stage-1 ruler is an
+OFFLINE audit; it needs neither the live branch nor a restart. Use a separate audit worktree
+carrying `a004347b3` / `101015309`. (Merging to `main` for permanence is a separate, optional
+question.) ⚑ **NOTHING gets deployed to the running tree.**
+
+**6. ⚑ AND `searchmoves` IS A NEW RULER UNTIL CALIBRATED — the peer's demand, adopted as a
+BLOCKING pre-step.** A forced root move at 1M nodes receives vastly more attention than one
+line of an unrestricted `1M/MPV10` search, so `MPV10 score of m` and `forced-searchmoves score
+of m` are NOT interchangeable. **CALIBRATION, before any unlisted move is resolved:** take
+moves the historical deep ruler ALREADY LISTED, re-score them by the proposed searchmoves
+method, and measure the systematic difference. If it is material, `searchmoves` values must be
+corrected onto the MPV scale — or the whole ruler declared new and `S_hat_R^historical` kept
+as the ONLY continuity number.
+
+**7. ADAPTIVE RESOLUTION ORDER — ADOPTED.** Rank unlisted moves by their contribution to the
+identification WIDTH, `|t0(m) - q(m)| * (r_max - r_floor)`, not by probability. Resolve
+descending until the residual interval on `G = f * 0.25 * S_R` is `<= 0.5 cp` **or lies
+entirely on one side of the 3.0 cp boundary**, then stop. Far cheaper than MPV>=28 everywhere
+and aimed exactly at the uncertainty that poisons `S_R`.
+
+**8. `0.53` STAYS A SCHEDULING TRIGGER, and one supporting argument is WITHDRAWN.** I had used
+"historical `S_R = 20`" to argue `0.53` is probably enough coverage. **That argument is
+retired** — 20 is a weakly identified proxy. `0.53` remains as a scheduling choice only:
+close, free to wait for, and never an efficacy gate.
+
+**9. AND A CORRECTED STRONG-SCREEN FAIL STILL DOES NOT VETO.** Unchanged from `758c63a79` §4
+and `8cbba0490` §4: the target-space screen says how strong the target-space evidence is; it
+does not answer whether this gradient helps TRAINING.
+
+**REVISED STAGE-1 SEQUENCE.** At trailing-20 `f >= 0.53`: (1) freeze the matched population;
+(2) draw under the matched sampler; (3) compute `S_hat_R^historical` for continuity;
+(4) calibrate searchmoves against listed moves; (5) adaptively resolve consequential unlisted
+moves to obtain `S_R^resolved`; (6) apply the UNCHANGED `alpha = 0.25` entropy constraint and
+the UNCHANGED 3.0 cp bar to the RESOLVED result; (7) report the old-ruler verdict as a
+labelled historical secondary.
+
+**STATE: pairing continues (0.4661, iter 578). PR on hold. No SF spent.**
