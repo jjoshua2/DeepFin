@@ -63422,3 +63422,37 @@ stated here rather than left implicit.
 
 **Not launched.** This closes a review finding. The arm still needs its step budget frozen into
 the prereg (proposed 38,544 steps in the entry above) and an explicit go.
+
+### Arm-F inertness: upgraded from one shard to the whole corpus
+
+The commit message on `db54785fc` claimed "one converted shard has no SF arrays ⇒ mask empty on
+all 79,077,376 rows". That is an inference from a sample of ONE out of 9,653 shards, and it was
+correctly challenged. Replaced with a measurement, banked at
+`scratchpad/lc0_corpus_sf_inertness.json` and reproducible via
+`python3 scratchpad/lc0_corpus_sf_inertness.py`:
+
+```
+shards scanned: 10137  {'data/lc0_rows': 9653, 'data/lc0_rows_heldout': 484}
+distinct array-name sets: 1
+   10137 shards | 19 arrays | SF-related: NONE
+shards carrying ANY sf* array: 0
+```
+
+**Every shard in both roots carries the identical 19-array schema and not one SF array** —
+no `sf_p0_regret`, no `has_sf_p0_regret`, nothing. `sf_p0_regret_base` is therefore empty
+corpus-wide by construction, so `m_sf_policy_floor` is `masked_mean` over a zero-count mask,
+which `losses.py:84`'s `clamp_min(1.0)` renders exactly `0.0`. `has_sf_p0_regret rows =
+0 / 79,077,376`. The scan reads zarr group metadata (directory listings) only, no row data,
+which is why there was no excuse for not running it.
+
+### The stale-pin residual needs no fix — the launch path already closes it
+
+The surviving mutant (pin AND control moved to 0.0 together, in-tree tests green) does not
+create a route to a silently-invalid run. `control_validity_problems`
+(`scripts/lc0_control_train.py:980`) takes an explicit **`live_config_unread: bool`** parameter,
+both drivers resolve `live_production_config_path()` at the call site (`:787`, `:821`, `:852`,
+`:1437`), and `valid_control` is `not validity_problems` — checked before the first step and
+refused without `--allow-invalid-control`. So the split is deliberate and sound: **CI and the
+in-tree tests may judge against the pin; a VALID experimental run must read the live file.** A
+pin that has gone stale together with the control can fail a unit test's purpose but cannot
+produce a run that claims validity. No change made.
