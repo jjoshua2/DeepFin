@@ -63565,3 +63565,49 @@ it. (3.0 cp is the same bar the frozen Stage-1 screen uses, so the two are compa
   spliced across arms.
 
 **NOT LAUNCHED.** Prereg only. No GPU work, no config change, no live edit.
+
+## 2026-08-19 — REVERT POINT banked before the lc0 positive control's pause window
+
+`data/salvage/pre_lc0_control_20260819` — 3.7G, taken while training ran, per the protocol's
+salvage-export rule.
+
+```
+[salvage] wrote 1 seeds from run_id=dea5e metric=training_iteration
+[salvage] slot=00 metric=595.000 iter=595 shards=797
+          src=train_trial_dea5e_00000_0_lr=0.0000_2026-08-16_12-38-11
+          ckpt=checkpoint_000594 (newest on disk: checkpoint_000594)
+```
+
+⚑ `--metric training_iteration` was passed, so this is CURRENT STATE (iter 595), not the
+best-metric row the default would have picked. Confirmed by the echoed `metric=595.000
+iter=595` matching the newest checkpoint on disk.
+
+**Why it exists, given #438 modifies nothing in production.** The arm is offline and never
+writes a production weight, so this is not a rollback target for the experiment. It is
+insurance for the PAUSE: Ray prunes live checkpoints (a checkpoint was pruned mid-session on
+2026-08-18, 40 minutes after it served a run), and the window parks training for ~3.6 h — far
+longer than any previous use of `scripts/pause_window.sh`, which was measured on a ~20-minute
+arena.
+
+**⚑ The un-park command, written down BEFORE the window opens rather than looked up during an
+incident.** `pause_window.sh` removes the marker on command failure and on interrupt, but that
+is a shell trap: it does NOT fire on SIGKILL or a host reboot, and a marker left behind with a
+live trial parks training indefinitely — the script's own "one unrecoverable mistake".
+`train.sh`'s `clear_pause_markers()` only runs on a fresh start, which does not help a trial
+that is alive and parked. So:
+
+```bash
+rm -f runs/pbt2_small/tune/pause.txt runs/pbt2_small/tune/train_trial_*/pause.txt
+```
+
+The window is therefore launched under `setsid`/`nohup` so it survives this shell.
+
+**RECOVERY IS NOT "the marker is gone".** Pre-committed definition, because the obvious version
+gives a false alarm: the pause parks at the TOP of an iteration and that same iteration resumes
+afterwards, so the first emitted row is EXPECTED to be the stretched one (the ledger's own
+measurement of the window is "ONE stretched iteration"). Recovery is:
+
+  marker gone -> trial advances -> workers return -> **the next CLEAN FULL iteration returns to
+  normal cadence** (~300 s/iter)
+
+Judging on the first post-release row would read the designed cost as a regression.
