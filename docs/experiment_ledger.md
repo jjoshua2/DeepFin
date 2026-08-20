@@ -62737,3 +62737,89 @@ this measures search depth, not target quality. `W` is not refuted as a teacher,
 free lunch.
 
 **STATE: unchanged. Pairing continues (trigger 0.4639 at iter 577, 0.53 frozen). PR on hold.**
+
+### ⚑⚑⚑ 2026-08-19 — THE "DEEP RULER" IMPUTES 66% OF ITS OWN MOVES, AND THE BIAS IS
+### ASYMMETRIC BETWEEN `t0` AND `q`. The worst-case `S_R` understatement is **+21.5 cp**
+### against an anchor of 20.0
+
+Peer: *"we don't want to reproduce the same defect with a more expensive MPV10 judge and
+call it 'deep'."* **That is exactly what is there.** Audited before spending on Stage 1.
+
+**THE IMPUTATION RULE, `eval/audit.py:265-270`:**
+
+    worst_listed = min(pos.move_cp.values())
+    floor = pos.best_cp - worst_listed
+    out[i] = (pos.best_cp - cp) if cp is not None else floor
+
+Unlisted legal moves get the WORST LISTED line's regret. Its own docstring is honest about
+it — *"a lower bound on their true regret, biased optimistic for bad distributions"* — and
+then asserts *"with MultiPV >= 10 at 1M nodes the unlisted mass of any sane candidate is
+tiny."* **That assertion is now measured, on all 4000 audit rows, and it does not hold.**
+
+| | |
+|---|---|
+| mean legal moves | **28.0** |
+| mean moves the deep ruler LISTED | **9.4** |
+| ⇒ **imputed entries per position** | **18.6 (66%)** |
+
+| distribution | mean unlisted mass | median | p90 | frac > 1% | frac > 5% |
+|---|---|---|---|---|---|
+| `train` (`t0`) | **0.0549** | 0.00015 | **0.1314** | 0.234 | 0.143 |
+| `sf_soft` (`q`) | 0.0288 | 0.00697 | 0.0641 | 0.175 | 0.114 |
+
+**⇒ ASYMMETRY, AND IT IS THE WHOLE POINT: `mean(t0 - q) unlisted mass = +0.0261
+[+0.0206, +0.0318]`, CI excludes 0.** Predicted before measuring, and for the stated
+reason: `q` is built from SF's own top lines so it lands on moves the deep ruler also
+listed; `t0` is the SEARCH visit target and puts mass where SF never ranked. `t0` carries
+**1.9x** the imputed mass `q` does.
+
+**⇒ DIRECTION AND MAGNITUDE.** Imputed regret is a LOWER bound, so `E_t0[r]` is biased down
+MORE than `E_q[r]`, and `S_R = E_t0[r] - E_q[r]` is **UNDERSTATED**. Bounding it:
+
+| | |
+|---|---|
+| imputed floor (worst listed regret) | mean **233.4 cp**, median 135.0, p90 573.1 |
+| cap (`AUDIT_REGRET_CAP_CP`) | 1000 cp ⇒ headroom **766.6 cp** |
+| **MAX understatement** (every imputed move truly at the cap) | **+21.53 cp** |
+| anchor `S_R` | **20.0 cp** |
+
+⚑ **THE WORST-CASE BIAS EXCEEDS THE QUANTITY IT BIASES.** That is a loose upper bound —
+assuming EVERY imputed move is a 1000cp blunder is absurd — but it establishes that the
+imputation is NOT a rounding detail on this functional, and that `S_R = 20` cannot be
+treated as instrument-independent. The bias direction is FAVOURABLE (true `S_R` >= measured),
+which is exactly why it must be stated: a favourable bias is the kind nobody audits.
+
+**⇒ STAGE 1 DECISION, and it is a real fork the peer's rule already anticipated:**
+- **(a) REPRODUCE the historical `r`-construction exactly** — MPV>=10 at >=1M with the same
+  worst-listed floor. `S_R,today` is then comparable to 20, and both carry the same bias.
+- **(b) IMPROVE the ruler** — widen it so `t0`'s mass is actually covered — and **DECLARE
+  that 20 is no longer directly comparable.**
+
+**RECOMMENDATION: (a), and pre-commit it now.** The frozen decision rule is
+`UCB95(f * 0.25 * S_R) > 3.0`, and its 3.0 was calibrated against instrument-(a) numbers.
+Switching rulers mid-funnel changes the scale of the quantity under test while leaving the
+threshold fixed — [[a_guard_must_share_the_criterion_instrument]]. Take (b) only as a
+SEPARATE, labelled measurement, and if (b) is ever run, the 3.0 bar must be re-derived
+rather than carried over.
+
+⚑ **AND THE WIDTH ARITHMETIC SAYS (b) IS EXPENSIVE.** Covering `t0`'s support means listing
+~28 moves, not ~9.4. From today's 2x2, width at fixed depth costs ~2.86x per 6->40 lines;
+a >=1M-node MPV>=28 judge is a materially bigger buy than the >=1M/MPV>=10 one, on top of
+2,500 positions. Another reason (b) is a separate project, not a Stage-1 upgrade.
+
+**TWO CORRECTIONS ACCEPTED, both mine, both overclaims:**
+1. **WITHDRAWN: "today's shipped `S_R` should be >= 20."** That assumed monotonicity in
+   teacher strength which `S_R = SUM (t0 - q) r` does not have — a stronger `q` can move
+   mass among already-good moves, or toward `t0`, and shrink the gap. Correct statement:
+   **the 150-200k/MPV6 teacher MAY raise `S_R` relative to the 75k anchor; sign and
+   magnitude are what Stage 1 measures.** Strengthens the case for running it — we should
+   not know the answer in advance.
+2. **SOFTENED: "500k is exactly the iso-depth price of MPV40."** n=40 rows, one population.
+   Correct statement: **`500k/MPV40` empirically restores MEAN production depth on this
+   sample** (17.88 vs 18.00). Position complexity varies and no universal price is
+   established.
+
+**Separability is also dead, from the same 2x2:** `depth = g(nodes) - h(width)` does not
+fit — the width penalty is -4.40 at 175k and -6.27 at 500k, interaction **-1.87**.
+
+**STATE: unchanged. Pairing continues (0.4639, iter 577). PR on hold. No SF bought.**
