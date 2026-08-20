@@ -67,6 +67,25 @@ trained on, frozen as an explicit row-id list before the first training step.
 exposure recency, not generalisation — banked as
 `exposure_recency_dominates_heldout_ce`. Freeze it and record its sha256.
 
+### Amendment 3 (2026-08-20): frozen held-out is **v2** — the purity gate fired on v1
+
+Window 2's in-window `purity` measured **4,970 of 96,811 distinct v1 held-out inputs (5.1337%)
+occurring in the train corpus** (record-level intersection 32 — the under-report the tool
+warns about). The gate fail-fasted the window before any training compute; no model read
+existed to select on, so rebuilding the split is identity-only, the same argument class as the
+seed-1 re-freeze. Remedy = the gate's own `subtract`:
+
+- **`data/lc0_control_heldout_frozen_v2.json` — 91,842 rows / 91,841 distinct x**, sha256
+  `80ab2a7bc192c1356e249f3c0648b6a587ab4ef97f4250c0cc95bb057b2da2b6`; purity on v2 = PURE
+  (0 exposed inputs, 0 record intersection over all 78,531,074 train rows).
+- Resolution restated at n=91,842: the bar scales by sqrt(100000/91842) = 1.0435, so
+  **±0.392 pp → ±0.409 pp** everywhere the verdict table reads it. The +2.0 pp material
+  threshold is unchanged (still ~10× resolution).
+- v1 (`data/lc0_control_heldout_frozen.json`, sha `b6f47be8…`) is retired and must not be
+  scored against; the banked exposed ids are `data/lc0_control_exposed_20260820.json`.
+
+Full narrative: experiment ledger, "window 2: the purity gate FIRED" (live branch).
+
 ## Instrument resolution — COMPUTED FIRST, threshold derived from it
 
 Held-out top-1 agreement with lc0's own visit-argmax. Computed 2026-08-15:
