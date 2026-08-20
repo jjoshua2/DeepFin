@@ -63745,6 +63745,47 @@ released.
   worktree at `e6ad55cb9` + prereg-deviation doc commit only. Purity re-runs inside the window
   off the cache (minutes, not 69).
 
+## 2026-08-20 — PRE-REGISTERED, NOT RUN: absolute-Q target sigma probe (`target_q_rescale=0`, offline)
+
+**Hypothesis (the Gumbel-lane audit's F2, the strongest surviving mechanism for "sharp and
+wrong"):** the mctx min-max rescale in `_completed_q_transform` hands the stored target's
+locally-best move the full `c_scale*(c_visit+max_visit)` logits of authority regardless of the
+ABSOLUTE completed-Q spread — at 100 sims / topk 16 most candidates hold 1–3 visits, so
+rescaled visit noise gets decisive weight stacked on an already-sharp prior. If true, a target
+built with sigma in absolute Q units scores better on the deep ruler; if not, the mechanism is
+not load-bearing at the target level and the bad tail needs a different explanation.
+
+**Instrument:** `792fde4d6` adds `GumbelConfig.target_q_rescale` (default True = mctx-exact,
+bit-identical; store-arm only; play arm untouched; not yaml-wired — probe-only via
+`audit_targets --gumbel`). Mutants killed on both search paths; carried-fields pin updated.
+
+**ONE deciding yardstick** (two legs, same banked checkpoint, C17-probe design):
+
+```
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint data/salvage/pre_lc0_control_20260819/trainer.pt \
+  --sims 100 --max-positions 2000 --sf-soft-nodes 50000 --nice 19 \
+  --gpu-mem-fraction 0.20 [--gumbel target_q_rescale=0]   # leg B has the override
+```
+
+paired on the production-training-target row's E[deep regret] via
+`scripts/paired_compare.py --join-key key`. **SUCCESS:** leg B better, 95% CI excluding 0.
+**REFUTED:** CI excludes 0 in the worse direction, OR the CI lies entirely within ±1.0 cp
+(mechanism real but immaterial). **INCONCLUSIVE:** one repeat at 4000 positions, then stop.
+Secondary (reported, not deciding): target top-1 regret, H(target), bad-tail mass.
+
+**Interpretation limit, stated up front:** rescale=0 changes sigma's MAGNITUDE as well as its
+proportionality (at real Q spreads < 1 the absolute arm is also globally softer — the new
+store-only test measures higher target entropy at 32 sims). A positive read therefore licenses
+"absolute-Q sigma builds a better target", NOT "proportionality per se"; the magnitude-matched
+dissection (c_scale lowered under rescale=1 to equate mean sigma) is follow-up ONLY on a
+positive read. Guarded against [[an_arm_that_is_the_gradient_of_the_metric_always_wins]]: the
+ruler is the frozen deep-SF audit set, which neither leg's construction reads.
+
+**Scheduling:** GPU-gated behind window 3 (#438 owns the machine until ~16:00); then safe
+concurrent with resumed training at `--gpu-mem-fraction 0.20` per the standing arena-safety
+rules. Confound-free by construction: offline, no live keys touched, default path bit-identical.
+
 ## 2026-08-20 — REGISTERED PREDICTIONS for the three queued readouts (before any reads out)
 
 Recorded so post-hoc interpretation is constrained. Subjective probabilities, not commitments;
