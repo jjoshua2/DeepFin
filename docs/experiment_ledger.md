@@ -63196,3 +63196,59 @@ measured against a `best_cp` that is a mate sentinel, so it is the stratum where
 
 **NOTHING FURTHER IS ADDED. Next expenditure is Stage 1 itself.** Watcher at 0.4700 / iter
 580. Live run untouched throughout; no training change has been made this session.
+
+## 2026-08-19 — Reconciliation of the relayed six-lever backlog survey (verification, no launch)
+
+A peer agent proposed a six-lever taxonomy of the RL loop (data arrival → replay/retention →
+search authority → target construction → model capacity/topology → teacher quality) with a
+ranked 10-item queue. Every load-bearing claim was checked against the LIVE branch, not main.
+
+**Checked out.**
+- Arm G (replay recency) is genuinely open and genuinely neglected:
+  `replay_shard_recency_exponent: 1.0` at `configs/pbt2_small.yaml:722`, validator at
+  `replay/disk_buffer.py:115`. Nothing has ever moved it.
+- `parametric_q` is implemented and off: `stockfish/wdl.py:98`
+  (`SEARCH_WDL_DRAW_PARAMETRIC_Q`), validator `tune/trial_config.py:115`.
+  `search_wdl_draw_mode` is absent from the live yaml (only `search_wdl_frac: 0.31`, line 553).
+- PR #440 (Stockfish upgrade) is MERGED and **not deployed**: `e2e_server/publish/stockfish`
+  is still a symlink to the 2026-03-27 binary and reports `dev-20260420-ed651aab`. The
+  ledger's "STAGED, NOT DEPLOYED" is accurate on disk.
+
+**Did not check out — three corrections.**
+1. **Item 1 (prior-vs-MCTS arbitration) has no data today.** `prior_top1_index` is present on
+   `origin/main` and **ABSENT from the live branch** (`git grep` on both refs). PR #445 never
+   reached the running trial, so current shards do not carry the field. The arm cannot be
+   measured without a restart AND a fresh shard generation — it is not a config flip.
+2. **Arm G is restart-required, not live-pushable.** `replay_shard_recency_exponent` is in
+   `_CONSTRUCTION_ONLY_REPLAY_KEYS` (`tune/trainable_config_ops.py:455`) precisely because it
+   is the SHAPE of the shuffle-refresh shard draw; a mid-run edit would split one replay
+   window across two sampling regimes. The survey priced it as cheap; it costs a restart.
+3. **Item 4 (tile-aligned FFN widening, +710,325 params) is refuted by our own measurement.**
+   That is **+1.13%** of 63.08M. `our_gap_is_training_not_capacity` has C1-384-12 at **31.16M
+   — 49% of our parameter count — beating us by 11.4 pp top-1 / 24.75 cp**, and C1-512-15 at
+   our own shape beating us by 12.0 pp. Capacity is not the binding axis, so a 1.13% capacity
+   add cannot be. The survey's item 4 contradicts the survey's own lever-6 framing.
+
+**Also unpriced: changing search voids the regret series.** `search_wdl_draw_mode` is read by
+`from_dict` and validated, so a live edit is category (b) — a real intervention, not a soft
+one — and it is a SEARCH change. The series has been frozen since 2026-08-09 20:58; moving it
+needs a fresh baseline, which the survey did not budget.
+
+**The structural fact the survey misses.** The live trial is **79 commits behind
+`origin/main`**; five of the ten queued items live on main only. Measured this session: the
+live yaml boots CLEAN on main-derived code — `flatten_run_config_defaults` OK (329 keys) and
+`TrialConfig.from_dict` OK against `8a4701e59` (origin/main + PR #438). So neither category
+(a) nor category (b) blocks a restart. ⇒ The queue's real unit is not "which config flip" but
+"what do we bundle into the one restart", and that bundle is currently: arm G, the #445
+arbitration field, the #440 binary, and #438's training path.
+
+**The omission that orders the rest.** The survey does not mention the lc0 positive control
+(PR #438) at all. It is the H_target / H_stack discriminator — whether our targets/data are
+the defect or the training stack is — and it costs ~36k optimizer steps ≈ **2–4 h GPU** at the
+measured live rate of 3.01 steps/s. It decides which HALF of the survey's own list is worth
+funding: levers 4–6 (capacity/topology/teacher) versus levers 1–3 (arrival/retention/search).
+Running it before spending a restart on the bundle is strictly cheaper than the reverse.
+
+**Disposition.** No arm launched, no training change, no restart. The SF-soft Stage-1 trigger
+watcher stays running (iter 583, trailing-20 `has_sf_p0_frac` = 0.4757 against the frozen 0.53
+trigger, ~25 iterations out). Queue order recorded above; nothing is promoted by this entry.
