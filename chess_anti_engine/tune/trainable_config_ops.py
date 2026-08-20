@@ -176,7 +176,7 @@ def _wait_if_paused(
                             f"{total_b / 2**20:.0f})",
                             flush=True,
                         )
-                except Exception as exc:  # noqa: BLE001 - parking must survive this
+                except Exception as exc:  # parking must survive this
                     print(f"[trial] parked: empty_cache failed: {exc!r}", flush=True)
             time.sleep(float(poll_s))
     finally:

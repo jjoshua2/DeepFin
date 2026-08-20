@@ -11,16 +11,45 @@
 #   3. restarts via train.sh start (auto-resume from the last checkpoint).
 #
 # Invoked by watchdog_loop.sh on a confirmed STALLED verdict (90 min flat, PID
-# alive, no pause.txt, no intentional-stop marker), or by hand. Idempotent-ish:
-# safe to run when already down (kills nothing, just restarts).
+# alive, no pause.txt, no intentional-stop marker), or by hand.
+#
+# ⚑ FAIL-CLOSED (#177, 2026-08-20): this script REFUSES (exit 7) while an
+# intentional-stop marker or a pause marker is present, unless passed --force.
+# The guard used to live only in the CALLER — and the by-hand path this header
+# invites had none at all. On 2026-08-20 the watchdog cleared a live pause
+# window's marker on an age bound, after which this script's teardown killed
+# the deliberately-parked trial and restarted production beside the job the
+# pause protected. "Safe to run when already down" is exactly inverted when
+# down is ON PURPOSE, so the operator markers now gate the teardown here,
+# where the by-hand path cannot skip them. --force also remains the only path
+# that removes a pause marker below.
+#
+# RECOVER_ROOT / RECOVER_STOP_MARKER / RECOVER_PAUSE_TXT / RECOVER_PIDFILE are
+# TEST SEAMS (watchdog_loop.sh convention): without them the guard could only
+# be pinned by reading it, and exercising the teardown path in a test would
+# pkill the LIVE stack.
 set -u
-cd /home/josh/projects/chess
+cd "${RECOVER_ROOT:-/home/josh/projects/chess}"
 LOG=scratchpad/recover_stall.log
+STOP_MARKER="${RECOVER_STOP_MARKER:-/tmp/chess_training.intentional_stop}"
+PAUSE_TXT="${RECOVER_PAUSE_TXT:-runs/pbt2_small/tune/pause.txt}"
+PIDFILE="${RECOVER_PIDFILE:-/tmp/chess_training.pid}"
+FORCE=0
+[ "${1:-}" = "--force" ] && FORCE=1
 mkdir -p scratchpad
 log(){ echo "$(date '+%m-%d %H:%M:%S') recover_stall: $*" | tee -a "$LOG"; }
 
+if [ "$FORCE" != 1 ]; then
+    for guard in "$STOP_MARKER" "$PAUSE_TXT"; do
+        if [ -e "$guard" ]; then
+            log "REFUSING (no --force): operator marker present: $guard"
+            exit 7
+        fi
+    done
+fi
+
 log "BEGIN force teardown (GPU-independent)"
-PID=$(cat /tmp/chess_training.pid 2>/dev/null || true)
+PID=$(cat "$PIDFILE" 2>/dev/null || true)
 [ -n "$PID" ] && kill -9 "$PID" 2>/dev/null && log "killed trainer pid=$PID"
 # Module names as they actually appear in ps (NOT 'distributed_worker').
 for pat in "chess_anti_engine.worker" "chess_anti_engine.inference" \
@@ -28,7 +57,12 @@ for pat in "chess_anti_engine.worker" "chess_anti_engine.inference" \
            "ray/dashboard/agent"; do
     pkill -9 -f "$pat" 2>/dev/null && log "pkilled $pat"
 done
-rm -f /tmp/chess_training.pid runs/pbt2_small/tune/pause.txt
+rm -f "$PIDFILE"
+# Only a FORCED run may remove a pause marker: the unforced path proved no
+# marker existed at the guard, and one that appeared since belongs to a pause
+# that just started — deleting it would leave that window believing it holds
+# a marker that is gone.
+[ "$FORCE" = 1 ] && rm -f "$PAUSE_TXT"
 
 # Wait for the GPU bridge: once the wedged contexts die, dxg recovers on its own.
 BACK=0
