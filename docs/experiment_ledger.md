@@ -63611,3 +63611,60 @@ measurement of the window is "ONE stretched iteration"). Recovery is:
   normal cadence** (~300 s/iter)
 
 Judging on the first post-release row would read the designed cost as a regression.
+
+## 2026-08-20 — lc0 control launch prep: the freeze REFUSED (correctly), and purity is not a minutes-scale step
+
+### 1. `freeze --seed 0` refused, and it was right to
+
+It completed its analysis and then declined to write the artifact:
+
+```
+pool rows              3943343
+pool unique ids        3943219
+pool duplicate ids     124
+pool unique inputs     3735239
+pool duplicate inputs  208104
+frozen rows            100000 (unique ids 99999, unique inputs 96912, seed 0)
+row id version         lc0_control_row_id_v2_x_policy_plus_x_only_blake2b128
+FAIL: the frozen set contains duplicate row ids
+```
+
+`scripts/lc0_control_heldout.py:158` refuses when `frozen_rows != frozen_unique_ids`, **before**
+`write_frozen`, so there is no partial artifact. The 100k draw happened to take both members of
+one duplicate pair.
+
+**The corpus is NOT defective.** 124 duplicate ids in 3.94M rows is the DOCUMENTED shape: the
+tool's own message says duplicate inputs run "~1000x" duplicate ids on real data, and the
+measured ratio is 208104/124 = **1678x**. Two records with identical `x` AND identical policy
+hash to one id — a genuine duplicate record, not a hash collision (128-bit blake2b over 4M rows
+makes collision ~1e-27). Sampling 2.54% of the pool gives ~(0.0254)^2 per pair, so with ~124
+pairs the expected number of collisions drawn is ~0.08 — drawing one is unlucky, not anomalous.
+
+**Remedy: re-run at `--seed 1`, recorded rather than silent.** ⚑ This is a re-roll of a gate, so
+the reason it is not gaming one is stated explicitly: the rejection criterion involves ONLY row
+identity, no model exists at this point, and no measurement has been taken — there is no path
+from this selection to a biased result. The freeze sample seed is also NOT preregistered (the
+prereg's seed discussion at lines 266-272 concerns the EVAL seed band applied before
+`build_model`, a different knob). The seed is carried in the artifact either way.
+
+### 2. ⚑ `purity` is a ~9-hour step concurrent, not a minutes-scale one
+
+The endorsed ordering was `freeze -> salvage -> purity -> park -> #438`, so that no paused GPU
+time is spent on CPU prep or on discovering a bad corpus receipt. That was priced at minutes.
+Measured, it is not:
+
+- `freeze` scanned the **held-out** corpus: 3,943,343 rows in ~1,680 s under contention =
+  **2,347 rows/s**, single-threaded (it has no `--workers`).
+- `purity` must compute row ids over the **training** corpus — **78,531,074 rows, 20x** — because
+  the id hashes `x` + policy and there is no cheaper path to it.
+- At the same contended rate that is **9.3 hours**. `purity` DOES take `--workers` and the host
+  has 32 cores, so in a drained window (5 selfplay workers gone, ~5x the CPU) it is ~0.2-0.5 h.
+
+⇒ **Deviation, recorded: `freeze` stays OUTSIDE the pause window; `purity` moves INSIDE it.**
+The principle is kept where it is cheap (freeze costs 28 min concurrent and nothing inside) and
+abandoned only where honouring it costs ~9 hours of wall-clock against ~30 min of park. Run
+`purity` with `--cache-dir` so a re-run is cheap, and note that a purity FAILURE while parked is
+survivable: it is a stop condition either way, and the park is released by the same trap.
+
+**Revised sequence:** freeze (`--seed 1`, running) -> park/drain -> purity (parallel workers)
+-> `lc0_control_train --steps 38544` -> release -> recovery check.
