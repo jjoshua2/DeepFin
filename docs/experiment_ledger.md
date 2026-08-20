@@ -63745,6 +63745,26 @@ released.
   worktree at `e6ad55cb9` + prereg-deviation doc commit only. Purity re-runs inside the window
   off the cache (minutes, not 69).
 
+## 2026-08-20 — window 3: staging refused CONVERSION DEBRIS; corpus glob cleaned; window 4
+
+Window 3 cleared everything that killed windows 1–2 — drain clean (zero stderr leaks; the
+sourced lib carries `b1cb60cad`), purity CACHED → **PURE in 98 s** on v2 — then `[2/2]` died
+in `stage_shards`: `no shards under data/lc0_rows/training-run2-test91-20260813-1117`. That
+dir (and, found by scanning rather than by the next crash, **also `…20260815-0717`**) holds
+only a `_staging/` subdir — debris of interrupted conversions (2026-08-16), zero promoted
+shards, zero rows in the purity scan, zero rows in the frozen budget. `stage_shards` refuses
+an empty dir instead of silently skipping a named one — correct behaviour, third distinct
+gate to fire, third correct firing.
+
+- **Fix:** both dirs MOVED (not deleted) to `data/lc0_rows_partial/`; glob now yields 122
+  dirs. Corpus unchanged by construction: purity had scanned 0 rows from either.
+- **Proof before the next park:** `stage_shards` dry-run on the cleaned glob, CPU-only,
+  outside the window: 122 dirs → **9,653 staged symlinks** — exactly the receipt's shard
+  count, so staged corpus ≡ receipted corpus. The in-window purity re-run regenerates the
+  receipt against the same 122-dir glob.
+- Marker released on the fail path again; trial resumed at the next poll (~12:33).
+- **Window 4:** same frozen budget (38,544), same runner, no other change.
+
 ## 2026-08-20 — PRE-REGISTERED, NOT RUN: absolute-Q target sigma probe (`target_q_rescale=0`, offline)
 
 **Hypothesis (the Gumbel-lane audit's F2, the strongest surviving mechanism for "sharp and
