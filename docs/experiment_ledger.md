@@ -63708,6 +63708,43 @@ standing pgrep-scripts ban — its header was read, its internals were not.
 
 **NOT RETRIED. #438 remains staged and blocked on Josh's go after this fix is reviewed.**
 
+## 2026-08-20 — window 2: the purity gate FIRED (5.13% exposed inputs); holdout rebuilt as v2; window 3 relaunched
+
+**No training step ran; no GPU work; no model read was taken.** The rebuilt pause machinery had a
+clean first live outing: park ack at iter 710, drain in ~65 s (4 workers TERM -> ack -> 95
+suspended games banked, zero survivors under the zombie-as-drained rule), lease held, release on
+the fail path. In-window `purity` then scanned all 78,531,074 train rows and **FAILED the gate:
+4,970 of 96,811 distinct held-out inputs (5.1337%) also occur in the train corpus** —
+transposition/duplicate positions in other games. Record-level intersection was only 32, which is
+exactly the under-report the tool warns about. The runner fail-fasted (rc=1) and the window
+released.
+
+- **Why freeze could not catch this:** freeze checks identity within the held-out sample; input-
+  level exposure against the 78.5M-row corpus is what purity exists to measure, and this was its
+  first full evaluation. Precedent inside the tool itself: `--exposed-out`'s docstring records a
+  prior 5,065-exposed instance on an earlier freeze.
+- **Omission, owned:** the window runner did not pass `--exposed-out`, so the exposed ids were
+  not banked by the failing run ([[bank_the_dump_not_just_the_number]] again). Recovered by a
+  cheap re-run off the 4.8G train-index cache the failing run wrote; the runner now passes
+  `--exposed-out` permanently.
+- **Remedy (the gate's own prescribed one):** `subtract` -> `data/lc0_control_heldout_frozen_v2.json`
+  — 91,842 rows / 91,841 distinct x (the tool predicted 91,841 BEFORE building; exact), sha256
+  `80ab2a7bc192c1356e249f3c0648b6a587ab4ef97f4250c0cc95bb057b2da2b6`. Purity on v2:
+  **PURE — 0 exposed inputs, 0 record intersection**; receipt at
+  `data/lc0_control_purity_receipt.json` names the v2 sha.
+- **Why this re-roll is not gaming a gate:** same argument as the seed-1 re-freeze above — the
+  rejection criterion is row identity only, the gate fired before any training compute, and no
+  measurement existed to select on.
+- **Deviation from the prereg's n:** 100,000 -> 91,842 rows. The ±0.392 pp resolution bar scales
+  by sqrt(100000/91842) = 1.0435 -> **±0.409 pp**. Verdict thresholds are unchanged (stated in
+  pp); the prereg carries the amendment note.
+- **Recovery check (pre-committed rule): PASSED.** Marker cleared ~11:50; iter 711 is the
+  designed stretched row (11:58:32, ~26 min, `resumed_inflight_games=302` — the banked games came
+  back); iter 712, the first clean full iteration, landed at 410 s — inside the 313–520 s band.
+- **Window 3:** same frozen budget (38,544; nothing else), same runner with `FROZEN` -> v2,
+  worktree at `e6ad55cb9` + prereg-deviation doc commit only. Purity re-runs inside the window
+  off the cache (minutes, not 69).
+
 ## 2026-08-20 — REGISTERED PREDICTIONS for the three queued readouts (before any reads out)
 
 Recorded so post-hoc interpretation is constrained. Subjective probabilities, not commitments;
