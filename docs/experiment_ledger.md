@@ -62465,3 +62465,65 @@ five rows 0.472-0.481 and a rate of **+0.0029/iter** ⇒ **~25 iterations, ~2.7 
 The `f >= 0.53` Stage-1 decision point is imminent, which reorders the queue: the SF-soft
 funnel is about to become actionable, and it is the CONSUMPTION lever the teacher-quality
 lever depends on.
+
+### 2026-08-19 — WITHDRAWN wording, and the VALUE-route headroom is MEASURED at 2.92%.
+### Stage 1 amended to bank its raw teacher outputs; exploratory-run commitment recorded
+
+**1. WITHDRAWN: "a 500k label improves that WDL as surely as it improves the policy rows."**
+Too strong, and it asserted something already measured to be mostly false. The
+**150k -> 500k** rung — OUR label budget vs converged — moves SF's own WDL verdict by
+`>= 0.20` on **2.92% of rows [2.04%, 4.03%]**. ⇒ on ~97% of rows a deeper label does NOT
+materially change the value target. The structural claim (the live SF route into search is
+`sf_wdl` at 0.69 blend weight, not the policy legs) STANDS; the efficacy gloss I attached
+to it does not.
+
+**2. ⚑ AND THAT NUMBER REFRAMES THE ECONOMICS OF THE WHOLE TARGETED-RELABEL IDEA.** The
+2.92% slice is what a VALUE-route selector would target, and its base rate is 5x smaller
+than the policy selector's 15% operating point:
+
+| selector target | base rate | label cost at PERFECT selection |
+|---|---|---|
+| policy deficit (the built one, top-15%) | 0.15 | 1.429x |
+| **WDL unconvergedness (150k->500k, not built)** | **0.0292** | **1.054x** |
+
+A perfect WDL-unconvergedness selector would cost **~5% on labels**, not ~43%. That is a
+far better prospect than the arm we were about to build — but it is a PROSPECT ONLY: no
+such selector exists, its predictability is unmeasured, and the total headroom is a
+`>= 0.20` WDL correction on 1 row in 34. Recorded as the shape of any future teacher-quality
+work, NOT as a candidate.
+
+⚑ Note also, from the same entry: raising the LABEL budget GLOBALLY needs **no new
+plumbing** (`sf_label_nodes_floor`/`cap` are already separate from the opponent's
+`sf_nodes`). The blanket version is config-only at 2.857x label cost. Targeting is what
+needs code — and targeting is only worth code once the slice is shown to be predictable.
+
+**3. STAGE 1 AMENDED — BANK THE RAW TEACHER OUTPUTS. The decision rule is UNCHANGED.**
+Stage 1 buys genuinely deep labels on a current eligible population. Persisting only the
+scalar `S_R` would throw away the only deep-SF sample we will have on that population, and
+force a second expensive campaign to answer questions these same 2,500 labels already
+contain. **Persist per row:** full MultiPV list with per-line cp/mate/WDL, bestmove, depth,
+nodes, the production-depth label alongside it, and the row's stored target arrays.
+
+Enables later, at ZERO extra SF cost: 175k-vs-deep top-1 change rate; MultiPV membership and
+rank changes; policy-target TV/KL; **base-vs-deep WDL change (the 2.92% question) on THIS
+population**; and whether the existing policy-deficit selector enriches for WDL-changed rows
+— the exact route/selector mismatch identified above.
+
+⚑ **NONE of these enter Stage 1's futility criterion**, which stays exactly as frozen
+(`UCB95(G) > 3.0` ⇒ buy Stage 2). They are banked observations, not decision inputs. Adding
+them to the rule after the fact would be the post-hoc criterion this session has rejected
+four times.
+
+**4. EXPLORATORY-RUN COMMITMENT, recorded so the screen cannot become a veto by inertia.**
+If coverage reaches 0.53, Stage 1 comes back SHORT of the strong screen, and there is still
+no better GPU arm, then the **separate exploratory decision** already agreed
+(`758c63a79` §4) is to be made explicitly — not deferred by default. A strong-screen FAIL is
+a statement about evidence, not a prohibition on an explicitly-labelled exploratory
+`w_sf_own` run under its own prereg, kill rule and MAXIMUM window.
+
+**5. CALIBRATION BANKED, NOT WASTED.** `39a34878d`'s 40/40 result stands as infrastructure
+evidence: if targeted deep labels are ever justified, the synchronised `fresh=True` path
+yields a genuine cold deep query even on the same engine. It sits banked until teacher-
+quality data justifies using it.
+
+**STATE: PR on hold. Pairing continues. Next action is the 0.53 trigger.**
