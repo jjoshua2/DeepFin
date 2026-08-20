@@ -348,19 +348,44 @@ train:
   # under the same rule as the weights above -- zeroing it would be a second,
   # undocumented deviation from the stack under test. Inert here, and the
   # inertness is PROVEN, not assumed, on all three axes that could break it:
-  #   1. the term is `masked_mean(sf_floor, sf_p0_regret_base)` (losses.py:1953)
-  #      and a converted lc0 shard carries NINETEEN arrays, none SF-related --
-  #      no `sf_p0_regret`, so the mask is empty on every one of the 79,077,376
-  #      training rows;
-  #   2. `masked_mean` clamps its denominator (`denom.clamp_min(1.0)`,
-  #      losses.py:84), so an empty mask yields exactly 0.0 -- NOT NaN, which is
-  #      the failure mode a floor term with w=0.8 would otherwise arm;
+  #   1. no lc0 shard carries an SF array AT ALL. Measured over the whole
+  #      frozen corpus, not a sample: all 10,137 shards (9,653 training +
+  #      484 held-out) have ONE identical 19-array signature with zero
+  #      SF-named arrays -- no `sf_p0_regret`, `sf_wdl` or
+  #      `sf_p0_policy_target` -- and `scripts/lc0_data_to_rows.py` has no
+  #      flag path that emits one. Realized training rows: 78,531,074
+  #      (9,531 full shards + 122 partial; the nominal 9653*8192 =
+  #      79,077,376 overstates by 0.69%);
+  #   2. so `sf_p0_regret_t` is None and losses.py:1667's
+  #      `if sf_p0_regret_t is not None:` takes its ELSE branch:
+  #      `sf_floor = zero_loss` and every SfPolicyFloorOutputs field is
+  #      zero_loss. `sf_policy_floor_deficit` is called ZERO times -- no sort,
+  #      no allocation, no diagnostic, no crash path.
+  #      ⚑ NOT "masked_mean clamps its denominator so an empty mask cannot
+  #      NaN". That is true and it is NOT what makes this safe: a clamped
+  #      denominator does nothing about a NaN numerator, since NaN * 0.0 =
+  #      NaN. What makes it safe is that the numerator is never computed on
+  #      this path -- and on the OTHER collate path (`dataset.collate()`
+  #      allocates an all-zeros `sf_p0_regret_t` unconditionally) it IS
+  #      computed and measures finite, deficit ~0.149, masked_mean 0.0
+  #      exactly. `total += 0.8 * 0.0` on both paths;
   #   3. `sf_policy_floor_tau_played` stays ABSENT here exactly as in production,
-  #      so it DERIVES from `gumbel_topk`; this config sets none, and
-  #      DEFAULT_GUMBEL_TOPK is 16 -- the same 16 the live yaml sets -- so the
-  #      derived 1/16 = 0.0625 matches, `max(tau, tau_top1) + tau_played =
-  #      0.2125 <= 1.0` passes SfPolicyFloorParams validation, and 0.15 >= 1/16
-  #      raises no prior-rank warning.
+  #      so it DERIVES from `gumbel_topk`, which this config does not set:
+  #      DEFAULT_GUMBEL_TOPK (constants.py:31) is 16, the same 16 the live yaml
+  #      sets, giving 1/16 = 0.0625. `max(tau, tau_top1) + tau_played = 0.2125
+  #      <= 1.0` passes SfPolicyFloorParams validation, and 0.15 >= 1/16 raises
+  #      no prior-rank warning.
+  #      ⚑ A review asked for `gumbel_topk: 16` here, to make that equality
+  #      ASSERTED rather than a coincidence of two defaults. DECIDED AGAINST,
+  #      and the reason is not cosmetic: `test_no_selfplay_or_search_machinery_
+  #      is_configured` bans `gumbel_*` from this section outright, because
+  #      "the arm is supervised -- a selfplay/PID knob here would be a false
+  #      claim". It is right. This arm has no search, and writing a search knob
+  #      into it to document a derivation would buy an assertion by making the
+  #      config lie about what the arm IS. The equality is already guarded
+  #      where a guard belongs: `sf_policy_floor_gumbel_topk: 16` is one of the
+  #      90 pinned trainer kwargs, so a live `gumbel_topk` move fires
+  #      ControlTrainerDrift instead of silently re-deriving this collar.
   # => `total += 0.8 * 0.0`. The driver's per-head realized ROW COUNT is what
   # confirms it at launch; this comment is the prediction, not the evidence.
   w_sf_policy_floor: 0.8
