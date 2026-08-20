@@ -96,7 +96,7 @@ pause_worker_snapshot() {
     for d in "$PAUSE_PROC_ROOT"/[0-9]*; do
         pid="${d##*/}"
         [ "$pid" = "$$" ] && continue
-        cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+        cmd="$(tr '\0' ' ' 2>/dev/null < "$d/cmdline")" || continue
         [[ "$cmd" =~ $WORKER_PATTERN ]] || continue
         case " $cmd" in
             *" --trial-id $trial "*) ;;

@@ -1793,6 +1793,24 @@ def test_a_recycled_pid_is_never_signalled(tmp_path: Path) -> None:
     assert calls.read_text() == f"-TERM {FAKE_PID}\n", calls.read_text()
 
 
+def test_a_proc_entry_that_vanishes_mid_walk_is_skipped_silently(tmp_path: Path) -> None:
+    """⚑ MANIFESTED LIVE 2026-08-20: `/proc/516049/cmdline: No such file or
+    directory` leaked into the window log during the drain snapshot. Bash
+    processes redirections left to right, so in `tr < file 2>/dev/null` the
+    failed open is reported BEFORE stderr is silenced -- `|| continue` already
+    handled the vanished pid correctly; only the noise escaped. The reorder
+    puts `2>/dev/null` first. A numeric dir with no cmdline is exactly what a
+    pid that exited between the glob and the read looks like."""
+    proc = tmp_path / "proc"
+    (proc / "516049").mkdir(parents=True)          # vanished: dir, no files
+    _fake_worker(proc, FAKE_PID)                   # the walk must continue past it
+    r = _run_lib(f"pause_worker_snapshot {TRIAL_ID}",
+                 env={"CAE_PAUSE_PROC_ROOT": str(proc)})
+    assert r.returncode == 0, r.stderr
+    assert f"{FAKE_PID} {FAKE_START} {FAKE_PPID}" in r.stdout, r.stdout
+    assert r.stderr == "", f"drain snapshot leaked to stderr: {r.stderr!r}"
+
+
 def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> None:
     """⚑ THE REVIEW'S BLOCKING FINDING. The watchdog used to `rm -f` whatever
     sat at the marker path once its owner died -- demonstrated live against a
