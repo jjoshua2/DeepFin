@@ -63345,3 +63345,63 @@ intervention; Arm G, #440's teacher, and `parametric_q` are three separate inter
 must not share a readout window. FFN widening: **generic capacity is refuted** (31M beats us by
 11.4 pp), a localized FFN-geometry bottleneck is not refuted but is unsupported and
 low-priority. No launch, no training change, no restart.
+
+## 2026-08-19 — #438 merge delta review: one blocking finding, closed (`db54785fc`)
+
+The independent delta review of merge commit `8a4701e59` (origin/main + PR #438) returned
+**CHANGES-REQUESTED**. It confirmed the merge is an exact auto-merge — it reproduced
+`git merge f355bc00e + 3587ffab4` and the tree hash is byte-identical — and that the metric
+plumbing composes cleanly (`_TRAIN_METRIC_DEFAULTS` and `_train_metrics_dict` identical at 101
+keys in both directions; both sides' new entries mutation-killed). But it found the merge turns
+the branch **red by 31 tests** and makes the arm unlaunchable.
+
+**The finding.** PR #448 added `w_sf_policy_floor` to `TRAINER_WEIGHT_KEYS` plus four
+`sf_policy_floor_*` shape keys. `LIVE_TRAINER_PIN` is a frozen 2026-08-16 snapshot without
+them, so each became an unexplained deviation and `ControlTrainerDrift` fired. **The guard was
+correct, not stale-in-a-cosmetic-way:** production is training arm F at
+`w_sf_policy_floor: 0.8` (`configs/pbt2_small.yaml:525`) and the control set none of it, so the
+arm's premise — "our EXACT trainer on someone else's data" — was false on that axis.
+
+**Resolution: adopt the keys at production values.** Not a `LC0_TRAINER_DEVIATIONS` entry. The
+control config already states this rule for `w_sf_move` / `w_sf_own` / `w_sf_own_regret` /
+`w_sf_eval`: leave inert weights at production values, because zeroing them is a second
+undocumented deviation from the stack under test. A deviation entry would have established that
+the control may diverge wherever someone argues the difference does not matter — precisely the
+drift this module exists to stop.
+
+**Inertness PROVEN on the three axes that could break it** (the reviewer left all three open;
+each was measured):
+1. the term is `masked_mean(sf_floor, sf_p0_regret_base)` (`losses.py:1953`), and a converted
+   lc0 shard carries **19 arrays, NONE SF-related** — no `sf_p0_regret` at all, so the mask is
+   empty on every one of the **79,077,376** training rows;
+2. `masked_mean` clamps its denominator (`denom.clamp_min(1.0)`, `losses.py:84`), so an empty
+   mask yields exactly **0.0, not NaN** — the failure mode a `w=0.8` floor would otherwise arm,
+   and the one [[a_clamp_is_not_a_validator_nan_propagates]] exists to catch;
+3. `sf_policy_floor_tau_played` stays ABSENT exactly as in production, so it DERIVES from
+   `gumbel_topk`; the control sets none and `DEFAULT_GUMBEL_TOPK` is 16 — the same 16 the live
+   yaml sets — so `1/16 = 0.0625`, `max(tau, tau_top1) + tau_played = 0.2125 <= 1.0` passes
+   `SfPolicyFloorParams` validation, and `0.15 >= 1/16` raises no prior-rank warning.
+
+⇒ `total += 0.8 * 0.0`.
+
+**The pin was regenerated against the LIVE file**, `ops/live-20260725` `e94862771`, via
+`scripts/lc0_control_arch_pin.py --axis trainer` — NOT against `main`'s in-tree yaml, which
+does not set these keys either and would have produced a pin agreeing with the control and
+disagreeing with production. 90 kwargs, six new.
+
+**Verification.** `--check` vs the live file: OK on all three axes (it printed the 4-key drift
+before the change). The three lc0-control files: **135 passed, 1 skipped, 0 failed** (was 31
+failed). Lint scoped on the changed `.py`: clean. Whole-repo lint exits 1 with 13 basedpyright
+errors — all in three files neither side of the merge touched, reproduced identically on parent
+`f355bc00e`; **delta zero**, and the exit code is reported as 1 rather than called green, per
+[[lint_verified_by_grep_not_exit_code]].
+
+**⚑ MUTATION, because a guard that was just made to pass must be shown still armed.**
+Setting the control's `w_sf_policy_floor` back to 0.0 fails **3** tests and re-fires `--check`.
+Setting BOTH pin and control to 0.0 fails **nothing** — correct and documented: in-tree tests
+can only observe control-vs-pin agreement, and a stale pin is catchable ONLY by `--check`
+against the live working tree's file. That residual is the reason the script exists and is
+stated here rather than left implicit.
+
+**Not launched.** This closes a review finding. The arm still needs its step budget frozen into
+the prereg (proposed 38,544 steps in the entry above) and an explicit go.
