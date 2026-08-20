@@ -344,6 +344,29 @@ train:
   w_sf_move: 0.05
   w_sf_own: 0.0
   w_sf_own_regret: 0.0
+  # LIVE arm F (PR #448, live since 2026-08-17). Adopted at PRODUCTION VALUES
+  # under the same rule as the weights above -- zeroing it would be a second,
+  # undocumented deviation from the stack under test. Inert here, and the
+  # inertness is PROVEN, not assumed, on all three axes that could break it:
+  #   1. the term is `masked_mean(sf_floor, sf_p0_regret_base)` (losses.py:1953)
+  #      and a converted lc0 shard carries NINETEEN arrays, none SF-related --
+  #      no `sf_p0_regret`, so the mask is empty on every one of the 79,077,376
+  #      training rows;
+  #   2. `masked_mean` clamps its denominator (`denom.clamp_min(1.0)`,
+  #      losses.py:84), so an empty mask yields exactly 0.0 -- NOT NaN, which is
+  #      the failure mode a floor term with w=0.8 would otherwise arm;
+  #   3. `sf_policy_floor_tau_played` stays ABSENT here exactly as in production,
+  #      so it DERIVES from `gumbel_topk`; this config sets none, and
+  #      DEFAULT_GUMBEL_TOPK is 16 -- the same 16 the live yaml sets -- so the
+  #      derived 1/16 = 0.0625 matches, `max(tau, tau_top1) + tau_played =
+  #      0.2125 <= 1.0` passes SfPolicyFloorParams validation, and 0.15 >= 1/16
+  #      raises no prior-rank warning.
+  # => `total += 0.8 * 0.0`. The driver's per-head realized ROW COUNT is what
+  # confirms it at launch; this comment is the prediction, not the evidence.
+  w_sf_policy_floor: 0.8
+  sf_policy_floor_delta_cp: 20.0
+  sf_policy_floor_tau: 0.15
+  sf_policy_floor_tau_top1: 0.15
   w_sf_eval: 0.0
   w_categorical: 1.0
   w_volatility: 0.10
