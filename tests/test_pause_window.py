@@ -1833,3 +1833,54 @@ def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> No
     assert r.returncode == 0, r.stderr
     assert not marker.exists(), "the lease no longer cleans up our own orphaned marker"
     assert "launcher pid" in wlog.read_text(), wlog.read_text()
+
+
+def test_the_lease_watchdogs_owner_identity_is_start_time_pinned(tmp_path: Path) -> None:
+    """⚑ REVIEW M4. The owner-identity branch compares the owner pid's CURRENT
+    kernel start time to the banked one; inverting the comparison (`=` -> `!=`)
+    survived the whole suite while un-parking every production window ~30s in,
+    logging "launcher ... is GONE" about a living launcher. The branch cannot
+    be driven from the fake proc root (the detached shell's inline parse reads
+    the real /proc, deliberately), so the owner here is a REAL self-spawned
+    process, killed by explicit pid.
+
+    Half A kills the `!=` mutant: live owner, CORRECT banked start -> the
+    marker must survive several polls. Half B kills branch deletion: live
+    owner, WRONG banked start = a recycled pid wearing our number -> the real
+    launcher is gone and the marker must be cleaned promptly, not at the 6h
+    deadline."""
+    marker = tmp_path / "pause.txt"
+    wlog = tmp_path / "lease.log"
+    owner = subprocess.Popen(["sleep", "300"])
+    try:
+        marker.write_text(f"pause_window.sh pid={owner.pid} started=x\njob=ours\n")
+        r = _run_lib(
+            f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
+            f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
+            f'600 {shlex.quote(str(wlog))} "$start"); '
+            'sleep 4; kill "$wd" 2>/dev/null; echo done',
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        )
+        assert r.returncode == 0, r.stderr
+        assert marker.exists(), (
+            "a LIVE owner with a MATCHING start time was treated as gone -- "
+            f"every window would un-park at the first poll; lease log: "
+            f"{wlog.read_text() if wlog.exists() else '(empty)'!r}"
+        )
+
+        r = _run_lib(
+            f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
+            f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
+            f'600 {shlex.quote(str(wlog))} "$((start + 1))"); '
+            'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+            'kill "$wd" 2>/dev/null; echo done',
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        )
+        assert r.returncode == 0, r.stderr
+        assert not marker.exists(), (
+            "a start-time mismatch (recycled launcher pid) was not treated as "
+            "owner-gone; cleanup would wait the full hard deadline"
+        )
+    finally:
+        owner.terminate()
+        owner.wait()
