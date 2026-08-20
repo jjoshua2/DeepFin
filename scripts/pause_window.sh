@@ -499,7 +499,11 @@ log "marker set; waiting up to ${ACK_TIMEOUT}s for the trial to park"
 # the longest sanctioned window (the lc0 control, ~4.5h worst case) plus slack.
 LEASE_DEADLINE="${CAE_PAUSE_HARD_DEADLINE_SECONDS:-21600}"
 LEASE_LOG="${MARKER%.txt}_lease.log"
-WATCHDOG_PID="$(pause_start_lease_watchdog "$MARKER" "$$" "$LEASE_DEADLINE" "$LEASE_LOG")"
+# our own start time rides along so the watchdog can tell a recycled pid
+# wearing our number from us -- without it, cleanup after a SIGKILL+pid-reuse
+# waits for the full hard deadline.
+OWN_START="$(pause_proc_start_time "$$")" || OWN_START=""
+WATCHDOG_PID="$(pause_start_lease_watchdog "$MARKER" "$$" "$LEASE_DEADLINE" "$LEASE_LOG" "$OWN_START")"
 log "marker lease: watchdog pid $WATCHDOG_PID, hard deadline ${LEASE_DEADLINE}s, log $LEASE_LOG"
 
 # ⚑ WHEN A PRE-EXISTING ACK IS PRESENT, FAIL FAST INSTEAD OF HOLDING FOR HALF

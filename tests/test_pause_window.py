@@ -1743,3 +1743,93 @@ def test_an_interrupt_during_the_ACK_WAIT_is_not_a_wrapper_failure(
     assert rc == 130, f"an interrupt must report 130, got {rc}"
     assert not ran.exists(), "the job ran despite the interrupt"
     assert not (work / "tune" / "pause.txt").exists(), "interrupted holding the marker"
+
+
+# ── review findings on 20f271ad3: two guarantees previously pinned only by an
+# uncommitted synthetic script ────────────────────────────────────────────────
+
+
+def _run_lib(body: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Source the drain lib with WORKER_PATTERN defined and run `body`."""
+    e = dict(os.environ)
+    e.update(env or {})
+    return subprocess.run(
+        ["bash", "-c",
+         "set -u; WORKER_PATTERN='-m chess_anti_engine\\.worker( |$)'; "
+         f". {shlex.quote(str(SCRIPT.parent / 'pause_drain_lib.sh'))}; {body}"],
+        capture_output=True, text=True, timeout=60, env=e, check=False,
+    )
+
+
+def test_a_recycled_pid_is_never_signalled(tmp_path: Path) -> None:
+    """⚑ THE HEADLINE IDENTITY GUARANTEE, COMMITTED. `pause_term_if_same_start`
+    re-reads the kernel start time at signal moment; a pid whose start time no
+    longer matches the banked value is a RECYCLED pid -- the original worker is
+    gone, and our TERM would land on a stranger. Review mutation (b) deleted
+    the re-verification and the suite stayed green; this is the test that
+    mutation now fails."""
+    proc = tmp_path / "proc"
+    _fake_worker(proc, FAKE_PID, start=FAKE_START)
+    calls = tmp_path / "kills.log"
+    stub = tmp_path / "killstub"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n')
+    stub.chmod(0o755)
+    env = {"CAE_PAUSE_PROC_ROOT": str(proc), "CAE_PAUSE_KILL_CMD": str(stub)}
+
+    # banked start differs from the entry's -> recycled -> MUST NOT signal
+    r = _run_lib(
+        f'pause_term_if_same_start {FAKE_PID} {FAKE_START + 1} :', env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert not calls.exists(), (
+        f"a recycled pid was signalled: {calls.read_text() if calls.exists() else ''!r}"
+    )
+
+    # matching start -> the ORIGINAL worker -> must signal exactly once
+    r = _run_lib(
+        f'pause_term_if_same_start {FAKE_PID} {FAKE_START} :', env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert calls.read_text() == f"-TERM {FAKE_PID}\n", calls.read_text()
+
+
+def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> None:
+    """⚑ THE REVIEW'S BLOCKING FINDING. The watchdog used to `rm -f` whatever
+    sat at the marker path once its owner died -- demonstrated live against a
+    marker naming a DIFFERENT pid. Removing someone else's marker resumes
+    training mid-their-window: the contended-measurement-filed-as-clean
+    direction this whole script exists to prevent. The rule is release()'s:
+    ONLY REMOVE A MARKER THAT IS STILL OURS; a foreign marker means someone
+    replaced it, and the watchdog's job is to stop watching, not to clean up."""
+    marker = tmp_path / "pause.txt"
+    wlog = tmp_path / "lease.log"
+    # a dead-owner pid that is certainly not running: spawn-and-reap our own
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+
+    # foreign marker: names some OTHER pid
+    marker.write_text("pause_window.sh pid=999999 started=x\njob=other window\n")
+    r = _run_lib(
+        f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
+        f'600 {shlex.quote(str(wlog))}); sleep 4; kill "$wd" 2>/dev/null; wait 2>/dev/null; echo done',
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+    )
+    assert r.returncode == 0, r.stderr
+    assert marker.exists(), (
+        f"the watchdog removed a marker it does not own; lease log: "
+        f"{wlog.read_text() if wlog.exists() else '(empty)'!r}"
+    )
+
+    # our OWN marker with a dead owner: must still be cleaned up (the lease's
+    # entire purpose) -- the ownership check must not break the good path
+    marker.write_text(f"pause_window.sh pid={dead.pid} started=x\njob=ours\n")
+    r = _run_lib(
+        f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
+        f'600 {shlex.quote(str(wlog))}); '
+        'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+        'kill "$wd" 2>/dev/null; echo done',
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+    )
+    assert r.returncode == 0, r.stderr
+    assert not marker.exists(), "the lease no longer cleans up our own orphaned marker"
+    assert "launcher pid" in wlog.read_text(), wlog.read_text()

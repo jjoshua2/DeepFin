@@ -24,6 +24,15 @@
 # the PID's kernel start time against the banked value, so a recycled PID can
 # never receive our TERM.
 #
+# ⚑ DEGRADED READS CLASSIFY TOWARD "DRAINED". Every read failure in
+# classification (stat gone, status gone, no State line) reads as `gone`, and
+# the same failure inside pause_term_if_same_start means NO TERM is sent -- so
+# a systemic /proc read failure (fork/memory exhaustion) between baseline and
+# drain runs the job beside live, never-signalled workers. The failure is not
+# producible by a healthy /proc for a live pid, is correlated with the machine
+# already being in trouble, and leaves a signature ("drained after ~0s" + per-
+# worker "no suspend line" warnings) -- named here so nobody reads `gone` as a
+# verified kill.
 # The drain rule:
 #     gone                          => drained
 #     same start time + state Z     => drained (exited; parked parent can't reap)
@@ -133,26 +142,53 @@ pause_term_if_same_start() {
 # production run is not.
 # The launcher kills the watchdog BY EXPLICIT PID during normal release.
 pause_start_lease_watchdog() {
-    local marker="$1" owner="$2" deadline="$3" wlog="$4"
+    local marker="$1" owner="$2" deadline="$3" wlog="$4" owner_start="${5:-}"
     setsid bash -c '
-        marker="$1"; owner="$2"; deadline="$3"; wlog="$4"
+        marker="$1"; owner="$2"; deadline="$3"; wlog="$4"; owner_start="$5"
+        poll="${CAE_PAUSE_LEASE_POLL_SECONDS:-30}"
+        # inline stat parse (the lib is not sourced in this detached shell):
+        # strip through the LAST ") " -- comm may contain spaces/parens --
+        # then post-comm field 20 = overall field 22 = starttime.
+        start_of() {
+            local st; st="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+            st="${st##*) }"; set -- $st; [ -n "${20:-}" ] || return 1
+            printf "%s\n" "${20}"
+        }
+        # ⚑ ONLY REMOVE A MARKER THAT IS STILL OURS -- the same invariant
+        # release() enforces (pause_window.sh), demonstrated violated in
+        # review: a watchdog whose owner died removed a FOREIGN marker at the
+        # same path, which would resume training mid-someone-elses-window.
+        # A marker that stops naming our owner means someone replaced it;
+        # stop watching, never touch it.
+        ours() { grep -q "pid=$owner\b" "$marker" 2>/dev/null; }
         start="$(date +%s)"
-        while sleep 30; do
+        while sleep "$poll"; do
             [ -e "$marker" ] || exit 0
+            ours || exit 0
+            owner_gone=0
             if ! kill -0 "$owner" 2>/dev/null; then
-                rm -f "$marker"
+                owner_gone=1
+            elif [ -n "$owner_start" ]; then
+                cur="$(start_of "$owner")" || cur=""
+                # pid recycled => the REAL launcher is gone even though the
+                # pid answers kill -0 -- without this the cleanup waits for
+                # the full deadline behind a stranger wearing our pid.
+                [ "$cur" = "$owner_start" ] || owner_gone=1
+            fi
+            if [ "$owner_gone" = 1 ]; then
+                ours && rm -f "$marker"
                 printf "[pause-lease] %s launcher pid %s is GONE with the marker still present -- marker removed; if the window job survived it, training resumes BESIDE it\n" \
                     "$(date -Is)" "$owner" >> "$wlog"
                 exit 0
             fi
             now="$(date +%s)"
             if [ $((now - start)) -ge "$deadline" ]; then
-                rm -f "$marker"
+                ours && rm -f "$marker"
                 printf "[pause-lease] %s hard deadline %ss reached with launcher pid %s still alive -- marker removed; the window job may still be running and training resumes BESIDE it\n" \
                     "$(date -Is)" "$deadline" "$owner" >> "$wlog"
                 exit 0
             fi
         done
-    ' lease-watchdog "$marker" "$owner" "$deadline" "$wlog" >/dev/null 2>&1 &
+    ' lease-watchdog "$marker" "$owner" "$deadline" "$wlog" "$owner_start" >/dev/null 2>&1 &
     printf '%s\n' "$!"
 }
