@@ -63765,6 +63765,35 @@ gate to fire, third correct firing.
 - Marker released on the fail path again; trial resumed at the next poll (~12:33).
 - **Window 4:** same frozen budget (38,544), same runner, no other change.
 
+## 2026-08-20 — window 5 IS TRAINING; the budget's wall-clock basis was wrong ~4×; lease extended
+
+Window 5 passed every gate (live-config preflights green) and is running the frozen 38,544-step
+budget. Two corrections, recorded while the run is in flight and BEFORE any readout:
+
+- **Cold compile cost ~49 min** (13:06→~13:55): max-autotune + a cold Inductor cache (the
+  worktree's file hashes miss production's warm entries) + an effectively serial codegen phase.
+  Production's ~10-min "compile" intuition is the warm-cache number. The kernels are now cached,
+  so any relaunch of this code compiles warm.
+- **The "~3.6 h @ 3.01 steps/s" wall estimate in the frozen-budget table was wrong ~4×.** The
+  STEPS budget is untouched — 38,544 was frozen in steps, wall hours were advisory — but the
+  realized drained rate is **0.9–1.05 steps/s** (measured 13:57–14:08, autotune fully drained by
+  the end of that span), consistent with the ledger's own live `trainer_steps_per_s`
+  0.6522/0.6235 plus some drained-loader headroom. GPU sits ~59%: the trainer is loader-bound,
+  so draining selfplay does not multiply throughput. Where 3.01 came from is not recoverable
+  from the entry; treat it as a computation error. Realistic finish: **~00:00–01:00 tonight**.
+- **Consequence: the 6 h lease was sized to the wrong number** and would have fired at 18:59
+  mid-run — resuming production BESIDE the control train, the exact failure the lease exists to
+  avoid... caused by the lease itself. Watchdog replaced in place (old 558091 killed; detached
+  replacement pid 585164, same marker/owner/owner-start invariants, deadline 66,600 s → fires
+  ~08:36 tomorrow ONLY if the job hangs; normal completion releases the marker immediately).
+  Extension logged in `pause_lease.log`.
+- Cost accepted: production selfplay pauses overnight (~10 h). Rationale: the run is flat, the
+  marginal selfplay is low-value against the loop diagnosis #438 buys, and overnight is the
+  cheapest window. Abort lever unchanged: kill the job, marker releases, trial resumes.
+- Trainer's I11 grad-norm watch fires on early windows (median 5.2–6.2 vs 4.75, hard-clip up to
+  47%): expected at random init under production's pinned `zclip_max_norm 6.5`, which is the
+  premise and must not be tuned. Both reads (MID/LAST) sit far past this regime.
+
 ## 2026-08-20 — PRE-REGISTERED, NOT RUN: absolute-Q target sigma probe (`target_q_rescale=0`, offline)
 
 **Hypothesis (the Gumbel-lane audit's F2, the strongest surviving mechanism for "sharp and
