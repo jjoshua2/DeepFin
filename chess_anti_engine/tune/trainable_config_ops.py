@@ -157,6 +157,27 @@ def _wait_if_paused(
                     flush=True,
                 )
                 announced = True
+  # ⚑ The park exists so a pause window can run GPU work while we sleep, and
+  # a parked trainer that keeps the allocator's full activation cache resident
+  # defeats that purpose: measured 2026-08-20, the parked trial held 32,059 of
+  # 32,607 MiB (132 MiB free) and the #438 control train could not build its
+  # model. Live tensors (params/optimizer/EMA, a few GB) stay put -- this
+  # frees only cached, unallocated blocks. Resume pays first-iteration
+  # re-caching (cudaMalloc), which is noise against a multi-hour window.
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        free_b, total_b = torch.cuda.mem_get_info()
+                        print(
+                            f"[trial] parked: released CUDA cache "
+                            f"({free_b / 2**20:.0f} MiB free of "
+                            f"{total_b / 2**20:.0f})",
+                            flush=True,
+                        )
+                except Exception as exc:  # noqa: BLE001 - parking must survive this
+                    print(f"[trial] parked: empty_cache failed: {exc!r}", flush=True)
             time.sleep(float(poll_s))
     finally:
         _clear_pause_acks(ack_paths)
