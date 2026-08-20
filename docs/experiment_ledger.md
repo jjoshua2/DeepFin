@@ -62317,3 +62317,83 @@ fraction and realized `M_label` are all diagnostics; the dry run establishes the
 4. Then selector + config + diagnostics + tests.
 
 **Live run untouched. No code written yet. No restart.**
+
+### ⚑⚑⚑ 2026-08-19 BLOCKING FINDING — "48.6% of the deficit REPAIRED" IS A SELECTION SHARE,
+### NOT A MEASURED REPAIR. Escalation's efficacy has NEVER been measured, and the mechanism
+### that would convert it into target quality is SWITCHED OFF
+
+Setting up the pre-PR calibration required reading what the 48.6% actually is. It is not
+what my prereg says it is, and the slippage is already in the 08-16 entry.
+
+**1. THE RIG COMPUTES A SELECTION SHARE.** `tailscreen_cv.py:144`, verbatim:
+
+    "deficit_captured": round(float(-d[sel][bad[sel]].sum()) / deficit_all, 4)
+
+with `deficit_all = -d[bad].sum()`. That is **the fraction of the bad tail's deficit that
+LIES INSIDE the selected 15%** — pure ranking arithmetic over already-computed numbers.
+**Nothing in it measures what escalation DOES.** Reading it as "repairs 48.6%" silently
+assumes repair efficacy = 1.0 on every touched row. My prereg's hypothesis sentence
+("repairs 48.6% of the bad tail's dQ deficit") and the 08-16 entry's "per unit of deficit
+REPAIRED" both carry that assumption unstated. This is the repo's signature defect in its
+purest form: a number that means something other than its name.
+
+**2. THE EFFICACY HAS NEVER BEEN MEASURED, AND CANNOT BE FROM BANKED DATA.** The 08-16
+entry says so itself — *"This entry attacks the cost, not the mechanism."* Confirmed by
+inspection: `scratchpad/target_vs_bt4/` contains **NO escalated / 500k / MPV40 artifact for
+these rows**. There is no measurement anywhere of what a full-width teacher does to a
+bad-tail row.
+
+**3. ⚑ AND THE DEFICIT IS DEFINED SO THAT A STRONGER SF WIDENS IT.** Verified from the
+artifact rather than assumed: `tb4_q_winner.npz` carries `cand = ['tgt','sf','foreign','rand']`
+and `Q` is **BT4 net evaluation** (`BT4-it332-vanilla-{q,winner}.onnx`), not Stockfish. So
+
+    dQ = Q_BT4(target's move) - Q_BT4(SF's move),   bad := dQ <= -0.10
+
+⇒ the bad tail is **rows where the TRAINING TARGET picks a move BT4 judges materially worse
+than the move SF ALREADY RECOMMENDED AT 175k.** On those rows SF is already right and the
+target already disagrees with it. Escalating SF to 500k can only move `Q_sf` UP, which makes
+`dQ` MORE negative. **The raw deficit gets bigger, not smaller.**
+
+**4. ⇒ REPAIR REQUIRES A LEG THAT PULLS THE TARGET TOWARD SF, AND THE MAIN ONES ARE ZERO.**
+`policy_target` is the MCTS visit distribution; the SF label does not enter it. The legs
+that could carry an improved SF label into `policy_own`:
+
+| leg | live value |
+|---|---|
+| `w_sf_own` (same-position SF soft CE) | **0.0** |
+| `w_sf_own_regret` (regret-weighted SF) | **0.0** |
+| `w_sf_move` (CE to SF's best move, `losses.py:1588`) | **0.05** — the ONLY live one, and small |
+
+⇒ **the targeted re-label is NOT a standalone arm.** It buys better SF labels into an
+objective that is almost entirely not listening. Its value is COUPLED to turning on one of
+the zero legs — i.e. to the very SF-soft arm we just gated behind `f >= 0.53`. I presented
+these as independent, parallel bottlenecks. **They are not independent.**
+
+**⇒ DO NOT BUILD THE PR.** Not because the arm is refuted, but because it is not yet the
+arm it was described as, and the plumbing would be built around an efficacy figure that has
+never been measured. The peer's instinct to calibrate before committing was right; the
+audit just found a larger unvalidated assumption sitting above the one we set out to check.
+
+**THE FIRST-ORDER EXPERIMENT THAT SHOULD COME FIRST** — cheap, offline, and it SUBSUMES the
+requested calibration because it has to run the same searches anyway. `tb4_rows.npz` carries
+`fens`, so the positions are in hand:
+1. **Does the escalated label even DIFFER?** On bad-tail rows, production-equivalent
+   175k/MPV6 vs escalated 500k/MPV40: does SF's recommendation change, does the target's
+   move become LISTED (it is unlisted on most rows — that is the `not_listed` feature), and
+   does its regret stop being the fabricated default?
+2. **Given the improved label, does any LIVE leg move the target?** With `w_sf_own` and
+   `w_sf_own_regret` at 0.0 this reduces to `w_sf_move: 0.05`, and that question is
+   answerable analytically before spending anything.
+3. **The requested semantic calibration comes free**: A1 vs A2 (cold 500k, twice) as the
+   determinism control, A1 vs B (175k then `fresh=True` 500k) as the test.
+
+⚑ **THE DETERMINISM CONTROL SHOULD BE EXACTLY ZERO, AND THAT IS A PREDICTION, NOT A HOPE.**
+`uci.py:405` sets **`Threads value 1`** — production parallelism is multiple PROCESSES, not
+SF threads — and `_new_game_locked` does a properly synchronised `ucinewgame`/`isready`/
+`readyok`. A single-threaded fixed-node search from a cleared TT is deterministic, so
+**A1 == A2 bit-for-bit is the pre-registered prediction**
+([[predict_the_exact_count_before_running]]). If A1 != A2 there is a nondeterminism source
+I have not identified, and that is a finding in its own right.
+
+**Live run untouched. No code written. Load average is 42 on 32 CPUs, so any SF calibration
+runs at ONE nice'd worker.**
