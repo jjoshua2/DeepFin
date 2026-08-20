@@ -63784,9 +63784,22 @@ bit-identical; store-arm only; play arm untouched; not yaml-wired — probe-only
 ```
 PYTHONPATH=. python3 scripts/audit_targets.py \
   --checkpoint data/salvage/pre_lc0_control_20260819/trainer.pt \
-  --sims 100 --max-positions 2000 --sf-soft-nodes 50000 --nice 19 \
-  --gpu-mem-fraction 0.20 [--gumbel target_q_rescale=0]   # leg B has the override
+  --config configs/pbt2_small.yaml --max-positions 2000 \
+  --sf-soft-nodes 50000 --nice 19 --gpu-mem-fraction 0.20 \
+  --dump-per-position scratchpad/sigma_probe_<leg>.jsonl \
+  [--gumbel target_q_rescale=0 --gumbel-training-rows]   # leg B only
 ```
+
+**Command AMENDED pre-run (same session, nothing executed yet):** the first draft said
+`--sims 100 --gumbel target_q_rescale=0`. Both halves were wrong-knobbed: `--sims` drives the
+PLAY row (b) only — row (d) takes `mcts_simulations` from `--config`, which the live yaml pins
+at 100 natively — and `--gumbel` reaches the TRAINING rows **only under
+`--gumbel-training-rows`** (audit_targets.py:505; the guard exists precisely so an override
+cannot relabel a search selfplay never runs as "production training target"). Without the flag,
+leg B would have scored an UNCHANGED row (d) under the probe's name — the
+announce-from-the-consumer's-own-parameter failure, caught by reading the consumer. Note the
+play row (b) also takes the override in leg B (unconditional at :523): row (b) is contaminated
+there and is not read; the verdict is (d)-vs-(d) paired only.
 
 paired on the production-training-target row's E[deep regret] via
 `scripts/paired_compare.py --join-key key`. **SUCCESS:** leg B better, 95% CI excluding 0.
