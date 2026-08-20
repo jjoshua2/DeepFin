@@ -75,8 +75,10 @@ def _make_trainer_stub(model: torch.nn.Module, eval_payload):
 
     captured = {}
 
-    def _compute_metrics(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+    def _compute_metrics(*, buf, batch_size, steps, tag, model_override=None,
+                         full_pass=False, objective=None):
         del buf, tag  # consumed only via captured below
+        captured["objective"] = objective
         captured["model_override"] = model_override
         captured["batch_size"] = batch_size
         captured["steps"] = steps
@@ -341,8 +343,9 @@ def test_snapshot_isolated_from_trainer_model(cfg_and_builder):
     model = _StubChessNet(dim=4)
     snap_seen = {}
 
-    def _compute_metrics_capturing(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
-        del buf, batch_size, steps, tag, full_pass  # only model_override matters here
+    def _compute_metrics_capturing(*, buf, batch_size, steps, tag, model_override=None,
+                                   full_pass=False, objective=None):
+        del buf, batch_size, steps, tag, full_pass, objective  # only model_override matters here
   # Sleep so the test has time to mutate trainer.model before the
   # eval thread reads it. AsyncTestEval should have already snapped
   # the state_dict before kicking the thread, so this mutation
@@ -421,7 +424,8 @@ def test_load_state_dict_works_through_compile_wrapper(cfg_and_builder, monkeypa
 
     monkeypatch.setattr("chess_anti_engine.train.async_eval.apply_compile", _fake_apply_compile)
 
-    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False, objective=None):
+        del objective
         del buf, batch_size, steps, tag, full_pass
   # Reach into the compiled snap and read the loaded params.
         assert model_override is not None
@@ -453,7 +457,8 @@ def test_second_iter_reuses_snap_with_new_weights(cfg_and_builder):
     model = _StubChessNet(dim=4)
     seen_weights: list[torch.Tensor] = []
 
-    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False, objective=None):
+        del objective
         del buf, batch_size, steps, tag, full_pass
         assert model_override is not None
         seen_weights.append(model_override.linear.weight.detach().clone())
@@ -1052,3 +1057,66 @@ def test_a_refused_eval_does_not_leave_a_prior_result_readable(monkeypatch):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_worker_uses_the_objective_captured_at_start(cfg_and_builder):
+    """A live weight flip after `start()` must not reach the in-flight eval.
+
+    Codex delta review of `ca7d08298`, P1. `_Work` carried the model snapshot
+    but a LIVE `trainer` reference, and the worker called
+    `work.trainer._compute_metrics(...)`, which re-read `_eval_loss_kwargs` and
+    re-derived the ruler whenever it happened to run -- possibly an iteration
+    later, after a flip. Model, loss and ruler could then come from three
+    different logical times.
+
+    ⚑ TWO THINGS THIS HAS TO DO, and the first version did only one.
+    1. Assert the WIRING, not the helper: `Trainer.objective_snapshot()` being
+       correct proves nothing if the worker never receives it. Deleting
+       `objective=work.objective` left 84 tests green before this existed.
+    2. Make the eval genuinely IN FLIGHT across the flip. The FIRST `start()`
+       for a given shape is synchronous (the compile barrier), so a flip after
+       it lands too late and a snapshot taken at COLLECT time would pass just
+       as well -- that mutant survived the first version. So: prime the barrier
+       with one full start/collect, then hold the second eval inside the stub
+       on an event, flip while it is blocked, and only then release it.
+    """
+    model = _StubChessNet(dim=4)
+    trainer, _captured = _make_trainer_stub(model, eval_payload="OK")
+
+    live = {"obj": "OBJECTIVE_AT_START"}
+    trainer.objective_snapshot = lambda: live["obj"]
+
+    aer = AsyncTestEval()
+    # (1) prime: same shapes, so the next start returns immediately
+    _start_bounded(aer,
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="STUB_BUF",
+        batch_size=4, steps=2, device="cpu", source_iter=10,
+    )
+    assert aer.collect(timeout=5.0)[1] == 10
+
+    release = threading.Event()
+    seen: dict[str, object] = {}
+
+    def _blocking(*, buf, batch_size, steps, tag, model_override=None,
+                  full_pass=False, objective=None):
+        del buf, batch_size, steps, tag, model_override, full_pass
+        seen["objective"] = objective
+        release.wait(timeout=5.0)
+        return "OK"
+
+    trainer._compute_metrics = _blocking
+    aer.start(
+        trainer=trainer, model_cfg=cfg_and_builder, holdout_buf="STUB_BUF",
+        batch_size=4, steps=2, device="cpu", source_iter=11,
+    )
+    # (2) the eval is now genuinely in flight; flip the objective under it
+    live["obj"] = "OBJECTIVE_AFTER_A_LIVE_FLIP"
+    release.set()
+
+    metrics, src = aer.collect(timeout=5.0)
+    assert metrics == "OK"
+    assert src == 11
+    assert seen["objective"] == "OBJECTIVE_AT_START", (
+        "the worker used the trainer's CURRENT objective, not the one captured "
+        f"with the model snapshot: {seen['objective']!r}"
+    )

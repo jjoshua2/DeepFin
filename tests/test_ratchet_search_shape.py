@@ -677,7 +677,7 @@ def test_neither_script_can_disagree_with_the_other() -> None:
         for pattern, what in (
             (r"^\s*RATCHET_EXIT_(NO_)?RETRY=", "its own copy of an exit status"),
             (r"^\s*WORK_DIR=", "its own copy of the run directory"),
-            (r"^\s*cd \S*/home/josh", "its own hard-coded repo path"),
+            (r"^\s*cd \S*/home/[A-Za-z0-9._-]+", "its own hard-coded repo path"),
             (r"sed 's/checkpoint_0\*//'", "the old iteration parse"),
             (r"sed -E 's/\^checkpoint_//", "its own copy of the iteration parse"),
         ):

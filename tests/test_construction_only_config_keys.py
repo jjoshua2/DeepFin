@@ -141,6 +141,26 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
     "policy_target_temp": {"chess_anti_engine/train/trainer.py"},
     # `_resolve_pause_marker_paths`, which the startup block calls once.
     "pause_file": {"chess_anti_engine/tune/trainable_config_ops.py"},
+    # SF-policy-floor SHAPE. TWO readers, and only one of them is a consumer:
+    # `trainer.py` folds all three into one frozen `SfPolicyFloorParams` at
+    # construction (so a live edit provably cannot reach the loss -- hence
+    # startup-only), while `trial_config.py` reads them EVERY iteration purely to
+    # re-run the range check and DISCARDS the result. A validator is not a
+    # consumer: it turns a bad live value into a loud death instead of silent
+    # wrongness, and it deliberately stores nothing that could disagree with the
+    # object the loss holds. See `TrialConfig.from_dict`.
+    **{
+        key: {
+            "chess_anti_engine/train/trainer.py",
+            "chess_anti_engine/tune/trial_config.py",
+        }
+        for key in (
+            "sf_policy_floor_delta_cp",
+            "sf_policy_floor_tau",
+            "sf_policy_floor_tau_top1",
+            "sf_policy_floor_tau_played",
+        )
+    },
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,

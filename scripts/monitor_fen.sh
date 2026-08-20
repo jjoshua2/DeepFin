@@ -18,7 +18,8 @@
 # trainer is actually running — seed logic must not burn GPU/CPU while training
 # is stopped for a match or maintenance.
 set -u
-cd /home/josh/projects/chess
+cd "$(dirname "$0")/.." || exit 2
+REPO_ROOT="$PWD"
 PIDFILE=/tmp/chess_training.pid
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 MON=scratchpad/live_read/monitor
@@ -41,12 +42,30 @@ BASE=scratchpad/canary_512_iter20
 # Harvest-gate vetting (PR #182): CPU Stockfish + syzygy for deep-SF vetting of
 # harvested severe seeds. Same binary/TB the miner uses; skipped if absent. Vetted
 # survivors are promoted after each gate pass through the safe versioned feed step.
-SF_BIN="${HARVEST_SF_BIN:-/home/josh/projects/chess/e2e_server/publish/stockfish}"
+#
+# ⚑⚑ NEITHER OF THESE IS IN THE CHECKOUT, so neither may be derived from
+# $REPO_ROOT. `e2e_server/publish/` is untracked runtime output and
+# `data/syzygy_*` is 151G of tablebases; both exist only in the checkout that
+# published them, so a $REPO_ROOT-relative value is correct in the live tree and
+# empty in every worktree and fresh clone. PR #441 made both of them
+# $REPO_ROOT-relative. The binary at least fails visibly (the `-x` test below
+# skips the gate); the TABLEBASES DO NOT — Stockfish accepts a nonexistent
+# SyzygyPath, prints one `info string Found 0 WDL and 0 DTZ` into a redirected
+# log, and answers `readyok`. Both now come from the shared discovery, which
+# falls back to the MAIN checkout via `git rev-parse --git-common-dir`.
+SF_BIN="${HARVEST_SF_BIN:-$(PYTHONPATH=. python3 -m chess_anti_engine.utils.engine_discovery 2>/dev/null)}"
+SF_BIN="${SF_BIN:-$REPO_ROOT/e2e_server/publish/stockfish}"
 # Match the in-loop label's TB coverage (games search 3-4-5 + 6-man, see
 # pbt2_small.yaml syzygy_path) so the gate is never TB-blind where the ~700k
 # label has exact truth — the gate must dominate the label on every axis (depth
 # 2M>700k, MultiPV-1 concentrated, TB equal) to legitimately overrule it.
-SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6}"
+#
+# ⚑ That claim is now ENFORCED rather than asserted: harvest_gate_step.py exits
+# non-zero when any component of this path holds no .rtbw/.rtbz, so a TB-blind
+# cycle produces `harvest_gate: FAILED (...)` in the monitor line instead of a
+# quietly worse number. `--allow-missing-tablebases` is the deliberate opt-out.
+SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-$(PYTHONPATH=. python3 -m chess_anti_engine.utils.syzygy 2>/dev/null)}"
+SYZYGY_PATH="${SYZYGY_PATH:-$REPO_ROOT/data/syzygy_3-4-5:$REPO_ROOT/data/syzygy_6}"
 STAGED_SEEDS="${HARVEST_STAGED_SEEDS:-data/harvest/staged_candidates.txt}"
 AUTO_FEED_DISABLED="$MON/auto_feed_disabled"
 mkdir -p "$MON"

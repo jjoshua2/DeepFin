@@ -39,6 +39,17 @@ stamps a scalar. See ``require_same_ruler`` and ``_match_stamp_shape``.
 
 Sign convention: delta = A - B per position. For regret-style metrics (lower
 is better), a NEGATIVE mean delta means A is better.
+
+Two flags exist for PRE-REGISTERED readouts and are off by default:
+
+  --mcnemar-at CP   McNemar's exact test on the paired binary predicate
+                    ``metric <= CP``. It also prints the MEASURED discordance
+                    ``d_obs`` and the half-width ``1.96*sqrt(d_obs/n)`` that
+                    follows from it — the quantity a prereg must publish
+                    BEFORE it picks an effect size, rather than assuming.
+  --require-n N     refuse unless the join yields exactly N paired positions,
+                    so a truncated or partially-labelled dump cannot deliver a
+                    quotable verdict at a resolution nobody registered.
 """
 from __future__ import annotations
 
@@ -75,6 +86,175 @@ def paired_bootstrap_ci(
     means = deltas[idx].mean(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return float(lo), float(hi)
+
+
+class McNemar(NamedTuple):
+    """The 2x2 of a paired BINARY predicate, plus what it can resolve.
+
+    Cell names follow the classical table: ``b`` is "A-only" (the predicate
+    holds on A and not on B) and ``c`` is "B-only". ``n`` is the paired count,
+    NOT either side's row count.
+    """
+
+    n: int
+    both: int
+    b: int
+    c: int
+    neither: int
+    p_two_sided: float
+    discordance: float
+    half_width: float
+
+
+def exact_binomial_two_sided(k: int, n: int) -> float:
+    """Two-sided exact binomial p at p=0.5 — McNemar's exact test.
+
+    ⚑ Exact rather than the chi-square approximation on purpose: this gate's
+    whole discordant population is expected to be small (the #440 prereg's tail
+    is ~38 positions in 4000), and the chi-square form is unreliable there — it
+    is the regime where an approximation quietly manufactures significance.
+
+    At p=0.5 the binomial is symmetric, so the two-sided p is twice the lower
+    tail at ``min(k, n-k)``, clipped at 1.0. ``n == 0`` returns 1.0: with no
+    discordant pairs there is no evidence in either direction, which is the
+    honest reading and NOT a pass.
+
+    ⚑ NEITHER ``2.0**n`` NOR ``math.comb`` SURVIVES THE SIZES THIS IS FOR, and
+    both failures were found by running it rather than by reading it:
+
+    * ``2.0**n`` raises OverflowError above n=1023 — at n=4000 paired positions
+      an ordinary discordant count, not a corner case, so the float denominator
+      would have crashed the gate on exactly the run it was built for.
+    * exact big-int ``math.comb`` sums fix that and are O(n^2) in the discordant
+      count: **1.2 s at n=4000, 17.6 s at n=10000, ~4 min at n=20000** (measured,
+      PR #446 review). Harmless at the registered n and indistinguishable from a
+      hang on a 50k-row ``value_regret`` dump.
+
+    So the tail is summed in LOG space, which is O(k) and flat in n. "Exact"
+    here means the exact binomial TEST rather than the chi-square approximation
+    to it; the arithmetic is float, and `tests/test_paired_compare_mcnemar.py`
+    pins it against `scipy.stats.binomtest` over a random sweep so the claim is
+    checked rather than asserted. Underflow to 0.0 for extreme tables is the
+    correct reading, not an error.
+    """
+    if n <= 0:
+        return 1.0
+    k = min(k, n - k)
+    log_half_n = -n * math.log(2.0)
+    log_fact_n = math.lgamma(n + 1)
+    tail = math.fsum(
+        math.exp(log_fact_n - math.lgamma(i + 1) - math.lgamma(n - i + 1) + log_half_n)
+        for i in range(k + 1)
+    )
+    return min(1.0, 2.0 * tail)
+
+
+def mcnemar(
+    va: np.ndarray, vb: np.ndarray, *, at: float,
+) -> McNemar:
+    """Paired binary comparison of ``value <= at`` between two aligned arrays.
+
+    The predicate is ``<=`` because these fields are REGRET in centipawns and
+    lower is better: ``--mcnemar-at 0`` reads exactly the #440 prereg's
+    ``top1_match := (cand.sf_soft.top1 == 0)`` for a non-negative field, and a
+    positive threshold generalises it to "within `at` cp of best".
+
+    ⚑ ``half_width`` is the quantity the prereg's step 2 owes and could not
+    compute: ``1.96*sqrt(d_obs/n)`` on the MEASURED discordance rather than an
+    assumed one. Report it BEFORE choosing an effect size, never after. It is
+    the NULL-CASE (diff = 0) form, so it is an upper bound on the Wald CI
+    printed beside it — the two agree to 3 dp at the registered n=4000 / 38
+    discordant and the null form is 1.12x wider at b=20, c=0, n=100. Both are
+    printed and labelled; do not try to reconcile them into one number.
+    """
+    if not math.isfinite(at):
+        # Every comparison against NaN is False, so the predicate selects
+        # nothing and the table is all-`neither` -> VOID. That is the SAME
+        # output a served cache produces, which makes a typo'd threshold
+        # indistinguishable from the defect this gate exists to catch.
+        #
+        # ⚑ NOT JUST NaN — `isfinite`, and the infinities are the likelier typo.
+        # argparse's `type=float` accepts `inf`, `-inf`, and overflowing
+        # spellings like `1e999`, and EITHER infinity makes the predicate
+        # CONSTANT across all finite metrics: `+inf` selects every row (all
+        # `both`), `-inf` selects none (all `neither`). Both give b + c == 0,
+        # which is the same VOID. The guard was written against NaN and read as
+        # if it covered "not a usable threshold"; it did not, and the two
+        # uncovered spellings produce the false stop from a live keyboard rather
+        # than from a computation. Codex review of PR #446 (P2) — taken over the
+        # human reviewer's "far less plausible than nan, not worth a change",
+        # because plausibility is not the test: the cost is one token and the
+        # failure it prevents is the one this whole entry exists to prevent.
+        raise SystemExit(
+            f"--mcnemar-at {at}: the predicate `value <= {at}` is CONSTANT over "
+            "every finite row, so the table would print VOID for a reason that "
+            "has nothing to do with the data — the same output a served cache "
+            "produces. Pass a real threshold (0 for top1_match)."
+        )
+    ha = va <= at
+    hb = vb <= at
+    n = int(ha.shape[0])
+    both = int((ha & hb).sum())
+    b = int((ha & ~hb).sum())
+    c = int((~ha & hb).sum())
+    neither = int((~ha & ~hb).sum())
+    d = (b + c) / n if n else 0.0
+    return McNemar(
+        n=n, both=both, b=b, c=c, neither=neither,
+        p_two_sided=exact_binomial_two_sided(b, b + c),
+        discordance=d,
+        half_width=1.96 * math.sqrt(d / n) if n else float("nan"),
+    )
+
+
+def report_mcnemar(m: McNemar, *, at: float, label_a: str, label_b: str) -> None:
+    """Print the 2x2 and say plainly when it cannot decide anything."""
+    print(f"\nMcNemar on (metric <= {at:g}), paired n={m.n}")
+    print(f"  both {m.both}   A-only {m.b}   B-only {m.c}   neither {m.neither}")
+    if m.b + m.c == 0:
+        # ⚑ NOT a pass, and not a null either. Zero discordant pairs means the
+        # statistic has no null variance on this input, so it could not have
+        # produced any other answer -- the #440 B5 shape, where a cache served
+        # run 2 from run 1 and the control read 0 by construction.
+        print("  ⚑⚑ VOID: 0 discordant pairs. The two dumps agree on this "
+              "predicate for every paired position, so the test has NO "
+              "resolution here. Check that the two arms actually re-measured "
+              "(a served cache reproduces this exactly) before reading it as "
+              "'no difference'.")
+        return
+    diff = (m.b - m.c) / m.n
+    var = (m.b + m.c - (m.b - m.c) ** 2 / m.n) / (m.n**2)
+    se = math.sqrt(max(var, 0.0))
+    print(f"  discordant {m.b + m.c}  (d_obs {m.discordance:.4f})   "
+          f"exact two-sided p = {m.p_two_sided:.4g}")
+    # ⚑ THE SIGN CONVENTION HERE IS THE OPPOSITE OF THE PAIRED DELTA'S, ONE
+    # SCREEN UP, AND BOTH ARE LABELLED "(A-B)". The delta is over a regret in
+    # cp, where LOWER is better, so negative = A better. This is over a rate of
+    # SATISFYING the predicate, where HIGHER is better, so positive = A better.
+    # Neither is wrong; adjacent and unannotated they invite one to be read
+    # with the other's rule.
+    # ⚑ 5 dp AND a pp form, deliberately. At the registered n=4000 the paired
+    # correction ``-(b-c)^2/n`` moves the bound by ~1e-5, so at the 4 dp this
+    # line used to print, a build that DROPPED the correction was byte-identical
+    # to one that kept it. That is not only a testing problem -- it means the
+    # operator could not have seen the difference either, and a half-width of
+    # 0.00305 was being reported as 0.0030, two significant figures on the
+    # number the launch decision is read off.
+    print(f"  paired rate diff (A-B) {diff:+.5f} "
+          f"[95% CI {diff - 1.96 * se:+.5f} .. {diff + 1.96 * se:+.5f}]"
+          f"   ({100 * diff:+.3f}pp)"
+          f"   (higher = A better — OPPOSITE of the cp delta above)")
+    print(f"  null-case half-width at this n: ±{m.half_width:.5f} "
+          f"(±{100 * m.half_width:.3f}pp) — 1.96*sqrt(d_obs/n), the diff=0 form, "
+          f"so an upper bound on the CI above")
+    # b == c > 0 is discordance with NO direction: the arms disagree on b+c
+    # positions and split them evenly. Naming a winner there invents one.
+    where = (
+        "exactly tied" if m.b == m.c
+        else f"point estimate favours {label_a if diff > 0 else label_b}"
+    )
+    print(f"  {'significant at 95%' if m.p_two_sided < 0.05 else 'NOT significant'}"
+          f"   ({where})")
 
 
 def get_field(rec: dict, path: str) -> object | None:
@@ -114,6 +294,7 @@ class Dump(NamedTuple):
 
 def load_dump(
     path: str, *, join_key: str = "fen", field: str = "value",
+    mcnemar_at: float | None = None,
 ) -> Dump:
     """Index one per-position dump by its join key.
 
@@ -233,6 +414,47 @@ def load_dump(
                     provenance[pf].add(json.dumps(r[pf], sort_keys=True))
             k = r.get(join_key)
             v = get_field(r, field)
+            if isinstance(v, bool) and mcnemar_at is not None:
+                # ⚑⚑ A BOOLEAN --field SILENTLY INVERTS THE McNEMAR VERDICT, and
+                # it is not a hypothetical field: `audit_targets` writes
+                # `top1_agree` and `out_of_top10` expressly so this tool can
+                # difference them, and `top1_agree` IS the #440 prereg's
+                # `top1_match`. Scored as a number under the documented
+                # `--mcnemar-at 0`, the predicate `agree <= 0` selects
+                # DISagreement — so the same two dumps produce the same n, the
+                # same d_obs and the same p, with the WINNER SWAPPED and nothing
+                # in the output looking wrong (measured on the #440 arms:
+                # `favours arm_old` vs `favours arm_new`, p = 0.000472 both
+                # ways). Refuse rather than pick a direction: this file already
+                # knows bool-is-int one guard down, on `ROW_COUNT_KEY`.
+                #
+                # ⚑ SCOPED TO THE THRESHOLD GATE, deliberately. The inversion is
+                # a property of `value <= at`, so it cannot occur when no
+                # `--mcnemar-at` was given, and refusing there would break the
+                # use these fields were WRITTEN for: `audit_targets`'
+                # `--dump-per-position` help calls `top1_agree`/`out_of_top10`
+                # "the paired per-position booleans ... for offline slicing and
+                # PAIRED statistics", and the paired bootstrap over a rate is
+                # exactly that. Python's bool is an int, so they flow through
+                # the finite-number guard below as 1.0/0.0 and the bootstrap
+                # differences two RATES, which is well defined and directional
+                # by the field's own name. An unconditional refusal here would
+                # have made `out_of_top10` unreachable by the only tool built
+                # to difference it — a guard that costs more than the hazard.
+                raise SystemExit(
+                    f"{path}: --field {field!r} is a BOOLEAN and "
+                    f"--mcnemar-at {mcnemar_at:g} was given. A threshold gate "
+                    "over a bool inverts: `value <= 0` selects False, i.e. the "
+                    "OPPOSITE of the agreement the name promises, and every "
+                    "other number in the readout is identical. Either drop "
+                    "--mcnemar-at and read the paired bootstrap over the rate "
+                    "(bools are scored as 1/0 there), or point --field at an "
+                    "underlying cp quantity whose zero IS the predicate — "
+                    "`cand.sf_soft.top1` is that for `top1_agree`. ⚑ There is "
+                    "no such cp substitute for `out_of_top10` (no dumped cp "
+                    "field means 'outside SF's top-10 set'), so for that one "
+                    "the bootstrap is the route, not a different --field."
+                )
             if k is None or not isinstance(v, (int, float)) or not math.isfinite(v):
                 unusable += 1
                 continue
@@ -615,7 +837,37 @@ def require_same_ruler(
         print(f"[paired-compare] ruler {field}={sorted(va)[0]}{source}")
 
 
-def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None:
+def require_paired_n(n_common: int, want: int | None, *, label_a: str, label_b: str) -> None:
+    """Refuse a verdict whose paired n is not the n the caller pre-committed.
+
+    ⚑ THE JOIN IS THE SILENT FAILURE ON THIS PATH. Every threshold in a prereg
+    is written at a stated n; the join then silently delivers whatever the two
+    files happen to share. A dump truncated to 500 of 4000 rows still loads,
+    still joins, and still prints a clean verdict — at 2.8x the half-width the
+    prereg was written against, with nothing in the output that says so. The
+    per-side accounting below makes that VISIBLE; this makes it FATAL, because
+    a number a reader has to check by hand is a number that gets quoted
+    unchecked.
+
+    Opt-in by design: exploratory runs have no pre-committed n. A deciding
+    readout must pass it.
+    """
+    if want is None or n_common == want:
+        return
+    raise SystemExit(
+        f"--require-n {want} but the join produced {n_common} paired positions "
+        f"(A={label_a}, B={label_b}). Every threshold pre-committed at n={want} "
+        f"has a different resolution at n={n_common}: the paired half-width "
+        f"scales as 1/sqrt(n), so this readout does NOT test what was "
+        "registered. Re-run the missing positions, or amend the prereg to the "
+        "n you actually have and recompute the thresholds from it."
+    )
+
+
+def report(
+    a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int,
+    mcnemar_at: float | None = None, require_n: int | None = None,
+) -> None:
     common = sorted(set(a.rows) & set(b.rows))
     if not common:
   # Report `unusable` here too, in the same per-side shape as the success
@@ -647,6 +899,9 @@ def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None
                 "check --join-key/--field against the dump schema."
             ),
         )
+    # Before any statistic is computed: a verdict at the wrong n is worse than
+    # no verdict, because it is quotable.
+    require_paired_n(len(common), require_n, label_a=label_a, label_b=label_b)
     va = np.array([a.rows[k][0] for k in common])
     vb = np.array([b.rows[k][0] for k in common])
     ph = np.array([a.rows[k][1] for k in common])
@@ -680,6 +935,11 @@ def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None
         plo, phi = paired_bootstrap_ci(d[m], n_boot=n_boot)
         print(f"  {name:11s} n={int(m.sum()):5d} delta {d[m].mean():+.2f} "
               f"[{plo:+.2f} .. {phi:+.2f}]")
+    if mcnemar_at is not None:
+        report_mcnemar(
+            mcnemar(va, vb, at=mcnemar_at),
+            at=mcnemar_at, label_a=label_a, label_b=label_b,
+        )
 
 
 def main() -> None:
@@ -696,16 +956,29 @@ def main() -> None:
                     help="dotted path to the compared metric "
                          "(audit_targets dumps: e.g. 'cand.search.exp')")
     ap.add_argument("--n-boot", type=int, default=10_000)
+    ap.add_argument("--mcnemar-at", type=float, default=None, metavar="CP",
+                    help="also run McNemar's exact test on the paired binary "
+                         "predicate (metric <= CP). --mcnemar-at 0 is the "
+                         "#440 prereg's top1_match on a regret field.")
+    ap.add_argument("--require-n", type=int, default=None, metavar="N",
+                    help="refuse unless the join yields exactly N paired "
+                         "positions. Pass it on any readout whose thresholds "
+                         "were pre-committed at a stated n.")
     args = ap.parse_args()
-    dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field)
-    dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field)
+    dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field,
+                       mcnemar_at=args.mcnemar_at)
+    dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field,
+                       mcnemar_at=args.mcnemar_at)
     label_a = args.label_a or args.dump_a
     label_b = args.label_b or args.dump_b
     require_same_ruler(
         dump_a, dump_b, label_a=label_a, label_b=label_b, metric=args.field,
     )
     require_same_stamp(dump_a, dump_b, label_a=label_a, label_b=label_b)
-    report(dump_a, dump_b, label_a=label_a, label_b=label_b, n_boot=args.n_boot)
+    report(
+        dump_a, dump_b, label_a=label_a, label_b=label_b, n_boot=args.n_boot,
+        mcnemar_at=args.mcnemar_at, require_n=args.require_n,
+    )
 
 
 if __name__ == "__main__":

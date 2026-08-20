@@ -74,7 +74,7 @@ Usage:
 
     PYTHONPATH=. python3 scripts/mpv6_tail_panel.py \\
         --replay-dir runs/pbt2_small/replay/<live-trial>/replay_shards \\
-        --stockfish /home/josh/projects/chess/e2e_server/publish/stockfish \\
+        --stockfish "$(PYTHONPATH=. python3 -m chess_anti_engine.utils.engine_discovery)" \\
         --checkpoint data/tail_screen_20260814/checkpoint_000218 \\
         --positions 400 --deep-nodes 4000000 --workers 3 \\
         --json-out scratchpad/mpv6_tail_panel.json
@@ -96,7 +96,9 @@ from chess_anti_engine.moves.encode import move_to_index_for_encoding
 from chess_anti_engine.replay.shard import load_shard_arrays
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
+from chess_anti_engine.utils.engine_discovery import default_stockfish
 from chess_anti_engine.utils.git_meta import git_sha
+from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path
 from scripts.diagnostic_replay_utils import record_skipped_shard, select_shards
 from scripts.tail_censor_screen import N_BOOT, SF_OWN_REGRET_CAP_CP, Row, analyse
 
@@ -105,9 +107,20 @@ from scripts.tail_censor_screen import N_BOOT, SF_OWN_REGRET_CAP_CP, Row, analys
 PROD_MULTIPV = 6
 PROD_NODES = 150_000
 PROD_HASH_MB = 17
-PROD_SYZYGY = "/home/josh/projects/chess/data/syzygy_3-4-5"
-DEEP_SYZYGY = ("/home/josh/projects/chess/data/syzygy_3-4-5"
-               ":/home/josh/projects/chess/data/syzygy_6")
+# ⚑ DERIVED, not written down — #441. These were absolute paths naming one
+# machine's filesystem in a PUBLIC repo, and they regrew here AFTER that PR's
+# merge base, which is the argument for the guard that now catches them.
+# `default_syzygy_path()` resolves each half independently and falls back to the
+# MAIN checkout, so this keeps working from the `git worktree` CLAUDE.md
+# mandates — where a bare `$REPO_ROOT/data/syzygy_*` resolves to nothing and
+# Stockfish would run tablebase-blind without saying so.
+#
+# DEEP is the colon-separated PAIR (the playing engines' `syzygy_path`); PROD is
+# the 3-4-5 directory ALONE, which is what the LABELLER gets
+# (`stockfish_syzygy_path`). Splitting the pair rather than re-deriving the
+# first half keeps the two from drifting apart.
+DEEP_SYZYGY = default_syzygy_path()
+PROD_SYZYGY = DEEP_SYZYGY.split(SEPARATOR)[0]
 # python-chess caps out well below this; 64 is a safe ceiling on legal width.
 MAX_MULTIPV = 64
 # Syzygy tops out at 7 men; at or below this the arms' different TB sets can
@@ -509,7 +522,10 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--replay-dir", type=Path, required=True, action="append")
-    ap.add_argument("--stockfish", type=str, required=True)
+    # Discovered rather than required: the shared discovery already looks in
+    # this checkout, then the MAIN checkout, then $CAE_STOCKFISH / PATH, and it
+    # is the only definition that knows `e2e_server/publish/` is untracked.
+    ap.add_argument("--stockfish", type=str, default=default_stockfish())
     ap.add_argument("--checkpoint", type=str, required=True,
                     help="the loss weights by the NET'S prior, so this is not optional here")
     ap.add_argument("--positions", type=int, default=400)

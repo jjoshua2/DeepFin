@@ -55,6 +55,32 @@ cadenced FEN-panel reads + the seed retire/probation step (log
 `scratchpad/live_read/monitor/`); `scripts/ratchet_loop.sh` — the daily strength
 ratchet (log `scratchpad/ratchet_loop.log`).
 
+**⚑ Ops scripts now operate on THE TREE THEY LIVE IN.** `monitor_fen.sh`,
+`recover_stall.sh`, `run_bootstrap_512x16.sh` and **`bank_rolling_checkpoints.sh`** used
+to `cd` to (or hardcode) an absolute root, so they drove the main checkout no matter where
+they were launched from; they now derive it with `cd "$(dirname "$0")/.."`. Launched from
+`train.sh` / `watchdog_loop.sh` in the repo root this is identical behaviour — but running
+one **out of a `git worktree` now drives the worktree**, where `runs/` does not exist and
+the script will find no trial. Given the standing "use a worktree for all branch work"
+rule, run these from the main checkout, or `cd` there first. (`ratchet_common.sh` is
+*sourced*, so it uses `${BASH_SOURCE[0]}`, not `$0`; `RATCHET_ROOT` / `WATCHDOG_ROOT`
+still override.)
+
+⚑⚑ **`bank_rolling_checkpoints.sh` is the one where that silently cost you something**, so
+it now refuses instead: from a tree with no `runs/pbt2_small/tune` it prints `[bank] ERROR:
+no tune dir at <path>` and exits **2**, where before it printed nothing, created an empty
+`data/salvage/rolling`, and — with `ONCE` unset, i.e. in production — looped on that
+forever. It is the rolling half of the **revert points** the experiment protocol depends
+on, and Ray prunes the originals meanwhile, so a silently-empty bank is only discovered at
+the moment a rollback is needed. `TUNE_DIR=<path>` overrides the location.
+
+Engine-running tools
+(`blindspot_*`) do NOT have this problem — they discover the published Stockfish through
+`chess_anti_engine.utils.engine_discovery`, which falls back from the current checkout to
+the **main** checkout via `git rev-parse --git-common-dir`, because
+`e2e_server/publish/` is untracked runtime output that exists only where it was
+published. `CAE_STOCKFISH` overrides.
+
 ## The nightly pause window
 
 `scripts/pause_window.sh <cmd>` runs a job with the trial parked and selfplay drained,

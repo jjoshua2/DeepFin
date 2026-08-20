@@ -289,7 +289,7 @@ The WDL head (what MCTS uses to evaluate positions) only gets ~10% of total grad
 **Restart actions**:
 - Force-stopped both concurrent runs and Ray workers.
 - Started a single fresh run:
-  - `python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --salvage-seed-pool-dir /home/josh/projects/chess/runs/pbt2_small/salvage/7773d_20260305_083208`
+  - `python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --salvage-seed-pool-dir ~/projects/chess/runs/pbt2_small/salvage/7773d_20260305_083208`
   - New trial prefix: `09543` (8 trials).
   - Active TB root: `/tmp/ray/session_2026-03-05_10-14-39_577500_2427274/.../driver_artifacts`
 

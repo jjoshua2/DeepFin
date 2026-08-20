@@ -669,3 +669,169 @@ def test_parse_source_tag_never_guesses() -> None:
     assert parse_source_tag(f"{_FEN_A}  # sp=10") is None
     assert parse_source_tag(f"{_FEN_A}  # sp=") is None
     assert parse_source_tag("") is None
+
+
+# ---------------------------------------------------------------------------
+# ⚑⚑ TABLEBASE BLINDNESS. The silent half of the #441 review's F2.
+# ---------------------------------------------------------------------------
+
+
+def _fake_tablebase_dir(root: Path, name: str) -> Path:
+    """A directory that HOLDS tablebases, distinguished by CONTENTS not name.
+
+    ⚑ CLAUDE.md: the production directory names lie -- `data/syzygy_3-4-5`
+    actually holds 3-6 man WDL -- so every check reads the files, and so does
+    this fixture: the directory here is called something no scheme would
+    recognise, and it must still pass.
+    """
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "KQvK.rtbw").write_bytes(b"\x00" * 16)
+    (d / "KQvK.rtbz").write_bytes(b"\x00" * 16)
+    return d
+
+
+def test_a_directory_is_judged_by_its_tablebases_not_its_name(tmp_path: Path) -> None:
+    from chess_anti_engine.utils.syzygy import has_tablebases, missing_tablebase_dirs
+
+    real = _fake_tablebase_dir(tmp_path, "not_called_syzygy_at_all")
+    assert has_tablebases(real)
+    assert missing_tablebase_dirs(str(real)) == []
+
+    # Right name, no tablebases: still blind.
+    empty = tmp_path / "syzygy_3-4-5"
+    empty.mkdir()
+    (empty / "README.md").write_text("tablebases live on the other disk", encoding="utf-8")
+    assert not has_tablebases(empty)
+    assert missing_tablebase_dirs(str(empty)) == [str(empty)]
+
+    # A pair is only as good as its worse half.
+    pair = f"{real}:{empty}"
+    assert missing_tablebase_dirs(pair) == [str(empty)]
+
+    # ⚑ "No path at all" is the blindest case and must not read as "nothing
+    # missing" -- returning [] for None is precisely the gate-that-cannot-fail.
+    assert missing_tablebase_dirs(None) == [""]
+    assert missing_tablebase_dirs("") == [""]
+    assert missing_tablebase_dirs("   ") == [""]
+
+
+def _gate_argv(tmp_path: Path, syzygy: str | None, *extra: str) -> list[str]:
+    """A gate invocation that REACHES the SF branch (one new, undeduped line)."""
+    harvest = tmp_path / "blindspot.severe.p1.txt"
+    _write(harvest, _line(_FEN_A) + "\n")
+    argv = [
+        "--harvest-glob", str(harvest),
+        "--state", str(tmp_path / "gate_state.json"),
+        "--out", str(tmp_path / "staged.txt"),
+        "--yaml", str(tmp_path / "no_such.yaml"),
+        "--holdout", str(tmp_path / "no_such_holdout.jsonl"),
+        "--sf-path", str(tmp_path / "no_such_engine"),
+        "--max-vet-per-run", "1",
+        "--sf-nodes", "1000",
+        "--stamp", _STAMP,
+    ]
+    if syzygy is not None:
+        argv += ["--syzygy-path", syzygy]
+    return argv + list(extra)
+
+
+def test_a_tablebase_blind_gate_exits_NON_ZERO(tmp_path: Path, capsys) -> None:
+    """⚑⚑ The gate whose own comment demands "TB equal" could run TB-blind.
+
+    `scripts/monitor_fen.sh` derives `SYZYGY_PATH` from the checkout, and after
+    PR #441 that resolves to nothing in every worktree and fresh clone. MEASURED
+    on the production binary: Stockfish accepts a nonexistent SyzygyPath, prints
+    `info string Found 0 WDL and 0 DTZ tablebase files (up to 0-man)` into a
+    redirected log, answers `readyok`, and exits 0. Nothing downstream could
+    tell the difference between a TB-equal vet and a blind one.
+
+    The exit code is the assertion, not the message: a monitor reads status.
+    """
+    from scripts.harvest_gate_step import main
+
+    missing = tmp_path / "nowhere" / "syzygy_3-4-5"
+    rc = main(_gate_argv(tmp_path, str(missing)))
+    assert rc == 2, rc
+    out = capsys.readouterr().out
+    assert "tablebase-BLIND" in out, out
+    # ...and it never started an engine: the check is BEFORE the pool, so the
+    # bogus --sf-path was never reached.
+    assert "no_such_engine" not in out, out
+
+
+def test_no_syzygy_path_at_all_is_also_a_refusal(tmp_path: Path, capsys) -> None:
+    """Omitting the option is blinder than pointing it somewhere wrong."""
+    from scripts.harvest_gate_step import main
+
+    assert main(_gate_argv(tmp_path, None)) == 2
+    assert "tablebase-BLIND" in capsys.readouterr().out
+
+
+def test_the_PASS_branch_still_works_on_real_tablebases(tmp_path: Path, capsys) -> None:
+    """⚑ A fix for "this gate cannot fail" must not ship "this gate cannot pass".
+
+    Measured 9/9 in this repo: the PR that closes a silently-ignored value tends
+    to ship a fresh one. So the positive branch is asserted explicitly: with a
+    directory that really holds tablebases, the gate gets PAST the check and
+    fails on the next thing (the deliberately bogus engine), not on the
+    tablebases.
+    """
+    from scripts.harvest_gate_step import main
+
+    good = _fake_tablebase_dir(tmp_path, "tb_a")
+    also = _fake_tablebase_dir(tmp_path, "tb_b")
+    rc = main(_gate_argv(tmp_path, f"{good}:{also}"))
+    out = capsys.readouterr().out
+    assert "tablebase-BLIND" not in out, out
+    # It proceeded to build the engine, which is the bogus path this fixture
+    # supplies -- so the run fails for THAT reason (1), not for the TB one (2).
+    assert rc == 1, (rc, out)
+
+
+def test_the_opt_out_is_explicit_and_works(tmp_path: Path, capsys) -> None:
+    """A deliberate TB-less run stays possible — it just has to say so.
+
+    Without this the check would be a wall rather than a gate, and the next
+    person with a legitimate reason would delete it instead of passing a flag.
+    """
+    from scripts.harvest_gate_step import main
+
+    rc = main(_gate_argv(tmp_path, None, "--allow-missing-tablebases"))
+    out = capsys.readouterr().out
+    assert "tablebase-BLIND" not in out, out
+    assert rc == 1, (rc, out)      # past the TB check, dies on the bogus engine
+
+
+def test_the_derived_default_reaches_the_publishing_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of F2: derive from MORE than this checkout.
+
+    `monitor_fen.sh` used `$REPO_ROOT/data/syzygy_*`, which is right in the tree
+    that holds the 151G of tablebases and empty in the `git worktree` CLAUDE.md
+    mandates. The default now falls back to the main checkout the same way the
+    engine lookup does.
+    """
+    from chess_anti_engine.utils import syzygy
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    main_co = tmp_path / "main_checkout"
+    for rel in syzygy.SYZYGY_DIRS:
+        _fake_tablebase_dir(main_co, rel)
+
+    monkeypatch.delenv(syzygy.ENV_VAR, raising=False)
+    monkeypatch.setattr(syzygy, "main_checkout", lambda _root=None: main_co)
+    resolved = syzygy.default_syzygy_path(worktree)
+    assert resolved == syzygy.SEPARATOR.join(
+        str(main_co / rel) for rel in syzygy.SYZYGY_DIRS
+    ), resolved
+    assert syzygy.missing_tablebase_dirs(resolved) == []
+
+    # Negative control: with no main checkout to fall back on, the default names
+    # THIS checkout's paths -- and is then correctly reported as blind, rather
+    # than silently resolving to something that happens to exist.
+    monkeypatch.setattr(syzygy, "main_checkout", lambda _root=None: None)
+    lonely = syzygy.default_syzygy_path(worktree)
+    assert syzygy.missing_tablebase_dirs(lonely) == lonely.split(syzygy.SEPARATOR)

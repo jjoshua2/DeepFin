@@ -149,8 +149,19 @@ from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.moves.encode import move_to_index_for_encoding
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.utils.engine_discovery import (
+    announce_engine,
+    default_stockfish,
+    write_engine_record,
+)
 
-_DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+# ⚑ DISCOVERED, not merely repo-relative. `e2e_server/publish/` is UNTRACKED
+# runtime output, so it exists only in the checkout that published it — a
+# checkout-relative default resolves to nothing in the `git worktree` CLAUDE.md
+# mandates for branch work, which is where these tools are run. The shared
+# lookup falls back through $CAE_STOCKFISH, this checkout, the MAIN checkout and
+# PATH. (Codex inline review, #441.)
+_DEFAULT_SF = default_stockfish()
 
 
 def _q(info: chess.engine.InfoDict, pov: chess.Color) -> float:
@@ -258,6 +269,9 @@ def main() -> None:
     policy_encoding = getattr(model, "policy_encoding", None)
     ev = LocalModelEvaluator(model, device=args.device)
 
+    # ⚑ #441 review N3: a net-side VET decides which seeds survive, against
+    # deep-SF verdicts. Announce and record the binary that produced them.
+    engine_record = announce_engine("netvet", args.stockfish)
     eng = chess.engine.SimpleEngine.popen_uci(args.stockfish)
     opts: dict[str, str | int] = {"Threads": 1, "Hash": int(args.hash_mb)}
     if args.syzygy_path:
@@ -437,10 +451,12 @@ def main() -> None:
                  f"fine>={args.fine} lost<={args.lost} deep={args.deep_nodes}\n")
         for ln in kept:
             fh.write(ln + "\n")
+    write_engine_record(args.out_list, engine_record)
     if args.out_jsonl:
         with open(args.out_jsonl, "w", encoding="utf-8") as fh:
             for r in audit:
                 fh.write(json.dumps(r) + "\n")
+        write_engine_record(args.out_jsonl, engine_record)
 
     n_deep = sum(1 for r in audit if r.get("stage") == "deep")
     print(f"\n[netvet:{args.control}] seeds={len(lines)} parse_fail={n_parse} "

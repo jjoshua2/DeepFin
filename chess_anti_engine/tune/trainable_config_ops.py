@@ -584,6 +584,16 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_pid_enabled",
     "pause_file",
     "policy_target_temp",
+  # SF-policy-floor SHAPE. Same class as `policy_target_temp` and for a stronger
+  # reason: the three are resolved into ONE frozen, validated
+  # `SfPolicyFloorParams` in the Trainer constructor, so a live edit provably
+  # cannot reach the loss. Listing them turns that silence into a
+  # restart-required warning on the iteration the edit lands. The WEIGHT
+  # `w_sf_policy_floor` is NOT here -- it is live-pushed every iteration.
+    "sf_policy_floor_delta_cp",
+    "sf_policy_floor_tau",
+    "sf_policy_floor_tau_top1",
+    "sf_policy_floor_tau_played",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
@@ -1377,6 +1387,14 @@ def _sync_trainer_weights(
     take effect immediately.
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
+
+    # The SF-policy floor's `tau_played` is DERIVED from `gumbel_topk`, which is
+    # a LIVE selfplay key. Pushed here rather than left to the startup-only
+    # machinery, which structurally cannot warn about it: `gumbel_topk` really is
+    # live for its other consumer, so nothing would have flagged the floor's copy
+    # going stale. `tc.gumbel_topk` is the loop's own re-read of the key, so this
+    # is the same value the search itself will use this iteration.
+    trainer.sync_search_width(tc.gumbel_topk)
 
     # SF target rebuild: construction-time on the Trainer, so it needs an
     # explicit push or a live yaml edit silently waits for the next restart.
