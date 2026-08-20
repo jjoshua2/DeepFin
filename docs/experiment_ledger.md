@@ -62605,3 +62605,78 @@ vs 0.0293).** More best-move churn at unchanged depth is a MultiPV search-behavi
 **PR REMAINS ON HOLD, now for a better-understood reason: the arm's stated mechanism
 (un-fabricate the tail = WIDTH) feeds only legs that are set to 0.0, and the leg that is live
 wants DEPTH instead.**
+
+### ⚑⚑ 2026-08-19 — THE `S_R = 20` ANCHOR'S TEACHER IS **75k / MPV6**, NOT 500k/MPV40. ⇒
+### Stage 1 buys the **JUDGE**, not a teacher, and the anchor UNDERSTATES the shipped arm
+
+Peer's safeguard was *"if the historical `S_R ~ 20` was measured against 500k/MPV40, Stage 1
+should use 500k/MPV40 again — don't 'correct' it to MPV6 just because E6 is deeper."* The
+reasoning is right and the premise is wrong. Checked rather than assumed.
+
+**THE ANCHOR'S OWN WORDS** (`docs/experiment_ledger.md`, the SF-soft correction entry):
+
+> "Measured at **PRODUCTION teacher depth (75k/MPV6)**: production training target
+> **39.81 cp**, `sf_soft` **19.80 cp**."
+
+`S_R = 20` IS that 39.81 - 19.80 = 20.01 gap. ⇒ the teacher was **75k / MPV6**. The
+500k/MPV40 tier is the STRONG TEACHER used by a DIFFERENT arm (`strong_oracle` in the repair
+gate, `#60299`), explicitly flagged there as **NOT SHIPPABLE**. Two tiers, two arms, and I
+would have carried the wrong one into Stage 1 had the premise gone unchecked.
+
+**⇒ THREE CONSEQUENCES, AND THE FIRST REORGANISES STAGE 1.**
+
+**1. STAGE 1'S DEEP LABELS BUY THE JUDGE `r`, NOT THE TEACHER `q`.** In
+`S_R = SUM_m (t0 - q)_m * r_m`:
+
+| symbol | what it is | where it comes from | SF cost |
+|---|---|---|---|
+| `t0` | production policy target (search visits) | stored in the shard | **0** |
+| `q` | the SF soft teacher `w_sf_own` would train toward | `sf_p0_policy_target`, **already stored** | **0** |
+| `r` | per-move regret — the RULER | needs a genuinely deep judge | **the entire spend** |
+
+So Stage 1 is not "buy a better teacher and see if it helps". The teacher is whatever
+production already wrote; **the money goes to the JUDGE**, and the judge must match the
+historical DEEP ruler (`>=1M nodes, MultiPV >= 10`), not the 500k/MPV40 strong-teacher tier
+and not 500k/MPV6. ⚑ The judge needs WIDTH as well as depth — `r` must cover every move
+carrying target mass, and at MPV6 a judge would fabricate exactly the tail it is meant to
+adjudicate.
+
+**2. THE ANCHOR'S TEACHER IS WEAKER THAN THE SHIPPED ONE, SO 20 IS A FLOOR-ISH ESTIMATE.**
+75k is `sf_nodes`, the OPPONENT's budget ([[sf_label_nodes_are_not_sf_nodes]]); production
+LABELS are queried at 150k-200k, same MPV6. `w_sf_own` would train toward the 150-200k
+teacher, which is strictly better than the 75k one the anchor used. Blending toward a better
+`q` gains MORE, so **today's shipped `S_R` should be >= 20, not <=**, other things equal. That
+is the favourable direction — and it is still an ARGUMENT, not a measurement, which is
+precisely what Stage 1 exists to settle.
+
+**3. A FOURTH WIDTH/BUDGET PAIR ENTERS THE SAME ARGUMENT.** Tally, all now verified:
+
+| instrument | nodes / width | role |
+|---|---|---|
+| DEEP ruler | >=1M / MPV>=10 | the judge `r` |
+| STRONG teacher | 500k / MPV40 | `strong_oracle` only — NOT SHIPPABLE |
+| anchor teacher | **75k / MPV6** | what `S_R = 20` was measured with |
+| **shipped teacher** | **150k-200k / MPV6** | what `w_sf_own` would actually consume |
+| 2.92% WDL ladder | 150k->500k / **MPV1** | the value-convergence rung |
+
+Five instruments, five (nodes, width) pairs, and the discussion had been treating "more
+Stockfish" as one axis. ⇒ **NO SF QUANTITY IN THIS PROJECT MAY BE CITED WITHOUT ITS
+(nodes, MultiPV) PAIR.** Adopted as a standing rule.
+
+**STAGE 1 INSTRUMENT, FROZEN:** teacher `q` = the STORED `sf_p0_policy_target` on the frozen
+bank (zero SF cost, and it is what production would train on); judge `r` = deep ruler at
+`>=1M nodes, MPV>=10`, matching the anchor's judge. The futility rule and every other frozen
+element are UNCHANGED.
+
+**PEER'S TWO-QUESTION SPLIT ADOPTED for the banked secondary analysis:** policy teacher
+`175k/MPV6 -> 500k/MPV40` (TV/KL, top-1 and rank change, surfaced coverage, fabricated-regret
+replacement, SF-soft target entropy); value teacher `175k/MPV6 -> 500k/MPV6` (WDL change,
+fraction over threshold, cheap-feature predictability of the changed rows). **E40 must not
+answer the WDL question and E6 must not answer the policy-support question.**
+
+**AND THE 2x2 IS BEING COMPLETED NOW** (`175k/MPV40`, the missing corner) — it costs ~1 minute
+of one nice'd worker and Stage 1 is ~25 iterations away, so there is no delay to trade off.
+It separates the node effect (`E6 - P`) from the width effect (`W - P`) and their interaction
+(`(E40 - E6) - (W - P)`), and answers the question the depth result raised: **if
+`175k/MPV40 ~= 500k/MPV40` on the quantities `w_sf_own` cares about, the wide teacher is
+available at ~1x cost rather than 2.86x.**
