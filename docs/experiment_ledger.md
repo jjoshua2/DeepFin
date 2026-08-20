@@ -63315,22 +63315,39 @@ read it. Measured the corpus instead.
 The driver runs the budget in whole windows of `--train-window-steps` (default 88), so the
 budget must be an even window count. Proposed frozen initial budget:
 
-| | windows | steps | rows seen | epoch fraction | wall clock @ 3.01 steps/s |
+| | windows | steps | sampled examples | corpus-size exposure | wall clock @ 3.01 steps/s |
 |---|---|---|---|---|---|
-| initial | 438 | **38,544** | 19.73M | **0.249** | ~3.6 h |
-| after the ONE preregistered 2x extension | 876 | 77,088 | 39.47M | 0.499 | ~7.1 h total |
+| initial | 438 (MID at 219) | **38,544** | 19,734,528 | **0.24956x** | ~3.6 h |
+| after the ONE preregistered 2x extension | 876 (MID at 438) | 77,088 | 39,469,056 | 0.49912x | ~7.1 h total |
 
 The 3.01 steps/s is the *live* rate with selfplay contending; a paused-GPU dedicated run should
 beat it, so treat the hours as an upper bound.
 
-**Why this budget and not another.** At 38,544 steps the run sees 24.9% of the corpus, so
-**every training row is unseen at the moment it is trained on**. That matters for the
-inference, not just the cost: in a strictly fresh-row regime a train/held-out generalization
-gap cannot be attributed to memorisation. So an H_stack-looking signature (train agreement
-rising, held-out flat) is *stronger* evidence here than the same signature would be after
-multiple epochs. The number lands within 7% of the `249 x 144` figure, but the justification is
-now an exposure argument that also states a property of the regime, rather than an analogy to
-an RL run that shares none of its mechanics.
+**⚑ RETRACTED IN THE SAME SESSION, BEFORE IT WAS FROZEN: "every training row is unseen".**
+The first version of this entry justified the budget by claiming a strictly fresh-row regime in
+which a train/held-out gap could not be attributed to memorisation. **That is false.** The
+control trains through `DiskReplayBuffer`, and BOTH halves of its sampler draw WITH
+replacement: the uniform half at `replay/disk_buffer.py:1666` and the priority half at `:1674`,
+`:1678` and `:1706` all pass `replace=True`, split by `surprise_mix = 0.5`. Rows can repeat
+long before one corpus-equivalent has elapsed -- at a 100k hot pool, ideal uniform sampling
+already yields ~510.7 expected unique rows per 512 draws, i.e. ~1.3 duplicate selections per
+batch, and priority skew only concentrates reuse further. A second, independent reason the
+claim could not have worked: the train-side readout scores rows the net has ALREADY trained on,
+and one exposure is enough to fit a row, so no sub-epoch budget makes train-vs-held-out
+divergence immune to memorisation.
+
+⇒ **Quote these as nominal corpus-size EXPOSURE EQUIVALENTS, never as epochs and never as a
+unique-row fraction.** `38,544 x 512 = 19,734,528` sampled examples against a 79,077,376-row
+corpus is `0.24956x`.
+
+**Why this budget and not another, restated on ground that holds.** It is exactly 438
+production-style 88-step windows, so MID lands on a whole window boundary (219) and MID and
+LAST are read at the same phase of the sqrt_release ramp -- the defect the prereg's own
+Amendment fixed and the one refuted above. It is ~38.5k optimizer steps, comfortably past the
+1000-step warmup the prereg guards against. And it stays below a single corpus-size exposure
+equivalent, which bounds how much reuse the sampler can have accumulated without claiming there
+is none. The number lands within 7% of the discarded `249 x 144` figure; what changed is that
+the justification is now checkable.
 
 ⚑ This is a proposed budget, not a launched one. It must be written into the prereg and frozen
 BEFORE `--steps` is passed, or it is optional stopping.
