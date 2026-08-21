@@ -1,0 +1,64 @@
+# Test selector for the arena evaluator-hoist branch (feat/arena-evaluator-hoist).
+#
+# Run it with:
+#   CUDA_VISIBLE_DEVICES="" PYTHONPATH=. python3 -m pytest \
+#       $(grep -v '^#' tests/selectors/arena_hoist_selector.txt) -p no:randomly
+#
+# This file exists because the branch's test delta is only meaningful as a
+# DELTA against the branch point, and a delta whose selector is not written
+# down cannot be reproduced by a reviewer. Scope: every suite that touches the
+# arena, the match helpers, the Gumbel/MCTS search (gumbel_c.py is shared with
+# production selfplay), and the end-to-end smoke.
+#
+# ⚑ Known pre-existing, NOT caused by this branch:
+#   tests/test_mcts_uci_parity_gates.py::test_gumbel_cross_impl_residual_above_64_sims[96]
+#   tests/test_mcts_uci_parity_gates.py::test_gumbel_cross_impl_residual_above_64_sims[128]
+# are strict-xfail cases over an all-ties fixture (zero logits, so ranking falls
+# to iteration order) and flip between XFAIL and XPASS across environments. They
+# read as XPASS-failures here and as XFAIL-passes in the reviewer's environment,
+# identically on the branch point and on HEAD. Compare the two sides in ONE
+# environment; never compare a count across two.
+tests/test_arena.py
+tests/test_arena_fen_openings.py
+tests/test_arena_match_smoke.py
+tests/test_arena_pgn.py
+tests/test_arena_pgn_integration.py
+tests/test_arena_search_shape_plumbing.py
+tests/test_arena_standard.py
+tests/test_audit_gumbel_override_dispatch.py
+tests/test_audit_search_param_stamp.py
+tests/test_audit_search_profiles.py
+tests/test_batch_descend_puct.py
+tests/test_cpuct_scaling.py
+tests/test_dynamic_relations.py
+tests/test_e2e_smoke.py
+tests/test_gumbel_budget_usage.py
+tests/test_gumbel_c_audit_guards.py
+tests/test_gumbel_c_leaf_duplication.py
+tests/test_gumbel_dup_stats.py
+tests/test_gumbel_mcts_smoke.py
+tests/test_gumbel_root_many_edge_cases.py
+tests/test_history_rep_fix.py
+tests/test_inert_gumbel_knobs.py
+tests/test_match_checkpoints_script.py
+tests/test_match_result_labeling.py
+tests/test_match_resume.py
+tests/test_mcts_c_tree.py
+tests/test_mcts_forced_collapse.py
+tests/test_mcts_solved_propagation.py
+tests/test_mcts_transposition_key.py
+tests/test_mcts_uci_parity_gates.py
+tests/test_mcts_virtual_loss.py
+tests/test_param_count.py
+tests/test_play_match_search_shape.py
+tests/test_pucv_search.py
+tests/test_root_parallel_gumbel.py
+tests/test_search_wdl_draw_mode.py
+tests/test_selfplay_gumbel_batching_plumbing.py
+tests/test_selfplay_gumbel_c_scale.py
+tests/test_selfplay_policy_temp_plumbing.py
+tests/test_selfplay_state.py
+tests/test_uci_gumbel_vloss_plumbing.py
+tests/test_uci_search_options.py
+tests/test_volatility_search.py
+tests/test_arena_evaluator_hoist.py
