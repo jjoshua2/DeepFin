@@ -64076,3 +64076,33 @@ positive-control leg). Effort routes to the target program — exactly the sigma
 dose ladder now running. Δ_train legs still land later (freeze scanning) and will be recorded
 as color on fit-vs-transfer, but cannot change this verdict. The 2× extension clause is MOOT
 (it existed for flat/flat).
+
+## 2026-08-21 — PREREG: Elo calibration of the #438 control net (Josh: "how many good games are needed to reach a strong level / how fast should we improve")
+
+Three fixed-N matches, queued behind the dose ladder's GPU. All reads are FINAL-ONLY — no
+rolling peeks, no early stops (the old Cheese 0.6875 is the cautionary truncation). Seed 42.
+Not training-affecting; production stays down.
+
+- **A — control-LAST vs production iter-595** (the calibration headline: ~10 h / 19.7M
+  samples of clean external supervision from RANDOM INIT vs our whole RL loop's product):
+  `arena_standard.py --candidate runs/lc0_control_20260820/checkpoint.pt --reference
+  data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt --mode matched_sims
+  --sims 100 --games 400 --no-rolling --seed 42 --search-shape play --syzygy <prod pair>`.
+  Same search both sides (frozen production shape) — ⚑ same-setting-both-sides is pairing,
+  not neutrality; the number is the WEIGHTS delta under production search.
+- **B — control-LAST vs control-MID** (Elo VELOCITY per ~9.9M good samples, the direct
+  answer to "how fast should we improve"): same command, reference `checkpoint_mid.pt`,
+  400 games.
+- **C — control-LAST vs Cheese 3.2.1 @ UCI_Elo 2400, 60s+1s, FULL 60-game block** (external
+  anchor on the rung production measured 0.6875 on 24 truncated games): `match_vs_uci.py`
+  with the proven clock protocol (off-clock warmup 3000 nodes, grace 100 ms,
+  `--move-log-out` REQUIRED — the +137 run's absence is a banked defect). Clock mode needs
+  the GPU quiet, so C runs LAST, after A/B. Production's truncated 0.6875 is context, not a
+  paired baseline; a clean production-vs-Cheese block under identical settings is a
+  follow-up if wanted.
+
+**Expectations, registered:** no kill bar (measurement, not an intervention). A large
+control-net deficit in A is COMPATIBLE with the #438 PASS — 0.25× exposure of T91-era data
+is a small dose; the point is the exchange rate. B should be positive if top-1 +3.6 pp buys
+play strength at all; a B ≈ 0 with the CE/top-1 gain intact would echo
+[[losses_are_decoupled_from_strength]] on clean data — a finding, not a failure.
