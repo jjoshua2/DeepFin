@@ -63974,3 +63974,35 @@ same worktree code + config). Budget arithmetic: boot+purity+stage+compile ~30-4
 `overnight_chain2.sh` (gates adapted: no marker/cadence stages — nothing resumes) fires the
 readout, the iter-595 value baseline, and the sigma probe, exact preregistered commands
 unchanged. Total ≈ 12-15 h. Production restart stays MANUAL by standing rule; nothing is armed.
+
+## 2026-08-21 — window 6 COMPLETE (guards green); first readout attempt REFUSED by its own n-shrink gate; Amendment 4; chain3 relaunched
+
+**The run itself is clean:** 38,544/38,544 steps, MID banked at exactly 19,272 (driver line
+"0.5000 of the budget, window boundary 219/438"), realized-blend leak guard PASS over all
+38,544 compute_loss calls, drained rate ~1.34 steps/s (23:12 launch → 08:14 complete).
+
+**The readout attempt at 09:40 refused before producing any number** — `91842 of 91842
+frozen rows were not found in the given shards` — and the refusal was CORRECT twice over:
+the runner script passed only the 122 TRAIN dirs to `--shards` while the held-out rows live
+in `data/lc0_rows_heldout/*/` (6 dirs, 490 shards), and its `--population train` legs
+pointed at the HELD-OUT frozen file while the prereg's Δ_train artifact ("a frozen, equally
+sized sample of rows already trained on") had never been built at all. Third, independent:
+both baseline commands (value_regret, sigma probe) named the salvage EXPORT ROOT as the
+checkpoint; the file is `seeds/slot_000/trainer.pt` (identity confirmed from manifest:
+`picked_row_training_iteration: 595`, `checkpoint_000594`) — the preregistered command was
+never executed end-to-end, which is exactly what "an exact command means it was RUN" is for.
+
+**Amendment 4 (pcontrol `4b06a164c`, written before any score existed):** pins the Δ_train
+construction — `freeze --sample 91842 --seed 2 --allow-source-selection` over the 122 train
+dirs → `data/lc0_control_train_frozen_v1.json` — and states the DILUTION before the read:
+at 0.25130× sample exposure with replacement, ≈22.2% (upper bound) of a uniform train
+sample was drawn ≥once, so a true trained-row effect appears ≈4.5× diluted in Δ_train.
+Thresholds UNCHANGED; a diluted-looking (0.409, 2.0) pp Δ_train with flat Δ_heldout is the
+table's "anything else" → AMBIGUOUS → the single 2× extension. Sampler replay to enumerate
+truly-drawn rows was rejected (priority draws depend on data values; an index-only replay
+enumerates a different population).
+
+**Relaunched 09:51 as chain3:** train freeze (CPU, concurrent) + fixed readout (held-out
+legs scan held-out dirs only; train legs wait on the freeze's .done marker, then scan the
+train corpus) → corrected value baseline → corrected sigma probe. Production still
+intentionally stopped.
