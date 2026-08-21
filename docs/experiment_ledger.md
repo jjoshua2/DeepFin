@@ -64299,3 +64299,26 @@ hoist one `DirectGPUEvaluator` per model in run_arena through a new `evaluator=`
 on `pick_moves_for_boards` (collapses ≤32 streams → 2 and activates the real batch
 cap), set `_inference_only` before compile, `empty_cache()` between chunks, bucket the
 root submit.
+
+### 2026-08-21 — match-resume MERGED to ops/live (`7ed103591`); review trail closed; seq6 arms one --resume retry per match
+
+Review chain: independent Grok+supervisor review of the branch (16 findings, each triaged
+against source) → Opus fix batch `ffebb4461` (8 fixes, +19 tests, 10/10 mutants) → second
+independent review CONFIRMED one scoring-core defect in the beyond-spec addition
+(`repair_truncated_tail` deleted a COMMITTED final row that merely lacked its trailing
+newline — the resume loader had already counted it done, so it was never replayed) + 3
+honesty gaps → fix `8f78b91d1` (parse-first repair; broadened except so
+`verify_game_log_on_disk` cannot raise on a keyless row; no-op-resume note now claims only
+what it checked; symmetric-difference diagnostic; mixed_compile gated on SCORED pairs).
++3 tests (47 in test_match_resume.py), 15/15 mutants caught, all 10 prior mutants re-run
+still caught. Main session re-verified the blocking fix with the reviewer's executing
+repro in the worktree (complete-no-newline row preserved, true fragment truncated) and ran
+the 47 tests IN THE LIVE TREE post-merge: 47/47. Known accepted limitations (documented,
+not fixed): fingerprints store PATHS not content hashes; resume is statistically valid but
+not bit-identical (RNG stream restarts for remainder pairs); `mixed_compile` is recorded
+and warned but nothing gates on it.
+
+seq6 (supersedes seq5; same matches, sims 100/games 400/seed 42, conc 16, rolling +
+`--report-every 100000`, expandable_segments): each match now retries ONCE with
+`--resume` on nonzero exit — crash costs only the incomplete pairs. Per-game JSONL lands
+under `runs/arena_games/` keyed by settings fingerprint; PGN per game as it finishes.
