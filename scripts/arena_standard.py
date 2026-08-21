@@ -40,7 +40,7 @@ import shlex
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,15 +52,34 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.utils.game_log import (
+    GameLogWriter,
+    default_game_log_path,
+    fingerprint_differences,
+    latest_rows_by_key,
+    read_game_log,
+    refuse_existing_log_message,
+    refuse_settings_mismatch_message,
+    settings_fingerprint,
+)
 
-# Called once per FINISHED game when --pgn-out is on, else None. Keyword-only so
-# the three play loops (rolling / chunked / matched_time) cannot silently pass
-# these positionally in different orders.
+# Called once per FINISHED game. Keyword-only so the three play loops (rolling /
+# chunked / matched_time) cannot silently pass these positionally in different
+# orders. It used to be installed only for --pgn-out; it is now ALWAYS
+# installed, because the per-game JSONL that makes a crashed arena resumable
+# rides the same hook.
 PgnSink = Callable[..., None]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
 DEFAULT_RESULTS_PATH = REPO_ROOT / "runs" / "arena_results.jsonl"
+# Per-run game logs. NOT derived from --out: that is a shared, append-only
+# aggregate (every arena ever run appends to runs/arena_results.jsonl, and the
+# ratchet never passes --out at all), so `<out stem>.games.jsonl` would be ONE
+# file for every arena in history — which either mixes every run's games or
+# makes the "already exists" guard fire on every run. The default log name
+# carries the settings fingerprint instead; see default_game_log_path.
+DEFAULT_GAME_LOG_DIR = REPO_ROOT / "runs" / "arena_games"
 
 # matched_sims --compile=auto threshold: compile only when the run does enough
 # inference work to amortize the ~2-4 min torch.compile cost. games*sims is a
@@ -619,6 +638,178 @@ def summarize_pentanomial(
 
 
 # ---------------------------------------------------------------------------
+# Crash-resilient game log + resume
+# ---------------------------------------------------------------------------
+#
+# Every FINISHED game is appended to a JSONL log and flushed before the next
+# ply is played, so a crash loses only the games still in flight. 2026-08-21: a
+# 128-game compiled arena OOMed at ply 20 with ZERO games persisted, and the
+# relaunch lost its first minutes the same way — the run's only durable output
+# was written after the last game.
+#
+# --resume replays nothing that finished. The unit it keeps is the PAIR, not
+# the game: pentanomial scoring is pair-based, so a pair with only one coloring
+# played is DISCARDED and replayed in full. Keeping the orphan half would fold
+# a single-color result into a pair-score bin and quietly bias the very
+# color-balance the paired design exists to remove.
+
+def score_from_result(result: str, *, a_is_white: bool) -> float:
+    """Candidate-POV score from a PGN result string.
+
+    ``"*"`` maps to 0.5 to match the play loops, which score an unfinished
+    max-plies game as a draw and WRITE it as ``1/2-1/2`` (Ordo discards ``*``,
+    which would give the pooled fit a different population than the
+    pentanomial).
+    """
+    if result in ("1/2-1/2", "*"):
+        return 0.5
+    win = "1-0" if a_is_white else "0-1"
+    return 1.0 if result == win else 0.0
+
+
+def arena_game_log_settings(
+    *,
+    mode: str,
+    candidate: str,
+    reference: str,
+    games: int,
+    seed: int,
+    openings_path: str,
+    openings_kind: str,
+    opening_plies: int | None,
+    sims_candidate: int | None,
+    sims_reference: int | None,
+    ms_per_move: int | None,
+    max_plies: int,
+    temperature: float,
+    gumbel_add_noise: bool,
+    search_candidate: SideSearch | None,
+    search_reference: SideSearch | None,
+    volatility_candidate: dict[str, float] | None,
+    uci_args: str,
+    syzygy_path: str | None,
+    tb_max_pieces: int,
+) -> dict:
+    """The settings a resume must MATCH — the population and the ruler.
+
+    Deliberately EXCLUDED: ``max_concurrent_games``, ``rolling``, ``compile``,
+    ``device``, ``max_seconds``, ``report_every``, ``label``, ``out``. Those
+    are execution knobs, not the measurement — and the motivating crash was an
+    OOM, whose whole remedy is to resume at a LOWER ``--max-concurrent-games``.
+    A fingerprint that refused that would refuse the one resume we built this
+    for.
+    """
+    return {
+        "mode": mode,
+        "candidate": candidate,
+        "reference": reference,
+        "games": int(games),
+        "seed": int(seed),
+        "openings": openings_path,
+        "openings_kind": openings_kind,
+        "opening_plies": None if opening_plies is None else int(opening_plies),
+        "sims_candidate": None if sims_candidate is None else int(sims_candidate),
+        "sims_reference": None if sims_reference is None else int(sims_reference),
+        "ms_per_move": None if ms_per_move is None else int(ms_per_move),
+        "max_plies": int(max_plies),
+        "temperature": float(temperature),
+        "gumbel_add_noise": bool(gumbel_add_noise),
+        "search_candidate": None if search_candidate is None else search_candidate.as_record(),
+        "search_reference": None if search_reference is None else search_reference.as_record(),
+        "volatility_candidate": volatility_candidate,
+        "uci_args": uci_args,
+        "syzygy": syzygy_path or "",
+        "syzygy_max_pieces": int(tb_max_pieces),
+    }
+
+
+@dataclass(frozen=True)
+class ArenaResume:
+    """What a game log contributes to a resumed arena."""
+
+    path: Path
+    pair_scores: list[float]          # COMPLETE pairs only, by pair id
+    complete_pair_ids: list[int]
+    orphan_pair_ids: list[int]        # one coloring played: discarded, replayed
+    games_loaded: int
+    truncated_tail: bool
+
+
+def load_arena_resume(
+    path: Path, *, settings: dict, openings: list[chess.Board],
+) -> ArenaResume:
+    """Load finished pairs from ``path``, refusing anything that does not match.
+
+    Three refusals, all loud, because each one would otherwise produce a number
+    that reads as a clean arena result:
+
+    * settings fingerprint differs -> two populations averaged into one Elo;
+    * a recorded ``opening_fen`` differs from the opening the schedule
+      regenerated at that pair id -> the schedule is not reproducible from the
+      seed, so the pairs cannot be matched up at all;
+    * ``half`` disagrees with ``a_is_white`` -> the file is not what it says.
+
+    The second is the one that matters most: it verifies AT RUN TIME the
+    property resume rests on (openings are a pure function of seed + book +
+    games) rather than assuming it.
+    """
+    log = read_game_log(path)
+    diffs = fingerprint_differences(log.settings, settings)
+    if diffs:
+        raise SystemExit(refuse_settings_mismatch_message(
+            path, differences=diffs, resume_flag="--resume",
+        ))
+    rows = latest_rows_by_key(
+        log.games, key=lambda r: (int(r["pair_id"]), int(r["half"])),
+    )
+    halves: dict[int, dict[int, float]] = {}
+    for (pair_id, half), row in sorted(rows.items()):
+        if not 0 <= pair_id < len(openings):
+            raise SystemExit(
+                f"--resume: {path} has pair_id {pair_id}, but this invocation "
+                f"schedules only {len(openings)} pairs"
+            )
+        a_is_white = bool(row["a_is_white"])
+        if a_is_white != (half == 0):
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} half {half} records "
+                f"a_is_white={a_is_white}; half 0 is always the candidate as "
+                "White. The log does not describe the schedule it claims to."
+            )
+        want = openings[pair_id].fen()
+        got = str(row.get("opening_fen", ""))
+        if got != want:
+            raise SystemExit(
+                f"--resume: {path} pair {pair_id} was played from\n"
+                f"    {got}\n  but this invocation's schedule regenerates\n"
+                f"    {want}\n  The opening schedule is NOT reproducible from "
+                "the recorded settings, so resumed and replayed pairs would be "
+                "different openings. Refusing."
+            )
+        halves.setdefault(pair_id, {})[half] = score_from_result(
+            str(row["result"]), a_is_white=a_is_white,
+        )
+    complete: list[int] = []
+    orphans: list[int] = []
+    scores: list[float] = []
+    for pair_id in sorted(halves):
+        by_half = halves[pair_id]
+        if 0 in by_half and 1 in by_half:
+            complete.append(pair_id)
+            scores.append(by_half[0] + by_half[1])
+        else:
+            orphans.append(pair_id)
+    return ArenaResume(
+        path=path,
+        pair_scores=scores,
+        complete_pair_ids=complete,
+        orphan_pair_ids=orphans,
+        games_loaded=len(rows),
+        truncated_tail=log.truncated_tail,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Openings
 # ---------------------------------------------------------------------------
 
@@ -841,9 +1032,17 @@ def play_paired_games_matched_sims(
     syzygy_tablebase: object | None = None,
     tb_max_pieces: int = 6,
     pgn_sink: PgnSink | None = None,
-    pair_id_offset: int = 0,
+    pair_ids: Sequence[int] | None = None,
+    chunk: int | None = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
+
+    ``pair_ids[k]`` is the GLOBAL pair id of ``openings[k]`` (default: ``k``).
+    It replaced a plain ``pair_id_offset`` because a resumed run plays a
+    NON-CONTIGUOUS subset of the schedule — the pairs the crash left unfinished
+    — and an offset can only describe a contiguous slice. The ids are what the
+    game log and the PGN's ``PairId`` are keyed on, so getting them wrong
+    merges unrelated pairs into one block.
 
     ``search_candidate`` / ``search_reference`` are REQUIRED and carry the full
     realized search shape per side (see ``SideSearch``). There is deliberately
@@ -869,6 +1068,11 @@ def play_paired_games_matched_sims(
     )
     from scripts.match_vs_uci import _tb_adjudicate_result
 
+    ids = list(range(len(openings))) if pair_ids is None else list(pair_ids)
+    if len(ids) != len(openings):
+        raise ValueError(
+            f"pair_ids has {len(ids)} entries for {len(openings)} openings"
+        )
     boards: list[chess.Board] = []
     a_plays_white: list[bool] = []
     start_fens: list[str] = []
@@ -896,7 +1100,7 @@ def play_paired_games_matched_sims(
         res = result_override or adjudicated[i] or boards[i].result(claim_draw=True)
         mv = tuple(boards[i].move_stack[start_offsets[i]:])
         pgn_sink(
-            pair_id=pair_id_offset + i // 2,
+            pair_id=ids[i // 2],
             half=i % 2,
             a_is_white=bool(a_plays_white[i]),
             start_fen=start_fens[i],
@@ -905,6 +1109,8 @@ def play_paired_games_matched_sims(
             termination=termination,
             plies=len(mv),
             duration_s=time.time() - t0,
+            chunk=chunk,
+            loop="chunked",
         )
     for ply in range(int(max_plies)):
         for i in range(g):
@@ -1015,6 +1221,8 @@ def play_paired_games_matched_sims_rolling(
     report_every: int = 64,
     deadline: float | None = None,
     pgn_sink: PgnSink | None = None,
+    pair_ids: Sequence[int] | None = None,
+    prior_pair_scores: Sequence[float] | None = None,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -1043,6 +1251,15 @@ def play_paired_games_matched_sims_rolling(
     )
     from scripts.match_vs_uci import _tb_adjudicate_result
 
+    # ``pair_ids[k]`` is the GLOBAL pair id of ``openings[k]`` (default: k) —
+    # a resumed run plays a non-contiguous subset of the schedule, and the
+    # PairId in the game log / PGN must stay the schedule's own numbering.
+    # ``gids`` remain LOCAL (2k / 2k+1) because they index ``game_scores``.
+    ids = list(range(len(openings))) if pair_ids is None else list(pair_ids)
+    if len(ids) != len(openings):
+        raise ValueError(
+            f"pair_ids has {len(ids)} entries for {len(openings)} openings"
+        )
     queue: list[tuple[int, chess.Board, bool]] = []
     for k, opening in enumerate(openings):
         queue.append((2 * k, opening, True))
@@ -1085,7 +1302,7 @@ def play_paired_games_matched_sims_rolling(
             # pentanomial summary disagree about which games exist.
             mv = tuple(boards[j].move_stack[goffs[j]:])
             pgn_sink(
-                pair_id=gids[j] // 2,
+                pair_id=ids[gids[j] // 2],
                 half=gids[j] % 2,
                 a_is_white=bool(awhite[j]),
                 start_fen=gfens[j],
@@ -1094,6 +1311,8 @@ def play_paired_games_matched_sims_rolling(
                 termination=termination,
                 plies=len(mv),
                 duration_s=time.time() - gt0[j],
+                chunk=None,
+                loop="rolling",
             )
 
     t0 = time.time()
@@ -1164,7 +1383,11 @@ def play_paired_games_matched_sims_rolling(
             )
             # Running Elo over the pairs that have BOTH colorings finished so far,
             # so the standings stream in instead of only printing at the end.
-            ready = complete_pair_scores(game_scores)
+            # Resumed pairs are part of the sample, so the RUNNING block must
+            # count them: a run killed again would otherwise be read off a
+            # block that understates its own n (the ratchet reads these blocks
+            # when the process does not survive to the final summary).
+            ready = list(prior_pair_scores or []) + complete_pair_scores(game_scores)
             if ready:
                 print(f"[arena] RUNNING Elo after {len(ready)} complete pairs:", flush=True)
                 print_summary(summarize_pentanomial(pentanomial_counts(ready)))
@@ -1210,6 +1433,7 @@ def play_paired_games_matched_time(
     uci_args: str,
     deadline: float | None = None,
     pgn_sink: PgnSink | None = None,
+    pair_ids: Sequence[int] | None = None,
 ) -> list[float]:
     """Pair-by-pair UCI match using the production engine inference path.
 
@@ -1225,6 +1449,13 @@ def play_paired_games_matched_time(
     from scripts.match_vs_uci import _open_engine, _score_for_a, play_one_game
 
     limit = chess.engine.Limit(time=float(ms_per_move) / 1000.0)
+    # Global pair ids (see the chunked loop): a resumed run plays a
+    # non-contiguous subset of the schedule.
+    ids = list(range(len(openings))) if pair_ids is None else list(pair_ids)
+    if len(ids) != len(openings):
+        raise ValueError(
+            f"pair_ids has {len(ids)} entries for {len(openings)} openings"
+        )
 
     def engine_cmd(ckpt: str) -> str:
   # _open_engine shlex-splits the command, so quote anything path-like.
@@ -1267,7 +1498,7 @@ def play_paired_games_matched_time(
                 scores.append(_score_for_a(record.result, a_is_white=a_is_white))
                 if pgn_sink is not None:
                     pgn_sink(
-                        pair_id=pair_idx,
+                        pair_id=ids[pair_idx],
                         half=0 if a_is_white else 1,
                         a_is_white=a_is_white,
                         start_fen=record.start_board.fen(),
@@ -1276,6 +1507,8 @@ def play_paired_games_matched_time(
                         termination=record.termination,
                         plies=record.plies,
                         duration_s=time.time() - _g_t0,
+                        chunk=None,
+                        loop="matched_time",
                     )
             pair_scores.append(scores[0] + scores[1])
             print(
@@ -1340,6 +1573,11 @@ def build_result_record(
     games_requested: int | None = None,
     max_seconds: float | None = None,
     truncated: bool = False,
+    game_log: str | None = None,
+    game_log_fingerprint: str | None = None,
+    game_log_agrees: bool = True,
+    resumed_pairs: int = 0,
+    resumed_orphan_pairs: int = 0,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -1364,6 +1602,15 @@ def build_result_record(
         "games_requested": games_requested,
         "max_seconds": max_seconds,
         "truncated": bool(truncated),
+        # Crash-resilience / resume provenance. `resumed_pairs` > 0 means this
+        # row is a SPLICE of two processes' games — same schedule and same
+        # settings (the fingerprint is checked before a single pair is
+        # reused), but not one continuous run.
+        "game_log": game_log,
+        "game_log_fingerprint": game_log_fingerprint,
+        "game_log_agrees": bool(game_log_agrees),
+        "resumed_pairs": int(resumed_pairs),
+        "resumed_orphan_pairs": int(resumed_orphan_pairs),
         "openings": openings_path,
         "openings_kind": openings_kind,
         "opening_plies": opening_plies,
@@ -1462,6 +1709,8 @@ def run_arena(
     pgn_out: Path | None = None,
     pgn_candidate_name: str | None = None,
     pgn_reference_name: str | None = None,
+    resume: bool = False,
+    game_log_path: Path | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -1512,8 +1761,97 @@ def run_arena(
             openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
         )
 
+    # ---- crash-resilient game log + resume -------------------------------
+    # Decided before any file is created and before either checkpoint is
+    # loaded: a refusal here must not leave a stray PGN behind, and a
+    # fully-resumed schedule must not pay for two ~700MB loads and a 4-minute
+    # compile to play zero games.
+    openings_source = str(openings_fen if openings_fen is not None else openings_path)
+    openings_kind = "fen" if openings_fen is not None else "book"
+    log_settings = arena_game_log_settings(
+        mode=mode,
+        candidate=candidate,
+        reference=reference,
+        games=games,
+        seed=seed,
+        openings_path=openings_source,
+        openings_kind=openings_kind,
+        opening_plies=None if openings_fen is not None else opening_plies,
+        sims_candidate=sims_candidate if mode == "matched_sims" else None,
+        sims_reference=sims_reference if mode == "matched_sims" else None,
+        ms_per_move=ms_per_move if mode == "matched_time" else None,
+        max_plies=max_plies,
+        temperature=temperature,
+        gumbel_add_noise=gumbel_add_noise,
+        search_candidate=search_candidate,
+        search_reference=search_reference,
+        volatility_candidate=volatility_candidate,
+        uci_args=uci_args,
+        syzygy_path=syzygy_path,
+        tb_max_pieces=tb_max_pieces,
+    )
+    fingerprint = settings_fingerprint(log_settings)
+    log_path = (
+        Path(game_log_path) if game_log_path is not None
+        else default_game_log_path(
+            DEFAULT_GAME_LOG_DIR, label=label, fingerprint=fingerprint,
+        )
+    )
+    had_log = log_path.exists() and log_path.stat().st_size > 0
+    resumed: ArenaResume | None = None
+    if had_log and not resume:
+        raise SystemExit(refuse_existing_log_message(
+            log_path, resume_flag="--resume", out_flag="--games-out",
+        ))
+    if had_log:
+        resumed = load_arena_resume(
+            log_path, settings=log_settings, openings=openings,
+        )
+    elif resume:
+        # Not an error: wrappers pass --resume unconditionally (the ratchet
+        # does, so its retries continue rather than abort). Never silent
+        # either — the default log name is keyed on --label and on the settings
+        # fingerprint, so a person who expected to continue a specific crashed
+        # run needs to see WHICH path was looked for before watching it replay
+        # from zero.
+        print(
+            f"[arena] --resume: no game log at {log_path} — nothing to resume, "
+            f"this run starts from scratch. That path is keyed on --label and "
+            f"on the settings fingerprint ({fingerprint}); if the crashed run "
+            f"used a different label or any different setting, point "
+            f"--games-out at its log.",
+            flush=True,
+        )
+    done_pair_ids = set(resumed.complete_pair_ids) if resumed is not None else set()
+    orphan_pair_ids = set(resumed.orphan_pair_ids) if resumed is not None else set()
+    loaded_pair_scores = list(resumed.pair_scores) if resumed is not None else []
+    remaining_ids = [i for i in range(len(openings)) if i not in done_pair_ids]
+    openings_to_play = [openings[i] for i in remaining_ids]
+    if resumed is not None:
+        print(
+            f"[arena] RESUMED {len(resumed.complete_pair_ids)} complete pairs "
+            f"({resumed.games_loaded} games on file) from {log_path}; "
+            f"{len(remaining_ids)}/{len(openings)} pairs left to play",
+            flush=True,
+        )
+        if resumed.truncated_tail:
+            print(
+                "[arena] resume: the log's last line was truncated (the crash "
+                "caught a write mid-flight); that game is replayed",
+                flush=True,
+            )
+        if orphan_pair_ids:
+            print(
+                f"[arena] resume: {len(orphan_pair_ids)} pair(s) had only ONE "
+                f"coloring played and are DISCARDED and replayed in full "
+                f"(pentanomial scoring is pair-based): "
+                f"{sorted(orphan_pair_ids)}",
+                flush=True,
+            )
     pgn_writer: ArenaPgnWriter | None = None
     pgn_sink: PgnSink | None = None
+    cand_name = ref_name = ""
+    cand_search = ref_search = ""
     if pgn_out is not None:
         cand_name = pgn_candidate_name or engine_name_from_checkpoint(
             candidate, fallback="candidate")
@@ -1542,45 +1880,103 @@ def run_arena(
         print(f"[arena] PGN output -> {pgn_out} "
               f"(White/Black = {cand_name} / {ref_name})", flush=True)
 
-        def _emit_pgn(
-            *,
-            pair_id: int,
-            half: int,
-            a_is_white: bool,
-            start_fen: str,
-            moves: tuple[chess.Move, ...],
-            result: str,
-            termination: str,
-            plies: int,
-            duration_s: float,
-        ) -> None:
-            assert pgn_writer is not None
-            pgn_writer.write_game(ArenaGame(
-                white=cand_name if a_is_white else ref_name,
-                black=ref_name if a_is_white else cand_name,
-                result=result,
-                moves=moves,
-                start_fen=start_fen,
-                pair_id=pair_id,
-                pair_half=half,
-                extra={
-                    "WhiteSearch": cand_search if a_is_white else ref_search,
-                    "BlackSearch": ref_search if a_is_white else cand_search,
-                    "Termination": termination,
-                    # For the informative-missingness check: if pairs complete
-                    # at different rates across matchups, the pairs a partial
-                    # run HAS from a slow matchup are its FAST ones, which are
-                    # systematically more decisive. No bootstrap fixes that, so
-                    # the evidence to detect it has to be IN the file.
-                    "Plies": str(int(plies)),
-                    "GameDurationSec": f"{float(duration_s):.2f}",
-                },
-            ))
+    # Created LAST, after every check that can still raise (--pgn-out's engine
+    # name collision is one), because creating it writes the header: a run that
+    # aborts after this point leaves a log behind, and the fixed re-run would
+    # then hit the "log already exists" refusal for a reason unrelated to it.
+    game_log = GameLogWriter(
+        log_path, driver="arena_standard", settings=log_settings,
+        resuming=had_log,
+    )
+    print(f"[arena] game log -> {log_path} (fingerprint {fingerprint})", flush=True)
+    # Per-session tally, used to cross-check that what was PERSISTED is what was
+    # SCORED. A game log that silently disagrees with the summary would make
+    # every later resume unsound while looking perfectly healthy.
+    session_halves: dict[int, dict[int, float]] = {}
 
-        pgn_sink = _emit_pgn
+    def _on_game(
+        *,
+        pair_id: int,
+        half: int,
+        a_is_white: bool,
+        start_fen: str,
+        moves: tuple[chess.Move, ...],
+        result: str,
+        termination: str,
+        plies: int,
+        duration_s: float,
+        chunk: int | None = None,
+        loop: str | None = None,
+    ) -> None:
+        """Persist ONE finished game. Called by all three play loops.
+
+        The JSONL write comes FIRST and is flushed: it is what makes the run
+        resumable, so it must not be behind the (optional) PGN write.
+        """
+        score = score_from_result(result, a_is_white=a_is_white)
+        session_halves.setdefault(int(pair_id), {})[int(half)] = score
+        game_log.write_game({
+            "pair_id": int(pair_id),
+            "half": int(half),
+            "opening_index": int(pair_id),
+            # The SCHEDULE's opening, which is what a resume matches against;
+            # `start_fen` is what the loop actually played from, kept as
+            # evidence that the two agree.
+            "opening_fen": openings[int(pair_id)].fen(),
+            "start_fen": start_fen,
+            "a_is_white": bool(a_is_white),
+            "result": result,
+            "score_candidate": score,
+            "plies": int(plies),
+            "termination": termination,
+            "seed": int(seed),
+            "chunk": None if chunk is None else int(chunk),
+            "loop": loop,
+            "duration_s": round(float(duration_s), 2),
+        })
+        if pgn_writer is None:
+            return
+        extra = {
+            "WhiteSearch": cand_search if a_is_white else ref_search,
+            "BlackSearch": ref_search if a_is_white else cand_search,
+            "Termination": termination,
+            # For the informative-missingness check: if pairs complete
+            # at different rates across matchups, the pairs a partial
+            # run HAS from a slow matchup are its FAST ones, which are
+            # systematically more decisive. No bootstrap fixes that, so
+            # the evidence to detect it has to be IN the file.
+            "Plies": str(int(plies)),
+            "GameDurationSec": f"{float(duration_s):.2f}",
+        }
+        if int(pair_id) in orphan_pair_ids:
+            # This pair is being REPLAYED because the crash left it half
+            # played, and the PGN already holds that orphan game (append-only:
+            # it cannot be unwritten). Tag the replacements so a pooled fit can
+            # drop the stale row — for any PairId carrying ResumeReplay, the
+            # games WITHOUT the tag are the discarded orphans.
+            extra["ResumeReplay"] = "1"
+        pgn_writer.write_game(ArenaGame(
+            white=cand_name if a_is_white else ref_name,
+            black=ref_name if a_is_white else cand_name,
+            result=result,
+            moves=moves,
+            start_fen=start_fen,
+            pair_id=pair_id,
+            pair_half=half,
+            extra=extra,
+        ))
+
+    pgn_sink = _on_game
 
     t0 = time.time()
-    if mode == "matched_sims":
+    if not openings_to_play:
+        print(
+            f"[arena] resume: all {len(openings)} pairs are already complete "
+            f"in {log_path} — nothing left to play, scoring the log",
+            flush=True,
+        )
+        pair_scores: list[float] = []
+    elif mode == "matched_sims":
         from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
   # `require_complete` is left at its auto default, which is per-side, not
@@ -1651,7 +2047,7 @@ def run_arena(
                 flush=True,
             )
             pair_scores = play_paired_games_matched_sims_rolling(
-                model_candidate, model_reference, openings,
+                model_candidate, model_reference, openings_to_play,
                 device=device, rng=rng,
                 sims_candidate=sims_candidate, sims_reference=sims_reference,
                 max_plies=max_plies, temperature=temperature,
@@ -1663,14 +2059,16 @@ def run_arena(
                 report_every=int(report_every),
                 deadline=deadline,
                 pgn_sink=pgn_sink,
+                pair_ids=remaining_ids,
+                prior_pair_scores=loaded_pair_scores,
             )
         else:
             # Chunked: plays each chunk of `max_concurrent_games` to completion
             # (drains per chunk). Numerically identical (pair scores concatenate).
             chunk_pairs = max(1, int(max_concurrent_games) // 2)
-            n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
+            n_chunks = (len(openings_to_play) + chunk_pairs - 1) // chunk_pairs
             pair_scores = []
-            for ci in range(0, len(openings), chunk_pairs):
+            for ci in range(0, len(openings_to_play), chunk_pairs):
                 # Chunk granularity: a chunk plays to completion, so this stops
                 # BEFORE starting one that would run past the budget rather
                 # than mid-chunk. Rolling (the default, and what the ratchet
@@ -1683,7 +2081,8 @@ def run_arena(
                         flush=True,
                     )
                     break
-                sub = openings[ci:ci + chunk_pairs]
+                sub = openings_to_play[ci:ci + chunk_pairs]
+                sub_ids = remaining_ids[ci:ci + chunk_pairs]
                 print(
                     f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
                     f"{len(sub)} pairs ({2 * len(sub)} games)",
@@ -1700,22 +2099,48 @@ def run_arena(
                     search_candidate=search_candidate,
                     search_reference=search_reference,
                     pgn_sink=pgn_sink,
-                    pair_id_offset=ci,
+                    pair_ids=sub_ids,
+                    chunk=ci // chunk_pairs,
                 ))
-                print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
-                print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
+                _so_far = loaded_pair_scores + pair_scores
+                print(f"[arena] RUNNING Elo after {2 * len(_so_far)} games:", flush=True)
+                print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
         if syzygy_tb is not None:
             syzygy_tb.close()
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
         pair_scores = play_paired_games_matched_time(
-            candidate, reference, openings,
+            candidate, reference, openings_to_play,
             device=device, ms_per_move=ms_per_move, max_plies=max_plies,
             uci_args=uci_args, deadline=deadline, pgn_sink=pgn_sink,
+            pair_ids=remaining_ids,
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
     duration_s = time.time() - t0
+    # Fold the resumed pairs in. Order is irrelevant to the pentanomial (it
+    # bins pair scores), so a resumed run and an uninterrupted one with the
+    # same schedule produce the same counts, the same Elo and the same CI.
+    played_pair_scores = list(pair_scores)
+    pair_scores = loaded_pair_scores + played_pair_scores
+    # Did what we PERSISTED match what we SCORED? A game log that disagrees
+    # with the summary is not a cosmetic bug: every future resume is built on
+    # it, and it would look perfectly healthy right up to the wrong Elo.
+    session_pairs = sorted(
+        halves[0] + halves[1]
+        for halves in session_halves.values()
+        if 0 in halves and 1 in halves
+    )
+    game_log_agrees = session_pairs == sorted(played_pair_scores)
+    if not game_log_agrees:
+        print(
+            f"[arena] WARNING: the game log holds {len(session_pairs)} complete "
+            f"pairs for this session but the play loop scored "
+            f"{len(played_pair_scores)}. The summary below uses the play loop; "
+            f"do NOT --resume {log_path} until this is understood.",
+            flush=True,
+        )
+    game_log.close()
     if pgn_writer is not None:
         # Every game was already flushed as it finished, so a crash before this
         # point still leaves a complete, parseable PGN of the games that ended —
@@ -1743,7 +2168,9 @@ def run_arena(
     if truncated:
         print(
             f"[arena] TRUNCATED: {len(pair_scores)}/{len(openings)} opening pairs "
-            f"completed in {duration_s:.0f}s",
+            f"completed in {duration_s:.0f}s — "
+            f"`--resume` with the same settings plays only the remainder "
+            f"({log_path})",
             flush=True,
         )
     summary = summarize_pentanomial(pentanomial_counts(pair_scores))
@@ -1758,8 +2185,8 @@ def run_arena(
         # its own field so downstream readers can tell FEN-list runs from book
         # runs without the path string changing shape. opening_plies is a book
         # concept, so it is null on the FEN path (it is never applied there).
-        openings_path=str(openings_fen if openings_fen is not None else openings_path),
-        openings_kind="fen" if openings_fen is not None else "book",
+        openings_path=openings_source,
+        openings_kind=openings_kind,
         opening_plies=None if openings_fen is not None else opening_plies,
         sims_candidate=sims_candidate if mode == "matched_sims" else None,
         sims_reference=sims_reference if mode == "matched_sims" else None,
@@ -1777,6 +2204,11 @@ def run_arena(
         games_requested=games,
         max_seconds=None if max_seconds is None else float(max_seconds),
         truncated=truncated,
+        game_log=str(log_path),
+        game_log_fingerprint=fingerprint,
+        game_log_agrees=game_log_agrees,
+        resumed_pairs=len(loaded_pair_scores),
+        resumed_orphan_pairs=len(orphan_pair_ids),
     )
     if out_path is not None:
         append_result(record, out_path)
@@ -1817,6 +2249,17 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", type=Path, default=DEFAULT_RESULTS_PATH,
                    help=f"JSONL results log (default: {DEFAULT_RESULTS_PATH})")
+    p.add_argument("--resume", action="store_true",
+                   help="continue the run recorded in this invocation's game "
+                        "log: its COMPLETE pairs are kept and only the "
+                        "remaining pairs are played, then everything is scored "
+                        "as one pentanomial. A pair with only one coloring "
+                        "played is discarded and replayed (pair-based "
+                        "scoring). REFUSES if the log's recorded settings "
+                        "(nets, seed, games, mode, sims, openings, search "
+                        "shape, ...) differ from this invocation. Without this "
+                        "flag an existing log for the same settings is an "
+                        "error, so two runs can never be mixed by accident.")
 
 
 def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
@@ -1918,6 +2361,15 @@ def main() -> None:
                    help="extra args appended to both UCI engine commands in matched_time "
                    "(e.g. '--no-compile')")
     p.add_argument("--label", default=None, help="free-form tag stored in the JSONL record")
+    p.add_argument("--games-out", type=Path, default=None,
+                   help="per-game JSONL written AS EACH GAME FINISHES (and read "
+                        "back by --resume). Default: "
+                        f"{DEFAULT_GAME_LOG_DIR}/<label>.<settings-fingerprint>"
+                        ".games.jsonl. It is NOT derived from --out, which is a "
+                        "shared append-only aggregate every arena writes to; "
+                        "the fingerprint in the name is what keeps two "
+                        "different runs out of one file. Pass this to resume a "
+                        "log whose label has changed.")
     p.add_argument("--openings-fen", type=Path, default=None,
                    help="plain FEN file (one per line, # comments) used as paired "
                         "openings instead of a PGN/Polyglot book — for blind-spot "
@@ -2095,6 +2547,8 @@ def main() -> None:
         pgn_out=args.pgn_out,
         pgn_candidate_name=args.pgn_candidate_name,
         pgn_reference_name=args.pgn_reference_name,
+        resume=bool(args.resume),
+        game_log_path=args.games_out,
         uci_args=args.uci_args,
         label=args.label,
         volatility_candidate=_volatility_kwargs_from_args(args),

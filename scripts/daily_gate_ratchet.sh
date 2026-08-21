@@ -440,13 +440,21 @@ run_arena () {   # $1=reference  $2=series-label
     if [ "$compile_arg" = "--no-compile" ]; then
         echo "[ratchet] free VRAM ${free_mib:-unknown}MiB below the 10240MiB compile floor — running eager"
     fi
+    # --resume is REQUIRED here, not an optimisation. arena_standard writes one
+    # flushed JSONL record per finished game and refuses to append to a log
+    # written by an identical invocation, so without it the second ATTEMPT of a
+    # series on the same day (same label, same iter, same settings => same
+    # default log path) would abort instead of playing. With it, the retry
+    # keeps the pairs the killed attempt finished and plays only the remainder
+    # — which is the whole point: 2026-08-21 a 128-game arena OOMed with zero
+    # games persisted, and its relaunch started from nothing.
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
         --mode matched_sims --search-shape "$SHAPE" --sims "$SIMS" --games "$GAMES" \
         --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
         --max-seconds "$inner" \
-        $compile_arg --device cuda --seed 42 \
+        $compile_arg --device cuda --seed 42 --resume \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     # The token recorded for this series if no row comes out of the log below.

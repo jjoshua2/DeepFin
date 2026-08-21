@@ -41,7 +41,7 @@ import math
 import os
 import shlex
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,6 +51,23 @@ import chess.engine
 import chess.pgn
 import chess.syzygy
 import contextlib
+
+from chess_anti_engine.utils.game_log import (
+    GameLogWriter,
+    default_game_log_path,
+    fingerprint_differences,
+    latest_rows_by_key,
+    read_game_log,
+    refuse_existing_log_message,
+    refuse_settings_mismatch_message,
+    settings_fingerprint,
+)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# Per-run game logs, used when neither --games-out nor --pgn-out says where.
+# The settings fingerprint is in the name so two runs that differ in any
+# resume-critical setting cannot land in the same file.
+DEFAULT_GAME_LOG_DIR = REPO_ROOT / "runs" / "match_games"
 
 
 def _positive_int(value: str) -> int:
@@ -769,6 +786,149 @@ def _write_move_record(
     })
 
 
+# ---------------------------------------------------------------------------
+# Crash-resilient game log + resume
+# ---------------------------------------------------------------------------
+#
+# One flushed JSONL record per FINISHED game, so a crash (CUDA OOM, an engine
+# dying, `timeout -k`) loses at most the game in flight instead of the whole
+# match, and --resume replays only what did not finish.
+#
+# The schedule needs no seed to be reproducible: game ``i`` is played by
+# ``a_is_white = (i % 2 == 0)`` from ``openings[(i // 2) % len(openings)]``,
+# both pure functions of ``i`` and the opening file. There is no RNG in this
+# driver at all, so "same settings" is the whole of "same schedule" — and
+# ``load_match_resume`` re-derives the colour and the opening for every
+# recorded game and refuses if either disagrees, rather than trusting that.
+
+
+def _game_schedule(index: int, openings: Sequence[chess.Board]) -> tuple[bool, int]:
+    """``(a_is_white, opening_index)`` for game ``index`` — the whole schedule."""
+    return (index % 2 == 0), (index // 2) % len(openings)
+
+
+def match_game_log_settings(
+    args: argparse.Namespace,
+    *,
+    time_ms_a: int,
+    time_ms_b: int,
+    nodes_a: int | None,
+    nodes_b: int | None,
+    clock_base_a: int | None,
+    clock_base_b: int | None,
+    clock_inc_a: int,
+    clock_inc_b: int,
+    enforce_nodes_a: bool,
+    enforce_nodes_b: bool,
+    warmup_nodes_a: int | None,
+    warmup_nodes_b: int | None,
+    opts_a: dict[str, str],
+    opts_b: dict[str, str],
+) -> dict[str, Any]:
+    """The settings a --resume must MATCH: both engines and both budgets.
+
+    Everything here changes what the games ARE. ``--pgn-out`` /
+    ``--move-log-out`` / ``--games-out`` are output paths and are excluded.
+    """
+    return {
+        "engine_a": args.engine_a,
+        "engine_b": args.engine_b,
+        "label_a": args.label_a,
+        "label_b": args.label_b,
+        "games": int(args.games),
+        "time_ms_a": int(time_ms_a),
+        "time_ms_b": int(time_ms_b),
+        "nodes_a": None if nodes_a is None else int(nodes_a),
+        "nodes_b": None if nodes_b is None else int(nodes_b),
+        "clock_base_ms_a": None if clock_base_a is None else int(clock_base_a),
+        "clock_base_ms_b": None if clock_base_b is None else int(clock_base_b),
+        "clock_inc_ms_a": int(clock_inc_a),
+        "clock_inc_ms_b": int(clock_inc_b),
+        "clock_grace_ms": int(args.clock_grace_ms),
+        "enforce_nodes_a": bool(enforce_nodes_a),
+        "enforce_nodes_b": bool(enforce_nodes_b),
+        "warmup_nodes_a": None if warmup_nodes_a is None else int(warmup_nodes_a),
+        "warmup_nodes_b": None if warmup_nodes_b is None else int(warmup_nodes_b),
+        "max_plies": int(args.max_plies),
+        "openings": "" if args.openings is None else str(args.openings),
+        "openings_limit": (
+            None if args.openings_limit is None else int(args.openings_limit)
+        ),
+        "openings_offset": int(args.openings_offset),
+        "options_a": dict(opts_a),
+        "options_b": dict(opts_b),
+        "syzygy_adjudicate_path": args.syzygy_adjudicate_path,
+        "syzygy_adjudicate_max_pieces": int(args.syzygy_adjudicate_max_pieces),
+    }
+
+
+def resolve_game_log_path(args: argparse.Namespace, *, fingerprint: str) -> Path:
+    """Where this match's per-game log lives.
+
+    ``--games-out`` wins. Otherwise it rides ``--pgn-out``, which is already a
+    per-run path (it is opened ``"w"``, i.e. every caller gives each match its
+    own). With neither, fall back to a fingerprinted name under
+    ``runs/match_games/`` so two different matches cannot share a log.
+    """
+    if args.games_out is not None:
+        return Path(args.games_out)
+    if args.pgn_out is not None:
+        pgn = Path(args.pgn_out)
+        return pgn.with_name(pgn.stem + ".games.jsonl")
+    return default_game_log_path(
+        DEFAULT_GAME_LOG_DIR,
+        label=f"{args.label_a}_vs_{args.label_b}",
+        fingerprint=fingerprint,
+    )
+
+
+@dataclass(frozen=True)
+class MatchResume:
+    """Finished games reloaded from a game log."""
+
+    rows: dict[int, dict[str, Any]]   # game index -> last recorded row
+    truncated_tail: bool
+
+
+def load_match_resume(
+    path: Path, *, settings: Mapping[str, Any], openings: Sequence[chess.Board],
+) -> MatchResume:
+    """Reload finished games, refusing anything that is not the same match."""
+    log = read_game_log(path)
+    diffs = fingerprint_differences(log.settings, settings)
+    if diffs:
+        raise SystemExit(refuse_settings_mismatch_message(
+            path, differences=diffs, resume_flag="--resume",
+        ))
+    rows = latest_rows_by_key(log.games, key=lambda r: int(r["game_index"]))
+    out: dict[int, dict[str, Any]] = {}
+    for index, row in rows.items():
+        if not 0 <= index < int(settings["games"]):
+            raise SystemExit(
+                f"--resume: {path} records game_index {index}, outside the "
+                f"{settings['games']} games this invocation plays"
+            )
+        a_is_white, opening_index = _game_schedule(index, openings)
+        if bool(row["a_is_white"]) != a_is_white:
+            raise SystemExit(
+                f"--resume: {path} game {index} was played with "
+                f"a_is_white={row['a_is_white']}, but the schedule gives "
+                f"{a_is_white}. The log does not describe this match."
+            )
+        if int(row["opening_index"]) != opening_index or (
+            str(row.get("opening_fen", "")) != openings[opening_index].fen()
+        ):
+            raise SystemExit(
+                f"--resume: {path} game {index} was played from opening "
+                f"{row['opening_index']} ({row.get('opening_fen', '')!r}), but "
+                f"the schedule gives opening {opening_index} "
+                f"({openings[opening_index].fen()!r}). The opening list has "
+                "changed under the log; refusing to mix two populations."
+            )
+        out[index] = row
+    return MatchResume(rows=out, truncated_tail=log.truncated_tail)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--engine-a", required=True, help="UCI engine A (binary path or shell command)")
@@ -805,6 +965,18 @@ def main() -> None:
     p.add_argument("--openings-limit", type=_positive_int, default=None, help="maximum opening rows to load")
     p.add_argument("--openings-offset", type=int, default=0, help="skip this many valid opening rows before loading")
     p.add_argument("--pgn-out", type=Path, default=None, help="write completed games to a PGN file")
+    p.add_argument("--games-out", type=Path, default=None,
+                   help="per-game JSONL written AS EACH GAME FINISHES (and read "
+                        "back by --resume). Default: <--pgn-out stem>.games.jsonl, "
+                        f"or {DEFAULT_GAME_LOG_DIR}/<labels>.<settings-fingerprint>"
+                        ".games.jsonl when no PGN is requested.")
+    p.add_argument("--resume", action="store_true",
+                   help="skip the games already recorded in the game log and "
+                        "fold their results into the final tabulation, as if "
+                        "the match had run once. REFUSES if the log's engines, "
+                        "budgets, openings or any other recorded setting differ "
+                        "from this invocation. Without this flag an existing "
+                        "log is an error, so two matches can never be mixed.")
     p.add_argument("--move-log-out", type=Path, default=None, help="write per-move timing/search stats to CSV")
     p.add_argument("--warmup-nodes", type=_positive_int, default=None, help="run an unrated warmup search for both engines")
     p.add_argument("--warmup-nodes-a", type=_positive_int, default=None, help="run an unrated warmup search for engine A")
@@ -881,6 +1053,50 @@ def main() -> None:
             if args.openings is not None
             else [chess.Board()]
         )
+        log_settings = match_game_log_settings(
+            args,
+            time_ms_a=time_ms_a, time_ms_b=time_ms_b,
+            nodes_a=nodes_a, nodes_b=nodes_b,
+            clock_base_a=clock_base_a, clock_base_b=clock_base_b,
+            clock_inc_a=clock_inc_a, clock_inc_b=clock_inc_b,
+            enforce_nodes_a=enforce_nodes_a, enforce_nodes_b=enforce_nodes_b,
+            warmup_nodes_a=warmup_nodes_a, warmup_nodes_b=warmup_nodes_b,
+            opts_a=opts_a, opts_b=opts_b,
+        )
+        fingerprint = settings_fingerprint(log_settings)
+        game_log_path = resolve_game_log_path(args, fingerprint=fingerprint)
+        had_log = game_log_path.exists() and game_log_path.stat().st_size > 0
+        # Decided BEFORE the engines are started: a refusal must not leave two
+        # UCI subprocesses (and a compiled net) behind.
+        if had_log and not args.resume:
+            raise SystemExit(refuse_existing_log_message(
+                game_log_path, resume_flag="--resume", out_flag="--games-out",
+            ))
+        resumed = (
+            load_match_resume(
+                game_log_path, settings=log_settings, openings=openings,
+            )
+            if had_log else None
+        )
+        done_games: dict[int, dict[str, Any]] = {} if resumed is None else resumed.rows
+        if resumed is not None:
+            print(
+                f"[match] RESUMED {len(done_games)}/{args.games} finished games "
+                f"from {game_log_path}",
+                flush=True,
+            )
+            if resumed.truncated_tail:
+                print(
+                    "[match] resume: the log's last line was truncated mid-write; "
+                    "that game is replayed",
+                    flush=True,
+                )
+        elif args.resume:
+            print(
+                f"[match] WARNING --resume: no game log at {game_log_path} — "
+                f"starting from scratch (settings fingerprint {fingerprint})",
+                flush=True,
+            )
         if args.pgn_out is not None:
             args.pgn_out.parent.mkdir(parents=True, exist_ok=True)
         if args.move_log_out is not None:
@@ -915,11 +1131,32 @@ def main() -> None:
             enforce_nodes=enforce_nodes_b,
         )
 
+        # Seeded from the resumed games so every tabulated number below (W/D/L,
+        # score, colour balance, plies, the CI over `points`) is what one
+        # uninterrupted match would have produced. `points` ends up ordered
+        # resumed-then-new rather than by game index; the mean and the CI are
+        # order-free, and nothing else reads the list.
         a_wins = a_draws = a_losses = 0
         a_white_count = 0
         a_black_count = 0
         total_plies = 0
         points: list[float] = []
+        for _idx in sorted(done_games):
+            _row = done_games[_idx]
+            _point = float(_row["score_a"])
+            points.append(_point)
+            if _point == 1.0:
+                a_wins += 1
+            elif _point == 0.0:
+                a_losses += 1
+            else:
+                a_draws += 1
+            if bool(_row["a_is_white"]):
+                a_white_count += 1
+            else:
+                a_black_count += 1
+            total_plies += int(_row["plies"])
+        resumed_games = len(done_games)
         t0 = time.time()
         print(
             f"[match] playing {args.games} games, "
@@ -938,9 +1175,23 @@ def main() -> None:
                 flush=True,
             )
 
-        pgn_fh = args.pgn_out.open("w") if args.pgn_out is not None else None
+        # Append when resuming: the games already on file must not be erased by
+        # the run that continues them. (Without --resume these keep truncating,
+        # which is the behaviour every caller has today.)
+        pgn_mode = "a" if resumed is not None else "w"
+        move_mode = "a" if resumed is not None else "w"
+        move_log_had_rows = (
+            args.move_log_out is not None
+            and resumed is not None
+            and args.move_log_out.exists()
+            and args.move_log_out.stat().st_size > 0
+        )
+        pgn_fh = args.pgn_out.open(pgn_mode) if args.pgn_out is not None else None
         try:
-            move_fh = args.move_log_out.open("w", newline="") if args.move_log_out is not None else None
+            move_fh = (
+                args.move_log_out.open(move_mode, newline="")
+                if args.move_log_out is not None else None
+            )
         except Exception:
             if pgn_fh is not None:
                 pgn_fh.close()
@@ -966,7 +1217,10 @@ def main() -> None:
                     "black_clock_after_s",
                 ],
             )
-            move_writer.writeheader()
+            if not move_log_had_rows:
+                # A resumed CSV already carries its header; a second one mid-file
+                # would be parsed as a data row by every reader of it.
+                move_writer.writeheader()
 
         def live_move_callback(
             *,
@@ -993,12 +1247,20 @@ def main() -> None:
 
             return _write_live
 
+        game_log = GameLogWriter(
+            game_log_path, driver="match_vs_uci", settings=log_settings,
+            resuming=had_log,
+        )
+        print(f"[match] game log -> {game_log_path} (fingerprint {fingerprint})",
+              flush=True)
         try:
             for i in range(args.games):
-                a_white = (i % 2 == 0)
+                a_white, opening_idx = _game_schedule(i, openings)
+                if i in done_games:
+                    continue
                 white, black = _game_sides(side_a, side_b, a_is_white=a_white)
-                start_board = openings[(i // 2) % len(openings)]
-                opening_idx = (i // 2) % len(openings)
+                start_board = openings[opening_idx]
+                _g_t0 = time.time()
                 if a_white:
                     a_white_count += 1
                 else:
@@ -1041,6 +1303,22 @@ def main() -> None:
                     pgn_fh.flush()
                 if move_fh is not None:
                     move_fh.flush()
+                # Durable BEFORE the next game starts: this is the record that
+                # makes a crashed match resumable rather than lost.
+                game_log.write_game({
+                    "game_index": i,          # 0-based schedule index
+                    "game_number": i + 1,     # what the console and the CSV show
+                    "opening_index": opening_idx,
+                    "opening_fen": openings[opening_idx].fen(),
+                    "a_is_white": bool(a_white),
+                    "white": white.label,
+                    "black": black.label,
+                    "result": result,
+                    "score_a": point,
+                    "plies": int(plies),
+                    "termination": record.termination,
+                    "duration_s": round(time.time() - _g_t0, 2),
+                })
                 total_plies += plies
                 elapsed = time.time() - t0
                 total = a_wins + a_draws + a_losses
@@ -1054,6 +1332,7 @@ def main() -> None:
                     flush=True,
                 )
         finally:
+            game_log.close()
             if pgn_fh is not None:
                 pgn_fh.close()
             if move_fh is not None:
@@ -1072,8 +1351,16 @@ def main() -> None:
         return
     score = (a_wins + 0.5 * a_draws) / total
     dt = time.time() - t0
+    played = total - resumed_games
     print()
-    print(f"[match] {total} games in {dt:.0f}s ({dt/total:.1f}s/game, avg {total_plies/total:.0f} plies/game)")
+    if resumed_games:
+        print(
+            f"[match] RESUMED run: {resumed_games} games reloaded from "
+            f"{game_log_path}, {played} played in this process — the "
+            f"tabulation below covers all {total}, the timing only this process"
+        )
+    per_game = dt / played if played else float("nan")
+    print(f"[match] {total} games in {dt:.0f}s ({per_game:.1f}s/game, avg {total_plies/total:.0f} plies/game)")
     print(f"[match] {args.label_a} (A) vs {args.label_b} (B):")
     print(f"  A wins   : {a_wins}")
     print(f"  draws    : {a_draws}")

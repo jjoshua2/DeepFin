@@ -91,6 +91,10 @@ def main() -> None:
             label=f"elo_vs_sims:{hi}v{lo}",
             search_candidate=side,
             search_reference=side,
+            # Each rung has its own game log (the label and the sims are both
+            # in the default path), so --resume replays only the rung that was
+            # interrupted: a completed rung reloads its pairs and plays nothing.
+            resume=bool(args.resume),
         )
         rows.append((hi, record))
 
