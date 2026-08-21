@@ -64049,3 +64049,30 @@ remains, which shares nothing with an offline arm. Pins, recorded before launch:
 - **Confounds:** runs concurrently with the #438 readout scoring (GPU bursts) and the SF
   baselines (CPU); the arms' own numbers are paired within the ladder, so box load shifts
   wall time, not verdicts. Worktree: `chess-doseladder` @ `8cda1fb3a`.
+
+## 2026-08-21 — ⚑⚑ #438 VERDICT: **PASS** — the production stack LEARNS AND GENERALISES on clean external data; H_stack DISFAVOURED; the plateau is the TARGETS, not the trainer
+
+**Judged by the pre-committed rule, same session as the read.** Primary heldout compare
+(pinned command; n=91,842 paired rows):
+
+- MID (step 19,272): top-1 vs lc0 argmax **43.1796%** · LAST (38,544): **46.7967%**
+- **Δ_heldout = +3.6171 pp, 95% CI [+3.3526, +3.8816], exact McNemar p = 3.8e-158**,
+  halfwidth 0.2645 pp — read at the ORIGINAL 0.392 pp bar, which is STRICTER than
+  Amendment 3's 0.409 (the tool's strictness rule refuses a loosened bar at n<100k;
+  a stricter-than-preregistered read is always admissible). Verdict row: Δ_heldout ≥ +2.0
+  with CI lower (+3.35) > bar ⇒ **PASS regardless of Δ_train**.
+- ⚑ The CI is row-level; 28,482 game clusters (3.2 rows/cluster) make it optimistic by the
+  design effect — a √3.2 ≈ 1.8× inflation leaves CI lower ≈ +3.1 pp, verdict unchanged.
+- **Supports:** random-init seed band 6.70–9.15% (5 seeds — the floor the slopes stand on);
+  negative control (shuffled targets) 0.2646% ≈ its own collision floor 0.24–0.31% ⇒ the rig
+  reads the position→move mapping, no leak. All launch/leak guards green (windows 6 log).
+
+**Registered-prediction settlement (`c609e5818`):** PASS was the 55-60% favourite — settled
+as predicted; the H_stack (~15-20%) and flat/flat (~15%) cells are dead for this corpus.
+
+**What it buys:** the alternative "our stack cannot generalise" is REMOVED. Our gap is
+training TARGETS/data-generation ([[our_gap_is_training_not_capacity]] now has its
+positive-control leg). Effort routes to the target program — exactly the sigma probe and
+dose ladder now running. Δ_train legs still land later (freeze scanning) and will be recorded
+as color on fit-vs-transfer, but cannot change this verdict. The 2× extension clause is MOOT
+(it existed for flat/flat).
