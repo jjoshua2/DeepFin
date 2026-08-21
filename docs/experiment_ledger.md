@@ -63944,3 +63944,18 @@ running (control lands ~Fri 04:00, production degraded meanwhile); (b) re-park p
 sequential plan this window was designed as; (c) abort the control train (loses ~10k steps,
 no checkpoint exists before MID). Recommendation: (b); but production is now live and
 re-parking kills/parks a running stack, so it waits for Josh.
+
+## 2026-08-20 — window 5 ABORTED by operator (~11k of 38,544 steps, no checkpoint existed); production stopped intentionally; box handed to Josh
+
+Josh: "we need to kill both so I can use computer for a bit." Control train killed (no
+checkpoint before MID at 19,272, so the ~11k steps are lost — the run is repeatable: the
+Inductor cache is warm and the drained rate is 0.9–1.05 steps/s, so a clean rerun is ~10.7 h
+wall). The preregistration is untouched — budget frozen in steps, holdout v2 frozen, purity
+receipt banked; a rerun is the SAME experiment, not a new one. Production stopped via
+`train.sh stop` (intentional-stop marker written 20:19, so the watchdog loop reports STOPPED
+and cannot auto-restart; the 08-20 guard fix `42e72d6cb` additionally makes `recover_stall.sh`
+refuse while the marker stands). Zero survivors verified by process table; GPU 2.1 GiB / 74 W.
+Restart is deliberately manual: `./scripts/train.sh start` when Josh is done — nothing is
+armed to do it automatically. The #438 rerun should relaunch via the same
+`scratchpad/lc0_control_window.sh` pause-window path, which the fixed watchdog now leaves
+alone for its full duration.
