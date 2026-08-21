@@ -64139,3 +64139,19 @@ passes were fresh. Real outputs, full dumps banked (3.0/3.1 MB per leg).
   55.8; tail: med 6.0, P90 200, >100cp 17.9%, >300cp 5.3%. ⚑ Compare ONLY against
   same-config reads (same_name_different_population — the old 76.4/85.5 anchors were a
   different rig).
+
+## 2026-08-21 — ROUTING TABLE, banked before tonight's ladder read: how the repair portfolio dispatches on the verdict
+
+Josh asked where the older ΔQ / SF-repair ideas fit. Written down BEFORE the ladder lands so
+the dispatch is mechanical, not post-hoc:
+
+| ladder verdict row | production fix shipped first | second-generation upgrade |
+|---|---|---|
+| monotone TEACHER WORKS | α target-blend live (labels already owned, zero new SF cost) | bad-tail screen, then ΔQ |
+| PEAKS 0.5–0.7, falls at 1.0 (registered prediction) | α blend at the peak | **ΔQ dataset** — the cheap support-widener (315/528 disagreement pairs FREE; buys off-MultiPV moves instead of 7× MultiPV-40) |
+| CE falls, regret flat | none yet | **bad-tail screen + deeper labels on screened rows** (1.27× loop cost, ~49% of deficit) — with #438 PASS, label CONTENT is the suspect, not the stack |
+| flat/flat | UNDERDOSED check first (adequacy guard), else wiring hunt | data ideas wait |
+
+Closed and staying closed: relational SF6 (algebra), categorical repair (null), blanket
+Stage-1 funnel (demoted). Value lane (outcome anchor 0.001, head-vs-label) is a SEPARATE
+program — re-prioritised if match C reproduces the value-hallucination loss shape.
