@@ -869,3 +869,67 @@ caveat.
 Offline arm. Touches no production weights, no live yaml, no replay window. The only
 shared resource is the GPU, so it requires production training to be stopped —
 which it already is, and which is Josh's call to change.
+
+## ⚑⚑ AMENDMENT 4 (2026-08-21, written AFTER training completed but BEFORE any score existed): the readout rig had two wiring defects and one missing input; the `Δ_train` sample is pinned here, with its dilution stated before the read
+
+The 38,544-step run completed 08:14 with every launch/leak guard green. The first
+scoring call then refused — `91842 of 91842 frozen rows were not found in the given
+shards` — which is the n-shrink guard doing its job. No score, compare, or slope was
+produced before this amendment; nothing here is conditioned on a number.
+
+**Defects found (all in the staged runner script, none in the rig's gates):**
+
+1. **The runner passed only the TRAIN corpus to `score --shards`.** The frozen
+   held-out rows live in the six held-out hourly dirs (`data/lc0_rows_heldout/*/`,
+   490 shards), disjoint from the 122 train dirs by construction. Fixed: held-out
+   legs (seed band, negative control, MID/LAST held-out) scan the held-out dirs
+   ONLY; train legs scan the train corpus ONLY. Scoping is also the cheap
+   direction: `score` scans every shard it is given.
+2. **The runner's `--population train` legs pointed at the HELD-OUT frozen file.**
+   They would have scored the held-out rows twice under a train label — the exact
+   mislabeling `--population` was added to prevent, one level up. Fixed: the train
+   legs read the train-side frozen artifact below.
+3. **The `Δ_train` artifact did not exist.** The prereg requires "a frozen, equally
+   sized sample of ROWS ALREADY TRAINED ON" and no train-side freeze was ever run.
+
+**Pinned `Δ_train` construction (run from the pinned worktree):**
+
+```
+python3 scripts/lc0_control_heldout.py freeze \
+    --shards <the 122 train dirs> \
+    --out data/lc0_control_train_frozen_v1.json \
+    --sample 91842 --seed 2 --allow-source-selection
+```
+
+`--sample 91842` matches the held-out n exactly ("equally sized"); `--seed 2` is
+pinned here before the draw (held-out v1 used 1; 0 is refused by the tool);
+`--allow-source-selection` is the deliberate train-side stamp — the six-source rule
+is a held-out property, and `score --population train` / `compare --population
+train` are the consumers that read the stamp in that role.
+
+**⚑⚑ DILUTION, stated before the read, thresholds UNCHANGED.** The budget realized
+0.25130× corpus-size sample exposure WITH replacement, so the expected fraction of a
+uniform train-corpus sample that was drawn at least once during training is
+≈ 1 − e^(−0.2513) ≈ **22.2%** (an upper bound: priority sampling concentrates draws,
+lowering the unique fraction). The verdict table's `Δ_train ≥ +2.0 pp` cell was
+written for "rows already trained on"; on this uniform sample the same true
+per-trained-row effect appears diluted ≈ 4.5×. Pre-committed consequences:
+
+- The table's thresholds are NOT rescaled. A post-hoc division of `Δ_train` by the
+  22.2% estimate may be used as interpretation COMMENTARY only, never as a verdict
+  input.
+- If `Δ_heldout` reads flat and `Δ_train` lands in (0.409, 2.0) pp — a plausible
+  diluted H_stack signature — the verdict row is "anything else" → **AMBIGUOUS** →
+  the single preregistered 2× extension, which also raises exposure to 0.503×
+  (expected trained fraction ≈ 39.5%), sharpening this same instrument without
+  changing it.
+- Enumerating the actually-drawn rows by replaying the sampler was considered and
+  rejected: the priority half's draw depends on data values, so a faithful replay
+  is a second full pass of the training loader, and a cheaper index-only replay
+  would enumerate a DIFFERENT population than the one trained on.
+
+**Also corrected, same session, before execution:** the two non-readout baseline
+commands (deep-SF value baseline, sigma probe) pointed at the salvage export root;
+the trainer file lives at `seeds/slot_000/trainer.pt` inside it (identity confirmed
+from the export manifest: `picked_row_training_iteration: 595`,
+`checkpoint_000594`). Path fix only; no parameter changes.
