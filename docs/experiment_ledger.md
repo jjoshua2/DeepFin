@@ -64106,3 +64106,17 @@ control-net deficit in A is COMPATIBLE with the #438 PASS — 0.25× exposure of
 is a small dose; the point is the exchange rate. B should be positive if top-1 +3.6 pp buys
 play strength at all; a B ≈ 0 with the CE/top-1 gain intact would echo
 [[losses_are_decoupled_from_strength]] on clean data — a finding, not a failure.
+
+### Amendment to the Elo-calibration prereg (before any match executed)
+
+Josh: *"im hopeful that it is strong enough to face the full cheese which we will know
+better how strong it actually is. i think group A will be enough to reference to previous
+which i expect it to be much stronger."* Changes, made while the queue was still waiting on
+the ladder (zero games played):
+
+- **Match C is now FULL-STRENGTH Cheese** (no `UCI_LimitStrength`, self-rated ~3000), same
+  clock protocol, same full 60-game block. Context: no production net has a completed
+  full-strength Cheese block; the single 30+10 TC test lost on a value-head hallucination.
+- **Registered directional predictions for match A, both banked before the read:** Josh
+  expects the control net MUCH STRONGER than iter-595; my registered note said a large
+  control deficit is compatible with the PASS. Opposite signs — A settles it.
