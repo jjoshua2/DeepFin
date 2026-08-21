@@ -64202,3 +64202,22 @@ from "don't run beside training" to "128 is over budget alone". Relaunched at
 re-armed on the new pid. (Also: a `pkill -f` self-match killed my own relaunch shell once
 in between — [[pgrep_in_a_wait_loop_cannot_terminate]]'s sibling, now demonstrated for
 pkill; anchor patterns or filter self.)
+
+### Ladder rig fixed (`52127f817` on feat/sfp0-dose-ladder); relaunch pinned as ladder2
+
+Root cause was ORDERING, not a missing pop: `_run_variant` ran the dead-knob guard over the
+raw overrides ten lines before the rig popped `sf_p0_blend_alpha` — the guard truthfully
+reported a rig-only key it had no category for. Fix: `_split_rig_overrides` partitions
+rig-consumed keys BEFORE the guard, keyed by the factory that consumes them (registering
+and wiring are one edit); `rig_active` + `_assert_rig_wrapper_took_effect` now refuse the
+two silent-null shapes (wrapper served zero rows; wrapper served only ineligible rows).
+Same fix covers `rig_policy_from_soft`, which carried the identical latent bug. +10
+end-to-end tests (the old six construct the wrapper directly — exactly why they stayed
+green through the outage); both mutants caught with the live refusal messages verbatim.
+
+**Ladder2 (supersedes the aborted run's banked a000):** ALL FIVE arms in ONE invocation —
+within-invocation shard/draw pairing — same pins otherwise (iter-595 checkpoint, salvage
+window read-only, 6,000 steps/arm, batch 512, `--no-rebuild-sf-targets`, fresh out-dir
+`dose_ladder2/`). Runs when match A releases the GPU; audits with the corrected
+`--checkpoint/--audit-set` flags. Verdict rule unchanged (a070 vs a000 ≥ 3.0 cp kill;
+adequacy guard: a100 train-CE must fall ≥ 0.05 nats).
