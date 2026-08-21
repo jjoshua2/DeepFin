@@ -64322,3 +64322,60 @@ seq6 (supersedes seq5; same matches, sims 100/games 400/seed 42, conc 16, rollin
 `--report-every 100000`, expandable_segments): each match now retries ONCE with
 `--resume` on nonzero exit — crash costs only the incomplete pairs. Per-game JSONL lands
 under `runs/arena_games/` keyed by settings fingerprint; PGN per game as it finishes.
+
+## 2026-08-21 — ⚑⚑ DOSE LADDER2 VERDICT: **THE KILL FIRED** — a070 beats a000 by 1.8 cp top-1 (bar: ≥3.0). And the dose is not merely sub-threshold: **E[regret] WORSENS MONOTONICALLY with α (+9.9 cp at α=1.0)** — the SF-p0 blend FLATTENS the student
+
+**Judged by the pre-committed rule, same session as the read.** Yardstick as preregistered:
+row (a) net raw policy, overall **top-1** deep-SF regret on the frozen `audit_set_v1`
+(4000), each arm vs `a000`. Reports banked: `scratchpad/dose_ladder2/audit_a*.json` +
+`retarget_report.json`.
+
+| arm | α | row(a) E[regret] / top-1 | Δtop-1 vs a000 | policy entropy (nats) | mean top-1 mass | final `policy_own_acc_top1` | `m_sf_own` |
+|---|---|---|---|---|---|---|---|
+| a000 | 0.0 | 51.6 / 46.3 | — | 0.824 | 0.697 | 0.809 | 3.025 |
+| a025 | 0.25 | 54.1 / 44.2 | −2.1 | 1.036 | 0.643 | 0.793 | 2.337 |
+| a050 | 0.5 | 57.0 / 45.1 | −1.2 | 1.202 | 0.599 | 0.741 | 2.120 |
+| a070 | 0.7 | 59.2 / 44.5 | **−1.8 < 3.0 ⇒ KILL** | 1.312 | 0.568 | 0.691 | 2.017 |
+| a100 | 1.0 | 61.5 / 42.5 | −3.8 (diagnostic leg) | 1.444 | 0.531 | 0.608 | 1.916 |
+
+- **KILL clause:** a070 improves top-1 by 1.8 cp; the bar was ≥3.0. The high-dose
+  hypothesis is dead in its tested form; **no live `w_sf_own`/`sf_p0_blend_alpha` flip
+  follows.** PR #450's rig stays merged default-off; the deployment sequence prepared for
+  a positive verdict is CANCELLED.
+- **The stronger finding is the second column.** Expected regret under the policy
+  distribution degrades monotonically with dose while top-1 barely moves: the blend
+  redistributes mass toward the MultiPV-wide, flatter SF-p0 distribution
+  ([[we_are_sharper_than_our_own_teacher]] — SF is flatter on 64% of rows; entropy and
+  top-1-mass columns show the student flattening in lockstep with α). A small argmax gain
+  bought with +5–10 cp of expected regret is a WORSE search prior, not a better one.
+- **Prereg prediction settled as WRONG (the prereg itself demands this be recorded):** the
+  predicted non-monotone "peaks 0.5–0.7, drops at 1.0" did not occur — a100 is the BEST
+  top-1 arm. The 6-move-support worry showed up as flattening, not as a top-1 collapse.
+- **Verdict-table row:** none of the four rows fits cleanly; formally the KILL clause
+  governs. "Teacher works, dose was the limit" is untenable given the E[regret] column;
+  the H_stack row is NOT claimed (the yardstick did move, just sub-bar). The flat/flat
+  plumbing row is not read, so the adequacy guard's licensing function is not invoked.
+- **Adequacy guard — instrument gap, disclosed:** the driver's sparse logging emitted no
+  per-arm CE trajectory, so "a100 train CE fell ≥0.05 nats" cannot be read as specified.
+  Adequacy is nonetheless established by stronger observables: the dose reached the
+  objective monotonically (`policy_own_acc_top1` 0.809→0.608, `m_sf_own` 3.025→1.916,
+  held-out entropy 0.824→1.444 — none of which can happen if the blend fails to bind).
+- **Wiring proof (per protocol):** `rig_active: sf_p0_blend_alpha` on all four wrapped
+  arms, `None` on a000; wrapper counters report **realized f = 0.5026**
+  (1,544,039 / 3,072,000 — the SAME rows in every arm; `sf_search_agree_frac` identical
+  to 16 digits across all five arms = identically-seeded paired draws held). This f
+  matches the PR #450 reviewer's 0.483–0.525 on live shards; **the stale 0.15–0.23
+  eligibility figure is retired for the banked corpus too.**
+- **Compile purity, checked:** the per-arm torch.compile probe read `frames_ok=0 …
+  running eager` on a025–a100; a000's probe line is absent from the captured log. One
+  shared process, zero captured frames on every probed arm, and bitwise-identical
+  data-side stats across arms ⇒ treated as eager-for-all. Noted, not a confound: any
+  residual difference sits between a000 and ALL wrapped arms equally and cannot
+  manufacture the monotone α-response.
+- **Confounds:** ran concurrently with #438 readout scoring (GPU bursts) — wall-time
+  only, paired within the ladder. Production stopped throughout; nothing live changed.
+- **Caveat on scope:** tested form = offline target-blend from the iter-595 checkpoint,
+  cold optimizer, 6,000 steps, banked corpus. [[knob_effects_reverse_sign_between_checkpoints]]
+  applies as always — but this was the preregistered test of the high-dose hypothesis,
+  and it killed it. The SF-teacher program's surviving lever is label-time screening
+  ([[bad_tail_is_screenable_at_label_time]]), not dose.
