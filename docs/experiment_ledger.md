@@ -64401,3 +64401,32 @@ read). MID top-1 45.8951% → LAST 49.5351%, exact McNemar p = 2.8e-161, halfwid
   banked — the compares above were run manually from the banked artifacts. The two
   population/resolution guards in the compare tool both fired correctly en route
   (train-vs-heldout refusal; n<100k bar refusal) — working as designed.
+
+## 2026-08-21 — MATCH A FINAL (Elo calibration): control-LAST **−404.6 Elo [−466.1, −357.0]** vs production iter-595. Registered predictions settled: the large-deficit side was right; "control much stronger" was wrong
+
+Final-only read, per prereg (no rolling peeks; 400/400 games, `truncated: False`,
+`duration_s` 1751). Banked: `scratchpad/elo_calib/A_vs_iter595.json` + `A4.pgn`; per-game
+JSONL `runs/arena_games/lc0ctl_vs_iter595.d64b66d91f23.games.jsonl`, `game_log_agrees:
+True`, `mixed_compile: False`. Pentanomial {WW 0, WD/DW 3, DD/WL 19, LD/DL 24, **LL 154**},
+score 0.0888. Same play-shape search both sides at sims 100 — the number is the WEIGHTS
+delta under production search ([[same_setting_both_sides_is_not_neutrality]]).
+
+- **Prediction settlement (both banked pre-read):** Josh's "control MUCH STRONGER than
+  iter-595" is settled WRONG; my "a large control deficit is compatible with the PASS" is
+  what happened. No tension with #438: the PASS is about the STACK's ability to learn and
+  generalise (it does, with zero fit-vs-transfer gap); A prices the EXCHANGE RATE —
+  **~10 h / 19.7M samples of clean lc0 supervision from RANDOM INIT lands ~405 Elo below
+  our plateaued RL product** under production search. 0.25× exposure of T91-era data is a
+  small dose; it does not buy parity with years-equivalent of loop compute.
+- ⚑ Not a crippled-agent artifact: the control's WDL head was properly supervised (1.00
+  lc0 root search value, `w_wdl` 1.0, `value_blend_guard`-verified at launch), so search
+  had a trained value function on both sides.
+- [[arena_elo_is_anchor_dependent]]: −405 is vs the iter-595 anchor at matched sims 100,
+  not an absolute rating. Match B (LAST vs MID, running) gives Elo VELOCITY per ~9.9M
+  samples — the direct "how fast should we improve" number; C (full-strength Cheese)
+  anchors externally.
+- **Ops note:** attempt 1 OOMed at launch (the Δ_train scorer still held the card);
+  seq6's single prearmed `--resume` retry fired, the takeover of the header-only game log
+  worked exactly as reviewed, and the retry ran clean start-to-finish (`resumed_pairs: 0`
+  because attempt 1 had banked zero games). First production outing of the match-resume
+  feature: clean.
