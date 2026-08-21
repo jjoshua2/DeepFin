@@ -90,6 +90,7 @@ from chess_anti_engine.tune.trial_config import (
     TrainingResult,
     TrialConfig,
 )
+from chess_anti_engine.replay.sfp0_blend import SfP0BlendBuffer
 from chess_anti_engine.utils.atomic import atomic_write_text
 import contextlib
 
@@ -607,6 +608,46 @@ def _run_holdout_evaluation(
     return None, -1
 
 
+def _train_buffer_for_iteration(buf, *, tc: TrialConfig):
+    """The buffer ``train_steps`` consumes this iteration: blended or raw.
+
+    Rebuilt from THIS iteration's freshly reloaded ``tc`` at the call
+    boundary, which is what makes ``sf_p0_blend_alpha`` live-reloadable in
+    both directions (0 <-> positive included) with no push machinery — and
+    what keeps every attribute WRITE the trial performs on its buffer
+    (``buf.capacity``, the per-iteration sampling-knob pushes in
+    ``trainable.py``) on the RAW object, where ``SfP0BlendBuffer``'s
+    read-only ``__getattr__`` delegation cannot shadow it. At 0.0 the raw
+    buffer is returned unwrapped — identity, not equivalence — so OFF stays
+    bitwise identical to the pre-feature path.
+    """
+    alpha = float(tc.sf_p0_blend_alpha)
+    if alpha <= 0.0:
+        return buf, None
+    blend = SfP0BlendBuffer(buf, alpha)
+    return blend, blend
+
+
+def _log_sfp0_blend(blend: SfP0BlendBuffer | None, *, iteration_idx: int) -> None:
+    """Wiring proof, announced from the consumer's own parameter.
+
+    Reports the alpha THE WRAPPER ITSELF holds plus the realized blended-row
+    fraction from its own counters — never the config's request — so a live
+    operator reads effect, not intent, off the trial log. Silent when OFF: an
+    always-on line would train the reader to ignore it.
+    """
+    if blend is None:
+        return
+    total = int(blend.total_rows)
+    frac = (float(blend.blended_rows) / total) if total else 0.0
+    print(
+        f"[trial] sf_p0_blend: alpha={blend.alpha} "
+        f"blended_rows={blend.blended_rows} total_rows={total} "
+        f"f={frac:.4f} (iteration {iteration_idx})",
+        flush=True,
+    )
+
+
 def _run_training_and_gating(
     *,
     tc: TrialConfig,
@@ -691,7 +732,9 @@ def _run_training_and_gating(
                 export_model=False,
             )
 
-        metrics = trainer.train_steps(buf, batch_size=batch_size, steps=steps)
+        train_buf, sfp0_blend = _train_buffer_for_iteration(buf, tc=tc)
+        metrics = trainer.train_steps(train_buf, batch_size=batch_size, steps=steps)
+        _log_sfp0_blend(sfp0_blend, iteration_idx=int(iteration_idx))
 
     test_metrics, test_metrics_source_iter = _run_holdout_evaluation(
         trainer=trainer, holdout_buf=holdout_buf,

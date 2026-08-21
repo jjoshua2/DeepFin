@@ -41,6 +41,13 @@ StartupSource = Literal[
 ]
 
 
+def _unit_fraction(value: Any, *, name: str) -> float:
+    frac = float(value)
+    if not math.isfinite(frac) or frac < 0.0 or frac > 1.0:
+        raise ValueError(f"{name} must be in [0, 1], got {value!r}")
+    return frac
+
+
 def _optional_unit_fraction(value: Any, *, name: str) -> float | None:
     if value is None:
         return None
@@ -425,6 +432,12 @@ class TrialConfig:
     replay_sf_gap_priority_weight: float = 0.0
     replay_sf_gap_priority_signed: bool = False
     replay_fast_low_surprise_priority: float = 1.0
+  # Target blend: on rows with has_sf_p0, policy_target <- (1-a)*t0 + a*q where
+  # q is the stored same-position SF soft teacher (sf_p0_policy_target). 0.0 =
+  # OFF (the buffer runs unwrapped, bitwise). Applied at the train_steps call
+  # boundary each iteration, so it is live-reloadable in both directions.
+  # Dose-ladder prereg 2026-08-19; wired live 2026-08-21.
+    sf_p0_blend_alpha: float = 0.0
     shared_shards_dir: str | None = None
 
   # --- Holdout / evaluation ---
@@ -921,6 +934,8 @@ class TrialConfig:
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             replay_sf_gap_priority_weight=float(
                 config.get("replay_sf_gap_priority_weight", 0.0)),
+            sf_p0_blend_alpha=_unit_fraction(
+                config.get("sf_p0_blend_alpha", 0.0), name="sf_p0_blend_alpha"),
             # str().lower() coercion so a stringy "off"/"no"/"false" (which
             # bool() would read as True) disables signed mode, while a native
             # YAML bool still works.

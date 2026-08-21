@@ -371,6 +371,7 @@ _TUNE_KEYS = (
     "shuffle_draw_cap_frac", "shuffle_wl_max_ratio",
     "replay_sf_gap_priority_weight", "replay_sf_gap_priority_signed",
     "replay_fast_low_surprise_priority",
+    "sf_p0_blend_alpha",
     "shard_size",
     "exploit_replay_refresh_enabled", "exploit_replay_keep_fraction",
     "exploit_replay_donor_shards", "exploit_replay_skip_newest",
