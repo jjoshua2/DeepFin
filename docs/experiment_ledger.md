@@ -64006,3 +64006,12 @@ enumerates a different population).
 legs scan held-out dirs only; train legs wait on the freeze's .done marker, then scan the
 train corpus) → corrected value baseline → corrected sigma probe. Production still
 intentionally stopped.
+
+## 2026-08-21 — standing policy (Josh): production STAYS DOWN until a loop fix is in hand
+
+"I didn't think we were doing production yet because that doesn't gain elo until we fix."
+Production is not paused-pending-restart; it is stopped on purpose because the run is a
+plateau and resuming it gains nothing. The GPU belongs to the diagnosis/fix program until a
+fix candidate exists (candidates in flight: #438 verdict routing, sigma-probe target fix,
+SF-teacher dose ladder). The intentional-stop marker stays; nothing restarts production
+without an affirmative "we have a fix, deploy it" decision.
