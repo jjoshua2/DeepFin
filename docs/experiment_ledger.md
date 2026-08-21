@@ -64430,3 +64430,26 @@ delta under production search ([[same_setting_both_sides_is_not_neutrality]]).
   worked exactly as reviewed, and the retry ran clean start-to-finish (`resumed_pairs: 0`
   because attempt 1 had banked zero games). First production outing of the match-resume
   feature: clean.
+
+## 2026-08-21 — MATCH B FINAL: control-LAST beats control-MID by **+196.7 Elo [+160.8, +236.9]** ⇒ on clean lc0 targets, the top-1/CE gain CONVERTS to play strength — [[losses_are_decoupled_from_strength]] is a property of OUR TARGETS, not of the stack
+
+Final-only read; 400/400, `truncated: False`, `game_log_agrees: True`, `mixed_compile:
+False`, no retry needed, 875 s. Pentanomial {WW 108, WD/DW 8, DD/WL 74, LD/DL 1, LL 9},
+score 0.756. Banked: `scratchpad/elo_calib/B_last_vs_mid.json` + `B.pgn` + per-game JSONL.
+
+- **The registered expectation resolves on the strong side:** the prereg said "B should be
+  positive if top-1 +3.6 pp buys play strength at all; B ≈ 0 … would echo
+  losses_are_decoupled_from_strength on clean data". B is +197 — the coupling between
+  supervised policy/value improvement and Elo is INTACT in this stack. The decoupling we
+  measured all spring lives in the TARGET PROGRAM, not in the net, the trainer, or the
+  loss-strength relationship. This is the Elo-side twin of #438's zero fit-vs-transfer gap.
+- **Velocity, measured:** the second ~9.9M lc0 samples (~4.5 h GPU) bought ~197 Elo at
+  this point on the curve (≈ 20 Elo/M samples, ≈ 44 Elo/GPU-hour) — while the production
+  loop's marginal Elo at iter-595 is ~0 ([[no_rollback_target_the_run_is_a_plateau]]).
+  Same GPU, same trainer, same architecture; only the targets differ.
+- **Composition (rough, anchor-dependent):** LAST is −405 vs iter-595 (match A) and +197
+  vs MID ⇒ MID ≈ −600 vs iter-595. Extrapolating the remaining gap at decaying velocity
+  suggests parity with the plateaued production net within a few more doubling-scale doses
+  of clean data — an EXTRAPOLATION, marked as such, not a measurement; C's external
+  anchor and any continued-training decision belong to a fresh prereg.
+- ⚑ Same caveats as A: matched sims 100, play shape both sides, Elo vs an internal anchor.
