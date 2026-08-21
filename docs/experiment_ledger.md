@@ -64120,3 +64120,22 @@ the ladder (zero games played):
 - **Registered directional predictions for match A, both banked before the read:** Josh
   expects the control net MUCH STRONGER than iter-595; my registered note said a large
   control deficit is compatible with the PASS. Opposite signs — A settles it.
+
+## 2026-08-21 — sigma probe FIRST READ: **INCONCLUSIVE** by the pre-committed rule; the preregistered 4,000-position repeat is running; value baseline banked
+
+Both ran fast because the deep/soft SF labels were cached from prior sessions — only the net
+passes were fresh. Real outputs, full dumps banked (3.0/3.1 MB per leg).
+
+- **Sigma probe (prereg `5b72f3b94`), 2000 paired positions, row (d) E[deep regret]:**
+  A (rescale ON, production) **44.52 cp** · B (absolute-Q) **46.62 cp** · paired Δ(A−B)
+  **−2.10 cp, 95% CI [−5.93, +1.68]** — CI includes 0, not entirely within ±1.0 ⇒
+  **INCONCLUSIVE ⇒ one repeat at 4000 positions, then stop** (running,
+  `scratchpad/sigma_probe_4k.sh`; new positions are uncached ⇒ hours). ⚑ The point estimate
+  leans AGAINST the hypothesis: removing the min-max rescale made the stored target WORSE by
+  2.1 cp, not better. If the 4k CI lands negative-significant or tight-null, F2's "σ-rescale
+  noise poisons the target" mechanism is dead in its tested form.
+- **Value baseline (iter-595, banked with dump `vdump_dea5e_iter595.jsonl`):** overall
+  **67.2 cp** (n=1723, fen_only, batch 256, TB-excluded ≥8-man); endgame 74.3 / middlegame
+  55.8; tail: med 6.0, P90 200, >100cp 17.9%, >300cp 5.3%. ⚑ Compare ONLY against
+  same-config reads (same_name_different_population — the old 76.4/85.5 anchors were a
+  different rig).
