@@ -64246,3 +64246,56 @@ has been quoting is stale by ~2×. Realized blend dose = α×f, so any α chosen
 must be priced against the MEASURED live f (the PR's wiring-proof log line reports it
 per iteration), not against either stale figure. The deployment prereg must quote its
 expected effective dose from that line after one iteration at α=0... (log runs at any α).
+
+### 2026-08-21 — Arena OOM DIAGNOSED: throwaway per-ply evaluator cycles the 32-stream pool; the "tree state grows with plies" mechanism above is WITHDRAWN
+
+Deep-dive (independent agent, full report in session; key cites verified):
+
+- **The 08-21 entry's mechanism was wrong twice.** (1) Run 2 (64 conc) FINISHED games —
+  `elo_calib/A.log` reads `ply 40: 10/64 finished` … `ply 140: 55/64` — so "cleanup never
+  ran" and "per-game tree state grows with plies" are both falsified. (2) The C tree is
+  host-side malloc (~40 B/node, ~100 KB/game) built FRESH per side per ply and dropped
+  whole (`gumbel_c.py:710-712`; the arena never passes `tree=`). It cannot be the VRAM
+  story. `tree_reuse=cold` in the log is literal.
+- **Actual mechanism: the arena is the ONE C-path caller that passes no `evaluator=`**
+  (`selfplay/match.py:156-161`), so `run_gumbel_root_many_c` builds a throwaway
+  `LocalModelEvaluator` per side per ply (`gumbel_c.py:524-528`), each lazily creating a
+  NEW CUDA stream (`inference.py:383-384`). Torch streams come from a fixed round-robin
+  pool of 32/device, and the caching allocator partitions segments BY STREAM — a block
+  freed on stream k is not reusable on stream j. Two evaluators/ply cycle the whole pool
+  in 16 plies; each stream retains a full forward's working set; nothing calls
+  `empty_cache()` in arena_standard. Run 1 died at ply ~20 — pool fully cycled at 16.
+  Every other consumer hoists one evaluator (`network_turn.py:1008/1031/1073`,
+  `uci/search.py:2196`, `selfplay/state.py:902`, `worker.py:4513/4632`).
+- **No batch cap on this path**: `LocalModelEvaluator` lacks the inplace API, so
+  `_max_batch` is never consulted; max forward batch = n_boards×topk-ish → 4096 @128
+  conc, 2048 @64, 1024 @32, 512 @16. ~550 KiB/row live × up to 32 stream pools is the
+  arithmetic that overflows 32 GB.
+- **Secondary (run 2's actual thrown error): chunked-path shape churn.** Root eval
+  submits RAW n_boards rows (`gumbel_c.py:684-686`) — only LEAF batches go through
+  `_pad_for_bucket`'s 21-bucket ladder. As games finish, n_boards drifts and dynamo
+  re-specializes (log: recompile_limit hit, `16 <= x.size()[0] <= 63`; the 150 s
+  ply-80→100 stall). The fatal error was driver-level (Triton module load / cuBLASLt
+  workspace), NOT a caching-allocator OOM — which is why it threw raw
+  `cudaErrorMemoryAllocation` inside `event.synchronize()`. The rolling path exists
+  precisely to hold the batch shape fixed; `--no-rolling` was chosen for reading
+  discipline without noticing it disables the anti-thrash design. The
+  `arena_standard.py:1616-1617` comment claiming plain inductor is immune to recompile
+  thrash is falsified for the chunked path.
+- **Also found, same class:** the arena never sets `model._inference_only`, so every
+  arena forward computes all 10 heads while search reads 2 (policy_own, wdl). worker,
+  inference broker, and AOT builds all set it; arena_standard does not.
+
+**Amendment (instrument fix, pre-read — no game results existed from any attempt):**
+match A/B rerun as seq5 with `--max-concurrent-games 16`, ROLLING scheduler (drop
+`--no-rolling`) with `--report-every 100000` — this preserves the final-only reading
+discipline exactly (report_every gates only the interim print block) while restoring
+the fixed-batch-shape design; `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (same
+as training). Sims/games/seed/openings/label unchanged (100/400/42). The "compiled
+paired arenas need ≤32 concurrent on this card" rule two entries up is superseded: the
+binding constraint is the throwaway-evaluator stream leak + uncapped batch, not
+concurrency per se. Proper fix (owed, separate branch after feat/match-resume merges):
+hoist one `DirectGPUEvaluator` per model in run_arena through a new `evaluator=` kwarg
+on `pick_moves_for_boards` (collapses ≤32 streams → 2 and activates the real batch
+cap), set `_inference_only` before compile, `empty_cache()` between chunks, bucket the
+root submit.
