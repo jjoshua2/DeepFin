@@ -73,6 +73,8 @@ class Emitted:
     termination: str
     plies: int
     duration_s: float
+    chunk: int | None
+    loop: str | None
 
 
 def _collect_sink(store: list[Emitted]) -> Callable[..., None]:
@@ -87,11 +89,14 @@ def _collect_sink(store: list[Emitted]) -> Callable[..., None]:
         termination: str,
         plies: int,
         duration_s: float,
+        chunk: int | None,
+        loop: str | None,
     ) -> None:
         store.append(Emitted(
             pair_id=pair_id, half=half, a_is_white=a_is_white,
             start_fen=start_fen, moves=moves, result=result,
             termination=termination, plies=plies, duration_s=duration_s,
+            chunk=chunk, loop=loop,
         ))
     return sink
 
@@ -102,7 +107,7 @@ def _play(
     sink: Callable[..., None] | None = None,
     *,
     max_plies: int = 20,
-    pair_id_offset: int = 0,
+    pair_ids: list[int] | None = None,
 ) -> list[float]:
     """Explicit calls, not a kwargs dict: an untyped dict makes every argument
     Unknown to the type checker, which is how a wrong one gets through."""
@@ -113,7 +118,7 @@ def _play(
             sims_candidate=1, sims_reference=1, max_plies=max_plies,
             temperature=0.1, gumbel_add_noise=False,
             search_candidate=_search(), search_reference=_search(),
-            pool_size=4, pgn_sink=sink,
+            pool_size=4, pgn_sink=sink, pair_ids=pair_ids,
         )
     return play_paired_games_matched_sims(
         None, None, openings,
@@ -121,7 +126,7 @@ def _play(
         sims_candidate=1, sims_reference=1, max_plies=max_plies,
         temperature=0.1, gumbel_add_noise=False,
         search_candidate=_search(), search_reference=_search(),
-        pgn_sink=sink, pair_id_offset=pair_id_offset,
+        pgn_sink=sink, pair_ids=pair_ids,
     )
 
 
@@ -234,14 +239,17 @@ def test_final_ply_pgn_decisiveness_matches_the_board() -> None:
 
 
 @pytest.mark.usefixtures("scripted_moves")
-def test_chunked_pair_id_offset_keeps_pairs_globally_unique() -> None:
-    # run_arena calls the chunked path once per chunk with a LOCAL opening list;
-    # without the offset every chunk would restart PairId at 0 and the pooled
-    # fit would merge unrelated pairs into one block.
+@pytest.mark.parametrize("rolling", [True, False])
+def test_pair_ids_keep_pairs_globally_unique(rolling: bool) -> None:
+    # run_arena calls the play loops with a LOCAL opening list; without the
+    # global ids every chunk would restart PairId at 0 and the pooled fit would
+    # merge unrelated pairs into one block. The ids are a LIST rather than the
+    # old contiguous offset because a --resume run plays the non-contiguous
+    # subset of pairs the crash left unfinished.
     got: list[Emitted] = []
-    _play(False, [chess.Board() for _ in range(2)], sink=_collect_sink(got),
-          pair_id_offset=10)
-    assert sorted({g.pair_id for g in got}) == [10, 11]
+    _play(rolling, [chess.Board() for _ in range(2)], sink=_collect_sink(got),
+          pair_ids=[10, 13])
+    assert sorted({g.pair_id for g in got}) == [10, 13]
 
 
 def test_max_plies_game_is_written_as_a_draw_not_a_star(

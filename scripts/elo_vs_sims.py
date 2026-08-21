@@ -9,7 +9,11 @@ rate between search budget and strength: it prices what a throughput
 regression (e.g. a 20% slower architecture) costs in Elo.
 
 Each rung's result is also appended to runs/arena_results.jsonl with a
-``label`` of the form ``elo_vs_sims:64v32``.
+``label`` of the form ``elo_vs_sims:64v32``, and each rung keeps its own
+per-game log named from that label. ``--resume`` therefore replays only the
+rung that was interrupted. To run the SAME ladder again on purpose, pass
+``--label`` — without it the second ladder writes to the first one's game logs
+and is refused.
 
 Usage::
 
@@ -51,6 +55,15 @@ def main() -> None:
                    help="comma-separated ascending sims rungs (default: 32,64,128,256,512)")
     p.add_argument("--games-per-rung", type=int, default=400,
                    help="games per adjacent-rung arena; games/2 opening pairs (default: 400)")
+    p.add_argument("--label", default=None,
+                   help="suffix for every rung's label, i.e. "
+                        "'elo_vs_sims:64v32:<label>'. Each rung's per-game log "
+                        "is named from its label, so this is what lets a "
+                        "DELIBERATE repeat of the same ladder start instead of "
+                        "hitting the 'game log already exists' refusal — "
+                        "arena_standard's --games-out is per-arena and cannot "
+                        "name a whole ladder. Without it the labels are exactly "
+                        "what they have always been.")
     add_common_args(p)
     args = p.parse_args()
 
@@ -69,6 +82,7 @@ def main() -> None:
         args.openings if args.openings is not None else default_openings_path()
     )
 
+    suffix = f":{args.label}" if args.label else ""
     rows: list[tuple[int, dict]] = []
     for lo, hi in itertools.pairwise(sims):
         print(f"\n[elo_vs_sims] === {hi} sims vs {lo} sims ===")
@@ -88,9 +102,13 @@ def main() -> None:
             device=args.device,
             seed=args.seed,
             out_path=args.out,
-            label=f"elo_vs_sims:{hi}v{lo}",
+            label=f"elo_vs_sims:{hi}v{lo}{suffix}",
             search_candidate=side,
             search_reference=side,
+            # Each rung has its own game log (the label and the sims are both
+            # in the default path), so --resume replays only the rung that was
+            # interrupted: a completed rung reloads its pairs and plays nothing.
+            resume=bool(args.resume),
         )
         rows.append((hi, record))
 

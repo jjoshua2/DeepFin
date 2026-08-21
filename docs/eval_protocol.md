@@ -108,6 +108,39 @@ the encoding stored in the checkpoint itself.
   rates; if a candidate's effect is smaller than that, more games — not a
   tighter prior — is the only honest fix.
 
+## A crashed match is resumable — never replay a finished game
+
+Both drivers (`scripts/arena_standard.py`, `scripts/match_vs_uci.py`) append one
+flushed JSONL record per FINISHED game to a **game log**, so a run that dies
+mid-match leaves every game that ended. 2026-08-21 is why: a 128-game compiled
+arena OOMed at ply 20 with ZERO games persisted, and its relaunch lost its first
+minutes the same way.
+
+- **Where**: `--games-out <path>`. Default for the arena is
+  `runs/arena_games/<label>.<settings-fingerprint>.games.jsonl`; for
+  `match_vs_uci` it rides `--pgn-out` when that is given, else
+  `runs/match_games/`. It is deliberately NOT derived from the arena's `--out`,
+  which is the shared append-only aggregate every arena in history writes to.
+- **Resume**: `--resume` keeps what finished and plays only the remainder, then
+  scores everything as one match. The arena keeps COMPLETE PAIRS only — a pair
+  with one coloring played is discarded and replayed, because the pentanomial's
+  sampling unit is the pair. The result record carries `resumed_pairs`,
+  `resumed_orphan_pairs` and `game_log`, so a row that is a splice of two
+  processes says so.
+- **It refuses to mix.** The log header stores a fingerprint of every setting
+  that defines the population and the ruler (nets/engines, seed, games,
+  openings, mode, sims or budget, search shape, syzygy). `--resume` onto a
+  changed one names the difference and exits. Execution knobs are deliberately
+  NOT in the fingerprint — resuming an OOMed arena at a lower
+  `--max-concurrent-games` is the main use.
+- **Without `--resume`, an existing log for the same settings is an error.**
+  Appending would silently pool two runs. `scripts/daily_gate_ratchet.sh` passes
+  `--resume` for exactly this reason: its same-day retry of a series is the same
+  invocation, and it now continues that attempt instead of replaying it.
+- ⚑ A resumed PGN keeps the discarded orphan game (append-only). Its
+  replacements carry `ResumeReplay "1"`, so for any `PairId` that has the tag,
+  the games WITHOUT it are the stale ones — drop those before a pooled fit.
+
 ## Pooled multi-player ratings (Ordo) — when 3+ arms play a round robin
 
 A paired arena answers ONE A/B. For three arms (Tier-13 A/B/C) it answers three
