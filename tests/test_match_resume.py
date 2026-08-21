@@ -712,3 +712,589 @@ def test_resume_reaches_the_matched_sims_path(
         assert [call["chunk"] for call in seen] == [0, 1]
     assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
     assert record["resumed_pairs"] == 2
+
+
+# ---------------------------------------------------------------------------
+# What a resume is allowed to MIX, and what it must say about it
+# ---------------------------------------------------------------------------
+
+def _run_arena_matched_sims(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    log_path: Path,
+    compile_models: bool,
+    crash_after: int | None = None,
+    resume: bool = False,
+    out_path: Path | None = None,
+) -> dict:
+    """matched_sims with the two checkpoint loads and torch.compile stubbed.
+
+    The compile-mix tests have to run THIS path: ``compile_models`` reaches
+    nothing on the matched_time loop (UCI subprocesses build their own engine),
+    which is exactly why a matched_time row records ``"n/a"``.
+    """
+    import scripts.arena_standard as arena
+
+    side = arena.resolve_search_shape("training")
+    monkeypatch.setattr(
+        "chess_anti_engine.uci.model_loader.load_model_from_checkpoint",
+        lambda *_a, **_kw: object(),
+    )
+    monkeypatch.setattr("torch.compile", lambda model, **_kw: model)
+    play = _fake_matched_time(crash_after=crash_after)
+    for name in (
+        "play_paired_games_matched_sims",
+        "play_paired_games_matched_sims_rolling",
+    ):
+        monkeypatch.setattr(arena, name, play)
+    return arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=8,
+        openings_path=None, openings_fen=_openings_file(tmp_path),
+        opening_plies=16, mode="matched_sims",
+        sims_candidate=8, sims_reference=8, ms_per_move=0, max_plies=40,
+        temperature=0.1, gumbel_add_noise=True, device="cpu", seed=7,
+        out_path=out_path, game_log_path=log_path, resume=resume,
+        compile_models=compile_models, rolling=True, max_concurrent_games=2,
+        search_candidate=side, search_reference=side,
+    )
+
+
+def test_a_resume_across_a_compile_change_is_recorded_as_mixed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """daily_gate_ratchet.sh's retry, exactly: compiled attempt, eager retry.
+
+    The ratchet re-derives ``--compile on|off`` from free VRAM on EVERY attempt
+    and always passes --resume, so the two halves of one reported Elo can come
+    from two different inference paths. compile is deliberately NOT in the
+    resume fingerprint (refusing that retry is worse), so the whole guard is
+    that the mix is SAID rather than swallowed.
+    """
+    log_path = tmp_path / "mix.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena_matched_sims(
+            monkeypatch, tmp_path, log_path=log_path, compile_models=True,
+            crash_after=4,
+        )
+    assert [row["compile"] for row in read_game_log(log_path).games] == ["on"] * 4
+    capsys.readouterr()
+
+    record = _run_arena_matched_sims(
+        monkeypatch, tmp_path, log_path=log_path, compile_models=False,
+        resume=True,
+    )
+    err = capsys.readouterr().err
+    assert "MIXED torch.compile" in err, err
+    assert record["mixed_compile"] is True
+    assert record["compile_values"] == ["off", "on"], record["compile_values"]
+    assert record["compile"] == "off", "`compile` is what THIS process ran"
+    # The mix is real and per-game, not a whole-file property.
+    tags = [row["compile"] for row in read_game_log(log_path).games]
+    assert tags == ["on"] * 4 + ["off"] * 4
+
+
+def test_an_unmixed_resume_is_not_flagged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The flag must be silent on the ordinary retry, or it means nothing."""
+    log_path = tmp_path / "same.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena_matched_sims(
+            monkeypatch, tmp_path, log_path=log_path, compile_models=False,
+            crash_after=4,
+        )
+    capsys.readouterr()
+    record = _run_arena_matched_sims(
+        monkeypatch, tmp_path, log_path=log_path, compile_models=False,
+        resume=True,
+    )
+    assert "MIXED torch.compile" not in capsys.readouterr().err
+    assert record["mixed_compile"] is False
+    assert record["compile_values"] == ["off"]
+
+
+def test_matched_time_rows_do_not_invent_a_compile_mix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """compile never reaches a UCI subprocess, so it cannot differ between two.
+
+    ``compile_models`` still arrives at run_arena on this path (main() resolves
+    it from free VRAM before it knows the mode), so recording the raw flag
+    would report a mix between two attempts that played identically.
+    """
+    log_path = tmp_path / "uci.games.jsonl"
+    record = _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    assert [row["compile"] for row in read_game_log(log_path).games] == ["n/a"] * 8
+    assert record["mixed_compile"] is False
+    assert record["compile_values"] == ["n/a"]
+
+
+def test_rows_written_before_the_compile_field_existed_read_as_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An older log must resume, and must still say its provenance is unknown."""
+    log_path = tmp_path / "legacy.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena_matched_sims(
+            monkeypatch, tmp_path, log_path=log_path, compile_models=True,
+            crash_after=4,
+        )
+    # Strip the field the way a log written before it existed would look.
+    kept: list[str] = []
+    for line in log_path.read_text().splitlines():
+        row = json.loads(line)
+        row.pop("compile", None)
+        kept.append(json.dumps(row, separators=(",", ":")))
+    log_path.write_text("\n".join(kept) + "\n")
+    capsys.readouterr()
+
+    record = _run_arena_matched_sims(
+        monkeypatch, tmp_path, log_path=log_path, compile_models=True,
+        resume=True,
+    )
+    err = capsys.readouterr().err
+    assert record["pentanomial"] == _EXPECTED_PENTANOMIAL, "the resume must work"
+    assert record["mixed_compile"] is True
+    assert record["compile_values"] == ["on", "unknown"]
+    assert err.count("MIXED torch.compile") == 1, (
+        f"one warning per resume, not one per legacy row; got\n{err}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Write ordering: the JSONL is the commit record
+# ---------------------------------------------------------------------------
+
+def test_a_pgn_write_that_dies_leaves_no_jsonl_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A crash BETWEEN the two writes must cost a replay, not a lost game.
+
+    With the JSONL written first, a death in that window leaves a game the
+    resume reads as complete and never replays, so the PGN is permanently one
+    game short and nothing anywhere can detect it. Writing the JSONL LAST makes
+    it the commit record: the window costs a duplicated PGN game (tagged
+    ResumeReplay), which is visible and recoverable.
+    """
+    from chess_anti_engine.eval.arena_pgn import ArenaPgnWriter
+
+    log_path = tmp_path / "order.games.jsonl"
+    pgn = tmp_path / "order.pgn"
+    real_write = ArenaPgnWriter.write_game
+    calls = {"n": 0}
+
+    def _dies_on_the_third(self: ArenaPgnWriter, game: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise _SimulatedCrash("the PGN write died")
+        real_write(self, game)
+
+    monkeypatch.setattr(ArenaPgnWriter, "write_game", _dies_on_the_third)
+    with pytest.raises(_SimulatedCrash):
+        _run_arena(monkeypatch, tmp_path, log_path=log_path, pgn_out=pgn)
+
+    rows = read_game_log(log_path).games
+    keys = [(int(r["pair_id"]), int(r["half"])) for r in rows]
+    assert keys == [(0, 0), (0, 1)], (
+        "the game whose PGN write died must NOT be in the JSONL — the JSONL is "
+        f"the commit record and anything in it is never replayed; got {keys}"
+    )
+    assert pgn.read_text().count("[Event ") == 2
+
+    # And therefore the pair genuinely replays.
+    monkeypatch.setattr(ArenaPgnWriter, "write_game", real_write)
+    record = _run_arena(
+        monkeypatch, tmp_path, log_path=log_path, resume=True, pgn_out=pgn,
+    )
+    assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
+    assert record["resumed_pairs"] == 1
+    assert pgn.read_text().count("[Event ") == 8
+
+
+# ---------------------------------------------------------------------------
+# game_log_agrees, read off the DISK
+# ---------------------------------------------------------------------------
+
+def test_game_log_agrees_sees_a_row_that_never_reached_the_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The check must touch the file, or it cannot fail for its own reason.
+
+    Comparing two in-memory tallies built at the same call site agrees with
+    itself no matter what the disk holds — a guard that cannot fire, wearing
+    the name of the thing it does not do.
+    """
+    import scripts.arena_standard as arena
+
+    log_path = tmp_path / "shortened.games.jsonl"
+    play = _fake_matched_time()
+
+    def _play_then_lose_the_last_row(*args: Any, **kwargs: Any) -> list[float]:
+        scores = play(*args, **kwargs)
+        lines = log_path.read_text().splitlines(keepends=True)
+        log_path.write_text("".join(lines[:-1]))
+        return scores
+
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time", _play_then_lose_the_last_row,
+    )
+    record = arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=8,
+        openings_path=None, openings_fen=_openings_file(tmp_path),
+        opening_plies=16, mode="matched_time",
+        sims_candidate=32, sims_reference=32, ms_per_move=100, max_plies=300,
+        temperature=0.1, gumbel_add_noise=True, device="cpu", seed=7,
+        out_path=None, game_log_path=log_path, resume=False,
+    )
+    assert record["game_log_agrees"] is False, (
+        "the log is one game short on disk; the in-memory tally cannot see that"
+    )
+    assert "does not hold what this run scored" in capsys.readouterr().err
+    # The played result still stands — the games happened.
+    assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
+
+
+def test_game_log_agrees_is_true_on_a_clean_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The other half of the guard: it must not fire on a healthy run."""
+    record = _run_arena(
+        monkeypatch, tmp_path, log_path=tmp_path / "clean_agrees.games.jsonl",
+    )
+    assert record["game_log_agrees"] is True
+
+
+# ---------------------------------------------------------------------------
+# A no-op resume must not double-count in the shared aggregate
+# ---------------------------------------------------------------------------
+
+def test_a_fully_complete_resume_does_not_re_append_the_aggregate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--out is shared and append-only; a replayed no-op would double-count.
+
+    The ratchet passes --resume unconditionally, so re-running a finished
+    series is the ordinary case, not an odd one.
+    """
+    import scripts.arena_standard as arena
+
+    log_path = tmp_path / "aggregate.games.jsonl"
+    aggregate = tmp_path / "arena_results.jsonl"
+    kwargs: dict[str, Any] = {
+        "candidate": "cand.pt", "reference": "ref.pt", "games": 8,
+        "openings_path": None, "openings_fen": _openings_file(tmp_path),
+        "opening_plies": 16, "mode": "matched_time",
+        "sims_candidate": 32, "sims_reference": 32, "ms_per_move": 100,
+        "max_plies": 300, "temperature": 0.1, "gumbel_add_noise": True,
+        "device": "cpu", "seed": 7,
+        "out_path": aggregate, "game_log_path": log_path,
+    }
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time", _fake_matched_time(),
+    )
+    first = arena.run_arena(resume=False, **kwargs)
+    assert len(aggregate.read_text().splitlines()) == 1
+
+    def _must_not_run(*_a: object, **_kw: object) -> list[float]:
+        raise AssertionError("a fully-resumed run played a game")
+
+    monkeypatch.setattr(arena, "play_paired_games_matched_time", _must_not_run)
+    capsys.readouterr()
+    again = arena.run_arena(resume=True, **kwargs)
+    out = capsys.readouterr().out
+
+    assert len(aggregate.read_text().splitlines()) == 1, (
+        "a resume that played zero games appended a second row for one arena"
+    )
+    assert "not re-appended" in out, out
+    assert "[arena] Elo:" in out, "the recomputed summary must still print"
+    assert again["pentanomial"] == first["pentanomial"]
+
+
+# ---------------------------------------------------------------------------
+# A log with a header and no games is not two runs
+# ---------------------------------------------------------------------------
+
+def test_a_header_only_log_does_not_block_a_fresh_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The crash window before the first game: checkpoint load, compile, warmup.
+
+    The header is written before the first game finishes, so a death in that
+    window leaves a log holding zero games. Refusing the retry there protects
+    games that do not exist — and the operator's way out was deleting a file,
+    which is the habit that loses real logs.
+    """
+    import scripts.arena_standard as arena
+
+    log_path = tmp_path / "headeronly.games.jsonl"
+
+    def _dies_before_any_game(*_a: object, **_kw: object) -> list[float]:
+        raise _SimulatedCrash("died loading the checkpoint")
+
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time", _dies_before_any_game,
+    )
+    with pytest.raises(_SimulatedCrash):
+        arena.run_arena(
+            candidate="cand.pt", reference="ref.pt", games=8,
+            openings_path=None, openings_fen=_openings_file(tmp_path),
+            opening_plies=16, mode="matched_time",
+            sims_candidate=32, sims_reference=32, ms_per_move=100,
+            max_plies=300, temperature=0.1, gumbel_add_noise=True,
+            device="cpu", seed=7, out_path=None, game_log_path=log_path,
+            resume=False,
+        )
+    parsed = read_game_log(log_path)
+    assert parsed.games == [], "fixture: the log must hold a header and no games"
+
+    record = _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
+    assert record["resumed_pairs"] == 0
+    assert len(read_game_log(log_path).games) == 8
+
+
+def test_a_header_only_log_from_another_run_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Zero games is not a licence to take over someone else's file."""
+    log_path = tmp_path / "foreign.games.jsonl"
+    log_path.write_text(
+        json.dumps({
+            "kind": "header", "version": 1, "driver": "arena_standard",
+            "fingerprint": "0123456789ab", "settings": {"mode": "something"},
+        }) + "\n"
+    )
+    with pytest.raises(SystemExit) as exc:
+        _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    message = str(exc.value)
+    assert "ZERO games" in message, message
+    assert "0123456789ab" in message, message
+    assert log_path.read_text(), "a refused run must not have cleared the file"
+
+
+# ---------------------------------------------------------------------------
+# The refusal must only claim what it measured
+# ---------------------------------------------------------------------------
+
+def test_the_collision_refusal_does_not_claim_an_unmeasured_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """--games-out was compared against nothing before this refusal fired."""
+    log_path = tmp_path / "explicit.games.jsonl"
+    _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    with pytest.raises(SystemExit) as exc:
+        _run_arena(monkeypatch, tmp_path, log_path=log_path)
+    message = str(exc.value)
+    assert "given explicitly" in message, message
+    assert "fingerprint matches" not in message, (
+        "nothing compared this path's settings to the invocation's; claiming a "
+        f"match sends the reader hunting a difference never measured:\n{message}"
+    )
+    assert "--resume" in message, message
+    assert "--games-out" in message, message
+
+
+def test_the_default_path_refusal_does_claim_the_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """On the DEFAULT path the claim is true: the name is built from the hash."""
+    import scripts.arena_standard as arena
+
+    monkeypatch.setattr(arena, "DEFAULT_GAME_LOG_DIR", tmp_path / "arena_games")
+    kwargs: dict[str, Any] = {
+        "candidate": "cand.pt", "reference": "ref.pt", "games": 8,
+        "openings_path": None, "openings_fen": _openings_file(tmp_path),
+        "opening_plies": 16, "mode": "matched_time",
+        "sims_candidate": 32, "sims_reference": 32, "ms_per_move": 100,
+        "max_plies": 300, "temperature": 0.1, "gumbel_add_noise": True,
+        "device": "cpu", "seed": 7,
+        "out_path": None, "game_log_path": None, "label": "ladder",
+    }
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time", _fake_matched_time(),
+    )
+    arena.run_arena(resume=False, **kwargs)
+    with pytest.raises(SystemExit) as exc:
+        arena.run_arena(resume=False, **kwargs)
+    message = str(exc.value)
+    assert "keyed on this invocation's settings fingerprint" in message, message
+
+
+# ---------------------------------------------------------------------------
+# A PGN that cannot hold the whole match
+# ---------------------------------------------------------------------------
+
+def test_arena_warns_when_the_resumed_pgn_lost_the_earlier_games(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Appending to a missing PGN yields a partial file nothing can detect."""
+    log_path = tmp_path / "lostpgn.games.jsonl"
+    pgn = tmp_path / "lost.pgn"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena(
+            monkeypatch, tmp_path, log_path=log_path, crash_after=5, pgn_out=pgn,
+        )
+    pgn.unlink()
+    capsys.readouterr()
+    _run_arena(
+        monkeypatch, tmp_path, log_path=log_path, resume=True, pgn_out=pgn,
+    )
+    err = capsys.readouterr().err
+    assert "missing or empty" in err, err
+    assert str(pgn) in err
+    # A warning, not a refusal: the run still produces its games.
+    assert pgn.read_text().count("[Event ") == 4
+
+
+def test_arena_does_not_warn_when_the_pgn_carries_the_earlier_games(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_path = tmp_path / "keptpgn.games.jsonl"
+    pgn = tmp_path / "kept.pgn"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena(
+            monkeypatch, tmp_path, log_path=log_path, crash_after=5, pgn_out=pgn,
+        )
+    capsys.readouterr()
+    _run_arena(
+        monkeypatch, tmp_path, log_path=log_path, resume=True, pgn_out=pgn,
+    )
+    assert "missing or empty" not in capsys.readouterr().err
+
+
+def test_match_warns_when_the_resumed_pgn_lost_the_earlier_games(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_match_module()
+    log_path = tmp_path / "matchpgn.games.jsonl"
+    pgn = tmp_path / "match_lost.pgn"
+    with pytest.raises(_SimulatedCrash):
+        _drive_match(
+            monkeypatch, module,
+            _match_argv(tmp_path, log_path, extra=["--pgn-out", str(pgn)]),
+            crash_after=5,
+        )
+    pgn.unlink()
+    capsys.readouterr()
+    _drive_match(
+        monkeypatch, module,
+        _match_argv(tmp_path, log_path, extra=["--pgn-out", str(pgn), "--resume"]),
+    )
+    err = capsys.readouterr().err
+    assert "missing or empty" in err, err
+    assert pgn.read_text().count("[Event ") == 3
+
+
+def test_match_header_only_log_does_not_block_a_fresh_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    module = _load_match_module()
+    log_path = tmp_path / "match_headeronly.games.jsonl"
+
+    def _dies_before_any_game(**_kw: Any) -> object:
+        raise _SimulatedCrash("engine died during warmup")
+
+    monkeypatch.setattr(module, "_open_warm_engine", lambda *_a, **_kw: _FakeEngine())
+    monkeypatch.setattr(module, "_play_one_pairing", _dies_before_any_game)
+    monkeypatch.setattr(
+        "sys.argv", ["match_vs_uci.py", *_match_argv(tmp_path, log_path, extra=[])],
+    )
+    with pytest.raises(_SimulatedCrash):
+        module.main()
+    assert read_game_log(log_path).games == []
+
+    played = _drive_match(
+        monkeypatch, module, _match_argv(tmp_path, log_path, extra=[]),
+    )
+    assert played == list(range(8))
+
+
+# ---------------------------------------------------------------------------
+# elo_vs_sims: a deliberate repeat of the same ladder
+# ---------------------------------------------------------------------------
+
+def _ladder_labels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, extra: list[str],
+) -> list[str]:
+    import scripts.elo_vs_sims as ladder
+
+    seen: list[str] = []
+
+    def _spy(**kwargs: Any) -> dict[str, Any]:
+        seen.append(str(kwargs["label"]))
+        return {"elo": 1.0, "elo_ci95": [0.0, 2.0], "pairs": 4}
+
+    monkeypatch.setattr(ladder, "run_arena", _spy)
+    monkeypatch.setattr("sys.argv", [
+        "elo_vs_sims.py", "--checkpoint", "ck.pt",
+        "--search-shape", "training", "--sims", "32,64",
+        "--openings", str(_openings_file(tmp_path)),
+        *extra,
+    ])
+    ladder.main()
+    return seen
+
+
+def test_elo_vs_sims_label_suffixes_every_rung(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Without this a repeat ladder can only start by deleting the first one's logs.
+
+    Each rung's game log is named from its label, so two ladders with identical
+    settings collide by construction — and elo_vs_sims exposed neither
+    --games-out nor --label to break the tie.
+    """
+    assert _ladder_labels(monkeypatch, tmp_path, extra=[]) == ["elo_vs_sims:64v32"]
+    assert _ladder_labels(
+        monkeypatch, tmp_path, extra=["--label", "repeat2"],
+    ) == ["elo_vs_sims:64v32:repeat2"]
+
+
+# ---------------------------------------------------------------------------
+# Appending after a crash-truncated tail
+# ---------------------------------------------------------------------------
+
+def test_a_resume_repairs_a_half_written_final_line(tmp_path: Path) -> None:
+    """Appending onto a partial line would fuse two records into a corrupt one.
+
+    read_game_log tolerates a truncated FINAL line and refuses a corrupt MIDDLE
+    one, so an append that fuses them turns "lose the game in flight" into
+    "lose the whole log" — on exactly the crash the resume exists for.
+    """
+    path = tmp_path / "partial.games.jsonl"
+    with GameLogWriter(path, driver="t", settings={"k": 1}) as log:
+        log.write_game({"game_index": 0})
+    with path.open("a") as fh:
+        fh.write('{"kind": "game", "game_ind')
+
+    with GameLogWriter(
+        path, driver="t", settings={"k": 1}, resuming=True,
+    ) as log:
+        assert log.repaired_truncated_tail is True
+        log.write_game({"game_index": 1})
+
+    parsed = read_game_log(path)
+    assert [row["game_index"] for row in parsed.games] == [0, 1]
+    assert parsed.truncated_tail is False
+
+
+def test_a_complete_log_is_not_touched_by_the_repair(tmp_path: Path) -> None:
+    path = tmp_path / "whole.games.jsonl"
+    with GameLogWriter(path, driver="t", settings={"k": 1}) as log:
+        log.write_game({"game_index": 0})
+    before = path.read_bytes()
+    with GameLogWriter(
+        path, driver="t", settings={"k": 1}, resuming=True,
+    ) as log:
+        assert log.repaired_truncated_tail is False
+    assert path.read_bytes() == before

@@ -20,7 +20,10 @@ Two properties do the work:
   the games still in flight. Deliberately NOT ``fsync``: the failure mode this
   guards is a dead PROCESS (OOM, ``timeout -k``), and the page cache survives
   that. Power loss is out of scope and paying an fsync per game to pretend
-  otherwise would be a cost bought for nothing.
+  otherwise would be a cost bought for nothing. The next writer first drops a
+  half-written FINAL line (``repair_truncated_tail``), because appending onto
+  one would fuse two records into an unparseable MIDDLE line — turning "lose
+  the game in flight" into "lose the whole log".
 * **A settings fingerprint in the header.** A resume onto different settings
   would silently mix two populations into one Elo, so ``fingerprint_differences``
   names every setting that moved and the caller refuses. Accepting the resume
@@ -162,6 +165,28 @@ def latest_rows_by_key(
     return out
 
 
+def repair_truncated_tail(path: str | Path) -> bool:
+    """Drop a half-written FINAL line, returning True when bytes were dropped.
+
+    ``read_game_log`` already tolerates a crash-truncated tail (that game is
+    exactly the one a resume replays), but APPENDING to it would fuse the next
+    record onto the partial one and turn a MIDDLE line unparseable — which the
+    reader refuses outright, so the crash would cost the whole log instead of
+    one game. Called before every append; a log that ends in a newline is left
+    byte-for-byte alone.
+    """
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        return False
+    with p.open("rb+") as fh:
+        fh.seek(-1, 2)
+        if fh.read(1) == b"\n":
+            return False
+        data = p.read_bytes()
+        fh.truncate(data.rfind(b"\n") + 1)
+    return True
+
+
 class GameLogWriter:
     """Append-only JSONL of finished games, flushed after every record."""
 
@@ -179,6 +204,7 @@ class GameLogWriter:
         self.fingerprint = settings_fingerprint(self.settings)
         self.games_written = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.repaired_truncated_tail = repair_truncated_tail(self.path)
         had_content = self.path.exists() and self.path.stat().st_size > 0
         self._fh = self.path.open("a", encoding="utf-8")
         if not (resuming and had_content):
@@ -238,16 +264,75 @@ def default_game_log_path(
     return Path(directory) / f"{stem}.{fingerprint}.games.jsonl"
 
 
-def refuse_existing_log_message(path: Path, *, resume_flag: str, out_flag: str) -> str:
-    """The message for "a log for these exact settings already exists"."""
+def refuse_existing_log_message(
+    path: Path, *, resume_flag: str, out_flag: str, fingerprint_keyed: bool,
+) -> str:
+    """The message for "a log already exists at the path this run would write".
+
+    ``fingerprint_keyed`` says whether the path was DERIVED from this
+    invocation's settings fingerprint (``default_game_log_path``) or handed in
+    explicitly. Only the first licenses "its settings match this invocation":
+    an explicit ``--games-out``/``--pgn-out`` path is compared against nothing
+    at all before this refusal fires, and claiming a match there sends the
+    reader looking for a settings difference that was never measured.
+    """
+    if fingerprint_keyed:
+        why = (
+            "  That path is keyed on this invocation's settings fingerprint, so "
+            "the file was written by a run with the SAME settings and appending "
+            "would MIX two runs into one score.\n"
+        )
+    else:
+        why = (
+            "  The path was given explicitly, so nothing has compared its "
+            "settings to this invocation's; appending would MIX whatever it "
+            "holds into this run's score.\n"
+        )
     return (
         f"game log already exists: {path}\n"
-        f"  Its settings fingerprint matches this invocation, so appending "
-        f"would MIX two runs into one score.\n"
-        f"  Pass {resume_flag} to continue that run (its finished games are "
-        f"kept and only the remainder is played),\n"
-        f"  or {out_flag} <path> / change the run label to start a separate one, "
+        + why
+        + f"  Pass {resume_flag} to continue that run — its recorded settings "
+        f"ARE checked then, and a mismatch is refused; its finished games are "
+        f"kept and only the remainder is played.\n"
+        f"  Or {out_flag} <path> / change the run label to start a separate one, "
         f"or delete the file."
+    )
+
+
+def take_over_header_only_log(
+    path: str | Path, *, fingerprint: str,
+) -> tuple[bool, str]:
+    """Clear a log that holds a header and ZERO games so a fresh run can use it.
+
+    A crash between the header write and the first finished game — checkpoint
+    load, a 4-minute ``torch.compile``, engine warmup — leaves exactly this,
+    and the "already exists" refusal then blocks the retry to protect games
+    that do not exist. Returns ``(taken_over, message)``: the message is a note
+    to print when the log was cleared, and an extra line for the refusal when
+    it was not.
+
+    Not taken over when the log holds games (the case the refusal is FOR), when
+    its fingerprint is another invocation's, or when it cannot be parsed.
+    """
+    p = Path(path)
+    try:
+        log = read_game_log(p)
+    except (ValueError, OSError):
+        return False, ""
+    if log.games:
+        return False, ""
+    if log.fingerprint != fingerprint:
+        return False, (
+            f"  It holds ZERO games, but its header fingerprint "
+            f"({log.fingerprint or '<absent>'}) is not this invocation's "
+            f"({fingerprint}), so it belongs to a different run."
+        )
+    p.write_text("", encoding="utf-8")
+    return True, (
+        f"note: {p} held a header and ZERO games (a crash before the first "
+        f"game finished — checkpoint load, compile, engine warmup). Its "
+        f"fingerprint is this invocation's, so there is nothing to mix: the "
+        f"header is rewritten and this run starts from scratch."
     )
 
 

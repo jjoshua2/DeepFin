@@ -448,6 +448,15 @@ run_arena () {   # $1=reference  $2=series-label
     # keeps the pairs the killed attempt finished and plays only the remainder
     # — which is the whole point: 2026-08-21 a 128-game arena OOMed with zero
     # games persisted, and its relaunch started from nothing.
+    #
+    # ⚑ The pair of decisions above means one reported Elo CAN span a compiled
+    # attempt and an eager retry: $compile_arg is re-derived from free VRAM on
+    # every attempt, while --resume keeps the earlier attempt's games. compile
+    # is deliberately outside the resume fingerprint (a fingerprint covering it
+    # would refuse exactly this retry), so the mix is REPORTED instead: each
+    # game row records its compile setting and the result record carries
+    # `mixed_compile` plus the distinct values. A `MIXED torch.compile` line in
+    # "$out" says this series' number is a splice of two inference paths.
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \

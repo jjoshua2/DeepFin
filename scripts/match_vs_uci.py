@@ -40,6 +40,7 @@ import csv
 import math
 import os
 import shlex
+import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -61,6 +62,7 @@ from chess_anti_engine.utils.game_log import (
     refuse_existing_log_message,
     refuse_settings_mismatch_message,
     settings_fingerprint,
+    take_over_header_only_log,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -976,7 +978,15 @@ def main() -> None:
                         "the match had run once. REFUSES if the log's engines, "
                         "budgets, openings or any other recorded setting differ "
                         "from this invocation. Without this flag an existing "
-                        "log is an error, so two matches can never be mixed.")
+                        "log is an error, so two matches can never be mixed. "
+                        "A resumed match is statistically valid under those "
+                        "settings but is NOT bit-identical to an uninterrupted "
+                        "one: both engines are restarted, so hash tables, "
+                        "learned time control state and any internal RNG begin "
+                        "fresh at the resume point. The fingerprint also stores "
+                        "engine COMMANDS and checkpoint paths, not content "
+                        "hashes — replacing a binary or a weights file in place "
+                        "between segments is undetectable here, so don't.")
     p.add_argument("--move-log-out", type=Path, default=None, help="write per-move timing/search stats to CSV")
     p.add_argument("--warmup-nodes", type=_positive_int, default=None, help="run an unrated warmup search for both engines")
     p.add_argument("--warmup-nodes-a", type=_positive_int, default=None, help="run an unrated warmup search for engine A")
@@ -1069,9 +1079,26 @@ def main() -> None:
         # Decided BEFORE the engines are started: a refusal must not leave two
         # UCI subprocesses (and a compiled net) behind.
         if had_log and not args.resume:
-            raise SystemExit(refuse_existing_log_message(
-                game_log_path, resume_flag="--resume", out_flag="--games-out",
-            ))
+            # A crash between the header write and the first finished game
+            # (engine warmup, a slow checkpoint load inside engine A) leaves a
+            # log with zero games; refusing the retry then protects nothing.
+            taken_over, note = take_over_header_only_log(
+                game_log_path, fingerprint=fingerprint,
+            )
+            if taken_over:
+                print(f"[match] {note}", flush=True)
+                had_log = False
+            else:
+                message = refuse_existing_log_message(
+                    game_log_path, resume_flag="--resume",
+                    out_flag="--games-out",
+                    # The default path carries the fingerprint; --games-out and
+                    # --pgn-out are given by hand and compared against nothing.
+                    fingerprint_keyed=(
+                        args.games_out is None and args.pgn_out is None
+                    ),
+                )
+                raise SystemExit(message + ("\n" + note if note else ""))
         resumed = (
             load_match_resume(
                 game_log_path, settings=log_settings, openings=openings,
@@ -1099,6 +1126,23 @@ def main() -> None:
             )
         if args.pgn_out is not None:
             args.pgn_out.parent.mkdir(parents=True, exist_ok=True)
+            if done_games and not (
+                args.pgn_out.exists() and args.pgn_out.stat().st_size > 0
+            ):
+                # The PGN is opened in APPEND mode on a resume, so this process
+                # writes only the games it plays. With the earlier segment's
+                # PGN missing (or never requested), the file that appears is a
+                # partial record of a match whose JSONL log is complete, and
+                # nothing downstream can tell.
+                print(
+                    f"[match] WARNING: --pgn-out {args.pgn_out} is missing or "
+                    f"empty, but {game_log_path} already holds "
+                    f"{len(done_games)} finished game(s). The PGN will contain "
+                    f"ONLY the games this process plays, not the whole match "
+                    f"the summary reports. Point --pgn-out at the earlier "
+                    f"segment's file, or treat this one as a partial record.",
+                    file=sys.stderr, flush=True,
+                )
         if args.move_log_out is not None:
             args.move_log_out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1304,7 +1348,11 @@ def main() -> None:
                 if move_fh is not None:
                     move_fh.flush()
                 # Durable BEFORE the next game starts: this is the record that
-                # makes a crashed match resumable rather than lost.
+                # makes a crashed match resumable rather than lost. It is also
+                # written LAST on purpose — JSONL is the commit record, and
+                # anything not in it is replayed on resume. A crash between the
+                # PGN write above and this one therefore costs a duplicated PGN
+                # game, not a silently missing one.
                 game_log.write_game({
                     "game_index": i,          # 0-based schedule index
                     "game_number": i + 1,     # what the console and the CSV show
