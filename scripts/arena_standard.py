@@ -930,6 +930,78 @@ def verify_game_log_on_disk(
 # Openings
 # ---------------------------------------------------------------------------
 
+DEFAULT_EVAL_MAX_BATCH = 4096
+"""Forward-batch cap for the hoisted arena evaluators; 0 disables the hoist.
+
+4096 is what production selfplay runs (``worker.py`` builds its
+``DirectGPUEvaluator`` with ``max_batch=4096, n_slots=2``), and at the default
+``--max-concurrent-games 128`` it is at or above every batch the C search
+already builds, so the cap does not reshape the search at the default settings
+-- it only binds once concurrency is raised past that. Raising concurrency
+without raising this is what the cap exists to stop.
+"""
+
+
+def build_arena_evaluator(model: Any, *, device: str, max_batch: int, n_slots: int = 2) -> Any:
+    """One LONG-LIVED evaluator for one arena side.
+
+    Without this, ``pick_moves_for_boards`` passes no evaluator and every C
+    search entry point builds a THROWAWAY ``LocalModelEvaluator`` per call --
+    per side, per ply. Each one lazily creates its own CUDA stream on first use;
+    torch hands streams out of a fixed round-robin pool of 32 per device and the
+    caching allocator partitions its segments BY STREAM, so a two-model arena
+    cycles the entire pool in 16 plies and every stream ends up retaining a full
+    forward's working set. Reserved VRAM inflates by up to the pool size and
+    OOMs a 32G card well before the game count does.
+
+    ``DirectGPUEvaluator`` (not ``LocalModelEvaluator``) for two reasons beyond
+    lifetime: it implements the pinned slot API, so ``supports_inplace_api`` is
+    true and the C search writes encodes straight into reused pinned buffers
+    instead of allocating a fresh numpy batch per rep; and it carries
+    ``_max_batch``, which is the ONLY thing that caps the leaf batch --
+    ``mcts/gumbel_c.py`` mins its leaf cap against ``getattr(eval_impl,
+    "_max_batch", <uncapped>)``, so a ``LocalModelEvaluator`` leaves the forward
+    batch growing with concurrency without bound.
+
+    ``n_slots=2`` because the C search's 2-group eval pipeline (any call with
+    >= 64 boards) needs two independent output slots; with one slot it silently
+    falls back off the in-place path.
+
+    ``legal_bf16=False`` deliberately. It defaults True, and turning it on would
+    switch the non-pipelined leaf transport to compact BF16 logits softmaxed in
+    C -- a real numerics change against every arena already in the ledger.
+    ``LocalModelEvaluator`` has no ``evaluate_legal_bf16`` at all, so today's
+    arena runs dense float32; keeping it dense is what makes this change a
+    memory fix rather than a new instrument.
+    """
+    from chess_anti_engine.inference import DirectGPUEvaluator
+
+    return DirectGPUEvaluator(
+        model,
+        device=str(device),
+        max_batch=int(max_batch),
+        n_slots=int(n_slots),
+        legal_bf16=False,
+    )
+
+
+def _free_cached_vram(device: str) -> None:
+    """Return the caching allocator's idle segments to the driver. No-op off CUDA.
+
+    Cheap insurance at the two points where the batch shape shrinks for good
+    (a finished chunk, the rolling pool's drain): the segments cached for the
+    wide shape are dead weight against the next arena stage or a concurrent
+    trainer, and nothing else in this process will reclaim them.
+    """
+    if not str(device).startswith("cuda"):
+        return
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.empty_cache()
+
+
 def default_openings_path() -> Path:
     """The 8-move UHO book from the production config (opening_book_path_2)."""
     import yaml
@@ -1151,6 +1223,8 @@ def play_paired_games_matched_sims(
     pgn_sink: PgnSink | None = None,
     pair_ids: Sequence[int] | None = None,
     chunk: int | None = None,
+    evaluator_candidate: Any = None,
+    evaluator_reference: Any = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
 
@@ -1171,6 +1245,14 @@ def play_paired_games_matched_sims(
     CANDIDATE side only — the reference keeps today's search, which is the
     A/B the experiment needs. Non-zero flags force the Python search path
     (mcts/gumbel.py), so matched_sims is the honest mode.
+
+    ``evaluator_candidate`` / ``evaluator_reference`` are the per-side
+    long-lived evaluators (``build_arena_evaluator``). ``None`` on both is
+    today's behaviour: each search call then builds its own throwaway
+    ``LocalModelEvaluator`` and its own CUDA stream. They are per SIDE, not
+    shared -- an evaluator is bound to one model, and handing the candidate's
+    evaluator to the reference would silently play the candidate's weights for
+    both sides.
 
     Reuses the selfplay match helpers so search behavior (gumbel MCTS, the
     model's own input_history_encoding / policy_encoding, including the
@@ -1257,9 +1339,11 @@ def play_paired_games_matched_sims(
             active, boards, a_plays_white,
         )
         vol_kwargs = dict(volatility_candidate or {})
-        for model, idxs, sims, extra, side in (
-            (model_candidate, a_to_move, sims_candidate, vol_kwargs, search_candidate),
-            (model_reference, b_to_move, sims_reference, {}, search_reference),
+        for model, idxs, sims, extra, side, ev in (
+            (model_candidate, a_to_move, sims_candidate, vol_kwargs, search_candidate,
+             evaluator_candidate),
+            (model_reference, b_to_move, sims_reference, {}, search_reference,
+             evaluator_reference),
         ):
             if not idxs:
                 continue
@@ -1272,6 +1356,7 @@ def play_paired_games_matched_sims(
                 gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
+                evaluator=ev,
             )
             apply_actions_to_boards(boards, idxs, actions)
 
@@ -1340,6 +1425,8 @@ def play_paired_games_matched_sims_rolling(
     pgn_sink: PgnSink | None = None,
     pair_ids: Sequence[int] | None = None,
     prior_pair_scores: Sequence[float] | None = None,
+    evaluator_candidate: Any = None,
+    evaluator_reference: Any = None,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -1359,6 +1446,14 @@ def play_paired_games_matched_sims_rolling(
     and returns whatever COMPLETE pairs exist. Only complete pairs are ever
     returned: a half-played game contributes nothing, because filling it in as
     a draw would let a truncated run report pairs it never finished.
+
+    ``evaluator_candidate`` / ``evaluator_reference`` are the per-side
+    long-lived evaluators (``build_arena_evaluator``). ``None`` on both is
+    today's behaviour: each search call then builds its own throwaway
+    ``LocalModelEvaluator`` and its own CUDA stream. They are per SIDE, not
+    shared -- an evaluator is bound to one model, and handing the candidate's
+    evaluator to the reference would silently play the candidate's weights for
+    both sides.
     """
     from chess_anti_engine.selfplay.match import (
         apply_actions_to_boards,
@@ -1435,6 +1530,7 @@ def play_paired_games_matched_sims_rolling(
     t0 = time.time()
     done = 0
     last_report = 0
+    drain_freed = False
     while queue or boards:
         # Stop on our OWN clock rather than waiting to be SIGKILLed by the
         # caller's `timeout`. A killed process returns nothing at all; stopping
@@ -1490,6 +1586,13 @@ def play_paired_games_matched_sims_rolling(
             )
             break
         _refill()  # backfill the slots the reaped games freed — keep the pool full
+        if not drain_freed and not queue and len(boards) < pool_size:
+            # Drain has begun: the queue is empty, so the pool only shrinks from
+            # here and the allocator's full-width segments will never be reused.
+            # Freed ONCE, at the transition — doing it per ply would sync the
+            # device on each of the last ~pool_size plies for no further gain.
+            _free_cached_vram(device)
+            drain_freed = True
         if not boards:
             break
         if done - last_report >= report_every:
@@ -1511,10 +1614,11 @@ def play_paired_games_matched_sims_rolling(
             last_report = done
         active = list(range(len(boards)))
         a_to_move, b_to_move = split_active_by_side_to_move(active, boards, awhite)
-        for model, idxs, sims, extra, side in (
+        for model, idxs, sims, extra, side, ev in (
             (model_candidate, a_to_move, sims_candidate,
-             dict(volatility_candidate or {}), search_candidate),
-            (model_reference, b_to_move, sims_reference, {}, search_reference),
+             dict(volatility_candidate or {}), search_candidate, evaluator_candidate),
+            (model_reference, b_to_move, sims_reference, {}, search_reference,
+             evaluator_reference),
         ):
             if not idxs:
                 continue
@@ -1527,11 +1631,13 @@ def play_paired_games_matched_sims_rolling(
                 gumbel_overrides=overrides_with_volatility(side, extra),
                 gumbel_vloss_weight=side.vloss_weight,
                 gumbel_target_batch=side.target_batch,
+                evaluator=ev,
             )
             apply_actions_to_boards(boards, idxs, actions)
         for i in active:
             gplies[i] += 1
 
+    _free_cached_vram(device)
     return complete_pair_scores(game_scores)
 
 
@@ -1839,6 +1945,7 @@ def run_arena(
     pgn_reference_name: str | None = None,
     resume: bool = False,
     game_log_path: Path | None = None,
+    eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -1852,6 +1959,21 @@ def run_arena(
     """
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
+    if eval_max_batch < 0:
+        raise SystemExit("--eval-max-batch must be >= 0 (0 disables the hoist)")
+    if 0 < eval_max_batch < max_concurrent_games:
+        # Refused HERE, not on the ply that trips it. The C gumbel ROOT submit
+        # is handed every board on one side at once and is NOT bucketed against
+        # the evaluator's cap, so `get_input_buffer` would raise `batch N > max
+        # M` mid-arena -- after the checkpoint load and a multi-minute compile,
+        # and after the PGN/game log already exist.
+        raise SystemExit(
+            f"--eval-max-batch {eval_max_batch} is below --max-concurrent-games "
+            f"{max_concurrent_games}: the search's root batch is up to one whole "
+            "side of the pool and the hoisted evaluator would refuse it. Raise "
+            "--eval-max-batch to at least --max-concurrent-games, or pass "
+            "--eval-max-batch 0 to keep the per-call evaluators."
+        )
     if mode == "matched_sims" and (search_candidate is None or search_reference is None):
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
@@ -2195,6 +2317,38 @@ def run_arena(
         model_reference = load_model_from_checkpoint(reference, device=device)
         print(f"[arena] both checkpoints loaded "
               f"(reference in {time.time() - _t_load:.0f}s)", flush=True)
+  # Search reads exactly two heads -- `policy_own` (the prior) and `wdl` --
+  # while `ChessNet.forward` otherwise computes ten. Its `_inference_only`
+  # branch returns those two from the SAME expressions the full branch uses
+  # (`policy_own(_policy_tokens(t), ft_bias=...)`, and `value_wdl(t)`, which is
+  # what the coupled branch's `head_from_hidden(hidden(t))` evaluates to), so
+  # this drops work without moving a number the search reads. Set BEFORE
+  # torch.compile -- the same point worker.py and SlotBroker set it -- because
+  # after compile it is a guard change on an already-traced graph.
+  #
+  # ⚑ NOT under --volatility-*. That search runs the PYTHON path and reads the
+  # `volatility` head through `evaluate_encoded_with_volatility`, which
+  # substitutes ZEROS when the key is absent rather than raising. Setting
+  # `_inference_only` there would leave a volatility arena searching with vol=0
+  # on every node and reporting it as a volatility result -- a value accepted
+  # and then silently ignored, which is the defect class this change removes.
+        _full_heads = volatility_candidate is not None
+        if not _full_heads:
+            for _m in (model_candidate, model_reference):
+                if hasattr(_m, "_inference_only"):
+                    setattr(_m, "_inference_only", True)
+  # Read BACK off the models rather than echoing the intent: `hasattr` is the
+  # gate above, so a model that never had the attribute must show as absent
+  # here instead of being reported as configured.
+        print(
+            "[arena] inference-only heads: candidate={} reference={}{}".format(
+                getattr(model_candidate, "_inference_only", "absent"),
+                getattr(model_reference, "_inference_only", "absent"),
+                " (forced full: --volatility-* needs the volatility head)"
+                if _full_heads else " (policy_own + wdl only)",
+            ),
+            flush=True,
+        )
         if compile_models:
             import torch
             # Plain inductor compile (NOT reduce-overhead/cudagraphs, which recompile
@@ -2204,6 +2358,57 @@ def run_arena(
             model_candidate = torch.compile(model_candidate)
             model_reference = torch.compile(model_reference)
             print("[arena] torch.compile ON (inductor, auto-dynamic batch)", flush=True)
+  # ONE evaluator per side for the whole run, built AFTER compile so it holds
+  # the module the forwards actually go through. See `build_arena_evaluator`
+  # for what the per-call evaluators cost. Three conditions, each PRINTED when
+  # it turns the hoist off, because a knob that silently does nothing is the
+  # defect this whole change is about:
+  #  * CUDA only. The defect is the CUDA stream pool and the VRAM the allocator
+  #    strands per stream; a CPU arena has neither, and would pay ~0.5G of host
+  #    buffers at the default cap for nothing.
+  #  * not under --volatility-*. That side searches on the PYTHON path, whose
+  #    leaf batches are not sized against any evaluator cap, and hoisting only
+  #    the side that stayed on the C path would put the two halves of the A/B
+  #    on different transports.
+  #  * --eval-max-batch 0, the same opt-out by hand, for reproducing a
+  #    pre-hoist arena exactly.
+        evaluator_candidate = None
+        evaluator_reference = None
+        _no_hoist = (
+            "--eval-max-batch 0" if not eval_max_batch
+            else "--volatility-* on the candidate" if _full_heads
+            else f"device={device} is not CUDA" if not str(device).startswith("cuda")
+            else None
+        )
+        if _no_hoist is None:
+            from chess_anti_engine.inference_dispatcher import supports_inplace_api
+
+            evaluator_candidate = build_arena_evaluator(
+                model_candidate, device=device, max_batch=eval_max_batch,
+            )
+            evaluator_reference = build_arena_evaluator(
+                model_reference, device=device, max_batch=eval_max_batch,
+            )
+  # Announced off the OBJECTS, through the very expressions mcts/gumbel_c.py
+  # uses to read them (`getattr(eval_impl, "_max_batch", ...)`,
+  # `supports_inplace_api`), so a hoist that produced an evaluator the search
+  # would not actually use in-place cannot print as if it had. The two ids
+  # differ iff the sides really got separate evaluators.
+            print(
+                "[arena] evaluator HOISTED (one per side, whole run): "
+                f"{type(evaluator_candidate).__name__} "
+                f"max_batch={getattr(evaluator_candidate, '_max_batch', 'absent')} "
+                f"n_slots={getattr(evaluator_candidate, 'n_slots', 'absent')} "
+                f"inplace={supports_inplace_api(evaluator_candidate)} "
+                f"cand=0x{id(evaluator_candidate):x} ref=0x{id(evaluator_reference):x}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[arena] evaluator hoist OFF ({_no_hoist}): every search call "
+                "builds its own LocalModelEvaluator, and on CUDA its own stream",
+                flush=True,
+            )
         print(
             f"[arena] matched_sims: candidate={sims_candidate} sims/move, "
             f"reference={sims_reference} sims/move, temp={temperature}, "
@@ -2249,6 +2454,8 @@ def run_arena(
                 pgn_sink=pgn_sink,
                 pair_ids=remaining_ids,
                 prior_pair_scores=loaded_pair_scores,
+                evaluator_candidate=evaluator_candidate,
+                evaluator_reference=evaluator_reference,
             )
         else:
             # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -2289,7 +2496,12 @@ def run_arena(
                     pgn_sink=pgn_sink,
                     pair_ids=sub_ids,
                     chunk=ci // chunk_pairs,
+                    evaluator_candidate=evaluator_candidate,
+                    evaluator_reference=evaluator_reference,
                 ))
+                # The chunk has drained; its widest batch shapes are gone for
+                # good until the next chunk rebuilds them.
+                _free_cached_vram(device)
                 _so_far = loaded_pair_scores + pair_scores
                 print(f"[arena] RUNNING Elo after {2 * len(_so_far)} games:", flush=True)
                 print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
@@ -2541,6 +2753,16 @@ def main() -> None:
                    help="matched_sims: cap simultaneous games per batch to bound "
                         "GPU memory; total --games still played in chunks "
                         "(default: 128). Lower if you OOM on a small card.")
+    p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
+                   help="matched_sims: forward-batch cap for the ONE long-lived "
+                        f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
+                        "which is what production selfplay runs). Must be >= "
+                        "--max-concurrent-games: the search's root submit is a "
+                        "whole side of the pool at once and is not bucketed "
+                        "against this cap. 0 disables the hoist entirely and "
+                        "restores the per-call evaluators (a fresh CUDA stream "
+                        "per side per ply, and no cap on the leaf batch) — for "
+                        "reproducing a pre-hoist arena, not for normal use.")
     p.add_argument("--report-every", type=int, default=64,
                    help="rolling mode: print a RUNNING Elo block every N finished "
                         "games (default: 64). Lower it when the run is under a "
@@ -2752,6 +2974,7 @@ def main() -> None:
         reference=args.reference,
         games=args.games,
         max_concurrent_games=args.max_concurrent_games,
+        eval_max_batch=args.eval_max_batch,
         report_every=args.report_every,
         max_seconds=args.max_seconds,
         syzygy_path=args.syzygy,
