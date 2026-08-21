@@ -786,7 +786,7 @@ def test_a_resume_across_a_compile_change_is_recorded_as_mixed(
         resume=True,
     )
     err = capsys.readouterr().err
-    assert "MIXED torch.compile" in err, err
+    assert "ABOUT TO MIX torch.compile" in err, err
     assert record["mixed_compile"] is True
     assert record["compile_values"] == ["off", "on"], record["compile_values"]
     assert record["compile"] == "off", "`compile` is what THIS process ran"
@@ -811,7 +811,7 @@ def test_an_unmixed_resume_is_not_flagged(
         monkeypatch, tmp_path, log_path=log_path, compile_models=False,
         resume=True,
     )
-    assert "MIXED torch.compile" not in capsys.readouterr().err
+    assert "ABOUT TO MIX torch.compile" not in capsys.readouterr().err
     assert record["mixed_compile"] is False
     assert record["compile_values"] == ["off"]
 
@@ -860,7 +860,7 @@ def test_rows_written_before_the_compile_field_existed_read_as_unknown(
     assert record["pentanomial"] == _EXPECTED_PENTANOMIAL, "the resume must work"
     assert record["mixed_compile"] is True
     assert record["compile_values"] == ["on", "unknown"]
-    assert err.count("MIXED torch.compile") == 1, (
+    assert err.count("ABOUT TO MIX torch.compile") == 1, (
         f"one warning per resume, not one per legacy row; got\n{err}"
     )
 
@@ -954,7 +954,12 @@ def test_game_log_agrees_sees_a_row_that_never_reached_the_disk(
     assert record["game_log_agrees"] is False, (
         "the log is one game short on disk; the in-memory tally cannot see that"
     )
-    assert "does not hold what this run scored" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "does not hold what this run scored" in err, err
+    assert "pair ids scored but NOT complete on disk: [3]" in err, (
+        "counts alone are silent when two lists differ by VALUE at equal "
+        f"length; the diagnostic must name the pair:\n{err}"
+    )
     # The played result still stands — the games happened.
     assert record["pentanomial"] == _EXPECTED_PENTANOMIAL
 
@@ -1012,7 +1017,11 @@ def test_a_fully_complete_resume_does_not_re_append_the_aggregate(
     assert len(aggregate.read_text().splitlines()) == 1, (
         "a resume that played zero games appended a second row for one arena"
     )
-    assert "not re-appended" in out, out
+    assert "played ZERO new games" in out, out
+    assert "did NOT read" in out, (
+        "the note must not assert the earlier row IS in the aggregate — "
+        f"nothing here read it:\n{out}"
+    )
     assert "[arena] Elo:" in out, "the recomputed summary must still print"
     assert again["pentanomial"] == first["pentanomial"]
 
@@ -1298,3 +1307,137 @@ def test_a_complete_log_is_not_touched_by_the_repair(tmp_path: Path) -> None:
     ) as log:
         assert log.repaired_truncated_tail is False
     assert path.read_bytes() == before
+
+
+def test_a_complete_final_line_without_its_newline_is_a_committed_game(
+    tmp_path: Path,
+) -> None:
+    """"No trailing newline" is not "half written", and the gap is a whole game.
+
+    read_game_log PARSES before it judges, so a complete JSON row missing only
+    its newline is returned as a FINISHED game — and both drivers load their
+    resume state from that read BEFORE the writer is constructed. The pair is
+    therefore already marked done and will never be replayed, so a repair that
+    truncated on the byte alone would delete a game nothing puts back.
+    """
+    path = tmp_path / "committed.games.jsonl"
+    header = {
+        "kind": "header", "version": 1, "driver": "arena_standard",
+        "fingerprint": "abc123abc123", "settings": {"k": 1},
+    }
+    game = {"kind": "game", "pair_id": 0, "half": 0, "result": "1-0"}
+    path.write_bytes(
+        (json.dumps(header) + "\n" + json.dumps(game)).encode("utf-8")
+    )
+    assert len(read_game_log(path).games) == 1, "fixture: a resume counts it"
+
+    with GameLogWriter(
+        path, driver="arena_standard", settings={"k": 1}, resuming=True,
+    ) as log:
+        assert log.repaired_truncated_tail is False, (
+            "nothing may be dropped: this row parses, so it is committed"
+        )
+        log.write_game({"pair_id": 0, "half": 1, "result": "0-1"})
+
+    parsed = read_game_log(path)
+    assert [(r["pair_id"], r["half"]) for r in parsed.games] == [(0, 0), (0, 1)], (
+        "the committed game must survive AND the next write must not fuse "
+        f"onto it; got {parsed.games}"
+    )
+    assert parsed.truncated_tail is False
+
+
+def test_game_log_agrees_survives_a_row_the_loader_cannot_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A malformed row is the input this check exists to survive, not to die on.
+
+    ``load_arena_resume`` keys rows by ``row["pair_id"]``, so a row without one
+    raises KeyError straight out of the verification — after every game has
+    been played. Reporting beats losing the summary to a bookkeeping fault.
+    """
+    import scripts.arena_standard as arena
+
+    log_path = tmp_path / "unkeyable.games.jsonl"
+    play = _fake_matched_time()
+
+    def _play_then_append_a_bad_row(*args: Any, **kwargs: Any) -> list[float]:
+        scores = play(*args, **kwargs)
+        with log_path.open("a") as fh:
+            fh.write(json.dumps({
+                "kind": "game", "half": 0, "a_is_white": True,
+                "result": "1-0", "opening_fen": _OPENING_FENS[0],
+            }) + "\n")
+        return scores
+
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time", _play_then_append_a_bad_row,
+    )
+    record = arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=8,
+        openings_path=None, openings_fen=_openings_file(tmp_path),
+        opening_plies=16, mode="matched_time",
+        sims_candidate=32, sims_reference=32, ms_per_move=100, max_plies=300,
+        temperature=0.1, gumbel_add_noise=True, device="cpu", seed=7,
+        out_path=None, game_log_path=log_path, resume=False,
+    )
+    assert record["game_log_agrees"] is False
+    err = capsys.readouterr().err
+    assert "KeyError" in err, err
+    assert record["pentanomial"] == _EXPECTED_PENTANOMIAL, (
+        "the games were played; a malformed row must not cost the summary"
+    )
+
+
+def test_a_resume_that_scores_no_new_pair_mixes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """mixed_compile must follow the games SCORED, not the games scheduled.
+
+    A --max-seconds deadline that lands before the first pair finishes adds
+    nothing to the pentanomial, so the eager retry contributed no game and the
+    Elo spans one inference path, not two.
+    """
+    import scripts.arena_standard as arena
+
+    log_path = tmp_path / "deadline.games.jsonl"
+    with pytest.raises(_SimulatedCrash):
+        _run_arena_matched_sims(
+            monkeypatch, tmp_path, log_path=log_path, compile_models=True,
+            crash_after=4,
+        )
+
+    def _deadline_hits_first(*_a: object, **_kw: object) -> list[float]:
+        return []
+
+    side = arena.resolve_search_shape("training")
+    monkeypatch.setattr(
+        "chess_anti_engine.uci.model_loader.load_model_from_checkpoint",
+        lambda *_a, **_kw: object(),
+    )
+    monkeypatch.setattr("torch.compile", lambda model, **_kw: model)
+    for name in (
+        "play_paired_games_matched_sims",
+        "play_paired_games_matched_sims_rolling",
+    ):
+        monkeypatch.setattr(arena, name, _deadline_hits_first)
+    record = arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=8,
+        openings_path=None, openings_fen=_openings_file(tmp_path),
+        opening_plies=16, mode="matched_sims",
+        sims_candidate=8, sims_reference=8, ms_per_move=0, max_plies=40,
+        temperature=0.1, gumbel_add_noise=True, device="cpu", seed=7,
+        out_path=None, game_log_path=log_path, resume=True,
+        compile_models=False, rolling=True, max_concurrent_games=2,
+        search_candidate=side, search_reference=side,
+    )
+    assert record["truncated"] is True, "fixture: this run scored no new pair"
+    assert record["mixed_compile"] is False, (
+        "the eager process contributed zero games; the score is all compiled"
+    )
+    assert record["compile_values"] == ["on"]
+    assert record["game_log_agrees"] is True, (
+        "a truncated run does not know which pair ids it scored, so the id "
+        "check must not fire on it"
+    )

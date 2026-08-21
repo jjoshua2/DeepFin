@@ -849,9 +849,17 @@ def load_arena_resume(
     )
 
 
+def _first_few(values: Sequence[object], limit: int = 8) -> str:
+    """``[a, b, c] (+N more)`` — a diagnostic that stays readable at 500 pairs."""
+    head = ", ".join(repr(v) for v in values[:limit])
+    extra = len(values) - limit
+    return f"[{head}]" + (f" (+{extra} more)" if extra > 0 else "")
+
+
 def verify_game_log_on_disk(
     path: Path, *, settings: dict, openings: list[chess.Board],
     expected_pair_scores: Sequence[float],
+    expected_pair_ids: Sequence[int] | None = None,
 ) -> tuple[bool, str]:
     """Re-READ the finished log and check it holds what was just scored.
 
@@ -863,22 +871,59 @@ def verify_game_log_on_disk(
     Deliberately routed through ``load_arena_resume``, the loader ``--resume``
     itself uses, so the check also answers the question the field exists for:
     is this log resumable, or has the run left something a later resume will
-    reject? Every failure is reported, never raised: the games have already
-    been played, and losing the summary to a bookkeeping fault would be a
-    worse outcome than a flagged record.
+    reject?
+
+    ``expected_pair_ids`` is passed only when the run KNOWS which pairs it
+    scored — a wall-clock-truncated run does not, because the play loops return
+    scores rather than ids, and inventing the set there would make this fire on
+    a healthy run.
+
+    Every failure is reported, never raised — including a malformed row, which
+    is precisely the input this exists to survive: the games have already been
+    played, and losing the summary to a bookkeeping fault would be a worse
+    outcome than a flagged record. ``KeyError``/``TypeError`` are in the catch
+    because a row missing ``pair_id``, or holding a string where an int
+    belongs, reaches the loader as an unhandled exception rather than a
+    refusal.
     """
     try:
         reloaded = load_arena_resume(path, settings=settings, openings=openings)
-    except (SystemExit, ValueError, OSError) as exc:
-        return False, f"the log cannot be re-read as a resumable arena: {exc}"
+    except (SystemExit, ValueError, TypeError, KeyError, OSError) as exc:
+        return False, (
+            f"the log cannot be re-read as a resumable arena: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    on_disk_ids = sorted(reloaded.complete_pair_ids)
     on_disk = sorted(reloaded.pair_scores)
     expected = sorted(expected_pair_scores)
+    ids_agree = (
+        expected_pair_ids is None or on_disk_ids == sorted(expected_pair_ids)
+    )
+    if on_disk == expected and ids_agree:
+        return True, ""
+    parts = [
+        f"the log holds {len(on_disk)} complete pairs on disk, this run scored "
+        f"{len(expected)}"
+    ]
+    if expected_pair_ids is not None:
+        wanted = set(expected_pair_ids)
+        missing = sorted(wanted - set(on_disk_ids))
+        extra = sorted(set(on_disk_ids) - wanted)
+        if missing:
+            parts.append(
+                f"pair ids scored but NOT complete on disk: {_first_few(missing)}"
+            )
+        if extra:
+            parts.append(
+                f"pair ids complete on disk but not scored: {_first_few(extra)}"
+            )
     if on_disk != expected:
-        return False, (
-            f"the log holds {len(on_disk)} complete pairs on disk but this run "
-            f"scored {len(expected)}"
+        # Counts alone are silent when the two differ by VALUE at equal length.
+        parts.append(
+            f"pair scores on disk {_first_few(on_disk)} vs scored "
+            f"{_first_few(expected)}"
         )
-    return True, ""
+    return False, "; ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -1948,19 +1993,25 @@ def run_arena(
     # the mix it permits is surfaced here instead of being refused.
     this_compile = compile_tag(compile_models, mode=mode)
     kept_compile_tags = sorted(resumed.compile_tags) if resumed is not None else []
+    # The tags of the games that end up SCORED. `this_compile` joins it after
+    # the play loop, once it is known that this process scored a pair at all.
     scored_compile_tags = set(kept_compile_tags)
-    if remaining_ids:
-        scored_compile_tags.add(this_compile)
-    if len(scored_compile_tags) > 1:
+    predicted_tags = scored_compile_tags | (
+        {this_compile} if remaining_ids else set()
+    )
+    if len(predicted_tags) > 1:
+        # Printed BEFORE play, where it can still change an operator's mind, so
+        # it is a forecast: `mixed_compile` in the result record is the fact.
         print(
-            f"[arena] WARNING: MIXED torch.compile across this resume. The "
+            f"[arena] WARNING: this resume is ABOUT TO MIX torch.compile. The "
             f"pairs kept from {log_path} were played under "
-            f"{kept_compile_tags} and this process "
-            f"plays the remaining {len(remaining_ids)} pair(s) under "
-            f"{this_compile!r}. compile is deliberately outside the resume "
-            f"fingerprint (daily_gate_ratchet.sh re-derives it from free VRAM "
-            f"on every retry), so this is allowed and the pooled Elo spans two "
-            f"inference paths. Recorded as mixed_compile in the result record.",
+            f"{kept_compile_tags} and this process plays the remaining "
+            f"{len(remaining_ids)} pair(s) under {this_compile!r}. compile is "
+            f"deliberately outside the resume fingerprint "
+            f"(daily_gate_ratchet.sh re-derives it from free VRAM on every "
+            f"retry), so this is allowed and the pooled Elo will span two "
+            f"inference paths. The result record's mixed_compile says whether "
+            f"it did: a run that scores no new pair mixes nothing.",
             file=sys.stderr, flush=True,
         )
     if (
@@ -2260,6 +2311,18 @@ def run_arena(
     # same schedule produce the same counts, the same Elo and the same CI.
     played_pair_scores = list(pair_scores)
     pair_scores = loaded_pair_scores + played_pair_scores
+    # What this invocation's compile setting ACTUALLY contributed. Gated on
+    # pairs scored, not on pairs scheduled: a --max-seconds deadline that lands
+    # before the first pair finishes adds no games, so flagging a mix there
+    # would report a splice that never happened.
+    if played_pair_scores:
+        scored_compile_tags.add(this_compile)
+    # Which pair ids the log must hold complete — knowable only when every
+    # scheduled pair finished, since the play loops return scores, not ids.
+    expected_pair_ids = (
+        sorted(done_pair_ids | set(remaining_ids))
+        if len(played_pair_scores) == len(remaining_ids) else None
+    )
     # Did what we PERSISTED match what we SCORED? Answered off the DISK, after
     # the writer is closed: a game log that disagrees with the summary is not a
     # cosmetic bug — every future resume is built on it, and it would look
@@ -2268,6 +2331,7 @@ def run_arena(
     game_log_agrees, disagreement = verify_game_log_on_disk(
         log_path, settings=log_settings, openings=openings,
         expected_pair_scores=pair_scores,
+        expected_pair_ids=expected_pair_ids,
     )
     if not game_log_agrees:
         print(
@@ -2357,8 +2421,12 @@ def run_arena(
             # this.
             print(
                 f"[arena] all {len(openings)} pairs already complete in "
-                f"{log_path}; result not re-appended to {out_path} (it is "
-                f"already there — re-appending would double-count this arena)",
+                f"{log_path}; this invocation played ZERO new games, so "
+                f"nothing is appended to {out_path} — a second row for one "
+                f"arena would double-count it in a shared aggregate. This "
+                f"process did NOT read {out_path}: confirm it holds the "
+                f"earlier run's row (a crash between the last game and that "
+                f"append would have left none).",
                 flush=True,
             )
         else:

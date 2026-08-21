@@ -455,8 +455,9 @@ run_arena () {   # $1=reference  $2=series-label
     # is deliberately outside the resume fingerprint (a fingerprint covering it
     # would refuse exactly this retry), so the mix is REPORTED instead: each
     # game row records its compile setting and the result record carries
-    # `mixed_compile` plus the distinct values. A `MIXED torch.compile` line in
-    # "$out" says this series' number is a splice of two inference paths.
+    # `mixed_compile` plus the distinct values. An `ABOUT TO MIX
+    # torch.compile` line in "$out" forecasts the splice; the row's
+    # `mixed_compile` says whether the retry actually scored a pair.
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \

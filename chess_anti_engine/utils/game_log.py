@@ -20,10 +20,12 @@ Two properties do the work:
   the games still in flight. Deliberately NOT ``fsync``: the failure mode this
   guards is a dead PROCESS (OOM, ``timeout -k``), and the page cache survives
   that. Power loss is out of scope and paying an fsync per game to pretend
-  otherwise would be a cost bought for nothing. The next writer first drops a
-  half-written FINAL line (``repair_truncated_tail``), because appending onto
-  one would fuse two records into an unparseable MIDDLE line — turning "lose
-  the game in flight" into "lose the whole log".
+  otherwise would be a cost bought for nothing. The next writer first
+  TERMINATES an unterminated final line (``repair_truncated_tail``), because
+  appending onto one would fuse two records into an unparseable MIDDLE line —
+  turning "lose the game in flight" into "lose the whole log". It drops that
+  line only when it does not parse: a complete JSON row without its newline is
+  a game ``read_game_log`` already returned and a resume already counted.
 * **A settings fingerprint in the header.** A resume onto different settings
   would silently mix two populations into one Elo, so ``fingerprint_differences``
   names every setting that moved and the caller refuses. Accepting the resume
@@ -166,25 +168,43 @@ def latest_rows_by_key(
 
 
 def repair_truncated_tail(path: str | Path) -> bool:
-    """Drop a half-written FINAL line, returning True when bytes were dropped.
+    """Terminate an unterminated FINAL line, returning True if bytes were DROPPED.
 
-    ``read_game_log`` already tolerates a crash-truncated tail (that game is
-    exactly the one a resume replays), but APPENDING to it would fuse the next
-    record onto the partial one and turn a MIDDLE line unparseable — which the
-    reader refuses outright, so the crash would cost the whole log instead of
-    one game. Called before every append; a log that ends in a newline is left
-    byte-for-byte alone.
+    A crash mid-``write`` can leave the last line without its newline, and
+    appending to it would fuse the next record onto it — turning a MIDDLE line
+    unparseable, which the reader refuses outright, so the crash would cost the
+    whole log instead of one game.
+
+    ⚑ "no trailing newline" is NOT the same as "half written", and the
+    difference is a committed game. ``read_game_log`` PARSES before it judges:
+    a final line that is complete JSON without a newline is a FINISHED game, it
+    is returned to the caller, and both drivers have already loaded their
+    resume state from that read by the time this runs — so that pair is marked
+    done and will never be replayed. Truncating it there deletes a game nothing
+    will ever put back. So parse the candidate first: if it parses, only the
+    newline is missing and only the newline is added; only an unparseable tail
+    is dropped. A log that already ends in a newline is left byte-for-byte
+    alone.
     """
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
         return False
-    with p.open("rb+") as fh:
-        fh.seek(-1, 2)
-        if fh.read(1) == b"\n":
-            return False
-        data = p.read_bytes()
-        fh.truncate(data.rfind(b"\n") + 1)
-    return True
+    data = p.read_bytes()
+    if data.endswith(b"\n"):
+        return False
+    cut = data.rfind(b"\n") + 1
+    try:
+        json.loads(data[cut:].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # Genuinely half written: this is the game the resume replays.
+        with p.open("rb+") as fh:
+            fh.truncate(cut)
+        return True
+    # Parses, so read_game_log counted it as a finished game. Anything else
+    # here deletes a committed record.
+    with p.open("ab") as fh:
+        fh.write(b"\n")
+    return False
 
 
 class GameLogWriter:
