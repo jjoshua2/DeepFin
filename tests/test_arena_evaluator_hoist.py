@@ -33,11 +33,15 @@ import pytest
 import torch
 
 import scripts.arena_standard as arena
+from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
+from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay import match as match_mod
 from scripts.arena_standard import (
+    DEFAULT_EVAL_MAX_BATCH,
     SideSearch,
+    arena_uncapped_leaf_rows,
     build_arena_evaluator,
     play_paired_games_matched_sims,
     play_paired_games_matched_sims_rolling,
@@ -52,7 +56,11 @@ _OPENING_FENS = (
 
 
 def _openings_file(tmp_path: Path, n: int = 2) -> Path:
-    path = tmp_path / "openings.fen"
+    # Named by count. A single shared name is a trap here: `_run` builds its
+    # defaults (which call this with n=1) BEFORE applying overrides, so a test
+    # asking for 2 openings would have its file truncated back to 1 by the
+    # default it was trying to override.
+    path = tmp_path / f"openings_{n}.fen"
     path.write_text("\n".join(_OPENING_FENS[:n]) + "\n")
     return path
 
@@ -102,12 +110,12 @@ class _DummyModel(torch.nn.Module):
 
 
 def _side(**kwargs: Any) -> SideSearch:
-    base = {
+    base: dict[str, Any] = {
         "shape": "test", "source": "test", "gumbel": {},
         "vloss_weight": 0, "target_batch": 0,
     }
     base.update(kwargs)
-    return SideSearch(**base)  # pyright: ignore[reportArgumentType]
+    return SideSearch(**base)
 
 
 def _fake_search_result(n: int) -> tuple:
@@ -532,3 +540,550 @@ def test_the_cli_flag_reaches_run_arena(monkeypatch: pytest.MonkeyPatch) -> None
     ])
     arena.main()
     assert seen.get("eval_max_batch") == 777
+
+
+# ---------------------------------------------------------------------------
+# --eval-max-batch is a SEARCH-SHAPE knob below the uncapped leaf buffer
+#
+# gumbel_c mins its leaf buffer against the evaluator's `_max_batch`, and when
+# that buffer fills `_mcts_tree.c` does NOT flush and retry -- it appends the
+# leaf as a SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q
+# (`stored_append_terminal(s, path_buf, path_len, g->root_qs[bi],
+# SOLVED_UNKNOWN)`). Leaves beyond the buffer are absorbed, not evaluated, so a
+# cap below what the search asked for changes which move is played. Reviewer
+# measured 128 vs 4096 on CPU: 57-75% of leaf evaluations gone, 53/64 boards
+# picking a different action.
+# ---------------------------------------------------------------------------
+
+
+def _original_pipelined_rows(n_boards: int, topk: int) -> int:
+    """The pre-extraction expression, transcribed from `git show` of the parent."""
+    mid = n_boards // 2
+    max_grp = max(mid, n_boards - mid)
+    return max(512, max_grp * max(2, int(topk)) * 2)
+
+
+def _original_single_rows(n_boards: int, topk: int) -> int:
+    """`_max_leaves_per_rep * 2`, the pre-extraction expression."""
+    return max(256, n_boards * max(2, int(topk))) * 2
+
+
+@pytest.mark.parametrize("topk", [2, 8, 16, 32, 64])
+@pytest.mark.parametrize("n_boards", [1, 2, 7, 63, 64, 65, 128, 256])
+def test_the_extracted_leaf_buffer_helper_is_value_identical(
+    n_boards: int, topk: int,
+) -> None:
+    """The extraction into gumbel_c.leaf_buffer_rows must be a pure move.
+
+    gumbel_c is shared with production selfplay, so this is the one file the
+    branch was allowed to touch and the only acceptable change to it is one
+    that cannot move a number.
+    """
+    assert leaf_buffer_rows(n_boards, topk=topk, pipelined=True) == (
+        _original_pipelined_rows(n_boards, topk)
+    )
+    assert leaf_buffer_rows(n_boards, topk=topk, pipelined=False) == (
+        _original_single_rows(n_boards, topk)
+    )
+
+
+def test_the_two_regimes_are_not_ordered_in_n() -> None:
+    """Why the arena must take the max over BOTH, not evaluate one at its top.
+
+    The single-buffer path applies below 64 boards and at topk 32 asks for more
+    rows at 63 boards than the pipelined path does at 64. A bound computed from
+    the pipelined path alone would under-report, and the warning would not fire
+    on a cap that really does shrink the search.
+    """
+    assert leaf_buffer_rows(63, topk=32, pipelined=False) == 4032
+    assert leaf_buffer_rows(64, topk=32, pipelined=True) == 2048
+    assert leaf_buffer_rows(63, topk=32, pipelined=False) > (
+        leaf_buffer_rows(64, topk=32, pipelined=True)
+    )
+
+
+class _RecordingDirectEvaluator(DirectGPUEvaluator):
+    """A real evaluator that records the row counts the search asks it for."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.buffer_requests: list[tuple[int, int]] = []
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        self.buffer_requests.append((int(bsz), int(slot)))
+        return super().get_input_buffer(bsz, slot=slot)
+
+
+class _PlanesModel(_DummyModel):
+    input_extra_features = "v1"
+
+
+@pytest.mark.parametrize(
+    # 65 is not redundant with 64. The pipelined expression splits the boards
+    # and takes the CEIL half (`max(mid, n_boards - mid)`); at an even count
+    # that equals `n_boards // 2`, so an even-only case cannot tell the real
+    # expression from a floor-half copy of it. A mutant that inlined exactly
+    # that drift at the call site survived the 64-board case.
+    ("n_boards", "pipelined"), [(8, False), (64, True), (65, True)],
+)
+def test_the_search_sizes_its_leaf_buffer_through_the_helper(
+    n_boards: int, pipelined: bool,
+) -> None:
+    """Consumer-side, executing: the helper and the CALL SITE cannot drift.
+
+    A value-parity test alone would still pass if gumbel_c stopped calling the
+    helper and kept an inline copy. This runs the real C search and reads the
+    row count it actually requests from the evaluator, so the helper is checked
+    where it is used, not where it is defined.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+
+    topk = 8
+    cfg = GumbelConfig(
+        simulations=4, temperature=0.0, add_noise=False, topk=topk,
+        input_extra_features="v1", policy_encoding="lc0_1858",
+    )
+    model = _PlanesModel().eval()
+    ev = _RecordingDirectEvaluator(
+        model, device="cpu", max_batch=16384, n_slots=2, use_amp=False,
+        legal_bf16=False,
+    )
+    boards = [chess.Board() for _ in range(n_boards)]
+    run_gumbel_root_many_c(
+        model, boards, device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+        evaluator=ev, allow_terminal_root_shortcuts=True,
+    )
+    expected = leaf_buffer_rows(n_boards, topk=topk, pipelined=pipelined)
+    asked = [rows for rows, _slot in ev.buffer_requests]
+    assert expected in asked, (
+        f"the search asked for {asked}; the helper says the {'pipelined' if pipelined else 'single'} "
+        f"leaf buffer is {expected} rows -- helper and call site have drifted"
+    )
+    # Non-vacuous: the root submit is a different, smaller request, so the
+    # assertion above is not just matching the root call by coincidence.
+    assert (n_boards, 0) in ev.buffer_requests
+    assert expected != n_boards
+
+
+def test_the_arena_bound_takes_the_max_over_the_reachable_board_counts() -> None:
+    """What --eval-max-batch is compared against at launch."""
+    side = _side(gumbel={"topk": 32})
+    got = arena_uncapped_leaf_rows(max_concurrent_games=128, sides=(side, side))
+    assert got == max(
+        leaf_buffer_rows(63, topk=32, pipelined=False),
+        leaf_buffer_rows(128, topk=32, pipelined=True),
+    )
+    assert got == 4096, "the play shape at mcg 128 asks for 4096 leaf rows"
+    # Below 64 boards the pipelined path is unreachable, so only the single one
+    # counts -- and a None side (matched_time) contributes nothing.
+    assert arena_uncapped_leaf_rows(
+        max_concurrent_games=8, sides=(side, None),
+    ) == leaf_buffer_rows(8, topk=32, pipelined=False)
+
+
+def test_the_two_sides_can_ask_for_different_widths() -> None:
+    """--cand-gumbel topk=N is per side; the bound must cover the wider one."""
+    narrow, wide = _side(gumbel={"topk": 2}), _side(gumbel={"topk": 64})
+    both = arena_uncapped_leaf_rows(max_concurrent_games=128, sides=(narrow, wide))
+    assert both == arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(wide, wide),
+    )
+    assert both > arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(narrow, narrow),
+    )
+
+
+def test_a_cap_that_shrinks_the_search_warns_loudly_and_still_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """Allow-but-warn, the way compile is handled: it runs, and it is loud."""
+    _stub_model_loader(monkeypatch)
+    seen = _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=512,
+        search_candidate=side, search_reference=side,
+    )
+    err = capsys.readouterr().err
+    assert "512" in err, "the cap must be named"
+    assert "4032" in err, "the uncapped leaf-buffer size must be named"
+    assert "SOLVED_UNKNOWN" in err, "the mechanism must be stated, not just the fact"
+    assert "NOT COMPARABLE" in err.upper()
+    assert seen, "a capped arena must still PLAY -- this is warn, not refuse"
+
+
+def test_a_cap_at_or_above_the_uncapped_size_is_silent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The default must not cry wolf: at mcg 128 / topk 32 it is exactly 4096."""
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side,
+    )
+    # Keyed on THIS warning's own mechanism string: the stubbed play loop
+    # returns scores without writing rows, so the unrelated game-log
+    # disagreement warning is on stderr too and a bare "WARNING" check would
+    # pass for the wrong reason.
+    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+
+
+def test_the_refusal_recommends_the_uncapped_size_not_the_bare_minimum(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Naming --max-concurrent-games would swap a loud crash for a quiet one.
+
+    That value is exactly where the ROOT submit stops raising and the LEAF cap
+    binds hardest, so recommending it is recommending a silently shrunken
+    search.
+    """
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    side = _side(gumbel={"topk": 32})
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=32,
+            search_candidate=side, search_reference=side,
+        )
+    message = str(excinfo.value)
+    assert "--eval-max-batch 4032" in message, "must name the uncapped size"
+    assert "--eval-max-batch 0" in message
+    assert "SHRINKS THE SEARCH" in message
+
+
+def test_a_negative_cap_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """0 is the documented opt-out; a negative is a typo, on every path."""
+    built = _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    with pytest.raises(SystemExit, match="must be >= 0"):
+        _run(tmp_path, device="cuda", eval_max_batch=-1)
+    assert built == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"device": "cpu"},
+        {"device": "cuda", "volatility_candidate": {"volatility_q_scale": 0.5,
+                                                    "volatility_fpu": 0.0}},
+    ],
+    ids=["cpu", "volatility"],
+)
+def test_a_path_that_builds_no_evaluator_is_not_refused_for_a_small_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict,
+) -> None:
+    """A cap that can never bind must not refuse a run it cannot affect.
+
+    The evaluator is only built on matched_sims + CUDA + volatility-off, so on
+    every other path --eval-max-batch is inert and refusing would be a knob
+    rejecting a configuration it has no bearing on.
+    """
+    _stub_model_loader(monkeypatch)
+    seen = _stub_play_loops(monkeypatch)
+    _run(tmp_path, max_concurrent_games=64, eval_max_batch=8, **overrides)
+    assert seen, "the arena must have run"
+
+
+def test_matched_time_is_not_refused_for_a_small_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """matched_time plays through UCI subprocesses; nothing here is hoisted."""
+    monkeypatch.setattr(
+        arena, "play_paired_games_matched_time",
+        lambda *_a, **_kw: [1.0],
+    )
+    record = arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=2,
+        openings_path=None, openings_fen=_openings_file(tmp_path, 1),
+        opening_plies=4, mode="matched_time",
+        sims_candidate=0, sims_reference=0, ms_per_move=10,
+        max_plies=4, temperature=0.0, gumbel_add_noise=False,
+        device="cuda", seed=1, out_path=None,
+        max_concurrent_games=64, eval_max_batch=8,
+        game_log_path=tmp_path / "mt.jsonl",
+    )
+    assert record["eval_hoist"] == "n/a"
+
+
+# ---------------------------------------------------------------------------
+# --eval-max-batch 0 is documented as restoring the PRE-HOIST arena
+#
+# The help text promises reproduction, so everything this branch added has to
+# be off under it -- not just the evaluator. _inference_only traces a different
+# graph under torch.compile, and the cache frees are new behaviour too.
+# ---------------------------------------------------------------------------
+
+
+def test_zero_leaves_the_ten_head_forward_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A 2-head forward is not what a pre-hoist arena ran."""
+    built = _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    _run(tmp_path, device="cuda", eval_max_batch=0)
+    assert [m._inference_only for m in built] == [False, False]
+
+
+def test_a_normal_run_still_sets_inference_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The control for the test above: without the opt-out it IS set."""
+    built = _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    _run(tmp_path, device="cuda")
+    assert [m._inference_only for m in built] == [True, True]
+
+
+@pytest.mark.parametrize("eval_max_batch", [0, DEFAULT_EVAL_MAX_BATCH])
+def test_zero_frees_no_cache_between_chunks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, eval_max_batch: int,
+) -> None:
+    """The chunk-boundary free is new behaviour, so 0 must not do it either."""
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    calls: list[str] = []
+    monkeypatch.setattr(arena, "_free_cached_vram", calls.append)
+    _run(tmp_path, device="cuda", rolling=False, eval_max_batch=eval_max_batch)
+    assert (calls == []) is (eval_max_batch == 0), (
+        f"eval_max_batch={eval_max_batch} produced {calls}"
+    )
+
+
+@pytest.mark.parametrize("eval_max_batch", [0, DEFAULT_EVAL_MAX_BATCH])
+def test_the_rolling_loop_is_told_whether_to_free(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, eval_max_batch: int,
+) -> None:
+    """run_arena's half of the contract: the switch is threaded, not assumed."""
+    _stub_model_loader(monkeypatch)
+    seen = _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    _run(tmp_path, device="cuda", rolling=True, eval_max_batch=eval_max_batch)
+    assert seen
+    for kw in seen:
+        assert kw["free_cached_vram"] is bool(eval_max_batch)
+
+
+@pytest.mark.parametrize("free_cached_vram", [True, False])
+def test_the_rolling_loop_honours_the_free_switch(
+    monkeypatch: pytest.MonkeyPatch, free_cached_vram: bool,
+) -> None:
+    """The loop's half: a threaded flag that the loop ignored would look green
+    on the test above and still free the cache under --eval-max-batch 0."""
+    calls: list[str] = []
+    monkeypatch.setattr(arena, "_free_cached_vram", calls.append)
+    seen = _capture(monkeypatch, "_run_gumbel_root_many_c")
+    board = chess.Board()
+    board.push_uci("e2e4")
+    side = _side()
+    play_paired_games_matched_sims_rolling(
+        _DummyModel("c").eval(), _DummyModel("r").eval(), [board],
+        device="cuda", rng=np.random.default_rng(0),
+        sims_candidate=2, sims_reference=2, max_plies=4,
+        temperature=0.0, gumbel_add_noise=False,
+        search_candidate=side, search_reference=side,
+        pool_size=2, free_cached_vram=free_cached_vram,
+    )
+    assert seen, "the loop never played"
+    assert bool(calls) is free_cached_vram
+
+
+# ---------------------------------------------------------------------------
+# The hoist state is RECORDED -- the way compile is
+# ---------------------------------------------------------------------------
+
+
+def test_the_tag_distinguishes_the_four_states() -> None:
+    """'128<4096' is the form that has to survive into a log read years later:
+    eval_max_batch alone cannot say whether the cap BOUND, because that depends
+    on topk and concurrency."""
+    assert arena.hoist_tag(4096, mode="matched_time", no_hoist=None,
+                           uncapped_leaf_rows=4096) == "n/a"
+    assert arena.hoist_tag(0, mode="matched_sims", no_hoist="--eval-max-batch 0",
+                           uncapped_leaf_rows=0) == "off"
+    assert arena.hoist_tag(4096, mode="matched_sims", no_hoist=None,
+                           uncapped_leaf_rows=4096) == "4096"
+    assert arena.hoist_tag(128, mode="matched_sims", no_hoist=None,
+                           uncapped_leaf_rows=4096) == "128<4096"
+
+
+def test_a_row_written_before_the_field_reads_as_unknown_not_off() -> None:
+    """A default that answers for rows the field never covered is how a
+    resumed splice stops being visible."""
+    assert arena.row_hoist_tag({}) == "unknown"
+    assert arena.row_hoist_tag({"eval_hoist": None}) == "unknown"
+    assert arena.row_hoist_tag({"eval_hoist": "128<4096"}) == "128<4096"
+
+
+def test_the_result_record_carries_the_hoist_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=512,
+        search_candidate=side, search_reference=side,
+    )
+    assert record["eval_hoist"] == "512<4032"
+    assert record["eval_max_batch"] == 512
+    assert record["eval_leaf_cap_uncapped"] == 4032
+    assert record["eval_leaf_cap_bound"] is True
+    assert record["mixed_eval_hoist"] is False
+
+
+def test_an_unbound_run_records_that_it_was_unbound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The control: the same fields must read differently when nothing bound."""
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=64,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side,
+    )
+    assert record["eval_hoist"] == str(DEFAULT_EVAL_MAX_BATCH)
+    assert record["eval_leaf_cap_bound"] is False
+    assert record["eval_leaf_cap_uncapped"] == 4032
+
+
+class _SimulatedCrash(RuntimeError):
+    pass
+
+
+def _emitting_play_loops(
+    monkeypatch: pytest.MonkeyPatch, *, crash_after: int | None = None,
+) -> None:
+    """A play loop that writes real game rows, and can die mid-schedule."""
+    emitted = {"n": 0}
+
+    def _spy(
+        _c: Any, _r: Any, openings: list[chess.Board], *,
+        pgn_sink: Any = None, pair_ids: Any = None, **_kw: Any,
+    ) -> list[float]:
+        ids = list(range(len(openings))) if pair_ids is None else list(pair_ids)
+        scores: list[float] = []
+        for k, opening in enumerate(openings):
+            for half, a_is_white in ((0, True), (1, False)):
+                if pgn_sink is not None:
+                    pgn_sink(
+                        pair_id=ids[k], half=half, a_is_white=a_is_white,
+                        start_fen=opening.fen(), moves=(), result="1/2-1/2",
+                        termination="rules", plies=10, duration_s=0.5,
+                        chunk=None, loop="stub",
+                    )
+                emitted["n"] += 1
+                if crash_after is not None and emitted["n"] >= crash_after:
+                    raise _SimulatedCrash("simulated OOM")
+            scores.append(1.0)
+        return scores
+
+    for name in (
+        "play_paired_games_matched_sims",
+        "play_paired_games_matched_sims_rolling",
+    ):
+        monkeypatch.setattr(arena, name, _spy)
+
+
+def test_a_played_game_row_records_the_hoist_tag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from chess_anti_engine.utils.game_log import read_game_log
+
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    log_path = tmp_path / "rows.games.jsonl"
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=512,
+        search_candidate=side, search_reference=side, game_log_path=log_path,
+    )
+    rows = read_game_log(log_path).games
+    assert rows, "no game rows were written"
+    assert {arena.row_hoist_tag(r) for r in rows} == {"512<4032"}
+
+
+def test_a_resume_across_two_hoist_settings_reports_the_mix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The whole point of recording it: a spliced run must not read as one arena.
+
+    eval_max_batch is deliberately OUTSIDE the resume fingerprint -- a pre-hoist
+    log has to stay resumable under post-hoist code -- so the mix it permits is
+    surfaced instead of refused, exactly as for compile.
+    """
+    log_path = tmp_path / "mix.games.jsonl"
+    openings = _openings_file(tmp_path, 2)
+    side = _side(gumbel={"topk": 32})
+    common: dict[str, Any] = {
+        "games": 4, "openings_fen": openings, "max_concurrent_games": 64,
+        "search_candidate": side, "search_reference": side,
+        "game_log_path": log_path, "device": "cuda",
+    }
+
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch, crash_after=2)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    with pytest.raises(_SimulatedCrash):
+        _run(tmp_path, eval_max_batch=DEFAULT_EVAL_MAX_BATCH, **common)
+
+    # Resume under the opt-out: same fingerprint, different search transport.
+    _emitting_play_loops(monkeypatch)
+    record = _run(tmp_path, eval_max_batch=0, resume=True, **common)
+    assert record["mixed_eval_hoist"] is True
+    assert record["eval_hoist_values"] == ["4096", "off"]
+    assert record["eval_hoist"] == "off", "the tag is what THIS process played"
+
+
+def test_a_resume_that_scores_nothing_new_mixes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Gated on pairs SCORED, not scheduled -- same rule as mixed_compile.
+
+    A resume of an already-complete log plays no game, so flagging a mix there
+    would report a splice that never happened.
+    """
+    log_path = tmp_path / "done.games.jsonl"
+    openings = _openings_file(tmp_path, 2)
+    side = _side(gumbel={"topk": 32})
+    common: dict[str, Any] = {
+        "games": 4, "openings_fen": openings, "max_concurrent_games": 64,
+        "search_candidate": side, "search_reference": side,
+        "game_log_path": log_path, "device": "cuda",
+    }
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    _run(tmp_path, eval_max_batch=DEFAULT_EVAL_MAX_BATCH, **common)
+
+    record = _run(tmp_path, eval_max_batch=0, resume=True, **common)
+    assert record["mixed_eval_hoist"] is False
+    assert record["eval_hoist_values"] == ["4096"]
+
+
+def test_the_hoist_is_not_in_the_resume_fingerprint() -> None:
+    """A pre-hoist log must resume under post-hoist code; a fingerprint over
+    eval_max_batch would refuse exactly the retry this is for."""
+    settings = arena.arena_game_log_settings(
+        mode="matched_sims", candidate="a", reference="b", games=4, seed=1,
+        openings_path="o", openings_kind="fen", opening_plies=4,
+        sims_candidate=2, sims_reference=2, ms_per_move=None, max_plies=4,
+        temperature=0.0, gumbel_add_noise=False,
+        search_candidate=None, search_reference=None,
+        volatility_candidate=None, uci_args="", syzygy_path=None, tb_max_pieces=6,
+    )
+    assert not [k for k in settings if "eval" in k or "hoist" in k]
