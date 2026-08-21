@@ -63959,3 +63959,18 @@ Restart is deliberately manual: `./scripts/train.sh start` when Josh is done —
 armed to do it automatically. The #438 rerun should relaunch via the same
 `scratchpad/lc0_control_window.sh` pause-window path, which the fixed watchdog now leaves
 alone for its full duration.
+
+## 2026-08-20 — window 6: the #438 rerun, launched drained-by-stoppage (23:12); chain2 carries readout + baselines + sigma probe
+
+Josh: "ok now resume enough work to last 12 hours." Relaunched `scratchpad/lc0_control_window.sh`
+unchanged (same prereg, same frozen 38,544-step budget, same holdout v2 + purity receipt; out-dir
+reuse is legal — the abort left none of the three run artifacts, and `stage_shards` rebuilds its
+symlink farm idempotently). Differences from window 5, all environmental: production is
+INTENTIONALLY STOPPED (marker at 20:19) rather than parked, so there is no pause marker to defend,
+the watchdog reads STOPPED and cannot act (belt: `42e72d6cb` guard), and the control train owns
+the whole box — one CUDA context, the state window 5 never got. Compile should be warm (~10 min,
+same worktree code + config). Budget arithmetic: boot+purity+stage+compile ~30-40 min, then
+38,544 steps at the drained 0.9–1.05 steps/s ≈ 10.7 h → completion ~10:30-11:00, after which
+`overnight_chain2.sh` (gates adapted: no marker/cadence stages — nothing resumes) fires the
+readout, the iter-595 value baseline, and the sigma probe, exact preregistered commands
+unchanged. Total ≈ 12-15 h. Production restart stays MANUAL by standing rule; nothing is armed.
