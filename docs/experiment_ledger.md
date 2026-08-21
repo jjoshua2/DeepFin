@@ -64221,3 +64221,13 @@ window read-only, 6,000 steps/arm, batch 512, `--no-rebuild-sf-targets`, fresh o
 `dose_ladder2/`). Runs when match A releases the GPU; audits with the corrected
 `--checkpoint/--audit-set` flags. Verdict rule unchanged (a070 vs a000 ≥ 3.0 cp kill;
 adequacy guard: a100 train-CE must fall ≥ 0.05 nats).
+
+### Match A OOM #2 at 64 concurrent; ladder2 took the GPU; concurrency ratcheted to 32
+
+The 64-concurrent attempt also died `c10` OOM, ~6 min in — per-game tree state grows with
+plies, so the early 13.1 GiB reading was pre-peak; compiled paired arenas need ≤32
+concurrent on this card. The dead pid released seq2's gate and ladder2 launched 12:05:55
+(the right owner anyway — the fix-selector outranks calibration). New order (seq4):
+ladder2 (~6.5 h incl. audits) → match A attempt 3 at `--max-concurrent-games 32` → B (32)
+→ full-Cheese block. Match A's verdict slips to late evening; the crash-persistence +
+resume feature (in flight) makes any further arena failure cheap.
