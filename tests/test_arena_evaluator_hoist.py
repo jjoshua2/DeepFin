@@ -24,6 +24,7 @@ weights for the reference.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -965,6 +966,211 @@ def test_an_unbound_run_records_that_it_was_unbound(
     assert record["eval_hoist"] == str(DEFAULT_EVAL_MAX_BATCH)
     assert record["eval_leaf_cap_bound"] is False
     assert record["eval_leaf_cap_uncapped"] == 4032
+
+
+
+
+# ---------------------------------------------------------------------------
+# The recorded leaf-cap fields are POST-LOAD EXACT, not the launch-time floor
+#
+# The launch check must run before the checkpoints load (its refusal has to
+# beat a multi-minute compile), so it can only assume relations OFF. A model
+# with `use_dynamic_relations` forces `_use_pipeline` False at every board
+# count, so the single-buffer path runs at the real n: 8192 rows at mcg 128 /
+# topk 32 where the floor said 4096. A cap in [4096, 8192) is then bound in
+# fact while nothing warns and the record says bound=False.
+# ---------------------------------------------------------------------------
+
+
+def test_relations_raise_the_uncapped_size_above_the_relations_off_floor() -> None:
+    side = _side(gumbel={"topk": 32})
+    floor = arena_uncapped_leaf_rows(max_concurrent_games=128, sides=(side, side))
+    exact = arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(side, side), relations=(True, True),
+    )
+    assert floor == 4096
+    assert exact == 8192, "relations force the single-buffer path at the real n"
+    # The blind window the record used to misreport.
+    assert floor <= 6000 < exact
+
+
+def test_relations_are_per_side() -> None:
+    """Two different checkpoints; only one of them may have the flag."""
+    side = _side(gumbel={"topk": 32})
+    one_on = arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(side, side), relations=(False, True),
+    )
+    assert one_on == arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(side, side), relations=(True, True),
+    )
+    assert one_on > arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(side, side), relations=(False, False),
+    )
+
+
+def test_omitting_relations_is_the_relations_off_answer() -> None:
+    """The floor is not a separate formula, just the all-off case."""
+    for n in (1, 8, 63, 64, 128, 256):
+        for topk in (2, 16, 32):
+            side = _side(gumbel={"topk": topk})
+            assert arena_uncapped_leaf_rows(
+                max_concurrent_games=n, sides=(side, side),
+            ) == arena_uncapped_leaf_rows(
+                max_concurrent_games=n, sides=(side, side), relations=(False, False),
+            )
+
+
+class _RelationsModel(_DummyModel):
+    """A checkpoint that may compute dynamic relations.
+
+    Declared on the class, not poked onto an instance: `nn.Module.__setattr__`
+    is typed for Tensors and Modules, so a bare `m.use_dynamic_relations = True`
+    is a type error. Kept OFF `_DummyModel` so that
+    `test_a_model_without_the_attribute_is_treated_as_relations_off` still has a
+    model that genuinely lacks the attribute, the way a pre-relations checkpoint
+    does.
+    """
+
+    use_dynamic_relations: bool = False
+
+
+def _stub_model_loader_with_relations(
+    monkeypatch: pytest.MonkeyPatch, *, relations: bool | Sequence[bool],
+) -> list[_RelationsModel]:
+    """``relations`` may be per side, in LOAD order: candidate then reference.
+
+    Per side because "reads the flag" and "reads BOTH sides' flags" are
+    different properties, and a fixture that sets it on both models cannot
+    tell them apart — a run_arena that only ever looked at the candidate would
+    pass every same-on-both test.
+    """
+    flags = ([bool(relations)] * 2 if isinstance(relations, bool)
+             else [bool(r) for r in relations])
+    built: list[_RelationsModel] = []
+
+    def _load(path: str, **_kw: Any) -> _RelationsModel:
+        m = _RelationsModel(str(path)).eval()
+        m.use_dynamic_relations = flags[len(built) % len(flags)]
+        built.append(m)
+        return m
+
+    monkeypatch.setattr(
+        "chess_anti_engine.uci.model_loader.load_model_from_checkpoint", _load,
+    )
+    return built
+
+
+def test_a_relations_model_flips_the_recorded_bound_in_the_blind_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The defect: cap 4096 at mcg 128 / topk 32 passes the pre-load floor
+    (4096 >= 4096, no warning) but IS bound once relations are known (< 8192)."""
+    _stub_model_loader_with_relations(monkeypatch, relations=True)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side,
+    )
+    assert record["eval_leaf_cap_uncapped"] == 8192, "the record must be post-load exact"
+    assert record["eval_leaf_cap_bound"] is True
+    assert record["eval_hoist"] == "4096<8192"
+    err = capsys.readouterr().err
+    assert "SOLVED_UNKNOWN" in err, "the late warning must still fire"
+    assert "after loading the checkpoints" in err, "and say why it is late"
+
+
+def test_a_relations_off_model_records_exactly_the_pre_load_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """Parity: the re-derivation must not move the common case.
+
+    Same invocation as the test above with the flag off — every recorded field
+    has to agree with the launch-time floor, and nothing may warn.
+    """
+    _stub_model_loader_with_relations(monkeypatch, relations=False)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side,
+    )
+    floor = arena_uncapped_leaf_rows(
+        max_concurrent_games=128, sides=(side, side),
+    )
+    assert record["eval_leaf_cap_uncapped"] == floor == 4096
+    assert record["eval_leaf_cap_bound"] is False
+    assert record["eval_hoist"] == "4096"
+    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+
+
+def test_a_model_without_the_attribute_is_treated_as_relations_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Older checkpoints have no such attribute; absent must mean off, not crash."""
+    _stub_model_loader(monkeypatch)  # plain _DummyModel: no use_dynamic_relations
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side,
+    )
+    assert record["eval_leaf_cap_uncapped"] == 4096
+    assert record["eval_leaf_cap_bound"] is False
+
+
+def test_a_relations_flag_on_either_side_alone_is_seen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Both sides' models must be read, not just the candidate's.
+
+    The two sides are different checkpoints and the arena's own bound is the max
+    over them, so a re-derivation that inspected only `model_candidate` would
+    under-report exactly when the reference is the relations-on net — and every
+    fixture that sets the flag on both models would still pass.
+    """
+    side = _side(gumbel={"topk": 32})
+    for flags in ((True, False), (False, True)):
+        with monkeypatch.context() as ctx:
+            _stub_model_loader_with_relations(ctx, relations=flags)
+            _stub_play_loops(ctx)
+            ctx.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+            record = _run(
+                tmp_path, device="cuda", max_concurrent_games=128,
+                eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+                search_candidate=side, search_reference=side,
+            )
+        assert record["eval_leaf_cap_uncapped"] == 8192, f"missed relations on {flags}"
+        assert record["eval_leaf_cap_bound"] is True
+
+
+def test_a_relations_list_that_does_not_match_the_sides_is_refused() -> None:
+    """The two sequences are zipped; a length mismatch would silently pair a
+    side with the wrong model's flag rather than fail."""
+    side = _side(gumbel={"topk": 32})
+    with pytest.raises(ValueError, match="relations has 1 entries for 2 sides"):
+        arena_uncapped_leaf_rows(
+            max_concurrent_games=128, sides=(side, side), relations=(True,),
+        )
+
+# ---------------------------------------------------------------------------
+# NOT PORTED (2): the per-game-row half of the post-load re-derive
+# ---------------------------------------------------------------------------
+#
+# Upstream also carries `test_the_corrected_tag_reaches_the_game_rows_not_just
+# _the_record`, which reads the corrected tag back off the JSONL game rows. This
+# branch writes no game rows, so the equivalent take-effect proof for the
+# `this_hoist` reassignment is
+# `test_a_relations_model_flips_the_recorded_bound_in_the_blind_window`'s
+# `record["eval_hoist"] == "4096<8192"` assertion: it is the RESULT RECORD's tag,
+# which is the only place this branch writes it, and it is stale unless the
+# re-derive block reassigns `this_hoist`.
 
 
 # ---------------------------------------------------------------------------

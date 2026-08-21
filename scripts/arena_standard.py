@@ -902,6 +902,7 @@ def realized_topk(side: SideSearch) -> int:
 
 def arena_uncapped_leaf_rows(
     *, max_concurrent_games: int, sides: Sequence[SideSearch | None],
+    relations: Sequence[bool] | None = None,
 ) -> int:
     """Largest leaf buffer this arena's search will ask for, before any cap.
 
@@ -920,22 +921,40 @@ def arena_uncapped_leaf_rows(
     single-buffer path applies below 64 boards and at topk 32 wants 4032 rows at
     63 boards, more than the pipelined path's 2048 at 64.
 
-    ⚑ Assumes the pipelined regime is reachable, i.e. relations OFF -- which is
-    what production checkpoints run (`use_dynamic_relations` default false) and
-    all this function can know, since it is called BEFORE the models are loaded
-    so the refusal beats a multi-minute compile. A `use_dynamic_relations` model
-    routes every call to the single-buffer path, whose rows at the top of the
-    range are larger still, so for that rare config this is a floor and not the
-    exact figure.
+    ``relations[i]`` says whether side ``i``'s MODEL computes dynamic relations
+    (``use_dynamic_relations``, `configs/exp_dynamic_relations.yaml`, default
+    off). It is per side because the two sides are different checkpoints and
+    only one of them may have it. Relations force ``_use_pipeline`` False at
+    every board count, so the single-buffer path then runs at the REAL n rather
+    than only below 64 -- which is larger: at mcg 128 / topk 32 it is 8192
+    against the 4096 a relations-off model asks for.
+
+    ⚑ Omitting ``relations`` assumes OFF and therefore returns a FLOOR, not the
+    exact figure. That is deliberate for the launch-time check, which runs
+    before the checkpoints are loaded so a refusal beats a multi-minute compile
+    and cannot read the flag. The caller must re-derive with the real flags once
+    the models exist -- otherwise a relations-on model with a cap in
+    [4096, 8192) is bound in fact while every recorded field says it is not.
     """
     from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
 
     n_max = max(1, int(max_concurrent_games))
+    rels = list(relations) if relations is not None else [False] * len(sides)
+    if len(rels) != len(sides):
+        raise ValueError(
+            f"relations has {len(rels)} entries for {len(sides)} sides"
+        )
     rows = 0
-    for side in sides:
+    for side, rel in zip(sides, rels, strict=True):
         if side is None:
             continue
         topk = realized_topk(side)
+        if rel:
+            # Pipeline unreachable: the single path runs at every n, and it is
+            # monotone, so its value at the top of the range subsumes the <64
+            # term below.
+            rows = max(rows, leaf_buffer_rows(n_max, topk=topk, pipelined=False))
+            continue
         rows = max(rows, leaf_buffer_rows(min(63, n_max), topk=topk, pipelined=False))
         if n_max >= 64:
             rows = max(rows, leaf_buffer_rows(n_max, topk=topk, pipelined=True))
@@ -963,6 +982,37 @@ def no_hoist_reason(
     if not str(device).startswith("cuda"):
         return f"device={device} is not CUDA"
     return None
+
+
+def _warn_leaf_cap_binds(
+    eval_max_batch: int, uncapped_leaf_rows: int, *, late: bool,
+) -> None:
+    """The one warning text, printed from both the pre-load and post-load checks.
+
+    Shared rather than duplicated because the post-load check exists precisely
+    to catch what the pre-load floor missed, and two copies of a warning that
+    must say the same thing is how one of them ends up saying less.
+    """
+    when = (
+        "after loading the checkpoints (a dynamic-relations model routes every "
+        "call to the single-buffer path, which the pre-load estimate could not "
+        "know): "
+        if late else ""
+    )
+    print(
+        f"[arena] ⚑ WARNING: {when}--eval-max-batch {eval_max_batch} is BELOW "
+        f"this arena's uncapped leaf-buffer size {uncapped_leaf_rows}, so it is "
+        f"acting as a SEARCH-SHAPE knob, not a memory knob. gumbel_c mins its "
+        f"leaf buffer against the evaluator's cap, and when that buffer fills "
+        f"the C tree does NOT flush and retry — it absorbs the leaf as a "
+        f"SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q. Leaves beyond "
+        f"{eval_max_batch} are therefore never evaluated: measured on CPU, 128 "
+        f"vs 4096 dropped 57-75% of leaf evaluations and changed the chosen "
+        f"move on 53 of 64 boards. THIS ARENA'S SEARCH IS NOT COMPARABLE TO AN "
+        f"UNCAPPED ONE. Pass --eval-max-batch {uncapped_leaf_rows} (or 0) if "
+        f"that was not intended; the result record stores which it was.",
+        file=sys.stderr, flush=True,
+    )
 
 
 def _free_cached_vram(device: str) -> None:
@@ -1794,10 +1844,18 @@ def build_result_record(
         # The evaluator hoist, recorded because it can change the arithmetic
         # that played the games. `eval_leaf_cap_bound` is the field that makes
         # a shrunken search identifiable afterwards -- `eval_max_batch` alone
-        # cannot say whether it bound, because that depends on topk and
-        # concurrency. `eval_hoist_values`/`mixed_eval_hoist` carry the same
-        # contract as `compile_values` does on the resume-capable branch: on a
-        # run whose games all come from one process there is exactly one tag.
+        # cannot say whether it bound, because that depends on topk,
+        # concurrency AND whether a side's model computes dynamic relations.
+        # `eval_hoist_values`/`mixed_eval_hoist` carry the same contract as
+        # `compile_values` does on the resume-capable branch: on a run whose
+        # games all come from one process there is exactly one tag.
+        #
+        # ⚑ These two are POST-LOAD EXACT, not the launch-time floor: run_arena
+        # re-derives them once the checkpoints are in hand and can be asked for
+        # `use_dynamic_relations`. The launch check necessarily runs earlier
+        # (its refusal has to beat the compile) and under-reports for a
+        # relations-on model, so a record written from that estimate would say
+        # bound=False about a search that was bound.
         "eval_hoist": hoist_setting,
         "eval_hoist_values": list(hoist_values) or [hoist_setting],
         "mixed_eval_hoist": len(set(hoist_values)) > 1,
@@ -2003,21 +2061,7 @@ def run_arena(
         # arithmetic, there are legitimate reasons to want it (a smaller card),
         # and refusing would take the option away. What is not allowed is it
         # being quiet.
-        print(
-            f"[arena] ⚑ WARNING: --eval-max-batch {eval_max_batch} is BELOW this "
-            f"arena's uncapped leaf-buffer size {uncapped_leaf_rows}, so it is "
-            f"acting as a SEARCH-SHAPE knob, not a memory knob. gumbel_c mins "
-            f"its leaf buffer against the evaluator's cap, and when that buffer "
-            f"fills the C tree does NOT flush and retry — it absorbs the leaf as "
-            f"a SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q. Leaves "
-            f"beyond {eval_max_batch} are therefore never evaluated: measured on "
-            f"CPU, 128 vs 4096 dropped 57-75% of leaf evaluations and changed the "
-            f"chosen move on 53 of 64 boards. THIS ARENA'S SEARCH IS NOT "
-            f"COMPARABLE TO AN UNCAPPED ONE. Pass --eval-max-batch "
-            f"{uncapped_leaf_rows} (or 0) if that was not intended; the result "
-            f"record stores which it was.",
-            file=sys.stderr, flush=True,
-        )
+        _warn_leaf_cap_binds(eval_max_batch, uncapped_leaf_rows, late=False)
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
     # Anchored HERE, not at the play loop, so opening sampling and the two
@@ -2146,6 +2190,50 @@ def run_arena(
         model_reference = load_model_from_checkpoint(reference, device=device)
         print(f"[arena] both checkpoints loaded "
               f"(reference in {time.time() - _t_load:.0f}s)", flush=True)
+  # RE-DERIVE the uncapped leaf size now that the checkpoints exist. The launch
+  # check had to run before this point so a refusal beats a multi-minute
+  # compile, and there it could only assume relations OFF -- a FLOOR. A model
+  # with `use_dynamic_relations` (configs/exp_dynamic_relations.yaml, default
+  # off) forces `_use_pipeline` False at every board count, so the
+  # single-buffer path runs at the real n and asks for 8192 rows at mcg 128 /
+  # topk 32 where the floor said 4096. Without this, a cap in [4096, 8192) is
+  # bound IN FACT while nothing warns and every recorded field says
+  # bound=False -- a value accepted and then silently misreported, which is the
+  # defect class this whole branch is about.
+  #
+  # Still BEFORE torch.compile, so a late warning can still change an
+  # operator's mind rather than only explaining the number afterwards.
+        if _no_hoist is None:
+            _pre_load_leaf_rows = uncapped_leaf_rows
+            uncapped_leaf_rows = arena_uncapped_leaf_rows(
+                max_concurrent_games=max_concurrent_games,
+                sides=(search_candidate, search_reference),
+                relations=(
+                    bool(getattr(model_candidate, "use_dynamic_relations", False)),
+                    bool(getattr(model_reference, "use_dynamic_relations", False)),
+                ),
+            )
+            _was_bound, leaf_cap_bound = (
+                leaf_cap_bound, eval_max_batch < uncapped_leaf_rows,
+            )
+  # `this_hoist` was computed from the PRE-LOAD floor, and `build_result_record`
+  # (at the end of run_arena) is the only thing that reads it on this branch, so
+  # reassigning it here is what actually puts the corrected tag in the recorded
+  # `eval_hoist`. Without this line the two numeric fields would be re-derived
+  # and the tag beside them would still read the floor's answer.
+            this_hoist = hoist_tag(
+                eval_max_batch, mode=mode, no_hoist=_no_hoist,
+                uncapped_leaf_rows=uncapped_leaf_rows,
+            )
+            if uncapped_leaf_rows != _pre_load_leaf_rows:
+                print(
+                    f"[arena] uncapped leaf-buffer size re-derived after load: "
+                    f"{_pre_load_leaf_rows} -> {uncapped_leaf_rows} "
+                    f"(dynamic relations on a side disable the eval pipeline)",
+                    flush=True,
+                )
+            if leaf_cap_bound and not _was_bound:
+                _warn_leaf_cap_binds(eval_max_batch, uncapped_leaf_rows, late=True)
   # Search reads exactly two heads -- `policy_own` (the prior) and `wdl` --
   # while `ChessNet.forward` otherwise computes ten. Its `_inference_only`
   # branch returns those two from the SAME expressions the full branch uses
