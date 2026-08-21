@@ -64171,3 +64171,23 @@ the remaining legs: teacher content/dose (the LADDER, running), surprise-samplin
 amplification (unprobed), and the value-anchor composition. No production change follows
 from this probe; `target_q_rescale` stays default-on (bit-identical) and the knob remains
 probe-only. Prereg closed — no further sigma runs.
+
+## 2026-08-21 — ladder ABORTED by its own dead-knob guard (correctly); TWO prereg commands were never-run; resequenced
+
+Arm a000 (control) trained clean — 6,000 steps in 4,234 s (1.42 steps/s) — then the driver
+REFUSED arm a025: `sf_p0_blend_alpha` "reaches NOTHING" on the variant path. The guard is
+right and the 08-19 branch is wrong: `8cda1fb3a` committed the wrapper + unit tests but
+(apparently) never the variant-path activation pop — the unit tests construct the wrapper
+directly, so they pass with the activation missing (a_new_test_file_plus_green_lint class).
+Exactly the 2026-07-06 sf_gap_priority_signed failure the guard was built for, caught at
+run 1 instead of at verdict time. Separately the prereg's audit yardstick used `--net`,
+which `audit_targets.py` does not accept (rc=2 on a000) — corrected to
+`--checkpoint/--audit-set/--config`. Both are "an exact command means it was RUN"
+violations in the 08-19 prereg: neither command had ever been executed.
+
+Side effect: the abort wrote "ladder complete", releasing the Elo queue early — match A
+(control vs iter-595) started 11:40 and was LEFT RUNNING (1 min sunk, GPU now free of the
+ladder). Resequenced under one supervisor: A → fixed ladder arms a025–a100 (wiring fix
+delegated; reuses the banked a000 — pairing is at the audit level and the frozen corpus +
+per-variant seeding make cross-invocation arms comparable) → B → C. Verdict slips to
+~21:00-22:00; a000's banked checkpoint and the 1.42 steps/s rate carry over.
