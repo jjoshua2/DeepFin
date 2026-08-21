@@ -64191,3 +64191,14 @@ ladder). Resequenced under one supervisor: A → fixed ladder arms a025–a100 (
 delegated; reuses the banked a000 — pairing is at the audit level and the frozen corpus +
 per-variant seeding make cross-invocation arms comparable) → B → C. Verdict slips to
 ~21:00-22:00; a000's banked checkpoint and the 1.42 steps/s rate carry over.
+
+### Match A OOM + relaunch (concurrency lesson extended)
+
+First match-A attempt died `c10::AcceleratorError: CUDA out of memory` at ply 20, chunk 1 —
+a COMPILED paired arena (two nets) at the default `--max-concurrent-games 128` overflows
+the 5090 **with the GPU otherwise empty**, extending [[paired_compiled_arenas_oomed_training]]
+from "don't run beside training" to "128 is over budget alone". Relaunched at
+`--max-concurrent-games 64` (32 pairs/chunk), same seed/settings otherwise; sequencer
+re-armed on the new pid. (Also: a `pkill -f` self-match killed my own relaunch shell once
+in between — [[pgrep_in_a_wait_loop_cannot_terminate]]'s sibling, now demonstrated for
+pkill; anchor patterns or filter self.)
