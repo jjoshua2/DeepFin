@@ -39,7 +39,7 @@ import shlex
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -848,6 +848,123 @@ def build_arena_evaluator(model: Any, *, device: str, max_batch: int, n_slots: i
     )
 
 
+HOIST_UNKNOWN = "unknown"
+
+
+def hoist_tag(
+    eval_max_batch: int, *, mode: str, no_hoist: str | None, uncapped_leaf_rows: int,
+) -> str:
+    """What the result record stores about the invocation's evaluator hoist.
+
+    Recorded because the hoist can change the arithmetic that plays the games,
+    and below the uncapped leaf-buffer size it changes the SEARCH: the C tree
+    absorbs surplus leaves as root-Q pseudo-terminals instead of evaluating
+    them.
+
+    So the tag is the effective configuration, not the raw flag:
+    ``"n/a"`` off the matched_sims path, ``"off"`` when no evaluator is hoisted,
+    ``"4096"`` when the cap cannot bind, and ``"128<4096"`` when it does — the
+    one form that has to be distinguishable in a log years later.
+    """
+    if mode != "matched_sims":
+        return "n/a"
+    if no_hoist is not None:
+        return "off"
+    cap = int(eval_max_batch)
+    if cap < int(uncapped_leaf_rows):
+        return f"{cap}<{int(uncapped_leaf_rows)}"
+    return str(cap)
+
+
+def row_hoist_tag(row: Mapping[str, Any]) -> str:
+    """The hoist tag of one result row; ``"unknown"`` for rows written before it.
+
+    A missing key is UNKNOWN, never "off": those runs were pre-hoist in fact,
+    but a default that answers for rows the field never covered is how a
+    pre-hoist row stops being distinguishable from a deliberately un-hoisted
+    one. Unknown is the honest reading.
+    """
+    value = row.get("eval_hoist", HOIST_UNKNOWN)
+    return HOIST_UNKNOWN if value is None else str(value)
+
+
+def realized_topk(side: SideSearch) -> int:
+    """The ``topk`` this side's search will actually run.
+
+    Mirrors how ``pick_moves_for_boards`` builds its config: the GumbelConfig
+    default unless the side overrides it. Read through ``.gumbel`` rather than
+    ``realized_gumbel()`` because that one filters to the printable knob set.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    return int(side.gumbel.get("topk", GumbelConfig().topk))
+
+
+def arena_uncapped_leaf_rows(
+    *, max_concurrent_games: int, sides: Sequence[SideSearch | None],
+) -> int:
+    """Largest leaf buffer this arena's search will ask for, before any cap.
+
+    ⚑ The number ``--eval-max-batch`` has to be compared against, and the reason
+    that flag is a SEARCH-SHAPE knob rather than a memory one: ``gumbel_c`` mins
+    its leaf buffer against the evaluator's ``_max_batch``, and when the buffer
+    fills the C tree does not flush -- it absorbs the leaf as a SOLVED_UNKNOWN
+    pseudo-terminal carrying the ROOT's Q. Below this value, leaves stop being
+    evaluated and moves change.
+
+    Computed from ``mcts/gumbel_c.leaf_buffer_rows`` -- the search's own
+    expression -- over every board count either loop can hand one side (1 ..
+    ``max_concurrent_games``; rolling passes up to ``pool_size``, chunked up to
+    ``2 * chunk_pairs``, and either can put every active game on one side at a
+    ply). Both regimes are checked because they are not ordered in ``n``: the
+    single-buffer path applies below 64 boards and at topk 32 wants 4032 rows at
+    63 boards, more than the pipelined path's 2048 at 64.
+
+    ⚑ Assumes the pipelined regime is reachable, i.e. relations OFF -- which is
+    what production checkpoints run (`use_dynamic_relations` default false) and
+    all this function can know, since it is called BEFORE the models are loaded
+    so the refusal beats a multi-minute compile. A `use_dynamic_relations` model
+    routes every call to the single-buffer path, whose rows at the top of the
+    range are larger still, so for that rare config this is a floor and not the
+    exact figure.
+    """
+    from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
+
+    n_max = max(1, int(max_concurrent_games))
+    rows = 0
+    for side in sides:
+        if side is None:
+            continue
+        topk = realized_topk(side)
+        rows = max(rows, leaf_buffer_rows(min(63, n_max), topk=topk, pipelined=False))
+        if n_max >= 64:
+            rows = max(rows, leaf_buffer_rows(n_max, topk=topk, pipelined=True))
+    return rows
+
+
+def no_hoist_reason(
+    *, mode: str, device: str, eval_max_batch: int,
+    volatility_candidate: dict[str, float] | None,
+) -> str | None:
+    """Why this invocation builds no hoisted evaluator, or None if it does.
+
+    ONE source of truth, because three separate things key off it: whether the
+    launch-time cap checks apply at all (they are meaningless on a path that
+    never builds an evaluator -- matched_time runs UCI subprocesses and a CPU
+    arena is excluded by design), what the console prints, and what the result
+    record stores.
+    """
+    if mode != "matched_sims":
+        return f"--mode {mode} builds no in-process evaluator"
+    if not eval_max_batch:
+        return "--eval-max-batch 0"
+    if volatility_candidate is not None:
+        return "--volatility-* on the candidate"
+    if not str(device).startswith("cuda"):
+        return f"device={device} is not CUDA"
+    return None
+
+
 def _free_cached_vram(device: str) -> None:
     """Return the caching allocator's idle segments to the driver. No-op off CUDA.
 
@@ -1278,6 +1395,7 @@ def play_paired_games_matched_sims_rolling(
     pgn_sink: PgnSink | None = None,
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
+    free_cached_vram: bool = True,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -1426,7 +1544,7 @@ def play_paired_games_matched_sims_rolling(
             )
             break
         _refill()  # backfill the slots the reaped games freed — keep the pool full
-        if not drain_freed and not queue and len(boards) < pool_size:
+        if free_cached_vram and not drain_freed and not queue and len(boards) < pool_size:
             # Drain has begun: the queue is empty, so the pool only shrinks from
             # here and the allocator's full-width segments will never be reused.
             # Freed ONCE, at the transition — doing it per ply would sync the
@@ -1475,7 +1593,8 @@ def play_paired_games_matched_sims_rolling(
         for i in active:
             gplies[i] += 1
 
-    _free_cached_vram(device)
+    if free_cached_vram:
+        _free_cached_vram(device)
     return complete_pair_scores(game_scores)
 
 
@@ -1643,6 +1762,11 @@ def build_result_record(
     games_requested: int | None = None,
     max_seconds: float | None = None,
     truncated: bool = False,
+    hoist_setting: str = HOIST_UNKNOWN,
+    hoist_values: Sequence[str] = (),
+    eval_max_batch: int | None = None,
+    eval_leaf_cap_uncapped: int | None = None,
+    eval_leaf_cap_bound: bool = False,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -1667,6 +1791,19 @@ def build_result_record(
         "games_requested": games_requested,
         "max_seconds": max_seconds,
         "truncated": bool(truncated),
+        # The evaluator hoist, recorded because it can change the arithmetic
+        # that played the games. `eval_leaf_cap_bound` is the field that makes
+        # a shrunken search identifiable afterwards -- `eval_max_batch` alone
+        # cannot say whether it bound, because that depends on topk and
+        # concurrency. `eval_hoist_values`/`mixed_eval_hoist` carry the same
+        # contract as `compile_values` does on the resume-capable branch: on a
+        # run whose games all come from one process there is exactly one tag.
+        "eval_hoist": hoist_setting,
+        "eval_hoist_values": list(hoist_values) or [hoist_setting],
+        "mixed_eval_hoist": len(set(hoist_values)) > 1,
+        "eval_max_batch": eval_max_batch,
+        "eval_leaf_cap_uncapped": eval_leaf_cap_uncapped,
+        "eval_leaf_cap_bound": bool(eval_leaf_cap_bound),
         "openings": openings_path,
         "openings_kind": openings_kind,
         "opening_plies": opening_plies,
@@ -1805,19 +1942,6 @@ def run_arena(
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
         raise SystemExit("--eval-max-batch must be >= 0 (0 disables the hoist)")
-    if 0 < eval_max_batch < max_concurrent_games:
-        # Refused HERE, not on the ply that trips it. The C gumbel ROOT submit
-        # is handed every board on one side at once and is NOT bucketed against
-        # the evaluator's cap, so `get_input_buffer` would raise `batch N > max
-        # M` mid-arena -- after the checkpoint load and a multi-minute compile,
-        # and after the PGN/game log already exist.
-        raise SystemExit(
-            f"--eval-max-batch {eval_max_batch} is below --max-concurrent-games "
-            f"{max_concurrent_games}: the search's root batch is up to one whole "
-            "side of the pool and the hoisted evaluator would refuse it. Raise "
-            "--eval-max-batch to at least --max-concurrent-games, or pass "
-            "--eval-max-batch 0 to keep the per-call evaluators."
-        )
     if mode == "matched_sims" and (search_candidate is None or search_reference is None):
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
@@ -1833,6 +1957,66 @@ def run_arena(
         raise SystemExit(
             "matched_time plays through UCI engine subprocesses, which use their "
             "own play shape; --search-shape cannot apply. Use --uci-args."
+        )
+    # Cap checks live HERE: after the shape refusals (so both sides' topk are
+    # resolved) and before any checkpoint load or compile, and ONLY on a path
+    # that will actually build an evaluator. matched_time plays through UCI
+    # subprocesses and a CPU arena is excluded by design, so a cap that can
+    # never bind must not refuse either of them.
+    _no_hoist = no_hoist_reason(
+        mode=mode, device=device, eval_max_batch=eval_max_batch,
+        volatility_candidate=volatility_candidate,
+    )
+    uncapped_leaf_rows = (
+        arena_uncapped_leaf_rows(
+            max_concurrent_games=max_concurrent_games,
+            sides=(search_candidate, search_reference),
+        )
+        if _no_hoist is None else 0
+    )
+    leaf_cap_bound = _no_hoist is None and eval_max_batch < uncapped_leaf_rows
+    if _no_hoist is None and eval_max_batch < max_concurrent_games:
+        # Refused HERE, not on the ply that trips it. The C gumbel ROOT submit
+        # is handed every board on one side at once and is NOT bucketed against
+        # the evaluator's cap, so `get_input_buffer` would raise `batch N > max
+        # M` mid-arena -- after the checkpoint load and a multi-minute compile,
+        # and after the PGN/game log already exist.
+        #
+        # ⚑ The remedy deliberately does NOT say "raise it to
+        # --max-concurrent-games". That is the value at which the ROOT submit
+        # stops raising and the LEAF cap binds HARDEST: at mcg 128 the search
+        # asks for 4096 leaf rows, so a cap of 128 would run and absorb most of
+        # the leaves. Naming the bare minimum would trade a loud crash for a
+        # quiet search change.
+        raise SystemExit(
+            f"--eval-max-batch {eval_max_batch} is below --max-concurrent-games "
+            f"{max_concurrent_games}: the search's root batch is up to one whole "
+            f"side of the pool and the hoisted evaluator would refuse it.\n"
+            f"  Use --eval-max-batch {uncapped_leaf_rows} — this arena's uncapped "
+            f"leaf-buffer size, at which the search runs unchanged — or "
+            f"--eval-max-batch 0 to keep the per-call evaluators.\n"
+            f"  Anything between {max_concurrent_games} and {uncapped_leaf_rows} "
+            f"runs, but SHRINKS THE SEARCH rather than just the memory."
+        )
+    if leaf_cap_bound:
+        # Allowed, warned, and recorded — the way compile is. It changes the
+        # arithmetic, there are legitimate reasons to want it (a smaller card),
+        # and refusing would take the option away. What is not allowed is it
+        # being quiet.
+        print(
+            f"[arena] ⚑ WARNING: --eval-max-batch {eval_max_batch} is BELOW this "
+            f"arena's uncapped leaf-buffer size {uncapped_leaf_rows}, so it is "
+            f"acting as a SEARCH-SHAPE knob, not a memory knob. gumbel_c mins "
+            f"its leaf buffer against the evaluator's cap, and when that buffer "
+            f"fills the C tree does NOT flush and retry — it absorbs the leaf as "
+            f"a SOLVED_UNKNOWN pseudo-terminal carrying the ROOT's Q. Leaves "
+            f"beyond {eval_max_batch} are therefore never evaluated: measured on "
+            f"CPU, 128 vs 4096 dropped 57-75% of leaf evaluations and changed the "
+            f"chosen move on 53 of 64 boards. THIS ARENA'S SEARCH IS NOT "
+            f"COMPARABLE TO AN UNCAPPED ONE. Pass --eval-max-batch "
+            f"{uncapped_leaf_rows} (or 0) if that was not intended; the result "
+            f"record stores which it was.",
+            file=sys.stderr, flush=True,
         )
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
@@ -1855,6 +2039,14 @@ def run_arena(
             openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
         )
 
+    # What THIS invocation's hoist configuration actually is, in the one form a
+    # log can be read by years later. Computed here, off `_no_hoist` and the
+    # uncapped leaf-buffer size resolved above, so the record cannot disagree
+    # with what the refusal and the warning were decided from.
+    this_hoist = hoist_tag(
+        eval_max_batch, mode=mode, no_hoist=_no_hoist,
+        uncapped_leaf_rows=uncapped_leaf_rows,
+    )
     pgn_writer: ArenaPgnWriter | None = None
     pgn_sink: PgnSink | None = None
     if pgn_out is not None:
@@ -1969,7 +2161,12 @@ def run_arena(
   # `_inference_only` there would leave a volatility arena searching with vol=0
   # on every node and reporting it as a volatility result -- a value accepted
   # and then silently ignored, which is the defect class this change removes.
-        _full_heads = volatility_candidate is not None
+  # ⚑ ALSO gated on --eval-max-batch: 0 is documented as restoring the
+  # pre-hoist arena, and a 2-head forward is not what a pre-hoist arena ran.
+  # Under torch.compile the two-head branch is a DIFFERENT traced graph, so
+  # "bit-identical in eager" does not carry to a compiled run -- which makes 0
+  # a real escape hatch only if it turns this off as well.
+        _full_heads = volatility_candidate is not None or not eval_max_batch
         if not _full_heads:
             for _m in (model_candidate, model_reference):
                 if hasattr(_m, "_inference_only"):
@@ -1981,8 +2178,14 @@ def run_arena(
             "[arena] inference-only heads: candidate={} reference={}{}".format(
                 getattr(model_candidate, "_inference_only", "absent"),
                 getattr(model_reference, "_inference_only", "absent"),
-                " (forced full: --volatility-* needs the volatility head)"
-                if _full_heads else " (policy_own + wdl only)",
+                (
+                    " (forced full: --volatility-* needs the volatility head)"
+                    if volatility_candidate is not None
+                    else " (forced full: --eval-max-batch 0 restores the "
+                         "pre-hoist 10-head forward)"
+                    if not eval_max_batch
+                    else " (policy_own + wdl only)"
+                ),
             ),
             flush=True,
         )
@@ -2001,8 +2204,9 @@ def run_arena(
   # it turns the hoist off, because a knob that silently does nothing is the
   # defect this whole change is about:
   #  * CUDA only. The defect is the CUDA stream pool and the VRAM the allocator
-  #    strands per stream; a CPU arena has neither, and would pay ~0.5G of host
-  #    buffers at the default cap for nothing.
+  #    strands per stream; a CPU arena has neither, and would pay ~1.05 GB of
+  #    host buffers at the default cap for nothing (262 MB per slot x 2 slots
+  #    x 2 sides; page-locked on CUDA).
   #  * not under --volatility-*. That side searches on the PYTHON path, whose
   #    leaf batches are not sized against any evaluator cap, and hoisting only
   #    the side that stayed on the C path would put the two halves of the A/B
@@ -2011,12 +2215,6 @@ def run_arena(
   #    pre-hoist arena exactly.
         evaluator_candidate = None
         evaluator_reference = None
-        _no_hoist = (
-            "--eval-max-batch 0" if not eval_max_batch
-            else "--volatility-* on the candidate" if _full_heads
-            else f"device={device} is not CUDA" if not str(device).startswith("cuda")
-            else None
-        )
         if _no_hoist is None:
             from chess_anti_engine.inference_dispatcher import supports_inplace_api
 
@@ -2093,6 +2291,7 @@ def run_arena(
                     pgn_sink=pgn_sink,
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
+                    free_cached_vram=bool(eval_max_batch),
                 )
             else:
                 # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -2134,8 +2333,10 @@ def run_arena(
                         evaluator_reference=evaluator_reference,
                     ))
                     # The chunk has drained; its widest batch shapes are gone for
-                    # good until the next chunk rebuilds them.
-                    _free_cached_vram(device)
+                    # good until the next chunk rebuilds them. Skipped under
+                    # --eval-max-batch 0, which restores the pre-hoist arena whole.
+                    if eval_max_batch:
+                        _free_cached_vram(device)
                     print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
                     print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
         except ActionDecodeError as exc:
@@ -2214,6 +2415,14 @@ def run_arena(
         games_requested=games,
         max_seconds=None if max_seconds is None else float(max_seconds),
         truncated=truncated,
+        # `hoist_values` is left at its default: every game this record scores
+        # was played by THIS process (there is no resume on this branch), so
+        # the values list is exactly `[this_hoist]` and `mixed_eval_hoist` is
+        # false by construction rather than by assumption.
+        hoist_setting=this_hoist,
+        eval_max_batch=int(eval_max_batch),
+        eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
+        eval_leaf_cap_bound=leaf_cap_bound,
     )
     if out_path is not None:
         append_result(record, out_path)
@@ -2412,13 +2621,20 @@ def main() -> None:
     p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
                    help="matched_sims: forward-batch cap for the ONE long-lived "
                         f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
-                        "which is what production selfplay runs). Must be >= "
-                        "--max-concurrent-games: the search's root submit is a "
-                        "whole side of the pool at once and is not bucketed "
-                        "against this cap. 0 disables the hoist entirely and "
-                        "restores the per-call evaluators (a fresh CUDA stream "
-                        "per side per ply, and no cap on the leaf batch) — for "
-                        "reproducing a pre-hoist arena, not for normal use.")
+                        "which is what production selfplay runs, and at the "
+                        "default --max-concurrent-games is at or above every "
+                        "batch the search asks for). ⚑ BELOW that it is a "
+                        "SEARCH-SHAPE knob, not a memory knob: gumbel_c mins its "
+                        "leaf buffer against this, and a full buffer makes the C "
+                        "tree ABSORB surplus leaves as root-Q pseudo-terminals "
+                        "instead of evaluating them, so the moves change. Values "
+                        "below --max-concurrent-games are refused (the root "
+                        "submit would raise); values between that and the "
+                        "uncapped leaf-buffer size run but print a loud warning "
+                        "and are recorded in the result record. 0 disables the "
+                        "hoist and restores the pre-hoist "
+                        "arena exactly — per-call evaluators, 10-head forward, "
+                        "no cache frees — for reproduction, not normal use.")
     p.add_argument("--report-every", type=int, default=64,
                    help="rolling mode: print a RUNNING Elo block every N finished "
                         "games (default: 64). Lower it when the run is under a "
