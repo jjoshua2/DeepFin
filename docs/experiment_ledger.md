@@ -64015,3 +64015,37 @@ plateau and resuming it gains nothing. The GPU belongs to the diagnosis/fix prog
 fix candidate exists (candidates in flight: #438 verdict routing, sigma-probe target fix,
 SF-teacher dose ladder). The intentional-stop marker stays; nothing restarts production
 without an affirmative "we have a fix, deploy it" decision.
+
+## 2026-08-21 — DOSE LADDER: operational pins (completes the 2026-08-19 prereg) and LAUNCH
+
+GPU idle while the #438 readout's CPU stages run (Josh: "I think gpu is idle and needs
+more"); #438's training is complete so the priority clause is satisfied — only its scoring
+remains, which shares nothing with an offline arm. Pins, recorded before launch:
+
+- **Checkpoint:** `data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt` —
+  pinned by path AND step (manifest: `picked_row_training_iteration` 595, `checkpoint_000594`).
+- **Corpus:** the same export's `replay_shards/` (797 shards, the frozen replay window banked
+  at the same instant as the checkpoint). Opened IN PLACE: `retarget_retrain.py` builds its
+  buffer `read_only=True` (line ~584), so the revert-point export cannot be consumed.
+  Spot-checked `has_sf_p0` coverage f ≈ 0.444 (shard_010238, 2000 rows); the wrapper's
+  `blended_rows/total_rows` counters REPORT realized f per arm, never spliced across arms.
+- **Arms (one driver invocation, 5 variants, shared shard snapshot, identically seeded,
+  cold optimizer):** `a000:` (control, UNWRAPPED by construction — bitwise the no-blend
+  path), `a025:sf_p0_blend_alpha=0.25`, `a050:...=0.5`, `a070:...=0.7`, `a100:...=1.0`.
+- **`--no-rebuild-sf-targets`** — REQUIRED, not a choice: the blend's `q` is the STORED
+  `sf_p0_policy_target`, and the rebuild path masks exactly that field.
+- **Budget: 6,000 steps/arm at batch 512** (≈2.05 draws/row over the ~1.5M-row window;
+  measured driver rate 1.25–1.33 steps/s from the July race runs ⇒ ~77 min/arm, ~6.5 h
+  ladder). ⚑ **Adequacy guard, pre-committed:** the `a100` diagnostic arm's own train CE
+  must FALL ≥ 0.05 nats over its run. If it does not, the ladder is UNDERDOSED and the
+  verdict table's "flat CE ⇒ plumbing/optimisation defect" row MAY NOT be read — an
+  underdosed budget mimics that row (instrument resolution before threshold).
+- **Yardstick, unchanged from the prereg:** per arm,
+  `PYTHONPATH=. python3 scripts/audit_targets.py --net <arm_ckpt> --audit data/audit_set_v1.jsonl`,
+  each arm judged against `a000` (never against live). Kill unchanged: a070 must beat a000
+  by ≥ 3.0 cp.
+- **Snapshot clause:** production is stopped and untouched; the arms are offline from the
+  salvage export, which IS the banked snapshot. Nothing to snapshot beyond it.
+- **Confounds:** runs concurrently with the #438 readout scoring (GPU bursts) and the SF
+  baselines (CPU); the arms' own numbers are paired within the ladder, so box load shifts
+  wall time, not verdicts. Worktree: `chess-doseladder` @ `8cda1fb3a`.
