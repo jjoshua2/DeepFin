@@ -64155,3 +64155,19 @@ the dispatch is mechanical, not post-hoc:
 Closed and staying closed: relational SF6 (algebra), categorical repair (null), blanket
 Stage-1 funnel (demoted). Value lane (outcome anchor 0.001, head-vs-label) is a SEPARATE
 program — re-prioritised if match C reproduces the value-hallucination loss shape.
+
+## 2026-08-21 — ⚑⚑ sigma probe FINAL: **REFUTED** — the mctx min-max rescale HELPS the stored target; F2 is dead in its tested form
+
+4,000-position repeat (prereg 5b72f3b94's one-and-done): A (rescale ON, production)
+**38.68 cp** vs B (absolute-Q) **41.56 cp**; paired Δ(A−B) **−2.88 cp, 95% CI
+[−4.18, −1.60]** — excludes 0 in B's worse direction ⇒ **REFUTED** by the pre-committed
+rule. Middlegame carries it (−3.72 [−5.17, −2.33]); endgame same sign, wider. Consistent
+with read 1 (−2.10 n.s. at 2000). Dumps banked (`sigma_probe4k_leg{A,B}.jsonl`).
+
+**Consequence:** the full-loop audit's strongest surviving mechanism — few-visit noise
+receiving decisive σ authority via the min-max rescale — does NOT degrade realized target
+quality; if anything the rescale is protective. The "sharp and wrong" account now rests on
+the remaining legs: teacher content/dose (the LADDER, running), surprise-sampling
+amplification (unprobed), and the value-anchor composition. No production change follows
+from this probe; `target_q_rescale` stays default-on (bit-identical) and the knob remains
+probe-only. Prereg closed — no further sigma runs.
