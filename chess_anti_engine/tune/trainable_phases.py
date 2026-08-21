@@ -608,7 +608,7 @@ def _run_holdout_evaluation(
     return None, -1
 
 
-def _train_buffer_for_iteration(buf, *, tc: TrialConfig):
+def _train_buffer_for_iteration(buf, *, tc: TrialConfig, trainer):
     """The buffer ``train_steps`` consumes this iteration: blended or raw.
 
     Rebuilt from THIS iteration's freshly reloaded ``tc`` at the call
@@ -620,21 +620,68 @@ def _train_buffer_for_iteration(buf, *, tc: TrialConfig):
     read-only ``__getattr__`` delegation cannot shadow it. At 0.0 the raw
     buffer is returned unwrapped — identity, not equivalence — so OFF stays
     bitwise identical to the pre-feature path.
+
+    ⚑ The two refusals read the TRAINER'S OWN attributes, not the config
+    dict: both hazards reach the loss through raw-config paths
+    (``w_sf_own`` via ``_sync_trainer_weights``, which has already run this
+    iteration; ``rebuild_sf_targets`` at construction), so the trainer's
+    attribute is the value that will actually apply, and a live yaml edit to
+    ``w_sf_own`` is caught the same iteration it lands.
+
+    - ``w_sf_own > 0`` while blending double-doses eligible rows: the
+      additive CE term is separately ``masked_mean``-normalized, so those
+      rows get ~``w_sf_own / has_sf_p0_frac`` extra teacher coefficient on
+      top of the blend — the exact row-upweighting confound the target blend
+      exists to avoid. (LIVE production runs ``w_sf_own: 0.0``; ``main``'s
+      yaml still says 0.1 — the stale-yaml trap. Do not read the refusal as
+      "production must change first".)
+    - ``rebuild_sf_targets`` runs AFTER this wrap (inside
+      ``_prepare_host_arrays``) and clears ``has_sf_p0`` without being able
+      to restore an already-blended ``policy_target``: training would consume
+      a stale teacher while coverage reports it masked. Refused, not
+      reordered — see the ordering contract in ``sfp0_blend.py``.
     """
     alpha = float(tc.sf_p0_blend_alpha)
     if alpha <= 0.0:
         return buf, None
+    w_sf_own = float(trainer.w_sf_own)
+    if w_sf_own > 0.0:
+        raise RuntimeError(
+            f"sf_p0_blend_alpha={alpha} with w_sf_own={w_sf_own}: the "
+            "additive CE term would double-dose eligible rows on top of the "
+            "target blend (~w_sf_own/has_sf_p0_frac extra coefficient). Set "
+            "w_sf_own to 0.0 while the blend is active"
+        )
+    if bool(trainer.rebuild_sf_targets):
+        raise RuntimeError(
+            f"sf_p0_blend_alpha={alpha} with rebuild_sf_targets=True: the "
+            "rebuild runs after the blend and clears has_sf_p0 but cannot "
+            "restore the already-blended policy_target — training would "
+            "consume a stale teacher while coverage reports it masked. "
+            "Disable one of the two"
+        )
     blend = SfP0BlendBuffer(buf, alpha)
     return blend, blend
 
 
-def _log_sfp0_blend(blend: SfP0BlendBuffer | None, *, iteration_idx: int) -> None:
-    """Wiring proof, announced from the consumer's own parameter.
+def _finish_sfp0_blend(blend: SfP0BlendBuffer | None, *, iteration_idx: int) -> None:
+    """Wiring proof + the zero-blend outage gate, after the training phase.
 
     Reports the alpha THE WRAPPER ITSELF holds plus the realized blended-row
     fraction from its own counters — never the config's request — so a live
     operator reads effect, not intent, off the trial log. Silent when OFF: an
     always-on line would train the reader to ignore it.
+
+    ⚑ THE GATE: the wrapper's missing-column refusal cannot see the realistic
+    outage — the shard codec always materializes ``has_sf_p0`` (zeros) and
+    the chunk gatherer zero-fills over the union of keys, so a recording
+    outage, a window aging past the last teacher-carrying shards, or donor
+    shards without the field all arrive as columns-present-all-zero. At
+    production eligibility (~0.15-0.23) a legitimately all-zero iteration is
+    statistically impossible over 88x512 rows, so an iteration that trained
+    rows and blended none is an OUTAGE and raises — a silent pure-t0 run
+    reading as a null is the exact failure this knob's instrumentation
+    exists to prevent.
     """
     if blend is None:
         return
@@ -646,6 +693,15 @@ def _log_sfp0_blend(blend: SfP0BlendBuffer | None, *, iteration_idx: int) -> Non
         f"f={frac:.4f} (iteration {iteration_idx})",
         flush=True,
     )
+    if total > 0 and int(blend.blended_rows) == 0:
+        raise RuntimeError(
+            f"sf_p0_blend: iteration {iteration_idx} trained {total} rows "
+            f"with alpha={blend.alpha} and blended ZERO — every sampled row "
+            "carried has_sf_p0=0. That is an sf_p0 teacher OUTAGE (recording "
+            "gap, window aged past the teacher-carrying shards, or donor "
+            "shards without the field), not chance: production eligibility "
+            "is ~0.15-0.23. Refusing to continue as a silent pure-t0 run"
+        )
 
 
 def _run_training_and_gating(
@@ -732,9 +788,9 @@ def _run_training_and_gating(
                 export_model=False,
             )
 
-        train_buf, sfp0_blend = _train_buffer_for_iteration(buf, tc=tc)
+        train_buf, sfp0_blend = _train_buffer_for_iteration(buf, tc=tc, trainer=trainer)
         metrics = trainer.train_steps(train_buf, batch_size=batch_size, steps=steps)
-        _log_sfp0_blend(sfp0_blend, iteration_idx=int(iteration_idx))
+        _finish_sfp0_blend(sfp0_blend, iteration_idx=int(iteration_idx))
 
     test_metrics, test_metrics_source_iter = _run_holdout_evaluation(
         trainer=trainer, holdout_buf=holdout_buf,

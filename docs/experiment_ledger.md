@@ -42922,3 +42922,65 @@ already holding 18.3/32 cores, so a PASS is necessary and not sufficient. The ma
 unchanged and is now runnable: repeat arm with `--sf-cache` first, publish `d_obs` and the
 half-width, choose the effect size against the MEASURED resolution, demonstrate that PASS and
 KILL both land inside the statistic's observed range, and only then run arm NEW.
+
+## 2026-08-21 — PR #450: `sf_p0_blend_alpha` productionized (default 0.0 = OFF) — **SUPERSEDES the 2026-08-09 "duplication" retirement of the target-blend arm**
+
+**What ships.** `sf_p0_blend_alpha` (schema `tune:` section, `TrialConfig`-validated to
+[0, 1], default **0.0 = OFF**): at the `train_steps` call boundary the replay buffer is
+wrapped per iteration so sampled batches carry
+`policy_target ← (1−α)·t0 + α·sf_p0_policy_target` on `has_sf_p0` rows, no
+renormalization, every row staying ONE row of weight 1. α=0 runs the unwrapped buffer
+object, bitwise. Live-reloadable in both directions (the wrapper is rebuilt from the
+freshly reloaded config every iteration). At the shipped default this PR is not a
+training-affecting change; activation is governed by the dose-ladder prereg below.
+
+**(a) SUPERSEDED: the 2026-08-09 #373-era ruling** (this ledger: "Soft cross-entropy is
+LINEAR in the target… The new knob was therefore duplication whose only distinguishing
+feature was the defect"). The per-row identity
+`CE((1−α)·t0 + α·s, p) = (1−α)·CE(t0, p) + α·CE(s, p)` is true and was never the
+question. The two routes differ in ROW-WEIGHT normalization, and the ruling's own dose
+table contains the refutation: the additive term is a **masked mean over `has_sf_p0`
+rows**, so on an eligible row its weight relative to the main term is
+`(w_sf_own/w_policy)/f`. Matching teacher SHARE α on eligible rows via `w_sf_own`
+therefore requires `w_sf_own = f·w_policy·α/(1−α)`, which puts the eligible row's TOTAL
+policy-gradient weight at `w_policy/(1−α)` — **1/(1−α)× an ineligible row's (3.33× at
+α=0.7)** — while the target blend holds every row at exactly 1. Equivalence would need
+`w_policy` scaled down on eligible rows only, which a global weight cannot do. The two
+knobs are NOT re-parameterisations of each other: the blend delivers dose α without
+handing a non-random 15–23% subpopulation extra gradient share. The 2026-08-09 defect
+finding against #373's implementation stands; the retirement of the ARM as "duplication"
+is withdrawn.
+
+**(b) Prereg (live branch, banked before this PR):** `d2e07b96d` (dose-ladder
+operational pins: iter-595 ckpt, salvage replay window of 797 shards, 5 arms × 6,000
+steps at batch 512, `a100` adequacy guard), `c72966877` (repair-portfolio routing table
+banked before the ladder read), `a12239709` (ladder aborted by the dead-knob guard: the
+blend key was unreachable on the variant path — the wiring gap whose production-path
+half this PR closes; audit flag fixed, resequenced A → fixed ladder → B → C).
+
+**Hypothesis.** Blending the same-position SF soft teacher into the policy target at
+dose α improves policy target quality on the frozen audit set, without the additive
+route's gradient-share confound.
+
+**Deciding yardstick (exact command, per ladder arm, unchanged from the prereg):**
+`PYTHONPATH=. python3 scripts/audit_targets.py --net <arm_ckpt> --audit data/audit_set_v1.jsonl`
+— each arm judged against `a000`, never against live. **Kill pre-committed: `a070` must
+beat `a000` by ≥ 3.0 cp, else the arm family dies.** Arms: a000/a025/a050/a070/a100.
+
+**Refusals shipped with the knob** (all raise; none degrade silently): α>0 with
+`w_sf_own>0` (double-dose — NOTE live production runs `w_sf_own: 0.0`; `main`'s yaml
+still says 0.1, the stale-yaml trap); α>0 with `rebuild_sf_targets` (the rebuild clears
+`has_sf_p0` after the blend but cannot restore the already-blended target); an iteration
+that trains rows and blends ZERO of them (sf_p0 outage — the shard codec always
+materializes zero flags, so column presence proves nothing); eligible-row sums off 1
+beyond 1e-2 in either source array (downstream `soft_cross_entropy` renormalizes and
+would silently repair the corruption).
+
+**Realized dose is α×f, and f is a property of the corpus, not the config.** Production
+eligibility `has_sf_p0_frac` ≈ 0.15–0.23 (0.2304 banked, trial 379f6 iter 516); the
+ladder's salvage window reads 0.444. Deployment prereg MUST read realized f off the
+wrapper's wiring-proof log line (`blended_rows/total_rows`) before choosing α — a dose
+chosen from the yaml alone is a guess.
+
+**Confounds:** none at the shipped default (α=0 is the identity path, pinned bitwise by
+test).

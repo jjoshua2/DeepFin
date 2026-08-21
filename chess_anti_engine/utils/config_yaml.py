@@ -371,6 +371,12 @@ _TUNE_KEYS = (
     "shuffle_draw_cap_frac", "shuffle_wl_max_ratio",
     "replay_sf_gap_priority_weight", "replay_sf_gap_priority_signed",
     "replay_fast_low_surprise_priority",
+    # ⚑ tune:, NOT train:. Filed here by consumer location (the replay-sampling
+    # family above; the blend applies at buffer sample time). An operator will
+    # mentally file it beside policy_target_temp/w_sf_own in train:, and a live
+    # edit under train: makes _check_unknown reject the WHOLE reload (all
+    # concurrent edits included) mid-run, and is fatal at launch. Deactivate by
+    # setting 0.0, never by deleting the line.
     "sf_p0_blend_alpha",
     "shard_size",
     "exploit_replay_refresh_enabled", "exploit_replay_keep_fraction",

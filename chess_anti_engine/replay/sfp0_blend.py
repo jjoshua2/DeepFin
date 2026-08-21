@@ -10,7 +10,20 @@ gradient (3.33x at a=0.7), a confound with nothing to recommend it.
 
 Both inputs are normalized distributions and the blend is convex, so no
 renormalization happens here; renormalizing would silently repair a corrupt
-stored target instead of surfacing it.
+stored target instead of surfacing it. That stance is only real because the
+wrapper VALIDATES eligible-row sums first (``_ROW_SUM_ATOL``): downstream
+``soft_cross_entropy`` renormalizes, so a corruption this wrapper let through
+would otherwise be silently repaired one frame later and never surface at all.
+
+⚑ ORDERING CONTRACT — the wrap happens at the ``train_steps`` call boundary,
+i.e. BEFORE ``Trainer._prepare_host_arrays``. That order is load-bearing:
+``mask_cross_ply_sf_targets`` (run inside ``_prepare_host_arrays`` when
+``rebuild_sf_targets`` is on) clears ``has_sf_p0`` because the cross-ply
+teacher cannot be rebuilt — but it cannot restore a ``policy_target`` this
+wrapper already blended. A refactor that moves the wrap after the rebuild
+would train on a stale teacher while coverage reports it masked, which is why
+``rebuild_sf_targets`` + a positive alpha is REFUSED outright at the wrap site
+(``trainable_phases._train_buffer_for_iteration``) rather than reordered.
 
 ⚑ LIFETIME CONTRACT — the wrapper is a per-``train_steps``-call view, never a
 long-lived replacement for the buffer. ``__getattr__`` delegates attribute
@@ -32,6 +45,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
+# |row_sum - 1| tolerance on ACTIVE rows of both sources. Production stores
+# both arrays float16; at width 1858 the accumulated representation drift on a
+# genuinely-normalized row measures ~2.3e-4, so 1e-2 is ~40x margin while
+# still refusing real corruption (a truncated row sums far below 1).
+_ROW_SUM_ATOL = 1e-2
+
 
 class SfP0BlendBuffer:
     """Blend the stored SF soft teacher into ``policy_target`` at sample time.
@@ -40,20 +61,36 @@ class SfP0BlendBuffer:
     lifetime — one training phase under the live wiring — so the realized
     eligible-row fraction ``f`` can be reported from the object the trainer
     actually consumed, never from the config that asked for it.
+
+    ⚑ The missing-COLUMN refusal below is necessary but NOT sufficient as an
+    outage gate: the shard codec always materializes ``has_sf_p0`` (zeros)
+    and the chunk gatherer zero-fills over the union of keys, so a real sf_p0
+    outage presents as columns-present-with-all-zero-flags. The iteration-level
+    zero-blend gate lives with the wiring
+    (``trainable_phases._finish_sfp0_blend``), which raises when an iteration
+    that trained rows blended none of them.
     """
 
     def __init__(self, inner: Any, alpha: float):
+        # Assigned FIRST: __getattr__ delegates through self._inner, and on a
+        # partially-constructed instance (this constructor raising, __new__
+        # without __init__, deepcopy protocol probes) a missing _inner would
+        # otherwise recurse through __getattr__ forever.
+        self._inner = inner
         if not 0.0 < float(alpha) <= 1.0:
             raise ValueError(
                 f"sf_p0_blend_alpha={alpha!r}: activation needs 0 < a <= 1 "
                 "(a=0 is OFF and runs UNWRAPPED, bitwise)"
             )
-        self._inner = inner
         self.alpha = float(alpha)
         self.blended_rows = 0
         self.total_rows = 0
 
     def __getattr__(self, name: str) -> Any:
+        if name == "_inner":
+            # Half-built instance (see __init__): answer honestly instead of
+            # recursing through this method looking for the delegate.
+            raise AttributeError(name)
         return getattr(self._inner, name)
 
     def __len__(self) -> int:
@@ -72,8 +109,26 @@ class SfP0BlendBuffer:
                 "pure t0 and read as a null"
             )
         mask = has_q.astype(bool)
+        n_eligible = int(mask.sum())
         self.total_rows += int(t0.shape[0])
-        self.blended_rows += int(mask.sum())
+        self.blended_rows += n_eligible
+        if n_eligible:
+            # Validate BEFORE blending: soft_cross_entropy renormalizes
+            # downstream, so a corrupt stored sum that passes this wrapper is
+            # silently repaired one frame later — the exact outcome the
+            # no-renormalization stance exists to refuse.
+            for name, arr in (("policy_target", t0), ("sf_p0_policy_target", q)):
+                sums = arr[mask].sum(axis=1, dtype=np.float64)
+                bad = np.abs(sums - 1.0) > _ROW_SUM_ATOL
+                if bad.any():
+                    worst = float(sums[np.argmax(np.abs(sums - 1.0))])
+                    raise RuntimeError(
+                        f"sf_p0_blend: {int(bad.sum())} active {name} row(s) "
+                        f"are not normalized (worst sum {worst:.4f}, "
+                        f"tolerance {_ROW_SUM_ATOL}) — refusing to blend a "
+                        "corrupt stored target; downstream normalization "
+                        "would silently repair it"
+                    )
         blended = t0.copy()
         a = self.alpha
         blended[mask] = ((1.0 - a) * t0[mask] + a * q[mask]).astype(

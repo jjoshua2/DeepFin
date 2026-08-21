@@ -42,8 +42,8 @@ StartupSource = Literal[
 
 
 def _unit_fraction(value: Any, *, name: str) -> float:
-    frac = float(value)
-    if not math.isfinite(frac) or frac < 0.0 or frac > 1.0:
+    frac = _optional_unit_fraction(value, name=name)
+    if frac is None:
         raise ValueError(f"{name} must be in [0, 1], got {value!r}")
     return frac
 
