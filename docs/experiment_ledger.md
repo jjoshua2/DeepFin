@@ -64231,3 +64231,18 @@ concurrent on this card. The dead pid released seq2's gate and ladder2 launched 
 ladder2 (~6.5 h incl. audits) → match A attempt 3 at `--max-concurrent-games 32` → B (32)
 → full-Cheese block. Match A's verdict slips to late evening; the crash-persistence +
 resume feature (in flight) makes any further arena failure cheap.
+
+### PR #450 delta re-review: APPROVE, MERGE-READY; auto-merge armed on CI green; f-coverage correction
+
+The original reviewer verified all findings closed (re-ran the renorm and outage-gate
+mutants itself; proved the new refusals untouched on the α=0 path by handing the wrap site
+a trainer whose attributes raise if read), and audited the new row-sum validator against
+REAL live shards: max |row_sum−1| = 3.6e-4 vs the 1e-2 tolerance, would_refuse = 0.
+Squash-merge fires automatically when the in-flight CI test job completes green.
+
+⚑ **Correction, measured by the reviewer on current live-trial shards:** `has_sf_p0`
+coverage is **0.483/0.524/0.525** — the "~0.15–0.23 production eligibility" this ledger
+has been quoting is stale by ~2×. Realized blend dose = α×f, so any α chosen from ladder2
+must be priced against the MEASURED live f (the PR's wiring-proof log line reports it
+per iteration), not against either stale figure. The deployment prereg must quote its
+expected effective dose from that line after one iteration at α=0... (log runs at any α).
