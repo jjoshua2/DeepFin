@@ -64379,3 +64379,25 @@ row (a) net raw policy, overall **top-1** deep-SF regret on the frozen `audit_se
   applies as always — but this was the preregistered test of the high-dose hypothesis,
   and it killed it. The SF-teacher program's surviving lever is label-time screening
   ([[bad_tail_is_screenable_at_label_time]]), not dose.
+
+## 2026-08-21 — #438 Δ_train color lands: **+3.6399 pp [+3.3764, +3.9035]** on TRAIN rows vs Δ_heldout +3.6171 [+3.3526, +3.8816] ⇒ **ZERO fit-vs-transfer gap** on the lc0 corpus
+
+Owed from the #438 verdict ("Δ_train legs still land later … recorded as color"). Both
+train scans banked (`mid_train.json.npz` 14:20, `last_train.json.npz` 16:23, n=91,842
+frozen train rows each); compare run with the pinned rig
+(`/home/josh/chess-438-merge-review/scripts/lc0_control_eval.py compare --population train
+--max-halfwidth-pp 0.392` — same stricter-than-preregistered bar mechanism as the heldout
+read). MID top-1 45.8951% → LAST 49.5351%, exact McNemar p = 2.8e-161, halfwidth 0.2635 pp,
+1.1 rows/cluster (design effect negligible on this leg).
+
+- **The train slope equals the heldout slope to 0.02 pp.** The stack's generalisation gap
+  on clean external data is ~zero: it is not fitting train rows faster than it transfers.
+  Strengthens the PASS reading — effort routes to the target program with no
+  memorisation discount.
+- Absolute levels: train ≈2.7 pp above heldout at both checkpoints (ordinary exposure
+  advantage, stable across training — consistent with the zero gap in slopes).
+- **Chain defect, disclosed:** chain3's own compare stage crashed on a filename mismatch
+  (`_load_scores` given `mid_heldout.json`; the scorer writes `.json.npz`) AFTER all scans
+  banked — the compares above were run manually from the banked artifacts. The two
+  population/resolution guards in the compare tool both fired correctly en route
+  (train-vs-heldout refusal; n<100k bar refusal) — working as designed.
