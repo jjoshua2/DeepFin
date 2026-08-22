@@ -65437,3 +65437,19 @@ fail-loud UPPER BOUND for `sf_move_ce` — legend nit routed); F7 refusal proven
 delete an ALREADY-WRITTEN mid checkpoint (drift injected only on call 4); both lint
 gates delta 0; pre-existing lc0_data_to_rows failure proven identical at the branch
 point. Merge on the one-change commit landing.
+
+**Grok pass on the identity fix diff: TWO REGRESSIONS INTRODUCED BY THE RESTRUCTURE,
+both code-verified** — vindicating the run-grok-on-nontrivial-fix-diffs policy. (1) HIGH:
+the `eval_max_batch` launch gate still sizes the search for the dead many-boards-per-call
+path — with one board per call the true need is 512 rows, so [512, 4032) draws false
+"SHRINKS THE SEARCH" warnings/refusals and the knob is INERT above 512 while still
+fingerprinted as measurement-defining. (2) MEDIUM: `played_regret_mean/max` silently
+stopped excluding no-PV moves — the F3 fix changed their regret from None to a real 0.0,
+breaking the accidental invariant the `is not None` filter relied on, while the note
+still claims exclusion (surfaces exactly during the desynced-pool episodes the no-PV
+warning exists for). Plus a test gap (the new payload test never varies the five
+side-derived keys; the old vacuous fingerprint test survives un-pruned) and two doc
+nits. Positively confirmed: pairing intact under the restructure, RNG stream tags
+alias-free, no-PV substitution exactly matches production, sidecar/final share one row
+builder, `stockfish_turn.py` byte-identical. All routed to the builder; Opus
+re-verification still running in parallel — its findings merge into the same commit.
