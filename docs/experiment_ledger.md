@@ -65173,3 +65173,20 @@ all PASS by re-derivation. The wiring layer carries the defects:
 Lint delta 0 (13 pre-existing, same 3 untouched files; ⚑ a fresh worktree without built
 `.so` reads 155 — the baseline is build-state dependent). Tests: +69 new pass, 57
 pre-existing pass both sides. Fix list sent to the builder; grok pass still pending.
+
+**Grok cross-family review — `feat/rvg-target-surgery`: CONVERGES with the Opus review on
+both headline findings** (enumeration RNG divergence — Grok traced the same chain
+independently and called it the one blocker; soft-arm stamp crash — Grok git-blamed it to
+`fe44ce4cf` and confirmed no test reaches the path). Four NEW findings routed to the
+builder: (A) enumerate-rows mode silently ignores 8 label-pass flags and label mode
+ignores the 3 enum flags — refuse inapplicable flags; (B) `.partial` resume has no
+settings provenance — reusing `--out` after a `--nodes`/`--multipv` change stitches
+stale labels under a fresh header claiming the new budget (same defect class as the BT4
+dump's stale-header fix; the fix must not invalidate the in-flight matching .partial);
+(C) arm R's unlabeled rows get a ZERO regret vector + has=0, not "untouched" as the
+docstring claims — semantics probably right, docstring wrong, and a loss-consumer test
+is owed proving has=0 == absent; (D) header copies `sf_label_nodes_floor/cap` from the
+yaml while the search uses the hardcoded default (equal today, will not track). Grok
+also confirmed the negatives: V/G math clean, variant isolation clean (spot-checked, not
+exhaustive), join-key float determinism robust, empty-MultiPV fold guarded.
+Both fix lists (Opus + Grok addendum) are with the builder in one pass.
