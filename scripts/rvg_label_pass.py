@@ -597,6 +597,13 @@ def enumerate_drawn_rows(
         "accum_steps": accum_steps,
         "draws": draws,
         "batch_size": int(batch_size),
+        # ⚑ THE MIRROR PROBABILITY IS PART OF THE READING, NOT A FOOTNOTE. It is
+        # what makes this row set the sweep's row set: the mirror consumes
+        # `buf.rng` between draws, so an enumeration run at a different
+        # `mirror_prob` than the sweep names different rows. A key file whose
+        # header does not say it cannot be checked against the run that uses it.
+        "mirror_prob": float(mirror_prob),
+        "mirror_rng_consumed": True,
         "rows_drawn_with_repeats": rows_drawn,
         "distinct_rows": len(seen),
         "distinct_fraction_of_draws": (len(seen) / rows_drawn) if rows_drawn else 0.0,
