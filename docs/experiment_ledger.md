@@ -65654,3 +65654,85 @@ production outing of the F1-fixed fresh-pass path) with
 pass's rate. The rig consumes both files via the append-capable `--rvg-labels`.
 BT4 weekend dump starts AFTER the top-up (serial — the top-up gates tomorrow's ladder,
 the dump gates only Sunday's b030 leg).
+
+## 2026-08-22 — PREREG (LAUNCH): R/V/G target-surgery ladder — exact commands banked. Completes the 2026-08-22 DESIGN prereg; hypothesis, arms, yardstick, bars, reading key, and operator predictions UNCHANGED from that entry and its addenda.
+
+**Start checkpoint, pinned by path AND step:**
+`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt` — **step 171,327**,
+md5 `9758f97f7c9c…` (the iter-595 salvage init; same file as ft595/ext's reference).
+Corpus: the same salvage export's `replay_shards` (frozen; production stopped).
+
+**Main sweep (6 legs, one invocation, sequential arms, GPU ~8h):**
+```
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python3 scripts/retarget_retrain.py \
+    --config configs/pbt2_small.yaml \
+    --checkpoint data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt \
+    --replay-dir data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards \
+    --steps 6000 --batch-size 512 \
+    --out-dir runs/retarget/rvg_v1 \
+    --rvg-labels data/rvg/rvg_labels_mpv40_150k.jsonl \
+    --rvg-labels data/rvg/rvg_labels_mpv40_150k_topup.jsonl \
+    --rvg-r-weight 0.7 \
+    --rvg-v-lambda 0.02 --rvg-v-tau 20 --rvg-v-veto-cp 200 \
+    --rvg-g-alpha 0.3 --rvg-g-temp 150 \
+    --variant a000: \
+    --variant a00f:w_sf_policy_floor=0 \
+    --variant r070:rvg_arm=r,w_sf_policy_floor=0 \
+    --variant v020:rvg_arm=v \
+    --variant g030:rvg_arm=g \
+    --variant vg01:rvg_arm=vg
+```
+ONE amendment vs the rig builder's dry-parsed template, disclosed: `--rvg-labels` appears
+TWICE (main + top-up file) — the flag is `action="append"` by design decision at review,
+and the overlay path refuses mixed encodings (both files are `lc0_1858`).
+
+**Arm B (separate invocation per design deviation 3; runs AFTER the BT4 dump lands,
+Sunday/Monday; its own `a000` leg re-runs as an intra-invocation pairing check):**
+```
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python3 scripts/retarget_retrain.py \
+    --config configs/pbt2_small.yaml \
+    --checkpoint data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt \
+    --replay-dir data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards \
+    --steps 6000 --batch-size 512 \
+    --out-dir runs/retarget/rvg_b \
+    --rvg-labels data/rvg/rvg_labels_mpv40_150k.jsonl \
+    --rvg-labels data/rvg/rvg_labels_mpv40_150k_topup.jsonl \
+    --rvg-g-alpha 0.3 --rvg-g-temp 150 \
+    --rvg-g-q-source file:data/rvg/bt4_policy_by_key.jsonl \
+    --variant a000: \
+    --variant b030:rvg_arm=g
+```
+
+**Deciding yardstick (unchanged):** per arm,
+`PYTHONPATH=. python3 scripts/audit_targets.py --net runs/retarget/rvg_v1/<arm>.pt --audit data/audit_set_v1.jsonl`,
+row (a) net raw policy, overall top-1 deep-SF regret vs `a000` (r070/a00f judged vs
+`a00f`? NO — **every arm vs `a000`; a00f is the floor-off CONTROL whose own delta
+bounds how much of r070's effect is the floor removal**, per the design's deviation 2).
+**SUCCESS: Δtop-1 ≥ +3.0 cp AND E[regret] not worse. KILL: best arm < +3.0 cp or
+E[regret] worsens in every arm.** Never judged on entropy. Reading key and both operator
+predictions as registered in the addenda (B>G ⇒ gap structure; sharpness+tail is the
+disease; distribution axis exonerated by any positive).
+
+**Pre-launch smoke, REQUIRED before the sweep starts (the ladder2 lesson —
+a banked command must be RUN):** (1) top-up complete with `OK: join verified`;
+(2) `RvgLabelIndex.load` over BOTH files via the overlay path, asserting
+union coverage = 1,053,147 distinct keys = 100% of the fixed enumeration;
+(3) the main-sweep command dry-launched to the point of arm a000's buffer scan
+(kill before step 1) to prove the two-file load + variant parse on the real config.
+
+**Readability floors (pre-committed):** each active arm must report, from its OWN
+wrapper stats: labeled-drawn coverage ≥99% of drawn rows (else the arm is UNREADABLE —
+not killed, unreadable) and `edited_rows > 0` (the rig refuses this by construction).
+Report per-arm `edited_rows`/`eligible_rows` and realized coverage in the readout table.
+
+**Confounds, disclosed now:** (a) the two label files were produced by two code
+vintages (main: pre-F1-fix worktree code launched 13:39; top-up: merged live tree) —
+schema v2 identical, both fresh-TT, same nodes/multipv; (b) the main file's row set was
+keyed by the DEFECTIVE enumeration — 210,744 of its rows are never-drawn extras, inert
+by construction (the wrapper only touches drawn rows); the union covers 100% of the true
+draw; (c) box load differs across arms' wall-clock (BT4 dump may run on CPU during arm
+B) — arms are internally paired on identical draws, and the yardstick is offline.
+
+**Sequencing:** ladder launches tomorrow (2026-08-23) after tonight's ext deciding
+arena + identity calibration probes release the GPU. Arm B gates on the BT4 dump
+(`bt4_policy_by_key.jsonl`) and joins as its own invocation.
