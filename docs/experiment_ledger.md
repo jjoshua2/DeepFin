@@ -65496,3 +65496,18 @@ the one contaminated measurement, re-measured in a scratch worktree, and preserv
 builder's WIP. Standing rule extended: not only must reviewers not share a worktree with
 an active builder — a builder must not be ACTIVATED into a worktree a reviewer is
 measuring. Sequence installments; never overlap them on one tree.
+
+**identity harness MERGED to `ops/live-20260725`** as `779d49c60` (`feat/identity-harness`
+@ `675e25e9f`). Post-merge in the live tree: bare lint **exit 0**, harness tests green.
+Final commit accepted ONE builder deviation on the record: the fingerprint carries
+`eval_leaf_cap_effective = min(flag, uncapped)` rather than the raw flag — the raw value
+would SPLIT runs that measured the identical search (2048 vs 4096 both inert above the
+one-board 512), which is worse than over-splitting; the collapse is mutant-pinned
+(P3b), the binding range stays distinct, and raw request + uncapped size are recorded
+outside the fingerprint. `harness_version = 2` is a human-bumped literal with a
+changelog (a source hash would move on every reflow and train people to ignore it).
+23/23 mutants killed; tests 302→337 (+35, 0 new failures); `stockfish_turn.py`
+byte-identical across BOTH fix passes — the differential-cleared production edit landed
+untouched. Second of four branches home. The ratio-ladder prereg's identity instrument
+is now live-tree canonical; its calibration probes ((regret, nodes) → ~0.5 score on
+iter-595, ~100 games/point) run tonight AFTER the ext deciding arena, GPU-serial.
