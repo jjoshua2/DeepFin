@@ -65239,3 +65239,26 @@ math. Also on record (author-disclosed): the mask-zeroing enforcement has never 
 real data — today's lc0 rows carry no forbidden column, so it is proven by mutation
 tests only. 438 checkout verified clean post-review (this grok ran pre-hardening; no
 repo writes, notes went to /tmp). Opus review of the branch still pending.
+
+**Opus review — `feat/mixed-corpus`: MERGE-WITH-CHANGES; the routing core could not be
+broken.** Highlights: the reviewer's own novel mutant (np.roll on the source vector — one
+row of misalignment) was caught by a RUNTIME guard, not a test: the row-weighted own-row
+blend guard refused with "SF leaked 0.3450" while routing_violations correctly read empty
+(a misaligned own row carries no forbidden mask) — the two-instrument design proving out.
+Blend provenance verified literal-free to the live yaml; guard bar verified
+input-derived; f=0 disengage verified; both author mutants reproduced. CONVERGED with
+grok on the phase-metric bug (F2/F3 — six raw phase row-counts halved on mixed batches;
+`9d320a2ba`'s premise measurably false; its test unable to fail on the real path).
+**NEW must-fix: the builder's "lint delta 0" claim was WRONG** — it measured only the
+basedpyright gate; ruff carries 11 NEW gating findings, all in the two new files (the
+"LINT HAS TWO GATES" trap, hit by a builder that had the memory in its spec). Hardening
+routed: a third door into `sf_move_ce` the routing table does not name
+(losses.py:1725-1728 re-widens `has_sf_policy` from `has_sf_multipv_raw` — unreachable
+today, one flag away); rows_reaching_loss vs rows_by_source banked but never compared
+(strict equality would be unsound: the CUDA-retry path legitimately leads); the
+outcome-borne bar has no ceiling (0.5 accepted silently disarms the guard);
+`refresh_phase_offset` poke hasattr-guarded with its landing never observed; three
+comment-honesty items. Tests verified on the wider 8-file set: 208→246, +38, 0
+regressions. Both installments (grok + Opus) with the builder as one fix pass.
+Review coverage is now COMPLETE for 3 of 4 branches (bt4dump, rvg, mixed-corpus — each
+Opus+grok); identity-harness pair still running.
