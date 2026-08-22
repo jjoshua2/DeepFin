@@ -64854,3 +64854,20 @@ NOT MERGED — using the old static remap would under-weight castling priors 49-
 disclose at readout: BT4 runs FEN-only (history-less input, documented degradation). B
 joins the ladder if the dump lands before launch; otherwise it is the immediate next
 round on the same rig.
+
+### 2026-08-22 — operator design sketch registered: the COMPOSITE production target (deep-narrow own search + narrow SF PV + one-node BT4 tail), contingent on arm B
+
+Josh: narrow our Gumbel considered-set 16 -> 8, narrow SF's PV (deeper per line at fixed
+nodes), and use ONE BT4 forward pass to rank the tail. Economics: search buys head
+differentiation, a single NN eval buys calibrated tail ranking at ~zero cost. Status:
+DEPLOYMENT-SHAPE CANDIDATE, not an experiment — it activates only if arm B wins the
+offline ladder (its foundation is "BT4 policy is the best tail calibrator"). Constraints
+recorded now: (a) `gumbel_topk` is a FROZEN search knob — changing it voids the regret
+series and is arena-relevant; it must be its own prereg with a fresh baseline, never a
+rider; (b) narrowing own-search support SHARPENS the target (our disease) — the bet is
+BT4 tail-fill overcompensates, which is exactly what B tests. History note: corpus rows
+CAN gain real lc0 history (shards carry optional game_id/ply_index; reconstruct last-7
+by walking the game) — first B round runs FEN-only disclosed; history upgrade is the
+first optimization if B shows signal (history-less degradation is worst in
+repetition/fortress contexts — our themes). The audit set cannot be retrofitted
+(history was never recorded; that would be a new frozen version).
