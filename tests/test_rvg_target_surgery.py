@@ -566,8 +566,10 @@ class _FakeInner:
     def keys(self) -> list[bytes]:
         return position_fingerprints(self._x, input_history_encoding=PROD_ENCODING)
 
-    def sample_batch_arrays(self, batch_size: int, **kw: object) -> dict:
-        del batch_size, kw   # a fixed batch; the house idiom for an unused arg
+    def sample_batch_arrays(
+        self, batch_size: int, *, wdl_balance: bool = True,
+    ) -> dict[str, np.ndarray]:
+        del batch_size, wdl_balance   # a fixed batch; the house unused-arg idiom
         self.calls += 1
         n = self._x.shape[0]
         return {
@@ -1227,3 +1229,91 @@ def test_an_external_q_on_an_arm_with_no_g_stage_is_a_refusal(tmp_path: Path) ->
             inner, _spec(arm="r", r_weight=0.5), index,
             external_q=RvgExternalPolicyIndex.load(ext_path),
         )
+
+
+# ---------------------------------------------------------------------------
+# 12. The join on the PRODUCTION path (the rig's own replay buffer)
+# ---------------------------------------------------------------------------
+
+
+def test_the_key_survives_the_rigs_replay_buffer_not_just_the_scan_path(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE WIRING PROOF, AND IT IS A DIFFERENT PATH FROM THE LABEL PASS'S.
+
+    ``scripts/rvg_label_pass.py`` keys its records off shard arrays read
+    STRAIGHT off disk. The rig keys its lookups off batches
+    ``DiskReplayBuffer.sample_batch_arrays`` returns, which go through the
+    shuffle pool, sparse policy storage and ``_gather_rows``' densification. If
+    any of that changed ``x`` — a plane upgrade, a dtype round-trip, a
+    reordering — every fingerprint would differ, the join would return "no
+    label" on every row, and the arms would read as a clean null with the rig's
+    own coverage counter dutifully reporting f = 0.
+
+    So this test does not check the fingerprint function; it checks that the two
+    PATHS agree. Same shards, keys computed both ways, and every key the buffer
+    serves must be one the label file could address.
+
+    (Measured the same way against the banked ladder2 corpus: 4591/4591 of the
+    rows the rig's buffer served were addressable by the scan path's keys.)
+    """
+    from chess_anti_engine.moves.encode import POLICY_SIZE
+    from chess_anti_engine.replay.buffer import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        samples_to_arrays,
+        save_local_shard_arrays,
+    )
+
+    boards = [chess.Board(f) for f in _ROUNDTRIP_FENS]
+    samples = []
+    for i, board in enumerate(boards * 4):
+        pol = np.zeros(POLICY_SIZE, dtype=np.float32)
+        pol[i % POLICY_SIZE] = 1.0
+        samples.append(ReplaySample(
+            x=encode_lc0_full(board, input_history_encoding=PROD_ENCODING),
+            policy_target=pol, wdl_target=i % 3, priority=1.0, has_policy=True,
+        ))
+    shard_dir = tmp_path / "shards"
+    arrs = samples_to_arrays(samples)
+    # The stored per-row encoding tag, exactly as a production shard carries it —
+    # both paths read it off the row rather than assuming production's.
+    arrs["_input_history_encoding"] = np.asarray(PROD_ENCODING)
+    save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=arrs)
+
+    # SCAN path — what the label pass keys its records with.
+    from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+    scan_keys: set[bytes] = set()
+    for path in iter_shard_paths(shard_dir):
+        stored, _ = load_shard_arrays(path, lazy=False)
+        scan_keys.update(position_fingerprints(
+            np.asarray(stored["x"]),
+            input_history_encoding=str(
+                np.asarray(stored["_input_history_encoding"]).reshape(-1)[0],
+            ),
+        ))
+    assert scan_keys
+
+    # BUFFER path — what the rig looks up.
+    buf = rr.build_rig_replay_buffer(
+        config={"seed": 0}, replay_dir=shard_dir,
+        target_planes=int(samples[0].x.shape[0]),
+        rng=np.random.default_rng(0),
+    )
+    try:
+        # Through the WRAPPER'S OWN `_row_keys`, not a re-derivation here: that
+        # method is what the arms actually look labels up with, including its
+        # per-row encoding read.
+        keyer = rr._RvgTargetSurgeryBuffer(
+            buf, _spec(arm="v", v_lambda=0.01, v_veto_cp=500.0),
+            _index_for([b"\x00" * 16], tmp_path, {0: ([1, 2], [0.0, -10.0])}),
+        )
+        served: set[bytes] = set()
+        for _ in range(8):
+            served.update(keyer._row_keys(buf.sample_batch_arrays(8)))
+    finally:
+        buf.close()
+    assert served
+    assert served <= scan_keys, (
+        f"{len(served - scan_keys)} of {len(served)} rows the buffer served are "
+        "NOT addressable by the scan path's keys — the join would silently miss"
+    )

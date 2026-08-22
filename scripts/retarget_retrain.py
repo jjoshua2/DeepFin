@@ -475,7 +475,13 @@ class _SamplesBatches(Protocol):
     a stub through ``object``, which is a suppression pretending to be a type.
     """
 
-    def sample_batch_arrays(self, batch_size: int, **kw: Any) -> dict: ...
+    # Mirrors `DiskReplayBuffer.sample_batch_arrays` exactly, including the
+    # keyword-only `wdl_balance`: a `**kw: Any` member would demand that every
+    # implementation accept arbitrary keywords, which the real buffer does not,
+    # and the protocol would then describe nothing that exists.
+    def sample_batch_arrays(
+        self, batch_size: int, *, wdl_balance: bool = True,
+    ) -> dict[str, np.ndarray]: ...
 
     def __len__(self) -> int: ...
 
