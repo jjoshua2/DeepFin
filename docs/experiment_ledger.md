@@ -64783,3 +64783,21 @@ with C recovering toward B.
 the hole (reinit heads = instant skill loss; the all-lc0 endpoint is the −405 control).
 The interference-matched remedy remains MIXED REPLAY (keep own-loop gradients present),
 pending the ext readout. Not launched.
+
+### 2026-08-22 — R/V/G addendum: OPERATOR PREDICTION registered + combined arm added
+
+Josh, pre-readout (recorded per protocol so the verdict can grade it): "I doubt the
+problem was the shift of opening versus endgame. I'm pretty sure it's just the sharpness
+and the bad tail, and I think we could fix that with temperature. And Stockfish
+[regret-veto] instead [of needing lc0 data]." ⇒ Prediction: the position-distribution
+axis is innocent; target SHAPE (over-sharpness + the 10.3% bad-mass tail) is the disease;
+V and/or G arms show gains, and the combination should. The ladder tests this cleanly:
+it edits targets on OUR OWN positions, so a positive result exonerates the distribution
+axis by construction, and a null across all arms RAISES it.
+- **Arm added: VG (veto-edit THEN geometric blend, composed in that order)** — if
+  sharpness and the tail are jointly the disease, single-axis arms may read partial/null
+  while the composition works; testing only separately could kill a correct idea.
+- Calibration note held against over-reading a G null: the ARITHMETIC blend toward flat
+  SF is already dead (dose ladder2 — E[regret] worsens monotonically), and G_sharp is
+  negative (sharpening OURSELVES is not the fix). G's differentiator is sharpening SF
+  first, then geometric mixing; V's is removing the tail without touching sharpness.
