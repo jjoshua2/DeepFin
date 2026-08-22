@@ -596,6 +596,17 @@ def main() -> None:
         row_start = int(a) if a else 0
         row_end = int(b) if b else None
 
+    if args.restrict_to is not None and int(args.limit) > 0:
+        # `--limit` caps the SCAN and `--restrict-to` filters it, so together
+        # they label "the first N rows that happen to also be enumerated" —
+        # a subset nobody asked for, silently. `--row-range` is the way to
+        # shard a restricted pass across invocations.
+        raise SystemExit(
+            "--limit and --restrict-to together label an arbitrary subset "
+            "(the limit caps the scan BEFORE the restriction). Use --row-range "
+            "to split a restricted pass across invocations."
+        )
+
     t_scan = time.time()
     scan = scan_corpus(
         args.replay_dir, row_start=row_start, row_end=row_end,
