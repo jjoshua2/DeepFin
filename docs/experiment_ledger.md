@@ -65472,3 +65472,27 @@ recorded, delta 0.
 `chess-438-merge-review` checkout that ext is training from; no branch operations there
 while a run is live. Sequence: ext summary → deciding arena (runs from the live tree,
 independent) → merge `feat/mixed-corpus` → ratio-ladder prereg.
+
+**Opus re-verification — `feat/identity-harness` @ `08bbc9e05`: ALL 14 items CONFIRMED**
+under the reviewer's own probes and mutants — mcg 4 vs 2 BYTE-identical (pre-fix: 1.0 vs
+0.875 on the same fingerprint), pairing/pentanomial re-derived by hand across 1- and
+2-chunk runs, payload-deletion mutant kills 3 tests + the launch guard names the missing
+keys, the sidecar survived a REAL SIGKILL with the full wiring proof intact (final JSON
+absent, 2 parseable rows preserved), checkpoint sha+step independently reproduced, and
+the 6.9×/3.9h timing methodology confirmed (reviewer: 5.98×, 4.09h; ⚑ the penalty is
+WORSE at low sims — 7.8× at sims 8 — fixed per-call overhead dominates, so "--sims is
+the lever" is sub-linear). Independently CONVERGED with grok on both restructure
+regressions (no-PV stats dilution — measured 5× understatement biased toward "clean"
+during exactly the desynced-pool failure mode; stale eval_max_batch gate). Verdict
+MERGE-WITH-CHANGES: the one-line no-PV filter before merge; the gate fix already in the
+builder's WIP. `stockfish_turn.py` re-verified byte-identical — the live-branch verdict
+stands. Three small adds routed (harness_version as a fingerprint MECHANISM — this
+pass's hash moved only by the luck of book_sha256 landing simultaneously; --seed
+validation; mcg help text).
+**Process note (mine):** I resumed the builder with grok's fixes while the Opus
+re-verification was still measuring IN THE SAME WORKTREE — the tree moved under the
+reviewer at 15:43 mid-review. The reviewer detected it (mtime+md5 timeline), discarded
+the one contaminated measurement, re-measured in a scratch worktree, and preserved the
+builder's WIP. Standing rule extended: not only must reviewers not share a worktree with
+an active builder — a builder must not be ACTIVATED into a worktree a reviewer is
+measuring. Sequence installments; never overlap them on one tree.
