@@ -64725,3 +64725,31 @@ via score for ext-MID/LAST (does fit keep rising).
 **Confounds:** production stopped; corpus read-only; same guards as ft595; no LR
 confound possible (same restored schedule). The ruler shares seed-42 openings with the
 ft595 arenas — cross-arena comparisons are same-openings, same-reference.
+
+### 2026-08-22 — warm-TT flip SEVERITY measured: the flips are mostly NEAR-TIES; average label quality is UNCHANGED (warm 16.2 cp vs fresh 16.7 cp mean deep regret); ~2.7% of positions flip between genuinely different moves
+
+Operator asked whether the warm-TT instability means "false transpositions / the moves
+are actually worse". Answer, measured (300-position sample, two warm runs order X vs
+reversed, joined to the deep ruler via `compute_coverage.deep_regret`; rows banked
+`scratchpad/mpv_coverage/warm_severity_rows.jsonl`, summary `warm_severity_summary.json`):
+- **Not collisions.** The mechanism is path dependence (TT hits on genuinely shared
+  sub-positions change move ordering/cutoffs, reallocating a fixed node budget), not
+  Zobrist false hits.
+- **Average quality unchanged:** mean deep regret of the warm top-1 **16.15 cp** vs
+  fresh top-1 **16.66 cp** (medians both 0.0). The warm searches are not worse — the
+  operator's "some of them could be okay, it's hitting the exact same positions" reading
+  is confirmed for the AVERAGE.
+- **Flips are mostly benign:** top-1 flips on 35.3%; median deep-regret gap between the
+  two choices **9.5 cp**; 40.6% of flips have BOTH moves ≤10 cp (pure near-ties).
+- **The tail is real but thin:** 7.5% of flips (≈**2.7% of positions**) have the worse
+  choice ≥100 cp deep regret — e.g. banked worst case e3e4 (321 cp) vs e3d3 (0 cp). So
+  TT nondeterminism puts a genuinely bad top-1 on the order of ~1-3% of labels.
+⇒ For TRAINING-label quality the dirty TT is modest noise, not systematic damage; the
+priority of a production `fresh=True` flip drops accordingly. The 32.3% SET churn still
+matters for anything keyed on list MEMBERSHIP — which is why the R/V/G rig labels fresh.
+
+### 2026-08-22 — ft595-EXT LAUNCHED per prereg
+
+Banner verified: init_from ft-LAST (step 211,327), scheduler_restored True, realized
+peak 3e-05, uniform draw, 122 shard dirs. Log `scratchpad/ft595ext_train.log`, out
+`runs/lc0_ft_iter595_ext_20260822`, ~4.3 h. Deciding arena on ext-LAST per prereg.
