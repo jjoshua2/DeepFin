@@ -64642,3 +64642,52 @@ over the banked corpus rows (CPU, priced by the coverage rig at ~
 mpv6-equal wall per position), (3) the dead-knob guard smoke. Exact commands + arm table
 get appended HERE when the smoke passes, before launch. GPU slot: tomorrow night, after
 the ft595 readout. Confounds: none live (production stopped); ladder pairs internally.
+
+## 2026-08-22 — ⚑⚑ ft595 VERDICT: **THE KILL FIRED** — ft-LAST is **−41.0 Elo [−71.3, −11.4]** vs its own iter-595 init. And the shape is a DIP-AND-RECOVER: post-hoc ft-MID reads −84.1, significantly WORSE than LAST
+
+**Judged by the pre-committed rule, same session as the read.** Deciding yardstick exactly
+as preregistered (bc373f633): arena ft-LAST vs the iter-595 salvage checkpoint it started
+from, matched_sims 100, 400 games, seed 42, play shape, production Syzygy, final-only.
+Result: score 0.44125, **Elo −41.01 [−71.27, −11.37]** — CI excludes 0 on the negative
+side ⇒ **KILL clause: at this dose/LR the fine-tune HURTS. This form stops.** No
+fix-candidate in hand. Banked: `scratchpad/elo_calib/FT_vs_iter595.json` (fingerprint
+e7028a2ec32b, truncated=False, game_log_agrees).
+
+**Training ran clean per prereg:** 40,000/40,000 steps, scheduler restored at donor peak
+3e-05 (realized == configured ⇒ no LR confound, as the reviewer's F1 predicted),
+target-leak guard PASS, uniform draw over all 9,653 shards (recency_exponent 0.0 — the
+full 78.5M-row corpus). One trajectory observation banked at launch: first 88-step window
+grad-norm median 14.2 vs zclip 6.5, **83% of steps norm-clipped** — the
+distribution-shift transient was violent.
+
+**Secondary (preregistered, non-deciding) — the exchange rate:** on the frozen lc0
+heldout (91,842 rows), ft-MID **50.10%** / ft-LAST **51.28%** top-1 vs lc0 argmax. The
+random-init CONTROL read 43.2%/46.8% at the same steps. ⇒ warm-starting from iter-595
+learns the lc0 targets FASTER than random init — **+4.5 pp over the control at the same
+40k steps — while simultaneously LOSING play strength.** The lc0 fit is real and the
+price is loop-learned skill: a cleaner catastrophic-forgetting signature than match A's
+cross-run comparison. (Init's own lc0 top-1 is unmeasured: the score tool correctly
+REFUSED to score the init checkpoint against ft595's summary — a summary vouches only for
+the checkpoints it wrote. Guard working as designed; noted, not worked around.)
+
+**Post-hoc diagnostic (NOT part of the deciding read, labeled as such):** arena ft-MID vs
+init, same ruler: **−84.12 [−115.55, −53.99]** (`FTMID_vs_iter595.json`). MID is
+significantly worse than LAST (CIs disjoint). ⇒ the damage is **NOT monotone in dose**:
+a large early hit — coincident with the clipped-gradient transient — then a recovery of
+roughly half the deficit from 20k→40k steps WHILE lc0 top-1 kept rising 50.10→51.28. Two
+points do not make a curve, but the shape says "the net re-integrates after the shock",
+not "lc0 data steadily erodes skill".
+
+**What this settles / what it opens.** Settled: clean policy-shaped supervision does NOT
+transplant into our net as free Elo at 3e-05 × 40k — Match B's ~44 Elo/GPU-hour lives in
+the lc0 regime, not ours. Open (each requires a NEW prereg; none launched, GPU idle):
+(a) longer training — the dip-recover slope (+43 Elo per 20k steps on the back half, if
+naively linear) reaches zero near ~60k steps, a cheap falsifiable extension; (b) LR-down
+to trade speed for a shallower dip; (c) mixed replay (lc0 + own-loop shards) — the
+textbook anti-forgetting fix, and our replay window is sitting in the salvage export.
+
+**Ops note:** both 400-game arenas completed in ~13 min at conc 64 on the merged hoist
+(787 s / 801 s) vs multi-hour at conc 16 pre-hoist — the hoist's first production
+dividend. ⚑ setsid-wrapper pid caught TWICE this session pretending the arena died
+(`$!` and an early `pgrep` both grab the transient wrapper): wait on the OUTPUT FILE
+only, never a pid captured at launch.
