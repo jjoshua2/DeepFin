@@ -65736,3 +65736,28 @@ B) — arms are internally paired on identical draws, and the yardstick is offli
 **Sequencing:** ladder launches tomorrow (2026-08-23) after tonight's ext deciding
 arena + identity calibration probes release the GPU. Arm B gates on the BT4 dump
 (`bt4_policy_by_key.jsonl`) and joins as its own invocation.
+
+## 2026-08-22 — ext COMPLETE (20,000/20,000, clean exit); deciding arena LAUNCHED; mixed-corpus MERGED — all four branches of the build program are home
+
+**ext**: `summary.json` landed 19:24 — steps_realized 20,000, seed 2, both checkpoints
+sha256-pinned in the summary (mid a8eaf2c8…, last 05fb5a73…), params 61,444,448, purity
+guard clean (`production_game_frac` 0.0 judged against the live yaml). The back half ran
+~4h under label-pass CPU contention vs the front half's ~100 min — the 0.42 s/step
+deterministic-refresh tax compounds badly under load; noted for the ratio ladder's
+wall-clock planning. **Deciding arena LAUNCHED per prereg** (banked template verbatim:
+ext-LAST vs iter-595 init, matched_sims 100, 400 games, seed 42, play shape, production
+Syzygy, conc 64) → `scratchpad/elo_calib/EXT_vs_iter595.json`; crash-aware file waiter
+armed; verdict same-session by the prereg's three clauses (SUCCESS CI>0 / RECOVERY ≥+20
+over −41 with CI<0, ext2 pre-authorized ONCE / KILL point ≤ −31).
+
+**mixed-corpus MERGED**: `feat/mixed-corpus` @ `649626c05` → `feat/lc0-continuation` as
+`063e5112d` in the 438 checkout (held until ext exited; branch op done on a quiescent
+tree). Post-merge: `test_lc0_control_mix.py` **49 passed** (48 + the F9-floor launch
+test), bare lint exit 1 with **13 basedpyright errors in the SAME 3 files every non-live
+checkout carries** (gumbel_scale_probe 1 / test_sf_attach_turn_required 8 /
+test_shard_codec_deserialization_guard 4 — none touched by the merge; the live tree is
+clean on all three) — **delta 0**, recorded per the red-by-design rule. FOURTH branch
+home: BT4 dump, identity harness, R/V/G rig (live branch) + mixed trainer
+(lc0-continuation). The ratio ladder's PREREG is still OWED before it runs (Sunday
+GPU): f ∈ {0.25, 0.5, 0.75}, seeds 11/12/13, 20k steps, serial,
+`--mix-own-max-outcome-borne 0.001`, identity baseline first.
