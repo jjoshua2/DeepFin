@@ -65103,3 +65103,17 @@ Builder: Opus agent, checkout `/home/josh/chess-438-merge-review`, branch
   `--mix-own-max-outcome-borne 0.001` (corpus-measured 0.000943), serial arms, mid
   checkpoint at step 10,032 (0.5016 of budget), every arm `valid_control: false` by
   construction — score/arena only, never `compare`.
+
+**CORRECTION to today's two ext ops notes — the mtime trap, hit a second time.** The
+"crawl completed ~13:30, ETA ~18:30" line is FALSE: the ext log's mtime is 11:58:58 —
+ALL of its output (including the shuffle-seed/shard-draw lines I read as fresh at 13:34)
+was written in the first minute after launch. Measured at 13:52: pid 837238 alive 2h02m,
+123% CPU, rchar 43.6GB (~monotone since launch, rate now ~3-6 MB/s), GPU 0%, 14.3GB VRAM
+held, ZERO log output since the first minute. ⇒ the pre-step-1 crawl is REAL and ONGOING
+in the script (my original observation stands; the builder's 11s-construction harness
+does not reproduce the script's path — the seed-dependence question stays OPEN, and the
+mechanism stays unexplained by both accounts). If the crawl is O(corpus-bytes) (~50G),
+it is ~87% done → steps begin ~14:30-15:00, summary ETA ~19:30-20:30. The
+`a_progress_file_mtime_is_part_of_the_reading` memory exists because of exactly this
+misread; I re-hit it by tailing content without stat'ing the file. Waiter unchanged
+(8h bound from 11:58 = 19:58 — may need one re-arm if steps are slow).
