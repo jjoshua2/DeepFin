@@ -65218,3 +65218,24 @@ on done-key load). Grok independently confirmed two Opus blockers (full-corpus
 materialization ~89GB; hardcoded shard encoding). Verified negatives: rule50 fp16
 round-trip exact 0/101 wrong with round (48/101 with truncation — grok executed, not
 asserted); history/castling/EP/file-axis conversion clean.
+
+**Grok cross-family review — `feat/mixed-corpus`: routing core survived the full hunt
+list; ONE confirmed bug, in the follow-up commit itself.** `_is_extensive`
+(`lc0_control_mix.py:835`) classifies by `endswith("_rows"/"_sum"/"_n")` and misses the
+mid-string keys `wdl_rows_phase_*`/`policy_rows_phase_*` — raw counts the trainer
+publishes un-divided — so a mixed batch weight-averages them (~half their true value at
+f=0.5). Worse: `9d320a2ba`'s premise is FALSE — `compute_loss` ALWAYS emits every phase
+key (empty bucket = 0.0 with count 0, never absent) and the real names carry `_phase_`,
+so the dilution that commit claims to close is still present, and its test uses a key
+name the real path never produces (cannot fail on the real defect — the
+new-test-plus-green-suite shape again). Verified scope: does NOT move `total`, routing
+counters, or blend guards — the ladder's deciding verdict is unaffected; it is a
+silently-wrong diagnostic column. Fix routed to the builder (classify via the trainer's
+own `_RAW_SUM_LOSS_KEYS` convention; combine phase means by `*_rows_phase_*` counts;
+replace the vacuous test with one through the REAL `compute_loss`). Ruled out with
+re-verified citations: index alignment, zeroing-before-realized ordering, wrapper
+composition/pop semantics, f=0 disengage, guard-from-input derivation, refresh stagger
+math. Also on record (author-disclosed): the mask-zeroing enforcement has never fired on
+real data — today's lc0 rows carry no forbidden column, so it is proven by mutation
+tests only. 438 checkout verified clean post-review (this grok ran pre-hardening; no
+repo writes, notes went to /tmp). Opus review of the branch still pending.
