@@ -64905,3 +64905,19 @@ median KL ≤0.05 ⇒ FEN-only licensed round 1 (bound disclosed); flip >8% OR K
 HISTORY REQUIRED (FEN-only dump must not feed B); between ⇒ operator call with numbers.
 The probe also independently validates the adapter's FEN→planes construction against the
 raw records' current-position block. Probe outranks the dump in the build order.
+
+#### Resolution (operator, same day): the history was captured all along — INSIDE the stored x. Conversion, not reconstruction
+
+Operator: "isn't this a problem for our net as well?" → NO, verified: production runs
+`input_history_encoding: lc0_root_legacy_meta` (yaml:160) — the stored x(175,8,8) embeds
+8 lc0-style history slots, built LIVE during selfplay (the C search path builds history
+incrementally per leaf), so training inputs always carried true history; the sparse row
+recording never touched them. The only history-blind instruments are the frozen FEN-only
+rulers ([[frozen_rulers_score_fen_only_inputs]]) — equal across arms, so ladder verdicts
+stand. Operator: "if we have some version of it, we could convert it" → YES: arm B's
+BT4 input is now built by DIRECT TENSOR CONVERSION from our stored history slots (our
+8×13 blocks + legacy meta → lc0's 112 planes) — true history on the banked corpus, no
+replay, no FEN-only compromise. Validation: round-trip against raw-tar lc0 records
+(repetition plane's 7-ply-vs-whole-game difference is the only tolerated diff) + the
+history-sensitivity probe demoted to fallback license + free measurement of history's
+realized value on our positions (50-row conversion-vs-FEN delta). Build reprioritized.
