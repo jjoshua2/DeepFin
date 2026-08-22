@@ -64921,3 +64921,21 @@ replay, no FEN-only compromise. Validation: round-trip against raw-tar lc0 recor
 (repetition plane's 7-ply-vs-whole-game difference is the only tolerated diff) + the
 history-sensitivity probe demoted to fallback license + free measurement of history's
 realized value on our positions (50-row conversion-vs-FEN delta). Build reprioritized.
+
+### 2026-08-22 — ops: ext's 80-min "wedge" DIAGNOSED (py-spy, now sudo-free) — first-batch refresh crawl on a non-control seed, not a hang
+
+ft595-EXT sat 80+ min after the pool-fill log line with GPU 0% and the log silent.
+py-spy dump (operator granted cap_sys_ptrace+cap_dac_read_search+cap_perfmon on the
+py-spy binary — it now attaches as the user, no sudo): main thread waiting on the FIRST
+batch future; the prefetch worker ACTIVE in `_refresh_shuffle_buf` →
+`_apply_refresh_chunks` → `sparsify_chunk`, streaming corpus chunks at ~6-7 MB/s. ⇒ NOT
+a hang: with `deterministic_refresh` and seed 2, the disk buffer works its way to its
+seed-determined refresh position by READING chunk-by-chunk — an O(corpus) one-time
+crawl (~2.3h on the 50G corpus). ft595 and the original control both ran seed 1 and
+started ~immediately, which is why this was never seen. Verified progressing (rchar
+monotone), left to finish; ext ETA ~19:30 with the deciding arena after. ⚑ Consequence
+for the RATIO LADDER: its arms use distinct seeds and would EACH pay this crawl on the
+mixed trainer unless bounded — flagged to that build as a diagnose-and-cap item in the
+offline trainer's copy (production disk_buffer untouched). ⚑ mtime-wedge rule note: an
+unchanged LOG with a live process now has a measured benign cause in THIS trainer's
+first-batch phase — check rchar slope + a stack dump before declaring a wedge.
