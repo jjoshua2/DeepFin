@@ -65554,3 +65554,37 @@ gates on both; then the label top-up.
 under 16-thread label-pass CPU contention, so the mid-checkpoint pace (10,032 steps by
 15:14) is the optimistic bound. Waiter's 8h bound hits 19:58 — re-arm if it expires
 before the summary lands.
+
+**Rig re-verification pair COMPLETE — all 11 fix claims CONFIRMED, and the two lanes
+independently CONVERGED on two fresh blockers in the fix diff itself.** The Opus
+re-verifier re-killed every named mutant in its own scratch worktrees (M12 stamp,
+M13 drive-the-real-`enumerate_drawn_rows` — mutant fails with the named/drawn mismatch;
+M14 all three directions; M15 through the real `_apply_rig_wrappers`, noting the refusal
+fires mid-sweep at `:1522`, same placement as the pre-existing multi-wrapper refusal;
+M16 with the arm-B-specific un-normalized mutant the parent suite could not kill), and
+verified lint delta 0 by running BOTH endpoints (13 basedpyright errors, same 3 untouched
+files both sides) and 157-pass/exit-0. The detach half of the accepted deviation is
+genuinely visible (stdout + `q_source: sf_regret` + `attached: false` driven on the real
+buffer); the sweep-refusal half is where blocker F2 lives.
+**The blockers are the signature class, in commits closing a review about that class:**
+F1 — the new `resume_settings` line means every FRESH label pass dies `KeyError: 'key'`
+at `rvg_label_pass.py:1003` AFTER the SF work and before the output write, and retries
+are permanently wedged (the settings line persists in the `.partial`); the writer's
+loader learned the record, the read-back loop did not; missed because both resume tests
+pin `_assert_resume_settings_match` in isolation, never the writer→reader round trip.
+⚑ The RUNNING pass is confirmed SAFE (pre-fix code; its partial opens with a data row) —
+the exposure is exactly tonight's top-up. F2 — the sweep-level q-reach gate resolves
+variants on the sweep context with `params={}` and runs `validate()`, so the DOCUMENTED
+per-variant spelling (`g030:rvg_arm=g,rvg_g_alpha=0.3`) aborts on "alpha=0.0" — only
+when `--rvg-g-q-source` is passed, i.e. only on arm B, the arm the gate exists for.
+Opus-only adds: F3 streaming single-file load drops the overlay's mixed-encoding refusal
+and the accept/refuse outcome is HASH-RANDOMIZATION-nondeterministic (5 accepts/1 refuse
+in six runs of one input); F4 doubled `@classmethod` (breaks outright on Python 3.13);
+F5 announce reads the shape object, not the consumer's `w_sf_policy_floor`; F6 two dead
+`_RigContext` fields; F7 external-q provenance guard is one-sided (hardcoded provenance
+stays green). Grok-only adds: the key-space refusal is pinned on a synthetic stats dict
+and unreachable through the real path (edited_rows==0 fires first); the mode-flag test
+re-implements the parser by hand — the pins-the-principle class recurring in the same
+branch that just fixed it for the RNG test. All 9 routed to the builder as the third
+installment; MERGE and TOP-UP both blocked on F1/F2; targeted re-verification by the
+same Opus reviewer follows the fix diff.
