@@ -64871,3 +64871,14 @@ by walking the game) — first B round runs FEN-only disclosed; history upgrade 
 first optimization if B shows signal (history-less degradation is worst in
 repetition/fortress contexts — our themes). The audit set cannot be retrofitted
 (history was never recorded; that would be a new frozen version).
+
+#### Correction (operator, same day): constraint (b) above is WITHDRAWN — sharpness is an independent knob
+
+"It doesn't have to sharpen — we can control sharpness separately. We should never think
+about sharpness as a thing we cannot adjust independently." Correct: support (which
+moves carry search-quality info) and temperature (how concentrated the mass is) are
+orthogonal; any target pipeline ends with an explicit tempering stage, so no upstream
+choice — including narrowing the considered-set 16 -> 8 — determines the target's
+sharpness. The composite's real trade is support/coverage only. Standing residue: temper
+cannot repair wrong ORDERING — the sharp-and-wrong finding is a wrongness finding that
+sharpness amplifies. Constraint (a) (frozen `gumbel_topk`, fresh baseline) stands.
