@@ -65262,3 +65262,38 @@ comment-honesty items. Tests verified on the wider 8-file set: 208→246, +38, 0
 regressions. Both installments (grok + Opus) with the builder as one fix pass.
 Review coverage is now COMPLETE for 3 of 4 branches (bt4dump, rvg, mixed-corpus — each
 Opus+grok); identity-harness pair still running.
+
+**Opus review — `feat/identity-harness`: MERGE-WITH-CHANGES; the PRODUCTION EDIT IS
+CLEARED — 200,000-case differential against the pre-extraction rule, zero mismatches on
+move AND rng state; verdict "safe to land as-is".** All four re-run mutants killed.
+Findings routed to the builder:
+- **F1 HIGH:** the net side shares one RNG stream whose consumption depends on batch
+  size ⇒ `--max-concurrent-games` CHANGES THE MEASUREMENT under an IDENTICAL fingerprint
+  (measured: mcg 4 vs 2, same seed, score 1.0 vs 0.875, different games) — while the
+  fingerprint's own comment claims concurrency moves only wall clock. Fix: key net-side
+  RNG per (seed, game, ply) as `sf_move_rng` already does + an mcg-invariance test.
+- **F2 MED-HIGH:** the fingerprint test hashes its own literal dict — the reviewer
+  deleted `sf_nodes`/`sf_multipv`/`eval_max_batch` from the REAL payload and 21/21
+  passed. Fix: extract the payload builder and pin its exact key set.
+- **F3:** no-PV fallback diverges from production (production substitutes SF's bestmove
+  BEFORE the chooser; the harness plays uniform-random legal; two docstrings claim the
+  opposite).
+- **F4 (calibration-relevant):** production's curriculum opponent averages ~32.8k
+  nodes/move at `sf_nodes: 75000` (`sf_fast_ply_node_scale` 0.25 on ~75% non-full
+  plies, `playout_cap_fraction` 0.25) — the harness's constant 75k plays a ~2.3×-node,
+  materially STRONGER opponent than production at nominal settings. Right design for a
+  frozen instrument, wrong as documented. ⇒ the harness's absolute score is NOT a
+  production winrate, and `--regret 0.05` is NOT its 0.5-scoring point — the prereg must
+  calibrate (regret, nodes) near 0.5 on the reference checkpoint first (iter-595 read
+  0.375 at (0.05, 75k) in the builder's smoke).
+- Accepted advisories: per-chunk JSONL sidecar instead of `--resume` (arena_standard's
+  2026-08-21 zero-persist OOM is the precedent); saturation validity warning; and the
+  PREREG DECISION — **`--search-shape training` is the ladder's PRIMARY identity arm**
+  (production's actual search; the play-shape substitution flipped a sims ladder
+  −52.5→+5.8 once), `play` optional as ledger-comparable secondary.
+- LOWs: diluted admitted-mean needs an `_unsaturated` companion; no validity gate on
+  no-PV fraction; checkpoint pinned by path only; book fingerprinted by path while the
+  SF binary gets a content hash; rolling score line unlabelled; warm-TT help caveat.
+Also verified clean: 0/30 flags accepted-and-ignored, both `--eval-max-batch` guard
+paths exercised live, bit-identical reproducibility including qualifying-set sizes,
+pairing/pentanomial reuse. Lint delta 0 both gates; tests +21/0. Grok pass pending.
