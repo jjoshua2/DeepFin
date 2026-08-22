@@ -359,6 +359,7 @@ def test_regret_guard_refuses_out_of_band_values() -> None:
         sims = 8
         sf_multipv = 6
         sf_workers = 1
+        seed = 42
         stockfish = __file__  # exists; the guard only checks presence
 
     for bad in (-0.001, -1.0, REGRET_MAX + 0.001, 2.0):
@@ -461,7 +462,7 @@ def test_summary_drops_an_orphan_half_instead_of_imputing_it() -> None:
     assert s["games"] == 3
 
 
-def _payload_args(**over) -> argparse.Namespace:
+def _payload_args(**over: Any) -> argparse.Namespace:
     base = {
         "regret": 0.05, "sf_nodes": 75000, "sf_multipv": 6, "sf_hash_mb": 17,
         "sf_fresh_tt": True, "sims": 100, "temperature": 0.1,
@@ -473,17 +474,34 @@ def _payload_args(**over) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def _payload(**over) -> dict:
-    from scripts.arena_standard import resolve_search_shape
+def _side(**over: Any):
+    """A SideSearch built by hand, so the five side-derived fingerprint keys can
+    be perturbed one at a time without running the (expensive) yaml -> reco ->
+    worker channel that ``resolve_search_shape("training")`` needs."""
+    from scripts.arena_standard import SideSearch
+
+    base = {
+        "shape": "play", "source": "test",
+        "gumbel": {"c_scale": 0.025, "topk": 32},
+        "vloss_weight": 3, "target_batch": 0, "tree_reuse": "cold",
+    }
+    base.update(over)
+    return SideSearch(**base)  # pyright: ignore[reportArgumentType]
+
+
+def _payload(
+    *, side: Any = None, eval_leaf_cap_effective: int = 512, **over: Any,
+) -> dict:
     from scripts.match_vs_handicapped_sf import build_fingerprint_payload
 
     return build_fingerprint_payload(
         _payload_args(**over),
-        side=resolve_search_shape("play"),
+        side=_side() if side is None else side,
         sf_binary_sha="deadbeef",
         book_path=Path("/books/uho.pgn.zip"),
         book_sha="cafe1234",
         syzygy="a:b",
+        eval_leaf_cap_effective=eval_leaf_cap_effective,
     )
 
 
@@ -510,7 +528,8 @@ def test_fingerprint_payload_key_set_is_pinned() -> None:
         "search_vloss_weight", "search_target_batch", "tree_reuse",
         "temperature", "gumbel_add_noise", "seed", "games", "book",
         "book_sha256", "opening_plies", "max_plies", "syzygy",
-        "tb_adjudication", "tb_max_pieces", "eval_max_batch", "compile",
+        "tb_adjudication", "tb_max_pieces", "eval_leaf_cap_effective",
+        "compile", "harness_version",
     }
 
 
@@ -529,7 +548,6 @@ def test_the_fingerprint_excludes_only_wall_clock_knobs() -> None:
 
 def test_every_payload_field_actually_moves_the_fingerprint() -> None:
     """No field is present-but-inert: each one changes the hash on its own."""
-    from scripts.match_vs_handicapped_sf import build_fingerprint
 
     ref = build_fingerprint(_payload())
     for key, other in (
@@ -538,13 +556,16 @@ def test_every_payload_field_actually_moves_the_fingerprint() -> None:
         ("temperature", 0.2), ("no_gumbel_noise", True), ("seed", 43),
         ("games", 402), ("opening_plies", 12), ("max_plies", 200),
         ("no_syzygy_adjudication", True), ("tb_max_pieces", 5),
-        ("eval_max_batch", 2048), ("compile", True),
+        ("compile", True),
     ):
-        assert build_fingerprint(_payload(**{key: other})) != ref, (
+        over: dict[str, Any] = {key: other}
+        assert build_fingerprint(_payload(**over)) != ref, (
             f"{key} does not move the fingerprint"
         )
-    # The three non-args inputs, checked the same way.
-    from scripts.arena_standard import resolve_search_shape
+    # The realized leaf cap is its own input, not an args field.
+    assert build_fingerprint(_payload(eval_leaf_cap_effective=256)) != ref
+    assert build_fingerprint(_payload(eval_leaf_cap_effective=0)) != ref
+    # The non-args inputs, checked the same way.
     from scripts.match_vs_handicapped_sf import build_fingerprint_payload
 
     for kwargs in (
@@ -552,14 +573,143 @@ def test_every_payload_field_actually_moves_the_fingerprint() -> None:
         {"book_path": Path("/books/other.zip")}, {"syzygy": "a"},
     ):
         base: dict[str, Any] = {
-            "side": resolve_search_shape("play"), "sf_binary_sha": "deadbeef",
+            "side": _side(), "sf_binary_sha": "deadbeef",
             "book_path": Path("/books/uho.pgn.zip"), "book_sha": "cafe1234",
-            "syzygy": "a:b",
+            "syzygy": "a:b", "eval_leaf_cap_effective": 512,
         }
         base.update(kwargs)
         assert build_fingerprint(
             build_fingerprint_payload(_payload_args(), **base),
         ) != ref, f"{kwargs} does not move the fingerprint"
+
+
+def test_every_SIDE_derived_field_moves_the_fingerprint() -> None:
+    """⚑ The five keys that come from ``side``, perturbed one at a time.
+
+    The sibling test only ever varied ``args``, and every call passed the SAME
+    ``resolve_search_shape("play")`` object — so a builder that hardcoded
+    ``search_shape``/``search_gumbel``/``search_vloss_weight``/
+    ``search_target_batch``/``tree_reuse`` from a constant would have stayed
+    green while the search shape silently dropped out of the fingerprint. That
+    is the knob the ladder's primary arm turns (``--search-shape training``), so
+    it is the last one that can afford to be untested.
+    """
+
+    ref = build_fingerprint(_payload())
+    for key, other in (
+        ("shape", "training"),
+        ("gumbel", {"c_scale": 0.1, "topk": 32}),
+        ("vloss_weight", 1),
+        ("target_batch", 256),
+        ("tree_reuse", "warm"),
+    ):
+        moved = build_fingerprint(_payload(side=_side(**{key: other})))
+        assert moved != ref, f"side.{key} does not move the fingerprint"
+
+    # ``source`` is provenance, not shape: it must NOT move the hash, or two
+    # identical searches described differently would stop comparing.
+    assert build_fingerprint(_payload(side=_side(source="other"))) == ref
+
+
+def test_the_eval_leaf_cap_is_sized_for_a_ONE_BOARD_search() -> None:
+    """⚑ The gate was sized for a code path that no longer exists.
+
+    It came from ``arena_standard``, where one ``pick_moves_for_boards`` call is
+    handed a whole side of the pool, and kept asking for
+    ``arena_uncapped_leaf_rows(2 * chunk_pairs)`` after ``play_chunk`` went
+    one-game-per-call. So it refused values a one-board search can serve, and
+    warned "SHRINKS THE SEARCH" about a search it does not touch for everything
+    in [512, 4032).
+
+    The correct figure is ``leaf_buffer_rows(1, topk)`` = 512 at the play shape,
+    and the resolver takes NO concurrency argument at all — which is what makes
+    the sizing impossible to re-break by changing the chunking.
+    """
+    from scripts.match_vs_handicapped_sf import resolve_eval_leaf_cap
+
+    uncapped, effective, regime = resolve_eval_leaf_cap(
+        eval_max_batch=4096, side=_side(), device="cuda",
+    )
+    assert uncapped == 512, (
+        f"the leaf buffer of a ONE-board search is 512 at the play shape, got "
+        f"{uncapped} — the gate is sized for a multi-board call again"
+    )
+    # Above the uncapped size the knob caps nothing.
+    assert (effective, regime) == (512, "inert")
+
+    # ...and every inert value collapses to the SAME realized cap, so two runs
+    # that measured the identical search still compare.
+    assert resolve_eval_leaf_cap(
+        eval_max_batch=2048, side=_side(), device="cuda",
+    )[1] == 512
+
+    # Below it, the cap really does shrink the search and must stay distinct.
+    assert resolve_eval_leaf_cap(
+        eval_max_batch=256, side=_side(), device="cuda",
+    ) == (512, 256, "binds")
+
+    # 0 is a different regime (no hoisted evaluator), not a bigger cap.
+    assert resolve_eval_leaf_cap(
+        eval_max_batch=0, side=_side(), device="cuda",
+    ) == (512, 0, "off")
+
+    assert resolve_eval_leaf_cap(
+        eval_max_batch=4096, side=_side(), device="cpu",
+    )[2] == "cpu"
+
+
+def test_the_harness_version_is_in_the_fingerprint() -> None:
+    """⚑ N3. The fingerprint covers the SETTINGS; this covers the CODE.
+
+    This fix pass changed the measurement three ways at once — our side's RNG
+    keying, the no-PV fallback, the played-regret filter — and the fingerprint
+    moved only because ``book_sha256`` was added in the same pass. That is luck.
+    Without a version key, a future pass that changes behaviour and adds no new
+    setting would leave two runs of DIFFERENT code reporting the SAME
+    fingerprint, which is the one error this instrument cannot survive.
+    """
+    import scripts.match_vs_handicapped_sf as mod
+
+    assert _payload()["harness_version"] == mod.HARNESS_VERSION
+    assert isinstance(mod.HARNESS_VERSION, int)
+
+    ref = build_fingerprint(_payload())
+    original = mod.HARNESS_VERSION
+    try:
+        mod.HARNESS_VERSION = original + 1
+        assert build_fingerprint(_payload()) != ref, (
+            "bumping HARNESS_VERSION must move the fingerprint, or the "
+            "mechanism is decorative"
+        )
+    finally:
+        mod.HARNESS_VERSION = original
+
+
+def test_a_negative_seed_is_refused_before_anything_expensive() -> None:
+    """⚑ N4. SeedSequence rejects negative entropy — fail at the flag, not at
+    the first Stockfish move, which is after the fingerprint, the banner, the
+    checkpoint load and the engine pool."""
+    from scripts.match_vs_handicapped_sf import _validate
+
+    class _Args:
+        regret = 0.05
+        games = 4
+        sf_nodes = 5000
+        sims = 8
+        sf_multipv = 6
+        sf_workers = 1
+        seed = 42
+        stockfish = __file__
+
+    args = _Args()
+    args.seed = -1
+    with pytest.raises(SystemExit, match="seed"):
+        _validate(args)  # pyright: ignore[reportArgumentType]
+
+    _validate(_Args())  # pyright: ignore[reportArgumentType]
+    ok = _Args()
+    ok.seed = 0
+    _validate(ok)  # pyright: ignore[reportArgumentType] - 0 is valid entropy
 
 
 def test_payload_builder_refuses_a_key_set_that_drifts_from_the_constant() -> None:
@@ -573,21 +723,6 @@ def test_payload_builder_refuses_a_key_set_that_drifts_from_the_constant() -> No
             _payload()
     finally:
         mod.FINGERPRINT_KEYS = original
-
-
-def test_fingerprint_moves_with_every_opponent_defining_field() -> None:
-    base = {
-        "regret": 0.05, "sf_nodes": 75000, "sf_multipv": 6, "sims": 100,
-        "seed": 42, "book": "b.pgn", "syzygy": "a:b", "sf_fresh_tt": True,
-    }
-    ref = build_fingerprint(base)
-    assert build_fingerprint(dict(base)) == ref
-    for key, other in (
-        ("regret", 0.051), ("sf_nodes", 75001), ("sf_multipv", 7),
-        ("sims", 101), ("seed", 43), ("book", "c.pgn"), ("syzygy", "a"),
-        ("sf_fresh_tt", False),
-    ):
-        assert build_fingerprint({**base, key: other}) != ref, f"{key} not in it"
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1067,38 @@ def test_a_saturated_score_is_flagged_invalid_and_the_flag_is_banked() -> None:
     mid = summarize([_game([_sf_move(qualifying=2, tied=1)], score=0.5)], regret=0.05)
     assert mid["valid"] is True
     assert mid["validity_warnings"] == []
+
+
+def test_no_pv_moves_stay_out_of_the_played_regret_statistics() -> None:
+    """⚑ A regression the F3 fix INTRODUCED, caught on the fix diff.
+
+    Before F3 a no-PV move reached ``_sf_played_move_diagnostics`` with an EMPTY
+    candidate list, which returns ``(None, None)`` — so the ``is not None``
+    filter excluded it BY ACCIDENT. Production's substitution gives the move
+    ``cand=[bestmove] / [0.0]``, so the diagnostic now returns a real ``0.0``
+    and every no-PV move would enter the played-regret stats as a perfect zero:
+    the mean drifts toward 0 and ``played_regret_max`` reads safer than it is,
+    while the note claimed they were excluded.
+
+    The fixture makes the accident visible: three no-PV moves at 0.0 against one
+    real move at 0.04. Filtered, the mean is 0.04; unfiltered it is 0.01.
+    """
+    s = summarize(
+        [_game(
+            [_sf_move(qualifying=1, tied=1, candidates=1, no_pv=True, regret=0.0)] * 3
+            + [_sf_move(qualifying=3, tied=1, regret=0.04)],
+        )],
+        regret=0.05,
+    )
+    h = s["handicap"]
+    assert h["no_pv_moves"] == 3, "the no-PV moves must still be COUNTED"
+    assert h["sf_moves"] == 4
+    assert h["measured_moves"] == 1
+    assert h["played_regret_mean"] == pytest.approx(0.04), (
+        "no-PV moves leaked into the played-regret mean as zeros"
+    )
+    assert h["played_regret_max"] == pytest.approx(0.04)
+    assert h["regret_bound_respected"] is True
 
 
 def test_a_high_no_pv_rate_is_flagged_invalid() -> None:

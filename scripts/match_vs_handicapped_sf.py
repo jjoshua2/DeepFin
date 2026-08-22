@@ -68,6 +68,15 @@ with the band. ``saturated_frac`` says how much of the run the handicap could no
 act on at all, and ``regret_bound_respected`` is the exact invariant: no played
 move may give up more win fraction than the band allows.
 
+⚑ COST, MEASURED TWICE (see ``net_move_rng`` and the ``play_chunk`` call site).
+Our side searches ONE GAME PER CALL so each game owns its RNG stream, which costs
+~6-7x against a batched search on an idle card and ~6x under contention: 400
+games at production settings is **~3.9-4.1 h**, and that wall clock is
+concurrency-INDEPENDENT (raising --max-concurrent-games buys Stockfish
+parallelism only). ``--sims`` is the lever but its payoff is SUB-LINEAR — the
+penalty is worse at low sims (~7.8x at 8 vs ~6-7x at 100) because fixed per-call
+overhead dominates a short search.
+
 ⚑ COLD TRANSPOSITION TABLE PER SEARCH, and it is a deliberate departure from
 production. ``StockfishPool`` hands each request to whichever pooled engine is
 free, and an engine keeps its TT across searches — so with a warm TT the
@@ -146,6 +155,28 @@ DEFAULT_SF_WORKERS = 8
 # exactly 0 and 1; these bars fire before that, while the number still looks
 # like a number. Deliberately loose — the point is to catch "wrong operating
 # point", not to police normal variation.
+# ⚑ N3: BUMP THIS ON ANY MEASUREMENT-AFFECTING CHANGE TO THIS MODULE.
+#
+# The fingerprint covers every SETTING that defines the opponent, and nothing
+# about the CODE that applies them. This fix pass changed the measurement three
+# ways at once — our side's RNG keying, the no-PV fallback, the played-regret
+# filter — and the fingerprint moved only because `book_sha256` happened to be
+# added in the same pass. That is luck, not a mechanism, and the failure it
+# leaves open is the worst one available here: two runs of DIFFERENT code
+# reporting the same fingerprint and being differenced as one experiment.
+#
+# A literal rather than a hash of the module, deliberately: a source hash moves
+# on every comment and reflow, which would make every run non-comparable to
+# every other and train people to ignore it. A number a human bumps says "the
+# measurement changed" and nothing else.
+#
+#   1  initial harness
+#   2  one-game-per-call net search with per-(seed, game, ply) keying (was a
+#      shared play-order stream, so scores depended on --max-concurrent-games);
+#      no-PV now plays production's bestmove substitution (was a uniform random
+#      legal move); no-PV moves excluded from the played-regret statistics.
+HARNESS_VERSION = 2
+
 SCORE_SATURATION_HI = 0.9
 SCORE_SATURATION_LO = 0.1
 
@@ -419,7 +450,7 @@ FINGERPRINT_KEYS = frozenset({
     "search_vloss_weight", "search_target_batch", "tree_reuse", "temperature",
     "gumbel_add_noise", "seed", "games", "book", "book_sha256",
     "opening_plies", "max_plies", "syzygy", "tb_adjudication", "tb_max_pieces",
-    "eval_max_batch", "compile",
+    "eval_leaf_cap_effective", "compile", "harness_version",
 })
 
 
@@ -431,6 +462,7 @@ def build_fingerprint_payload(
     book_path: Path,
     book_sha: str | None,
     syzygy: str | None,
+    eval_leaf_cap_effective: int,
 ) -> dict[str, Any]:
     """Every setting that changes the OPPONENT or the RULER, and nothing else.
 
@@ -444,8 +476,8 @@ def build_fingerprint_payload(
     its Gumbel noise, and mcg 4 vs mcg 2 at one seed and one fingerprint scored
     1.0 vs 0.875. It is excluded now because ``net_move_rng`` keys our side per
     (seed, game, ply) and the search runs one game per call, and because
-    ``test_the_measurement_is_independent_of_max_concurrent_games`` holds the
-    claim to a run rather than to this comment.
+    ``test_two_chunkings_of_the_same_pairs_agree_move_for_move`` holds the claim
+    to a run rather than to this comment.
 
     ⚑ ``sf_workers`` is excluded only while ``--sf-fresh-tt`` holds. Under
     ``--no-sf-fresh-tt`` the pooled engines carry a warm TT, so which engine
@@ -480,8 +512,22 @@ def build_fingerprint_payload(
         "syzygy": syzygy,
         "tb_adjudication": (not args.no_syzygy_adjudication),
         "tb_max_pieces": int(args.tb_max_pieces),
-        "eval_max_batch": int(args.eval_max_batch),
+        # ⚑ THE REALIZED CAP, NOT THE FLAG. `--eval-max-batch` binds only
+        # BELOW the leaf buffer one board's search asks for (512 at the play
+        # shape); at or above that it caps nothing and changes no move. Storing
+        # the raw flag would split runs that measured the identical search —
+        # 2048 and 4096 are both inert and would fingerprint differently, so two
+        # ladder rungs could become non-comparable over a knob that did nothing.
+        # min(flag, uncapped) collapses exactly the inert range and keeps the
+        # binding range distinct, so a pathologically low cap (which DOES shrink
+        # the search) still separates. 0 means the hoisted evaluator is off
+        # entirely — a different regime, carried through as 0 rather than
+        # clamped up.
+        "eval_leaf_cap_effective": int(eval_leaf_cap_effective),
         "compile": "on" if args.compile else "off",
+        # See HARNESS_VERSION: the fingerprint otherwise describes the settings
+        # and says nothing about the code that applies them.
+        "harness_version": int(HARNESS_VERSION),
     }
     if set(payload) != set(FINGERPRINT_KEYS):
         # Belt-and-braces next to the test: a field added here without updating
@@ -496,6 +542,46 @@ def build_fingerprint_payload(
             "clock before adding it."
         )
     return payload
+
+
+def resolve_eval_leaf_cap(
+    *, eval_max_batch: int, side: Any, device: str,
+) -> tuple[int, int, str]:
+    """(uncapped rows, realized cap, regime) for the hoisted evaluator.
+
+    ⚑ SIZED FOR n=1, BECAUSE EVERY SEARCH CALL CARRIES ONE BOARD. This gate was
+    inherited from ``arena_standard``, where one call is handed a whole side of
+    the pool, and it kept asking ``arena_uncapped_leaf_rows(2 * chunk_pairs)``
+    after ``play_chunk`` went one-game-per-call (F1). Everything it then said was
+    wrong in the same direction: its refusal claimed a root submit carries
+    ``2 * chunk_pairs`` boards when it carries 1, and any value in [512, 4032)
+    drew a "SHRINKS THE SEARCH" warning about a search it does not touch. The
+    real per-call figure is ``leaf_buffer_rows(1, topk)`` = 512 at the play
+    shape.
+
+    ⚑ It takes NO concurrency argument, and that is the fix rather than an
+    omission: nothing about this cap depends on how many games are in flight.
+
+    No refusal path survives either. The root submit is ONE board, so every
+    positive cap accommodates it; the old ``SystemExit`` could only ever have
+    fired on a value the search can serve.
+
+    Regimes: ``off`` (0 — the hoisted evaluator is disabled and each call builds
+    a throwaway one, genuinely different, not a bigger cap), ``binds`` (below the
+    uncapped size — the search SHRINKS), ``inert`` (at or above — caps nothing),
+    ``cpu`` (no hoisted evaluator is built off CUDA).
+    """
+    from scripts.arena_standard import arena_uncapped_leaf_rows
+
+    uncapped = arena_uncapped_leaf_rows(max_concurrent_games=1, sides=(side,))
+    if int(eval_max_batch) <= 0:
+        return uncapped, 0, "off"
+    effective = min(int(eval_max_batch), uncapped)
+    if not str(device).startswith("cuda"):
+        return uncapped, effective, "cpu"
+    if int(eval_max_batch) < uncapped:
+        return uncapped, effective, "binds"
+    return uncapped, effective, "inert"
 
 
 def checkpoint_identity(path: str | Path) -> dict[str, Any]:
@@ -598,9 +684,11 @@ def play_chunk(
 ) -> list[GameOutcome]:
     """Play each opening twice (colors swapped) against handicapped SF.
 
-    Our side runs the SAME batched Gumbel entry point every arena uses
+    Our side runs the same Gumbel entry point every arena uses
     (``selfplay.match.pick_moves_for_boards``) with the shape resolved by
-    ``arena_standard.resolve_search_shape``, and — like every arena — a COLD tree
+    ``arena_standard.resolve_search_shape`` — but ONE BOARD PER CALL rather than
+    a batch, for the reason given at the call site and in ``net_move_rng``. Same
+    search, same knobs, batch size 1. Like every arena it also uses a COLD tree
     per move: no ``tree``/``root_node_ids`` are threaded through, so each search
     starts from an empty root. Production selfplay carries the tree; this does
     not, and the difference is recorded in the fingerprint as ``tree_reuse``
@@ -681,9 +769,23 @@ def play_chunk(
         # needs ~1.9 s/ply for the same 8 boards — so the run is now NET-bound
         # and its wall clock is concurrency-INDEPENDENT: 400 games x ~58.5 net
         # moves x 0.596 s is ~3.9 h, against ~1.5 h for the batched version.
-        # Bought deliberately: a batched run is 2.6x cheaper and its score
-        # depends on --max-concurrent-games, which is exactly the comparison the
-        # ladder cannot tolerate. --sims is the lever if that price is too high.
+        # Bought deliberately: a batched run is cheaper and its score depends
+        # on --max-concurrent-games, which is exactly the comparison the ladder
+        # cannot tolerate.
+        #
+        # ⚑ --sims IS THE LEVER, BUT ITS PAYOFF IS SUB-LINEAR. The one-at-a-time
+        # penalty is WORSE at low sims — ~7.8x at sims 8 against ~6-7x at sims
+        # 100 — because fixed per-call overhead dominates a short search. Halving
+        # --sims does not halve the wall clock.
+        #
+        # ⚑ AND IT IS UNNECESSARY IN EXACTLY ONE CONFIGURATION: with
+        # --no-gumbel-noise AND --temperature 0.0 the search consumes NO rng at
+        # all (the two consumers are the root Gumbel draw and the temperature
+        # sample), so batching could not perturb anything and the serialization
+        # buys nothing. Under the defaults — noise on, temperature 0.1 — it is
+        # load-bearing. Left unconditional rather than branched on those two
+        # flags: a fast path that silently changes batch shape with the flags is
+        # a second measurement regime hiding behind a performance switch.
         for i in net_idxs:
             actions = pick_moves_for_boards(
                 model,
@@ -861,8 +963,21 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
     # THE WIRING PROOF. Mean over MEASURED sets only; the no-PV fallbacks are
     # reported next to it because they are moves the handicap never touched.
     sizes = [s for o in outcomes for s in o.qualifying_sizes()]
+    # ⚑ `not m.no_pv` FIRST, and the None guard is no longer what does the work.
+    # Before the F3 fix a no-PV move reached `_sf_played_move_diagnostics` with
+    # an EMPTY candidate list, which returns (None, None) — so the None filter
+    # excluded those moves by accident. Production's substitution gives them
+    # cand=[bestmove]/[0.0], so the diagnostic now returns a real 0.0 and every
+    # no-PV move would enter the played-regret stats as a perfect zero, dragging
+    # the mean toward 0 and making `played_regret_max` look safer than it is —
+    # while the note below claimed they were excluded. Silent on a clean run
+    # (structural no-PV rate is exactly 0.000000) and loudest during precisely
+    # the desynced-pool episodes the no-PV warning exists to catch.
     regrets = [
-        m.regret for o in outcomes for m in o.sf_moves if m.regret is not None
+        m.regret
+        for o in outcomes
+        for m in o.sf_moves
+        if not m.no_pv and m.regret is not None
     ]
     hist: dict[str, int] = {}
     for s in sizes:
@@ -923,9 +1038,11 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
             "admit more moves than Stockfish was asked to report. no_pv_moves "
             "counts moves where none of SF's MultiPV lines was legal in the "
             "queried position — production substitutes SF's own bestmove as a "
-            "one-element candidate list there (NOT a random legal move), and "
-            "those moves are excluded from every mean above because they carry "
-            "no handicap information."
+            "one-element candidate list there (NOT a random legal move). Those "
+            "moves are excluded from every mean above INCLUDING the "
+            "played_regret ones, where the substitution makes them read as a "
+            "real 0.0 rather than as missing, because they carry no handicap "
+            "information."
         ),
     }
     # An exact, cheap INVARIANT rather than a statistic: the move actually
@@ -1122,10 +1239,26 @@ def build_parser(
                    help="cap this process's share of the GPU (use when training "
                         "owns the card)")
     p.add_argument("--eval-max-batch", type=int, default=4096,
-                   help="cap on the hoisted evaluator's batch; below the search's "
-                        "uncapped leaf size it SHRINKS THE SEARCH (default: 4096)")
+                   help="cap on the hoisted evaluator's batch (default: 4096). "
+                        "⚑ Our side searches ONE board per call, so the leaf "
+                        "buffer a search asks for is leaf_buffer_rows(1, topk) "
+                        "= 512 at the play shape: below that this SHRINKS THE "
+                        "SEARCH (the C tree absorbs overflow leaves as "
+                        "pseudo-terminals carrying the root's Q), at or above it "
+                        "the knob is INERT. The fingerprint carries the REALIZED "
+                        "cap min(this, 512), so two runs at different inert "
+                        "values still compare. 0 disables the hoisted evaluator "
+                        "entirely, which is a different regime and fingerprints "
+                        "as 0.")
     p.add_argument("--max-concurrent-games", type=int, default=64,
-                   help="games in flight at once (default: 64)")
+                   help="games in flight at once (default: 64). ⚑ Post-restructure "
+                        "this buys STOCKFISH parallelism only: our side searches "
+                        "one game per call and is serial, so raising this does "
+                        "not speed the net up at all. Values above roughly 2x "
+                        "--sf-workers buy nothing (the extra games just queue on "
+                        "the pool). It is deliberately NOT in the fingerprint "
+                        "because the measurement no longer depends on it — see "
+                        "net_move_rng and the chunking test.")
     p.add_argument("--compile", action="store_true",
                    help="torch.compile our side (off by default; recorded in the "
                         "fingerprint either way)")
@@ -1159,6 +1292,16 @@ def _validate(args: argparse.Namespace) -> None:
         raise SystemExit("--sf-multipv must be >= 1")
     if args.sf_workers < 1:
         raise SystemExit("--sf-workers must be >= 1")
+    if args.seed < 0:
+        # Range-checked HERE with the other flags rather than left to fail deep
+        # in the run: a negative seed reaches `np.random.default_rng` inside
+        # `_stream_rng` and raises a raw ValueError on the first SF move —
+        # AFTER the fingerprint is built, the banner is printed, the checkpoint
+        # is loaded and the Stockfish pool is spawned.
+        raise SystemExit(
+            f"--seed {args.seed} must be >= 0: it is used as SeedSequence "
+            "entropy, which rejects negative values."
+        )
     if not args.stockfish:
         raise SystemExit(
             "no Stockfish binary: pass --stockfish (the config has no "
@@ -1194,7 +1337,6 @@ def main() -> None:
     _validate(args)
 
     from scripts.arena_standard import (
-        arena_uncapped_leaf_rows,
         build_arena_evaluator,
         default_compile_cache_dir,
         default_openings_path,
@@ -1226,27 +1368,29 @@ def main() -> None:
     # C search mins its leaf buffer against the evaluator's cap and ABSORBS the
     # overflow leaves as pseudo-terminals carrying the root's Q, so a cap below
     # the uncapped size changes the moves instead of just the memory.
-    uncapped_leaf_rows = arena_uncapped_leaf_rows(
-        max_concurrent_games=2 * chunk_pairs, sides=(side,),
+    uncapped_leaf_rows, eval_leaf_cap_effective, cap_regime = resolve_eval_leaf_cap(
+        eval_max_batch=int(args.eval_max_batch), side=side, device=str(args.device),
     )
-    if str(args.device).startswith("cuda") and args.eval_max_batch > 0:
-        if args.eval_max_batch < 2 * chunk_pairs:
-            raise SystemExit(
-                f"--eval-max-batch {args.eval_max_batch} is below the "
-                f"{2 * chunk_pairs} boards one root submit can carry; the "
-                f"hoisted evaluator would refuse it mid-run. Use "
-                f"--eval-max-batch {uncapped_leaf_rows} (the size at which the "
-                f"search runs unchanged) or 0 for per-call evaluators."
-            )
-        if args.eval_max_batch < uncapped_leaf_rows:
-            print(
-                f"[idharness] WARNING: --eval-max-batch {args.eval_max_batch} < "
-                f"{uncapped_leaf_rows} uncapped leaf rows: this SHRINKS THE "
-                f"SEARCH, it does not just cap memory. The value is in the "
-                f"fingerprint, so such a run is only comparable to another run "
-                f"with the same cap.",
-                flush=True,
-            )
+    if cap_regime == "binds":
+        print(
+            f"[idharness] WARNING: --eval-max-batch {args.eval_max_batch} < "
+            f"{uncapped_leaf_rows}, the leaf buffer ONE board's search asks for "
+            f"at this shape: below that the C tree stops flushing and absorbs "
+            f"overflow leaves as pseudo-terminals carrying the root's Q, so this "
+            f"SHRINKS THE SEARCH rather than just capping memory. The realized "
+            f"cap is in the fingerprint, so such a run is only comparable to "
+            f"another run with the same one.",
+            flush=True,
+        )
+    elif cap_regime == "inert":
+        print(
+            f"[idharness] --eval-max-batch {args.eval_max_batch} is above the "
+            f"{uncapped_leaf_rows} rows a one-board search can ask for, so it is "
+            f"INERT: it caps nothing and changes no move. Fingerprinted as the "
+            f"realized cap {eval_leaf_cap_effective}, which is why two runs at "
+            f"different inert values still compare.",
+            flush=True,
+        )
 
     syzygy = str(args.syzygy or "") or None
     sf_binary_sha = file_sha256(args.stockfish)
@@ -1256,6 +1400,7 @@ def main() -> None:
     fingerprint_payload = build_fingerprint_payload(
         args, side=side, sf_binary_sha=sf_binary_sha,
         book_path=openings_path, book_sha=book_sha, syzygy=syzygy,
+        eval_leaf_cap_effective=eval_leaf_cap_effective,
     )
     fingerprint = build_fingerprint(fingerprint_payload)
 
@@ -1434,6 +1579,9 @@ def main() -> None:
         "checkpoint": str(args.checkpoint),
         "checkpoint_identity": checkpoint_identity(args.checkpoint),
         "per_game_sidecar": str(sidecar_path),
+        # The RAW request, next to the realized cap the fingerprint carries.
+        "eval_max_batch_requested": int(args.eval_max_batch),
+        "eval_leaf_cap_uncapped": int(uncapped_leaf_rows),
         "config": str(config_path),
         "fingerprint": fingerprint,
         "fingerprint_payload": fingerprint_payload,
