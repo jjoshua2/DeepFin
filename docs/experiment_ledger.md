@@ -65453,3 +65453,22 @@ nits. Positively confirmed: pairing intact under the restructure, RNG stream tag
 alias-free, no-PV substitution exactly matches production, sidecar/final share one row
 builder, `stockfish_turn.py` byte-identical. All routed to the builder; Opus
 re-verification still running in parallel — its findings merge into the same commit.
+
+**`feat/mixed-corpus` one-change commit landed @ `649626c05` — MERGE-READY per the
+re-verification's verdict.** The builder REPRODUCED the degenerate ceiling before fixing
+(fully-labelled 16-row corpus: bar 0.001 refused with an unreachable remedy — "Pass a
+bar at or under 0.000000"), then fixed with `OWN_OUTCOME_BAR_ABS_FLOOR = 0.002`
+(justified against both endpoints in the constant's own comment; the multiple still
+governs on the real corpus, so the floor is a degenerate-case backstop, not a silent
+widening; the refusal names which bound produced the ceiling). The replaced test —
+literals restating the guard's own arithmetic, structurally blind to the zero-base case
+— is superseded by a test that LAUNCHES against a zero-residual corpus; the floor is
+mutant-pinned from BOTH sides (drop it / inflate it → different tests fail). Both nits
+fixed. Lint both gates delta 0 (builder read the ruff section explicitly this time);
+tests 283→332 (+49, 0 new failures; the one failure identical at the branch point in an
+untouched file). Bare exit stays 1 on the 438 checkout's pre-existing numpy-typing red —
+recorded, delta 0.
+**Merge SEQUENCING: held until ext's summary lands** — the branch lives in the
+`chess-438-merge-review` checkout that ext is training from; no branch operations there
+while a run is live. Sequence: ext summary → deciding arena (runs from the live tree,
+independent) → merge `feat/mixed-corpus` → ratio-ladder prereg.
