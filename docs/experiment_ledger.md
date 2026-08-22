@@ -64892,3 +64892,16 @@ learned, context-conditional gaps. ⇒ B > G specifically ⇒ gap structure is t
 ingredient (deepest level). G ≈ B > a000 ⇒ ranking repair sufficed. E[regret] is the
 gap-sensitive half of the yardstick (top-1 sees ranking only). ⚑ Never judge B by
 BT4-similarity/KL — an arm that blends toward BT4 wins that metric by construction.
+
+#### Amendment (operator, same day): FEN-only for arm B is NOT assumed safe — history-sensitivity is now MEASURED before B runs
+
+"History planes for BT4 [don't seem] optional — that seems a required thing to know for
+sure it's going to work as intended." Accepted: a FEN-only B that reads null would be an
+unreadable verdict ([[invalid_verdicts_from_unwired_features]] — never cite a negative
+off a feature not wired as intended). Raw lc0 tarballs with TRUE 112-plane inputs are on
+disk (`data/lc0_training/*.tar`), so the degradation gets MEASURED, not assumed: BT4 on
+~2k positions, true planes vs history-zeroed, pre-committed rule — top-1 flip ≤3% AND
+median KL ≤0.05 ⇒ FEN-only licensed round 1 (bound disclosed); flip >8% OR KL >0.15 ⇒
+HISTORY REQUIRED (FEN-only dump must not feed B); between ⇒ operator call with numbers.
+The probe also independently validates the adapter's FEN→planes construction against the
+raw records' current-position block. Probe outranks the dump in the build order.
