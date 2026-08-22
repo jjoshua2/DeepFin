@@ -65117,3 +65117,23 @@ it is ~87% done → steps begin ~14:30-15:00, summary ETA ~19:30-20:30. The
 `a_progress_file_mtime_is_part_of_the_reading` memory exists because of exactly this
 misread; I re-hit it by tailing content without stat'ing the file. Waiter unchanged
 (8h bound from 11:58 = 19:58 — may need one re-arm if steps are slow).
+
+**Review verdict — `feat/bt4-policy-dump` (independent Opus reviewer): MERGE-WITH-CHANGES.**
+Correctness core VERIFIED clean three independent ways (production-path frame proof:
+10,870 shard rows, 5,345 true-black, 693 with castling, 0 legal-mask disagreements;
+end-to-end black-castling case bit-identical shard-path vs true-path; round-trip vs
+lc0's own bits 0/60). 4 reviewer mutants all caught; lint exit 0; tests +22/0 regressions.
+BLOCKERS sent back to the builder: (1) run() materialises every row AND each retained row
+pins its whole shard's converted array as a view — measured ~38KB/row ⇒ ~59GB RSS on the
+1.5M corpus; must stream. (2) shard `input_history_encoding` attr is IGNORED (hardcoded)
+so the existing layout guard structurally cannot fire — v1 tensors accepted silently,
+rule50 silently wrong; signature defect. REQUIRED for arm B: the dump emits canonical
+(mirrored) FEN keys + canonical UCIs with NO shard/row identity, while the R/V/G rig
+joins on its own 32-hex plane key ⇒ builder must emit shard/row/game_id/ply_index so an
+adapter bridges the two contracts (⚑ measured: our compact index vs Leela's 1858 agree
+on 88/5,243 moves — UCI strings are the ONLY safe interchange, never indices).
+Also sent: resume torn-line + stale-header fixes, ambiguity-raises alignment with
+net_source, vacuous-sanity removals, one test vacuity (ranking-only gather test passed
+under the static-remap mutant). Reviewer also re-measured raw-prior entropy: 1.39 nats
+on shard rows / 1.52 on audit rows (my 1.90 was a different draw) — all far from the
+0.970 post-search anchor, point unchanged. grok pass on the conversion still pending.
