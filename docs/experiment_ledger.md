@@ -64882,3 +64882,13 @@ choice — including narrowing the considered-set 16 -> 8 — determines the tar
 sharpness. The composite's real trade is support/coverage only. Standing residue: temper
 cannot repair wrong ORDERING — the sharp-and-wrong finding is a wrongness finding that
 sharpness amplifies. Constraint (a) (frozen `gumbel_topk`, fresh baseline) stands.
+
+#### Reading key (pre-registered): the repair hierarchy is sharpness < ranking < gap sizes
+
+Operator: sharpness is trivial to control; fixing the RANKING is harder; getting the
+GAPS between ranks right-sized is hardest. Arm decode: V acts on ranking only; G has
+SF's ranking but INVENTS gaps via one global exp(-regret/T) map; B inherits BT4's
+learned, context-conditional gaps. ⇒ B > G specifically ⇒ gap structure is the active
+ingredient (deepest level). G ≈ B > a000 ⇒ ranking repair sufficed. E[regret] is the
+gap-sensitive half of the yardstick (top-1 sees ranking only). ⚑ Never judge B by
+BT4-similarity/KL — an arm that blends toward BT4 wins that metric by construction.
