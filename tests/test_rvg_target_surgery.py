@@ -1831,9 +1831,25 @@ def test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer(
 
     from scripts.rvg_label_pass import _trainer_mirror_prob
 
-    boards = [chess.Board(f) for f in _ROUNDTRIP_FENS]
+    # ⚑ 256 DISTINCT POSITIONS, NOT 6 REPEATED. The set-level control below is
+    # vacuous on a small corpus: if 48 sampled rows cover every distinct
+    # position, the emitted SET is the same whatever order they came in, so
+    # `emitted == expected` would pass for a stream that is completely wrong.
+    # A walk down the opening tree gives enough distinct rows that 6x8 draws
+    # cannot cover them all, which is what makes the comparison discriminating.
+    boards = []
+    frontier = [chess.Board()]
+    while len(boards) < 256:
+        node = frontier.pop(0)
+        for move in list(node.legal_moves)[:4]:
+            child = node.copy(stack=False)
+            child.push(move)
+            boards.append(child)
+            frontier.append(child)
+            if len(boards) >= 256:
+                break
     samples = []
-    for i, board in enumerate(boards * 8):
+    for i, board in enumerate(boards):
         pol = np.zeros(POLICY_SIZE, dtype=np.float32)
         pol[i % POLICY_SIZE] = 1.0
         samples.append(ReplaySample(
@@ -1845,6 +1861,13 @@ def test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer(
     arrs["_input_history_encoding"] = np.asarray(PROD_ENCODING)
     save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=arrs)
     planes = int(samples[0].x.shape[0])
+    distinct_corpus = len(set(position_fingerprints(
+        np.stack([s.x for s in samples]), input_history_encoding=PROD_ENCODING,
+    )))
+    assert distinct_corpus > 6 * 8, (
+        f"only {distinct_corpus} distinct rows: 6x8 draws could cover the whole "
+        "corpus and the set comparison would not discriminate"
+    )
 
     mirror_prob = _trainer_mirror_prob({})
     assert mirror_prob > 0.0, (
@@ -1919,6 +1942,41 @@ def test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer(
     naive = _naive_stream()
     assert naive[0] == trainer_stream[0]
     assert naive != trainer_stream
+
+    # ⚑⚑ AND NOW THE PRODUCTION FUNCTION ITSELF, which the block above does NOT
+    # cover. Mutating `enumerate_drawn_rows` to drop its mirror call SURVIVED an
+    # earlier version of this test, because everything above re-implements the
+    # enumeration loop inline: it pinned the PRINCIPLE and left the CALL SITE
+    # free. That is this repo's signature defect committed inside the test
+    # written to prevent it, so the real entry point is driven here and its
+    # emitted key set — the thing `--restrict-to` consumes — is compared against
+    # the trainer-faithful draw.
+    import yaml
+
+    from scripts.rvg_label_pass import enumerate_drawn_rows
+
+    config_path = tmp_path / "enum.yaml"
+    config_path.write_text(yaml.safe_dump({"seed": 0, "batch_size": 8}))
+    out_path = tmp_path / "enum_keys.txt"
+    enumerate_drawn_rows(
+        config_path=config_path, replay_dir=shard_dir, steps=6, batch_size=8,
+        out_path=out_path, progress_every=0,
+    )
+    emitted = {
+        bytes.fromhex(line.strip())
+        for line in out_path.read_text().splitlines()
+        if line.strip() and not line.startswith("{")
+    }
+    expected = {key for draw in trainer_stream for key in draw}
+    assert emitted == expected, (
+        f"enumerate_drawn_rows emitted {len(emitted)} distinct rows, the "
+        f"trainer's draw touches {len(expected)}; "
+        f"{len(emitted - expected)} named-but-never-drawn, "
+        f"{len(expected - emitted)} drawn-but-never-named"
+    )
+    # ...and the no-mirror row set is genuinely different, so the equality above
+    # is discriminating rather than an artifact of a small corpus.
+    assert {key for draw in naive for key in draw} != expected
 
 
 @pytest.mark.parametrize(
