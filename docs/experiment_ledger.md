@@ -65297,3 +65297,22 @@ Findings routed to the builder:
 Also verified clean: 0/30 flags accepted-and-ignored, both `--eval-max-batch` guard
 paths exercised live, bit-identical reproducibility including qualifying-set sizes,
 pairing/pentanomial reuse. Lint delta 0 both gates; tests +21/0. Grok pass pending.
+
+**Grok cross-review — `feat/identity-harness`: CONVERGES with Opus on both majors**
+(net-RNG concurrency dependence traced independently to the per-board Gumbel draw loop
+in `gumbel_c.py:870-880`; no-PV divergence traced to `_process_sf_results`'s bestmove
+substitution — Grok's verdict line: "extracted the helper, missed the caller's
+substitution... the defect this codebase is known for"). ONE new finding routed:
+`--config`'s help claims it supplies "SF/opening/syzygy defaults" but openings always
+come from arena_standard's hardcoded production config, as do `--search-shape training`
+knobs — doc fix (keep the book frozen; truthfulness is the fix, not wiring). Two
+corrections: the 0.0008 no-PV rate is repudiated in the source (structural floor
+0.000000; contaminated-shard measurement); the correlated same-chunk Gumbel noise is a
+mild pentanomial-independence violation that the per-game keying fix also eliminates.
+Grok positively confirmed: extraction byte-for-byte preserving, WDL units/POV/max-side,
+band-0 tied_at_best, genuine pentanomial reuse, all knobs reaching consumers.
+**REVIEW COVERAGE NOW COMPLETE: all four branches, both lanes each.** Cross-family
+convergence scorecard: rvg (2/2 majors), mixed (1/1), identity (2/2) — plus each lane's
+unique finds (Opus: memory blockers, dead gates, lint two-gates, fingerprint vacuity;
+Grok: mode-flag hygiene, .partial provenance, --config honesty, frame reproduction).
+All four builders hold consolidated fix lists; merges gate on their re-verified reports.
