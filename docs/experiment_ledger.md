@@ -65607,3 +65607,25 @@ side of the certify/dispatch gap quietly endorses the wrong read. Targeted
 re-verification dispatched: same Opus reviewer re-running its own probes on
 `61da5a603..7ef3f4ba1` (incl. the typo'd-arm-name trace through the new `stages_for`
 fall-through) + grok snapshot pass. Merge and top-up gate on this round.
+
+**R/V/G rig MERGED to `ops/live-20260725`** as `6d60474d5` (`feat/rvg-target-surgery` @
+`7ef3f4ba1`) on the targeted re-verification's MERGE-CLEAR: every fix re-confirmed by
+re-run mutants — F1's 12-row real-SF pass is a DISCRIMINATING repro (under the mutant it
+reproduces the production `KeyError` exactly: exit 1, no `.jsonl`, orphaned partial),
+F2's both branches through real `main()`, F3's refusal now deterministic 8/8 (was 5
+accepts/1 refuse in 6), F8b's inertness re-proven on a WIDENED 144-state enumeration,
+and a typo'd `rvg_arm=gg` traced to fail closed on both routes. Grok's parallel pass:
+no new blockers, runtime verified true at every cited line. Post-merge in the live
+tree: bare lint **exit 0 both gates** (⚑ the rvg worktree's 13 basedpyright errors do
+NOT reproduce here — worktree-environment phantoms, as the two-endpoint delta already
+implied), rig tests **174 passed, exit 0**, matching the re-verifier's count. Third of
+four branches home.
+**Residuals routed as post-merge polish, NOT merge blockers** (decided now, per
+protocol): five items, all test-hardening or message quality, none production defects —
+grok: F1's round-trip test hand-copies the writer line instead of driving `main()`'s
+call sites; F5's fixture can't catch a `config["w_sf_policy_floor"]` mis-read (both
+values 0.0); the every-flag test asserts unclaimed-empty but not disjointness; streaming
+docstring's refusal list omits the new mixed-encoding refusal — Opus: typo'd-arm-plus-q
+aborts with "no G stage" instead of naming the unknown arm. The ladder does not wait on
+these. Top-up will now run FROM THE LIVE TREE (merged-code provenance) once the main
+pass finishes.
