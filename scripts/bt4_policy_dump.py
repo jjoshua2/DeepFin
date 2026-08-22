@@ -1,36 +1,65 @@
-"""Batched BT4 (LC0) policy dump over a FEN row list, as JSONL.
+"""Batched BT4 (LC0) policy dump, as JSONL, from FENs or from replay shards.
 
 For each input position this runs the BT4 ONNX policy head, gathers the logits
 of the LEGAL moves through the board-aware LC0-1858 mapping
 (:mod:`chess_anti_engine.moves.leela_index`), softmaxes over the legal moves
-ONLY, and writes ``{key, n_legal, policy: {uci: prob}}``.
+ONLY, and writes one record per position.
 
-⚑ HISTORY-LESS INPUT — A KNOWN, DOCUMENTED DEGRADATION. The 112-plane LC0
-input is built from the FEN alone, with the 7 history frames filled by
-repeating the current position (``fill_lc0_history_repeat``). BT4 was trained
-on real move history, so this asks it a question it never saw in training. Two
-consequences worth naming: repetition/50-move context is faked, and en passant
-is conveyed in the T-format through the history frames rather than a plane, so
-on the ~1% of positions whose key move is an en-passant capture BT4 cannot see
-the double-push that made it available. This is the SAME convention every
-prior BT4 instrument here used (``scripts/foreign_net_audit.py``,
-``scripts/lc0_adapter_probe.py``, and the banked ``bt4_audit_cache``), so the
-numbers stay comparable with those; it is not a defect introduced here, and it
-is not a reason to compare these dumps against a history-carrying BT4 run.
+Two input sources, and they are NOT equivalent:
+
+``--input-source fens`` (default)
+    Positions come from a FEN row list. The 112-plane LC0 input is built from
+    the FEN alone, with the 7 history frames filled by repeating the current
+    position (``fill_lc0_history_repeat``).
+    ⚑ HISTORY-LESS — A KNOWN, MEASURED DEGRADATION. BT4 was trained on real
+    move history. Measured against lc0's own v6 training records
+    (``scripts/bt4_history_sensitivity.py``, 2000 positions): repeat-filled
+    history moves BT4's top-1 on ~6% of positions, median KL(true‖repeat)
+    ~0.005 nats. En passant is conveyed in the T-format through the history
+    frames rather than a plane, so a FEN-built input also cannot show BT4 the
+    double-push behind an en-passant capture. This is the same convention every
+    prior BT4 instrument here used (``scripts/foreign_net_audit.py``,
+    ``scripts/lc0_adapter_probe.py``, the banked ``bt4_audit_cache``), so those
+    numbers stay comparable.
+
+``--input-source shards:<dir>[,<dir>]``
+    Positions come from stored replay ``x`` tensors, whose first 112 planes are
+    the LC0 block and carry TRUE 8-slot history. No FEN rebuild happens, so the
+    degradation above does not apply. Prefer this whenever the rows exist.
+
+CONSUMER CONTRACT — read before joining a dump to anything
+----------------------------------------------------------
+(a) ⚑ ``key`` is the SIDE-TO-MOVE CANONICAL FEN and the ``policy`` keys are
+    CANONICAL UCIs. Replay planes are stored POV-oriented, so a decoded row is
+    always White-to-move: a black kingside castle appears as ``e1g1``, NEVER
+    ``e8g8``, and every move is named in the mirrored frame. A consumer holding
+    real-orientation FENs will get an EMPTY join. Decode shard rows through
+    :func:`board_from_stored_x` (or mirror your own board when Black is to
+    move) so both sides speak the same frame.
+(b) ⚑ The gather index space is LC0's 1858 ORDER, which is not ours. Measured:
+    ``compact_index_for_move`` and ``leela_index_for_move`` agree on only
+    88 of 5,243 moves. **UCI STRINGS ARE THE INTERCHANGE FORMAT — never join on
+    a policy index.** The dict is keyed by UCI precisely so no index crosses
+    the boundary.
+(c) ⚑ Transpositions are FIRST-WINS SKIP: a key already emitted is not emitted
+    again. Measured on 113k corpus rows: 20 keys / 40 rows (0.035%), 3 of them
+    reached with different history. Because every record carries ``shard`` and
+    ``row`` (plus ``game_id`` / ``ply_index``), which occurrence was kept is
+    observable, and a consumer that cares can re-derive the others instead of
+    silently inheriting our choice.
 
 ⚑ The gather is board-aware for a reason. LC0's 1858 head spells castling
 king-takes-rook (``e1h1``) and ALSO has an ordinary ``e1g1`` slide slot, and it
 puts KNIGHT promotion (not queen) on the bare 7th->8th slot. A static
 from/to-string remap reads a real but unrelated logit for both families rather
-than failing, which is how castling priors came out 49x-120x too small. See
-``chess_anti_engine/onnx/load.py`` and the header record's ``remap`` block,
-which pins the exact code that produced a dump.
+than failing, which is how castling priors came out 49x-120x too small. The
+header record's ``remap`` block pins the exact code that produced a dump.
 
 Example
 -------
     PYTHONPATH=. python3 scripts/bt4_policy_dump.py \
-        --rows data/audit_set_v1.jsonl --out data/lc0/bt4_policy_dump.jsonl \
-        --batch-size 128 --threads 16
+        --input-source shards:data/salvage/<label>/seeds/slot_000/replay_shards \
+        --out data/lc0/bt4_policy_dump.jsonl --batch-size 128 --threads 16
 """
 from __future__ import annotations
 
@@ -41,7 +70,8 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +82,7 @@ from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.encoding.lc0 import (
     LC0_FULL,
     fill_lc0_history_repeat,
+    normalize_lc0_history_encoding,
     x_to_lc0_planes,
 )
 from chess_anti_engine.encoding.plane_decode import (
@@ -65,13 +96,13 @@ from chess_anti_engine.moves.leela_index import (
 )
 
 DEFAULT_ONNX = "data/lc0/onnx/BT4-it332-vanilla-winner.onnx"
-# The 112-plane LC0-canonical layout. `lc0_root_legacy_meta` packs an
-# en-passant file into plane 110 and is NOT what an LC0 net reads.
+# The 112-plane LC0-canonical layout used for FEN-built inputs.
 HISTORY_ENCODING = "lc0_root"
-# What production actually stores (configs/pbt2_small.yaml: input_history_encoding
-# + input_extra_features: v2_threats). Its first 112 planes are the LC0 block and
-# carry TRUE history, which is the whole point of the shard path.
-SHARD_HISTORY_ENCODING = "lc0_root_legacy_meta"
+# Layouts whose planes 0..103 ARE LC0's interleaved history block, so
+# `x_to_lc0_planes` can convert them. `legacy` APPENDS its repetition planes
+# instead, which puts a repetition plane where LC0 reads rule50 -- a shard read
+# under the wrong name yields a valid tensor and a silently wrong rule50.
+SUPPORTED_SHARD_ENCODINGS = ("lc0_root_legacy_meta", "lc0_root")
 # Files whose content defines the remap; pinned per-dump so a cache can never
 # be silently attributed to the wrong revision of it.
 REMAP_SOURCES = (
@@ -81,22 +112,46 @@ REMAP_SOURCES = (
 )
 
 
-# --------------------------------------------------------------- input rows
-def iter_rows(path: Path) -> Iterator[tuple[str, str]]:
-    """``(key, fen)`` pairs from a JSONL row list or a plain one-FEN-per-line file.
+@dataclass
+class Row:
+    """One position on its way to the net, with the identity it will be dumped under."""
 
-    ``key`` is the dump's identity (echoed to the output); ``fen`` is what the
-    board is built from. They differ deliberately.
+    key: str
+    board: chess.Board
+    #: Ready-made LC0 planes (shard path, TRUE history) or ``None`` to build
+    #: them from the FEN (history-less path).
+    planes: np.ndarray | None = None
+    shard: str | None = None
+    row_index: int | None = None
+    game_id: int | None = None
+    ply_index: int | None = None
+    legal_mask: np.ndarray | None = None
+
+    def identity(self) -> dict[str, Any]:
+        """The join fields, omitted entirely for FEN input where they are absent."""
+        if self.shard is None:
+            return {}
+        return {
+            "shard": self.shard,
+            "row": self.row_index,
+            "game_id": self.game_id,
+            "ply_index": self.ply_index,
+        }
+
+
+# --------------------------------------------------------------- input rows
+def iter_fen_rows(path: Path) -> Iterator[Row]:
+    """Rows from a JSONL row list (``key``/``fen`` field) or one FEN per line.
 
     ⚑ The audit set's 4-field ``key`` has NO halfmove clock, so a board built
     from it carries rule50 = 0 — and rule50 is plane 109 of the LC0 input, a
     plane BT4 reads. Measured on 500 audit rows: keying off ``key`` instead of
     ``fen`` flips BT4's top-1 on 5 of them (1.0%), every one a position with a
     large halfmove clock (23, 26, 32, 89, 92) where BT4 correctly plays
-    differently near the 50-move boundary. So the FULL fen is preferred for the
-    board whenever the row carries one, while the output stays keyed by ``key``
-    for joinability with the audit set. On rows where both describe the same
-    clock this script and ``scripts/foreign_net_audit.py`` agree exactly.
+    differently near the 50-move boundary. So the FULL fen builds the board
+    whenever the row carries one, while the output stays keyed by ``key`` for
+    joinability with the audit set. On rows where both describe the same clock
+    this script and ``scripts/foreign_net_audit.py`` agree exactly.
     """
     with path.open(encoding="utf-8") as fh:
         for raw in fh:
@@ -108,9 +163,9 @@ def iter_rows(path: Path) -> Iterator[tuple[str, str]]:
                 key = rec.get("key") or rec.get("fen")
                 if key is None:
                     raise ValueError(f"row has neither 'key' nor 'fen': {line[:120]}")
-                yield str(key), str(rec.get("fen") or key)
+                yield Row(key=str(key), board=chess.Board(str(rec.get("fen") or key)))
             else:
-                yield line, line
+                yield Row(key=line, board=chess.Board(line))
 
 
 def shard_castling_rights(planes: np.ndarray, board: chess.Board) -> int:
@@ -134,13 +189,17 @@ def shard_castling_rights(planes: np.ndarray, board: chess.Board) -> int:
     return rights & board.rooks
 
 
-def board_from_stored_x(x_row: np.ndarray, planes: np.ndarray) -> chess.Board:
+def board_from_stored_x(
+    x_row: np.ndarray, planes: np.ndarray, *, input_history_encoding: str,
+) -> chess.Board:
     """Rebuild the position from one stored replay row.
 
     Replay shards hold encoded planes, NOT FENs, so the position has to come
     back out of the tensor. Decoding is side-to-move canonical: the result is
     always White to move, which is the frame the planes were written in and the
-    frame BT4's policy head speaks.
+    frame BT4's policy head speaks. ``input_history_encoding`` must be the
+    shard's OWN declared layout -- the en-passant square lives in a different
+    place under each one.
     """
     bbs = decode_step0_bitboards(x_row[None])[0]
     board = chess.Board(None)
@@ -150,41 +209,124 @@ def board_from_stored_x(x_row: np.ndarray, planes: np.ndarray) -> chess.Board:
             for sq in chess.scan_forward(int(bbs[offset + pt_idx])):
                 board.set_piece_at(sq, piece)
     board.turn = chess.WHITE
-    ep = decode_ep_square(x_row, SHARD_HISTORY_ENCODING)
+    ep = decode_ep_square(x_row, input_history_encoding)
     board.ep_square = ep if ep >= 0 else None
     board.castling_rights = shard_castling_rights(planes, board)
-    board.halfmove_clock = int(min(100.0, float(planes[LC0_FULL.root_metadata_base + 5][0, 0])))
+    board.halfmove_clock = int(
+        min(100.0, float(planes[LC0_FULL.root_metadata_base + 5][0, 0])),
+    )
     return board
 
 
-def iter_shard_rows(
-    dirs: Sequence[str], limit: int,
-) -> Iterator[tuple[str, chess.Board, np.ndarray, np.ndarray]]:
-    """``(key, board, lc0_planes, legal_mask)`` for each stored replay row.
+def shard_encoding(group: Any, shard: Path) -> str:
+    """The shard's OWN declared input layout, or a loud failure.
 
-    The key is the decoded side-to-move-canonical FEN, which is the only
-    joinable identity a shard row has -- the shards carry ``game_id`` and
-    ``ply_index`` but no position string.
+    ⚑ Never assume this. Every shard records ``input_history_encoding``, and
+    reading one layout as another fails SILENTLY: an ``lc0_root`` shard read as
+    ``lc0_root_legacy_meta`` has its raw rule50 multiplied by 100 (clamped to
+    100, i.e. "50-move rule about to fire" on every row), and a ``legacy``
+    shard has a REPETITION plane sitting where LC0 reads rule50, so every row
+    reports rule50 = 0. ``--check-legal-mask`` cannot catch either, because the
+    step-0 piece planes are identical across all three layouts.
+    """
+    declared = group.attrs.get("input_history_encoding")
+    if declared is None:
+        raise SystemExit(
+            f"{shard} has no 'input_history_encoding' attribute; refusing to "
+            f"guess a layout. Expected one of {list(SUPPORTED_SHARD_ENCODINGS)}.",
+        )
+    name = str(declared)
+    try:
+        canonical = normalize_lc0_history_encoding(name)
+    except ValueError as exc:
+        raise SystemExit(f"{shard}: unknown input_history_encoding {name!r}") from exc
+    if canonical not in SUPPORTED_SHARD_ENCODINGS:
+        raise SystemExit(
+            f"{shard}: input_history_encoding {name!r} (canonical {canonical!r}) is "
+            f"not an LC0-root layout. Supported: {list(SUPPORTED_SHARD_ENCODINGS)}. "
+            "Converting it would produce a plausible tensor with a wrong rule50.",
+        )
+    return canonical
+
+
+def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
+    """Stream ``Row``s from replay shards, one shard resident at a time.
+
+    ⚑ Each row's planes are ``.copy()``d out of the shard's converted block.
+    Handing out a VIEW would make one retained row pin the whole
+    ``(2000, 112, 8, 8)`` float32 array (~460 MB per 12k rows retained), which
+    is what turned a 3.1M-row corpus dump into a ~121 GB resident set.
     """
     import zarr
 
-    n = 0
     for directory in dirs:
         for shard in sorted(Path(directory).glob("*.zarr")):
             group = zarr.open(str(shard), mode="r")
+            encoding = shard_encoding(group, shard)
             xs = np.asarray(group["x"][:])
             masks = np.asarray(group["legal_mask"][:])
-            planes_all = x_to_lc0_planes(
-                xs, input_history_encoding=SHARD_HISTORY_ENCODING,
-            )
+            game_ids = np.asarray(group["game_id"][:])
+            plies = np.asarray(group["ply_index"][:])
+            planes_all = x_to_lc0_planes(xs, input_history_encoding=encoding)
             for row in range(xs.shape[0]):
-                board = board_from_stored_x(xs[row], planes_all[row])
-                yield board.fen(), board, planes_all[row], masks[row]
-                n += 1
-                if limit and n >= limit:
-                    return
+                board = board_from_stored_x(
+                    xs[row], planes_all[row], input_history_encoding=encoding,
+                )
+                yield Row(
+                    key=board.fen(),
+                    board=board,
+                    planes=planes_all[row].copy(),
+                    shard=shard.name,
+                    row_index=row,
+                    game_id=int(game_ids[row]),
+                    ply_index=int(plies[row]),
+                    legal_mask=masks[row],
+                )
+            del xs, planes_all, masks
 
 
+def batched(rows: Iterable[Row], size: int) -> Iterator[list[Row]]:
+    """Fixed-size batches from a stream, so nothing accumulates across batches."""
+    batch: list[Row] = []
+    for row in rows:
+        batch.append(row)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+def source_rows(args: argparse.Namespace, done: set[str]) -> Iterator[Row]:
+    """The de-duplicated, limited row stream for whichever input source is set."""
+    shard_dirs = shard_source_dirs(args.input_source)
+    raw: Iterator[Row] = (
+        iter_shard_rows(shard_dirs) if shard_dirs else iter_fen_rows(Path(args.rows))
+    )
+    seen: set[str] = set()
+    emitted = 0
+    for row in raw:
+        if row.key in seen or row.key in done:
+            continue  # first-wins transposition skip; see the module contract
+        if not any(row.board.legal_moves):
+            continue
+        if row.legal_mask is not None and args.check_legal_mask:
+            ours = {compact_index_for_move(row.board, m) for m in row.board.legal_moves}
+            if ours != set(np.flatnonzero(row.legal_mask > 0).tolist()):
+                raise SystemExit(
+                    f"decoded legal moves disagree with the shard's stored "
+                    f"legal_mask at {row.shard}:{row.row_index} ({row.key}); "
+                    "the plane decode is wrong",
+                )
+        seen.add(row.key)
+        row.legal_mask = None  # not needed downstream; do not keep it alive
+        yield row
+        emitted += 1
+        if args.limit and emitted >= args.limit:
+            return
+
+
+# ---------------------------------------------------------------- dump file
 def load_done_keys(out_path: Path) -> set[str]:
     """Keys already dumped, for --resume. Ignores a torn trailing line."""
     done: set[str] = set()
@@ -205,6 +347,57 @@ def load_done_keys(out_path: Path) -> set[str]:
     return done
 
 
+def read_header(out_path: Path) -> dict[str, Any] | None:
+    """The header record of an existing dump, if it has one."""
+    if not out_path.exists() or not out_path.stat().st_size:
+        return None
+    with out_path.open(encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                return None
+            return rec if rec.get("record") == "header" else None
+    return None
+
+
+def truncate_torn_tail(out_path: Path) -> int:
+    """Drop an unterminated final line before appending. Returns bytes removed.
+
+    ⚑ Opening in ``"a"`` after a killed run appends straight onto a half-written
+    record, welding it to the first new record to form ONE invalid line — so the
+    torn row AND the first good row are both lost, and ``load_done_keys`` cannot
+    see it because it only skips lines it cannot parse.
+    """
+    if not out_path.exists():
+        return 0
+    size = out_path.stat().st_size
+    if size == 0:
+        return 0
+    with out_path.open("rb+") as fh:
+        fh.seek(-1, os.SEEK_END)
+        if fh.read(1) == b"\n":
+            return 0
+        # Walk back to the last newline and cut there.
+        chunk = 1 << 16
+        pos = size
+        while pos > 0:
+            step = min(chunk, pos)
+            pos -= step
+            fh.seek(pos)
+            buf = fh.read(step)
+            idx = buf.rfind(b"\n")
+            if idx >= 0:
+                keep = pos + idx + 1
+                fh.truncate(keep)
+                return size - keep
+        fh.truncate(0)
+        return size
+
+
 # ------------------------------------------------------------------ session
 def open_session(
     onnx: str, *, gpu_mem_gb: float, threads: int,
@@ -212,14 +405,23 @@ def open_session(
     import onnxruntime as ort
 
     providers: list[Any] = []
-    if gpu_mem_gb > 0 and "CUDAExecutionProvider" in ort.get_available_providers():
-        # ⚑ A bare provider NAME cannot carry gpu_mem_limit, and ORT allocates
-        # through its own CUDA arena that torch's memory fraction does not
-        # bound — so an uncapped session here would sit on the trainer's GPU.
-        providers.append((
-            "CUDAExecutionProvider",
-            {"device_id": 0, "gpu_mem_limit": int(gpu_mem_gb * 1024 ** 3)},
-        ))
+    if gpu_mem_gb > 0:
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            # ⚑ A bare provider NAME cannot carry gpu_mem_limit, and ORT
+            # allocates through its own CUDA arena that torch's memory fraction
+            # does not bound — so an uncapped session would sit on the
+            # trainer's GPU.
+            providers.append((
+                "CUDAExecutionProvider",
+                {"device_id": 0, "gpu_mem_limit": int(gpu_mem_gb * 1024 ** 3)},
+            ))
+        else:
+            print(
+                f"[dump] WARNING: --gpu-mem-gb {gpu_mem_gb} requested but this "
+                f"onnxruntime has no CUDAExecutionProvider "
+                f"(available: {ort.get_available_providers()}); running on CPU.",
+                file=sys.stderr, flush=True,
+            )
     providers.append("CPUExecutionProvider")
 
     options = None
@@ -238,14 +440,27 @@ def resolve_policy_output(sess: Any, policy_output: str | None) -> int:
 
     Picked by WIDTH, not position: some LC0/BT4 graphs emit the 3-wide WDL
     before the 1858-wide policy, so ``out[0]`` is not reliably the policy.
+    An AMBIGUOUS graph raises rather than taking the first match, matching
+    ``scripts/net_source.py`` — picking one of two policy heads silently is
+    exactly the class of defect this file exists to avoid.
     """
     names = [o.name for o in sess.get_outputs()]
     if policy_output:
+        if policy_output not in names:
+            raise SystemExit(
+                f"--policy-output {policy_output!r} is not an output of this graph. "
+                f"Available: {names}",
+            )
         return names.index(policy_output)
     widths = [
         (o.shape[-1] if isinstance(o.shape[-1], int) else -1) for o in sess.get_outputs()
     ]
     exact = [i for i, w in enumerate(widths) if w == COMPACT_POLICY_SIZE]
+    if len(exact) > 1:
+        raise SystemExit(
+            f"graph has {len(exact)} {COMPACT_POLICY_SIZE}-wide outputs "
+            f"({[names[i] for i in exact]}); pass --policy-output to say which.",
+        )
     if exact:
         return exact[0]
     raise SystemExit(
@@ -343,6 +558,38 @@ def remap_provenance() -> dict[str, Any]:
     }
 
 
+def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
+                 providers: list[str]) -> dict[str, Any]:
+    return {
+        "record": "header",
+        "onnx": {"path": str(args.onnx), "sha256": file_sha256(args.onnx)},
+        "policy_output": pol_name,
+        "providers": providers,
+        "batch_size": int(args.batch_size),
+        "threads": int(args.threads),
+        "input": {
+            "planes": 112,
+            "source": "shards" if shard_dirs else "fens",
+            "shard_dirs": list(shard_dirs),
+            "history_encoding": None if shard_dirs else HISTORY_ENCODING,
+            "history_fill": None if shard_dirs else "repeat",
+            "history_less": not shard_dirs,
+        },
+        "contract": {
+            "key": "side-to-move canonical FEN (decoded rows are always White to move)",
+            "policy_keys": "canonical UCI (black O-O is e1g1, never e8g8)",
+            "index_space": (
+                "LC0 1858 order internally; UCI strings are the interchange format"
+            ),
+            "duplicate_keys": (
+                "first-wins skip; shard/row/game_id/ply_index identify which"
+            ),
+        },
+        "remap": remap_provenance(),
+        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
 # ---------------------------------------------------------------------- main
 def shard_source_dirs(spec: str) -> list[str]:
     """Directories named by ``--input-source shards:<dir>[,<dir>]``, else []."""
@@ -356,6 +603,35 @@ def shard_source_dirs(spec: str) -> list[str]:
     return dirs
 
 
+def _resume_guard(
+    prior_header: dict[str, Any], header: dict[str, Any], pol_name: str, out_path: Path,
+) -> dict[str, Any]:
+    """Refuse to append rows that a dump's own header would misdescribe.
+
+    ⚑ Without this, resuming with a different ``--onnx`` writes rows under the
+    ORIGINAL net's provenance record and nothing ever says so.
+    """
+    old_sha = (prior_header.get("onnx") or {}).get("sha256")
+    new_sha = header["onnx"]["sha256"]
+    if old_sha and old_sha != new_sha:
+        raise SystemExit(
+            f"{out_path} was written with onnx sha256 {old_sha}, but --onnx is "
+            f"{new_sha}. Resuming would mix two nets in one dump; use a different "
+            "--out or pass the original net.",
+        )
+    old_source = (prior_header.get("input") or {}).get("source")
+    if prior_header.get("policy_output") != pol_name or (
+        old_source != header["input"]["source"]
+    ):
+        raise SystemExit(
+            f"{out_path} was written with policy_output="
+            f"{prior_header.get('policy_output')!r} / source={old_source!r}, which "
+            f"does not match this run ({pol_name!r} / "
+            f"{header['input']['source']!r}).",
+        )
+    return dict(header, record="resume")
+
+
 def run(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -367,46 +643,14 @@ def run(args: argparse.Namespace) -> int:
             "continue it, or remove it to start over.",
         )
 
-    done = load_done_keys(out_path) if args.resume else set()
     shard_dirs = shard_source_dirs(args.input_source)
-    # `items` is (key, board, lc0 planes or None). None means "build the planes
-    # from the FEN", which is the history-less path; the shard path supplies
-    # planes that carry TRUE history and are never rebuilt.
-    items: list[tuple[str, chess.Board, np.ndarray | None]] = []
-    seen: set[str] = set()
-    if shard_dirs:
-        for key, board, planes, mask in iter_shard_rows(shard_dirs, 0):
-            if key in seen or key in done:
-                continue
-            if not any(board.legal_moves):
-                continue
-            if args.check_legal_mask:
-                ours = {compact_index_for_move(board, m) for m in board.legal_moves}
-                if ours != set(np.flatnonzero(mask > 0).tolist()):
-                    raise SystemExit(
-                        f"decoded legal moves disagree with the shard's stored "
-                        f"legal_mask at {key}; the plane decode is wrong",
-                    )
-            seen.add(key)
-            items.append((key, board, planes))
-            if args.limit and len(items) >= args.limit:
-                break
-    else:
-        for key, fen in iter_rows(Path(args.rows)):
-            if key in seen or key in done:
-                continue
-            seen.add(key)
-            items.append((key, chess.Board(fen), None))
-            if args.limit and len(items) >= args.limit:
-                break
-    if done:
-        print(f"[dump] resume: {len(done)} keys already present, {len(items)} to do")
-    if not items:
-        print("[dump] nothing to do")
-        return 0
-    print(f"[dump] source: {'shards ' + ','.join(shard_dirs) if shard_dirs else args.rows}"
-          f" -> {len(items)} rows, history="
-          f"{'TRUE (from stored x)' if shard_dirs else 'repeat-filled (FEN-only)'}")
+    prior_header = read_header(out_path) if args.resume else None
+    done = load_done_keys(out_path) if args.resume else set()
+    if args.resume:
+        dropped = truncate_torn_tail(out_path)
+        if dropped:
+            print(f"[dump] resume: dropped {dropped} bytes of a torn final record")
+        print(f"[dump] resume: {len(done)} keys already present")
 
     sess, in_name, in_dtype, providers = open_session(
         args.onnx, gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
@@ -414,80 +658,60 @@ def run(args: argparse.Namespace) -> int:
     pol_idx = resolve_policy_output(sess, args.policy_output)
     pol_name = sess.get_outputs()[pol_idx].name
     print(f"[dump] providers={providers} input={in_name}({in_dtype}) policy={pol_name}")
+    print(f"[dump] source: {'shards ' + ','.join(shard_dirs) if shard_dirs else args.rows}"
+          f", history="
+          f"{'TRUE (from stored x)' if shard_dirs else 'repeat-filled (FEN-only)'}")
 
-    header = {
-        "record": "header",
-        "onnx": {"path": str(args.onnx), "sha256": file_sha256(args.onnx)},
-        "policy_output": pol_name,
-        "providers": providers,
-        "batch_size": int(args.batch_size),
-        "threads": int(args.threads),
-        "input": {
-            "planes": 112,
-            "source": "shards" if shard_dirs else "fens",
-            "shard_dirs": list(shard_dirs),
-            "history_encoding": (
-                SHARD_HISTORY_ENCODING if shard_dirs else HISTORY_ENCODING
-            ),
-            "history_fill": None if shard_dirs else "repeat",
-            "history_less": not shard_dirs,
-        },
-        "remap": remap_provenance(),
-        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
+    header = build_header(args, shard_dirs, pol_name, providers)
+    resume_note = (
+        _resume_guard(prior_header, header, pol_name, out_path)
+        if prior_header is not None else None
+    )
 
     n_written = 0
-    n_skipped = 0
     ent_sum = 0.0
-    argmax_legal = 0
+    top1_sum = 0.0
     castle_examples: list[dict[str, Any]] = []
     t0 = time.time()
-    bs = int(args.batch_size)
 
-    # Size, not `done`: a resumed file holding only a header has no keys yet,
-    # and re-emitting the header there would put two of them in one dump.
     needs_header = not (out_path.exists() and out_path.stat().st_size)
     with out_path.open("a", encoding="utf-8") as fh:
         if needs_header:
             fh.write(json.dumps(header) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        for start in range(0, len(items), bs):
-            chunk = items[start:start + bs]
-            usable = [(k, b, pl) for k, b, pl in chunk if any(b.legal_moves)]
-            n_skipped += len(chunk) - len(usable)
-            if not usable:
-                continue
+        elif resume_note is not None:
+            # Provenance for the rows appended by THIS run, so a dump built over
+            # several sessions still says what produced each stretch of it.
+            fh.write(json.dumps(resume_note) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+
+        for batch in batched(source_rows(args, done), int(args.batch_size)):
             feats = np.stack([
-                planes if planes is not None else fill_lc0_history_repeat(
-                    encode_position(b, add_features=False,
+                row.planes if row.planes is not None else fill_lc0_history_repeat(
+                    encode_position(row.board, add_features=False,
                                     input_history_encoding=HISTORY_ENCODING),
                 )
-                for _k, b, planes in usable
+                for row in batch
             ]).astype(in_dtype, copy=False)
             raw = sess.run([pol_name], {in_name: feats})[0]
             policy = np.asarray(raw, dtype=np.float32)[:, :COMPACT_POLICY_SIZE]
 
             lines: list[str] = []
-            for row, (key, board, _planes) in enumerate(usable):
-                ucis, probs = legal_move_policy(board, policy[row])
+            for i, row in enumerate(batch):
+                ucis, probs = legal_move_policy(row.board, policy[i])
                 ent_sum += entropy_nats(probs)
+                top1_sum += float(probs.max())
                 best = ucis[int(np.argmax(probs))]
-                # By construction the argmax is drawn from board.legal_moves,
-                # so this cannot fail unless the gather stopped being legal-only.
-                assert chess.Move.from_uci(best) in board.legal_moves, (
-                    f"{board.fen()}: argmax {best} is not legal"
-                )
-                argmax_legal += 1
-                castles = castling_probability(board, ucis, probs)
+                castles = castling_probability(row.board, ucis, probs)
                 if castles and len(castle_examples) < args.castle_examples:
                     castle_examples.append({
-                        "key": key, "castling": castles, "best": best,
+                        "key": row.key, "castling": castles, "best": best,
                         "best_p": round(float(probs.max()), 4),
                     })
                 lines.append(json.dumps({
-                    "key": key,
+                    "key": row.key,
                     "n_legal": len(ucis),
+                    **row.identity(),
                     "policy": {u: round(float(p), 6)
                                for u, p in zip(ucis, probs.tolist(), strict=True)},
                 }))
@@ -496,21 +720,24 @@ def run(args: argparse.Namespace) -> int:
             fh.flush()
             os.fsync(fh.fileno())
 
-            done_n = start + len(chunk)
             elapsed = time.time() - t0
-            rate = done_n / elapsed if elapsed > 0 else 0.0
-            eta = f" eta {(len(items) - done_n) / rate / 60:.1f} min" if rate > 0 else ""
-            print(f"[dump] {done_n}/{len(items)} {rate:.1f} pos/s{eta}", flush=True)
+            rate = n_written / elapsed if elapsed > 0 else 0.0
+            print(f"[dump] {n_written} rows {rate:.1f} pos/s", flush=True)
 
     elapsed = time.time() - t0
     rate = n_written / elapsed if elapsed > 0 else 0.0
-    print(f"[dump] wrote {n_written} rows ({n_skipped} terminal positions skipped) "
-          f"in {elapsed:.1f}s = {rate:.1f} pos/s -> {out_path}")
+    print(f"[dump] wrote {n_written} rows in {elapsed:.1f}s = {rate:.1f} pos/s "
+          f"-> {out_path}")
     if n_written:
+        # ⚑ NOT comparable to the banked 0.970: that figure is BT4-100, i.e.
+        # after 100 nodes of SEARCH and matched to our branching factor. This is
+        # the RAW PRIOR, whose documented top-1 is 0.476 against 0.693
+        # post-search. Judge a wiring change by the delta against a previous run
+        # of THIS script on THE SAME rows, never against 0.970.
         print(f"[sanity] mean legal-move entropy: {ent_sum / n_written:.4f} nats "
-              f"(banked BT4 figure ~0.970)")
-        print(f"[sanity] argmax-legal fraction: {argmax_legal / n_written:.4f} "
-              "(1.0 by construction)")
+              "(raw prior; NOT the banked 0.970, which is BT4-100 post-search)")
+        print(f"[sanity] mean top-1 probability: {top1_sum / n_written:.4f} "
+              "(BT4 raw-prior reference ~0.476)")
     for ex in castle_examples:
         print(f"[sanity] castling prior {ex['castling']} "
               f"(best {ex['best']} p={ex['best_p']}) {ex['key']}")
@@ -532,21 +759,27 @@ def build_parser() -> argparse.ArgumentParser:
                     help="'fens' (default, history-less, for the audit set) or "
                          "'shards:<dir>[,<dir>]' to read stored replay x tensors, "
                          "which carry TRUE history")
-    ap.add_argument("--check-legal-mask", action="store_true", default=True,
-                    help="shard mode: assert the decoded legal moves match the "
-                         "shard's own legal_mask (default on)")
     ap.add_argument("--no-check-legal-mask", dest="check_legal_mask",
-                    action="store_false")
+                    action="store_false",
+                    help="shard mode: skip asserting that the decoded legal moves "
+                         "match the shard's own legal_mask (the check is ON by "
+                         "default and is the plane decode's only cross-check)")
+    ap.set_defaults(check_legal_mask=True)
     ap.add_argument("--out", required=True, help="JSONL dump path (appended to)")
     ap.add_argument("--onnx", default=DEFAULT_ONNX)
     ap.add_argument("--batch-size", type=int, default=128)
     ap.add_argument("--threads", type=int, default=16,
                     help="ORT intra-op threads for the CPU provider (0 = ORT default)")
     ap.add_argument("--gpu-mem-gb", type=float, default=0.0,
-                    help=">0 tries CUDAExecutionProvider with this hard memory cap")
+                    help=">0 tries CUDAExecutionProvider with this hard memory cap; "
+                         "warns and uses CPU if the provider is unavailable")
     ap.add_argument("--policy-output", default=None,
-                    help="ONNX policy output name (default: the 1858-wide one)")
-    ap.add_argument("--limit", type=int, default=0, help="0 = all rows")
+                    help="ONNX policy output name (default: the 1858-wide one; "
+                         "required if the graph has more than one)")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="stop after N rows; with --resume this means N NEW rows, "
+                         "since already-dumped keys are skipped before counting "
+                         "(0 = all rows)")
     ap.add_argument("--resume", action="store_true",
                     help="skip keys already present in --out")
     ap.add_argument("--castle-examples", type=int, default=3,

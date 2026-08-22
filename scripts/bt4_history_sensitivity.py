@@ -16,10 +16,15 @@ and nothing else.
 Two history-less arms are reported, because they are not the same thing:
 
 ``repeat``
-    frames 1..7 replaced by a copy of frame 0. This is what
-    ``fill_lc0_history_repeat`` does and therefore what
-    ``scripts/bt4_policy_dump.py``, ``scripts/foreign_net_audit.py`` and
-    ``OnnxChessNet`` actually feed. **This is the decision arm.**
+    frames 1..7 replaced by a copy of frame 0, which is what
+    ``fill_lc0_history_repeat`` does. ⚑ It still inherits frame 0's REPETITION
+    plane from the lc0 record, and a FEN-built board can never set that plane
+    (it has no move stack), so this arm slightly UNDERSTATES the degradation on
+    repeated positions.
+``repeat_norep``
+    ``repeat`` plus the repetition planes cleared -- the faithful emulation of
+    what ``scripts/bt4_policy_dump.py``, ``scripts/foreign_net_audit.py`` and
+    ``OnnxChessNet`` actually feed from a FEN. **This is the decision arm.**
 ``zero``
     frames 1..7 zeroed. Included because it is the intuitive reading of
     "no history", and because the repo's own encoder notes claim zeros break
@@ -301,13 +306,24 @@ def sample_records(tar_path: Path, want: int, per_game: int, seed: int) -> list[
 
 
 # ------------------------------------------------------------------- arms
+#: Offset of a frame's repetition plane (12 piece planes, then 1 repetition).
+FRAME_REPETITION = PIECE_PLANES_PER_FRAME
+
+
 def history_stripped(planes: np.ndarray, mode: str) -> np.ndarray:
-    """A copy of ``planes`` with ONLY the 7 older history frames replaced."""
+    """A copy of ``planes`` with the 7 older history frames replaced.
+
+    ``repeat_norep`` additionally clears the repetition planes, because a board
+    rebuilt from a FEN has no move stack and therefore cannot know it is a
+    repetition -- leaving lc0's bit set would flatter the FEN-only path.
+    """
     out = planes.copy()
     out[HISTORY_START:HISTORY_END] = 0.0
-    if mode == "repeat":
-        # Exactly the helper the dump path uses, so this arm IS the dump input.
+    if mode in ("repeat", "repeat_norep"):
         fill_lc0_history_repeat(out)
+        if mode == "repeat_norep":
+            for slot in range(LC0_FRAMES):
+                out[slot * LC0_PLANES_PER_FRAME + FRAME_REPETITION] = 0.0
     elif mode != "zero":
         raise ValueError(f"unknown history mode {mode!r}")
     return out
@@ -409,9 +425,12 @@ def run(args: argparse.Namespace) -> int:
     pol_name = sess.get_outputs()[pol_idx].name
     print(f"[probe] providers={providers} policy={pol_name}")
 
-    arms = {"true": [r.planes for r in records],
-            "repeat": [history_stripped(r.planes, "repeat") for r in records],
-            "zero": [history_stripped(r.planes, "zero") for r in records]}
+    arms = {
+        "true": [r.planes for r in records],
+        "repeat": [history_stripped(r.planes, "repeat") for r in records],
+        "repeat_norep": [history_stripped(r.planes, "repeat_norep") for r in records],
+        "zero": [history_stripped(r.planes, "zero") for r in records],
+    }
     scored: dict[str, np.ndarray] = {}
     for name, stack in arms.items():
         feats = np.stack(stack).astype(in_dtype, copy=False)
@@ -435,7 +454,7 @@ def run(args: argparse.Namespace) -> int:
         "roundtrip": rt,
         "arms": {},
     }
-    for arm in ("repeat", "zero"):
+    for arm in ("repeat", "repeat_norep", "zero"):
         report["arms"][arm] = compare(records, scored["true"], scored[arm], args.topk)
 
     print_report(report, args)
@@ -498,7 +517,8 @@ def print_report(report: dict[str, Any], args: argparse.Namespace) -> None:
     print(f"\n=== BT4 history sensitivity ({report['positions']} positions, "
           f"{report['tar']}) ===")
     for arm, m in report["arms"].items():
-        tag = " (DECISION ARM - what the dump feeds)" if arm == "repeat" else ""
+        tag = (" (DECISION ARM - what a FEN-built input really is)"
+               if arm == "repeat_norep" else "")
         print(f"\n-- history '{arm}'{tag}")
         print(f"   top-1 flip rate        {m['top1_flip_rate']:.4f} "
               f"({m['top1_flips']}/{m['n']})")
@@ -513,8 +533,8 @@ def print_report(report: dict[str, Any], args: argparse.Namespace) -> None:
               f"{m['top_gap_abs_delta_mean']:.4f}  "
               f"(median {m['top_gap_abs_delta_median']:.4f})")
         print(f"   VERDICT: {verdict(m['top1_flip_rate'], m['kl_median'])}")
-    decision = report["arms"]["repeat"]
-    print(f"\n>>> PRE-COMMITTED DECISION (repeat arm): "
+    decision = report["arms"]["repeat_norep"]
+    print(f"\n>>> PRE-COMMITTED DECISION (repeat_norep arm): "
           f"{verdict(decision['top1_flip_rate'], decision['kl_median'])}")
     print("    rule: flip<=3% AND medKL<=0.05 => licensed; "
           "flip>8% OR medKL>0.15 => history required; else operator call")

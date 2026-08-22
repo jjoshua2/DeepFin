@@ -131,7 +131,8 @@ def test_board_decodes_back_out_of_the_stored_tensor(fen: str) -> None:
     stored = encode_position(board, add_features=True,
                              input_history_encoding="lc0_root_legacy_meta")
     planes = x_to_lc0_planes(stored, input_history_encoding="lc0_root_legacy_meta")
-    got = board_from_stored_x(stored, planes)
+    got = board_from_stored_x(stored, planes,
+                              input_history_encoding="lc0_root_legacy_meta")
     # The decode is side-to-move canonical, so compare against the oriented board.
     want = board if board.turn == chess.WHITE else board.mirror()
     assert got.board_fen() == want.board_fen()

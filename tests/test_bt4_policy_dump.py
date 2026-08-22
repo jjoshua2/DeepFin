@@ -17,17 +17,27 @@ import pytest
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from scripts.bt4_policy_dump import (
+    Row,
+    batched,
     castling_probability,
     entropy_nats,
-    iter_rows,
+    iter_fen_rows,
     legal_move_policy,
     load_done_keys,
+    read_header,
     remap_provenance,
+    resolve_policy_output,
+    shard_encoding,
+    truncate_torn_tail,
 )
 
 # Both castles legal for white, plus a 7th-rank pawn and pieces that can slide
 # onto the back rank -- every family the static remap got wrong, in one board.
 KITCHEN_SINK = "r3k2r/P6P/8/8/8/8/8/R3K2R w KQkq - 0 1"
+# Black to move AND castling legal: under the static-remap mutant the wrongly
+# read slots reorder the probabilities here, whereas on KITCHEN_SINK they
+# happen to preserve the order.
+ORDER_SENSITIVE = "r3k2r/8/8/8/8/8/6PP/R3K2R b KQkq - 0 1"
 
 
 def _identity_row() -> np.ndarray:
@@ -35,20 +45,31 @@ def _identity_row() -> np.ndarray:
     return np.arange(COMPACT_POLICY_SIZE, dtype=np.float32)
 
 
-def test_each_legal_move_reads_its_own_leela_slot() -> None:
-    """Softmax is strictly monotone, so with policy[i] == i the probability
-    ranking must be the ranking of the slots the moves SHOULD have read."""
-    board = chess.Board(KITCHEN_SINK)
+@pytest.mark.parametrize("fen", [KITCHEN_SINK, ORDER_SENSITIVE])
+def test_each_legal_move_reads_its_own_leela_slot(fen: str) -> None:
+    """Recovers the EXACT slot each move was gathered from, not merely its rank.
+
+    With policy[i] == i the softmax gives log p_i = idx_i - logsumexp, so
+    log p_i - log p_0 == idx_i - idx_0 exactly. Comparing those differences
+    pins the gathered INDEX per move.
+
+    ⚑ Regression: the first version of this test compared only the probability
+    RANKING, and it PASSED under the static-remap mutant -- on the kitchen-sink
+    board the wrongly-read slots happened to preserve the order, so a test
+    written to catch that mutant could not see it.
+    """
+    board = chess.Board(fen)
     ucis, probs = legal_move_policy(board, _identity_row())
     assert len(ucis) == board.legal_moves.count()
-    want = [
+    want = np.array([
         LC0_1858_UCI_TO_IDX[_expected_leela_uci(board, chess.Move.from_uci(u))]
         for u in ucis
-    ]
-    assert len(set(want)) == len(want), "two legal moves cannot share a slot"
-    by_prob = [u for _p, u in sorted(zip(probs.tolist(), ucis, strict=True))]
-    by_slot = [u for _s, u in sorted(zip(want, ucis, strict=True))]
-    assert by_prob == by_slot
+    ], dtype=np.float64)
+    assert len(set(want.tolist())) == len(want), "two legal moves cannot share a slot"
+    got = np.log(probs) - np.log(probs[0])
+    assert np.allclose(got, want - want[0], atol=1e-6), (
+        f"gathered slots off by {np.round(got - (want - want[0]), 3)}"
+    )
 
 
 def _expected_leela_uci(board: chess.Board, move: chess.Move) -> str:
@@ -141,7 +162,7 @@ def test_entropy_matches_a_hand_computed_uniform() -> None:
     assert entropy_nats(np.array([1.0, 0.0])) == pytest.approx(0.0)
 
 
-def test_iter_rows_keeps_the_key_but_builds_from_the_full_fen(tmp_path: Path) -> None:
+def test_iter_fen_rows_keeps_the_key_but_builds_from_the_full_fen(tmp_path: Path) -> None:
     """rule50 is plane 109 and the 4-field key does not carry it, so the board
     must come from `fen` while the output stays keyed by `key`."""
     key = "8/8/6r1/1np5/p2k4/P7/8/2K5 w - -"
@@ -151,14 +172,15 @@ def test_iter_rows_keeps_the_key_but_builds_from_the_full_fen(tmp_path: Path) ->
         + json.dumps({"fen": chess.STARTING_FEN}) + "\n",
         encoding="utf-8",
     )
-    assert list(iter_rows(jsonl)) == [
-        (key, key + " 89 1"), (chess.STARTING_FEN, chess.STARTING_FEN),
-    ]
+    rows = list(iter_fen_rows(jsonl))
+    assert [r.key for r in rows] == [key, chess.STARTING_FEN]
+    assert rows[0].board.halfmove_clock == 89  # from `fen`, not the clock-less key
+    assert rows[0].identity() == {}  # FEN rows carry no shard identity
     assert chess.Board(key + " 89 1").halfmove_clock == 89
     assert chess.Board(key).halfmove_clock == 0  # what keying off `key` would feed
     plain = tmp_path / "rows.txt"
     plain.write_text(f"{chess.STARTING_FEN}\n\n{chess.STARTING_FEN}\n", encoding="utf-8")
-    assert list(iter_rows(plain)) == [(chess.STARTING_FEN, chess.STARTING_FEN)] * 2
+    assert [r.key for r in iter_fen_rows(plain)] == [chess.STARTING_FEN] * 2
 
 
 def test_resume_ignores_a_torn_trailing_line(tmp_path: Path) -> None:
@@ -182,3 +204,117 @@ def test_provenance_pins_the_remap_sources() -> None:
     # A dump must be attributable even from a dirty tree, so the blob hashes
     # (not just the commit) have to be real.
     assert all(len(v) == 40 for v in prov["blobs"].values())
+
+
+# --------------------------------------------------------- resume / streaming
+def _torn_dump(tmp_path: Path) -> Path:
+    out = tmp_path / "dump.jsonl"
+    out.write_text(
+        json.dumps({"record": "header", "onnx": {"sha256": "abc"}}) + "\n"
+        + json.dumps({"key": "a", "n_legal": 1, "policy": {}}) + "\n"
+        + '{"key": "b", "n_leg',  # killed mid-write
+        encoding="utf-8",
+    )
+    return out
+
+
+def test_resuming_a_torn_file_leaves_it_well_formed(tmp_path: Path) -> None:
+    """The torn record must be CUT, not appended onto.
+
+    ⚑ Regression: opening in "a" without truncating welds the half-written
+    record to the first new record, producing one unparseable line -- so the
+    torn row and a good row are both lost, and nothing reports it.
+    """
+    out = _torn_dump(tmp_path)
+    dropped = truncate_torn_tail(out)
+    assert dropped == len('{"key": "b", "n_leg')
+    with out.open("a", encoding="utf-8") as fh:  # what run() does next
+        fh.write(json.dumps({"key": "c", "n_legal": 1, "policy": {}}) + "\n")
+    lines = [ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for line in lines:
+        json.loads(line)  # every line parses -- the actual contract
+    assert [json.loads(ln).get("key") for ln in lines] == [None, "a", "c"]
+
+
+def test_truncate_is_a_noop_on_a_clean_file(tmp_path: Path) -> None:
+    out = tmp_path / "clean.jsonl"
+    out.write_text(json.dumps({"key": "a"}) + "\n", encoding="utf-8")
+    before = out.read_bytes()
+    assert truncate_torn_tail(out) == 0
+    assert out.read_bytes() == before
+
+
+def test_read_header_returns_the_provenance_record(tmp_path: Path) -> None:
+    out = _torn_dump(tmp_path)
+    header = read_header(out)
+    assert header is not None
+    assert header["onnx"]["sha256"] == "abc"
+    assert read_header(tmp_path / "missing.jsonl") is None
+
+
+def test_batched_emits_fixed_size_groups_and_a_short_tail() -> None:
+    rows = [Row(key=str(i), board=chess.Board()) for i in range(7)]
+    assert [len(b) for b in batched(rows, 3)] == [3, 3, 1]
+    assert [len(b) for b in batched([], 3)] == []
+
+
+def test_shard_encoding_refuses_a_missing_or_wrong_layout() -> None:
+    """A shard read under the wrong layout yields a valid tensor and a silently
+    wrong rule50, so the layout is never assumed."""
+    class _Group:
+        def __init__(self, **attrs: object) -> None:
+            self.attrs = attrs
+
+    path = Path("shard_000.zarr")
+    assert shard_encoding(
+        _Group(input_history_encoding="lc0_root_legacy_meta"), path,
+    ) == "lc0_root_legacy_meta"
+    assert shard_encoding(_Group(input_history_encoding="lc0_root"), path) == "lc0_root"
+    with pytest.raises(SystemExit, match="no 'input_history_encoding'"):
+        shard_encoding(_Group(), path)
+    with pytest.raises(SystemExit, match="unknown input_history_encoding"):
+        shard_encoding(_Group(input_history_encoding="not_a_layout"), path)
+    with pytest.raises(SystemExit, match="not an LC0-root layout"):
+        shard_encoding(_Group(input_history_encoding="legacy"), path)
+
+
+class _FakeOut:
+    def __init__(self, name: str, width: int) -> None:
+        self.name = name
+        self.shape = ["batch", width]
+
+
+class _FakeSess:
+    def __init__(self, *outs: _FakeOut) -> None:
+        self._outs = list(outs)
+
+    def get_outputs(self) -> list[_FakeOut]:
+        return self._outs
+
+
+def test_resolve_policy_output_refuses_an_ambiguous_graph() -> None:
+    """Two 1858-wide heads must raise, matching scripts/net_source.py. Picking
+    one silently is the defect class this file exists to avoid."""
+    one = _FakeSess(_FakeOut("wdl", 3), _FakeOut("policy", 1858))
+    assert resolve_policy_output(one, None) == 1
+    two = _FakeSess(_FakeOut("policy", 1858), _FakeOut("policy2", 1858))
+    with pytest.raises(SystemExit, match="2 1858-wide outputs"):
+        resolve_policy_output(two, None)
+    assert resolve_policy_output(two, "policy2") == 1
+
+
+def test_resolve_policy_output_names_the_available_outputs() -> None:
+    sess = _FakeSess(_FakeOut("wdl", 3), _FakeOut("policy", 1858))
+    with pytest.raises(SystemExit, match="is not an output of this graph"):
+        resolve_policy_output(sess, "nope")
+    with pytest.raises(SystemExit, match="no 1858-wide policy output"):
+        resolve_policy_output(_FakeSess(_FakeOut("wdl", 3)), None)
+
+
+def test_shard_rows_carry_the_join_identity() -> None:
+    """The arm-B join needs shard/row/game_id/ply_index on every record."""
+    row = Row(key="k", board=chess.Board(), shard="shard_1.zarr", row_index=7,
+              game_id=123, ply_index=42)
+    assert row.identity() == {
+        "shard": "shard_1.zarr", "row": 7, "game_id": 123, "ply_index": 42,
+    }
