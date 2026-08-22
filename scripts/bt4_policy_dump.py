@@ -29,13 +29,33 @@ Two input sources, and they are NOT equivalent:
 
 CONSUMER CONTRACT — read before joining a dump to anything
 ----------------------------------------------------------
-(a) ⚑ ``key`` is the SIDE-TO-MOVE CANONICAL FEN and the ``policy`` keys are
-    CANONICAL UCIs. Replay planes are stored POV-oriented, so a decoded row is
-    always White-to-move: a black kingside castle appears as ``e1g1``, NEVER
-    ``e8g8``, and every move is named in the mirrored frame. A consumer holding
-    real-orientation FENs will get an EMPTY join. Decode shard rows through
-    :func:`board_from_stored_x` (or mirror your own board when Black is to
-    move) so both sides speak the same frame.
+(a) ⚑⚑ THE TWO MODES EMIT DIFFERENT COORDINATE FRAMES. This is deliberate and
+    is the single most important thing to get right before joining.
+
+    ``shards`` ⇒ **CANONICAL frame.** Replay planes are stored POV-oriented, so
+    a decoded row is ALWAYS White-to-move. ``key`` is the mirrored,
+    side-to-move-canonical FEN and the ``policy`` keys are canonical UCIs: for
+    a black-to-move row a kingside castle is ``e1g1``, NEVER ``e8g8``, and a
+    black pawn push reads ``e2e4``, not ``e7e5``.
+    ``fens`` ⇒ **TRUE frame.** ``key`` is the caller's own FEN, verbatim, and
+    the UCIs are in real board coordinates.
+
+    So the same position dumped through the two modes does NOT produce the same
+    record, and a consumer holding true-frame FENs gets an EMPTY join against a
+    shard dump. This is not a bug to "fix" by flipping the shard path: the
+    downstream rig builds its labels on the same white-to-move canonical board
+    reconstructed from the same planes, so canonical↔canonical is the coherent
+    join and a true-frame shard path would BREAK it. The frame is recorded per
+    dump in the header's ``contract.frame``, and
+    ``tests/test_bt4_policy_dump.py`` pins it end to end.
+    To join a true-frame position against a shard dump, decode it through
+    :func:`board_from_stored_x` (or mirror the board yourself when Black is to
+    move) so both sides speak the canonical frame.
+
+(a2) ⚑ The canonical key is IDENTITY-BY-PLANES, not a true game state. It is
+    rebuilt from ``chess.Board(None)``, so its fullmove number is always 1, and
+    its halfmove clock saturates at 100 because rule50 arrives through a plane.
+    Treat the key as a position fingerprint; never parse a move number out of it.
 (b) ⚑ The gather index space is LC0's 1858 ORDER, which is not ours. Measured:
     ``compact_index_for_move`` and ``leela_index_for_move`` agree on only
     88 of 5,243 moves. **UCI STRINGS ARE THE INTERCHANGE FORMAT — never join on
@@ -297,8 +317,17 @@ def batched(rows: Iterable[Row], size: int) -> Iterator[list[Row]]:
         yield batch
 
 
-def source_rows(args: argparse.Namespace, done: set[str]) -> Iterator[Row]:
-    """The de-duplicated, limited row stream for whichever input source is set."""
+def source_rows(
+    args: argparse.Namespace, done: set[str], stats: dict[str, int] | None = None,
+) -> Iterator[Row]:
+    """The de-duplicated, limited row stream for whichever input source is set.
+
+    ``stats`` accumulates ``seen_rows`` / ``distinct_keys`` / ``collisions`` so
+    the first-wins transposition skip is COUNTED rather than silent.
+    """
+    counts = stats if stats is not None else {}
+    for field in ("seen_rows", "distinct_keys", "collisions", "resume_skipped"):
+        counts.setdefault(field, 0)
     shard_dirs = shard_source_dirs(args.input_source)
     raw: Iterator[Row] = (
         iter_shard_rows(shard_dirs) if shard_dirs else iter_fen_rows(Path(args.rows))
@@ -306,8 +335,13 @@ def source_rows(args: argparse.Namespace, done: set[str]) -> Iterator[Row]:
     seen: set[str] = set()
     emitted = 0
     for row in raw:
-        if row.key in seen or row.key in done:
-            continue  # first-wins transposition skip; see the module contract
+        counts["seen_rows"] += 1
+        if row.key in seen:
+            counts["collisions"] += 1  # first-wins skip; see the module contract
+            continue
+        if row.key in done:
+            counts["resume_skipped"] += 1
+            continue
         if not any(row.board.legal_moves):
             continue
         if row.legal_mask is not None and args.check_legal_mask:
@@ -319,6 +353,7 @@ def source_rows(args: argparse.Namespace, done: set[str]) -> Iterator[Row]:
                     "the plane decode is wrong",
                 )
         seen.add(row.key)
+        counts["distinct_keys"] += 1
         row.legal_mask = None  # not needed downstream; do not keep it alive
         yield row
         emitted += 1
@@ -328,7 +363,14 @@ def source_rows(args: argparse.Namespace, done: set[str]) -> Iterator[Row]:
 
 # ---------------------------------------------------------------- dump file
 def load_done_keys(out_path: Path) -> set[str]:
-    """Keys already dumped, for --resume. Ignores a torn trailing line."""
+    """Keys already dumped, for --resume.
+
+    ⚑ A record only counts as done if it actually carries a ``policy``. A write
+    torn at just the right byte can leave STRUCTURALLY VALID JSON that stops
+    before the policy field — it would parse, mark the key done, and that
+    position would then be skipped forever with no policy in the dump. Requiring
+    the payload makes an incomplete record get retried instead of trusted.
+    """
     done: set[str] = set()
     if not out_path.exists():
         return done
@@ -342,7 +384,7 @@ def load_done_keys(out_path: Path) -> set[str]:
             except json.JSONDecodeError:
                 continue  # torn final write from a killed run
             key = rec.get("key")
-            if key is not None:
+            if key is not None and isinstance(rec.get("policy"), dict):
                 done.add(str(key))
     return done
 
@@ -576,8 +618,17 @@ def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
             "history_less": not shard_dirs,
         },
         "contract": {
-            "key": "side-to-move canonical FEN (decoded rows are always White to move)",
-            "policy_keys": "canonical UCI (black O-O is e1g1, never e8g8)",
+            "frame": "canonical" if shard_dirs else "true",
+            "key": (
+                "side-to-move canonical FEN, always White to move; fullmove is "
+                "always 1 and halfmove saturates at 100 (identity-by-planes)"
+                if shard_dirs else
+                "the caller's own FEN, verbatim, in true board coordinates"
+            ),
+            "policy_keys": (
+                "canonical UCI (black O-O is e1g1, never e8g8)" if shard_dirs
+                else "UCI in true board coordinates"
+            ),
             "index_space": (
                 "LC0 1858 order internally; UCI strings are the interchange format"
             ),
@@ -668,6 +719,7 @@ def run(args: argparse.Namespace) -> int:
         if prior_header is not None else None
     )
 
+    stats: dict[str, int] = {}
     n_written = 0
     ent_sum = 0.0
     top1_sum = 0.0
@@ -685,7 +737,7 @@ def run(args: argparse.Namespace) -> int:
         fh.flush()
         os.fsync(fh.fileno())
 
-        for batch in batched(source_rows(args, done), int(args.batch_size)):
+        for batch in batched(source_rows(args, done, stats), int(args.batch_size)):
             feats = np.stack([
                 row.planes if row.planes is not None else fill_lc0_history_repeat(
                     encode_position(row.board, add_features=False,
@@ -728,6 +780,10 @@ def run(args: argparse.Namespace) -> int:
     rate = n_written / elapsed if elapsed > 0 else 0.0
     print(f"[dump] wrote {n_written} rows in {elapsed:.1f}s = {rate:.1f} pos/s "
           f"-> {out_path}")
+    print(f"[dump] rows read {stats.get('seen_rows', 0)}, distinct keys "
+          f"{stats.get('distinct_keys', 0)}, transposition collisions skipped "
+          f"{stats.get('collisions', 0)}, already-done skipped "
+          f"{stats.get('resume_skipped', 0)}")
     if n_written:
         # ⚑ NOT comparable to the banked 0.970: that figure is BT4-100, i.e.
         # after 100 nodes of SEARCH and matched to our branching factor. This is

@@ -7,6 +7,7 @@ mis-gather visible as a wrong number rather than a wrong-looking one.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -14,10 +15,14 @@ import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from scripts.bt4_policy_dump import (
     Row,
+    board_from_stored_x,
+    source_rows,
+    x_to_lc0_planes,
     batched,
     castling_probability,
     entropy_nats,
@@ -318,3 +323,97 @@ def test_shard_rows_carry_the_join_identity() -> None:
     assert row.identity() == {
         "shard": "shard_1.zarr", "row": 7, "game_id": 123, "ply_index": 42,
     }
+
+
+# ------------------------------------------------- the frame contract, pinned
+BLACK_TO_MOVE_CASTLING = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1"
+
+
+def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
+    """⚑⚑ CONTRACT TEST — the shard path must emit CANONICAL (mirrored) FENs and
+    UCIs for a black-to-move row, and this is DELIBERATE.
+
+    The downstream rig builds its labels on the same white-to-move canonical
+    board reconstructed from the same planes, so canonical<->canonical is the
+    coherent join. "Fixing" the shard path to emit true-board coordinates would
+    silently break arm B's coordinate system, and the old round-trip test could
+    not catch that: it compares against `board.mirror()` and so PASSES either
+    way. This asserts the OUTPUT contract instead.
+
+    For a black-to-move position: the key is the mirrored FEN (White to move),
+    and black's kingside castle is named `e1g1`, never `e8g8`.
+    """
+    true_board = chess.Board(BLACK_TO_MOVE_CASTLING)
+    assert true_board.turn == chess.BLACK
+    assert chess.Move.from_uci("e8g8") in true_board.legal_moves
+
+    # exactly what a shard stores, then exactly what the dump does to it
+    stored = encode_position(true_board, add_features=True,
+                             input_history_encoding="lc0_root_legacy_meta")
+    planes = x_to_lc0_planes(stored, input_history_encoding="lc0_root_legacy_meta")
+    decoded = board_from_stored_x(stored, planes,
+                                  input_history_encoding="lc0_root_legacy_meta")
+
+    assert decoded.turn == chess.WHITE, "canonical frame is always White to move"
+    assert decoded.fen() == true_board.mirror().fen()
+    key = decoded.fen()
+    assert key.split()[1] == "w"
+
+    row = np.full((COMPACT_POLICY_SIZE,), -20.0, dtype=np.float32)
+    row[LC0_1858_UCI_TO_IDX["e1h1"]] = 10.0  # LC0's castling slot
+    ucis, probs = legal_move_policy(decoded, row)
+    assert "e1g1" in ucis, "black O-O must be named e1g1 in the canonical frame"
+    assert "e8g8" not in ucis, "true-frame UCIs must NOT appear in a shard record"
+    assert ucis[int(np.argmax(probs))] == "e1g1"
+
+
+def test_fen_path_keeps_the_TRUE_frame() -> None:
+    """The other half of the contract: FEN input is echoed verbatim, in true
+    coordinates -- so the two modes genuinely differ and the header says which."""
+    board = chess.Board(BLACK_TO_MOVE_CASTLING)
+    row = np.full((COMPACT_POLICY_SIZE,), -20.0, dtype=np.float32)
+    row[LC0_1858_UCI_TO_IDX["e1h1"]] = 10.0
+    ucis, probs = legal_move_policy(board, row)
+    assert "e8g8" in ucis
+    assert "e1g1" not in ucis
+    assert ucis[int(np.argmax(probs))] == "e8g8"
+
+
+# ----------------------------------------------------------- resume integrity
+def test_a_record_without_a_policy_is_not_counted_as_done(tmp_path: Path) -> None:
+    """⚑ A write torn at the right byte can leave VALID JSON that stops before
+    the policy field. Trusting it would skip that position forever."""
+    out = tmp_path / "dump.jsonl"
+    out.write_text(
+        json.dumps({"key": "complete", "n_legal": 2, "policy": {"e2e4": 1.0}}) + "\n"
+        + json.dumps({"key": "truncated", "n_legal": 2}) + "\n",
+        encoding="utf-8",
+    )
+    assert load_done_keys(out) == {"complete"}
+
+
+def test_transposition_collisions_are_counted(tmp_path: Path) -> None:
+    """First-wins skip must be COUNTED, not silent."""
+    rows = tmp_path / "rows.txt"
+    rows.write_text("\n".join([chess.STARTING_FEN, chess.STARTING_FEN,
+                                BLACK_TO_MOVE_CASTLING]) + "\n", encoding="utf-8")
+    args = argparse.Namespace(input_source="fens", rows=str(rows),
+                              check_legal_mask=True, limit=0)
+    stats: dict[str, int] = {}
+    emitted = list(source_rows(args, set(), stats))
+    assert [r.key for r in emitted] == [chess.STARTING_FEN, BLACK_TO_MOVE_CASTLING]
+    assert stats["seen_rows"] == 3
+    assert stats["distinct_keys"] == 2
+    assert stats["collisions"] == 1
+    assert stats["resume_skipped"] == 0
+
+
+def test_resume_skipped_rows_are_counted_separately(tmp_path: Path) -> None:
+    rows = tmp_path / "rows.txt"
+    rows.write_text(chess.STARTING_FEN + "\n", encoding="utf-8")
+    args = argparse.Namespace(input_source="fens", rows=str(rows),
+                              check_legal_mask=True, limit=0)
+    stats: dict[str, int] = {}
+    assert list(source_rows(args, {chess.STARTING_FEN}, stats)) == []
+    assert stats["resume_skipped"] == 1
+    assert stats["collisions"] == 0

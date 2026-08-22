@@ -95,6 +95,11 @@ HISTORY_END = LC0_FRAMES * LC0_PLANES_PER_FRAME  # 104
 
 PIECE_ORDER = (chess.PAWN, chess.KNIGHT, chess.BISHOP,
                chess.ROOK, chess.QUEEN, chess.KING)
+#: Fraction of rows allowed to disagree on a repetition plane. lc0 counts
+#: repetitions over the whole game; our encoder sees only the history window it
+#: is handed, so a repetition older than 7 plies is invisible to us. Measured
+#: 7/400 = 0.0175; the budget is set with headroom, not to the measurement.
+REPETITION_MISMATCH_BUDGET = 0.05
 
 
 @dataclass
@@ -416,6 +421,19 @@ def run(args: argparse.Namespace) -> int:
           f"{rt['stm_plane_mismatch_rows_expected']}/{rt['checked']}")
     for e in rt["examples"]:
         print(f"[roundtrip]   {e}")
+    # ⚑ The equivalence this script exists to prove must FAIL THE PROCESS, not
+    # merely print. Piece/history and metadata planes must match exactly; the
+    # repetition planes are allowed a small budget because lc0 counts
+    # repetitions over the whole game and our encoder only sees the 7 plies it
+    # was handed (measured: 7/400 rows, 8 of 3200 planes).
+    rep_rate = rt["repetition_mismatch_rows"] / max(1, rt["checked"])
+    if (rt["piece_plane_mismatch_rows"] or rt["metadata_mismatch_rows"]
+            or rep_rate > REPETITION_MISMATCH_BUDGET):
+        print(f"[roundtrip] FAIL — piece={rt['piece_plane_mismatch_rows']} "
+              f"metadata={rt['metadata_mismatch_rows']} "
+              f"repetition={rep_rate:.4f} (budget {REPETITION_MISMATCH_BUDGET})")
+        return 1
+    print("[roundtrip] PASS")
 
     # ---- inference: the true planes and both history-less arms ----
     sess, in_name, in_dtype, providers = open_session(
