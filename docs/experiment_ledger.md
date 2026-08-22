@@ -64691,3 +64691,37 @@ textbook anti-forgetting fix, and our replay window is sitting in the salvage ex
 dividend. ⚑ setsid-wrapper pid caught TWICE this session pretending the arena died
 (`$!` and an early `pgrep` both grab the transient wrapper): wait on the OUTPUT FILE
 only, never a pid captured at launch.
+
+## 2026-08-22 — PREREG: ft595-EXT — does the dip-recover slope cross zero? (+20k steps from ft-LAST)
+
+**Hypothesis.** ft595's damage was non-monotone: −84.1 Elo at 20k steps, −41.0 at 40k —
+a recovery of ~+43 Elo per 20k steps on the back half while lc0 fit kept rising. If the
+recovery continues, the fine-tune crosses its own init near ~60k steps and keeps the lc0
+gains — which would resurrect the form the 40k KILL closed. If it plateaus below zero,
+the form is closed for real. Operator directed GPU use this session ("we should do
+something with the gpu so it's not idle").
+
+**Design.** `lc0_control_train.py --init-from runs/lc0_ft_iter595_20260822/checkpoint.pt`
+(the ft-LAST checkpoint, step 211,327), same config, same 122-shard corpus, `--steps
+20000`, seed 2 (fresh draw order), out `runs/lc0_ft_iter595_ext_20260822`. Scheduler
+restored (continues the sawtooth at peak 3e-05); MID checkpoint lands ~+10k (cumulative
+~50k), LAST at +20k (cumulative 60k). ~4.3h — clear of tonight's R/V/G GPU slot.
+
+**DECIDING YARDSTICK:** same ruler as ft595 (arena vs the ORIGINAL iter-595 salvage
+init, matched_sims 100, 400 games, seed 42, play shape, production Syzygy, conc 64),
+read on ext-LAST (60k), final-only.
+- **SUCCESS: CI excludes 0 positive ⇒ fix-candidate** (lc0 fine-tune with enough steps
+  beats its init) — deployment/scale gets its own prereg.
+- **RECOVERY-CONTINUES (not success):** ext-LAST CI excludes −41 above (i.e., its CI lower
+  bound > −41.0's point estimate is NOT the test — the test is CI excludes 0 from below
+  while the point estimate improves ≥ +20 Elo over −41.0) ⇒ record slope, one further
+  extension is pre-authorized as ext2 with the same rule, at most once.
+- **KILL: point estimate ≤ −41.0 + 10 (no meaningful recovery) or CI excludes 0 negative
+  with point ≤ −30** ⇒ recovery stalled; the direct-fine-tune form closes for real; the
+  surviving anti-forgetting lever is mixed replay (own prereg).
+**Secondary (non-deciding):** ext-MID arena (dose curve point at 50k); lc0-heldout top-1
+via score for ext-MID/LAST (does fit keep rising).
+
+**Confounds:** production stopped; corpus read-only; same guards as ft595; no LR
+confound possible (same restored schedule). The ruler shares seed-42 openings with the
+ft595 arenas — cross-arena comparisons are same-openings, same-reference.
