@@ -795,3 +795,76 @@ def fill_lc0_history_repeat(planes: np.ndarray) -> np.ndarray:
         if empty.any():
             planes[empty, f * s:f * s + f] = planes[empty, 0:f]
     return planes
+
+
+def x_to_lc0_planes(
+    x: np.ndarray, *, input_history_encoding: str,
+) -> np.ndarray:
+    """Our stored input tensor -> the 112-plane input an LC0/BT4 net reads.
+
+    Production stores ``x`` as ``(175, 8, 8)`` under ``lc0_root_legacy_meta``
+    (``configs/pbt2_small.yaml``: ``input_history_encoding`` /
+    ``input_extra_features: v2_threats``). The first 112 planes are the LC0
+    block and everything past them is our extra-feature block, which no
+    foreign net consumes. Crucially the stored tensor carries **TRUE history**
+    -- 8 root-POV slots of 12 piece planes + 1 repetition plane, written by
+    :func:`encode_lc0_full_root` -- so converting it feeds BT4 the real move
+    history instead of the repeat-filled fake a FEN-only rebuild produces.
+
+    Accepts ``(P, 8, 8)`` or ``(B, P, 8, 8)``; returns float32 with the leading
+    shape preserved. The source tensor is never modified.
+
+    Every convention below was verified against the writer rather than assumed:
+
+    ``0..103`` history, PASS-THROUGH
+        8 slots x 13 planes (12 piece + 1 repetition), **newest first**
+        (``encode_lc0_full_root``'s ``hist_idx == 0`` branch reads the live
+        board, and slot ``i`` is written at ``i * 13``). Every slot is encoded
+        from the ROOT side-to-move POV, which is what LC0 does, and the
+        orientation is ``[rank][file]`` with the black rank-flip already
+        applied -- the same tensor layout the BT4 adapter confirmed.
+    ``104..107`` castling, PASS-THROUGH
+        ``(us_Q, us_K, them_Q, them_K)``, i.e. LC0's
+        ``us_ooo, us_oo, them_ooo, them_oo``.
+    ``108`` side to move, PASS-THROUGH
+        1.0 when the root side to move is black, as in LC0.
+    ``109`` rule50, RESCALED
+        ⚑ The ONLY numeric conversion. ``lc0_root`` writes the RAW ply count,
+        but ``lc0_root_legacy_meta`` overrides it with
+        ``min(clock, 100) / 100`` (:func:`apply_lc0_root_legacy_meta_planes`),
+        while LC0 nets are trained on the raw count. Passing our production
+        tensor through unchanged would tell BT4 that a 70-ply-stale position
+        is 0.7 plies old -- accepted silently, since the plane is a valid
+        float either way.
+    ``110`` movecount, ZEROED
+        ⚑ The second legacy-meta override packs the EN-PASSANT FILE into this
+        plane. LC0's classical 112-plane input has no en-passant plane at all
+        (it conveys en passant through the history frames) and leaves this
+        plane zero, so our EP column is dropped rather than handed to the net
+        as a movecount it would misread.
+    ``111`` ones, SET
+        All-ones bias plane.
+    """
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if not uses_lc0_root_history(hist_enc):
+        raise ValueError(
+            f"x_to_lc0_planes needs an LC0-root layout; got {input_history_encoding!r}. "
+            "The 'legacy' layout appends its repetition planes instead of "
+            "interleaving them, so planes 0..103 are NOT LC0's history block."
+        )
+    arr = np.asarray(x)
+    if arr.shape[-3] < LC0_FULL.num_planes:
+        raise ValueError(
+            f"need at least {LC0_FULL.num_planes} planes; got {arr.shape[-3]}",
+        )
+    out = arr[..., :LC0_FULL.num_planes, :, :].astype(np.float32, copy=True)
+    base = LC0_FULL.root_metadata_base
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        # Undo the /100 scaling; round because float16 storage makes e.g.
+        # 0.07 -> 6.9999 and BT4 was trained on integral ply counts.
+        out[..., base + 5, :, :] = np.round(
+            np.clip(out[..., base + 5, :, :], 0.0, 1.0) * 100.0,
+        )
+    out[..., base + 6, :, :] = 0.0
+    out[..., LC0_FULL.ones_plane, :, :] = 1.0
+    return out
