@@ -64521,3 +64521,124 @@ banked in the worktree (`smoke_prehoist.csv`/`smoke_hoisted.csv`). ⇒ 64–128+
 arenas are memory-safe post-merge; the "≤32 concurrent compiled" rule is superseded on
 merged code. Branch review trail: MERGE-AFTER-FIXES → MERGE → CONFIRMED-MERGE, three
 commits, 110 tests, 18 mutants killed.
+
+## 2026-08-22 — ft595 LAUNCHED 01:03 (prereg above): banner verified, uniform draw over the FULL corpus
+
+Launched per prereg after the coverage GPU dump freed the card (pid 831239, log
+`scratchpad/ft595_train.log`, out `runs/lc0_ft_iter595_20260822`). Banner closes every
+launch-gate item: preflight accepted the iter-595 salvage checkpoint (step 171,327, sha
+`62f4ad8d…`, architecture match); `scheduler_restored: True`; `realized_peak_lr 3e-05` ==
+configured 3e-05 (reviewer F1: the LR-confound guard is non-discriminating on this config
+— reported as NO confound, not as a pass); Aurora group realized 6e-04; NO warmup re-run;
+the run self-declares CONTINUATION / `valid_control: false` and prints the
+compare-refusal. Shard draw realized `recency_exponent 0.0` over all 9,653 shards —
+uniform over the FULL 78.5M-row corpus (decile mass 0.100 ± 0.0001), which is the fix for
+the "I thought we used all the lc0 data" gap: the 26% subsample is now a uniform draw
+from everything rather than a recency-shaped slice. 122 shard dirs verified == purity
+receipt. Deciding arena on completion as preregistered (post-hoist code, conc 64 now
+memory-safe).
+
+## 2026-08-22 — ⚑⚑ MPV COVERAGE CURVE: label WIDTH is the whole story — MultiPV 20 holds 95.3% of the target's bad mass vs 60.9% at MultiPV 6, at production's REAL budget, at ~equal wall cost
+
+Rig + all passes banked in `scratchpad/mpv_coverage/` (COVERAGE.md, PROVENANCE.md,
+coverage_results.json, 6 shallow passes × 4000 rows × 0 failures, bit-reproducible;
+target dump = row-(d) training-target distributions from iter-595 with the load-bearing
+`--vloss-weight 1`, since the script's default 0 does NOT read the production key and
+dumps a search production never runs).
+
+**Premise correction first: production labels are NOT 75k-node searches.** 75k is
+`sf_nodes`, the OPPONENT budget. The label path runs
+`max(min(PID base_nodes, 200k), 150k)` and the live PID pins `nodes: 75000` ⇒ **every
+production label is exactly a 150,000-node MultiPV-6 search.** The rig closed the gap
+instead of disclosing it: 150k arms exist for both widths.
+
+**Question:** share of BAD training-target mass (deep regret ≥ 100 cp; 10.30% of all
+target mass) sitting on a move the shallow label LISTS — the reach ceiling for any
+membership-keyed veto/repair.
+
+| nodes | MultiPV 6 | MultiPV 20 |
+|---|---|---|
+| 75k | 63.1% | 95.4% |
+| **150k (production's real label budget)** | **60.9%** | **95.3%** |
+| constant-per-line (250k/500k @ 20) | — | 94.4% / 94.6% |
+
+- **Per-line strength buys NOTHING for membership** — holding nodes/line constant moves
+  coverage ~−1 pp. Same shape at the 300 cp cut and top-1-only.
+- **Width is ~free at fixed node budget:** mpv20_150k 72 s vs mpv6_150k 74 s wall. (The
+  [[sf_multipv_width_costs_7x]] 7× figure is a FIXED-DEPTH cost; at fixed total nodes the
+  cost is ~flat and the price is per-line depth — which this table says membership does
+  not need.)
+- ⚑ **46–53% of the mass MPV20 adds is FLOORED** — the 10-line deep ruler never listed
+  those moves, so their regret is a lower bound. Membership reach ≠ value accuracy: the
+  curve licenses a WIDE list for veto KEYS, it does not certify 7.5k-node cp values as
+  veto MAGNITUDES.
+- Deep ruler has no Syzygy while shallow passes match production (measured asymmetry at
+  75k/6: 87.0% top-1 / 78.7% set agreement); with Syzygy on, TB lines report
+  `cp ≈ ±20000` — downstream consumers of `pvs[].cp` must handle it; the rig uses RANK
+  only.
+
+**VERDICT (pre-committed question answered):** the R/V/G ladder's SF label is
+**MultiPV 20 at 150k nodes, fresh TT** — not MPV6 (misses 4 of 10 bad points of mass),
+not 500k (2.7× cost, −1 pp).
+
+## 2026-08-22 — ⚑⚑ PRODUCTION SF LABELS RUN ON A WARM SHARED TT: two warm runs over the SAME positions agree on the 6-move set only 32.3% of the time (top-1 changes on 34%); fresh=True reproduces 100.0%
+
+Found by the coverage rig while validating reproducibility, measured on 300 positions,
+order-permuted. `StockfishPool.submit` defaults `fresh=False` and neither
+`submit_sf_queries` nor `submit_async_curriculum_move_queries` overrides it, so every
+production label is computed on a transposition table warmed by UNRELATED positions —
+label content depends on scheduling order. This is an instability lever INDEPENDENT of
+MultiPV width (no width fixes it), and any membership-keyed veto inherits it unless the
+labeler passes `fresh=True`. Two corollaries, both measured:
+- the banked `(75000, 6)` rows in `data/audit_set_v1.jsonl.shallow_sf.jsonl` reproduce
+  NOTHING (62.3% top-1 / 33.7% set agreement vs a clean pass) — `_shallow_sf_records`
+  searches without `fresh=True` and without Syzygy. **Do not join against that cache.**
+  The `(500000, 40)` rows feeding audit row (c) were written the same way; untested at
+  that width.
+- the R/V/G rig labels below use `fresh=True` throughout, so the ladder does NOT inherit
+  the instability; a production flip of `fresh` is its own future experiment (cost: TT
+  reuse is a speedup; a prereg would need the nps price).
+Status: measurement, not yet a fix. No live change made. The audit's I-series should gain
+an invariant ("label reproducibility under order permutation") — deferred to the next
+audit pass, recorded here so it is not lost.
+
+## 2026-08-22 — PREREG (DESIGN): target-surgery ladder R/V/G — SF as EDITOR of the search target, not as CE-teacher. Exact commands to be banked at rig-readiness, per the ladder2 lesson
+
+**Hypothesis.** Dose ladder2 killed CE-blending toward SF-p0 (flat teacher flattens the
+student; E[regret] worsens monotonically). The surviving lever is label-time SURGERY
+([[bad_tail_is_screenable_at_label_time]]): keep OUR target's sharpness (its ranking is
+right only 46% but its shape is the signal) and use SF only to remove/downweight the bad
+tail (91.5% learned) and to sharpen SF's contribution before any mixing — asymmetric
+emphasis: sharpen SF (ranking is its information), don't flatten us
+([[we_are_sharp_and_wrong_not_flat]], G_sharp negative).
+
+**Arms, each an EDIT of the stored search target t (all offline, retarget_retrain rig,
+iter-595 checkpoint, banked corpus, vs the SAME a000 baseline):**
+- **R — repaired regret loss:** resurrect `w_sf_own_regret` (PR #78) with
+  listed-moves-only masking. June's form defaulted unlisted moves to regret 1.0, making
+  it a membership prior overweighted 2.1–2.9× ([[multipv6_regret_tail_is_fabricated]]);
+  it WORKED inside a bundle (56.7→49.6) and was zeroed without an own-evidence kill. R
+  tests the repaired form on its own.
+- **V — veto-edit:** t′ ∝ t·exp(−λ·max(0, regret(m)−τ)) using REAL MultiPV cp only
+  (unlisted moves untouched — never fabricated), plus a hard zero for listed moves with
+  regret ≥ veto cp. Per the coverage curve this keys on a MultiPV-20/150k/fresh-TT label
+  (95.3% bad-mass reach; MPV6's 60.9% would leave 4/10 bad points unreachable).
+- **G — geometric blend:** t′ ∝ t^(1−α)·q^α with q the SF distribution SHARPENED
+  geometrically (power/temperature on SF mass), calibration anchored near BT4's 0.970
+  entropy — subsumes the temperature-matching idea; distinct from ladder2's ARITHMETIC
+  CE-blend, which is the killed form.
+
+**Deciding yardstick (same family as ladder2, bar pre-committed):** row (a) net raw
+policy, overall top-1 deep-SF regret on frozen `audit_set_v1` (4000), arm vs a000 —
+**SUCCESS: Δtop-1 ≥ 3.0 cp AND E[regret] does not worsen** (the guard that killed
+ladder2's blend is promoted to a co-criterion); **KILL:** best arm < 3.0 cp or E[regret]
+worsens in every arm. NEVER judged on entropy
+([[an_arm_that_is_the_gradient_of_the_metric_always_wins]]).
+
+**Commands NOT banked yet — deliberately.** Ladder2 aborted once because prereg commands
+were written before they were ever run ([[a_required_grep_must_be_run_before_it_is_written]]).
+The rig needs: (1) the three target-edit wrappers, (2) a MultiPV-20/150k/fresh label pass
+over the banked corpus rows (CPU, priced by the coverage rig at ~
+mpv6-equal wall per position), (3) the dead-knob guard smoke. Exact commands + arm table
+get appended HERE when the smoke passes, before launch. GPU slot: tomorrow night, after
+the ft595 readout. Confounds: none live (production stopped); ladder pairs internally.
