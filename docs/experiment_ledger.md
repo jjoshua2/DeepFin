@@ -65358,3 +65358,31 @@ fails 7/7 under the mirror mutant via its turn assertion — the new test's real
 pinning emitted UCI naming), and the "52→98" test delta is not reproducible (confirmed:
 32→46 new files, 468→470 sweep, 0 failures). Residuals N1-N7 (doc-only + trivia) sent
 as one final small commit; **branch merges to `ops/live-20260725` when it lands.**
+
+**BT4 dump MERGED to `ops/live-20260725`** as `cd1293829` (merge of `feat/bt4-policy-dump`
+@ `5142440d5`, 5 commits). Post-merge verification IN THE LIVE TREE: bare
+`./scripts/lint.sh` **exit 0** (ruff clean, basedpyright 0/0/0), the two new test files
+48/48 pass. First of the four branches to land. The weekend arm-B dump will run from the
+live tree. (Note: the 13-error basedpyright baseline seen at the three worktree branch
+points does NOT reproduce on the live branch head — the baseline is branch-point- and
+build-state-specific; deltas remain the only meaningful lint reading on non-live
+branches.) Builder's final commit included a model retraction: its original mutant run
+never loaded the test file it drew conclusions about, and its 52→98 test delta compared
+mismatched file sets — both self-diagnosed as denominators reported without re-derivation.
+
+**`feat/mixed-corpus` fix pass complete @ `877bbeb30`; RE-VERIFICATION DISPATCHED (not
+merged).** All installments closed with measurements: `_is_extensive` now keyed off the
+trainer's own `_RAW_SUM_LOSS_KEYS` (phase means combined by their own `*_rows_phase_*`
+denominators — exact; end-to-end: phase_n columns sum to 3200 = 50×64); lint BOTH gates
+delta 0 (was +12 ruff, all the builder's); F4-F11 closed. ⚑ TWO FOLLOW-ON DEFECTS
+INTRODUCED BY THE FIXES, self-caught: (1) `route_rows` CONJOINED mask_keys — correct by
+accident at one mask per route, and the F4 fix's third mask made a two-source head count
+0 rows (an under-reporting counter = the gate that cannot fail, inside the module built
+to prevent it); masks now OR as doors. (2) the F7 blend-drift assertion first raised
+above `fail_without_checkpoint`, leaving a mid checkpoint on a refused run; now routed
+through the one cleanup. Both mutant-pinned (17 total mutants across the branch's life).
+The builder itself judged the branch "has earned another reviewer pass rather than a
+merge" — original Opus reviewer re-dispatched with the OR-semantics check (is OR right
+for EVERY route?) and a hunt for a third follow-on. Re-smoke clean: realized f 0.500000,
+sf_move_ce own 1598/1598 / lc0 0/0 under OR, own leak 0.000862 < 0.001 bar, 0
+unrouted/violations. Tests wide-set 283→331, +48, zero new failures.
