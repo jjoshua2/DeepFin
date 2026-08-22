@@ -65588,3 +65588,22 @@ re-implements the parser by hand — the pins-the-principle class recurring in t
 branch that just fixed it for the RNG test. All 9 routed to the builder as the third
 installment; MERGE and TOP-UP both blocked on F1/F2; targeted re-verification by the
 same Opus reviewer follows the fix diff.
+
+**Rig third installment CLOSED by the builder** (`7ef3f4ba1`): all 9 findings fixed,
+none declined. F1 by UNIFYING the two `.partial` readers into one generator
+(`_read_partial_records`) — a new record type is now skipped by both readers or by
+neither — verified with a real fresh 12-row pass through the exact crash path (completes,
+`OK: join verified`, exit 0, partial cleaned). F2 by `RvgArmSpec.stages_for(name)` — the
+sweep gate keys stage sets by arm NAME and never builds or validates a spec; both
+branches pinned through real `main()`. F8 adopted cause-before-symptom precedence and
+additionally distinguishes absent rows from present-but-non-overlapping (different
+repairs); the `edited_rows` refusal re-pinned on arm V's own fallback so that leg is
+independent of arm B. 9/10 mutants killed; F8b survives and is proven inert by state
+enumeration (90 states, 0 behavioural diffs — kept as intent). Lint delta 0; tests
+157 → 174, 0 regressions. ⚑ Builder's own flag worth keeping: F5's fix required
+updating three `_T` fakes that carried the PRODUCER's attribute
+(`sf_policy_floor_params`) instead of the consumer's — a fake that drifts to the wrong
+side of the certify/dispatch gap quietly endorses the wrong read. Targeted
+re-verification dispatched: same Opus reviewer re-running its own probes on
+`61da5a603..7ef3f4ba1` (incl. the typo'd-arm-name trace through the new `stages_for`
+fall-through) + grok snapshot pass. Merge and top-up gate on this round.
