@@ -64835,3 +64835,22 @@ V arm's τ dead-zone (exploitation moves are rarely SF-rated as blunders), the
 multiplicative form (mass is never moved TOWARD SF's preferences), and the fact that any
 passing arm's confirming test is PLAY (arena + frozen-handicap SF), which sees anti-SF
 skill the SF-ruled audit cannot ([[audit_first_cannot_judge_a_non_sf_teacher]]).
+
+### 2026-08-22 — second operator prediction registered + arm B added: BT4's policy as the calibration teacher
+
+Josh: "I think Stockfish is enough better than us that we are not actually exploiting it
+yet. I think we just have bad moves that we like [for] no good reason... we just like
+them more or less than we should, even if they're not one of our top moves. And [Leela]
+data is better here than us or Stockfish, probably." ⇒ (a) the anti-SF-move-protection
+concern is DEPRIORITIZED by operator judgment (the τ dead-zone stays as cheap insurance
+only); (b) the disease is DISTRIBUTION-WIDE miscalibration, which the multiplicative
+arms treat everywhere at once; (c) registered prediction: **arm B — geometric blend
+toward BT4's actual policy distribution on OUR positions — should beat arm G (SF-derived
+q)**, because an lc0 net's policy is the best-calibrated move-liking signal available.
+Arm B = the same G wrapper with q read from a BT4 policy dump (no SF search needed).
+Prerequisites dispatched: land the board-aware castling remap (verified fix exists,
+NOT MERGED — using the old static remap would under-weight castling priors 49-120x in
+9.3% of positions and poison the blend) + a batched ONNX dump script. Known confound to
+disclose at readout: BT4 runs FEN-only (history-less input, documented degradation). B
+joins the ladder if the dump lands before launch; otherwise it is the immediate next
+round on the same rig.
