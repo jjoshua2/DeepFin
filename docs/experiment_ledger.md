@@ -64753,3 +64753,33 @@ matters for anything keyed on list MEMBERSHIP — which is why the R/V/G rig lab
 Banner verified: init_from ft-LAST (step 211,327), scheduler_restored True, realized
 peak 3e-05, uniform draw, 122 shard dirs. Log `scratchpad/ft595ext_train.log`, out
 `runs/lc0_ft_iter595_ext_20260822`, ~4.3 h. Deciding arena on ext-LAST per prereg.
+
+### 2026-08-22 — weight forensics (operator question "did the RL loop damage the net?"): NO structural damage — zero dead units, trunk spectra match the never-RL control; and the ft595 fine-tune left the spectra UNTOUCHED while Elo swung 84 points
+
+Instrument: per-matrix SVD stats (entropy effective rank, stable rank, dead row/col
+fractions at 1% of median norm) over all 190 unique-storage 2D+ tensors, three
+same-architecture checkpoints: A = iter-595 RL net, B = lc0 control (random init + 40k
+supervised, no RL history), C = ft-LAST (A + 40k lc0 steps). Script + full table banked:
+`scratchpad/net_forensics_20260822.json`. Pre-stated falsifier: damage = A well below B
+with C recovering toward B.
+- **Dead structure: none.** 0.0000 dead rows/cols in every group of every net (smolgen's
+  4.9% dead rows is identical in ALL THREE including the random-init-trained control ⇒
+  architectural, not damage).
+- **Trunk is healthy:** trunk_mlp erank_frac A 0.892 vs B 0.871 (A slightly HIGHER);
+  trunk_attn stable rank A 0.099 vs B 0.049 (A higher). No rank collapse where the
+  computation lives.
+- **Heads/embed have lower rank in A** (policy 0.772 vs 0.927, value 0.823 vs 0.961,
+  embed 0.858 vs 0.954) — consistent with SPECIALIZATION: A trained 4× longer and serves
+  much sharper outputs (entropy 0.678 vs lc0's soft targets). Caveat: B is undertrained
+  (40k steps), which inflates its rank; this comparison cannot separate "damage" from
+  "convergence", but the next line can:
+- **C ≈ A to the third decimal in EVERY group.** 40k lc0 steps moved Elo −84 then +43
+  and lifted lc0 top-1 to 51.3% while leaving the weight spectra untouched. If the dip
+  were "undoing damage/restructuring", the spectra would move; they did not. Combined
+  with ft595 learning lc0 FASTER than random init (+4.5pp — a plasticity-damaged net
+  learns SLOWER), the damage hypothesis is DISFAVORED: the dip is interference
+  (lc0 gradients overwrite loop skill absent from lc0 data), not repair.
+⇒ Partial re-initialization has nothing to fix (plasticity is fine) and starts deeper in
+the hole (reinit heads = instant skill loss; the all-lc0 endpoint is the −405 control).
+The interference-matched remedy remains MIXED REPLAY (keep own-loop gradients present),
+pending the ext readout. Not launched.
