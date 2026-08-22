@@ -64801,3 +64801,24 @@ axis by construction, and a null across all arms RAISES it.
   SF is already dead (dose ladder2 — E[regret] worsens monotonically), and G_sharp is
   negative (sharpening OURSELVES is not the fix). G's differentiator is sharpening SF
   first, then geometric mixing; V's is removing the tail without touching sharpness.
+
+### 2026-08-22 — operator hypothesis TESTED: "anything not in SF's MultiPV-20 is a bad move" — SUPPORTED, with measured collateral ~0.1-0.2% of target mass vs 10.3% policed (~50:1)
+
+Josh: "I feel like 20 should be enough... but maybe we should test, instead of assuming."
+Tested from banked data (fresh mpv20_150k pass × deep ruler × row-(d) target dump ×
+the (500000,40) cache; scripts + `scratchpad/mpv_coverage/unlisted20_test.json`):
+- **Exact axis (no floors):** of 13,185 deep-certified good moves (<30cp), only 39
+  (0.296%) are absent from the shallow-20 list — and the counterexamples concentrate in
+  SATURATED WON positions where many moves tie at 0.0cp ([[wdl_regret_filter_leaks_huge_cp]]
+  regime), so the contested-position miss rate is effectively nil. At <100cp: 0.415%.
+- **Target-weighted:** 0.802% of target mass is unlisted-at-20 at all. Splitting it:
+  deep-listed good <100cp 0.043%; deep-listed bad 0.045%; the 0.714% floored remainder
+  splits by the cached MPV40@500k's internal regret (warm/no-syzygy cache — severity
+  probe says warm ≈ fresh on average) into good<50 0.028% / 50-100 0.150% / bad≥100
+  0.464% / absent-from-40 0.073%.
+⇒ **"unlisted-at-20 ⇒ treat as bad" is LICENSED at MultiPV 20**, unlike MultiPV 6 where
+the same rule was 74% fabrication. Practical consequence for the ladder label: MPV40
+remains v1 default (unlisted ~vanishes, simplest semantics); if the smoke shows MPV40 is
+NOT ~free at fixed nodes, the MPV20 fallback may carry a soft unlisted-penalty on this
+measurement's authority. Caveat: measured on the audit distribution (curriculum
+positions), tails capped at 1000cp, one saturated-position regime disclosed above.
