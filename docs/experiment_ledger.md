@@ -65629,3 +65629,13 @@ docstring's refusal list omits the new mixed-encoding refusal — Opus: typo'd-a
 aborts with "no G stage" instead of naming the unknown arm. The ladder does not wait on
 these. Top-up will now run FROM THE LIVE TREE (merged-code provenance) once the main
 pass finishes.
+
+**Rig polish installment merged** (`ea766b21f` → live). All five residuals closed, 7/7
+mutants — G2/G2b prove the fixture item was real: with the old equal-valued fixture the
+config-read mutant SURVIVED. Item 1 took both halves (shared `write_resume_settings` +
+a structural test that `main` reaches the `.partial` only through `_read_partial_records`
+and never read-opens it) — the builder self-corrected an over-broad first version that
+banned field access off yielded records rather than parsing. Live-tree: lint exit 0
+both gates, 177/177. The rig branch is CLOSED — four review passes total, and the
+ladder's instrument stack (rig + identity harness + BT4 dump) is now all live-tree
+canonical.
