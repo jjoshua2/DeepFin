@@ -65639,3 +65639,18 @@ banned field access off yielded records rather than parsing. Live-tree: lint exi
 both gates, 177/177. The rig branch is CLOSED — four review passes total, and the
 ladder's instrument stack (rig + identity harness + BT4 dump) is now all live-tree
 canonical.
+
+**MPV40@150k label pass COMPLETE**: `data/rvg/rvg_labels_mpv40_150k.jsonl` —
+**1,057,186 label records, 0 failures, 0 unscoreable**, join verified over all
+1,061,494 selected corpus rows (keys can repeat across rows), 311.4 min at 56.6 pos/s.
+Width vindicated at the row level: n_pv histogram has **196,014 rows (18.5%) using all
+40 PVs** (median ~25) — MPV20 would have truncated the wide tail on a fifth of the
+corpus. ⚑ This file is keyed by the DEFECTIVE enumeration: 846,442 of its rows are in
+the true draw (its training-relevant content), 210,744 are never-drawn extras (harmless;
+all rows carry fen). **TOP-UP LAUNCHED from the live tree** (merged code — first
+production outing of the F1-fixed fresh-pass path) with
+`--restrict-to data/rvg/rvg_topup_rows_206705.keys`, out
+`rvg_labels_mpv40_150k_topup.jsonl`, same nodes/multipv/threads; ~61 min at the main
+pass's rate. The rig consumes both files via the append-capable `--rvg-labels`.
+BT4 weekend dump starts AFTER the top-up (serial — the top-up gates tomorrow's ladder,
+the dump gates only Sunday's b030 leg).
