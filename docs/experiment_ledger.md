@@ -64453,3 +64453,57 @@ score 0.756. Banked: `scratchpad/elo_calib/B_last_vs_mid.json` + `B.pgn` + per-g
   of clean data — an EXTRAPOLATION, marked as such, not a measurement; C's external
   anchor and any continued-training decision belong to a fresh prereg.
 - ⚑ Same caveats as A: matched sims 100, play shape both sides, Elo vs an internal anchor.
+
+## 2026-08-22 — Match C CANCELLED by operator decision at 31/60 games; partial banked, NOT a rating claim
+
+Josh: "I don't think our cheese match is valuable either" — C killed at 00:26 after 31
+completed games (27 banked pre-kill at the 21:27 wedge + 4 more in the resumed block;
+per-game log `scratchpad/elo_calib/C.games.jsonl` holds every completed game and the match
+remains resumable). Context recorded for honesty, NOT quotable as a rating (truncated,
+operator-stopped): partial through 27 games was 11/27 points with 16 draws vs FULL-strength
+Cheese at 60s+1s — strikingly stronger than the matched-sims ruler suggested (control is
+−405 vs iter-595 at sims 100), consistent with clock-time search scaling differing per net.
+If an external anchor is wanted later, resume with the same command + `--resume`.
+Ops note: the first C attempt deadlocked in python-chess's `readyok` handling (late reply
+after the driver's isready patience during a 9-min max-autotune warmup; `InvalidStateError`
+in `_readyok` corrupted the protocol state and froze the driver with both processes alive).
+Killed by exact pid; the warm inductor cache let the `--resume` retry beat the race. A
+tolerant-isready patch to `match_vs_uci.py` is the robustness fix if C is ever resumed cold.
+
+## 2026-08-22 — PREREG: lc0 FINE-TUNE of production iter-595 ("ft595") — the first direct fix-candidate test
+
+**Hypothesis.** Clean policy-shaped supervision (lc0 visit distributions + lc0 root search
+values) improves OUR production net's play strength. #438 proved the stack learns these
+targets from random init with zero fit-vs-transfer gap; Match B proved they convert to Elo
+(~44 Elo/GPU-hour). This arm tests the missing link: do they move a net already shaped by
+our RL loop. Josh's framing ("I thought we were training lc0 data on top of our net").
+
+**Design.** `lc0_control_train.py --init-from` (new, commit 03f911879 on
+feat/lc0-continuation in the 438 checkout; independent review in flight, launch gated on
+its verdict): init from `data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt`,
+pinned by path AND step (171,327). 40,000 steps, batch 512 (~20.5M samples ≈ 26% of the
+78.5M-row corpus), seed 1 (fresh draw order; ~25% expected row overlap with what the
+random-init CONTROL saw — zero relation to anything iter-595 itself trained on). LR:
+restored production sawtooth at the DONOR's peak 3e-05, Aurora group 20× — realized-LR
+guarded and banner-verified; a failed optimizer-state load REFUSES rather than silently
+cold-starting (the −494 Elo warm-start trap is structurally closed). `checkpoint_mid.pt`
+at step 19,976. Out: `runs/lc0_ft_iter595_20260822`. `valid_control: false` by
+construction — read with arena + `score`, never `compare`.
+
+**DECIDING YARDSTICK (exact command banked at launch):** `scripts/arena_standard.py`
+ft-LAST vs its own init (iter-595 salvage), `--mode matched_sims --sims 100 --games 400
+--seed 42 --search-shape play`, production Syzygy pair, final-only read.
+- **SUCCESS: Elo > 0 with 95% CI excluding 0 ⇒ FIRST FIX-CANDIDATE IN HAND** (clean-target
+  distillation moves our net) — deployment/scale-up gets its own prereg.
+- **KILL: CI excludes 0 negative** ⇒ at this dose/LR the fine-tune hurts (forgetting of
+  loop-learned skill would land here). Record and stop this form.
+- **AMBIGUOUS: CI spans 0** ⇒ velocity too low at 3e-05 — record; any LR/dose escalation
+  is a NEW prereg, not a rerun.
+
+**Secondary color (non-deciding):** heldout top-1 vs lc0 argmax for MID2/LAST2 (random-init
+control read 43.2%/46.8% — iter-595 has never seen lc0 data, so no contamination is
+possible); optional ft-LAST vs control-LAST arena.
+
+**Confounds/notes:** production stopped throughout; corpus opened read-only from the
+salvage export; nothing live changes. GPU timeline: launch after the evalhoist smoke
+completes, ~8.5 h for 40k steps at the rig's ~1.3 steps/s.
