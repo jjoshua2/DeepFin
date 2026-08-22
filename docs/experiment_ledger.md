@@ -65316,3 +65316,29 @@ convergence scorecard: rvg (2/2 majors), mixed (1/1), identity (2/2) — plus ea
 unique finds (Opus: memory blockers, dead gates, lint two-gates, fingerprint vacuity;
 Grok: mode-flag hygiene, .partial provenance, --config honesty, frame reproduction).
 All four builders hold consolidated fix lists; merges gate on their re-verified reports.
+
+**`feat/bt4-policy-dump` fix pass COMPLETE (builder report; re-verification dispatched
+to the original reviewer).** Both blockers fixed and measured: streaming peak RSS FLAT
+at ~1.57GB for 1k vs 4k rows (was ~38KB/row ⇒ ~59GB projected at corpus scale);
+per-shard `input_history_encoding` read + loud refusal (attr verified present on 580/580
+sampled shards, all `lc0_root_legacy_meta`). Frame contract implemented as ruled and
+MUTANT-VERIFIED: a `.mirror()` "fix" of `board_from_stored_x` — exactly the plausible
+future mistake — now fails the end-to-end canonical-frame test while the pre-existing
+round-trip test passes under it (proving that test never pinned the contract). Row
+identity (shard/row/game_id/ply_index) in every record; resume hardened (torn-tail
+truncate, onnx refusal, resume provenance line, policy-field check); roundtrip check now
+GATES the exit code (rule50-rescale mutant ⇒ exit 1); collision counter; repetition
+handling upgraded from caveat to a measured `repeat_norep` decision arm (7/400 rows
+affected, 5% budget). Lint bare exit 0; tests 52→98 (+46, 0 new failures); the formerly
+vacuous gather test now fails under the static-remap mutant on both boards. Incident
+recovery: pre-14:23 work redone from HEAD, contaminated stash left untouched, 3
+incremental commits.
+**Arm-B dump SCHEDULING DECISION:** dump throughput halves under load (15.7-16.2 pos/s
+vs 27.8 quiet — the load is the RVG label pass + ext + builders, NOT production selfplay,
+which remains stopped). Full-corpus dump ≈15h quiet / ~26h loaded ⇒ **arm B runs
+AFTER the main 6-leg ladder, not with it**: tomorrow GPU = a000/a00f/r070/v020/g030/vg01
+(no BT4 needed); the BT4 dump starts when the label pass finishes tonight and runs
+through the weekend on CPU (compatible with Sunday's GPU ratio ladder); the b030 leg runs
+Sunday/Monday against the SAME a000 baseline, checkpoint, labels, and step budget —
+prereg will state this explicitly (the B-vs-G reading key does not require same-day
+execution, only same-rig comparability).
