@@ -37,6 +37,7 @@ except ImportError:
     _HAS_GUMBEL_C = False
 
 if TYPE_CHECKING:
+    from chess_anti_engine.inference import BatchEvaluator
     from chess_anti_engine.mcts.gumbel_c import (
         run_gumbel_root_many_c as _run_gumbel_root_many_c,
     )
@@ -88,6 +89,7 @@ def pick_moves_for_boards(
     gumbel_overrides: dict[str, float] | None = None,
     gumbel_vloss_weight: int = 0,
     gumbel_target_batch: int = 0,
+    evaluator: BatchEvaluator | None = None,
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards.
 
@@ -111,6 +113,28 @@ def pick_moves_for_boards(
     (``run_gumbel_root_many``, used when the extension is missing or volatility
     search is on) has no equivalent, so a non-zero value there is a request the
     search cannot honour and is rejected rather than dropped.
+
+    ``evaluator`` is an optional LONG-LIVED batch evaluator to run the forwards
+    through. ``None`` (the default) is today's behaviour and every other caller
+    keeps it: each search entry point then builds a THROWAWAY
+    ``LocalModelEvaluator`` per call (``mcts/gumbel_c.run_gumbel_root_many_c``
+    and the three other entries reached below). On CUDA that is a fresh, lazily
+    created stream per side per ply; torch hands streams out of a fixed
+    round-robin pool of 32 per device and the caching allocator partitions
+    segments BY STREAM, so a two-model arena cycles the whole pool in 16 plies
+    and every stream retains a full forward's working set — reserved VRAM
+    inflates until the card OOMs. A hoisted evaluator also carries
+    ``_max_batch``, which is the ONLY thing that caps the leaf batch
+    (``gumbel_c`` mins its leaf cap against it); a throwaway
+    ``LocalModelEvaluator`` has no such attribute, so the leaf batch grows with
+    concurrency without bound.
+
+    It is forwarded to whichever search path this call takes — all four entry
+    points accept ``evaluator`` — so it is never accepted here and quietly
+    dropped below. ⚑ A ``DirectGPUEvaluator`` RAISES when a submit exceeds its
+    ``max_batch`` (``get_input_buffer`` / ``evaluate_encoded``) and the C gumbel
+    ROOT submit is NOT bucketed against it, so size ``max_batch`` at or above
+    the largest board count any one call will be handed.
     """
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
@@ -155,6 +179,7 @@ def pick_moves_for_boards(
         if _HAS_GUMBEL_C and not volatility_search_enabled(gumbel_cfg):
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+                evaluator=evaluator,
                 allow_terminal_root_shortcuts=True,
                 vloss_weight=int(gumbel_vloss_weight),
                 target_batch=int(gumbel_target_batch),
@@ -179,6 +204,7 @@ def pick_moves_for_boards(
                 )
             result = run_gumbel_root_many(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+                evaluator=evaluator,
             )
         _probs, actions, _values, _masks = result[:4]
     else:
@@ -193,6 +219,7 @@ def pick_moves_for_boards(
                 policy_encoding=policy_encoding,
                 compute_relations=use_dynamic_relations,
             ),
+            evaluator=evaluator,
         )
     return [int(a) for a in actions]
 
