@@ -64507,3 +64507,17 @@ possible); optional ft-LAST vs control-LAST arena.
 **Confounds/notes:** production stopped throughout; corpus opened read-only from the
 salvage export; nothing live changes. GPU timeline: launch after the evalhoist smoke
 completes, ~8.5 h for 40k steps at the rig's ~1.3 steps/s.
+
+## 2026-08-22 — EVALUATOR HOIST MERGED (83d7fb523) after GPU smoke CONFIRMED the stream-pool mechanism: pre-hoist reserved 32.3 GB vs 1.4 GB allocated at conc 64; hoisted 3.0 GB — ~11×
+
+Smoke (seq7, both arms 128/128 games, conc 64, LAST-vs-MID checkpoints, seed 7, allocator
+sampled at 2 s): the `--eval-max-batch 0` escape hatch reproduces the exact pre-hoist
+arena — reserved climbed 239 MB → **32,292 MB** (whole card) through ~19 levels while
+allocated peaked at 1,383 MB: the per-ply-throwaway-evaluator stream-pool staircase,
+measured, closing the ledgered diagnosis (b97eee62f). Hoisted arm: reserved max
+**2,957 MB**, flat; identical aggregate score (92/128 both arms; pentanomials differ —
+2-head vs 10-head inductor graphs are not bit-identical, as the review documented). CSVs
+banked in the worktree (`smoke_prehoist.csv`/`smoke_hoisted.csv`). ⇒ 64–128+ concurrent
+arenas are memory-safe post-merge; the "≤32 concurrent compiled" rule is superseded on
+merged code. Branch review trail: MERGE-AFTER-FIXES → MERGE → CONFIRMED-MERGE, three
+commits, 110 tests, 18 mutants killed.
