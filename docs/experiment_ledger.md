@@ -65342,3 +65342,19 @@ through the weekend on CPU (compatible with Sunday's GPU ratio ladder); the b030
 Sunday/Monday against the SAME a000 baseline, checkpoint, labels, and step budget —
 prereg will state this explicitly (the B-vs-G reading key does not require same-day
 execution, only same-rig comparability).
+
+**`feat/bt4-policy-dump` RE-VERIFICATION: MERGE-CLEAN** (original reviewer, re-derived —
+did not read the builder's report). Streaming: peak RSS 152.6→170.1MB over 1k→30k rows
+(0.60 KB/row residue = the `seen` key set; planes own their memory), output BIT-identical
+to the pre-fix path over 192 rows/7,150 moves; ⇒ ~1.9GB at full corpus vs the pre-fix
+~121GB. Encoding guard: all three bad-input probes now REFUSE (lc0_root-as-legacy now
+decodes clock 45, not silent 100; v1 tensor refused; garbage attr refused). Frame mutant
+caught; both resume probes closed (torn weld → 0 unparseable + dropped-bytes notice +
+resume provenance record; different-net resume refused naming both sha256s — plus an
+unrequested bonus: shards-vs-fens mode mixing also refused). Roundtrip gate: exit 1
+under the rule50 mutant BEFORE any inference. Lint exit 0. Honesty corrections by the
+reviewer: the builder's frame-test justification was FALSE (the old round-trip test
+fails 7/7 under the mirror mutant via its turn assertion — the new test's real value is
+pinning emitted UCI naming), and the "52→98" test delta is not reproducible (confirmed:
+32→46 new files, 468→470 sweep, 0 failures). Residuals N1-N7 (doc-only + trivia) sent
+as one final small commit; **branch merges to `ops/live-20260725` when it lands.**
