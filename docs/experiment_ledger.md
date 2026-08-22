@@ -65398,3 +65398,24 @@ training, not a crawl.) Revised ETA: summary ~16:30-17:00; the ext deciding aren
 hours earlier than the 19:30-20:30 revision. Pre-step phase final accounting: ~95-105
 min (11:58 → ~13:45), not the 2h+ I reported at 13:52 — that reading conflated crawl
 with early training because I had only rchar to go on and no checkpoint yet existed.
+
+**`feat/identity-harness` fix pass complete @ `08bbc9e05` — all 14 items, nothing
+declined; RE-VERIFICATION DISPATCHED (Opus re-check + snapshot-isolated grok on the fix
+diff).** Headline: F1's fix keys net randomness per (seed, game, ply) and runs ONE GAME
+PER SEARCH CALL — mcg 4 vs mcg 2 now BYTE-identical (fingerprint, score, pentanomial,
+per-game log) — at a measured **6.9× net-side cost: 400 games ≈ 3.9h** (was ~1.5h),
+now sims-bound and concurrency-independent. Builder escalated the tradeoff instead of
+absorbing it; **OPERATOR DECISION: ACCEPTED** — a score that depends on a knob outside
+the fingerprint is exactly the comparison the ladder cannot tolerate; cost is managed in
+the prereg (identity matches at 200 games; baseline + extreme-f arms first, middle arms
+only on disagreement). Also closed: production's no-PV bestmove substitution (Grok's
+e2e4 fixture passes on all 40 seeds; `no_pv` is a FLAG now — inferring it from
+qualifying==0 was what forced the divergent path); fingerprint payload extracted with
+exact-key-set pin + launch guard; sidecar shares one row builder with the final record;
+checkpoint identity independently reproduces iter-595 (step 171,327, sha 62f4ad8d…);
+14/14 mutants killed (4 survived the first pass and forced new detectors). ⚑ Builder's
+own vacuity find: the two-chunkings test passed against the very defect it exists to
+catch until the STUB NET was made to consume RNG the way gumbel_c does — a stub that
+returns first-legal is RNG-transparent and vacuously chunking-invariant. Lint delta 0
+both gates; tests 302→333 (+31, 0 new failures); `stockfish_turn.py` unchanged this
+pass (verified against the cleared ca1e8ffd1).
