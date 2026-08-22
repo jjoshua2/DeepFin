@@ -14,7 +14,7 @@ sides cannot drift:
   ``AUDIT_REGRET_CAP_CP`` rather than a second copy of those rules;
 * the three edits, as pure array functions with hand-checkable arithmetic.
 
-⚑ THE LABEL IS A MultiPV-20 / 150k-node / ``fresh=True`` / Syzygy-on SHALLOW
+⚑ THE LABEL IS A WIDE-MultiPV / 150k-node / ``fresh=True`` / Syzygy-on SHALLOW
 pass. It is NOT the stored MPV6 ``sf_p0_*`` fields: the coverage curve
 (2026-08-22) put MPV6's reach at 60.9% of the target's bad mass against MPV20's
 95.3%, and the warm-TT finding the same day showed the banked MPV6 rows do not

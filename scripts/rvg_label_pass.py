@@ -48,7 +48,7 @@ Usage::
     PYTHONPATH=. python3 scripts/rvg_label_pass.py \\
         --config configs/pbt2_small.yaml \\
         --replay-dir <banked corpus>/replay_shards \\
-        --out <out dir>/rvg_labels_mpv20_150k.jsonl \\
+        --out <out dir>/rvg_labels_mpv40_150k.jsonl \\
         --threads 16
 
 Two modes:

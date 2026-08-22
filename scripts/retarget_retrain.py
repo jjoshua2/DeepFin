@@ -63,7 +63,7 @@ to be re-run from the start. ``cp -r`` the shards, or use a salvage pool nothing
 is writing to.
 
 TARGET-SURGERY LADDER (arms R / V / G), all DEFAULT OFF. Three rig-only arms
-that use a shallow MultiPV-20 SF label as an EDITOR of the stored search target
+that use a shallow wide-MultiPV SF label as an EDITOR of the stored search target
 rather than as a CE-teacher — the form dose-ladder2 killed (its blend flattened
 the student and worsened E[regret] monotonically with dose). Each arm joins the
 label file written by ``scripts/rvg_label_pass.py`` by position fingerprint:
@@ -99,7 +99,7 @@ Usage::
 
     # ... or one target-surgery ladder, ONE invocation (paired draws):
     PYTHONPATH=. python3 scripts/retarget_retrain.py ... \\
-        --rvg-labels <out>/rvg_labels_mpv20_150k.jsonl \\
+        --rvg-labels <out>/rvg_labels_mpv40_150k.jsonl \\
         --rvg-v-lambda 0.02 --rvg-v-tau 20 --rvg-v-veto-cp 200 \\
         --rvg-g-alpha 0.3 --rvg-g-temp 150 \\
         --variant a000: \\
@@ -602,7 +602,7 @@ class RvgArmSpec:
 class _RvgTargetSurgeryBuffer:
     """Serve MPV20-edited targets (arms V / G / VG) or regret vectors (arm R).
 
-    Joins each sampled row to the shallow MultiPV-20 label file by
+    Joins each sampled row to the shallow wide-MultiPV label file by
     ``rvg_surgery.position_fingerprints`` — the SAME function
     ``scripts/rvg_label_pass.py`` keyed the file with, called on the SAME stored
     planes, so the join is exact by construction. Rows with no label are served
@@ -969,7 +969,7 @@ class _RigContext:
         if self.labels is None:
             raise SystemExit(
                 "rvg_arm is set but --rvg-labels was not: every arm joins the "
-                "shallow MultiPV-20 label file by position fingerprint, and "
+                "shallow wide-MultiPV label file by position fingerprint, and "
                 "without it the arm would train the control"
             )
         return self.labels
@@ -1492,7 +1492,7 @@ def main() -> None:
   # one invocation runs the whole ladder over ONE identically-seeded draw
   # sequence — the pairing property dose-ladder2 depends on.
     ap.add_argument("--rvg-labels", type=Path, default=None,
-                    help="shallow MultiPV-20 label JSONL from "
+                    help="shallow wide-MultiPV label JSONL from "
                          "scripts/rvg_label_pass.py; required by any rvg arm")
     ap.add_argument("--rvg-r-weight", type=float, default=0.0,
                     help="arm R: w_sf_own_regret applied to the listed-only "
