@@ -20,6 +20,7 @@ from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from scripts.bt4_policy_dump import (
     Row,
+    run,
     board_from_stored_x,
     source_rows,
     x_to_lc0_planes,
@@ -335,13 +336,16 @@ def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
 
     The downstream rig builds its labels on the same white-to-move canonical
     board reconstructed from the same planes, so canonical<->canonical is the
-    coherent join. "Fixing" the shard path to emit true-board coordinates would
-    silently break arm B's coordinate system, and the old round-trip test could
-    not catch that: it compares against `board.mirror()` and so PASSES either
-    way. This asserts the OUTPUT contract instead.
+    coherent join; "fixing" the shard path to emit true-board coordinates would
+    silently break arm B's coordinate system.
 
-    For a black-to-move position: the key is the mirrored FEN (White to move),
-    and black's kingside castle is named `e1g1`, never `e8g8`.
+    What this adds over ``test_board_decodes_back_out_of_the_stored_tensor``:
+    that test already pins the decoded BOARD (its ``turn == WHITE`` assertion
+    does fail under a ``.mirror()`` mutant, on all 7 parametrisations). What it
+    does NOT check is the EMITTED NAMING — the key string and the UCI keys that
+    actually land in the JSONL. This asserts those: for a black-to-move row the
+    key is the mirrored FEN and black's kingside castle is named ``e1g1``, with
+    ``e8g8`` absent from the record entirely.
     """
     true_board = chess.Board(BLACK_TO_MOVE_CASTLING)
     assert true_board.turn == chess.BLACK
@@ -417,3 +421,45 @@ def test_resume_skipped_rows_are_counted_separately(tmp_path: Path) -> None:
     assert list(source_rows(args, {chess.STARTING_FEN}, stats)) == []
     assert stats["resume_skipped"] == 1
     assert stats["collisions"] == 0
+
+
+def _resume_args(out: Path, rows: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        out=str(out), rows=str(rows), input_source="fens", resume=True,
+        onnx="/nonexistent-should-never-be-opened.onnx", batch_size=8, threads=1,
+        gpu_mem_gb=0.0, policy_output=None, limit=0, castle_examples=0,
+        check_legal_mask=True,
+    )
+
+
+def test_resume_refuses_a_dump_with_no_readable_header(tmp_path: Path) -> None:
+    """⚑ A headerless/corrupt file is exactly the case the provenance guard
+    exists for, so it must be refused rather than quietly appended to.
+
+    Also pins the ORDER: the refusal happens before the file is touched, so the
+    dump is byte-identical afterwards. (Truncating the torn tail first meant a
+    run that refused to write had already mutated the file.)
+    """
+    rows = tmp_path / "rows.txt"
+    rows.write_text(chess.STARTING_FEN + "\n", encoding="utf-8")
+    out = tmp_path / "headerless.jsonl"
+    out.write_text(
+        json.dumps({"key": "a", "n_legal": 1, "policy": {"e2e4": 1.0}}) + "\n"
+        + '{"key": "b", "n_leg',  # torn tail, and no header record
+        encoding="utf-8",
+    )
+    before = out.read_bytes()
+    with pytest.raises(SystemExit, match="no readable header record"):
+        run(_resume_args(out, rows))
+    assert out.read_bytes() == before, "a refused resume must not mutate the file"
+
+
+def test_resume_onto_a_missing_file_is_allowed(tmp_path: Path) -> None:
+    """--resume on a not-yet-existing dump is a normal first run, not a refusal;
+    it must get past the header check (and then fail on the bogus onnx path)."""
+    rows = tmp_path / "rows.txt"
+    rows.write_text(chess.STARTING_FEN + "\n", encoding="utf-8")
+    out = tmp_path / "fresh.jsonl"
+    with pytest.raises(Exception) as excinfo:  # noqa: PT011 - ORT's own error type
+        run(_resume_args(out, rows))
+    assert "no readable header record" not in str(excinfo.value)

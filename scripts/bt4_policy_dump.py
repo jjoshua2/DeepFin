@@ -12,10 +12,18 @@ Two input sources, and they are NOT equivalent:
     the FEN alone, with the 7 history frames filled by repeating the current
     position (``fill_lc0_history_repeat``).
     ⚑ HISTORY-LESS — A KNOWN, MEASURED DEGRADATION. BT4 was trained on real
-    move history. Measured against lc0's own v6 training records
-    (``scripts/bt4_history_sensitivity.py``, 2000 positions): repeat-filled
-    history moves BT4's top-1 on ~6% of positions, median KL(true‖repeat)
-    ~0.005 nats. En passant is conveyed in the T-format through the history
+    move history. Measured against lc0's own v6 training records, n=1000,
+    by::
+
+        PYTHONPATH=. python3 scripts/bt4_history_sensitivity.py \
+            --tar data/lc0_training/training-run2-test91-20260810-1417.tar \
+            --positions 1000 --validate 400 --roundtrip 400 --threads 16
+
+    which reported, for the ``repeat_norep`` arm (the faithful emulation of
+    what this path feeds): top-1 flip rate **0.0610 (61/1000)**, median
+    KL(true‖fen-only) **0.0043** nats, mean 0.0197, Spearman(log p) 0.9728.
+    Re-run the command to reproduce; those numbers are from that n, not a
+    banked artifact in the tree. En passant is conveyed through the history
     frames rather than a plane, so a FEN-built input also cannot show BT4 the
     double-push behind an en-passant capture. This is the same convention every
     prior BT4 instrument here used (``scripts/foreign_net_audit.py``,
@@ -276,6 +284,13 @@ def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
     Handing out a VIEW would make one retained row pin the whole
     ``(2000, 112, 8, 8)`` float32 array (~460 MB per 12k rows retained), which
     is what turned a 3.1M-row corpus dump into a ~121 GB resident set.
+
+    ⚑ "Streams" means the PLANES stream; it is not O(1) overall. The ``seen``
+    and ``done`` key sets in :func:`source_rows` and :func:`load_done_keys`
+    still grow with distinct keys at ~0.60 KB/row — about **1.9 GB at 3.1M
+    rows, ~3.7 GB for a resumed run** that also holds ``done``. That is the
+    price of first-wins dedup and resumability; budget for it, or shard the
+    run by directory and merge.
     """
     import zarr
 
@@ -283,6 +298,16 @@ def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
         for shard in sorted(Path(directory).glob("*.zarr")):
             group = zarr.open(str(shard), mode="r")
             encoding = shard_encoding(group, shard)
+            missing = [
+                name for name in ("x", "legal_mask", "game_id", "ply_index")
+                if name not in group
+            ]
+            if missing:
+                raise SystemExit(
+                    f"{shard} is missing {missing}; the arm-B join needs "
+                    "game_id/ply_index on every record. Re-export the shard or "
+                    "point --input-source at a directory that has them.",
+                )
             xs = np.asarray(group["x"][:])
             masks = np.asarray(group["legal_mask"][:])
             game_ids = np.asarray(group["game_id"][:])
@@ -326,7 +351,8 @@ def source_rows(
     the first-wins transposition skip is COUNTED rather than silent.
     """
     counts = stats if stats is not None else {}
-    for field in ("seen_rows", "distinct_keys", "collisions", "resume_skipped"):
+    for field in ("seen_rows", "distinct_keys", "collisions", "resume_skipped",
+                  "terminal_skipped"):
         counts.setdefault(field, 0)
     shard_dirs = shard_source_dirs(args.input_source)
     raw: Iterator[Row] = (
@@ -343,6 +369,7 @@ def source_rows(
             counts["resume_skipped"] += 1
             continue
         if not any(row.board.legal_moves):
+            counts["terminal_skipped"] += 1
             continue
         if row.legal_mask is not None and args.check_legal_mask:
             ours = {compact_index_for_move(row.board, m) for m in row.board.legal_moves}
@@ -696,11 +723,18 @@ def run(args: argparse.Namespace) -> int:
 
     shard_dirs = shard_source_dirs(args.input_source)
     prior_header = read_header(out_path) if args.resume else None
-    done = load_done_keys(out_path) if args.resume else set()
+    done: set[str] = set()
     if args.resume:
-        dropped = truncate_torn_tail(out_path)
-        if dropped:
-            print(f"[dump] resume: dropped {dropped} bytes of a torn final record")
+        # ⚑ N5: a file whose header cannot be read is exactly the damaged case
+        # the mismatch guard exists for -- so refusing here, rather than
+        # appending provenance-less rows, is the whole point.
+        if out_path.exists() and out_path.stat().st_size and prior_header is None:
+            raise SystemExit(
+                f"{out_path} has no readable header record, so this run cannot "
+                "check that it was produced by the same net and source. Refusing "
+                "to append; use a fresh --out.",
+            )
+        done = load_done_keys(out_path)
         print(f"[dump] resume: {len(done)} keys already present")
 
     sess, in_name, in_dtype, providers = open_session(
@@ -718,6 +752,12 @@ def run(args: argparse.Namespace) -> int:
         _resume_guard(prior_header, header, pol_name, out_path)
         if prior_header is not None else None
     )
+    # ⚑ N4: only NOW is the file touched. Truncating before the guard meant a
+    # refused resume had already mutated the file it refused to write to.
+    if args.resume:
+        dropped = truncate_torn_tail(out_path)
+        if dropped:
+            print(f"[dump] resume: dropped {dropped} bytes of a torn final record")
 
     stats: dict[str, int] = {}
     n_written = 0
@@ -782,7 +822,8 @@ def run(args: argparse.Namespace) -> int:
           f"-> {out_path}")
     print(f"[dump] rows read {stats.get('seen_rows', 0)}, distinct keys "
           f"{stats.get('distinct_keys', 0)}, transposition collisions skipped "
-          f"{stats.get('collisions', 0)}, already-done skipped "
+          f"{stats.get('collisions', 0)}, terminal positions skipped "
+          f"{stats.get('terminal_skipped', 0)}, already-done skipped "
           f"{stats.get('resume_skipped', 0)}")
     if n_written:
         # ⚑ NOT comparable to the banked 0.970: that figure is BT4-100, i.e.
