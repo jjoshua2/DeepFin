@@ -1837,10 +1837,26 @@ def main() -> None:
         # this script's own help text documents. The question here is purely
         # "which legs have a G stage", which the name answers on its own; each
         # leg's parameters are validated later, against its own overrides.
-        reaches = [
-            name for name, ov in (_parse_variant(v) for v in args.variant)
-            if "rvg_arm" in ov and "G" in RvgArmSpec.stages_for(str(ov["rvg_arm"]))
+        arms = [
+            (name, str(ov["rvg_arm"]).strip().lower())
+            for name, ov in (_parse_variant(v) for v in args.variant)
+            if "rvg_arm" in ov
         ]
+        # ⚑ NAME THE UNKNOWN ARM, DON'T REPORT ITS SYMPTOM. `stages_for` answers
+        # `()` for a name it does not know, which is indistinguishable here from
+        # a legitimately G-less arm — so `rvg_arm=gg` beside a q file aborted
+        # with "NO variant has a G stage" and sent the operator looking at their
+        # ladder instead of at the typo. The unknown arm is refused FIRST, in
+        # `validate`'s own words, so the two sites read the same to an operator
+        # who hits them in either order.
+        unknown = [(n, a) for n, a in arms if a not in RvgArmSpec.STAGES]
+        if unknown:
+            raise SystemExit(
+                "unknown rvg_arm in "
+                + ", ".join(f"variant {n!r} (rvg_arm={a!r})" for n, a in unknown)
+                + f": expected one of {', '.join(sorted(RvgArmSpec.STAGES))}"
+            )
+        reaches = [n for n, a in arms if "G" in RvgArmSpec.stages_for(a)]
         if not reaches:
             raise SystemExit(
                 f"--rvg-g-q-source names {external_q_path} but NO variant in this "

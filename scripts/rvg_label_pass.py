@@ -663,6 +663,18 @@ def _read_partial_records(
             yield rec
 
 
+def write_resume_settings(partial_path: Path, settings: dict[str, object]) -> None:
+    """Open a fresh ``.partial`` with its settings record.
+
+    ⚑ A FUNCTION, not an inline `json.dumps`, so the tests write the record the
+    way `main` writes it. A test that hand-rolls a byte-identical copy pins its
+    own literal: the writer and the readers could drift apart underneath it and
+    the round trip would still close over the test's own bytes.
+    """
+    with open(partial_path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"record": "resume_settings", **settings}) + "\n")
+
+
 def _resume_settings(args: argparse.Namespace) -> dict[str, object]:
     """The settings that change what a BANKED ROW MEANS.
 
@@ -913,8 +925,7 @@ def main() -> None:
             done[str(rec["key"])] = rec
         print(f"[rvg-label] resuming: {len(done)} positions already banked", flush=True)
     if not partial_path.exists():
-        with open(partial_path, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"record": "resume_settings", **settings}) + "\n")
+        write_resume_settings(partial_path, settings)
 
     todo = [r for k, r in scan.unique.items() if k.hex() not in done]
     engines: list[StockfishUCI] = []

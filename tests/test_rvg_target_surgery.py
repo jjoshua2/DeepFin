@@ -2114,6 +2114,20 @@ def test_every_optional_flag_is_claimed_by_exactly_one_mode_or_shared() -> None:
         f"{unclaimed} belong to no mode and are not shared: either add them to "
         "_MODE_ONLY_FLAGS or to this test's `shared` set, deliberately"
     )
+    # ⚑ AND DISJOINT, which "nothing unclaimed" does not imply. A dest listed
+    # under BOTH modes is refused in both — the flag becomes unusable everywhere
+    # while every coverage assertion above still passes. A dest that is both
+    # mode-only and shared is the same contradiction stated twice.
+    modes = sorted(_MODE_ONLY_FLAGS)
+    for i, a in enumerate(modes):
+        for b in modes[i + 1:]:
+            both = sorted(set(_MODE_ONLY_FLAGS[a]) & set(_MODE_ONLY_FLAGS[b]))
+            assert not both, (
+                f"{both} are listed as mode-only for BOTH {a!r} and {b!r}, so "
+                "every mode refuses them and the flags are unusable"
+            )
+        overlap = sorted(set(_MODE_ONLY_FLAGS[a]) & shared)
+        assert not overlap, f"{overlap} are both mode-only for {a!r} and shared"
 
 
 def test_a_resume_under_different_label_settings_is_a_refusal() -> None:
@@ -2227,7 +2241,7 @@ def test_a_fresh_partial_round_trips_through_both_readers(tmp_path: Path) -> Non
     REAL writer and reads it back through the REAL readers — the shape the bug
     lived in.
     """
-    from scripts.rvg_label_pass import _read_partial_records
+    from scripts.rvg_label_pass import _read_partial_records, write_resume_settings
 
     settings: dict[str, object] = {
         "nodes": 150_000, "multipv": 40, "syzygy": True,
@@ -2235,9 +2249,10 @@ def test_a_fresh_partial_round_trips_through_both_readers(tmp_path: Path) -> Non
     }
     partial = tmp_path / "labels.jsonl.partial"
 
-    # --- the writer, exactly as `main` writes a FRESH partial
-    with open(partial, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps({"record": "resume_settings", **settings}) + "\n")
+    # ⚑ `main`'s OWN writer, not a byte-identical copy of its literal. A copy
+    # closes the round trip over the test's own bytes: the writer could change
+    # underneath it and this would still pass.
+    write_resume_settings(partial, settings)
     rows = [_label(bytes([i]) * 16, [0, 1], [0.0, -20.0]) for i in (1, 2, 3)]
     with open(partial, "a", encoding="utf-8") as fh:
         for row in rows:
@@ -2417,15 +2432,119 @@ def test_the_summary_announces_the_floor_weight_the_CONSUMER_receives() -> None:
     """
     from types import SimpleNamespace
 
+    # THREE distinct values, one per possible source, so every wrong read is a
+    # different number. With the config equal to the trainer attribute (as an
+    # earlier fixture had it) a `_rvg_config_side` that read the CONFIG stayed
+    # green — the fixture could not tell the producer from the consumer.
     shape = SimpleNamespace(w=0.8)              # as resolved at construction
-    trainer = SimpleNamespace(w_sf_own_regret=0.7, w_sf_policy_floor=0.0,
+    trainer = SimpleNamespace(w_sf_own_regret=0.7, w_sf_policy_floor=0.25,
                               sf_policy_floor_params=shape)
-    # What the trainer actually hands compute_loss:
-    consumed = float(trainer.w_sf_policy_floor)
-    assert consumed != float(trainer.sf_policy_floor_params.w), (
-        "fixture must make the two disagree or this test cannot discriminate"
+    config = {"w_sf_policy_floor": 0.5, "w_sf_own_regret": 0.9}
+    consumed = float(trainer.w_sf_policy_floor)                     # 0.25
+    assert len({consumed, float(shape.w), float(config["w_sf_policy_floor"])}) == 3, (
+        "fixture must give the three sources distinct values or it cannot "
+        "discriminate between them"
     )
 
-    announced = rr._rvg_config_side(trainer, config={"w_sf_policy_floor": 0.0})
-    assert announced["w_sf_policy_floor"] == consumed
-    assert announced["w_sf_own_regret"] == 0.7
+    announced = rr._rvg_config_side(trainer, config=config)
+    assert announced["w_sf_policy_floor"] == consumed               # not 0.8, not 0.5
+    assert announced["w_sf_own_regret"] == 0.7                      # not 0.9
+    # ...and the ASK is recorded beside it, because the pair disagreeing is the
+    # observation and it is unavailable if only one is kept.
+    assert announced["asked_for"] == {
+        "w_sf_own_regret": 0.9, "w_sf_policy_floor": 0.5,
+    }
+
+
+def test_mains_partial_writer_and_readers_stay_paired() -> None:
+    """⚑ THE ROUND TRIP CLOSES OVER HELPERS; THIS PINS THE CALL SITES.
+
+    The round-trip test drives ``write_resume_settings`` and
+    ``_read_partial_records``, so reverting one of ``main``'s two read sites to
+    an inline ``json.loads(line)["key"]`` loop leaves it green — and an inline
+    read of the partial is exactly the F1 crash. The real 12-row pass catches
+    it; a source-level pin catches it without Stockfish or a banked corpus.
+
+    Structural, deliberately: what went wrong was not a value but a call site
+    growing a second, unpaired copy of a rule.
+    """
+    import inspect
+
+    from scripts import rvg_label_pass as lp
+
+    src = inspect.getsource(lp.main)
+    # Reading a field off a record the shared reader YIELDED is fine
+    # (`done[str(rec["key"])] = rec`); PARSING the file is what must not be
+    # duplicated, because that is where the record-line rule lives.
+    assert "json.loads" not in src, (
+        "main parses .partial lines itself instead of via _read_partial_records"
+    )
+    # Opening it to APPEND a finished label is main's job; opening it to READ is
+    # not, because reading means deciding what a record line is.
+    for read_open in ('open(partial_path, encoding', 'open(partial_path)',
+                      'open(partial_path, "r"'):
+        assert read_open not in src, (
+            f"main opens the .partial for reading ({read_open}); both reads go "
+            "through _read_partial_records"
+        )
+    assert src.count("_read_partial_records(") == 2, (
+        "main should reach the partial exactly twice — the resume load and the "
+        "join read-back — both through the shared reader"
+    )
+    assert '"record": "resume_settings"' not in src, (
+        "main writes the settings record inline; write_resume_settings is the "
+        "one writer the tests exercise"
+    )
+    assert "write_resume_settings(" in src
+
+    # The shared reader is the only place that decides what a record line is.
+    reader = inspect.getsource(lp._read_partial_records)
+    assert 'rec.get("record")' in reader
+
+
+def test_a_typo_in_rvg_arm_names_the_TYPO_not_a_missing_G_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ AN UNKNOWN ARM AND A G-LESS ARM ARE THE SAME `()` TO ``stages_for``.
+
+    So ``rvg_arm=gg`` beside a q file aborted with "NO variant in this sweep has
+    a G stage" — true, and it sends the operator to audit their ladder instead of
+    the two characters they mistyped. The unknown arm is refused first, in
+    ``validate``'s own words, so an operator meeting the two refusals in either
+    order reads the same sentence.
+    """
+    _write_labels(tmp_path / "labels.jsonl", [_label(b"\x01" * 16, [0], [0.0])])
+    q = _q_file(tmp_path / "q.jsonl")
+
+    monkeypatch.setattr(rr, "_run_variant", lambda **kw: {"variant": kw["name"]})
+    monkeypatch.setattr(rr, "flatten_run_config_defaults", lambda _c: {"batch_size": 8})
+    monkeypatch.setattr(rr, "load_yaml_file", lambda _p: {})
+    monkeypatch.setattr(rr, "_corpus_policy_encoding", lambda _d: "lc0_1858")
+    monkeypatch.setattr(sys, "argv", _main_argv(tmp_path, q, [
+        "a000:", "gg30:rvg_arm=gg,rvg_g_alpha=0.3",
+    ]))
+    with pytest.raises(SystemExit) as ei:
+        rr.main()
+    message = str(ei.value)
+    assert "unknown rvg_arm" in message
+    assert "'gg30'" in message          # which variant
+    assert "'gg'" in message            # and what they actually typed
+    assert "expected one of g, r, v, vg" in message
+    assert "G stage" not in message, (
+        "the missing-G-stage message is the symptom of the typo, not its cause"
+    )
+
+
+def test_the_gates_unknown_arm_wording_matches_validates() -> None:
+    """Two sites refuse the same mistake; they must not describe it differently.
+
+    Pinned against ``validate``'s message rather than against a copied literal,
+    so adding an arm to ``STAGES`` updates both or neither."""
+    expected = f"expected one of {', '.join(sorted(rr.RvgArmSpec.STAGES))}"
+    with pytest.raises(SystemExit) as ei:
+        rr.RvgArmSpec(
+            arm="gg", r_weight=0.0, v_lambda=0.0, v_tau_cp=0.0,
+            v_veto_cp=float("inf"), g_alpha=0.3, g_temp_cp=100.0,
+        ).validate()
+    assert expected in str(ei.value)
+    assert expected == "expected one of g, r, v, vg"
