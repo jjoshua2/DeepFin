@@ -65419,3 +65419,21 @@ catch until the STUB NET was made to consume RNG the way gumbel_c does — a stu
 returns first-legal is RNG-transparent and vacuously chunking-invariant. Lint delta 0
 both gates; tests 302→333 (+31, 0 new failures); `stockfish_turn.py` unchanged this
 pass (verified against the cleared ca1e8ffd1).
+
+**`feat/mixed-corpus` RE-VERIFICATION: all 8 items CONFIRMED; verdict
+MERGE-WITH-ONE-CHANGE — and the hunted third follow-on WAS FOUND.** The F9 bar ceiling
+is `required × 10`, and `required` is EXACTLY 0.0 on a fully-labelled own corpus ⇒ the
+ceiling refuses ANY positive bar including the ladder's 0.001 (measured: 0.001 refused
+against a fully-labelled corpus; 0.0 launches), and the refusal's only named escape is
+the flag that disarms the guard entirely — a cleaner corpus pushes the operator toward
+the disarm switch. Planned ladder unaffected (production base 0.000943 → ceiling
+0.00943; arithmetic + flag path verified). Fix: absolute floor 0.002 + a real launch
+test (the existing test asserted literals and never launched). Re-verification
+highlights: phase recombination EXACT through the real `compute_loss` on
+disjoint-bucket batches (means and counts); classifier 30/30 raw-sum keys, zero
+mean-like false positives; OR semantics verified against `losses.py`'s own
+`torch.maximum` admission with AND never load-bearing on any of 13 routes (OR is a
+fail-loud UPPER BOUND for `sf_move_ce` — legend nit routed); F7 refusal proven to
+delete an ALREADY-WRITTEN mid checkpoint (drift injected only on call 4); both lint
+gates delta 0; pre-existing lc0_data_to_rows failure proven identical at the branch
+point. Merge on the one-change commit landing.
