@@ -65386,3 +65386,15 @@ merge" — original Opus reviewer re-dispatched with the OR-semantics check (is 
 for EVERY route?) and a hunt for a third follow-on. Re-smoke clean: realized f 0.500000,
 sf_move_ce own 1598/1598 / lc0 0/0 under OR, own leak 0.000862 < 0.001 bar, 0
 unrouted/violations. Tests wide-set 283→331, +48, zero new failures.
+
+**ops: ext IS TRAINING AND PAST HALFWAY — `checkpoint_mid.pt` written 15:14 (= step
+10,032 of 20,000).** The crawl ended before ~13:45; the log stays silent because this
+trainer emits nothing to stdout during training under nohup (block-buffered) — its
+11:58 mtime is a DEAD instrument. ⇒ For `lc0_control_train.py`, liveness = checkpoint
+file mtimes + `/proc/<pid>/io` growth, NEVER the log. (rchar now 57.0GB and still
+climbing at ~120% CPU = the deterministic-refresh synchronous reload tax during
+training, not a crawl.) Revised ETA: summary ~16:30-17:00; the ext deciding arena
+(ext-LAST vs original iter-595 init, banked template, conc 64) runs this evening —
+hours earlier than the 19:30-20:30 revision. Pre-step phase final accounting: ~95-105
+min (11:58 → ~13:45), not the 2h+ I reported at 13:52 — that reading conflated crawl
+with early training because I had only rchar to go on and no checkpoint yet existed.
