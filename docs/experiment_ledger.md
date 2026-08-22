@@ -64991,3 +64991,61 @@ on the plane conversion — pre-named riskiest piece #2); **not merged, no PR**.
 **ops:** ft595-EXT finished its deterministic-refresh crawl ~13:30 (shuffle-seed +
 shard-draw lines in the log) — ~1h earlier than projected; training steps beginning,
 summary ETA moves to ~18:30. Waiter unchanged.
+
+### 2026-08-22 — R/V/G target-surgery rig LANDED (`feat/rvg-target-surgery`); enumeration banked; MPV40@150k label pass LAUNCHED
+
+Builder: Opus agent, worktree `/home/josh/projects/chess-rvg`, 6 commits ending
+`0258ecce7`. Review pending (Opus reviewer dispatched); **not merged, no PR, no GPU work**.
++4,071/−63 over `rvg_surgery.py` (shared pure math), `rvg_label_pass.py` (label pass +
+`--mode enumerate-rows`), `retarget_retrain.py` (arms R/V/G/VG + rig-wrapper registry +
+took-effect assertion), 1,400 lines of tests.
+
+- **Join integrity:** smoke 200 predicted / 200 matched with `predicted` derived
+  scan-side and `matched` re-read off disk (the first version subtracted non-matches — a
+  gate that could not fail; builder fixed it and said so). Key round-trip 200/200; 0
+  moves outside stored `legal_mask`; **production-path join 4591/4591** through the
+  rig's own `DiskReplayBuffer` (different code path than the scan), pinned by a test.
+- **Mutation pass: 17 mutants, 16 killed, 1 proven arithmetically inert** (M3c,
+  whole-t renormalize on an already-normalized target). Three holes found ALIVE and
+  closed: uniform-multiplier blindness (ratio-only unlisted test), a G test row with no
+  unlisted mass, and **M11 — the join key hardcoding the production plane encoding**:
+  a legacy-encoding row gets a plausible WRONG key, silently stops matching its label,
+  and the arm still reports tidy coverage. Our signature defect, in the one function the
+  whole rig depends on, and the suite passed with it until mutated. (Now killed by an
+  encoding-aware test.)
+- **Deviations the code forced, accepted:** (1) label schema v2 stores per-move
+  EFFECTIVE CP, not regret — regret is pass-relative and cannot overlay; derived at read
+  time. (2) ⚑ **Arm R zeroes `w_sf_policy_floor`** (its listed-only vector also feeds
+  `sf_policy_floor_deficit`; running both silently corrupts the floor term) — so `a000`
+  is the wrong control for R and the ladder gains an **`a00f` leg**
+  (`w_sf_policy_floor=0`, nothing else). (3) `--rvg-g-q-source` is sweep-global ⇒ **arm B
+  runs as its own invocation** (a per-variant q override would be silently
+  variant-dependent — same defect class). (4) G's normalization convention fixed and
+  documented: q normalized over the LISTED set, power on t's support, unlisted keeps
+  t-mass; an external teacher's zero REMOVES a move, SF's mere absence does NOT.
+  (5) layered join built/tested, flag-gated OFF, out of v1. (6) entropy plumbed as
+  CALIBRATION ONLY (`note: never a success metric or gate`). (7) `fresh=True` on every
+  submit.
+- **Enumeration (ladder2-standard draw, seed 0, 6000×512):** 3,072,000 draws →
+  **1,057,186 distinct rows** (70.7% of the corpus's 1,495,168 unique) — restricting the
+  label pass cuts **29.3%** of SF budget with zero effect on what the sweep sees. ⚑ The
+  agent's "ready to bank" commands were NOT run verbatim — outputs went to the session
+  scratchpad; the enum file (verified: 1 provenance header + 1,057,186 keys, replay_dir
+  matches the salvage corpus, seed 0) is now BANKED at
+  `data/rvg/rvg_drawn_rows_6000x512.keys`; smokes at `scratchpad/rvg_smokes_20260822/`.
+- **Width cost re-measured at fixed NODES:** MPV40 = **1.171×** MPV20 (16-thread column;
+  the 32-thread pair is straggler noise on a 16-core box). The 7× in
+  `sf_multipv_width_costs_7x` is a fixed-DEPTH figure — both are true, different
+  regimes. MPV40 histogram: only 66/200 rows hit the 40-line cap ⇒ ~67% of rows list
+  EVERY legal move — "unlisted" nearly stops existing, which is the design point.
+- Lint bare: exit 1, **delta 0 vs branch point** (same 13 pre-existing basedpyright
+  errors in 3 files the branch never opened; live-branch suite is red by design —
+  reported as a delta). Tests: 66 → 135 passed, 0 regressions.
+- **LABEL PASS LAUNCHED** (the as-run command, from the rig worktree):
+  `cd /home/josh/projects/chess-rvg && CUDA_VISIBLE_DEVICES="" PYTHONPATH=. setsid nohup nice -n 10 python3 scripts/rvg_label_pass.py --mode label --config /home/josh/projects/chess/configs/pbt2_small.yaml --replay-dir /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --out /home/josh/projects/chess/data/rvg/rvg_labels_mpv40_150k.jsonl --threads 16 --nodes 150000 --multipv 40 --restrict-to /home/josh/projects/chess/data/rvg/rvg_drawn_rows_6000x512.keys`
+  ~4.7h projected (may run longer beside ext training). Completion marker: the FINAL
+  `.jsonl` (the run writes `.partial` until done); file-keyed waiter armed. Launched
+  BEFORE review by explicit risk call: label rows store `key` AND `fen`, so a join-key
+  defect found in review is repairable by re-keying from `fen` without re-searching.
+  The ladder itself does NOT launch until (a) the review verdict and (b) a prereg entry
+  with per-arm kill thresholds — neither exists yet.
