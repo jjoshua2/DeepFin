@@ -262,19 +262,30 @@ def test_v_hard_veto_zeroes_a_listed_move_at_or_above_the_threshold() -> None:
 def test_v_leaves_unlisted_moves_multiplier_at_exactly_one() -> None:
     """THE PROPERTY THE PREREG IS FOR: no fabricated regret for unlisted moves.
 
-    The renormalization is a single global constant, so the RATIO between any
-    two unlisted moves — and their ratio to the untouched listed move — is
-    preserved exactly. Any per-move default on the unlisted set breaks this.
+    Two assertions, and the SECOND is the load-bearing one. Ratios AMONG the
+    unlisted moves are preserved by any uniform multiplier, so a mutant that
+    downweights the whole unlisted block by one constant — the exact shape of
+    June's fabricated default — survives that check untouched. (Measured: a
+    mutant setting every weight to the worst listed weight left this test green
+    until the level assertion below was added.) The level is pinned against an
+    UNTOUCHED LISTED move, whose multiplier is exactly 1 by construction, so
+    only a genuinely-1.0 unlisted multiplier can satisfy it.
     """
     t = np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32)
+    # Slot 0 is listed with regret 400 (downweighted); slot 1 is listed with
+    # regret 0, i.e. below tau, so its multiplier is exactly 1.0.
     out, _ = apply_veto_edit(
-        t, np.array([0]), np.array([400.0]),
+        t, np.array([0, 1]), np.array([400.0, 0.0]),
         lam=0.02, tau_cp=10.0, veto_cp=1000.0,
     )
-    unlisted = np.array([1, 2, 3])
+    unlisted = np.array([2, 3])
     ratios_before = t[unlisted] / t[unlisted].sum()
     ratios_after = out[unlisted] / out[unlisted].sum()
     assert np.allclose(ratios_before, ratios_after, atol=1e-7)
+    # LEVEL, not just shape: unlisted mass relative to an untouched listed move
+    # must be unchanged, which is what "multiplier exactly 1" means.
+    for u in unlisted.tolist():
+        assert pytest.approx(float(out[u] / out[1]), rel=1e-6) == float(t[u] / t[1])
 
 
 def test_v_falls_back_to_the_unedited_target_when_all_mass_is_vetoed() -> None:
@@ -333,23 +344,60 @@ def test_g_hand_computed_three_move_example() -> None:
     assert pytest.approx(float(out[2]), abs=1e-6) == 0.18371602
 
 
-def test_g_powers_before_it_renormalizes() -> None:
-    """Renormalizing q or t AFTER the power is a different (and wrong) function.
+def test_g_normalizes_q_over_the_LISTED_set_before_the_power() -> None:
+    """The q normalization is load-bearing ONLY when unlisted mass exists.
 
-    Hand check with a deliberately UNNORMALIZED-looking listed pair: with
-    alpha = 0.5 the correct answer is proportional to sqrt(t*q) with q already
-    normalized over the listed set. A version that raised the powers and then
-    rescaled q would land somewhere else, and both answers are finite
-    distributions — nothing downstream would complain.
+    ⚑ MEASURED, NOT ASSUMED, AND IT COST A SURVIVING MUTANT TO FIND OUT. With
+    every move listed, dropping ``q /= q.sum()`` scales all listed entries by one
+    constant, which the FINAL renormalization then cancels exactly — so a
+    two-move example cannot see the defect at all, and an earlier version of this
+    test used one. The third move here is UNLISTED and keeps its t-mass, which is
+    what breaks the symmetry: a q that is not a distribution shifts mass between
+    the listed and unlisted halves.
+
+    Hand numbers (t = [0.5, 0.3, 0.2], listed {0,1}, regret [0, 100] cp, T = 100,
+    alpha = 0.5):
+      correct: q = [1, e^-1]/1.3678794 = [0.73105858, 0.26894142]
+               -> [sqrt(.5*q0), sqrt(.3*q1), .2] / 1.08863912
+               =  [0.55536450, 0.26091948, 0.18371602]
+      WRONG (q left unnormalized as [1, e^-1]):
+               -> [0.70710678, 0.33221737, 0.2] / 1.23932415
+               =  [0.57056068, 0.26806529, 0.16137403]
+    Both are finite, both sum to 1, and nothing downstream would object.
     """
-    t = np.array([0.8, 0.2], dtype=np.float32)
+    t = np.array([0.5, 0.3, 0.2], dtype=np.float32)
     out, _ = apply_geometric_blend(
-        t, np.array([0, 1]), np.array([0.0, 200.0]), alpha=0.5, temp_cp=100.0,
+        t, np.array([0, 1]), np.array([0.0, 100.0]), alpha=0.5, temp_cp=100.0,
     )
-    q = np.array([1.0, math.exp(-2.0)])
+    q = np.array([1.0, math.exp(-1.0)])
     q = q / q.sum()
-    unnorm = np.sqrt(np.array([0.8, 0.2]) * q)
+    unnorm = np.array([math.sqrt(0.5 * q[0]), math.sqrt(0.3 * q[1]), 0.2])
     assert np.allclose(out, unnorm / unnorm.sum(), atol=1e-6)
+    wrong = np.array([math.sqrt(0.5 * 1.0), math.sqrt(0.3 * math.exp(-1.0)), 0.2])
+    assert not np.allclose(out, wrong / wrong.sum(), atol=1e-4)
+
+
+def test_g_does_not_condition_t_on_the_listed_set_before_the_power() -> None:
+    """The other renormalization-order defect: rescaling t's LISTED entries to
+    sum to 1 before the power. That turns ``t`` into a conditional distribution
+    and silently changes how much of the row the unlisted tail keeps.
+
+    Same row as above. Conditioning t on {0,1} makes it [0.625, 0.375]:
+      -> [sqrt(.625*q0), sqrt(.375*q1), .2] / 1.16884
+      =  [0.58676..., 0.27568..., 0.17110...] -- again finite and normalized.
+    """
+    t = np.array([0.5, 0.3, 0.2], dtype=np.float32)
+    out, _ = apply_geometric_blend(
+        t, np.array([0, 1]), np.array([0.0, 100.0]), alpha=0.5, temp_cp=100.0,
+    )
+    q = np.array([1.0, math.exp(-1.0)])
+    q = q / q.sum()
+    cond = np.array([0.5, 0.3]) / 0.8
+    wrong = np.array([math.sqrt(cond[0] * q[0]), math.sqrt(cond[1] * q[1]), 0.2])
+    assert not np.allclose(out, wrong / wrong.sum(), atol=1e-4)
+    # ... and it IS the unconditioned answer.
+    right = np.array([math.sqrt(0.5 * q[0]), math.sqrt(0.3 * q[1]), 0.2])
+    assert np.allclose(out, right / right.sum(), atol=1e-6)
 
 
 def test_g_never_grows_the_support_of_t() -> None:
