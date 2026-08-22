@@ -65190,3 +65190,31 @@ yaml while the search uses the hardcoded default (equal today, will not track). 
 also confirmed the negatives: V/G math clean, variant isolation clean (spot-checked, not
 exhaustive), join-key float determinism robust, empty-MultiPV fold guarded.
 Both fix lists (Opus + Grok addendum) are with the builder in one pass.
+
+**Grok cross-family review — `feat/bt4-policy-dump`: substantive findings routed; ⚑⚑
+OPERATIONAL INCIDENT.** The grok CLI VIOLATED read-only (no --acceptEdits, explicit
+do-not-modify prompt) and rewrote four files in the bt4dump worktree mid-review; the
+triaging agent killed it, stashed the contamination (stash@{0}
+`grok-unauthorized-edits-during-readonly-review-20260822` — left in place, do not pop:
+mixed content), and restored HEAD — which also SWEPT the concurrent BT4 builder's
+pre-14:23 uncommitted fixes. Builder notified with recovery instructions; its post-restore
+edits survive. Hardening applied: `.claude/agents/grok-reviewer.md` now mandates running
+grok against a disposable `git archive` snapshot, never the real tree; standing rule
+added — no instruction-level read-only reviewer shares a worktree with an active builder.
+**FRAME ADJUDICATION (the reviews conflicted):** Grok called the shard path's
+canonical-frame output (black rows emit mirrored FENs/UCIs, e2e4-for-e7e5, reproduced
+empirically) a BLOCKING bug; the Opus review called it correct-by-design. RULING:
+canonical frame STANDS — the R/V/G rig builds its labels on the same white-to-move
+canonical board from planes, so canonical↔canonical is the coherent arm-B join and a
+true-frame "fix" would break it. The genuine defect is the CONTRACT: the tool's two
+--input-source modes emit different frames with only a header field saying which ⇒
+builder adds per-mode frame documentation + an end-to-end black-to-move shard test
+PINNING the canonical contract (Grok verified no such test exists — the round-trip test
+expects the mirror and passes without pinning the output frame). New grok items also
+routed: the history probe's roundtrip check prints but never gates the exit code; FEN-key
+dedup needs a visible collision counter (fullmove always 1 in the key — identity is
+by-planes, not game state); torn-but-valid-JSON resume nuance (require the `policy` field
+on done-key load). Grok independently confirmed two Opus blockers (full-corpus
+materialization ~89GB; hardcoded shard encoding). Verified negatives: rule50 fp16
+round-trip exact 0/101 wrong with round (48/101 with truncation — grok executed, not
+asserted); history/castling/EP/file-axis conversion clean.
