@@ -1232,6 +1232,87 @@ def test_an_external_q_on_an_arm_with_no_g_stage_is_a_refusal(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# 11b. The join key reads each row's OWN history encoding
+# ---------------------------------------------------------------------------
+
+
+class _MixedEncodingInner:
+    """A pool serving ONE position encoded under TWO different plane layouts.
+
+    Salvage bundles are concatenations of eras and the metadata plane block
+    moved between them (``_plane_layout``: root encodings hang their castling
+    and clock off ``root_metadata_base``, the legacy one off ``metadata_base``).
+    A pool that mixes them is exactly the case ``_row_keys`` exists for.
+    """
+
+    def __init__(self, fen: str, encodings: list[str], targets: np.ndarray) -> None:
+        board = chess.Board(fen)
+        self._encodings = list(encodings)
+        self._x = np.stack([
+            encode_lc0_full(board, input_history_encoding=enc) for enc in encodings
+        ]).astype(np.float16)
+        self._t = targets.astype(np.float16)
+
+    def per_row_keys(self) -> list[bytes]:
+        return [
+            position_fingerprints(self._x[i:i + 1], input_history_encoding=enc)[0]
+            for i, enc in enumerate(self._encodings)
+        ]
+
+    def sample_batch_arrays(
+        self, batch_size: int, *, wdl_balance: bool = True,
+    ) -> dict[str, np.ndarray]:
+        del batch_size, wdl_balance   # a fixed batch; the house unused-arg idiom
+        n = self._x.shape[0]
+        return {
+            "x": self._x.copy(),
+            "policy_target": self._t.copy(),
+            "_input_history_encoding": np.array(self._encodings),
+            "sf_p0_regret": np.zeros((n, _POLICY_W), dtype=np.float16),
+            "has_sf_p0_regret": np.zeros((n,), dtype=np.uint8),
+        }
+
+    def __len__(self) -> int:
+        return 2
+
+
+def test_the_join_key_reads_each_rows_own_history_encoding(tmp_path: Path) -> None:
+    """⚑ A HARDCODED LAYOUT DOES NOT RAISE — IT MIS-JOINS AND REPORTS A LOW ``f``.
+
+    Both rows are the SAME position, so a reader that honours each row's own
+    encoding gives them ONE key: the fingerprint identifies the position, not
+    the plane arrangement it arrived in. A reader that keys every row with one
+    hardcoded layout reads the legacy row's history planes as castling bits and
+    hands it a plausible, wrong key — no exception, just a row that silently
+    stops matching its label while the arm still reports a tidy coverage number.
+
+    So the assertion is on the JOIN, not on the helper: with a single label
+    written under the shared key, BOTH rows must come back eligible.
+    """
+    fen = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5"
+    targets = np.array([[0.5, 0.3, 0.2, 0, 0, 0, 0, 0]] * 2, dtype=np.float32)
+    inner = _MixedEncodingInner(fen, [PROD_ENCODING, "legacy"], targets)
+    keys = inner.per_row_keys()
+    assert keys[0] == keys[1]
+
+    path = tmp_path / "labels.jsonl"
+    _write_labels(path, [_label(keys[0], [0, 1], [0.0, -300.0])])
+    index = RvgLabelIndex.load(path)
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="v", v_lambda=0.01, v_tau_cp=0.0, v_veto_cp=1000.0), index,
+    )
+    out = buf.sample_batch_arrays(2)
+    stats = buf.rig_stats()
+    assert stats["total_rows"] == 2
+    assert stats["eligible_rows"] == 2
+    assert stats["realized_f"] == 1.0
+    # and the edit actually landed on both, not just on the row whose layout
+    # happened to match whatever the key reader assumed.
+    assert not np.array_equal(out["policy_target"][0], inner._t[0])
+    assert not np.array_equal(out["policy_target"][1], inner._t[1])
+
+
+# ---------------------------------------------------------------------------
 # 12. The join on the PRODUCTION path (the rig's own replay buffer)
 # ---------------------------------------------------------------------------
 
