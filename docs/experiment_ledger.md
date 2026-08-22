@@ -65137,3 +65137,39 @@ net_source, vacuous-sanity removals, one test vacuity (ranking-only gather test 
 under the static-remap mutant). Reviewer also re-measured raw-prior entropy: 1.39 nats
 on shard rows / 1.52 on audit rows (my 1.90 was a different draw) — all far from the
 0.970 post-search anchor, point unchanged. grok pass on the conversion still pending.
+
+**Review verdict — `feat/rvg-target-surgery` (independent Opus reviewer): MERGE-WITH-CHANGES;
+Q1 enumeration determinism FAIL.** Core arithmetic (join key both directions + through the
+rig's own buffer, V/G/VG hand-recomputed, R/floor coupling end-to-end, variant isolation)
+all PASS by re-derivation. The wiring layer carries the defects:
+- **⚑⚑ ENUMERATION REPRODUCES ONLY BATCH 1 OF 6000** — `maybe_mirror_batch_arrays` draws
+  `rng.random(n)` UNCONDITIONALLY from the buffer's own sampling RNG between draws
+  (mirror_prob 0.5, no yaml key), so the trainer's row stream diverges from the
+  enumeration's after the first batch (measured: draw 1 identical, draws 2+ different).
+  NOT an arm bias — all arms share one draw sequence and realized f reads off the
+  wrapper's own counters — but the RUNNING label pass covers ~93-97% of what the sweep
+  will draw (expected overlap ≈0.94) with ~4-7% waste. Disposition: pass NOT killed
+  (resumable, joins by key); builder fixes enumeration to consume the identical stream
+  (call the real mirror fn, + a stream-equality test), re-enumerates to the scratchpad;
+  I top up the label file afterward with `--restrict-to <union>`. Ladder can also run at
+  f≈0.94 if time forces it — the realized number goes in the prereg either way.
+- **P0:** this branch BROKE the pre-existing soft-shape arm
+  (`_SoftPolicyAsMainBuffer.rig_active_stamp` reads a `_spec` that is never set →
+  AttributeError via `__getattr__` forwarding; no test activates that wrapper).
+- **Took-effect gate blind to `edited_rows==0`:** arm B with a key-mismatched q file
+  trains the CONTROL on every row and passes the gate (eligible ⇒ counted, fallback ⇒
+  still eligible). Refusals added on edited_rows==0 / all-eligible-missing.
+- **Signature defect, verbatim:** the `policy_encoding` refusal at rvg_surgery.py:698-703
+  is green in tests and DEAD in the rig — both production `load` call sites omit the
+  argument its test passes explicitly. Plus: rig params with no activating arm are
+  recorded as applied and reach NOTHING (`g030:rvg_g_alpha=...` without `rvg_arm=g` = a
+  silent control leg); external-q path never reaches the report (provenance unprovable);
+  arm v + external q accepted with a false q_source; reviewer's own surviving mutant —
+  external-q normalization removable at 126/126 green because every arm-B test row sums
+  to 1 over listed.
+- Decide-now calls made: layered join WIRED (`--rvg-labels` append; machinery kept for
+  the composite-target future), single-file label-index load STREAMED (~9.3GB peak /
+  ~6GB held measured at 1M positions otherwise).
+Lint delta 0 (13 pre-existing, same 3 untouched files; ⚑ a fresh worktree without built
+`.so` reads 155 — the baseline is build-state dependent). Tests: +69 new pass, 57
+pre-existing pass both sides. Fix list sent to the builder; grok pass still pending.
