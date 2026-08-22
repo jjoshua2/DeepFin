@@ -21,6 +21,17 @@ pass. It is NOT the stored MPV6 ``sf_p0_*`` fields: the coverage curve
 even reproduce themselves (32.3% set agreement). Nothing here reads
 ``sf_p0_regret``/``sf_p0_policy_target`` as an INPUT.
 
+⚑ THE LABEL CANNOT SEE REPETITION HISTORY, AND NEITHER CAN THE JOIN KEY. The
+label pass rebuilds a board from the stored planes and hands SF a FEN, so the
+repetition stack is gone: SF scores the position as a first occurrence while the
+training row may have arisen after one, and two rows differing only in
+repetition count share ONE key and ONE label. Accepted for v1, and neither
+consequence is invisible: a fortress or perpetual whose true value is a draw by
+repetition can be labeled as a live evaluation. The direction is the safe one —
+an over-optimistic ``best_cp`` makes the veto fire LESS, not more — and it
+applies uniformly to every arm and to the control, so it cannot manufacture a
+difference between them.
+
 TB-LINE SENTINELS (``cp ~ +/-20000`` with Syzygy on) ARE TREATED AS REAL
 EVALUATIONS. They are folded through the ordinary ``best_cp - cp`` regret and
 then clipped at ``AUDIT_REGRET_CAP_CP`` (1000 cp), exactly like the mate band
@@ -32,8 +43,10 @@ every mated line, because both saturate the cap.
 """
 from __future__ import annotations
 
+import array
 import hashlib
 import json
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +68,35 @@ from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 #: pass's own ``best_cp``, so two passes' regrets cannot be overlaid — only
 #: their cp can, with ``best_cp`` recomputed over the overlaid set.
 RVG_LABEL_SCHEMA_VERSION = 2
+
+#: Arm B's external-policy file format. Separate from the label schema on
+#: purpose: the two files are produced by different programs on different
+#: branches, and a shared version number would make a bump in one of them read
+#: as a bump in the other.
+RVG_EXTERNAL_POLICY_SCHEMA_VERSION = 1
+
+
+def file_provenance(path: str | Path) -> dict[str, object]:
+    """``{path, bytes, mtime_utc}`` for an input file, for the run report.
+
+    ⚑ A PATH ALONE DOES NOT IDENTIFY A FILE. ``--rvg-labels labels.jsonl`` names
+    a file that a resumed label pass appends to while a sweep reads it, and two
+    runs quoting the same path can have read different bytes. Size and mtime are
+    what distinguish them; they are not a content hash, and are not claimed to
+    be — hashing a multi-gigabyte label file at the head of every sweep would
+    cost minutes to defend against a case (a same-size same-mtime edit) that
+    does not occur here.
+    """
+    p = Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return {"path": str(p), "bytes": None, "mtime_utc": None}
+    return {
+        "path": str(p),
+        "bytes": int(st.st_size),
+        "mtime_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)),
+    }
 
 #: Digest width of the join key, in bytes. 16 bytes over ~1.5M corpus rows puts
 #: the birthday collision probability at ~1e-10; the key is also EXACT in the
@@ -640,6 +682,105 @@ class RvgLabelIndex:
         return (nodes / multipv if multipv > 0 else 0.0, nodes, name)
 
     @classmethod
+    @classmethod
+    def _load_one_streaming(
+        cls, file_path: Path, *, policy_encoding: str | None,
+    ) -> RvgLabelIndex:
+        """One label file, parsed straight into the flat arrays.
+
+        Every refusal the overlay path makes is made here: schema version,
+        move/cp length agreement, duplicate keys, and the corpus policy-space
+        check. What is NOT here is the two intermediate dicts — the per-record
+        move dict is transient, and the columns accumulate in ``array.array``
+        (compact C storage, amortized append) rather than in lists of ndarrays.
+
+        Move order and duplicate-slot handling match the overlay path exactly:
+        moves ascending, and a slot named twice inside one record keeps the LAST
+        cp — the same thing ``slot[move] = ...`` does there. That equality is
+        what makes this a memory optimization rather than a second convention.
+        """
+        header: dict[str, object] = {}
+        encodings: set[str] = set()
+        lookup: dict[bytes, int] = {}
+        offsets = array.array("q", [0])
+        move_index = array.array("i")
+        cp_eff = array.array("f")
+        regret_cp = array.array("f")
+        total = 0
+        with open(file_path, encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                rec = json.loads(stripped)
+                if rec.get("record") == "provenance":
+                    header = dict(rec)
+                    continue
+                version = int(rec.get("v", -1))
+                if version != RVG_LABEL_SCHEMA_VERSION:
+                    raise SystemExit(
+                        f"{file_path}: label schema version {version}, this "
+                        f"build reads {RVG_LABEL_SCHEMA_VERSION}"
+                    )
+                encodings.add(str(rec.get("policy_encoding", "")))
+                key = bytes.fromhex(str(rec["key"]))
+                mi = [int(v) for v in rec["move_index"]]
+                cp = [float(v) for v in rec["cp_eff"]]
+                if len(mi) != len(cp):
+                    raise SystemExit(
+                        f"{file_path}: record {rec['key']} has {len(mi)} moves "
+                        f"and {len(cp)} cp values"
+                    )
+                if key in lookup:
+                    raise SystemExit(
+                        f"{file_path}: duplicate key {rec['key']} — the join "
+                        "would be ambiguous"
+                    )
+                # A slot named twice keeps the LAST cp — the same thing
+                # `slot[move] = ...` does in the overlay path, and the equality
+                # the two paths are compared on.
+                slot: dict[int, float] = dict(zip(mi, cp, strict=True))
+                moves = sorted(slot)
+                cps = [slot[m] for m in moves]
+                lookup[key] = len(lookup)
+                move_index.extend(moves)
+                cp_eff.extend(cps)
+                # `best_cp=None`: over THIS record's set, the same rule the
+                # overlay path applies over the overlaid set.
+                regret_cp.extend(regrets_from_cp(cps))
+                total += len(moves)
+                offsets.append(total)
+
+        file_encoding = next(iter(encodings)) if encodings else ""
+        if policy_encoding is not None and file_encoding and file_encoding != policy_encoding:
+            raise SystemExit(
+                f"labels are in {file_encoding!r} policy space but the corpus "
+                f"stores {policy_encoding!r} — the edits would address different "
+                "moves than the ones they were computed for"
+            )
+        header.setdefault("nodes", 0)
+        header.setdefault("multipv", 0)
+        header["policy_encoding"] = file_encoding
+        header["label_files"] = [str(file_path)]
+        header["label_file_provenance"] = [file_provenance(file_path)]
+        strength = cls._pass_strength(header, file_path.name)
+        return cls(
+            offsets=np.frombuffer(offsets, dtype=np.int64).copy(),
+            move_index=np.frombuffer(move_index, dtype=np.int32).copy(),
+            cp_eff=np.frombuffer(cp_eff, dtype=np.float32).copy(),
+            regret_cp=np.frombuffer(regret_cp, dtype=np.float32).copy(),
+            pass_id=np.zeros((total,), dtype=np.int8),
+            lookup=lookup,
+            header=header,
+            passes=[{
+                "name": file_path.name,
+                "nodes": int(_header_number(header, "nodes")),
+                "multipv": int(_header_number(header, "multipv")),
+                "nodes_per_line": strength[0],
+            }],
+        )
+
+    @classmethod
     def load(
         cls,
         path: str | Path | Sequence[str | Path],
@@ -649,6 +790,29 @@ class RvgLabelIndex:
         paths = [Path(path)] if isinstance(path, (str, Path)) else [Path(p) for p in path]
         if not paths:
             raise SystemExit("RvgLabelIndex.load: no label files given")
+        if len(paths) == 1:
+            # ⚑ THE ONLY SHAPE v1 RUNS, AND THE OVERLAY PATH COSTS ~9.3 GB TO
+            # BUILD IT. That path materializes the whole corpus TWICE in Python
+            # objects (`rows`, then `merged`) before flattening — a standing cost
+            # held for the entire sweep, on the same box as training. With one
+            # file there is nothing to overlay, so stream straight into the flat
+            # arrays. Same refusals, same output; proved equal to the overlay
+            # path on the same file by
+            # `test_the_streaming_single_file_load_equals_the_overlay_path`.
+            return cls._load_one_streaming(paths[0], policy_encoding=policy_encoding)
+        return cls._load_overlay(paths, policy_encoding=policy_encoding)
+
+    @classmethod
+    def _load_overlay(
+        cls, paths: list[Path], *, policy_encoding: str | None = None,
+    ) -> RvgLabelIndex:
+        """Several passes, overlaid per move, weakest pass first.
+
+        Kept reachable on ONE file (called directly) so
+        ``test_the_streaming_single_file_load_equals_the_overlay_path`` can
+        compare the two on identical input — a memory optimization that is not
+        differentially tested is a second convention.
+        """
 
         parsed: list[tuple[tuple[float, float, str], Path, dict[str, object],
                            dict[bytes, tuple[list[int], list[float]]]]] = []
@@ -746,6 +910,12 @@ class RvgLabelIndex:
         header_out = dict(parsed[-1][2])
         header_out["policy_encoding"] = file_encoding
         header_out["label_files"] = [str(p) for _s, p, _h, _r in parsed]
+        # Not a path list: SIZE AND MTIME PER FILE. A label file grows while a
+        # resumed pass appends to it, so "which file" and "which bytes" are
+        # different questions and the report has to answer the second one.
+        header_out["label_file_provenance"] = [
+            file_provenance(p) for _s, p, _h, _r in parsed
+        ]
         return cls(
             offsets=offsets,
             move_index=(np.concatenate(idx_chunks) if idx_chunks
@@ -853,5 +1023,38 @@ class RvgExternalPolicyIndex:
                     # it is probability mass, and mass adds.
                     per_move[slot] = per_move.get(slot, 0.0) + float(prob)
                 rows[key] = per_move
+        # ⚑ THE VERSION IS REQUIRED, AND ITS ABSENCE IS A REFUSAL. This file is
+        # produced by a DIFFERENT program on a DIFFERENT branch; "no version
+        # declared" means the two sides have never agreed on what a record means,
+        # which is exactly when silently consuming it is worst. Declared on the
+        # provenance line (a per-row version on a policy file is pure bulk):
+        #   {"record": "provenance", "v": 1, "name": "...", "policy_encoding": ...}
+        declared_v = header.get("v")
+        if declared_v is None:
+            raise SystemExit(
+                f"{path}: external policy file declares no schema version. Add a "
+                '\'{"record": "provenance", "v": '
+                f'{RVG_EXTERNAL_POLICY_SCHEMA_VERSION}, ...}}\' line — an '
+                "undeclared format is one the rig cannot promise it reads the "
+                "way the producer wrote it."
+            )
+        version = _header_number({"v": declared_v}, "v")
+        if int(version) != RVG_EXTERNAL_POLICY_SCHEMA_VERSION:
+            raise SystemExit(
+                f"{path}: external policy schema version {int(version)}, this "
+                f"build reads {RVG_EXTERNAL_POLICY_SCHEMA_VERSION}"
+            )
+        # And the file's OWN declared policy space, checked against the corpus's
+        # — the `encoding` check above only refuses a corpus this loader cannot
+        # serve, which is a different question and would pass a file written in
+        # `az_4672`.
+        declared_encoding = str(header.get("policy_encoding", "") or "")
+        if declared_encoding and declared_encoding != encoding:
+            raise SystemExit(
+                f"{path}: external policy is in {declared_encoding!r} policy "
+                f"space but the corpus stores {encoding!r} — its probabilities "
+                "would be applied to different moves than they were computed for"
+            )
         header.setdefault("policy_encoding", encoding)
+        header["file_provenance"] = file_provenance(path)
         return cls(rows, header)

@@ -73,6 +73,7 @@ import os
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import argparse
+import inspect
 import json
 import sys
 import threading
@@ -103,7 +104,7 @@ from chess_anti_engine.moves.encode import (
 )
 from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
 from chess_anti_engine.stockfish.uci import StockfishUCI
-from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 
@@ -201,11 +202,19 @@ class CorpusRow:
 class ScanResult:
     """What ``scan_corpus`` found, with every drop counted rather than filtered.
 
-    ``predicted_matches`` is the number of SELECTED rows that a complete label
-    file must join — the count the verification step asserts. It is
-    ``selected - unfingerprintable - undecodable``, i.e. the rows that have a
-    key AND a board; a search failure later subtracts from it explicitly, so the
-    prediction is never quietly adjusted to whatever the run produced.
+    ``unfingerprintable`` and ``undecodable`` are SCAN-WIDE counts and stay that
+    way even under ``--restrict-to``: they say how much of the corpus could not
+    be canonicalized at all, which is a property of the corpus and not of the
+    subset an invocation chose to label.
+
+    ⚑ There is deliberately no ``predicted_matches`` helper. One used to live
+    here as ``selected - unfingerprintable - undecodable``, and it is the wrong
+    arithmetic under ``--restrict-to`` — where ``selected`` is the restricted
+    row count while the two subtrahends are scan-wide, so a restricted pass
+    would predict too few matches and the join check would "pass" by having
+    aimed low. The prediction is now taken directly from the keys the scan
+    actually selected (see the join block in ``main``), which cannot drift from
+    the population it describes.
     """
 
     rows: list[CorpusRow]
@@ -217,10 +226,6 @@ class ScanResult:
     fingerprint_roundtrip_mismatch: int
     alignment_checked: int
     alignment_illegal: int
-
-    @property
-    def predicted_matches(self) -> int:
-        return self.selected - self.unfingerprintable - self.undecodable
 
 
 def _legal_indices(arrs: dict[str, np.ndarray], i: int) -> np.ndarray:
@@ -389,6 +394,19 @@ def label_record(row: CorpusRow, res: object, policy_encoding: str) -> LabelReco
             continue
         a = move_to_index_for_encoding(mv, board, policy_encoding=policy_encoding)
         if a < 0:
+            # ⚑ THE DROPPED MOVE STAYS IN ``best_cp``, AND THAT IS THE SAFE
+            # DIRECTION. ``best_cp`` was folded over ALL listed lines, so a move
+            # that has no policy slot still sets the bar the surviving moves'
+            # regrets are measured against. Recomputing the bar over only the
+            # encodable moves would make every surviving move look BETTER than
+            # SF found it — the veto would fire less, the blend would sharpen
+            # less, and both arms would under-apply while reading as configured.
+            # Keeping it means a row can have no move at regret 0, which the
+            # edits handle (V's fallback, G's support rule) and which is the
+            # honest statement: the best move here is one the policy space
+            # cannot express. In practice this is empty — the scan ASSERTS every
+            # legal move encodes onto the stored legal mask before any search
+            # runs, so a drop here means the position changed under us.
             continue
         idx.append(int(a))
         # ⚑ EFFECTIVE CP IS THE STORED VALUE; regret rides along for readability
@@ -421,6 +439,31 @@ def label_record(row: CorpusRow, res: object, policy_encoding: str) -> LabelReco
 
 
 
+def _trainer_mirror_prob(trainer_kwargs: dict[str, object]) -> float:
+    """The mirror probability the sweep's ``Trainer`` will actually run with.
+
+    ⚑ There is NO ``mirror_prob`` yaml key. The value is the ``Trainer.__init__``
+    signature default (0.5), which means hardcoding 0.5 here would be a constant
+    that silently stops matching the day someone changes the default — the
+    stale-constant defect, in the one number that decides whether this
+    enumeration names the right rows. So the config is consulted first (in case
+    a key is ever added) and the signature default is read second, off the
+    Trainer itself. A rename raises rather than degrading to "no mirror",
+    because "no mirror" is the answer that looks fine and is wrong.
+    """
+    if "mirror_prob" in trainer_kwargs:
+        return float(trainer_kwargs["mirror_prob"])  # pyright: ignore[reportArgumentType]
+    param = inspect.signature(Trainer.__init__).parameters.get("mirror_prob")
+    if param is None or param.default is inspect.Parameter.empty:
+        raise SystemExit(
+            "Trainer.__init__ has no 'mirror_prob' default to read. The mirror "
+            "consumes this buffer's RNG between draws, so the enumeration "
+            "cannot name the sweep's rows without it — find where the mirror "
+            "probability now comes from and pass it here."
+        )
+    return float(param.default)
+
+
 def enumerate_drawn_rows(
     *,
     config_path: Path,
@@ -451,19 +494,43 @@ def enumerate_drawn_rows(
       replacement batches and advances the buffer's RNG. That path also
       DE-PAIRS the sweep, so ``_assert_draws_unchanged`` aborts it — a sweep
       this enumeration under-covers is a sweep that is void anyway;
-    * irrelevant: mirror augmentation and the SF-target rebuild both run AFTER
-      ``sample_batch_arrays`` returns, so they change the CONTENT of a batch and
-      never which rows it holds.
+    * ⚑⚑ REPRODUCED, AND IT IS NOT OPTIONAL: the mirror's RNG CONSUMPTION.
+      ``maybe_mirror_batch_arrays`` changes only the CONTENT of a batch, which
+      is why an earlier revision of this docstring called it irrelevant — and
+      that was wrong, because it draws ``rng.random(n)`` from
+      ``buf.rng``, the SAME generator ``sample_batch_arrays`` samples rows
+      from, and it draws it UNCONDITIONALLY at ``prob > 0`` (``augment.py``;
+      the trainer chain is ``train_steps`` -> ``_sample_batch_host`` ->
+      ``_prepare_host_arrays``, and ``Trainer.mirror_prob`` defaults to 0.5
+      with no yaml key). An enumeration that skips it reproduces draw 1 exactly
+      and then diverges from draw 2 onward — measured. So the REAL function is
+      called here, on the real batch, purely for that side effect; its output
+      is discarded because the rig's wrapper edits rows PRE-mirror and the
+      label join is in the pre-mirror frame. Calling the real function rather
+      than re-deriving "one extra ``random(n)``" is the point: it stays correct
+      the day the trainer's between-draw consumption changes, and
+      ``test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer``
+      fails the day it changes in a way this does not track.
+    * genuinely irrelevant: the SF-target rebuild, which consumes no RNG.
 
     All arms of a ladder share one enumeration: they are seeded identically and
     the rig ABORTS if their shard pool or draw count differs.
     """
     import numpy as _np
 
+    from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays
+
     from scripts.retarget_retrain import build_rig_replay_buffer
 
     base_config = flatten_run_config_defaults(load_yaml_file(config_path))
-    accum_steps = int(trainer_kwargs_from_config(dict(base_config)).get("accum_steps", 1) or 1)
+    trainer_kwargs = trainer_kwargs_from_config(dict(base_config))
+    accum_steps = int(trainer_kwargs.get("accum_steps", 1) or 1)
+    mirror_prob = _trainer_mirror_prob(trainer_kwargs)
+    history_encoding = str(
+        trainer_kwargs.get("input_history_encoding")
+        or base_config.get("input_history_encoding")
+        or "",
+    )
     draws = int(steps) * accum_steps
     # The stored plane width IS the arch's width for any valid sweep: the rig
     # refuses a mismatch up front (`_assert_replay_planes_match`), so reading it
@@ -478,7 +545,7 @@ def enumerate_drawn_rows(
 
     print(f"[rvg-enum] seed={seed} steps={steps} accum_steps={accum_steps} "
           f"draws={draws} batch={batch_size} planes={target_planes} "
-          f"shards={len(paths)}", flush=True)
+          f"shards={len(paths)} mirror_prob={mirror_prob}", flush=True)
 
     buf = build_rig_replay_buffer(
         config=dict(base_config), replay_dir=replay_dir,
@@ -498,6 +565,17 @@ def enumerate_drawn_rows(
                     np.asarray(arrs["x"])[sel], input_history_encoding=str(enc),
                 ))
             rows_drawn += int(np.asarray(arrs["x"]).shape[0])
+            # ⚑ NOT DEAD CODE, AND THE RESULT IS MEANT TO BE DISCARDED. This is
+            # the trainer's between-draw RNG consumption, reproduced by calling
+            # the real function on the real batch. Without it the buffer's
+            # generator runs ahead of the sweep's from draw 2 onward and this
+            # enumeration names a DIFFERENT row set than the one that will be
+            # trained on. See the docstring; the fingerprints above are taken
+            # BEFORE it because the rig edits and joins pre-mirror.
+            maybe_mirror_batch_arrays(
+                arrs, rng=buf.rng, prob=mirror_prob,
+                input_history_encoding=history_encoding or None,
+            )
             if progress_every > 0 and (i + 1) % progress_every == 0:
                 rate = (i + 1) / max(1e-9, time.time() - t0)
                 print(f"[rvg-enum] {i + 1}/{draws} draws "
@@ -534,6 +612,94 @@ def enumerate_drawn_rows(
     return header
 
 
+#: Flags each mode reads. Every other flag is refused when that mode is
+#: selected — an accepted-and-ignored flag is this repo's signature defect in
+#: its cheapest form, and the operator who wrote `--limit 200` alongside
+#: `--mode enumerate-rows` believes they bounded a 41-minute job.
+_MODE_ONLY_FLAGS: dict[str, tuple[str, ...]] = {
+    "label": ("threads", "nodes", "multipv", "limit", "row_range",
+              "roundtrip_sample", "restrict_to", "no_syzygy"),
+    "enumerate-rows": ("enum_steps", "enum_batch_size", "enum_progress_every"),
+}
+
+
+def _resume_settings(args: argparse.Namespace) -> dict[str, object]:
+    """The settings that change what a BANKED ROW MEANS.
+
+    ⚑ Deliberately NOT every flag. ``--row-range``, ``--limit`` and
+    ``--restrict-to`` change WHICH rows a pass labels, never what a labeled row
+    says, and sharding one logical pass across several ``--row-range``
+    invocations into a single ``--out`` is the documented workflow — putting
+    them here would refuse the exact thing the ``--limit``/``--restrict-to``
+    guard tells operators to do. ``--threads`` is parallelism. What is left is
+    the search budget, the width, the tablebases, and the corpus the row indices
+    point into: change any of those and a resumed file is a blend of two
+    measurements under one header.
+    """
+    paths = iter_shard_paths(args.replay_dir)
+    return {
+        "nodes": int(args.nodes),
+        "multipv": int(args.multipv),
+        "syzygy": not bool(args.no_syzygy),
+        "corpus": {
+            "replay_dir": str(Path(args.replay_dir).resolve()),
+            "shards": len(paths),
+            "bytes": sum(p.stat().st_size for p in paths),
+        },
+    }
+
+
+def _assert_resume_settings_match(
+    banked: dict[str, object], current: dict[str, object], partial_path: Path,
+) -> None:
+    """Refuse a resume whose banked rows were measured under other settings.
+
+    A ``.partial`` written before this record existed carries no
+    ``resume_settings`` line and is therefore never checked — it resumes exactly
+    as it did, which is what an in-flight pass needs.
+    """
+    diffs = [
+        f"{k}: banked {banked.get(k)!r} vs now {current[k]!r}"
+        for k in sorted(current)
+        if banked.get(k) != current[k]
+    ]
+    if diffs:
+        raise SystemExit(
+            f"{partial_path} holds rows measured under DIFFERENT settings:\n  "
+            + "\n  ".join(diffs)
+            + "\nResuming would stitch two measurements into one file under a "
+            "header written from this invocation's arguments — the artifact "
+            "would claim a budget it did not run. Use a different --out, or "
+            "delete the .partial to relabel."
+        )
+
+
+def _refuse_flags_for_other_mode(
+    ap: argparse.ArgumentParser, args: argparse.Namespace,
+) -> None:
+    """Refuse flags that belong to the mode that is NOT selected.
+
+    Compared against each flag's own argparse DEFAULT rather than against a
+    hardcoded list of "unset" values, so a default that changes cannot turn this
+    into either a false refusal or a silent pass.
+    """
+    other = [m for m in _MODE_ONLY_FLAGS if m != args.mode]
+    defaults = {a.dest: a.default for a in ap._actions}
+    offenders = sorted(
+        dest
+        for mode in other
+        for dest in _MODE_ONLY_FLAGS[mode]
+        if getattr(args, dest, None) != defaults.get(dest)
+    )
+    if offenders:
+        names = ", ".join("--" + d.replace("_", "-") for d in offenders)
+        raise SystemExit(
+            f"--mode {args.mode} does not read {names}. They were accepted and "
+            "then ignored, which is indistinguishable from having worked — pass "
+            "them to the mode that reads them, or drop them."
+        )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -561,16 +727,28 @@ def main() -> None:
     ap.add_argument("--restrict-to", type=Path, default=None,
                     help="a key file from --mode enumerate-rows: label ONLY the "
                          "rows the seeded sweep will actually draw")
+  # ⚑ THESE DEFAULTS DO NOT MATCH retarget_retrain.py's, AND THE MODE'S WHOLE
+  # CLAIM IS THAT IT MIRRORS IT. `--steps` there defaults to 800, not 6000, and
+  # its batch-size fallback constant is 256 where this one is 512. Both sides
+  # read `batch_size` off the yaml today, so the constants never fire and the
+  # two agree — by coincidence, not by construction. Stated in --help so an
+  # operator who overrides one side knows to override the other.
     ap.add_argument("--enum-steps", type=int, default=6000,
-                    help="enumerate-rows: optimizer steps the sweep will run")
+                    help="enumerate-rows: optimizer steps the sweep will run. "
+                         "⚑ retarget_retrain.py --steps defaults to 800 — pass "
+                         "the SAME number to both or the enumeration names a "
+                         "different row set than the sweep draws")
     ap.add_argument("--enum-batch-size", type=int, default=0,
-                    help="enumerate-rows: batch size (0 = the config's)")
+                    help="enumerate-rows: batch size (0 = the config's, which is "
+                         "also what the sweep uses; the two scripts' hardcoded "
+                         "fallbacks differ, 512 here vs 256 there)")
     ap.add_argument("--enum-progress-every", type=int, default=100,
                     help="enumerate-rows: draws between progress lines")
     ap.add_argument("--no-syzygy", action="store_true",
                     help="deviate from the production label path and run WITHOUT "
                          "tablebases (recorded in the header)")
     args = ap.parse_args()
+    _refuse_flags_for_other_mode(ap, args)
 
     if args.mode == "enumerate-rows":
         base = flatten_run_config_defaults(load_yaml_file(args.config))
@@ -647,11 +825,19 @@ def main() -> None:
         scan.unique = {k: v for k, v in scan.unique.items() if k in wanted}
         scan.rows = [r for r in scan.rows if r.key in wanted]
         scan.selected = len(scan.rows)
-        scan.unfingerprintable = 0
-        scan.undecodable = 0
+        # ⚑ THESE COUNTS ARE REPORTED, NOT ZEROED. An earlier revision set both
+        # to 0 here so the join arithmetic would balance — which silently
+        # discarded the one measurement that says how much of the corpus this
+        # pass could not even canonicalize. The join is predicted off
+        # `scan.unique` and asserted against the file, so it never needed them
+        # zeroed; what it needed was for them not to be counted twice, and they
+        # are not. They are carried as the SCAN's counts, which is what they are.
         print(f"[rvg-label] --restrict-to {args.restrict_to}: "
               f"{len(wanted)} enumerated rows, {before} -> {len(scan.unique)} "
-              "unique positions to label", flush=True)
+              f"unique positions to label (scan-wide: {scan.unfingerprintable} "
+              f"unfingerprintable, {scan.undecodable} undecodable — these are "
+              "counts over the FULL scan, not over the restricted set)",
+              flush=True)
 
     if not scan.unique:
         raise SystemExit("no labelable rows selected")
@@ -660,15 +846,31 @@ def main() -> None:
     partial_path = out_path.with_suffix(out_path.suffix + ".partial")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # ⚑ THE SETTINGS THE BANKED ROWS WERE MEASURED UNDER, WRITTEN INTO THE
+    # SIDECAR AND CHECKED ON RESUME. The `.partial` is keyed by position only, so
+    # re-running the same `--out` after changing `--nodes`, `--multipv`,
+    # `--restrict-to` or the corpus STITCHES the old rows into the new file —
+    # and the final header is rewritten from the NEW argv, so the artifact then
+    # claims a budget it did not run. Neither the join check (key presence) nor
+    # the header can catch that: the header is the thing that lies. Same defect
+    # shape as the BT4 dump's stale header.
+    settings = _resume_settings(args)
     done: dict[str, LabelRecord] = {}
     if partial_path.exists():
         with open(partial_path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
-                if line:
-                    rec = json.loads(line)
-                    done[str(rec["key"])] = rec
+                if not line:
+                    continue
+                rec = json.loads(line)
+                if rec.get("record") == "resume_settings":
+                    _assert_resume_settings_match(rec, settings, partial_path)
+                    continue
+                done[str(rec["key"])] = rec
         print(f"[rvg-label] resuming: {len(done)} positions already banked", flush=True)
+    if not partial_path.exists():
+        with open(partial_path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"record": "resume_settings", **settings}) + "\n")
 
     todo = [r for k, r in scan.unique.items() if k.hex() not in done]
     engines: list[StockfishUCI] = []
@@ -838,11 +1040,26 @@ def main() -> None:
         # Search throughput with engine spawn EXCLUDED — the number a full-pass
         # projection should be taken from.
         "positions_per_second_this_invocation": round(rate, 3),
+        # ⚑ INFORMATIONAL ONLY — THIS BLOCK DID NOT CONFIGURE THE SEARCH. Read
+        # off the yaml so a reader can compare the pass against production, but
+        # the pass ran at `--nodes` (recorded above), which is the module
+        # constant `DEFAULT_NODES` unless overridden. It EQUALS
+        # `sf_label_nodes_floor` today and will not follow it if the yaml moves:
+        # deriving the default from the yaml was the alternative, and it was
+        # rejected because a label pass whose budget silently changes with a
+        # production edit is not reproducible, which is the property this whole
+        # file is built around. `nodes_matches_production_floor` states the
+        # relationship instead of leaving it to be assumed.
         "production_reference": {
+            "note": "informational; the search ran at the recorded 'nodes', "
+                    "not at these values",
             "sf_multipv": opts.sf_multipv_production,
             "sf_nodes_opponent": opts.sf_nodes_opponent,
             "sf_label_nodes_floor": opts.sf_label_nodes_floor,
             "sf_label_nodes_cap": opts.sf_label_nodes_cap,
+            "nodes_matches_production_floor": (
+                int(args.nodes) == int(opts.sf_label_nodes_floor)
+            ),
         },
     }
 

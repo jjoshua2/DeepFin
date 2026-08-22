@@ -421,8 +421,16 @@ class _SoftPolicyAsMainBuffer:
         self.eligible_rows = 0
 
     def rig_active_stamp(self) -> str:
-        """``R`` / ``V`` / ``G`` / ``V+G`` — read off the applying object."""
-        return self._spec.stamp()
+        """This wrapper has ONE shape, so the stamp is a constant.
+
+        ⚑ It used to read ``self._spec.stamp()``, copied from the rvg wrapper
+        during the port. ``_spec`` is not an attribute here, so ``__getattr__``
+        forwarded the lookup to the wrapped ``DiskReplayBuffer`` and the arm
+        died with ``AttributeError`` the first time ``rig_policy_from_soft=1``
+        was used — i.e. this branch broke a pre-existing arm, and no test caught
+        it because the only existing mention refuses before it ever wraps.
+        """
+        return "SOFT"
 
     def rig_description(self) -> str:
         return ("main policy target served from policy_soft_target "
@@ -605,10 +613,24 @@ class _RvgTargetSurgeryBuffer:
     Joins each sampled row to the shallow wide-MultiPV label file by
     ``rvg_surgery.position_fingerprints`` — the SAME function
     ``scripts/rvg_label_pass.py`` keyed the file with, called on the SAME stored
-    planes, so the join is exact by construction. Rows with no label are served
-    UNTOUCHED and counted; the realized coverage ``f`` is reported per arm
-    exactly as dose-ladder2 reported its ``sf_p0`` eligibility, because ``f`` is
-    a property of the banked corpus and not of the live run.
+    planes, so the join is exact by construction. The realized coverage ``f`` is
+    reported per arm exactly as dose-ladder2 reported its ``sf_p0`` eligibility,
+    because ``f`` is a property of the banked corpus and not of the live run.
+
+    ⚑ "UNLABELED ROWS ARE SERVED UNTOUCHED" IS TRUE FOR V/G/VG AND FALSE FOR R,
+    and the difference is deliberate. V, G and VG edit ``policy_target`` in
+    place and leave an unlabeled row's array bit-identical. Arm R REPLACES the
+    whole ``sf_p0_regret`` field with a freshly built vector, so an unlabeled
+    row does not keep its stored MPV6 regret — it gets zeros and
+    ``has_sf_p0_regret = 0``. That is the point of the arm: the stored vector is
+    the MPV6 one whose bad-mass reach is 60.9% and whose warm-TT rows do not
+    reproduce, and mixing repaired and unrepaired vectors inside one loss term
+    would make the arm a blend of two teachers rather than a test of one.
+    ``has = 0`` is the field's own "no label here" state, so the row leaves the
+    ``w_sf_own_regret`` term entirely rather than contributing "regret is zero
+    on every move", which would be a strong and false signal —
+    ``test_arm_r_unlabeled_rows_leave_the_loss_term_entirely`` pins that through
+    the real loss, not through the field.
 
     ⚑ ARM R EDITS ``sf_p0_regret``, NOT ``policy_target``. The loss leg it feeds
     (``w_sf_own_regret``) is a whole-distribution pull ``sum_m p(m) * r(m)``;
@@ -644,10 +666,28 @@ class _RvgTargetSurgeryBuffer:
         *, external_q: RvgExternalPolicyIndex | None = None,
     ) -> None:
         spec.validate()
-        if external_q is not None and not spec.stages():
-            raise SystemExit(
-                f"rvg_arm={spec.arm!r} has no G stage, so an external q source "
-                "would reach nothing. Use arm g or vg."
+        # ⚑ THE TEST HAS TO BE "HAS A G STAGE", NOT "HAS ANY STAGE". `stages()`
+        # is empty only for arm R, so the original form ACCEPTED arm V beside an
+        # external q: V has a stage, the guard passed, the q reached nothing, and
+        # `rig_stats` still reported `q_source: external_policy_file`. A FALSE
+        # PROVENANCE LINE is worse than the silent no-op it describes, because it
+        # is the line a reader would use to rule the failure out.
+        #
+        # ⚑ AND THE ANSWER IS NOT A PER-LEG REFUSAL. A mixed ladder
+        # (a000 / v020 / g030) with a q file is legitimate — the q belongs to the
+        # G legs and the V leg simply has no use for it — so refusing here would
+        # ban a correct sweep. Instead: DETACH it on a leg that cannot use it, so
+        # the leg is honest about running on nothing, and let `main` refuse the
+        # case that is genuinely an operator error (a q file that reaches NO leg
+        # in the whole sweep). Silence is not an option either way; what varies
+        # is whether the right response is "stop" or "say so".
+        self._external_q_detached = external_q is not None and "G" not in spec.stages()
+        if self._external_q_detached:
+            external_q = None
+            print(
+                f"[retarget] rvg arm {spec.arm!r} has no G stage: the external q "
+                "source is NOT attached to this leg and its q_source reads "
+                "sf_regret. (The q applies to the g/vg legs of this sweep.)"
             )
         self._inner = inner
         self._spec = spec
@@ -658,6 +698,10 @@ class _RvgTargetSurgeryBuffer:
         # and quietly substituting one for the other is the arm-B version of
         # this repo's signature defect.
         self.external_q_missing_rows = 0
+        # Present in the q file, but not one move it names is in this row's
+        # listed set -- see the G stage. Counted apart from `missing_rows`
+        # because the two point at different repairs.
+        self.external_q_zero_overlap_rows = 0
         self.total_rows = 0
         self.eligible_rows = 0
         self.edited_rows = 0
@@ -746,9 +790,21 @@ class _RvgTargetSurgeryBuffer:
                 "sf_regret" if self._external_q is None else "external_policy_file"
             ),
             "external_q": (
+                {
+                    "attached": False,
+                    "reason": "this arm has no G stage; the q applies to g/vg legs",
+                }
+                if self._external_q_detached else
                 None if self._external_q is None else {
+                    "attached": True,
+                    # ⚑ The PATH AND ITS BYTES, not just the path. Recorded at
+                    # load time inside the index (`file_provenance`), so the
+                    # report names the file the sweep actually read rather than
+                    # the argument it was given.
+                    "file": self._external_q.header.get("file_provenance"),
                     "n_positions": len(self._external_q),
                     "missing_rows": int(self.external_q_missing_rows),
+                    "zero_overlap_rows": int(self.external_q_zero_overlap_rows),
                     "header": self._external_q.header,
                 }
             ),
@@ -774,9 +830,16 @@ class _RvgTargetSurgeryBuffer:
     def _row_keys(self, arrs: dict) -> list[bytes]:
         """Fingerprints for the batch, grouped by history encoding.
 
-        A pool mixing encodings would otherwise be keyed with ONE encoding's
-        plane offsets, which does not raise — it reads a repetition plane as a
+        ⚑ A pool mixing encodings would otherwise be keyed with ONE encoding's
+        plane offsets, which does not raise — it reads a history plane as a
         castling bit and hands the row a plausible, wrong key.
+
+        In practice ``DiskReplayBuffer`` refuses to build a CHUNK from shards of
+        mixed encodings, so a mixed BATCH is not reachable through it today.
+        This branch is therefore a guard against a future pool shape, not a
+        live bug — and it is kept, and tested, because the failure it prevents
+        is silent: the wrong key reads as "this row has no label", i.e. as
+        lower coverage rather than as an error.
         """
         x = arrs["x"]
         encs = np.asarray(arrs["_input_history_encoding"]).reshape(-1)
@@ -857,6 +920,18 @@ class _RvgTargetSurgeryBuffer:
                             self.external_q_missing_rows += 1
                             self.stage_fallback[stage] += 1
                             continue
+                        # ⚑ PRESENT BUT USELESS IS A THIRD STATE, and it reads
+                        # like the other two if it is not counted. The row IS in
+                        # the q file, so it is not `missing`; every move the file
+                        # names falls outside this row's listed set, so the
+                        # aligned q is all zeros and the blend falls back — which
+                        # is indistinguishable from a numerical fallback in the
+                        # counters. It means something specific and actionable:
+                        # the q file and the labels are joined but their MOVE
+                        # spaces disagree (a frame or canonicalization mismatch),
+                        # which is a different repair from "regenerate the keys".
+                        if not float(np.sum(q_weights)) > 0.0:
+                            self.external_q_zero_overlap_rows += 1
                     current, fell_back = apply_geometric_blend(
                         current, idx, reg,
                         alpha=spec.g_alpha, temp_cp=spec.g_temp_cp,
@@ -925,7 +1000,7 @@ class _RigContext:
 
     defaults: RvgArmSpec
     labels: RvgLabelIndex | None
-    labels_path: Path | None
+    labels_path: list[Path] | None
     params: dict[str, float]
     #: Arm B's alternative ``q``: an external per-row policy (an lc0/BT4 net's
     #: distribution) instead of the SF-regret-derived softmax. Default None =
@@ -975,6 +1050,26 @@ class _RigContext:
         return self.labels
 
 
+def _corpus_policy_encoding(replay_dir: Path) -> str:
+    """The policy space THIS corpus stores, read off its own first shard.
+
+    ⚑ ARMS A GATE THAT WAS OTHERWISE DEAD. ``RvgLabelIndex.load`` and
+    ``RvgExternalPolicyIndex.load`` both refuse a label file whose policy space
+    disagrees with the corpus — and both were called without the argument, so
+    the refusal could only ever fire in the tests that passed it explicitly.
+    A gate whose only caller declines to arm it is the defect this repo is named
+    for; this is the value that arms it.
+
+    Read lazily (headers only, no row data): the corpus is ~800 shards and this
+    runs before the first arm.
+    """
+    paths = iter_shard_paths(replay_dir)
+    if not paths:
+        raise SystemExit(f"no replay shards under {replay_dir}")
+    lazy, _ = load_shard_arrays(paths[0], lazy=True)
+    return str(np.asarray(lazy["_policy_encoding"]).reshape(-1)[0])
+
+
 def _split_rig_overrides(overrides: dict) -> tuple[dict, dict, dict]:
     """Partition a variant's overrides into ``(rig, rig-params, Trainer-bound)``.
 
@@ -999,6 +1094,7 @@ def _split_rig_overrides(overrides: dict) -> tuple[dict, dict, dict]:
 
 def _apply_rig_wrappers(
     buf: Any, rig_overrides: dict, ctx: _RigContext, *, name: str,
+    params: dict | None = None,
 ) -> tuple[Any, str | None]:
     """Wrap ``buf`` for whichever rig knob this arm activated.
 
@@ -1013,6 +1109,24 @@ def _apply_rig_wrappers(
     decide what the arm trained on.
     """
     active = {k: v for k, v in rig_overrides.items() if v}
+    params = dict(params or {})
+    # ⚑ RIG PARAMETERS WITHOUT A WRAPPER ARE A SILENT CONTROL. `_split_rig_overrides`
+    # keeps the `rvg_*` parameter names away from the dead-knob guard (they are
+    # not supposed to reach the Trainer), which means a variant that tunes an arm
+    # and forgets to ACTIVATE it —
+    #     --variant "g030:rvg_g_alpha=0.30,rvg_g_temp=150"   (no rvg_arm=g)
+    # — sails through: the overrides are recorded in the report as applied, the
+    # trainer-bound set is empty, no wrapper is built, and the leg trains the
+    # control while its row in the ladder table reads "alpha 0.30". Exactly the
+    # shape the dead-knob guard exists for, reintroduced one level up by the
+    # exemption that guard needed.
+    if params and not active:
+        raise SystemExit(
+            f"variant {name!r} sets rig parameters {sorted(params)} but activates "
+            "NO rig wrapper, so they reach nothing and this leg would train the "
+            "control while the report records them as applied. Add the arm "
+            "(e.g. rvg_arm=g), or drop the parameters."
+        )
     if len(active) > 1:
         raise SystemExit(
             f"variant {name!r} activates {len(active)} rig wrappers at once: "
@@ -1054,9 +1168,20 @@ def _assert_rig_wrapper_took_effect(train_buf: Any, *, name: str) -> None:
     * ``eligible_rows == 0`` — the wrapper served rows and not one was eligible,
       so the edit was the identity and this arm IS the control under another
       name.
+    * ``edited_rows == 0`` — ⚑ THE THIRD DOOR, and eligibility does not close
+      it. A row can be eligible (it HAS a label) and still be served bitwise
+      unchanged, because every stage fell back. The realistic trigger is arm B
+      with a q file whose keys do not match this corpus: every row looks up,
+      every lookup misses, every G stage falls back, and the arm trains the
+      control while ``realized_f`` reports full coverage. Reported as
+      ``fallback_rows`` in the summary — but a number in a report nobody reads
+      is not a gate, so it is one here.
 
     Duck-typed on ``rig_stats`` rather than switched on a class, so a wrapper
-    added later is covered the day it is added.
+    added later is covered the day it is added. A wrapper whose stats carry no
+    ``edited_rows`` key (the soft-shape arm) is exempt from that leg rather than
+    failed by it — ``.get(..., None)`` distinguishes "did not edit" from
+    "does not count edits".
     """
     stats = getattr(train_buf, "rig_stats", None)
     if stats is None:
@@ -1075,6 +1200,25 @@ def _assert_rig_wrapper_took_effect(train_buf: Any, *, name: str) -> None:
             "the control under another name. Check that --rvg-labels covers this "
             "--replay-dir (realized f is reported per arm in retarget_report.json)."
         )
+    edited = s.get("edited_rows")
+    if edited is not None and int(edited) == 0:
+        raise SystemExit(
+            f"variant {name!r}: {s['eligible_rows']} rows were eligible and NOT "
+            "ONE was edited — every stage fell back, so the Trainer saw the "
+            "stored targets bit for bit and this arm is the control under "
+            f"another name (fallback_rows={s.get('fallback_rows')})."
+        )
+    ext = s.get("external_q")
+    if isinstance(ext, dict):
+        missing = int(ext.get("missing_rows", 0) or 0)
+        if missing and missing >= int(s.get("eligible_rows", 0)):
+            raise SystemExit(
+                f"variant {name!r}: the external q file supplied NO row the "
+                f"corpus asked for ({missing} misses over "
+                f"{s['eligible_rows']} eligible rows). The two files are in "
+                "different key spaces — regenerate the q file against this "
+                "--replay-dir rather than training a control labelled arm B."
+            )
 
 
 def _apply_rvg_config_side(
@@ -1376,7 +1520,7 @@ def _run_variant(
                 "checkpoint arch)"
             )
         train_buf, rig_active = _apply_rig_wrappers(
-            buf, rig_overrides, ctx, name=name,
+            buf, rig_overrides, ctx, name=name, params=rig_params,
         )
         t0 = time.time()
         metrics = trainer.train_steps(train_buf, batch_size=int(batch_size), steps=int(steps))
@@ -1441,13 +1585,31 @@ def _run_variant(
             train_buf.rig_stats() if hasattr(train_buf, "rig_stats") else None
         ),
   # Arm R changes a LOSS WEIGHT rather than a batch field, so the wrapper's
-  # counters cannot prove that half. Read back off the resolved config the
-  # Trainer was actually built from.
+  # counters cannot prove that half.
+  #
+  # ⚑ READ OFF THE TRAINER'S OWN ATTRIBUTES, NOT THE CONFIG DICT. The config is
+  # the PRODUCER's copy: it proves what was asked for, which is the half we
+  # already know. `trainer.w_sf_own_regret` and `trainer.sf_policy_floor_params.w`
+  # are the values `compute_loss` is actually called with, so a rename or a
+  # dropped key between `from_dict` and the Trainer shows up as a disagreement
+  # instead of being invisible. Same rule the trainer's own floor announcement
+  # follows ([[announce_from_the_consumers_own_parameter]]).
         "rvg_config_side": {
-            "w_sf_own_regret": float(config.get("w_sf_own_regret", 0.0) or 0.0),
-            "w_sf_policy_floor": float(config.get("w_sf_policy_floor", 0.0) or 0.0),
+            "w_sf_own_regret": float(trainer.w_sf_own_regret),
+            "w_sf_policy_floor": float(trainer.sf_policy_floor_params.w),
+            "asked_for": {
+                "w_sf_own_regret": float(config.get("w_sf_own_regret", 0.0) or 0.0),
+                "w_sf_policy_floor": float(config.get("w_sf_policy_floor", 0.0) or 0.0),
+            },
         },
-        "rvg_labels": str(ctx.labels_path) if ctx.labels_path else None,
+        "rvg_labels": (
+            ctx.labels.header.get("label_file_provenance")
+            if ctx.labels is not None else None
+        ),
+        "rvg_external_q": (
+            ctx.external_q.header.get("file_provenance")
+            if ctx.external_q is not None else None
+        ),
         "final_metrics": {
             k: float(v)
             for k, v in vars(metrics).items()
@@ -1491,9 +1653,20 @@ def main() -> None:
   # matching `rvg_*` key (e.g. `--variant "g030:rvg_arm=g,rvg_g_alpha=0.30"`), so
   # one invocation runs the whole ladder over ONE identically-seeded draw
   # sequence — the pairing property dose-ladder2 depends on.
-    ap.add_argument("--rvg-labels", type=Path, default=None,
+  # `append`: REPEATABLE, single-file behaviour unchanged. The overlay machinery
+  # (`RvgLabelIndex.load` over several files, weakest pass first so the strongest
+  # per-move reading wins) was built and tested but had NO WAY TO BE CALLED —
+  # a `type=Path` scalar. Tested-but-unreachable is the same defect class as
+  # accepted-but-ignored, one layer up, and the composite-target design needs a
+  # deeper-narrow overlay later, so this arms it rather than deleting it.
+  # ⚑ v1 of the ladder uses ONE pass; a multi-file invocation is not part of the
+  # banked command list.
+    ap.add_argument("--rvg-labels", type=Path, action="append", default=None,
+                    metavar="PATH",
                     help="shallow wide-MultiPV label JSONL from "
-                         "scripts/rvg_label_pass.py; required by any rvg arm")
+                         "scripts/rvg_label_pass.py; required by any rvg arm. "
+                         "REPEATABLE: several passes are overlaid per move, "
+                         "deeper-per-line wins (v1 uses one file)")
     ap.add_argument("--rvg-r-weight", type=float, default=0.0,
                     help="arm R: w_sf_own_regret applied to the listed-only "
                          "regret vector (arm R also REQUIRES w_sf_policy_floor=0)")
@@ -1532,9 +1705,22 @@ def main() -> None:
   # ~1.5M positions and re-parsing the JSONL per arm would add minutes of wall
   # to every leg for an index that is identical across them by construction.
     labels: RvgLabelIndex | None = None
+    # The corpus's OWN policy space, passed to BOTH index loaders so their
+    # encoding refusals are armed on the production path rather than only in the
+    # tests that hand them the argument.
+    #
+    # ⚑ LAZY, and that is not a micro-optimization. Reading it eagerly made a
+    # sweep with NO rvg arguments open the shard directory here and die on an
+    # empty one, several guards earlier than the buffer that is supposed to
+    # report that — i.e. a change made for the rvg path broke the non-rvg path.
+    # It is read once, on first need, and only when there is a file to check.
+    corpus_encoding: str | None = None
     if args.rvg_labels is not None:
+        corpus_encoding = _corpus_policy_encoding(args.replay_dir)
         t_lab = time.time()
-        labels = RvgLabelIndex.load(args.rvg_labels)
+        labels = RvgLabelIndex.load(
+            list(args.rvg_labels), policy_encoding=corpus_encoding,
+        )
         print(f"[retarget] rvg labels: {len(labels)} positions from "
               f"{args.rvg_labels} in {time.time() - t_lab:.1f}s "
               f"(nodes={labels.header.get('nodes')}, "
@@ -1549,7 +1735,11 @@ def main() -> None:
                 f"--rvg-g-q-source {q_source!r}: expected 'sf' or 'file:<path>'"
             )
         external_q_path = Path(q_source[len("file:"):])
-        external_q = RvgExternalPolicyIndex.load(external_q_path)
+        if corpus_encoding is None:
+            corpus_encoding = _corpus_policy_encoding(args.replay_dir)
+        external_q = RvgExternalPolicyIndex.load(
+            external_q_path, policy_encoding=corpus_encoding,
+        )
         print(f"[retarget] rvg external q: {len(external_q)} positions from "
               f"{external_q_path}")
     rig = _RigContext(
@@ -1560,11 +1750,30 @@ def main() -> None:
             g_temp_cp=float(args.rvg_g_temp),
         ),
         labels=labels,
-        labels_path=args.rvg_labels,
+        labels_path=(list(args.rvg_labels) if args.rvg_labels else None),
         params={},
         external_q=external_q,
         external_q_path=external_q_path,
     )
+    # ⚑ THE ONE q REFUSAL THAT IS CORRECTLY SWEEP-LEVEL. A leg without a G stage
+    # detaches the q and says so (see `_RvgTargetSurgeryBuffer.__init__`), which
+    # keeps a mixed ladder legal. But a q file that reaches NO leg in the whole
+    # sweep is not a mixed ladder — it is an operator who believes arm B is
+    # running. That is a stop, and it can only be decided once every variant is
+    # known, which is here.
+    if external_q is not None:
+        reaches = [
+            name for name, ov in (_parse_variant(v) for v in args.variant)
+            if "rvg_arm" in ov and "G" in rig.resolve_rvg(str(ov["rvg_arm"])).stages()
+        ]
+        if not reaches:
+            raise SystemExit(
+                f"--rvg-g-q-source names {external_q_path} but NO variant in this "
+                "sweep has a G stage, so the external policy reaches nothing and "
+                "every leg would train on the SF-derived q (or on nothing at all) "
+                "while the run was labelled arm B. Add an rvg_arm=g or rvg_arm=vg "
+                "variant, or drop --rvg-g-q-source."
+            )
 
     # ONE reference for the whole sweep, and it is arm 1's OWN buffer scan —
     # deliberately not a glob taken here. Each arm re-scans the directory inside

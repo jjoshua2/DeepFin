@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import cast
 
 import chess
 import numpy as np
@@ -28,6 +29,7 @@ import pytest
 
 from chess_anti_engine.eval.audit import decode_board_from_planes
 from chess_anti_engine.eval.rvg_surgery import (
+    RVG_EXTERNAL_POLICY_SCHEMA_VERSION,
     RVG_LABEL_SCHEMA_VERSION,
     MultiPvLine,
     RvgLabelIndex,
@@ -1140,11 +1142,10 @@ def test_the_external_q_source_blends_toward_a_file_supplied_policy(
     ]
     path = tmp_path / "ext.jsonl"
     key = b"\x22" * 16
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps({"record": "provenance", "name": "bt4-test"}) + "\n")
-        fh.write(json.dumps({
-            "key": key.hex(), "policy": {ucis[0]: 0.7, ucis[1]: 0.3},
-        }) + "\n")
+    _write_external_q(
+        path, [{"key": key.hex(), "policy": {ucis[0]: 0.7, ucis[1]: 0.3}}],
+        name="bt4-test",
+    )
     ext = RvgExternalPolicyIndex.load(path)
     assert len(ext) == 1
     assert ext.header["name"] == "bt4-test"
@@ -1182,12 +1183,11 @@ def test_the_external_q_aligns_by_policy_index_not_by_list_position(
     ]
     path = tmp_path / "ext.jsonl"
     key = b"\x22" * 16
-    with open(path, "w", encoding="utf-8") as fh:
-        # Written in REVERSE order on purpose.
-        fh.write(json.dumps({
-            "key": key.hex(),
-            "policy": {ucis[2]: 0.6, ucis[1]: 0.3, ucis[0]: 0.1},
-        }) + "\n")
+    # Written in REVERSE order on purpose.
+    _write_external_q(path, [{
+        "key": key.hex(),
+        "policy": {ucis[2]: 0.6, ucis[1]: 0.3, ucis[0]: 0.1},
+    }])
     ext = RvgExternalPolicyIndex.load(path)
     q = ext.weights_for(key, np.asarray(slots, dtype=np.int64))
     assert q is not None
@@ -1204,7 +1204,7 @@ def test_a_row_absent_from_the_external_q_file_is_counted_not_back_filled(
     index = _index_for(inner.keys(), tmp_path,
                        {0: (_VG_IDX.tolist(), (-_VG_REG).tolist())})
     ext_path = tmp_path / "ext.jsonl"
-    ext_path.write_text(json.dumps({"key": (b"\xee" * 16).hex(), "policy": {}}) + "\n")
+    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
     buf = rr._RvgTargetSurgeryBuffer(
         inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0),
         index, external_q=RvgExternalPolicyIndex.load(ext_path),
@@ -1217,18 +1217,60 @@ def test_a_row_absent_from_the_external_q_file_is_counted_not_back_filled(
     assert stats["stages"] == [{"stage": "G", "edited_rows": 0, "fallback_rows": 1}]
 
 
-def test_an_external_q_on_an_arm_with_no_g_stage_is_a_refusal(tmp_path: Path) -> None:
+@pytest.mark.parametrize("arm", ["r", "v"])
+def test_an_external_q_on_a_leg_with_no_g_stage_is_detached_and_says_so(
+    arm: str, tmp_path: Path,
+) -> None:
+    """⚑ NOT A REFUSAL, AND NOT A SILENT NO-OP EITHER.
+
+    A mixed ladder (a000 / v020 / g030) with ``--rvg-g-q-source`` is legitimate:
+    the q belongs to the G legs. Refusing per-leg would ban that sweep. But the
+    original form tested ``not spec.stages()``, which is empty ONLY for arm R —
+    so arm V passed the guard, the q reached nothing, and ``rig_stats`` still
+    reported ``q_source: external_policy_file``. A false provenance line is
+    worse than the no-op it describes: it is the line a reader uses to rule the
+    failure out.
+
+    The leg detaches it and says so on both channels — ``q_source`` reads
+    ``sf_regret``, and ``external_q`` carries ``attached: False`` with a reason.
+    """
     targets = np.stack([_VG_T, _VG_T])
     inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
     index = _index_for(inner.keys(), tmp_path,
                        {0: (_VG_IDX.tolist(), (-_VG_REG).tolist())})
     ext_path = tmp_path / "ext.jsonl"
-    ext_path.write_text(json.dumps({"key": (b"\xee" * 16).hex(), "policy": {}}) + "\n")
-    with pytest.raises(SystemExit, match="no G stage"):
-        rr._RvgTargetSurgeryBuffer(
-            inner, _spec(arm="r", r_weight=0.5), index,
-            external_q=RvgExternalPolicyIndex.load(ext_path),
-        )
+    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
+    spec = (_spec(arm="r", r_weight=0.5) if arm == "r"
+            else _spec(arm="v", v_lambda=0.01, v_veto_cp=1000.0))
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, spec, index, external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    stats = buf.rig_stats()
+    assert stats["q_source"] == "sf_regret"
+    assert stats["external_q"] == {
+        "attached": False,
+        "reason": "this arm has no G stage; the q applies to g/vg legs",
+    }
+
+
+def _write_external_q(
+    path: Path, rows: list[dict[str, object]], **header: object,
+) -> Path:
+    """Write an arm-B q file, provenance line included.
+
+    The version line is REQUIRED by the loader: an external policy comes from
+    another program on another branch, so an undeclared format is one neither
+    side has agreed on. Written through one helper so a fixture cannot quietly
+    test a shape the rig refuses.
+    """
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "record": "provenance", "v": RVG_EXTERNAL_POLICY_SCHEMA_VERSION,
+            **header,
+        }) + "\n")
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -1398,3 +1440,625 @@ def test_the_key_survives_the_rigs_replay_buffer_not_just_the_scan_path(
         f"{len(served - scan_keys)} of {len(served)} rows the buffer served are "
         "NOT addressable by the scan path's keys — the join would silently miss"
     )
+
+
+# ---------------------------------------------------------------------------
+# 13. Review-pass guards (2026-08-22 independent + cross-family review)
+# ---------------------------------------------------------------------------
+
+
+def test_the_soft_shape_wrapper_can_actually_be_activated() -> None:
+    """⚑ THIS BRANCH BROKE A PRE-EXISTING ARM, AND THE SUITE DID NOT NOTICE.
+
+    ``_SoftPolicyAsMainBuffer.rig_active_stamp`` was copied from the rvg wrapper
+    during the port and read ``self._spec.stamp()``. ``_spec`` is not an
+    attribute of that class, so ``__getattr__`` forwarded the lookup to the
+    wrapped ``DiskReplayBuffer`` and the arm died with ``AttributeError`` the
+    first time ``rig_policy_from_soft=1`` was used. Nothing caught it because
+    the only existing test of that key refuses BEFORE the wrapper is built.
+
+    So this test does the one thing that would have: it ACTIVATES the wrapper
+    and takes it through the same two calls ``_run_variant`` makes.
+    """
+    class _Inner:
+        rng = np.random.default_rng(0)
+
+        def sample_batch_arrays(
+            self, batch_size: int, *, wdl_balance: bool = True,
+        ) -> dict[str, np.ndarray]:
+            del batch_size, wdl_balance
+            n = 2
+            return {
+                "x": np.zeros((n, 175, 8, 8), dtype=np.float16),
+                "policy_target": np.eye(n, _POLICY_W, dtype=np.float16),
+                "policy_soft_target": np.full((n, _POLICY_W), 1.0 / _POLICY_W,
+                                              dtype=np.float16),
+                "has_policy_soft": np.ones((n,), dtype=np.uint8),
+            }
+
+        def __len__(self) -> int:
+            return 2
+
+    buf, active = rr._apply_rig_wrappers(
+        _Inner(), {"rig_policy_from_soft": 1.0}, rr._RigContext.inert(), name="soft",
+    )
+    assert active == "rig_policy_from_soft:SOFT"
+    out = buf.sample_batch_arrays(2)
+    rr._assert_rig_wrapper_took_effect(buf, name="soft")
+    assert np.allclose(np.asarray(out["policy_target"], dtype=np.float32),
+                       1.0 / _POLICY_W)
+
+
+def test_rig_parameters_without_an_active_wrapper_are_a_refusal() -> None:
+    """``--variant "g030:rvg_g_alpha=0.30"`` with ``rvg_arm=g`` FORGOTTEN.
+
+    The parameters are split away from the dead-knob guard (they are not meant
+    to reach the Trainer), so nothing else can see that they reach nothing
+    either: the overrides land in the report as applied, the trainer-bound set
+    is empty, no wrapper is built, and the leg trains the control while its row
+    in the ladder table reads "alpha 0.30".
+    """
+    _name, overrides = rr._parse_variant("g030:rvg_g_alpha=0.30,rvg_g_temp=150")
+    rig, params, bound = rr._split_rig_overrides(overrides)
+    assert not rig            # nothing activates a wrapper
+    assert not bound          # nothing reaches the Trainer either
+    assert params             # ...and yet the parameters are recorded
+    with pytest.raises(SystemExit, match="activates NO rig wrapper"):
+        rr._apply_rig_wrappers(
+            object(), rig, rr._RigContext.inert(), name="g030", params=params,
+        )
+
+
+def test_an_arm_that_edited_no_row_is_a_refusal_not_a_null(tmp_path: Path) -> None:
+    """Eligible does not mean edited, and the gate has to test the second one.
+
+    Arm B with a q file keyed against a different corpus is the realistic case:
+    every row is labeled (eligible), every q lookup misses, every G stage falls
+    back, and the arm trains the control with ``realized_f`` reading 1.0.
+    """
+    targets = np.stack([_VG_T, _VG_T])
+    inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
+    keys = inner.keys()
+    index = _index_for(keys, tmp_path, {
+        0: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+        1: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+    })
+    ext_path = tmp_path / "ext.jsonl"
+    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0), index,
+        external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    buf.sample_batch_arrays(2)
+    stats = buf.rig_stats()
+    assert stats["eligible_rows"] == 2
+    assert stats["realized_f"] == 1.0
+    assert stats["edited_rows"] == 0
+    with pytest.raises(SystemExit, match="NOT ONE was edited"):
+        rr._assert_rig_wrapper_took_effect(buf, name="b030")
+
+
+def test_an_external_q_that_matched_no_eligible_row_is_a_refusal(
+    tmp_path: Path,
+) -> None:
+    """The same failure named accurately: a key-space mismatch, not a null arm.
+
+    The message has to name the q FILE, because "regenerate the q file against
+    this --replay-dir" and "your alpha is too small" are different repairs.
+    """
+    targets = np.stack([_VG_T, _VG_T])
+    inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
+    index = _index_for(inner.keys(), tmp_path, {
+        0: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+        1: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+    })
+    ext_path = tmp_path / "ext.jsonl"
+    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0), index,
+        external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    buf.sample_batch_arrays(2)
+    assert buf.rig_stats()["external_q"]["missing_rows"] == 2
+    # `edited_rows == 0` fires first; both are the same event, and the external-q
+    # leg is what makes the message actionable, so it is asserted directly.
+    with pytest.raises(SystemExit, match="different key spaces"):
+        rr._assert_rig_wrapper_took_effect(
+            _StatsOnly({
+                "total_rows": 2, "eligible_rows": 2, "edited_rows": 1,
+                "fallback_rows": 1,
+                "external_q": {"missing_rows": 2},
+            }),
+            name="b030",
+        )
+
+
+class _StatsOnly:
+    """A wrapper stand-in that only answers ``rig_stats`` — the duck type the
+    took-effect gate is written against."""
+
+    def __init__(self, stats: dict[str, object]) -> None:
+        self._stats = stats
+
+    def rig_stats(self) -> dict[str, object]:
+        return self._stats
+
+
+def test_the_external_q_is_renormalized_over_the_LISTED_set() -> None:
+    """⚑ THE MUTANT THE FIRST ARM-B SUITE COULD NOT KILL.
+
+    Every earlier arm-B test used a q that already summed to 1 over the listed
+    moves, so deleting ``q = q / q_total`` changed nothing and the whole suite
+    stayed green. The realistic file does NOT sum to 1 over the listed set: an
+    external net spreads its mass over ALL legal moves and the SF label lists a
+    subset, so the aligned slice sums to whatever fraction of the net's mass
+    happens to fall inside it.
+
+    Hand-computed. t = [0.5, 0.3, 0.2] on slots 0..2, listed = slots 0 and 1,
+    file q = 0.2 and 0.1 (mass 0.3, the rest of the net's belief sits on moves
+    SF did not list). Normalized over the listed set: q = [2/3, 1/3].
+    alpha = 0.5:
+        slot0 = sqrt(0.5 * 2/3) = 0.5773502692
+        slot1 = sqrt(0.3 * 1/3) = 0.3162277660
+        slot2 = 0.2 (unlisted, untouched)
+        sum   = 1.0935780352
+        t'    = [0.5279461, 0.2891680, 0.1828859]
+    WITHOUT the normalization the same row gives
+        sqrt(0.5*0.2)=0.3162278, sqrt(0.3*0.1)=0.1732051, 0.2  -> renormalized
+        [0.4586781, 0.2512284, 0.2900935] — a visibly different, wrong target.
+    """
+    t = np.array([0.5, 0.3, 0.2, 0.0], dtype=np.float32)
+    idx = np.array([0, 1], dtype=np.int64)
+    reg = np.array([0.0, 50.0], dtype=np.float64)   # ignored: q is external
+    out, fell_back = apply_geometric_blend(
+        t, idx, reg, alpha=0.5, temp_cp=200.0,
+        q_weights=np.array([0.2, 0.1], dtype=np.float64),
+    )
+    assert not fell_back
+    assert out[:3] == pytest.approx([0.5279461, 0.2891680, 0.1828859], abs=1e-6)
+    # and the un-normalized answer is genuinely different, so the assertion above
+    # is not passing by coincidence
+    assert out[:3] != pytest.approx([0.4586781, 0.2512284, 0.2900935], abs=1e-3)
+
+
+def test_a_row_present_in_the_q_file_with_no_overlap_is_counted_apart(
+    tmp_path: Path,
+) -> None:
+    """Present-but-zero-overlap is a THIRD state and points at a third repair.
+
+    ``missing_rows`` says "regenerate the keys". A row that IS in the file, all
+    of whose moves fall outside this row's listed set, says something else: the
+    two files are joined and their MOVE spaces disagree. Folded into either of
+    the other counters it is unreadable.
+    """
+    targets = np.stack([_VG_T, _VG_T])
+    inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
+    keys = inner.keys()
+    index = _index_for(keys, tmp_path, {0: (_VG_IDX.tolist(), (-_VG_REG).tolist())})
+    # A real uci that encodes to a slot OUTSIDE the labeled row's listed set
+    # ([0, 1, 2]); asserted rather than assumed, because picking one that happens
+    # to overlap would make this test pass for the wrong reason.
+    board = chess.Board("8/8/8/8/8/8/8/K6k w - - 0 1")
+    far = "a1b1"
+    far_slot = move_to_index_for_encoding(chess.Move.from_uci(far), board)
+    assert far_slot not in set(_VG_IDX.tolist())
+    ext_path = tmp_path / "ext.jsonl"
+    _write_external_q(ext_path, [{"key": keys[0].hex(), "policy": {far: 1.0}}])
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0), index,
+        external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    out = buf.sample_batch_arrays(2)
+    stats = buf.rig_stats()
+    assert stats["external_q"]["missing_rows"] == 0        # it IS in the file
+    assert stats["external_q"]["zero_overlap_rows"] == 1   # and it overlapped nothing
+    assert np.array_equal(out["policy_target"][0], inner._t[0])
+
+
+def test_an_external_q_file_without_a_schema_version_is_a_refusal(
+    tmp_path: Path,
+) -> None:
+    """Produced by another program on another branch: an undeclared format is
+    one the two sides have never agreed on."""
+    path = tmp_path / "ext.jsonl"
+    path.write_text(json.dumps({"key": (b"\x11" * 16).hex(), "policy": {}}) + "\n")
+    with pytest.raises(SystemExit, match="declares no schema version"):
+        RvgExternalPolicyIndex.load(path)
+
+
+def test_an_external_q_file_from_a_future_schema_is_a_refusal(tmp_path: Path) -> None:
+    path = tmp_path / "ext.jsonl"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "record": "provenance",
+            "v": RVG_EXTERNAL_POLICY_SCHEMA_VERSION + 1,
+        }) + "\n")
+    with pytest.raises(SystemExit, match="external policy schema version"):
+        RvgExternalPolicyIndex.load(path)
+
+
+def test_an_external_q_file_in_another_policy_space_is_a_refusal(
+    tmp_path: Path,
+) -> None:
+    """The loader's existing check refuses a CORPUS it cannot serve. That is a
+    different question from "is this FILE in the corpus's space", and a file
+    declaring ``az_4672`` passed it."""
+    path = tmp_path / "ext.jsonl"
+    _write_external_q(
+        path, [{"key": (b"\x11" * 16).hex(), "policy": {}}],
+        policy_encoding="az_4672",
+    )
+    with pytest.raises(SystemExit, match="policy space"):
+        RvgExternalPolicyIndex.load(path)
+
+
+def test_the_index_loaders_record_the_bytes_they_read_not_just_the_path(
+    tmp_path: Path,
+) -> None:
+    """A path is not a file identity: a label file grows while a resumed pass
+    appends to it, so two runs quoting one path can have read different bytes."""
+    labels = tmp_path / "labels.jsonl"
+    _write_labels(labels, [_label(b"\x01" * 16, [0, 1], [0.0, -20.0])])
+    index = RvgLabelIndex.load(labels)
+    prov = cast("list[dict[str, object]]", index.header["label_file_provenance"])
+    assert prov[0]["path"] == str(labels)
+    assert prov[0]["bytes"] == labels.stat().st_size
+    assert str(prov[0]["mtime_utc"]).endswith("Z")
+
+
+def test_the_streaming_single_file_load_equals_the_overlay_path(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE MEMORY FIX MUST NOT BE A SECOND CONVENTION.
+
+    The single-file path skips the two intermediate dicts the overlay path
+    builds (~9.3 GB at 1M positions). That is only a memory optimization if the
+    two produce the SAME index — including move ORDER and the duplicate-slot
+    rule, both of which the overlay path decides implicitly (``sorted(slot)``
+    over a dict). The row below has moves out of order AND a repeated slot, so
+    an agreement here is an agreement about the conventions and not just about
+    a simple case.
+    """
+    path = tmp_path / "labels.jsonl"
+    _write_labels(path, [
+        _label(b"\x01" * 16, [5, 2, 9, 2], [-30.0, 0.0, -80.0, -55.0]),
+        _label(b"\x02" * 16, [3], [0.0]),
+    ])
+    streamed = RvgLabelIndex.load(path)                # dispatches to streaming
+    overlaid = RvgLabelIndex._load_overlay([path])     # the same file, other path
+    for key in (b"\x01" * 16, b"\x02" * 16):
+        a, b = streamed.get(key), overlaid.get(key)
+        assert a is not None
+        assert b is not None
+        assert np.array_equal(a[0], b[0])          # move_index, same ORDER
+        assert np.allclose(a[1], b[1])             # regret_cp (what `get` returns)
+        cs, co = streamed.cp_for(key), overlaid.cp_for(key)
+        assert cs is not None
+        assert co is not None
+        assert np.allclose(cs, co)                 # cp_eff
+    assert len(streamed) == len(overlaid)
+    assert streamed.header["policy_encoding"] == overlaid.header["policy_encoding"]
+
+
+def test_arm_r_unlabeled_rows_leave_the_loss_term_entirely() -> None:
+    """⚑ ZERO-VECTOR + ``has = 0`` MUST BE LOSS-EQUIVALENT TO ABSENT.
+
+    Arm R does not serve an unlabeled row untouched: it REPLACES the whole
+    ``sf_p0_regret`` field, so an unlabeled row loses its stored MPV6 vector and
+    gets zeros with ``has_sf_p0_regret = 0``. That is the intended semantics —
+    a repaired-vector arm must not mix repaired and unrepaired vectors inside
+    one loss term — but it is only safe if the mask is honoured EVERYWHERE.
+
+    If any consumer ignored ``has``, a zero vector would read as "SF says every
+    move here is perfect", which is a strong, false signal that would drag
+    ``m_sf_own_regret`` toward zero and make the arm look better the LESS of the
+    corpus it covered.
+
+    So this traces the real loss, not the field: the same labeled row scored
+    (a) beside an unlabeled row and (b) alone must give the SAME
+    ``sf_own_regret``, while (c) the same zero vector marked ELIGIBLE must give
+    a different one — (c) is what proves (a) is not passing vacuously.
+    """
+    import torch
+
+    from chess_anti_engine.train.losses import compute_loss
+
+    actions = 3
+    labeled_regret = [1.0, 0.5, 0.0]
+
+    def _score(regret_rows: list[list[float]], has: list[float]) -> float:
+        n = len(regret_rows)
+        policy_t = torch.zeros((n, actions), dtype=torch.float32)
+        policy_t[:, 0] = 1.0
+        batch = {
+            "x": torch.zeros((n, 1, 1, 1), dtype=torch.float32),
+            "policy_t": policy_t,
+            "wdl_t": torch.zeros((n,), dtype=torch.long),
+            "has_policy": torch.ones((n,), dtype=torch.float32),
+            "is_network_turn": torch.ones((n,), dtype=torch.float32),
+            "sf_p0_regret_t": torch.tensor(regret_rows, dtype=torch.float32),
+            "has_sf_p0_regret": torch.tensor(has, dtype=torch.float32),
+        }
+        outputs = {
+            "policy": torch.zeros((n, actions), dtype=torch.float32),
+            "wdl": torch.zeros((n, 3), dtype=torch.float32),
+        }
+        losses = compute_loss(
+            outputs, batch, w_wdl=0.0, w_sf_own_regret=0.5,
+        )
+        return float(losses["sf_own_regret"])
+
+    with_unlabeled = _score([labeled_regret, [0.0] * actions], [1.0, 0.0])
+    alone = _score([labeled_regret], [1.0])
+    assert with_unlabeled == pytest.approx(alone, abs=1e-7), (
+        "an unlabeled arm-R row changed the loss, so its zero vector is being "
+        "read as 'every move is perfect' somewhere instead of being masked out"
+    )
+    # The negative control: the SAME zero vector, marked eligible, must move it.
+    # Without this the assertion above would pass on a term that is always 0.
+    if_counted = _score([labeled_regret, [0.0] * actions], [1.0, 1.0])
+    assert if_counted != pytest.approx(alone, abs=1e-7)
+
+
+def test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE ENUMERATION NAMES THE ROWS THE SWEEP WILL DRAW, OR IT NAMES NOTHING.
+
+    ``maybe_mirror_batch_arrays`` draws ``rng.random(n)`` from ``buf.rng`` — the
+    SAME generator ``sample_batch_arrays`` samples rows from — unconditionally
+    at ``prob > 0``, and ``Trainer.mirror_prob`` is 0.5 with no yaml key. An
+    enumeration that samples without mirroring therefore reproduces draw 1
+    exactly and diverges from draw 2 onward. The mirror only changes a batch's
+    CONTENT, which is why it read as irrelevant; what matters is its SIDE EFFECT
+    on the shared generator.
+
+    The comparison is against the REAL ``Trainer._prepare_host_arrays`` (called
+    unbound on a duck-typed stand-in), not against a re-implementation of it —
+    so this fails the day the trainer grows another between-draw RNG consumer,
+    which is the regression the enumeration cannot survive silently.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.moves.encode import POLICY_SIZE
+    from chess_anti_engine.replay.augment import maybe_mirror_batch_arrays
+    from chess_anti_engine.replay.buffer import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        samples_to_arrays,
+        save_local_shard_arrays,
+    )
+    from chess_anti_engine.train.trainer import Trainer
+
+    from scripts.rvg_label_pass import _trainer_mirror_prob
+
+    boards = [chess.Board(f) for f in _ROUNDTRIP_FENS]
+    samples = []
+    for i, board in enumerate(boards * 8):
+        pol = np.zeros(POLICY_SIZE, dtype=np.float32)
+        pol[i % POLICY_SIZE] = 1.0
+        samples.append(ReplaySample(
+            x=encode_lc0_full(board, input_history_encoding=PROD_ENCODING),
+            policy_target=pol, wdl_target=i % 3, priority=1.0, has_policy=True,
+        ))
+    shard_dir = tmp_path / "shards"
+    arrs = samples_to_arrays(samples)
+    arrs["_input_history_encoding"] = np.asarray(PROD_ENCODING)
+    save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=arrs)
+    planes = int(samples[0].x.shape[0])
+
+    mirror_prob = _trainer_mirror_prob({})
+    assert mirror_prob > 0.0, (
+        "with mirror_prob 0 the mirror consumes no RNG and this test cannot "
+        "detect the divergence it exists for"
+    )
+
+    def _draw_stream(*, like_the_trainer: bool, draws: int = 6) -> list[list[bytes]]:
+        buf = rr.build_rig_replay_buffer(
+            config={"seed": 0}, replay_dir=shard_dir, target_planes=planes,
+            rng=np.random.default_rng(0),
+        )
+        fake_trainer = SimpleNamespace(
+            _sf_rebuild_coverage=None, rebuild_sf_targets=False,
+            rebuild_categorical_target=False, sf_policy_sparse_ce=False,
+            _input_history_encoding=PROD_ENCODING,
+        )
+        stream: list[list[bytes]] = []
+        try:
+            for _ in range(draws):
+                batch = buf.sample_batch_arrays(8)
+                stream.append(position_fingerprints(
+                    np.asarray(batch["x"]), input_history_encoding=PROD_ENCODING,
+                ))
+                if like_the_trainer:
+                    # The real host-side pipeline, unbound on a stand-in.
+                    Trainer._prepare_host_arrays(
+                        # Duck-typed on purpose: the point is to run the REAL
+                        # method, not a re-implementation of it.
+                        cast("Trainer", cast("object", fake_trainer)),
+                        batch, rng=buf.rng,
+                        mirror_prob=mirror_prob, rebuild_sf_targets=False,
+                    )
+                else:
+                    # What the enumeration does.
+                    maybe_mirror_batch_arrays(
+                        batch, rng=buf.rng, prob=mirror_prob,
+                        input_history_encoding=PROD_ENCODING,
+                    )
+        finally:
+            buf.close()
+        return stream
+
+    def _naive_stream(draws: int = 6) -> list[list[bytes]]:
+        """No mirror at all — what the enumeration used to do."""
+        buf = rr.build_rig_replay_buffer(
+            config={"seed": 0}, replay_dir=shard_dir, target_planes=planes,
+            rng=np.random.default_rng(0),
+        )
+        try:
+            return [
+                position_fingerprints(
+                    np.asarray(buf.sample_batch_arrays(8)["x"]),
+                    input_history_encoding=PROD_ENCODING,
+                )
+                for _ in range(draws)
+            ]
+        finally:
+            buf.close()
+
+    trainer_stream = _draw_stream(like_the_trainer=True)
+    enum_stream = _draw_stream(like_the_trainer=False)
+    assert enum_stream == trainer_stream, (
+        "the enumeration's draw sequence no longer matches the trainer's — the "
+        "trainer consumes the buffer's RNG somewhere the enumeration does not, "
+        "so --restrict-to would name rows the sweep never draws"
+    )
+
+    # ⚑ THE NEGATIVE CONTROL, which is what stops the assertion above from being
+    # vacuous: without the mirror the FIRST draw still matches and the rest do
+    # not. That exact signature is what made the bug invisible.
+    naive = _naive_stream()
+    assert naive[0] == trainer_stream[0]
+    assert naive != trainer_stream
+
+
+@pytest.mark.parametrize(
+    ("mode", "argv_extra", "expected"),
+    [
+        ("enumerate-rows", ["--limit", "200"], "--limit"),
+        ("enumerate-rows", ["--multipv", "6"], "--multipv"),
+        ("enumerate-rows", ["--restrict-to", "keys.txt"], "--restrict-to"),
+        ("label", ["--enum-steps", "10"], "--enum-steps"),
+        ("label", ["--enum-batch-size", "8"], "--enum-batch-size"),
+    ],
+)
+def test_a_flag_the_selected_mode_never_reads_is_a_refusal(
+    mode: str, argv_extra: list[str], expected: str,
+) -> None:
+    """⚑ ACCEPTED AND THEN IGNORED, IN ITS CHEAPEST FORM.
+
+    ``--mode enumerate-rows`` returns before ``--limit``, ``--multipv``,
+    ``--nodes``, ``--threads``, ``--restrict-to`` or ``--no-syzygy`` is ever
+    read, and ``--mode label`` never reads the three ``--enum-*`` flags. An
+    operator who wrote ``--limit 200`` beside ``enumerate-rows`` believes they
+    bounded a 41-minute job; nothing told them otherwise.
+    """
+    import argparse
+
+    from scripts.rvg_label_pass import _refuse_flags_for_other_mode
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=("label", "enumerate-rows"), default="label")
+    ap.add_argument("--threads", type=int, default=16)
+    ap.add_argument("--nodes", type=int, default=150_000)
+    ap.add_argument("--multipv", type=int, default=40)
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--row-range", default="")
+    ap.add_argument("--roundtrip-sample", type=int, default=200)
+    ap.add_argument("--restrict-to", type=Path, default=None)
+    ap.add_argument("--enum-steps", type=int, default=6000)
+    ap.add_argument("--enum-batch-size", type=int, default=0)
+    ap.add_argument("--enum-progress-every", type=int, default=100)
+    ap.add_argument("--no-syzygy", action="store_true")
+
+    clean = ap.parse_args(["--mode", mode])
+    _refuse_flags_for_other_mode(ap, clean)          # defaults never refuse
+
+    dirty = ap.parse_args(["--mode", mode, *argv_extra])
+    with pytest.raises(SystemExit, match=expected):
+        _refuse_flags_for_other_mode(ap, dirty)
+
+
+def test_a_resume_under_different_label_settings_is_a_refusal() -> None:
+    """⚑ THE HEADER IS THE THING THAT LIES.
+
+    The ``.partial`` is keyed by position only, so re-running the same ``--out``
+    after changing ``--nodes`` or ``--multipv`` stitches the old rows into the
+    new file — and the header is then written from the NEW argv, so the artifact
+    claims a budget it did not run. The join check cannot see it: every key is
+    present, which is all it tests.
+    """
+    from scripts.rvg_label_pass import _assert_resume_settings_match
+
+    banked: dict[str, object] = {
+        "nodes": 150_000, "multipv": 40, "syzygy": True,
+        "corpus": {"replay_dir": "/c", "shards": 3, "bytes": 99},
+    }
+    same = dict(banked)
+    _assert_resume_settings_match({"record": "resume_settings", **banked},
+                                  same, Path("p.partial"))   # no raise
+
+    for key, value in (("nodes", 75_000), ("multipv", 6), ("syzygy", False)):
+        changed = {**banked, key: value}
+        with pytest.raises(SystemExit, match=key):
+            _assert_resume_settings_match(
+                {"record": "resume_settings", **banked}, changed,
+                Path("p.partial"),
+            )
+    with pytest.raises(SystemExit, match="corpus"):
+        _assert_resume_settings_match(
+            {"record": "resume_settings", **banked},
+            {**banked, "corpus": {"replay_dir": "/other", "shards": 3, "bytes": 99}},
+            Path("p.partial"),
+        )
+
+
+def test_a_legacy_partial_without_a_settings_line_still_resumes() -> None:
+    """An in-flight pass wrote its ``.partial`` before this record existed.
+
+    Refusing it would kill a running multi-hour job to enforce a check it
+    predates, so the absence of the record means "unchecked", not "invalid".
+    """
+    from scripts.rvg_label_pass import _assert_resume_settings_match
+
+    # The loop only calls the check when a `resume_settings` record is present;
+    # this pins the contract that plain label rows never reach it.
+    legacy_line = {"key": "aa", "move_index": [0], "cp_eff": [0.0]}
+    assert legacy_line.get("record") != "resume_settings"
+    _assert_resume_settings_match({}, {}, Path("p.partial"))   # no raise on empty
+
+
+def test_the_rig_arms_the_label_encoding_gate_with_the_corpus_it_reads(
+    tmp_path: Path,
+) -> None:
+    """⚑ A GATE WHOSE ONLY CALLER DECLINES TO ARM IT.
+
+    ``RvgLabelIndex.load``'s policy-space refusal was green in the tests that
+    passed ``policy_encoding=`` explicitly and DEAD in the rig, which called it
+    without the argument. This pins the value the rig now passes — read off the
+    corpus's own first shard — and that the refusal fires through it.
+    """
+    from chess_anti_engine.moves.encode import POLICY_SIZE
+    from chess_anti_engine.replay.buffer import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        samples_to_arrays,
+        save_local_shard_arrays,
+    )
+
+    pol = np.zeros(POLICY_SIZE, dtype=np.float32)
+    pol[0] = 1.0
+    arrs = samples_to_arrays([ReplaySample(
+        x=encode_lc0_full(chess.Board(), input_history_encoding=PROD_ENCODING),
+        policy_target=pol, wdl_target=0, priority=1.0, has_policy=True,
+    )])
+    shard_dir = tmp_path / "shards"
+    save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=arrs)
+
+    # `_policy_encoding` is SYNTHESIZED by the shard writer, not carried by
+    # `samples_to_arrays`, so it is read back off the file rather than off the
+    # dict that was handed in — which is also the only reading the rig can make.
+    from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+    stored, _ = load_shard_arrays(iter_shard_paths(shard_dir)[0], lazy=False)
+    encoding = rr._corpus_policy_encoding(shard_dir)
+    assert encoding == str(np.asarray(stored["_policy_encoding"]).reshape(-1)[0])
+    # This fixture writes FULL-width rows, so its shard is az_4672 — which makes
+    # it the mismatched corpus for a production `lc0_1858` label file, exactly
+    # the pairing the refusal exists for.
+    assert encoding == "az_4672"
+
+    labels = tmp_path / "labels.jsonl"
+    _write_labels(labels, [_label(b"\x01" * 16, [0], [0.0])])   # lc0_1858
+    with pytest.raises(SystemExit, match="policy space"):
+        RvgLabelIndex.load(labels, policy_encoding=encoding)
+    # ...and it does NOT fire when they agree, so the refusal is discriminating
+    # rather than universal.
+    RvgLabelIndex.load(labels, policy_encoding="lc0_1858")
