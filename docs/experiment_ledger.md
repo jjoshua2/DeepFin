@@ -64822,3 +64822,16 @@ remains v1 default (unlisted ~vanishes, simplest semantics); if the smoke shows 
 NOT ~free at fixed nodes, the MPV20 fallback may carry a soft unlisted-penalty on this
 measurement's authority. Caveat: measured on the audit distribution (curriculum
 positions), tails capped at 1000cp, one saturated-position regime disclosed above.
+
+#### Scope caveat (operator objection, same day, accepted): the unlisted-at-20 test compares SF WITH SF
+
+The test above judges shallow-SF-20 omissions by deep-SF-10 — correlated instruments. It
+certifies SF's cross-depth internal consistency and the MASS BOOKKEEPING (the bad tail is
+95%+ inside the 20-list, so tail-repair does not require ranking moves 21+), but it
+CANNOT detect a shared SF blind spot: a move SF misjudges at every depth is invisible to
+it by construction ([[internal_equivalence_cannot_find_a_shared_wrong_rule]] — same
+shape). Anti-SF exploitation moves are the live concern; the ladder's protections are the
+V arm's τ dead-zone (exploitation moves are rarely SF-rated as blunders), the
+multiplicative form (mass is never moved TOWARD SF's preferences), and the fact that any
+passing arm's confirming test is PLAY (arena + frozen-handicap SF), which sees anti-SF
+skill the SF-ruled audit cannot ([[audit_first_cannot_judge_a_non_sf_teacher]]).
