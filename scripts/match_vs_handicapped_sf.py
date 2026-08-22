@@ -7,8 +7,30 @@ difference between two of our nets. The trained specialty — exploiting Stockfi
 at a handicap — has no net-vs-net expression at all: a ladder of arms can move
 together against each other while every one of them gets worse at the thing the
 loop is training. This harness is the missing instrument. It plays our
-checkpoint against the SAME curriculum opponent production selfplay plays,
-except that the difficulty is NAILED DOWN instead of being steered.
+checkpoint against production's curriculum opponent — the same engine, the same
+MultiPV width and the same within-regret selection rule — at a difficulty that is
+NAILED DOWN instead of steered.
+
+⚑ THE OPERATING POINT IS DELIBERATELY NOT PRODUCTION'S, and the difference is
+larger than it looks. Production's curriculum opponent runs
+``_eff_sf_nodes(for_move=True)``, which multiplies ``sf_nodes`` by
+``sf_fast_ply_node_scale`` (0.25, a GameConfig default with no yaml key) on every
+non-full ply — and with ``playout_cap_fraction`` 0.25 about three plies in four
+are non-full. At ``sf_nodes`` 75000 that is roughly **32.8k nodes on average**,
+where this harness spends a constant **75k on every move**: ~2.3x production's
+average, and unlike production it never varies within a game. That is the RIGHT
+choice for a frozen instrument — a node budget that depends on the net's own
+playout-cap draws is not a fixed opponent — but it means a score here is NOT a
+prediction of production's curriculum winrate, and ``--regret`` here is not
+numerically interchangeable with a live ``wdl_regret`` reading.
+
+⚑ ``--config`` supplies exactly FOUR values (see ``_config_defaults``):
+``stockfish_path``, ``sf_multipv``, ``sf_hash_mb`` and the syzygy pair. The
+opening book comes from ``arena_standard.default_openings_path()`` and the
+``--search-shape training`` knobs from ``production_selfplay_configs()``, both of
+which read the PRODUCTION config unconditionally, whatever ``--config`` says.
+That is intentional — the ladder wants the book and the search shape frozen to
+production — and it is stated here rather than left for a reader to discover.
 
 ⚑ THE FREEZE IS THE POINT. In production a PID controller moves ``wdl_regret``
 every iteration to hold curriculum winrate at ``sf_pid_target_winrate`` (0.5), so
@@ -90,7 +112,11 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
-from chess_anti_engine.moves.encode import index_to_move, legal_move_indices
+from chess_anti_engine.moves.encode import (
+    index_to_move,
+    legal_move_indices,
+    uci_to_policy_index,
+)
 from chess_anti_engine.selfplay.stockfish_turn import (
     _choose_curriculum_opponent_move,
     _collect_sf_pv_candidates,
@@ -114,6 +140,24 @@ REGRET_MAX = 1.0
 # subprocess with its own hash table; the production fleet runs 8.
 DEFAULT_SF_WORKERS = 8
 
+# A score outside this band has no resolution: the opponent is so far from the
+# checkpoint's level that a stronger and a weaker net both land at the ceiling
+# (or floor) and their difference is unmeasurable. Elo is already undefined at
+# exactly 0 and 1; these bars fire before that, while the number still looks
+# like a number. Deliberately loose — the point is to catch "wrong operating
+# point", not to police normal variation.
+SCORE_SATURATION_HI = 0.9
+SCORE_SATURATION_LO = 0.1
+
+# Fraction of SF moves where NOT ONE MultiPV line was legal in the queried
+# position. `stockfish_turn.py` measures the STRUCTURAL rate as exactly
+# 0.000000 and repudiates the 0.0008 "clean baseline" that appeared in an
+# earlier comment there (it was measured on contaminated shards); non-zero
+# readings belong to desynced-pool episodes. So this bar is not "the normal
+# background plus headroom" — any sustained non-zero rate is the alarm, and
+# 0.005 is simply below anything a real episode has produced.
+NO_PV_WARN_FRAC = 0.005
+
 
 # ---------------------------------------------------------------------------
 # Per-move handicap application
@@ -124,16 +168,22 @@ DEFAULT_SF_WORKERS = 8
 class SfMoveOutcome:
     """What the handicap did on ONE Stockfish move.
 
-    ``qualifying`` is the size of the set the played move was drawn from, and it
-    is the realized-handicap reading: 0 marks the degenerate branch where NOT ONE
-    of SF's MultiPV moves was legal in the queried position, so the move came
-    from the uniform-legal fallback and no handicap was applied at all. Those are
-    counted separately rather than averaged in as a set of size zero — an
+    ``qualifying`` is the size of the set the played move was drawn from.
+    ``no_pv`` marks the degenerate branch where NOT ONE of SF's MultiPV moves was
+    legal in the queried position; production then substitutes SF's own bestmove
+    as a one-element candidate list, so the "set" is real but carries no handicap
+    information. Those moves are counted separately rather than averaged in — an
     unmeasured move must never dilute the statistic that proves the measurement.
+
+    ⚑ ``no_pv`` is a FLAG, not ``qualifying == 0``. It used to be inferred from a
+    zero size, which forced the harness to pass the empty candidate list through
+    to the chooser and play a uniform random legal move — a different opponent
+    from production's, which never does that (see ``handicapped_sf_move``).
     """
 
     qualifying: int
     candidates: int
+    no_pv: bool
     # The size of the regret-0 set: how many candidates TIE with SF's best.
     # ⚑ THE CONFOUND THIS FIELD EXISTS FOR, measured on the first smoke run.
     # `qualifying` alone does NOT isolate the handicap. SF's native WDL
@@ -162,24 +212,77 @@ class SfMoveOutcome:
     @property
     def saturated(self) -> bool:
         """Every candidate scores identically, so NO band can discriminate."""
-        return self.candidates >= 2 and self.tied_at_best >= self.candidates
+        return (
+            not self.no_pv
+            and self.candidates >= 2
+            and self.tied_at_best >= self.candidates
+        )
+
+
+# Stream tags. Every generator in this harness is derived from the seed with an
+# explicit tag, so two consumers can never accidentally share a stream and a new
+# consumer cannot perturb an existing one by being added.
+_STREAM_SF = 0     # the handicapped opponent's draw
+_STREAM_NET = 1    # our side's Gumbel noise + temperature sampling
+_STREAM_BOOK = 2   # opening sampling
+
+
+def _stream_rng(*, seed: int, stream: int, game_index: int, ply: int):
+    """A fresh generator for ONE (stream, game, ply) event.
+
+    Fresh per event rather than one long stream advanced in play order, and that
+    is the whole design. Play order is not a property of the measurement: games
+    run interleaved, Stockfish futures complete out of order, and the batch a
+    move is decided in depends on ``--max-concurrent-games``. A shared stream
+    makes every draw depend on all of that; a keyed one makes each draw a pure
+    function of (seed, stream, game, ply).
+    """
+    return np.random.default_rng(
+        [int(seed), int(stream), int(game_index), int(ply)],
+    )
 
 
 def sf_move_rng(*, seed: int, game_index: int, ply: int) -> np.random.Generator:
     """The RNG for ONE handicapped SF draw, keyed by (seed, game, ply).
 
-    Deliberately a FRESH generator per move rather than one stream advanced in
-    play order. The games run interleaved in a batched loop and Stockfish futures
-    complete out of order, so a shared stream would make the move sequence depend
-    on thread scheduling — reproducible only by luck. Keyed this way, replaying a
-    single game, or the whole run at a different concurrency, draws the same
-    moves.
-
     ``_choose_curriculum_opponent_move`` consumes exactly one ``rng.integers``
     call per move on every branch it can reach here, so one generator per move is
     not merely sufficient, it is the whole stream.
     """
-    return np.random.default_rng([int(seed), int(game_index), int(ply)])
+    return _stream_rng(
+        seed=seed, stream=_STREAM_SF, game_index=game_index, ply=ply,
+    )
+
+
+def net_move_rng(*, seed: int, game_index: int, ply: int) -> np.random.Generator:
+    """The RNG for ONE of OUR side's searches, keyed by (seed, game, ply).
+
+    ⚑ THE MEASURED DEFECT THIS FIXES. Our side used to take ONE shared generator
+    advanced in play order, and ``mcts/gumbel_c.py`` consumes it INSIDE a
+    per-board loop — ``_gumbel(rng, legal_idx.size)`` draws once per legal move of
+    board 0, then board 1, and so on, plus a temperature draw each. So every
+    board's noise depended on how many boards preceded it in the batch and on how
+    many legal moves each of those had. Batch composition is set by
+    ``--max-concurrent-games``, which is NOT a property of the measurement:
+    MEASURED at the same seed and the SAME fingerprint, mcg 4 and mcg 2 returned
+    scores of 1.0 and 0.875 over 104 and 183 SF moves. A knob outside the
+    fingerprint was silently changing the result.
+
+    Keying per game also removes a second, quieter problem: same-colour games
+    from DIFFERENT pairs that happened to share a batch drew correlated Gumbel
+    noise, which violates the independence the pentanomial CI assumes.
+
+    The cost is that our side is searched one game at a time (see
+    ``play_chunk``), because the only way to give each board its own stream
+    through ``pick_moves_for_boards`` is to hand it one board. That also makes
+    the search numerically independent of concurrency — a board evaluated in a
+    batch of 8 and the same board in a batch of 1 need not produce bit-identical
+    logits, so per-game calls close the float-nondeterminism route to the same
+    defect, which a keyed shared stream would have left open.
+    """
+    return _stream_rng(
+        seed=seed, stream=_STREAM_NET, game_index=game_index, ply=ply,
+    )
 
 
 def handicapped_sf_move(
@@ -201,6 +304,20 @@ def handicapped_sf_move(
     ``within_regret_candidates`` is called a SECOND time only to read the set's
     size. It is a pure function of the same three inputs, so it cannot disagree
     with the set the draw came from.
+
+    ⚑ THE NO-PV SUBSTITUTION IS PRODUCTION'S, AND IT IS NOT THE CHOOSER'S EMPTY
+    BRANCH. ``_process_sf_results`` resolves SF's bestmove to an action id FIRST
+    (falling back to ``legal_indices[0]`` when even the bestmove is illegal here)
+    and, when no MultiPV line survives the legality filter, substitutes
+    ``cand_idxs = [a_idx] / cand_scores = [0.0]`` BEFORE calling the chooser. So
+    the curriculum opponent never plays a uniform random legal move on this path
+    — it plays SF's bestmove. An earlier version of this harness passed the empty
+    list straight through and hit
+    ``_choose_curriculum_opponent_move``'s uniform-legal branch, which is a
+    strictly weaker opponent than production's on exactly the rows where the
+    engine is least trustworthy. The branch is rare — ``stockfish_turn`` measures
+    the STRUCTURAL rate as exactly 0.000000, with spikes only during
+    desynced-pool episodes — but "rare" is how a silent opponent swap survives.
     """
     legal_idx = legal_move_indices(board)
     if legal_idx.size == 0:
@@ -208,9 +325,18 @@ def handicapped_sf_move(
     legal_set = {int(x) for x in legal_idx}
     turn = bool(board.turn)
 
+    a_idx = uci_to_policy_index(res.bestmove_uci, turn)
+    if a_idx < 0 or a_idx not in legal_set:
+        a_idx = int(legal_idx[0])
+
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=turn, legal_set=legal_set,
     )
+    no_pv = not cand_idxs
+    if no_pv:
+        cand_idxs = [int(a_idx)]
+        cand_scores = [0.0]
+
     move_idx = _choose_curriculum_opponent_move(
         rng=rng,
         legal_indices=legal_idx,
@@ -237,6 +363,7 @@ def handicapped_sf_move(
     return move, SfMoveOutcome(
         qualifying=len(qualifying),
         candidates=len(cand_idxs),
+        no_pv=bool(no_pv),
         tied_at_best=len(tied_at_best),
         rank=rank,
         regret=played_regret,
@@ -277,6 +404,128 @@ def build_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
+# ⚑ THE KEY SET IS PINNED BY TEST (`test_fingerprint_payload_key_set_is_pinned`).
+# A knob added to the CLI and forgotten here is a knob that changes the opponent
+# while two runs still report the same fingerprint and get differenced — this
+# repo's signature defect aimed straight at the comparison the instrument
+# exists for. The test asserts the EXACT set, so adding or removing a field
+# forces a deliberate edit in both places. It caught nothing when written
+# because the previous test hashed its own literal dict: deleting `sf_nodes`,
+# `sf_multipv` and `eval_max_batch` from the real payload left all 21 tests
+# green.
+FINGERPRINT_KEYS = frozenset({
+    "regret", "sf_nodes", "sf_multipv", "sf_hash_mb", "sf_fresh_tt",
+    "sf_binary_sha256", "sims", "search_shape", "search_gumbel",
+    "search_vloss_weight", "search_target_batch", "tree_reuse", "temperature",
+    "gumbel_add_noise", "seed", "games", "book", "book_sha256",
+    "opening_plies", "max_plies", "syzygy", "tb_adjudication", "tb_max_pieces",
+    "eval_max_batch", "compile",
+})
+
+
+def build_fingerprint_payload(
+    args: argparse.Namespace,
+    *,
+    side: Any,
+    sf_binary_sha: str | None,
+    book_path: Path,
+    book_sha: str | None,
+    syzygy: str | None,
+) -> dict[str, Any]:
+    """Every setting that changes the OPPONENT or the RULER, and nothing else.
+
+    Deliberately EXCLUDED, because they change the wall clock rather than the
+    measurement: ``--label``, the output paths, ``--device``, ``--sf-workers``
+    and ``--max-concurrent-games``.
+
+    ⚑ ``max_concurrent_games`` earned its place on that list rather than being
+    assumed onto it. It used to change the result — our side took one shared
+    generator advanced in play order, so the batch a move was decided in altered
+    its Gumbel noise, and mcg 4 vs mcg 2 at one seed and one fingerprint scored
+    1.0 vs 0.875. It is excluded now because ``net_move_rng`` keys our side per
+    (seed, game, ply) and the search runs one game per call, and because
+    ``test_the_measurement_is_independent_of_max_concurrent_games`` holds the
+    claim to a run rather than to this comment.
+
+    ⚑ ``sf_workers`` is excluded only while ``--sf-fresh-tt`` holds. Under
+    ``--no-sf-fresh-tt`` the pooled engines carry a warm TT, so which engine
+    served a position — and therefore the worker count — starts affecting the
+    result from outside the fingerprint. ``sf_fresh_tt`` is itself a key, so the
+    two regimes can never be differenced; the flag's help says the rest.
+    """
+    payload: dict[str, Any] = {
+        "regret": float(args.regret),
+        "sf_nodes": int(args.sf_nodes),
+        "sf_multipv": int(args.sf_multipv),
+        "sf_hash_mb": int(args.sf_hash_mb),
+        "sf_fresh_tt": bool(args.sf_fresh_tt),
+        "sf_binary_sha256": sf_binary_sha,
+        "sims": int(args.sims),
+        "search_shape": side.shape,
+        "search_gumbel": {k: float(v) for k, v in side.realized_gumbel().items()},
+        "search_vloss_weight": int(side.vloss_weight),
+        "search_target_batch": int(side.target_batch),
+        "tree_reuse": side.tree_reuse,
+        "temperature": float(args.temperature),
+        "gumbel_add_noise": not args.no_gumbel_noise,
+        "seed": int(args.seed),
+        "games": int(args.games),
+        "book": str(book_path),
+        # ⚑ CONTENT, not just path — the same reason the SF binary is hashed.
+        # Two runs pointing at one path across a book regeneration are not one
+        # experiment, and the path alone cannot tell them apart.
+        "book_sha256": book_sha,
+        "opening_plies": int(args.opening_plies),
+        "max_plies": int(args.max_plies),
+        "syzygy": syzygy,
+        "tb_adjudication": (not args.no_syzygy_adjudication),
+        "tb_max_pieces": int(args.tb_max_pieces),
+        "eval_max_batch": int(args.eval_max_batch),
+        "compile": "on" if args.compile else "off",
+    }
+    if set(payload) != set(FINGERPRINT_KEYS):
+        # Belt-and-braces next to the test: a field added here without updating
+        # FINGERPRINT_KEYS (or vice versa) fails at launch rather than producing
+        # runs whose fingerprints silently stop meaning what the constant says.
+        missing = sorted(FINGERPRINT_KEYS - set(payload))
+        extra = sorted(set(payload) - FINGERPRINT_KEYS)
+        raise SystemExit(
+            "fingerprint payload does not match FINGERPRINT_KEYS "
+            f"(missing={missing}, unexpected={extra}). Update both, and think "
+            "about whether the new field changes the opponent or only the wall "
+            "clock before adding it."
+        )
+    return payload
+
+
+def checkpoint_identity(path: str | Path) -> dict[str, Any]:
+    """Content hash + training step for the checkpoint under test.
+
+    ⚑ PIN BY PATH *AND* STEP. Ray prunes live checkpoints and a salvage label can
+    be re-exported in place, so a path is not an identity: two ladder rungs can
+    name the same file and mean different weights. The sha is authoritative; the
+    step is what a human recognizes. Both are recorded and neither is in the
+    fingerprint — the fingerprint describes the RULER, and the checkpoint is the
+    thing being measured with it.
+    """
+    out: dict[str, Any] = {"path": str(path), "sha256": None, "step": None}
+    p = Path(path)
+    target = p / "trainer.pt" if p.is_dir() else p
+    out["sha256"] = file_sha256(target)
+    try:
+        import torch
+
+        ckpt = torch.load(target, map_location="cpu", weights_only=False)
+    except Exception:  # identity is best-effort; never fail a run over it
+        return out
+    if isinstance(ckpt, dict):
+        for key in ("step", "global_step", "training_iteration", "iteration"):
+            if isinstance(ckpt.get(key), (int, float)):
+                out["step"] = int(ckpt[key])
+                break
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -297,14 +546,13 @@ class GameOutcome:
     start_fen: str
     moves: tuple[chess.Move, ...]
     sf_moves: list[SfMoveOutcome] = field(default_factory=list)
-    duration_s: float = 0.0
 
     def qualifying_sizes(self) -> list[int]:
         """Sizes of the MEASURED qualifying sets (the no-PV fallbacks excluded)."""
-        return [m.qualifying for m in self.sf_moves if m.qualifying > 0]
+        return [m.qualifying for m in self.sf_moves if not m.no_pv]
 
     def no_pv_moves(self) -> int:
-        return sum(1 for m in self.sf_moves if m.qualifying == 0)
+        return sum(1 for m in self.sf_moves if m.no_pv)
 
 
 def net_score_from_result(result: str, *, net_is_white: bool) -> float:
@@ -347,7 +595,6 @@ def play_chunk(
     evaluator: Any,
     tablebase: Any | None,
     tb_max_pieces: int,
-    net_rng: np.random.Generator,
 ) -> list[GameOutcome]:
     """Play each opening twice (colors swapped) against handicapped SF.
 
@@ -385,7 +632,6 @@ def play_chunk(
     adjudicated: list[str | None] = [None] * g
     termination = ["rules"] * g
     sf_log: list[list[SfMoveOutcome]] = [[] for _ in range(g)]
-    t0 = time.time()
 
     for _ply in range(int(max_plies)):
         for i in range(g):
@@ -418,12 +664,35 @@ def play_chunk(
             for i in sf_idxs
         }
 
-        if net_idxs:
+        # ⚑ ONE GAME PER CALL, deliberately, and this is NOT an oversight about
+        # batching. See ``net_move_rng``: the C search consumes its rng inside a
+        # per-board loop, so any shared generator makes each board's noise a
+        # function of the batch it landed in — and the batch is set by
+        # --max-concurrent-games, a knob that must not change the measurement.
+        # Handing one board per call is the only way to give each game its own
+        # stream through this API, and it also removes the float-nondeterminism
+        # route (identical board, different batch size, different logits).
+        #
+        # ⚑ THE PRICE, MEASURED, because it is not small and an earlier version
+        # of this comment guessed it away as "affordable, the loop is
+        # Stockfish-bound". At 100 sims on one RTX 5090: 8 boards batched =
+        # 691 ms/ply, the same 8 one at a time = 4768 ms/ply, i.e. 6.9x and
+        # ~596 ms per board-move. That inverts the bottleneck — SF at 8 workers
+        # needs ~1.9 s/ply for the same 8 boards — so the run is now NET-bound
+        # and its wall clock is concurrency-INDEPENDENT: 400 games x ~58.5 net
+        # moves x 0.596 s is ~3.9 h, against ~1.5 h for the batched version.
+        # Bought deliberately: a batched run is 2.6x cheaper and its score
+        # depends on --max-concurrent-games, which is exactly the comparison the
+        # ladder cannot tolerate. --sims is the lever if that price is too high.
+        for i in net_idxs:
             actions = pick_moves_for_boards(
                 model,
-                [boards[i] for i in net_idxs],
+                [boards[i]],
                 device=device,
-                rng=net_rng,
+                rng=net_move_rng(
+                    seed=seed, game_index=game_ids[i],
+                    ply=len(boards[i].move_stack),
+                ),
                 mcts_type="gumbel",
                 mcts_simulations=int(sims),
                 temperature=float(temperature),
@@ -434,7 +703,7 @@ def play_chunk(
                 gumbel_target_batch=side.target_batch,
                 evaluator=evaluator,
             )
-            apply_actions_to_boards(boards, net_idxs, actions)
+            apply_actions_to_boards(boards, [i], actions)
 
         for i, res in _resolve_sf_futures(futures).items():
             # The RNG key is the board's OWN ply count, so it identifies the
@@ -474,7 +743,6 @@ def play_chunk(
                 start_fen=start_fens[i],
                 moves=tuple(boards[i].move_stack[start_offsets[i]:]),
                 sf_moves=sf_log[i],
-                duration_s=time.time() - t0,
             ),
         )
     return outcomes
@@ -483,6 +751,43 @@ def play_chunk(
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+
+
+def game_row(o: GameOutcome) -> dict[str, Any]:
+    """One game's record, for BOTH the sidecar and the final JSON.
+
+    One builder on purpose. The crash-durable sidecar exists so a killed run
+    still yields the wiring proof, which it can only do if it carries the same
+    fields the final artifact does — two builders would drift and the sidecar
+    would quietly become a different, less trustworthy record.
+    """
+    measured = o.qualifying_sizes()
+    return {
+        "game": o.game_index,
+        "pair": o.pair_id,
+        "half": o.half,
+        "net_is_white": o.net_is_white,
+        "result": o.result,
+        "score": o.score,
+        "plies": o.plies,
+        "termination": o.termination,
+        "start_fen": o.start_fen,
+        "sf_moves": len(o.sf_moves),
+        "no_pv_moves": o.no_pv_moves(),
+        "qualifying_set_size_mean": (
+            sum(measured) / len(measured) if measured else None
+        ),
+        "admitted_by_regret_mean": (
+            sum(m.admitted_by_regret for m in o.sf_moves if not m.no_pv)
+            / len(measured)
+            if measured else None
+        ),
+        "saturated_moves": sum(1 for m in o.sf_moves if m.saturated),
+        "qualifying_set_sizes": [m.qualifying for m in o.sf_moves],
+        "tied_at_best_sizes": [m.tied_at_best for m in o.sf_moves],
+        "no_pv_flags": [m.no_pv for m in o.sf_moves],
+        "played_regrets": [m.regret for m in o.sf_moves],
+    }
 
 
 def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, Any]:
@@ -564,7 +869,7 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         key = str(s) if s < 10 else "10+"
         hist[key] = hist.get(key, 0) + 1
 
-    measured = [m for o in outcomes for m in o.sf_moves if m.qualifying > 0]
+    measured = [m for o in outcomes for m in o.sf_moves if not m.no_pv]
     ties = [m.tied_at_best for m in measured]
     admitted = [m.admitted_by_regret for m in measured]
     unsaturated = [m for m in measured if not m.saturated]
@@ -589,6 +894,18 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
         "qualifying_set_size_mean_unsaturated": (
             sum(m.qualifying for m in unsaturated) / len(unsaturated)
         ) if unsaturated else None,
+        # ⚑ F5: THE DILUTED AND UNDILUTED READINGS, side by side. A saturated
+        # move contributes admitted_by_regret == 0 BY CONSTRUCTION (every
+        # candidate ties, so a zero band already admits them all), so those
+        # moves pin part of the denominator at zero and drag the headline mean
+        # down by exactly saturated_frac. Live read: 12.7% of measured moves at
+        # production settings, ~53% in a low-node smoke. The unsaturated mean is
+        # the band's effect where the band CAN act; the diluted one is its
+        # effect over the whole run. Both are legitimate, they answer different
+        # questions, and quoting one under the other's name is the failure.
+        "admitted_by_regret_mean_unsaturated": (
+            sum(m.admitted_by_regret for m in unsaturated) / len(unsaturated)
+        ) if unsaturated else None,
         "played_regret_mean": (sum(regrets) / len(regrets)) if regrets else None,
         "played_regret_max": max_regret,
         "note": (
@@ -605,8 +922,10 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
             "on at all. Everything here is CAPPED BY --sf-multipv: no band can "
             "admit more moves than Stockfish was asked to report. no_pv_moves "
             "counts moves where none of SF's MultiPV lines was legal in the "
-            "queried position — those took a uniform random legal move and are "
-            "excluded from every mean above."
+            "queried position — production substitutes SF's own bestmove as a "
+            "one-element candidate list there (NOT a random legal move), and "
+            "those moves are excluded from every mean above because they carry "
+            "no handicap information."
         ),
     }
     # An exact, cheap INVARIANT rather than a statistic: the move actually
@@ -616,6 +935,41 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
     out["handicap"]["regret_bound_respected"] = (
         None if max_regret is None else bool(max_regret <= regret + 1e-9)
     )
+    # ⚑ VALIDITY, BANKED — printed AND stored, so a reader of the artifact
+    # alone learns that the number is unusable. A warning that only ever went to
+    # a console is a warning that is gone by the time anyone reads the JSON.
+    warnings: list[str] = []
+    score = float(out["score"])
+    if score > SCORE_SATURATION_HI or score < SCORE_SATURATION_LO:
+        warnings.append(
+            f"SATURATED SCORE {score:.4f}: the opponent is far from this "
+            f"checkpoint's level, so the run has NO RESOLUTION — a stronger and "
+            f"a weaker net would both score here and the difference between "
+            f"them is unmeasurable. Elo is undefined at exactly 0 or 1 and is "
+            f"already reported as null. Re-run with a --regret / --sf-nodes "
+            f"operating point that puts the score nearer 0.5 before reading "
+            f"anything into it, and note that changing either makes a NEW "
+            f"fingerprint (not comparable to this one)."
+        )
+    total_sf = sum(len(o.sf_moves) for o in outcomes)
+    no_pv = sum(o.no_pv_moves() for o in outcomes)
+    no_pv_frac = (no_pv / total_sf) if total_sf else 0.0
+    out["handicap"]["no_pv_frac"] = no_pv_frac
+    if no_pv_frac > NO_PV_WARN_FRAC:
+        warnings.append(
+            f"NO-PV RATE {no_pv_frac:.4f} over {total_sf} SF moves exceeds "
+            f"{NO_PV_WARN_FRAC}: on those moves NOT ONE of Stockfish's MultiPV "
+            f"lines was legal in the position queried. The structural rate is "
+            f"0.000000 (see stockfish_turn.py), so a non-zero reading means "
+            f"engines are answering a DIFFERENT position than the one asked — a "
+            f"desynced pool, or an engine built without WDL output. The "
+            f"handicap cannot act on those moves, so the opponent is degraded "
+            f"toward its bestmove there while the artifact still looks clean. "
+            f"Do not read this score."
+        )
+    out["validity_warnings"] = warnings
+    out["valid"] = not warnings
+
     out["termination"] = {
         t: sum(1 for o in outcomes if o.termination == t)
         for t in sorted({o.termination for o in outcomes})
@@ -629,7 +983,15 @@ def summarize(outcomes: Sequence[GameOutcome], *, regret: float) -> dict[str, An
 
 
 def _config_defaults(config_path: Path) -> dict[str, Any]:
-    """SF/opening/syzygy defaults read from *config_path*.
+    """The FOUR values *config_path* supplies: SF binary, MultiPV, hash, syzygy.
+
+    ⚑ NOT the opening book and NOT the search shape, despite an earlier version
+    of the ``--config`` help saying "SF/opening/syzygy". ``default_openings_path``
+    and ``production_selfplay_configs`` both read ``arena_standard``'s hardcoded
+    PRODUCTION_CONFIG with no parameter, so pointing ``--config`` elsewhere would
+    have changed the engine while silently keeping production's book and search —
+    a flag half-honoured, which is worse than one not offered. The remedy is the
+    honest doc, not new wiring: the ladder wants both frozen to production.
 
     ⚑ Searched with ``arena_standard._find_nested`` rather than off a fixed
     section. These keys do NOT all live under ``selfplay:`` — ``stockfish_path``,
@@ -675,19 +1037,34 @@ def build_parser(
     p.add_argument("--checkpoint", required=True,
                    help="our side: trainer.pt or checkpoint dir")
     p.add_argument("--config", type=Path, default=config_path,
-                   help="config the SF/opening/syzygy defaults are READ FROM "
-                        f"(default: {PRODUCTION_CONFIG.name}). It is consumed by "
-                        "a pre-parse before these defaults are built, so the "
-                        "values below really do come from the file named here; "
-                        "the resolved values are printed at startup from the "
-                        "variables the Stockfish pool is constructed with.")
+                   help="config that supplies EXACTLY FOUR defaults: "
+                        "--stockfish, --sf-multipv, --sf-hash-mb and --syzygy "
+                        f"(default: {PRODUCTION_CONFIG.name}). Consumed by a "
+                        "pre-parse before those defaults are built, and the "
+                        "resolved values are printed at startup from the "
+                        "variables the Stockfish pool is constructed with. "
+                        "⚑ It does NOT supply the opening book or the search "
+                        "shape: --openings defaults to arena_standard's "
+                        "default_openings_path() and --search-shape training "
+                        "reads production_selfplay_configs(), both of which "
+                        "read the PRODUCTION config regardless of this flag. "
+                        "That is deliberate (the ladder freezes the book and "
+                        "the shape to production), not an oversight.")
     p.add_argument("--regret", type=float, required=True,
                    help="FROZEN wdl_regret for the whole run, in SF win-fraction "
                         f"units [{REGRET_MIN}, {REGRET_MAX}]. Higher = weaker SF. "
                         "There is no PID here: this value never moves.")
     p.add_argument("--sf-nodes", type=int, default=75000,
-                   help="frozen SF node budget per move (default: 75000, the "
-                        "production sf_nodes)")
+                   help="CONSTANT SF node budget on EVERY move (default: 75000). "
+                        "⚑ This is the production sf_nodes VALUE but not "
+                        "production's realized budget: the live curriculum "
+                        "opponent scales it by sf_fast_ply_node_scale (0.25) on "
+                        "the ~75%% of plies that are not full, averaging ~32.8k "
+                        "at this setting. A constant budget is deliberate — an "
+                        "opponent whose strength depends on the net's own "
+                        "playout-cap draws is not frozen — but it makes this a "
+                        "~2.3x STRONGER opponent than production's average, so "
+                        "scores here do not predict live curriculum winrate.")
     p.add_argument("--sf-multipv", type=int, default=int(defaults["sf_multipv"]),
                    help="MultiPV width; CAPS the qualifying set "
                         f"(default: production {defaults['sf_multipv']})")
@@ -703,7 +1080,13 @@ def build_parser(
                         "thread scheduling — MEASURED: two identical 4-game "
                         "invocations then returned different results. Default "
                         "is a COLD TT per search, which is what makes a frozen "
-                        "opponent a function of the position alone.")
+                        "opponent a function of the position alone. ⚑ It also "
+                        "pulls --sf-workers into the measurement: under a warm "
+                        "TT the result depends on WHICH pooled engine served a "
+                        "position, and the worker count is deliberately NOT in "
+                        "the fingerprint — so two runs differing only in "
+                        "--sf-workers would compare as identical while having "
+                        "measured different opponents.")
     p.add_argument("--sf-workers", type=int, default=DEFAULT_SF_WORKERS,
                    help=f"concurrent Stockfish processes (default: {DEFAULT_SF_WORKERS})")
     p.add_argument("--games", type=int, default=400,
@@ -868,36 +1251,12 @@ def main() -> None:
     syzygy = str(args.syzygy or "") or None
     sf_binary_sha = file_sha256(args.stockfish)
 
-    # ⚑ EVERY field here changes the OPPONENT or the ruler. Two runs are
-    # comparable iff this dict is equal — which is why the label, the output
-    # paths, the device, the worker count and the concurrency are NOT in it:
-    # they change the wall clock, not the measurement.
-    fingerprint_payload = {
-        "regret": float(args.regret),
-        "sf_nodes": int(args.sf_nodes),
-        "sf_multipv": int(args.sf_multipv),
-        "sf_hash_mb": int(args.sf_hash_mb),
-        "sf_fresh_tt": bool(args.sf_fresh_tt),
-        "sf_binary_sha256": sf_binary_sha,
-        "sims": int(args.sims),
-        "search_shape": side.shape,
-        "search_gumbel": {k: float(v) for k, v in side.realized_gumbel().items()},
-        "search_vloss_weight": int(side.vloss_weight),
-        "search_target_batch": int(side.target_batch),
-        "tree_reuse": side.tree_reuse,
-        "temperature": float(args.temperature),
-        "gumbel_add_noise": not args.no_gumbel_noise,
-        "seed": int(args.seed),
-        "games": int(args.games),
-        "book": str(openings_path),
-        "opening_plies": int(args.opening_plies),
-        "max_plies": int(args.max_plies),
-        "syzygy": syzygy,
-        "tb_adjudication": (not args.no_syzygy_adjudication),
-        "tb_max_pieces": int(args.tb_max_pieces),
-        "eval_max_batch": int(args.eval_max_batch),
-        "compile": "on" if args.compile else "off",
-    }
+
+    book_sha = file_sha256(openings_path)
+    fingerprint_payload = build_fingerprint_payload(
+        args, side=side, sf_binary_sha=sf_binary_sha,
+        book_path=openings_path, book_sha=book_sha, syzygy=syzygy,
+    )
     fingerprint = build_fingerprint(fingerprint_payload)
 
     banner = (
@@ -913,10 +1272,17 @@ def main() -> None:
     print(banner, flush=True)
     print(f"[idharness] our side: {side.describe()}", flush=True)
 
-    rng = np.random.default_rng(int(args.seed))
+    # Its OWN derived stream, not the generator the play loop uses. Opening
+    # selection must depend on the seed alone; sharing a generator with anything
+    # that draws a variable number of times would make the opening SET depend on
+    # that consumer.
+    book_rng = _stream_rng(
+        seed=int(args.seed), stream=_STREAM_BOOK, game_index=0, ply=0,
+    )
     print(f"[idharness] sampling {n_pairs} openings from {openings_path}", flush=True)
     openings = load_paired_openings(
-        openings_path, n_pairs=n_pairs, max_plies=int(args.opening_plies), rng=rng,
+        openings_path, n_pairs=n_pairs, max_plies=int(args.opening_plies),
+        rng=book_rng,
     )
 
     tablebase = None
@@ -987,6 +1353,10 @@ def main() -> None:
 
     outcomes: list[GameOutcome] = []
     t_start = time.time()
+    sidecar_path = args.out.with_suffix(".games.jsonl")
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = sidecar_path.open("w", encoding="utf-8")
+    print(f"[idharness] per-game sidecar: {sidecar_path}", flush=True)
     try:
         for start in range(0, n_pairs, chunk_pairs):
             block = list(range(start, min(start + chunk_pairs, n_pairs)))
@@ -1009,9 +1379,18 @@ def main() -> None:
                 evaluator=evaluator,
                 tablebase=tablebase,
                 tb_max_pieces=int(args.tb_max_pieces),
-                net_rng=rng,
             )
             outcomes.extend(chunk)
+            # ⚑ A1: CRASH-DURABLE, written and FLUSHED per chunk. arena_standard
+            # lost a 128-game compiled run to an OOM at ply 20 with ZERO games
+            # persisted (2026-08-21) because its only durable output came after
+            # the last game. This is NOT a --resume: nothing reads it back. It
+            # exists so a killed run still leaves the per-game record and the
+            # qualifying-set / tied / played-regret wiring proof on disk, at a
+            # cost of one chunk.
+            for o in sorted(chunk, key=lambda o: o.game_index):
+                sidecar.write(json.dumps(game_row(o), separators=(",", ":")) + "\n")
+            sidecar.flush()
             if pgn_writer is not None:
                 for o in chunk:
                     pgn_writer.write_game(
@@ -1028,14 +1407,20 @@ def main() -> None:
                     )
             if len(outcomes) % max(1, int(args.report_every)) < len(chunk):
                 partial = summarize(outcomes, regret=float(args.regret))
+                # ⚑ F9: "PROGRESS" IS LOAD-BEARING. This is a ROLLING read of a
+                # run in flight, and stopping when it looks good is optional
+                # stopping — the failure that manufactured a 112-Elo result in
+                # this repo's own ledger. Never decide on this line.
                 print(
-                    f"[idharness] {len(outcomes)}/{args.games} games "
+                    f"[idharness] PROGRESS (rolling, NOT decision-grade) "
+                    f"{len(outcomes)}/{args.games} games "
                     f"({time.time() - t_start:.0f}s) score={partial['score']:.4f} "
                     f"admitted_by_regret="
                     f"{partial['handicap']['admitted_by_regret_mean']}",
                     flush=True,
                 )
     finally:
+        sidecar.close()
         pool.close()
         if pgn_writer is not None:
             pgn_writer.close()
@@ -1047,6 +1432,8 @@ def main() -> None:
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "label": args.label,
         "checkpoint": str(args.checkpoint),
+        "checkpoint_identity": checkpoint_identity(args.checkpoint),
+        "per_game_sidecar": str(sidecar_path),
         "config": str(config_path),
         "fingerprint": fingerprint,
         "fingerprint_payload": fingerprint_payload,
@@ -1065,33 +1452,7 @@ def main() -> None:
     }
     record.update(summarize(outcomes, regret=float(args.regret)))
     record["per_game_log"] = [
-        {
-            "game": o.game_index,
-            "pair": o.pair_id,
-            "half": o.half,
-            "net_is_white": o.net_is_white,
-            "result": o.result,
-            "score": o.score,
-            "plies": o.plies,
-            "termination": o.termination,
-            "start_fen": o.start_fen,
-            "sf_moves": len(o.sf_moves),
-            "no_pv_moves": o.no_pv_moves(),
-            "qualifying_set_size_mean": (
-                sum(o.qualifying_sizes()) / len(o.qualifying_sizes())
-                if o.qualifying_sizes() else None
-            ),
-            "admitted_by_regret_mean": (
-                sum(m.admitted_by_regret for m in o.sf_moves if m.qualifying > 0)
-                / len(o.qualifying_sizes())
-                if o.qualifying_sizes() else None
-            ),
-            "saturated_moves": sum(1 for m in o.sf_moves if m.saturated),
-            "qualifying_set_sizes": [m.qualifying for m in o.sf_moves],
-            "tied_at_best_sizes": [m.tied_at_best for m in o.sf_moves],
-            "played_regrets": [m.regret for m in o.sf_moves],
-        }
-        for o in sorted(outcomes, key=lambda o: o.game_index)
+        game_row(o) for o in sorted(outcomes, key=lambda o: o.game_index)
     ]
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -1110,9 +1471,16 @@ def main() -> None:
         f"played regret mean {h['played_regret_mean']} max "
         f"{h['played_regret_max']} | bound respected "
         f"{h['regret_bound_respected']}\n"
+        f"[idharness] admitted_by_regret (unsaturated only) "
+        f"{h['admitted_by_regret_mean_unsaturated']} | no-PV frac "
+        f"{h['no_pv_frac']}\n"
         f"[idharness] wrote {args.out}\n{banner}",
         flush=True,
     )
+    for w in record["validity_warnings"]:
+        print(f"[idharness] \u26d1 VALIDITY: {w}", flush=True)
+    if not record["validity_warnings"]:
+        print("[idharness] validity: no warnings", flush=True)
 
 
 if __name__ == "__main__":

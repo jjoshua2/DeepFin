@@ -10,8 +10,11 @@ a rule that had drifted.
 """
 from __future__ import annotations
 
+import argparse
 import math
 from collections import Counter
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -43,6 +46,9 @@ _INSIDE = ("e2e4", "d2d4", "g1f3")
 _OUTSIDE = ("c2c4", "b1c3")
 _SCORES = (0.60, 0.59, 0.58, 0.50, 0.40)
 _BAND = 0.025
+
+# A second, structurally different opening for the chunking test.
+_ITALIAN = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
 
 
 def _pv(uci: str, score: float) -> StockfishPV:
@@ -217,30 +223,64 @@ def test_exact_ties_are_admitted_at_regret_zero() -> None:
     assert sorted(qualifying) == [10, 20]
 
 
-def test_empty_candidate_list_is_reported_as_unmeasured_not_as_a_set() -> None:
-    """No legal PV => qualifying 0, and the move still has to be legal.
+def test_no_pv_plays_PRODUCTIONS_bestmove_fallback_not_a_random_legal_move() -> None:
+    """⚑ THE OPPONENT-SWAP BUG. No legal PV => SF's bestmove, deterministically.
 
-    A desynced engine returns lines that are illegal in the queried position;
-    production falls back to a uniform legal move there. The harness must record
-    that as UNMEASURED (0), never as a qualifying set of size zero or one, or the
-    realized-handicap mean would quietly average in moves the handicap never
-    touched.
+    ``_process_sf_results`` resolves SF's bestmove to an action id and, when no
+    MultiPV line survives the legality filter, substitutes
+    ``cand_idxs = [a_idx] / cand_scores = [0.0]`` BEFORE calling the chooser — so
+    the production curriculum opponent NEVER plays a uniform random legal move on
+    this path. The harness used to pass the empty list through to
+    ``_choose_curriculum_opponent_move``'s uniform-legal branch, which is a
+    strictly weaker opponent than production's on exactly the rows where the
+    engine is least trustworthy.
+
+    The fixture is decisive: with ``bestmove_uci="e2e4"`` and no PVs at all,
+    production plays e2e4 every time. The pre-fix harness drew uniformly over the
+    startpos' twenty legal moves, so it disagreed on 19 seeds in 20.
     """
     board = chess.Board()
     empty = StockfishResult(
         bestmove_uci="e2e4", wdl=None, pvs=[], cp=None, mate=None,
     )
-    move, outcome = handicapped_sf_move(
-        empty, board, regret=_BAND, rng=sf_move_rng(seed=1, game_index=0, ply=0),
-    )
-    assert outcome.qualifying == 0
-    assert outcome.candidates == 0
-    assert outcome.rank is None
-    assert move in board.legal_moves
+    for seed in range(40):
+        move, outcome = handicapped_sf_move(
+            empty, board, regret=_BAND,
+            rng=sf_move_rng(seed=seed, game_index=0, ply=0),
+        )
+        assert move.uci() == "e2e4", (
+            "no-PV fallback must play SF's bestmove, as production does"
+        )
+        assert outcome.no_pv is True
+        # A REAL one-element set (production's substitution), flagged rather
+        # than encoded as a zero size — the zero is what forced the old,
+        # divergent code path.
+        assert outcome.qualifying == 1
+        assert outcome.candidates == 1
+        assert outcome.tied_at_best == 1
+        assert outcome.admitted_by_regret == 0
+        assert outcome.saturated is False
+        assert move in board.legal_moves
 
     assert within_regret_candidates(
         cand_indices=[], cand_scores=[], regret_limit=_BAND,
     ) == []
+
+
+def test_no_pv_with_an_ILLEGAL_bestmove_falls_back_to_legal_index_zero() -> None:
+    """Production's second fallback, reproduced: bestmove illegal => legal[0]."""
+    from chess_anti_engine.moves.encode import index_to_move, legal_move_indices
+
+    board = chess.Board()
+    bogus = StockfishResult(
+        bestmove_uci="a1a8", wdl=None, pvs=[], cp=None, mate=None,
+    )
+    move, outcome = handicapped_sf_move(
+        bogus, board, regret=_BAND, rng=sf_move_rng(seed=1, game_index=0, ply=0),
+    )
+    expected = index_to_move(int(legal_move_indices(board)[0]), board)
+    assert move == expected
+    assert outcome.no_pv is True
 
 
 def test_same_seed_reproduces_the_whole_move_sequence() -> None:
@@ -351,8 +391,9 @@ def _outcome(game: int, score: float, quals: list[int]):
         score=score, plies=40, termination="rules", start_fen=chess.STARTING_FEN,
         moves=(),
         sf_moves=[
-            SfMoveOutcome(qualifying=q, candidates=6, tied_at_best=1, rank=1,
-                          regret=0.0, nodes=75000, depth=20)
+            SfMoveOutcome(qualifying=max(1, q), candidates=6, no_pv=(q == 0),
+                          tied_at_best=1, rank=1, regret=0.0, nodes=75000,
+                          depth=20)
             for q in quals
         ],
     )
@@ -397,8 +438,8 @@ def test_summary_flags_a_run_whose_played_move_broke_the_band() -> None:
             score=1.0, plies=2, termination="rules", start_fen=chess.STARTING_FEN,
             moves=(),
             sf_moves=[SfMoveOutcome(
-                qualifying=2, candidates=6, tied_at_best=1, rank=2,
-                regret=regret, nodes=1, depth=1,
+                qualifying=2, candidates=6, no_pv=False, tied_at_best=1,
+                rank=2, regret=regret, nodes=1, depth=1,
             )],
         )
 
@@ -418,6 +459,120 @@ def test_summary_drops_an_orphan_half_instead_of_imputing_it() -> None:
     assert s["pairs_complete"] == 1
     assert s["pairs_dropped"] == 1
     assert s["games"] == 3
+
+
+def _payload_args(**over) -> argparse.Namespace:
+    base = {
+        "regret": 0.05, "sf_nodes": 75000, "sf_multipv": 6, "sf_hash_mb": 17,
+        "sf_fresh_tt": True, "sims": 100, "temperature": 0.1,
+        "no_gumbel_noise": False, "seed": 42, "games": 400,
+        "opening_plies": 16, "max_plies": 300, "no_syzygy_adjudication": False,
+        "tb_max_pieces": 6, "eval_max_batch": 4096, "compile": False,
+    }
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def _payload(**over) -> dict:
+    from scripts.arena_standard import resolve_search_shape
+    from scripts.match_vs_handicapped_sf import build_fingerprint_payload
+
+    return build_fingerprint_payload(
+        _payload_args(**over),
+        side=resolve_search_shape("play"),
+        sf_binary_sha="deadbeef",
+        book_path=Path("/books/uho.pgn.zip"),
+        book_sha="cafe1234",
+        syzygy="a:b",
+    )
+
+
+def test_fingerprint_payload_key_set_is_pinned() -> None:
+    """⚑ THE REAL PAYLOAD, not a literal dict standing in for it.
+
+    The previous test hashed a hand-written dict, so it measured its own
+    fixture: the reviewer DELETED ``sf_nodes``, ``sf_multipv`` and
+    ``eval_max_batch`` from the payload ``main()`` actually builds and all 21
+    tests stayed green — three knobs that change the opponent could have dropped
+    out of the fingerprint with nothing failing, and two runs at different node
+    budgets would then have compared as identical and been differenced.
+
+    Pinning the EXACT key set means adding or removing a knob forces a
+    deliberate edit here, which is the point at which someone has to decide
+    whether it changes the opponent or only the wall clock.
+    """
+    from scripts.match_vs_handicapped_sf import FINGERPRINT_KEYS
+
+    assert set(_payload()) == set(FINGERPRINT_KEYS)
+    assert set(_payload()) == {
+        "regret", "sf_nodes", "sf_multipv", "sf_hash_mb", "sf_fresh_tt",
+        "sf_binary_sha256", "sims", "search_shape", "search_gumbel",
+        "search_vloss_weight", "search_target_batch", "tree_reuse",
+        "temperature", "gumbel_add_noise", "seed", "games", "book",
+        "book_sha256", "opening_plies", "max_plies", "syzygy",
+        "tb_adjudication", "tb_max_pieces", "eval_max_batch", "compile",
+    }
+
+
+def test_the_fingerprint_excludes_only_wall_clock_knobs() -> None:
+    """Concurrency and worker count must NOT be in it — and must not need to be.
+
+    They are excluded because the measurement is independent of them (see
+    ``test_two_chunkings_of_the_same_pairs_agree_move_for_move``), not because
+    they were forgotten. Stated as a test so the exclusion is a claim someone
+    has to re-justify if it stops holding.
+    """
+    keys = set(_payload())
+    for excluded in ("max_concurrent_games", "sf_workers", "device", "label"):
+        assert excluded not in keys
+
+
+def test_every_payload_field_actually_moves_the_fingerprint() -> None:
+    """No field is present-but-inert: each one changes the hash on its own."""
+    from scripts.match_vs_handicapped_sf import build_fingerprint
+
+    ref = build_fingerprint(_payload())
+    for key, other in (
+        ("regret", 0.051), ("sf_nodes", 75001), ("sf_multipv", 7),
+        ("sf_hash_mb", 18), ("sf_fresh_tt", False), ("sims", 101),
+        ("temperature", 0.2), ("no_gumbel_noise", True), ("seed", 43),
+        ("games", 402), ("opening_plies", 12), ("max_plies", 200),
+        ("no_syzygy_adjudication", True), ("tb_max_pieces", 5),
+        ("eval_max_batch", 2048), ("compile", True),
+    ):
+        assert build_fingerprint(_payload(**{key: other})) != ref, (
+            f"{key} does not move the fingerprint"
+        )
+    # The three non-args inputs, checked the same way.
+    from scripts.arena_standard import resolve_search_shape
+    from scripts.match_vs_handicapped_sf import build_fingerprint_payload
+
+    for kwargs in (
+        {"sf_binary_sha": "other"}, {"book_sha": "other"},
+        {"book_path": Path("/books/other.zip")}, {"syzygy": "a"},
+    ):
+        base: dict[str, Any] = {
+            "side": resolve_search_shape("play"), "sf_binary_sha": "deadbeef",
+            "book_path": Path("/books/uho.pgn.zip"), "book_sha": "cafe1234",
+            "syzygy": "a:b",
+        }
+        base.update(kwargs)
+        assert build_fingerprint(
+            build_fingerprint_payload(_payload_args(), **base),
+        ) != ref, f"{kwargs} does not move the fingerprint"
+
+
+def test_payload_builder_refuses_a_key_set_that_drifts_from_the_constant() -> None:
+    """The launch-time half of the same guard."""
+    import scripts.match_vs_handicapped_sf as mod
+
+    original = mod.FINGERPRINT_KEYS
+    try:
+        mod.FINGERPRINT_KEYS = frozenset(set(original) | {"a_knob_nobody_added"})
+        with pytest.raises(SystemExit, match="FINGERPRINT_KEYS"):
+            _payload()
+    finally:
+        mod.FINGERPRINT_KEYS = original
 
 
 def test_fingerprint_moves_with_every_opponent_defining_field() -> None:
@@ -464,11 +619,30 @@ class _StubPool:
 
 
 def _stub_net(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Our side plays its first legal move — deterministic, no model needed."""
+    """Our side, stubbed — but consuming the rng THE WAY THE REAL SEARCH DOES.
+
+    ⚑ THIS IS WHAT MAKES THE CONCURRENCY TEST NON-VACUOUS. A stub that ignored
+    the generator (an earlier one returned the first legal move) would make
+    ``test_two_chunkings_of_the_same_pairs_agree_move_for_move`` pass against
+    the very defect it exists to catch, because nothing would depend on batch
+    composition.
+
+    ``mcts/gumbel_c.py`` draws ONCE PER LEGAL MOVE of board 0
+    (``_gumbel(rng, legal_idx.size)``), then once per legal move of board 1, and
+    so on down the batch, plus a temperature draw each. So the number of draws a
+    board consumes depends on ITS legal-move count, and every later board's
+    stream position depends on every earlier one. This mirrors exactly that:
+    variable-length per board, order-dependent, batch-composition-dependent.
+    """
     from chess_anti_engine.moves.encode import move_to_index
 
-    def fake(_model, boards, **_kwargs):
-        return [move_to_index(next(iter(b.legal_moves)), b) for b in boards]
+    def fake(_model, boards, *, rng, **_kwargs):
+        out = []
+        for b in boards:
+            legal = list(b.legal_moves)
+            noise = rng.random(len(legal))  # variable length, like _gumbel
+            out.append(move_to_index(legal[int(np.argmax(noise))], b))
+        return out
 
     monkeypatch.setattr(
         "chess_anti_engine.selfplay.match.pick_moves_for_boards", fake,
@@ -499,7 +673,6 @@ def _run_chunk(monkeypatch: pytest.MonkeyPatch, *, openings=None, **over):
         "evaluator": None,
         "tablebase": None,
         "tb_max_pieces": 6,
-        "net_rng": np.random.default_rng(7),
     }
     kwargs.update(over)
     outcomes = play_chunk(None, boards, **kwargs)  # pyright: ignore[reportArgumentType]
@@ -609,6 +782,178 @@ def test_two_pairs_playing_the_SAME_opening_randomize_independently(
         "opening — the SF draw is not keyed on the game index, so the pairs are "
         f"perfectly correlated and the CI is fiction. ranks={ranks_a}"
     )
+
+
+def test_two_chunkings_of_the_same_pairs_agree_move_for_move(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ F1: THE MEASUREMENT MUST NOT DEPEND ON --max-concurrent-games.
+
+    This is the mcg 4 vs mcg 2 comparison in miniature: the same two pairs
+    played in ONE chunk of 2 and as TWO chunks of 1. Under the old shared
+    play-order generator these disagreed, because ``mcts/gumbel_c.py`` consumes
+    the rng inside a per-board loop (``_gumbel(rng, legal_idx.size)`` once per
+    legal move, per board, in batch order) — so a game's Gumbel noise depended on
+    which other games shared its batch. MEASURED on the real harness before the
+    fix: mcg 4 and mcg 2, same seed and the SAME fingerprint, scored 1.0 and
+    0.875 over 104 and 183 SF moves.
+
+    That is the worst shape a defect can have here — a knob outside the
+    fingerprint silently changing the number two ladder rungs are differenced on.
+    It is fixed by keying our side per (seed, game, ply) and searching one game
+    per call, and this test is what keeps ``max_concurrent_games`` out of the
+    fingerprint honestly rather than by assertion.
+    """
+    two_boards = [chess.Board(), chess.Board(_ITALIAN)]
+
+    one_chunk, _ = _run_chunk(monkeypatch, openings=two_boards, max_plies=20)
+    first, _ = _run_chunk(
+        monkeypatch, openings=two_boards[:1], pair_ids=[0], max_plies=20,
+    )
+    second, _ = _run_chunk(
+        monkeypatch, openings=two_boards[1:], pair_ids=[1], max_plies=20,
+    )
+
+    def by_game(outs):
+        return {
+            o.game_index: (
+                o.result, o.plies, tuple(m.uci() for m in o.moves),
+                [m.qualifying for m in o.sf_moves],
+                [m.tied_at_best for m in o.sf_moves],
+                [m.rank for m in o.sf_moves],
+            )
+            for o in outs
+        }
+
+    split = by_game(first) | by_game(second)
+    whole = by_game(one_chunk)
+    assert set(whole) == set(split) == {0, 1, 2, 3}
+    for g in sorted(whole):
+        assert whole[g] == split[g], (
+            f"game {g} differs between one chunk of 2 pairs and two chunks of "
+            "1 — the measurement depends on concurrency, so a fingerprint that "
+            "omits --max-concurrent-games is lying"
+        )
+
+
+def test_our_sides_randomness_is_keyed_on_the_GAME_not_just_the_ply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Two identical openings must not produce two identical games.
+
+    Keying our side on ``ply`` alone would leave every game at ply p drawing the
+    same noise — invisible while the openings differ (different legal sets give
+    different argmaxes) and fatal when they do not: two pairs would play one
+    game twice and the pentanomial would count a duplicate as an independent
+    sample.
+
+    ``--regret 0.0`` makes the stub opponent deterministic (only the best move
+    ties), so our side's stream is the ONLY remaining source of variation and
+    this is an exact detector rather than a probabilistic one.
+    """
+    outcomes, _pool = _run_chunk(
+        monkeypatch,
+        openings=[chess.Board(), chess.Board()],
+        regret=0.0,
+        max_plies=20,
+    )
+    by_game = {o.game_index: o for o in outcomes}
+    a, b = by_game[0], by_game[2]  # both net-white, identical opening
+    assert a.net_is_white and b.net_is_white  # noqa: PT018 - one fact
+    assert tuple(m.uci() for m in a.moves) != tuple(m.uci() for m in b.moves), (
+        "two pairs from the same opening played the identical game with a "
+        "deterministic opponent — our side's RNG is not keyed on the game"
+    )
+
+
+def _sf_move(*, qualifying: int, tied: int, candidates: int = 6,
+             no_pv: bool = False, regret: float = 0.0):
+    from scripts.match_vs_handicapped_sf import SfMoveOutcome
+
+    return SfMoveOutcome(
+        qualifying=qualifying, candidates=candidates, no_pv=no_pv,
+        tied_at_best=tied, rank=1, regret=regret, nodes=1, depth=1,
+    )
+
+
+def _game(moves, *, score: float = 0.5):
+    from scripts.match_vs_handicapped_sf import GameOutcome
+
+    return GameOutcome(
+        game_index=0, pair_id=0, half=0, net_is_white=True,
+        result={1.0: "1-0", 0.5: "1/2-1/2", 0.0: "0-1"}[score], score=score,
+        plies=10, termination="rules", start_fen=chess.STARTING_FEN, moves=(),
+        sf_moves=list(moves),
+    )
+
+
+def test_the_undiluted_admitted_mean_excludes_saturated_moves() -> None:
+    """⚑ F5. Saturated moves pin ``admitted`` at 0 BY CONSTRUCTION.
+
+    Every candidate ties there, so a zero band already admits them all and the
+    band can add nothing. Leaving them in the denominator scales the headline
+    mean down by exactly ``saturated_frac`` — a real effect (12.7% of measured
+    moves at production settings, ~53% in a low-node smoke) that reads as a
+    weaker handicap rather than as an unmeasurable one. Both numbers are
+    reported; only this one answers "how much did the band do where it could".
+    """
+    s = summarize(
+        [_game([
+            _sf_move(qualifying=3, tied=1),   # admitted 2, unsaturated
+            _sf_move(qualifying=5, tied=1),   # admitted 4, unsaturated
+            _sf_move(qualifying=6, tied=6),   # admitted 0, SATURATED
+            _sf_move(qualifying=6, tied=6),   # admitted 0, SATURATED
+        ])],
+        regret=0.05,
+    )
+    h = s["handicap"]
+    assert h["saturated_moves"] == 2
+    assert h["saturated_frac"] == pytest.approx(0.5)
+    assert h["admitted_by_regret_mean"] == pytest.approx(6 / 4)
+    assert h["admitted_by_regret_mean_unsaturated"] == pytest.approx(6 / 2)
+    assert h["admitted_by_regret_mean"] != h["admitted_by_regret_mean_unsaturated"]
+
+
+def test_a_saturated_score_is_flagged_invalid_and_the_flag_is_banked() -> None:
+    """⚑ A3. A score at the ceiling has no resolution — and Elo is null there.
+
+    Printed AND stored: a warning that only reached a console is gone by the
+    time anyone reads the JSON, which is the only artifact a ladder rung leaves.
+    """
+    won = summarize([_game([_sf_move(qualifying=2, tied=1)], score=1.0)], regret=0.05)
+    assert won["valid"] is False
+    assert any("SATURATED SCORE" in w for w in won["validity_warnings"])
+    assert won["elo"] is None
+
+    lost = summarize([_game([_sf_move(qualifying=2, tied=1)], score=0.0)], regret=0.05)
+    assert lost["valid"] is False
+    assert any("SATURATED SCORE" in w for w in lost["validity_warnings"])
+
+    mid = summarize([_game([_sf_move(qualifying=2, tied=1)], score=0.5)], regret=0.05)
+    assert mid["valid"] is True
+    assert mid["validity_warnings"] == []
+
+
+def test_a_high_no_pv_rate_is_flagged_invalid() -> None:
+    """⚑ F6. No legal MultiPV line ⇒ the handicap could not act on that move.
+
+    The structural rate is exactly 0.000000; a non-zero one means engines are
+    answering a different position than the one asked (a desynced pool, or a
+    build without WDL output). The opponent is then degraded toward its bestmove
+    while the artifact still looks clean, so the run has to say so itself.
+    """
+    bad = summarize(
+        [_game([_sf_move(qualifying=1, tied=1, candidates=1, no_pv=True)] * 3
+               + [_sf_move(qualifying=2, tied=1)] * 97)],
+        regret=0.05,
+    )
+    assert bad["handicap"]["no_pv_frac"] == pytest.approx(0.03)
+    assert bad["valid"] is False
+    assert any("NO-PV RATE" in w for w in bad["validity_warnings"])
+
+    clean = summarize([_game([_sf_move(qualifying=2, tied=1)] * 100)], regret=0.05)
+    assert clean["handicap"]["no_pv_frac"] == 0.0
+    assert clean["valid"] is True
 
 
 def test_play_loop_is_reproducible_from_the_seed(
