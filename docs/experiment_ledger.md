@@ -65049,3 +65049,57 @@ took-effect assertion), 1,400 lines of tests.
   defect found in review is repairable by re-keying from `fen` without re-searching.
   The ladder itself does NOT launch until (a) the review verdict and (b) a prereg entry
   with per-arm kill thresholds — neither exists yet.
+
+### 2026-08-22 — mixed-corpus trainer LANDED (`feat/mixed-corpus`); my seed-crawl mechanism REFUTED; ratio-ladder prereg still OWED
+
+Builder: Opus agent, checkout `/home/josh/chess-438-merge-review`, branch
+`feat/mixed-corpus` off `feat/lc0-continuation`@`03f911879`, commits `0ba4316ed` +
+`9d320a2ba` (+2,882/−47). Review pending (Opus + grok dispatched); not merged, no PR.
+
+- **Core design:** `sf_wdl_frac`/`search_wdl_frac` are scalar kwargs and the right value
+  differs per row ⇒ `compute_loss` runs ONCE PER SOURCE on an index-sliced sub-batch
+  with that source's own blend; recombined row-weighted. Two independent mechanisms:
+  the split, and `LOSS_ROUTING` mask-zeroing with observed/realized counters —
+  `realized>0` on a forbidden pair REFUSES the run, no checkpoint. Own rows' blend read
+  from `live_production_value_blend`, never hard-coded.
+- **Smoke routing table (50 steps, f=0.5, iter-595 init, cpu/no-compile):** every
+  SF-derived loss (`wdl_sf_component`, `sf_eval_ce`, `soft_policy_ce`,
+  `future_policy_ce`, `sf_own_*`, `sf_move_ce`, `categorical_ce`, `volatility`,
+  `sf_volatility`) reads own-rows ONLY (lc0 obs/real 0/0); `policy_ce`,
+  `wdl_search_component`, `moves_left` read both. Realized f = 0.500000 COUNTED from
+  rows; 0 unrouted calls; per-source blend leak 0.000000 (lc0) / 0.000862 (own, bar
+  0.001). ⚑ On the real corpus the zeroing is a no-op (lc0 rows carry no `sf_wdl`) —
+  every routing test therefore BUILDS an lc0 row with the forbidden column, or the
+  mutant is vacuous. 5 mutants applied and killed.
+- **⚑⚑ MY SEED-CRAWL MECHANISM IS REFUTED AS STATED** (this corrects the 2026-08-22
+  "ext's 80-min 'wedge' DIAGNOSED" ops note). Builder measured: buffer construction
+  11.4s (seed 1) / 10.5s (seed 2), first batch 0.01–0.02s — NO seed dependence, no
+  O(corpus) pre-step crawl in its harness; raw zarr reads at 2,610 MB/s (nothing
+  I/O-bound). What IS established: `deterministic_refresh: true` (a declared deviation)
+  suppresses the prefetch thread ⇒ every 4th draw reloads 5 shards synchronously on the
+  sampling path ≈ **0.42 s/step ongoing tax**, 61% of it `shard.validate_arrays`
+  re-validating a frozen corpus. UNRESOLVED: ext's observed ~90-min silent pre-step
+  phase (monotone rchar ~6-7 MB/s; py-spy in `_refresh_shuffle_buf`→`sparsify_chunk`)
+  is explained by NEITHER account — the builder's harness may not reproduce the
+  script's construction path. Not adjudicating further now: arm 1 of the ratio ladder
+  banks `draw_seconds_by_source` + measured pre-step time, which settles the practical
+  cost without the mechanism. Builder's scoped changes: staggered `refresh_phase_offset`
+  for the second buffer (collision-tested) + per-source draw timing. Deliberately NOT
+  changed (guard-judged, prereg-owned): `refresh_shards`, `deterministic_refresh`,
+  validate-skip for frozen corpora.
+- **Deviations accepted:** own-source guard is row-weighted (worst-of-batch would need a
+  bar 30× looser than the quantity it bounds at batch 32; bar derived from measured
+  corpus coverage = an INPUT, never the run's output); `--gpu-mem-fraction` doesn't
+  exist on this driver (smoke ran cpu/no-compile on the real architecture + iter-595
+  weights); `compute_loss_calls` reads 2× steps in mixed runs; `dataset.py` untouched —
+  source vector crosses via a `Trainer._host_batch_to_tensors` wrapper with
+  skipped/unrouted counters that refuse the run on any failure to cross.
+- Lint bare: exit 1, **delta 0** (identical 13 pre-existing numpy-typing findings at the
+  branch point, proven by stash; builder's files zero findings). Tests delta:
+  145→183, +38, 0 regressions, baseline proven to run its own code.
+- **⚑ Prereg still OWED before any arm launches** (builder confirmed by search: mixed
+  replay appears in the ledger only as a named unlaunched remedy). Launch template
+  banked in the builder's report: f ∈ {0.25, 0.5, 0.75} → seeds 11/12/13, 20k steps,
+  `--mix-own-max-outcome-borne 0.001` (corpus-measured 0.000943), serial arms, mid
+  checkpoint at step 10,032 (0.5016 of budget), every arm `valid_control: false` by
+  construction — score/arena only, never `compare`.
