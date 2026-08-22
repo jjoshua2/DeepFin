@@ -10,7 +10,6 @@ import inspect
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -373,7 +372,7 @@ def test_the_shard_guard_runs_on_the_real_call_path(monkeypatch, tmp_path) -> No
         rr, "Trainer",
         lambda *a, **k: type("_T", (), {
             "train_steps": _no_training, "w_sf_own_regret": 0.0,
-            "sf_policy_floor_params": SimpleNamespace(w=0.0),
+            "w_sf_policy_floor": 0.0,
         })(),
     )
     monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
@@ -653,7 +652,7 @@ def _variant_harness(monkeypatch, buf_cls, *, train: bool = False) -> None:
                   "save": lambda *_a, **_k: None,
                   # announced FROM the consumer, so the fake has to have them
                   "w_sf_own_regret": 0.0,
-                  "sf_policy_floor_params": SimpleNamespace(w=0.0)}
+                  "w_sf_policy_floor": 0.0}
 
     monkeypatch.setattr(rr, "DiskReplayBuffer", buf_cls)
     monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
@@ -973,7 +972,7 @@ def test_the_draw_guard_runs_on_the_real_call_path_and_lands_in_the_report(
         # drifted from the object it stands in for, and the drift would hide
         # exactly the disagreement the announcement exists to expose.
         w_sf_own_regret = 0.0
-        sf_policy_floor_params = SimpleNamespace(w=0.0)
+        w_sf_policy_floor = 0.0
 
         def train_steps(self, *_a, **_k):
             return _Metrics()

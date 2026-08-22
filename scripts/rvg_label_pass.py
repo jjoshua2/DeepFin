@@ -79,6 +79,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -630,6 +631,38 @@ _MODE_ONLY_FLAGS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _read_partial_records(
+    partial_path: Path, *, settings: dict[str, object] | None = None,
+) -> Iterator[LabelRecord]:
+    """Every DATA row in a ``.partial``, record lines skipped.
+
+    ⚑ ONE READER, BECAUSE THERE ARE TWO READ SITES AND THEY DIVERGED. The resume
+    loader was taught that the file opens with a ``resume_settings`` record; the
+    end-of-run join read-back was not, and went on subscripting ``["key"]`` on
+    every line. Every FRESH pass then died with ``KeyError: 'key'`` after hours
+    of SF work and before the final ``.jsonl`` was written, and the retry hit the
+    same line in the now-existing partial — wedged until hand-stripped. A single
+    generator both sites call is the shape that cannot drift again: a new record
+    type is skipped by both readers or by neither.
+
+    ``settings`` opts into the resume check. The join read-back passes None: it
+    is re-reading a file this process just wrote, so re-validating it there would
+    only assert that the settings match themselves.
+    """
+    with open(partial_path, encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            rec = json.loads(stripped)
+            record_kind = rec.get("record")
+            if record_kind is not None:
+                if record_kind == "resume_settings" and settings is not None:
+                    _assert_resume_settings_match(rec, settings, partial_path)
+                continue
+            yield rec
+
+
 def _resume_settings(args: argparse.Namespace) -> dict[str, object]:
     """The settings that change what a BANKED ROW MEANS.
 
@@ -707,7 +740,14 @@ def _refuse_flags_for_other_mode(
         )
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The real CLI, in one place.
+
+    ⚑ FACTORED OUT SO THE TESTS DRIVE *THIS* PARSER. A test that rebuilds
+    the flag list by hand pins the principle and leaves the call site free:
+    a flag added here and forgotten in ``_MODE_ONLY_FLAGS`` would stay green
+    forever, which is the same defect class as the mode guard itself.
+    """
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -754,6 +794,11 @@ def main() -> None:
     ap.add_argument("--no-syzygy", action="store_true",
                     help="deviate from the production label path and run WITHOUT "
                          "tablebases (recorded in the header)")
+    return ap
+
+
+def main() -> None:
+    ap = build_parser()
     args = ap.parse_args()
     _refuse_flags_for_other_mode(ap, args)
 
@@ -864,16 +909,8 @@ def main() -> None:
     settings = _resume_settings(args)
     done: dict[str, LabelRecord] = {}
     if partial_path.exists():
-        with open(partial_path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                rec = json.loads(line)
-                if rec.get("record") == "resume_settings":
-                    _assert_resume_settings_match(rec, settings, partial_path)
-                    continue
-                done[str(rec["key"])] = rec
+        for rec in _read_partial_records(partial_path, settings=settings):
+            done[str(rec["key"])] = rec
         print(f"[rvg-label] resuming: {len(done)} positions already banked", flush=True)
     if not partial_path.exists():
         with open(partial_path, "w", encoding="utf-8") as fh:
@@ -995,12 +1032,14 @@ def main() -> None:
     # rather than out of `done`, so a hex/serialization bug or a resume that
     # mixed in another corpus's records shows up as a disagreement instead of
     # being confirmed by the same dict that produced it.
-    banked_keys: set[str] = set()
-    with open(partial_path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                banked_keys.add(str(json.loads(line)["key"]))
+    # ⚑ SKIP RECORD LINES. The `.partial` is not homogeneous: it opens with a
+    # `resume_settings` record. Teaching the LOAD side about that record and
+    # leaving this side subscripting `["key"]` on every line killed every fresh
+    # pass with `KeyError: 'key'` AFTER all the SF work and BEFORE the final
+    # .jsonl write — and wedged the retry, because the partial then exists with
+    # the settings line still in it. One reader was updated, its twin was not;
+    # `_read_partial_records` is now that twin, shared by both.
+    banked_keys = {str(rec["key"]) for rec in _read_partial_records(partial_path)}
     matched = sum(1 for r in scan.rows if r.key.hex() in banked_keys)
 
     header = {

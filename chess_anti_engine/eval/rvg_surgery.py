@@ -682,7 +682,6 @@ class RvgLabelIndex:
         return (nodes / multipv if multipv > 0 else 0.0, nodes, name)
 
     @classmethod
-    @classmethod
     def _load_one_streaming(
         cls, file_path: Path, *, policy_encoding: str | None,
     ) -> RvgLabelIndex:
@@ -751,6 +750,19 @@ class RvgLabelIndex:
                 total += len(moves)
                 offsets.append(total)
 
+        # ⚑ MIXED ENCODINGS INSIDE ONE FILE, refused here as the overlay path
+        # refuses them across files. Without this, `next(iter(...))` picked an
+        # arbitrary member of a set of hash-randomized strings, so WHICH encoding
+        # got checked against the corpus varied run to run on identical input.
+        # Silent, nondeterministic wrongness -- and it contradicted this method's
+        # own docstring promise that every refusal the overlay path makes is
+        # made here.
+        if len(encodings) > 1:
+            raise SystemExit(
+                f"{file_path}: mixed policy encodings within one label file "
+                f"{sorted(encodings)} -- the rows were computed in different "
+                "move spaces and cannot be joined against one corpus"
+            )
         file_encoding = next(iter(encodings)) if encodings else ""
         if policy_encoding is not None and file_encoding and file_encoding != policy_encoding:
             raise SystemExit(

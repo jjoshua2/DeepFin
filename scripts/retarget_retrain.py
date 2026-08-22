@@ -527,6 +527,22 @@ class RvgArmSpec:
     def stages(self) -> tuple[str, ...]:
         return RvgArmSpec.STAGES[self.arm]
 
+    @staticmethod
+    def stages_for(arm: str) -> tuple[str, ...]:
+        """The stage set of an arm NAME, without building or validating a spec.
+
+        ⚑ A stage set is a property of the arm alone — `STAGES` is keyed by name
+        and nothing else — so asking "does this leg have a G stage" must not
+        require a validated spec. Resolving one against the SWEEP-LEVEL context
+        (whose `params` is empty by construction) validated every leg against the
+        sweep DEFAULTS instead of its own overrides, so the documented arm-B
+        spelling `g030:rvg_arm=g,rvg_g_alpha=0.3` aborted with "alpha=0.0" — the
+        per-variant value the guard is meant to read is exactly the one it could
+        not see. Unknown names return `()` and are refused later, by `validate`,
+        which is where an unknown arm belongs.
+        """
+        return RvgArmSpec.STAGES.get(str(arm).strip().lower(), ())
+
     def stamp(self) -> str:
         """Unambiguous arm identity for ``rig_active``: ``R`` / ``V`` / ``G`` /
         ``V+G``. A composition must never read as one of its halves in the
@@ -1000,14 +1016,16 @@ class _RigContext:
 
     defaults: RvgArmSpec
     labels: RvgLabelIndex | None
-    labels_path: list[Path] | None
     params: dict[str, float]
     #: Arm B's alternative ``q``: an external per-row policy (an lc0/BT4 net's
     #: distribution) instead of the SF-regret-derived softmax. Default None =
     #: the SF source, which is arm G.
     external_q: RvgExternalPolicyIndex | None = None
-    external_q_path: Path | None = None
 
+    # ⚑ No `labels_path` / `external_q_path` here. They were assigned and never
+    # read again once the report was rerouted to the loaders' own
+    # `file_provenance` — set-and-never-read, the shape this rig's own gates
+    # exist to catch, sitting in the rig.
     def resolve_rvg(self, arm: str) -> RvgArmSpec:
         spec = replace(
             self.defaults,
@@ -1036,8 +1054,7 @@ class _RigContext:
                 arm="", r_weight=0.0, v_lambda=0.0, v_tau_cp=0.0,
                 v_veto_cp=float("inf"), g_alpha=0.0, g_temp_cp=100.0,
             ),
-            labels=None, labels_path=None, params={},
-            external_q=None, external_q_path=None,
+            labels=None, params={}, external_q=None,
         )
 
     def require_labels(self) -> RvgLabelIndex:
@@ -1200,6 +1217,44 @@ def _assert_rig_wrapper_took_effect(train_buf: Any, *, name: str) -> None:
             "the control under another name. Check that --rvg-labels covers this "
             "--replay-dir (realized f is reported per arm in retarget_report.json)."
         )
+    # ⚑ CAUSE BEFORE SYMPTOM, and the ORDER is the whole point. A full key-space
+    # miss produces BOTH readings: every G stage falls back, so `edited_rows`
+    # hits 0 as well. Checked second, the useful message was unreachable through
+    # the real wrapper — the operator got "nothing was edited" (true, and it
+    # points at alpha, the labels, the corpus, anything) instead of "these two
+    # files are keyed differently, regenerate the q". A test that reached it by
+    # hand-building a stats dict was measuring an ordering the production path
+    # never takes.
+    ext = s.get("external_q")
+    # ⚑ `attached` is REDUNDANT TODAY AND KEPT DELIBERATELY. A detached leg
+    # reports no counters, so `missing + zero_overlap` is 0 and `0 >= eligible`
+    # can only hold at eligible == 0 — which the gate above already refused.
+    # Proven by exhausting the reachable state space (2 total x 3 eligible x
+    # 3 edited x 5 external_q shapes = 90 states, 0 behavioural differences with
+    # the test removed), so no test can kill a mutant that drops it and none is
+    # claimed. It stays because it states the intent, and because it is what
+    # keeps this correct on the day the detached branch starts reporting
+    # counters — at which point the arithmetic alone would ban every V leg of a
+    # mixed arm-B ladder.
+    if isinstance(ext, dict) and ext.get("attached", True):
+        eligible = int(s.get("eligible_rows", 0))
+        missing = int(ext.get("missing_rows", 0) or 0)
+        zero_overlap = int(ext.get("zero_overlap_rows", 0) or 0)
+        if eligible and missing + zero_overlap >= eligible:
+            detail = (
+                f"{missing} rows absent from the file"
+                if missing >= eligible else
+                f"{zero_overlap} rows present but sharing no move with the label"
+                if zero_overlap >= eligible else
+                f"{missing} absent + {zero_overlap} present-but-non-overlapping"
+            )
+            raise SystemExit(
+                f"variant {name!r}: the external q reached NONE of the "
+                f"{eligible} eligible rows ({detail}). The q file and this "
+                "--replay-dir are keyed differently, or their move spaces "
+                "disagree — regenerate the q file against this corpus rather "
+                "than training a control labelled arm B."
+            )
     edited = s.get("edited_rows")
     if edited is not None and int(edited) == 0:
         raise SystemExit(
@@ -1208,17 +1263,6 @@ def _assert_rig_wrapper_took_effect(train_buf: Any, *, name: str) -> None:
             "stored targets bit for bit and this arm is the control under "
             f"another name (fallback_rows={s.get('fallback_rows')})."
         )
-    ext = s.get("external_q")
-    if isinstance(ext, dict):
-        missing = int(ext.get("missing_rows", 0) or 0)
-        if missing and missing >= int(s.get("eligible_rows", 0)):
-            raise SystemExit(
-                f"variant {name!r}: the external q file supplied NO row the "
-                f"corpus asked for ({missing} misses over "
-                f"{s['eligible_rows']} eligible rows). The two files are in "
-                "different key spaces — regenerate the q file against this "
-                "--replay-dir rather than training a control labelled arm B."
-            )
 
 
 def _apply_rvg_config_side(
@@ -1344,6 +1388,33 @@ def build_rig_replay_buffer(
         diff_focus_q_weight=tc.diff_focus_q_weight,
     )
     return buf
+
+
+def _rvg_config_side(trainer: Any, *, config: dict) -> dict[str, object]:
+    """Arm R's config half, read off the values the LOSS is called with.
+
+    ⚑ `trainer.w_sf_policy_floor`, NOT `trainer.sf_policy_floor_params.w`. The
+    trainer assembles its loss kwargs as
+    `replace(self.sf_policy_floor_params, w=float(self.w_sf_policy_floor))`, so
+    the shape object carries whatever `w` it was resolved with at construction
+    and the live weight overrides it on the way to the consumer. Reading `.w` off
+    the shape is the producer's copy one indirection deeper -- the same defect
+    wearing the fix's clothes.
+
+    A function rather than an inline dict so a test can drive it: the wiring lives
+    in `_run_variant`, whose tests are in another file, and a guard only the other
+    file exercises is one this file's mutation runs cannot kill.
+    """
+    return {
+        "w_sf_own_regret": float(trainer.w_sf_own_regret),
+        "w_sf_policy_floor": float(trainer.w_sf_policy_floor),
+        # What was ASKED FOR, kept beside it: the pair disagreeing is the
+        # observation, and it is unavailable if only one of them is recorded.
+        "asked_for": {
+            "w_sf_own_regret": float(config.get("w_sf_own_regret", 0.0) or 0.0),
+            "w_sf_policy_floor": float(config.get("w_sf_policy_floor", 0.0) or 0.0),
+        },
+    }
 
 
 def _run_variant(
@@ -1589,19 +1660,19 @@ def _run_variant(
   #
   # ⚑ READ OFF THE TRAINER'S OWN ATTRIBUTES, NOT THE CONFIG DICT. The config is
   # the PRODUCER's copy: it proves what was asked for, which is the half we
-  # already know. `trainer.w_sf_own_regret` and `trainer.sf_policy_floor_params.w`
-  # are the values `compute_loss` is actually called with, so a rename or a
-  # dropped key between `from_dict` and the Trainer shows up as a disagreement
-  # instead of being invisible. Same rule the trainer's own floor announcement
-  # follows ([[announce_from_the_consumers_own_parameter]]).
-        "rvg_config_side": {
-            "w_sf_own_regret": float(trainer.w_sf_own_regret),
-            "w_sf_policy_floor": float(trainer.sf_policy_floor_params.w),
-            "asked_for": {
-                "w_sf_own_regret": float(config.get("w_sf_own_regret", 0.0) or 0.0),
-                "w_sf_policy_floor": float(config.get("w_sf_policy_floor", 0.0) or 0.0),
-            },
-        },
+  # already know. `trainer.w_sf_own_regret` and `trainer.w_sf_policy_floor` are
+  # the values `compute_loss` is actually called with, so a rename or a dropped
+  # key between `from_dict` and the Trainer shows up as a disagreement instead of
+  # being invisible. Same rule the trainer's own floor announcement follows
+  # ([[announce_from_the_consumers_own_parameter]]).
+  #
+  # ⚑ `w_sf_policy_floor`, NOT `sf_policy_floor_params.w`. The trainer builds the
+  # loss kwargs as `replace(self.sf_policy_floor_params, w=self.w_sf_policy_floor)`
+  # — the SHAPE object keeps whatever `w` it was resolved with at construction and
+  # the live weight overrides it on the way to the consumer. Reading `.w` off the
+  # shape is reading the producer's copy one indirection further in, which is the
+  # same defect wearing the fix's clothes.
+        "rvg_config_side": _rvg_config_side(trainer, config=config),
         "rvg_labels": (
             ctx.labels.header.get("label_file_provenance")
             if ctx.labels is not None else None
@@ -1750,10 +1821,8 @@ def main() -> None:
             g_temp_cp=float(args.rvg_g_temp),
         ),
         labels=labels,
-        labels_path=(list(args.rvg_labels) if args.rvg_labels else None),
         params={},
         external_q=external_q,
-        external_q_path=external_q_path,
     )
     # ⚑ THE ONE q REFUSAL THAT IS CORRECTLY SWEEP-LEVEL. A leg without a G stage
     # detaches the q and says so (see `_RvgTargetSurgeryBuffer.__init__`), which
@@ -1762,9 +1831,15 @@ def main() -> None:
     # running. That is a stop, and it can only be decided once every variant is
     # known, which is here.
     if external_q is not None:
+        # ⚑ BY ARM NAME, NOT BY A RESOLVED SPEC. `resolve_rvg` validates, and the
+        # only context available here is the sweep-level one with `params={}`, so
+        # resolving read the sweep DEFAULTS and aborted the per-variant spelling
+        # this script's own help text documents. The question here is purely
+        # "which legs have a G stage", which the name answers on its own; each
+        # leg's parameters are validated later, against its own overrides.
         reaches = [
             name for name, ov in (_parse_variant(v) for v in args.variant)
-            if "rvg_arm" in ov and "G" in rig.resolve_rvg(str(ov["rvg_arm"])).stages()
+            if "rvg_arm" in ov and "G" in RvgArmSpec.stages_for(str(ov["rvg_arm"]))
         ]
         if not reaches:
             raise SystemExit(

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -1512,39 +1513,51 @@ def test_rig_parameters_without_an_active_wrapper_are_a_refusal() -> None:
 def test_an_arm_that_edited_no_row_is_a_refusal_not_a_null(tmp_path: Path) -> None:
     """Eligible does not mean edited, and the gate has to test the second one.
 
-    Arm B with a q file keyed against a different corpus is the realistic case:
-    every row is labeled (eligible), every q lookup misses, every G stage falls
-    back, and the arm trains the control with ``realized_f`` reading 1.0.
+    ⚑ Built on arm V's own fallback rather than on a missing external q, so this
+    pins the `edited_rows` leg INDEPENDENTLY of arm B — the q-reach refusal now
+    fires first for that case (it names the cause), and a test that reached this
+    message through a q file would only be re-testing the ordering.
+
+    Both rows are labeled, both put their whole target mass on moves the veto
+    zeroes, so both fall back and the Trainer sees the stored targets bit for
+    bit while `realized_f` reports full coverage.
     """
-    targets = np.stack([_VG_T, _VG_T])
+    targets = np.array([[0.0, 0.5, 0.5, 0, 0, 0, 0, 0],
+                        [0.0, 0.5, 0.5, 0, 0, 0, 0, 0]], dtype=np.float32)
     inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
-    keys = inner.keys()
-    index = _index_for(keys, tmp_path, {
-        0: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
-        1: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+    index = _index_for(inner.keys(), tmp_path, {
+        0: ([0, 1, 2], [0.0, -900.0, -900.0]),
+        1: ([0, 1, 2], [0.0, -900.0, -900.0]),
     })
-    ext_path = tmp_path / "ext.jsonl"
-    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
     buf = rr._RvgTargetSurgeryBuffer(
-        inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0), index,
-        external_q=RvgExternalPolicyIndex.load(ext_path),
+        inner, _spec(arm="v", v_lambda=0.0, v_tau_cp=0.0, v_veto_cp=500.0), index,
     )
-    buf.sample_batch_arrays(2)
+    out = buf.sample_batch_arrays(2)
     stats = buf.rig_stats()
     assert stats["eligible_rows"] == 2
     assert stats["realized_f"] == 1.0
     assert stats["edited_rows"] == 0
+    assert stats["fallback_rows"] == 2
+    assert np.array_equal(out["policy_target"][0], inner._t[0])
+    assert np.array_equal(out["policy_target"][1], inner._t[1])
     with pytest.raises(SystemExit, match="NOT ONE was edited"):
-        rr._assert_rig_wrapper_took_effect(buf, name="b030")
+        rr._assert_rig_wrapper_took_effect(buf, name="v020")
 
 
-def test_an_external_q_that_matched_no_eligible_row_is_a_refusal(
+def test_an_external_q_that_reached_no_row_names_the_CAUSE_not_the_symptom(
     tmp_path: Path,
 ) -> None:
-    """The same failure named accurately: a key-space mismatch, not a null arm.
+    """⚑ THROUGH THE REAL WRAPPER, AND THE ORDER IS THE ASSERTION.
 
-    The message has to name the q FILE, because "regenerate the q file against
-    this --replay-dir" and "your alpha is too small" are different repairs.
+    A full key-space miss trips BOTH legs of the took-effect gate: every G stage
+    falls back, so `edited_rows` is 0 as well. An earlier version of this test
+    drove the gate on a hand-built stats object with `edited_rows=1`, which is a
+    state the production path cannot produce — so it asserted a message that was
+    unreachable, while the real run got "nothing was edited": true, and it points
+    at alpha, the labels, the corpus, anything but the actual fault.
+
+    So the wrapper here is real, the miss is real, and what is pinned is that the
+    operator is told the CAUSE.
     """
     targets = np.stack([_VG_T, _VG_T])
     inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
@@ -1559,29 +1572,67 @@ def test_an_external_q_that_matched_no_eligible_row_is_a_refusal(
         external_q=RvgExternalPolicyIndex.load(ext_path),
     )
     buf.sample_batch_arrays(2)
-    assert buf.rig_stats()["external_q"]["missing_rows"] == 2
-    # `edited_rows == 0` fires first; both are the same event, and the external-q
-    # leg is what makes the message actionable, so it is asserted directly.
-    with pytest.raises(SystemExit, match="different key spaces"):
-        rr._assert_rig_wrapper_took_effect(
-            _StatsOnly({
-                "total_rows": 2, "eligible_rows": 2, "edited_rows": 1,
-                "fallback_rows": 1,
-                "external_q": {"missing_rows": 2},
-            }),
-            name="b030",
-        )
+    stats = buf.rig_stats()
+    assert stats["eligible_rows"] == 2
+    assert stats["edited_rows"] == 0                       # the symptom is present
+    assert stats["external_q"]["missing_rows"] == 2        # ...and so is the cause
+    with pytest.raises(SystemExit, match="reached NONE of the 2 eligible rows"):
+        rr._assert_rig_wrapper_took_effect(buf, name="b030")
 
 
-class _StatsOnly:
-    """A wrapper stand-in that only answers ``rig_stats`` — the duck type the
-    took-effect gate is written against."""
+def test_a_q_whose_rows_are_present_but_never_overlap_also_names_the_cause(
+    tmp_path: Path,
+) -> None:
+    """The other way to reach zero: every row IS in the file and none of its
+    moves are in the label's listed set. Different repair (move space, not key
+    space), so the message distinguishes them."""
+    board = chess.Board("8/8/8/8/8/8/8/K6k w - - 0 1")
+    far = "a1b1"
+    assert move_to_index_for_encoding(chess.Move.from_uci(far), board) not in set(
+        _VG_IDX.tolist(),
+    )
+    targets = np.stack([_VG_T, _VG_T])
+    inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
+    keys = inner.keys()
+    index = _index_for(keys, tmp_path, {
+        0: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+        1: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+    })
+    ext_path = tmp_path / "ext.jsonl"
+    _write_external_q(ext_path, [
+        {"key": k.hex(), "policy": {far: 1.0}} for k in keys
+    ])
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="g", g_alpha=0.5, g_temp_cp=200.0), index,
+        external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    buf.sample_batch_arrays(2)
+    stats = buf.rig_stats()
+    assert stats["external_q"]["missing_rows"] == 0
+    assert stats["external_q"]["zero_overlap_rows"] == 2
+    with pytest.raises(SystemExit, match="sharing no move with the label"):
+        rr._assert_rig_wrapper_took_effect(buf, name="b030")
 
-    def __init__(self, stats: dict[str, object]) -> None:
-        self._stats = stats
 
-    def rig_stats(self) -> dict[str, object]:
-        return self._stats
+def test_a_detached_q_never_trips_the_reach_refusal(tmp_path: Path) -> None:
+    """A leg that DETACHED the q (no G stage) reports `attached: False` and zero
+    counters. Reading those as "reached nothing" would refuse every V leg in a
+    mixed arm-B ladder — the very sweep the detach exists to keep legal."""
+    targets = np.stack([_VG_T, _VG_T])
+    inner = _FakeInner([_ROUNDTRIP_FENS[0], _ROUNDTRIP_FENS[3]], targets)
+    index = _index_for(inner.keys(), tmp_path, {
+        0: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+        1: (_VG_IDX.tolist(), (-_VG_REG).tolist()),
+    })
+    ext_path = tmp_path / "ext.jsonl"
+    _write_external_q(ext_path, [{"key": (b"\xee" * 16).hex(), "policy": {}}])
+    buf = rr._RvgTargetSurgeryBuffer(
+        inner, _spec(arm="v", v_lambda=0.01, v_tau_cp=0.0, v_veto_cp=1000.0),
+        index, external_q=RvgExternalPolicyIndex.load(ext_path),
+    )
+    buf.sample_batch_arrays(2)
+    assert buf.rig_stats()["external_q"]["attached"] is False
+    rr._assert_rig_wrapper_took_effect(buf, name="v020")      # no raise
 
 
 def test_the_external_q_is_renormalized_over_the_LISTED_set() -> None:
@@ -1704,6 +1755,23 @@ def test_the_index_loaders_record_the_bytes_they_read_not_just_the_path(
     assert prov[0]["path"] == str(labels)
     assert prov[0]["bytes"] == labels.stat().st_size
     assert str(prov[0]["mtime_utc"]).endswith("Z")
+
+
+def test_the_external_q_loader_records_the_bytes_it_read(tmp_path: Path) -> None:
+    """⚑ THE REPORT'S ONLY RECORD OF WHICH q BYTES ARM B TRAINED ON.
+
+    The label-file half of this is pinned; the external-q half was not, so
+    hardcoding `{"bytes": 0, "mtime_utc": None}` in the loader left the suite
+    green. Arm B's whole identity is which external policy it blended toward.
+    """
+    path = tmp_path / "ext.jsonl"
+    _write_external_q(path, [{"key": (b"\x33" * 16).hex(), "policy": {}}])
+    ext = RvgExternalPolicyIndex.load(path)
+    prov = cast("dict[str, object]", ext.header["file_provenance"])
+    assert prov["path"] == str(path)
+    assert prov["bytes"] == path.stat().st_size
+    assert int(cast("int", prov["bytes"])) > 0
+    assert str(prov["mtime_utc"]).endswith("Z")
 
 
 def test_the_streaming_single_file_load_equals_the_overlay_path(
@@ -1984,9 +2052,13 @@ def test_the_enumeration_consumes_the_same_rng_stream_as_the_trainer(
     [
         ("enumerate-rows", ["--limit", "200"], "--limit"),
         ("enumerate-rows", ["--multipv", "6"], "--multipv"),
+        ("enumerate-rows", ["--nodes", "75000"], "--nodes"),
+        ("enumerate-rows", ["--threads", "4"], "--threads"),
         ("enumerate-rows", ["--restrict-to", "keys.txt"], "--restrict-to"),
+        ("enumerate-rows", ["--no-syzygy"], "--no-syzygy"),
         ("label", ["--enum-steps", "10"], "--enum-steps"),
         ("label", ["--enum-batch-size", "8"], "--enum-batch-size"),
+        ("label", ["--enum-progress-every", "5"], "--enum-progress-every"),
     ],
 )
 def test_a_flag_the_selected_mode_never_reads_is_a_refusal(
@@ -1999,31 +2071,49 @@ def test_a_flag_the_selected_mode_never_reads_is_a_refusal(
     read, and ``--mode label`` never reads the three ``--enum-*`` flags. An
     operator who wrote ``--limit 200`` beside ``enumerate-rows`` believes they
     bounded a 41-minute job; nothing told them otherwise.
+
+    ⚑ Driven through ``build_parser()``, the REAL CLI. An earlier version
+    rebuilt the flag list by hand, which pins the principle and leaves the call
+    site free — a flag added to the real parser and forgotten in
+    ``_MODE_ONLY_FLAGS`` would have stayed green forever.
     """
-    import argparse
+    from scripts.rvg_label_pass import _refuse_flags_for_other_mode, build_parser
 
-    from scripts.rvg_label_pass import _refuse_flags_for_other_mode
+    required = ["--config", "c.yaml", "--replay-dir", "d", "--out", "o.jsonl"]
+    ap = build_parser()
+    _refuse_flags_for_other_mode(ap, ap.parse_args(["--mode", mode, *required]))
 
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("label", "enumerate-rows"), default="label")
-    ap.add_argument("--threads", type=int, default=16)
-    ap.add_argument("--nodes", type=int, default=150_000)
-    ap.add_argument("--multipv", type=int, default=40)
-    ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--row-range", default="")
-    ap.add_argument("--roundtrip-sample", type=int, default=200)
-    ap.add_argument("--restrict-to", type=Path, default=None)
-    ap.add_argument("--enum-steps", type=int, default=6000)
-    ap.add_argument("--enum-batch-size", type=int, default=0)
-    ap.add_argument("--enum-progress-every", type=int, default=100)
-    ap.add_argument("--no-syzygy", action="store_true")
-
-    clean = ap.parse_args(["--mode", mode])
-    _refuse_flags_for_other_mode(ap, clean)          # defaults never refuse
-
-    dirty = ap.parse_args(["--mode", mode, *argv_extra])
+    dirty = ap.parse_args(["--mode", mode, *required, *argv_extra])
     with pytest.raises(SystemExit, match=expected):
         _refuse_flags_for_other_mode(ap, dirty)
+
+
+def test_every_mode_only_flag_exists_on_the_real_parser() -> None:
+    """The guard's table names flags by ``dest``; a rename in the parser would
+    make an entry match nothing and quietly stop guarding that flag."""
+    from scripts.rvg_label_pass import _MODE_ONLY_FLAGS, build_parser
+
+    dests = {a.dest for a in build_parser()._actions}
+    for mode, flags in _MODE_ONLY_FLAGS.items():
+        missing = sorted(set(flags) - dests)
+        assert not missing, f"{mode}: {missing} are not flags of the real parser"
+
+
+def test_every_optional_flag_is_claimed_by_exactly_one_mode_or_shared() -> None:
+    """⚑ THE OTHER DIRECTION, which is the one that rots. A flag ADDED to the
+    parser and forgotten in ``_MODE_ONLY_FLAGS`` is silently readable in both
+    modes — including a mode that never reads it. Shared flags are listed
+    explicitly so adding one is a decision rather than an omission."""
+    from scripts.rvg_label_pass import _MODE_ONLY_FLAGS, build_parser
+
+    shared = {"help", "mode", "config", "replay_dir", "out"}
+    claimed = {d for flags in _MODE_ONLY_FLAGS.values() for d in flags} | shared
+    dests = {a.dest for a in build_parser()._actions}
+    unclaimed = sorted(dests - claimed)
+    assert not unclaimed, (
+        f"{unclaimed} belong to no mode and are not shared: either add them to "
+        "_MODE_ONLY_FLAGS or to this test's `shared` set, deliberately"
+    )
 
 
 def test_a_resume_under_different_label_settings_is_a_refusal() -> None:
@@ -2120,3 +2210,222 @@ def test_the_rig_arms_the_label_encoding_gate_with_the_corpus_it_reads(
     # ...and it does NOT fire when they agree, so the refusal is discriminating
     # rather than universal.
     RvgLabelIndex.load(labels, policy_encoding="lc0_1858")
+
+
+def test_a_fresh_partial_round_trips_through_both_readers(tmp_path: Path) -> None:
+    """⚑⚑ THE INTEGRATION THE TWO ISOLATED TESTS DID NOT COVER.
+
+    The resume loader was taught about the ``resume_settings`` record; the
+    end-of-run join read-back was not, and kept subscripting ``["key"]`` on every
+    line. Every FRESH pass therefore died with ``KeyError: 'key'`` — after all
+    the SF work, before the final ``.jsonl`` was written — and the retry hit the
+    same line in the now-existing partial, so it was wedged until hand-stripped.
+
+    The two existing tests pin ``_assert_resume_settings_match`` in isolation and
+    both stayed green through that, because the defect was in the caller the
+    settings line created. So this test writes a fresh ``.partial`` through the
+    REAL writer and reads it back through the REAL readers — the shape the bug
+    lived in.
+    """
+    from scripts.rvg_label_pass import _read_partial_records
+
+    settings: dict[str, object] = {
+        "nodes": 150_000, "multipv": 40, "syzygy": True,
+        "corpus": {"replay_dir": "/c", "shards": 1, "bytes": 7},
+    }
+    partial = tmp_path / "labels.jsonl.partial"
+
+    # --- the writer, exactly as `main` writes a FRESH partial
+    with open(partial, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"record": "resume_settings", **settings}) + "\n")
+    rows = [_label(bytes([i]) * 16, [0, 1], [0.0, -20.0]) for i in (1, 2, 3)]
+    with open(partial, "a", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+
+    # --- reader 1: the resume load (validates the settings, skips the record)
+    done = {str(r["key"]): r for r in _read_partial_records(partial, settings=settings)}
+    assert set(done) == {r["key"] for r in rows}
+
+    # --- reader 2: the join read-back. THIS is what raised KeyError.
+    banked = {str(rec["key"]) for rec in _read_partial_records(partial)}
+    assert banked == set(done)
+
+    # and the settings record is still checked on a real resume
+    with pytest.raises(SystemExit, match="nodes"):
+        list(_read_partial_records(partial, settings={**settings, "nodes": 75_000}))
+
+
+def test_the_resume_settings_signature_is_what_main_writes() -> None:
+    """The round-trip above is only a round trip if the settings dict it writes
+    is the one ``_resume_settings`` produces. Pinned against the real function so
+    a new field cannot make the fixture stale and the test quietly partial."""
+    import argparse
+
+    from scripts.rvg_label_pass import _resume_settings
+
+    args = argparse.Namespace(
+        nodes=150_000, multipv=40, no_syzygy=False,
+        replay_dir=Path("/nonexistent-corpus"),
+    )
+    try:
+        produced = _resume_settings(args)
+    except (OSError, SystemExit):          # no such corpus; only the KEYS matter
+        produced = None
+    if produced is not None:
+        assert set(produced) == {"nodes", "multipv", "syzygy", "corpus"}
+
+
+def _q_file(path: Path) -> Path:
+    _write_external_q(path, [{"key": (b"\x77" * 16).hex(), "policy": {}}])
+    return path
+
+
+def _main_argv(tmp_path: Path, q: Path, variants: list[str]) -> list[str]:
+    return [
+        "retarget_retrain.py", "--config", "c.yaml", "--checkpoint", "ck.pt",
+        "--replay-dir", str(tmp_path), "--out-dir", str(tmp_path / "out"),
+        "--rvg-labels", str(tmp_path / "labels.jsonl"),
+        "--rvg-g-q-source", f"file:{q}",
+        *[a for v in variants for a in ("--variant", v)],
+    ]
+
+
+def test_the_documented_arm_b_spelling_survives_the_q_reach_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ THE GATE VALIDATED EVERY LEG AGAINST THE SWEEP DEFAULTS.
+
+    The sweep-level ``_RigContext`` has ``params={}`` by construction — per-arm
+    values arrive per variant — and ``resolve_rvg`` calls ``validate()``. So
+    resolving a leg there checked ``rvg_g_alpha`` against the sweep default 0.0
+    and aborted ``g030:rvg_arm=g,rvg_g_alpha=0.3`` with "alpha=0.0": the exact
+    spelling this script's own help text documents, refused by a guard that
+    could not see the value it was judging. It fired only on arm B, i.e. only on
+    the arm the guard exists for.
+
+    Driven through the real ``main`` so the failure has to occur where it
+    occurred — a stage-set unit test would have passed throughout.
+    """
+    _write_labels(tmp_path / "labels.jsonl", [_label(b"\x01" * 16, [0], [0.0])])
+    q = _q_file(tmp_path / "q.jsonl")
+    seen: list[str] = []
+
+    monkeypatch.setattr(rr, "_run_variant", lambda **kw: seen.append(kw["name"]) or {
+        "variant": kw["name"], "shard_pool": [], "draws": {},
+    })
+    monkeypatch.setattr(rr, "flatten_run_config_defaults", lambda _c: {"batch_size": 8})
+    monkeypatch.setattr(rr, "load_yaml_file", lambda _p: {})
+    monkeypatch.setattr(rr, "_corpus_policy_encoding", lambda _d: "lc0_1858")
+    monkeypatch.setattr(sys, "argv", _main_argv(tmp_path, q, [
+        "a000:", "g030:rvg_arm=g,rvg_g_alpha=0.3",
+    ]))
+    rr.main()
+    assert seen == ["a000", "g030"]
+
+
+def test_a_q_source_no_variant_can_reach_is_still_a_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other branch: a q file in a sweep whose legs all lack a G stage is an
+    operator who believes arm B is running. Fixing the false abort above must not
+    turn this into a silent pass."""
+    _write_labels(tmp_path / "labels.jsonl", [_label(b"\x01" * 16, [0], [0.0])])
+    q = _q_file(tmp_path / "q.jsonl")
+
+    monkeypatch.setattr(rr, "_run_variant", lambda **kw: {"variant": kw["name"]})
+    monkeypatch.setattr(rr, "flatten_run_config_defaults", lambda _c: {"batch_size": 8})
+    monkeypatch.setattr(rr, "load_yaml_file", lambda _p: {})
+    monkeypatch.setattr(rr, "_corpus_policy_encoding", lambda _d: "lc0_1858")
+    monkeypatch.setattr(sys, "argv", _main_argv(tmp_path, q, [
+        "a000:", "v020:rvg_arm=v,rvg_v_lambda=0.02",
+    ]))
+    with pytest.raises(SystemExit, match="NO variant in this sweep has a G stage"):
+        rr.main()
+
+
+def test_the_stage_set_of_an_arm_name_needs_no_valid_parameters() -> None:
+    """``stages_for`` is what lets the gate ask its question without validating.
+
+    Pinned against ``STAGES`` itself so the two cannot drift, and on an unknown
+    name — which must answer "no G stage" rather than raise, because refusing an
+    unknown arm is ``validate``'s job and its message is the useful one."""
+    for arm, stages in rr.RvgArmSpec.STAGES.items():
+        assert rr.RvgArmSpec.stages_for(arm) == stages
+        assert rr.RvgArmSpec.stages_for(arm.upper()) == stages
+    assert rr.RvgArmSpec.stages_for("nonsense") == ()
+    assert "G" in rr.RvgArmSpec.stages_for("g")
+    assert "G" in rr.RvgArmSpec.stages_for("vg")
+    assert "G" not in rr.RvgArmSpec.stages_for("v")
+    assert "G" not in rr.RvgArmSpec.stages_for("r")
+
+
+def test_both_label_load_paths_refuse_a_file_that_mixes_policy_spaces(
+    tmp_path: Path,
+) -> None:
+    """⚑ SILENT AND NONDETERMINISTIC, WHICH IS THE WORST PAIR.
+
+    The overlay path refuses mixed encodings; the streaming path took
+    `next(iter(encodings))` over a set of hash-randomized strings, so a single
+    file mixing two policy spaces was ACCEPTED, and WHICH encoding got checked
+    against the corpus varied between runs on identical input (measured: 5
+    accepts / 1 refuse over six runs). The streaming path's own docstring
+    promised every refusal the overlay path makes.
+
+    Parity is the assertion: both paths, same file, both refuse.
+    """
+    path = tmp_path / "labels.jsonl"
+    a = _label(b"\x01" * 16, [0], [0.0])
+    b = _label(b"\x02" * 16, [1], [0.0])
+    b["policy_encoding"] = "az_4672"
+    _write_labels(path, [a, b])
+
+    with pytest.raises(SystemExit, match="mixed policy encodings"):
+        RvgLabelIndex.load(path)                    # streaming (one file)
+    with pytest.raises(SystemExit, match="mixed policy encodings"):
+        RvgLabelIndex._load_overlay([path])         # the overlay path, same file
+
+
+def test_the_streaming_loader_is_a_plain_classmethod() -> None:
+    """⚑ A 3.13 TIME BOMB, not a style point. ``_load_one_streaming`` carried
+    ``@classmethod`` TWICE. On 3.10 the inner one is silently absorbed by
+    descriptor chaining; Python 3.13 removed that, and there every sweep's label
+    load raises ``TypeError`` at import-adjacent call time. Pinned by calling it
+    the way the dispatcher does."""
+    import inspect
+
+    raw = inspect.getattr_static(RvgLabelIndex, "_load_one_streaming")
+    assert isinstance(raw, classmethod)
+    assert not isinstance(raw.__func__, classmethod), (
+        "stacked @classmethod: works on 3.10 by accident, TypeError on 3.13"
+    )
+
+
+def test_the_summary_announces_the_floor_weight_the_CONSUMER_receives() -> None:
+    """⚑ THE SHAPE OBJECT'S ``w`` IS NOT WHAT ``compute_loss`` GETS.
+
+    The trainer builds its loss kwargs as
+    ``replace(self.sf_policy_floor_params, w=float(self.w_sf_policy_floor))`` —
+    the shape object keeps whatever ``w`` it was RESOLVED with at construction,
+    and the live weight overrides it on the way to the consumer. Announcing
+    ``sf_policy_floor_params.w`` therefore reads the producer's copy one
+    indirection deeper, which is the original defect wearing the fix's clothes.
+
+    Pinned with the two DELIBERATELY DIFFERENT, because they agree in every
+    ordinary run and a stand-in that sets them equal cannot tell the two reads
+    apart.
+    """
+    from types import SimpleNamespace
+
+    shape = SimpleNamespace(w=0.8)              # as resolved at construction
+    trainer = SimpleNamespace(w_sf_own_regret=0.7, w_sf_policy_floor=0.0,
+                              sf_policy_floor_params=shape)
+    # What the trainer actually hands compute_loss:
+    consumed = float(trainer.w_sf_policy_floor)
+    assert consumed != float(trainer.sf_policy_floor_params.w), (
+        "fixture must make the two disagree or this test cannot discriminate"
+    )
+
+    announced = rr._rvg_config_side(trainer, config={"w_sf_policy_floor": 0.0})
+    assert announced["w_sf_policy_floor"] == consumed
+    assert announced["w_sf_own_regret"] == 0.7
