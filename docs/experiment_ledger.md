@@ -64939,3 +64939,55 @@ mixed trainer unless bounded — flagged to that build as a diagnose-and-cap ite
 offline trainer's copy (production disk_buffer untouched). ⚑ mtime-wedge rule note: an
 unchanged LOG with a live process now has a measured benign cause in THIS trainer's
 first-batch phase — check rchar slope + a stack dump before declaring a wedge.
+
+### 2026-08-22 — BT4 adapter + policy dump LANDED (`feat/bt4-policy-dump`) — history probe adjudicated, entropy anchor corrected
+
+Builder: Opus agent, worktree `/home/josh/projects/chess-bt4dump`, commits `4795a7713`
+(dump) + `ee89cad67` (conversion + probe). Review pending (Opus reviewer + grok-reviewer
+on the plane conversion — pre-named riskiest piece #2); **not merged, no PR**.
+
+- **Remap recovery was a no-op: already merged** as `c49b89937` (#376) — the memory doc
+  was stale (now corrected). Acceptance gate re-run in-worktree: Leela's 1858 table
+  regenerated from first principles = 1858/1858 identical; 1,800 positions / 43,045 legal
+  moves, **0 mismatches on both gathers**. Builder disclosed a gate defect it fixed
+  mid-task: its first gate checked only the plane-driven `leela_gather_indices` and PASSED
+  under a castling mutant, while the dump uses board-driven `leela_index_for_move` — the
+  gate now covers both (mutant → 47 castling mismatches). Same defect class as
+  "verified a path the deliverable does not use".
+- **`x_to_lc0_planes` (our x(175) → lc0 112 planes, TRUE history):** 400-row plane
+  validation exact; round-trip vs lc0's own bits piece/history **0/400**, metadata exact
+  except stm on POV-canonical v6 rows (harness artifact, not the converter), repetition
+  8/3,200 planes (the known 7-ply-vs-whole-game window).
+- **HISTORY PROBE — adjudication of the arm-B prereg thresholds** (licensed: flip≤3% AND
+  KL≤0.05; required: flip>8% OR KL>0.15). Repeat-fill (what our instruments actually
+  feed) on 2,000 lc0 rows: **top-1 flip 5.85%, median KL 0.0045, Spearman 0.972** ⇒
+  between the bars = OPERATOR-CALL zone. **Resolution: moot for the corpus** — arm B's q
+  comes from the shards path with TRUE history (corpus check: 5/50 flips vs FEN-only,
+  consistent). The audit-set dump stays FEN-only with the 5.85%/0.0045 bound disclosed —
+  the frozen ruler is FEN-only for EVERY arm equally (the audit set has no history by
+  construction). Zeroed-history arm: **71.7% flips** — the spec's "FEN-only = zeroed
+  planes" premise was WRONG (our stack repeat-fills); builder deviated and stated it.
+  Had it run only the specified arm, the verdict would have been HISTORY REQUIRED off a
+  failure mode no instrument here incurs.
+- **Corpus-path smoke:** 500 shard rows, argmax-legal 1.0000, shard decode vs each
+  shard's own `legal_mask` 200/200. Castling fingerprint through the fixed remap:
+  `e1g1` prior 0.6301 / `e1c1` 0.3165, both top move (old static remap read ~0).
+- **⚑ ENTROPY ANCHOR CORRECTED: raw BT4 prior = 1.90 nats** on audit rows. The banked
+  0.970 is **BT4-100, post-search** (ledger line 58034; raw top-1 0.476 vs 0.693
+  post-search). Ladder consequence: arm B's q arrives ~1.90 nats raw and gets its
+  sharpness set by the arm's own anchoring like every arm — sharpness is a free knob;
+  never judge B against 0.970 directly. Wiring cross-check vs `foreign_net_audit.py`:
+  argmax 144/144, max |Δp| 5e-5.
+- **Bug found by that cross-check:** the audit 4-field `key` has no halfmove clock →
+  keying off it feeds BT4 **rule50 = 0**; all 5 initial disagreements were high-clock
+  rows. Fixed — board built from the full `fen`, output still keyed by `key`.
+- Verification: bare `./scripts/lint.sh` exit 0 (fresh-worktree `.so` copied from live
+  tree, no `.c`/`.h` changes); tests as a DELTA vs branch point 52→84 passed, 0 new
+  failures; 3 mutants run and killed (castling→static: 10 fail; rule50 rescale drop: 4;
+  EP plane leak: 3).
+- Cost: **~28 pos/s CPU** (onnxruntime 1.23.2 ships no CUDAExecutionProvider) ⇒
+  ladder-row dump ~1h/100k rows; full 3.1M corpus ≈ 31h — not needed for the ladder.
+
+**ops:** ft595-EXT finished its deterministic-refresh crawl ~13:30 (shuffle-seed +
+shard-draw lines in the log) — ~1h earlier than projected; training steps beginning,
+summary ETA moves to ~18:30. Waiter unchanged.
