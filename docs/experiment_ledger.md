@@ -65511,3 +65511,46 @@ byte-identical across BOTH fix passes — the differential-cleared production ed
 untouched. Second of four branches home. The ratio-ladder prereg's identity instrument
 is now live-tree canonical; its calibration probes ((regret, nodes) → ~0.5 score on
 iter-595, ~100 games/point) run tonight AFTER the ext deciding arena, GPU-serial.
+
+**R/V/G rig — both fix installments COMPLETE** (`feat/rvg-target-surgery` @ `61da5a603`,
+9 commits, nothing pushed; live tree and `data/rvg/` untouched by the builder). All 5
+MUST-FIX closed, incl. the P0 (`rig_active_stamp` raised `AttributeError` through
+`__getattr__` forwarding — **this branch broke a PRE-EXISTING arm**, now returns
+`"SOFT"` with a test that activates the wrapper) and the enumeration-RNG fix (real
+`maybe_mirror_batch_arrays` per draw, `mirror_prob` from the Trainer signature, never a
+literal). Arm-B hardening in: external-q renormalization pinned by a non-summing row,
+schema-version refusals, loader-computed provenance (path+bytes+mtime). ONE deviation
+ACCEPTED: no per-leg refusal for a q with no G stage — the leg DETACHES with stdout
+notice + `q_source: sf_regret` + `external_q: {attached: false, reason}`; sweep-level
+refusal only when NO variant has a G stage (a per-leg refusal would ban the mixed
+ladder). 26 mutants, 25 killed, M3c proven arithmetically inert. Lint delta 0 (ruff 0;
+13 basedpyright errors pre-existing in 3 untouched files); tests 66 → 157, 0 regressions.
+**⚑ M13 initially SURVIVED — the RNG guard test re-implemented the enumeration loop
+inline, pinning the principle and leaving the call site free: the signature defect
+committed inside the guard against it.** Caught by the mandatory mutation run, pre-merge;
+the test now drives `enumerate_drawn_rows` itself and its fixture grew 6 → 256 distinct
+positions (a set comparison over a corpus every draw covers is vacuous).
+
+**Enumeration-defect cost MEASURED — and my earlier coverage estimate was WRONG.** Fixed
+re-enumeration banked (65 min, reproducible: a harness-reaped first attempt and its
+`setsid` relaunch agree at every 500-draw checkpoint). Independently verified in-session
+by `comm` on the two key sets, exact match with the builder: defective 1,057,186 / fixed
+1,053,147 / common 846,442 — Jaccard 0.670. ⇒ the RUNNING label pass covers **80.4% of
+the true draw, not the ~94% previously ledgered here**; 210,744 of its labels (19.9%)
+are for rows never actually drawn (sunk CPU, harmless — rows carry fen, so nothing is
+unrepairable). Top-up = **206,705 rows ≈ 66 min** at the observed 52.2 pos/s. Banked:
+`data/rvg/rvg_drawn_rows_6000x512_fixed.keys` (canonical enumeration; header discloses
+`header_backfilled` for two post-run fields) and `data/rvg/rvg_topup_rows_206705.keys`
+(derived difference, provenance header) as the top-up `--restrict-to`.
+
+**Rig re-verification pair DISPATCHED** on the fix diff `0258ecce7..61da5a603`: fresh
+Opus re-verifier (the original reviewer agent is no longer resident) re-running the
+named probes/mutants in a detached scratch worktree — the rvg worktree is READ-ONLY
+while the label pass imports from it — plus the standing grok snapshot pass. Merge
+gates on both; then the label top-up.
+
+**Ext liveness at 17:09** — pid 837238 alive, `rchar` slope ~3.2 MB/s (the synchronous
+5-shard-reload signature ⇒ still stepping), no `summary.json` yet; the back half runs
+under 16-thread label-pass CPU contention, so the mid-checkpoint pace (10,032 steps by
+15:14) is the optimistic bound. Waiter's 8h bound hits 19:58 — re-arm if it expires
+before the summary lands.
