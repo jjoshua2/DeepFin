@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from collections.abc import Sequence
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass
 from typing import Any
@@ -422,6 +423,50 @@ def _sf_result_wdl_for_record(
     return None
 
 
+def within_regret_candidates(
+    *,
+    cand_indices: Sequence[int],
+    cand_scores: Sequence[float],
+    regret_limit: float,
+) -> list[int]:
+    """THE handicap rule: candidates within ``regret_limit`` of SF's best.
+
+    The qualifying set the curriculum opponent draws its move uniformly from.
+    Scores are in the units ``_collect_sf_pv_candidates`` produced them in — for
+    the MOVE path that is SF's native win fraction ``w + 0.5*d``, which is what
+    makes the PID's ``wdl_regret`` band meaningful. Never a centipawn band.
+
+    ⚑ EXTRACTED, NOT RESTATED. ``_choose_curriculum_opponent_move`` is the only
+    production caller and it calls THIS — so an out-of-process instrument
+    (``scripts/match_vs_handicapped_sf.py``, which needs the SET, not just the
+    draw) measures the rule production runs rather than a copy of it. A copy is
+    exactly how a "frozen handicap" harness would end up freezing a different
+    opponent than the one the net was trained against.
+
+    The two degenerate inputs stay with the caller on purpose, because each one
+    changes the RNG DRAW and not just the set: an empty candidate list falls back
+    to a uniform legal move (a draw over a different population) and a
+    non-finite ``regret_limit`` takes rank 1 with no draw at all. Folding either
+    in here would consume a different number of ``rng.integers`` calls and
+    silently re-stream every selfplay game.
+
+    ``regret_limit`` is compared against ``best - score``, i.e. how much win
+    fraction the candidate GIVES UP versus SF's best. Larger limit => larger
+    set => weaker opponent (see docs: PID regret runs backwards from intuition).
+    """
+    if not cand_indices:
+        return []
+    best_score = max(float(s) for s in cand_scores)
+    acceptable = [
+        int(idx)
+        for idx, score in zip(cand_indices, cand_scores, strict=False)
+        if (best_score - float(score)) <= float(regret_limit) + 1e-12
+    ]
+    if not acceptable:
+        acceptable = [int(cand_indices[0])]
+    return acceptable
+
+
 def _choose_curriculum_opponent_move(
     *,
     rng: np.random.Generator,
@@ -436,7 +481,7 @@ def _choose_curriculum_opponent_move(
     * ``regret_limit == inf`` -> take SF's top choice verbatim (used by
       eval/gate matches where we want full-strength SF).
     * Otherwise -> uniform random among moves within ``regret_limit``
-      score of the best candidate.
+      score of the best candidate (``within_regret_candidates``).
     """
     if not cand_indices:
         return int(legal_indices[int(rng.integers(len(legal_indices)))])
@@ -445,14 +490,11 @@ def _choose_curriculum_opponent_move(
         # MultiPV lists PVs in rank order so cand_indices[0] is SF's best.
         return cand_indices[0]
 
-    best_score = max(float(s) for s in cand_scores)
-    acceptable = [
-        idx
-        for idx, score in zip(cand_indices, cand_scores, strict=False)
-        if (best_score - float(score)) <= float(regret_limit) + 1e-12
-    ]
-    if not acceptable:
-        acceptable = [cand_indices[0]]
+    acceptable = within_regret_candidates(
+        cand_indices=cand_indices,
+        cand_scores=cand_scores,
+        regret_limit=regret_limit,
+    )
     return acceptable[int(rng.integers(len(acceptable)))]
 
 
@@ -1636,4 +1678,5 @@ __all__ = [
     "submit_async_sf_label_queries",
     "submit_async_sf_labels_from_curriculum_moves",
     "submit_sf_queries",
+    "within_regret_candidates",
 ]
