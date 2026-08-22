@@ -369,7 +369,11 @@ def test_the_shard_guard_runs_on_the_real_call_path(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(rr, "load_state_dict_tolerant", lambda *a, **k: None)
     monkeypatch.setattr(rr, "trainer_kwargs_from_config", lambda _c: {})
     monkeypatch.setattr(
-        rr, "Trainer", lambda *a, **k: type("_T", (), {"train_steps": _no_training})(),
+        rr, "Trainer",
+        lambda *a, **k: type("_T", (), {
+            "train_steps": _no_training, "w_sf_own_regret": 0.0,
+            "w_sf_policy_floor": 0.0,
+        })(),
     )
     monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
     monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
@@ -645,7 +649,10 @@ def _variant_harness(monkeypatch, buf_cls, *, train: bool = False) -> None:
         })()
 
     trainer_ns = {"train_steps": _train_steps if train else _no_training,
-                  "save": lambda *_a, **_k: None}
+                  "save": lambda *_a, **_k: None,
+                  # announced FROM the consumer, so the fake has to have them
+                  "w_sf_own_regret": 0.0,
+                  "w_sf_policy_floor": 0.0}
 
     monkeypatch.setattr(rr, "DiskReplayBuffer", buf_cls)
     monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
@@ -960,6 +967,13 @@ def test_the_draw_guard_runs_on_the_real_call_path_and_lands_in_the_report(
             return retries["n"]
 
     class _T:
+        # The two loss knobs the summary announces FROM THE CONSUMER rather than
+        # from the config dict. A fake trainer missing them is a fake that has
+        # drifted from the object it stands in for, and the drift would hide
+        # exactly the disagreement the announcement exists to expose.
+        w_sf_own_regret = 0.0
+        w_sf_policy_floor = 0.0
+
         def train_steps(self, *_a, **_k):
             return _Metrics()
         def save(self, path) -> None:
