@@ -65761,3 +65761,64 @@ home: BT4 dump, identity harness, R/V/G rig (live branch) + mixed trainer
 (lc0-continuation). The ratio ladder's PREREG is still OWED before it runs (Sunday
 GPU): f ∈ {0.25, 0.5, 0.75}, seeds 11/12/13, 20k steps, serial,
 `--mix-own-max-outcome-borne 0.001`, identity baseline first.
+
+## 2026-08-22 — ⚑ ext VERDICT: **BETWEEN CLAUSES — point −20.0 [−51.1, +10.8] vs iter-595.** Recovery continued exactly on slope (−84.1 → −41.0 → −20.0) and the CI now SPANS zero; ext2 (the single pre-authorized extension) FIRES, a fortiori
+
+**Judged by the pre-committed rule, same session as the read.** Deciding yardstick exactly
+as preregistered: arena ext-LAST vs the iter-595 salvage init, matched_sims 100, 400
+games, seed 42, play shape, production Syzygy, conc 64, final-only. Result: score
+0.47125, **Elo −20.0 [−51.08, +10.76]**, pentanomial {WW 28, WD/DW 30, DD/WL 71, LD/DL
+33, LL 38}, truncated=False, game_log_agrees=True. Banked:
+`scratchpad/elo_calib/EXT_vs_iter595.json`.
+- **SUCCESS did not fire** (CI does not exclude 0 positive).
+- **KILL did not fire** (point −20.0 > −31; CI does not exclude 0 negative).
+- **RECOVERY-CONTINUES: its LITERAL trigger assumed a still-negative CI** ("CI excludes 0
+  from below while the point improves ≥ +20 over −41.0"). The point improved **+21.0 ≥
+  +20** ✓ but the CI does not exclude 0 from below — because the result is BETTER than
+  the clause anticipated, not worse. **The prereg's clauses have a gap and this lands in
+  it; stated plainly rather than read post-hoc into a clause.**
+- **Disposition: ext2 fires, by monotonicity (a fortiori).** The clause pre-authorized
+  ONE extension for a strictly WEAKER outcome (same ≥+20 improvement with a
+  still-significantly-negative CI). Any reading where the weaker result continues and
+  the stronger result stops is perverse. The interpretation step is disclosed here as
+  an interpretation; the pre-authorization is spent on it — **ext2 is the FINAL
+  extension of this lane regardless of outcome.**
+
+**Dose curve to date (fine-tune steps on the lc0 corpus, arena vs iter-595 init, same
+ruler/openings/reference throughout):** 20k −84.1 → 40k −41.0 → 60k **−20.0**. Slope
++43 then +21 per 20k — decelerating, roughly halving per segment; naive continuation
+asymptotes to ~0 from below, which is exactly what ext2 tests.
+
+## 2026-08-22 — PREREG: ext2 — the FINAL extension: does the recovery cross zero, or asymptote below it?
+
+**Design.** `lc0_control_train.py --init-from runs/lc0_ft_iter595_ext_20260822/checkpoint.pt`
+(ext-LAST, sha256 05fb5a73…), same config, same 122-shard corpus, `--steps 20000`,
+seed 3 (fresh draw order), out `runs/lc0_ft_iter595_ext2_20260823`. Launches tonight
+after the ext-MID secondary arena frees the GPU (never train concurrent with an arena);
+runs overnight beside the BT4 CPU dump (disclosed contention — the deterministic-refresh
+tax is CPU-bound, expect ~6-7h not ~4.3h). **Code vintage disclosed:** runs from the 438
+checkout on the MERGED `feat/lc0-continuation` (`063e5112d`, mixed-corpus in, mix flags
+OFF) — ext itself already ran mixed-branch code (the checkout sat on `feat/mixed-corpus`
+at its 11:58 launch), and the review verified the mixed routing is flag-gated with
+single-source metric behavior unchanged, so this is the SAME vintage modulo the F9-floor
+commit (test-only + a constant no unflagged path reads).
+**DECIDING YARDSTICK:** same ruler (arena vs the ORIGINAL iter-595 init, matched_sims
+100, seed 42, play shape, production Syzygy, conc 64), read on ext2-LAST (80k
+cumulative), **800 games** — instrument-resolution change, disclosed BEFORE the run
+([[compute_instrument_resolution_before_the_threshold]]): at 400 games the ±31-Elo CI
+cannot certify a small true positive; 800 games (400 pairs, same seed-42 opening book
+prefix) tightens to ~±22. Same reference, same openings family — the ruler is unchanged,
+only its resolution.
+- **SUCCESS: CI excludes 0 positive ⇒ fix-candidate** — deployment/scale gets its own
+  prereg (and production stays STOPPED regardless; Josh's call).
+- **LANE-CLOSES (all other outcomes):** the pre-authorization is spent; no ext3. Record
+  the slope; the surviving anti-forgetting lever is the MIXED-REPLAY ratio ladder
+  (its own prereg, still owed). Sub-readings recorded but NOT gating: point ≥ −5 with
+  CI spanning 0 = "asymptote consistent with 0, uncertifiable at this budget"; point
+  improvement < +10 over −20.0 = "slope collapsed".
+**Secondary (non-deciding):** lc0-heldout top-1 for ext-MID/ext-LAST/ext2-LAST (does
+fit keep rising while Elo recovers); ext2-MID banked, no arena unless the LAST read is
+ambiguous AND cheap to disambiguate.
+**Confounds:** BT4 dump shares the box's CPU overnight (arms unaffected — the yardstick
+arena runs after both finish); the ruler shares seed-42 openings with every arena in
+this series (deliberate — cross-arena comparisons stay same-openings).
