@@ -688,8 +688,10 @@ class RvgLabelIndex:
         """One label file, parsed straight into the flat arrays.
 
         Every refusal the overlay path makes is made here: schema version,
-        move/cp length agreement, duplicate keys, and the corpus policy-space
-        check. What is NOT here is the two intermediate dicts — the per-record
+        move/cp length agreement, duplicate keys, MIXED POLICY ENCODINGS WITHIN
+        THE FILE, and the corpus policy-space check. (The mixed-encoding one was
+        missing from both the code and this list; the list is part of the
+        promise, so an omission here is how the next one gets left out.) What is NOT here is the two intermediate dicts — the per-record
         move dict is transient, and the columns accumulate in ``array.array``
         (compact C storage, amortized append) rather than in lists of ndarrays.
 
