@@ -1460,8 +1460,20 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         if (n_cands > GSS_MAX_CANDS) n_cands = GSS_MAX_CANDS;
 
         int32_t rid = g->root_ids[bi];
-        int32_t root_n = atomic_load_i32(&t->N[rid]);
-        double root_Q = (root_n > 0) ? (atomic_load_double(&t->W[rid]) / (double)root_n) : 0.0;
+        /* mctx `qtransform_completed_by_mix_value` takes the FRESH network root
+         * value as its `value` argument, NOT the running tree average — and so
+         * does every other consumer of this transform in this repo: the Python
+         * reference passes `root_qs[i]` (gumbel.py `_halve_remaining_for_board`
+         * -> `_completed_q_transform(raw_value=...)`), and the C path's OWN
+         * final-policy reconstruction passes `root_q_i` (gumbel_c.py
+         * `_build_improved_policy_for_board`'s C twin). This site used to read
+         * `W[rid]/N[rid]`, the average this search keeps mutating, so the
+         * baseline the eliminations were scored against moved every round while
+         * the returned policy's baseline stayed put — the same tree scored two
+         * different ways. `root_qs[bi]` is fixed for the whole search, which is
+         * what "the value at the root before any of this search happened"
+         * means. */
+        double root_Q = g->root_qs[bi];
 
         /* Single pass over children: max_visit + mctx mixed-value stats +
          * populate action_to_slot map. */

@@ -39,11 +39,24 @@ Scouted classic-Gumbel decisions this orchestrator reproduces exactly
   ``gumbel + log(max(prior, 1e-12)) + q_scale * (q_hat - min_q) / max(max_q -
   min_q, 1e-8)`` where ``q_hat`` is the child's mean value from the root POV
   when visited, else the mctx mixed value; min/max run over ALL root children
-  (unvisited ones contribute the mixed value); the running root value is
+  (unvisited ones contribute the mixed value); the root value fed to the mix is
   ``(root_q_init + sum(q_c * N_c)) / (1 + sum(N_c))`` — algebraically the
   ``W[root]/N[root]`` the classic single-tree backprop maintains (here
   descents are rooted at candidate nodes, so the root aggregate is
-  reconstructed from child stats). ``q_scale`` reuses
+  reconstructed from child stats).
+
+  ⚑ **This is the ONE place the mirror is no longer exact.** The C stopped
+  reading ``W[root]/N[root]`` there: ``gss_score_and_halve`` now takes the
+  FRESH network root value (``root_qs``), which is what mctx's
+  ``qtransform_completed_by_mix_value`` takes, what ``gumbel.py``'s reference
+  ``_halve_remaining_for_board`` passes as ``raw_value``, and what this path's
+  own ``_final_value`` / the C path's returned improved policy already used.
+  Aligning RPG is a one-line change (``root_q = float(st.root_q_init)`` in
+  ``_score_and_halve``) but it moves the root-parallel PLAY path, so it is left
+  for a change that can carry its own arena readout. Until then RPG eliminates
+  against a baseline the single-tree path no longer uses.
+
+  ``q_scale`` reuses
   ``gumbel._root_sigma_scale`` — the ROOT-site transform (c_scale_root /
   c_visit_root / q_visit_exp_root; the production root-LOG transform), which
   is deliberately different from the descent transform (see
@@ -907,7 +920,13 @@ class RootParallelGumbelPool:
         remaining: list[int],
         gumbels: dict[int, float],
     ) -> list[int]:
-        """Exact mirror of ``gss_score_and_halve`` (see module docstring)."""
+        """Mirror of ``gss_score_and_halve`` — with ONE known divergence.
+
+        Everything below matches the C except the root value fed to the mix:
+        the C now uses the FRESH ``root_qs``, this still uses the running
+        ``W[root]/N[root]`` reconstruction. See the module docstring for why
+        that is not fixed here and what the one-line fix is.
+        """
         if len(remaining) <= 1:
             return remaining
         actions, visits, qs = st.tree.get_children_q(st.root_id, 0.0)
