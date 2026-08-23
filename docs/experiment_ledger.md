@@ -65838,3 +65838,29 @@ matched. Seed 3, 20k steps, out `runs/lc0_ft_iter595_ext2_20260823`, running fro
 merged `feat/lc0-continuation` checkout as the prereg discloses. Overnight beside the
 BT4 dump; summary waiter armed (9h). Deciding read tomorrow: 800-game arena vs iter-595
 init. Heldout top-1 scores (ext-MID/LAST/ext2-LAST) deferred to the same readout block.
+
+**Top-up COMPLETE — the ladder's label corpus is DONE, and the F1 fix earned its keep on
+its first production outing.** `rvg_labels_mpv40_150k_topup.jsonl`: 206,705/206,705
+records, 0 failures, 0 unscoreable, `OK: join verified` (206,986 corpus rows), 54.1 min
+at 63.7 pos/s — the fresh-pass path that yesterday's code would have crashed at the
+join read-back. **Pre-launch smoke item (2) PASSED tonight:** two-file
+`RvgLabelIndex.load` union = 1,263,891 distinct keys (= 1,057,186 + 206,705, fully
+disjoint), and **all 1,053,147 fixed-enumeration keys present — 0 missing**. Smoke
+item (3), the a000 dry-launch, runs tomorrow immediately before the ladder (GPU is
+ext2's tonight).
+
+**⚑ ARM-B KEY CONTRACT MISMATCH caught BEFORE the dump burned a day:** the BT4 dump's
+shard mode keys rows by CANONICAL FEN (its own contract block says so) while
+`RvgExternalPolicyIndex.load` does `bytes.fromhex(rec["key"])` — it requires the 32-hex
+plane fingerprint, and its provenance refusals demand `"v": 1` +
+`policy_encoding: lc0_1858`. The dump also cannot restrict shard rows (`--rows` is
+FEN-mode only) ⇒ as-is it is BOTH unjoinable and unrestricted (~31h for ~2/3 waste).
+The two artifacts came from two builders and the interchange was never driven
+end-to-end — the consumer-test gap, one level up from code. Routed to a fresh Opus
+implementer in a worktree (`feat/bt4-dump-rigkey`): `--restrict-keys` (32-hex,
+header-tolerant), emit the SHARED fingerprint fn's key (imported, never re-implemented,
+parity-pinned vs the label pass), loader-compatible provenance, dedupe on the emitted
+key, and THE consumer test — `RvgExternalPolicyIndex.load` on real dump output, plus
+both refusal directions. Light single-review after (instrument code, off the production
+path), then the restricted dump (~1.05M rows, ~10-15h CPU beside ext2) → Sunday b030
+unchanged.
