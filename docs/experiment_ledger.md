@@ -65822,3 +65822,19 @@ ambiguous AND cheap to disambiguate.
 **Confounds:** BT4 dump shares the box's CPU overnight (arms unaffected — the yardstick
 arena runs after both finish); the ruler shares seed-42 openings with every arena in
 this series (deliberate — cross-arena comparisons stay same-openings).
+
+**ext-MID secondary (preregistered, non-deciding):** 50k cumulative reads **−48.1
+[−78.5, −18.3]** — a transient dip BELOW ft-LAST's −41.0 before the recovery to −20.0
+at 60k (CIs overlap; not significant). Second observation of the same shape: a fresh
+seed's draw order injects a shock, then the net re-integrates — consistent with the
+interference mechanism and the weight-forensics read (no structural change; the dip is
+data-order, not damage). Banked `scratchpad/elo_calib/EXTMID_vs_iter595.json`.
+Full dose curve: 20k −84.1 / 40k −41.0 / 50k −48.1 (dip, seed flip) / 60k −20.0.
+
+**ext2 LAUNCHED per prereg, banner VERIFIED:** `--init-from` ext-LAST **sha256
+05fb5a73… step 231,327** (matches the prereg pin exactly), purity receipt frozen-sha
+covers all 122 dirs, sf_wdl coverage 0/78,531,074 (pure lc0), arch/trainer/replay pins
+matched. Seed 3, 20k steps, out `runs/lc0_ft_iter595_ext2_20260823`, running from the
+merged `feat/lc0-continuation` checkout as the prereg discloses. Overnight beside the
+BT4 dump; summary waiter armed (9h). Deciding read tomorrow: 800-game arena vs iter-595
+init. Heldout top-1 scores (ext-MID/LAST/ext2-LAST) deferred to the same readout block.
