@@ -66319,3 +66319,10 @@ CONVERSION BAND — live, improvable territory — not in solved TB positions, a
    past a screening run without a game readout. "Discounted to ~0" (19:40 rule 1) is
    WITHDRAWN in favor of this.
 Audit-first demotion (pass ≠ strength presumption) UNCHANGED.
+
+Addendum (v020 salvage condition, Josh-acked): V's knobs were global cp thresholds, not
+endgame-tuned — the endgame concentration is where V's signal is loudest, not a
+calibration error. NOT salvageable by retuning: no middlegame gain existed at any swept
+setting, and any retune would be judged by the ruler V is partially the gradient of.
+Code stays in-tree flag-off. RE-SCREEN CONDITION: if an instrument ever prices
+opening/middlegame moves in Elo-convertible terms, V is cheap to re-screen there.
