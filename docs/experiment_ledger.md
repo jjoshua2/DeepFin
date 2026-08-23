@@ -65969,3 +65969,20 @@ Training run itself was clean: 20k steps, init ext-LAST 231327 sha 05fb5a73, LAS
 218801d5, MID step 10032 banked. ⚑ Ops note, twice now: a waiter keyed on the pid
 captured at `setsid` launch watches the PARENT; key waiters on the FILE plus the
 `ps aux | grep "[x]"` pid, never the launch-time `$!`.
+
+**2026-08-23 ~08:15 — lc0 CONVERSION SPOT-CHECK: CLEAN. The residual bug hypothesis is
+CLOSED.** Instrument `scratchpad/lc0_label_spotcheck.py` (reuses the dump module's own
+board_from_stored_x / compact_index_for_move / legal_move_policy — no local
+re-derivations; predictions committed before running). 1600 lc0 rows + 1449 own replay
+rows, BT4 ONNX referee: lc0_rows mask-parity fails 0, illegal target mass 0, illegal
+top-1 0, BT4 top-1 agreement **0.7044**; own_replay baseline (identical code path)
+0/0/0, agreement 0.5217. A remap/mirror bug predicts mass illegality and/or agreement
+far BELOW baseline; observed is perfect legality and agreement well ABOVE it. ⇒ the
+ft595/ext/ext2 kills are an APPLICATION failure (warm-start interference), not data.
+Result banked at `scratchpad/lc0_label_spotcheck.result.json`.
+Operator input registered (Josh): the old "zeroing the WDL blend's SF component
+crashed winrate 0.64→0.40" fact is DISTRUSTED (ancient, uncontrolled, pre-dates many
+fixes) — not to be cited as mechanism without a fresh prereg'd re-ablation. Standing
+frame for lc0 data: bootstrap faster, or targeted exploit-training once within ~300
+Elo — the ratio ladder (Sunday) tests the mixing middle ground; bootstrap-from-
+scratch/early-checkpoint is the natural next bet if that also fails from this init.
