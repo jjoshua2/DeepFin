@@ -37,16 +37,23 @@ Two input sources, and they are NOT equivalent:
 
 CONSUMER CONTRACT — read before joining a dump to anything
 ----------------------------------------------------------
-(a) ⚑⚑ THE TWO MODES EMIT DIFFERENT COORDINATE FRAMES. This is deliberate and
-    is the single most important thing to get right before joining.
+(a) ⚑⚑ THE TWO MODES EMIT DIFFERENT KEYS AND DIFFERENT COORDINATE FRAMES. This
+    is deliberate and is the single most important thing to get right before
+    joining.
 
-    ``shards`` ⇒ **CANONICAL frame.** Replay planes are stored POV-oriented, so
-    a decoded row is ALWAYS White-to-move. ``key`` is the mirrored,
-    side-to-move-canonical FEN and the ``policy`` keys are canonical UCIs: for
-    a black-to-move row a kingside castle is ``e1g1``, NEVER ``e8g8``, and a
-    black pawn push reads ``e2e4``, not ``e7e5``.
-    ``fens`` ⇒ **TRUE frame.** ``key`` is the caller's own FEN, verbatim, and
-    the UCIs are in real board coordinates.
+    ``shards`` ⇒ **RIG KEY + CANONICAL frame.** Replay planes are stored
+    POV-oriented, so a decoded row is ALWAYS White-to-move. ``key`` is the
+    32-hex PLANE FINGERPRINT — the very digest
+    :func:`chess_anti_engine.eval.rvg_surgery.position_fingerprints` computes,
+    imported and called here rather than re-derived, because that function IS
+    the R/V/G rig's join key and a second copy of it would drift and silently
+    unjoin every row. The mirrored, side-to-move-canonical FEN is still carried,
+    in the ``fen`` field, for humans and for debugging — it is NOT the join key.
+    The ``policy`` keys are canonical UCIs: for a black-to-move row a kingside
+    castle is ``e1g1``, NEVER ``e8g8``, and a black pawn push reads ``e2e4``,
+    not ``e7e5``.
+    ``fens`` ⇒ **TRUE frame.** ``key`` is the caller's own FEN, verbatim (there
+    is no ``fen`` field), and the UCIs are in real board coordinates.
 
     So the same position dumped through the two modes does NOT produce the same
     record, and a consumer holding true-frame FENs gets an EMPTY join against a
@@ -60,10 +67,23 @@ CONSUMER CONTRACT — read before joining a dump to anything
     :func:`board_from_stored_x` (or mirror the board yourself when Black is to
     move) so both sides speak the canonical frame.
 
-(a2) ⚑ The canonical key is IDENTITY-BY-PLANES, not a true game state. It is
+(a2) ⚑ The ``fen`` field is IDENTITY-BY-PLANES, not a true game state. It is
     rebuilt from ``chess.Board(None)``, so its fullmove number is always 1, and
     its halfmove clock saturates at 100 because rule50 arrives through a plane.
-    Treat the key as a position fingerprint; never parse a move number out of it.
+    Never parse a move number out of it, and never join on it — the fingerprint
+    in ``key`` is the join, and it hashes the PLANES (the clock at full 0..150
+    resolution included), not this string.
+
+(a3) **A SHARD DUMP IS DIRECTLY LOADABLE BY THE RIG.** The header line is a
+    ``{"record": "provenance", "v": 1, "policy_encoding": "lc0_1858", ...}``
+    record, which is what
+    :meth:`chess_anti_engine.eval.rvg_surgery.RvgExternalPolicyIndex.load`
+    requires — a missing or wrong ``v`` is a REFUSAL there, not a warning, and
+    so are duplicate keys. ``--restrict-keys <file>`` (shard mode only) narrows
+    a dump to an enumerated key set: one 32-hex key per line, lines beginning
+    with ``{`` skipped so a label file's own provenance header can be fed
+    straight back in. The restrict file's path/size/mtime and key count go in
+    the header.
 (b) ⚑ The gather index space is LC0's 1858 ORDER, which is not ours. Measured:
     ``compact_index_for_move`` and ``leela_index_for_move`` agree on only
     88 of 5,243 moves. **UCI STRINGS ARE THE INTERCHANGE FORMAT — never join on
@@ -74,7 +94,10 @@ CONSUMER CONTRACT — read before joining a dump to anything
     reached with different history. Because every record carries ``shard`` and
     ``row`` (plus ``game_id`` / ``ply_index``), which occurrence was kept is
     observable, and a consumer that cares can re-derive the others instead of
-    silently inheriting our choice.
+    silently inheriting our choice. In shard mode the dedup key is the emitted
+    FINGERPRINT, which is what the rig loader refuses duplicates of — deduping
+    on anything else (the FEN, say) would let two rows that share a fingerprint
+    both through and make the file unloadable.
 
 ⚑ The gather is board-aware for a reason. LC0's 1858 head spells castling
 king-takes-rook (``e1h1``) and ALSO has an ordinary ``e1g1`` slide slot, and it
@@ -87,7 +110,8 @@ Example
 -------
     PYTHONPATH=. python3 scripts/bt4_policy_dump.py \
         --input-source shards:data/salvage/<label>/seeds/slot_000/replay_shards \
-        --out data/lc0/bt4_policy_dump.jsonl --batch-size 128 --threads 16
+        --out data/lc0/bt4_policy_dump.jsonl --batch-size 128 --threads 16 \
+        --restrict-keys data/rvg/labels_keys.txt
 """
 from __future__ import annotations
 
@@ -117,7 +141,17 @@ from chess_anti_engine.encoding.plane_decode import (
     decode_ep_square,
     decode_step0_bitboards,
 )
-from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
+from chess_anti_engine.eval.rvg_surgery import (
+    FINGERPRINT_BYTES,
+    RVG_EXTERNAL_POLICY_SCHEMA_VERSION,
+    UNFINGERPRINTABLE,
+    file_provenance,
+    position_fingerprints,
+)
+from chess_anti_engine.moves.encode import (
+    COMPACT_POLICY_SIZE,
+    POLICY_ENCODING_LC0_1858,
+)
 from chess_anti_engine.moves.leela_index import (
     compact_index_for_move,
     leela_index_for_move,
@@ -142,10 +176,16 @@ REMAP_SOURCES = (
 
 @dataclass
 class Row:
-    """One position on its way to the net, with the identity it will be dumped under."""
+    """One position on its way to the net, with the identity it will be dumped under.
+
+    ``key`` is what the dump is KEYED BY, deduped on and resumed off: the 32-hex
+    plane fingerprint in shard mode, the caller's own FEN string in FEN mode.
+    ``fen`` is set on the shard path only and is descriptive, never a join key.
+    """
 
     key: str
     board: chess.Board
+    fen: str | None = None
     #: Ready-made LC0 planes (shard path, TRUE history) or ``None`` to build
     #: them from the FEN (history-less path).
     planes: np.ndarray | None = None
@@ -160,6 +200,7 @@ class Row:
         if self.shard is None:
             return {}
         return {
+            "fen": self.fen,
             "shard": self.shard,
             "row": self.row_index,
             "game_id": self.game_id,
@@ -280,6 +321,11 @@ def shard_encoding(group: Any, shard: Path) -> str:
 def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
     """Stream ``Row``s from replay shards, one shard resident at a time.
 
+    ⚑ THE KEY COMES FROM :func:`position_fingerprints`, IMPORTED. That function
+    is the R/V/G rig's join key and the label pass's row key; a local
+    re-derivation of "the same" digest is the one change that would unjoin every
+    row in a 31-hour dump without raising anything.
+
     ⚑ Each row's planes are ``.copy()``d out of the shard's converted block.
     Handing out a VIEW would make one retained row pin the whole
     ``(2000, 112, 8, 8)`` float32 array (~460 MB per 12k rows retained), which
@@ -287,10 +333,13 @@ def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
 
     ⚑ "Streams" means the PLANES stream; it is not O(1) overall. The ``seen``
     and ``done`` key sets in :func:`source_rows` and :func:`load_done_keys`
-    still grow with distinct keys at ~0.60 KB/row — about **1.9 GB at 3.1M
-    rows, ~3.7 GB for a resumed run** that also holds ``done``. That is the
-    price of first-wins dedup and resumability; budget for it, or shard the
-    run by directory and merge.
+    still grow with distinct keys — measured at ~0.60 KB/row back when the key
+    was a FEN, i.e. about **1.9 GB at 3.1M rows, ~3.7 GB for a resumed run**
+    that also holds ``done``. Those figures now bound rather than describe it:
+    a 32-hex key is a smaller string than a FEN (81 vs ~99 bytes) in the same
+    set. ``--restrict-keys`` adds a third set of the same shape, held for the
+    whole run. That is the price of first-wins dedup and resumability; budget
+    for it, or shard the run by directory and merge.
     """
     import zarr
 
@@ -312,14 +361,34 @@ def iter_shard_rows(dirs: Sequence[str]) -> Iterator[Row]:
             masks = np.asarray(group["legal_mask"][:])
             game_ids = np.asarray(group["game_id"][:])
             plies = np.asarray(group["ply_index"][:])
+            # The rig's key, off the SAME planes the label pass hashes -- note
+            # this reads the STORED `xs`, not the LC0-converted block, because
+            # that is what `position_fingerprints` is defined over. Taken BEFORE
+            # the conversion so a shard too narrow to fingerprint is named by
+            # that fact rather than by `x_to_lc0_planes`'s 112-plane complaint.
+            keys = position_fingerprints(xs, input_history_encoding=encoding)
+            # ⚑ REFUSED, NOT SKIPPED, and it is a whole-shard property (the
+            # sentinel is returned for the entire batch or for none of it). An
+            # unfingerprintable row cannot join, and a dump that exists only to
+            # be joined must not quietly emit rows keyed by the empty string --
+            # they would collide with each other and the rig would refuse the
+            # whole file for "duplicate key ''", hours later and far from here.
+            if keys and keys[0] == UNFINGERPRINTABLE:
+                raise SystemExit(
+                    f"{shard}: x is {xs.shape[1]} planes, too narrow to carry the "
+                    f"metadata position_fingerprints hashes under "
+                    f"{encoding!r}; this shard cannot produce a rig join key.",
+                )
             planes_all = x_to_lc0_planes(xs, input_history_encoding=encoding)
             for row in range(xs.shape[0]):
+                key = keys[row]
                 board = board_from_stored_x(
                     xs[row], planes_all[row], input_history_encoding=encoding,
                 )
                 yield Row(
-                    key=board.fen(),
+                    key=key.hex(),
                     board=board,
+                    fen=board.fen(),
                     planes=planes_all[row].copy(),
                     shard=shard.name,
                     row_index=row,
@@ -342,17 +411,61 @@ def batched(rows: Iterable[Row], size: int) -> Iterator[list[Row]]:
         yield batch
 
 
+def load_restrict_keys(path: str | Path) -> set[str]:
+    """The enumerated key set for ``--restrict-keys``, as canonical lowercase hex.
+
+    Tolerant in exactly one way, matching ``scripts/rvg_label_pass.py``'s
+    ``--restrict-to``: a line starting with ``{`` is a JSONL provenance header
+    and is skipped, so a label file can be fed back in whole. Everything else
+    must be a real ``FINGERPRINT_BYTES``-wide key.
+
+    ⚑ A wrong-width or non-hex key is a REFUSAL, not a skip. Dropping it would
+    leave a restriction that quietly matches fewer rows than the caller
+    enumerated, and "the dump came out short" is not a symptom anyone traces
+    back to a typo in the key file.
+    """
+    wanted: set[str] = set()
+    with open(path, encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, start=1):
+            line = raw.strip()
+            if not line or line.startswith("{"):
+                continue
+            try:
+                blob = bytes.fromhex(line)
+            except ValueError as exc:
+                raise SystemExit(
+                    f"{path}:{lineno}: {line[:80]!r} is not a hex key ({exc})",
+                ) from exc
+            if len(blob) != FINGERPRINT_BYTES:
+                raise SystemExit(
+                    f"{path}:{lineno}: key {line[:80]!r} is {len(blob)} bytes, but "
+                    f"the join key is {FINGERPRINT_BYTES} ({FINGERPRINT_BYTES * 2} "
+                    "hex chars); this file does not hold rig keys.",
+                )
+            wanted.add(blob.hex())
+    return wanted
+
+
 def source_rows(
     args: argparse.Namespace, done: set[str], stats: dict[str, int] | None = None,
+    restrict: set[str] | None = None,
 ) -> Iterator[Row]:
     """The de-duplicated, limited row stream for whichever input source is set.
 
     ``stats`` accumulates ``seen_rows`` / ``distinct_keys`` / ``collisions`` so
     the first-wins transposition skip is COUNTED rather than silent.
+
+    ``restrict`` is the ``--restrict-keys`` set (hex keys), applied FIRST so a
+    row the caller never asked for is reported as ``restrict_skipped`` rather
+    than as ``resume_skipped`` or ``terminal_skipped``. ⚑ It is NOT applied
+    first in order to protect ``collisions``: ``seen`` only ever receives keys
+    that were KEPT, so a restricted-away row cannot reach that counter from
+    either position — a mutation pass that moved the clause below the dedup
+    check changed no observable, and the docstring used to claim otherwise.
     """
     counts = stats if stats is not None else {}
     for field in ("seen_rows", "distinct_keys", "collisions", "resume_skipped",
-                  "terminal_skipped"):
+                  "terminal_skipped", "restrict_skipped"):
         counts.setdefault(field, 0)
     shard_dirs = shard_source_dirs(args.input_source)
     raw: Iterator[Row] = (
@@ -362,6 +475,9 @@ def source_rows(
     emitted = 0
     for row in raw:
         counts["seen_rows"] += 1
+        if restrict is not None and row.key not in restrict:
+            counts["restrict_skipped"] += 1
+            continue
         if row.key in seen:
             counts["collisions"] += 1  # first-wins skip; see the module contract
             continue
@@ -416,6 +532,13 @@ def load_done_keys(out_path: Path) -> set[str]:
     return done
 
 
+#: Record types the first line of a dump may carry. ``provenance`` is what this
+#: script writes now (the rig's external-policy loader keys off exactly that
+#: string); ``header`` is what it wrote before, and dumps in that shape still
+#: exist on disk, so a resume must still be able to read their provenance.
+HEADER_RECORD_TYPES = ("provenance", "header")
+
+
 def read_header(out_path: Path) -> dict[str, Any] | None:
     """The header record of an existing dump, if it has one."""
     if not out_path.exists() or not out_path.stat().st_size:
@@ -429,7 +552,7 @@ def read_header(out_path: Path) -> dict[str, Any] | None:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 return None
-            return rec if rec.get("record") == "header" else None
+            return rec if rec.get("record") in HEADER_RECORD_TYPES else None
     return None
 
 
@@ -628,9 +751,20 @@ def remap_provenance() -> dict[str, Any]:
 
 
 def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
-                 providers: list[str]) -> dict[str, Any]:
-    return {
-        "record": "header",
+                 providers: list[str], restrict: set[str] | None = None) -> dict[str, Any]:
+    """The dump's provenance line.
+
+    ⚑ ``record``/``v``/``policy_encoding`` are not decoration: they are the
+    three fields ``RvgExternalPolicyIndex.load`` reads, and it REFUSES a file
+    that declares no ``v`` (an undeclared format is one the rig cannot promise
+    it reads the way this program wrote it). ``v`` and ``policy_encoding`` are
+    written on the shard path only — that is the path whose ``key`` is a rig
+    join key; a FEN-mode dump is keyed by FEN strings and is not a rig file, so
+    claiming the rig schema for it would be a lie the loader could not catch
+    until ``bytes.fromhex`` choked on a FEN.
+    """
+    header: dict[str, Any] = {
+        "record": "provenance",
         "onnx": {"path": str(args.onnx), "sha256": file_sha256(args.onnx)},
         "policy_output": pol_name,
         "providers": providers,
@@ -647,8 +781,11 @@ def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
         "contract": {
             "frame": "canonical" if shard_dirs else "true",
             "key": (
-                "side-to-move canonical FEN, always White to move; fullmove is "
-                "always 1 and halfmove saturates at 100 (identity-by-planes)"
+                f"{FINGERPRINT_BYTES * 2}-hex plane fingerprint, from "
+                "chess_anti_engine.eval.rvg_surgery.position_fingerprints -- the "
+                "R/V/G rig's join key. The side-to-move canonical FEN is in the "
+                "'fen' field (always White to move, fullmove always 1, halfmove "
+                "saturating at 100); it is descriptive, never the join."
                 if shard_dirs else
                 "the caller's own FEN, verbatim, in true board coordinates"
             ),
@@ -660,12 +797,23 @@ def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
                 "LC0 1858 order internally; UCI strings are the interchange format"
             ),
             "duplicate_keys": (
+                "first-wins skip on the emitted key (the fingerprint); "
+                "fen/shard/row/game_id/ply_index identify which row supplied it"
+                if shard_dirs else
                 "first-wins skip; shard/row/game_id/ply_index identify which"
             ),
         },
         "remap": remap_provenance(),
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if shard_dirs:
+        header["v"] = RVG_EXTERNAL_POLICY_SCHEMA_VERSION
+        header["policy_encoding"] = POLICY_ENCODING_LC0_1858
+    header["restrict_keys"] = (
+        None if args.restrict_keys is None
+        else {**file_provenance(args.restrict_keys), "keys": len(restrict or ())}
+    )
+    return header
 
 
 # ---------------------------------------------------------------------- main
@@ -707,7 +855,13 @@ def _resume_guard(
             f"does not match this run ({pol_name!r} / "
             f"{header['input']['source']!r}).",
         )
-    return dict(header, record="resume")
+    # ⚑ STILL A `provenance` RECORD. The rig loader classifies every line by
+    # `record`, so a `"resume"` line would fall through to the row branch and
+    # die on a missing `key` -- a resumed dump would be unloadable purely
+    # because it was resumed. `resumed: true` carries the distinction instead,
+    # and the loader's last-provenance-wins read then describes the rows this
+    # run appended.
+    return dict(header, record="provenance", resumed=True)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -722,6 +876,26 @@ def run(args: argparse.Namespace) -> int:
         )
 
     shard_dirs = shard_source_dirs(args.input_source)
+    restrict: set[str] | None = None
+    if args.restrict_keys is not None:
+        # FEN mode is keyed by FEN strings, so a hex key set could only ever
+        # match zero rows there -- an empty dump and no error is precisely the
+        # silent-wrongness this refusal exists to prevent.
+        if not shard_dirs:
+            raise SystemExit(
+                "--restrict-keys is shard mode only: it enumerates 32-hex plane "
+                "fingerprints, and FEN mode keys its records by the caller's own "
+                "FEN string, so the restriction would match nothing. Use "
+                "--input-source shards:<dirs>, or filter the --rows file itself.",
+            )
+        restrict = load_restrict_keys(args.restrict_keys)
+        if not restrict:
+            raise SystemExit(
+                f"--restrict-keys {args.restrict_keys} enumerates no keys; that "
+                "would dump nothing.",
+            )
+        print(f"[dump] --restrict-keys {args.restrict_keys}: {len(restrict)} keys")
+
     prior_header = read_header(out_path) if args.resume else None
     done: set[str] = set()
     if args.resume:
@@ -747,7 +921,7 @@ def run(args: argparse.Namespace) -> int:
           f", history="
           f"{'TRUE (from stored x)' if shard_dirs else 'repeat-filled (FEN-only)'}")
 
-    header = build_header(args, shard_dirs, pol_name, providers)
+    header = build_header(args, shard_dirs, pol_name, providers, restrict)
     resume_note = (
         _resume_guard(prior_header, header, pol_name, out_path)
         if prior_header is not None else None
@@ -777,7 +951,9 @@ def run(args: argparse.Namespace) -> int:
         fh.flush()
         os.fsync(fh.fileno())
 
-        for batch in batched(source_rows(args, done, stats), int(args.batch_size)):
+        for batch in batched(
+            source_rows(args, done, stats, restrict), int(args.batch_size),
+        ):
             feats = np.stack([
                 row.planes if row.planes is not None else fill_lc0_history_repeat(
                     encode_position(row.board, add_features=False,
@@ -797,7 +973,8 @@ def run(args: argparse.Namespace) -> int:
                 castles = castling_probability(row.board, ucis, probs)
                 if castles and len(castle_examples) < args.castle_examples:
                     castle_examples.append({
-                        "key": row.key, "castling": castles, "best": best,
+                        "where": row.fen or row.key, "castling": castles,
+                        "best": best,
                         "best_p": round(float(probs.max()), 4),
                     })
                 lines.append(json.dumps({
@@ -825,6 +1002,11 @@ def run(args: argparse.Namespace) -> int:
           f"{stats.get('collisions', 0)}, terminal positions skipped "
           f"{stats.get('terminal_skipped', 0)}, already-done skipped "
           f"{stats.get('resume_skipped', 0)}")
+    if restrict is not None:
+        print(f"[dump] --restrict-keys {args.restrict_keys}: {len(restrict)} keys "
+              f"enumerated -> kept {stats.get('distinct_keys', 0)}, skipped "
+              f"{stats.get('restrict_skipped', 0)} rows not in the set "
+              f"(of {stats.get('seen_rows', 0)} read)")
     if n_written:
         # ⚑ NOT comparable to the banked 0.970: that figure is BT4-100, i.e.
         # after 100 nodes of SEARCH and matched to our branching factor. This is
@@ -837,7 +1019,7 @@ def run(args: argparse.Namespace) -> int:
               "(BT4 raw-prior reference ~0.476)")
     for ex in castle_examples:
         print(f"[sanity] castling prior {ex['castling']} "
-              f"(best {ex['best']} p={ex['best_p']}) {ex['key']}")
+              f"(best {ex['best']} p={ex['best_p']}) {ex['where']}")
     if not castle_examples:
         print("[sanity] no position with a legal castling move in this slice")
     if rate > 0:
@@ -875,8 +1057,14 @@ def build_parser() -> argparse.ArgumentParser:
                          "required if the graph has more than one)")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N rows; with --resume this means N NEW rows, "
-                         "since already-dumped keys are skipped before counting "
-                         "(0 = all rows)")
+                         "since already-dumped keys are skipped before counting, "
+                         "and with --restrict-keys N RESTRICTED rows, since the "
+                         "restriction is applied first (0 = all rows)")
+    ap.add_argument("--restrict-keys", type=Path, default=None,
+                    help="shard mode only: dump ONLY rows whose 32-hex plane "
+                         "fingerprint appears in this file (one key per line; "
+                         "lines starting with '{' are skipped, so a label file's "
+                         "own provenance header can be fed back in)")
     ap.add_argument("--resume", action="store_true",
                     help="skip keys already present in --out")
     ap.add_argument("--castle-examples", type=int, default=3,

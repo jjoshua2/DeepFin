@@ -318,11 +318,13 @@ def test_resolve_policy_output_names_the_available_outputs() -> None:
 
 
 def test_shard_rows_carry_the_join_identity() -> None:
-    """The arm-B join needs shard/row/game_id/ply_index on every record."""
-    row = Row(key="k", board=chess.Board(), shard="shard_1.zarr", row_index=7,
-              game_id=123, ply_index=42)
+    """The arm-B join needs shard/row/game_id/ply_index on every record, plus the
+    canonical FEN now that ``key`` is the fingerprint and no longer readable."""
+    row = Row(key="k", board=chess.Board(), fen="a-fen", shard="shard_1.zarr",
+              row_index=7, game_id=123, ply_index=42)
     assert row.identity() == {
-        "shard": "shard_1.zarr", "row": 7, "game_id": 123, "ply_index": 42,
+        "fen": "a-fen", "shard": "shard_1.zarr", "row": 7, "game_id": 123,
+        "ply_index": 42,
     }
 
 
@@ -428,7 +430,7 @@ def _resume_args(out: Path, rows: Path) -> argparse.Namespace:
         out=str(out), rows=str(rows), input_source="fens", resume=True,
         onnx="/nonexistent-should-never-be-opened.onnx", batch_size=8, threads=1,
         gpu_mem_gb=0.0, policy_output=None, limit=0, castle_examples=0,
-        check_legal_mask=True,
+        check_legal_mask=True, restrict_keys=None,
     )
 
 
