@@ -66264,3 +66264,25 @@ Confounds: none — single change, pre-set size, no optional stopping, seed 47 r
 **Program state after this readout:** lc0 lanes lead (ext2 rerun on Josh's go — GPU now
 FREE tonight, ahead of schedule; mixed-replay ratio ladder prereg 10fc2f1d4 ready).
 Production remains STOPPED.
+
+### 2026-08-23 19:40 — DIAGNOSTIC CLOSED same-session: the arena cannot price v020's gain — 60% of games were TB-adjudicated exactly where the gain lives
+
+From the banked game log (no GPU): **478/800 games (59.8%) ended by syzygy
+adjudication**, 321 by rules, median length 100 plies. v020's audit gain was
+endgame-concentrated (−8.1cp top-1; middlegame 0.0) — and the certification arena
+amputates endgames at ≤6 men while BOTH sides carry syzygy in search, equalizing
+endgame skill pre-adjudication. Mechanism (b)/(c) not needed; (a) confirmed in its
+sharpest form. Compounding cause: the V edit is (partially) the GRADIENT OF THE
+INSTRUMENT — it edits targets USING SF cp and the audit MEASURES cp vs deep SF
+([[an_arm_that_is_the_gradient_of_the_metric_always_wins]]); the arena was the only
+independent ruler.
+
+**Two standing rule changes, effective now:**
+1. **Endgame-bucket audit gains are discounted to ~0 for strength screening** under the
+   current arena design (adjudication + search-syzygy). Opening/middlegame movement is
+   the strength-relevant signal. (Deliberate design keep: adjudication is
+   production-equivalent and halves match wall-clock; we change the READING, not the
+   instrument.)
+2. **Audit-first demotion:** a direct-audit PASS no longer earns any strength
+   presumption, even for SF-family target edits — it remains a KILL filter only.
+   Games are the sole certifier.
