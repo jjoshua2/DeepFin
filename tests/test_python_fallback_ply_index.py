@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock
 
 import chess
@@ -131,11 +132,14 @@ def test_syzygy_policy_rescore_matches_absolute_fen_ply(
     monkeypatch.setattr(finalize_mod, "is_tb_eligible", lambda _board: True)
     monkeypatch.setattr(finalize_mod, "probe_best_move", lambda _board, _path: played_move)
 
+    # The helper only reads ``ply_index`` from records in this branch. Make the
+    # deliberate minimal test double explicit at the typed private API boundary.
+    records = cast(Any, [SimpleNamespace(ply_index=starting.ply())])
     result, overrides = finalize_mod._rescore_with_syzygy(
         state,
         0,
         final,
-        [SimpleNamespace(ply_index=starting.ply())],
+        records,
         "1/2-1/2",
     )
 
