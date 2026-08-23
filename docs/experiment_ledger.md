@@ -65927,3 +65927,13 @@ LAUNCH: smoke (--limit 64) verified restriction (1,053,147 keys enumerated, 64 k
 1001340, CPU 16 threads beside ext2 (GPU untouched), out `data/rvg/bt4_policy_by_key.jsonl`,
 log `scratchpad/bt4dump_launch.log`, ~24 pos/s → ~12h for the 1.053M restricted evals.
 Feeds arm b030 of the R/V/G ladder (Sunday leg).
+
+**2026-08-22 ~22:00: ext2 PAUSED at Josh's request** ("pause training for now and ill
+resume later"). Killed ~40 min into training, ZERO checkpoints written, so nothing to
+resume from — and `lc0_control_train.py` has no mid-run resume anyway. Disposition: on
+Josh's go, RELAUNCH THE IDENTICAL BANKED COMMAND from scratch (init ext-LAST, seed 3,
+20k steps) — a full rerun, not a mid-run restart, so the ext2 prereg stays valid (a
+mid-checkpoint restart would inject the data-order shock this lane measures). The
+CPU-only BT4 dump keeps running (pid 1001340, CPUExecutionProvider, no GPU). ext2
+summary waiter stopped. Residual 18.8G/26% on nvidia-smi is Windows-side (WSL2
+nvidia-smi is not an ownership test); no process of ours touches the GPU now.
