@@ -65864,3 +65864,17 @@ key, and THE consumer test — `RvgExternalPolicyIndex.load` on real dump output
 both refusal directions. Light single-review after (instrument code, off the production
 path), then the restricted dump (~1.05M rows, ~10-15h CPU beside ext2) → Sunday b030
 unchanged.
+
+### 2026-08-22 — operator design directive registered for the RATIO-LADDER prereg: judge the TRAJECTORY, not the dip
+
+Josh: "A small dip might be worth it, though. If it means it gains faster after that."
+⇒ The ratio ladder's deciding metric is the ENDPOINT (each arm's LAST-checkpoint arena
+vs iter-595, read against the pure-lc0 matched-step curve) with the recovery SLOPE
+(LAST − MID, two arenas per arm) as the secondary and the extension criterion. **Dip
+depth at MID is a diagnostic, never a kill criterion** — an arm is not killed for
+dipping deep, and "smallest dip" is explicitly NOT the objective (f=0 wins that metric
+by never learning anything: [[an_arm_that_is_the_gradient_of_the_metric_always_wins]],
+one step removed). Pre-authorize ONE extension of the best arm if LAST < 0 with clearly
+positive slope — clauses to be written covering the FULL outcome space including
+CI-spans-zero (the ext verdict's between-clauses gap, not repeated). Consistent with
+[[speed_of_improvement_over_stability]].
