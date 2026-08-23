@@ -65878,3 +65878,28 @@ one step removed). Pre-authorize ONE extension of the best arm if LAST < 0 with 
 positive slope — clauses to be written covering the FULL outcome space including
 CI-spans-zero (the ext verdict's between-clauses gap, not repeated). Consistent with
 [[speed_of_improvement_over_stability]].
+
+**ops: ext2 FALSE-STARTED TWICE, then launched valid.** (1) 20:12 the merged branch's
+new validity guard REFUSED the run — without `$CHESS_LIVE_PRODUCTION_CONFIG` the
+arch/trainer premises are judged against committed pins that cannot see live-file
+drift, and `lc0_control_eval compare` would refuse the artifact; the guard correctly
+spent 0 of the budget. My launch omitted the env var ext had carried. (2) 21:02 retry
+with a guessed `--live-config` flag — argparse exit 2 (the mechanism is the ENV VAR).
+(3) 21:05 relaunch with `CHESS_LIVE_PRODUCTION_CONFIG` set: all three premises now read
+"matches the LIVE file", same sha-pinned init, running. ~55 min lost; prereg otherwise
+unchanged; the 9h summary waiter covers the same out dir.
+
+**BT4 dump rig-key feature LANDED** (`697e6b406`, `feat/bt4-dump-rigkey`): imported
+`position_fingerprints` on the stored x (parity-pinned vs the label pass — the first
+fixture COULDN'T see a castling-plane-order error because all-rights rows are
+order-invariant; fixed with asymmetric-castling + EP rows plus a
+fixture-can-see-what-it-claims guard), `--restrict-keys` with refusals (non-hex,
+FEN-mode, empty set), loader-compatible provenance, fingerprint dedupe, resume-safe
+(a `"resume"`-typed note would have made every RESUMED dump unloadable — caught and
+kept as provenance-typed). 22 mutants: 20 killed, M1d control survivor (by design),
+M3 proven equivalent (docstring corrected). Real end-to-end: actual ONNX, 3-key
+restrict, `RvgExternalPolicyIndex.load` ACCEPTED the output. Lint delta 0/0, tests
++18/0. Grok review dispatched; merge + restricted dump launch on its clearance.
+Implementer disclosure, verified benign: it briefly started a FULL pytest in the
+worktree (the pkill-pattern hazard) — caught at ~29%, killed; production stopped for
+48h, no process harmed; ext2's 20:12 refusal predates it and was my env-var omission.
