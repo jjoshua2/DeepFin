@@ -65952,3 +65952,20 @@ preflight premises "matches the LIVE file", init ext-LAST step 231327 sha 05fb5a
 zero REFUSING lines. ~9.5h → summary ~09:00; waiter armed. On summary: launch the
 prereg'd 800-game deciding arena vs iter-595 (banked template, --games 800). CPU BT4
 dump unaffected throughout (~136k rows at pause-time check, on track ~09:00 finish).
+
+**2026-08-23 07:30 — ext2 VERDICT: KILL, LANE-CLOSED.** Deciding 800-game arena
+(prereg'd; banked template, matched_sims 100, seed 42, play shape) vs iter-595:
+**−42.3 Elo [−64.0, −21.0]**, score 0.4394, pentanomial WW45/WD51/DD-WL150/LD70/LL84,
+`scratchpad/elo_calib/EXT2_vs_iter595.json` (games log fingerprint 7e5108380b0a,
+truncated=false, 0.54h). Judged by the pre-committed rule: SUCCESS required the CI to
+exclude 0 POSITIVE; the CI excludes 0 negative. All non-success outcomes close the
+lane; the ext pre-authorization was already SPENT, so there is no ext3. Final dose
+curve of lc0-fine-tuning iter-595 (all vs iter-595 init, same instrument): 20k −84.1 /
+40k −41.0 / 60k −20.0 / 80k −42.3 — the 60k point was transient noise around a ~−40
+plateau, not a recovery trend. **Conclusion stands: lc0 fine-tuning of iter-595 trades
+Elo for fit at every dose tried. Successor lanes: today's R/V/G ladder + the
+mixed-replay ratio ladder (Sunday, per the registered endpoint+slope directive).**
+Training run itself was clean: 20k steps, init ext-LAST 231327 sha 05fb5a73, LAST sha
+218801d5, MID step 10032 banked. ⚑ Ops note, twice now: a waiter keyed on the pid
+captured at `setsid` launch watches the PARENT; key waiters on the FILE plus the
+`ps aux | grep "[x]"` pid, never the launch-time `$!`.
