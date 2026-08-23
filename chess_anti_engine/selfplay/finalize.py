@@ -192,7 +192,16 @@ def _rescore_with_syzygy(
     # recording), so a naive ``sample_idx`` counter would overshoot ``t``
     # by the number of skipped forced plies — stamping TB overrides from
     # K+P endgame positions onto the wrong records.
-    record_at_ply = {int(rec.ply_index): t for t, rec in enumerate(records)}
+    # ⚑ FIRST record at a ply wins, matching `blindspot_harvest.pre_move_boards`
+    # exactly. These two walkers key the same map off the same field over the
+    # same replay, and this one used a dict comprehension (LAST wins) while that
+    # one used `setdefault` (FIRST wins) — two different answers to one question,
+    # which is a silent divergence rather than a design. Duplicates should not
+    # occur (each ply produces at most one record), so this only bites on
+    # already-corrupt input; when it does, both walkers now blame the same record.
+    record_at_ply: dict[int, int] = {}
+    for t, rec in enumerate(records):
+        record_at_ply.setdefault(int(rec.ply_index), t)
 
     replay_board = starting.copy()
     for mv in move_stack[opening_len:]:

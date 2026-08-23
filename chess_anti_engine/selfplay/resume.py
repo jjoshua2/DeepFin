@@ -1114,8 +1114,16 @@ def _resumable_slots(state: SelfplayState) -> list[int]:
 # session's games on exactly the leased workers it was built for, so these
 # files are put back instead. Expiry stays bounded: `stale` (counted) and the
 # sweep's 4x backstop remain the deleting paths.
+#
+# `ply_convention_mismatch` belongs here for the same reason and was missing
+# it: `should_resume_game` raises it when the FILE's `has_c_ply` differs from
+# THIS process's, and `has_c_ply` is a property of whether the local build
+# imported `_mcts_tree.batch_process_ply` — a fact about this session, not a
+# defect of the game. A worker whose extension failed to import (or a fleet
+# mid-rebuild) would otherwise DELETE every game a C-path worker suspended.
 _PRESERVE_FILE_REASONS = frozenset(
-    {"no_trial_id", "trial_mismatch", "config_mismatch"},
+    {"no_trial_id", "trial_mismatch", "config_mismatch",
+     "ply_convention_mismatch"},
 )
 
 

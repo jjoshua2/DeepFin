@@ -95,12 +95,15 @@ def pre_move_boards(
     """Reconstruct each record's PRE-move board (position the net faced, with
     real history) and the move the net then PLAYED from it.
 
-    Mirrors the syzygy-rescore walk in finalize.py: ``record_ply_index`` equals
-    the position's absolute ``Board.ply()`` (network_turn.py), so walking the
-    final move stack and matching that game-ply count aligns each record to the
-    position just before its move. ``opening_len`` skips the opening plies
-    already present in ``starting_board`` on the Python play path (0 on the
-    C-ply path).
+    Mirrors the syzygy-rescore walk in ``finalize._rescore_with_syzygy``:
+    ``record_ply_index`` equals the position's absolute ``Board.ply()``
+    (network_turn.py), so walking the final move stack and matching that
+    game-ply count aligns each record to the position just before its move.
+    ``opening_len`` skips the opening plies already present in
+    ``starting_board`` on the Python play path (0 on the C-ply path).
+    "Mirrors" includes the TIE-BREAK: both build the ply→record map
+    first-wins. The two drifted apart once (this one ``setdefault``, that one a
+    last-wins dict comprehension); keep them identical or the claim is false.
 
     ``wanted`` (record indices) restricts the expensive per-ply Board.copy() to
     just those records — the caller applies the cheap WDL gate first so the hot

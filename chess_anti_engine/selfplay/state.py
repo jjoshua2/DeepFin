@@ -250,8 +250,11 @@ class _NetRecord:
     # position. The one piece of bookkeeping that lets selfplay/resume.py
     # re-encode ``x`` from a replayed move list instead of persisting the
     # 44.8 KB of planes: it names the exact position each record was taken at,
-    # without relying on ply_index (whose origin differs between the C and
-    # Python play paths). -1 = not tracked; such a game is never resumed.
+    # without relying on ply_index. ``ply_index`` is absolute game ply on BOTH
+    # play paths, but it still cannot serve here: it counts from the start of
+    # the GAME, while this counts from the start of ``move_idx_history``, and a
+    # seeded opening puts those two origins an arbitrary number of plies apart.
+    # -1 = not tracked; such a game is never resumed.
     move_offset: int
     # ``CBoard.zobrist_hash`` of the position this record was taken at, read at
     # capture time. selfplay/resume.py checks it after replaying the move list:
