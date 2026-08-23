@@ -66299,3 +66299,23 @@ concentrates in TB-covered territory is killed before compute. Extends the 19:40
 Also: **PR #451 MERGED** (2026-08-23 23:29 UTC, CI lint+test green on 01c3db46f) — the
 absolute-ply convention fix, triple-reviewed; live effects disclosed in the entry above;
 reaches production at the next restart.
+
+### 2026-08-23 — CORRECTION (Josh: "There is plenty of endgame to improve on like 12 man to 6 man") — the audit endgame bucket is 7-13 MAN, zero TB rows; the 19:40 rules are REFINED, not as written
+
+Measured: audit_set_v1 has **0 positions ≤6 men**; the endgame bucket is exactly 7-13
+pieces (1,181 at 7-12 + 151 at 13 = n=1332). So v020's −8.1cp endgame gain was in the
+CONVERSION BAND — live, improvable territory — not in solved TB positions, and the
+19:40 "amputation" reading overstated. Corrected rules:
+1. **≤6-man is solved territory** (search probes TB, arena adjudicates) — arms whose
+   mechanism lives there are dead at design time. UNCHANGED.
+2. **7-12(13)-man conversion is a LIVE target** (operator directive). The endgame
+   audit bucket measures this band. The v020 evidence bounds its Elo-per-cp conversion
+   rate as HEAVILY REDUCED in our arena, not zero: an 8.1cp bucket gain priced inside
+   [−29.6, +10.4] overall — consistent with 0 but also with +5-8. Mechanisms: 100-sim
+   search bottoms out in TB throughout the band (compressing policy deltas), and games
+   occupy the band briefly (median 100 plies, 60% adjudicated).
+3. **Screening weight**: opening/middlegame movement remains the primary strength
+   signal; an endgame-bucket-only arm is NOT auto-dead but must not receive investment
+   past a screening run without a game readout. "Discounted to ~0" (19:40 rule 1) is
+   WITHDRAWN in favor of this.
+Audit-first demotion (pass ≠ strength presumption) UNCHANGED.
