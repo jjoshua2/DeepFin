@@ -908,7 +908,7 @@ def _append_records_via_python(
         assert v is not None
 
         board_before = state.boards[idx]
-        ply_index = len(board_before.move_stack)
+        ply_index = int(board_before.ply())
         pov_color = board_before.turn
         # Read before the push below (mirrors the C path's snapshot).
         pos_hash = int(state.cboards[idx].zobrist_hash)
