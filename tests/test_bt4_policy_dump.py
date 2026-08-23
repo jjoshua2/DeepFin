@@ -344,10 +344,11 @@ def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
     What this adds over ``test_board_decodes_back_out_of_the_stored_tensor``:
     that test already pins the decoded BOARD (its ``turn == WHITE`` assertion
     does fail under a ``.mirror()`` mutant, on all 7 parametrisations). What it
-    does NOT check is the EMITTED NAMING — the key string and the UCI keys that
+    does NOT check is the EMITTED NAMING — the FEN string and the UCI keys that
     actually land in the JSONL. This asserts those: for a black-to-move row the
-    key is the mirrored FEN and black's kingside castle is named ``e1g1``, with
-    ``e8g8`` absent from the record entirely.
+    ``fen`` field is the mirrored FEN (the join ``key`` itself is the plane
+    fingerprint — see ``test_bt4_dump_rig_key.py``) and black's kingside castle
+    is named ``e1g1``, with ``e8g8`` absent from the record entirely.
     """
     true_board = chess.Board(BLACK_TO_MOVE_CASTLING)
     assert true_board.turn == chess.BLACK
@@ -362,8 +363,8 @@ def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
 
     assert decoded.turn == chess.WHITE, "canonical frame is always White to move"
     assert decoded.fen() == true_board.mirror().fen()
-    key = decoded.fen()
-    assert key.split()[1] == "w"
+    canonical_fen = decoded.fen()
+    assert canonical_fen.split()[1] == "w"
 
     row = np.full((COMPACT_POLICY_SIZE,), -20.0, dtype=np.float32)
     row[LC0_1858_UCI_TO_IDX["e1h1"]] = 10.0  # LC0's castling slot

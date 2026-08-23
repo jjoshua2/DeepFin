@@ -577,9 +577,47 @@ def test_resume_keys_off_the_new_key_and_stays_loadable(
     assert len(RvgExternalPolicyIndex.load(out)) == 5
 
 
+def test_resume_of_a_pre_rig_key_dump_is_refused_not_silently_restarted(
+    tmp_path: Path, fake_onnx: Path,
+) -> None:
+    """⚑ A shard dump written BEFORE this commit passes the net/output/source
+    checks (same onnx, same policy_output, source "shards") but keys its rows
+    by FEN and declares no ``v``. Loading its keys into ``done`` can never skip
+    a fingerprint-keyed row, so a --resume would print a nonzero resume count
+    and then silently re-scan and re-emit every row — and the merged file would
+    still open with a ``header`` record the rig loader cannot classify. The
+    guard must refuse on the schema mismatch, before touching the file.
+
+    MUTANT (run, killed): deleting the ``v`` check in ``_resume_guard``
+    restores the silent full restart this test pins.
+    """
+    shard_dir = tmp_path / "shards"
+    write_shard(shard_dir)
+    out = tmp_path / "legacy_dump.jsonl"
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    legacy_header = {
+        "record": "header",
+        "onnx": {"path": str(fake_onnx), "sha256": dump.file_sha256(fake_onnx)},
+        "policy_output": "policy",
+        "input": {"source": "shards"},
+    }
+    legacy_row = {"key": fen, "fen": fen, "policy": {"e2e4": 1.0}}
+    out.write_text(
+        json.dumps(legacy_header) + "\n" + json.dumps(legacy_row) + "\n",
+        encoding="utf-8",
+    )
+    before = out.read_bytes()
+
+    with pytest.raises(SystemExit, match="key-schema"):
+        dump.run(dump_args(out, shard_dir, fake_onnx, resume=True))
+    assert out.read_bytes() == before, "the refusal must fire before any write"
+
+
 def test_read_header_still_reads_a_pre_existing_header_record(tmp_path: Path) -> None:
     """Dumps written before the rename exist on disk; a resume must still be
-    able to read their provenance rather than refusing them as headerless."""
+    able to READ their provenance — not to append to them (the schema guard
+    refuses that), but so the refusal can say what the file actually is
+    instead of falling back to the blunt "no readable header"."""
     old = tmp_path / "old.jsonl"
     old.write_text(json.dumps({"record": "header", "onnx": {"sha256": "abc"}}) + "\n",
                    encoding="utf-8")

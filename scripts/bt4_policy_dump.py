@@ -755,13 +755,14 @@ def build_header(args: argparse.Namespace, shard_dirs: list[str], pol_name: str,
     """The dump's provenance line.
 
     ⚑ ``record``/``v``/``policy_encoding`` are not decoration: they are the
-    three fields ``RvgExternalPolicyIndex.load`` reads, and it REFUSES a file
-    that declares no ``v`` (an undeclared format is one the rig cannot promise
-    it reads the way this program wrote it). ``v`` and ``policy_encoding`` are
-    written on the shard path only — that is the path whose ``key`` is a rig
-    join key; a FEN-mode dump is keyed by FEN strings and is not a rig file, so
-    claiming the rig schema for it would be a lie the loader could not catch
-    until ``bytes.fromhex`` choked on a FEN.
+    three fields ``RvgExternalPolicyIndex.load`` reads. ``v`` and
+    ``policy_encoding`` are written on the shard path only — that is the path
+    whose ``key`` is a rig join key; a FEN-mode dump is keyed by FEN strings
+    and is not a rig file, so claiming the rig schema for it would be a lie.
+    (The loader rejects a FEN dump either way, but note the mechanism: its row
+    loop hits ``bytes.fromhex`` on the first FEN key BEFORE the after-loop
+    missing-``v`` check ever runs, so the clean "declares no schema version"
+    refusal only fires for a header-only file.)
     """
     header: dict[str, Any] = {
         "record": "provenance",
@@ -854,6 +855,23 @@ def _resume_guard(
             f"{prior_header.get('policy_output')!r} / source={old_source!r}, which "
             f"does not match this run ({pol_name!r} / "
             f"{header['input']['source']!r}).",
+        )
+    # ⚑ KEY SCHEMA. A shard dump written before the rig-key change passes all
+    # three checks above (same net, same output, source "shards") but keys its
+    # rows by FEN and declares no ``v`` — so ``load_done_keys`` would fill
+    # ``done`` with FEN strings that can never match a fingerprint: the run
+    # prints a nonzero "resume: N keys already present" and then silently
+    # re-scans and re-emits EVERY row, and the merged file still opens with a
+    # ``header`` record the rig loader cannot classify. Refuse instead.
+    old_v = prior_header.get("v")
+    if old_v != header.get("v"):
+        raise SystemExit(
+            f"{out_path} declares key-schema version {old_v!r} "
+            f"(record={prior_header.get('record')!r}), but this run writes "
+            f"v={header.get('v')!r}. Their keys do not join, so its rows cannot "
+            "be skipped and resuming would redo the whole scan while appending "
+            "under an incompatible header. Use a fresh --out and keep the old "
+            "dump as its own artifact.",
         )
     # ⚑ STILL A `provenance` RECORD. The rig loader classifies every line by
     # `record`, so a `"resume"` line would fall through to the row branch and
@@ -1056,10 +1074,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ONNX policy output name (default: the 1858-wide one; "
                          "required if the graph has more than one)")
     ap.add_argument("--limit", type=int, default=0,
-                    help="stop after N rows; with --resume this means N NEW rows, "
-                         "since already-dumped keys are skipped before counting, "
-                         "and with --restrict-keys N RESTRICTED rows, since the "
-                         "restriction is applied first (0 = all rows)")
+                    help="stop after N emitted rows (0 = all). Every skip is "
+                         "applied before counting, so with --resume this means "
+                         "N NEW rows, with --restrict-keys N RESTRICTED rows, "
+                         "and with both it counts only rows that pass BOTH "
+                         "filters")
     ap.add_argument("--restrict-keys", type=Path, default=None,
                     help="shard mode only: dump ONLY rows whose 32-hex plane "
                          "fingerprint appears in this file (one key per line; "
