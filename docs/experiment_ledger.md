@@ -66153,3 +66153,31 @@ certifies with high power; the extra 800 flat games only add resolution in the
 (certification rule, WIDE branch, no optional stopping, judged only at pre-set /
 pooled size) unchanged. ZERO games played before this amendment; the staged command's
 --games updated 1600 → 800, seed 47 as recorded.
+
+## 2026-08-23 19:10 — b030 FAILS; reading key NEGATIVE (B ≈ G, both hurt regret); fork = TIGHT; deciding match LAUNCHED (v020 vs iter-595, 800 games)
+
+**Arm B readout** (own-invocation pairing per prereg; rvg_b a000 = 51.7/45.4, which
+reproduces the main invocation's 51.6/46.0 to 0.1cp E[regret] / 0.6cp top-1 = the
+measured cross-invocation noise): **b030 raw 53.2/44.9** ⇒ Δtop-1 **+0.5** (KILL, < +3.0),
+E[regret] **1.5 WORSE**. Readability floors: report exists, external q loaded
+1,053,147/1,053,147 BT4 rows at launch (banner logged).
+
+**Reading key verdict: B ≈ G — NEGATIVE.** g030 read +0.7/−2.8, b030 reads +0.5/−1.5;
+the top-1 delta is inside cross-invocation noise and both damage E[regret]. Swapping the
+G edit's q-source from SF to BT4 does NOT rescue it ⇒ the entropy-raising multiplicative
+blend mechanism is the problem, not the teacher. Josh's registered arm-B prediction
+(2026-08-22 addendum) is NOT confirmed; the gap-structure hypothesis is unsupported by
+this instrument. The BT4 dump remains banked and clean for other uses.
+
+**Fork evaluation (prereg 6e033aec2, all 8 entrants scored):** best Δtop-1 = vg01 +3.2
+< 5.0; across-arm spread 2.7 < 5.0 ⇒ **TIGHT**. Audit winner = **v020** (sole survivor;
+vg01 failed the AND clause). Per the 18:05 pre-launch amendment: **800 games**, one
+pre-authorized +800 extension iff CI-spans-0 with point ≥ +10, judged pooled.
+
+**Deciding match LAUNCHED 19:10** (banked template verbatim, --games 800, seed 47
+distinct from banked 42, recorded): v020 (runs/retarget/rvg_v1/v020.pt) vs iter-595
+(data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt), matched_sims 100,
+play shape, production Syzygy pair, conc 64 →
+scratchpad/elo_calib/V020_vs_iter595.json. Verdict same-session on landing: CI > 0 ⇒
+CERTIFIED ⇒ Cheese per tail rule; CI spans 0 with point ≥ +10 ⇒ ONE +800 extension,
+pooled; anything else ⇒ NOT-STRONGER. Box otherwise idle (arm B exited before launch).
