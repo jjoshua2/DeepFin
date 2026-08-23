@@ -65903,3 +65903,27 @@ restrict, `RvgExternalPolicyIndex.load` ACCEPTED the output. Lint delta 0/0, tes
 Implementer disclosure, verified benign: it briefly started a FULL pytest in the
 worktree (the pkill-pattern hazard) — caught at ~29%, killed; production stopped for
 48h, no process harmed; ext2's 20:12 refusal predates it and was my env-var omission.
+
+**2026-08-22 (cont): bt4 dump rig-key MERGED (`265bde64c`) and the restricted dump is RUNNING.**
+Grok review of `697e6b406` returned one real blocker: `_resume_guard` never checked the
+key schema, so `--resume` of a pre-rig-key shard dump (FEN-keyed, `record:"header"`, no
+`v`, same net/output/source) silently no-oped resume — `done` filled with FEN strings
+that can never match a fingerprint, every row re-scanned behind a nonzero "resume: N
+keys already present" print — and the merged file stayed rig-unloadable. The signature
+defect, inside the commit whose purpose was resume. Fix `b10e5acb6`: refuse on
+prior-vs-current `v` mismatch before any write; the test drives the REAL
+`dump.run(resume=True)` against an on-disk legacy dump whose net/output/source all
+match, so only the schema check can fire; mutant (guard disabled) killed. Targeted grok
+re-verification: fix confirmed effective on the dangerous path, no production finding,
+but it named three v-check mutants the suite could not kill — closed in `b0f513bbb`
+(FEN/FEN success-through-the-guard test + v=999 refusal test; mutant runs a=2/3, b=1/3,
+c=1/3 tests fail, restored 0/3) plus the misleading resume print moved after the guard.
+That reorder introduced a ruff SIM102 the worktree "lint pass" missed because I read
+tail's exit code, not lint's — the `lint_verified_by_grep_not_exit_code` trap, caught by
+the live tree's bare run and fixed in `8216e570f`. Live tree after merge: 48/48 dump
+tests, bare lint exit 0 both gates.
+LAUNCH: smoke (--limit 64) verified restriction (1,053,147 keys enumerated, 64 kept /
+2,235 skipped) and `RvgExternalPolicyIndex.load` accepted it; real dump running pid
+1001340, CPU 16 threads beside ext2 (GPU untouched), out `data/rvg/bt4_policy_by_key.jsonl`,
+log `scratchpad/bt4dump_launch.log`, ~24 pos/s → ~12h for the 1.053M restricted evals.
+Feeds arm b030 of the R/V/G ladder (Sunday leg).
