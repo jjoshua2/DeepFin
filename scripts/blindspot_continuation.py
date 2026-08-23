@@ -149,14 +149,25 @@ def load_game_rows_from_jsonl(
 ) -> dict[int, list[GameRow]]:
     """Per-ply rows from the harvester's saved ``<out>.games.pPID.jsonl`` — the
     self-contained record (root_fen + move list + per-ply net_q/sf_q + result), so
-    continuation analysis survives the replay window aging out (Codex #125). The
-    side-to-move at ply p is root_fen's side flipped by parity; outcome is derived
-    from the game result on that POV. (Codex #125 worried an odd-length stripped opening
-    flips this — it does NOT: ply IS absolute (root_fen is an opening position with an
-    offset — verified maxply 77-91 > 62-79 moves on C-ply games), but root_fen's turn
-    field self-encodes the offset parity, so ``root_white == (ply even)`` is the correct
-    RELATIVE parity for any offset. VERIFIED 0/2324 outcome mismatches vs the shard
-    wdl_target across 117 shared games incl 27 C-ply.) Preferred over the shard join."""
+    continuation analysis survives the replay window aging out (Codex #125).
+    Preferred over the shard join.
+
+    ⚑ ``ply`` is the record's ABSOLUTE game ply on EVERY play path — the C path
+    always recorded it that way, and the Python fallback does since the v3
+    absolute-ply change (``network_turn.py`` reads ``state.cboards[idx].ply``).
+    An absolute ply is even exactly when White is to move, so the side-to-move
+    is ``ply % 2 == 0`` and nothing else; ``root_fen``'s own colour must NOT
+    enter it.
+
+    The formula that stood here, ``root_white == (ply % 2 == 0)``, is the
+    RELATIVE-ply one. It agrees with the absolute rule on every white-to-move
+    root and INVERTS ``outcome`` for every black-to-move root — precisely what a
+    FEN-seeded (``opening_fen_*``) game supplies. The old note's "VERIFIED
+    0/2324 outcome mismatches vs the shard wdl_target across 117 shared games
+    incl 27 C-ply" is consistent with that population having held no
+    black-to-move root, since the two formulas are identical there; it is
+    therefore not evidence for the old formula. ``root_fen`` is still parsed,
+    but only as a malformed-line guard."""
     games: dict[int, list[GameRow]] = defaultdict(list)
     for p in paths:
         with open(p, encoding="utf-8") as fh:
@@ -164,7 +175,9 @@ def load_game_rows_from_jsonl(
                 try:
                     r = json.loads(line)
                     gid = int(r["game_id"])
-                    root_white = str(r["root_fen"]).split()[1] == "w"
+                    # Well-formedness only — the parity below does not read it.
+                    if str(r["root_fen"]).split()[1] not in ("w", "b"):
+                        continue
                 except (json.JSONDecodeError, KeyError, IndexError, ValueError):
                     continue
                 if wanted is not None and gid not in wanted:
@@ -177,7 +190,7 @@ def load_game_rows_from_jsonl(
                         ply=ply,
                         net_q=float("nan") if nq is None else float(nq),
                         sf_q=float("nan") if sq is None else float(sq),
-                        outcome=_result_to_outcome(result, root_white == (ply % 2 == 0)),
+                        outcome=_result_to_outcome(result, ply % 2 == 0),
                         selfplay=selfplay,
                     ))
     for g in games.values():

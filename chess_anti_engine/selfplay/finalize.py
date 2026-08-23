@@ -186,17 +186,26 @@ def _rescore_with_syzygy(
     if not state.game.syzygy_rescore_policy:
         return result, tb_policy_overrides
 
-    # Map each record's ply_index to its position in the records list. The
-    # replay walks every ply in ``move_stack`` (including forced-move plies
+    # Map each record's absolute game ply to its position in the records list.
+    # The replay walks every ply in ``move_stack`` (including forced-move plies
     # that the 1-legal shortcut in ``run_network_turn`` push but skip
     # recording), so a naive ``sample_idx`` counter would overshoot ``t``
     # by the number of skipped forced plies — stamping TB overrides from
     # K+P endgame positions onto the wrong records.
-    record_at_ply = {int(rec.ply_index): t for t, rec in enumerate(records)}
+    # ⚑ FIRST record at a ply wins, matching `blindspot_harvest.pre_move_boards`
+    # exactly. These two walkers key the same map off the same field over the
+    # same replay, and this one used a dict comprehension (LAST wins) while that
+    # one used `setdefault` (FIRST wins) — two different answers to one question,
+    # which is a silent divergence rather than a design. Duplicates should not
+    # occur (each ply produces at most one record), so this only bites on
+    # already-corrupt input; when it does, both walkers now blame the same record.
+    record_at_ply: dict[int, int] = {}
+    for t, rec in enumerate(records):
+        record_at_ply.setdefault(int(rec.ply_index), t)
 
     replay_board = starting.copy()
     for mv in move_stack[opening_len:]:
-        cur_ply = len(replay_board.move_stack)
+        cur_ply = int(replay_board.ply())
         t = record_at_ply.get(cur_ply)
         if t is not None and is_tb_eligible(replay_board):
             best = probe_best_move(replay_board, state.game.syzygy_path)

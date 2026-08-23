@@ -690,7 +690,12 @@ def _resume_one(path: Path, game: GameConfig) -> Any:
 
 
 def test_prior_top1_survives_suspend_and_resume(tmp_path: Path) -> None:
-    """The round-trip RESUME_FORMAT_VERSION was bumped 1 -> 2 to buy.
+    """The round-trip the RESUME_FORMAT_VERSION 1 -> 2 bump was paid for.
+
+    (The constant is at 3 now — v3 redefined `ply_index` as absolute game ply
+    on both play paths. The v2 columns this test guards are unaffected by that,
+    so the assertion below is still the one the *v2* bump exists for; do not
+    read "1 -> 2" as the current version.)
 
     ⚑ This is the assertion the format bump exists for. `prior_top1_index` /
     `prior_top1_prob` are captured from the ply's raw policy logits, so — unlike
@@ -880,7 +885,10 @@ def test_negative_control_zeroed_tail_hash_is_rejected(tmp_path: Path) -> None:
 def test_negative_control_tampered_ply_index_is_rejected(tmp_path: Path) -> None:
     """`ply_index` is not derivable from the moves, and finalize keys its
     sf_p0 one-ply shift off it — a wrong value shifts a teacher instead of
-    failing. On the C play path it must equal the replayed CBoard ply."""
+    failing. Under resume format v3 it must equal the replayed CBoard ply on
+    EVERY play path; the check is no longer gated on the file's `has_c_ply`.
+    This case is the C-path one — see the `_python_fallback` twin below for the
+    half the gate used to skip."""
     path, game, _src = _one_suspended_game(tmp_path)
 
     def _shift(arrays: dict[str, Any]) -> None:
@@ -891,6 +899,72 @@ def test_negative_control_tampered_ply_index_is_rejected(tmp_path: Path) -> None
 
     assert report.resumed == 0
     assert report.reasons.get("ply_index_mismatch") == 1
+
+
+def test_negative_control_tampered_ply_index_is_rejected_on_python_fallback(
+    tmp_path: Path,
+) -> None:
+    """The same tamper on a file whose producer had NO C ply path.
+
+    ⚑ This is the assertion the unconditional check exists for, and the suite
+    had none: with the old `check_ply = bool(meta.get("has_c_ply"))` gate, a
+    Python-fallback file's `ply_index` was never validated at all, so a wrong
+    value rode straight into finalize's ply-keyed teacher shifts. Restoring
+    that gate must make THIS test fail; the C-path twin above stays green under
+    it, which is exactly why it could not catch the regression.
+
+    Both the producing and the resuming state carry `has_c_ply = False` —
+    `should_resume_game` refuses a cross-convention file before the replay is
+    reached, so a fallback file can only be validated by a fallback session.
+    """
+    game = _game_config()
+    src = _fresh_state(game, batch_size=2)
+    src.has_c_ply = False
+    _fill_slot(src, 0, plies=6)
+    src.done_arr[1] = 1
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(src, out_dir) == 1
+    path = _state_files(out_dir)[0]
+    assert _meta_of(_load_arrays(path))["has_c_ply"] is False
+
+    def _shift(arrays: dict[str, Any]) -> None:
+        arrays["ply_index"] = arrays["ply_index"] + 100
+
+    _rewrite(path, _shift)
+
+    target = _fresh_state(game, batch_size=2)
+    target.has_c_ply = False
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 0
+    assert report.reasons.get("ply_index_mismatch") == 1
+    assert not any(target.resumed_from_disk)
+
+
+def test_untampered_python_fallback_game_still_resumes(tmp_path: Path) -> None:
+    """The fallback negative control above must fail for the TAMPER, not for
+    being a fallback file: an unmodified `has_c_ply=False` game resumes
+    cleanly under the unconditional ply check."""
+    game = _game_config()
+    src = _fresh_state(game, batch_size=2)
+    src.has_c_ply = False
+    _fill_slot(src, 0, plies=6)
+    src.done_arr[1] = 1
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(src, out_dir) == 1
+
+    target = _fresh_state(game, batch_size=2)
+    target.has_c_ply = False
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 1
+    assert report.reasons == {}
 
 
 def test_a_game_from_another_trial_is_discarded(tmp_path: Path) -> None:
@@ -1432,12 +1506,19 @@ def test_no_trial_id_at_session_start_warns(
 
 
 def test_a_game_from_the_other_ply_convention_is_rejected(tmp_path: Path) -> None:
-    """`ply_index` means CBoard.ply on the C path but len(move_stack) on the
-    Python fallback — different origins for a seeded opening. `has_c_ply` says
-    which convention the stored values use; a session on the OTHER convention
-    cannot validate them (the replay's ply check keys off the file's own flag)
-    and finalize keys its sf_p0 one-ply shift off ply_index, so the game must
-    be refused, not resumed under a reinterpreted index."""
+    """`has_c_ply` pins a file to the execution path that produced it.
+
+    As of resume format v3, `ply_index` is ABSOLUTE game ply on both paths, so
+    the flag no longer changes what that field MEANS. It is kept as a
+    conservative compatibility gate because the two paths still maintain their
+    live board/history objects differently.
+
+    ⚑ The refusal is therefore a fact about THIS session's BUILD (did
+    `_mcts_tree.batch_process_ply` import?), not a defect of the file: the same
+    game is resumable by a worker whose extension loaded. So it must PRESERVE
+    the file rather than unlink it — `ply_convention_mismatch` is in
+    `_PRESERVE_FILE_REASONS`. Without that, one worker with a broken extension
+    deletes every game the C-path workers suspended."""
     path, game, _src = _one_suspended_game(tmp_path)
 
     def _flip(arrays: dict[str, Any]) -> None:
@@ -1451,6 +1532,11 @@ def test_a_game_from_the_other_ply_convention_is_rejected(tmp_path: Path) -> Non
     assert report.resumed == 0
     assert report.reasons.get("ply_convention_mismatch") == 1
     assert not any(target.resumed_from_disk)
+    # Refused, but NOT destroyed: counted as preserved and left on disk under
+    # its original name for a session whose build matches.
+    assert report.preserved == 1
+    assert report.discarded == 0
+    assert path.exists()
 
 
 # ── the worker->play_batch wirings ───────────────────────────────────────────

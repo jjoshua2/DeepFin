@@ -29,7 +29,7 @@ from chess_anti_engine.train.constants import (
 # positions.
 #
 # ⚑⚑ THIS USED TO BUCKET ON `moves_left`, AND THAT WAS AN INSTRUMENT BUG, NOT A
-# DISTRIBUTION. `selfplay/finalize.py:924` writes `moves_left` as
+# DISTRIBUTION. `selfplay/finalize.py:931` writes `moves_left` as
 # ``(total_plies_played - ply_index) / max_plies`` — the divisor is the
 # CONFIGURED PLY CAP (`max_plies: 450` in production), not the game's own
 # length — so the quantity is "plies REMAINING as a share of the cap" and says
@@ -54,10 +54,22 @@ from chess_anti_engine.train.constants import (
 #
 # `moves_left` is untouched as a TARGET (the `moves_left` head still regresses
 # it); only the reporting split moved off it. NOTE for anyone who returns to
-# that field: `finalize.py:924` divides by an ABSOLUTE game total, while the
-# Python fallback in `selfplay/network_turn.py:558` sets `ply_index` RELATIVE
-# to the search root where the production C path (`mcts/_mcts_tree.c:4734`)
-# sets it ABSOLUTE. That mismatch no longer touches this split.
+# that field: it is now internally consistent, and this comment used to say the
+# opposite. `finalize.py:931` (`_build_replay_samples`) divides by an ABSOLUTE
+# game total — `total_plies_played=int(cb.ply)` at `finalize.py:1489`/`:1502` —
+# and BOTH play paths now supply an ABSOLUTE `ply_index`: the production C path
+# in `mcts/_mcts_tree.c:4870` (`ply_out[i] = (int32_t)cb->ply` inside
+# `py_batch_process_ply`), and the Python fallback in
+# `selfplay/network_turn.py:932` (`_append_records_via_python`, which reads
+# `state.cboards[idx].ply`). Until the resume-format v3 change the fallback set
+# `ply_index` RELATIVE to its own `chess.Board.move_stack`, which mixed a
+# relative numerator with an absolute total. PAYOFF: a FEN seed entering at
+# absolute ply 136 and playing 40 plies ends at `total_plies_played` 176, so
+# its FIRST record read `(176 - 0) / 450 = 0.391` — "87% of the cap still to
+# play" — where the truth is `(176 - 136) / 450 = 0.089`. Every fallback row of
+# such a game was shifted by the seed's entry ply. The C path was always
+# correct, so production data was never affected; the fallback and its
+# consumers were.
 from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
 
 # Deliberately the module constant and NOT `model_cfg.phase_piece_thresholds`:

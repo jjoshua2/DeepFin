@@ -908,7 +908,28 @@ def _append_records_via_python(
         assert v is not None
 
         board_before = state.boards[idx]
-        ply_index = len(board_before.move_stack)
+        # ⚑ Read the ply off the CBOARD, not off ``board_before``.
+        # ``state.cboards`` is pushed by EVERY producer of a ply -- net moves
+        # here, the 1-legal shortcut in ``_apply_forced_moves``, and the
+        # curriculum/SF-refute opponent moves in
+        # ``stockfish_turn._push_curriculum_opponent_move``. ``state.boards``
+        # is pushed only by the two net-turn sites: nothing in
+        # ``stockfish_turn.py`` touches it (it has zero ``state.boards``
+        # references), and nothing re-syncs it afterwards. So in a curriculum
+        # game on this fallback ``board_before.ply()`` trails
+        # ``state.cboards[idx].ply`` by one per SF ply already played, and the
+        # record would claim an absolute ply the position does not have --
+        # which resume.py's v3 replay check then rejects as
+        # ``ply_index_mismatch``. The cboard is the same source the C path
+        # records (``_mcts_tree.c``) and the same one
+        # ``stockfish_turn._emit_sf_refute_opp_record`` already uses, so this
+        # is one convention across all three record producers.
+        # ⚑ That divergence is WIDER than ply_index and is NOT fixed here --
+        # after an SF ply ``board_before`` is a different POSITION, so
+        # ``pov_color`` / the ``legal_move_mask`` fallback / ``x_lc0_root`` /
+        # ``index_to_move`` below are all read off the stale board. Tracked
+        # separately; production runs the C path, where none of this executes.
+        ply_index = int(state.cboards[idx].ply)
         pov_color = board_before.turn
         # Read before the push below (mirrors the C path's snapshot).
         pos_hash = int(state.cboards[idx].zobrist_hash)
