@@ -66068,3 +66068,56 @@ match ends CI-spanning-0 with point ≥ +10, extend THAT match once by +400 (WID
 No optional stopping: matches judged only at their pre-set size. Arms failing the
 survivor gate play zero games. Swiss/knockout at 100-game matches REJECTED by
 arithmetic: ±62 half-width cannot sort 40-Elo gaps; games concentrate on the leaders.
+
+## 2026-08-23 15:30 — R/V/G MAIN SWEEP READOUT: v020 is the SOLE SURVIVOR (+3.1cp top-1, regret better); vg01 fails the AND clause; arm B launched
+
+All 6 legs complete (retarget_report.json, 6000 steps each, sequential 07:45–15:01).
+**Readability floors PASS for every active arm** (from each arm's own wrapper stats):
+eligible_rows 3,072,000 = 100% of drawn; edited_rows r070 3,072,000 / v020 3,071,274
+(726 fallback = 99.98%) / g030 3,072,000 / vg01 3,072,000 (V-stage 726 fallback, G-stage
+full). All arms readable.
+
+**Deciding yardstick** (audit_targets, audit_set_v1 n=4000, flags `--batch-size 64
+--gpu-mem-fraction 0.15 --seed 0`, row (a) net raw policy, E[regret]/top-1 cp; logs
+`audit_preview_*.log` in the job tmp dir, tables in runs/audit_rvg/):
+
+| arm | E[regret] | top-1 | Δtop-1 vs a000 | ΔE[regret] vs a000 |
+|---|---|---|---|---|
+| iter-595 base | 52.4 | 46.1 | — | — |
+| a000 (control) | 51.6 | 46.0 | 0 | 0 |
+| a00f (floor-off control) | 51.2 | 45.3 | +0.7 | +0.4 better |
+| r070 | 50.7 | 45.0 | +1.0 | +0.9 better |
+| **v020** | **49.9** | **42.9** | **+3.1** | **+1.7 better** |
+| g030 | 54.4 | 45.3 | +0.7 | **−2.8 WORSE** |
+| vg01 | 52.4 | 42.8 | +3.2 | −0.8 WORSE |
+
+**Verdicts by the pre-committed rule** (SUCCESS: Δtop-1 ≥ +3.0 AND E[regret] not worse):
+- **v020 SUCCESS — sole survivor.** +3.1cp top-1 AND regret improves. First arm to clear
+  a +3.0cp bar on this ruler since the ladder program began.
+- **vg01 FAILS the gate** on the AND clause: top-1 +3.2 (best of field) but E[regret]
+  52.4 vs a000's 51.6. Not a survivor; plays zero games per the tournament prereg.
+- **r070 KILL** (+1.0 < +3.0). Net of the a00f floor-off control's +0.7, the R
+  reweighting itself contributed ~+0.3 — the rank floor does nothing here.
+- **g030 KILL** (+0.7, regret 2.8cp WORSE). The G entropy edit with the SF q-source
+  actively hurts E[regret] while leaving top-1 flat. Direct setup for the reading key:
+  b030 is the SAME edit with BT4's q — B>G ⇒ gap structure (Josh's registered
+  prediction favors B).
+- V+G interaction is NEGATIVE on regret: v020 (+1.7 better) + g030 (−2.8) ≈ vg01 (−0.8)
+  — the stages compose roughly additively, and G's harm survives composition.
+
+**Tournament fork (prereg 2026-08-23 10:40) — standing at TIGHT pending b030:** best
+Δtop-1 +3.2 < 5.0; across-arm spread 2.5 < 5.0. If b030 lands < +5.0 and doesn't widen
+the spread to ≥5.0 ⇒ TIGHT: v020 (audit winner: Δtop-1 +3.1 with regret better beats
+vg01's +3.2 with regret worse only if vg01 is excluded — vg01 FAILED the survivor gate,
+so v020 is the sole eligible entrant) vs iter-595 at 1,600 games.
+
+**Arm B LAUNCHED 15:12** (banked command VERBATIM from the 2026-08-22 LAUNCH prereg,
+incl. its own a000 pairing-check leg): pid 1056150, log
+`~/.claude/jobs/80e06746/tmp/rvg_b_launch.log`, out runs/retarget/rvg_b/. The armed
+sweep-end waiter from the other session was notify-only and its launch never happened —
+verified no rvg_b dir and no retarget process before launching (no double launch).
+Auto-scorer armed for both rvg_b legs at the identical audit flags.
+
+Confounds: none new; box otherwise idle during all six audits (and per Josh's standing
+correction, fixed-sims audit scores are load-invariant anyway — only same-flags matters,
+held).
