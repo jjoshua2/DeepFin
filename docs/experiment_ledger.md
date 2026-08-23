@@ -66195,3 +66195,34 @@ cp, so v020's −1.7/−3.1 is ~3× the noise floor. R/V/G PROGRAM STATE: ladder
 verdicts recorded for all 7 arms; the one production-candidate repair is the v020 veto
 screen (label-time bad-tail veto at 200cp). Taking V into a production experiment is
 an operator decision — not launched. GPU now on the ratio ladder (mix025 running).
+
+## 2026-08-23 — PR #451 (absolute game ply on the Python fallback) reviewed 3× and fixed; merge pending CI — LIVE-EFFECT DISCLOSURE
+
+Review chain per protocol: my own read → Codex (3 findings, fixed pre-review) → Opus
+agent (8 findings) → Grok (1 new finding + coverage gaps) → fix pass `01c3db46f`
+(9/9 dispositioned, 6/6 mutants killed, 245 tests 0 fail, lint delta 0 vs main's
+13 pre-existing). Highlights:
+- **Grok's F1, CONFIRMED BY MEASUREMENT:** on the Python fallback, curriculum SF moves
+  advance ONLY `state.cboards` — `state.boards` goes stale (after 1 SF ply: boards.ply=0
+  vs cboards.ply=1, different FENs, opposite side to move). Producer now records
+  `int(state.cboards[idx].ply)`. ⚑ WIDER PRE-EXISTING DEFECT documented, not fixed:
+  everything the fallback reads off `board_before` after an SF ply (pov_color, legal
+  masks, x_lc0_root) reads a DIFFERENT POSITION. Unreachable in production (C extension
+  always built); tracked at the site + PR comment.
+- **F2 CORRECTED during fixing:** `blindspot_continuation.py`'s side-to-move formula
+  inverted `outcome` for black-to-move FEN roots — and this was ALREADY LIVE ON THE C
+  PATH pre-PR (root_fen is the seed FEN on both paths; C plies were always absolute).
+  ⚑ Any blindspot-continuation outcome rows generated BEFORE `01c3db46f` with
+  black-to-move roots are suspect.
+- **Opus's headline:** both replay walkers were broken on the PRODUCTION C path for
+  FEN-seeded games — blindspot harvest and syzygy rescore silently produced ZERO rows
+  for every FEN-seeded game (up to the ~8% dole cap). This PR closes that.
+
+**What changes LIVE when deployed (merge ≠ deploy; reaches production at the next
+restart onto rebuilt code):** (1) blindspot harvest starts contributing FEN-seeded
+games to blindspot_live.txt/.severe/.games.jsonl — a population shift for future seed
+mining; (2) ONE restart's suspended selfplay games are discarded by the v2→v3 resume
+format bump (bounded, per-worker); (3) syzygy_rescore_policy walker fixed but the flag
+is OFF in production. No loss weights, targets, or search shapes change. Confounds if
+deployed alongside other restart-gated changes: harvest population shift is the only
+data-affecting arm; disclose in the restart bundle entry.
