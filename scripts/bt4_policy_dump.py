@@ -916,16 +916,16 @@ def run(args: argparse.Namespace) -> int:
 
     prior_header = read_header(out_path) if args.resume else None
     done: set[str] = set()
-    if args.resume:
-        # ⚑ N5: a file whose header cannot be read is exactly the damaged case
-        # the mismatch guard exists for -- so refusing here, rather than
-        # appending provenance-less rows, is the whole point.
-        if out_path.exists() and out_path.stat().st_size and prior_header is None:
-            raise SystemExit(
-                f"{out_path} has no readable header record, so this run cannot "
-                "check that it was produced by the same net and source. Refusing "
-                "to append; use a fresh --out.",
-            )
+    # ⚑ N5: a file whose header cannot be read is exactly the damaged case
+    # the mismatch guard exists for -- so refusing here, rather than
+    # appending provenance-less rows, is the whole point.
+    if (args.resume and out_path.exists() and out_path.stat().st_size
+            and prior_header is None):
+        raise SystemExit(
+            f"{out_path} has no readable header record, so this run cannot "
+            "check that it was produced by the same net and source. Refusing "
+            "to append; use a fresh --out.",
+        )
     sess, in_name, in_dtype, providers = open_session(
         args.onnx, gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
     )
