@@ -65986,3 +65986,40 @@ fixes) — not to be cited as mechanism without a fresh prereg'd re-ablation. St
 frame for lc0 data: bootstrap faster, or targeted exploit-training once within ~300
 Elo — the ratio ladder (Sunday) tests the mixing middle ground; bootstrap-from-
 scratch/early-checkpoint is the natural next bet if that also fails from this init.
+
+**2026-08-23 PREREG — MIXED-REPLAY RATIO LADDER (the lc0 lane's named successor).**
+HYPOTHESIS: lc0 rows help as a MINORITY-to-majority mix with our own replay when
+training from the iter-595 init with mixing from step 1 — the pure-lc0 kills were
+interference, and dilution controls it (data verified clean 2026-08-23; bug closed).
+Registered operator directive (`396896688`) governs: judged on ENDPOINT + SLOPE; dip
+depth is diagnostic-only, NEVER a kill criterion.
+ARMS (serial, ~7.4h each): own-fraction f=0.25/seed 11, f=0.50/seed 12, f=0.75/seed 13.
+Each:
+`cd /home/josh/chess-438-merge-review && CHESS_LIVE_PRODUCTION_CONFIG=/home/josh/projects/chess/configs/pbt2_small.yaml PYTHONPATH=. setsid nohup python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --init-from /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt --shards /home/josh/projects/chess/data/lc0_rows/training-run2-test91-* --mix-own-shards /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --mix-own-fraction <F> --mix-own-max-outcome-borne 0.001 --purity-receipt /home/josh/projects/chess/data/lc0_control_purity_receipt.json --steps 20000 --seed <S> --out-dir /home/josh/projects/chess/runs/lc0_mix<F>_iter595_<date>`
+Init pinned: slot_000/trainer.pt step 171,327 md5 9758f97f7c9c (same as R/V/G).
+YARDSTICK (deciding): 400-game banked-template arena vs iter-595 for MID and LAST of
+every arm (6 arenas, ~0.5h each on the compile cache). ENDPOINT = LAST Elo vs
+iter-595; SLOPE = Elo(LAST) − Elo(MID), point estimate, resolution ±~44 Elo — coarse
+by construction, used ONLY as the pre-committed tiebreak below, per the directive.
+PRE-COMMITTED CLAUSES (best arm = highest LAST Elo; full outcome space, no gaps):
+- C1 LAST CI excludes 0 POSITIVE → SUCCESS: fix candidate; no extension needed.
+- C2 LAST CI spans 0 AND slope > 0 → EXTEND best arm +20k (the ONE pre-authorized
+  extension; same seed, --init-from its LAST).
+- C3 LAST CI spans 0 AND slope ≤ 0 → LANE CLOSES.
+- C4 LAST CI excludes 0 negative AND slope > 0 → EXTEND (the "small dip worth it"
+  case, per the directive).
+- C5 LAST CI excludes 0 negative AND slope ≤ 0 → LANE CLOSES.
+- EXTENSION verdict (terminal, no second extension): 400-game arena vs iter-595; CI
+  excludes 0 positive → SUCCESS; ANY other outcome → LANE CLOSES.
+ON CLOSE: the registered next bet is a BOOTSTRAP arm (lc0 pretrain from scratch or an
+early checkpoint, then anti-SF training) — separate prereg; per Josh 2026-08-23, lc0
+data's live uses are bootstrap and, once within ~300 Elo of a target engine, targeted
+exploit-training.
+DIAGNOSTICS (non-deciding): banked pure-lc0 20k curve (−84.1) at matched steps for
+dip-depth comparison; lc0-heldout top-1; realized per-source loss-routing counters
+from the trainer's own log (the announce-from-the-consumer check).
+CONFOUNDS: three arms share one GPU serially (era drift over ~22h accepted); the
+mixed trainer's loss routing is new code (reviewed two-lane, merged 063e5112d).
+KILL during a run: NaN/crash only — dip depth explicitly excluded.
+SCHEDULE: arm 1 launches tonight after the R/V/G b030 leg + audit readout; arms 2-3
+follow serially Sunday.
