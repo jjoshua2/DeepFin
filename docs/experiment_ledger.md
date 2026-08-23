@@ -66031,3 +66031,17 @@ skipped, 0 terminals, 10.7h at 27.4 pos/s). `RvgExternalPolicyIndex.load` accept
 FULL file: 1,053,147 entries. Sanity: mean top-1 0.487 (BT4 raw-prior reference
 ~0.476), castling priors present and varied. b030 leg fires when the 6-leg ladder
 finishes (waiter armed).
+
+**2026-08-23 ~00:50: BT4 restricted dump COMPLETE and VERIFIED — arm b030's data
+prerequisite is CLOSED.** `[dump] wrote 1053147 rows in 38453.9s = 27.4 pos/s` (10.7h,
+CPU-only, ran through the ext2 pause untouched). Rows read 1,499,898; transposition
+collisions first-wins-skipped 4,244; already-done 0. Consumer-accept proof run this
+session: `RvgExternalPolicyIndex.load('data/rvg/bt4_policy_by_key.jsonl')` accepted all
+1,053,147 entries, and set equality against the canonical enumeration
+(`rvg_drawn_rows_6000x512_fixed.keys`) is EXACT — missing 0, extra 0 (readability floor
+was ≥99%; this is 100%). Banked artifact: `data/rvg/bt4_policy_by_key.jsonl` (738M,
+provenance header v=1, lc0_1858). The b030 leg of the R/V/G ladder is now runnable
+whenever GPU work resumes (Josh's go). NOTE the dump-monitor waiter died with the
+wrapper (exit -1) while the dump itself finished cleanly — the completion was read off
+the LOG MARKER and the output file, not the waiter's exit, per
+`background_task_notifications_report_the_wrappers_exit`.
