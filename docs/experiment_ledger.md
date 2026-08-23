@@ -66045,3 +66045,26 @@ whenever GPU work resumes (Josh's go). NOTE the dump-monitor waiter died with th
 wrapper (exit -1) while the dump itself finished cleanly — the completion was read off
 the LOG MARKER and the output file, not the waiter's exit, per
 `background_task_notifications_report_the_wrappers_exit`.
+
+**2026-08-23 10:40 PREREG — R/V/G strength tournament (adaptive, agreed with Josh this
+session; committed BEFORE any game).** Entrants: iter-595 base + a000/a00f/r070/v020/
+g030/vg01/b030. ORDERING INSTRUMENT: `audit_targets` on audit_set_v1, n=4000, flags
+`--batch-size 64 --gpu-mem-fraction 0.15 --seed 0` (base re-measured at these exact
+flags: raw 52.4/46.1, matching banked 52.4/45.9 → ruler stable; a000 51.6/46.0, a00f
+51.2/45.3 = controls flat). Survivor gate (unchanged from the ladder prereg): Δtop-1 ≥
++3.0cp vs a000 AND E[regret] not worse. Effect-size prior from the ledger: training-side
+wins ≤ +13.9 certified ever, but target-class swaps (lc0 dose curve) move 20-85 → regime
+UNKNOWN, so the game plan FORKS on a pre-committed audit condition:
+- **WIDE** if best-arm Δtop-1 ≥ +5.0cp vs a000 OR across-arm Δtop-1 spread ≥ 5.0cp:
+  every survivor vs iter-595, 400 games each (±31), banked arena template (matched_sims
+  100, paired openings, conc 64), distinct recorded seed per match. If the top two
+  vs-base CIs overlap → ONE 800-game head-to-head decides the finalist.
+- **TIGHT** otherwise: audit winner (Δtop-1, tiebreak E[regret]) vs iter-595 at 1,600
+  games (±~15). No other arm plays.
+CERTIFICATION: stronger-than-base = vs-iter-595 CI excludes 0 positive → Cheese match
+per the standing tail rule. EXTENSION (ONE, pre-authorized): if the deciding vs-base
+match ends CI-spanning-0 with point ≥ +10, extend THAT match once by +400 (WIDE) /
++800 (TIGHT) and judge the pooled result; every other ambiguous outcome = NOT-STRONGER.
+No optional stopping: matches judged only at their pre-set size. Arms failing the
+survivor gate play zero games. Swiss/knockout at 100-game matches REJECTED by
+arithmetic: ±62 half-width cannot sort 40-Elo gaps; games concentrate on the leaders.
