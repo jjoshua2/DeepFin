@@ -314,6 +314,43 @@ def _report_guard_health() -> None:
     )
 
 
+# The root sequential-halving SEMANTIC is a compiled constant, and nothing else
+# makes it observable. Merging the repo does not deploy it; rebuilding the .so
+# for ANY unrelated .c change does. `ABI_VERSION` deliberately does not move
+# (see the GSS_HALVING_REV comment in _mcts_tree.c), so without this line a
+# regret-series step or an arena delta caused by the elimination rule changing
+# under a routine rebuild has nothing to attribute it to — the exact
+# "MERGED != DEPLOYED" trap, one level below the source.
+#
+# Announced from the CONSUMER's own parameter: the value comes off the loaded
+# extension module, so the line reports which .so this process is running, not
+# what the checkout says it should be. An .so predating the constant IS the old
+# semantic, hence the default of 1 rather than "unknown".
+#
+# stderr and once per process, for the same reasons as _report_guard_health.
+_GSS_HALVING_REV_LEGACY = 1
+_halving_rev_reported = False
+
+
+def _report_halving_rev() -> None:
+    global _halving_rev_reported
+    if _halving_rev_reported:
+        return
+    _halving_rev_reported = True
+    rev = int(getattr(_mcts_tree_ext, "GSS_HALVING_REV", _GSS_HALVING_REV_LEGACY))
+    rule = (
+        "fresh root_qs (mctx / gumbel.py reference)" if rev >= 2
+        else "running W[root]/N[root] (pre-fix; rebuild the C extension)"
+    )
+    print(
+        f"[mcts] gss_halving_rev={rev} loaded from {_mcts_tree_ext.__file__}: "
+        f"root sequential-halving eliminates against the {rule}. "
+        "Not gating — a stale .so runs, it just searches by the old rule.",
+        file=_sys.stderr,
+        flush=True,
+    )
+
+
 def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
     return (
         np.zeros((POLICY_SIZE,), dtype=np.float32),
@@ -469,6 +506,9 @@ def run_gumbel_root_many_c(
   # because this is the choke point EVERY C-path consumer goes through —
   # selfplay, training-time eval and UCI all land on this function.
     _report_guard_health()
+  # Same choke point, for the semantic that has no guard at all: which root
+  # halving rule the LOADED .so implements (see _report_halving_rev).
+    _report_halving_rev()
   # Same reasoning, for the OTHER silent-null shape: a GumbelConfig field this
   # path does not implement. Guarding the dispatch boundary rather than each
   # caller's CLI is the point — the CLI is not what chooses the C path, and a

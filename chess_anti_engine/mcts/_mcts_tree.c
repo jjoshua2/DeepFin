@@ -5846,6 +5846,29 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
         return NULL;
     }
 
+    /* Which root sequential-halving SEMANTIC this .so was built with. NOT an
+     * ABI marker and deliberately non-gating: no signature changed, so a stale
+     * .so runs fine — it just eliminates candidates by the old rule, and every
+     * yardstick that reads a search (regret, arena Elo) would show the step
+     * with nothing to attribute it to. ABI_VERSION cannot carry this: bumping
+     * it hard-fails every process that has not rebuilt, and this change does
+     * not warrant that.
+     *
+     * 1 = the baseline was `W[root]/N[root]`, the running tree average this
+     *     search keeps mutating (absent from the module: an .so predating this
+     *     constant IS rev 1, which is why the Python reader defaults to 1
+     *     rather than to "unknown").
+     * 2 = the baseline is the fresh network root value `root_qs[bi]`, matching
+     *     mctx's qtransform_completed_by_mix_value, gumbel.py's reference
+     *     `_halve_remaining_for_board`, and this path's own returned policy.
+     *
+     * Read and announced once per process by mcts/gumbel_c.py so a running
+     * process's elimination rule is observable in its log. */
+    if (PyModule_AddIntConstant(m, "GSS_HALVING_REV", 2) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
     /* The search_wdl draw-mode encoding, exported so the Python side reads the
      * ints off the extension rather than keeping a second copy that can drift
      * (network_turn.py::_SWDL_DRAW_MODE_TO_C). */
