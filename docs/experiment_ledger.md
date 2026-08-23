@@ -66121,3 +66121,20 @@ Auto-scorer armed for both rvg_b legs at the identical audit flags.
 Confounds: none new; box otherwise idle during all six audits (and per Josh's standing
 correction, fixed-sims audit scores are load-invariant anyway — only same-flags matters,
 held).
+
+**2026-08-23 ~15:45 — R/V/G LADDER VERDICT (same-session, per prereg rule: Δtop-1 ≥
++3.0cp vs a000 AND E[regret] not worse; instrument audit_targets on the frozen v1 set,
+4000 rows, batch 64; note the prereg's banked command said `--net`, the real flag is
+`--checkpoint` — same instrument).** Row (a) overall E[regret]/top-1 in cp:
+a000 51.6/46.0 · a00f 51.2/45.3 (null: the floor is ~inert here) · r070 50.7/45.0
+(FAIL) · **v020 49.9/42.9 → Δ −1.7/−3.1 — PASS, the only arm** · g030 54.4/45.3
+(FAIL: SF-q graft actively worsens E[regret] +2.8 — consistent with "relational SF6
+loses") · vg01 52.4/42.8 (FAIL: V's top-1 gain survives G but E[regret] +0.8 worse —
+G's damage leaks through). READING: the bad-tail VETO at label time is the one repair
+that generalizes — matches the OOF-AUC-0.737 screenability finding; reweighting alone
+under-doses; grafting SF-q distributions hurts. v020 clears the top-1 bar at 3.1 vs
+threshold 3.0 — marginal, but the rule was pre-committed and it also improves
+E[regret]. PENDING reading key: b030 (BT4 external q) vs g030 — if B >> G the graft
+failure is the SOURCE (SF-q), not the mechanism (grafting). Per-arm reports banked at
+scratchpad/rvg_audit/<arm>.log (the md in that dir is vg01's only — each run overwrote
+target_audit_142afffa0.md; logs are the record).
