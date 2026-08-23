@@ -318,11 +318,13 @@ def test_resolve_policy_output_names_the_available_outputs() -> None:
 
 
 def test_shard_rows_carry_the_join_identity() -> None:
-    """The arm-B join needs shard/row/game_id/ply_index on every record."""
-    row = Row(key="k", board=chess.Board(), shard="shard_1.zarr", row_index=7,
-              game_id=123, ply_index=42)
+    """The arm-B join needs shard/row/game_id/ply_index on every record, plus the
+    canonical FEN now that ``key`` is the fingerprint and no longer readable."""
+    row = Row(key="k", board=chess.Board(), fen="a-fen", shard="shard_1.zarr",
+              row_index=7, game_id=123, ply_index=42)
     assert row.identity() == {
-        "shard": "shard_1.zarr", "row": 7, "game_id": 123, "ply_index": 42,
+        "fen": "a-fen", "shard": "shard_1.zarr", "row": 7, "game_id": 123,
+        "ply_index": 42,
     }
 
 
@@ -342,10 +344,11 @@ def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
     What this adds over ``test_board_decodes_back_out_of_the_stored_tensor``:
     that test already pins the decoded BOARD (its ``turn == WHITE`` assertion
     does fail under a ``.mirror()`` mutant, on all 7 parametrisations). What it
-    does NOT check is the EMITTED NAMING — the key string and the UCI keys that
+    does NOT check is the EMITTED NAMING — the FEN string and the UCI keys that
     actually land in the JSONL. This asserts those: for a black-to-move row the
-    key is the mirrored FEN and black's kingside castle is named ``e1g1``, with
-    ``e8g8`` absent from the record entirely.
+    ``fen`` field is the mirrored FEN (the join ``key`` itself is the plane
+    fingerprint — see ``test_bt4_dump_rig_key.py``) and black's kingside castle
+    is named ``e1g1``, with ``e8g8`` absent from the record entirely.
     """
     true_board = chess.Board(BLACK_TO_MOVE_CASTLING)
     assert true_board.turn == chess.BLACK
@@ -360,8 +363,8 @@ def test_shard_path_emits_the_CANONICAL_frame_end_to_end() -> None:
 
     assert decoded.turn == chess.WHITE, "canonical frame is always White to move"
     assert decoded.fen() == true_board.mirror().fen()
-    key = decoded.fen()
-    assert key.split()[1] == "w"
+    canonical_fen = decoded.fen()
+    assert canonical_fen.split()[1] == "w"
 
     row = np.full((COMPACT_POLICY_SIZE,), -20.0, dtype=np.float32)
     row[LC0_1858_UCI_TO_IDX["e1h1"]] = 10.0  # LC0's castling slot
@@ -428,7 +431,7 @@ def _resume_args(out: Path, rows: Path) -> argparse.Namespace:
         out=str(out), rows=str(rows), input_source="fens", resume=True,
         onnx="/nonexistent-should-never-be-opened.onnx", batch_size=8, threads=1,
         gpu_mem_gb=0.0, policy_output=None, limit=0, castle_examples=0,
-        check_legal_mask=True,
+        check_legal_mask=True, restrict_keys=None,
     )
 
 
