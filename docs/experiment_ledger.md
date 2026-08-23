@@ -66023,3 +66023,11 @@ mixed trainer's loss routing is new code (reviewed two-lane, merged 063e5112d).
 KILL during a run: NaN/crash only — dip depth explicitly excluded.
 SCHEDULE: arm 1 launches tonight after the R/V/G b030 leg + audit readout; arms 2-3
 follow serially Sunday.
+
+**2026-08-23 ~08:35 — BT4 dump COMPLETE and VERIFIED; arm-B prerequisite closed.**
+`data/rvg/bt4_policy_by_key.jsonl` (704M): wrote **1,053,147 rows = 100% of the
+restrict set** (1,499,898 rows read, 4,244 transposition collisions first-wins
+skipped, 0 terminals, 10.7h at 27.4 pos/s). `RvgExternalPolicyIndex.load` accepts the
+FULL file: 1,053,147 entries. Sanity: mean top-1 0.487 (BT4 raw-prior reference
+~0.476), castling priors present and varied. b030 leg fires when the 6-leg ladder
+finishes (waiter armed).
