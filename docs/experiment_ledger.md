@@ -66181,3 +66181,17 @@ play shape, production Syzygy pair, conc 64 →
 scratchpad/elo_calib/V020_vs_iter595.json. Verdict same-session on landing: CI > 0 ⇒
 CERTIFIED ⇒ Cheese per tail rule; CI spans 0 with point ≥ +10 ⇒ ONE +800 extension,
 pooled; anything else ⇒ NOT-STRONGER. Box otherwise idle (arm B exited before launch).
+
+**2026-08-23 ~19:40 — ARM B VERDICT: FAIL, and the reading key resolves to MECHANISM.**
+b-run audit (same instrument/settings as the ladder readout): a000-control 51.3/45.1,
+b030 (BT4 external prior grafted at α=0.3, temp 150) **53.2/44.9 → Δ +1.9 E[regret]
+worse, top-1 −0.2 null — FAIL**, the same failure shape as g030 (+2.8/−0.7). ⇒ B ≈ G:
+swapping the graft's source from SF-Q to a stronger external teacher does NOT rescue
+it — **grafting a foreign distribution into the target hurts E[regret] regardless of
+teacher**. The "gap structure / external teacher" branch is dead at this dose; the
+surviving repair is V alone. CONTROL REPLICATION: the two independently trained a000
+legs read 51.6/46.0 (v1) vs 51.3/45.1 (b-run) — empirical replication noise ~0.3/0.9
+cp, so v020's −1.7/−3.1 is ~3× the noise floor. R/V/G PROGRAM STATE: ladder complete,
+verdicts recorded for all 7 arms; the one production-candidate repair is the v020 veto
+screen (label-time bad-tail veto at 200cp). Taking V into a production experiment is
+an operator decision — not launched. GPU now on the ratio ladder (mix025 running).
