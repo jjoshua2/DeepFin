@@ -96,10 +96,11 @@ def pre_move_boards(
     real history) and the move the net then PLAYED from it.
 
     Mirrors the syzygy-rescore walk in finalize.py: ``record_ply_index`` equals
-    ``len(board_before.move_stack)`` (network_turn.py), so walking the final
-    move stack and matching that count aligns each record to the position just
-    before its move. ``opening_len`` skips the opening plies already present in
-    ``starting_board`` on the Python play path (0 on the C-ply path).
+    the position's absolute ``Board.ply()`` (network_turn.py), so walking the
+    final move stack and matching that game-ply count aligns each record to the
+    position just before its move. ``opening_len`` skips the opening plies
+    already present in ``starting_board`` on the Python play path (0 on the
+    C-ply path).
 
     ``wanted`` (record indices) restricts the expensive per-ply Board.copy() to
     just those records — the caller applies the cheap WDL gate first so the hot
@@ -111,7 +112,7 @@ def pre_move_boards(
     played: list[chess.Move | None] = [None] * len(record_ply_indices)
     rb = starting_board.copy()
     for mv in final_move_stack[opening_len:]:
-        t = at_ply.get(len(rb.move_stack))
+        t = at_ply.get(int(rb.ply()))
         if t is not None and (wanted is None or t in wanted):
             boards[t] = rb.copy()
             played[t] = mv
@@ -197,8 +198,8 @@ def harvest_from_records(
     ``board`` was reconstructed and whose played move the search favored.
     Unreconstructed / temperature-exploration records are skipped. ``ply_indices``
     (the game ply per record) is stamped onto the seed so downstream analysis can
-    locate it exactly; absent it, the pre-move board's stack length is used (the
-    two are equal — see pre_move_boards)."""
+    locate it exactly; absent it, the pre-move board's absolute game ply is used
+    (the two are equal — see pre_move_boards)."""
     out: list[HarvestedSeed] = []
     for t, net_q, sf_q in value_blind_candidates(evals, cfg=cfg):
         board, played, policy_probs = boards[t], played_moves[t], evals[t][3]
@@ -206,7 +207,7 @@ def harvest_from_records(
             continue  # not reconstructed (unaligned or not in `wanted`)
         if not _played_was_favored(board, played, policy_probs, cfg.min_played_prob):
             continue  # temperature-explored a move the search didn't favor
-        ply = int(ply_indices[t]) if ply_indices is not None else len(board.move_stack)
+        ply = int(ply_indices[t]) if ply_indices is not None else int(board.ply())
         out.append(HarvestedSeed(
             line=seed_line_from_board(board, cfg.history_plies),
             net_q=net_q, sf_q=sf_q, severe=net_q >= cfg.severe_net_ok, ply_index=ply,
