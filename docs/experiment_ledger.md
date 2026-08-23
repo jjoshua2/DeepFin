@@ -65937,3 +65937,18 @@ mid-checkpoint restart would inject the data-order shock this lane measures). Th
 CPU-only BT4 dump keeps running (pid 1001340, CPUExecutionProvider, no GPU). ext2
 summary waiter stopped. Residual 18.8G/26% on nvidia-smi is Windows-side (WSL2
 nvidia-smi is not an ownership test); no process of ours touches the GPU now.
+
+**2026-08-22 ~23:30: GPU resumed at Josh's go ("resume gpu use and ill check in after
+night in 12 hours").** Sequence executed: (1) R/V/G pre-launch smoke item 3 PASSED —
+the banked main-sweep command dry-launched (only deviation: throwaway --out-dir;
+PYTHONUNBUFFERED for observability) loaded the label union (1,263,891 positions from
+both files, 124.6s), printed a sane trainer config (sf_policy_floor w=0.8 delta_cp=20
+gumbel_topk=16), and reached arm a000's buffer scan (797 shards, "every later arm must
+scan exactly these") — killed before step 1, out-dir removed. All three pre-launch
+smoke items now closed; the 6-leg ladder is GO for tomorrow. (2) ext2 RELAUNCHED from
+scratch per the pause disposition — identical banked command, out-dir freshly recreated
+(aborted 40-min attempt moved to runs/lc0_ft_iter595_ext2_20260823.aborted_2200), all
+preflight premises "matches the LIVE file", init ext-LAST step 231327 sha 05fb5a73...,
+zero REFUSING lines. ~9.5h → summary ~09:00; waiter armed. On summary: launch the
+prereg'd 800-game deciding arena vs iter-595 (banked template, --games 800). CPU BT4
+dump unaffected throughout (~136k rows at pause-time check, on track ~09:00 finish).
