@@ -66138,3 +66138,18 @@ E[regret]. PENDING reading key: b030 (BT4 external q) vs g030 — if B >> G the 
 failure is the SOURCE (SF-q), not the mechanism (grafting). Per-arm reports banked at
 scratchpad/rvg_audit/<arm>.log (the md in that dir is vg01's only — each run overwrote
 target_audit_142afffa0.md; logs are the record).
+
+### 2026-08-23 18:05 — TOURNAMENT PREREG AMENDED (pre-launch, operator directive): TIGHT deciding match 1,600 → 800 games
+
+Josh, before game 1: 1,600 is more than the binary question needs — past deciders ran
+800 max, other lanes compete for the box, and there is no multi-winner field to sort
+(sole survivor). AMENDMENT: TIGHT branch = audit winner vs iter-595 at **800 games**
+(±~22); the pre-authorized extension (CI-spans-0 with point ≥ +10 → +800, judged
+pooled) is UNCHANGED, so max depth is 1,600 pooled — the original resolution is still
+reachable, but only paid for when the result is promising-but-ambiguous. Rationale: the
+operator effect-size prior for target-class changes is ~40 Elo, which 800 games
+certifies with high power; the extra 800 flat games only add resolution in the
++10..+20 band where the integration case is weak regardless. All other clauses
+(certification rule, WIDE branch, no optional stopping, judged only at pre-set /
+pooled size) unchanged. ZERO games played before this amendment; the staged command's
+--games updated 1600 → 800, seed 47 as recorded.
