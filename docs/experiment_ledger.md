@@ -66286,3 +66286,16 @@ independent ruler.
 2. **Audit-first demotion:** a direct-audit PASS no longer earns any strength
    presumption, even for SF-family target edits — it remains a KILL filter only.
    Games are the sole certifier.
+
+### 2026-08-23 — OPERATOR DIRECTIVE (Josh, standing): design every training run and experiment knowing we run 6-man Syzygy
+
+"All of our training and experiments should be done knowing we use 6 man syzygy."
+⇒ ≤6-man (and search-reachable-TB) positions are SOLVED territory: search probes TB,
+the arena adjudicates there, so net improvements in that region cannot convert to Elo.
+Effective immediately at DESIGN time, not just readout time: an arm whose mechanism
+concentrates in TB-covered territory is killed before compute. Extends the 19:40 rules
+(endgame audit bucket discounted; audit-first = kill-filter only).
+
+Also: **PR #451 MERGED** (2026-08-23 23:29 UTC, CI lint+test green on 01c3db46f) — the
+absolute-ply convention fix, triple-reviewed; live effects disclosed in the entry above;
+reaches production at the next restart.
