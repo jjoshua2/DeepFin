@@ -613,11 +613,74 @@ def test_resume_of_a_pre_rig_key_dump_is_refused_not_silently_restarted(
     assert out.read_bytes() == before, "the refusal must fire before any write"
 
 
+def test_fen_mode_resume_of_a_fen_dump_still_goes_through_the_guard(
+    tmp_path: Path, fake_onnx: Path,
+) -> None:
+    """A FEN-mode dump declares no ``v`` and neither does a FEN-mode run, so
+    the schema check must pass (None == None) and the resume must actually
+    happen: old keys skipped, the new FEN appended.
+
+    MUTANT (run, killed): comparing the prior ``v`` against the hardcoded
+    schema CONSTANT instead of this run's own header (None != 1) would refuse
+    every legitimate FEN/FEN resume; so would a truthiness check. Nothing else
+    in the suite drives a SUCCESSFUL resume through ``_resume_guard`` in FEN
+    mode, so without this test both mutants survive.
+    """
+    fen2 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    rows = tmp_path / "rows.txt"
+    rows.write_text(chess.STARTING_FEN + "\n", encoding="utf-8")
+    out = tmp_path / "fen_dump.jsonl"
+    dump.run(dump_args(out, tmp_path, fake_onnx, input_source="fens",
+                       rows=str(rows)))
+    rows.write_text(chess.STARTING_FEN + "\n" + fen2 + "\n", encoding="utf-8")
+    dump.run(dump_args(out, tmp_path, fake_onnx, input_source="fens",
+                       rows=str(rows), resume=True))
+
+    header, recs = read_dump(out)
+    assert [r["key"] for r in recs] == [chess.STARTING_FEN, fen2]
+    assert header["resumed"] is True
+    assert "v" not in header
+
+
+def test_resume_refuses_a_dump_from_a_newer_key_schema(
+    tmp_path: Path, fake_onnx: Path,
+) -> None:
+    """The check is prior-vs-THIS-RUN ``v``, not "prior v is missing": a shard
+    dump declaring a v this writer does not produce must be refused even though
+    its record type, net, output and source all match.
+
+    MUTANT (run, killed): classifying by ``record`` instead of ``v`` passes the
+    legacy-refusal test (record "header" differs) and both success tests
+    (records match), but lets a v=999 provenance dump resume — only this test
+    catches it. A truthiness check (`if not old_v`) also passes 999 as fine.
+    """
+    shard_dir = tmp_path / "shards"
+    write_shard(shard_dir)
+    out = tmp_path / "future_dump.jsonl"
+    future_header = {
+        "record": "provenance", "v": 999, "policy_encoding": "lc0_1858",
+        "onnx": {"path": str(fake_onnx), "sha256": dump.file_sha256(fake_onnx)},
+        "policy_output": "policy",
+        "input": {"source": "shards"},
+    }
+    row = {"key": "00" * 16, "fen": chess.STARTING_FEN, "policy": {"e2e4": 1.0}}
+    out.write_text(
+        json.dumps(future_header) + "\n" + json.dumps(row) + "\n",
+        encoding="utf-8",
+    )
+    before = out.read_bytes()
+
+    with pytest.raises(SystemExit, match="key-schema"):
+        dump.run(dump_args(out, shard_dir, fake_onnx, resume=True))
+    assert out.read_bytes() == before
+
+
 def test_read_header_still_reads_a_pre_existing_header_record(tmp_path: Path) -> None:
     """Dumps written before the rename exist on disk; a resume must still be
-    able to READ their provenance — not to append to them (the schema guard
-    refuses that), but so the refusal can say what the file actually is
-    instead of falling back to the blunt "no readable header"."""
+    able to READ their provenance. For a shard-mode legacy dump that read is
+    what lets the schema guard refuse with a real message instead of the blunt
+    "no readable header"; a FEN-mode legacy dump (keys unchanged) may still
+    legitimately resume through it."""
     old = tmp_path / "old.jsonl"
     old.write_text(json.dumps({"record": "header", "onnx": {"sha256": "abc"}}) + "\n",
                    encoding="utf-8")

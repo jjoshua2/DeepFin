@@ -926,9 +926,6 @@ def run(args: argparse.Namespace) -> int:
                 "check that it was produced by the same net and source. Refusing "
                 "to append; use a fresh --out.",
             )
-        done = load_done_keys(out_path)
-        print(f"[dump] resume: {len(done)} keys already present")
-
     sess, in_name, in_dtype, providers = open_session(
         args.onnx, gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
     )
@@ -944,6 +941,11 @@ def run(args: argparse.Namespace) -> int:
         _resume_guard(prior_header, header, pol_name, out_path)
         if prior_header is not None else None
     )
+    if args.resume:
+        # Only after the guard: printing "N keys already present" and then
+        # refusing would report a resume that never happens.
+        done = load_done_keys(out_path)
+        print(f"[dump] resume: {len(done)} keys already present")
     # ⚑ N4: only NOW is the file touched. Truncating before the guard meant a
     # refused resume had already mutated the file it refused to write to.
     if args.resume:
