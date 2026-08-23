@@ -12,6 +12,8 @@ same 32k-node sample) and pass after it.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import chess
 import numpy as np
 import pytest
@@ -222,6 +224,160 @@ def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) ->
     assert root_coverage_miss_count() == before + 1
     actions, _ = tree.get_children_visits(new_root)
     assert {int(a) for a in actions} == set(legal.tolist())
+
+
+# --- W2b: the gate is support EQUALITY, not coverage ---------------------
+#
+# A carried root may be a strict SUPERSET of the support the CURRENT search is
+# allowed to touch: `allowed_root_indices_batch` (UCI `searchmoves`) and the
+# winning-root terminal-draw prune both narrow `legal_idx` below the previous
+# ply's expansion. `gss_score_and_halve` reads max_visit / total_visits /
+# weighted_q / mixed_value / min_q / max_q off ALL of the root's children, so an
+# excluded child still moves the Q transform every INCLUDED candidate is scored
+# through — while the improved policy on top is built over the current support
+# only. The superset gate accepted exactly that.
+
+# Position with 37 legal moves; the first 10 policy indices are the support and
+# the 11th is the carried-but-excluded child. Search shapes pinned per case
+# (the house rule: a parametrisation that cannot fail is decoration) — the
+# selfplay shape is the live yaml's `c_scale=0.1` linear root, the play shape is
+# `gumbel.PLAY_SEARCH_DEFAULTS`' root-log split, which is what the UCI path that
+# actually carries trees across moves runs.
+_NARROW_FEN = "r1bqkb1r/pp1ppppp/2n2n2/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4"
+_NARROW_SHAPES = ("selfplay_linear_root", "play_log_root")
+
+
+def _narrow_cfg(shape: str) -> GumbelConfig:
+    """Written as ``dataclasses.replace`` on one base rather than ``**dict``:
+    a ``dict[str, float]`` splat widens every keyword to ``float`` and
+    basedpyright rejects the ``int``/``bool``/``str`` fields it lands on."""
+    base = GumbelConfig(
+        simulations=128, topk=16, c_scale=0.1, temperature=0.0, add_noise=False
+    )
+    if shape == "selfplay_linear_root":
+        return base
+    return dataclasses.replace(
+        base, c_scale=0.025, c_visit=50.0, c_visit_root=900.0,
+        c_scale_root=7.0, q_visit_exp_root=-1.0,
+    )
+
+
+def _narrowed_support_tree(carried: list[int], excluded: int, visits: int):
+    """A carried root over ``carried`` whose ``excluded`` child holds ``visits``
+    visits at Q = +1 — the drawing child of a now-winning root, or the move a
+    ``searchmoves`` list just dropped. Built by tree surgery rather than a first
+    search so the two arms differ ONLY in whether the root is reused: the tree
+    handed to both is byte-for-byte the same shape, and no transposition-table
+    entry exists to make node ids matter."""
+    tree = _mcts_tree.MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    acts = np.array(sorted(carried), dtype=np.int32)
+    tree.expand(rid, acts, np.full(acts.size, 1.0 / acts.size, dtype=np.float64))
+    cid = tree.find_child(rid, excluded)
+    assert cid >= 0
+    path = np.array([rid, cid], dtype=np.int32)
+    for _ in range(visits):
+        tree.backprop(path, 1.0)
+    return tree, rid
+
+
+@pytest.mark.parametrize("shape", _NARROW_SHAPES)
+def test_a_narrowed_root_does_not_inherit_the_excluded_child(
+    monkeypatch, shape: str
+) -> None:
+    """RED on the pre-fix (superset) gate, in both search shapes.
+
+    Arm: carried root over support+{excluded}, reused. Control: the SAME tree,
+    same seed, same evaluator, same narrowed support — but ``root_node_ids=None``
+    so the root is built over the current support alone, which is the Python
+    reference's (``gumbel.py``, no tree reuse) semantic. The two must agree
+    exactly. Pre-fix they do not: the played move flips between two INCLUDED
+    moves, and the root's visit split across the included moves shifts with it —
+    both decided by a child the current search says does not exist.
+
+    Control chosen as the same populated tree rather than an empty one so the
+    single manipulated variable is the reuse decision itself — post-fix the arm
+    rebuilds into the identical node slot, so equality is exact, not approximate.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    board = chess.Board(_NARROW_FEN)
+    legal = sorted(_legal_set(board))
+    assert len(legal) > 11, "position must be wide enough to narrow"
+    support = legal[:10]
+    excluded = legal[10]
+    carried = [*support, excluded]
+
+    cfg = _narrow_cfg(shape)
+
+    def _search(tree, root_ids):
+        return run_gumbel_root_many_c(
+            None, [chess.Board(_NARROW_FEN)], device="cpu",
+            rng=np.random.default_rng(0), cfg=cfg, evaluator=_Ev(1),
+            tree=tree, root_node_ids=root_ids,
+            allowed_root_indices_batch=[set(support)],
+            target_batch=0, vloss_weight=1,
+        )
+
+    arm_tree, stale_root = _narrowed_support_tree(carried, excluded, visits=4000)
+    misses_before = root_coverage_miss_count()
+    arm = _search(arm_tree, [stale_root])
+    arm_root = int(arm[5][0])
+
+    assert root_coverage_miss_count() == misses_before + 1, (
+        "the wider carried root was reused instead of rejected"
+    )
+    assert arm_root != stale_root
+    arm_actions, arm_visits = arm_tree.get_children_visits(arm_root)
+    assert {int(a) for a in arm_actions} == set(support), (
+        "the rebuilt root must hold exactly the current support"
+    )
+
+    ctl_tree, _ = _narrowed_support_tree(carried, excluded, visits=4000)
+    ctl = _search(ctl_tree, None)
+    ctl_actions, ctl_visits = ctl_tree.get_children_visits(int(ctl[5][0]))
+
+    # Played move first: it is the assertion with a chess meaning, and the one
+    # the superset gate flips.
+    assert int(arm[1][0]) == int(ctl[1][0]), (
+        f"reused wide root played {int(arm[1][0])}, support-only root played "
+        f"{int(ctl[1][0])} — the excluded child decided the halving"
+    )
+    assert dict(
+        zip((int(a) for a in arm_actions), (int(v) for v in arm_visits), strict=True)
+    ) == dict(
+        zip((int(a) for a in ctl_actions), (int(v) for v in ctl_visits), strict=True)
+    ), "the excluded child moved the visit split over the included moves"
+    assert np.array_equal(arm[0][0], ctl[0][0]), "improved policy diverged"
+    assert float(arm[2][0]) == float(ctl[2][0]), "root value diverged"
+
+
+def test_the_root_support_gate_is_equality_not_coverage() -> None:
+    """The predicate itself, in every direction. The old superset reading
+    (``isin(actions, child_actions).all()`` behind a ``child_actions.size <
+    actions.size`` early-out) agrees on the equal, reordered, wider and
+    same-size-but-different rows — and disagrees on the two that matter: a
+    NARROWED support, and the empty support its ``actions.size == 0`` early-out
+    waved through."""
+    tree = _mcts_tree.MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    acts = np.array([7, 11, 23], dtype=np.int32)
+    tree.expand(rid, acts, np.full(3, 1.0 / 3.0, dtype=np.float64))
+    matches = gumbel_c_mod._expanded_root_matches_actions
+
+    assert matches(tree, rid, np.array([7, 11, 23], dtype=np.int32))
+    assert matches(tree, rid, np.array([23, 7, 11], dtype=np.int64)), "order-blind"
+    assert not matches(tree, rid, np.array([7, 11], dtype=np.int32)), (
+        "narrowed support: the ROOT is a superset — this is the bug"
+    )
+    assert not matches(tree, rid, np.array([7, 11, 23, 40], dtype=np.int32)), (
+        "the root is missing an action we are about to search"
+    )
+    assert not matches(tree, rid, np.array([7, 11, 40], dtype=np.int32)), (
+        "same size, different members — the size early-out must not decide it"
+    )
+    assert not matches(tree, rid, np.empty(0, dtype=np.int32)), (
+        "an empty support matches only an empty child set"
+    )
 
 
 def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:

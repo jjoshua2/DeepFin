@@ -33426,8 +33426,10 @@ an empty square**. The board stays self-consistent, nothing raises, and the
 entire subtree below is a position that cannot arise in chess — encoded, sent to
 the net, and backpropped into the real tree's statistics.
 
-**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`), the check that would
-catch a stale root child set, was short-circuited by
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`; renamed
+`_expanded_root_matches_actions` when its semantic went from SUPERSET to exact
+support EQUALITY — see the W2b addendum at the end of this section), the check
+that would catch a stale root child set, was short-circuited by
 `allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
 argument, so **the one path that carries a tree across plies (selfplay) was the
 one path the check never ran on** — the by-now familiar shape of a gate that
@@ -33550,6 +33552,45 @@ this project ships, also untouched. Third, the review of this PR found a
 realloc-dangle in the children pool that is **shared with `main` and predates
 this work**; it is recorded here as a known pre-existing defect and deliberately
 not bundled into a correctness fix that is trying to stay reviewable.
+
+### W2b addendum 2026-08-23 — the W2 gate was a SUPERSET check, and the superset is not harmless
+
+**Not an experiment; no verdict, no yardstick, nothing launched.** Recorded here
+because it changes the semantic of an instrument this section defines.
+
+`_expanded_root_covers_actions` accepted a carried root whose child set was any
+SUPERSET of the current search support (`np.isin(actions, child_actions).all()`),
+on the reading that spare children can only help. They cannot. Two production
+paths NARROW the root support below the previous ply's expansion — winning-root
+terminal-draw pruning (`gumbel_c.py`, `root_qs[i] > 0` + immediate draws) and
+`allowed_root_indices_batch` (UCI `searchmoves`) — and the C halving scorer
+`gss_score_and_halve` derives `max_visit`, `total_visits`, the prior-weighted
+`weighted_q`/`mixed_value` and the `min_q`/`max_q` normalisation from ALL of the
+root's children. So an excluded child still moves the Q transform that every
+INCLUDED candidate is scored through. Meanwhile the improved policy is built over
+the current support only, so the eliminator and the returned target disagreed
+about which moves exist. The Python reference (`gumbel.py`) never reuses a tree,
+so its semantic for a narrowed root is a fresh root over the current support.
+
+Fix: the gate is now exact support EQUALITY
+(`_expanded_root_matches_actions`); a narrowed support rejects the carried root
+and rebuilds it over `legal_idx`, which the existing fallback already did. The
+counter, `root_coverage_miss_count()` and the `root_coverage_miss=` operator
+token keep their names on purpose — they are the greppable identity of this guard
+in shipped logs — but every string describing them now says EQUALITY.
+
+Measured (`tests/test_mcts_transposition_key.py`, red on the parent commit): a
+carried root holding one extra, heavily-visited child changes the *played move*
+of a search over the narrowed support, and the root's visit distribution over the
+included moves, versus the same search on a root built over that support alone.
+Both search shapes flip — `c_scale=0.1` selfplay linear root and the
+`PLAY_SEARCH_DEFAULTS`-shaped root-log — in opposite directions.
+
+**⚠ DEPLOY GATED, and this addendum is NOT that gate.** This changes production
+search behaviour — the reuse rate on narrowed-support roots — so deploying it
+voids the frozen-search regret baseline (frozen 2026-08-09 20:58) and needs its
+own entry with a pre-committed yardstick plus an arena readout. Pure Python: no
+extension rebuild, but merge ≠ deploy, and a restart is what deploys it.
 
 ---
 

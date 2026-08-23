@@ -243,10 +243,20 @@ def _mark_legal_bf16_temp_warned() -> None:
     _LEGAL_BF16_TEMP_WARNED = True
 
 
-# Audit W2. Counts reused-root candidates rejected because their child set did
-# not cover the actions we were about to search. Process-cumulative so a run can
-# be asked "did this ever fire?" — a guard nobody can observe is a guard nobody
-# knows is dead. Read with root_coverage_miss_count().
+# Audit W2. Counts reused-root candidates rejected because their child set was
+# not EXACTLY the action set we were about to search — a missing action and an
+# EXTRA one both reject (see _expanded_root_matches_actions for why the extra is
+# not harmless). Process-cumulative so a run can be asked "did this ever fire?"
+# — a guard nobody can observe is a guard nobody knows is dead. Read with
+# root_coverage_miss_count().
+#
+# The counter, its accessor and the `root_coverage_miss=` token in the operator
+# line below keep their pre-equality names deliberately: they are the greppable
+# identity of this guard in shipped selfplay/UCI logs and in the ledger's W2
+# entry, and renaming them would split old logs from new ones for no gain. What
+# changed is the semantic, so every string that DESCRIBES the guard is updated
+# instead — a metric whose name is stable and whose description lies is the
+# defect this counter was added to expose.
 _ROOT_COVERAGE_MISSES = 0
 _ROOT_COVERAGE_WARNED = False
 
@@ -257,14 +267,15 @@ def _warn_root_coverage_miss() -> None:
     if not _ROOT_COVERAGE_WARNED:
         _ROOT_COVERAGE_WARNED = True
         _log.warning(
-            "gumbel: discarded a reused root whose child set did not cover the "
-            "search actions (audit W2); rebuilding the root. Further "
-            "occurrences are counted, not logged."
+            "gumbel: discarded a reused root whose child set did not EQUAL the "
+            "search actions (audit W2) — it was missing one, or carried an extra "
+            "the current search excludes; rebuilding the root over the current "
+            "support. Further occurrences are counted, not logged."
         )
 
 
 def root_coverage_miss_count() -> int:
-    """Reused roots rejected by the coverage check since process start."""
+    """Reused roots rejected by the support-equality check since process start."""
     return _ROOT_COVERAGE_MISSES
 
 
@@ -307,7 +318,8 @@ def _report_guard_health() -> None:
         f"tt_donor_reject={current[0]} root_coverage_miss={current[1]}. "
         "tt_donor_reject>0 means the transposition key no longer implies the "
         "legal move set (audit W1); root_coverage_miss>0 means a carried tree "
-        "root was discarded (audit W2). Neither corrupts the search — both mean "
+        "root was discarded because its child set did not EQUAL this search's "
+        "root support (audit W2). Neither corrupts the search — both mean "
         "something upstream changed.",
         file=_sys.stderr,
         flush=True,
@@ -323,13 +335,39 @@ def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]
     )
 
 
-def _expanded_root_covers_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
+def _expanded_root_matches_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
+    """Whether ``root_id``'s child ACTION SET is EXACTLY ``actions``.
+
+    EQUALITY, not coverage. The predicate this replaced accepted any SUPERSET
+    (``np.isin(actions, child_actions).all()``), on the reading that a carried
+    root with spare children can only help. It cannot: the C halving scorer
+    (``gss_score_and_halve``) derives ``max_visit``, ``total_visits``, the
+    prior-weighted ``weighted_q``/``mixed_value`` and the ``min_q``/``max_q``
+    normalisation from ALL of the root's children, so a child the CURRENT search
+    has deliberately excluded still moves the Q transform every INCLUDED
+    candidate is scored through, and can flip which of them survives sequential
+    halving. Two production paths narrow the root support below the previous
+    ply's expansion — winning-root terminal-draw pruning, and
+    ``allowed_root_indices_batch`` (UCI ``searchmoves``) — and a carried root is
+    exactly the wide expansion those narrowings just walked away from. The
+    improved policy on top is built over the current support only, so accepting
+    the superset leaves the eliminator and the returned target disagreeing about
+    which moves exist.
+
+    The Python reference (``gumbel.py``) never reuses a tree, so its semantic for
+    a narrowed support is a fresh root holding only that support; equality is
+    what makes the C path agree with it.
+
+    Order and visits are irrelevant — only membership. Sorted comparison rather
+    than a two-way ``isin`` so a duplicated child action cannot read as a match
+    on a set basis; both sides are duplicate-free by construction, and n <= 218.
+    """
+    child_actions, _visits = tree.get_children_visits(root_id)
+    if child_actions.size != actions.size:
+        return False
     if actions.size == 0:
         return True
-    child_actions, _visits = tree.get_children_visits(root_id)
-    if child_actions.size < actions.size:
-        return False
-    return bool(np.isin(actions, child_actions).all())
+    return bool(np.array_equal(np.sort(child_actions), np.sort(actions)))
 
 
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
@@ -803,7 +841,7 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                # The coverage check runs on EVERY reuse, including selfplay
+                # The support check runs on EVERY reuse, including selfplay
                 # (audit W2). It used to be short-circuited by
                 # `allowed_root_indices_batch is None`, which selfplay always
                 # is — so the only path that carries a tree across plies was
@@ -811,7 +849,19 @@ def run_gumbel_root_many_c(
                 # child set is missing an action we are about to search makes
                 # tree_gumbel_collect_leaf bail at depth 1 (`child_id < 0`),
                 # silently spending the whole simulation on the root.
-                if tree.is_expanded(rid) and _expanded_root_covers_actions(
+                #
+                # It demands EQUALITY, not coverage: `legal_idx` above may have
+                # been NARROWED below the previous ply's expansion, by the
+                # winning-root terminal-draw prune a few lines up or by
+                # `allowed_root_indices_batch`. A carried root still holding the
+                # excluded children feeds their visits and Q into the C halving
+                # scorer's max_visit / mixed_value / min-max normalisation, so a
+                # move this search says does not exist still decides which of the
+                # moves that DO exist survives. See
+                # _expanded_root_matches_actions. On rejection we fall through to
+                # the fresh-root build below, which expands exactly `legal_idx` —
+                # the Python reference's semantic for a narrowed root.
+                if tree.is_expanded(rid) and _expanded_root_matches_actions(
                     tree, rid, legal_idx
                 ):
                     root_ids[i] = rid
