@@ -66226,3 +66226,41 @@ format bump (bounded, per-worker); (3) syzygy_rescore_policy walker fixed but th
 is OFF in production. No loss weights, targets, or search shapes change. Confounds if
 deployed alongside other restart-gated changes: harvest population shift is the only
 data-affecting arm; disclose in the restart bundle entry.
+
+## 2026-08-23 19:25 — TOURNAMENT VERDICT: v020 NOT-STRONGER — −9.56 [−29.59, +10.41] at 800 games; audit gain did NOT convert to Elo
+
+Deciding match complete in 34 min (seed 47, matched_sims 100, play shape, conc 64,
+production Syzygy; scratchpad/elo_calib/V020_vs_iter595.json, pgn + game log banked,
+game_log_agrees=True). **v020 vs iter-595: −9.56 Elo, 95% CI [−29.59, +10.41], n=800,
+score 0.48625**, pentanomial WW 51 / WD 55 / DD+WL 171 / LD 67 / LL 56.
+
+**Judged by the pre-committed clauses (prereg 6e033aec2 + 18:05 amendment), in order:**
+- CI excludes 0 positive? NO. → not certified.
+- Extension (CI spans 0 AND point ≥ +10)? NO — point is −9.56. → no extension.
+- ⇒ **NOT-STRONGER. No Cheese match. Tournament CLOSED at its pre-set size.**
+
+**Interpretation (facts, then reading):** v020's audit gain was real on its instrument
+(+3.1cp top-1, −8.1cp endgame, survived PLAY search, not entropy-shaped) and did not
+transfer to game strength — point estimate mildly negative, upper bound +10.4. This is
+the THIRD instance of the audit/fit→Elo transfer failure signature (F-only: −0.043 nats
+for 0 cp; absorption: 11.6× fit for 0 Elo; now v020: +3.1cp for ≤0 Elo), and the first
+on the DEEP-SF cp ruler itself — which narrows the standing claim: even the deciding
+audit instrument, moved in the right direction by a target edit, does not certify
+strength. Per the pre-agreed plan: **the phase/spread-tau ladder is DEAD ON ARRIVAL**
+(no certified mechanism to refine); the composite production target does NOT adopt V on
+this evidence. R/V/G target-surgery lane CLOSED: R dead, G dead (both q-sources),
+V audit-positive but strength-null.
+
+**One bounded follow-up owed (diagnostic, not a lane):** why does a +3.1cp top-1 /
+−8.1cp endgame raw-policy improvement price at ≈0 Elo at 100-sim play? Candidate
+explanations to discriminate CHEAPLY from the banked PGN/game log before any new GPU:
+(a) endgame plies are already decided by then (gain lands where games are over);
+(b) search at 100 sims re-ranks away the raw-policy delta (the b-row gain was −2.3cp —
+smaller than raw's −3.1 overall);
+(c) the audit set's fen_only/no-history positions over-weight exactly the positions
+play never reaches ([[audit_set_has_no_history_or_castling]]).
+Confounds: none — single change, pre-set size, no optional stopping, seed 47 recorded.
+
+**Program state after this readout:** lc0 lanes lead (ext2 rerun on Josh's go — GPU now
+FREE tonight, ahead of schedule; mixed-replay ratio ladder prereg 10fc2f1d4 ready).
+Production remains STOPPED.
