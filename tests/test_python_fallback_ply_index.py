@@ -6,7 +6,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
-from chess_anti_engine.encoding.cboard_encode import cboard_from_board_fast
+from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.moves import POLICY_SIZE, legal_move_mask
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -42,14 +42,17 @@ def _state_from_fen(fen: str) -> SelfplayState:
     )
     board = chess.Board(fen)
     state.boards[0] = board
-    state.cboards[0] = cboard_from_board_fast(board)
+    # Match SelfplayState.create/recycle_slot exactly: production uses
+    # CBoard.from_board(), not the history-free from_raw fast constructor.
+    state.cboards[0] = CBoard.from_board(board)
+    state.starting_ply_arr[0] = board.ply()
     return state
 
 
 def test_python_fallback_records_absolute_fen_ply_like_c_path() -> None:
     # A FEN-created board has no local move-stack history, but its fullmove
-    # counter still places it at an absolute game ply. The CBoard preserves
-    # that absolute ply; the Python fallback must not reset the record to 0.
+    # counter still places it at an absolute game ply. The production CBoard
+    # preserves that absolute ply; the Python fallback must not reset it to 0.
     state = _state_from_fen(
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 69",
     )
