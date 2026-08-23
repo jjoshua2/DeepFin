@@ -30452,7 +30452,7 @@ renames the output directory rather than silently mislabelling a cell.
 
 Full write-ups + repros: `scratchpad/code_audit_20260803/{ENCODING,C_WALKER,INFERENCE}_AUDIT.md` (`enc_*`/`cwalk_*`/`inf_*` repros banked alongside). Fix PRs in flight for W1/W2, E1-E4, I1-I4+I6; all deploy-gated items marked below.
 
-- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
+- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate (now `_classify_expanded_root_support` — see the W2b addendum for the rename and the SUPERSET→EQUALITY change) is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
 - **ENCODING: the C and Python encoders are BIT-IDENTICAL in the production regime** (175/v2_threats + lc0_root_legacy_meta + history_rep_fix, 1,654 positions with real history × 3 modes × both versions) — first time measured. 722,888 lc0_1858↔4672 round-trips clean incl. promotions/castling/EP; PR #314's 93-dead-planes accounting confirmed exactly. Defects are COVERAGE: E1 the only C-vs-Py plane oracle is off in every gate (stale docstring; passes today when enabled — fix PR turns it into CI); E2 AOT package verification encodes its distribution in the LEGACY history layout (98/175 planes differ; one keyword); E3 rep_fix flag-ordering has no guard (latent); E4 C encoders infer plane count from the buffer, config never compared (latent). ⚠ our `lc0_1858` is NOT Leela's kMoveStrs promotion ordering — `onnx/load.py` handles it; live trap for BT4 distillation.
 - **INFERENCE: I1 (CONFIRMED, both transports): the slot protocol has NO request identity** — a client that times out (hardcoded 30s) and re-submits is served the PREVIOUS request's policy/WDL; on compact-legal the row is partially reinterpreted metadata bytes = plausible-looking policy from a different position, recordable as training data. Precondition (client reset) documented in-source as observed 2026-07-24; RATE UNMEASURED (log grep in flight). Fix PR in flight (request id/epoch in header; wire-format change, workers+broker restart together). I2: connect never validates layout vs shm size → all-zero policy on plane skew (latent; guard in PR). I3: hang watchdog inert until first successful forward AND excludes _ensure_model — cannot fire on the documented boot-into-wedged-dxg scenario. I4: AOT constants rebound check_full_update=False, nothing binds package↔model. I6: broker busy-spins ~83% of a core at idle. I5 (deferred, separate decision): EncodedEvalCache transparently BYPASSED on the compact UCI path (0 hits/0 misses reads as clean); both cache keys otherwise sound. Gather policy clean; ThreadedDispatcher not on the production selfplay path.
 
@@ -33426,8 +33426,8 @@ an empty square**. The board stays self-consistent, nothing raises, and the
 entire subtree below is a position that cannot arise in chess — encoded, sent to
 the net, and backpropped into the real tree's statistics.
 
-**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`; renamed
-`_expanded_root_matches_actions` when its semantic went from SUPERSET to exact
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`; now
+`_classify_expanded_root_support`, after its semantic went from SUPERSET to exact
 support EQUALITY — see the W2b addendum at the end of this section), the check
 that would catch a stale root child set, was short-circuited by
 `allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
@@ -33572,25 +33572,55 @@ the current support only, so the eliminator and the returned target disagreed
 about which moves exist. The Python reference (`gumbel.py`) never reuses a tree,
 so its semantic for a narrowed root is a fresh root over the current support.
 
-Fix: the gate is now exact support EQUALITY
-(`_expanded_root_matches_actions`); a narrowed support rejects the carried root
-and rebuilds it over `legal_idx`, which the existing fallback already did. The
-counter, `root_coverage_miss_count()` and the `root_coverage_miss=` operator
-token keep their names on purpose — they are the greppable identity of this guard
-in shipped logs — but every string describing them now says EQUALITY.
+Fix: the gate is now exact support EQUALITY (`_classify_expanded_root_support`);
+a narrowed support rejects the carried root and rebuilds it over `legal_idx`,
+which the existing fallback already did.
 
-Measured (`tests/test_mcts_transposition_key.py`, red on the parent commit): a
-carried root holding one extra, heavily-visited child changes the *played move*
-of a search over the narrowed support, and the root's visit distribution over the
-included moves, versus the same search on a root built over that support alone.
-Both search shapes flip — `c_scale=0.1` selfplay linear root and the
-`PLAY_SEARCH_DEFAULTS`-shaped root-log — in opposite directions.
+**The rejection counter is SPLIT, because the two rejections mean opposite
+things.** Folding them together would have buried the W1/W2-family corruption
+signal under routine traffic — the narrowed case fires on ordinary winning-root
+selfplay plies, so a shared counter would have been permanently nonzero and the
+alarm unreadable.
+- `root_coverage_miss_count()` / `root_coverage_miss=` keep their names AND their
+  original meaning: the carried root was MISSING an action the search needed, i.e.
+  the tree disagrees with the rules. Still an alarm; still re-triggers the
+  operator line.
+- `root_support_narrowed_count()` / `root_support_narrowed=` is new: every action
+  was present and the root also carried excluded ones. Routine. Announced ONCE
+  per process (one-shot WARNING plus the first operator line) and thereafter only
+  carried along when an alarm prints — a counter that re-triggered every 60 s
+  would train operators to ignore the line the alarms share.
 
-**⚠ DEPLOY GATED, and this addendum is NOT that gate.** This changes production
-search behaviour — the reuse rate on narrowed-support roots — so deploying it
-voids the frozen-search regret baseline (frozen 2026-08-09 20:58) and needs its
-own entry with a pre-committed yardstick plus an arena readout. Pure Python: no
-extension rebuild, but merge ≠ deploy, and a restart is what deploys it.
+Measured (`tests/test_mcts_transposition_key.py`, all four cases red on the
+parent commit on the PLAYED-MOVE assertion): a carried root holding an extra,
+heavily-visited child changes the *played move* of a search over the narrowed
+support versus the same search on a root built over that support alone. Both
+narrowing paths, both search shapes: `searchmoves` (157↔155) and the winning-root
+draw prune in selfplay's own call shape — `allowed_root_indices_batch=None`, root
+carried with its full legal expansion — at 21 legal/8 support (657 vs 584) and 15
+legal/2 support (804 vs 803).
+
+⚑ Instrument note for whoever reproduces this: the draw prune needs `root_q > 0`,
+but pinning the WDL to a decisive win for EVERY node makes the test vacuous —
+identical `q_hat` across candidates collapses the Q transform to a constant and
+the halving becomes a pure log-prior ranking that no root pollution can move. The
+root batch must be winning while the leaves stay varied.
+
+**⚠ DEPLOY GATED, and this addendum is NOT that gate.** Two reasons, and the
+second is the bigger one:
+1. **Search-shape.** The reuse rate on narrowed-support roots changes, which
+   voids the frozen-search regret baseline (frozen 2026-08-09 20:58).
+2. **DATA-AFFECTING.** On every narrowed ply the stored policy row and
+   `values_out` are now built from a REBUILT, cold root — different survivor,
+   different visit distribution, different value. Winning positions with
+   claimable-draw replies are exactly where the anti-engine curriculum spends
+   time, so this is a change to training rows, not only to played moves. It
+   belongs under the one-data-affecting-change-per-readout-window rule and needs
+   its own entry with a pre-committed yardstick plus an arena readout; if it
+   restarts alongside anything else, that overlap goes in both Confounds lines.
+
+Pure Python: no extension rebuild, but merge ≠ deploy, and a restart is what
+deploys it.
 
 ---
 

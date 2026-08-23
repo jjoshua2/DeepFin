@@ -243,22 +243,35 @@ def _mark_legal_bf16_temp_warned() -> None:
     _LEGAL_BF16_TEMP_WARNED = True
 
 
-# Audit W2. Counts reused-root candidates rejected because their child set was
-# not EXACTLY the action set we were about to search — a missing action and an
-# EXTRA one both reject (see _expanded_root_matches_actions for why the extra is
-# not harmless). Process-cumulative so a run can be asked "did this ever fire?"
-# — a guard nobody can observe is a guard nobody knows is dead. Read with
-# root_coverage_miss_count().
+# The reuse gate rejects for two reasons that must NOT share a counter, because
+# one is an alarm and the other is routine bookkeeping:
 #
-# The counter, its accessor and the `root_coverage_miss=` token in the operator
-# line below keep their pre-equality names deliberately: they are the greppable
-# identity of this guard in shipped selfplay/UCI logs and in the ledger's W2
-# entry, and renaming them would split old logs from new ones for no gain. What
-# changed is the semantic, so every string that DESCRIBES the guard is updated
-# instead — a metric whose name is stable and whose description lies is the
-# defect this counter was added to expose.
+#   * MISSING ACTION (audit W2, the original event) — the carried root's child
+#     set does not contain something this search is about to look at. That means
+#     the tree disagrees with the rules about the position it is sitting on;
+#     something upstream changed and it needs a human. Counted in
+#     `_ROOT_COVERAGE_MISSES`, read with `root_coverage_miss_count()`.
+#   * NARROWED SUPPORT — every action IS present, but the carried root ALSO
+#     holds children this search has deliberately excluded (winning-root
+#     terminal-draw prune, or `allowed_root_indices_batch`/`searchmoves`). The
+#     tree is fine; the search simply asked a narrower question than the ply that
+#     built the root. This fires as a matter of course in normal selfplay, so
+#     folding it into the alarm would bury a corruption signal under routine
+#     traffic. Counted in `_ROOT_NARROWED_REBUILDS`, read with
+#     `root_support_narrowed_count()`.
+#
+# Both are process-cumulative so a run can be asked "did this ever fire?" — a
+# guard nobody can observe is a guard nobody knows is dead.
+#
+# `_ROOT_COVERAGE_MISSES`, its accessor and the `root_coverage_miss=` token in
+# the operator line below keep their names AND their original meaning: they are
+# the greppable identity of the W2 alarm in shipped selfplay/UCI logs and in the
+# ledger's W2 entry. The narrowed case is what is NEW, so it gets the new name
+# rather than diluting the old one.
 _ROOT_COVERAGE_MISSES = 0
 _ROOT_COVERAGE_WARNED = False
+_ROOT_NARROWED_REBUILDS = 0
+_ROOT_NARROWED_WARNED = False
 
 
 def _warn_root_coverage_miss() -> None:
@@ -267,22 +280,51 @@ def _warn_root_coverage_miss() -> None:
     if not _ROOT_COVERAGE_WARNED:
         _ROOT_COVERAGE_WARNED = True
         _log.warning(
-            "gumbel: discarded a reused root whose child set did not EQUAL the "
-            "search actions (audit W2) — it was missing one, or carried an extra "
-            "the current search excludes; rebuilding the root over the current "
-            "support. Further occurrences are counted, not logged."
+            "gumbel: discarded a reused root whose child set was MISSING an "
+            "action this search needs (audit W2); rebuilding the root. The tree "
+            "disagrees with the position's legal moves — something upstream "
+            "changed. Further occurrences are counted, not logged."
+        )
+
+
+def _warn_root_support_narrowed() -> None:
+    global _ROOT_NARROWED_REBUILDS, _ROOT_NARROWED_WARNED
+    _ROOT_NARROWED_REBUILDS += 1
+    if not _ROOT_NARROWED_WARNED:
+        _ROOT_NARROWED_WARNED = True
+        _log.warning(
+            "gumbel: rebuilt a carried root because this search NARROWED its "
+            "root support below the carried expansion (winning-root draw prune, "
+            "or searchmoves). Routine, not a fault: reusing the wider root would "
+            "let an excluded child skew the halving transform of the included "
+            "ones. Cost is one ply of tree carry. Further occurrences are "
+            "counted, not logged."
         )
 
 
 def root_coverage_miss_count() -> int:
-    """Reused roots rejected by the support-equality check since process start."""
+    """Reused roots rejected for MISSING an action, since process start (W2 alarm)."""
     return _ROOT_COVERAGE_MISSES
 
 
-# Operator surface for the two audit-W1/W2 guards. A counter no production path
+def root_support_narrowed_count() -> int:
+    """Carried roots rebuilt because this search narrowed its support (routine)."""
+    return _ROOT_NARROWED_REBUILDS
+
+
+# Operator surface for the audit-W1/W2 guards. A counter no production path
 # reads is the same defect the guards exist to fix — a value accepted and then
-# silently ignored — so the shared C-path entry point emits a line whenever
-# either guard has fired since the last report.
+# silently ignored — so the shared C-path entry point emits a line when a guard
+# has fired since the last report.
+#
+# ⚑ Only the two ALARMS re-trigger the line: `tt_donor_reject` and
+# `root_coverage_miss`. `root_support_narrowed` is routine and, on a winning-root
+# selfplay position, monotonically increasing — re-printing on it would emit a
+# line every 60 s forever and train every operator to ignore this message, which
+# is how the alarms would get lost. It is announced ONCE (the first time it
+# leaves zero) and thereafter only rides along in whatever an alarm prints, plus
+# the one-shot WARNING from `_warn_root_support_narrowed` and
+# `root_support_narrowed_count()` for anyone who asks.
 #
 # stderr, NOT stdout: this path is also the UCI engine's search, whose stdout is
 # the protocol channel; an unsolicited line there desynchronises the GUI. Both
@@ -295,7 +337,7 @@ def root_coverage_miss_count() -> int:
 # compare, and the counters are not even read until it elapses.
 _TT_HEALTH_INTERVAL_S = 60.0
 _tt_health_next_check = 0.0
-_tt_health_reported = (0, 0)
+_tt_health_reported = (0, 0, 0)
 
 
 def _report_guard_health() -> None:
@@ -309,18 +351,25 @@ def _report_guard_health() -> None:
         reject = int(_mcts_tree_ext.tt_stats()["reject"])
     except (AttributeError, KeyError, TypeError):
         return  # pre-fix .so; the ABI guard above already covers that case
-    current = (reject, _ROOT_COVERAGE_MISSES)
-    if current == (0, 0) or current == _tt_health_reported:
+    current = (reject, _ROOT_COVERAGE_MISSES, _ROOT_NARROWED_REBUILDS)
+    alarms_moved = current[:2] != (0, 0) and current[:2] != _tt_health_reported[:2]
+    narrowed_first_seen = current[2] > 0 and _tt_health_reported[2] == 0
+    if not (alarms_moved or narrowed_first_seen):
         return
     _tt_health_reported = current
     print(
         f"[mcts] search guards FIRED since process start: "
-        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]}. "
-        "tt_donor_reject>0 means the transposition key no longer implies the "
-        "legal move set (audit W1); root_coverage_miss>0 means a carried tree "
-        "root was discarded because its child set did not EQUAL this search's "
-        "root support (audit W2). Neither corrupts the search — both mean "
-        "something upstream changed.",
+        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]} "
+        f"root_support_narrowed={current[2]}. "
+        "ALARMS — tt_donor_reject>0 means the transposition key no longer "
+        "implies the legal move set (audit W1); root_coverage_miss>0 means a "
+        "carried tree root was MISSING an action the search needed (audit W2). "
+        "Neither corrupts the search, but both mean something upstream changed. "
+        "ROUTINE — root_support_narrowed>0 only means searches narrowed their "
+        "own root support (winning-root draw prune, or searchmoves) and the "
+        "carried root was rebuilt over it; that is correct behaviour and its "
+        "only cost is a ply of tree carry. It is reported once, not per "
+        "occurrence.",
         file=_sys.stderr,
         flush=True,
     )
@@ -335,8 +384,18 @@ def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]
     )
 
 
-def _expanded_root_matches_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
-    """Whether ``root_id``'s child ACTION SET is EXACTLY ``actions``.
+# Verdicts from _classify_expanded_root_support. Ints rather than an Enum: this
+# runs once per board per ply on the search's hot path.
+_ROOT_SUPPORT_EQUAL = 0
+_ROOT_SUPPORT_MISSING_ACTION = 1
+_ROOT_SUPPORT_NARROWED = 2
+
+
+def _classify_expanded_root_support(
+    tree: MCTSTree, root_id: int, actions: np.ndarray,
+) -> int:
+    """How ``root_id``'s child ACTION SET relates to ``actions``, the support this
+    search is about to look at. Reuse requires ``_ROOT_SUPPORT_EQUAL``.
 
     EQUALITY, not coverage. The predicate this replaced accepted any SUPERSET
     (``np.isin(actions, child_actions).all()``), on the reading that a carried
@@ -354,20 +413,37 @@ def _expanded_root_matches_actions(tree: MCTSTree, root_id: int, actions: np.nda
     the superset leaves the eliminator and the returned target disagreeing about
     which moves exist.
 
-    The Python reference (``gumbel.py``) never reuses a tree, so its semantic for
-    a narrowed support is a fresh root holding only that support; equality is
-    what makes the C path agree with it.
+    The two rejection verdicts are kept apart because they mean opposite things
+    to an operator: ``MISSING_ACTION`` is the W2 alarm (the tree disagrees with
+    the rules), ``NARROWED`` is routine (the search asked a narrower question).
+    A root that is BOTH missing an action and carrying extras reports
+    ``MISSING_ACTION`` — the alarm outranks the bookkeeping.
+
+    ⚑ Scope, so this is not read as more than it is: equality makes the C path
+    agree with the Python reference (``gumbel.py``, which never reuses a tree)
+    about WHICH MOVES EXIST at the root. It does NOT deliver full parity with a
+    fresh root. A reused root still carries the PREVIOUS ply's ``t->prior``
+    values, which ``gss_score_and_halve`` reads for ``weighted_q``, while the
+    Python side rebuilds ``root_priors`` from this ply's evaluation. That
+    divergence is pre-existing, unchanged here, and out of scope.
 
     Order and visits are irrelevant — only membership. Sorted comparison rather
     than a two-way ``isin`` so a duplicated child action cannot read as a match
     on a set basis; both sides are duplicate-free by construction, and n <= 218.
     """
     child_actions, _visits = tree.get_children_visits(root_id)
-    if child_actions.size != actions.size:
-        return False
-    if actions.size == 0:
-        return True
-    return bool(np.array_equal(np.sort(child_actions), np.sort(actions)))
+    if child_actions.size == actions.size and (
+        actions.size == 0
+        or bool(np.array_equal(np.sort(child_actions), np.sort(actions)))
+    ):
+        return _ROOT_SUPPORT_EQUAL
+    if actions.size and not bool(np.isin(actions, child_actions).all()):
+        return _ROOT_SUPPORT_MISSING_ACTION
+    # Every requested action is present and the sets are not equal, so the root
+    # carries extras: this search narrowed its support. (An empty `actions`
+    # against a root with children lands here too, and is narrowing taken to its
+    # limit.)
+    return _ROOT_SUPPORT_NARROWED
 
 
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
@@ -858,16 +934,20 @@ def run_gumbel_root_many_c(
                 # scorer's max_visit / mixed_value / min-max normalisation, so a
                 # move this search says does not exist still decides which of the
                 # moves that DO exist survives. See
-                # _expanded_root_matches_actions. On rejection we fall through to
-                # the fresh-root build below, which expands exactly `legal_idx` —
-                # the Python reference's semantic for a narrowed root.
-                if tree.is_expanded(rid) and _expanded_root_matches_actions(
-                    tree, rid, legal_idx
-                ):
-                    root_ids[i] = rid
-                    _reused = True
-                elif tree.is_expanded(rid):
-                    _warn_root_coverage_miss()
+                # _classify_expanded_root_support. Either rejection falls through
+                # to the fresh-root build below, which expands exactly
+                # `legal_idx` — the Python reference's semantic for a narrowed
+                # root — but they are counted apart: MISSING is the alarm, and
+                # NARROWED is routine and fires on ordinary winning-root plies.
+                if tree.is_expanded(rid):
+                    _support = _classify_expanded_root_support(tree, rid, legal_idx)
+                    if _support == _ROOT_SUPPORT_EQUAL:
+                        root_ids[i] = rid
+                        _reused = True
+                    elif _support == _ROOT_SUPPORT_MISSING_ACTION:
+                        _warn_root_coverage_miss()
+                    else:
+                        _warn_root_support_narrowed()
 
             if not _reused:
                 rid = tree.add_root(1, float(root_qs[i]))
