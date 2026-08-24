@@ -115,9 +115,29 @@ lc0_ext = Extension(
 mcts_tree_ext = Extension(
     "chess_anti_engine.mcts._mcts_tree",
     sources=["chess_anti_engine/mcts/_mcts_tree.c"],
+    # The tree compiles the NNUE evaluator in directly (via the eval-plugin
+    # seam's provider header) rather than calling across a .so boundary, so it
+    # needs the encoding headers both files share.
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     extra_compile_args=_mcts_compile_args(),
     extra_link_args=_ext_link_args(openmp=True),
 )
 
-setup(ext_modules=[features_ext, lc0_ext, mcts_tree_ext])
+# ⚑ THE DEFAULT (PORTABLE) BUILD IS SCALAR-ONLY. The AVX2 kernels compile in
+# only under -march=native, i.e. when CAE_EXT_NATIVE is set — as
+# scripts/build_production_extensions.py does and CI does not. So on a portable
+# build _nnue_ext.HAVE_AVX2 is 0, set_simd(True) raises, and there is one kernel
+# rather than two. Anything that flips kernels must branch on HAVE_AVX2; the
+# evaluator's own numbers are identical either way, since the two kernels are
+# gated against Stockfish precisely to keep that true.
+nnue_ext = Extension(
+    "chess_anti_engine.nnue._nnue_ext",
+    sources=["chess_anti_engine/nnue/_nnue_ext.c"],
+    include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
+    # OpenMP: the throughput benchmark measures the multi-thread scaling the
+    # native-generator gate is decided on, so it has to actually run threaded.
+    extra_compile_args=_mcts_compile_args(),
+    extra_link_args=_ext_link_args(openmp=True),
+)
+
+setup(ext_modules=[features_ext, lc0_ext, mcts_tree_ext, nnue_ext])
