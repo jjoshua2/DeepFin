@@ -1703,11 +1703,34 @@ def test_sfnnue_decodes_with_the_configured_layout() -> None:
     # exactly why the flag is threaded rather than defaulted.
     assert as_root is None or as_root.fen() != as_legacy.fen()
 
-    source = _sf_source(input_history_encoding="legacy")
+    # ⚑ Through `build_sf_source`, NOT by constructing the source directly.
+    # An earlier version of this test built a StockfishValueSource by hand and
+    # asserted its attribute -- which is a statement about the constructor, not
+    # about the wiring. A mutant that hardwired "lc0_root_legacy_meta" inside
+    # `build_sf_source` SURVIVED it: the one place the flag could be dropped
+    # was the one place the test did not look.
+    cfg = _config(
+        Path("/tmp"), value_source="sfnnue", sf_binary=_SF_BINARY,
+        input_history_encoding="legacy",
+    )
+    source = GEN.build_sf_source(cfg)
+    assert source is not None
     try:
-        assert source.input_history_encoding == "legacy"
+        assert source.input_history_encoding == "legacy", (
+            "the configured layout did not reach the decoder"
+        )
     finally:
         source.close()
+
+    # ... and the production layout still arrives as itself.
+    root_source = GEN.build_sf_source(
+        _config(Path("/tmp"), value_source="sfnnue", sf_binary=_SF_BINARY),
+    )
+    assert root_source is not None
+    try:
+        assert root_source.input_history_encoding == _HIST
+    finally:
+        root_source.close()
 
 
 @_needs_sf
