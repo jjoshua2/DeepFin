@@ -906,6 +906,7 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "sf_policy_floor_truncated_frac": 0.0,
     "sf_policy_floor_member_count_applied": 0.0,
     "sf_policy_floor_applied_mass": 0.0,
+    "sf_own_regret_gated_frac": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -1040,6 +1041,13 @@ def _train_metrics_dict(metrics) -> dict:
             metrics.sf_policy_floor_member_count_applied,
         ),
         "sf_policy_floor_applied_mass": float(metrics.sf_policy_floor_applied_mass),
+        # ⚑ Share of the rows `sf_own_regret` acted on that the fabricated-tail
+        # gate scaled DOWN. This column is the ONLY observation that proves the
+        # gate reached the production path, so it has to land in the Ray result
+        # row -- TensorBoard event files rotate per Ray session and are a
+        # non-sink (see the TrainMetrics comment above `batches_drawn`). Reads
+        # exactly 0.0 at the identity defaults.
+        "sf_own_regret_gated_frac": float(metrics.sf_own_regret_gated_frac),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration

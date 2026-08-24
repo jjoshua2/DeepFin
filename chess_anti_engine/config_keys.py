@@ -17,6 +17,17 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
   # They are classified restart-required instead (`_STARTUP_ONLY_TRIAL_KEYS`),
   # so a live edit warns rather than no-ops.
     "w_sf_policy_floor",
+  # ⚑ The fabricated-tail gate keys (`sf_own_regret_listed_mass_min`,
+  # `sf_own_regret_unlisted_scale`) are deliberately NOT here. Same criterion as
+  # the `sf_policy_floor_*` shape keys immediately above, reached from the other
+  # direction: they are not loss WEIGHTS, they select WHICH ROWS the term applies
+  # to, i.e. they re-interpret rows already in the replay window -- the same
+  # reason `policy_target_temp` is excluded. Being in this tuple would make them
+  # every-iteration live-pushable AND part of the salvage-donor overlay, so a
+  # mid-run edit would silently re-shape the term's population under a
+  # half-finished readout window, and the arm's readout is a day-plus paired
+  # arena. They live in the startup-only group in `utils/config_yaml.py`, which
+  # warns on a mid-run edit instead.
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",
