@@ -66503,3 +66503,26 @@ ends best. Realized purity: both checkpoints written under the 0.002 bar. JSONs:
 scratchpad/elo_calib/MIX025_{MID,LAST}_vs_iter595.json. ARM 2 LAUNCHED: f=0.50 seed 12
 bar 0.002, out runs/lc0_mix050_iter595_20260824, 0 refusals; ETA ~17:30 → arenas →
 arm 3 (f=0.75, seed 13).
+
+### 2026-08-24 — LADDER AMENDMENT (Josh, pre-committed BEFORE arm-2 readout): up to TWO extensions, selection-error hedge
+
+Amends prereg 10fc2f1d4's single-extension clause. Rationale (Josh): at n=400
+the CI is ±~30, so which arm is "best" is unresolvable when arms land within
+~40 Elo — extending only the point-estimate winner risks spending the one
+extension on selection noise. Amended rules, recorded while only arm 1 has
+read out (arm 2 mid-training, arm 3 unlaunched):
+- Extension selectors after all 3 arms: (a) highest LAST Elo; (b) highest
+  PREDICTED endpoint = LAST + (LAST − MID), the naive linear extrapolation.
+  If (a) and (b) name the SAME arm, only ONE extension runs. If they differ,
+  BOTH named arms extend (+20k, same seed, --init-from own LAST, bar 0.002).
+- Extension gate per arm unchanged from C2/C4: extend only if its LAST CI
+  spans 0 or is negative, WITH slope > 0. C1 (outright success) and C3/C5
+  (close) unchanged.
+- TERMINAL read: **800-game** arena vs iter-595 (±~21, vs ±30 at 400) — more
+  games, not more leniency, because two shots at "CI>0" would double the
+  false-positive rate at n=400. Per-arm success = CI excludes 0 positive; if
+  both clear, fix candidate = higher point estimate; if neither, LANE CLOSES.
+  No further extensions in any case.
+- Secondary (non-deciding) analysis at close: monotone dose-trend across the
+  four points f=0 (banked −41.0) / 0.25 / 0.50 / 0.75 — the trend has more
+  resolution than any pairwise contrast at these error bars.
