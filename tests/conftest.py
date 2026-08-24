@@ -32,6 +32,8 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import threading
+import time
 import weakref
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
@@ -269,6 +271,15 @@ def _reap_replay_prefetch_threads() -> Iterator[None]:
     # been collected, `__del__` already ran `close()` and there is nothing left
     # to do.
     started: weakref.WeakSet[DiskReplayBuffer] = weakref.WeakSet()
+    # The THREADS are tracked separately, also weakly, because `close()` is not
+    # proof of shutdown: it joins for only 1.0s and then drops
+    # `_prefetch_thread` even if the thread is still alive (a slow or stalled
+    # shard read), which would hand the next test a live thread this fixture
+    # believed it had reaped. A weakref to a Thread does not keep the BUFFER
+    # alive (the reachability argument above is undisturbed); a running thread
+    # is pinned by `threading._active`, and one that has finished may be
+    # collected — then there is nothing left to join.
+    threads: weakref.WeakSet[threading.Thread] = weakref.WeakSet()
     real = cls._ensure_prefetch_thread
 
     def _tracking_ensure_prefetch_thread(self: DiskReplayBuffer) -> None:
@@ -277,6 +288,7 @@ def _reap_replay_prefetch_threads() -> Iterator[None]:
         # starting anything for the suppressed configurations above.
         if self._prefetch_thread is not None:
             started.add(self)
+            threads.add(self._prefetch_thread)
 
     cls._ensure_prefetch_thread = _tracking_ensure_prefetch_thread
     try:
@@ -293,6 +305,24 @@ def _reap_replay_prefetch_threads() -> Iterator[None]:
                 buf.close()
             _REAPED_PREFETCH_BUFFERS += 1
         started.clear()
+        # `close()` returning is NOT proof the thread stopped (1.0s join, then
+        # the reference is dropped) — wait out any straggler ourselves. This
+        # also covers a thread that outlived a test's OWN `close()` call, which
+        # the buffer no longer remembers but this WeakSet does. The stop event
+        # is already set, so a live thread here is finishing one shard read;
+        # 30s is a shared ceiling, not a per-thread hang budget.
+        deadline = time.monotonic() + 30.0
+        for t in list(threads):
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+            if t.is_alive():
+                # Loud, not fatal: the next tests may see its output, and that
+                # must be attributable to THIS test, not mistaken for theirs.
+                print(
+                    f"[conftest] WARNING: prefetch thread {t.name} survived "
+                    "close() plus a 30s join and may pollute later tests",
+                    file=sys.stderr,
+                )
+        threads.clear()
 
 
 @pytest.hookimpl(hookwrapper=True)

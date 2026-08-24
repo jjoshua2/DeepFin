@@ -164,7 +164,12 @@ def test_leaky_replay_file_leaves_no_prefetch_thread_behind() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     env = dict(os.environ)
     env[_EXPECT_REAPED_ENV] = "1"
-    env["PYTHONPATH"] = str(repo_root)
+    # Prepend rather than overwrite: the parent may already carry entries the
+    # child's imports need (documented invocation is `PYTHONPATH=. pytest`).
+    inherited = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{repo_root}{os.pathsep}{inherited}" if inherited else str(repo_root)
+    )
     probe = f"{Path(__file__).name}::test_no_prefetch_thread_is_alive"
     out = subprocess.run(
         [
