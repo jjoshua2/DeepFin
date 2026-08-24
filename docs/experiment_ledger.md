@@ -66542,3 +66542,26 @@ read out (arm 2 mid-training, arm 3 unlaunched):
   no longer trips the non-finite-grad guard — silent TB column until #271 adds a log.
 - Unblocks: AZ-purity Stage 1 prerequisite 1 (was BLOCKING) and the sfnnue bootstrap lane.
   NOT deployed to the live branch (production stopped; merges to main only — MERGED ≠ DEPLOYED).
+
+### 2026-08-24 — PR #459 MERGED (main ea8c410a7): C-only Gumbel knob route guard
+- `validate_gumbel_config` now REFUSES a non-default `full_tree` unconditionally (C-only
+  knob: read by the C path, silently dropped by the Python path), and
+  `assert_python_path_can_run` is the first statement of `run_gumbel_root_many`;
+  `C_ONLY_GUMBEL_KNOBS` table + `_C_ONLY_KNOB_DETAIL` messages. `policy_encoding` covered
+  as the read-by-neither case. `full_tree` has NO config surface at all (no SearchConfig
+  field, no yaml key, never passed by `build_selfplay_gumbel_config`) — pinned by
+  `test_production_selfplay_has_no_route_to_the_knob_at_all`, which fails the day someone
+  adds `gumbel_full_tree`.
+- Reviews: Opus (8 findings) + Grok; consolidated fix pass `228a1abe6` — corrected
+  placement/mechanism claims (C divergence under full_tree is NON-MONOTONE: topk=4 zeros
+  ≤896, ~2.0 at 1024/3072/4096, ~1e-6 at 1280 — 1024/4 is an empirical working point, not
+  a depth threshold; the sweep falsified the fixer's own "played move never changes" claim
+  at 3072/4096, now test-pinned). 15/15 mutants. Final commit `ce01d7eae` fixed two CI-ruff
+  findings the fixer's pre-final lint pass missed (RUF100 inert noqa, RUF043 unraw regex).
+- ⚑ Two transferable traps banked from this PR: (a) a marker grep cannot verify the
+  absence of a DELETION mutant — snapshot files up front and restore via atexit;
+  (b) `rep_fix.apply` is a process-global no test restores → cross-file flake (task #274;
+  #459 snapshot/restores its own caller, every other `pick_moves_for_boards` test remains
+  latent).
+- Narrows task #264 to closure of the route-guard half. NOT deployed to the live branch
+  (production stopped; merges to main only — MERGED ≠ DEPLOYED).
