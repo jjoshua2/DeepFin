@@ -1995,33 +1995,62 @@ def compute_loss(
             split_losses[f"wdl_rows_{suffix}"] = wdl_bucket_mask.to(torch.float32).sum()
             split_losses[f"policy_rows_{suffix}"] = policy_bucket_mask.to(torch.float32).sum()
 
-    total = (
-        float(w_policy) * m_policy
-        + float(w_soft) * m_soft
-        + float(w_future) * m_future
-        + float(w_sf_own) * m_sf_own
-        + float(w_sf_own_regret) * m_sf_own_regret
-        + float(w_wdl) * m_blended_wdl
-        + float(w_sf_move) * m_sf_move
-        + float(w_sf_eval) * m_sf_eval
-        + float(w_categorical) * m_cat
-        + float(w_volatility) * m_vol
-        + float(w_sf_volatility) * m_sf_vol
-        + float(w_moves_left) * m_ml
+  # ⚑ EVERY TERM IS ADDED UNDER AN `if`, NOT MULTIPLIED BY ITS WEIGHT, and the
+  # TABLE is the point: a head added to `total` inherits the guard instead of
+  # depending on someone remembering to repeat it. Two things the `if` buys:
+  #
+  # (1) `0.0 * x` IS NOT ZERO FOR EVERY `x`. `0.0 * float("nan")` is NaN, so ONE
+  #     NaN component poisons `total` -- and every gradient built from it --
+  #     through a weight that is supposed to mean "off". `masked_mean` is NOT a
+  #     defence: its DENOMINATOR is `clamp_min(1.0)`, but its NUMERATOR is
+  #     `(x * mask).sum()`, and `0.0 * nan` is NaN there too, so an EMPTY mask
+  #     over a NaN term returns NaN rather than 0.0. That regime is the expected
+  #     one and not an edge case: the AZ-purity arm zeroes several loss weights
+  #     and gen-0 shards carry NO SF fields at all, so a zero-weighted SF term
+  #     over an empty denominator is what a normal iteration of that arm looks
+  #     like. Same shape as "a clamp is not a validator", where min/max quietly
+  #     propagate NaN while the guard's own counter reads healthy.
+  # (2) INERTNESS IS EXACT: at weight 0.0 the objective is the one that existed
+  #     before the term, bit-identically rather than identical-up-to-a-`+ 0.0`.
+  #
+  # ⚑ THE PREDICATE IS EXACT EQUALITY WITH ZERO, NOT `<= 0.0`. A NEGATIVE weight
+  # is still a term in `total` (sign-flipped, but present), which is exactly what
+  # `eval_ruler.active_loss_terms` reports for a plain multiplier. The two rules
+  # have to agree or the holdout ruler hashes a term set the objective does not
+  # have. `-0.0` compares equal to `0.0` and is therefore off in both.
+  #
+  # The DIAGNOSTIC columns are computed either way, above and in the returned
+  # dict below, so switching a weight on is never the first time anyone sees
+  # what its term does.
+    weighted_terms: tuple[tuple[float, torch.Tensor], ...] = (
+        (float(w_policy), m_policy),
+        (float(w_soft), m_soft),
+        (float(w_future), m_future),
+        (float(w_sf_own), m_sf_own),
+        (float(w_sf_own_regret), m_sf_own_regret),
+        (float(w_wdl), m_blended_wdl),
+        (float(w_sf_move), m_sf_move),
+        (float(w_sf_eval), m_sf_eval),
+        (float(w_categorical), m_cat),
+        (float(w_volatility), m_vol),
+        (float(w_sf_volatility), m_sf_vol),
+        (float(w_moves_left), m_ml),
+        (float(floor_params.w), m_sf_policy_floor),
     )
-
-  # ⚑ ADDED ONLY WHEN THE WEIGHT IS NON-ZERO, unlike every term above, and that
-  # is deliberate on two counts. (1) INERTNESS IS EXACT: at the default 0.0 the
-  # expression for `total` is the one that existed before this term, so the
-  # objective is bit-identical rather than identical-up-to-a-`+ 0.0`. (2) `0.0 *
-  # x` IS NOT ZERO FOR EVERY `x`: a NaN or inf leaking out of the floor would
-  # poison `total` through a weight that is supposed to mean "off" -- the same
-  # shape as "a clamp is not a validator", where min/max quietly propagate NaN
-  # while the guard's own counter reads healthy. The diagnostic columns below
-  # are computed either way, so switching the weight on cannot be the first time
-  # anyone sees what the term does.
-    if float(floor_params.w) != 0.0:
-        total = total + float(floor_params.w) * m_sf_policy_floor
+  # Folded LEFT in declaration order, so with every weight non-zero this performs
+  # the same sequence of float32 additions as the flat `a + b + c + ...`
+  # expression it replaces: `total` is bit-identical there, not merely close.
+    total: torch.Tensor | None = None
+    for w, term in weighted_terms:
+        if w == 0.0:
+            continue
+        total = w * term if total is None else total + w * term
+    if total is None:
+  # Every weight is zero, so the objective is empty and `total` is a constant.
+  # It carries no gradient path -- there is no term left to carry one -- which
+  # is the honest reading of "nothing is being trained" and is not something a
+  # config asking for no objective at all should be able to hide.
+        total = torch.zeros_like(m_policy)
 
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
