@@ -391,7 +391,7 @@ def policy_temp_active(policy_temp: float) -> bool:
 
 
 # The divisor the C sequential halving silently raises anything smaller to:
-# `g->halving_div = (halving_div >= 2) ? halving_div : 2` (_mcts_tree.c:3966).
+# `g->halving_div = (halving_div >= 2) ? halving_div : 2` (_mcts_tree.c:3978).
 MIN_HALVING_DIV = 2
 
 
@@ -478,7 +478,7 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
     if math.isfinite(hd) and hd < MIN_HALVING_DIV:
         problems.append(
             f"halving_div={cfg.halving_div!r} is below {MIN_HALVING_DIV}, which the C search "
-            f"silently raises to {MIN_HALVING_DIV} (_mcts_tree.c:3966), so the "
+            f"silently raises to {MIN_HALVING_DIV} (_mcts_tree.c:3978), so the "
             "search would run STANDARD halving under a record naming your value"
         )
     if problems:

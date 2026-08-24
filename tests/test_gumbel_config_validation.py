@@ -154,7 +154,7 @@ def test_the_sentinel_arm_a_non_finite_value_takes_is_the_silent_one() -> None:
 
 @pytest.mark.parametrize("value", [1, 0, -3])
 def test_a_halving_div_the_c_would_clamp_is_refused(value: int) -> None:
-    """``_mcts_tree.c:3966``: ``g->halving_div = (halving_div >= 2) ? d : 2``.
+    """``_mcts_tree.c:3978``: ``g->halving_div = (halving_div >= 2) ? d : 2``.
 
     So ``halving_div=1`` runs STANDARD halving and every record of the run says
     it did not halve. Same defect as the temperature, different knob.
