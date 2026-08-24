@@ -66565,3 +66565,27 @@ read out (arm 2 mid-training, arm 3 unlaunched):
   latent).
 - Narrows task #264 to closure of the route-guard half. NOT deployed to the live branch
   (production stopped; merges to main only — MERGED ≠ DEPLOYED).
+
+### 2026-08-24 — PR #460 MERGED (main 73bec37c2): blend-path NaN/±inf finite guards (task #271)
+- `_finite_blend_component` + `_assert_blend_labels_finite` in `train/losses.py`: a row that
+  CLAIMS an SF blend component (frac>0) but carries a non-finite label now raises loudly
+  instead of training on it. Policy call, kept over two review objections: the assert is
+  deliberately UNGATED on `w_wdl` — a dirty claimed label is a DATA defect, wrong at any
+  weight, so `w_wdl=0` does not silence it.
+- Grok F2 (the real bug caught in review): a claimed `-inf` was LAUNDERED before the guard —
+  `_normalize_sf_wdl_probs`'s `clamp_min(0.0)` maps `-inf`→0.0, so `+inf` raised while `-inf`
+  trained silently. Fix: the guard now takes the RAW component and tests
+  `isfinite(raw) & isfinite(probs)`, making NaN/±inf one case (IEEE keep-property test-pinned).
+- UNCLAIMED rows (frac==0, non-finite label) stay announce-not-sanitize: counted in new
+  `blend_unclaimed_nonfinite_rows` + once-per-iteration warning, never raised on — at live's
+  `w_sf_eval: 0.0` an m_sf_eval NaN is disarmed-but-counted; at main's 0.10 regime the
+  non-finite-grad guard fires (both regimes tested). Codex P1 answered on-thread (3845588691).
+- Mutation: 17/18 killed; M16a survives BY DESIGN — it demonstrates Grok F4 (a metric-key
+  rename kills the warning while the stubbed test stays green; the real-`compute_loss`
+  integration test goes red, which is the pin). M11 (unreachable `raw is required` ValueError —
+  the signature defect class inside its own fix) caught in the fix pass and now covered.
+- OWED at first deployed iteration: Fable P2 — per-step host-sync cost of the new guards
+  (ms/step vs the #238 series). Eval-path units trap documented (guards not in
+  `_RAW_SUM_LOSS_KEYS`); hashed loss surface untouched.
+- Closes task #271. NOT deployed to the live branch (production stopped; merges to main
+  only — MERGED ≠ DEPLOYED).
