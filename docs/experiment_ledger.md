@@ -66326,3 +66326,23 @@ calibration error. NOT salvageable by retuning: no middlegame gain existed at an
 setting, and any retune would be judged by the ruler V is partially the gradient of.
 Code stays in-tree flag-off. RE-SCREEN CONDITION: if an instrument ever prices
 opening/middlegame moves in Elo-convertible terms, V is cheap to re-screen there.
+
+### 2026-08-24 — PR #452 + #453 MERGED to main (gumbel search fixes) — NEITHER IS DEPLOYED; both void the frozen-search regret baseline WHEN deployed
+
+- **#452** (squash, 23:52Z): warm-root reuse now requires exact support equality —
+  draw-pruned children can no longer pollute halving stats on winning roots. Python
+  path (`gumbel_c.py`), takes effect when the live branch picks it up. DATA-AFFECTING:
+  on every narrowed ply the stored policy row and values are rebuilt from a cold root.
+- **#453** (squash, 00:16Z): C `gss_score_and_halve` scores against the fresh
+  `root_qs[bi]` baseline instead of mutated `W/N` (mctx-conformant). ⚑ `.c` change —
+  per CLAUDE.md's rebuild rule it silently deploys on the NEXT
+  `build_production_extensions.py` run of a tree containing it. Deploy observable:
+  `GSS_HALVING_REV` = 2 (fixed) vs 1/absent (old rule), announced at startup with the
+  loaded `.so` path. Production-budget effect measured null (0/4,320 sweep, shift is
+  Δroot/(ΣN+1) = Δ/65 at prod shape); the fix matters at test/extreme shapes and for
+  correctness of the reference.
+- Combined tree validated pre-merge: main-with-#452 merged into #453, 33/33 shared
+  tests green locally, CI green on the merged head.
+- ⚑ DEPLOY GATE (both): deploy SEQUENTIALLY, never bundled in one restart; each deploy
+  gets its own ledger entry, voids the frozen-search regret series (frozen 2026-08-09
+  20:58) and needs a fresh regret baseline. Live branch does NOT yet contain either.
