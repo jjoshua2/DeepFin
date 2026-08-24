@@ -66481,3 +66481,16 @@ DEVIATION DISCLOSED: the prereg's bar was 0.001; realized leak 0.00101 makes 0.0
 the minimal clearing bar, and outcome-borne mass ≤0.2% is far below any plausible
 effect size. **Arms 2 and 3 will use 0.002 for consistency.** r2 ETA ~12:15; then
 MID+LAST arenas per prereg, then arm 2 (f=0.50, seed 12).
+
+### 2026-08-24 11:00 — LADDER ARM 1 (f=0.25) BANKED: MID −51.6 [−82.9,−21.2], LAST −13.9 [−43.7,+15.7] n=400/400
+
+r2 run (bar 0.002) completed clean — both guards PASS, checkpoints + summary
+banked (runs/lc0_mix025_iter595_20260824r2). Arena rows (banked template, seeds
+61/62, vs frozen iter-595 init): MID (step 10,032) **−51.62 [−82.91,−21.15]**;
+LAST (step 20,000) **−13.90 [−43.72,+15.71]** — dip-and-recover again, NOT
+monotone, same shape as ft595. Against ft595 (f=0, same init/steps/template:
+MID −84.1, LAST −41.0 [−64,−21]): f=0.25 halves the dip and moves the endpoint
+from a significant kill to a NULL spanning zero. Direction consistent with the
+ladder hypothesis (own-replay share buys back the lc0-fit Elo cost). No verdict
+yet — C1-C5 judge the BEST arm's LAST after all three arms; arm 2 (f=0.50,
+seed 12, bar 0.002) launched next on the free GPU.
