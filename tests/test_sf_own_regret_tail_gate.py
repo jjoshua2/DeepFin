@@ -19,12 +19,16 @@ mutant.
 from __future__ import annotations
 
 import inspect
+import warnings
+from pathlib import Path
 
 import pytest
 import torch
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
 from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.train import Trainer
 from chess_anti_engine.train.losses import (
     compute_loss,
     retemper_main_policy_target,
@@ -38,6 +42,9 @@ from chess_anti_engine.train.losses import (
 ALPHA = 0.52587890625
 REAL_REGRETS = (0.0, 0.012, 0.017, 0.033, 0.046, 0.052)
 N_LEGAL = 28
+# Input width for the one test that builds a real `Trainer`; matches the tiny
+# fixture net used by `tests/test_phase_loss_buckets.py`.
+_PLANES = 146
 
 
 def _constant_tail_row(*, n_legal: int = N_LEGAL, alpha: float = ALPHA) -> torch.Tensor:
@@ -551,6 +558,57 @@ def test_the_plateau_boundary_is_TWO_not_three() -> None:
     assert float(gated[0]) == 1.0
 
 
+def test_the_plateau_boundary_is_TWO_not_ONE() -> None:
+    """⚑⚑ THE OTHER SIDE OF THE SAME BAR, AND IT WAS THE ONE LEFT OPEN. A third
+    reviewer's mutation run found `>= 2` -> `>= 1` SURVIVING **319 tests** across
+    six files. `test_the_plateau_boundary_is_TWO_not_three` guards only the upper
+    side; nothing guarded the lower one, so the bar could have been deleted in the
+    permissive direction and every test stayed green.
+
+    ⚑ WHY THE EXISTING TESTS COULD NOT SEE IT, because the reason is the general
+    lesson and not a detail of this row. `>= 1` is true on EVERY row -- a row max
+    always has multiplicity at least one -- so it turns the plateau bar into a
+    no-op and re-admits exactly the fully-covered rows the bar exists to exclude.
+    The tests that cover those rows could not notice:
+
+      * `test_a_row_with_NO_fabricated_tail_is_never_gated` builds its rows from
+        `REAL_REGRETS`, whose max is 0.052. Those rows are already excluded by the
+        SECOND guard, `row_max >= _SF_REGRET_MIN_FILL` (0.5) -- so they stay
+        ungated under the mutant too, and the assertion passes for a reason that
+        has nothing to do with the bar under test. A BACKSTOP HOLLOWING OUT THE
+        PRIMARY GUARD'S TEST.
+      * `test_TIED_REAL_REGRETS_on_a_fully_covered_row` uses TIED maxima, i.e.
+        multiplicity >= 2 -- which `>= 1` also matches. Same verdict either way.
+
+    So the discriminating row needs BOTH properties at once, and neither existing
+    test has both: a UNIQUE max (multiplicity exactly 1, which only the real bar
+    rejects) that is ALSO at or above 0.5 (so the fill-range backstop cannot do
+    the rejecting for it). It is production-reachable: `legal_count <= sf_multipv`
+    with SF's worst surfaced line >= 500cp behind best and no tie.
+    """
+    reg = torch.zeros((POLICY_SIZE,), dtype=torch.float32)
+  # Four legal moves, ALL surfaced by MultiPV, max UNIQUE and inside the fill's
+  # arithmetic range [0.5, 1.0) so `_SF_REGRET_MIN_FILL` cannot reject it.
+    reg[0], reg[1], reg[2], reg[3] = 0.0, 0.11, 0.30, 0.70
+    legal = _legal(4).unsqueeze(0)
+    target = _onehot(3).unsqueeze(0)      # all mass on that unique max
+
+  # Non-degeneracy, asserted rather than assumed: the row really does clear the
+  # backstop, so a "not gated" verdict below can only come from the plateau bar.
+    assert 0.70 >= 0.5
+    assert int((reg[:4] == reg[:4].max()).sum()) == 1, "the max must be UNIQUE"
+
+    scale, gated = sf_regret_gate_scale(
+        reg.unsqueeze(0), target, legal,
+        listed_mass_min=0.5, unlisted_scale=0.0,
+    )
+    assert float(scale[0]) == 1.0, (
+        "gated a fully-covered row whose max is unique -- the plateau bar is gone "
+        "or has been weakened to `>= 1`"
+    )
+    assert float(gated[0]) == 0.0
+
+
 @pytest.mark.parametrize(
     "bad", [float("nan"), float("inf"), float("-inf"), -1.0, 10.0, 1e9],
 )
@@ -625,9 +683,12 @@ def test_a_non_finite_gate_value_falls_back_to_off_not_to_maximum_on() -> None:
       * `unlisted_scale: -inf`   -> clamps to 0.0 -> suppresses those rows fully
 
     So the code did the exact opposite of the sentence above it, on an input a
-    yaml can produce without anyone typing `.inf`: `yaml.safe_load("1e400")` is
-    `inf`, and so is `float("1e400")` on the `float(config.get(...))` path this
-    key travels. A too-long exponent silently arms the gate at full strength.
+    yaml can produce without anyone typing `.inf`. ⚑ Precisely: NOT via the yaml
+    parser -- `yaml.safe_load("1e400")` returns the STRING `'1e400'`, because
+    PyYAML's 1.1 float resolver requires a `.` -- but via the `float(...)` one
+    layer down in `trainer_kwargs_from_config`, where `float('1e400')` IS `inf`.
+    The escape is real end to end; the mechanism is the float conversion. A
+    too-long exponent silently arms the gate at full strength.
 
     ⚑ Asserted against a row the gate WOULD gate at a real threshold, so the
     assertion has somewhere to fail: the same fixture reads `scale == 0.0` at
@@ -664,6 +725,122 @@ def test_a_non_finite_gate_value_falls_back_to_off_not_to_maximum_on() -> None:
             f"unlisted_scale={bad} suppressed a gated row instead of disabling it"
         )
         assert float(gated[0]) == 0.0
+
+
+def test_a_substituted_gate_key_ANNOUNCES_itself_and_is_stored_realized() -> None:
+    """⚑⚑ THE TWO TYPO CLASSES REALIZE IN OPPOSITE DIRECTIONS, AND NO INSTRUMENT
+    CAN TELL THEM APART AFTER THE FACT.
+
+    `listed_mass_min: 10` realizes as `1.0` (gate every tail row);
+    `listed_mass_min: 1e400` realizes as `0.0` (gate disabled). Both are single
+    keystrokes off an in-range value, both were previously SILENT, and
+    `sf_own_regret_gated_frac` reads `0.0` for "deliberately off" and for
+    "disabled by fallback" alike -- so the one column that exists to prove the
+    gate reached production cannot distinguish them. That is the accepted-then-
+    ignored shape this repo is built to catch, so the substitution has to speak.
+
+    ⚑ Two separate claims here, and they fail independently:
+      1. a substitution WARNS, and an in-range pair does NOT (or the warning is
+         noise and gets filtered);
+      2. what the object STORES is the realized value, not the typed one -- so
+         `_loss_kwargs` and the reported config carry what is actually in force.
+    Claim 2 is the one that matters for our signature defect: a warning that
+    scrolls past while `params.json` still echoes `10` leaves the operator with a
+    config file that disagrees with the run.
+    """
+    from chess_anti_engine.train.losses import resolve_sf_regret_gate_keys
+
+  # 1a. The identity defaults must be SILENT.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert resolve_sf_regret_gate_keys(0.0, 1.0) == (0.0, 1.0)
+    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == [], (
+        "warned on the shipped defaults -- an alert that fires on every trial is "
+        "an alert nobody reads"
+    )
+
+  # 1b. An in-range non-default pair is also silent.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert resolve_sf_regret_gate_keys(0.75, 0.25) == (0.75, 0.25)
+    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
+
+  # 1c. Every substitution warns, and the two directions are asserted explicitly
+  # so a fallback that silently flipped to the other endpoint would fail here.
+    for typed, expected in (
+        ((10.0, 0.5), (1.0, 0.5)),          # finite over-range -> nearest endpoint
+        ((-1.0, 0.5), (0.0, 0.5)),          # finite under-range -> nearest endpoint
+        ((float("inf"), 0.5), (0.0, 0.5)),  # non-finite -> OFF, NOT the endpoint
+        ((0.5, float("-inf")), (0.5, 1.0)),  # non-finite -> OFF, NOT the endpoint
+        ((float("nan"), 1.0), (0.0, 1.0)),
+        ((0.5, float("nan")), (0.5, 1.0)),
+    ):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            got = resolve_sf_regret_gate_keys(*typed)
+        assert got == expected, f"{typed} realized as {got}, expected {expected}"
+        msgs = [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)]
+        assert len(msgs) == 1, f"{typed} produced {len(msgs)} warnings, expected 1"
+      # The typed value must appear in the text: "out of range" without the number
+      # sends the operator hunting through the yaml for which key it was.
+        assert "fabricated-tail gate key out of range" in msgs[0]
+        assert "realized as" in msgs[0]
+
+  # Sanity on the fixture used by the Trainer test below: typed and realized must
+  # differ, or that assertion has nothing to fail on.
+    assert resolve_sf_regret_gate_keys(10.0, -1.0) == (1.0, 0.0)
+
+
+def test_a_REAL_Trainer_stores_the_REALIZED_gate_keys_not_the_typed_ones(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THIS IS THE ONE THAT GOES THROUGH A `Trainer`, AND IT HAD TO.
+
+    A mutant that made the constructor store `float(typed)` instead of the
+    resolved value SURVIVED the whole gate suite, because every other test in this
+    file asserts the RULE (`resolve_sf_regret_gate_keys`) rather than the
+    constructor that is supposed to apply it. A rule that is correct and a caller
+    that ignores it is precisely this repo's signature defect, and a test of the
+    rule cannot see it -- the same gap that let the iteration-1 `TypeError` and
+    the dropped `trainer_kwargs_from_config` keys through in earlier waves.
+
+    ⚑ ASSERTED FROM THE CONSUMER'S OWN PARAMETER, not from the helper: the value
+    checked is the one `_loss_kwargs` will hand to `compute_loss`, which is the
+    thing an operator's `params.json` and the report row also read. If the
+    constructor ever resolves into a local and stores the typed value, this fails.
+    """
+    cfg = TransformerConfig(
+        in_planes=_PLANES, embed_dim=32, num_layers=1, num_heads=2,
+        use_smolgen=False, use_nla=False,
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        trainer = Trainer(
+            ChessNet(cfg), device="cpu", lr=1e-4, log_dir=tmp_path / "tb",
+            use_amp=False, feature_dropout_p=0.0, swa_start=-1,
+          # Both out of range, in OPPOSITE directions, so a "stored the typed
+          # value" bug cannot coincidentally match.
+            sf_own_regret_listed_mass_min=10.0,
+            sf_own_regret_unlisted_scale=-1.0,
+        )
+
+    assert trainer.sf_own_regret_listed_mass_min == 1.0, (
+        "Trainer stored the TYPED listed_mass_min -- the clamp resolved into a "
+        "local and the object kept the operator's out-of-range number"
+    )
+    assert trainer.sf_own_regret_unlisted_scale == 0.0
+
+  # The value that actually reaches the loss, read off `_loss_kwargs` rather than
+  # off the attribute a second time.
+    kwargs = trainer._loss_kwargs
+    assert kwargs["sf_own_regret_listed_mass_min"] == 1.0
+    assert kwargs["sf_own_regret_unlisted_scale"] == 0.0
+
+  # And it announced itself on the way through, once.
+    msgs = [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)]
+    assert any("fabricated-tail gate key out of range" in m for m in msgs), (
+        f"constructor substituted both keys silently; warnings seen: {msgs}"
+    )
 
 
 def test_the_gate_is_PINNED_OFF_on_the_eval_path() -> None:

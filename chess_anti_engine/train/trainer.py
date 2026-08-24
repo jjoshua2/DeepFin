@@ -97,6 +97,7 @@ from .losses import (
     compute_loss,
     normalize_value_blend_fracs,
     policy_target_temp_active,
+    resolve_sf_regret_gate_keys,
     retemper_main_policy_target,
     search_inclusion_guarantee_tau,
     warn_if_below_search_inclusion,
@@ -2710,8 +2711,19 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
-        self.sf_own_regret_listed_mass_min = float(sf_own_regret_listed_mass_min)
-        self.sf_own_regret_unlisted_scale = float(sf_own_regret_unlisted_scale)
+  # Fabricated-tail gate. RESOLVED ONCE, HERE, and the REALIZED pair is what this
+  # object stores -- so `_loss_kwargs`, the reported config and anything that reads
+  # these attributes all carry the value actually in force, not the one an operator
+  # typed. `sf_regret_gate_scale` re-applies the same rule (a no-op on an already
+  # resolved pair) so the offline rigs that call it directly are covered too.
+  # ⚑ This WARNS and does not raise, unlike the floor's shape keys immediately
+  # below; `resolve_sf_regret_gate_keys` records why the two differ.
+        (
+            self.sf_own_regret_listed_mass_min,
+            self.sf_own_regret_unlisted_scale,
+        ) = resolve_sf_regret_gate_keys(
+            sf_own_regret_listed_mass_min, sf_own_regret_unlisted_scale,
+        )
   # SF-approved-move floor. The WEIGHT is a plain live-pushable attribute like
   # every other `w_*` (`TRAINER_WEIGHT_KEYS`); the SHAPE is resolved ONCE, here,
   # and validated at construction so a bad tau kills startup rather than the
@@ -3475,11 +3487,19 @@ class Trainer:
         arm-vs-baseline comparison of that column would compare two rulers.
 
         ⚑ This also closes the ID's blind spot at the root rather than by widening
-        a digest closure. `eval_ruler_id` hashes the SOURCE of the covered frames,
-        so it moves when `compute_loss` is edited but is blind to
-        `sf_regret_gate_scale`, the helper that actually decides the number. With
-        the gate pinned off in eval, the helper cannot affect the eval measurement
-        at all, so there is nothing for the closure to have to see.
+        a digest closure. ⚑⚑ AND THE BLIND SPOT IS WIDER THAN AN EARLIER REVISION
+        OF THIS PARAGRAPH CLAIMED. It said the id "moves when `compute_loss` is
+        edited but is blind to `sf_regret_gate_scale`" -- an asymmetry that does
+        not exist. `eval_ruler_id_for`'s own docstring below says recursion stops
+        at this module's edge, so the closure is blind to `compute_loss`'s BODY
+        too; VERIFIED BY EXECUTION (a dead statement inserted into `compute_loss`
+        leaves the pins in `tests/test_holdout_ruler_identity.py` passing, one
+        inserted into this property fails them). ⇒ the pin is MORE necessary than
+        the false version argued, not less: nothing downstream of `_loss_kwargs`
+        is watched at all, so the gate could otherwise move the eval number with
+        the id sitting perfectly still. With it pinned off, no code below this
+        line can affect the eval measurement, and there is nothing for the
+        closure to have to see.
         """
         return {
             **self._loss_kwargs,

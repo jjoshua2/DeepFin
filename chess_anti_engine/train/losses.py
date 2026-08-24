@@ -1639,6 +1639,69 @@ def _phase_split_masks(
 _SF_REGRET_MIN_FILL = 0.5
 
 
+def resolve_sf_regret_gate_keys(
+    listed_mass_min: float, unlisted_scale: float,
+) -> tuple[float, float]:
+    """The two fabricated-tail gate keys, sanitized, WITH A WARNING IF THEY MOVED.
+
+    Non-finite -> the OFF value (``0.0`` / ``1.0``); finite out-of-range -> the
+    nearest endpoint of ``[0, 1]``. See ``sf_regret_gate_scale`` for why the two
+    cases are deliberately treated differently.
+
+    ⚑⚑ THE WARNING IS THE POINT, and it is what makes this a function rather than
+    four inline lines. Neither key is range-validated by ``TrialConfig`` (CLAUDE.md
+    category (c)), so before this the two typo classes were SILENT and, worse,
+    silently OPPOSITE: ``listed_mass_min: 10`` realized as ``1.0`` and gated every
+    tail row, while ``listed_mass_min: 1e400`` realized as ``0.0`` and disabled the
+    gate outright. Both echoed the operator's number straight back in
+    ``params.json``, and ``sf_own_regret_gated_frac`` reads ``0.0`` for "off" and
+    for "disabled by fallback" alike -- so no instrument could tell an operator
+    which of the two they had. That is this repo's signature defect exactly: a
+    value accepted and then quietly replaced.
+
+    ⚑ It WARNS rather than RAISES, unlike ``SfPolicyFloorParams.resolve`` 70 lines
+    up, and the asymmetry is deliberate rather than an oversight. Both keys are
+    startup-only, so a raise here is a FAILURE TO BOOT -- and per CLAUDE.md a
+    launch-time ``ValueError`` means the process never starts and there is no old
+    config to fall back to. The floor buys that risk with a term whose shape is
+    irrecoverable if wrong; this gate degrades to a documented, bit-exact identity
+    in every bad case, so killing a trial over it would cost more than it saves.
+    ⇒ warn loudly, name both numbers, and let the run continue at the safe value.
+    The caller that stores the RESULT (``Trainer.__init__``) is what closes the
+    loop: from then on the attribute, ``_loss_kwargs`` and the reported config all
+    carry the realized value instead of the typed one.
+    """
+    mass_min = float(listed_mass_min)
+    scale = float(unlisted_scale)
+    eff_min = 0.0 if not math.isfinite(mass_min) else min(max(mass_min, 0.0), 1.0)
+    eff_scale = 1.0 if not math.isfinite(scale) else min(max(scale, 0.0), 1.0)
+  # ⚑ `!=` and not `math.isclose`: this fires only when the sanitizer actually
+  # substituted a value, and NaN != NaN is True, which is the reading we want --
+  # a NaN input DID move.
+    moved = [
+        (name, typed, realized)
+        for name, typed, realized in (
+            ("sf_own_regret_listed_mass_min", mass_min, eff_min),
+            ("sf_own_regret_unlisted_scale", scale, eff_scale),
+        )
+        if typed != realized
+    ]
+    if moved:
+        detail = "; ".join(
+            f"{name}={typed!r} realized as {realized!r}" for name, typed, realized in moved
+        )
+        warnings.warn(
+            f"fabricated-tail gate key out of range: {detail}. Both keys are "
+            "probabilities and are clamped to [0, 1]; a non-finite value falls back "
+            "to the OFF value (listed_mass_min 0.0 / unlisted_scale 1.0). The trial "
+            "continues at the realized value -- `sf_own_regret_gated_frac` reads 0.0 "
+            "for a disabled gate and cannot tell you this happened, so fix the yaml.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return eff_min, eff_scale
+
+
 def sf_regret_surfaced_mask(
     reg_vec: torch.Tensor, legal_mask: torch.Tensor,
 ) -> torch.Tensor:
@@ -1674,7 +1737,26 @@ def sf_regret_surfaced_mask(
     would silently mask the wrong position — the P0-alignment defect that was
     caught once already by an impossible coverage of 1.04.
     """
-    legal = legal_mask.to(torch.bool)
+    return _sf_regret_surfaced_and_row_max(reg_vec, legal_mask.to(torch.bool))[0]
+
+
+def _sf_regret_surfaced_and_row_max(
+    reg_vec: torch.Tensor, legal: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(surfaced_mask, row_max)`` from one pass.
+
+    ⚑ BOTH OUTPUTS FROM ONE COMPUTATION, because both callers need both and the
+    row max is a full-width ``torch.where`` + ``amax``. ``sf_regret_gate_scale``
+    used to call ``sf_regret_surfaced_mask`` (which derived the max internally,
+    then discarded it) and then rebuild the very same tensor for its plateau test
+    — two 1858-wide temporaries per eligible batch for one quantity.
+
+    ⚑ The alternative — letting the gate compute ``row_max`` itself and inline
+    ``legal & (reg < row_max)`` — was rejected: it would put the definition of
+    "surfaced" in two places, and that rule is the single most load-bearing line
+    in this feature (the whole gate is a no-op under the ``reg < 1.0`` reading of
+    it). One private helper keeps one definition AND one computation.
+    """
   # Rows with no legal move would make `amax` read the -inf sentinel; clamp the
   # comparison to legal entries only so an empty row yields an all-False mask
   # rather than a NaN that propagates into the loss.
@@ -1682,7 +1764,7 @@ def sf_regret_surfaced_mask(
     row_max = torch.where(legal, reg_vec, torch.full_like(reg_vec, neg_inf)).amax(
         dim=-1, keepdim=True,
     )
-    return legal & (reg_vec < row_max)
+    return legal & (reg_vec < row_max), row_max
 
 
 def sf_regret_gate_scale(
@@ -1741,7 +1823,7 @@ def sf_regret_gate_scale(
     the mechanism behind it.
     """
     legal = legal_mask.to(torch.bool)
-    surfaced = sf_regret_surfaced_mask(reg_vec, legal_mask)
+    surfaced, row_max = _sf_regret_surfaced_and_row_max(reg_vec, legal)
   # ⚑ A FABRICATED TAIL IS A PLATEAU AT THE ROW MAX, not merely "some move was not
   # surfaced". `reg < row_max` excludes the argmax by construction, so
   # `surfaced_count < legal_count` is True on EVERY row with distinct values and
@@ -1757,9 +1839,6 @@ def sf_regret_gate_scale(
   #     cost is gating one row that had real supervision -- the same cost the
   #     unguarded version paid on every distinct-valued row, now rare instead of
   #     universal.
-    neg_inf = torch.finfo(reg_vec.dtype).min
-    masked = torch.where(legal, reg_vec, torch.full_like(reg_vec, neg_inf))
-    row_max = masked.amax(dim=-1, keepdim=True)
     at_max = legal & (reg_vec == row_max)
   # ⚑⚑ A ROW WHOSE MAX SITS AT THE CAP IS NEVER GATED. Normalized regret is capped
   # at 1.0, so a REAL regret that hit the cap is numerically INDISTINGUISHABLE from
@@ -1876,20 +1955,26 @@ def sf_regret_gate_scale(
   #     block guarded with `math.isnan` while the line below it promised
   #     "non-finite falls back to the OFF value" -- a claim the code did not keep
   #     for either infinity, which is this repo's signature defect stated in a
-  #     comment. ⚑ It is REACHABLE from yaml without anyone typing `.inf`:
-  #     `yaml.safe_load` returns `inf` for `1e400`, and `float("1e400")` in the
-  #     `_f`/`float(config.get(...))` path does the same, so an over-long
-  #     exponent typo reaches the consumer as an infinity.
+  #     comment. ⚑ It is REACHABLE from yaml without anyone typing `.inf`, and the
+  #     route is worth spelling correctly because an earlier revision got it
+  #     wrong: `yaml.safe_load("1e400")` does NOT return `inf`, it returns the
+  #     STRING `'1e400'` (PyYAML's 1.1 float resolver needs a `.`, so `1.0e400`
+  #     is a string too). The infinity is minted one layer down, by the
+  #     `float(config.get(...))` in `trainer_kwargs_from_config`: `float('1e400')`
+  #     IS `inf`. So the escape is real end to end -- an over-long exponent typo
+  #     reaches the consumer as an infinity -- but it arrives through the float
+  #     conversion, not through the yaml parser. MEASURED, not read off the spec.
   # ⇒ `math.isfinite` first, then clamp. Every non-finite input -- NaN and both
   # infinities -- falls back to the OFF value, so a typo degrades to "gate
   # disabled" rather than to a poisoned run OR to a silently maximal one. The
   # clamp still handles finite out-of-range values (`10` -> 1.0, `-5` -> 0.0),
   # because those ARE plausible decimal typos for an in-range value and the
   # nearest endpoint is the honest reading of them.
-    mass_min = float(listed_mass_min)
-    mass_min = 0.0 if not math.isfinite(mass_min) else min(max(mass_min, 0.0), 1.0)
-    raw_scale = float(unlisted_scale)
-    eff_scale = 1.0 if not math.isfinite(raw_scale) else min(max(raw_scale, 0.0), 1.0)
+  # ⚑ The rule lives in `resolve_sf_regret_gate_keys` so the Trainer can apply it
+  # ONCE at construction and store the realized value, rather than every caller
+  # re-deriving it. Re-resolving an already-resolved pair here is a no-op and
+  # stays silent, which is what keeps the warning to one line per trial.
+    mass_min, eff_scale = resolve_sf_regret_gate_keys(listed_mass_min, unlisted_scale)
     matches = (listed_mass < mass_min) & has_tail
     scale = torch.where(matches, torch.full_like(listed_mass, eff_scale),
                         torch.ones_like(listed_mass))
@@ -1909,8 +1994,11 @@ def compute_loss(
     w_sf_own_regret: float = 0.0,
   # Fabricated-tail gate on the sf_own_regret term. Defaults are a BIT-EXACT
   # identity — see `sf_regret_gate_scale`. Both are read here, not just accepted:
-  # `sf_own_regret_gated_frac` in the returned metrics is how an operator proves
-  # the gate reached the production path at all.
+  # ⚑ this function returns the COUNT `sf_own_regret_gated_rows`; the ratio an
+  # operator actually reads, `sf_own_regret_gated_frac`, is derived from it
+  # against `sf_own_regret_rows` by `_RATIO_METRIC_FIELDS` in `train/trainer.py`.
+  # Naming the derived column as though it came back from here sends anyone
+  # grepping for it to the wrong module.
     sf_own_regret_listed_mass_min: float = 0.0,
     sf_own_regret_unlisted_scale: float = 1.0,
     w_wdl: float = 1.0,
@@ -2095,12 +2183,20 @@ def compute_loss(
       # ⚑⚑ `legal_mask` IS FETCHED WITH `.get`, NOT BY SUBSCRIPT. It is OPTIONAL
       # everywhere else in this function — every other consumer goes through
       # `_get_mask`/`apply_policy_mask_to_logits`/`.get` — and subscripting it
-      # here raised `KeyError` on 5 tests in `test_sf_p0_teacher_metrics.py` plus
-      # 3 in `test_phase_loss_buckets.py`. Without legality the surfaced set is
-      # not identifiable, so the gate DOES NOT FIRE rather than guessing.
-      # ⚑ Do not "fix" this with `ones_like`: that marks all 1858 padding slots
-      # legal, making the row max the padding fill and the gate silently never
-      # fire on any row.
+      # here raises `KeyError` on 6 tests in `test_sf_p0_teacher_metrics.py`
+      # (re-measured on this tree: 49 -> 43 passed; the `test_phase_loss_buckets.py`
+      # half of the older count belonged to the `policy_t` guard that is gone).
+      # Without legality the surfaced set is not identifiable, so the gate DOES NOT
+      # FIRE rather than guessing.
+      # ⚑ Do not "fix" this with `ones_like`, but NOT for the reason an earlier
+      # revision of this comment gave. It said an all-True mask "makes the row max
+      # the padding fill and the gate silently never fire on any row". THAT IS
+      # FALSE, and measured to be false: `finalize.py::_build_sf_p0_regret_vector`
+      # writes `np.full((POLICY_SIZE,), default_regret)` -- the fill covers ILLEGAL
+      # indices too -- so an all-True mask leaves `row_max` and the surfaced set
+      # unchanged, and the gate fires IDENTICALLY. It is also identical when the
+      # padding densifies to 0.0 instead, because the stored target puts no mass
+      # there, so `listed_mass` cannot move. The real objection is the row below.
       #
       # ⚑ THE TARGET IS `aligned_pol_target`, NOT A SECOND READ OF `policy_t`.
       # Earlier waves of this branch did `align_policy_target(batch.get("policy_t"),
@@ -2127,15 +2223,25 @@ def compute_loss(
       # `has_legal_mask` clear did occur HISTORICALLY, so the rows can exist in an old
       # window. If a future change makes an unflagged mask non-zero rather than absent,
       # conjoin the flag -- the guard here is the all-zero shape, not the flag.
-      # ⚑ AND THAT IS WHY THIS DOES NOT CALL `policy_legal_bool` (added to this
-      # module by PR #448, after this branch was cut). That helper returns
-      # `aligned | (has_legal_mask <= 0.5)`, i.e. it calls EVERY action legal on a
-      # row whose flag is clear -- correct for the floor term, whose contract is
-      # "the support the softmax actually has", and exactly the `ones_like` shape
-      # the paragraph above forbids for the gate: an all-True legal row makes the
-      # row max the padding fill, so the surfaced set stops meaning "what SF
-      # listed". The two callers want different things from the same key; sharing
-      # the helper would silently give the gate the floor's answer.
+      # ⚑ AND THAT IS THE WHOLE REASON THIS DOES NOT CALL `policy_legal_bool`
+      # (added to this module by PR #448, after this branch was cut). MEASURED, on
+      # a production-shaped 1858-wide row under both padding conventions:
+      #
+      #   legality source                          scale   gated
+      #   true legal_mask                          0.000    1.0
+      #   policy_legal_bool / ones_like            0.000    1.0
+      #   unflagged row, all-zero legal_mask       1.000    0.0   <- the difference
+      #
+      # ⇒ the two agree everywhere EXCEPT on `has_legal_mask == 0` rows, and that
+      # single column is the argument. `policy_legal_bool` returns
+      # `aligned | (has_legal_mask <= 0.5)`, so on such a row it hands back a
+      # FABRICATED 1858-move legal set and the gate would scale the term down off
+      # it. This path refuses instead. Correct for the floor -- its contract is
+      # "the support the softmax actually has", and the softmax is unmasked there
+      # -- and wrong for a gate whose whole subject is which moves SF really
+      # listed. Two callers, one key, different questions; sharing the helper
+      # would silently give the gate the floor's answer on exactly the rows
+      # `eval/era_probe.py` says exist in older windows.
         legal_for_gate = batch.get("legal_mask")
         if legal_for_gate is not None:
             sf_own_regret_scale, sf_own_regret_gated = sf_regret_gate_scale(
