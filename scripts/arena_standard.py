@@ -238,6 +238,14 @@ class SideSearch:
         setting. A sweep over out-of-band temperatures is then a set of
         IDENTICAL arms recorded as different ones -- the c_puct Swiss (audit
         2026-08-03 F2) with a live knob instead of a dead one.
+
+        ⚑ ``frozen=True`` freezes the ATTRIBUTES, not the ``gumbel`` dict they
+        point at: ``side.gumbel["policy_temp"] = 1e300`` after construction
+        mutates in place and never re-enters this check. Nothing in this script
+        does that (every layer builds a new ``SideSearch``), and copying the
+        dict would only move the hole one alias further out, so this is recorded
+        rather than defended against -- but a future in-place edit is the way
+        past the guard, and it should build a new side instead.
         """
         import dataclasses as _dc
 
@@ -654,7 +662,17 @@ def apply_search_overrides(
                 "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
                 "over it would return a flat null and read as a measurement."
             )
-        gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        try:
+            gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        except ValueError:
+            # `int("2.5")` and `float("abc")` both land here. Refused in this
+            # function's own style rather than as a raw traceback: an int knob
+            # given 2.5 would otherwise have been truncated to 2 by the
+            # consumer if it parsed, which is the same silent-value defect.
+            raise SystemExit(
+                f"--*-gumbel: {k}={v!r} is not "
+                f"{'an integer' if k in _GUMBEL_INT_KEYS else 'a number'}"
+            ) from None
         extra.append(part)
     if vloss_weight is not None:
         extra.append(f"vloss_weight={int(vloss_weight)}")
@@ -1993,8 +2011,94 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help=f"JSONL results log (default: {DEFAULT_RESULTS_PATH})")
 
 
+def resolve_sides_from_args(args) -> tuple[SideSearch, SideSearch]:
+    """The complete ``matched_sims`` search resolution, exactly as ``main()`` does it.
+
+    Module-level rather than a block inside ``main()`` so the ORDER below is
+    drivable by a test: shape -> per-side overrides -> refuse the flags the run
+    would discard -> print. A guard whose invocation only ``main()`` performs is
+    a guard nothing can prove runs, which is the defect this whole change is
+    about; ``main()`` needs two checkpoints, so nothing was ever going to drive
+    it there.
+
+    Resolves BEFORE any model load, so a bad shape or an unrunnable knob costs a
+    second rather than a four-minute compile.
+    """
+    if args.search_shape is None:
+        raise SystemExit(
+            "--search-shape is required for matched_sims "
+            f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
+            "for anything judging the training loop."
+        )
+    base = resolve_search_shape(args.search_shape)
+    side_candidate = apply_search_overrides(
+        base, spec=args.cand_gumbel,
+        vloss_weight=args.cand_vloss_weight,
+        target_batch=args.cand_target_batch,
+    )
+    side_reference = apply_search_overrides(
+        base, spec=args.ref_gumbel,
+        vloss_weight=args.ref_vloss_weight,
+        target_batch=args.ref_target_batch,
+    )
+    refuse_flags_the_arena_would_discard(base, args)
+  # AFTER the overrides, and after the shape is final: the sides are what will
+  # actually be searched with. `describe()` therefore reports the realized
+  # values including every CLI override, which is what makes the printed record
+  # downstream of every override application site.
+    for label, side in (("candidate", side_candidate), ("reference", side_reference)):
+        print(f"[shape] {label}: {side.describe()}", flush=True)
+    _warn_noise_schedule_deviation(base, add_noise=not args.no_gumbel_noise)
+    return side_candidate, side_reference
+
+
+def refuse_flags_the_arena_would_discard(base: SideSearch, args) -> None:
+    """Refuse flags this run would accept, print, bank -- and then not use.
+
+    Both cases below are the PR's own defect one level out: the value is not
+    out of band, it is perfectly legal, and the arena simply never applies it.
+
+    1. ``--volatility-*`` under ``--search-shape training``. ``match.py`` builds
+       the config with the volatility kwargs and THEN applies ``side.gumbel``
+       over it (``dataclasses.replace``, match.py:140-152). The training shape's
+       ``gumbel`` dict carries ``volatility_q_scale`` / ``volatility_fpu`` /
+       ``volatility_anchor`` read from production (0.0 / 0.0), so the replace
+       overwrites the CLI value with production's zero and the Python volatility
+       path never switches on -- while ``volatility_candidate`` is banked into
+       the result record naming the operator's number. The PLAY shape carries no
+       volatility keys, so there the flags survive; that combination stays legal.
+    2. A non-finite ``--temperature``. ``sample_action_with_temperature`` gates
+       on ``temperature > 0``, which is False for ``nan``, so the arena plays
+       pure argmax while the JSONL records ``temperature: nan``.
+    """
+    if base.shape == "training" and _volatility_kwargs_from_args(args) is not None:
+        raise SystemExit(
+            "--volatility-* with --search-shape training: the training shape's "
+            "gumbel dict carries volatility_q_scale/volatility_fpu from "
+            "production (both 0.0) and match.py applies it AFTER the volatility "
+            "kwargs, so your value is overwritten before the search sees it -- "
+            "while the result record banks it as volatility_candidate. Use "
+            "--search-shape play for a volatility A/B, or drop the flags."
+        )
+    temperature = float(args.temperature)
+    if not math.isfinite(temperature):
+        raise SystemExit(
+            f"--temperature {temperature!r}: sample_action_with_temperature "
+            "gates on `temperature > 0`, which is False for a non-finite value, "
+            "so the arena would play pure argmax and record your value as the "
+            "temperature it played at."
+        )
+
+
 def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
-    """CANDIDATE-side volatility search kwargs, or None when all flags are off."""
+    """CANDIDATE-side volatility search kwargs, or None when all flags are off.
+
+    ⚑ The all-off early return happens BEFORE validation, deliberately: with
+    both scales at 0.0 there is no volatility search to configure, and
+    ``volatility_anchor`` alone cannot switch one on (this same predicate is
+    what ``volatility_search_enabled`` asks). Validating a dict that is never
+    built would refuse a run over a knob nothing reads.
+    """
     if float(args.volatility_q_scale) == 0.0 and float(args.volatility_fpu) == 0.0:
         return None
     if args.mode != "matched_sims":
@@ -2215,32 +2319,7 @@ def main() -> None:
     # run_arena reject the combination.
     side_candidate = side_reference = None
     if args.mode == "matched_sims":
-        if args.search_shape is None:
-            raise SystemExit(
-                "--search-shape is required for matched_sims "
-                f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
-                "for anything judging the training loop."
-            )
-        base = resolve_search_shape(args.search_shape)
-        side_candidate = apply_search_overrides(
-            base, spec=args.cand_gumbel,
-            vloss_weight=args.cand_vloss_weight,
-            target_batch=args.cand_target_batch,
-        )
-        side_reference = apply_search_overrides(
-            base, spec=args.ref_gumbel,
-            vloss_weight=args.ref_vloss_weight,
-            target_batch=args.ref_target_batch,
-        )
-      # AFTER the overrides, and after the shape is final: the sides are what
-      # will actually be searched with. `describe()` therefore reports the
-      # realized values including every CLI override, which is what makes the
-      # printed record downstream of every override application site.
-        for label, side in (("candidate", side_candidate), ("reference", side_reference)):
-            print(f"[shape] {label}: {side.describe()}", flush=True)
-        _warn_noise_schedule_deviation(
-            base, add_noise=not args.no_gumbel_noise,
-        )
+        side_candidate, side_reference = resolve_sides_from_args(args)
     else:
         # matched_time launches UCI subprocesses, which carry their own search.
         # EVERY in-process search flag is inert here, not just --search-shape:

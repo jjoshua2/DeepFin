@@ -113,6 +113,8 @@ from chess_anti_engine.mcts.gumbel import (
     _policy_logits_to_full,
     _root_sigma_scale,
     _select_top_m_with_gumbel,
+    halving_keep_count,
+    halving_visits_per_action,
 )
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits as _wdl_to_q
 from chess_anti_engine.mcts.puct_vl import _PLANES, PucvChunker
@@ -125,38 +127,14 @@ _log = logging.getLogger(__name__)
 
 
 # --- pure halving-schedule arithmetic (mirrors _mcts_tree.c) ------------------
-
-
-def halving_rounds_left(n_candidates: int, halving_div: int = 2) -> int:
-    """Ceil-divisions of ``n_candidates`` by ``halving_div`` down to 1.
-
-    Mirrors the ``while (tmp > 1) { rounds_left++; tmp = (tmp+div-1)/div; }``
-    loop in ``gss_begin_round``.
-    """
-    div = max(2, int(halving_div))
-    rounds = 0
-    tmp = int(n_candidates)
-    while tmp > 1:
-        rounds += 1
-        tmp = (tmp + div - 1) // div
-    return rounds
-
-
-def halving_visits_per_action(
-    n_candidates: int, budget_remaining: int, halving_div: int = 2,
-) -> int:
-    """Per-candidate sims for the current round (``gss_begin_round``)."""
-    if n_candidates <= 1:
-        return int(budget_remaining)
-    rounds_left = halving_rounds_left(n_candidates, halving_div)
-    return max(1, int(budget_remaining) // (int(n_candidates) * rounds_left))
-
-
-def halving_keep_count(n_candidates: int, halving_div: int = 2) -> int:
-    """Survivors after one halving round (``gss_score_and_halve``)."""
-    div = max(2, int(halving_div))
-    keep = (int(n_candidates) + div - 1) // div
-    return max(1, min(keep, int(n_candidates) - 1))
+#
+# ⚑ `halving_visits_per_action` / `halving_keep_count` MOVED to `mcts/gumbel.py`
+# and are imported above, so this module's public surface (and its tests') is
+# unchanged. They moved because the Python reference search in that file carried
+# a second, hardcoded div-2 copy of this arithmetic and never read
+# `cfg.halving_div`; two implementations of one schedule is how a knob ends up
+# honoured on one path and dropped on the other. `halving_rounds_left` lives
+# there too -- import it from `mcts.gumbel`, which is now its only home.
 
 
 def halving_schedule(
