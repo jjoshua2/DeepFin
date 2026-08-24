@@ -596,6 +596,21 @@ def build_gumbel_config(cfg: GenConfig) -> GumbelConfig:
 
 
 def build_opening_config(cfg: GenConfig) -> OpeningConfig:
+    """The two opening sources this tool has: a book, and random start plies.
+
+    ⚑ The blind-spot FEN-list branch of ``resolve_slot_opening`` is
+    STRUCTURALLY UNREACHABLE from this generator. It needs both a list path and
+    a positive draw probability on the shared ``OpeningConfig``, and neither is
+    a flag here nor assigned below, so both stay at the dataclass defaults
+    (``None`` / ``0.0``) on every run. That is deliberate: generation zero is
+    pure selfplay, and seeding from harvested blind spots would be curriculum
+    data smuggled into the arm that exists to have none.
+
+    Because it cannot vary, it is NOT announced in ``realized_config`` — see
+    that function's docstring for why a constant in the realized line is a
+    liability rather than extra provenance. The tests reach the branch by
+    building an ``OpeningConfig`` directly, which is a fixture, not a setting.
+    """
     return OpeningConfig(
         opening_book_path=None if cfg.openings is None else str(cfg.openings),
         opening_book_max_plies=int(cfg.opening_plies),
@@ -619,6 +634,16 @@ def realized_config(
     ``GumbelConfig`` the search receives, the evaluator instance it calls, the
     ``OpeningConfig`` the sampler reads, or the OS. A flag that got dropped on
     the way in is therefore visible in this line, not just in the parser.
+
+    ⚑ And ONLY such fields. A field no flag can move is not extra provenance,
+    it is a constant wearing a realized value's clothes — the mirror of the
+    defect this line exists to catch, and it dilutes the one property the line
+    claims (every entry here moved because something asked it to). So the
+    unreachable FEN-list opening fields are absent by the same rule that keeps
+    the parser's own spellings out; ``build_opening_config`` says why they
+    cannot vary. Wiring a flag for one is what should put it back, and the
+    deletion-annotation guard in ``tests/test_deletion_annotations.py`` will
+    stop that PR to have the key re-judged, which is the right place for it.
     """
     return {
         "worker_id": int(worker_id),
@@ -647,8 +672,6 @@ def realized_config(
         "opening_book_prob": float(opening_cfg.opening_book_prob),
         "opening_book_max_plies": int(opening_cfg.opening_book_max_plies),
         "opening_book_max_games": int(opening_cfg.opening_book_max_games),
-        "opening_fen_list_path": opening_cfg.opening_fen_list_path,
-        "opening_fen_prob": float(opening_cfg.opening_fen_prob),
         "random_start_plies": int(opening_cfg.random_start_plies),
         "history_rep_fix": bool(rep_fix.current() or False),
         "max_plies": int(cfg.max_plies),

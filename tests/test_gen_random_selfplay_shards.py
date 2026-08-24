@@ -568,6 +568,47 @@ def test_realized_config_is_read_off_the_objects_that_consume_it(
     assert "sims" not in realized, "realized must not echo the parser's names"
 
 
+def test_the_fen_seeding_branch_is_unreachable_and_unannounced(
+    tmp_path: Path,
+) -> None:
+    """Generation zero cannot seed from blind-spot FENs, and does not claim to.
+
+    Two halves, and the second is the one with teeth. FIRST: no CLI-reachable
+    combination populates the FEN-list branch of the shared ``OpeningConfig``,
+    so a run of this tool is pure selfplay by construction rather than by
+    convention -- seeded openings would be curriculum data inside the arm whose
+    whole point is having none. SECOND: because those fields cannot move, they
+    are absent from the realized line. A constant there is not extra
+    provenance; it is the mirror of the defect the line exists to catch, and it
+    would weaken the only property the line claims -- that every entry in it
+    moved because something asked it to.
+
+    Wiring a real flag for either field fails BOTH halves here and the
+    literal-surface pin in ``tests/test_deletion_annotations.py``, which is
+    where a consumer of a key the production config no longer sets belongs.
+    """
+    for cfg in (
+        _config(tmp_path),
+        _config(tmp_path, random_start_plies=6),
+        _config(tmp_path, openings=None),
+    ):
+        opening_cfg = GEN.build_opening_config(cfg)
+        assert opening_cfg.opening_fen_list_path is None
+        assert float(opening_cfg.opening_fen_prob) == 0.0
+        realized = GEN.realized_config(
+            gcfg=GEN.build_gumbel_config(cfg),
+            evaluator=GEN.UniformPriorEvaluator(
+                value_source="zero", expected_planes=_PLANES,
+            ),
+            opening_cfg=opening_cfg, cfg=cfg, worker_id=0,
+        )
+        assert not [k for k in realized if k.startswith("opening_fen")]
+        # Not just "the fen keys are gone": the reachable opening source is
+        # still announced, so this is a scoped absence and not an empty line.
+        assert "opening_book_prob" in realized
+        assert "random_start_plies" in realized
+
+
 def test_search_defaults_match_the_live_production_yaml() -> None:
     """Pin the four provenance numbers an earlier revision took from `main`.
 
