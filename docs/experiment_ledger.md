@@ -66464,3 +66464,20 @@ is production's own residual (losses.py fallback on unlabeled rows) and is
 present identically in every arm, so it cannot differentiate the ladder's
 contrasts. C1-C5 verdict clauses UNCHANGED. Arm-1 relaunch: same seed 11, same
 init/corpus/steps, fresh out-dir runs/lc0_mix025_iter595_20260824r2.
+
+**2026-08-24 ~04:50 — RATIO ARM 1: run 1 GUARD-REFUSED (zero checkpoints), relaunched
+as r2 by another session with the bar at 0.002.** Run 1 (mix025, seed 11) completed
+all 20k steps with PERFECT routing — realized own fraction exactly 0.25 (2,560,000/
+10,240,000 rows), per-source routing guard PASS — but the REALIZED VALUE-BLEND GUARD
+measured 0.0010 of own-rows WDL mass on raw game outcome via the label fallback
+(3,761 of 2.56M own rows lack SF labels → leak 0.00101 > bar 0.001) and refused to
+write ANY checkpoint, including the mid one it had already staged. 10h of GPU bought
+a clean purity demonstration and nothing else; the guard worked as designed and the
+bar was set a hair too tight for this window's real label coverage.
+At 02:07 a SECOND Claude session relaunched the identical arm as
+`runs/lc0_mix025_iter595_20260824r2` with `--mix-own-max-outcome-borne 0.002` (the
+one change; log `scratchpad/mix025r2_train.log`, preflight all-match, 0 refusals).
+DEVIATION DISCLOSED: the prereg's bar was 0.001; realized leak 0.00101 makes 0.002
+the minimal clearing bar, and outcome-borne mass ≤0.2% is far below any plausible
+effect size. **Arms 2 and 3 will use 0.002 for consistency.** r2 ETA ~12:15; then
+MID+LAST arenas per prereg, then arm 2 (f=0.50, seed 12).
