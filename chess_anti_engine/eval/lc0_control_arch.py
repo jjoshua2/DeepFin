@@ -262,8 +262,9 @@ def assert_control_matches_live_architecture(
   # applies to a live file only when that file's section is byte-identical —
   # otherwise the live tree is building something the pin never measured, and
   # a count taken from the pin would be an invented number.
+    pinned_model = dict(pinned["model"])
     expected_params: int | None = None
-    if live_config is None or reference == dict(pinned["model"]):
+    if live_config is None or reference == pinned_model:
         expected_params = int(pinned["trainable_params_unique_storage"])
 
     problems = model_section_drift(model_section(control_raw_config), reference)
@@ -274,6 +275,31 @@ def assert_control_matches_live_architecture(
                 f"trainable params (unique storage): control={realized} "
                 f"live={expected_params}",
             )
+    elif model is not None:
+  # ⚑⚑ THE CROSSCHECK USED TO SWITCH ITSELF OFF IN EXACTLY THE DRIFT CASE
+  # (PR #438 review, finding 1). `expected_params` is None here for one reason
+  # only: we are judging against a LIVE file whose `model:` section is not the
+  # one the pin measured. Skipping silently is the worst available answer,
+  # because the key-level comparison above is blind to precisely this state:
+  # `model_section_drift` compares the CONTROL against the LIVE reference, so
+  # it passes whenever the two moved TOGETHER, and the pinned count is then the
+  # only instrument that could still notice — and it was the one being turned
+  # off. Report the staleness instead; an instrument that cannot run must say
+  # so rather than return "clean".
+        stale_keys = sorted(
+            key for key in set(reference) | set(pinned_model)
+            if reference.get(key) != pinned_model.get(key)
+        )
+        problems.append(
+            "the parameter crosscheck COULD NOT RUN: the live file's `model:` "
+            "section is not the one LIVE_ARCH_PIN measured, so the pinned "
+            f"{int(pinned['trainable_params_unique_storage'])} describes a net "
+            "this tree no longer builds and applying it here would invent a "
+            "number. Keys the pin disagrees with the live file about: "
+            + (", ".join(stale_keys) or "<none>")
+            + ". Regenerate it with scripts/lc0_control_arch_pin.py --axis arch "
+            "--live-config <the live pbt2_small.yaml>.",
+        )
     if not problems:
         return provenance
     where = f" [{context}]" if context else ""

@@ -1435,7 +1435,16 @@ def shard_dir_search_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
 
 
 def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
-    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label."""
+    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label.
+
+    ⚑⚑ A DIAGNOSTIC, NEVER A GATE. ``labelled > 0`` answers "is there a label
+    anywhere", and no value-blend decision wants that question: the blend falls
+    every UNLABELLED row back to the raw game outcome, so what a gate needs is
+    ``labelled == rows``. This function was the SF half of
+    ``check-run-config`` while the search half measured coverage, which passed a
+    partially-labelled corpus (PR #438 review, finding 3). Gate on
+    `shard_dir_sf_wdl_coverage` instead; this stays only for reporting.
+    """
     labelled, _rows = shard_dir_sf_wdl_coverage(shard_dir)
     return labelled > 0
 
@@ -1889,15 +1898,44 @@ def cmd_check_run_config(args: argparse.Namespace) -> int:
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
     config = flatten_run_config_defaults(yaml.safe_load(Path(args.config).read_text()))
-    have_sf = shard_dir_has_sf_wdl(Path(args.shards))
-  # ⚑ Coverage, not presence, on the SEARCH side: a share that is not carried
-  # by EVERY row still lands on the raw outcome for the rest of them.
-    search_labelled, search_rows = shard_dir_search_wdl_coverage(Path(args.shards))
-    have_search = search_rows > 0 and search_labelled == search_rows
+  # ⚑ Coverage, not presence, on BOTH sides: a share that is not carried by
+  # EVERY row still lands on the raw outcome for the rest of them.
+  #
+  # ⚑⚑ THE SF SIDE USED TO ASK A DIFFERENT QUESTION FROM THE SEARCH SIDE, WITH
+  # THE COMMENT SAYING "COVERAGE" SITTING BETWEEN THEM (PR #438 review, finding
+  # 3). `shard_dir_has_sf_wdl` is `labelled > 0`, so ONE labelled row in a
+  # million made `have_sf` True, `run_config_problems` returned [], and a
+  # partially-labelled corpus was waved through with the unlabelled remainder
+  # training its value head on the raw game outcome, unwarned. The sibling gate
+  # in `scripts/lc0_control_train.py:preflight` already measured both sides as
+  # fractions and refused a partial corpus; this is that rule, here.
+    coverage = {
+        "sf_wdl": shard_dir_sf_wdl_coverage(Path(args.shards)),
+        "search_wdl": shard_dir_search_wdl_coverage(Path(args.shards)),
+    }
+    complete = {
+        flag: rows > 0 and labelled == rows
+        for flag, (labelled, rows) in coverage.items()
+    }
+    have_sf = complete["sf_wdl"]
+    have_search = complete["search_wdl"]
     problems = run_config_problems(
         config, shards_have_sf_wdl=have_sf, shards_have_search_wdl=have_search,
     )
-    print(f"shards carry a Stockfish value label: {have_sf}")
+  # ⚑ A PARTIAL CORPUS IS ITS OWN FAILURE, not just a False. Reported for both
+  # labels because "0 of 8 rows" and "7 of 8 rows" call for different actions,
+  # and averaging two regimes is never one of them.
+    problems.extend(
+        f"the shards are PARTIALLY {flag}-labelled ({labelled}/{rows} rows). "
+        "Every value-blend decision downstream assumes one regime or the "
+        "other; split the corpus rather than averaging two."
+        for flag, (labelled, rows) in coverage.items()
+        if 0 < labelled < rows
+    )
+    sf_labelled, sf_rows = coverage["sf_wdl"]
+    search_labelled, search_rows = coverage["search_wdl"]
+    print(f"shards carry a Stockfish value label: {have_sf} "
+          f"({sf_labelled}/{sf_rows} rows)")
     print(f"shards carry a search value label:    {have_search} "
           f"({search_labelled}/{search_rows} rows)")
     for key in (*VALUE_BLEND_KEYS, "search_wdl_frac"):
@@ -1980,19 +2018,33 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 def _publish(staging: Path, out: Path) -> int:
-    """Move staged shards into ``out``. Refuses to overwrite an existing shard."""
-    moved = 0
-    for path in sorted(staging.iterdir()):
-        destination = out / path.name
-        if destination.exists():
-            raise FileExistsError(
-                f"{destination} already exists; refusing to mix this run's rows into a "
-                "populated output directory",
-            )
-        path.rename(destination)
-        moved += 1
+    """Move staged shards into ``out``. Refuses to overwrite an existing shard.
+
+    ⚑⚑ TWO PASSES, AND THE SPLIT IS THE WHOLE POINT (PR #438 review, finding
+    5). Checking each destination inside the move loop made the refusal
+    ORDER-DEPENDENT: an ``out`` already holding ``shard_000001.zarr`` but not
+    ``shard_000000.zarr`` got 000000 renamed in and THEN raised on 000001,
+    leaving a half-published corpus, an orphaned ``_staging`` dir, and no
+    manifest — the exact partial-publish state the staging directory was
+    introduced to make impossible. The guard was correct about every individual
+    shard and wrong about the operation, because the operation is the whole set.
+    Scan ALL destinations first; touch the filesystem only once nothing can
+    collide.
+    """
+    staged = sorted(staging.iterdir())
+    collisions = [path.name for path in staged if (out / path.name).exists()]
+    if collisions:
+        raise FileExistsError(
+            "refusing to mix this run's rows into a populated output directory: "
+            f"{out} already holds " + ", ".join(collisions)
+            + f" ({len(collisions)} of {len(staged)} staged shard(s)), which "
+            "would produce a corpus no manifest describes. ⚑ NOTHING HAS BEEN "
+            f"MOVED — every staged shard is still under {staging}.",
+        )
+    for path in staged:
+        path.rename(out / path.name)
     staging.rmdir()
-    return moved
+    return len(staged)
 
 
 def _write_shard(

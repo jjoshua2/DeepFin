@@ -662,7 +662,14 @@ def purity_receipt_problems(
     — not a count, not a "looks right", and not a flag somebody sets by hand.
     """
     receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
-    covered = {str(Path(d)) for d in receipt.get("train_shards", ())}
+  # ⚑ BOTH SIDES RESOLVED (PR #438 review, finding 2). `used` was resolved and
+  # `covered` was not, so the set difference compared a normalised path against
+  # whatever spelling the receipt happened to carry. It agrees today only
+  # because THIS repo's writer resolves before banking; any other producer, a
+  # relative path, or a symlinked mount makes the comparison answer a question
+  # about spelling instead of about identity — in both directions, so it can
+  # pass wrongly as easily as it can fail wrongly.
+    covered = {str(Path(d).resolve()) for d in receipt.get("train_shards", ())}
     used = {str(Path(d).resolve()) for d in shard_dirs}
     problems: list[str] = []
     if not receipt.get("pure", False):
@@ -677,6 +684,44 @@ def purity_receipt_problems(
             + ", ".join(sorted(used - covered))
             + ". The receipt cleared: " + (", ".join(sorted(covered)) or "<none>"),
         )
+  # ⚑⚑ THE BANKED HASH IS NOW APPLIED, NOT JUST CARRIED. `frozen_sha256` was
+  # written by `lc0_control_heldout`, copied into `summary.json`, and printed —
+  # and never once compared to the artifact it names, which made it a receipt
+  # field rather than a check (the accepted-then-ignored shape). The directory
+  # sets above tie the corpus by NAME; this is the only tie by CONTENT, and it
+  # is what catches a held-out set re-frozen (new sample, new seed, repaired
+  # split) after the receipt was written, which renames nothing.
+  #
+  # ⚑ A MISSING ARTIFACT IS A PROBLEM, NOT A SKIP. "verify when convenient" is
+  # a gate that cannot fail; the receipt is meaningless without the set it
+  # describes, and the fix is to re-freeze or re-run purity, not to launch.
+    banked_sha = str(receipt.get("frozen_sha256") or "")
+    frozen_named = str(receipt.get("frozen") or "")
+    if not banked_sha or not frozen_named:
+        problems.append(
+            f"the purity receipt {receipt_path} names no frozen artifact "
+            f"(frozen={frozen_named or '<absent>'}, "
+            f"frozen_sha256={banked_sha or '<absent>'}), so nothing ties it to "
+            "the held-out set by CONTENT. Re-run `lc0_control_heldout purity "
+            "--receipt` with a build that banks both.",
+        )
+    elif not Path(frozen_named).exists():
+        problems.append(
+            f"the frozen held-out set the purity receipt describes is GONE: "
+            f"{frozen_named}. Its sha256 {banked_sha} cannot be verified, so "
+            "the receipt clears a corpus against a set nobody can produce. "
+            "Re-freeze and re-run purity.",
+        )
+    else:
+        digest = sha256_file(Path(frozen_named))
+        if digest != banked_sha:
+            problems.append(
+                f"the frozen held-out set {frozen_named} has CHANGED since the "
+                f"purity receipt was written: sha256 {digest} on disk, "
+                f"{banked_sha} banked. The receipt cleared a different set — "
+                "re-run purity against the set this run will actually be "
+                "scored on.",
+            )
     return receipt, problems
 
 

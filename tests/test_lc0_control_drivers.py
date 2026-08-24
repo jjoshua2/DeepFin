@@ -2018,6 +2018,69 @@ def test_the_purity_receipt_ties_the_trained_corpus_to_the_check(
         _run([train], "impure")
 
 
+def test_the_receipt_is_tied_to_the_frozen_set_by_CONTENT_not_only_by_NAME(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ PR #438 review, finding 2 — two holes in one gate.
+
+    ``frozen_sha256`` was written by `purity`, copied into ``summary.json`` and
+    PRINTED at launch, and never once compared to the artifact it names. A
+    receipt field that nothing reads is this repo's signature defect, and here
+    it hid a real state: re-freezing the held-out set (new sample, new seed, a
+    repaired split) renames nothing, so the directory-set check below stays
+    green while the receipt now clears a set that no longer exists.
+
+    The second hole is the comparison itself: ``used`` was resolved and
+    ``covered`` was not, so the two sets were compared across normalisation.
+    It agrees today only because this repo's writer happens to resolve before
+    banking — which makes it an accident, not a check.
+    """
+    held = _write_shards(tmp_path / "held", list(range(6)))
+    train = _write_shards(tmp_path / "train", list(range(100, 108)))
+    _rc, frozen = _freeze(tmp_path, held, sample=6)
+    receipt = tmp_path / "purity.json"
+    assert lc0_control_heldout.main([
+        "purity", "--frozen", str(frozen), "--train-shards", str(train),
+        "--receipt", str(receipt),
+    ]) == 0
+
+  # Baseline: the honest receipt clears its own corpus with no problems, so
+  # every assertion below is about the change and not about a broken fixture.
+    _receipt, problems = lc0_control_train.purity_receipt_problems(receipt, [train])
+    assert problems == [], problems
+
+  # (a) SPELLING. A path that resolves to the cleared directory IS the cleared
+  # directory. Under the unresolved comparison this reported "NOT covered".
+    banked = json.loads(receipt.read_text(encoding="utf-8"))
+    detour = train.parent / "zzz" / ".." / train.name
+    assert Path(detour).resolve() == train.resolve()
+    assert str(detour) != str(train.resolve())
+    banked["train_shards"] = [str(detour)]
+    receipt.write_text(json.dumps(banked), encoding="utf-8")
+    _receipt, problems = lc0_control_train.purity_receipt_problems(receipt, [train])
+    assert problems == [], problems
+
+  # (b) CONTENT. Same path, same name, different bytes — the only tie that can
+  # see a re-freeze.
+    banked["train_shards"] = [str(train.resolve())]
+    receipt.write_text(json.dumps(banked), encoding="utf-8")
+    frozen.write_bytes(frozen.read_bytes() + b"\n")
+    _receipt, problems = lc0_control_train.purity_receipt_problems(receipt, [train])
+    assert any("has CHANGED since the" in p for p in problems), problems
+
+  # (c) ABSENCE is a problem, not a skip: a gate that verifies only when the
+  # artifact happens to be there is a gate that cannot fail.
+    frozen.unlink()
+    _receipt, problems = lc0_control_train.purity_receipt_problems(receipt, [train])
+    assert any("is GONE" in p for p in problems), problems
+
+  # (d) And a receipt that banks no hash at all cannot be waved through either.
+    banked.pop("frozen_sha256")
+    receipt.write_text(json.dumps(banked), encoding="utf-8")
+    _receipt, problems = lc0_control_train.purity_receipt_problems(receipt, [train])
+    assert any("names no frozen artifact" in p for p in problems), problems
+
+
 def test_a_run_without_a_purity_receipt_is_not_a_valid_control(
     tmp_path: Path,
 ) -> None:

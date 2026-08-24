@@ -301,6 +301,54 @@ def test_the_pinned_parameter_count_is_checked_against_a_built_model() -> None:
     )
 
 
+def test_a_stale_pin_is_REPORTED_rather_than_silently_disabling_the_count(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE CROSSCHECK USED TO SWITCH ITSELF OFF IN THE DRIFT CASE.
+
+    ``expected_params`` is ``None`` for exactly one reason in live-file mode:
+    the live ``model:`` section is not the one the pin measured. That is the
+    STALE-PIN state, and it is the one state where the count is the only
+    instrument left — ``model_section_drift`` compares the CONTROL against the
+    LIVE file, so it is silent whenever the two moved together. The guard
+    therefore returned a clean provenance string for a pin describing a net the
+    tree no longer builds (PR #438 review, finding 1).
+
+    The setup is that exact state: control == live, both away from the pin.
+    """
+    pin: dict[str, Any] = {
+        "recorded": "2020-01-01", "live_branch": "toy", "live_commit": "deadbeef",
+        "trainable_params_unique_storage": 110,
+        "model": {"embed_dim": 64},
+    }
+    live = tmp_path / "live.yaml"
+    live.write_text(yaml.safe_dump({"model": {"embed_dim": 128}}), encoding="utf-8")
+    control: dict[str, Any] = {"model": {"embed_dim": 128}}
+    model = torch.nn.Linear(10, 10)
+
+  # The precondition, asserted rather than assumed: key-level drift is EMPTY,
+  # so nothing but the count could have caught this.
+    reference = model_section(yaml.safe_load(live.read_text(encoding="utf-8")))
+    assert model_section_drift(model_section(control), reference) == []
+
+    with pytest.raises(
+        ControlArchitectureDrift, match="parameter crosscheck COULD NOT RUN",
+    ) as excinfo:
+        assert_control_matches_live_architecture(
+            control, model=model, live_config=live, pin=pin,
+        )
+  # It must name the key that went stale, not just complain.
+    assert "embed_dim" in str(excinfo.value)
+
+  # ⚑ AND IT MUST STILL PASS WHEN THE PIN IS FRESH — otherwise this test would
+  # be satisfied by a guard that refuses everything, and the fix would be a
+  # regression rather than a repair.
+    fresh: dict[str, Any] = dict(pin, model={"embed_dim": 128})
+    assert assert_control_matches_live_architecture(
+        control, model=model, live_config=live, pin=fresh,
+    )
+
+
 def test_an_empty_reference_model_section_is_refused_not_agreed_with(
     tmp_path: Path,
 ) -> None:
