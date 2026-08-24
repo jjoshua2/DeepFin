@@ -2065,15 +2065,30 @@ def compute_loss(
       # `retemper_main_policy_target`. The gate must describe the DATA, so a
       # training knob must not be able to move which rows it selects.
       #
-      # ⚑⚑ BOTH INPUTS ARE FETCHED WITH `.get`, NOT BY SUBSCRIPT. `legal_mask` and
-      # `policy_t` are OPTIONAL everywhere else in this function — every other
-      # consumer goes through `_get_mask`/`apply_policy_mask_to_logits`/`.get` —
-      # and subscripting them here raised `KeyError` on 5 tests in
-      # `test_sf_p0_teacher_metrics.py` plus 3 in `test_phase_loss_buckets.py`.
-      # Without legality the surfaced set is not identifiable, so the gate DOES
-      # NOT FIRE rather than guessing. ⚑ Do not "fix" this with `ones_like`: that
-      # marks all 1858 padding slots legal, making the row max the padding fill
-      # and the gate silently never fire on any row.
+      # ⚑⚑ `legal_mask` IS FETCHED WITH `.get`, NOT BY SUBSCRIPT. It is OPTIONAL
+      # everywhere else in this function — every other consumer goes through
+      # `_get_mask`/`apply_policy_mask_to_logits`/`.get` — and subscripting it
+      # here raised `KeyError` on 5 tests in `test_sf_p0_teacher_metrics.py` plus
+      # 3 in `test_phase_loss_buckets.py`. Without legality the surfaced set is
+      # not identifiable, so the gate DOES NOT FIRE rather than guessing.
+      # ⚑ Do not "fix" this with `ones_like`: that marks all 1858 padding slots
+      # legal, making the row max the padding fill and the gate silently never
+      # fire on any row.
+      #
+      # ⚑ THE TARGET IS `aligned_pol_target`, NOT A SECOND READ OF `policy_t`.
+      # Earlier waves of this branch did `align_policy_target(batch.get("policy_t"),
+      # ...)` here, when `policy_t` was still optional in this function. It is not
+      # any more: PR #448 hoisted `aligned_pol_target = align_policy_target(
+      # batch["policy_t"], ...)` to the top of `compute_loss` as a HARD SUBSCRIPT,
+      # so a batch without it now raises long before this line and the second
+      # `.get` guarded a branch that can no longer be reached. Reusing the hoisted
+      # tensor drops a redundant full-width align per training step and, more to
+      # the point, keeps the two readers provably identical -- and it is the SAME
+      # decision this gate already made for its own reason: `aligned_pol_target`
+      # is the STORED target, kept UNRETEMPERED (see its comment above), which is
+      # exactly what the gate needs. `pol_target` is the retempered one and must
+      # never be used here; `test_the_gate_reads_the_STORED_target_not_the_
+      # retempered_one` fails if it is.
       # ⚑ `has_legal_mask` is deliberately NOT conjoined here, unlike `masked_base`
       # above, which routes through `apply_policy_mask_to_logits(..., "legal_mask",
       # "has_legal_mask")` and multiplies the mask by the row's flag. Reasons, in order:
@@ -2095,11 +2110,10 @@ def compute_loss(
       # listed". The two callers want different things from the same key; sharing
       # the helper would silently give the gate the floor's answer.
         legal_for_gate = batch.get("legal_mask")
-        target_for_gate = batch.get("policy_t")
-        if legal_for_gate is not None and target_for_gate is not None:
+        if legal_for_gate is not None:
             sf_own_regret_scale, sf_own_regret_gated = sf_regret_gate_scale(
                 reg_vec,
-                align_policy_target(target_for_gate, int(base_policy_logits.shape[-1])),
+                aligned_pol_target,
                 align_policy_mask(legal_for_gate, int(base_policy_logits.shape[-1])),
                 listed_mass_min=sf_own_regret_listed_mass_min,
                 unlisted_scale=sf_own_regret_unlisted_scale,
