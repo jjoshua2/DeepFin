@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import chess
@@ -496,6 +497,11 @@ class ActionDecodeError(ValueError):
     :func:`decode_fallback_count`.
     """
 
+    # ⚑ ValueError base, so a play loop wrapped in `except ValueError` swallows
+    # this and re-launders the failure it exists to surface. No path does that
+    # today (checked 2026-08-23); a new one must catch ActionDecodeError FIRST
+    # and re-raise, or void the measurement.
+
     def __init__(self, index: int, board: chess.Board, detail: str) -> None:
         self.index = int(index)
         self.fen = board.fen()
@@ -514,6 +520,10 @@ class ActionDecodeError(ValueError):
 # it had happened at all.
 _DECODE_FALLBACKS = 0
 _DECODE_FALLBACK_WARNED = False
+# High-water mark already published into the outcome_stats metric stream by
+# `drain_decode_fallback_count`; the lock covers drain-vs-drain only.
+_DECODE_FALLBACKS_PUBLISHED = 0
+_DECODE_FALLBACK_DRAIN_LOCK = threading.Lock()
 
 
 def _decode_action(index: int, board: chess.Board) -> chess.Move | None:
@@ -590,6 +600,29 @@ def decode_fallback_count() -> int:
     return _DECODE_FALLBACKS
 
 
+def drain_decode_fallback_count() -> int:
+    """Substitutions since the last drain, for publishing into a metric stream.
+
+    :func:`decode_fallback_count` stays cumulative for anyone who asks; this is
+    the delta form, so a publisher that runs once per finalized game reports
+    each substitution exactly once instead of re-reporting the running total.
+    Selfplay finalize (`selfplay/finalize.py`) is that publisher — a stderr line
+    in a worker log is not part of the experiment metric stream, and a counter
+    no production path reads is the same defect the count exists to expose.
+
+    Process-wide, not per-game: concurrent games in one worker share the
+    counter, and the shard sums them anyway. The lock makes two concurrent
+    drains exact; the increment itself is an unlocked ``+=`` like the guard
+    counters in ``mcts/gumbel_c.py``.
+    """
+    global _DECODE_FALLBACKS_PUBLISHED
+    with _DECODE_FALLBACK_DRAIN_LOCK:
+        total = _DECODE_FALLBACKS
+        delta = total - _DECODE_FALLBACKS_PUBLISHED
+        _DECODE_FALLBACKS_PUBLISHED = total
+    return delta
+
+
 def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     """Fast index → move using precomputed LUT.
 
@@ -600,10 +633,14 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     :func:`index_to_move_strict` instead.
     """
     m = _decode_action(index, board)
-    if m is None:
-        _note_decode_fallback(index, board)
-        return next(iter(board.legal_moves))
-    return m
+    if m is not None:
+        return m
+    # Count only once a substitute EXISTS. On a board with no legal moves
+    # `next(iter(...))` raises, and recording "SUBSTITUTED ... kept playing"
+    # before that would bank a move that never happened.
+    substitute = next(iter(board.legal_moves))
+    _note_decode_fallback(index, board)
+    return substitute
 
 
 def index_to_move_strict(index: int, board: chess.Board) -> chess.Move:

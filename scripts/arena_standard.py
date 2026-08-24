@@ -42,7 +42,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import chess
 import numpy as np
@@ -55,6 +55,7 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.moves import ActionDecodeError
 
 # Called once per FINISHED game when --pgn-out is on, else None. Keyword-only so
 # the three play loops (rolling / chunked / matched_time) cannot silently pass
@@ -1532,6 +1533,30 @@ def append_result(record: dict, out_path: Path) -> None:
         fh.write(json.dumps(record) + "\n")
 
 
+def _abort_void(exc: ActionDecodeError, *, completed_pairs: int) -> NoReturn:
+    """End the run VOID: named line on stderr, non-zero exit, no result row.
+
+    A corrupted instrument must not bank a reading — `append_result` is never
+    reached, so the JSONL keeps no row for this arena and no downstream fit can
+    pick one up. The pairs that DID complete are named rather than left as a
+    bare traceback: the operator needs to know how much of the budget burned.
+    ``completed_pairs`` is what the driver had banked, so the rolling path
+    reports 0 (it returns only on success) while the chunked path reports the
+    chunks that finished.
+    """
+    print(
+        f"[arena] VOID — action id {exc.index} decoded to no legal move "
+        f"({exc.detail}); side to move {'white' if exc.turn else 'black'}, "
+        f"fen {exc.fen!r}. {completed_pairs} complete pair(s) had been banked "
+        "by the driver; NO result row was written. The action space and the "
+        "checkpoints disagree, so every game in this run is unscorable — "
+        "rerun after fixing the encoding, do not salvage the partial score.",
+        file=sys.stderr,
+        flush=True,
+    )
+    raise SystemExit(2)
+
+
 def print_summary(summary: PentanomialSummary) -> None:
     counts = dict(zip(PAIR_LABELS, summary.counts))
     elo_lo, elo_hi = summary.elo_ci95
@@ -1779,71 +1804,75 @@ def run_arena(
                 f"(<={tb_max_pieces}-man, {syzygy_path})",
                 flush=True,
             )
-        if rolling:
-            # Rolling pool: fixed active-game count => fixed batch shape => compile
-            # reuses one graph (no per-shape thrash), and the GPU never drains until
-            # the very end (no per-chunk tail).
-            print(
-                f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
-                f"start a fresh one as each finishes",
-                flush=True,
-            )
-            pair_scores = play_paired_games_matched_sims_rolling(
-                model_candidate, model_reference, openings,
-                device=device, rng=rng,
-                sims_candidate=sims_candidate, sims_reference=sims_reference,
-                max_plies=max_plies, temperature=temperature,
-                gumbel_add_noise=gumbel_add_noise,
-                volatility_candidate=volatility_candidate,
-                syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                pool_size=int(max_concurrent_games),
-                search_candidate=search_candidate, search_reference=search_reference,
-                report_every=int(report_every),
-                deadline=deadline,
-                pgn_sink=pgn_sink,
-            )
-        else:
-            # Chunked: plays each chunk of `max_concurrent_games` to completion
-            # (drains per chunk). Numerically identical (pair scores concatenate).
-            chunk_pairs = max(1, int(max_concurrent_games) // 2)
-            n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
-            pair_scores = []
-            for ci in range(0, len(openings), chunk_pairs):
-                # Chunk granularity: a chunk plays to completion, so this stops
-                # BEFORE starting one that would run past the budget rather
-                # than mid-chunk. Rolling (the default, and what the ratchet
-                # runs) stops per ply.
-                if deadline is not None and time.time() >= deadline:
-                    print(
-                        f"[arena] max-seconds reached: stopping before chunk "
-                        f"{ci // chunk_pairs + 1}/{n_chunks} with "
-                        f"{len(pair_scores)} pairs complete",
-                        flush=True,
-                    )
-                    break
-                sub = openings[ci:ci + chunk_pairs]
+        pair_scores = []
+        try:
+            if rolling:
+                # Rolling pool: fixed active-game count => fixed batch shape => compile
+                # reuses one graph (no per-shape thrash), and the GPU never drains until
+                # the very end (no per-chunk tail).
                 print(
-                    f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
-                    f"{len(sub)} pairs ({2 * len(sub)} games)",
+                    f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                    f"start a fresh one as each finishes",
                     flush=True,
                 )
-                pair_scores.extend(play_paired_games_matched_sims(
-                    model_candidate, model_reference, sub,
+                pair_scores = play_paired_games_matched_sims_rolling(
+                    model_candidate, model_reference, openings,
                     device=device, rng=rng,
                     sims_candidate=sims_candidate, sims_reference=sims_reference,
                     max_plies=max_plies, temperature=temperature,
                     gumbel_add_noise=gumbel_add_noise,
                     volatility_candidate=volatility_candidate,
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                    search_candidate=search_candidate,
-                    search_reference=search_reference,
+                    pool_size=int(max_concurrent_games),
+                    search_candidate=search_candidate, search_reference=search_reference,
+                    report_every=int(report_every),
+                    deadline=deadline,
                     pgn_sink=pgn_sink,
-                    pair_id_offset=ci,
-                ))
-                print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
-                print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
-        if syzygy_tb is not None:
-            syzygy_tb.close()
+                )
+            else:
+                # Chunked: plays each chunk of `max_concurrent_games` to completion
+                # (drains per chunk). Numerically identical (pair scores concatenate).
+                chunk_pairs = max(1, int(max_concurrent_games) // 2)
+                n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
+                for ci in range(0, len(openings), chunk_pairs):
+                    # Chunk granularity: a chunk plays to completion, so this stops
+                    # BEFORE starting one that would run past the budget rather
+                    # than mid-chunk. Rolling (the default, and what the ratchet
+                    # runs) stops per ply.
+                    if deadline is not None and time.time() >= deadline:
+                        print(
+                            f"[arena] max-seconds reached: stopping before chunk "
+                            f"{ci // chunk_pairs + 1}/{n_chunks} with "
+                            f"{len(pair_scores)} pairs complete",
+                            flush=True,
+                        )
+                        break
+                    sub = openings[ci:ci + chunk_pairs]
+                    print(
+                        f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
+                        f"{len(sub)} pairs ({2 * len(sub)} games)",
+                        flush=True,
+                    )
+                    pair_scores.extend(play_paired_games_matched_sims(
+                        model_candidate, model_reference, sub,
+                        device=device, rng=rng,
+                        sims_candidate=sims_candidate, sims_reference=sims_reference,
+                        max_plies=max_plies, temperature=temperature,
+                        gumbel_add_noise=gumbel_add_noise,
+                        volatility_candidate=volatility_candidate,
+                        syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                        search_candidate=search_candidate,
+                        search_reference=search_reference,
+                        pgn_sink=pgn_sink,
+                        pair_id_offset=ci,
+                    ))
+                    print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
+                    print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
+        except ActionDecodeError as exc:
+            _abort_void(exc, completed_pairs=len(pair_scores))
+        finally:
+            if syzygy_tb is not None:
+                syzygy_tb.close()
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
         pair_scores = play_paired_games_matched_time(

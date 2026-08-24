@@ -301,6 +301,12 @@ def play_match_batch(
 
     Note `PLAY_SEARCH_DEFAULTS` deliberately carries no `simulations`, so the
     caller's sim budget is never overridden here.
+
+    ⚑ Raises `ActionDecodeError` when an action id names no legal move: this is
+    a measurement, and playing a substitute move on would score a corrupted
+    match. Any caller running INSIDE a training process must therefore catch it
+    and record the measurement VOID rather than let it propagate — an uncaught
+    raise takes the host process down over one unscorable match.
     """
     g = int(games)
     if g <= 0:
