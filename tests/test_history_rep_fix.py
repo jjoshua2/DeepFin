@@ -26,11 +26,35 @@ PROD_MODES = ("lc0_root", "lc0_root_legacy_meta")
 _DEEP_REP_GAME = ["h2h3", "a7a5", "f2f4", "a5a4", "g2g3", "g7g5", "b2b4", "e7e6", "b4b5", "g5g4", "h3g4", "e8e7", "d2d3", "a8a6", "c1b2", "c7c5", "c2c4", "h7h5", "f1h3", "d8e8", "e1f2", "a6a8", "b2e5", "d7d5", "d1a4", "h5g4", "e5b8", "e8d7", "h3g4", "h8h6", "b1d2", "e7f6", "h1h3", "g8e7", "a1e1", "d7c7", "a4a7", "h6h8", "b5b6", "a8b8", "e1d1", "c7d7", "e2e3", "e7g8", "d1c1", "h8h3", "a7b8", "d7e7", "d2b3", "h3h4", "c1d1", "h4h3", "g4h5", "d5d4", "f2f3", "h3h5", "d1a1", "h5h4", "f3f2", "h4h2", "f2e1", "f8h6", "b8a7", "e6e5", "b3c5", "h2g2", "c5d7", "c8d7", "g1h3", "f6g6", "a1b1", "e7d8", "g3g4", "g8e7", "f4e5", "d8f8", "g4g5", "e7d5", "b1c1", "d5c3", "c1c2", "f8e8", "e5e6", "g2g5", "c2f2", "g5b5", "f2f6", "g6h7", "e6d7", "b5g5", "a7a3", "h6g7", "h3g1", "g5d5", "d7e8q", "d5d7", "e8e4", "c3e4", "f6f5", "h7g8", "g1e2", "g7f6", "f5f4", "e4g3", "a3f8", "g8h7", "f4f2", "g3f1", "f8d6", "d7d8", "d6f6", "f1h2", "f6g7", "h7g7", "f2f4", "d8a8", "e2g3", "f7f5", "a2a4", "a8a7", "f4f1", "g7f6", "f1g1", "f5f4", "g1f1", "f6g7", "g3h1", "a7a4", "e3f4", "a4a7", "f4f5", "h2f3", "f1f3", "a7a4", "f3h3", "a4b4", "h3h4", "b4c4", "d3c4", "g7f8", "h4h3", "f8f7", "h3a3", "f7g8", "a3a1", "g8g7", "h1f2", "g7f8", "c4c5", "f8e7", "f2d1", "e7d8", "e1f1", "d8e7", "d1b2", "e7f8", "b2c4", "f8e8", "c4e5", "e8d8", "a1a2", "d8c8", "a2e2", "c8d8", "e2e4", "d8c8", "e5g6", "c8d8", "g6e7", "d8d7", "e7d5", "d7c8", "d5e7", "c8d7", "e7g8", "d7d8", "c5c6", "d8c8", "e4e2", "c8b8"]
 
 
+def _force_flag_off() -> None:
+    """Put the module sentinel AND every C global back on the default (off).
+
+    ⚑ ``rep_fix.apply(False, ...)`` on its own cannot do this, and that is not a
+    theory: it returns early whenever the value it already holds matches, while
+    several tests below poke ``_lc0_ext.set_history_rep_fix`` DIRECTLY. The
+    extension global is write-only from Python — there is no getter — so after
+    such a poke ``rep_fix.current()`` reports ``False`` while the encoder is
+    measurably fix-ON, and ``apply(False)`` short-circuits instead of repairing
+    it. MEASURED on the deep-repetition game: after
+    ``apply(False)`` → ``set_history_rep_fix(True)`` → ``apply(False)`` the C
+    encoding still matches python-chess exactly (fix-ON) with the sentinel
+    reading ``False``. ``test_a_direct_setter_poke_is_repaired_by_this_fixture``
+    pins the whole sequence.
+
+    Clearing the sentinel first makes the call actually write to every loaded
+    module, so this file cannot hand the next test FILE an encoder regime that
+    ``rep_fix.current()`` — and therefore the suite-wide restore fixture in
+    ``tests/conftest.py``, which can only see that sentinel — denies.
+    """
+    rep_fix._current = None
+    rep_fix.apply(False, boards_discarded=True)
+
+
 @pytest.fixture(autouse=True)
 def _reset_flag():
-    rep_fix.apply(False, boards_discarded=True)
+    _force_flag_off()
     yield
-    rep_fix.apply(False, boards_discarded=True)
+    _force_flag_off()
 
 
 def _build(moves: Sequence[str]) -> tuple[CBoard, chess.Board]:
@@ -285,6 +309,44 @@ _MIDGAME_FLIP_LINE = [
     "f3g5", "e8g8", "g5f3", "g8h8", "f3g5", "h8g8", "g5f3", "g8h8",
     "f3g5", "h8g8", "g5f3", "g8h8",
 ]
+
+
+def test_a_direct_setter_poke_is_repaired_by_this_fixture() -> None:
+    """The desync ``apply``'s idempotence cannot repair, and the repair.
+
+    Read the ENCODER, not the flag: the two disagree in exactly the window this
+    guards. Without the sentinel clear in ``_force_flag_off`` this file exits
+    with the C encoders in fix-ON while every later test file — and the autouse
+    restore fixture in ``tests/conftest.py``, which has only ``current()`` to go
+    on — believes the flag is off.
+    """
+    def encoder_is_fix_on() -> bool:
+        cb, b = _build(_DEEP_REP_GAME)
+        c = encode_cboard(
+            cb, input_history_encoding="lc0_root_legacy_meta", input_extra_features="v1",
+        )
+        p = encode_position(
+            b, input_history_encoding="lc0_root_legacy_meta", input_extra_features="v1",
+        )
+        return bool(np.array_equal(c, p))
+
+    _force_flag_off()
+    assert not encoder_is_fix_on()
+
+    _lc0_ext.set_history_rep_fix(True)  # what the tests above do
+    assert encoder_is_fix_on()
+    assert rep_fix.current() is False, "the sentinel already disagrees with the encoder"
+
+    # What this fixture used to do at teardown, and why it was not enough.
+    rep_fix.apply(False, boards_discarded=True)
+    assert encoder_is_fix_on(), (
+        "premise changed: apply() no longer short-circuits on an unchanged value, "
+        "so the sentinel clear in _force_flag_off may now be redundant"
+    )
+
+    _force_flag_off()
+    assert not encoder_is_fix_on()
+    assert rep_fix.current() is False
 
 
 def test_apply_is_idempotent_and_reports_current() -> None:

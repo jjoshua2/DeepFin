@@ -21,10 +21,16 @@ To lift it, when training is paused or on a machine with nothing else running::
 The regime is printed on EVERY run, so a capped session is never mistaken for a
 slow one. ⚑ See ``pytest_terminal_summary`` below for why it is emitted there
 and not from ``pytest_report_header``.
+
+The other resident here is ``_restore_rep_fix_process_flag`` at the bottom of
+the file — an autouse guard against a different kind of shared state, the
+process-global repetition-fix encoder flag. Same placement argument: a conftest
+is the only site that does not depend on the next test author remembering.
 """
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
@@ -157,3 +163,52 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
 def thread_cap() -> int | None:
     """The session's configured cap, for tests that need to reason about it."""
     return _CAP
+
+
+@pytest.fixture(autouse=True)
+def _restore_rep_fix_process_flag() -> Iterator[None]:
+    """Snapshot/restore the process-global ``history_rep_fix`` encoder flag.
+
+    ``rep_fix._current`` and the globals it pushes into ``_lc0_ext`` and
+    ``_mcts_tree`` are PROCESS state, not per-test state: whichever test touched
+    them last decides how every later test in the same pytest process encodes
+    its repetition planes. A test does not have to mention the flag to change
+    it — ``pick_moves_for_boards`` applies ``model.history_rep_fix`` on the way
+    in and ``build_model`` applies the checkpoint's value, so any test that
+    builds a model or runs a search sets it as a side effect. That makes the
+    leak a cross-FILE ordering flake: a test passes or fails on a value some
+    other file left behind, and the two files never mention each other.
+
+    ⚑ Restoring passes ``boards_discarded=True`` because ``apply`` refuses a
+    flip without it, and the keyword is TRUE here rather than a rubber stamp.
+    Per ``rep_fix``'s module docstring, per-slot repetition flags are recorded
+    at push time and never recomputed, so a ``CBoard`` carried across a flip
+    encodes planes matching NEITHER regime (audit E3 measured
+    ``[1,0,1,0,1,0,1,0]`` against ``[1,1,1,1,1,1,1,0]`` under either clean
+    regime). This fixture only acts when the finished test CHANGED the flag —
+    and a board that outlived that test was already mis-encoded in the direction
+    the test left it, before this fixture ran. Restoring does not create that
+    hazard; it replaces an order-dependent suite baseline with a deterministic
+    one. The E3 guard still fires inside the test, where the live board is.
+
+    ⚑ ``apply`` cannot express "never set" — it takes a ``bool``. So the
+    never-set snapshot restores in two steps: put the extensions on their
+    documented default (off), which is exactly the state a never-set flag leaves
+    them in, then restore the module's own ``None`` sentinel so ``current()``
+    reports the truth rather than a value nobody chose.
+
+    Imported lazily inside the fixture: a conftest is loaded on EVERY pytest
+    invocation and this package pulls in numpy and chess, and an environment
+    without the compiled encoders should reach ``apply`` (which skips missing
+    setters with a warning) rather than fail at collection. On the common path,
+    where the test left the flag alone, the fixture makes no calls at all.
+    """
+    from chess_anti_engine.encoding import rep_fix
+
+    before = rep_fix.current()
+    yield
+    if rep_fix.current() is before:
+        return
+    rep_fix.apply(bool(before), boards_discarded=True)
+    if before is None:
+        rep_fix._current = None
