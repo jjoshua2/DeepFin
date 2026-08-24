@@ -101,6 +101,26 @@ def test_train_metrics_dict_promotes_grad_norm_clip_rate_and_operating_lr() -> N
     assert got["opt_lr_max"] == 6e-4
 
 
+def test_the_value_blend_fallback_coverage_reaches_the_result_row() -> None:
+    """⚑ REVIEW F9. The two columns were TensorBoard-only, and TB is not the
+    path `scripts/loop_health.py` reads — so the state their field comment
+    names ("the 2026-05 realized sf_wdl_frac 0.45 episode") could still not be
+    alerted on.
+
+    ⚑ Polarity: healthy is 1.0 here and 0.0 is a FULL leak, the opposite of
+    every other detector in this block. The default must therefore NOT read as
+    healthy, which is what the second assertion pins.
+    """
+    got = _train_metrics_dict(
+        _metrics(sf_wdl_effective_frac=0.25, search_wdl_effective_frac=0.5),
+    )
+    assert got["sf_wdl_effective_frac"] == 0.25
+    assert got["search_wdl_effective_frac"] == 0.5
+    absent = _train_metrics_dict(None)
+    assert absent["sf_wdl_effective_frac"] == 0.0
+    assert absent["search_wdl_effective_frac"] == 0.0
+
+
 def test_the_draw_provenance_counters_reach_the_result_row_not_just_tensorboard() -> None:
     """PR #373 added `batches_drawn` / `transient_cuda_retry_batches` to
     `TrainMetrics` and called them "worth having live" -- but

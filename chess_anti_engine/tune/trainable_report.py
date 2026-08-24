@@ -925,6 +925,16 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # and must never be summed with it.
     "sf_wdl_degenerate_frac": 0.0, "sf_wdl_orphaned_frac": 0.0,
     "sf_eval_pv_orphan_frac": 0.0, "sf_eval_pv_checked_frac": 0.0,
+  # ⚑ VALUE-BLEND FALLBACK COVERAGE. Healthy is EXACTLY 1.000000 on both:
+  # every row's SF and search component came from its own label rather than
+  # from the raw one-hot game outcome. `1 - x` here is multiplied by the
+  # corresponding frac to get the share of the value target that silently
+  # became the outcome, so 0.0 is a FULL leak — the opposite polarity to every
+  # other column in this block, which is why the default is 0.0 and not 1.0:
+  # an absent column must not read as healthy. TB-only was the shipped state
+  # (review F9), and the alerting path is where the 2026-05 realized
+  # `sf_wdl_frac 0.45` episode would actually have been caught.
+    "sf_wdl_effective_frac": 0.0, "search_wdl_effective_frac": 0.0,
   # Terminal-proximal outcome share of the value target. Exactly 0.0 while
   # `wdl_terminal_outcome_plies` is 0 (the default), so a non-zero value is the
   # proof the knob reached the trained target -- the echoed config value is
@@ -1053,6 +1063,10 @@ def _train_metrics_dict(metrics) -> dict:
         # the blind spot's own count. See TrainMetrics for what each floor is.
         "sf_wdl_degenerate_frac": float(metrics.sf_wdl_degenerate_frac),
         "sf_wdl_orphaned_frac": float(metrics.sf_wdl_orphaned_frac),
+        # How much of each value-blend component came from its LABEL rather
+        # than from the raw one-hot fallback -- see the defaults table.
+        "sf_wdl_effective_frac": float(metrics.sf_wdl_effective_frac),
+        "search_wdl_effective_frac": float(metrics.search_wdl_effective_frac),
         "sf_eval_pv_orphan_frac": float(metrics.sf_eval_pv_orphan_frac),
         "sf_eval_pv_checked_frac": float(metrics.sf_eval_pv_checked_frac),
         # Terminal-proximal outcome transfer -- see the defaults table above.

@@ -126,10 +126,16 @@ Three options, and the one taken:
 
 ⚑ (c) has a trap, and it is REAL: ``losses.py`` falls the SF component back to
 the raw one-hot outcome when ``has_sf_wdl`` is 0 — so running these rows at the
-production ``sf_wdl_frac: 0.50`` would train value on ~50% deep game outcome,
-silently, with no error. The control run MUST set ``sf_wdl_frac: 0.0`` (and
-``sf_wdl_frac_floor: 0.0``) and put the whole non-outcome share on
-``search_wdl_frac``.
+LIVE ``sf_wdl_frac: 0.69`` would train value on **69%** deep game outcome,
+silently, with no error, against a LIVE ``game_frac`` of **0.00**. The control
+run MUST set ``sf_wdl_frac: 0.0`` (and ``sf_wdl_frac_floor: 0.0``) and put the
+whole non-outcome share on ``search_wdl_frac``.
+
+⚑ The numbers in this file said 0.50/0.80 until 2026-08-16. That was `main`'s
+committed ``configs/pbt2_small.yaml``; the LIVE one has run ``sf_wdl_frac 0.69 /
+search_wdl_frac 0.31`` since the bt4heads promotion, so live's ``game_frac`` is
+ZERO and the whole non-outcome share is 1.00, not 0.70. Corrected in place; the
+mechanism was never wrong, only the reference file.
 
 ⚑ That requirement used to live only as prose in a manifest nothing reads,
 which is not a guard. ``check-run-config`` now makes it EXECUTABLE: it loads a
@@ -1316,7 +1322,7 @@ def _row_from(
 # The rows carry no Stockfish label, and `losses.py` falls the SF component of
 # the value blend back to the RAW ONE-HOT OUTCOME when `has_sf_wdl` is 0 — no
 # error, no log line. So a control run launched at the production
-# `sf_wdl_frac: 0.50` would train value on ~50% deep game outcome, which is the
+# LIVE `sf_wdl_frac: 0.69` would train value on 69% deep game outcome, which is the
 # exact regime production avoids, and the positive control would be measuring
 # something nobody chose. Nothing in the trainer refuses that today, so this
 # command does, and it must be run before the launch.
@@ -1325,36 +1331,122 @@ VALUE_BLEND_KEYS = ("sf_wdl_frac", "sf_wdl_frac_floor")
 
 
 def run_config_problems(
-    config: Mapping[str, object], *, shards_have_sf_wdl: bool,
+    config: Mapping[str, object],
+    *,
+    shards_have_sf_wdl: bool,
+    shards_have_search_wdl: bool,
 ) -> list[str]:
-    """Reasons this config must not be pointed at lc0-derived shards."""
-    if shards_have_sf_wdl:
-        return []
-    problems = [
-        f"{key}={value!r} but the shards carry NO Stockfish label, so losses.py "
-        f"silently redirects that share onto the raw game outcome; set {key}: 0.0"
-        for key in VALUE_BLEND_KEYS
-        if isinstance(value := config.get(key), (int, float)) and float(value) > 0.0
-    ]
+    """Reasons this config must not be pointed at lc0-derived shards.
+
+    ⚑ The collapse check is NOT short-circuited by ``shards_have_sf_wdl``.
+    Returning ``[]`` on the first line whenever any SF label exists left a door
+    open that PR #438's review walked through: ``sf_wdl_frac: 0`` with
+    ``search_wdl_frac: 0`` and one SF-labelled shard in the list passes every
+    guard and trains 100% of the value target on the raw one-hot outcome. The
+    SF-label problems are label-dependent; "nothing but the outcome carries
+    value weight" is not.
+
+    ⚑ ``shards_have_search_wdl`` is REQUIRED, with no default, because the
+    default that reads naturally (``True``) is the bug: ``compute_loss`` falls
+    the SEARCH component back to the raw one-hot exactly the way it falls the
+    SF component back, and the search share is the WHOLE value target here
+    (``search_wdl_frac: 1.0`` since the 2026-08-16 trainer re-point; it read
+    0.70 before, derived from `main`'s stale ``game_frac``).
+    A default would have re-created review F1 at the next call site.
+    """
+    problems: list[str] = []
+    if not shards_have_sf_wdl:
+        problems += [
+            f"{key}={value!r} but the shards carry NO Stockfish label, so losses.py "
+            f"silently redirects that share onto the raw game outcome; set {key}: 0.0"
+            for key in VALUE_BLEND_KEYS
+            if isinstance(value := config.get(key), (int, float)) and float(value) > 0.0
+        ]
+    sf = config.get("sf_wdl_frac")
     search = config.get("search_wdl_frac")
-    if not isinstance(search, (int, float)) or float(search) <= 0.0:
+    if not shards_have_search_wdl and isinstance(search, (int, float)) and float(search) > 0.0:
         problems.append(
-            "search_wdl_frac is 0/absent, so nothing carries lc0's best_q/best_d and "
-            "the whole value target collapses onto the game outcome",
+            f"search_wdl_frac={float(search)!r} but the shards carry NO search "
+            "value label (has_search_wdl), so losses.py silently redirects that "
+            "share onto the raw game outcome too — the same fallback as the SF "
+            "component, on the larger term",
+        )
+    effective_sf = (
+        float(sf) if shards_have_sf_wdl and isinstance(sf, (int, float)) else 0.0
+    )
+    effective_search = (
+        float(search)
+        if shards_have_search_wdl and isinstance(search, (int, float)) else 0.0
+    )
+    if effective_sf <= 0.0 and effective_search <= 0.0:
+        problems.append(
+            "search_wdl_frac is 0/absent and no SF share survives on these shards, "
+            "so nothing carries a searched value and the whole value target "
+            "collapses onto the raw game outcome",
         )
     return problems
 
 
-def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
-    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label."""
+def shard_dir_label_coverage(shard_dir: Path, flag: str) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for one ``has_*`` column.
+
+    ⚑ A FRACTION, not a boolean. ``any()`` over a mixed corpus reports "these
+    shards carry the label" from a single labelled row out of millions, and
+    every downstream decision then reasons about a corpus that does not exist.
+    Reads the flag through the LAZY shard loader so the 175-plane inputs are
+    never decoded.
+    """
     from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
 
+    labelled = 0
+    rows = 0
     for path in iter_shard_paths(shard_dir):
-        arrs, _meta = load_shard_arrays(path)
-        flags = arrs.get("has_sf_wdl")
-        if flags is not None and int(np.asarray(flags).sum()) > 0:
-            return True
-    return False
+        arrs, _meta = load_shard_arrays(path, lazy=True)
+        flags = arrs.get(flag)
+        if flags is None:
+  # ⚑ Row count off the INPUT array, not off `meta["positions"]`. That key is
+  # optional and reads None on shards written without it, and an unlabelled
+  # shard that contributed 0 to the denominator would make a mixed corpus read
+  # as fully labelled — the exact failure this function replaces.
+            rows += int(np.asarray(arrs["x"].shape[0]))
+            continue
+        values = np.asarray(flags)
+        rows += int(values.shape[0])
+        labelled += int((values > 0).sum())
+    return labelled, rows
+
+
+def shard_dir_sf_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for the Stockfish value label."""
+    return shard_dir_label_coverage(shard_dir, "has_sf_wdl")
+
+
+def shard_dir_search_wdl_coverage(shard_dir: Path) -> tuple[int, int]:
+    """``(labelled_rows, total_rows)`` for the SEARCH value label.
+
+    ⚑ The bigger term, and the one that had no reader until PR #438's review
+    F1. ``compute_loss`` falls the SEARCH component back to the raw one-hot
+    exactly the way it falls the SF component back, and on the lc0 control
+    ``search_wdl_frac`` is **1.0** — the ENTIRE value target — so an unlabelled
+    corpus here trains the whole value head on the game result while
+    ``sf_wdl_frac: 0.0`` keeps every SF-side check clean.
+    """
+    return shard_dir_label_coverage(shard_dir, "has_search_wdl")
+
+
+def shard_dir_has_sf_wdl(shard_dir: Path) -> bool:
+    """Whether ANY shard under ``shard_dir`` carries a Stockfish value label.
+
+    ⚑⚑ A DIAGNOSTIC, NEVER A GATE. ``labelled > 0`` answers "is there a label
+    anywhere", and no value-blend decision wants that question: the blend falls
+    every UNLABELLED row back to the raw game outcome, so what a gate needs is
+    ``labelled == rows``. This function was the SF half of
+    ``check-run-config`` while the search half measured coverage, which passed a
+    partially-labelled corpus (PR #438 review, finding 3). Gate on
+    `shard_dir_sf_wdl_coverage` instead; this stays only for reporting.
+    """
+    labelled, _rows = shard_dir_sf_wdl_coverage(shard_dir)
+    return labelled > 0
 
 
 # ── policy-shape statistics ────────────────────────────────────────────────────
@@ -1671,7 +1763,13 @@ def _manifest(options: ConvertOptions, stats: VerifyStats) -> dict[str, object]:
         },
         "required_training_overrides": {
             "sf_wdl_frac": 0.0,
-            "search_wdl_frac": "the whole non-outcome share (lc0's own recipe: 0.5)",
+            "search_wdl_frac": (
+                "the whole non-outcome share. LIVE production is sf 0.69 + "
+                "search 0.31 = 1.00, i.e. game_frac 0.00, so the arm that "
+                "preserves live's outcome share runs search_wdl_frac: 1.0. "
+                "lc0's own recipe would be 0.5 search / 0.5 outcome, which is a "
+                "different experiment"
+            ),
         },
         "why": (
             "losses.py falls the SF component back to the raw one-hot outcome "
@@ -1800,9 +1898,46 @@ def cmd_check_run_config(args: argparse.Namespace) -> int:
     from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
     config = flatten_run_config_defaults(yaml.safe_load(Path(args.config).read_text()))
-    have_sf = shard_dir_has_sf_wdl(Path(args.shards))
-    problems = run_config_problems(config, shards_have_sf_wdl=have_sf)
-    print(f"shards carry a Stockfish value label: {have_sf}")
+  # ⚑ Coverage, not presence, on BOTH sides: a share that is not carried by
+  # EVERY row still lands on the raw outcome for the rest of them.
+  #
+  # ⚑⚑ THE SF SIDE USED TO ASK A DIFFERENT QUESTION FROM THE SEARCH SIDE, WITH
+  # THE COMMENT SAYING "COVERAGE" SITTING BETWEEN THEM (PR #438 review, finding
+  # 3). `shard_dir_has_sf_wdl` is `labelled > 0`, so ONE labelled row in a
+  # million made `have_sf` True, `run_config_problems` returned [], and a
+  # partially-labelled corpus was waved through with the unlabelled remainder
+  # training its value head on the raw game outcome, unwarned. The sibling gate
+  # in `scripts/lc0_control_train.py:preflight` already measured both sides as
+  # fractions and refused a partial corpus; this is that rule, here.
+    coverage = {
+        "sf_wdl": shard_dir_sf_wdl_coverage(Path(args.shards)),
+        "search_wdl": shard_dir_search_wdl_coverage(Path(args.shards)),
+    }
+    complete = {
+        flag: rows > 0 and labelled == rows
+        for flag, (labelled, rows) in coverage.items()
+    }
+    have_sf = complete["sf_wdl"]
+    have_search = complete["search_wdl"]
+    problems = run_config_problems(
+        config, shards_have_sf_wdl=have_sf, shards_have_search_wdl=have_search,
+    )
+  # ⚑ A PARTIAL CORPUS IS ITS OWN FAILURE, not just a False. Reported for both
+  # labels because "0 of 8 rows" and "7 of 8 rows" call for different actions,
+  # and averaging two regimes is never one of them.
+    problems.extend(
+        f"the shards are PARTIALLY {flag}-labelled ({labelled}/{rows} rows). "
+        "Every value-blend decision downstream assumes one regime or the "
+        "other; split the corpus rather than averaging two."
+        for flag, (labelled, rows) in coverage.items()
+        if 0 < labelled < rows
+    )
+    sf_labelled, sf_rows = coverage["sf_wdl"]
+    search_labelled, search_rows = coverage["search_wdl"]
+    print(f"shards carry a Stockfish value label: {have_sf} "
+          f"({sf_labelled}/{sf_rows} rows)")
+    print(f"shards carry a search value label:    {have_search} "
+          f"({search_labelled}/{search_rows} rows)")
     for key in (*VALUE_BLEND_KEYS, "search_wdl_frac"):
         print(f"  {key} = {config.get(key, '<absent>')!r}")
     for problem in problems:
@@ -1883,19 +2018,33 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 def _publish(staging: Path, out: Path) -> int:
-    """Move staged shards into ``out``. Refuses to overwrite an existing shard."""
-    moved = 0
-    for path in sorted(staging.iterdir()):
-        destination = out / path.name
-        if destination.exists():
-            raise FileExistsError(
-                f"{destination} already exists; refusing to mix this run's rows into a "
-                "populated output directory",
-            )
-        path.rename(destination)
-        moved += 1
+    """Move staged shards into ``out``. Refuses to overwrite an existing shard.
+
+    ⚑⚑ TWO PASSES, AND THE SPLIT IS THE WHOLE POINT (PR #438 review, finding
+    5). Checking each destination inside the move loop made the refusal
+    ORDER-DEPENDENT: an ``out`` already holding ``shard_000001.zarr`` but not
+    ``shard_000000.zarr`` got 000000 renamed in and THEN raised on 000001,
+    leaving a half-published corpus, an orphaned ``_staging`` dir, and no
+    manifest — the exact partial-publish state the staging directory was
+    introduced to make impossible. The guard was correct about every individual
+    shard and wrong about the operation, because the operation is the whole set.
+    Scan ALL destinations first; touch the filesystem only once nothing can
+    collide.
+    """
+    staged = sorted(staging.iterdir())
+    collisions = [path.name for path in staged if (out / path.name).exists()]
+    if collisions:
+        raise FileExistsError(
+            "refusing to mix this run's rows into a populated output directory: "
+            f"{out} already holds " + ", ".join(collisions)
+            + f" ({len(collisions)} of {len(staged)} staged shard(s)), which "
+            "would produce a corpus no manifest describes. ⚑ NOTHING HAS BEEN "
+            f"MOVED — every staged shard is still under {staging}.",
+        )
+    for path in staged:
+        path.rename(out / path.name)
     staging.rmdir()
-    return moved
+    return len(staged)
 
 
 def _write_shard(

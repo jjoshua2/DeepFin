@@ -20,6 +20,7 @@ from pathlib import Path
 import chess
 import numpy as np
 import pytest
+import yaml
 
 from chess_anti_engine.moves.lc0_1858_movestrs import LC0_1858_UCI_TO_IDX
 from chess_anti_engine.moves.leela_index import leela_index_for_move
@@ -47,8 +48,12 @@ from scripts.lc0_data_to_rows import (
     repair_en_passant,
     run_config_problems,
     shard_dir_has_sf_wdl,
+    shard_dir_search_wdl_coverage,
+    shard_dir_sf_wdl_coverage,
+    _publish,
     _wdl_from_q_d,
 )
+from scripts.lc0_data_to_rows import main as lc0_main
 
 _PIECES = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
 
@@ -860,14 +865,18 @@ def test_run_config_gate_refuses_the_production_value_blend_on_sf_less_shards() 
     share onto the raw game outcome when `has_sf_wdl` is 0, so this is the
     difference between a positive control and a value-collapse run."""
     production_like: dict[str, object] = {"sf_wdl_frac": 0.50, "sf_wdl_frac_floor": 0.45, "search_wdl_frac": 0.20}
-    problems = run_config_problems(production_like, shards_have_sf_wdl=False)
+    problems = run_config_problems(
+        production_like, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    )
     assert len(problems) == 2
     assert all("set sf_wdl_frac" in p or "set sf_wdl_frac_floor" in p for p in problems)
 
 
 def test_run_config_gate_accepts_the_prescribed_override() -> None:
     prescribed: dict[str, object] = {"sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.50}
-    assert run_config_problems(prescribed, shards_have_sf_wdl=False) == []
+    assert run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    ) == []
 
 
 def test_run_config_gate_refuses_a_target_with_nothing_but_the_outcome() -> None:
@@ -877,15 +886,89 @@ def test_run_config_gate_refuses_a_target_with_nothing_but_the_outcome() -> None
     collapsed: dict[str, object] = {
         "sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.0,
     }
-    problems = run_config_problems(collapsed, shards_have_sf_wdl=False)
-    assert any("collapses onto the game outcome" in p for p in problems)
+    problems = run_config_problems(
+        collapsed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    )
+    assert any("collapses onto the raw game outcome" in p for p in problems)
+  # ⚑ AND THE SAME COLLAPSE WITH SF LABELS PRESENT. The gate used to
+  # short-circuit on `shards_have_sf_wdl` and return [] before reaching this,
+  # so one SF-labelled shard in a mixed --shards list waved through a config
+  # that trains 100% of the value target on the raw outcome (PR #438 review F6).
+    still_collapsed = run_config_problems(
+        collapsed, shards_have_sf_wdl=True, shards_have_search_wdl=True,
+    )
+    assert any("collapses onto the raw game outcome" in p for p in still_collapsed)
 
 
 def test_run_config_gate_stays_out_of_the_way_when_shards_DO_carry_sf() -> None:
     """Negative control: on our own selfplay shards the production blend is
     correct and this must not fire."""
     production_like: dict[str, object] = {"sf_wdl_frac": 0.50, "sf_wdl_frac_floor": 0.45, "search_wdl_frac": 0.20}
-    assert run_config_problems(production_like, shards_have_sf_wdl=True) == []
+    assert run_config_problems(
+        production_like, shards_have_sf_wdl=True, shards_have_search_wdl=True,
+    ) == []
+
+
+def test_run_config_gate_refuses_a_search_share_the_shards_do_not_carry() -> None:
+    """⚑⚑ REVIEW F1, AT THE CONFIG GATE — the LARGER term.
+
+    ``compute_loss`` falls the SEARCH component back to the raw one-hot exactly
+    the way it falls the SF component back, and the lc0 control puts 0.70 of
+    its value target there. The gate measured only the SF side, so the
+    prescribed override — ``sf_wdl_frac: 0.0``, the share handed to search —
+    read CLEAN on a corpus with no ``has_search_wdl`` while training almost the
+    whole value head on the game result.
+    """
+    prescribed: dict[str, object] = {
+        "sf_wdl_frac": 0.0, "sf_wdl_frac_floor": 0.0, "search_wdl_frac": 0.70,
+    }
+    problems = run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=False,
+    )
+    assert any("NO search value label" in p for p in problems)
+  # ...and the collapse line fires too: with neither label surviving, nothing
+  # but the outcome carries value weight.
+    assert any("collapses onto the raw game outcome" in p for p in problems)
+  # The negative control: the SAME config on shards that DO carry the label.
+    assert run_config_problems(
+        prescribed, shards_have_sf_wdl=False, shards_have_search_wdl=True,
+    ) == []
+
+
+def test_search_wdl_coverage_is_a_fraction_not_a_boolean(tmp_path: Path) -> None:
+    """A partially-labelled corpus must be measurable as partial.
+
+    ⚑ Same shape as the SF-side coverage function, and for the same reason:
+    ``any()`` over a mixed corpus reports the label present from one row in
+    millions, and the rest of the rows train their search share on the outcome.
+    """
+    from chess_anti_engine.replay.sample import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        ShardMeta, local_shard_path, samples_to_arrays, save_local_shard_arrays,
+    )
+
+    def _row(*, with_search: bool) -> ReplaySample:
+        policy = np.zeros(1858, dtype=np.float32)
+        policy[0] = 1.0
+        sample = ReplaySample(
+            x=np.zeros((175, 8, 8), dtype=np.float32),
+            policy_target=policy,
+            wdl_target=0,
+            legal_mask=np.ones(1858, dtype=np.uint8),
+            has_policy=True,
+        )
+        if with_search:
+            sample.search_wdl = np.array([0.5, 0.3, 0.2], dtype=np.float32)
+        return sample
+
+    save_local_shard_arrays(
+        local_shard_path(tmp_path, 0),
+        arrs=samples_to_arrays(
+            [_row(with_search=True)] * 3 + [_row(with_search=False)] * 7,
+        ),
+        meta=ShardMeta(policy_encoding="lc0_1858", policy_size=1858),
+    )
+    assert shard_dir_search_wdl_coverage(tmp_path) == (3, 10)
 
 
 def test_the_rows_this_converter_writes_really_carry_no_sf_label(tmp_path: Path) -> None:
@@ -904,6 +987,120 @@ def test_the_rows_this_converter_writes_really_carry_no_sf_label(tmp_path: Path)
         meta=ShardMeta(policy_encoding="lc0_1858", policy_size=1858),
     )
     assert shard_dir_has_sf_wdl(tmp_path) is False
+
+
+def test_check_run_config_gates_the_SF_side_on_COVERAGE_not_PRESENCE(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑⚑ PR #438 review, finding 3 — two gates, two different questions.
+
+    ``shard_dir_has_sf_wdl`` is ``labelled > 0``, and it sat two lines above a
+    search-side check demanding ``labelled == rows``, with the comment saying
+    "coverage, not presence" in between. So ONE Stockfish-labelled row in a
+    corpus of millions set ``have_sf`` True, ``run_config_problems`` returned
+    ``[]``, and ``check-run-config`` printed PASS for a config whose
+    ``sf_wdl_frac`` lands on the raw game outcome for every unlabelled row.
+
+    The fixture is that corpus: 1 of 10 rows SF-labelled, all 10 search-labelled
+    — so the SEARCH side is clean and the verdict turns purely on the SF half.
+    """
+    from chess_anti_engine.replay.sample import ReplaySample
+    from chess_anti_engine.replay.shard import (
+        ShardMeta,
+        local_shard_path,
+        samples_to_arrays,
+        save_local_shard_arrays,
+    )
+
+    def _row(*, with_sf: bool) -> ReplaySample:
+        policy = np.zeros(1858, dtype=np.float32)
+        policy[0] = 1.0
+        sample = ReplaySample(
+            x=np.zeros((175, 8, 8), dtype=np.float32),
+            policy_target=policy,
+            wdl_target=0,
+            legal_mask=np.ones(1858, dtype=np.uint8),
+            has_policy=True,
+        )
+        sample.search_wdl = np.array([0.5, 0.3, 0.2], dtype=np.float32)
+        if with_sf:
+            sample.sf_wdl = np.array([0.6, 0.3, 0.1], dtype=np.float32)
+        return sample
+
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    save_local_shard_arrays(
+        local_shard_path(shards, 0),
+        arrs=samples_to_arrays([_row(with_sf=True)] + [_row(with_sf=False)] * 9),
+        meta=ShardMeta(policy_encoding="lc0_1858", policy_size=1858),
+    )
+  # The precondition, measured: presence and coverage DISAGREE on this corpus.
+  # Without this the test could pass against a corpus where both answers match.
+    assert shard_dir_has_sf_wdl(shards) is True
+    assert shard_dir_sf_wdl_coverage(shards) == (1, 10)
+    assert shard_dir_search_wdl_coverage(shards) == (10, 10)
+
+    config = tmp_path / "run.yaml"
+    config.write_text(
+        yaml.safe_dump({"train": {"sf_wdl_frac": 0.5, "search_wdl_frac": 0.5}}),
+        encoding="utf-8",
+    )
+  # Under the presence gate this whole call returned 0 and printed PASS.
+    assert lc0_main(["check-run-config", "--config", str(config),
+                     "--shards", str(shards)]) == 1
+    out = capsys.readouterr().out
+  # ⚑ THE EXIT CODE ALONE WOULD NOT PIN THIS. The partial-corpus refusal added
+  # alongside the fix also returns 1, so a mutant that reverted ONLY the
+  # presence/coverage swap would still exit 1 and survive. What proves the SF
+  # GATE moved is `run_config_problems` receiving shards_have_sf_wdl=False and
+  # naming the share it would redirect.
+    assert "the shards carry NO Stockfish label" in out
+    assert "sf_wdl_frac" in out
+    assert "PARTIALLY sf_wdl-labelled (1/10 rows)" in out
+    assert "VERDICT: FAIL" in out
+
+
+def test_publish_moves_nothing_when_any_destination_collides(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ PR #438 review, finding 5 — the guard was right about each shard and
+    wrong about the operation.
+
+    ``_publish`` checked the destination INSIDE the move loop, so the refusal
+    was order-dependent: an output directory already holding shard 000001 but
+    not 000000 got 000000 renamed in and only then raised, leaving a
+    half-published corpus, an orphaned staging dir, and no manifest — the very
+    state the staging directory exists to make impossible.
+
+    The assertion that distinguishes the fix from the bug is not that it
+    raises — the old code raised too — it is that the filesystem is UNTOUCHED.
+    """
+    staging = tmp_path / "_staging"
+    out = tmp_path / "out"
+    staging.mkdir()
+    out.mkdir()
+    for name in ("shard_000000.zarr", "shard_000001.zarr"):
+        (staging / name).mkdir()
+  # Only the SECOND staged shard collides, so a loop that moves as it goes has
+  # already published the first by the time it notices.
+    (out / "shard_000001.zarr").mkdir()
+
+    with pytest.raises(FileExistsError, match=r"shard_000001\.zarr"):
+        _publish(staging, out)
+
+    assert sorted(p.name for p in staging.iterdir()) == [
+        "shard_000000.zarr", "shard_000001.zarr",
+    ]
+    assert sorted(p.name for p in out.iterdir()) == ["shard_000001.zarr"]
+
+  # And it still publishes when nothing collides — otherwise the fix would be
+  # "refuse always", which no test above would have caught.
+    (out / "shard_000001.zarr").rmdir()
+    assert _publish(staging, out) == 2
+    assert not staging.exists()
+    assert sorted(p.name for p in out.iterdir()) == [
+        "shard_000000.zarr", "shard_000001.zarr",
+    ]
 
 
 def test_at_most_one_en_passant_witness_is_REACHABLE() -> None:
