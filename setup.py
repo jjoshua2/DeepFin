@@ -123,6 +123,13 @@ mcts_tree_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
+# ⚑ THE DEFAULT (PORTABLE) BUILD IS SCALAR-ONLY. The AVX2 kernels compile in
+# only under -march=native, i.e. when CAE_EXT_NATIVE is set — as
+# scripts/build_production_extensions.py does and CI does not. So on a portable
+# build _nnue_ext.HAVE_AVX2 is 0, set_simd(True) raises, and there is one kernel
+# rather than two. Anything that flips kernels must branch on HAVE_AVX2; the
+# evaluator's own numbers are identical either way, since the two kernels are
+# gated against Stockfish precisely to keep that true.
 nnue_ext = Extension(
     "chess_anti_engine.nnue._nnue_ext",
     sources=["chess_anti_engine/nnue/_nnue_ext.c"],

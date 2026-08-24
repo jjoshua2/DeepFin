@@ -40,13 +40,15 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import gzip
+import json
 import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TextIO
 
 import chess
 
@@ -79,6 +81,14 @@ class Mismatch:
     stockfish: int
     ours: int
     detail: str
+
+
+@dataclass
+class ParityResult:
+    checked: int
+    refused: int
+    mismatches: list[Mismatch]
+    observations: int
 
 
 class StockfishDriver:
@@ -229,25 +239,44 @@ def run_parity(
     stockfish: StockfishDriver,
     nnue_path: Path | None,
     max_report: int = 10,
-) -> tuple[int, list[Mismatch], int]:
-    """Compare every FEN. Returns ``(checked, mismatches, refused_in_check)``."""
+    observations: TextIO | None = None,
+) -> ParityResult:
+    """Compare every FEN, banking every observation.
+
+    ⚑ EVERY pair is written to ``observations``, not only the disagreements. A
+    summary plus the exceptional rows is exactly enough to answer the question we
+    already asked and nothing else: re-stratifying the sample, re-estimating on a
+    subset, or checking a later engine build against this run all need the equal
+    rows too, and re-running the engine to recover them re-rolls the sampling and
+    the engine version at the same time, confounding the method change with them.
+    The dump is the artifact; the count is a reading off it.
+    """
     mismatches: list[Mismatch] = []
     checked = 0
     refused = 0
+    written = 0
     for fen in fens:
         try:
             theirs = stockfish.evaluate(fen)
         except InCheckRefused:
             refused += 1
+            if observations is not None:
+                observations.write(json.dumps({"fen": fen, "refused": "in_check"}) + "\n")
+                written += 1
             continue
         ours = backend.evaluate(fen)
         checked += 1
+        if observations is not None:
+            observations.write(json.dumps({"fen": fen, "sf": theirs, "ours": ours}) + "\n")
+            written += 1
         if ours != theirs:
             detail = (
                 _localise(fen, ours, theirs, nnue_path) if len(mismatches) < max_report else ""
             )
             mismatches.append(Mismatch(fen=fen, stockfish=theirs, ours=ours, detail=detail))
-    return checked, mismatches, refused
+    return ParityResult(
+        checked=checked, refused=refused, mismatches=mismatches, observations=written
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,6 +302,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fens-in", type=Path, help="read FENs from this file instead of sampling")
     ap.add_argument("--fens-out", type=Path, help="write the sampled FENs here")
     ap.add_argument("--max-report", type=int, default=10)
+    ap.add_argument(
+        "--observations",
+        type=Path,
+        default=Path("nnue_parity_observations.jsonl.gz"),
+        help="bank EVERY (fen, ours, stockfish) triple here, gzipped JSONL "
+        "(default: %(default)s). Banking only the mismatches makes any later "
+        "re-analysis need a fresh engine run, which re-rolls the sample and the "
+        "engine build along with whatever was being changed.",
+    )
+    ap.add_argument(
+        "--no-observations",
+        action="store_true",
+        help="skip the observation dump (for a quick local check, not for a gate run)",
+    )
     ap.add_argument(
         "--simd",
         choices=("avx2", "scalar"),
@@ -319,47 +362,135 @@ def main(argv: list[str] | None = None) -> int:
     if args.fens_out:
         args.fens_out.write_text("\n".join(fens) + "\n")
 
-    with StockfishDriver(sf_path) as sf:
-        print(f"stockfish        : {sf_path}")
-        print(f"stockfish EvalFile: {sf.eval_file}")
-        our_sha = getattr(backend, "sha256", "")
-        if our_sha:
-            print(f"our net sha256   : {our_sha}")
-            # Stockfish names its nets nn-<first 12 hex of sha256>.nnue, so this
-            # is a real provenance check, not a label comparison.
-            expected = f"nn-{our_sha[:12]}.nnue"
-            if sf.eval_file and sf.eval_file != expected:
-                print(
-                    f"⚑ NET MISMATCH: stockfish is running {sf.eval_file}, our weights are "
-                    f"{expected}. The gate would be comparing two different networks.",
-                    file=sys.stderr,
-                )
-                return 2
-
-        t0 = time.perf_counter()
-        checked, mismatches, refused = run_parity(
-            backend, fens, sf, args.nnue, max_report=args.max_report
+    # ⚑ A gate with nothing to compare is not a gate that passed. An empty
+    # --fens-in, --n 0, or a sampler regression returning [] each used to print
+    # PARITY PASSED and exit 0 — a green result whose meaning was "we checked
+    # nothing", reported in the same words as "we checked fifty thousand".
+    if not fens:
+        print(
+            "no FENs to check — a parity run with an empty sample proves nothing "
+            "and does not pass",
+            file=sys.stderr,
         )
-        elapsed = time.perf_counter() - t0
+        return 2
+    # ⚑ With --fens-in there is no request to compare against, and printing the
+    # unused --n default beside the delivered count invents a shortfall that
+    # never happened.
+    if args.fens_in:
+        print(f"FENs read from   : {args.fens_in}   delivered: {len(fens):,}")
+    else:
+        print(f"FENs requested   : {args.n:,}   delivered: {len(fens):,}")
+
+    obs_handle: TextIO | None = None
+    obs_path: Path | None = None
+    if not args.no_observations:
+        obs_path = Path(args.observations)
+        # Held open across the whole run and closed in the finally below; a
+        # context manager here would need to wrap the entire engine session.
+        obs_handle = gzip.open(obs_path, "wt", encoding="utf-8")  # noqa: SIM115
+
+    try:
+        with StockfishDriver(sf_path) as sf:
+            print(f"stockfish        : {sf_path}")
+            print(f"stockfish EvalFile: {sf.eval_file or '(unreadable)'}")
+            our_sha = getattr(backend, "sha256", "")
+            if our_sha:
+                print(f"our net sha256   : {our_sha}")
+                # Stockfish names its nets nn-<first 12 hex of sha256>.nnue, so
+                # this is a real provenance check, not a label comparison.
+                expected = f"nn-{our_sha[:12]}.nnue"
+                # ⚑ AN UNREADABLE EvalFile IS A FAILURE, NOT A PASS. This used to
+                # read `if sf.eval_file and ...`, so an engine whose option line
+                # the regex could not match — a build change, a renamed option —
+                # skipped the comparison entirely and the gate ran against an
+                # unverified oracle. That is the exact drift the check exists to
+                # catch, and it was the one case the check could not fire on.
+                if not sf.eval_file:
+                    print(
+                        "⚑ could not read the engine's EvalFile option, so we cannot "
+                        "prove it is running the network we packed. Refusing to "
+                        "report parity against an unverified oracle.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if sf.eval_file != expected:
+                    print(
+                        f"⚑ NET MISMATCH: stockfish is running {sf.eval_file}, our weights "
+                        f"are {expected}. The gate would be comparing two different "
+                        "networks.",
+                        file=sys.stderr,
+                    )
+                    return 2
+
+            if obs_handle is not None:
+                obs_handle.write(
+                    json.dumps(
+                        {
+                            "record": "run",
+                            "backend": backend.name,
+                            "our_sha256": our_sha,
+                            "stockfish_eval_file": sf.eval_file,
+                            "fens_requested": args.n,
+                            "fens_delivered": len(fens),
+                            "seed": args.seed,
+                            "seeds": args.seeds,
+                            "simd": args.simd,
+                        }
+                    )
+                    + "\n"
+                )
+
+            t0 = time.perf_counter()
+            result = run_parity(
+                backend,
+                fens,
+                sf,
+                args.nnue,
+                max_report=args.max_report,
+                observations=obs_handle,
+            )
+            elapsed = time.perf_counter() - t0
+    finally:
+        if obs_handle is not None:
+            obs_handle.close()
 
     print()
     print(f"backend          : {backend.name}")
-    print(f"FENs checked     : {checked:,}  in {elapsed:.1f}s")
-    print(f"refused in check : {refused:,}  (should be 0 — the sampler excludes them)")
+    print(f"FENs checked     : {result.checked:,}  in {elapsed:.1f}s")
+    print(f"refused in check : {result.refused:,}  (should be 0 — the sampler excludes them)")
     if stats is not None:
         print(
             f"in-check excluded during sampling: {stats.in_check_excluded:,} / "
             f"{stats.considered:,} = {100.0 * stats.in_check_fraction:.2f}%"
         )
-    print(f"MISMATCHES       : {len(mismatches):,}")
-    for mm in mismatches[: args.max_report]:
+    if obs_path is not None:
+        print(f"observations     : {result.observations:,} rows banked to {obs_path}")
+    print(f"MISMATCHES       : {len(result.mismatches):,}")
+    for mm in result.mismatches[: args.max_report]:
         print(f"\n  FEN {mm.fen}\n    stockfish={mm.stockfish} ours={mm.ours}")
         if mm.detail:
             print(mm.detail)
-    if mismatches:
+
+    # Every FEN is either compared or refused; anything else means the loop
+    # silently dropped positions and the count above overstates the coverage.
+    if result.checked + result.refused != len(fens):
+        print(
+            f"\nPARITY INCONCLUSIVE — {len(fens):,} FENs in, but only "
+            f"{result.checked:,} checked + {result.refused:,} refused accounted for.",
+            file=sys.stderr,
+        )
+        return 2
+    if result.checked == 0:
+        print(
+            f"\nPARITY INCONCLUSIVE — 0 of {len(fens):,} FENs were comparable "
+            f"({result.refused:,} refused in check). Nothing was gated.",
+            file=sys.stderr,
+        )
+        return 2
+    if result.mismatches:
         print("\nPARITY FAILED — any mismatch on a non-check FEN is a bug.")
         return 1
-    print("\nPARITY PASSED — exact integer equality on every FEN.")
+    print(f"\nPARITY PASSED — exact integer equality on all {result.checked:,} FENs.")
     return 0
 
 

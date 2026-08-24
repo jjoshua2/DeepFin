@@ -125,7 +125,9 @@ typedef struct CaeValueProvider {
     const char *name;
     void *(*init)(const char *weights_path, char *err, size_t errlen);
     int   (*eval)(void *ctx, const CBoard *board, int32_t *out_value);
+    void *(*retain)(void *ctx);
     void  (*destroy)(void *ctx);
+    const char *(*kernel_name)(void);
 } CaeValueProvider;
 ```
 
@@ -134,28 +136,70 @@ writes through an out-parameter rather than returning the value directly —
 required, not ceremony, because the in-check refusal must not be expressible as
 an in-band int32.
 
+`retain`/`destroy` are a **refcount pair**, not alloc/free. A caller about to
+release the GIL and evaluate holds its own reference for the duration, so
+another thread clearing or replacing the provider cannot unmap the weights
+mid-evaluation. That failure is worth naming: a read of a freed read-only
+mapping usually returns *data* rather than crashing, so the symptom is a wrong
+evaluation, not a signal.
+
 Composition is recursion through the same interface: a provider that wants an
 inner evaluator (a leaf qsearch, a per-node mate extension) keeps the inner
-`{provider, ctx}` pair in its own context and calls `cae_value_eval()` on it. A
-second provider is an added entry in `CAE_VALUE_PROVIDERS`, not a change to the
-call site.
+`{provider, ctx}` pair in its own context and calls `cae_value_eval()` on it.
 
-Python surface on the tree:
+### ⚑⚑ Providers arrive by capsule, never by `#include`
+
+The evaluator is header-only statics, so **every extension that includes it gets
+its own copy of its code and of its static state.** A tree that obtained the
+NNUE provider by including `_nnue_provider.h` would hold a second
+kernel-selection flag and a second weight cache: `_nnue_ext.set_simd(False)`
+would not change what the tree ran, and one weight file would be mapped twice at
+62 MB. Neither is visible from outside — the tree keeps returning plausible
+evaluations from the copy nobody configured.
+
+So the module that *implements* a provider publishes it as a PyCapsule named
+`cae.value_provider.v1`, wrapping a `CaeValueProviderExport` (ABI version, the
+vtable, and the typed in-check exception it raises). The tree imports that
+capsule. One copy of the code, one copy of its state.
 
 ```python
-tree.set_value_provider("nnue", "/path/to/big.pack")
+tree.set_value_provider("nnue", "/path/to/big.pack")   # known name, or …
+tree.set_value_provider(_nnue_ext.value_provider_capsule, path)   # … any capsule
 tree.value_provider_name()      # read off the tree's STORED pointer
-tree.value_provider_eval(cboard)
+tree.value_provider_kernel()    # "avx2"/"scalar", asked of that same pointer
+tree.value_provider_eval(cboard)   # raises _nnue_ext.InCheckError in check
 tree.clear_value_provider()
 ```
 
-`value_provider_name()` reports the name off the pointer the consumer is
-holding, not off the argument that was passed in — the producer's copy of a
-setting is not evidence the consumer received it.
+A **future provider needs no edit to the tree**: it publishes the same capsule
+shape from its own module and is installed by passing that capsule.
+
+`value_provider_name()` and `value_provider_kernel()` both report off the
+pointer the consumer is holding, not off the argument that was passed in — the
+producer's copy of a setting is not evidence the consumer received it. The two
+observations that pin this down, and fail if the evaluator is ever compiled into
+the tree again:
+
+* `_nnue_ext.weight_cache_size()` counts *that module's* cache, so it rises when
+  a pack is loaded through the **tree** only;
+* `_nnue_ext.set_simd(False)` changes what `tree.value_provider_kernel()`
+  reports.
 
 Weights are mapped `PROT_READ | MAP_PRIVATE`, so every worker on the box shares
 the same physical pages through the page cache; within a process a small
-refcounted cache hands out one mapping per path.
+refcounted cache hands out one mapping per path, double-checked so two threads
+racing on the first load still end up with one mapping.
+
+### The pack is validated relationally, not just by range
+
+`cae_nnue_bind()` checks the header fields against **each other**, not only
+against their limits: `fc0_outputs == l2 + 1`, `fc1_outputs == l3`, and every
+padded width wide enough for its consumer. Each of those can be violated by a
+pack whose every individual field is in range, and the consequence is not a
+crash — `propagate()` reads uninitialised stack or walks off a row and returns a
+plausible-looking evaluation. Our own packer cannot emit such a pack, which is
+precisely why `bind()` has to reject one: it is the only thing between a
+hand-made or corrupted pack and a silently wrong number.
 
 ## Running the gate
 
@@ -177,6 +221,27 @@ paths live in one binary and each can be run against the engine. A SIMD path
 that has never been compared against Stockfish is a SIMD path nobody has
 checked.
 
+⚑ **The default (portable) build is scalar-only.** The AVX2 kernels compile in
+only under `-march=native` — i.e. when `CAE_EXT_NATIVE` is set, as
+`scripts/build_production_extensions.py` does and CI does not. On a portable
+build `_nnue_ext.HAVE_AVX2` is 0 and `set_simd(True)` raises, so anything that
+flips kernels must branch on `HAVE_AVX2`, and `--simd avx2` is not runnable
+there. The numbers are identical either way; that is what the gate exists to
+keep true.
+
+The gate refuses to report anything unless it actually compared:
+
+* an empty sample, `--n 0`, or an all-refused set exits non-zero rather than
+  printing a pass — "we checked nothing" must not be reportable in the same
+  words as "we agree on fifty thousand";
+* an engine whose `EvalFile` cannot be read is a hard failure, not a skipped
+  check. It used to be `if sf.eval_file and …`, which is a provenance gate that
+  cannot fire in exactly the drifted case it exists for;
+* every `(fen, ours, stockfish)` triple is banked to a gzipped JSONL artifact by
+  default, not just the mismatches — re-analysing from a summary means re-running
+  the engine, which re-rolls the sample and the engine build along with whatever
+  is being changed.
+
 On failure the harness localises in three layers — per-bucket PSQT, per-bucket
 positional, then the total — against `scripts/nnue_reference.py`'s numpy
 implementation, and reports whether that reference *also* disagrees with
@@ -193,6 +258,12 @@ PYTHONPATH=. nice -n 19 python3 scripts/nnue_bench.py --pack big.pack --n 5000
 ⚑ The reported rate **includes feature-index computation** (attack graph, threat
 relations, index mapping). The scoping projection measured the accumulator
 gather alone and said so; this closes that caveat.
+
+⚑ The **position reuse factor is printed with the result**, because it is part
+of the reading: every pass after the first re-evaluates the same positions with
+their weight rows already hot, so a high `--repeats` number is a warm-cache
+number. `--repeats 1` evaluates each position exactly once and is the
+conservative figure to quote when the question is working-set reuse.
 
 The benchmark reports two position sets, because one number here misleads in
 both directions: the *stratified* set spans all eight layer stacks but is

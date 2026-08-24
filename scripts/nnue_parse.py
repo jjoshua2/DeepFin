@@ -217,8 +217,12 @@ def decode_leb128(payload: bytes, total: int) -> npt.NDArray[np.int64]:
     cont = (raw & 0x80) != 0
     # Each value ends at the first byte without the continuation bit.
     ends = np.flatnonzero(~cont)
-    if ends.size < total:
-        raise ValueError(f"LEB128 stream holds {ends.size} values, expected {total}")
+    # ⚑ Exact, not "at least". Too FEW values is an obvious truncation; too MANY
+    # means the block boundary we computed is wrong, and silently decoding the
+    # first `total` of them yields a full-size tensor of plausible weights that
+    # happens to start in the wrong place. Both directions are corruption.
+    if ends.size != total:
+        raise ValueError(f"LEB128 stream holds {ends.size} values, expected exactly {total}")
     starts = np.empty_like(ends)
     starts[0] = 0
     starts[1:] = ends[:-1] + 1

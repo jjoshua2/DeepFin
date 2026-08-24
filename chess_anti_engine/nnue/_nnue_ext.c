@@ -3,9 +3,14 @@
  *
  * This module exists so the parity gate, the unit tests and the throughput
  * benchmark can drive the evaluator directly, without going through the MCTS
- * tree. The tree gets the SAME evaluator through the value-provider seam
- * (chess_anti_engine/mcts/_value_provider.h); both include _nnue_impl.h, so
- * there is one implementation and two callers, not two implementations.
+ * tree — and it is also the module that OWNS the evaluator: it is the only
+ * translation unit that includes _nnue_impl.h, so there is exactly one copy of
+ * the kernel-selection flag and one weight cache in the process.
+ *
+ * The tree gets the SAME code by importing the value-provider capsule this
+ * module publishes (see ../mcts/_value_provider.h), not by including the
+ * evaluator's header. That is what makes set_simd() below actually govern what
+ * the tree runs, and what keeps one weight file to one mapping.
  *
  * Positions arrive as CBoard objects built by
  * chess_anti_engine.encoding._lc0_ext.CBoard.from_board(python_chess_board),
@@ -24,9 +29,7 @@
 #include "_nnue_impl.h"
 #include "_nnue_provider.h"
 
-/* Mirrors the layout of _lc0_ext.c's PyCBoard, the same way _mcts_tree.c does.
- * ⚑ Duck-typing a struct across .so boundaries is only safe while the layouts
- * agree, so unwrap_cboard() checks tp_name rather than trusting the caller. */
+/* Mirrors the layout of _lc0_ext.c's PyCBoard, the same way _mcts_tree.c does. */
 typedef struct {
     PyObject_HEAD
     CBoard board;
@@ -34,16 +37,40 @@ typedef struct {
 
 static PyObject *NnueInCheckError = NULL;
 
+/* ⚑ THE TYPE IS RESOLVED, NOT GUESSED FROM ITS NAME. An earlier version of this
+ * compared tp_name's trailing component to "CBoard", which is not a type check:
+ * any class anywhere called CBoard passed it, and the cast below then read a
+ * small object's storage as a much larger PyCBoardMirror — out of bounds, after
+ * the GIL is released, instead of the TypeError that was promised. So we import
+ * the real type once and compare identity, and check tp_basicsize as well
+ * because the cast's correctness rests on the layout and not just the identity.
+ * The tree does the same, through its own copy of this helper. */
+static PyTypeObject *cached_cboard_type = NULL;
+
+static int ensure_cboard_type(void) {
+    if (cached_cboard_type) return 0;
+    PyObject *mod = PyImport_ImportModule("chess_anti_engine.encoding._lc0_ext");
+    if (!mod) return -1;
+    PyObject *type_obj = PyObject_GetAttrString(mod, "CBoard");
+    Py_DECREF(mod);
+    if (!type_obj) return -1;
+    if (!PyType_Check(type_obj)
+        || ((PyTypeObject *)type_obj)->tp_basicsize != (Py_ssize_t)sizeof(PyCBoardMirror)) {
+        Py_DECREF(type_obj);
+        PyErr_SetString(PyExc_ImportError,
+                        "CBoard extension ABI mismatch; rebuild C extensions");
+        return -1;
+    }
+    cached_cboard_type = (PyTypeObject *)type_obj;   /* module-lifetime reference */
+    return 0;
+}
+
 static const CBoard *unwrap_cboard(PyObject *obj) {
-    /* tp_name is the qualified "_lc0_ext.CBoard"; match on the trailing class
-     * name so a module rename does not silently start accepting anything. */
-    const char *name = Py_TYPE(obj)->tp_name;
-    const char *leaf = name ? strrchr(name, '.') : NULL;
-    leaf = leaf ? leaf + 1 : name;
-    if (!leaf || strcmp(leaf, "CBoard") != 0) {
+    if (ensure_cboard_type() != 0) return NULL;
+    if (Py_TYPE(obj) != cached_cboard_type) {
         PyErr_Format(PyExc_TypeError,
                      "expected a CBoard from chess_anti_engine.encoding._lc0_ext, got %s",
-                     name ? name : "?");
+                     Py_TYPE(obj)->tp_name ? Py_TYPE(obj)->tp_name : "?");
         return NULL;
     }
     return &((PyCBoardMirror *)obj)->board;
@@ -386,10 +413,23 @@ static PyObject *py_simd_active(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(a
     return PyBool_FromLong(cae_nnue_simd_active());
 }
 
+PyDoc_STRVAR(weight_cache_size_doc,
+"weight_cache_size() -> int\n\n"
+"How many distinct weight files THIS module's evaluator is holding mapped. The\n"
+"cache is a static of the evaluator, so the count is per copy of the evaluator's\n"
+"code — which makes it the instrument for 'did that other extension really call\n"
+"our provider, or a second copy of the evaluator compiled into itself'. A second\n"
+"copy would keep its own cache and leave this one reading 0.");
+
+static PyObject *py_weight_cache_size(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
+    return PyLong_FromLong((long)cae_nnue_cache_size());
+}
+
 static PyMethodDef module_methods[] = {
     {"load", py_load, METH_VARARGS, load_doc},
     {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
     {"simd_active", py_simd_active, METH_NOARGS, simd_active_doc},
+    {"weight_cache_size", py_weight_cache_size, METH_NOARGS, weight_cache_size_doc},
     {"info", py_info, METH_VARARGS, info_doc},
     {"source_sha256", py_source_sha256, METH_VARARGS, source_sha256_doc},
     {"evaluate", py_evaluate, METH_VARARGS, evaluate_doc},
@@ -431,6 +471,24 @@ PyMODINIT_FUNC PyInit__nnue_ext(void) {
         Py_DECREF(m);
         return NULL;
     }
+    /* ⚑ Publish the provider for OTHER extensions. Static storage: the capsule
+     * hands out a pointer, so the struct must outlive every consumer, and both
+     * fields point at objects that live as long as this module does. */
+    static CaeValueProviderExport nnue_export;
+    nnue_export.abi_version = CAE_VALUE_PROVIDER_ABI;
+    nnue_export.struct_size = (uint32_t)sizeof(CaeValueProviderExport);
+    nnue_export.provider = &CAE_NNUE_PROVIDER;
+    nnue_export.in_check_error = (struct _object *)NnueInCheckError;
+
+    PyObject *export_capsule = PyCapsule_New(&nnue_export,
+                                             CAE_VALUE_PROVIDER_CAPSULE_NAME, NULL);
+    if (!export_capsule) { Py_DECREF(m); return NULL; }
+    if (PyModule_AddObject(m, "value_provider_capsule", export_capsule) < 0) {
+        Py_DECREF(export_capsule);
+        Py_DECREF(m);
+        return NULL;
+    }
+
     PyModule_AddIntConstant(m, "THREAT_DIMS", (long)CAE_NNUE_THREAT_DIMS);
     PyModule_AddIntConstant(m, "HALFKA_DIMS", (long)CAE_NNUE_HALFKA_DIMS);
     PyModule_AddIntConstant(m, "PACK_VERSION", (long)CAE_NNUE_PACK_VERSION);

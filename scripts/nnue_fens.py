@@ -59,6 +59,12 @@ class SampleStats:
     in_check_excluded: int = 0
     accepted: int = 0
     cell_counts: Counter[tuple[int, int]] = field(default_factory=Counter)
+    #: Cell of each FEN this sampler produced. Kept so a caller that DEDUPES or
+    #: TRUNCATES the list can recount from the FENs it actually delivered rather
+    #: than adding up what the sub-samples originally saw — see
+    #: sample_fens_pooled, where doing the latter reported strata that were not
+    #: in the file the gate then read.
+    cell_of: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     @property
     def in_check_fraction(self) -> float:
@@ -190,6 +196,7 @@ def sample_fens(
                 drew = True
                 ordered.append(values[index])
                 stats.cell_counts[cell] += 1
+                stats.cell_of[values[index]] = cell
                 if len(ordered) == count:
                     break
         if not drew:
@@ -227,6 +234,13 @@ def sample_fens_pooled(
 
     Each sub-sample is reproducible from ``base_seed + i`` alone, so the pooled
     sample is reproducible from (count, seeds, base_seed).
+
+    ⚑ THE CELL COUNTS ARE RECOUNTED FROM THE FENs ACTUALLY DELIVERED. Summing
+    the sub-samples' own counts is the obvious thing and it is wrong twice over:
+    duplicates are dropped here, and the pooled list is truncated to ``count``,
+    so the summed report described a larger, differently-stratified population
+    than the file the parity gate then reads — a coverage table claiming strata
+    the gate never saw. Counting the retained FENs cannot drift from them.
     """
     per_seed = -(-count // max(1, seeds))
     pooled: list[str] = []
@@ -236,14 +250,18 @@ def sample_fens_pooled(
         chunk, stats = sample_fens(per_seed, seed=base_seed + i, **kwargs)  # pyright: ignore[reportArgumentType]
         total.considered += stats.considered
         total.in_check_excluded += stats.in_check_excluded
+        total.cell_of.update(stats.cell_of)
         for fen in chunk:
             if fen in seen:
                 continue
             seen.add(fen)
             pooled.append(fen)
-        total.cell_counts.update(stats.cell_counts)
         if len(pooled) >= count:
             break
     pooled = pooled[:count]
+    total.cell_counts = Counter(
+        total.cell_of[fen] for fen in pooled if fen in total.cell_of
+    )
+    total.cell_of = {fen: total.cell_of[fen] for fen in pooled if fen in total.cell_of}
     total.accepted = len(pooled)
     return pooled, total

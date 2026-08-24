@@ -28,9 +28,27 @@
  *      is a caller with a hole in its search.
  *
  * init() takes a weights path and returns an opaque ctx (NULL on failure, with
- * a message written into err). destroy() releases it. Weights are mapped
- * read-only and shared, so several trees in one process pointing at the same
- * path cost one mapping.
+ * a message written into err). retain()/destroy() are a REFCOUNT PAIR, not an
+ * alloc/free pair — see the contract on retain(). Weights are mapped read-only
+ * and shared, so several trees in one process pointing at the same path cost
+ * one mapping.
+ *
+ * ⚑⚑ HOW A PROVIDER REACHES THE TREE: THROUGH A CAPSULE, NEVER AN #include.
+ *
+ * Every function in an evaluator implemented as header-only statics is DUPLICATED
+ * into each extension that includes it, and so is every static variable it owns.
+ * A tree that got its provider by including the evaluator's header would hold a
+ * SECOND copy of that evaluator's kernel-selection flag and weight cache: the
+ * eval() the tree calls would ignore a set_simd() made through the evaluator's own
+ * module, and the same weight file would be mapped twice. Both are silent — the
+ * tree keeps returning plausible evaluations from the copy nobody configured.
+ *
+ * So the provider is published by the module that DEFINES it, as a PyCapsule named
+ * CAE_VALUE_PROVIDER_CAPSULE_NAME wrapping a CaeValueProviderExport, and consumers
+ * import that capsule instead of the header. One copy of the code, one copy of its
+ * state, and "which provider is installed" stays answerable from the pointer the
+ * tree actually holds. A future provider publishes the same capsule shape from its
+ * own module; the tree needs no edit to accept it.
  */
 
 #ifndef CAE_VALUE_PROVIDER_H
@@ -67,8 +85,23 @@ typedef struct CaeValueProvider {
      * threads share one ctx. */
     int (*eval)(void *ctx, const CBoard *board, int32_t *out_value);
 
-    /* Release a context from init(). Safe on NULL. */
+    /* ⚑ Take an additional reference to a ctx, returning it. REQUIRED, and it
+     * pairs with destroy(): destroy DROPS one reference and frees only at zero.
+     * A caller that is about to release the GIL and evaluate holds a reference
+     * across the call, so another thread swapping or clearing the provider
+     * cannot unmap the weights out from under an evaluation in flight. A
+     * provider without this cannot be installed — the alternative is a
+     * use-after-free that reads as a wrong evaluation. */
+    void *(*retain)(void *ctx);
+
+    /* Drop one reference from init()/retain(). Safe on NULL. */
     void (*destroy)(void *ctx);
+
+    /* Which compute kernel this provider will actually use, e.g. "avx2" or
+     * "scalar". Read by the CONSUMER off the vtable it holds, so a caller can
+     * observe the state of the code that will really run rather than the state
+     * of its own copy. NULL when the provider has no kernel choice to report. */
+    const char *(*kernel_name)(void);
 } CaeValueProvider;
 
 /* Dispatch helper — the one call site a composing provider uses on its inner
@@ -78,6 +111,42 @@ static inline int cae_value_eval(const CaeValueProvider *vp, void *ctx,
     if (!vp || !vp->eval) return CAE_VALUE_ERR_NOT_LOADED;
     return vp->eval(ctx, board, out_value);
 }
+
+/* Returns the retained ctx, or NULL if this provider cannot be held safely. */
+static inline void *cae_value_retain(const CaeValueProvider *vp, void *ctx) {
+    if (!vp || !vp->retain) return NULL;
+    return vp->retain(ctx);
+}
+
+static inline void cae_value_destroy(const CaeValueProvider *vp, void *ctx) {
+    if (vp && vp->destroy) vp->destroy(ctx);
+}
+
+/* ================================================================
+ * The cross-extension publication shape
+ * ================================================================ */
+
+#define CAE_VALUE_PROVIDER_CAPSULE_NAME "cae.value_provider.v1"
+#define CAE_VALUE_PROVIDER_ABI 1u
+
+/* PyObject, forward-declared: this header stays usable without Python.h, and
+ * `struct _object *` is exactly what PyObject * is. */
+struct _object;
+
+typedef struct CaeValueProviderExport {
+    uint32_t abi_version;               /* CAE_VALUE_PROVIDER_ABI */
+    uint32_t struct_size;               /* sizeof(CaeValueProviderExport) */
+
+    /* The vtable, owned by the publishing module and valid for its lifetime. */
+    const CaeValueProvider *provider;
+
+    /* The typed exception the publishing module raises for
+     * CAE_VALUE_ERR_IN_CHECK, so a consumer can raise the SAME class rather
+     * than a stringly-typed stand-in. The resolver that has to catch this is in
+     * a different module again, and matching on message text is not a contract.
+     * Borrowed; the publishing module holds the reference. */
+    struct _object *in_check_error;
+} CaeValueProviderExport;
 
 static inline const char *cae_value_status_name(int status) {
     switch (status) {

@@ -76,7 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"pack           : {args.pack}")
     print(f"net sha256     : {_nnue_ext.source_sha256(handle)}")
     print(f"avx2 compiled  : {bool(_nnue_ext.HAVE_AVX2)}")
-    print(f"repeats        : {args.repeats} passes over each set")
+    # ⚑ The reuse factor is part of the reading, not a knob footnote. Every pass
+    # after the first re-evaluates the SAME positions, so their weight rows and
+    # feature tables are already hot; a high-repeat number is a warm-cache
+    # number. --repeats 1 evaluates each position exactly once and is the
+    # conservative figure to quote when the concern is working-set reuse.
+    print(f"repeats        : {args.repeats} pass(es) over each set "
+          f"(position reuse factor {args.repeats}x)")
     for label, group in sets:
         counts = [bin(b.occupied).count("1") for b in group]
         threats = [
@@ -110,7 +116,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
         print()
 
-    _nnue_ext.set_simd(True)
+    # Restore the build's default kernel. ⚑ Not an unconditional set_simd(True):
+    # on a portable build AVX2 is not compiled in, that call raises, and an
+    # otherwise complete benchmark would exit nonzero on its last line.
+    _nnue_ext.set_simd(bool(_nnue_ext.HAVE_AVX2))
     return 0
 
 

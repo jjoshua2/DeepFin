@@ -85,21 +85,52 @@ def _big_layout() -> nnue_pack.PackLayout:
     )
 
 
-def write_synthetic_pack(path: Path, pokes: dict[str, list[tuple[int, int]]]) -> None:
-    """A real-layout pack that is all zeros except for ``pokes``.
+#: Element type of each packed tensor, so a test can poke any of them and not
+#: just the int32 ones. Mirrors the CaeNnueWeights pointer types.
+TENSOR_DTYPE: dict[str, type[np.number]] = {
+    "ft_bias": np.int16,
+    "ft_weight": np.int16,
+    "ft_psqt": np.int32,
+    "threat_weight": np.int8,
+    "threat_psqt": np.int32,
+    "fc0_bias": np.int32,
+    "fc0_weight": np.int8,
+    "fc1_bias": np.int32,
+    "fc1_weight": np.int8,
+    "fc2_bias": np.int32,
+    "fc2_weight": np.int8,
+}
 
-    ``pokes`` maps a tensor name to (element_index, value) pairs; int32 tensors
-    only, which is all the wiring tests need. The file is created as a sparse
-    file — the 111 MB of holes read back as zeros and cost no disk.
+
+def write_synthetic_pack(
+    path: Path,
+    pokes: dict[str, list[tuple[int, int]]] | None = None,
+    blobs: dict[str, list[tuple[int, np.ndarray]]] | None = None,
+    header: bytes | None = None,
+) -> None:
+    """A real-layout pack that is all zeros except for ``pokes`` and ``blobs``.
+
+    ``pokes`` maps a tensor name to (element_index, value) pairs; ``blobs`` maps
+    one to (element_index, array) pairs written contiguously from that element.
+    Element size comes from TENSOR_DTYPE, so int8/int16 tensors are writable too.
+    ``header`` replaces the layout's own header, for tests that need a pack whose
+    declared dimensions are deliberately inconsistent. The file is created sparse
+    — the 111 MB of holes read back as zeros and cost no disk.
     """
     layout = _big_layout()
     with open(path, "wb") as fh:
         fh.truncate(layout.total_size)
-        fh.write(layout.header)
-        for name, entries in pokes.items():
+        fh.write(header if header is not None else layout.header)
+        for name, entries in (pokes or {}).items():
+            dtype = np.dtype(TENSOR_DTYPE[name])
             for index, value in entries:
-                fh.seek(layout.offsets[name] + index * 4)
-                fh.write(struct.pack("<i", value))
+                fh.seek(layout.offsets[name] + index * dtype.itemsize)
+                fh.write(np.asarray(value, dtype=dtype).tobytes())
+        for name, chunks in (blobs or {}).items():
+            dtype = np.dtype(TENSOR_DTYPE[name])
+            for index, array in chunks:
+                fh.seek(layout.offsets[name] + index * dtype.itemsize)
+                fh.write(np.ascontiguousarray(array, dtype=dtype).tobytes())
 
 
 @pytest.fixture(scope="module")
@@ -475,11 +506,71 @@ def test_in_check_refusal_is_not_a_sentinel(bucket_pack: Path) -> None:
     assert "recursively" in str(excinfo.value)
 
 
-def test_reference_also_refuses_in_check() -> None:
-    from scripts.nnue_reference import InCheckError, position_view as pv
+def _full_size_zero_big_net() -> nnue_parse.NnueNet:
+    """A big-architecture net at REAL dimensions with all-zero weights.
 
-    assert pv(chess.Board(IN_CHECK_POSITIONS[0])).in_check
-    assert InCheckError is not None
+    Full size because the reference evaluator indexes ft_weight/threat_weight by
+    the true feature indices, so the mini net used for the serialisation tests
+    would raise IndexError rather than evaluate. Zeros because the point here is
+    reaching the code path, not the number at the end of it; np.zeros pages are
+    never touched, so the 108 MB is address space rather than memory.
+    """
+    arch = nnue_parse.ARCHS[0]
+    pad = nnue_parse.pad
+    stacks = tuple(
+        nnue_parse.LayerStack(
+            arch_hash=1,
+            fc0_bias=np.zeros(arch.l2 + 1, dtype=np.int32),
+            fc0_weight=np.zeros((arch.l2 + 1, pad(arch.l1)), dtype=np.int8),
+            fc1_bias=np.zeros(arch.l3, dtype=np.int32),
+            fc1_weight=np.zeros((arch.l3, pad(arch.l2 * 2)), dtype=np.int8),
+            fc2_bias=np.zeros(1, dtype=np.int32),
+            fc2_weight=np.zeros((1, pad(arch.l3)), dtype=np.int8),
+        )
+        for _ in range(nnue_parse.LAYER_STACKS)
+    )
+    return nnue_parse.NnueNet(
+        version=nnue_parse.VERSION,
+        net_hash=0x5EED,
+        description="zero",
+        arch=arch,
+        ft_hash=arch.ft_hash,
+        ft_bias=np.zeros(arch.l1, dtype=np.int16),
+        ft_weight=np.zeros((nnue_parse.HALFKA_DIMS, arch.l1), dtype=np.int16),
+        ft_psqt=np.zeros((nnue_parse.HALFKA_DIMS, nnue_parse.PSQT_BUCKETS), dtype=np.int32),
+        threat_weight=np.zeros((nnue_parse.THREAT_DIMS, arch.l1), dtype=np.int8),
+        threat_psqt=np.zeros((nnue_parse.THREAT_DIMS, nnue_parse.PSQT_BUCKETS), dtype=np.int32),
+        stacks=stacks,
+        source_sha256="cd" * 32,
+        source_bytes=1,
+    )
+
+
+def test_reference_also_refuses_in_check() -> None:
+    """The numpy reference refuses in check too — asserted by CALLING it.
+
+    ⚑ This test used to check that ``position_view(...).in_check`` was True and
+    that ``InCheckError`` was importable. Both were true no matter what
+    ``ReferenceEvaluator.evaluate`` did: an import is not a behaviour and a flag
+    on a different object is not the refusal. It would have passed unchanged if
+    the reference had happily returned a number for a king in check — which is
+    the one thing it exists here to rule out, because the reference is the
+    bisector a parity failure gets localised with.
+    """
+    from scripts.nnue_reference import InCheckError, ReferenceEvaluator
+
+    evaluator = ReferenceEvaluator(_full_size_zero_big_net())
+
+    # Positive half: the same evaluator DOES return a value for a quiet
+    # position, so the refusal below is about the check and not about the
+    # evaluator being broken for everything.
+    assert isinstance(evaluator.evaluate(chess.Board(POSITIONS[0])), int)
+
+    for fen in IN_CHECK_POSITIONS:
+        with pytest.raises(InCheckError):
+            evaluator.evaluate(chess.Board(fen))
+        with pytest.raises(InCheckError):
+            evaluator.trace(chess.Board(fen))
 
 
 # ===========================================================================
@@ -555,10 +646,100 @@ def test_psqt_is_side_to_move_relative(tmp_path: Path) -> None:
 # ===========================================================================
 
 
+@pytest.fixture(scope="module")
+def dense_pack(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A pack with NONZERO ft/threat/psqt rows for every feature POSITIONS uses.
+
+    ⚑ THE ALL-ZERO FIXTURE CANNOT TELL THE TWO KERNELS APART. With zero feature
+    weights the accumulator is zero everywhere, and the AVX2 transform's
+    clamp/mulhi/packus/permute chain maps zeros to zeros whatever order its lanes
+    are in — so a wrong ``_mm256_permute4x64_epi64`` selector, the single most
+    likely SIMD defect in this file, agrees with the scalar loop perfectly. The
+    weights below are varied ACROSS j precisely so lane order is observable.
+    """
+    rng = np.random.default_rng(4242)
+    active_halfka: set[int] = set()
+    active_threats: set[int] = set()
+    for fen in POSITIONS:
+        for perspective in (0, 1):
+            ka, th = _nnue_ext.active_features(cboard(fen), perspective)
+            active_halfka.update(ka)
+            active_threats.update(th)
+
+    l1 = BIG.l1
+    nb = nnue_parse.PSQT_BUCKETS
+    blobs: dict[str, list[tuple[int, np.ndarray]]] = {
+        "ft_bias": [(0, rng.integers(-120, 120, size=l1, dtype=np.int16))],
+        "ft_weight": [
+            (row * l1, rng.integers(-40, 40, size=l1, dtype=np.int16))
+            for row in sorted(active_halfka)
+        ],
+        "ft_psqt": [
+            (row * nb, rng.integers(-300, 300, size=nb, dtype=np.int32))
+            for row in sorted(active_halfka)
+        ],
+        "threat_weight": [
+            (row * l1, rng.integers(-30, 30, size=l1, dtype=np.int8))
+            for row in sorted(active_threats)
+        ],
+        "threat_psqt": [
+            (row * nb, rng.integers(-300, 300, size=nb, dtype=np.int32))
+            for row in sorted(active_threats)
+        ],
+        "fc0_bias": [(0, rng.integers(-500, 500, size=nnue_parse.LAYER_STACKS * (BIG.l2 + 1),
+                                      dtype=np.int32))],
+        "fc0_weight": [
+            (0, rng.integers(-20, 20,
+                             size=nnue_parse.LAYER_STACKS * (BIG.l2 + 1) * nnue_parse.pad(l1),
+                             dtype=np.int8))
+        ],
+        "fc1_bias": [(0, rng.integers(-500, 500, size=nnue_parse.LAYER_STACKS * BIG.l3,
+                                      dtype=np.int32))],
+        "fc1_weight": [
+            (0, rng.integers(-20, 20,
+                             size=nnue_parse.LAYER_STACKS * BIG.l3 * nnue_parse.pad(BIG.l2 * 2),
+                             dtype=np.int8))
+        ],
+        "fc2_bias": [(0, rng.integers(-500, 500, size=nnue_parse.LAYER_STACKS, dtype=np.int32))],
+        "fc2_weight": [
+            (0, rng.integers(-20, 20, size=nnue_parse.LAYER_STACKS * nnue_parse.pad(BIG.l3),
+                             dtype=np.int8))
+        ],
+    }
+    path = tmp_path_factory.mktemp("nnue") / "dense.pack"
+    write_synthetic_pack(path, blobs=blobs)
+    return path
+
+
+requires_avx2 = pytest.mark.skipif(
+    not _nnue_ext.HAVE_AVX2,
+    reason="portable build: no AVX2 kernels compiled in, so there is no second "
+    "kernel to compare against (CAE_EXT_NATIVE unset, as in CI)",
+)
+
+
+def test_the_dense_pack_actually_produces_varied_evaluations(dense_pack: Path) -> None:
+    """Guards the guard: a degenerate dense pack would make agreement vacuous."""
+    handle = _nnue_ext.load(str(dense_pack))
+    values = [_nnue_ext.evaluate(handle, cboard(fen)) for fen in POSITIONS]
+    assert any(v != 0 for v in values), "dense pack evaluates to all zeros"
+    assert len(set(values)) > 1, "dense pack gives every position the same value"
+
+
+@requires_avx2
 @pytest.mark.parametrize("fen", POSITIONS)
-def test_scalar_and_simd_kernels_agree(fen: str, bucket_pack: Path) -> None:
-    """Both kernels live in one binary precisely so this can be asserted."""
-    handle = _nnue_ext.load(str(bucket_pack))
+@pytest.mark.parametrize("pack_name", ["bucket_pack", "dense_pack"])
+def test_scalar_and_simd_kernels_agree(
+    fen: str, pack_name: str, request: pytest.FixtureRequest
+) -> None:
+    """Both kernels live in one binary precisely so this can be asserted.
+
+    Run against BOTH the all-zero bucket pack and the dense one: the zero pack
+    proves the plumbing, and only the dense pack can actually see a lane-order
+    defect.
+    """
+    pack: Path = request.getfixturevalue(pack_name)
+    handle = _nnue_ext.load(str(pack))
     try:
         _nnue_ext.set_simd(True)
         with_simd = _nnue_ext.evaluate(handle, cboard(fen))
@@ -650,7 +831,9 @@ def test_tree_seam_refuses_in_check(fen: str, bucket_pack: Path) -> None:
 
     tree = MCTSTree()
     tree.set_value_provider("nnue", str(bucket_pack))
-    with pytest.raises(ValueError, match="in-check"):
+    # InCheckError subclasses ValueError, so this stays a ValueError check AND
+    # pins the wording of the contract the caller has to satisfy.
+    with pytest.raises(ValueError, match="resolve check nodes recursively"):
         tree.value_provider_eval(cboard(fen))
 
 
@@ -710,3 +893,688 @@ def test_real_pack_provenance_is_readable_from_the_loaded_weights() -> None:
     assert info["threat_dims"] == nnue_parse.THREAT_DIMS
     assert info["ft_hash"] == BIG.ft_hash
     assert len(_nnue_ext.source_sha256(handle)) == 64
+
+
+# ===========================================================================
+# Pack internal consistency — the RELATIONS between fields, not their ranges
+# ===========================================================================
+
+#: Byte offset of each u32 header field, from the "<18I" pack at offset 8.
+_HDR_U32 = {
+    name: 8 + 4 * i
+    for i, name in enumerate(
+        [
+            "pack_version", "nnue_version", "net_hash", "ft_hash",
+            "l1", "l2", "l3", "psqt_buckets", "layer_stacks",
+            "halfka_dims", "threat_dims", "use_threats",
+            "fc0_outputs", "fc0_padded_in", "fc1_outputs", "fc1_padded_in",
+            "fc2_padded_in", "reserved0",
+        ]
+    )
+}
+
+
+def _pack_with_header_field(tmp_path: Path, name: str, value: int, filename: str) -> Path:
+    """A layout-correct pack with ONE header field overwritten."""
+    layout = _big_layout()
+    header = bytearray(layout.header)
+    struct.pack_into("<I", header, _HDR_U32[name], value)
+    path = tmp_path / filename
+    with open(path, "wb") as fh:
+        fh.truncate(layout.total_size)
+        fh.write(bytes(header))
+    return path
+
+
+def test_header_field_offsets_match_the_packer() -> None:
+    """The offset table above is derived from the packer, not from memory."""
+    layout = _big_layout()
+    assert struct.unpack_from("<I", layout.header, _HDR_U32["l1"])[0] == BIG.l1
+    assert struct.unpack_from("<I", layout.header, _HDR_U32["l2"])[0] == BIG.l2
+    assert struct.unpack_from("<I", layout.header, _HDR_U32["l3"])[0] == BIG.l3
+    assert struct.unpack_from("<I", layout.header, _HDR_U32["fc0_outputs"])[0] == BIG.l2 + 1
+    assert struct.unpack_from("<I", layout.header, _HDR_U32["fc1_outputs"])[0] == BIG.l3
+    assert (
+        struct.unpack_from("<I", layout.header, _HDR_U32["fc0_padded_in"])[0]
+        == nnue_parse.pad(BIG.l1)
+    )
+    assert (
+        struct.unpack_from("<I", layout.header, _HDR_U32["fc2_padded_in"])[0]
+        == nnue_parse.pad(BIG.l3)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        # fc0_outputs == l2 + 1. With l2 outputs, propagate() reads fc0[l2] —
+        # one past what the loop initialised — as the forward-skip term, i.e.
+        # uninitialised stack returned as an evaluation.
+        ("fc0_outputs", BIG.l2, "needs exactly l2 \\+ 1"),
+        ("fc0_outputs", BIG.l2 + 2, "needs exactly l2 \\+ 1"),
+        # fc1_outputs == l3.
+        ("fc1_outputs", BIG.l3 - 1, "fc1_outputs"),
+        # Padded widths must cover their consumers, or the layer loops walk off
+        # the end of a row into the next one.
+        ("fc0_padded_in", BIG.l1 - 64, "narrower than its l1"),
+        ("fc1_padded_in", 2 * BIG.l2 - 2, "narrower than its 2\\*l2"),
+        ("fc2_padded_in", BIG.l3 - 1, "fc2_padded_in"),
+        # Degenerate layers.
+        ("l2", 0, "empty layer"),
+        ("l3", 0, "empty layer"),
+    ],
+)
+def test_loader_rejects_internally_inconsistent_dimensions(
+    tmp_path: Path, field: str, value: int, message: str
+) -> None:
+    """⚑ Every one of these passes the per-field RANGE checks.
+
+    The defect class is relational: fields that are each individually plausible
+    but cannot be true together. Our own packer cannot emit any of them, which is
+    exactly why bind() has to reject them — it is the only thing between a
+    hand-made or corrupted pack and an evaluation that is silently wrong rather
+    than absent.
+    """
+    path = _pack_with_header_field(tmp_path, field, value, f"bad_{field}_{value}.pack")
+    with pytest.raises(ValueError, match=message):
+        _nnue_ext.load(str(path))
+
+
+def test_loader_rejects_an_l1_the_kernels_cannot_step(tmp_path: Path) -> None:
+    """l1 must suit the compiled kernels, or the two of them silently diverge.
+
+    The AVX2 transform steps 32 int16 lanes over each half of the accumulator, so
+    it needs l1 % 64 == 0 where the scalar loop needs only 32. On a build with
+    AVX2 compiled in, accepting l1 % 64 == 32 would mean the two kernels compute
+    different numbers from the same weights — and "the kernels agree" is the
+    whole reason for shipping both.
+    """
+    required = 64 if _nnue_ext.HAVE_AVX2 else 32
+    bad = required + 32 if required == 64 else required + 16
+    path = _pack_with_header_field(tmp_path, "l1", bad, "bad_l1.pack")
+    with pytest.raises(ValueError, match="not a multiple of"):
+        _nnue_ext.load(str(path))
+
+
+def test_loader_rejects_a_tensor_offset_that_wraps_uint64(tmp_path: Path) -> None:
+    """⚑ The bounds check is a subtraction because addition wraps.
+
+    `off + size > map_size` is the natural phrasing and a crafted off near
+    2**64 makes the sum small, so the tensor passes the check and then points
+    wherever it likes. Writing it as `size > map_size - off` cannot wrap.
+    """
+    layout = _big_layout()
+    header = bytearray(layout.header)
+    # off[1] is ft_weight, 46 MB; this value plus that size wraps to a small
+    # number in uint64 arithmetic.
+    struct.pack_into("<Q", header, 88 + 8 * 1, (1 << 64) - 1024)
+    path = tmp_path / "wrap.pack"
+    with open(path, "wb") as fh:
+        fh.truncate(layout.total_size)
+        fh.write(bytes(header))
+    with pytest.raises(ValueError, match="outside the file"):
+        _nnue_ext.load(str(path))
+
+
+# ===========================================================================
+# Malformed positions are rejected, not evaluated
+# ===========================================================================
+
+
+def _raw_cboard(
+    *,
+    pawns: int = 0,
+    knights: int = 0,
+    bishops: int = 0,
+    rooks: int = 0,
+    queens: int = 0,
+    kings: int = 0,
+    white_occ: int = 0,
+    black_occ: int = 0,
+    turn: int = 1,
+) -> CBoard:
+    """A CBoard straight from raw bitboards, bypassing python-chess validation.
+
+    from_raw takes positional integers only; the keyword wrapper is here so the
+    tests below read as the boards they describe.
+    """
+    return CBoard.from_raw(
+        pawns, knights, bishops, rooks, queens, kings,
+        white_occ, black_occ, turn, 0, -1, 0,
+    )
+
+
+def test_evaluator_rejects_overlapping_piece_bitboards(bucket_pack: Path) -> None:
+    """⚑ A CBoard is not the same thing as a chess position.
+
+    from_raw() does not require the piece-type masks to be disjoint, and a square
+    claimed by several types is emitted as several attackers — which multiplies
+    the threat-relation count far past anything a legal board reaches. The
+    relation buffer is a fixed array on the caller's stack, so the alternative to
+    rejecting this is a stack smash reached from Python-supplied integers.
+    """
+    handle = _nnue_ext.load(str(bucket_pack))
+    # ⚑ 30 occupied squares, deliberately UNDER the 32-piece limit. An earlier
+    # version of this test filled the board, and every piece-count check fired
+    # before the disjointness check was reached — so it passed with the
+    # disjointness check deleted, which is precisely the mutant it exists to
+    # kill. A rejection test has to fail for the reason it names.
+    kings = (1 << 4) | (1 << 60)
+    overlap = ((1 << 28) - 1) << 16   # 28 squares on ranks 3-6, no back rank
+    board = _raw_cboard(
+        knights=overlap,
+        bishops=overlap,   # same squares claimed by a second piece type
+        rooks=overlap,
+        queens=overlap,
+        kings=kings,
+        white_occ=overlap | (1 << 4),
+        black_occ=1 << 60,
+        turn=1,
+    )
+    assert bin(overlap | kings).count("1") == 30
+    with pytest.raises(ValueError, match="malformed position"):
+        _nnue_ext.evaluate(handle, board)
+
+
+def test_evaluator_rejects_a_pawn_on_the_back_rank(bucket_pack: Path) -> None:
+    """Pawns on rank 1/8 produce in-range but meaningless threat indices."""
+    handle = _nnue_ext.load(str(bucket_pack))
+    board = _raw_cboard(
+        pawns=1 << 0,
+        knights=0,
+        bishops=0,
+        rooks=0,
+        queens=0,
+        kings=(1 << 4) | (1 << 60),
+        white_occ=(1 << 0) | (1 << 4),
+        black_occ=1 << 60,
+        turn=1,
+    )
+    with pytest.raises(ValueError, match="malformed position"):
+        _nnue_ext.evaluate(handle, board)
+
+
+def test_evaluator_rejects_a_board_with_two_kings_of_one_colour(bucket_pack: Path) -> None:
+    handle = _nnue_ext.load(str(bucket_pack))
+    board = _raw_cboard(
+        pawns=0, knights=0, bishops=0, rooks=0, queens=0,
+        kings=(1 << 4) | (1 << 6) | (1 << 60),
+        white_occ=(1 << 4) | (1 << 6),
+        black_occ=1 << 60,
+        turn=1,
+    )
+    with pytest.raises(ValueError, match="malformed position"):
+        _nnue_ext.evaluate(handle, board)
+
+
+def test_a_legal_position_still_evaluates_after_the_validators(bucket_pack: Path) -> None:
+    """The positive control: the validators reject malformed boards ONLY.
+
+    Without this, every rejection test above would still pass if the validator
+    rejected everything.
+    """
+    handle = _nnue_ext.load(str(bucket_pack))
+    for fen in POSITIONS:
+        assert isinstance(_nnue_ext.evaluate(handle, cboard(fen)), int)
+
+
+# ===========================================================================
+# The provider capsule: ONE copy of the evaluator, shared across extensions
+# ===========================================================================
+
+
+def test_the_tree_uses_the_evaluator_modules_own_weight_cache(
+    bucket_pack: Path, tmp_path: Path
+) -> None:
+    """⚑ THE OBSERVATION THAT PROVES THE TREE IS NOT RUNNING A SECOND COPY.
+
+    The weight cache is a static of the evaluator, so each extension that
+    COMPILED the evaluator in would have its own. This loads a pack through the
+    TREE only and then reads the cache count from _nnue_ext: if the tree carried
+    its own copy of the evaluator, the file would be mapped into that copy's
+    cache and this count would stay where it started.
+
+    That was the real state of this seam before the capsule: the tree included
+    _nnue_provider.h, so set_simd() on _nnue_ext did not govern what the tree
+    ran, and a shared weight file was mapped twice at 62 MB each — both of them
+    silent, because the tree kept returning perfectly plausible evaluations.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    # A path this process has not loaded, so the count change is attributable.
+    unique = tmp_path / "capsule_probe.pack"
+    unique.write_bytes(bucket_pack.read_bytes())
+
+    before = _nnue_ext.weight_cache_size()
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(unique))
+    try:
+        assert _nnue_ext.weight_cache_size() == before + 1
+    finally:
+        tree.clear_value_provider()
+    assert _nnue_ext.weight_cache_size() == before
+
+
+def test_loading_one_path_twice_maps_it_once(bucket_pack: Path, tmp_path: Path) -> None:
+    """The refcounted cache keeps one mapping per path, across both surfaces."""
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    unique = tmp_path / "shared.pack"
+    unique.write_bytes(bucket_pack.read_bytes())
+
+    before = _nnue_ext.weight_cache_size()
+    handle = _nnue_ext.load(str(unique))
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(unique))
+    try:
+        assert _nnue_ext.weight_cache_size() == before + 1
+        assert _nnue_ext.evaluate(handle, cboard(POSITIONS[0])) == tree.value_provider_eval(
+            cboard(POSITIONS[0])
+        )
+    finally:
+        tree.clear_value_provider()
+
+
+@requires_avx2
+def test_set_simd_on_the_evaluator_module_governs_the_tree_path(bucket_pack: Path) -> None:
+    """⚑ ANNOUNCED FROM THE CONSUMER'S OWN POINTER.
+
+    The tree reports the kernel by asking the vtable it is holding, so this
+    asserts that a switch thrown on _nnue_ext reaches the code the TREE will run
+    — not that two independent flags happen to agree. With the evaluator
+    compiled into both extensions this fails: the tree's copy never hears about
+    _nnue_ext.set_simd() and keeps reporting (and running) the other kernel.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(bucket_pack))
+    try:
+        _nnue_ext.set_simd(True)
+        assert tree.value_provider_kernel() == "avx2"
+        assert _nnue_ext.simd_active() is True
+
+        _nnue_ext.set_simd(False)
+        assert tree.value_provider_kernel() == "scalar"
+        assert _nnue_ext.simd_active() is False
+    finally:
+        _nnue_ext.set_simd(bool(_nnue_ext.HAVE_AVX2))
+        tree.clear_value_provider()
+
+
+def test_a_provider_can_be_installed_from_its_capsule_directly(bucket_pack: Path) -> None:
+    """Future providers need no edit to the tree — that is the point of the shape."""
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    tree.set_value_provider(_nnue_ext.value_provider_capsule, str(bucket_pack))
+    try:
+        assert tree.value_provider_name() == "nnue"
+        assert tree.value_provider_eval(cboard(POSITIONS[0])) == _nnue_ext.evaluate(
+            _nnue_ext.load(str(bucket_pack)), cboard(POSITIONS[0])
+        )
+    finally:
+        tree.clear_value_provider()
+
+
+def test_the_tree_rejects_a_capsule_that_is_not_a_value_provider(bucket_pack: Path) -> None:
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    weights_capsule = _nnue_ext.load(str(bucket_pack))   # a capsule, wrong name
+    with pytest.raises(ValueError, match=r"cae\.value_provider"):
+        tree.set_value_provider(weights_capsule, str(bucket_pack))
+    assert tree.value_provider_name() is None
+
+
+def test_clearing_a_provider_during_an_evaluation_is_safe(bucket_pack: Path) -> None:
+    """⚑ The evaluation holds its OWN reference across the GIL release.
+
+    Without it, a thread clearing the provider unmaps 62 MB of weights while
+    another thread is reading them — and a read of a freed read-only mapping
+    usually returns data rather than crashing, so the symptom is a wrong
+    evaluation, not a signal.
+    """
+    import threading
+
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(bucket_pack))
+    boards = [cboard(fen) for fen in POSITIONS]
+    expected = {id(b): tree.value_provider_eval(b) for b in boards}
+
+    errors: list[BaseException] = []
+    stop = threading.Event()
+
+    def hammer() -> None:
+        try:
+            while not stop.is_set():
+                for b in boards:
+                    assert tree.value_provider_eval(b) == expected[id(b)]
+        except BaseException as exc:  # reported below, never swallowed
+            errors.append(exc)
+
+    workers = [threading.Thread(target=hammer) for _ in range(2)]
+    for w in workers:
+        w.start()
+    try:
+        for _ in range(30):
+            tree.set_value_provider("nnue", str(bucket_pack))
+    finally:
+        stop.set()
+        for w in workers:
+            w.join(timeout=30)
+    tree.clear_value_provider()
+
+    # A racing eval may legitimately observe a cleared provider; it may never
+    # observe a WRONG number or a crash.
+    assert [e for e in errors if not isinstance(e, ValueError)] == []
+
+
+def test_reinitialising_a_tree_releases_its_provider(bucket_pack: Path, tmp_path: Path) -> None:
+    """__init__ can be called twice; the second call must not orphan a mapping."""
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    unique = tmp_path / "reinit.pack"
+    unique.write_bytes(bucket_pack.read_bytes())
+
+    before = _nnue_ext.weight_cache_size()
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(unique))
+    assert _nnue_ext.weight_cache_size() == before + 1
+    # Re-running __init__ on a live object is the point of this test, so the
+    # explicit call is deliberate.
+    tree.__init__()
+    assert tree.value_provider_name() is None
+    assert _nnue_ext.weight_cache_size() == before
+
+
+def test_the_seam_rejects_an_object_that_merely_calls_itself_cboard(bucket_pack: Path) -> None:
+    """⚑ A NAME IS NOT A TYPE.
+
+    Both surfaces used to accept anything whose tp_name ended in "CBoard" and
+    then reinterpret its storage as a much larger struct — an out-of-bounds read
+    behind a promised TypeError, performed after the GIL is released.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    class CBoard:  # deliberately collides with the real class's name
+        pass
+
+    impostor = CBoard()
+    handle = _nnue_ext.load(str(bucket_pack))
+    with pytest.raises(TypeError):
+        _nnue_ext.evaluate(handle, impostor)  # pyright: ignore[reportArgumentType]
+
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(bucket_pack))
+    try:
+        with pytest.raises(TypeError):
+            tree.value_provider_eval(impostor)  # pyright: ignore[reportArgumentType]
+    finally:
+        tree.clear_value_provider()
+
+
+@pytest.mark.parametrize("fen", IN_CHECK_POSITIONS)
+def test_the_tree_raises_the_providers_own_in_check_type(fen: str, bucket_pack: Path) -> None:
+    """⚑ Caught by TYPE, not by message text.
+
+    The recursive check resolver lands in a third module and will catch this
+    exception. A ValueError carrying an explanatory string would force it to
+    match on wording, which nothing keeps stable.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(bucket_pack))
+    try:
+        with pytest.raises(_nnue_ext.InCheckError):
+            tree.value_provider_eval(cboard(fen))
+    finally:
+        tree.clear_value_provider()
+
+
+# ===========================================================================
+# The parity gate's own failure paths
+# ===========================================================================
+
+
+class _FakeStockfish:
+    """Stands in for the engine so the gate's control flow can be tested.
+
+    ``scores`` maps FEN -> value, or the sentinel "check" to refuse the way the
+    engine refuses an in-check position.
+    """
+
+    def __init__(self, scores: dict[str, object], eval_file: str) -> None:
+        self.eval_file = eval_file
+        self.scores = scores
+        self.asked: list[str] = []
+
+    def evaluate(self, fen: str) -> int:
+        from scripts.nnue_parity import InCheckRefused
+
+        self.asked.append(fen)
+        value = self.scores[fen]
+        if value == "check":
+            raise InCheckRefused(fen)
+        assert isinstance(value, int)
+        return value
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> _FakeStockfish:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        pass
+
+
+def _agreeing_scores(bucket_pack: Path, fens: list[str]) -> dict[str, object]:
+    """What a correct engine would print for these FENs under this pack.
+
+    ⚑ The default for every gate test, so that a gate under test is the ONLY
+    thing that can fail the run. Feeding arbitrary numbers instead makes the
+    harness exit non-zero because of a MISMATCH, and a test asserting only
+    "non-zero" then passes with the gate deleted — which is how the first
+    version of these tests passed against a deliberately reintroduced bug.
+    """
+    handle = _nnue_ext.load(str(bucket_pack))
+    return {fen: _nnue_ext.evaluate(handle, cboard(fen)) for fen in fens}
+
+
+def _run_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bucket_pack: Path,
+    fens: list[str],
+    scores: dict[str, object] | None = None,
+    eval_file: str | None = None,
+    extra_args: list[str] | None = None,
+) -> tuple[int, _FakeStockfish]:
+    """Drive nnue_parity.main() against a stubbed engine."""
+    if scores is None:
+        scores = _agreeing_scores(bucket_pack, fens)
+    import scripts.nnue_parity as parity
+
+    handle = _nnue_ext.load(str(bucket_pack))
+    sha = _nnue_ext.source_sha256(handle)
+    fake = _FakeStockfish(scores, f"nn-{sha[:12]}.nnue" if eval_file is None else eval_file)
+    monkeypatch.setattr(parity, "StockfishDriver", lambda _path: fake)
+
+    fens_file = tmp_path / "fens.txt"
+    fens_file.write_text("\n".join(fens) + ("\n" if fens else ""))
+    args = [
+        "--pack", str(bucket_pack),
+        "--stockfish", "/nonexistent-engine",
+        "--fens-in", str(fens_file),
+        "--observations", str(tmp_path / "obs.jsonl.gz"),
+        *(extra_args or []),
+    ]
+    return parity.main(args), fake
+
+
+def test_parity_gate_fails_when_it_checked_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """⚑ AN EMPTY SAMPLE IS NOT A PASS.
+
+    An empty --fens-in, --n 0, or a sampler regression returning [] used to print
+    "PARITY PASSED" and exit 0 — the same words, and the same exit code, that
+    fifty thousand exact matches produce. This is the gate that decides whether a
+    hundred-million-row corpus gets labelled, so "we compared nothing" must not
+    be reportable as "we agree".
+    """
+    code, fake = _run_gate(monkeypatch, tmp_path, bucket_pack, [], {})
+    assert code == 2, "an empty sample must be INCONCLUSIVE (2), not a pass or a mismatch"
+    assert fake.asked == []
+
+
+def test_parity_gate_fails_when_every_position_was_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """All-refused is zero comparisons, however many FENs went in."""
+    fens = list(IN_CHECK_POSITIONS)
+    code, _ = _run_gate(
+        monkeypatch, tmp_path, bucket_pack, fens, dict.fromkeys(fens, "check")
+    )
+    assert code == 2
+
+
+def test_parity_gate_fails_when_the_engines_eval_file_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """⚑ A PROVENANCE GATE THAT SKIPS WHEN IT CANNOT READ IS NOT A GATE.
+
+    The check was written as `if sf.eval_file and sf.eval_file != expected`, so
+    an engine whose option line the regex could not parse — a build change, a
+    renamed option — produced an empty string, skipped the comparison, and the
+    gate reported parity against an oracle nobody had verified. That is exactly
+    the drifted case the check exists for, and the one case it could not fire on.
+    """
+    # ⚑ The engine AGREES on every position here. So the only thing that can
+    # fail this run is the provenance gate — an earlier version passed numbers
+    # the evaluator disagreed with, and then "exit != 0" was satisfied by the
+    # mismatch while the provenance gate was deleted.
+    fens = [POSITIONS[0]]
+    code, _ = _run_gate(monkeypatch, tmp_path, bucket_pack, fens, eval_file="")
+    assert code == 2, "an unreadable EvalFile must refuse the run, not report parity"
+
+
+def test_parity_gate_fails_when_the_engine_runs_a_different_net(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    fens = [POSITIONS[0]]
+    code, _ = _run_gate(
+        monkeypatch, tmp_path, bucket_pack, fens, eval_file="nn-ffffffffffff.nnue"
+    )
+    assert code == 2
+
+
+def test_parity_gate_passes_only_when_it_really_compared(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """The positive control for all four gates above.
+
+    Without it every one of them would still pass if main() had simply been made
+    to always fail.
+    """
+    code, fake = _run_gate(monkeypatch, tmp_path, bucket_pack, list(POSITIONS))
+    assert code == 0
+    assert len(fake.asked) == len(POSITIONS)
+
+
+def test_parity_gate_reports_a_real_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    scores = _agreeing_scores(bucket_pack, list(POSITIONS))
+    first = POSITIONS[0]
+    scores[first] = int(scores[first]) + 1  # pyright: ignore[reportArgumentType]
+    code, _ = _run_gate(monkeypatch, tmp_path, bucket_pack, list(POSITIONS), scores)
+    assert code == 1, "a real disagreement is a FAILURE (1), distinct from inconclusive (2)"
+
+
+def test_parity_gate_banks_every_observation_not_only_mismatches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """⚑ BANK THE DUMP, NOT JUST THE NUMBER.
+
+    Keeping only the disagreements makes any later re-analysis — re-stratifying,
+    estimating on a subset, checking a newer engine build — need a fresh engine
+    run, which re-rolls the sample and the engine version along with whatever was
+    being changed. The equal rows are the expensive part to reproduce and the
+    cheap part to store.
+    """
+    import gzip
+    import json
+
+    scores = _agreeing_scores(bucket_pack, list(POSITIONS))
+    fens = [*POSITIONS, *IN_CHECK_POSITIONS]
+    for fen in IN_CHECK_POSITIONS:
+        scores[fen] = "check"
+
+    code, _ = _run_gate(monkeypatch, tmp_path, bucket_pack, fens, scores)
+    assert code == 0
+
+    with gzip.open(tmp_path / "obs.jsonl.gz", "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    header = [r for r in rows if r.get("record") == "run"]
+    assert len(header) == 1
+    assert header[0]["fens_delivered"] == len(fens)
+
+    compared = [r for r in rows if "ours" in r]
+    assert len(compared) == len(POSITIONS)
+    assert {r["fen"] for r in compared} == set(POSITIONS)
+    for row in compared:
+        assert row["ours"] == row["sf"] == scores[row["fen"]]
+
+    refused = [r for r in rows if r.get("refused") == "in_check"]
+    assert {r["fen"] for r in refused} == set(IN_CHECK_POSITIONS)
+
+
+# ===========================================================================
+# The sampler reports the sample it delivered
+# ===========================================================================
+
+
+def test_pooled_cell_counts_describe_the_fens_actually_returned() -> None:
+    """⚑ A COVERAGE TABLE MUST COUNT THE FILE THE GATE READS.
+
+    The pooled sampler dedupes across seeds and truncates to `count`, so adding
+    up the sub-samples' own cell counts described a larger, differently
+    stratified population than the FENs it returned — a report claiming strata
+    the parity gate never saw.
+    """
+    from scripts.nnue_fens import sample_fens, sample_fens_pooled
+
+    count, seeds, base = 120, 3, 5150
+    fens, stats = sample_fens_pooled(count, seeds=seeds, base_seed=base)
+
+    assert len(fens) == len(set(fens)), "pooled sample contains duplicates"
+    assert len(fens) <= count
+    assert stats.accepted == len(fens)
+    assert sum(stats.cell_counts.values()) == len(fens)
+    assert set(stats.cell_of) == set(fens)
+
+    # ⚑ NON-VACUITY: what the OLD code reported, reconstructed. Summing the
+    # sub-samples' own counts overstates the pooled sample, so the equalities
+    # above are not equalities that hold by construction — they hold because the
+    # counts are now derived from the delivered list.
+    naive_total = sum(
+        sum(sample_fens(-(-count // seeds), seed=base + i)[1].cell_counts.values())
+        for i in range(seeds)
+    )
+    assert naive_total > len(fens), (
+        "expected dedup/truncation to make the naive sum overstate the sample; "
+        "if this ever ties, the test below it proves nothing"
+    )
+
+
+def test_pooled_sampling_is_reproducible_from_its_seed() -> None:
+    from scripts.nnue_fens import sample_fens_pooled
+
+    a, _ = sample_fens_pooled(60, seeds=2, base_seed=99)
+    b, _ = sample_fens_pooled(60, seeds=2, base_seed=99)
+    assert a == b

@@ -101,10 +101,21 @@ static inline int cae_nnue_set_simd(int enabled) {
 #define CAE_NNUE_OUTPUT_SCALE    16
 #define CAE_NNUE_WEIGHT_SCALE_BITS 6
 
-/* Generous ceilings so the hot path never bounds-checks. Stockfish caps its own
- * active-threat list at 128 and scoping measured a maximum of 63; 1024 is above
- * any reachable count (fewer than 31 non-king attackers, each seeing at most 31
- * occupied squares is a loose bound this cannot approach in a legal position). */
+/* Ceiling on the threat-relation list. Stockfish caps its own active-threat list
+ * at 128 and scoping measured a maximum of 63.
+ *
+ * ⚑ THE BOUND, WORKED OUT RATHER THAN ASSUMED — and it needs only piece_count
+ * <= 32, not the disjointness of the piece masks. Each occupied square emits, as
+ * an attacker, at most: knight 8 targets, bishop 4 (one per diagonal, the rest
+ * blocked), rook 4, queen 8, pawn 2 attacks + 1 blocked push = 3. Even a
+ * MALFORMED board whose masks all overlap makes one square every one of those
+ * five types at once, so 27 per square, and 32 * 27 = 864 < 1024.
+ *
+ * So this cap cannot fire while cae_nnue_pos_from_cboard() enforces the piece
+ * count, and the mutation run confirms it: deleting it changes no test. It is
+ * kept as defence in depth — it is the difference between a stack smash and an
+ * error return if that piece-count check is ever loosened — and it is reported
+ * as an UNREACHABLE backstop rather than claimed as a checked one. */
 #define CAE_NNUE_MAX_RELATIONS   1024
 #define CAE_NNUE_MAX_L1          1024u
 #define CAE_NNUE_MAX_FC0_OUT     64u
@@ -404,8 +415,33 @@ typedef struct {
     uint8_t  in_check;
 } CaeNnuePos;
 
+/* ⚑ THIS IS THE TRUST BOUNDARY. CBoard.from_raw() takes bitboards straight from
+ * Python and does not require the piece-type or colour masks to be disjoint, so
+ * "a CBoard" is not the same thing as "a chess position". Everything downstream
+ * — the threat generator's fixed relation buffer, the piece-count bucket, the
+ * feature indices — is sized and reasoned about for a legal board. So the
+ * structural invariants get CHECKED here, once, and a board that fails is
+ * REJECTED rather than evaluated: the alternative is not a crash, it is an
+ * in-range index computed from a nonsense position, which returns a number that
+ * looks like an evaluation. */
 static int cae_nnue_pos_from_cboard(const CBoard *b, CaeNnuePos *p) {
     memset(p, 0, sizeof(*p));
+
+    /* A square holds at most one piece type, at most one colour, and occupancy
+     * agrees with the union. Without this a single square can appear in several
+     * pieces[][] sets and be emitted as several attackers, multiplying the
+     * relation count far past what a legal position can produce. */
+    uint64_t seen = 0;
+    for (int pt = 0; pt < 6; pt++) {
+        if (b->bb[pt] & seen) return CAE_VALUE_ERR_BAD_POS;
+        seen |= b->bb[pt];
+    }
+    if (b->occ[WHITE_C] & b->occ[BLACK_C]) return CAE_VALUE_ERR_BAD_POS;
+    if (seen != (b->occ[WHITE_C] | b->occ[BLACK_C])) return CAE_VALUE_ERR_BAD_POS;
+    /* Pawns cannot stand on the back ranks. Such a board yields in-range but
+     * meaningless threat indices (a pawn "push" off the board wraps a file). */
+    if (b->bb[PAWN] & 0xFF000000000000FFULL) return CAE_VALUE_ERR_BAD_POS;
+
     for (int pt = CAE_SF_PAWN; pt <= CAE_SF_KING; pt++) {
         p->pieces[CAE_SF_WHITE][pt] = b->bb[pt - 1] & b->occ[WHITE_C];
         p->pieces[CAE_SF_BLACK][pt] = b->bb[pt - 1] & b->occ[BLACK_C];
@@ -414,7 +450,8 @@ static int cae_nnue_pos_from_cboard(const CBoard *b, CaeNnuePos *p) {
     p->piece_count = (uint8_t)popcount64(p->occupied);
     if (p->piece_count < 2 || p->piece_count > 32)
         return CAE_VALUE_ERR_BAD_POS;
-    if (!p->pieces[CAE_SF_WHITE][CAE_SF_KING] || !p->pieces[CAE_SF_BLACK][CAE_SF_KING])
+    if (popcount64(p->pieces[CAE_SF_WHITE][CAE_SF_KING]) != 1
+        || popcount64(p->pieces[CAE_SF_BLACK][CAE_SF_KING]) != 1)
         return CAE_VALUE_ERR_BAD_POS;
     p->king_sq[CAE_SF_WHITE] = (uint8_t)lsb64(p->pieces[CAE_SF_WHITE][CAE_SF_KING]);
     p->king_sq[CAE_SF_BLACK] = (uint8_t)lsb64(p->pieces[CAE_SF_BLACK][CAE_SF_KING]);
@@ -481,6 +518,10 @@ typedef struct {
     uint8_t to;
 } CaeThreatRel;
 
+/* Fills `out` (capacity CAE_NNUE_MAX_RELATIONS) and returns the count, or -1 if
+ * the position would produce more relations than the buffer holds. ⚑ Callers
+ * MUST check for -1: the buffer is on the caller's stack, so the alternative to
+ * this return is a stack smash. */
 static int cae_nnue_threat_relations(const CaeNnuePos *p, CaeThreatRel *out) {
     uint64_t occupied = p->occupied;
     uint64_t pawns = p->pieces[CAE_SF_WHITE][CAE_SF_PAWN] | p->pieces[CAE_SF_BLACK][CAE_SF_PAWN];
@@ -507,12 +548,14 @@ static int cae_nnue_threat_relations(const CaeNnuePos *p, CaeThreatRel *out) {
                 attacks_right &= occupied;
                 int to;
                 FOR_EACH_BIT(attacks_left, to) {
+                    if (n >= CAE_NNUE_MAX_RELATIONS) return -1;
                     out[n].attacker = (uint8_t)attacker;
                     out[n].from = (uint8_t)(to - right);
                     out[n].to = (uint8_t)to;
                     n++;
                 }
                 FOR_EACH_BIT(attacks_right, to) {
+                    if (n >= CAE_NNUE_MAX_RELATIONS) return -1;
                     out[n].attacker = (uint8_t)attacker;
                     out[n].from = (uint8_t)(to - left);
                     out[n].to = (uint8_t)to;
@@ -523,6 +566,7 @@ static int cae_nnue_threat_relations(const CaeNnuePos *p, CaeThreatRel *out) {
                 uint64_t pushers = shifted & p->pieces[c][CAE_SF_PAWN];
                 int from;
                 FOR_EACH_BIT(pushers, from) {
+                    if (n >= CAE_NNUE_MAX_RELATIONS) return -1;
                     out[n].attacker = (uint8_t)attacker;
                     out[n].from = (uint8_t)from;
                     out[n].to = (uint8_t)(from + ((c == CAE_SF_WHITE) ? 8 : -8));
@@ -534,6 +578,7 @@ static int cae_nnue_threat_relations(const CaeNnuePos *p, CaeThreatRel *out) {
                     uint64_t attacks = nn_attacks_from(pt, from, occupied) & occupied;
                     int to;
                     FOR_EACH_BIT(attacks, to) {
+                        if (n >= CAE_NNUE_MAX_RELATIONS) return -1;
                         out[n].attacker = (uint8_t)attacker;
                         out[n].from = (uint8_t)from;
                         out[n].to = (uint8_t)to;
@@ -594,9 +639,10 @@ static inline void cae_nnue_add_row_i8(int16_t *acc, const int8_t *row, uint32_t
  * separate int16 accumulators and adds them in int16 at transform() time. We sum
  * them into one accumulator instead: int16 addition is modular, so associativity
  * makes the two forms bit-identical, and one pass halves the memory traffic. */
-static void cae_nnue_refresh(const CaeNnueWeights *w, const CaeNnuePos *p, CaeNnueAcc *a) {
+static int cae_nnue_refresh(const CaeNnueWeights *w, const CaeNnuePos *p, CaeNnueAcc *a) {
     CaeThreatRel rel[CAE_NNUE_MAX_RELATIONS];
     int n_rel = cae_nnue_threat_relations(p, rel);
+    if (n_rel < 0) return CAE_VALUE_ERR_BAD_POS;
     const uint32_t l1 = w->l1;
     const uint32_t nb = w->psqt_buckets;
 
@@ -634,6 +680,7 @@ static void cae_nnue_refresh(const CaeNnueWeights *w, const CaeNnuePos *p, CaeNn
             for (uint32_t k = 0; k < nb; k++) psqt[k] += prow[k];
         }
     }
+    return CAE_VALUE_OK;
 }
 
 /* ================================================================
@@ -688,7 +735,10 @@ static int32_t cae_nnue_transform(
 }
 
 static int32_t cae_nnue_propagate(const CaeNnueWeights *w, const uint8_t *ft, int bucket) {
-    const uint32_t n = w->l2;                 /* FC_0_OUTPUTS */
+    /* ⚑ n is L2, the width of the SQUARED/CLIPPED pair fc_1 consumes — NOT
+     * fc0_outputs, which is n + 1. The extra output is the forward-skip term
+     * read as fc0[n] below, and conflating the two silently drops it. */
+    const uint32_t n = w->l2;
     int32_t fc0[CAE_NNUE_MAX_FC0_OUT];
 
     const int32_t *b0 = w->fc0_bias + (size_t)bucket * w->fc0_outputs;
@@ -755,7 +805,8 @@ static int cae_nnue_trace(
 
     CaeNnueAcc acc;
     uint8_t ft[CAE_NNUE_MAX_L1] __attribute__((aligned(32)));
-    cae_nnue_refresh(w, p, &acc);
+    int rc = cae_nnue_refresh(w, p, &acc);
+    if (rc != CAE_VALUE_OK) return rc;
     for (uint32_t b = 0; b < w->psqt_buckets; b++) {
         int32_t psqt = cae_nnue_transform(w, &acc, p->side_to_move, (int)b, ft);
         int32_t positional = cae_nnue_propagate(w, ft, (int)b);
@@ -777,7 +828,8 @@ static int cae_nnue_evaluate(const CaeNnueWeights *w, const CaeNnuePos *p, int32
 
     CaeNnueAcc acc;
     uint8_t ft[CAE_NNUE_MAX_L1] __attribute__((aligned(32)));
-    cae_nnue_refresh(w, p, &acc);
+    rc = cae_nnue_refresh(w, p, &acc);
+    if (rc != CAE_VALUE_OK) return rc;
     int32_t psqt = cae_nnue_transform(w, &acc, p->side_to_move, bucket, ft);
     int32_t positional = cae_nnue_propagate(w, ft, bucket);
     *out = psqt / CAE_NNUE_OUTPUT_SCALE + positional / CAE_NNUE_OUTPUT_SCALE;
@@ -837,11 +889,70 @@ static int cae_nnue_bind(CaeNnueWeights *w, char *err, size_t errlen) {
                      h->use_threats, h->halfka_dims, h->threat_dims);
         return -1;
     }
-    if (h->l1 > CAE_NNUE_MAX_L1 || h->fc0_outputs > CAE_NNUE_MAX_FC0_OUT
+    if (h->l1 == 0 || h->l1 > CAE_NNUE_MAX_L1 || h->fc0_outputs > CAE_NNUE_MAX_FC0_OUT
         || h->fc1_padded_in > CAE_NNUE_MAX_FC1_IN || h->fc1_outputs > CAE_NNUE_MAX_FC1_OUT
         || h->psqt_buckets != CAE_NNUE_PSQT_BUCKETS
-        || h->layer_stacks != CAE_NNUE_LAYER_STACKS || (h->l1 % 32u) != 0u) {
+        || h->layer_stacks != CAE_NNUE_LAYER_STACKS) {
         cae_nnue_err(err, errlen, "pack dimensions outside the supported range");
+        return -1;
+    }
+    /* ⚑ The AVX2 transform consumes 32 int16 lanes per iteration from EACH of
+     * the two halves of the accumulator, so it steps 32 over l1/2 and needs
+     * l1 % 64 == 0; the scalar loop needs only l1 % 32 == 0. Requiring the
+     * looser rule on a build that has the AVX2 kernels compiled in would accept
+     * a pack whose two kernels silently disagree — and "the two kernels agree"
+     * is the entire load-bearing claim of having both. The shipped net's
+     * l1 = 1024 satisfies either. */
+#if CAE_NNUE_HAVE_AVX2
+    const uint32_t l1_multiple = 64u;
+#else
+    const uint32_t l1_multiple = 32u;
+#endif
+    if ((h->l1 % l1_multiple) != 0u) {
+        cae_nnue_err(err, errlen, "l1 = %u is not a multiple of %u, which this build's "
+                                  "transform kernels require", h->l1, l1_multiple);
+        return -1;
+    }
+
+    /* ⚑⚑ INTERNAL CONSISTENCY, NOT JUST UPPER BOUNDS. Every field above is
+     * within range on its own; the failures that matter are RELATIONAL. A pack
+     * with fc0_outputs == l2 (rather than l2 + 1) passes every bound and then
+     * makes cae_nnue_propagate() read fc0[n] off the end of an initialised
+     * prefix — uninitialised stack, returned as an evaluation. Undersized
+     * padded widths are the same defect one field over: the layer loops walk
+     * past a row into the next one and produce a plausible number. Our own
+     * packer cannot emit any of these, which is exactly why they must be
+     * checked here — bind() is the only thing standing between a hand-made or
+     * corrupted pack and a silently wrong evaluation, and each gets its own
+     * message so a failure says which relation broke. */
+    if (h->l2 == 0 || h->l3 == 0) {
+        cae_nnue_err(err, errlen, "pack has an empty layer (l2=%u l3=%u)", h->l2, h->l3);
+        return -1;
+    }
+    if (h->fc0_outputs != h->l2 + 1u) {
+        cae_nnue_err(err, errlen,
+                     "fc0_outputs = %u but l2 = %u; the layer stack needs exactly l2 + 1 "
+                     "outputs (the extra one is the forward-skip term)",
+                     h->fc0_outputs, h->l2);
+        return -1;
+    }
+    if (h->fc1_outputs != h->l3) {
+        cae_nnue_err(err, errlen, "fc1_outputs = %u but l3 = %u", h->fc1_outputs, h->l3);
+        return -1;
+    }
+    if (h->fc0_padded_in < h->l1) {
+        cae_nnue_err(err, errlen, "fc0_padded_in = %u is narrower than its l1 = %u input",
+                     h->fc0_padded_in, h->l1);
+        return -1;
+    }
+    if (h->fc1_padded_in < 2u * h->l2) {
+        cae_nnue_err(err, errlen, "fc1_padded_in = %u is narrower than its 2*l2 = %u input",
+                     h->fc1_padded_in, 2u * h->l2);
+        return -1;
+    }
+    if (h->fc2_padded_in < h->fc1_outputs) {
+        cae_nnue_err(err, errlen, "fc2_padded_in = %u is narrower than its %u input",
+                     h->fc2_padded_in, h->fc1_outputs);
         return -1;
     }
     if (h->total_size != w->map_size) {
@@ -863,8 +974,14 @@ static int cae_nnue_bind(CaeNnueWeights *w, char *err, size_t errlen) {
         (size_t)h->layer_stacks * 4,
         (size_t)h->layer_stacks * h->fc2_padded_in,
     };
+    /* ⚑ Written as a SUBTRACTION on purpose. `off + size > map_size` is the
+     * natural phrasing and it is wrong: both are 64-bit unsigned, so a crafted
+     * off near UINT64_MAX wraps the sum to a small number and the check passes
+     * on a tensor that points anywhere. Comparing against the remaining space
+     * cannot wrap. */
     for (int i = 0; i < 11; i++) {
-        if (h->off[i] < CAE_NNUE_HEADER_BYTES || h->off[i] + sizes[i] > w->map_size) {
+        if (h->off[i] < CAE_NNUE_HEADER_BYTES || h->off[i] > w->map_size
+            || sizes[i] > w->map_size - h->off[i]) {
             cae_nnue_err(err, errlen, "pack tensor %d runs outside the file", i);
             return -1;
         }
@@ -913,16 +1030,23 @@ static int cae_nnue_bind(CaeNnueWeights *w, char *err, size_t errlen) {
  * process on the box that maps the same file shares its physical pages through
  * the page cache; within a process the cache below hands out one mapping per
  * path, refcounted. */
+/* Caller must hold cae_nnue_cache_lock. */
+static CaeNnueWeights *cae_nnue_cache_find_locked(const char *path) {
+    for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++)
+        if (cae_nnue_cache[i] && strcmp(cae_nnue_cache[i]->path, path) == 0)
+            return cae_nnue_cache[i];
+    return NULL;
+}
+
 static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen) {
     cae_nnue_init_tables();
 
     pthread_mutex_lock(&cae_nnue_cache_lock);
-    for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++) {
-        if (cae_nnue_cache[i] && strcmp(cae_nnue_cache[i]->path, path) == 0) {
-            cae_nnue_cache[i]->refcount++;
-            pthread_mutex_unlock(&cae_nnue_cache_lock);
-            return cae_nnue_cache[i];
-        }
+    CaeNnueWeights *hit = cae_nnue_cache_find_locked(path);
+    if (hit) {
+        hit->refcount++;
+        pthread_mutex_unlock(&cae_nnue_cache_lock);
+        return hit;
     }
     pthread_mutex_unlock(&cae_nnue_cache_lock);
 
@@ -965,10 +1089,33 @@ static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen)
     }
     w->refcount = 1;
 
+    /* ⚑ DOUBLE-CHECKED: the lock was dropped across open/mmap/bind, so another
+     * thread may have loaded the same path in the meantime. Re-checking is what
+     * keeps the "one mapping per path per process" promise true under
+     * concurrency — without it two threads racing on the first load leave two
+     * 62 MB mappings and two cache entries for one file, and nothing ever
+     * reports it. Losing the race is fine: drop ours and take theirs. */
     pthread_mutex_lock(&cae_nnue_cache_lock);
+    CaeNnueWeights *raced = cae_nnue_cache_find_locked(path);
+    if (raced) {
+        raced->refcount++;
+        pthread_mutex_unlock(&cae_nnue_cache_lock);
+        munmap(w->map, w->map_size);
+        free(w);
+        return raced;
+    }
     for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++) {
         if (!cae_nnue_cache[i]) { cae_nnue_cache[i] = w; break; }
     }
+    pthread_mutex_unlock(&cae_nnue_cache_lock);
+    return w;
+}
+
+/* Take an additional reference. Pairs with cae_nnue_release(). */
+static CaeNnueWeights *cae_nnue_retain(CaeNnueWeights *w) {
+    if (!w) return NULL;
+    pthread_mutex_lock(&cae_nnue_cache_lock);
+    w->refcount++;
     pthread_mutex_unlock(&cae_nnue_cache_lock);
     return w;
 }
@@ -985,6 +1132,20 @@ static void cae_nnue_release(CaeNnueWeights *w) {
     pthread_mutex_unlock(&cae_nnue_cache_lock);
     munmap(w->map, w->map_size);
     free(w);
+}
+
+/* How many distinct weight files this MODULE's cache is holding. The number is
+ * per-copy-of-this-code by construction, which is what makes it the instrument
+ * for "did the tree really go through our provider, or through a second copy of
+ * the evaluator compiled into its own extension" — a second copy has its own
+ * cache and this one would stay empty. */
+static int cae_nnue_cache_size(void) {
+    int n = 0;
+    pthread_mutex_lock(&cae_nnue_cache_lock);
+    for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++)
+        if (cae_nnue_cache[i]) n++;
+    pthread_mutex_unlock(&cae_nnue_cache_lock);
+    return n;
 }
 
 #endif /* CAE_NNUE_IMPL_H */
