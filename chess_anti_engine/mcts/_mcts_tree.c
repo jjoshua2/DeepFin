@@ -1460,8 +1460,20 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         if (n_cands > GSS_MAX_CANDS) n_cands = GSS_MAX_CANDS;
 
         int32_t rid = g->root_ids[bi];
-        int32_t root_n = atomic_load_i32(&t->N[rid]);
-        double root_Q = (root_n > 0) ? (atomic_load_double(&t->W[rid]) / (double)root_n) : 0.0;
+        /* mctx `qtransform_completed_by_mix_value` takes the FRESH network root
+         * value as its `value` argument, NOT the running tree average — and so
+         * does every other consumer of this transform in this repo: the Python
+         * reference passes `root_qs[i]` (gumbel.py `_halve_remaining_for_board`
+         * -> `_completed_q_transform(raw_value=...)`), and the C path's OWN
+         * final-policy reconstruction passes `root_q_i` (gumbel_c.py
+         * `_build_improved_policy_for_board`'s C twin). This site used to read
+         * `W[rid]/N[rid]`, the average this search keeps mutating, so the
+         * baseline the eliminations were scored against moved every round while
+         * the returned policy's baseline stayed put — the same tree scored two
+         * different ways. `root_qs[bi]` is fixed for the whole search, which is
+         * what "the value at the root before any of this search happened"
+         * means. */
+        double root_Q = g->root_qs[bi];
 
         /* Single pass over children: max_visit + mctx mixed-value stats +
          * populate action_to_slot map. */
@@ -5830,6 +5842,29 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * 17 arguments" on the first ply of the first game; the marker turns that
      * into the rebuild command at import instead. */
     if (PyModule_AddIntConstant(m, "ABI_VERSION", 4) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    /* Which root sequential-halving SEMANTIC this .so was built with. NOT an
+     * ABI marker and deliberately non-gating: no signature changed, so a stale
+     * .so runs fine — it just eliminates candidates by the old rule, and every
+     * yardstick that reads a search (regret, arena Elo) would show the step
+     * with nothing to attribute it to. ABI_VERSION cannot carry this: bumping
+     * it hard-fails every process that has not rebuilt, and this change does
+     * not warrant that.
+     *
+     * 1 = the baseline was `W[root]/N[root]`, the running tree average this
+     *     search keeps mutating (absent from the module: an .so predating this
+     *     constant IS rev 1, which is why the Python reader defaults to 1
+     *     rather than to "unknown").
+     * 2 = the baseline is the fresh network root value `root_qs[bi]`, matching
+     *     mctx's qtransform_completed_by_mix_value, gumbel.py's reference
+     *     `_halve_remaining_for_board`, and this path's own returned policy.
+     *
+     * Read and announced once per process by mcts/gumbel_c.py so a running
+     * process's elimination rule is observable in its log. */
+    if (PyModule_AddIntConstant(m, "GSS_HALVING_REV", 2) < 0) {
         Py_DECREF(m);
         return NULL;
     }

@@ -10,6 +10,11 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 # C ABI capability marker (see PyInit__mcts_tree); bumped on detect-worthy ABI changes.
 ABI_VERSION: int
 
+# Which root sequential-halving semantic this .so was built with (see the
+# GSS_HALVING_REV comment in _mcts_tree.c). NOT an ABI gate: absent on an .so
+# built before the constant existed, which IS revision 1.
+GSS_HALVING_REV: int
+
 # `batch_process_ply`'s swdl_draw_mode encoding (SWDL_DRAW_* in _mcts_tree.c).
 # Exported by the extension so the Python side never keeps a second copy of the
 # int mapping — see selfplay/network_turn.py::_SWDL_DRAW_MODE_TO_C.
