@@ -20,12 +20,44 @@ number described was decided after the record was written.
 
 MEASURED here, not argued: ``test_the_c_path_really_reads_it`` and
 ``test_the_python_path_really_does_not`` run the same deterministic search on
-both paths at both values. Positive control on the C (L1 ~= 2.0 over the
-returned policy at 1024 sims / topk 4), exact 0.0 on the Python at every sim
-count tried. The C difference needs a deep enough subtree to reach the branch
-at all -- at 128/256/512 sims both C arms are bit-identical too, which is why a
-probe that stopped at "L1 = 0" would have reported the knob inert on BOTH paths
-and closed the question the wrong way.
+both paths at both values. L1 over the returned policy, ``full_tree`` True vs
+False, everything else fixed:
+
+    sims    C topk=4    C topk=8    Python (either)
+      64    0.000000    0.000000    0.000000
+     128    0.000000    0.000000    0.000000
+     256    0.000000    0.000000    0.000000
+     512    0.000000    0.000000    0.000000
+     768    0.000000    0.000000    0.000000
+     896    0.000000    0.096116    0.000000
+    1024    1.996486    0.063902    0.000000
+    1152    1.916876    0.043043    0.000000
+    1280    0.000001    0.028351    0.000000
+    1536    0.000000    1.980454    0.000000
+    2048    0.000000    0.000036    0.000000
+    3072    2.000000    0.000000    0.000000   <- played ACTION changes
+    4096    2.000000    0.000000    0.000000   <- played ACTION changes
+
+⚑⚑ THE C COLUMN IS NOT MONOTONE AND THERE IS NO DEPTH THRESHOLD. An earlier
+revision of this docstring said the difference "needs a deep enough subtree to
+reach the branch", which predicts a threshold the data does not have: topk=4
+diverges at 1024-1152, returns to 0.0 at 1536-2048, and diverges again at
+3072-4096. Sequential halving frequently eliminates to the SAME root policy
+even when the descent below the root genuinely differed, so the branch being
+reached is necessary and nowhere near sufficient. **The sim counts below are an
+empirically found working point, not a derived one.** If this test ever fails,
+do not go hunting for the mechanism that sets the threshold -- there isn't one.
+Re-run the sweep (``_SWEEP`` drives it) and move to a point that still
+diverges.
+
+What the table does establish, at all 26 measured points: the Python column is
+EXACTLY 0.0 everywhere, and the C column is non-zero at 8 of 26. That asymmetry
+is the whole finding. The tests below re-assert it at the DISCRIMINATING points
+-- every point where the C diverges, where a Python 0.0 is a statement about
+the path rather than about the sim count -- and not at all 26, because a Python
+0.0 where the C is also 0.0 discriminates nothing and the full re-sweep costs
+~98s of reference search. A probe that sampled only 128/256/512 would have read
+0.0 on both paths and closed the question the wrong way.
 
 The mutation matrix (9 mutants, each applied, run, reverted) is in the PR body.
 """
@@ -141,14 +173,43 @@ def test_membership_is_read_off_the_two_paths_source_not_off_the_name() -> None:
 # --- MEASURED: which path acts on it -----------------------------------------
 
 
-@pytest.mark.parametrize(("sims", "topk"), [(1024, 4), (1024, 8)])
+# The C points from the module docstring's table that diverge, chosen for
+# DISTANCE from a zero rather than for size. ``(1024, 4)`` is the headline
+# number but sits one step from ``(896, 4)`` = 0.0; the topk=8 run 896-1536 is
+# a contiguous non-zero band, so a knife-edge moving by one step cannot empty
+# this list. Not a threshold -- see the docstring.
+_DIVERGING = [(1024, 4), (1152, 4), (896, 8), (1024, 8), (1152, 8), (1536, 8)]
+
+# Where the descent swap reaches the PLAYED MOVE, not just the stored target.
+_ACTION_CHANGING = [(3072, 4), (4096, 4)]
+
+# Every point the module docstring tabulates. Not a test parametrisation --
+# re-running the whole thing on the PYTHON path costs ~98s, and at a point
+# where the C is 0.0 too a Python 0.0 discriminates nothing. It is here so the
+# sweep behind the table can be reproduced without reconstructing the list:
+#   [(s, k, l1) for s, k in _SWEEP]  against `_search(run_gumbel_root_many_c,...)`
+_SWEEP = [
+    (s, k)
+    for k in (4, 8)
+    for s in (64, 128, 256, 512, 768, 896, 1024, 1152, 1280, 1536, 2048, 3072, 4096)
+]
+
+# The DISCRIMINATING points for the Python-side control: every point where the
+# C really does diverge, so "Python is 0.0 here" is a statement about the path
+# and not about the sim count -- plus two from the shallow regime where neither
+# path moves. ``(4096, 4)`` is left out on cost alone (29s of Python reference
+# search for a point ``(3072, 4)`` already covers).
+_PY_CONTROL = [(128, 4), (256, 4), *_DIVERGING, (3072, 4)]
+
+
+@pytest.mark.parametrize(("sims", "topk"), _DIVERGING)
 def test_the_c_path_really_reads_it(sims: int, topk: int) -> None:
     """POSITIVE CONTROL. Without this the guard could be guarding a null.
 
     ``full_tree=False`` swaps the C descent to PUCT, which changes the returned
     policy -- the stored TRAINING TARGET -- even where it leaves the played
     action alone, so "the move did not change" is not evidence the knob is
-    inert.
+    inert. (It does reach the move too; see the next test.)
     """
     on = _search(run_gumbel_root_many_c, _cfg(simulations=sims, topk=topk))
     off = _search(
@@ -157,7 +218,25 @@ def test_the_c_path_really_reads_it(sims: int, topk: int) -> None:
     assert np.abs(on[0] - off[0]).sum() > 1e-3
 
 
-@pytest.mark.parametrize(("sims", "topk"), [(128, 4), (256, 4), (1024, 4), (1024, 8)])
+@pytest.mark.parametrize(("sims", "topk"), _ACTION_CHANGING)
+def test_the_c_path_reads_it_all_the_way_to_the_played_move(
+    sims: int, topk: int,
+) -> None:
+    """The strongest form of the positive control: a DIFFERENT MOVE.
+
+    At most diverging points only the returned policy moves, which is already
+    consequential (it is the stored training target). At these two the played
+    action changes as well, so the knob is not merely reshaping a target the
+    search then ignores.
+    """
+    on = _search(run_gumbel_root_many_c, _cfg(simulations=sims, topk=topk))
+    off = _search(
+        run_gumbel_root_many_c, _cfg(simulations=sims, topk=topk, full_tree=False),
+    )
+    assert on[1] != off[1]
+
+
+@pytest.mark.parametrize(("sims", "topk"), _PY_CONTROL)
 def test_the_python_path_really_does_not(
     sims: int, topk: int, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,6 +290,7 @@ def test_the_volatility_reroute_hits_the_same_guard(
     """
     import torch
 
+    from chess_anti_engine.encoding import rep_fix
     from chess_anti_engine.selfplay import match as match_mod
 
     class _Model(torch.nn.Module):
@@ -221,16 +301,66 @@ def test_the_volatility_reroute_hits_the_same_guard(
                 "wdl": torch.zeros((bs, 3), dtype=torch.float32),
             }
 
-    monkeypatch.setattr(match_mod, "_HAS_GUMBEL_C", True)
-    with pytest.raises(ValueError, match="full_tree"):
-        match_mod.pick_moves_for_boards(
-            _Model().eval(), [chess.Board()], device="cpu",
-            rng=np.random.default_rng(0), mcts_type="gumbel",
-            mcts_simulations=4, temperature=0.0, c_puct=2.5,
-            gumbel_add_noise=False,
-            volatility_q_scale=1.0,
-            gumbel_overrides={"full_tree": 0.0},
-        )
+  # ⚑ `pick_moves_for_boards` calls `rep_fix.apply` on the way in, and that
+  # flag is PROCESS-GLOBAL in the compiled encoders -- it changes how every
+  # later board in this interpreter encodes its repetition planes. A test that
+  # leaves it flipped is a test that silently re-encodes the rest of the
+  # session, which is the same accept-then-affect-something-else shape this
+  # whole file is about. Snapshot and restore.
+    _rep_fix_before = rep_fix.current()
+    try:
+        monkeypatch.setattr(match_mod, "_HAS_GUMBEL_C", True)
+        with pytest.raises(ValueError, match="full_tree"):
+            match_mod.pick_moves_for_boards(
+                _Model().eval(), [chess.Board()], device="cpu",
+                rng=np.random.default_rng(0), mcts_type="gumbel",
+                mcts_simulations=4, temperature=0.0, c_puct=2.5,
+                gumbel_add_noise=False,
+                volatility_q_scale=1.0,
+                gumbel_overrides={"full_tree": 0.0},
+            )
+    finally:
+        if rep_fix.current() != _rep_fix_before:
+            # `boards_discarded=True` holds: every board this test made is gone
+            # by here (the guard raised before any CBoard was built).
+            rep_fix.apply(bool(_rep_fix_before), boards_discarded=True)
+            if _rep_fix_before is None:
+              # `apply` cannot express "never set". The extensions are now on
+              # their documented default (off), which is the state a
+              # never-set flag leaves them in, so restoring the module's own
+              # sentinel restores the pair.
+                rep_fix._current = None  # noqa: SLF001
+
+
+def test_production_selfplay_has_no_route_to_the_knob_at_all() -> None:
+    """WHY there is no ``network_turn`` route test, stated as an assertion.
+
+    Production selfplay dispatches at ``run_network_turn`` (``_HAS_GUMBEL_C and
+    not volatility_search_enabled``), which the
+    ``pick_moves_for_boards`` test above does not cover. A route test there
+    would have to FABRICATE a config production cannot produce, so it would be
+    testing the callee-side placement -- which mutant M1 already covers from
+    ``run_gumbel_root_many`` -- rather than a reachable path.
+
+    The stronger and cheaper statement is this one: the knob has no config
+    surface anywhere. ``build_selfplay_gumbel_config`` is the whole
+    ``SearchConfig -> GumbelConfig`` mapping and it never passes ``full_tree``,
+    ``SearchConfig`` has no such field, and the yaml schema has no key for it.
+    So the production path is protected structurally, and this test is what
+    fails the day somebody adds ``gumbel_full_tree`` to the yaml and wires it
+    through without re-reading ``C_ONLY_GUMBEL_KNOBS``.
+    """
+    from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
+    from chess_anti_engine.selfplay.network_turn import build_selfplay_gumbel_config
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    cfg = build_selfplay_gumbel_config(
+        search=SearchConfig(), game=GameConfig(), simulations=8,
+    )
+    assert cfg.full_tree is True
+    assert c_only_knobs_set(cfg) == ()
+    assert not [f for f in SearchConfig.__dataclass_fields__ if "full_tree" in f]
+    assert not [k for k in flatten_run_config_defaults({}) if "full_tree" in k]
 
 
 def test_the_c_path_still_accepts_it() -> None:
@@ -259,6 +389,50 @@ def test_a_value_the_c_would_silently_coerce_is_refused_too() -> None:
     assert c_only_knobs_set(_cfg(full_tree=2)) == ("full_tree",)
     with pytest.raises(SystemExit, match="full_tree"):
         apply_search_overrides(_play_side(), spec="full_tree=2")
+
+
+def test_a_string_typed_knob_at_its_default_is_not_an_offender(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plain ``==`` ahead of the float coercion, exercised on a real field.
+
+    Both shipped sets hold numeric fields, so nothing today reaches the
+    equality arm. ``policy_encoding`` is a genuine ``str`` field of the same
+    dataclass, so pointing the set at it is the cheapest faithful stand-in for
+    the future C-only knob that is an enum. Without the early return
+    ``float("lc0_1858")`` raises, the fallback calls it an offender, and EVERY
+    config in the repo -- including the default -- fails the guard at a value
+    nobody changed.
+    """
+    monkeypatch.setattr(
+        gumbel_mod, "C_ONLY_GUMBEL_KNOBS", frozenset({"policy_encoding"}),
+    )
+    assert c_only_knobs_set(GumbelConfig()) == ()
+    validate_gumbel_config(GumbelConfig(), where="test")
+  # ...and it still fires when the string genuinely differs.
+    assert c_only_knobs_set(_cfg(policy_encoding=POLICY_ENCODING_AZ_4672)) == (
+        "policy_encoding",
+    )
+
+
+def test_an_int_too_wide_for_a_float_is_refused_not_propagated() -> None:
+    """``float(10**400)`` raises ``OverflowError``, not ``ValueError``.
+
+    Both catch sites matter and neither used to name it: the shared comparison
+    would have propagated it out of ``assert_python_path_can_run``, and
+    ``validate_gumbel_config``'s own finiteness loop would have propagated it
+    out of a function whose CLI callers wrap ``ValueError`` alone -- so an
+    operator would have got a raw traceback from inside the guard against raw
+    tracebacks.
+    """
+    huge = 10 ** 400
+    assert c_only_knobs_set(_cfg(full_tree=huge)) == ("full_tree",)
+    with pytest.raises(ValueError, match="full_tree"):
+        validate_gumbel_config(_cfg(full_tree=huge), where="test")
+  # The finiteness loop's own site: a numeric field, so it reaches that loop
+  # rather than the C-only comparison.
+    with pytest.raises(ValueError, match="c_scale|halving_div"):
+        validate_gumbel_config(_cfg(c_scale=huge, halving_div=1), where="test")
 
 
 def test_a_value_float_cannot_read_is_an_offender_on_both_knob_sets() -> None:
@@ -321,6 +495,12 @@ def test_the_arena_override_path_refuses_it() -> None:
     message = str(exc.value)
     assert "full_tree" in message
     assert "C-path only" in message
+  # The per-knob tail from `_C_ONLY_KNOB_DETAIL`, which is what tells the
+  # operator their arm would run an UNTUNABLE PUCT descent rather than just
+  # "a knob two paths disagree about". Pinned so moving it into the table did
+  # not quietly drop it from the message.
+    assert "PUCT" in message
+    assert "INERT_GUMBEL_KNOBS" in message
 
 
 def test_the_check_is_on_the_side_constructor_not_the_override_parser() -> None:
@@ -435,12 +615,23 @@ def test_the_only_production_reader_of_policy_encoding_is_still_the_one_named() 
     """Pins the map the declaration's comment records.
 
     Not "nothing reads it" -- ``eval.puzzles.run_puzzle_eval`` does, and that
-    read is why the field is documented rather than deleted. If a second
-    consumer appears, this fails and the comment gets rewritten instead of
-    quietly becoming false.
+    read is why the field is documented rather than deleted.
+
+    The scan covers the FIVE modules the comment's map names: the two search
+    paths, plus the two writers and the one reader. An earlier revision scanned
+    only the two search modules while claiming "if a second consumer appears,
+    this fails" -- which was false for a consumer appearing in any of the other
+    three, i.e. in exactly the modules the map is about.
+
+    ``uci/__main__.py`` and ``selfplay/match.py`` come back with NO attribute
+    reads at all: they read the checkpoint's encoding through
+    ``getattr(model, "policy_encoding", ...)``, which is a call and not an
+    attribute node, and then write it onto the config. That is the map's
+    "writers" row, asserted below by the keyword they pass.
     """
     from chess_anti_engine.eval import puzzles as puzzles_mod
     from chess_anti_engine.selfplay import match as match_mod
+    from chess_anti_engine.uci import __main__ as uci_main_mod
 
     assert "gumbel_cfg.policy_encoding" in inspect.getsource(
         puzzles_mod.run_puzzle_eval,
@@ -448,6 +639,16 @@ def test_the_only_production_reader_of_policy_encoding_is_still_the_one_named() 
     assert "policy_encoding=policy_encoding" in inspect.getsource(
         match_mod.pick_moves_for_boards,
     )
-    for module in (gumbel_mod, gumbel_c_mod):
-        assert _attribute_reads(module, "policy_encoding") == set()
+  # `gumbel_cfg` is the SOLE receiver, and only in `puzzles`. Anything else --
+  # a `cfg.policy_encoding` in either search path, or a second consumer in a
+  # writer module -- lands here as a new receiver and fails.
+    expected = {
+        gumbel_mod: set(),
+        gumbel_c_mod: set(),
+        match_mod: set(),
+        uci_main_mod: set(),
+        puzzles_mod: {"gumbel_cfg"},
+    }
+    for module, receivers in expected.items():
+        assert _attribute_reads(module, "policy_encoding") == receivers, module.__name__
         assert 'getattr(cfg, "policy_encoding"' not in inspect.getsource(module)

@@ -171,6 +171,20 @@ PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset(
 # realized shape before anything has chosen a path.
 C_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset({"full_tree"})
 
+# Per-knob tail appended to the generic refusal in `_c_only_knob_problems`.
+# A table rather than a sentence inside that loop: the loop's own text is true
+# of EVERY C-only knob, while this one is true of `full_tree` alone, and a
+# second knob added to the set above would otherwise silently inherit a
+# paragraph about a PUCT descent it has nothing to do with. `.get(name, "")`,
+# so a knob with nothing extra to say simply says nothing.
+_C_ONLY_KNOB_DETAIL: dict[str, str] = {
+    "full_tree": (
+        ". A false full_tree also swaps the C descent to PUCT at "
+        "c_puct/fpu_reduction, the knobs INERT_GUMBEL_KNOBS makes this same "
+        "CLI refuse"
+    ),
+}
+
 
 def _knob_differs_from_default(cfg: GumbelConfig, base: GumbelConfig, name: str) -> bool:
     """True when ``cfg.name`` is off its default. ONE rule for both knob sets.
@@ -191,11 +205,25 @@ def _knob_differs_from_default(cfg: GumbelConfig, base: GumbelConfig, name: str)
 
     A value `float()` cannot read is an offender too: it is certainly not the
     default, and raising a bare `TypeError` from inside a guard tells the
-    operator nothing about which knob was wrong.
+    operator nothing about which knob was wrong. `OverflowError` is in the
+    catch because `float(10**400)` raises THAT and not `ValueError` -- one
+    integer literal wide enough and the guard would have propagated the wrong
+    exception type out of a function whose callers only wrap `ValueError`.
+
+    ⚑ The plain `==` comes FIRST, before any coercion. Both current sets hold
+    numeric fields, but a future C-only knob that is a `str` (an enum-shaped
+    descent mode, say) would otherwise be a permanent offender AT ITS OWN
+    DEFAULT: `float("linear")` raises, the fallback returns True, and every
+    config in the repo fails the guard. Equality is also what "off its default"
+    means; the float coercion is only here for the spellings equality misses.
     """
+    default = getattr(base, name)
+    value = getattr(cfg, name)
+    if value == default:
+        return False
     try:
-        return float(getattr(cfg, name)) != float(getattr(base, name))
-    except (TypeError, ValueError):
+        return float(value) != float(default)
+    except (TypeError, ValueError, OverflowError):
         return True
 
 
@@ -437,7 +465,17 @@ class GumbelConfig:
   #     (`gumbel_cfg.policy_encoding`), and it reads it only as the fallback
   #     source for writing the same field back onto a `dataclasses.replace`.
   # Net: zero consumers, so it is metadata that says which head produced the
-  # logits, not a knob. Documented rather than deleted (the write sites and
+  # logits, not a knob.
+  #
+  # ⚑ Grepping the NAME finds a third site that is not a third reader:
+  # `inference_cache._ENCODING_ATTRS` lists `"policy_encoding"` as part of the
+  # eval-cache identity, so a cached row cannot be served across an encoding
+  # change. It reads that attribute off whatever `resolve_encoding_source`
+  # walks the wrapper chain to -- in production the MODEL -- and a
+  # `GumbelConfig` is never in that chain. Same name, different object; it does
+  # not make the paragraph above false.
+  #
+  # Documented rather than deleted (the write sites and
   # their test are real and a 4672-output net is a live case), and rather than
   # guarded (a guard on a non-default value would refuse `az_4672`, which the
   # ONNX loader legitimately sets -- `onnx/load.py`). Both halves of that map
@@ -602,11 +640,14 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
       # numpy scalars -- an accept-then-ignore inside the guard against
       # accept-then-ignore. `str` is excluded first because the encoding fields
       # are strings and `float("nan")` would parse one spelled that way.
+      # `OverflowError` is in the catch because `float(10**400)` raises THAT,
+      # not `ValueError` -- an int too wide for a float used to escape this
+      # loop as an exception type no caller wraps.
         if isinstance(value, (bool, str)):
             continue
         try:
             numeric = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not math.isfinite(numeric):
             problems.append(
@@ -664,13 +705,32 @@ def _c_only_knob_problems(cfg: GumbelConfig) -> list[str]:
       is therefore the whole fix -- reroute, or zero it -- and the config is
       runnable either way.
     * A C-only knob is honoured by the C and IGNORED by the Python. The dispatch
-      guard makes the Python path fail loudly instead of lying, but the callers
-      of this validator are eval instruments that BANK a realized shape
+      guard makes the Python path fail loudly instead of lying, but the
+      instruments that call this validator BANK a realized shape
       (``arena_standard.SideSearch.realized_gumbel`` into the JSONL,
       ``audit_targets`` into its header) at config-assembly time -- before
       ``_HAS_GUMBEL_C`` or ``volatility_search_enabled`` has chosen anything. A
       record written before the path is known cannot be truthful about a knob
       whose meaning depends on the path.
+
+    ⚑ That is true of MOST callers, not all, and the refusal is deliberately
+    unconditional anyway. There are seven ``validate_gumbel_config`` callers;
+    ``scripts/gen_random_selfplay_shards.py`` is a counter-example -- it calls
+    this validator and ``assert_c_path_can_run`` on adjacent lines, so ITS path
+    is known at assembly time and the "banked before the path is chosen"
+    argument does not apply to it. It is refused all the same, and no parameter
+    is offered to exempt it, for two reasons. A gate whose callers can opt out
+    is a gate that eventually nobody is inside, and a caller genuinely wanting a
+    PUCT descent has a cheaper honest route: construct the ``GumbelConfig``
+    directly and hand it to ``run_gumbel_root_many_c``, which never consults
+    this function. So the C capability survives exactly where it is asked for
+    explicitly, and is refused on every path that would record it.
+
+    Of the seven, only ``arena_standard`` and ``audit_targets`` can carry a
+    USER-SUPPLIED ``full_tree`` today -- they are the two with a generic
+    ``k=v`` ``GumbelConfig`` override surface. The other five expose named
+    flags with no ``full_tree`` among them, so for those the refusal is a
+    tripwire against a future flag rather than a live rejection.
 
     And the value it would let through is worse than a null. A FALSE
     ``full_tree`` does not turn the descent off, it switches it to
@@ -708,9 +768,7 @@ def _c_only_knob_problems(cfg: GumbelConfig) -> list[str]:
         "C descent on it, run_gumbel_root_many does not read it at all, so "
         "which search this is depends on whether the extension is loaded and "
         "whether volatility forced the Python path -- and the realized-shape "
-        "record is written before either is known. A false full_tree also "
-        "swaps the C descent to PUCT at c_puct/fpu_reduction, the knobs "
-        "INERT_GUMBEL_KNOBS makes this same CLI refuse"
+        f"record is written before either is known{_C_ONLY_KNOB_DETAIL.get(name, '')}"
         for name in offenders
     ]
 
