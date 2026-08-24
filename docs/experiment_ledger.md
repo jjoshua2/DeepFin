@@ -66666,3 +66666,40 @@ read out (arm 2 mid-training, arm 3 unlaunched):
 - Ratio-ladder note: the ladder arms keep running from the UNMOVED local branch ref (4b06a164c)
   in their own worktree — the merge changes nothing under the running job. MERGED ≠ DEPLOYED to
   the live branch.
+
+### 2026-08-24 — PR #461 MERGED (main e7432df78): native big-net NNUE evaluator + value-provider seam (task #273 PR 1)
+- From-scratch C implementation of SF's big net (FullThreats FT + HalfKAv2_hm PSQT, LEB128
+  wrapping-32-bit decode, 8 layer stacks bucketed (pc−1)/4, validated-not-clamped throughout) —
+  NO SF code imported or copied (reviewer-verified). Exposed to Python as `_nnue_ext` and to the
+  C Gumbel tree through an ABI-versioned PyCapsule provider seam: ONE evaluator instance across
+  both .so files (weight cache + SIMD state shared — the two-copy defect Grok found is closed by
+  construction and pinned by discriminating tests). In-check positions REFUSED unconditionally
+  via status+out-param (no sentinel); callers must resolve check nodes RECURSIVELY — resolver
+  lands in PR 2.
+- **Parity: EXACT integer equality vs a live SF process's big-net internal-units output — final
+  run 49,619 FENs / 6,922 playouts, 0 mismatches on BOTH kernels**; in-check excluded 4.640%
+  (reproduced across two independent 10-seed pools); every banked observation row carries its
+  cluster key (playout+ply). EvalFile provenance hard-fails; checked==0 fails; bank writes are
+  temp-staged + no-overwrite.
+- **Throughput: 143k–173k evals/s single-thread FULL PATH (index computation included)** — the
+  24–27k/s scoping projection was the artifact (refuted three ways: reviewer's fresh-seed
+  --repeats 1 re-run, author's repeats 1-vs-4 equality, near-linear 8-thread scaling). vs the
+  banked UCI@32 anchor (162,667 rows/h) the ≥5× gate (≥813k rows/h) looks CLEARED with margin,
+  pending the generator integration + the 2-arm quality readout.
+- Review: 3 rounds — Fable (7 findings) + Grok (15, wrapper-verified) + Codex (10 inline), then
+  Codex round 2 (6) — all 38 dispositioned; two fix passes; Fable delta re-reviews APPROVE both
+  times, final verdict MERGE-READY with the reviewer re-killing rewritten mutant R1 itself.
+  32 mutants killed total; principled survivors documented (V7 relation cap unreachable:
+  ≤27 relations/square ⇒ 864<1024 — Codex C9 refuted by arithmetic). Freshness gate now derives
+  each extension's header deps from the real #include graph (was blind to _nnue_ext entirely —
+  the gate-that-cannot-fail class, caught by Grok). Weight cache keyed by dev+ino+size+mtime of
+  the mapped fd (atomic same-path replace no longer serves stale weights).
+- Traps banked: SF's documented layer-hash algebra does NOT reproduce the shipped hashes — pinned
+  as MEASURED constants, labelled as such; a mutation harness must snapshot EVERY file any mutant
+  touches (one un-snapshotted file left two guards disabled — caught by the post-run RED
+  baseline); gh pr edit --body-file silently fails (REST PATCH + read-back, twice this PR).
+- Next in lane (task #273): PR 2 = recursive check-resolver (tree-side, shared by both race arms)
+  + leaf-qsearch plugin; then generator integration; then the 2-arm × sims-ladder readout vs the
+  banked UCI anchors (data/gen0/bench_anchors/), bend-of-curve operating point. Corpus launch
+  HOLDS until the gate reads out (#273 blocks #270). NOT deployed to the live branch (MERGED ≠
+  DEPLOYED).
