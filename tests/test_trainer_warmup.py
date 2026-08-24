@@ -1357,7 +1357,14 @@ def test_run_optimizer_step_collects_clip_stats_off_the_tb_log_stride(
         batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
     )
 
-    assert set(step_opt_stats) >= {"grad_norm", "total_norm", "clipped", "hard_clip", "adaptive_clip", "lr"}
+    # `adaptive_bound` is named here deliberately: this is the ONLY clip-flag
+    # check that runs the real `_run_optimizer_step` -> `_zclip_step` path
+    # rather than a stub, so a flag missing from the real emitter would
+    # otherwise survive every stubbed test in the suite.
+    assert set(step_opt_stats) >= {
+        "grad_norm", "total_norm", "clipped", "hard_clip", "adaptive_clip",
+        "adaptive_bound", "lr",
+    }
     assert step_opt_stats["grad_norm"] > 0.0
     assert step_opt_stats["total_norm"] == pytest.approx(step_opt_stats["grad_norm"])
     assert step_opt_stats["lr"] == pytest.approx(float(trainer._base_lrs()[0]))

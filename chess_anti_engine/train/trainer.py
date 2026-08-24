@@ -1841,8 +1841,15 @@ def _validated_optimizer_scalar(
     low_ok = value >= minimum if minimum_inclusive else value > minimum
     if not (low_ok and value <= maximum):
         low = f"{minimum:g} <=" if minimum_inclusive else f"{minimum:g} <"
+  # ⚑ `!r`, NOT `:g`. `:g` truncates to 6 significant figures, so the value
+  # that fails a boundary by a hair prints AS the boundary and the message
+  # contradicts itself: `f"{100.0001:g}"` is "100", giving "100 is outside the
+  # accepted range (0 < ... <= 100)". A rejection an operator cannot believe is
+  # worse than no rejection, because the next move is to distrust the guard.
+  # The bounds keep `:g` — they are exact literals (0, 1, 100) and `!r` would
+  # print them as "100.0".
         raise ValueError(
-            f"{name}={value:g} is outside the accepted range "
+            f"{name}={value!r} is outside the accepted range "
             f"({low} {name} <= {maximum:g}). {consequence}"
         )
     return value
@@ -1853,15 +1860,23 @@ def _validated_optimizer_scalar(
 # already paid for: `tune/trainable_init.py:guard_warm_start_lr` records the
 # 2026-07-11 warm start that put the matrix group at 6e-3 -- double the 0.003
 # recorded as model-destroying -- and cost -494 Elo in 74 iterations.
+#
+# ⚑ THE CURRENT PAIR AND THE FAILING PAIR ARE DIFFERENT, AND THE MESSAGE SAYS
+# WHICH IS WHICH. `configs/pbt2_small.yaml` runs `lr: 0.00003`, so production is
+# 3e-5 x 20 = 6e-4 for this group. The 3e-4 x 20 = 6e-3 figure is the HISTORICAL
+# FAILURE, not today's setting; quoting it as "the production lr" would overstate
+# the live matrix-group LR by 10x in the one piece of text an operator reads
+# while deciding what to replace a rejected value with.
 _MATRIX_LR_MULTIPLIER_CONSEQUENCE = (
     "matrix_lr_multiplier is the ENTIRE step-size control for the Aurora "
     "matrix group (28.6% of trainable params under "
     "matrix_optimizer_scope: mlp_out): that update is scale-invariant and "
     "carries no adaptive denominator, so nothing downstream absorbs a bad "
-    "value. At the production lr 3e-4 the production multiplier of 20 already "
-    "puts the group at 6e-3, double the 0.003 this project recorded as "
-    "model-destroying (tune/trainable_init.py guard_warm_start_lr: -494 Elo in "
-    "74 iterations). Production is 20."
+    "value. Production is multiplier 20 at lr 3e-5, i.e. 6e-4 for that group. "
+    "The historical FAILING pair is lr 3e-4 x 20 = 6e-3 -- double the 0.003 "
+    "this project recorded as model-destroying (tune/trainable_init.py "
+    "guard_warm_start_lr, 2026-07-11: -494 Elo in 74 iterations). Production "
+    "multiplier is 20."
 )
 
 _WEIGHT_DECAY_CONSEQUENCE = (
@@ -2961,13 +2976,27 @@ class Trainer:
                 "guard — re-set zclip_max_norm"
             )
         else:
+  # ⚑ NAMING A KNOB IS NOT ENOUGH — SAY WHETHER IT CAN BE REACHED. The
+  # adaptive threshold's knobs are `zclip_z_thresh` and `zclip_alpha`, and
+  # `ZClip.__init__` reads BOTH once: nothing in `tune/` pushes either at a
+  # running trial, so a live yaml edit to them is overlaid into the config,
+  # never re-read, and silently ignored until the next restart. Only
+  # `zclip_max_norm` has a live path (`set_grad_clip_max_norm`, pushed every
+  # iteration from `tune/trainable.py`) — and that setter exists precisely
+  # because editing it live USED to be a silent no-op. Telling an operator to
+  # "re-set zclip_z_thresh" without saying it needs a restart reproduces this
+  # repo's signature defect inside the very message that exists to stop it.
             binding = (
                 "the ADAPTIVE z-score threshold is the binding clip "
                 f"({100.0 * metrics.grad_adaptive_bound_rate:.1f}% of steps, vs "
                 f"{100.0 * metrics.grad_hard_clip_rate:.1f}% for the hard cap "
-                f"zclip_max_norm={float(max_grad_norm):.2f}) — re-setting "
-                "zclip_max_norm moves the smaller share; zclip_z_thresh / "
-                "zclip_alpha are the knobs on the binding one"
+                f"zclip_max_norm={float(max_grad_norm):.2f}). Its knobs are "
+                "zclip_z_thresh / zclip_alpha and BOTH ARE RESTART-GATED: zclip "
+                "reads them once at construction and nothing pushes them at a "
+                "running trial, so a live yaml edit to either is silently "
+                "ignored until the next restart. zclip_max_norm is the only "
+                "clip knob that takes effect mid-run, and it is binding the "
+                "smaller share here"
             )
         logging.getLogger(__name__).warning(
             "grad-norm median %.3f over %d step(s) is past the pre-committed "

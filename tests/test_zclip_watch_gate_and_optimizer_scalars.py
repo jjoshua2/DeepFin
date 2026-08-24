@@ -25,7 +25,6 @@ tells them apart.
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any
 
@@ -202,8 +201,63 @@ def test_watch_message_names_the_adaptive_threshold_when_it_binds(
         trainer._warn_if_grad_norm_median_past_watch(metrics)
 
     assert "ADAPTIVE z-score threshold is the binding clip" in caplog.text
-    assert "zclip_z_thresh / zclip_alpha are the knobs on the binding one" in caplog.text
+    assert "zclip_z_thresh / zclip_alpha" in caplog.text
     assert "HARD cap zclip_max_norm=6.50 is the binding clip" not in caplog.text
+
+
+def test_the_adaptive_branch_says_its_knobs_are_restart_gated(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ Naming a knob is not enough — say whether a live edit can reach it.
+
+    `ZClip.__init__` reads `zclip_z_thresh` and `zclip_alpha` once, and nothing
+    in `tune/` pushes either at a running trial: a live yaml edit to them is
+    overlaid into the config and then silently ignored until restart. Only
+    `zclip_max_norm` has a live path (`Trainer.set_grad_clip_max_norm`, pushed
+    every iteration), and that setter exists precisely because editing the cap
+    live used to be a no-op. A message that sends an operator to a restart-gated
+    knob without saying so reproduces this repo's signature defect inside the
+    very text written to stop it.
+    """
+    trainer = _make_trainer(tmp_path, zclip_max_norm=6.5)
+    metrics = _metrics(
+        grad_norm_samples=200,
+        grad_norm_median=trainer_mod.GRAD_NORM_MEDIAN_WATCH + 0.1,
+        grad_clip_rate=0.75,
+        grad_hard_clip_rate=0.15,
+        grad_adaptive_bound_rate=0.60,
+        grad_adaptive_clip_rate=0.80,
+    )
+
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
+        trainer._warn_if_grad_norm_median_past_watch(metrics)
+
+    assert "RESTART-GATED" in caplog.text
+    assert "silently ignored until the next restart" in caplog.text
+    assert "zclip_max_norm is the only clip knob that takes effect mid-run" in caplog.text
+    # The old wording told operators to re-set them as if it were a live edit.
+    assert "are the knobs on the binding one" not in caplog.text
+
+
+def test_an_exact_tie_credits_the_hard_cap(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tie goes to the hard cap: it is the one an operator can actually re-set."""
+    trainer = _make_trainer(tmp_path, zclip_max_norm=6.5)
+    metrics = _metrics(
+        grad_norm_samples=200,
+        grad_norm_median=trainer_mod.GRAD_NORM_MEDIAN_WATCH + 0.1,
+        grad_clip_rate=0.60,
+        grad_hard_clip_rate=0.30,
+        grad_adaptive_bound_rate=0.30,
+        grad_adaptive_clip_rate=0.35,
+    )
+
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
+        trainer._warn_if_grad_norm_median_past_watch(metrics)
+
+    assert "HARD cap zclip_max_norm=6.50 is the binding clip" in caplog.text
+    assert "ADAPTIVE z-score threshold is the binding clip" not in caplog.text
 
 
 def test_watch_still_declines_when_the_hard_cap_is_disabled(tmp_path: Path,
@@ -463,19 +517,43 @@ def test_validator_rejects_a_non_finite_matrix_lr_multiplier(
     """
     with pytest.raises(ValueError, match="is not finite"):
         _make_trainer(tmp_path, optimizer="aurora", matrix_lr_multiplier=bad)
-    # The mutant this guards: clamping instead of validating.
-    assert math.isnan(min(float("nan"), 100.0)) or math.isinf(bad)
 
 
 def test_multiplier_rejection_quotes_the_recorded_lr_fact(tmp_path: Path) -> None:
-    """The operator needs a replacement value, not just a refusal."""
+    """The operator needs a replacement value, not just a refusal.
+
+    And the two LR pairs must be labelled apart: production is lr 3e-5 x 20 =
+    6e-4, while 3e-4 x 20 = 6e-3 is the 2026-07-11 FAILURE. Quoting the failing
+    pair as the production one overstates the live matrix-group LR by 10x.
+    """
     with pytest.raises(ValueError, match="matrix_lr_multiplier") as excinfo:
         _make_trainer(tmp_path, optimizer="aurora", matrix_lr_multiplier=200.0)
 
     message = str(excinfo.value)
-    assert "6e-3" in message
+    assert "6e-4" in message          # what production actually runs
+    assert "3e-5" in message
+    assert "6e-3" in message          # ... labelled as the historical failure
+    assert "historical FAILING pair" in message
     assert "0.003" in message
-    assert "Production is 20." in message
+    assert "Production multiplier is 20." in message
+
+
+def test_a_near_boundary_rejection_does_not_print_as_the_boundary(
+    tmp_path: Path,
+) -> None:
+    """⚑ A rejection that reads as self-contradictory teaches operators to distrust it.
+
+    `f"{100.0001:g}"` is `"100"`, so a `:g`-formatted message says "100 is
+    outside the accepted range (0 < matrix_lr_multiplier <= 100)". The value
+    must print at full precision; the bounds stay exact literals.
+    """
+    with pytest.raises(ValueError, match="matrix_lr_multiplier") as excinfo:
+        _make_trainer(tmp_path, optimizer="aurora", matrix_lr_multiplier=100.0001)
+
+    message = str(excinfo.value)
+    assert "100.0001" in message
+    assert "matrix_lr_multiplier=100 " not in message
+    assert "<= 100)" in message
 
 
 @pytest.mark.parametrize("key", ["matrix_weight_decay", "aux_weight_decay"])
