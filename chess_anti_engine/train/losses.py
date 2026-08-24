@@ -1358,6 +1358,33 @@ def terminal_outcome_transfer_taper(
     return (taper * has_moves_left).unsqueeze(1)
 
 
+def normalize_value_blend_fracs(
+    sf_wdl_frac: float, search_wdl_frac: float,
+) -> tuple[float, float, float]:
+    """``(sf, search, game)`` shares of the WDL value target, as applied.
+
+    Extracted from ``compute_loss`` so the value-blend GUARD can read the same
+    arithmetic the trained objective uses instead of restating it. A guard that
+    reimplements its criterion measures its own copy: if the clamp, the
+    renormalisation or the ``game_frac`` complement ever moves here, a
+    duplicated version in the guard would keep passing while the two drifted
+    apart. One implementation, two callers.
+
+    ⚑ ``game`` is the share that is DELIBERATELY the raw one-hot game outcome.
+    It is not the whole outcome-borne share: when a row carries no usable
+    ``sf_wdl``, ``compute_loss`` falls the SF component back to that same
+    one-hot, so the realized outcome mass is ``game + sf`` on those rows. That
+    gap is what ``train/value_blend_guard.py`` exists to make loud — see
+    ``value_blend_readout``.
+    """
+    sf = max(0.0, float(sf_wdl_frac))
+    search = max(0.0, float(search_wdl_frac))
+    blend_sum = sf + search
+    if blend_sum > 1.0:
+        return sf / blend_sum, search / blend_sum, 0.0
+    return sf, search, 1.0 - blend_sum
+
+
 def _compute_sf_wdl_mask(
     *,
     net_mask: torch.Tensor,
@@ -2220,15 +2247,9 @@ def compute_loss(
     # Missing/dampened SF/search WDL labels fall back to the raw result so the
     # adjusted target does not silently expand beyond ``game_frac``.
     blend_fallback_target = game_oh
-    sf_wdl_frac_f = max(0.0, float(sf_wdl_frac))
-    search_wdl_frac_f = max(0.0, float(search_wdl_frac))
-    blend_sum = sf_wdl_frac_f + search_wdl_frac_f
-    if blend_sum > 1.0:
-        sf_wdl_frac_f /= blend_sum
-        search_wdl_frac_f /= blend_sum
-        game_frac = 0.0
-    else:
-        game_frac = 1.0 - blend_sum
+    sf_wdl_frac_f, search_wdl_frac_f, game_frac = normalize_value_blend_fracs(
+        sf_wdl_frac, search_wdl_frac,
+    )
     target = game_frac * game_target
     sf_available = has_sf_wdl.float()
     search_available = has_search_wdl.float()
@@ -2317,6 +2338,28 @@ def compute_loss(
   # asserts an SF opinion -- silently, which is worse than the NaN was.
     _assert_blend_labels_finite(
         (("sf_wdl", sf_bad_rows), ("search_wdl", search_bad_rows)),
+    )
+  # ⚑ THE TWO FALLBACKS, COUNTED — the denominators of the outcome-borne share.
+  # BOTH components fall back to `blend_fallback_target` (the raw one-hot), and
+  # until 2026-08-16 only the SF side had a count, so `search_wdl_frac` — 0.70
+  # of the lc0 control's value target — could land entirely on the outcome with
+  # every guard reading clean (PR #438 review F1).
+  #
+  # These are the EFFECTIVE mass, not the label count, and the difference is
+  # load-bearing in two ways `has_sf_wdl.sum()` cannot express:
+  #   * `sf_effective = sf_available * keep`, so the `1 - keep` shortfall the
+  #     sf_search_dampen_* knobs remove also lands on the one-hot (F10). Both
+  #     knobs are 0.0 in production today, which is exactly the kind of "agrees
+  #     by coincidence" that stops being true after one live edit.
+  #   * when the `sf_wdl` / `search_wdl` COLUMN is absent the component is the
+  #     one-hot for every row regardless of the mask, so the count must be 0
+  #     rather than the mask's sum.
+    zero_rows = torch.zeros((), device=search_available.device)
+    sf_wdl_effective_rows = (
+        sf_effective.sum() if sf_wdl_probs is not None else zero_rows
+    )
+    search_wdl_effective_rows = (
+        search_available.sum() if search_wdl_probs is not None else zero_rows
     )
     if terminal_taper is None:
   # Bit-identical to the pre-feature blend: same expressions, same order.
@@ -2655,6 +2698,12 @@ def compute_loss(
         "sf_wdl_degenerate_rows": sf_wdl_degenerate_rows,
         "sf_wdl_orphaned_rows": sf_wdl_orphaned_rows,
         "sf_wdl_rows": sf_wdl_rows,
+  # Value-blend fallback denominators — see the blend site. `sf_wdl_rows` above
+  # is the LABEL count and is NOT interchangeable with these: it ignores `keep`
+  # and reads non-zero on a batch whose `sf_wdl` column is missing entirely.
+  # Mapped to `sf_wdl_effective_frac` / `search_wdl_effective_frac`.
+        "sf_wdl_effective_rows": sf_wdl_effective_rows,
+        "search_wdl_effective_rows": search_wdl_effective_rows,
         "sf_eval_pv_orphan_rows": sf_eval_pv_orphan_rows,
         "sf_eval_pv_checked_rows": sf_eval_pv_checked_rows,
         "batch_rows": batch_rows,

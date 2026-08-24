@@ -126,6 +126,13 @@ Stated so the coverage is not overread:
   weights resolve at 1.0) is not.
 * claims phrased without the literal token ``DEAD KEY`` still skip the
   raw-text completeness scan; they get the literal-surface pin instead.
+* ⚑ a presence-requiring reader at FUNCTION scope, inside a module whose
+  module-level collection is already registered. ``MODULE_LEVEL_KEY_COLLECTIONS``
+  enumerates module-level constants from the AST, so a ``raise``/``SystemExit``
+  on an absent key written inside a function body is invisible to both guards —
+  demonstrated with a surviving mutant during the review of
+  ``LIVE_TRAINER_PIN``. Registering a module here therefore certifies its
+  module-level collections and nothing else about that file.
 * ``.c``/``.h``/``.pyx``/``.toml``/``.json`` and ``.sh`` outside ``scripts/``,
   for both scans. Verified moot for all 27 keys annotated today.
 """
@@ -335,9 +342,9 @@ _LITERAL_SOURCE_GLOBS = (
 # must not make the live production config the file unrelated PRs have to edit":
 # a PR that adds a consumer edits this file, never `configs/pbt2_small.yaml`.
 KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
-    "adjusted_wdl_regret_cap": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
-    "adjusted_wdl_regret_scale": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
-    "adjusted_wdl_regret_source": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_cap": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_scale": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
+    "adjusted_wdl_regret_source": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/diagnose_target_calibration.py", "scripts/offline_replay_epoch.py", "scripts/shrink_ffn_checkpoint.py"),
     "bootstrap_dir": ("chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "bootstrap_max_positions": ("chess_anti_engine/utils/config_yaml.py",),
     "bootstrap_train_steps": ("chess_anti_engine/utils/config_yaml.py",),
@@ -347,19 +354,29 @@ KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
     "gpbt_quantile_fraction": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "gpbt_resample_probability": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "gpbt_winner_weight": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "lr_T0": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
-    "lr_T_mult": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
+    "lr_T0": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
+    "lr_T_mult": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "min_replay_size": ("chess_anti_engine/utils/config_yaml.py",),
     "no_amp": ("chess_anti_engine/utils/config_yaml.py", "scripts/train_bootstrap.py"),
     "opening_fen_prob": ("chess_anti_engine/tune/distributed_runtime.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py", "chess_anti_engine/worker.py", "scripts/loop_health.py"),
     "pb2_perturbation_interval": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "replay_sf_gap_priority_weight": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
-    "resid_channel_balance_weight": ("chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
-    "resid_channel_dropout": ("chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
+  # ⚑ `lc0_control_replay.py` ADDED 2026-08-17, judged rather than pinned
+  # reflexively. It names the key in `CONFIG_KWARGS`, which maps a
+  # `DiskReplayBuffer` kwarg to the `TrialConfig` FIELD that supplies it, and it
+  # reads the value with `getattr(tc, ...)` — never off the flat config. So the
+  # yaml key's absence cannot reach it as a `KeyError` or a substituted default
+  # of its own: `TrialConfig.from_dict` resolves the field to 0.0 either way,
+  # which is exactly what `tune/trainable_init.py` passes production's buffer.
+  # ⚑ And per the caveat below, "the resolver has a default" is NOT the argument:
+  # the argument is that this key is DELETED from the config, so absence IS the
+  # shipped state on both sides of the comparison and substitutes nothing.
+    "replay_sf_gap_priority_weight": ("chess_anti_engine/eval/lc0_control_replay.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
+    "resid_channel_balance_weight": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
+    "resid_channel_dropout": ("chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/model/transformer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py", "scripts/offline_replay_epoch.py"),
     "search_optimizer_choices": ("chess_anti_engine/run.py", "chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
-    "sf_search_dampen_sf_high": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
-    "sf_search_dampen_sf_low": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
-    "sf_wdl_temperature": ("chess_anti_engine/config_keys.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_report.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_search_dampen_sf_high": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_search_dampen_sf_low": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_sf_search_disagreements.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
+    "sf_wdl_temperature": ("chess_anti_engine/config_keys.py", "chess_anti_engine/eval/lc0_control_trainer.py", "chess_anti_engine/train/trainer.py", "chess_anti_engine/tune/trainable_report.py", "chess_anti_engine/tune/trial_config.py", "scripts/diagnose_target_calibration.py", "scripts/diagnose_wdl_by_age.py", "scripts/shrink_ffn_checkpoint.py", "scripts/value_optimism.py"),
     "shared_shards_dir": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
     "use_nla": ("chess_anti_engine/arena.py", "chess_anti_engine/model/__init__.py", "chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
 }
@@ -393,8 +410,44 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
   # Membership tests over the driver/tune config. Absence removes a member from
   # a set intersection; no value is read.
     ("chess_anti_engine/run.py", "_TUNE_CONFIG_DENYLIST"): ("search_optimizer_choices",),
+  # A BUFFER-KWARG -> TRIALCONFIG-FIELD MAP, not a config read. The lc0 control's
+  # replay pin loops this to build `DiskReplayBuffer` kwargs via `getattr(tc, ...)`,
+  # mirroring `tune/trainable_init.py`'s call site. Absence of the yaml key leaves
+  # `TrialConfig`'s field at 0.0 on BOTH the control and the live reference, so the
+  # comparison the collection feeds is unchanged — and because the key is DELETED
+  # from the config, absence is the shipped state rather than a substitution.
+  # NOT presence-requiring: nothing here indexes the flat config by this name.
+    ("chess_anti_engine/eval/lc0_control_replay.py", "CONFIG_KWARGS"): ("replay_sf_gap_priority_weight",),
     ("chess_anti_engine/tune/trainable_config_ops.py", "_DRIVER_LAUNCH_FIXED_KEYS"): ("gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "pb2_perturbation_interval", "search_optimizer_choices"),
     ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_start",),
+  # A FROZEN LITERAL. `LIVE_TRAINER_PIN` is a recorded snapshot of
+  # `trainer_kwargs_from_config`'s output; it reads no config at any point, so no
+  # yaml key's absence can change what IT does. That — not "the resolver has a
+  # default" — is why it is not presence-requiring.
+  #
+  # ⚑ THE DEFAULT ARGUMENT IS A NON-SEQUITUR AND AN EARLIER REVISION OF THIS
+  # COMMENT MADE IT. "The resolver supplies a default when the yaml omits the
+  # key" does not give "absence cannot change what the consumer does": absence
+  # SUBSTITUTES the default for the shipped value. It only coincides when the two
+  # are equal, which is a fact about today's config, not a property of the code.
+  # Measured on THIS tree's `configs/pbt2_small.yaml`: deleting `lr_T0` moves the
+  # resolved kwarg 999999 -> 5000 and `lr_T_mult` moves 1 -> 2. Absence is not
+  # inert for those two.
+  #
+  # ⚑ AND THE EARLIER MEASUREMENT READ THE WRONG FILE. It resolved the LIVE
+  # WORKING TREE's `configs/pbt2_small.yaml` — a different branch's file of the
+  # same name — and reported "6 absent / 2 present, drift NONE in 11 runs". That
+  # is 8 keys, not 10, and it describes no single config.
+  # Re-derived here against the file this guard actually reads:
+  #     6 absent / 4 present (`lr_T0`, `lr_T_mult`, `sf_search_dampen_sf_high/low`)
+  #     2 of 10 DRIFT when deleted one at a time; 0 of 10 RAISE
+  # The classification is unchanged because the criterion is RAISES, not DRIFTS:
+  # all ten are read as `.get(key, default)` — none by subscript — so nothing here
+  # can make `from_dict` throw. `sf_search_dampen_sf_*` are RETAINED for
+  # `scripts/value_optimism.py`, a different consumer that genuinely does require
+  # presence; listing them here does not shadow that (mutation-verified: flipping
+  # one to DELETED still fires the `_CROSSCHECK_YAML_VS_PARAMS` violation).
+    ("chess_anti_engine/eval/lc0_control_trainer.py", "LIVE_TRAINER_PIN"): ("adjusted_wdl_regret_cap", "adjusted_wdl_regret_scale", "adjusted_wdl_regret_source", "lr_T0", "lr_T_mult", "resid_channel_balance_weight", "resid_channel_dropout", "sf_search_dampen_sf_high", "sf_search_dampen_sf_low", "sf_wdl_temperature"),
   # Read off progress.csv / compared against an already-resolved dict, never off
   # the yaml flat dict — so `sf_wdl_temperature` can be deleted despite sitting
   # in both of these.

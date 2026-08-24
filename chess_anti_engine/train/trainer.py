@@ -95,6 +95,7 @@ from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    normalize_value_blend_fracs,
     policy_target_temp_active,
     retemper_main_policy_target,
     search_inclusion_guarantee_tau,
@@ -1150,6 +1151,36 @@ class TrainMetrics:
   # sum it with the policy rate; they count the same rows.
     sf_wdl_degenerate_frac: float = 0.0
     sf_wdl_orphaned_frac: float = 0.0
+  # ⚑ THE VALUE-BLEND FALLBACK, MADE VISIBLE — BOTH HALVES OF IT.
+  # `compute_loss` builds the SF component as
+  # `sf_effective * sf_wdl_probs + (1 - sf_effective) * game_oh` and the SEARCH
+  # component the same way, and `_get_mask` defaults an absent mask to 0.0, so
+  # an unlabelled row silently puts that component's whole share onto the raw
+  # one-hot game outcome — no error, no warning, and until now no column whose
+  # name said so. These are the denominators that make it computable:
+  #
+  #     outcome_borne = game_frac
+  #                   + sf_wdl_frac     * (1 - sf_wdl_effective_frac)
+  #                   + search_wdl_frac * (1 - search_wdl_effective_frac)
+  #
+  # ⚑ EFFECTIVE, not labelled. The numerators are `sf_available * keep` and
+  # `search_available` taken off the blend site itself, so they also carry the
+  # `sf_search_dampen_*` shortfall (which lands on the one-hot too) and read 0
+  # when the `sf_wdl`/`search_wdl` COLUMN is missing, where a mask sum would
+  # not. Shipping only the SF half was PR #438's review finding F1: the search
+  # half is 0.70 of the lc0 control's value target.
+  #
+  # Production reads ~1.0 on both (712/713 live shards carry the SF label),
+  # which is exactly why the condition needs a column rather than a raise — a
+  # fatal path in the iteration loop (which has `finally:` and zero `except`)
+  # for a state production cannot reach is a new way to lose a trial. It is
+  # LOG-ONLY by design: see `chess_anti_engine/train/value_blend_guard.py` for
+  # the asserting form, used by the offline lc0 driver where the state is
+  # normal. Had these columns existed in 2026-05 the realized `sf_wdl_frac
+  # 0.45` episode referenced above would have been visible in TB rather than
+  # reconstructed.
+    sf_wdl_effective_frac: float = 0.0
+    search_wdl_effective_frac: float = 0.0
     sf_eval_pv_orphan_frac: float = 0.0
     sf_eval_pv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
@@ -1430,6 +1461,14 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # zero checked rows is unmeasured rather than clean.
     "sf_wdl_degenerate_frac": ("sf_wdl_degenerate_rows", "sf_wdl_rows"),
     "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
+  # ⚑ Denominator is ALL batch rows, unlike the two above, because the question
+  # is "what share of the trained value target fell through the blend's
+  # fallback" — the numerators are the numerators of exactly that, so dividing
+  # by them would publish a constant 1.0. Numerators are the blend site's own
+  # EFFECTIVE mass (`sf_available * keep`, `search_available`), never
+  # `sf_wdl_rows`: see the field comments.
+    "sf_wdl_effective_frac": ("sf_wdl_effective_rows", "batch_rows"),
+    "search_wdl_effective_frac": ("search_wdl_effective_rows", "batch_rows"),
     "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
     "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
   # Terminal-proximal outcome transfer. Row-weighted like the pairs above: the
@@ -2972,6 +3011,92 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+  # ⚑ LOG-ONLY, deliberately. See `sf_wdl_effective_frac`'s field comment: a
+  # raise here would be a new fatal path in an iteration loop that has
+  # `finally:` and zero `except`, for a state production (712/713 labelled
+  # shards) cannot reach. The bar is not 0 for the same reason — a single
+  # partially-labelled shard would otherwise warn every iteration forever.
+    _VALUE_BLEND_LEAK_WARN = 0.01
+
+    def _warn_if_value_blend_leaks_to_outcome(self, metrics: TrainMetrics) -> None:
+        """Say so when a value-blend share lands on the raw game outcome.
+
+        ⚑ BOTH components, because both fall back to the same one-hot. Reading
+        only the SF half reports a clean 0.0000 on a batch training its ENTIRE
+        value target on the outcome through the search half — measured through
+        the real `compute_loss` in `tests/test_value_blend_guard.py`.
+
+        ⚑ AND ONLY ON AN ITERATION THAT TRAINED. When no microbatch ran, the
+        ratio keys never reach `sums`, `_ratio_metric_kwargs` skips the fields
+        entirely, and both columns sit at their 0.0 dataclass default — which
+        reads as "nothing was labelled" and would warn that the whole value
+        target became the game outcome on an ingest-drought iteration where
+        nothing was trained at all. An absent measurement is not a measurement
+        of zero.
+
+        ⚑⚑ AND THE WEIGHTS ARE THE NORMALIZED ONES, NOT THE RAW ATTRIBUTES.
+        `compute_loss` puts both fracs through `normalize_value_blend_fracs`, so
+        when they sum above 1 the APPLIED weights are smaller than the
+        attributes — and this warning multiplied the shortfall by the raw ones.
+        Measured: `sf_wdl_frac 0.8` + `search_wdl_frac 0.8` with 50% effective SF
+        coverage realizes a 0.25 leak and this reported 0.40, i.e. 1.6x, so the
+        0.01 incident bar could fire on a leak the objective never had. The same
+        helper the loss uses, per its own docstring: one implementation, two
+        callers.
+
+        ⚑⚑ THAT CORRECTION IS **LATENT ON TODAY'S PRODUCTION CONFIG** — STATE THAT
+        BEFORE ANYONE HUNTS A 1.6x ERROR IN A LIVE TB SERIES. `blend_sum > 1.0` is
+        the only branch `normalize_value_blend_fracs` renormalises on, and the
+        live `configs/pbt2_small.yaml` cannot reach it: `sf_wdl_frac: 0.69` +
+        `search_wdl_frac: 0.31` is EXACTLY 1.0 (measured in IEEE754, not assumed —
+        `0.69 + 0.31 == 1.0` is True, so not even a float epsilon crosses it), and
+        `sf_wdl_frac_floor: 0.69` equals the start, so `_dynamic_sf_wdl_weight`
+        interpolates between 0.69 and 0.69 and the PID ramp cannot lift it. On
+        production this function is therefore bit-identical before and after the
+        fix. The states that DO reach it, all real:
+
+          * a live-yaml edit raising either frac. Both keys are in
+            `TRAINER_WEIGHT_KEYS`, so `_sync_trainer_weights` pushes them onto the
+            running trainer every iteration, and neither has a `TrialConfig`
+            validator (CLAUDE.md category (c)) — `search_wdl_frac: 0.8` lands
+            silently;
+          * a PB2 mutation of either key, same path;
+          * the lc0 positive control's own oversubscribed arms, which is where the
+            regression test lives.
+
+        ⇒ this is a correct fix to a REACHABLE-BUT-UNVISITED path, i.e. a latent
+        guard, not a live 1.6x mis-report. Do not "fix" the reach by changing the
+        blend: the 0.69/0.31 split is load-bearing (CLAUDE.md, "the WDL blend's SF
+        component is load-bearing — do not zero it").
+        """
+        if metrics.train_steps_done <= 0:
+            return
+        sf_frac, search_frac, _game_frac = normalize_value_blend_fracs(
+            float(getattr(self, "sf_wdl_frac", 0.0) or 0.0),
+            float(getattr(self, "search_wdl_frac", 0.0) or 0.0),
+        )
+        leaks = [
+            (name, frac * (1.0 - effective))
+            for name, frac, effective in (
+                ("sf_wdl_frac", sf_frac, float(metrics.sf_wdl_effective_frac)),
+                ("search_wdl_frac", search_frac,
+                 float(metrics.search_wdl_effective_frac)),
+            )
+            if frac > 0.0
+        ]
+        leaked = sum(leak for _name, leak in leaks)
+        if leaked <= self._VALUE_BLEND_LEAK_WARN:
+            return
+        logging.getLogger(__name__).warning(
+            "value blend: %.4f of the WDL target fell onto the RAW GAME OUTCOME "
+            "this iteration (%s; effective label mass sf=%.4f search=%.4f). "
+            "losses.py does this silently; see train/value_blend_guard.py.",
+            leaked,
+            ", ".join(f"{name} leaked {leak:.4f}" for name, leak in leaks),
+            float(metrics.sf_wdl_effective_frac),
+            float(metrics.search_wdl_effective_frac),
+        )
 
     def _warn_if_grad_norm_median_past_watch(self, metrics: TrainMetrics) -> None:
         """Fire the pre-committed I11 watch when the hard cap stops being a tail guard.
@@ -4668,6 +4793,7 @@ class Trainer:
             **getattr(self.opt, "last_polar_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
+        self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")
 
   # Compile probe: report once after the first batch of train steps that

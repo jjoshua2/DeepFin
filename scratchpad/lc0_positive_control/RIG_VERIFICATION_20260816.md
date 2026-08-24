@@ -1,0 +1,887 @@
+# lc0 positive control — RIG VERIFICATION (2026-08-16)
+
+**Status: PLUMBING ONLY. The arm was NOT run and no conclusion about the RL loop is
+drawn or licensed here.** Everything below is a property of the apparatus, measured
+at smoke scale. The prereg is `docs/lc0_positive_control_prereg.md` (committed 2026-08-16;
+until then it was an untracked `PREREG_DRAFT.md` in this directory — review F2a).
+
+Companion to that prereg, which requires four guards to pass before its primary
+readout may be read. Three of them are apparatus questions and are answered here.
+
+---
+
+## 1. ⚑⚑ The `sf_wdl` fallback — VERIFIED IN EFFECT, not configured
+
+### The defect, read off `train/losses.py` directly
+
+`compute_loss` builds the value blend as
+`game_frac * outcome + sf_wdl_frac * sf_component + search_wdl_frac * search_component`,
+and
+
+```python
+if sf_wdl_probs is not None:
+    sf_component = sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * blend_fallback_target
+else:
+    sf_component = blend_fallback_target        # blend_fallback_target = game_oh
+```
+
+with `sf_effective = has_sf_wdl * keep`. lc0 shards carry neither `sf_wdl` nor
+`has_sf_wdl`, and `_get_mask` defaults an absent mask to **0.0**, so BOTH branches
+resolve the SF component to the raw one-hot game outcome for every row. No error, no
+warning, no metric named for it.
+
+### Measured, through the production loss, on real converted lc0 rows
+
+The value target `compute_loss` actually built was intercepted at its
+`soft_cross_entropy` call and decomposed back into component shares by least squares
+(`tests/test_value_blend_guard.py`).
+
+⚑⚑ **RE-MEASURED 2026-08-16 AGAINST THE LIVE BLEND (§8). The table below is the
+`main`-blend measurement and is KEPT as the record; `sf 0.50 / search 0.20` is
+`main`'s committed pair, and LIVE runs `0.69 / 0.31`.** Every conclusion in this
+section survives the change — only the numbers move, and they move in the worse
+direction (0.69 leaks, not 0.50).
+
+| config | intended `game_frac` | realized outcome share | search share | target sums to |
+|---|---|---|---|---|
+| `main` blend (`sf 0.50 / search 0.20`) on lc0 rows | 0.30 | **0.80** | 0.20 | 1.000 |
+| this arm as shipped 2026-08-15 (`sf 0.00 / search 0.70`) on lc0 rows | 0.30 | **0.30** | 0.70 | 1.000 |
+| `main` blend on SF-LABELLED rows | 0.30 | 0.30 | 0.20 | 1.000 |
+| **LIVE blend (`sf 0.69 / search 0.31`) on lc0 rows** | **0.00** | **0.6900** | 0.3100 | 1.0000 |
+| **this arm AFTER the re-point (`sf 0.00 / search 1.00`)** | **0.00** | **0.0000** | 1.0001 | 1.0000 |
+
+⇒ at `main`'s settings **0.50 of the value target — 62.5% of all outcome-borne
+mass — silently relocates onto the deep game outcome**, and the third row shows this
+is a property of the DATA, not of the weights, so nothing about production changes.
+At LIVE's settings the leak is **0.69 of the entire target**, against an intended
+outcome share of ZERO.
+
+⚑ The `target sums to` column is load-bearing. An earlier version of this
+measurement computed the outcome share as `1 - search_share`, which assumes the
+components still sum to 1 — and a mutation that deleted the fallback branch entirely
+(`sf_component = zeros`) PASSED that test, because losing 0.50 of the mass and moving
+0.50 of the mass read identically. Reported here because the same shortcut is
+available to anyone re-deriving this.
+
+⚑⚑ **CORRECTION (independent review, 2026-08-16).** This section previously credited
+the `sums to 1.0` assertion with killing that mutant. It did not: `_decompose`'s
+caller asserted `shares["outcome"] == 0.80` first, so the mass line was never
+reached. The reviewer's diagnosis — "the least-squares solve is the killer" — is
+right about *which* assertion fired. But the further claim that the mass line is
+therefore *redundant with* `residual < 1e-5` is wrong, and the distinction matters:
+dropping the SF component leaves the target at `0.30·one_hot + 0.20·search`, which is
+exactly in the span of the remaining basis, so the residual is ~0 while the mass is
+0.50. Residual cannot see lost mass; the shares cannot distinguish lost from moved.
+The assertion was SHADOWED, not dead. Fixed by moving the mass check to the TOP of
+`_decompose`, before any share is returned, so each assertion owns a defect the other
+is blind to.
+
+### Realized weights off an actual training step
+
+Read by wrapping `trainer.compute_loss` and recording the kwargs it was CALLED with
+(not `trainer.sf_wdl_frac`, which is an attribute a live reload can change between
+the read and the step). 8 steps, batch 512, `configs/lc0_positive_control.yaml`:
+
+```
+sf_wdl_frac (realized)                 0.000000
+search_wdl_frac (realized)             0.700000
+game_frac (intended outcome share)     0.300000
+sf_labelled_frac (rows with sf_wdl)    0.000000
+leaked_to_outcome                      0.000000
+outcome_borne_frac (game_frac + leak)  0.300000
+```
+
+Same wrapper on a config restored to the production blend (`--allow-leak`, real lc0
+shards):
+
+```
+sf_wdl_frac (realized)                 0.500000
+search_wdl_frac (realized)             0.200000
+sf_labelled_frac (rows with sf_wdl)    0.000000
+leaked_to_outcome                      0.500000
+outcome_borne_frac (game_frac + leak)  0.800000
+```
+
+### ⚑ Is `sf_wdl_frac` PID-driven? — VERIFIED AGAINST THE CONTROLLER
+
+`tune/trainable_config_ops.py:1406` recomputes the weight EVERY iteration from
+`trainable_metrics._dynamic_sf_wdl_weight(sf_wdl_start=tc.sf_wdl_frac, ...)` and
+assigns `trainer.sf_wdl_frac` whenever the result is not `None`. That function
+returns `None` iff `sf_wdl_start <= 0`.
+
+Confirmed by calling the real function, not by reading its docstring: swept over
+regret `{0.0, 0.0075, 0.05, 0.10, 0.35, 0.70, 1.0, 5.0}` at `sf_wdl_start=0.0` it
+returns `None` at every point, and the same sweep at `sf_wdl_start=0.50` returns a
+weight — so the `None` result is not the function being inert. Mutating
+`if sf_wdl_start <= 0` to `if sf_wdl_start < -1` fails the test.
+
+⇒ **`sf_wdl_frac: 0.0` disables the ramp at its source; the override cannot expire
+mid-run.** `sf_wdl_frac_floor` is never read while the start is 0 and is zeroed
+anyway. (This arm does not run the tune trainable at all, so the ramp is doubly
+unreachable — the assertion does not rely on that.)
+
+### The guard, and where it lives
+
+`chess_anti_engine/train/value_blend_guard.py`. Five checks at four levels, in
+`scripts/lc0_control_train.py`:
+
+0. **launch, architecture** — `assert_control_matches_live_architecture` (added
+   2026-08-16, review F1). See §6.1.
+0c. **launch, trainer** — `assert_control_matches_live_trainer` (added 2026-08-16,
+   §8). The other half of "our exact net and trainer".
+1. **launch, config** — `assert_pid_cannot_reassert_sf_wdl`.
+2. **launch, corpus** — the converter's own `run_config_problems` is IMPORTED and
+   reused, not restated, driven by MEASURED SF-label coverage
+   (`shard_dir_sf_wdl_coverage`) rather than `any()`. See §6.4.
+3. **realized, per-step** — the wrapped `compute_loss` kwargs plus the batch's own
+   `sf_wdl_rows`, judged by `assert_no_silent_outcome_fallback` at `max_leak=0.0`
+   AND `max_outcome_borne=` **`0.00`** (⚑ 0.30 until 2026-08-16 — that was `main`'s
+   `game_frac`; live's is 0.00, §8.2). Judged on the WORST step, not the first or
+   the mean, so a leak that begins partway through a long run cannot be diluted
+   under the bar. ⚑ `--allow-leak` no longer skips it — see §6.2. The same wrap
+   feeds `assert_categorical_rebuild_is_inert` (§8.3).
+
+The blend arithmetic is NOT duplicated: `losses.normalize_value_blend_fracs` was
+extracted from `compute_loss` and is called by both, so the guard cannot drift from
+the criterion it checks.
+
+**No RAISE wired into `Trainer`/`tune`, deliberately — but a LOG-ONLY readout now
+is.** A hard raise inside `train_steps` would be a new fatal path on the production
+trial (CLAUDE.md category (b): the iteration loop has a `finally:` and zero
+`except`, so it kills the trial), for a condition production cannot reach — 712/713
+live shards carry `has_sf_wdl`. The reviewer agreed with declining the raise and
+recommended the middle path, which is now implemented: `TrainMetrics` publishes
+`sf_wdl_labelled_frac` (`sf_wdl_rows / batch_rows`, row-weighted), so
+`leaked_to_outcome = sf_wdl_frac × (1 − sf_wdl_labelled_frac)` is computable from
+TB, and `Trainer._warn_if_value_blend_leaks_to_outcome` logs a warning above a 0.01
+leak. No raise, no new fatal path — and the 2026-05 realized-`sf_wdl_frac`-0.45
+episode would have been a TB series instead of a reconstruction.
+
+### Mutation battery — the tests are not vacuous
+
+| mutant | expected | result |
+|---|---|---|
+| baseline | pass | ALL PASS |
+| `losses.py`: SF fallback → `zeros_like` | fail | FAILED |
+| `losses.py`: blend renormalisation dropped | fail | FAILED |
+| `value_blend_guard.py`: `leaked_to_outcome` → `0.0` | fail | FAILED |
+| `trainable_metrics.py`: ramp not disabled at start 0 | fail | FAILED |
+
+---
+
+## 2. Held-out split — frozen, time-disjoint, pure BY ID
+
+**Held-out window**: the last 6 hourly tars by wall-clock (from the filename stamp,
+which is the data's hour; local mtimes are download times and sort differently):
+`20260815-1917 · 2017 · 2117 · 2217 · 2317 · 20260816-0017`.
+
+| | |
+|---|---|
+| pool rows (400 games/tar, all 6 converted `VERDICT: PASS`) | 279,180 |
+| pool duplicate row ids | **3** (1.1e-5) |
+| frozen sample (stratified over all 6 hours, seed 0) | **100,000** |
+| frozen unique ids | 100,000 |
+| row id version | `lc0_control_row_id_v1_x_policy_blake2b128` |
+| **sha256 of the frozen artifact** | `e7ceb225f4c7caf10b7872e7b45b34346a0698096d2fca210de57a190fd46ba1` |
+
+**Purity, by id and not by tar name**: 0 intersecting ids against a time-disjoint
+train conversion (`20260810-1417`, 48,360 rows). The check FIRES: injecting one
+held-out hour into the train list yields **16,668 intersecting ids and exit 1**.
+
+⚑ Why the id is a content digest of `(x, policy_target)` and not `(game_id,
+ply_index)`: `game_id` is `enumerate()`'s index within ONE conversion invocation, so
+converting train and held-out separately restarts it at 0 and the id sets are
+disjoint BY CONSTRUCTION — the assertion would pass on a 100%-contaminated split.
+
+The 3 pool duplicates were inspected: each is a pair of DIFFERENT games reaching an
+identical position with an identical lc0 policy target but a different game outcome
+(`wdl_target` 1 vs 2). So the id is a *position+label* identity rather than a record
+identity, and the purity check's false-positive rate is bounded by 1.1e-5.
+
+---
+
+## 3. Chance level — `E[1/n_legal]`, on the frozen rows
+
+Computed on exactly the 100,000 frozen held-out rows, not on the pool:
+
+| | |
+|---|---|
+| mean `n_legal` | 27.6351 |
+| **`E[1/n_legal]` — the UNIFORM-MOVER floor** | **0.064577** |
+| `1/E[n_legal]` — WRONG (Jensen) | 0.036186 |
+| ratio | **1.7846×** |
+
+⇒ quoting `1/E[n]` would put a uniform mover's floor **44% below its own floor**.
+
+⚑⚑ **CORRECTION (2026-08-16, PR #438 review F2b). NEITHER NEGATIVE CONTROL IS JUDGED
+AGAINST THIS NUMBER, AND THIS SECTION USED TO SAY THEY WERE.** `E[1/n_legal]` is the
+floor for a UNIFORM RANDOM MOVER. Neither control produces one:
+
+* **Guard 1 (shuffled targets)** scores each prediction against another row's REAL
+  target, so its expectation is the marginal collision rate `Σ_m p_pred(m)·p_tgt(m)`
+  — measured **0.003283** on 100,000 real converted rows against an `E[1/n_legal]` of
+  0.063622, i.e. **19× apart**. A correctly-behaving control could not have hit the
+  band it was being judged against. The floor is now computed from the scored run
+  itself and gated; see prereg AMENDMENT 2.
+* **Guard 2 (random init)** is a fixed arbitrary function over a highly non-uniform
+  argmax distribution and is NOT expected to sit at any particular point. The
+  sentence this correction replaces — "**0.062050** … sits at the chance level (0.25
+  pp below it), so the evaluator is not manufacturing agreement" — is exactly the
+  argument `scripts/lc0_control_eval.py`'s docstring was written to refute, and it is
+  withdrawn. Four unseeded draws of the same command spanned 2.18 pp; the gate is a
+  SEEDED BAND, and **that band is not measured yet** (it needs a trained checkpoint).
+
+The random-init measurement itself stands as a number — **0.062050 on 100,000 rows,
+unseeded** — it is the INFERENCE from it that was wrong.
+
+---
+
+## 4. Ingest path — shards → replay buffer → training step → checkpoint
+
+`scripts/lc0_control_train.py`, 8 steps × batch 512 = 4,096 rows, CUDA, no
+`torch.compile`, 8.69 s of training wall time. 63,084,128 trainable params — ⚑ this
+branch's PRE-MERGE count, taken before PR #439; production's is 61,444,448 and this
+run has not been re-taken on it. `tests/test_lc0_control_config.py` asserts the
+control's ModelConfig is field-identical to the reference rather than pinning the
+constant, and since 2026-08-16 that reference is the LIVE `model:` section
+(`LIVE_ARCH_PIN`) overlaid on `configs/pbt2_small.yaml`, not the in-tree `model:`
+section — which is stale by the bt4heads bundle.
+
+Buffer is the production `DiskReplayBuffer`, opened `read_only=True`.
+
+| head | loss | rows that trained it |
+|---|---|---|
+| `policy_loss` | 3.094168 | 4,096 |
+| `wdl_loss` (= `blended_wdl_loss`) | 1.082501 | 4,096 |
+| `wdl_onehot_loss` (diagnostic) | 1.084320 | — |
+| `moves_left_loss` | 0.030380 | present |
+| `soft_policy_loss` | 0.000000 | **0 — no target in lc0 shards** |
+| `future_policy_loss` | 0.000000 | **0** |
+| `sf_move_loss` | 0.000000 | **0** |
+| `sf_eval_loss` | 0.000000 | **0** |
+| `categorical_loss` | 0.000000 | **0** |
+| `volatility_loss` / `sf_volatility_loss` | 0.000000 | **0** |
+| `loss` (total) | 4.177277 | |
+
+Phase split (`policy_loss_phase_*`): open 3.477 (n=1560) · mid 3.231 (n=1017) ·
+end 2.611 (n=1519).
+
+⚑ The zero-loss heads keep their production weights. They are INERT, not applied —
+`compute_loss` returns a zero loss for a head whose target is absent. The row counts
+above are the proof; the weights are left alone so the arm carries exactly one
+documented deviation instead of a dozen undocumented ones.
+
+**Throughput, for sizing the real run:** conversion runs at ~230 rows/s
+single-threaded (48,360 rows in 210 s), so the full 87M-position corpus is
+**~105 h on one core** and wants parallelising by tar. Row-id hashing is ~31k rows/s
+(~0.8 h for the full corpus) and is not the bottleneck.
+
+---
+
+## 5. Yardstick — paired top-1 vs lc0's visit-argmax (McNemar)
+
+`scripts/lc0_control_eval.py`. Exercised end to end on the frozen 100,000:
+
+```
+A  random init                    top-1 0.062050
+B  smoke checkpoint (6 steps)     top-1 0.096710
+paired rows          100000
+discordant  b(A only)=4434  c(B only)=7900  discordance=0.1233
+delta (B - A)        +3.4660 pp
+95% CI               [+3.2494, +3.6826] pp   (halfwidth 0.2166 pp)
+exact McNemar p      1.4412e-216
+```
+
+⚑ **This is a pipeline check, not a learning result, and must not be read as one.**
+Two arbitrary checkpoints differ; the point is that the paired estimator resolves the
+difference and reports a CI.
+
+**The prereg's resolution claim is CONFIRMED empirically.** It predicted 0.196 pp at
+discordance 0.10 and 0.277 pp at 0.20; realized discordance 0.1233 gave 0.2166 pp,
+on the interpolation. The **2× material bar of 0.392 pp** therefore stands as written.
+
+The prereg's second slope (`Δ_train`, frozen already-trained rows) uses the same two
+commands with different `--frozen`/`--shards`; exercised, works. ⚑ Its frozen set
+must be built at the SAME n as the held-out one — the prereg's bar applies to both
+and n=5,000 gives a 1.07 pp halfwidth, which would silently move the bar. **That is
+now a gate, not prose**: `compare` refuses (exit 1) any pairing whose 95% halfwidth
+exceeds `--max-halfwidth-pp` (default 0.392), and `freeze` refuses to write an
+artifact with fewer rows than `--sample`. See §6.5.
+
+---
+
+## 6. Review follow-up (2026-08-16) — what the independent review changed
+
+An independent reviewer returned **MERGE-WITH-CHANGES** with 5 findings (3× P1) and
+confirmed all 6 open Codex threads by execution. Every load-bearing number in §§1–5
+reproduced. This section records what changed, and the evidence that each change
+takes effect. **Author of the fixes is neither the author of the PR nor the
+reviewer.**
+
+### 6.1 F1 (P1) — ⚑⚑ THE ARM WOULD HAVE TRAINED AN ARCHITECTURE PRODUCTION DOES NOT RUN
+
+> ⚑ **STATE AS OF EARLIER ON 2026-08-16 — SUPERSEDED BY §6.1a BELOW, WHICH IS THE
+> CURRENT STATE.** Everything in this subsection is kept verbatim as the record of
+> the finding and the decision. The present-tense claims in it — "this branch cannot
+> build the live net", the guard firing — were true when written and are no longer.
+> The in-tree-vs-live 63,084,128 / 61,444,448 gap, however, IS still true.
+
+Measured, three ways:
+
+```
+this branch  configs/pbt2_small.yaml         63,084,128 trainable (unique storage)
+this branch  configs/lc0_positive_control     63,084,128
+LIVE tree    configs/pbt2_small.yaml         61,444,448   (sum(numel) 77,173,088)
+```
+
+The live file carries the bt4heads bundle promoted 2026-08-15 — `aux_policy_head_dim:
+128`, `categorical_head_coupled: true`, `policy_embedding_mode: linear`. **Two of the
+three touch the policy head, which is this arm's ONLY yardstick.**
+`aux_policy_head_dim` is not in this branch's `utils/config_yaml.py` schema, so this
+branch cannot build the live net at all (CLAUDE.md category (a): fatal at launch).
+
+**Decision: option (b) — the arm refuses to launch, loudly, rather than being
+re-pointed.** Option (a), basing the arm on the live branch's model code, would mean
+either shipping the bt4heads promotion inside a rig PR (a production-path change
+smuggled into an instrumentation change, and it needs its own ledger entry and
+review) or rebasing this PR onto a branch that does not exist on `origin`. Neither
+is a change to make on this PR's behalf. The premise "test THE STACK WE RUN" is a
+LAUNCH precondition, not a merge precondition, so the right shape is a guard that
+blocks the launch and names what is missing.
+
+New module `chess_anti_engine/eval/lc0_control_arch.py`:
+
+* `LIVE_ARCH_PIN` — the live `model:` section, both param counts, the branch and
+  commit they were read from, and the date.
+* `live_production_config_path()` — reads `$CHESS_LIVE_PRODUCTION_CONFIG`, and
+  **never defaults to an in-tree path**. The repo is public, so the live path is
+  supplied by the operator, not committed.
+* `assert_control_matches_live_architecture()` — judges against the LIVE FILE when
+  the env var names one, against the recorded pin otherwise, and says which in the
+  provenance string it returns. A drift raises `ControlArchitectureDrift`.
+* `unique_storage_param_count()` — counts by unique `untyped_storage().data_ptr()`,
+  never `sum(v.numel())` over the state_dict. `lc0_control_train.py` now uses it.
+* `scripts/lc0_control_arch_pin.py` — `--emit` to regenerate the pin from a live
+  config, `--check` as a standalone gate.
+
+Wired as **launch guard 0** in `lc0_control_train.py`. When this section was written
+it FIRED:
+
+```
+$ PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py --check
+REFUSING: the lc0 control's architecture is NOT production's ... Drift:
+  aux_policy_head_dim: control='<absent>' live=128
+  categorical_head_coupled: control='<absent>' live=True
+  policy_embedding_mode: control='<absent>' live='linear'
+  trainable params (unique storage): control=63084128 live=61444448
+```
+
+⚑ `tests/test_lc0_control_arch.py` is written so that the situation IMPROVING breaks
+it: `test_the_pin_records_an_architecture_this_tree_cannot_build` fails the moment
+`aux_policy_head_dim` enters this branch's schema, and
+`test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` fails the moment the
+in-tree production config gains them. Both failures mean "regenerate the pin and
+re-point the control", and neither can be silenced by copying a number across.
+
+⚑ `test_a_control_matching_the_stale_pin_still_fails_against_the_live_file` is the
+one that proves the instrument is not another in-tree copy: a control matching the
+committed pin EXACTLY still raises when `$CHESS_LIVE_PRODUCTION_CONFIG` disagrees.
+
+#### 6.1a UPDATE, later the same day — the guard fired, was answered, and was inverted
+
+PR #439 merged the bt4heads bundle to `main`; this branch merged `origin/main`. That
+put the three keys in the SCHEMA (not in `main`'s production yaml, which is still
+stale by them), so the "option (a) needs a promotion first" reasoning above was
+answered by the promotion actually happening, on its own PR, with its own review.
+`configs/lc0_positive_control.yaml` was then re-pointed at the live `model:` section,
+and the check now reads:
+
+```
+$ CHESS_LIVE_PRODUCTION_CONFIG=<live>/configs/pbt2_small.yaml \
+    PYTHONPATH=. python3 scripts/lc0_control_arch_pin.py --check
+OK: configs/lc0_positive_control.yaml matches the LIVE file <live>/configs/pbt2_small.yaml
+```
+
+The two merge-guards fired exactly as designed and were **inverted, not deleted**:
+
+| was | is | still fails when |
+|---|---|---|
+| `test_the_pin_records_an_architecture_this_tree_cannot_build` — the flattener must RAISE on `aux_policy_head_dim` | `test_this_tree_builds_the_pinned_live_architecture` — the flatten must succeed, each key must reach `ModelConfig`, and the BUILT net must be 61,444,448 / 77,173,088 | a key leaves the schema; a schema key never reaches the builder; this tree's builder produces a different net from the pinned `model:` section |
+| `test_the_control_config_is_currently_refused` | `test_the_control_config_matches_the_recorded_pin` | the shipped config drifts, **or** any one of the three bt4heads keys is dropped (all three checked, each still refused by name) |
+
+`test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` was NOT inverted —
+its premise is unchanged, `main`'s production yaml is still stale — and it is now
+the recorded justification for `test_architecture_is_identical_to_production` judging
+against `LIVE_ARCH_PIN` instead of the file beside it. New:
+`test_the_recorded_pin_still_matches_the_live_file_when_one_is_named` regenerates the
+pin from the live file when `$CHESS_LIVE_PRODUCTION_CONFIG` is set, and reports that
+it did NOT check when it is not — the pin is a committed copy too, and this is what
+keeps it from becoming the blindness one level up.
+
+### 6.2 F2 (P1) — the headline per-step guard could not fail; now it can, and does
+
+`--allow-leak` used to skip the realized assert as well as the launch guards, and
+launch guard 1 refuses every `sf_wdl_frac > 0` config unconditionally, so no input
+to the script reached a firing state. `--allow-leak` now downgrades **only the two
+launch guards**. Constructed and observed:
+
+```
+$ ... --config <production-blend copy> --shards <lc0 rows> --allow-leak
+⚑ --allow-leak: IGNORING launch guard — the PID sf_wdl ramp is not disabled ...
+  sf_wdl_frac (realized)  0.500000   leaked_to_outcome  0.500000
+  outcome_borne_frac      0.800000
+REALIZED VALUE-BLEND GUARD FAILED — no checkpoint written.
+EXIT != 0, and out-dir/checkpoint.pt does not exist.
+```
+
+Covered by `test_the_realized_guard_fails_the_run_and_writes_no_checkpoint`, which
+also asserts the absence of the checkpoint. Mutant M1 (delete the guard call) is
+killed by it.
+
+### 6.3 F6 / Codex #2 — the second door: an all-outcome value target with ZERO leak
+
+`leaked_to_outcome = sf_wdl_frac × (1 − sf_labelled_frac)` is 0 whenever
+`sf_wdl_frac` is 0 — including `sf_wdl_frac: 0.0` / `search_wdl_frac: 0.0`, which
+trains **100% of the value target on the raw one-hot outcome**. Two changes:
+
+* `assert_outcome_is_not_the_whole_target` gates on `outcome_borne_frac` against a
+  bar of **0.30 — production's own `game_frac`**, not a number invented here.
+  `assert_no_silent_outcome_fallback` now checks both bars.
+* `run_config_problems` no longer returns `[]` on the first line when any SF label
+  exists. The collapse check is label-INDEPENDENT and always runs.
+
+⚑ Correction to Codex #2 as filed: the mixed-corpus path could NOT permit a nonzero
+`sf_wdl_frac` (launch guard 1 refuses that corpus-independently). The reachable
+defect is the `sf=0 / search=0` door above, which the reviewer demonstrated passing
+all three old guards.
+
+### 6.4 Codex #2, second half — `any()` is not label coverage
+
+`shard_dir_sf_wdl_coverage()` replaces the boolean, reads `has_sf_wdl` through the
+LAZY shard loader (the 175-plane inputs are never decoded), and the preflight prints
+per-directory coverage. A **partially** labelled corpus is now refused outright:
+neither regime's reasoning applies to an average of two corpora.
+
+### 6.5 F5 / Codex #5 — "0 intersecting ids" was not "0 exposure". Measured: 450
+
+Re-derived on exactly the shipped smoke split, with the new gate:
+
+```
+frozen held-out rows 100000
+frozen distinct x    96847
+train rows scanned   48360 (unique ids 48360, unique inputs 47060)
+intersecting ids     0     <-- what the shipped gate reported: PURE, exit 0
+EXPOSED inputs       450   (0.4647% of held-out x)   <-- THE GATE, exit 1
+```
+
+`input_ids` (x-only) is now the gate; `row_ids` (`x, policy_target`) stays as the
+record identity used to address a row. Both are in the artifact and both are
+printed. `pool_duplicate_inputs` is reported next to `pool_duplicate_ids`: **10,130
+vs 3** in the pool, **3,153 vs 0** inside the frozen 100,000 — the same 1,000× gap
+the reviewer found.
+
+⚑ **The shipped frozen artifact is superseded.** Re-frozen with the same sources and
+seed; the `row_ids` list is **byte-identical to the shipped one** (verified), so the
+draw did not move — only the artifact schema did.
+
+```
+row id version   lc0_control_row_id_v2_x_policy_plus_x_only_blake2b128
+sha256           95829c261f6352eae1cd7da6417afb17b009a87849765668bb2799cf27dfb562
+```
+
+`load_frozen` refuses a v1 artifact and refuses any artifact missing the exposure
+ids, so the weaker gate cannot be reached by re-using an old file.
+
+### 6.6 Codex #1 and the Δ_train n — a bar derived at n=100,000, enforced nowhere
+
+* `freeze` refuses (exit 1, **and writes no file**) when the pool cannot supply
+  `--sample` rows.
+* `compare` refuses (exit 1) when the 95% halfwidth exceeds `--max-halfwidth-pp`
+  (default **0.392**, the prereg's material bar). `--allow-underpowered` downgrades
+  it to a banner. The reviewer's own demonstration — 5,000 paired rows, 1.0721 pp
+  halfwidth — now exits 1.
+* `cmd_compare` gains its first regression test: hand-built cells `b=10, c=30,
+  n=10,000` pin delta, halfwidth and the exact p against
+  `scipy.stats.binomtest(10, 40, 0.5).pvalue = 0.0022214337732293643`.
+
+### 6.7 Codex #6 — purity passed on an empty train directory
+
+`purity_against_train` raises `EmptyTrainCorpus` when it scans zero rows, and the
+driver exits 1. A check that scanned nothing reported PURE and exit 0.
+
+### 6.8 Codex #3 — the scorer tolerated a partial checkpoint load
+
+`lc0_control_eval._load_trainer` no longer calls `Trainer.load` (which uses
+`load_state_dict_tolerant(..., require_complete=False)` and only trips below 50% of
+keys). It loads the state dict directly with `require_complete=True`. Given F1 this
+was not hypothetical: scoring a live-production checkpoint with this config would
+have silently blended trained and fresh tensors under the checkpoint's name.
+
+### 6.9 F4 / Codex #4 — the random-init floor was unseeded, and there was no band
+
+`--seed` is applied **before** `build_model` and recorded in the score `.npz` meta.
+`--shuffle-targets` builds prereg guard 1, the shuffled-label negative control, by
+permuting the per-row TARGET across rows — not by permuting the hit vector, which
+would preserve the hit rate exactly and give a control that cannot fail.
+
+⚑ NOT DONE: the band itself. A band needs several seeds scored on the frozen rows
+against a trained checkpoint, and there is no trained checkpoint. The rig can now
+produce the band; the band is not in this document.
+
+### 6.10 F3 (P1) — zero test coverage on the drivers
+
+`tests/test_lc0_control_drivers.py` (new) drives all three `main()` entry points.
+Mutation battery, 14 mutants, each applied in a `cp -r` copy (never `git checkout`),
+each verified absent from the mutated file (`count(target) == 0`), each run twice —
+the lc0-control suite MINUS the killing test, and the killing test alone. Results in
+the PR comment.
+
+The reviewer's own double mutant (`worst -> readouts[0]` AND deletion of the guard
+call) is now M2 and M1, and each is killed by a test that fails alone while the rest
+of the suite passes.
+
+
+---
+
+## Reproduction
+
+```bash
+CONV=scripts/lc0_data_to_rows.py
+for t in 20260815-1917 20260815-2017 20260815-2117 \
+         20260815-2217 20260815-2317 20260816-0017; do
+  PYTHONPATH=. python3 $CONV convert \
+    --data data/lc0_training/training-run2-test91-$t.tar \
+    --limit-games 400 --out <work>/heldout/$t
+done
+PYTHONPATH=. python3 scripts/lc0_control_heldout.py freeze \
+  --shards <work>/heldout/* --out <work>/frozen.json --sample 100000 --seed 0
+PYTHONPATH=. python3 scripts/lc0_control_heldout.py purity \
+  --frozen <work>/frozen.json --train-shards <work>/train/*
+PYTHONPATH=. python3 scripts/lc0_control_heldout.py chance \
+  --frozen <work>/frozen.json --shards <work>/heldout/*
+PYTHONPATH=. python3 scripts/lc0_control_train.py \
+  --config configs/lc0_positive_control.yaml --shards <work>/train/* \
+  --out-dir <work>/run --steps 8 --no-compile
+PYTHONPATH=. python3 scripts/lc0_control_eval.py score \
+  --frozen <work>/frozen.json --shards <work>/heldout/* --out <work>/a.npz
+```
+
+⚑ **At launch the frozen set must be REBUILT over the full held-out conversion and
+its new sha256 recorded in the ledger.** The 100,000 above is drawn from a
+400-games-per-tar smoke conversion (279,180 of the window's ~2.8M rows), so it is a
+verified apparatus, not the artifact the arm will read.
+
+---
+
+## What is NOT verified
+
+* **No arm was run.** Everything here is 8 steps or fewer on 400 games per tar.
+* **The full-corpus conversion has not been done** (~105 core-hours) and the 130-tar
+  set has not been converted end to end. Only 7 of 130 tars were touched.
+* ~~**The negative control (prereg guard 1, shuffled labels) has no rig.**~~ Built
+  2026-08-16: `lc0_control_eval.py score --shuffle-targets`. It has NOT been RUN on
+  a trained checkpoint — there is no trained checkpoint.
+* **`torch.compile` was OFF** in every run here (`use_compile: true` in the config).
+  It changes throughput, not the objective, but the compiled path is unexercised.
+* **`Trainer`/`tune` do not RAISE.** The value-blend guard protects this arm's entry
+  point only; the trainer carries a log-only readout — see the decision note in §1.
+* **⚑ THE ARCHITECTURE BLOCK IS CLEARED; THE ARM IS STILL UNRUN.** As first
+  written this section said "THE ARM CANNOT BE LAUNCHED YET" — `aux_policy_head_dim`
+  was not in this branch's `utils/config_yaml.py` schema, so this branch's code could
+  not build the live network at all. PR #439 merged the bt4heads bundle to `main`
+  later on 2026-08-16 and this branch merged `origin/main`, so the schema is here,
+  `configs/lc0_positive_control.yaml` carries the three keys, and both
+  `scripts/lc0_control_arch_pin.py --check` (against the live file) and
+  `preflight_architecture` now PASS. `LIVE_ARCH_PIN` was re-measured in this tree
+  from the live file and reproduced 61,444,448 / 77,173,088 exactly.
+  ⚑ That clears a LAUNCH PRECONDITION and nothing else: **no arm has been run**, so
+  every number in this document is still a plumbing number.
+* **Nothing in this document was produced on production's architecture.** Every
+  smoke run recorded here predates the merge, carries `--allow-arch-drift`, and
+  stamps `valid_control: false` into its `summary.json`. The 63,084,128 in §4 is
+  this branch's pre-merge count and has not been re-taken.
+* ~~**⚑⚑ THE TRAINER AXIS IS STILL POINTED AT THE STALE COPY.**~~ **CLOSED
+  2026-08-16 — see §8.** Kept as the record of the finding: the architecture
+  reference moved to the live file and the trainer reference did not, leaving the
+  LIVE `train:`/`selfplay:` sections differing from `main`'s in **13 trainer
+  kwargs** — `w_sf_own_regret` 0.7→0.0, `w_sf_own` 0.1→0.0, `w_sf_eval` 0.1→0.0,
+  `w_sf_move` 0.02→0.05, `w_categorical` 0.3→1.0, `sf_wdl_frac` 0.5→0.69,
+  `search_wdl_frac` 0.2→0.31, `categorical_target_params` (blend 0.0→0.69),
+  `rebuild_categorical_target` false→true, `sf_target_params.sf_policy_score_mode`
+  wdl→cp, `lr_T0` 999999→5000, `lr_T_mult` 1→2, `warmup_steps` 72→1000 — so "our
+  EXACT net and trainer" held for the NET only.
+* ~~**`search_wdl_frac: 0.70` is a judgement call**, not a measured optimum. It holds
+  `game_frac` at production's 0.30; lc0's own recipe would be 0.50.~~ **WITHDRAWN:
+  the 0.30 it held `game_frac` at was `main`'s. Live's `game_frac` is 0.00 and
+  `search_wdl_frac` is now 1.0. §8.**
+
+---
+
+## 7. Second-review round (2026-08-16, PR #438 F1–F11) — what changed in the rig
+
+Fixed by a third party (neither the author of the rig nor the reviewer who filed
+F1–F11). Everything here is a property of the apparatus; **no arm was run**.
+
+### 7.1 The outcome-borne share now measures BOTH components (F1, F10)
+
+`compute_loss` falls the SEARCH component back to the raw one-hot exactly as it falls
+the SF component back, and it returned no search-side count at all — so
+`outcome_borne_frac` could report **0.3000 on a value target that was 100% raw game
+outcome**, with all three guards passing. Reproduced through the real `compute_loss`
+and now pinned by `tests/test_value_blend_guard.py`.
+
+Two new `compute_loss` scalars, `sf_wdl_effective_rows` / `search_wdl_effective_rows`,
+taken off the blend site itself. They are the EFFECTIVE mass, not the label count,
+which also closes F10: `sf_effective = sf_available * keep`, so the
+`sf_search_dampen_*` shortfall lands on the one-hot too, and a count read off
+`has_sf_wdl.sum()` agreed with the realized one only because both knobs are 0.0 today.
+The columns read 0 when the label COLUMN is absent, where a mask sum would not.
+
+The corpus preflight measures `has_search_wdl` coverage per directory alongside
+`has_sf_wdl`, and `run_config_problems` takes `shards_have_search_wdl` as a REQUIRED
+argument — the natural default (`True`) is the bug.
+
+⚑ **Nothing produced before this changes.** `has_search_wdl` reads **10,870/10,870 =
+1.000000** on a real production selfplay sample, and 204,800/204,800 on the converted
+lc0 hour the reviewer measured. The metric was wrong; no number was.
+
+### 7.2 The negative control can now pass and fail (F2b) — see prereg AMENDMENT 2
+
+Guard 1 was judged against `E[1/n_legal]` and converges to `Σ_m p_pred(m)·p_tgt(m)` —
+19× apart on real rows. The floor is now computed from the scored run itself,
+banked in the score `.npz`, and gated at 5σ. Both directions are tested, and the
+brute-force check averages 200 real permutations against the derived expectation
+rather than restating the formula.
+
+### 7.3 The pin gates something (F4)
+
+`assert_control_matches_live_architecture(pin=…)` read only the pin's parameter count
+and took the reference `model:` section from the module global — the signature defect
+inside the module written to close an instance of it. `pin` is honoured; `model=` is
+now passed by the driver AFTER `build_model` (guard 0b), which is the only check that
+can see this tree's code building a different net from the same `model:` keys. The env
+var is resolved at the CALL SITE, so the library function's verdict no longer depends
+on the caller's shell (F6), and an empty reference `model:` section is refused rather
+than agreed with (F7).
+
+### 7.4 Corpus identity (F5)
+
+`purity --receipt` banks the frozen sha256 and the train directories actually scanned;
+`lc0_control_train --purity-receipt` refuses to launch on a corpus the receipt does not
+cover, and `summary.json` records the resolved shard dirs, their per-label coverage,
+the receipt, and a `validity_problems` list naming EVERY reason a run is not a valid
+control. A run without a receipt is recorded as `valid_control: false`.
+
+### 7.5 Still not verified (unverified ≠ passed)
+
+* **No arm was run.** ⚑ The reason recorded here on 2026-08-16 — "it still cannot be
+  until bt4heads reaches `main`" — was overtaken the same day: PR #439 merged, this
+  branch merged `origin/main`, and the architecture guard now passes against the live
+  file. Unrun is now a matter of compute and of the trainer-axis gap above, not of a
+  blocked precondition. See "What is NOT verified".
+* **The guard-2 band is still missing** — it needs a trained checkpoint.
+* **`--shuffle-targets` has still never been run against a trained net.** Its floor is
+  unit-tested against a brute-force permutation average; its behaviour on a real model
+  is not.
+* **`torch.compile` is still unexercised.**
+* The `has_search_wdl` coverage above is a 10,870-row sample of one production day,
+  not the whole replay window.
+
+---
+
+## 8. Third round (2026-08-16) — the TRAINER axis, re-pointed at the LIVE recipe
+
+Prereg AMENDMENT 3 is the pre-registration for this; everything here is the
+measurement behind it. **No arm was run.** Author is not the author of §§1–7.
+
+### 8.1 The gap, and what closed it
+
+`trainer_kwargs_from_config(configs/lc0_positive_control.yaml)` vs the LIVE
+`configs/pbt2_small.yaml`: **13 differing kwargs before, 2 after**, and the 2 are the
+declared value-blend deviations. Judged in CI against `LIVE_TRAINER_PIN`
+(`chess_anti_engine/eval/lc0_control_trainer.py`), the exact construction
+`LIVE_ARCH_PIN` uses for the architecture, with `scripts/lc0_control_arch_pin.py
+--axis trainer` to regenerate it and `--check` (default `--axis both`) to gate the
+control straight against the live file.
+
+| kwarg | before | after | reason |
+|---|---|---|---|
+| `warmup_steps` | 72 | **1000** | LIVE. The only REAL LR-schedule difference. |
+| `lr_T0` / `lr_T_mult` | 999999 / 1 | **deleted** | ⚑ DEAD both sides — read only by the `CosineAnnealingWarmRestarts` branch, and both files run `lr_schedule: sqrt_release`. Deleting lands the realized defaults 5000/2 on both sides, as live does. |
+| `w_sf_move` | 0.02 | **0.05** | LIVE. Inert (no `sf_policy_t`). |
+| `w_sf_own` / `w_sf_own_regret` / `w_sf_eval` | 0.1 / 0.7 / 0.1 | **0.0** | LIVE zeroed its SF-teacher heads in the bt4heads era. Inert either way; three fewer armed weights. |
+| `w_categorical` | 0.3 | **1.0** | LIVE. Inert — no `categorical_t`. |
+| `rebuild_categorical_target` | False | **True** | LIVE. No-op on this corpus; §8.3. |
+| `categorical_target_params` | 0.0 / 0.0 | **0.69 / 0.31** | LIVE (`selfplay.categorical_*_blend_frac`). §8.3. |
+| `sf_target_params.sf_policy_score_mode` | wdl | **cp** | LIVE. Inert, from the CONSUMER not from the corpus: `trainer.py` reads `self.sf_target_params` only under `rebuild_sf_targets` or `sf_policy_sparse_ce`, both False in both files. |
+| `sf_wdl_frac` | 0.0 | **0.0** (LIVE 0.69) | DECLARED DEVIATION 1. §8.2. |
+| `search_wdl_frac` | 0.7 | **1.0** (LIVE 0.31) | DECLARED DEVIATION 2. §8.2. |
+
+### 8.2 ⚑⚑ `game_frac` IS 0.00 — the number the override protected did not exist
+
+Live: `sf_wdl_frac 0.69 + search_wdl_frac 0.31 = 1.00`. Production puts **no** weight
+on the raw game outcome. The arm's `search_wdl_frac: 0.70` was chosen to hold
+`game_frac` at "production's 0.30", which is `1 − 0.50 − 0.20` off `main`'s copy — so
+it was *adding* a 0.30 outcome share, not preserving one. `value_blend_guard`'s bar
+carried the same stale number, so the gate admitted exactly the state its docstring
+claimed it was preventing.
+
+Realized composition, through the real `compute_loss` on real converted rows
+(`data/lc0_rows/training-run2-test91-20260810-1417`, least-squares decomposition of
+the target `soft_cross_entropy` was called with):
+
+| config | normalized sf / search / game | sf eff. rows | search eff. rows | REALIZED outcome | REALIZED search | mass |
+|---|---|---|---|---|---|---|
+| BEFORE — shipped control | 0.00 / 0.70 / 0.30 | 0/64 | 64/64 | **0.3000** | 0.7001 | 1.0000 |
+| COUNTERFACTUAL — live blend verbatim | 0.69 / 0.31 / 0.00 | 0/64 | 64/64 | **0.6900** | 0.3100 | 1.0000 |
+| AFTER — re-pointed control | 0.00 / 1.00 / 0.00 | 0/64 | 64/64 | **0.0000** | 1.0001 | 1.0000 |
+
+`PRODUCTION_GAME_FRAC` moves 0.30 → **0.00** with it, and
+`test_the_bar_is_the_live_production_game_frac_not_a_literal` pins the constant to
+`LIVE_TRAINER_PIN` so it cannot drift again (the module cannot import the pin
+without a cycle, so the pinning lives in the test).
+
+### 8.3 ⚑⚑ `rebuild_categorical_target` WITH NO SF LABELS — it does NOT degenerate, and it IS armed
+
+The highest-risk item of the re-point, and the answer has two halves.
+
+**It is inert today, measured.** `rebuild_categorical_target_in_arrays` returns the
+batch UNCHANGED when `categorical_target` is not in it, and a batch sampled from the
+real converted rows carries 19 array keys — `categorical_target` is not one of them.
+Realized on 8 steps at production width: `categorical_loss 0.000000` over 0 rows;
+`rebuild applies to this batch 0.0`.
+
+**And it is armed.** `targets.normalize_categorical_blend_fracs` (extracted from
+`categorical_target_value` in this change, so the guard shares the criterion's
+instrument) DROPS an unavailable component's weight and does **not** redistribute it:
+
+| sf available | search available | sf_frac | search_frac | **game_frac** |
+|---|---|---|---|---|
+| yes | yes | 0.69 | 0.31 | **0.00** |
+| **no** | yes | 0.00 | 0.31 | **0.69** |
+| yes | no | 0.69 | 0.00 | 0.31 |
+| no | no | 0.00 | 0.00 | 1.00 |
+
+So on a corpus with no `sf_wdl`, 0.69 of the categorical target would be the raw game
+outcome. Measured on the real builder: the trained-toward value goes **0.330822 →
+0.675822** on the identical row, a shift of **0.345 = 0.69 × (1.0 − E[sf])**.
+
+⇒ the inertness is a property of `scripts/lc0_data_to_rows.py`'s OUTPUT, not of the
+config, so it is not left as a comment. New `assert_categorical_rebuild_is_inert` in
+`train/value_blend_guard.py` reads it off **every training batch** next to the WDL
+blend, judged on the WORST step, against the same `PRODUCTION_GAME_FRAC` bar, and the
+run exits non-zero with no checkpoint if it ever stops holding.
+
+⚑ The batch it judges is `compute_loss`'s SECOND POSITIONAL argument. A wrapper
+reading `kwargs["batch"]` would silently observe an empty batch and report
+"no categorical target" forever — mutant M9 below is exactly that, and it is killed.
+
+### 8.4 The LR-schedule scare was a dead knob
+
+`lr_T0: 999999` looked like the most disqualifying entry: no cosine restart against a
+production restarting every 5000 steps. **Both configs run `lr_schedule:
+sqrt_release`, under which `CosineAnnealingWarmRestarts` is never constructed**, and
+the live file DELETES both keys with that reason written next to them. The real
+difference was `warmup_steps` 72 → 1000.
+
+⚑ Consequence recorded as a gate, not prose: a run whose `--steps` does not exceed
+`warmup_steps` never reaches the base LR, so its slope describes the warmup ramp.
+`summary.json` now records `warmup_steps` and lists that as a
+`validity_problems` entry (⇒ `valid_control: false`). Refusing instead would break
+every 1-8 step plumbing smoke, which is the whole reason the flag path exists.
+
+### 8.5 Guard 0c, and the `--allow-leak` split
+
+`preflight_trainer` is launch guard 0c in `scripts/lc0_control_train.py`.
+`--allow-arch-drift` does **not** downgrade it — trainer kwargs are width-independent,
+so the tiny-model smokes keep the recipe verbatim. `--allow-leak` **does**, because
+that flag works by putting the value blend BACK to production's, which is by
+construction a trainer deviation; refusing it would make the headline realized guard
+unreachable again, which is the defect review F2 closed.
+
+### 8.6 Realized smoke at PRODUCTION WIDTH (first one in this document)
+
+8 steps, batch 64, CUDA, `--no-compile`, real converted rows, with
+`$CHESS_LIVE_PRODUCTION_CONFIG` set:
+
+```
+[preflight] architecture (config) matches the LIVE file .../configs/pbt2_small.yaml
+[preflight] trainer recipe matches the LIVE file .../configs/pbt2_small.yaml
+[preflight] sf_wdl coverage 0/729379 · search_wdl coverage 729379/729379
+[model] 61444448 trainable params on cuda
+[preflight] architecture (built model) matches the LIVE file ...
+
+REALIZED VALUE BLEND      sf 0.000000  search 1.000000  game 0.000000
+                          leaked_to_outcome 0.000000  outcome_borne 0.000000
+REALIZED CATEGORICAL      blend 0.690000 / 0.310000  target column present 0.0
+                          rebuild applies 0.0  outcome_borne 0.000000
+categorical_loss 0.000000 · soft/future/sf_move/sf_eval/volatility all 0.000000
+policy_loss 3.180211 · wdl_loss 1.084961 · loss 4.268469
+[guard] PASS
+valid_control false — no --purity-receipt; --steps 8 <= warmup_steps 1000
+```
+
+⚑ **61,444,448 — this is the first run recorded in this document on production's
+architecture.** §4's 63,084,128 is this branch's pre-merge count and stands as
+superseded. It is still a PLUMBING number: 8 steps, one converted hour, no receipt.
+
+### 8.7 Mutation battery — 14 mutants, each killed
+
+Each applied in a `cp -a` copy (never in place), the original text asserted absent,
+the single killing test run in the copy, required to FAIL, then restored.
+
+| mutant | file | killing test | result |
+|---|---|---|---|
+| M1 unlisted trainer drift is not a problem | `eval/lc0_control_trainer.py` | `test_the_trainer_guard_refuses_an_undeclared_deviation` | KILLED |
+| M2 a deviation that stopped deviating is fine | `eval/lc0_control_trainer.py` | `test_the_trainer_guard_refuses_a_deviation_that_stopped_deviating` | KILLED |
+| M3 the bar reverts to `main`'s 0.30 | `train/value_blend_guard.py` | `test_the_bar_is_the_live_production_game_frac_not_a_literal` | KILLED |
+| M3b same, via the superseded override | `train/value_blend_guard.py` | `test_the_superseded_0_70_override_is_now_refused` | KILLED |
+| M4 categorical assert always returns | `train/value_blend_guard.py` | `test_the_categorical_guard_fires_if_the_corpus_gains_a_target` | KILLED |
+| M5 categorical `outcome_borne_frac` hard-zeroed | `train/value_blend_guard.py` | `test_the_categorical_guard_fires_if_the_corpus_gains_a_target` | KILLED |
+| M6 `applies` ignores whether the corpus HAS a target | `train/value_blend_guard.py` | `test_the_categorical_guard_passes_on_the_lc0_corpus` | KILLED |
+| M7 the dropped categorical share IS redistributed | `train/targets.py` | `test_normalize_categorical_blend_fracs_drops_without_redistributing` | KILLED |
+| M7b same, through `categorical_target_value` | `train/targets.py` | `test_the_rebuild_moves_0_69_onto_the_outcome_when_sf_is_absent` | KILLED |
+| M8 driver: the categorical guard call is deleted | `scripts/lc0_control_train.py` | `test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target` | KILLED |
+| M9 driver: the wrapper reads the batch from `kwargs` | `scripts/lc0_control_train.py` | `test_the_categorical_guard_fails_the_run_on_a_corpus_that_gains_a_target` | KILLED |
+| M10 driver: guard 0c is never called | `scripts/lc0_control_train.py` | `test_the_trainer_guard_refuses_a_drifted_control_at_launch` | KILLED |
+| M11 the warmup validity problem is never recorded | `scripts/lc0_control_train.py` | `test_the_control_run_completes_and_writes_a_summary` | KILLED |
+| M12 `LIVE_TRAINER_PIN["warmup_steps"] 1000 -> 999` | `eval/lc0_control_trainer.py` | `test_the_recorded_pin_still_matches_the_live_file_when_one_is_named` (with `$CHESS_LIVE_PRODUCTION_CONFIG`) | KILLED |
+
+⚑ **M10 SURVIVED on the first pass** — the library tests proved
+`assert_control_matches_live_trainer` can refuse a drifted recipe, and nothing proved
+the DRIVER calls it. Replacing `preflight_trainer(...)` with a constant left the
+whole lc0-control suite green. `test_the_trainer_guard_refuses_a_drifted_control_at_launch`
+was written for that mutant, and it is the same finding
+`tests/test_lc0_control_drivers.py` was created for in §6.10.
+
+### 8.8 Still NOT verified after this round
+
+* **No arm was run**; every number here is 8 steps or fewer.
+* The categorical guard has never fired on a REAL corpus, because no real corpus
+  carries a `categorical_target`. Its firing state is constructed
+  (`_write_shards(..., with_categorical_target=True)`), which is the honest way to
+  test a mechanism that is inert by circumstance — but it is not a field observation.
+* `w_soft 1.0`, `w_future 0.01`, `w_categorical 1.0` and `w_sf_move 0.05` are live's
+  values over ZERO rows. The arm's total loss is therefore not comparable in
+  magnitude to production's, and the policy head carries a larger share of the
+  gradient than in the live loop. That is a deliberate consequence of copying
+  production rather than zeroing, and it belongs in the readout.
+* `warmup_steps: 1000` on a from-scratch supervised run is production's number for a
+  CONTINUING run. Whether 1000 is the right warmup for this arm's budget is an
+  unasked question; the arm answers "what does OUR trainer do", and that is our
+  trainer.
+* The freshness gates (`test_the_recorded_pin_still_matches_the_live_file...`) SKIP
+  when `$CHESS_LIVE_PRODUCTION_CONFIG` is unset, i.e. in CI. Both pins are committed
+  copies and only an operator with the live tree can falsify them.
+* **⚑ The sqrt_release CYCLE differs by CALL SHAPE, and no trainer diff can see it.**
+  `lr_release_cycle_steps: 0` means `Trainer.train_steps(steps=N)` uses N as the
+  cycle: flat for 80% of N, then release to `lr_release_min_scale` 0.1 over the last
+  20%. Production reaches that code with N ≈ 88 (one iteration, called repeatedly),
+  so it runs a SAWTOOTH per iteration; this arm calls it once with the whole budget
+  and runs ONE long cycle. Identical config, identical scheduler, different LR path.
+  It is a property of the DRIVER, so guard 0c is structurally blind to it. ⚑ It also
+  means the arm's `Δ_heldout` LAST reading is taken inside the release tail while the
+  MID reading is on the flat — the slope the prereg decides on is measured across an
+  LR change. Not fixed here (fixing it means either an explicit
+  `lr_release_cycle_steps` or a chunked driver loop, both training-affecting), and
+  named so the readout cannot discover it.

@@ -35,6 +35,20 @@
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
 #include "../encoding/_features_impl.h"
+/* Eval-plugin seam: the tree holds a POINTER to a value provider, never a
+ * hard-wired evaluator call. The NNUE provider is the first one; a leaf qsearch
+ * composes by holding an inner {provider, ctx} pair and recursing through
+ * cae_value_eval(). See _value_provider.h for the in-check contract.
+ *
+ * ⚑ This includes the seam's CONTRACT only — types, the dispatch helpers, and
+ * the capsule shape. It deliberately does NOT include any provider's
+ * implementation header: those are header-only statics, so including one here
+ * would compile a SECOND copy of that evaluator into this extension, with its
+ * own kernel-selection flag and its own weight cache. The tree would then run
+ * an evaluator that nobody had configured and map the same weights twice, and
+ * both symptoms are invisible from the outside — the numbers still look like
+ * evaluations. Providers arrive at run time through their published capsule. */
+#include "_value_provider.h"
 
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
@@ -2012,6 +2026,15 @@ typedef struct {
     TreeData tree;
     StoredPrepState stored;
     GumbelSimState gsim;
+    /* The eval seam. NULL until set_value_provider() succeeds; every read of
+     * "which provider is live" goes through THESE fields, so the answer comes
+     * from the consumer's own state rather than from the argument a caller
+     * passed in and might not have had applied. */
+    const CaeValueProvider *value_provider;
+    void *value_provider_ctx;
+    /* The capsule the provider came from, kept for the typed exception it
+     * carries. Module-lifetime storage in the publishing extension. */
+    const CaeValueProviderExport *value_provider_export;
 } MCTSTreeObject;
 
 
@@ -2117,7 +2140,15 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
     return li;
 }
 
+static void MCTSTree_drop_value_provider(MCTSTreeObject *self) {
+    cae_value_destroy(self->value_provider, self->value_provider_ctx);
+    self->value_provider = NULL;
+    self->value_provider_ctx = NULL;
+    self->value_provider_export = NULL;
+}
+
 static void MCTSTree_dealloc(MCTSTreeObject *self) {
+    MCTSTree_drop_value_provider(self);
     gss_free(&self->gsim);
     stored_free(&self->stored);
     tree_free(&self->tree);
@@ -2129,6 +2160,11 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
     (void)args;
     (void)kwds;
     memset(&self->stored, 0, sizeof(self->stored));
+    /* ⚑ __init__ can legally be called a second time on a live object, so the
+     * provider is RELEASED here rather than simply overwritten — assigning NULL
+     * over a live ctx drops the last reference to a 62 MB mapping without
+     * unmapping it. */
+    MCTSTree_drop_value_provider(self);
     if (tree_init(&self->tree) < 0) {
         PyErr_SetString(PyExc_MemoryError, "Failed to allocate MCTS tree");
         return -1;
@@ -4568,7 +4604,229 @@ static PyObject *MCTSTree_find_child(MCTSTreeObject *self, PyObject *args) {
     return PyLong_FromLong(-1);
 }
 
+/* ================================================================
+ * Eval-plugin seam
+ * ================================================================ */
+
+/* Names a caller may pass instead of a capsule, and the module that publishes
+ * each. A provider outside this table is still installable — pass its capsule
+ * directly — so adding one needs no edit here; the table only exists so the
+ * common case reads as set_value_provider("nnue", path). */
+static const struct { const char *name; const char *module; } CAE_VALUE_PROVIDER_MODULES[] = {
+    {"nnue", "chess_anti_engine.nnue._nnue_ext"},
+    {NULL, NULL}
+};
+
+/* Resolve a str-or-capsule argument to the export its publishing module owns.
+ * Returns NULL with an exception set. */
+static const CaeValueProviderExport *resolve_provider_export(PyObject *spec) {
+    PyObject *capsule = NULL;      /* owned only when we imported it ourselves */
+
+    if (PyUnicode_Check(spec)) {
+        const char *name = PyUnicode_AsUTF8(spec);
+        if (!name) return NULL;
+        const char *module = NULL;
+        for (int i = 0; CAE_VALUE_PROVIDER_MODULES[i].name; i++)
+            if (strcmp(CAE_VALUE_PROVIDER_MODULES[i].name, name) == 0)
+                module = CAE_VALUE_PROVIDER_MODULES[i].module;
+        if (!module) {
+            PyErr_Format(PyExc_ValueError,
+                         "no value provider named '%s'; pass its capsule to install "
+                         "a provider this build does not know by name", name);
+            return NULL;
+        }
+        PyObject *mod = PyImport_ImportModule(module);
+        if (!mod) return NULL;
+        capsule = PyObject_GetAttrString(mod, "value_provider_capsule");
+        Py_DECREF(mod);
+        if (!capsule) return NULL;
+    } else {
+        capsule = spec;
+        Py_INCREF(capsule);
+    }
+
+    void *raw = PyCapsule_GetPointer(capsule, CAE_VALUE_PROVIDER_CAPSULE_NAME);
+    Py_DECREF(capsule);
+    if (!raw) {
+        /* CPython's own message is "called with incorrect name", which says
+         * neither what was passed nor what was wanted. */
+        PyErr_Clear();
+        PyErr_Format(PyExc_ValueError,
+                     "not a value-provider capsule: expected one named \"%s\", as "
+                     "published by a provider module's value_provider_capsule",
+                     CAE_VALUE_PROVIDER_CAPSULE_NAME);
+        return NULL;
+    }
+
+    const CaeValueProviderExport *ex = (const CaeValueProviderExport *)raw;
+    /* ⚑ The ABI is checked because the capsule crosses a .so boundary: the two
+     * extensions are built together here, but nothing in the mechanism forces
+     * that, and a stale one would be reinterpreted field-by-field rather than
+     * rejected. */
+    if (ex->abi_version != CAE_VALUE_PROVIDER_ABI
+        || ex->struct_size != (uint32_t)sizeof(CaeValueProviderExport)) {
+        PyErr_Format(PyExc_ImportError,
+                     "value-provider ABI mismatch (capsule abi=%u size=%u, "
+                     "this build abi=%u size=%u); rebuild C extensions",
+                     ex->abi_version, ex->struct_size,
+                     (unsigned)CAE_VALUE_PROVIDER_ABI,
+                     (unsigned)sizeof(CaeValueProviderExport));
+        return NULL;
+    }
+    if (!ex->provider || !ex->provider->init || !ex->provider->eval
+        || !ex->provider->retain || !ex->provider->destroy) {
+        PyErr_SetString(PyExc_ImportError,
+                        "value provider is missing a required vtable entry "
+                        "(init/eval/retain/destroy are all mandatory)");
+        return NULL;
+    }
+    return ex;
+}
+
+static PyObject *MCTSTree_set_value_provider(MCTSTreeObject *self, PyObject *args) {
+    PyObject *spec;
+    const char *weights_path;
+    if (!PyArg_ParseTuple(args, "Os", &spec, &weights_path))
+        return NULL;
+
+    const CaeValueProviderExport *ex = resolve_provider_export(spec);
+    if (!ex) return NULL;
+    const CaeValueProvider *vp = ex->provider;
+
+    char err[512] = {0};
+    void *ctx;
+    Py_BEGIN_ALLOW_THREADS
+    ctx = vp->init(weights_path, err, sizeof(err));
+    Py_END_ALLOW_THREADS
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError, "value provider '%s' failed to load weights: %s",
+                     vp->name, err[0] ? err : "unknown error");
+        return NULL;
+    }
+    MCTSTree_drop_value_provider(self);
+    self->value_provider = vp;
+    self->value_provider_ctx = ctx;
+    self->value_provider_export = ex;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_clear_value_provider(MCTSTreeObject *self,
+                                               PyObject *Py_UNUSED(ignored)) {
+    MCTSTree_drop_value_provider(self);
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_value_provider_name(MCTSTreeObject *self,
+                                              PyObject *Py_UNUSED(ignored)) {
+    if (!self->value_provider) Py_RETURN_NONE;
+    return PyUnicode_FromString(self->value_provider->name);
+}
+
+static PyObject *MCTSTree_value_provider_kernel(MCTSTreeObject *self,
+                                                PyObject *Py_UNUSED(ignored)) {
+    if (!self->value_provider || !self->value_provider->kernel_name) Py_RETURN_NONE;
+    return PyUnicode_FromString(self->value_provider->kernel_name());
+}
+
+/* Raise for a refusal, using the provider's OWN exception class for the
+ * in-check case. The resolver that has to catch this lives in a third module
+ * and will catch by type; a ValueError carrying an explanatory string would
+ * make it match on message text, which is not a contract anyone can keep. */
+static void raise_provider_status(const CaeValueProviderExport *ex,
+                                  const CaeValueProvider *vp, int status) {
+    if (status == CAE_VALUE_ERR_IN_CHECK && ex && ex->in_check_error) {
+        PyErr_Format((PyObject *)ex->in_check_error,
+                     "value provider '%s' refuses a position in check: resolve check "
+                     "nodes recursively (search the evasions, which may themselves "
+                     "give check) instead of evaluating", vp->name);
+        return;
+    }
+    PyErr_Format(PyExc_ValueError, "value provider '%s' refused: %s",
+                 vp->name, cae_value_status_name(status));
+}
+
+static PyObject *MCTSTree_value_provider_eval(MCTSTreeObject *self, PyObject *args) {
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "O", &board_obj))
+        return NULL;
+    if (!self->value_provider) {
+        PyErr_SetString(PyExc_ValueError,
+                        "no value provider set; call set_value_provider(name, path) first");
+        return NULL;
+    }
+    if (ensure_cboard_type() != 0) return NULL;
+    if (Py_TYPE(board_obj) != _cached_cboard_type) {
+        PyErr_Format(PyExc_TypeError, "expected a CBoard, got %s",
+                     Py_TYPE(board_obj)->tp_name ? Py_TYPE(board_obj)->tp_name : "?");
+        return NULL;
+    }
+    const CBoard *board = &((PyCBoard *)board_obj)->board;
+
+    /* ⚑ SNAPSHOT AND RETAIN BEFORE DROPPING THE GIL. Another thread may call
+     * clear_value_provider() or install a different one while this evaluation
+     * is in flight; without holding a reference, its destroy() unmaps the
+     * weights under us and the read that follows is a use-after-free — which on
+     * a 62 MB read-only mapping most often returns data rather than crashing,
+     * i.e. a wrong evaluation rather than a visible failure. */
+    const CaeValueProviderExport *ex = self->value_provider_export;
+    const CaeValueProvider *vp = self->value_provider;
+    void *ctx = cae_value_retain(vp, self->value_provider_ctx);
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError,
+                     "value provider '%s' cannot be retained for evaluation", vp->name);
+        return NULL;
+    }
+
+    int32_t value = 0;
+    int status;
+    Py_BEGIN_ALLOW_THREADS
+    status = cae_value_eval(vp, ctx, board, &value);
+    Py_END_ALLOW_THREADS
+    cae_value_destroy(vp, ctx);
+
+    if (status != CAE_VALUE_OK) {
+        raise_provider_status(ex, vp, status);
+        return NULL;
+    }
+    return PyLong_FromLong((long)value);
+}
+
 static PyMethodDef MCTSTree_methods[] = {
+    {"set_value_provider", (PyCFunction)MCTSTree_set_value_provider, METH_VARARGS,
+     "set_value_provider(provider, weights_path) -> None\n\n"
+     "Install a CPU value provider on the tree's eval seam. `provider` is either\n"
+     "a known name ('nnue') or the value_provider_capsule published by the\n"
+     "extension that implements it — the tree IMPORTS the provider rather than\n"
+     "compiling it in, so the code it calls is the same copy, with the same\n"
+     "kernel selection and the same weight cache, that the provider's own module\n"
+     "exposes. A later provider (a leaf qsearch, a mate-search extension, a\n"
+     "composition of both) publishes the same capsule shape and needs no change\n"
+     "here. Replacing a provider releases the previous context."},
+    {"clear_value_provider", (PyCFunction)MCTSTree_clear_value_provider, METH_NOARGS,
+     "clear_value_provider() -> None — drop the provider and release its context.\n\n"
+     "Safe against a concurrent value_provider_eval: an evaluation in flight\n"
+     "holds its own reference, so this drops the tree's, not the last one."},
+    {"value_provider_name", (PyCFunction)MCTSTree_value_provider_name, METH_NOARGS,
+     "value_provider_name() -> str or None\n\n"
+     "The name read off the POINTER THE TREE IS HOLDING, not off the argument\n"
+     "that was passed to set_value_provider — so it reports what would actually\n"
+     "be called."},
+    {"value_provider_kernel", (PyCFunction)MCTSTree_value_provider_kernel, METH_NOARGS,
+     "value_provider_kernel() -> str or None\n\n"
+     "Which compute kernel the installed provider will really use ('avx2' /\n"
+     "'scalar'), asked of the vtable the tree holds. It therefore reports the\n"
+     "state of the provider's own module — the thing that does the work — and\n"
+     "changes when that module's set_simd() is called. None if the provider has\n"
+     "no kernel choice to report."},
+    {"value_provider_eval", (PyCFunction)MCTSTree_value_provider_eval, METH_VARARGS,
+     "value_provider_eval(cboard) -> int\n\n"
+     "Evaluate a position through the installed provider, from inside the tree\n"
+     "extension. ⚑ Raises for a position in check — as the provider's OWN\n"
+     "InCheckError, so a caller catches by type rather than by message text: the\n"
+     "NNUE evaluation is undefined there, and callers must resolve check nodes\n"
+     "RECURSIVELY (search the evasions, which may themselves give check) before\n"
+     "asking for a static value. The refusal is the enforcement backstop for\n"
+     "that invariant, not a substitute for it."},
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,

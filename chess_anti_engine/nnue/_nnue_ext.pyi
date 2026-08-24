@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from typing import Any
+
+from chess_anti_engine.encoding._lc0_ext import CBoard
+
+THREAT_DIMS: int
+HALFKA_DIMS: int
+PACK_VERSION: int
+FILE_VERSION: int
+HAVE_AVX2: int
+
+class InCheckError(ValueError):
+    """The NNUE evaluation is undefined for a position in check.
+
+    Callers must resolve check nodes recursively (search the evasions, which may
+    themselves give check) before asking for a static evaluation; this exception
+    is the enforcement backstop for that invariant.
+    """
+
+# The value-provider capsule other extensions import to install this evaluator
+# on their eval seam, instead of including its header and getting a second copy
+# of its kernel flag and weight cache.
+value_provider_capsule: object
+
+def load(pack_path: str, /) -> object: ...
+def set_simd(enabled: bool, /) -> bool: ...
+def simd_active() -> bool: ...
+def weight_cache_size() -> int: ...
+def info(handle: object, /) -> dict[str, Any]: ...
+def source_sha256(handle: object, /) -> str: ...
+def evaluate(handle: object, board: CBoard, /) -> int: ...
+def trace(handle: object, board: CBoard, /) -> tuple[int, tuple[int, ...], tuple[int, ...]]: ...
+def active_features(
+    board: CBoard, perspective: int, /
+) -> tuple[tuple[int, ...], tuple[int, ...]]: ...
+def benchmark(
+    handle: object, boards: list[CBoard], repeats: int, threads: int, /
+) -> tuple[int, float, int]: ...
+def provider_eval(name: str, weights_path: str, board: CBoard, /) -> int: ...
+def provider_names() -> tuple[str, ...]: ...
