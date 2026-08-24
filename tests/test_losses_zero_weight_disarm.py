@@ -353,11 +353,15 @@ def test_the_unpoisoned_fixture_makes_every_term_live_and_finite() -> None:
     """
     kwargs = _kwargs()
     losses = compute_loss(_outputs(), _batch(), **kwargs)  # pyright: ignore[reportArgumentType]
-    values = [float(losses[key].detach()) for _, key in _ASSEMBLY]
-    assert all(math.isfinite(v) for v in values), dict(zip(
-        [k for _, k in _ASSEMBLY], values, strict=True,
-    ))
+    keys = [key for _, key in _ASSEMBLY]
+    values = [float(losses[key].detach()) for key in keys]
+    labelled = dict(zip(keys, values, strict=True))
+    assert all(math.isfinite(v) for v in values), labelled
     assert all(v != 0.0 for v in values), "a structurally zero term proves nothing"
+    # ...and PAIRWISE DISTINCT, which the two lines above do not give: thirteen
+    # terms that happened to share a value would let a fold that added the wrong
+    # one agree with the right answer by arithmetic accident.
+    assert len(set(values)) == len(values), labelled
     assert float(losses["total"].detach()) == float(_fold(losses, kwargs, skip_zero=False))
 
 
@@ -540,13 +544,109 @@ def test_a_gen0_shaped_batch_with_every_sf_weight_off_is_finite() -> None:
         assert torch.isfinite(grad).all(), name
 
 
-def test_every_weight_zero_gives_a_finite_zero_total() -> None:
-    """The empty objective is a finite constant, not a NaN and not a crash."""
+def test_absent_sf_fields_leave_the_value_blend_finite_at_a_live_frac() -> None:
+    """⚑ THE CLAIM THE AZ-PURITY LANE ACTUALLY RESTS ON, PINNED.
+
+    The value BLEND is the one weighted sum in `compute_loss` that this PR's
+    guard does not cover, and deliberately so: `sf_wdl_frac * sf_component`
+    builds the TARGET (which is `.detach()`ed before the CE), not `total`. What
+    protects it in the gen-0 regime is not the weight — it is FIELD ABSENCE.
+    With `sf_wdl` missing, `sf_component` IS `blend_fallback_target`, so the
+    target stays finite whatever `sf_wdl_frac` happens to be.
+
+    ⚑ NO OTHER TEST IN THIS FILE REACHES THE BLEND AT A NON-ZERO FRAC. The
+    sibling gen-0 test leaves `sf_wdl_frac` at its 0.0 default, so it would pass
+    even if the fallback did not exist. This one runs the blend live: `sf_wdl` /
+    `search_wdl` both weighted in, `w_wdl` on, every SF LOSS weight left on too,
+    and every SF field genuinely popped out of the batch the way a gen-0 shard
+    delivers it.
+
+    ⚑ IT PINS ABSENCE, AND ONLY ABSENCE. A `sf_wdl` tensor that is PRESENT and
+    NaN still poisons `target` at any frac, because the per-row mask arithmetic
+    (`sf_effective_b * sf_wdl_probs`) is `0.0 * nan` all over again. That is a
+    separate, still-unguarded hazard on the target-construction path and is
+    tracked as a follow-up; nothing here claims otherwise.
+    """
+    outputs, batch = _outputs(), _batch()
+    for key in (
+        "sf_wdl", "has_sf_wdl", "sf_policy_t", "has_sf_policy", "has_sf_move",
+        "sf_p0_policy_t", "has_sf_p0", "sf_p0_regret_t", "has_sf_p0_regret",
+        "sf_volatility_t", "has_sf_volatility",
+    ):
+        del batch[key]
+    # The search half of the blend stays present, so `search_wdl_frac` is a live
+    # component rather than a second silent fallback.
+    batch["search_wdl"] = torch.tensor([[0.6, 0.3, 0.1], [0.1, 0.3, 0.6]])
+    batch["has_search_wdl"] = torch.ones((_B,), dtype=torch.float32)
+
+    kwargs = _kwargs()
+    losses = compute_loss(
+        outputs, batch, sf_wdl_frac=0.5, search_wdl_frac=0.2,
+        **kwargs,  # pyright: ignore[reportArgumentType]
+    )
+
+    # The SF-fed terms are absent-target zeros, not NaN...
+    for key in (
+        "sf_own_ce", "sf_own_regret", "sf_move_ce", "sf_eval_ce",
+        "sf_volatility", "sf_policy_floor",
+    ):
+        assert float(losses[key].detach()) == 0.0, key
+    # ...and the VALUE head, which is where a poisoned blend would surface,
+    # is finite and genuinely trained.
+    assert math.isfinite(float(losses["wdl_ce"].detach()))
+    total = losses["total"]
+    assert math.isfinite(float(total.detach()))
+    assert float(total.detach()) == float(_fold(losses, kwargs, skip_zero=True))
+
+    total.backward()
+    grad = outputs["wdl"].grad
+    assert grad is not None
+    assert torch.isfinite(grad).all()
+    assert torch.count_nonzero(grad).item() > 0, "the blend produced no value gradient"
+
+
+@pytest.mark.parametrize("case", _CASES, ids=_case_id)
+def test_negative_zero_is_off_as_well(case: _Case) -> None:
+    """⚑ `-0.0` COMPARES EQUAL TO `0.0`, so it must disarm the term too.
+
+    Both the guard's comment and the PR claim this; a claim nothing executes is
+    the shape of defect this file exists to catch. `math.copysign` re-reads the
+    sign off the weight the loss was actually handed, so the case cannot decay
+    into a duplicate of the `0.0` one if a `float()` somewhere normalises it.
+    """
+    losses, kwargs, _ = _run(case, -0.0)
+
+    w = _weight_of(kwargs, case.weight)
+    assert math.copysign(1.0, w) == -1.0, "setup: the weight is no longer -0.0"
+    assert math.isnan(float(losses[case.key].detach())), "setup: term is not NaN"
+    assert math.isfinite(float(losses["total"].detach()))
+    assert float(losses["total"].detach()) == float(_fold(losses, kwargs, skip_zero=True))
+
+
+def test_every_weight_zero_gives_a_finite_graph_free_total() -> None:
+    """The empty objective is a finite constant that carries NO gradient path.
+
+    ⚑ AND `backward()` ON IT RAISES AT THE TRAINER, WHICH IS THE INTENDED
+    BEHAVIOUR RATHER THAN AN OVERSIGHT. `torch.zeros_like` has no `grad_fn`, so
+    the one production caller — `losses["total"] / accum_steps` then
+    `loss.backward()` in `Trainer._run_optimizer_step` — fails LOUDLY on the
+    first step instead of quietly stepping the optimizer on all-zero gradients,
+    which is what the flat expression did: `0.0 * m_policy` kept a graph the
+    objective no longer had. Fail-loud is the right direction for "this config
+    asks for no objective at all", and it is unreachable from any real config —
+    production runs `w_policy: 1.0` and `w_wdl: 1.0`.
+
+    The exception is asserted here rather than described, so the trade is a
+    pinned fact for whoever reads it next and not a claim in a comment.
+    """
     kwargs = _kwargs(sf_policy_floor=0.0, **dict.fromkeys(_ALL_ON, 0.0))
     losses = compute_loss(_outputs(), _batch(), **kwargs)  # pyright: ignore[reportArgumentType]
     total = losses["total"]
     assert float(total.detach()) == 0.0
     assert total.shape == ()
+    assert total.requires_grad is False
+    with pytest.raises(RuntimeError, match="does not require grad"):
+        total.backward()
 
 
 def test_the_floor_params_default_is_the_same_objective_as_none() -> None:
