@@ -1238,7 +1238,26 @@ class TrainMetrics:
     grad_norm_p95: float = 0.0
     grad_norm_max: float = 0.0
     grad_clip_rate: float = 0.0
+  # ⚑ THREE RATES, TWO DIFFERENT QUESTIONS — do not read one for the other.
+  # `grad_adaptive_clip_rate` is how often the adaptive z-score threshold
+  # FIRED (zclip's `_compute_clip_val` returned a value below the step's own
+  # norm). `grad_hard_clip_rate` and `grad_adaptive_bound_rate` are how often
+  # each of the two clips BOUND — i.e. was the `min()` winner in
+  # `_apply_clipping`'s `effective_clip = min(adaptive_clip, max_grad_norm)`.
+  # Firing and binding are not the same event: a step where the adaptive
+  # threshold fires at 8.0 under a `zclip_max_norm` of 6.5 counts in
+  # `grad_adaptive_clip_rate` AND in `grad_hard_clip_rate`, because the hard
+  # cap is what the gradient was actually scaled to.
+  #
+  # The two BOUND rates partition `grad_clip_rate` exactly
+  # (`grad_hard_clip_rate + grad_adaptive_bound_rate == grad_clip_rate`), which
+  # is what makes "which clip bound?" answerable from the metric stream instead
+  # of by subtraction the reader has to know to perform. Before
+  # `grad_adaptive_bound_rate` existed the I11 warning had no honest way to name
+  # the binding clip, and it named `zclip_max_norm` unconditionally — on a run
+  # where that cap bound on 0.0% of steps.
     grad_adaptive_clip_rate: float = 0.0
+    grad_adaptive_bound_rate: float = 0.0
     grad_hard_clip_rate: float = 0.0
     grad_norm_samples: int = 0
   # Per-optimizer-group grad norms, iteration means. The clip acts on the
@@ -1476,6 +1495,44 @@ def _scalar_hparam_differs(old: Any, new: Any) -> bool:
 # deploy, which is the measurement narrowing onto the clip, not the run moving.
 GRAD_NORM_MEDIAN_WATCH = 4.75
 
+# The OTHER half of I11's condition, and until 2026-08-24 it was in the prose
+# and not in the code. I11 reads "median past GRAD_NORM_MEDIAN_WATCH (hard-clip
+# rate ~10%)": a CONJUNCTION, because the claim the warning makes — that
+# `zclip_max_norm` "has become an LR cap in disguise" — is a claim about the
+# HARD cap, and a cap that never binds cannot be capping anything. The median
+# alone was the whole gate, and it fired on EVERY iteration of the production
+# run (trial dea5e, 728 of 728) at a measured `grad_hard_clip_rate` of exactly
+# 0.000000 on 536 of 536 recorded rows: `zclip_max_norm` was not the binding
+# constraint on a single step, and the remediation the message named (re-set
+# zclip_max_norm) was a no-op on an inert knob.
+#
+# ⚑ AND `grad_clip_rate` CANNOT STAND IN FOR IT. That run reads clip rate
+# 1.000000 and adaptive-clip rate 1.000000 on all 536 rows, with a pre-clip
+# `grad_norm_median` of ~12.0 against a 6.5 cap. That is not the cap biting; it
+# is a degenerate fixed point of the installed zclip's EMA. `ZClip.step` folds
+# the CLIPPED value back into the EMA (`_update_ema(clip_val if clip_val is not
+# None else total_norm)`), so once the adaptive branch fires on every step the
+# EMA is being fed only its own output. Measured against the installed library
+# at the production settings (alpha 0.97, z_thresh 2.0, clip_factor 1.0, cap
+# 6.5): warm the EMA on norms with median 3.0, step the regime to median 12.0,
+# and within ~600 steps `mean` is pinned at 3.104, `var` has collapsed to 1e-8,
+# the z-score reads 1e5 and then 1e7, and the clip rate is 1.000 with the hard
+# rate 0.000 — for as long as the regime stays up. Warm the EMA ON the median-12
+# stream instead and the same gradients produce the opposite reading: EMA mean
+# 11.9, adaptive branch essentially silent, HARD cap binding 99.5% of steps. Same
+# gradients, different EMA history, opposite attribution. So a sustained clip
+# rate of 1.000 is a statement about run history, is pinned by the state it
+# reports, and carries no information about the cap at all.
+#
+# 10% is I11's own figure, and the two halves are calibrated to co-occur: on a
+# stationary lognormal stream with median 4.99 (a hair past the median watch)
+# the hard-clip rate measures 8.8%. Push that stream's median to ~9.0 and the
+# hard rate is 90.9% with the adaptive threshold binding on 0.0% of steps — the
+# genuine I11 state, an order of magnitude clear of this gate. So the gate does
+# not narrow the warning to a sliver of the pathology; it removes the regime
+# where the hard cap is provably not the thing doing the clipping.
+GRAD_HARD_CLIP_RATE_WATCH = 0.10
+
 
 def _nearest_rank_quantile(sorted_values: list[float], q: float) -> float:
     """Nearest-rank quantile of an already-sorted list (0.0 when empty)."""
@@ -1532,6 +1589,7 @@ def _grad_clip_metric_kwargs(
         "grad_norm_max": float(ordered[-1]) if ordered else 0.0,
         "grad_clip_rate": float(clip_counts.get("clipped", 0)) / n,
         "grad_adaptive_clip_rate": float(clip_counts.get("adaptive_clip", 0)) / n,
+        "grad_adaptive_bound_rate": float(clip_counts.get("adaptive_bound", 0)) / n,
         "grad_hard_clip_rate": float(clip_counts.get("hard_clip", 0)) / n,
         "grad_nonfinite_skip_rate": float(clip_counts.get("nonfinite_grad", 0)) / n,
   # Steps, not finite readings: the rates above are over this denominator.
@@ -1722,6 +1780,109 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     """
     raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
     return None if raw is None else float(raw)
+
+
+# Construction-site bounds for the per-group optimizer scalars that reach the
+# optimizer RAW. Wide enough that every config in `configs/` passes (all set
+# `matrix_lr_multiplier: 20`, `matrix_weight_decay` 0 or 1e-4, `aux_weight_decay`
+# 1e-4) and that a deliberate 5x re-tune needs no code change; tight enough that
+# the realistic accident — a misplaced decimal, 20 -> 200 — cannot reach the
+# optimizer. The downward typo 20 -> 2 is INSIDE the band on purpose: it is a
+# legitimate setting, not a runaway, and a validator that rejects legitimate
+# settings gets deleted.
+_MATRIX_LR_MULTIPLIER_MAX = 100.0
+_OPTIMIZER_WEIGHT_DECAY_MAX = 1.0
+
+
+def _validated_optimizer_scalar(
+    name: str,
+    raw: Any,
+    *,
+    minimum: float,
+    maximum: float,
+    minimum_inclusive: bool,
+    consequence: str,
+) -> float:
+    """Range-check one construction-only optimizer scalar, or raise ValueError.
+
+    ⚑ PLACEMENT — this is a CONSTRUCTION-SITE validator and deliberately NOT a
+    `TrialConfig.from_dict` one. A `from_dict` validator would be a category-(b)
+    live-edit kill hazard: `_reload_yaml_into_config` re-reads the live yaml
+    every iteration, `from_dict` runs inside `train_trial`'s iteration loop, and
+    that loop has a `finally:` and zero `except` — so an out-of-range value
+    typed into the live file does not get rejected, it takes the trial down
+    mid-iteration (CLAUDE.md, "Working on a live run"). These three keys are
+    construction-only by design: `tune/trainable_config_ops.py` documents them
+    as per-group VALUE knobs that are read once, by `trainer_kwargs_from_config`
+    on the way into `Trainer.__init__`, and are re-applied to the live optimizer
+    groups only from the snapshot taken there. So a mid-run edit to one of them
+    does nothing until the next restart, and the restart IS the construction —
+    which means construction-site validation covers the entire window in which
+    the value can take effect, at zero live-reload hazard. A `from_dict`
+    validator would cover the same window and add a way to kill a running trial.
+
+    ⚑ NOT A CLAMP. `min`/`max` PROPAGATE nan — `min(float("nan"), 100.0)` is
+    `nan` on CPython, and a silently-clamped value is this repo's signature
+    defect (accepted, then quietly something else). The finiteness test is
+    explicit and comes FIRST, because every ordering comparison against nan is
+    False and a bare range test would therefore reject it with a message about
+    bounds rather than about nan.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={raw!r} is not a number. {consequence}"
+        ) from exc
+    if not math.isfinite(value):
+        raise ValueError(
+            f"{name}={raw!r} is not finite. {consequence}"
+        )
+    low_ok = value >= minimum if minimum_inclusive else value > minimum
+    if not (low_ok and value <= maximum):
+        low = f"{minimum:g} <=" if minimum_inclusive else f"{minimum:g} <"
+  # ⚑ `!r`, NOT `:g`. `:g` truncates to 6 significant figures, so the value
+  # that fails a boundary by a hair prints AS the boundary and the message
+  # contradicts itself: `f"{100.0001:g}"` is "100", giving "100 is outside the
+  # accepted range (0 < ... <= 100)". A rejection an operator cannot believe is
+  # worse than no rejection, because the next move is to distrust the guard.
+  # The bounds keep `:g` — they are exact literals (0, 1, 100) and `!r` would
+  # print them as "100.0".
+        raise ValueError(
+            f"{name}={value!r} is outside the accepted range "
+            f"({low} {name} <= {maximum:g}). {consequence}"
+        )
+    return value
+
+
+# Quoted into every rejection message for `matrix_lr_multiplier`, because the
+# number an operator needs in order to pick a replacement is the one this repo
+# already paid for: `tune/trainable_init.py:guard_warm_start_lr` records the
+# 2026-07-11 warm start that put the matrix group at 6e-3 -- double the 0.003
+# recorded as model-destroying -- and cost -494 Elo in 74 iterations.
+#
+# ⚑ THE CURRENT PAIR AND THE FAILING PAIR ARE DIFFERENT, AND THE MESSAGE SAYS
+# WHICH IS WHICH. `configs/pbt2_small.yaml` runs `lr: 0.00003`, so production is
+# 3e-5 x 20 = 6e-4 for this group. The 3e-4 x 20 = 6e-3 figure is the HISTORICAL
+# FAILURE, not today's setting; quoting it as "the production lr" would overstate
+# the live matrix-group LR by 10x in the one piece of text an operator reads
+# while deciding what to replace a rejected value with.
+_MATRIX_LR_MULTIPLIER_CONSEQUENCE = (
+    "matrix_lr_multiplier is the ENTIRE step-size control for the Aurora "
+    "matrix group (28.6% of trainable params under "
+    "matrix_optimizer_scope: mlp_out): that update is scale-invariant and "
+    "carries no adaptive denominator, so nothing downstream absorbs a bad "
+    "value. Production is multiplier 20 at lr 3e-5, i.e. 6e-4 for that group. "
+    "The historical FAILING pair is lr 3e-4 x 20 = 6e-3 -- double the 0.003 "
+    "this project recorded as model-destroying (tune/trainable_init.py "
+    "guard_warm_start_lr, 2026-07-11: -494 Elo in 74 iterations). Production "
+    "multiplier is 20."
+)
+
+_WEIGHT_DECAY_CONSEQUENCE = (
+    "It is applied to its param group verbatim on every optimizer step. "
+    "Production is 1e-4; 0 disables decay for the group."
+)
 
 
 class _SfRebuildCoverageAccumulator:
@@ -2070,6 +2231,32 @@ class Trainer:
         self._model_config = model_config
         self._input_history_encoding = normalize_lc0_history_encoding(
             model_config.input_history_encoding if model_config is not None else None
+        )
+
+  # Range-check the per-group optimizer scalars BEFORE any of them is folded
+  # into a param group. Unconditional, not gated on `optimizer in (muon,
+  # aurora)`: the same yaml key means the same thing whichever optimizer is
+  # configured, and a guard that only fires on the production branch is a guard
+  # that is not tested by the configs people actually experiment with. See
+  # `_validated_optimizer_scalar` for why this lives here and not in
+  # `TrialConfig.from_dict`.
+        matrix_lr_multiplier = _validated_optimizer_scalar(
+            "matrix_lr_multiplier", matrix_lr_multiplier,
+            minimum=0.0, maximum=_MATRIX_LR_MULTIPLIER_MAX,
+            minimum_inclusive=False,
+            consequence=_MATRIX_LR_MULTIPLIER_CONSEQUENCE,
+        )
+        matrix_weight_decay = _validated_optimizer_scalar(
+            "matrix_weight_decay", matrix_weight_decay,
+            minimum=0.0, maximum=_OPTIMIZER_WEIGHT_DECAY_MAX,
+            minimum_inclusive=True,
+            consequence=_WEIGHT_DECAY_CONSEQUENCE,
+        )
+        aux_weight_decay = _validated_optimizer_scalar(
+            "aux_weight_decay", aux_weight_decay,
+            minimum=0.0, maximum=_OPTIMIZER_WEIGHT_DECAY_MAX,
+            minimum_inclusive=True,
+            consequence=_WEIGHT_DECAY_CONSEQUENCE,
         )
 
         optimizer = str(optimizer).lower()
@@ -2749,20 +2936,80 @@ class Trainer:
         return (self.step % self._tb_log_interval) == 0
 
     def _warn_if_grad_norm_median_past_watch(self, metrics: TrainMetrics) -> None:
-        """Fire the pre-committed I11 watch when the hard cap stops being a tail guard."""
+        """Fire the pre-committed I11 watch when the hard cap stops being a tail guard.
+
+        BOTH halves of I11's condition are gates: the windowed median past
+        `GRAD_NORM_MEDIAN_WATCH` *and* the hard-clip rate past
+        `GRAD_HARD_CLIP_RATE_WATCH`. The median alone was the whole gate until
+        2026-08-24, which made this a broken instrument rather than a noisy one:
+        it emitted on EVERY iteration of the production run — 728 of 728 on
+        trial dea5e, and 124 of 124 windows on the earlier run the ledger
+        quotes — at a measured hard-clip rate of 0.0%, telling operators to
+        re-set a `zclip_max_norm` that had not bound on a single step. The
+        median is a property of the gradients; only the hard-clip rate is a
+        property of the CAP, and the cap is what the message is about.
+
+        ⚑ THE MESSAGE NAMES THE CLIP THAT BOUND, not the one the reader might
+        assume. `effective_clip = min(adaptive_threshold, zclip_max_norm)`, so
+        two different knobs can be the one scaling the gradient, and only
+        `zclip_max_norm` is re-settable as a "cap". Naming the wrong one sends
+        the operator to a knob that cannot move the number they are looking at
+        — the defect this method exists to stop repeating.
+        """
         max_grad_norm = getattr(self.zclip, "max_grad_norm", None)
         if max_grad_norm is None or metrics.grad_norm_samples <= 0:
             return
         if metrics.grad_norm_median <= GRAD_NORM_MEDIAN_WATCH:
             return
+        if metrics.grad_hard_clip_rate < GRAD_HARD_CLIP_RATE_WATCH:
+            return
+  # Both rates are BOUND rates (see the TrainMetrics comment): they partition
+  # `grad_clip_rate`, so ">=" here is "the hard cap won the min() at least as
+  # often as the adaptive threshold did".
+        hard_binds = metrics.grad_hard_clip_rate >= metrics.grad_adaptive_bound_rate
+        if hard_binds:
+            binding = (
+                f"the HARD cap zclip_max_norm={float(max_grad_norm):.2f} is the "
+                f"binding clip ({100.0 * metrics.grad_hard_clip_rate:.1f}% of "
+                f"steps, vs {100.0 * metrics.grad_adaptive_bound_rate:.1f}% for "
+                "the adaptive threshold): it is acting as an LR cap, not a tail "
+                "guard — re-set zclip_max_norm"
+            )
+        else:
+  # ⚑ NAMING A KNOB IS NOT ENOUGH — SAY WHETHER IT CAN BE REACHED. The
+  # adaptive threshold's knobs are `zclip_z_thresh` and `zclip_alpha`, and
+  # `ZClip.__init__` reads BOTH once: nothing in `tune/` pushes either at a
+  # running trial, so a live yaml edit to them is overlaid into the config,
+  # never re-read, and silently ignored until the next restart. Only
+  # `zclip_max_norm` has a live path (`set_grad_clip_max_norm`, pushed every
+  # iteration from `tune/trainable.py`) — and that setter exists precisely
+  # because editing it live USED to be a silent no-op. Telling an operator to
+  # "re-set zclip_z_thresh" without saying it needs a restart reproduces this
+  # repo's signature defect inside the very message that exists to stop it.
+            binding = (
+                "the ADAPTIVE z-score threshold is the binding clip "
+                f"({100.0 * metrics.grad_adaptive_bound_rate:.1f}% of steps, vs "
+                f"{100.0 * metrics.grad_hard_clip_rate:.1f}% for the hard cap "
+                f"zclip_max_norm={float(max_grad_norm):.2f}). Its knobs are "
+                "zclip_z_thresh / zclip_alpha and BOTH ARE RESTART-GATED: zclip "
+                "reads them once at construction and nothing pushes them at a "
+                "running trial, so a live yaml edit to either is silently "
+                "ignored until the next restart. zclip_max_norm is the only "
+                "clip knob that takes effect mid-run, and it is binding the "
+                "smaller share here"
+            )
         logging.getLogger(__name__).warning(
             "grad-norm median %.3f over %d step(s) is past the pre-committed "
-            "watch threshold %.2f with zclip_max_norm=%.2f (clip rate %.1f%%, "
-            "hard-clip rate %.1f%%): the hard cap is acting as an LR cap, not a "
-            "tail guard — re-set it (docs/rl_loop_audit.md I11)",
+            "watch threshold %.2f and the hard-clip rate %.1f%% is past %.1f%%: "
+            "%s (adaptive threshold fired on %.1f%% of steps; any clip bound on "
+            "%.1f%%) (docs/rl_loop_audit.md I11)",
             metrics.grad_norm_median, metrics.grad_norm_samples,
-            GRAD_NORM_MEDIAN_WATCH, float(max_grad_norm),
-            100.0 * metrics.grad_clip_rate, 100.0 * metrics.grad_hard_clip_rate,
+            GRAD_NORM_MEDIAN_WATCH,
+            100.0 * metrics.grad_hard_clip_rate,
+            100.0 * GRAD_HARD_CLIP_RATE_WATCH,
+            binding,
+            100.0 * metrics.grad_adaptive_clip_rate,
+            100.0 * metrics.grad_clip_rate,
         )
 
     @property
@@ -2952,11 +3199,25 @@ class Trainer:
             effective_clip = min(effective_clip, float(max_grad_norm))
 
         clipped = effective_clip < total_norm
+  # WHICH clip bound, not which fired. `effective_clip` is the `min()` of the
+  # two candidates, so the hard cap bound exactly when it IS that min and the
+  # min is below the step's own norm. Everything else that clipped was bound by
+  # the adaptive threshold, which makes the two flags a partition of `clipped`
+  # — asserted in tests, and relied on by `_warn_if_grad_norm_median_past_watch`
+  # to name the binding clip. A tie (adaptive threshold exactly equal to the
+  # cap) is credited to the hard cap: the gradient is scaled to `max_grad_norm`
+  # either way, and the operator's re-settable knob is the one worth naming.
+        hard_bound = (
+            max_grad_norm is not None
+            and clipped
+            and effective_clip == float(max_grad_norm)
+        )
         stats = {
             "total_norm": total_norm,
             "effective_clip": float(effective_clip),
             "adaptive_clip": 1.0 if clip_val is not None and adaptive_clip < total_norm else 0.0,
-            "hard_clip": 1.0 if max_grad_norm is not None and clipped and effective_clip == float(max_grad_norm) else 0.0,
+            "adaptive_bound": 1.0 if clipped and not hard_bound else 0.0,
+            "hard_clip": 1.0 if hard_bound else 0.0,
             "clipped": 1.0 if clipped else 0.0,
         }
         return total_norm, stats
@@ -4143,6 +4404,7 @@ class Trainer:
                 self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
                 self.writer.add_scalar("zclip/effective_clip", zclip_stats["effective_clip"], self.step)
                 self.writer.add_scalar("zclip/adaptive_clipped", zclip_stats["adaptive_clip"], self.step)
+                self.writer.add_scalar("zclip/adaptive_bound", zclip_stats["adaptive_bound"], self.step)
                 self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
                 self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
   # The LR in force for THIS step, sampled before opt.step() and before
@@ -4196,7 +4458,8 @@ class Trainer:
         aurora_grad_norms: list[float] = []
         lr_samples: list[float] = []
         clip_counts: dict[str, int] = {
-            "clipped": 0, "adaptive_clip": 0, "hard_clip": 0, "nonfinite_grad": 0,
+            "clipped": 0, "adaptive_clip": 0, "adaptive_bound": 0, "hard_clip": 0,
+            "nonfinite_grad": 0,
         }
         transient_cuda_retry_batches = 0
 
