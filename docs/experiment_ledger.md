@@ -66711,3 +66711,30 @@ dip than arm 1 (MID −26 vs −74) but FLAT from 10k→20k; LAST CI spans 0. If
 best: C2 requires slope > 0 to extend — slope 0.0 → C3 (close) territory unless arm 3
 changes the picture. Ladder so far: f=0.25 → −38.4 rising; f=0.50 → −26.1 flat.
 ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
+
+### 2026-08-24 — Ratio ladder ARM 2 READOUT (f=0.50, seed 12) + arm-3 launch record
+- Training complete: runs/lc0_mix050_iter595_20260824 (20,000 steps, both guards PASS — per-source
+  routing held, no SF-to-outcome leak; summary.json mixed_corpus 0.5/0.5, zero routing_violations).
+- **Preregistered arenas (seeds 63/64, 400g terminal reads, baseline = the iter-595 init
+  trainer.pt step 171,327 sha 62f4ad8d41f6…), banked runs/.../arenas_63_64.txt:**
+  - MID (checkpoint_mid.pt, local step 10,032): **−42.78 [−71.55, −14.58]**
+  - LAST (checkpoint.pt, local step 20,000): **−0.87 [−29.55, +27.80]** — first arm whose LAST CI
+    spans 0. Slope (LAST−MID) **+41.91**.
+- **Dose trend monotone on BOTH endpoints** (prereg seeds only): LAST f=0/0.25/0.50 =
+  −41.0 / −13.90 / −0.87; MID = −84.1 / −51.62 / −42.78. Own-replay mixing monotonically buys
+  back the lc0-fine-tune Elo loss. NOT a verdict — C1-C5 judge the best arm after arm 3.
+- Instrument frozen verified: git diff EMPTY across arena_standard.py/mcts/model/moves/encoding
+  between arm-1's recorded sha (3eaac61b8) and this run's (8cf549fee), despite HEAD advancing.
+- **⚑ DUPLICATE-SESSION RECORD**: a second Claude session (f2207141) ran arm-2 arenas with
+  seed 42 both legs — MID −26.11 / LAST −26.11, slope 0.00 (distinct pentanomials; a real run,
+  not a copy). Same collision class as arm 1's double reading. RULE APPLIED: the ladder is judged
+  on the PREREGISTERED seed pair (63/64); seed-42 rows are recorded here as duplicates and are
+  never pooled or selected post hoc. The two slope reads are compatible with the prereg's own
+  ±~44 Elo slope resolution caveat.
+- **Arm 3 (f=0.75, seed 13) launched 18:46 by the second session** — flags verified prereg-exact
+  (bar 0.002 per the formal amendment; --steps 20000; same init/shards/receipt; setsid; out-dir
+  runs/lc0_mix075_iter595_20260824). Our own launch guard correctly refused a duplicate. Healthy
+  at 25 min (10 train windows, zero errors). Log lives in the other session's /tmp — mirrored to
+  scratchpad/mix075_train.log every 60s (scratchpad/mix075_log_mirror.sh). At completion verify
+  summary.json mixed_corpus reads 0.75/0.75 with zero routing_violations (the consumer-side
+  receipt; the f=0.75 stdout echo is block-buffered, producer side proven from live argv).
