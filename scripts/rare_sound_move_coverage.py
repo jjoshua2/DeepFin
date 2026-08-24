@@ -1297,7 +1297,7 @@ class _ResearchRunner:
     def __init__(
         self, spec: ResearchSpec, *, device: str, evaluator: object, hist: str,
     ) -> None:
-        from chess_anti_engine.mcts.gumbel import GumbelConfig
+        from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
 
         self.spec = spec
         self.device = device
@@ -1320,6 +1320,12 @@ class _ResearchRunner:
             gumbel_scale=float(sh.gumbel_scale), input_history_encoding=hist,
             input_extra_features=str(spec.input_extra_features),
         )
+      # `--policy-temp`/`--c-scale`/`--halving-div` reach the shape through a
+      # bare `float()`/`int()` (`_build_shape`), and the arm's label banks them.
+        try:
+            validate_gumbel_config(self.cfg, where="rare_sound_move_coverage --shape flags")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
 
     def run(
         self,
@@ -1692,7 +1698,7 @@ def simulate_rows(
         move_regrets,
     )
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
@@ -1722,6 +1728,10 @@ def simulate_rows(
         gumbel_scale=float(shape.gumbel_scale), input_history_encoding=hist,
         input_extra_features=extra, policy_encoding=pol_enc,
     )
+    try:
+        validate_gumbel_config(cfg, where="rare_sound_move_coverage --shape flags")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 

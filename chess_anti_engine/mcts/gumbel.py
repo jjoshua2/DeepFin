@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Literal, overload
 
 import chess
@@ -388,6 +388,101 @@ def policy_temp_active(policy_temp: float) -> bool:
     """
     pt = float(policy_temp)
     return math.isfinite(pt) and POLICY_TEMP_MIN <= pt <= POLICY_TEMP_MAX and pt != 1.0
+
+
+# The divisor the C sequential halving silently raises anything smaller to:
+# `g->halving_div = (halving_div >= 2) ? halving_div : 2` (_mcts_tree.c:3966).
+MIN_HALVING_DIV = 2
+
+
+def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse a search config carrying a value the search will not run.
+
+    THE band's second home is not allowed to exist, so this is where every
+    externally-built ``GumbelConfig`` is checked -- CLI overrides, ``setoption``
+    seeds, anything that reaches ``dataclasses.replace`` without passing the
+    yaml loader's validator (``trial_config._policy_temperature``).
+
+    Call it at CONSTRUCTION/OVERRIDE boundaries, not per search call: the hot
+    path deliberately cannot raise (``policy_temp_active`` reads an out-of-band
+    temperature as *off* because it runs per leaf), and that is exactly why the
+    refusal has to happen where the config is built instead.
+
+    ⚑ It refuses rather than repairs. Clamping ``policy_temp=1e300`` to 20.0
+    would run a search the operator did not ask for, and defaulting it to 1.0 is
+    what happens today -- silently, under a record naming 1e300. A sweep over
+    out-of-band temperatures produces identical arms banked as different
+    settings, which is the c_puct Swiss (play-path audit 2026-08-03 F2) with a
+    live knob instead of a dead one.
+
+    What it checks, and why each one is a silent no-op rather than a crash:
+
+    * **every numeric field finite.** Each sentinel in this file is a
+      COMPARISON, and every comparison against ``nan`` is False, so a non-finite
+      knob does not fail loudly -- it takes the fallback arm. ``nan`` is neither
+      ``< 90`` nor ``>= 90``, so ``q_visit_exp_root=nan`` silently reverts the
+      root to ``q_visit_exp``; ``c_scale_root=nan`` silently reverts to
+      ``c_scale``; ``policy_temp=inf`` reads as off.
+    * **``policy_temp`` inside the band, or exactly 1.0.** 1.0 is the documented
+      identity ("run the untempered prior") and stays valid; the band endpoints
+      are inclusive. Everything else ``policy_temp_active`` rejects reaches
+      ``apply_policy_temp`` and returns the priors untouched.
+    * **``halving_div >= MIN_HALVING_DIV``.** The C raises anything smaller to 2
+      and never says so, so ``halving_div=1`` runs standard halving under a
+      record claiming it did not halve.
+
+    What it deliberately does NOT check, so this does not grow into a second
+    opinion about knobs that already have one:
+
+    * the sentinel RANGES (``c_scale_root < 0``, ``c_visit_root < 0``,
+      ``q_visit_exp_root >= 90``, ``q_visit_floor < 0``,
+      ``target_max_visit_cap <= 0``). Every value inside one of those is a
+      legitimate spelling of "off" rather than a request that got dropped, and
+      ``mcts.search_options.branch_note`` is the shipped answer for telling an
+      operator so.
+    * ``INERT_GUMBEL_KNOBS`` and ``PY_ONLY_GUMBEL_KNOBS`` -- refused by the
+      ``--*-gumbel`` parsers and by ``assert_c_path_can_run`` respectively. A
+      knob with a guard does not need a second one.
+    * dead zones nobody has measured (``topk=0`` and friends): the C signature
+      rejects those downstream, loudly.
+
+    Raises ``ValueError``; CLI surfaces wrap it in ``SystemExit`` so an operator
+    gets the message and not a traceback.
+    """
+    problems: list[str] = []
+    for f in fields(cfg):
+        value = getattr(cfg, f.name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if not math.isfinite(float(value)):
+            problems.append(
+                f"{f.name}={value!r} is not finite, so every gate that reads it "
+                "takes its fallback arm instead of failing: the search runs a "
+                "shape nobody asked for and the record names yours"
+            )
+  # Deliberately NOT skipped for a non-finite value already reported above:
+  # `nan`/`inf` are out of band too, and the operator-facing phrase "outside
+  # the band" is what tells them the knob -- not the float -- is the problem.
+    pt = float(cfg.policy_temp)
+    if pt != 1.0 and not policy_temp_active(pt):
+        problems.append(
+            f"policy_temp={pt!r} is inside the field but outside the band where "
+            f"it does anything ([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], or "
+            "exactly 1.0 for the untempered prior), so apply_policy_temp would "
+            "return the priors untouched and the search would run UNTEMPERED "
+            "(T=1.0) while every record of it names your value"
+        )
+  # `float()` first: a non-finite `halving_div` is already reported above, and
+  # comparing it here would take the fallback arm and report nothing.
+    hd = float(cfg.halving_div)
+    if math.isfinite(hd) and hd < MIN_HALVING_DIV:
+        problems.append(
+            f"halving_div={cfg.halving_div!r} is below {MIN_HALVING_DIV}, which the C search "
+            f"silently raises to {MIN_HALVING_DIV} (_mcts_tree.c:3966), so the "
+            "search would run STANDARD halving under a record naming your value"
+        )
+    if problems:
+        raise ValueError(f"{where}: " + "; ".join(problems))
 
 
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:

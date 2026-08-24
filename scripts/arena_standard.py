@@ -215,6 +215,46 @@ class SideSearch:
   # keys` failure mode, and it would keep answering after tree carry lands.
     tree_reuse: str = "cold"
 
+    def __post_init__(self) -> None:
+        """Refuse a side carrying a knob value the search will not run.
+
+        Here rather than in ``apply_search_overrides`` because EVERY side is
+        built through this constructor -- the resolved shape, the CLI overrides
+        layered on top of it, and any programmatic caller (``elo_vs_sims.py``)
+        -- so "a SideSearch that exists is one the search will actually run" is
+        structural instead of being true of the two call sites someone
+        remembered. It still fires minutes early: ``main()`` resolves both sides
+        before any checkpoint is loaded or compiled.
+
+        The check itself is ``mcts.gumbel.validate_gumbel_config``, the ONE
+        home of the bands, applied to the config exactly as ``match.py`` will
+        (``dataclasses.replace`` onto a ``GumbelConfig``) so the guard shares
+        the criterion's instrument.
+
+        The hole it closes: ``--cand-gumbel policy_temp=1e300`` reached
+        ``dataclasses.replace`` without passing the yaml loader's validator, so
+        the search ran UNTEMPERED (``policy_temp_active(1e300)`` is False) while
+        ``realized_gumbel`` banked 1e300 into the JSONL as this side's realized
+        setting. A sweep over out-of-band temperatures is then a set of
+        IDENTICAL arms recorded as different ones -- the c_puct Swiss (audit
+        2026-08-03 F2) with a live knob instead of a dead one.
+        """
+        import dataclasses as _dc
+
+        from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+        try:
+            validate_gumbel_config(
+                _dc.replace(GumbelConfig(), **self.gumbel), where=f"[shape] {self.source}",
+            )
+        except ValueError as exc:
+            raise SystemExit(
+                f"{exc}. Refusing rather than dropping it is deliberate: the "
+                "value does reach GumbelConfig, so nothing downstream would "
+                "notice, and realized_gumbel() would bank it as this side's "
+                "realized search."
+            ) from exc
+
     def realized_gumbel(self) -> dict[str, float | int]:
         """Every shape-defining knob's REALIZED value, overrides or not.
 
@@ -1968,6 +2008,21 @@ def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
     }
     if args.volatility_anchor is not None:
         out["volatility_anchor"] = float(args.volatility_anchor)
+  # These are GumbelConfig fields that ride as kwargs instead of through
+  # `SideSearch.gumbel`, so `SideSearch.__post_init__` never sees them -- and
+  # they are banked into the result record (`volatility_candidate`) exactly as
+  # given. `--volatility-q-scale nan` reads as ENABLED (nan != 0.0), forces the
+  # Python path, and makes every sigma nan.
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    try:
+        validate_gumbel_config(
+            _dc.replace(GumbelConfig(), **out), where="--volatility-*",
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     return out
 
 

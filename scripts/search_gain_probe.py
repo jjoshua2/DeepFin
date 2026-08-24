@@ -644,7 +644,7 @@ def run_probe(
     import torch
 
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -665,7 +665,10 @@ def run_probe(
         tb_probe = SyzygyProbe(syzygy_path)
 
     def _cfg(sims: int) -> GumbelConfig:
-        return GumbelConfig(
+      # The ONE place `--shape`, `--shape-yaml` and `--override` become a
+      # search config, so it is where the band is checked: every one of the
+      # three reaches `SearchShape` through a bare `float()`.
+        cfg = GumbelConfig(
             simulations=int(sims),
             topk=int(shape.topk),
             temperature=0.0,
@@ -683,6 +686,11 @@ def run_probe(
             input_extra_features=extra,
             policy_encoding=pol_enc,
         )
+        try:
+            validate_gumbel_config(cfg, where=f"--shape {shape.label}")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        return cfg
 
     boards = [p.board for p in positions]
     rows: list[RowResult] = []
