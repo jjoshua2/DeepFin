@@ -66346,3 +66346,16 @@ opening/middlegame moves in Elo-convertible terms, V is cheap to re-screen there
 - ⚑ DEPLOY GATE (both): deploy SEQUENTIALLY, never bundled in one restart; each deploy
   gets its own ledger entry, voids the frozen-search regret series (frozen 2026-08-09
   20:58) and needs a fresh regret baseline. Live branch does NOT yet contain either.
+
+### 2026-08-24 01:35 — PR #454 MERGED (strict action decode) — eval arenas now FAIL on decode failure instead of laundering it
+
+Finding-6 close (external review series). Two-layer fix: index_to_move_strict raises
+ActionDecodeError (id+FEN+side+detail); the resilient decoder now COUNTS substitutions
+(`action_decode_fallbacks` in outcome_stats, riding the resume-counter merge path) with
+a one-shot stderr line. Strict at: arena_standard both loops (VOID line + exit 2, no
+JSONL row on failure), play_match_batch both sides, eval/puzzles. The old caller-side
+`not in legal_moves` guard was DEAD (every fast-decode return path already legal) and
+is deleted. 17/17 mutants; both reviews (Opus APPROVE-WITH-CHANGES → closed; Grok
+approve) consolidated and applied. Production selfplay behavior UNCHANGED (resilient,
+now observed); expected fallback rate ~0 — a nonzero `action_decode_fallbacks` after
+the next deploy is an action-space regression alarm, not noise. Undeployed on live.
