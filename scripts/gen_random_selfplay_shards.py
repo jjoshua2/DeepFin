@@ -138,13 +138,14 @@ from chess_anti_engine.mcts.gumbel import (
     SELFPLAY_GUMBEL_C_SCALE,
     GumbelConfig,
     assert_c_path_can_run,
+    validate_gumbel_config,
 )
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     POLICY_ENCODING_LC0_1858,
     POLICY_SIZE,
-    index_to_move,
+    index_to_move_strict,
     policy_mask_to_encoding,
     policy_vector_to_encoding,
 )
@@ -374,8 +375,15 @@ class WorkerResult:
 
 
 def build_gumbel_config(cfg: GenConfig) -> GumbelConfig:
-    """The search config the game loop will hand to the C tree, and nothing else."""
-    return GumbelConfig(
+    """The search config the game loop will hand to the C tree, and nothing else.
+
+    Validated here, at the construction boundary, by the repo's own
+    ``validate_gumbel_config``: an out-of-band knob would otherwise be recorded
+    in the realized line and the sidecar while the hot path quietly ignored it,
+    which is a worse outcome than a refusal for a tool whose whole product is
+    data labelled with the settings that produced it.
+    """
+    gcfg = GumbelConfig(
         simulations=int(cfg.sims),
         topk=int(cfg.topk),
         temperature=float(cfg.temperature),
@@ -387,6 +395,9 @@ def build_gumbel_config(cfg: GenConfig) -> GumbelConfig:
         input_extra_features=str(cfg.input_extra_features),
         policy_encoding=POLICY_ENCODING_LC0_1858,
     )
+    validate_gumbel_config(gcfg, where="gen_random_selfplay_shards")
+    assert_c_path_can_run(gcfg, where="gen_random_selfplay_shards")
+    return gcfg
 
 
 def build_opening_config(cfg: GenConfig) -> OpeningConfig:
@@ -504,7 +515,10 @@ def play_game(
             ),
         )
         cb.push_index(action)
-        board.push(index_to_move(action, board))
+        # STRICT, unlike production selfplay's lenient `index_to_move`: an
+        # undecodable action there costs one played move, here it would desync
+        # the two boards and mislabel every row after the split.
+        board.push(index_to_move_strict(action, board))
         actions.append(action)
 
     # The two boards are pushed independently from one action index, exactly as
@@ -646,7 +660,6 @@ def run_worker(spec: WorkerSpec) -> WorkerResult:
     rep_fix.apply(bool(cfg.history_rep_fix))
 
     gcfg = build_gumbel_config(cfg)
-    assert_c_path_can_run(gcfg, where="gen_random_selfplay_shards")
     evaluator = UniformPriorEvaluator(
         value_source=cfg.value_source,
         expected_planes=input_plane_count(cfg.input_extra_features),

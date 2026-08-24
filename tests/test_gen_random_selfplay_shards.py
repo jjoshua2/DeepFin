@@ -340,6 +340,21 @@ def test_value_source_reaches_the_game_loop(tmp_path: Path) -> None:
     assert random_game.move_trace not in (zero.move_trace, material.move_trace)
 
 
+def test_out_of_band_search_knobs_are_refused_not_recorded(tmp_path: Path) -> None:
+    """A knob the search would ignore must not reach the realized line.
+
+    `policy_temp_active` reads an out-of-band temperature as OFF (it runs per
+    leaf and cannot raise), so without the construction-boundary check the run
+    would be banked under a setting it never used.
+    """
+    with pytest.raises(ValueError, match="policy_temp"):
+        GEN.build_gumbel_config(_config(tmp_path, policy_temp=1e300))
+    with pytest.raises(ValueError, match="topk"):
+        GEN.build_gumbel_config(_config(tmp_path, topk=1))
+    # The in-band defaults still build, so the guard is not just "always raise".
+    assert GEN.build_gumbel_config(_config(tmp_path)).policy_temp == 1.0
+
+
 def test_history_encoding_reaches_the_encoder(tmp_path: Path) -> None:
     """A stub built for the wrong plane count must be refused, not evaluated."""
     cfg = _config(tmp_path, input_extra_features="v1")
