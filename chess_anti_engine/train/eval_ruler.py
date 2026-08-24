@@ -393,7 +393,8 @@ def call_closure(
 #: ruler across exactly the event it exists to catch.
 #:
 #: Each entry names the consumer expression it mirrors, because this table is
-#: only correct while it does. `test_every_trainer_weight_keys_normalisation_is_declared`
+#: only correct while it does. `test_every_normalised_weight_in_losses_is_declared`
+#: (tests/test_holdout_ruler_identity.py)
 #: DERIVES the true predicate from `compute_loss` and fails if this map drifts,
 #: so the set is maintained by measurement rather than by memory -- the first
 #: hand-written version of this shipped with 3 of the 5 clamped keys and missed

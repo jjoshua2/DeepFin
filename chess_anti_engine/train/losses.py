@@ -1399,13 +1399,145 @@ def _compute_sf_wdl_mask(
 def _normalize_sf_wdl_probs(
     sf_wdl_raw: torch.Tensor | None, *, temperature: float = 1.0
 ) -> torch.Tensor | None:
-    """Clamp negatives to 0, optionally soften via ``p^(1/T)``, renormalize."""
+    """Clamp negatives to 0, optionally soften via ``p^(1/T)``, renormalize.
+
+    ⚑⚑ THIS FUNCTION LAUNDERS ``-inf`` INTO A VALID-LOOKING DISTRIBUTION.
+    ``clamp_min(0.0)`` maps ``-inf`` to ``0.0``, so a row like
+    ``[-inf, 0.5, 0.5]`` leaves here as ``[0.0, 0.5, 0.5]`` -- finite,
+    normalized, and indistinguishable from a real label. ``+inf`` does NOT
+    survive (``inf / inf`` is NaN), so the two infinities behave OPPOSITELY
+    across this call. Any finiteness test on a label must therefore be made on
+    the RAW batch tensor, BEFORE this function -- see `_finite_blend_component`,
+    which takes both and requires both.
+    """
     if sf_wdl_raw is None:
         return None
     p = sf_wdl_raw.clamp_min(0.0)
     if temperature != 1.0 and temperature > 0.0:
         p = p.clamp_min(1e-6).pow(1.0 / float(temperature))
     return normalize_distribution(p)
+
+
+def _finite_blend_component(
+    probs: torch.Tensor | None,
+    *,
+    raw: torch.Tensor | None,
+    weight: torch.Tensor,
+    fallback: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    """One side of the value-target blend, with masked-off NaN label rows removed.
+
+    Returns ``(component, claimed_nonfinite_rows, unclaimed_nonfinite_rows)``.
+    Both counts are ``None`` when the field is absent, and device scalars
+    otherwise; the caller must pass the claimed count to
+    `_assert_blend_labels_finite` BEFORE the component reaches ``target``.
+
+    ⚑⚑ ``raw`` IS THE BATCH TENSOR AND ``probs`` IS ITS NORMALIZED FORM, AND
+    BOTH ARE TESTED. Testing only the normalized tensor is not a weaker check,
+    it is a check with a HOLE: `_normalize_sf_wdl_probs` opens with
+    ``clamp_min(0.0)``, so a CLAIMED row of ``[-inf, 0.5, 0.5]`` arrives here as
+    the perfectly ordinary ``[0.0, 0.5, 0.5]`` and TRAINS SILENTLY, while the
+    same row with ``+inf`` raises (``inf / inf`` is NaN). Same class of corrupt
+    label, opposite outcomes, decided by a sign. Testing ``raw`` first makes
+    ``-inf``, ``+inf`` and ``NaN`` one case. ``probs`` is still tested as well,
+    because the normalise is where a finite-but-degenerate row can go
+    non-finite.
+
+    ⚑ THE PRE-EXISTING PROTECTION IS KEYED ON FIELD-ABSENCE, NOT ON THE ROW MASK,
+    and that is the hazard this function closes. With the field ABSENT the caller
+    substitutes ``fallback`` wholesale and the blend is finite at any frac. With
+    the field PRESENT and a row NaN, the per-row arithmetic
+    ``weight * probs + (1 - weight) * fallback`` is ``0.0 * nan`` for a row whose
+    own mask is 0 — so a row the blend does not want at all still poisons the
+    target, at ANY frac including 0.0, and from there the CE, ``total`` and every
+    gradient. ``_normalize_sf_wdl_probs`` is not a defence either: `clamp_min`
+    and the renormalise both PROPAGATE NaN rather than sanitize it (a clamp is
+    not a validator), so this test is deliberately made on the NORMALIZED tensor
+    the blend actually consumes rather than on the raw batch field.
+
+    ⚑ TWO REGIMES, AND ONLY ONE OF THEM IS A REGIME.
+      - mask 0 (the row does not claim the label): its content is by definition
+        irrelevant, so the row takes ``fallback`` EXACTLY. `torch.where` selects,
+        it does not average, so nothing about a finite row's value changes.
+      - mask non-zero (the row CLAIMS the label and the label is NaN): dirty
+        label data, not a training regime. Counted here and raised on by
+        `_assert_blend_labels_finite` — silently substituting the fallback there
+        would train the value head on the game outcome while the shard says it
+        has an SF opinion, which is this repo's signature defect exactly.
+
+    ⚑ BIT-IDENTICAL ON EVERY CURRENTLY-FINITE PATH. ``blended`` is the parent
+    expression, character for character, and `torch.where` returns its value
+    unmodified wherever the row is finite — which is every row of every batch
+    that works today. Pinned at FULL RESOLUTION (``torch.equal`` on the
+    component, not ``==`` on a reduced scalar -- a sub-ULP target change does not
+    survive the CE) by
+    `tests/test_value_blend_nan_labels.py::test_the_component_is_bit_identical_to_the_unguarded_expression`.
+    """
+    if probs is None:
+        return fallback, None, None
+    if raw is None:
+        raise ValueError(
+            "_finite_blend_component: `raw` is required whenever `probs` is "
+            "present. The finiteness test has to be made on the batch tensor, "
+            "BEFORE `_normalize_sf_wdl_probs`'s clamp_min turns -inf into 0.0."
+        )
+    row_finite = (
+        torch.isfinite(raw).all(dim=-1, keepdim=True)
+        & torch.isfinite(probs).all(dim=-1, keepdim=True)
+    )
+    claimed = weight != 0.0
+    claimed_nonfinite = (claimed & ~row_finite).to(torch.float32).sum()
+    unclaimed_nonfinite = (~claimed & ~row_finite).to(torch.float32).sum()
+    blended = weight * probs + (1.0 - weight) * fallback
+    return (
+        torch.where(row_finite, blended, fallback),
+        claimed_nonfinite,
+        unclaimed_nonfinite,
+    )
+
+
+def _assert_blend_labels_finite(
+    counts: tuple[tuple[str, torch.Tensor | None], ...],
+) -> None:
+    """Raise when a value-label row claims to be valid and is non-finite.
+
+    ⚑⚑ DELIBERATELY NOT GATED ON ``w_wdl``, AND THE SCOPE IS THE POINT. Asked
+    whether this should stay silent on an arm that has the value head weighted
+    off, the answer is no, as stated policy: a CLAIMED value label that is
+    non-finite is a DATA DEFECT, never a training regime, and the shard is just
+    as broken when nothing happens to be reading it. Gating on the weight would
+    make the same corrupt shard raise or not raise depending on a live-reloadable
+    number, which is the worst of both -- it would go undetected on exactly the
+    arm that is not looking, and then fire later on an arm that is, with the bad
+    rows already banked in the replay window. Pinned by
+    `tests/test_value_blend_nan_labels.py::test_a_claimed_nan_label_raises_even_with_the_value_head_off`
+    so the scope is a test, not an implication.
+
+    ⚑ ONE host transfer for every field, and it is UNAVOIDABLE: a Python
+    exception is a host decision, so the counts have to be read. Batched into a
+    single `tolist()` rather than one `item()` per field because the training
+    loop already pays exactly one sync per microbatch (`_extract_loss_scalars`),
+    and this must not turn that into three.
+
+    Absent fields contribute no count and are skipped; with every field absent
+    there is no transfer at all.
+    """
+    present = [(name, c) for name, c in counts if c is not None]
+    if not present:
+        return
+    bad = torch.stack([c for _, c in present]).tolist()
+    offenders = [
+        f"{name}: {int(n)} row(s)" for (name, _), n in zip(present, bad, strict=True) if n > 0
+    ]
+    if offenders:
+        raise ValueError(
+            "non-finite value-target label rows that CLAIM to be valid "
+            f"({'; '.join(offenders)}). A row with a zero blend mask may be "
+            "non-finite -- it falls back to the game outcome exactly -- but a "
+            "row with a non-zero mask asserts the label is real, so this is "
+            "dirty label data rather than a training regime. Fix the shard; do "
+            "not lower the mask to hide it."
+        )
 
 
 def _q_to_wdl_probs(q: torch.Tensor) -> torch.Tensor:
@@ -1811,19 +1943,39 @@ def compute_loss(
         full_plies=int(wdl_terminal_outcome_full_plies),
         max_plies=float(moves_left_max_plies),
     )
-    if sf_wdl_probs is not None:
-        sf_component = (
-            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * blend_fallback_target
-        )
-    else:
-        sf_component = blend_fallback_target
     search_available_b = search_available.unsqueeze(1)
-    if search_wdl_probs is not None:
-        search_component = (
-            search_available_b * search_wdl_probs + (1.0 - search_available_b) * blend_fallback_target
-        )
-    else:
-        search_component = blend_fallback_target
+  # ⚑ A PRESENT-BUT-NaN LABEL ROW IS NOT DISARMED BY ITS OWN MASK. `0.0 * nan`
+  # is `nan`, so before this call a row with `has_sf_wdl == 0` and a NaN
+  # `sf_wdl` still poisoned `target` -> `blended_wdl_ce` -> `total`, at ANY
+  # frac including 0.0 and through `w_wdl = 1.0`, which no zero weight could
+  # ever have disarmed. Field ABSENCE was handled (the `is None` fallback);
+  # field PRESENCE with a NaN row was not. See `_finite_blend_component`.
+    sf_component, sf_bad_rows, sf_unclaimed_bad = _finite_blend_component(
+        sf_wdl_probs, raw=batch.get("sf_wdl"),
+        weight=sf_effective_b, fallback=blend_fallback_target,
+    )
+    search_component, search_bad_rows, search_unclaimed_bad = _finite_blend_component(
+        search_wdl_probs, raw=batch.get("search_wdl"),
+        weight=search_available_b, fallback=blend_fallback_target,
+    )
+  # ⚑ THE SUBSTITUTION MUST NOT BE SILENT. An unclaimed non-finite row is
+  # tolerated -- it takes the fallback -- but "tolerated" and "invisible" are
+  # different things, and a guard that quietly repairs corrupt input is the
+  # accepted-then-ignored shape this repo keeps re-growing. Counted for BOTH
+  # fields, on-device, and announced once per iteration by `Trainer.train_steps`.
+    blend_unclaimed_nonfinite_rows = torch.zeros(
+        (), device=blend_fallback_target.device, dtype=torch.float32,
+    )
+    for _unclaimed in (sf_unclaimed_bad, search_unclaimed_bad):
+        if _unclaimed is not None:
+            blend_unclaimed_nonfinite_rows = blend_unclaimed_nonfinite_rows + _unclaimed
+  # ⚑ MUST PRECEDE THE FIRST USE OF EITHER COMPONENT. A row that CLAIMS the
+  # label and is NaN gets `fallback` from the sanitiser too, so without this
+  # check the value head would train on the game outcome while the shard
+  # asserts an SF opinion -- silently, which is worse than the NaN was.
+    _assert_blend_labels_finite(
+        (("sf_wdl", sf_bad_rows), ("search_wdl", search_bad_rows)),
+    )
     if terminal_taper is None:
   # Bit-identical to the pre-feature blend: same expressions, same order.
         target += sf_wdl_frac_f * sf_component
@@ -2052,6 +2204,24 @@ def compute_loss(
   # config asking for no objective at all should be able to hide.
         total = torch.zeros_like(m_policy)
 
+  # ⚑ WHAT THE `if` ABOVE COSTS: a NaN in a zero-weighted term no longer reaches
+  # `total`, so it no longer trips `_run_optimizer_step`'s non-finite-GRADIENT
+  # guard either. Nothing is left to announce it -- the NaN survives as a silent
+  # TB column that reads like any other diagnostic. This counts exactly the terms
+  # the guard disarmed AND found non-finite, so a zero weight cannot quietly
+  # become a place NaNs go to die. `Trainer.train_steps` is the consumer and logs
+  # it once per iteration off its OWN accumulated value.
+  #
+  # Counted on-device (no `.item()`, no sync): `w == 0.0` is a host-side float
+  # comparison, so only the isfinite reduction touches the GPU, and only for the
+  # terms that are actually off.
+    disarmed_nonfinite_terms = torch.zeros((), device=m_policy.device, dtype=torch.float32)
+    for w, term in weighted_terms:
+        if w == 0.0:
+            disarmed_nonfinite_terms = disarmed_nonfinite_terms + (
+                ~torch.isfinite(term.detach())
+            ).to(torch.float32)
+
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
   #     `wdl_ce` is the name people reach for (it becomes the `wdl_loss`
@@ -2059,6 +2229,16 @@ def compute_loss(
   #   wdl_onehot_ce -> the hard one-hot diagnostic, never in `total`.
     return {
         "total": total,
+  # How many loss components were BOTH weighted off and non-finite. Zero on
+  # every healthy batch; > 0 means a NaN exists that the zero-weight guard is
+  # keeping out of `total` and that therefore no gradient check can see.
+        "disarmed_nonfinite_terms": disarmed_nonfinite_terms,
+  # How many value-label ROWS were non-finite with a zero blend mask, summed
+  # over `sf_wdl` and `search_wdl`. These are the rows `_finite_blend_component`
+  # silently replaced with the game outcome -- correct, and still a shard
+  # defect. Counts +-inf and NaN identically, which is the whole reason the
+  # finiteness test is taken on the RAW tensor.
+        "blend_unclaimed_nonfinite_rows": blend_unclaimed_nonfinite_rows,
         "policy_ce": m_policy,
         "wdl_ce": m_blended_wdl,
         "blended_wdl_ce": m_blended_wdl,
