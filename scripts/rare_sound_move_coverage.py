@@ -1291,14 +1291,59 @@ def read_shard_rows(
     return rows
 
 
+def build_sim_gumbel_config(
+    shape: SimShape,
+    *,
+    sims: int,
+    hist: str = "legacy",
+    extra: str = "v1",
+    pol_enc: str | None = None,
+):
+    """The ONE place a ``SimShape`` becomes a search config, for BOTH runners.
+
+    Module-level rather than inline in ``_ResearchRunner.__init__`` and
+    ``simulate_rows`` for the reason ``audit_targets.build_profile_search_shape``
+    is: inside those, the refusal was unreachable without a checkpoint and a
+    shard bank, so nothing could prove the guard runs. ``main()`` calls it right
+    after ``_build_shape`` -- before any load -- and
+    ``tests/test_gumbel_config_validation.py`` drives it directly.
+
+    ``--policy-temp`` / ``--c-scale`` / ``--halving-div`` / ``--topk`` reach
+    ``SimShape`` through a bare ``float()``/``int()`` in ``_build_shape``, and
+    the arm's label banks them, so a value the search would drop becomes a
+    coverage number attributed to a shape nobody ran.
+
+    ``pol_enc=None`` leaves the ``GumbelConfig`` default, which is what the
+    shard-decode runner relied on; the encodings do not participate in
+    validation.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    cfg = GumbelConfig(
+        simulations=int(sims), topk=int(shape.topk), temperature=0.0,
+        policy_temp=float(shape.policy_temp), c_scale=float(shape.c_scale),
+        c_visit=float(shape.c_visit), c_visit_root=float(shape.c_visit_root),
+        c_scale_root=float(shape.c_scale_root), q_visit_exp=float(shape.q_visit_exp),
+        q_visit_exp_root=float(shape.q_visit_exp_root),
+        halving_div=int(shape.halving_div), add_noise=bool(shape.add_noise),
+        gumbel_scale=float(shape.gumbel_scale), input_history_encoding=hist,
+        input_extra_features=extra,
+    )
+    if pol_enc is not None:
+        cfg = dataclasses.replace(cfg, policy_encoding=str(pol_enc))
+    try:
+        validate_gumbel_config(cfg, where="rare_sound_move_coverage --shape flags")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    return cfg
+
+
 class _ResearchRunner:
     """Decodes shard rows back to boards and re-searches them at one shape."""
 
     def __init__(
         self, spec: ResearchSpec, *, device: str, evaluator: object, hist: str,
     ) -> None:
-        from chess_anti_engine.mcts.gumbel import GumbelConfig
-
         self.spec = spec
         self.device = device
         self.evaluator = evaluator
@@ -1309,16 +1354,9 @@ class _ResearchRunner:
             from chess_anti_engine.tablebase import SyzygyProbe
 
             self.tb_probe = SyzygyProbe(spec.syzygy_path)
-        sh = spec.shape
-        self.cfg = GumbelConfig(
-            simulations=int(spec.sims), topk=int(sh.topk), temperature=0.0,
-            policy_temp=float(sh.policy_temp), c_scale=float(sh.c_scale),
-            c_visit=float(sh.c_visit), c_visit_root=float(sh.c_visit_root),
-            c_scale_root=float(sh.c_scale_root), q_visit_exp=float(sh.q_visit_exp),
-            q_visit_exp_root=float(sh.q_visit_exp_root),
-            halving_div=int(sh.halving_div), add_noise=bool(sh.add_noise),
-            gumbel_scale=float(sh.gumbel_scale), input_history_encoding=hist,
-            input_extra_features=str(spec.input_extra_features),
+        self.cfg = build_sim_gumbel_config(
+            spec.shape, sims=int(spec.sims), hist=hist,
+            extra=str(spec.input_extra_features),
         )
 
     def run(
@@ -1692,7 +1730,6 @@ def simulate_rows(
         move_regrets,
     )
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
@@ -1712,15 +1749,8 @@ def simulate_rows(
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
     evaluator = LocalModelEvaluator(model, device=device)
 
-    cfg = GumbelConfig(
-        simulations=int(sims), topk=int(shape.topk), temperature=0.0,
-        policy_temp=float(shape.policy_temp), c_scale=float(shape.c_scale),
-        c_visit=float(shape.c_visit), c_visit_root=float(shape.c_visit_root),
-        c_scale_root=float(shape.c_scale_root), q_visit_exp=float(shape.q_visit_exp),
-        q_visit_exp_root=float(shape.q_visit_exp_root),
-        halving_div=int(shape.halving_div), add_noise=bool(shape.add_noise),
-        gumbel_scale=float(shape.gumbel_scale), input_history_encoding=hist,
-        input_extra_features=extra, policy_encoding=pol_enc,
+    cfg = build_sim_gumbel_config(
+        shape, sims=int(sims), hist=hist, extra=extra, pol_enc=pol_enc,
     )
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
@@ -2393,12 +2423,18 @@ def require_calibration_anchor(
 
 
 def _build_shape(args: argparse.Namespace) -> SimShape:
-    return SimShape(
+    shape = SimShape(
         c_scale=float(args.c_scale), policy_temp=float(args.policy_temp),
         topk=int(args.topk), c_visit=float(args.c_visit),
         halving_div=int(args.halving_div), vloss_weight=int(args.vloss_weight),
         add_noise=not args.no_noise, gumbel_scale=float(args.gumbel_scale),
     )
+  # Refuse HERE: this is the one place the flags become a shape and every
+  # subcommand goes through it, so a value the search would silently drop costs
+  # a second instead of a checkpoint load plus a shard sweep. `simulations` is
+  # not a validated field, so the sims passed in is immaterial to the check.
+    build_sim_gumbel_config(shape, sims=int(getattr(args, "sims", 1) or 1))
+    return shape
 
 
 def main(argv: list[str] | None = None) -> int:

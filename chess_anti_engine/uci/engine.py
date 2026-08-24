@@ -10,6 +10,7 @@ path end-to-end so we can play a game.
 from __future__ import annotations
 
 import logging
+import math
 import sys
 import threading
 import time
@@ -754,7 +755,18 @@ class Engine:
             )
             return None
         lo, hi = opt.lo, opt.hi
-        if (lo is not None and value < lo) or (hi is not None and value > hi):
+      # ⚑ The finiteness clause is load-bearing, not belt-and-braces. Every
+      # comparison against `nan` is False, so the range pair alone waved
+      # `PolicyTemperature nan` through: it was stored, `searchconfig` reported
+      # it LIVE, and the search ran UNTEMPERED because `policy_temp_active(nan)`
+      # is False. The startup half of this same guard
+      # (`__main__._refuse_out_of_range_startup_value`) writes the range as the
+      # chained `lo <= v <= hi`, which refuses nan -- two halves of one guard,
+      # sharing bounds and disagreeing on the one value that is silently
+      # dropped rather than loudly wrong.
+        if not math.isfinite(value) or (
+            (lo is not None and value < lo) or (hi is not None and value > hi)
+        ):
             _println(
                 f"info string {opt.name}: {value} is out of range "
                 f"[{lo}, {hi}]; keeping {self._options.search_value(opt.field)}"

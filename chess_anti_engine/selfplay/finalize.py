@@ -22,6 +22,7 @@ import numpy as np
 from chess_anti_engine.moves import (
     FULL_TO_COMPACT_POLICY,
     POLICY_SIZE,
+    drain_decode_fallback_count,
     move_to_index_for_encoding,
     policy_index_for_encoding,
     policy_mask_to_encoding,
@@ -507,6 +508,16 @@ def _update_aggregate_stats(
     if pending:
         _merge_outcome_stats(outcome_stats, dict(pending))
         pending.clear()
+    # Action ids that named no legal move and were silently replaced with the
+    # first legal one (`moves/encode.index_to_move_fast`). PROCESS-wide since
+    # the last finalized game, not this game's own count — concurrent games in
+    # one worker share the counter and the shard sums them regardless. It rides
+    # the same path the resume counters do, so a substitution is a number in
+    # result.json rather than a stderr line nobody diffs; a counter no
+    # production path reads would be the same defect it exists to expose.
+    decode_fallbacks = drain_decode_fallback_count()
+    if decode_fallbacks:
+        _inc_outcome(outcome_stats, "action_decode_fallbacks", decode_fallbacks)
     if source.startswith("fenlist"):
         # Blind-spot FEN seeds are otherwise invisible in result.json (the
         # per-source outcome_stats aren't plumbed through the ingest-time

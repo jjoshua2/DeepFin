@@ -19,7 +19,7 @@ from chess_anti_engine.mcts.gumbel import (
     warn_volatility_python_path,
 )
 from chess_anti_engine.mcts.puct import run_mcts_many
-from chess_anti_engine.moves import index_to_move
+from chess_anti_engine.moves import index_to_move_fast, index_to_move_strict
 from chess_anti_engine.selfplay.opening import OpeningConfig, make_starting_board
 
 try:
@@ -198,14 +198,33 @@ def pick_moves_for_boards(
 
 
 def apply_actions_to_boards(
-    boards: list[chess.Board], idxs: list[int], actions: list[int],
+    boards: list[chess.Board], idxs: list[int], actions: list[int], *, strict: bool,
 ) -> None:
-    """Push each chosen action onto its board (fall back to first legal if illegal)."""
+    """Push each chosen action onto its board.
+
+    ``strict`` is REQUIRED and deliberately has no default, because the two
+    modes answer different questions and the wrong one is silent:
+
+    * MEASUREMENT (``True``) — an id that names no legal move raises
+      ``ActionDecodeError``. An arena that instead plays an unrelated legal move
+      keeps scoring games, and the action-space regression that caused it
+      reaches the operator as unattributable Elo loss.
+    * GAME GENERATION (``False``) — substitute the first legal move and keep
+      playing, so one bad id costs a move rather than a session. The
+      substitution is counted by ``decode_fallback_count()``.
+
+    There is no legality re-check here on purpose. Every return path of
+    ``index_to_move_fast`` is already a legal move — it substitutes internally —
+    so the ``mv not in legal_moves`` guard that used to sit in this loop could
+    never fire, and its presence is what made the substitution look handled.
+    """
     for i, a in zip(idxs, actions, strict=True):
-        mv = index_to_move(int(a), boards[i])
-        if mv not in boards[i].legal_moves:
-            mv = next(iter(boards[i].legal_moves))
-        boards[i].push(mv)
+        board = boards[i]
+        board.push(
+            index_to_move_strict(int(a), board)
+            if strict
+            else index_to_move_fast(int(a), board),
+        )
 
 
 def split_active_by_side_to_move(
@@ -282,6 +301,12 @@ def play_match_batch(
 
     Note `PLAY_SEARCH_DEFAULTS` deliberately carries no `simulations`, so the
     caller's sim budget is never overridden here.
+
+    ⚑ Raises `ActionDecodeError` when an action id names no legal move: this is
+    a measurement, and playing a substitute move on would score a corrupted
+    match. Any caller running INSIDE a training process must therefore catch it
+    and record the measurement VOID rather than let it propagate — an uncaught
+    raise takes the host process down over one unscorable match.
     """
     g = int(games)
     if g <= 0:
@@ -327,8 +352,15 @@ def play_match_batch(
         a_to_move, b_to_move = split_active_by_side_to_move(
             active, boards, a_plays_white,
         )
-        apply_actions_to_boards(boards, a_to_move, _pick(model_a, a_to_move, sims=sims_a))
-        apply_actions_to_boards(boards, b_to_move, _pick(model_b, b_to_move, sims=sims_b))
+        # strict: every caller of `play_match_batch` is an arena/gate/eval path
+        # (see the docstring above), so a decode failure corrupts a measurement
+        # rather than costing a training row.
+        apply_actions_to_boards(
+            boards, a_to_move, _pick(model_a, a_to_move, sims=sims_a), strict=True,
+        )
+        apply_actions_to_boards(
+            boards, b_to_move, _pick(model_b, b_to_move, sims=sims_b), strict=True,
+        )
 
     a_win, a_draw, a_loss = _tally_match_results(boards, a_plays_white)
 

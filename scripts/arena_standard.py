@@ -42,7 +42,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import chess
 import numpy as np
@@ -55,6 +55,7 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.moves import ActionDecodeError
 
 # Called once per FINISHED game when --pgn-out is on, else None. Keyword-only so
 # the three play loops (rolling / chunked / matched_time) cannot silently pass
@@ -214,6 +215,54 @@ class SideSearch:
   # answers for rows the field never covered is the `reco_diff misses absent
   # keys` failure mode, and it would keep answering after tree carry lands.
     tree_reuse: str = "cold"
+
+    def __post_init__(self) -> None:
+        """Refuse a side carrying a knob value the search will not run.
+
+        Here rather than in ``apply_search_overrides`` because EVERY side is
+        built through this constructor -- the resolved shape, the CLI overrides
+        layered on top of it, and any programmatic caller (``elo_vs_sims.py``)
+        -- so "a SideSearch that exists is one the search will actually run" is
+        structural instead of being true of the two call sites someone
+        remembered. It still fires minutes early: ``main()`` resolves both sides
+        before any checkpoint is loaded or compiled.
+
+        The check itself is ``mcts.gumbel.validate_gumbel_config``, the ONE
+        home of the bands, applied to the config exactly as ``match.py`` will
+        (``dataclasses.replace`` onto a ``GumbelConfig``) so the guard shares
+        the criterion's instrument.
+
+        The hole it closes: ``--cand-gumbel policy_temp=1e300`` reached
+        ``dataclasses.replace`` without passing the yaml loader's validator, so
+        the search ran UNTEMPERED (``policy_temp_active(1e300)`` is False) while
+        ``realized_gumbel`` banked 1e300 into the JSONL as this side's realized
+        setting. A sweep over out-of-band temperatures is then a set of
+        IDENTICAL arms recorded as different ones -- the c_puct Swiss (audit
+        2026-08-03 F2) with a live knob instead of a dead one.
+
+        ⚑ ``frozen=True`` freezes the ATTRIBUTES, not the ``gumbel`` dict they
+        point at: ``side.gumbel["policy_temp"] = 1e300`` after construction
+        mutates in place and never re-enters this check. Nothing in this script
+        does that (every layer builds a new ``SideSearch``), and copying the
+        dict would only move the hole one alias further out, so this is recorded
+        rather than defended against -- but a future in-place edit is the way
+        past the guard, and it should build a new side instead.
+        """
+        import dataclasses as _dc
+
+        from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+        try:
+            validate_gumbel_config(
+                _dc.replace(GumbelConfig(), **self.gumbel), where=f"[shape] {self.source}",
+            )
+        except ValueError as exc:
+            raise SystemExit(
+                f"{exc}. Refusing rather than dropping it is deliberate: the "
+                "value does reach GumbelConfig, so nothing downstream would "
+                "notice, and realized_gumbel() would bank it as this side's "
+                "realized search."
+            ) from exc
 
     def realized_gumbel(self) -> dict[str, float | int]:
         """Every shape-defining knob's REALIZED value, overrides or not.
@@ -614,7 +663,17 @@ def apply_search_overrides(
                 "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
                 "over it would return a flat null and read as a measurement."
             )
-        gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        try:
+            gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        except ValueError:
+            # `int("2.5")` and `float("abc")` both land here. Refused in this
+            # function's own style rather than as a raw traceback: an int knob
+            # given 2.5 would otherwise have been truncated to 2 by the
+            # consumer if it parsed, which is the same silent-value defect.
+            raise SystemExit(
+                f"--*-gumbel: {k}={v!r} is not "
+                f"{'an integer' if k in _GUMBEL_INT_KEYS else 'a number'}"
+            ) from None
         extra.append(part)
     if vloss_weight is not None:
         extra.append(f"vloss_weight={int(vloss_weight)}")
@@ -1064,7 +1123,10 @@ def play_paired_games_matched_sims(
                 gumbel_target_batch=side.target_batch,
                 **extra,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: this is the deciding Elo instrument. Substituting a legal
+            # move for an id that decoded to nothing would keep the arena
+            # scoring games under a broken action space.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
 
     def _game_score(i: int) -> float:
         res = adjudicated[i] or boards[i].result(claim_draw=True)
@@ -1303,7 +1365,8 @@ def play_paired_games_matched_sims_rolling(
                 gumbel_target_batch=side.target_batch,
                 **extra,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: same instrument as the chunked path above.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
         for i in active:
             gplies[i] += 1
 
@@ -1526,6 +1589,30 @@ def append_result(record: dict, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("a") as fh:
         fh.write(json.dumps(record) + "\n")
+
+
+def _abort_void(exc: ActionDecodeError, *, completed_pairs: int) -> NoReturn:
+    """End the run VOID: named line on stderr, non-zero exit, no result row.
+
+    A corrupted instrument must not bank a reading — `append_result` is never
+    reached, so the JSONL keeps no row for this arena and no downstream fit can
+    pick one up. The pairs that DID complete are named rather than left as a
+    bare traceback: the operator needs to know how much of the budget burned.
+    ``completed_pairs`` is what the driver had banked, so the rolling path
+    reports 0 (it returns only on success) while the chunked path reports the
+    chunks that finished.
+    """
+    print(
+        f"[arena] VOID — action id {exc.index} decoded to no legal move "
+        f"({exc.detail}); side to move {'white' if exc.turn else 'black'}, "
+        f"fen {exc.fen!r}. {completed_pairs} complete pair(s) had been banked "
+        "by the driver; NO result row was written. The action space and the "
+        "checkpoints disagree, so every game in this run is unscorable — "
+        "rerun after fixing the encoding, do not salvage the partial score.",
+        file=sys.stderr,
+        flush=True,
+    )
+    raise SystemExit(2)
 
 
 def print_summary(summary: PentanomialSummary) -> None:
@@ -1775,71 +1862,75 @@ def run_arena(
                 f"(<={tb_max_pieces}-man, {syzygy_path})",
                 flush=True,
             )
-        if rolling:
-            # Rolling pool: fixed active-game count => fixed batch shape => compile
-            # reuses one graph (no per-shape thrash), and the GPU never drains until
-            # the very end (no per-chunk tail).
-            print(
-                f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
-                f"start a fresh one as each finishes",
-                flush=True,
-            )
-            pair_scores = play_paired_games_matched_sims_rolling(
-                model_candidate, model_reference, openings,
-                device=device, rng=rng,
-                sims_candidate=sims_candidate, sims_reference=sims_reference,
-                max_plies=max_plies, temperature=temperature,
-                gumbel_add_noise=gumbel_add_noise,
-                volatility_candidate=volatility_candidate,
-                syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                pool_size=int(max_concurrent_games),
-                search_candidate=search_candidate, search_reference=search_reference,
-                report_every=int(report_every),
-                deadline=deadline,
-                pgn_sink=pgn_sink,
-            )
-        else:
-            # Chunked: plays each chunk of `max_concurrent_games` to completion
-            # (drains per chunk). Numerically identical (pair scores concatenate).
-            chunk_pairs = max(1, int(max_concurrent_games) // 2)
-            n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
-            pair_scores = []
-            for ci in range(0, len(openings), chunk_pairs):
-                # Chunk granularity: a chunk plays to completion, so this stops
-                # BEFORE starting one that would run past the budget rather
-                # than mid-chunk. Rolling (the default, and what the ratchet
-                # runs) stops per ply.
-                if deadline is not None and time.time() >= deadline:
-                    print(
-                        f"[arena] max-seconds reached: stopping before chunk "
-                        f"{ci // chunk_pairs + 1}/{n_chunks} with "
-                        f"{len(pair_scores)} pairs complete",
-                        flush=True,
-                    )
-                    break
-                sub = openings[ci:ci + chunk_pairs]
+        pair_scores = []
+        try:
+            if rolling:
+                # Rolling pool: fixed active-game count => fixed batch shape => compile
+                # reuses one graph (no per-shape thrash), and the GPU never drains until
+                # the very end (no per-chunk tail).
                 print(
-                    f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
-                    f"{len(sub)} pairs ({2 * len(sub)} games)",
+                    f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                    f"start a fresh one as each finishes",
                     flush=True,
                 )
-                pair_scores.extend(play_paired_games_matched_sims(
-                    model_candidate, model_reference, sub,
+                pair_scores = play_paired_games_matched_sims_rolling(
+                    model_candidate, model_reference, openings,
                     device=device, rng=rng,
                     sims_candidate=sims_candidate, sims_reference=sims_reference,
                     max_plies=max_plies, temperature=temperature,
                     gumbel_add_noise=gumbel_add_noise,
                     volatility_candidate=volatility_candidate,
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                    search_candidate=search_candidate,
-                    search_reference=search_reference,
+                    pool_size=int(max_concurrent_games),
+                    search_candidate=search_candidate, search_reference=search_reference,
+                    report_every=int(report_every),
+                    deadline=deadline,
                     pgn_sink=pgn_sink,
-                    pair_id_offset=ci,
-                ))
-                print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
-                print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
-        if syzygy_tb is not None:
-            syzygy_tb.close()
+                )
+            else:
+                # Chunked: plays each chunk of `max_concurrent_games` to completion
+                # (drains per chunk). Numerically identical (pair scores concatenate).
+                chunk_pairs = max(1, int(max_concurrent_games) // 2)
+                n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
+                for ci in range(0, len(openings), chunk_pairs):
+                    # Chunk granularity: a chunk plays to completion, so this stops
+                    # BEFORE starting one that would run past the budget rather
+                    # than mid-chunk. Rolling (the default, and what the ratchet
+                    # runs) stops per ply.
+                    if deadline is not None and time.time() >= deadline:
+                        print(
+                            f"[arena] max-seconds reached: stopping before chunk "
+                            f"{ci // chunk_pairs + 1}/{n_chunks} with "
+                            f"{len(pair_scores)} pairs complete",
+                            flush=True,
+                        )
+                        break
+                    sub = openings[ci:ci + chunk_pairs]
+                    print(
+                        f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
+                        f"{len(sub)} pairs ({2 * len(sub)} games)",
+                        flush=True,
+                    )
+                    pair_scores.extend(play_paired_games_matched_sims(
+                        model_candidate, model_reference, sub,
+                        device=device, rng=rng,
+                        sims_candidate=sims_candidate, sims_reference=sims_reference,
+                        max_plies=max_plies, temperature=temperature,
+                        gumbel_add_noise=gumbel_add_noise,
+                        volatility_candidate=volatility_candidate,
+                        syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                        search_candidate=search_candidate,
+                        search_reference=search_reference,
+                        pgn_sink=pgn_sink,
+                        pair_id_offset=ci,
+                    ))
+                    print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
+                    print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
+        except ActionDecodeError as exc:
+            _abort_void(exc, completed_pairs=len(pair_scores))
+        finally:
+            if syzygy_tb is not None:
+                syzygy_tb.close()
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
         pair_scores = play_paired_games_matched_time(
@@ -1953,8 +2044,94 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help=f"JSONL results log (default: {DEFAULT_RESULTS_PATH})")
 
 
+def resolve_sides_from_args(args) -> tuple[SideSearch, SideSearch]:
+    """The complete ``matched_sims`` search resolution, exactly as ``main()`` does it.
+
+    Module-level rather than a block inside ``main()`` so the ORDER below is
+    drivable by a test: shape -> per-side overrides -> refuse the flags the run
+    would discard -> print. A guard whose invocation only ``main()`` performs is
+    a guard nothing can prove runs, which is the defect this whole change is
+    about; ``main()`` needs two checkpoints, so nothing was ever going to drive
+    it there.
+
+    Resolves BEFORE any model load, so a bad shape or an unrunnable knob costs a
+    second rather than a four-minute compile.
+    """
+    if args.search_shape is None:
+        raise SystemExit(
+            "--search-shape is required for matched_sims "
+            f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
+            "for anything judging the training loop."
+        )
+    base = resolve_search_shape(args.search_shape)
+    side_candidate = apply_search_overrides(
+        base, spec=args.cand_gumbel,
+        vloss_weight=args.cand_vloss_weight,
+        target_batch=args.cand_target_batch,
+    )
+    side_reference = apply_search_overrides(
+        base, spec=args.ref_gumbel,
+        vloss_weight=args.ref_vloss_weight,
+        target_batch=args.ref_target_batch,
+    )
+    refuse_flags_the_arena_would_discard(base, args)
+  # AFTER the overrides, and after the shape is final: the sides are what will
+  # actually be searched with. `describe()` therefore reports the realized
+  # values including every CLI override, which is what makes the printed record
+  # downstream of every override application site.
+    for label, side in (("candidate", side_candidate), ("reference", side_reference)):
+        print(f"[shape] {label}: {side.describe()}", flush=True)
+    _warn_noise_schedule_deviation(base, add_noise=not args.no_gumbel_noise)
+    return side_candidate, side_reference
+
+
+def refuse_flags_the_arena_would_discard(base: SideSearch, args) -> None:
+    """Refuse flags this run would accept, print, bank -- and then not use.
+
+    Both cases below are the PR's own defect one level out: the value is not
+    out of band, it is perfectly legal, and the arena simply never applies it.
+
+    1. ``--volatility-*`` under ``--search-shape training``. ``match.py`` builds
+       the config with the volatility kwargs and THEN applies ``side.gumbel``
+       over it (``dataclasses.replace``, match.py:140-152). The training shape's
+       ``gumbel`` dict carries ``volatility_q_scale`` / ``volatility_fpu`` /
+       ``volatility_anchor`` read from production (0.0 / 0.0), so the replace
+       overwrites the CLI value with production's zero and the Python volatility
+       path never switches on -- while ``volatility_candidate`` is banked into
+       the result record naming the operator's number. The PLAY shape carries no
+       volatility keys, so there the flags survive; that combination stays legal.
+    2. A non-finite ``--temperature``. ``sample_action_with_temperature`` gates
+       on ``temperature > 0``, which is False for ``nan``, so the arena plays
+       pure argmax while the JSONL records ``temperature: nan``.
+    """
+    if base.shape == "training" and _volatility_kwargs_from_args(args) is not None:
+        raise SystemExit(
+            "--volatility-* with --search-shape training: the training shape's "
+            "gumbel dict carries volatility_q_scale/volatility_fpu from "
+            "production (both 0.0) and match.py applies it AFTER the volatility "
+            "kwargs, so your value is overwritten before the search sees it -- "
+            "while the result record banks it as volatility_candidate. Use "
+            "--search-shape play for a volatility A/B, or drop the flags."
+        )
+    temperature = float(args.temperature)
+    if not math.isfinite(temperature):
+        raise SystemExit(
+            f"--temperature {temperature!r}: sample_action_with_temperature "
+            "gates on `temperature > 0`, which is False for a non-finite value, "
+            "so the arena would play pure argmax and record your value as the "
+            "temperature it played at."
+        )
+
+
 def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
-    """CANDIDATE-side volatility search kwargs, or None when all flags are off."""
+    """CANDIDATE-side volatility search kwargs, or None when all flags are off.
+
+    ⚑ The all-off early return happens BEFORE validation, deliberately: with
+    both scales at 0.0 there is no volatility search to configure, and
+    ``volatility_anchor`` alone cannot switch one on (this same predicate is
+    what ``volatility_search_enabled`` asks). Validating a dict that is never
+    built would refuse a run over a knob nothing reads.
+    """
     if float(args.volatility_q_scale) == 0.0 and float(args.volatility_fpu) == 0.0:
         return None
     if args.mode != "matched_sims":
@@ -1968,6 +2145,21 @@ def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
     }
     if args.volatility_anchor is not None:
         out["volatility_anchor"] = float(args.volatility_anchor)
+  # These are GumbelConfig fields that ride as kwargs instead of through
+  # `SideSearch.gumbel`, so `SideSearch.__post_init__` never sees them -- and
+  # they are banked into the result record (`volatility_candidate`) exactly as
+  # given. `--volatility-q-scale nan` reads as ENABLED (nan != 0.0), forces the
+  # Python path, and makes every sigma nan.
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    try:
+        validate_gumbel_config(
+            _dc.replace(GumbelConfig(), **out), where="--volatility-*",
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     return out
 
 
@@ -2160,32 +2352,7 @@ def main() -> None:
     # run_arena reject the combination.
     side_candidate = side_reference = None
     if args.mode == "matched_sims":
-        if args.search_shape is None:
-            raise SystemExit(
-                "--search-shape is required for matched_sims "
-                f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
-                "for anything judging the training loop."
-            )
-        base = resolve_search_shape(args.search_shape)
-        side_candidate = apply_search_overrides(
-            base, spec=args.cand_gumbel,
-            vloss_weight=args.cand_vloss_weight,
-            target_batch=args.cand_target_batch,
-        )
-        side_reference = apply_search_overrides(
-            base, spec=args.ref_gumbel,
-            vloss_weight=args.ref_vloss_weight,
-            target_batch=args.ref_target_batch,
-        )
-      # AFTER the overrides, and after the shape is final: the sides are what
-      # will actually be searched with. `describe()` therefore reports the
-      # realized values including every CLI override, which is what makes the
-      # printed record downstream of every override application site.
-        for label, side in (("candidate", side_candidate), ("reference", side_reference)):
-            print(f"[shape] {label}: {side.describe()}", flush=True)
-        _warn_noise_schedule_deviation(
-            base, add_noise=not args.no_gumbel_noise,
-        )
+        side_candidate, side_reference = resolve_sides_from_args(args)
     else:
         # matched_time launches UCI subprocesses, which carry their own search.
         # EVERY in-process search flag is inert here, not just --search-shape:

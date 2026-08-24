@@ -13,6 +13,7 @@ import concurrent.futures
 import io
 from collections.abc import Mapping
 import logging
+import math
 import os
 import sys
 import threading
@@ -1094,7 +1095,21 @@ def _refuse_out_of_range_startup_value(
     in the docs rather than on the handshake line, but the handler enforces it,
     so startup does too.
     """
-    if isinstance(value, bool) or opt.lo is None or opt.hi is None:
+    if isinstance(value, bool):
+        return
+  # ⚑ Finiteness FIRST, before the "no bounds" early return. Every registered
+  # float option has bounds today, so the chained comparison below already
+  # refuses `nan`; the day one is added without them, this early return would
+  # reopen exactly the hole the `setoption` half had -- `nan` stored, reported
+  # LIVE, and searched as if the knob were off.
+    if not math.isfinite(float(value)):
+        raise SystemExit(
+            f"--{dest.replace('_', '-')} {value!r}: {opt.name} must be finite. "
+            "Every gate that reads it is a comparison, and a comparison against "
+            "a non-finite value is False, so the engine would run as if the "
+            "knob were unset while reporting your value as realized."
+        )
+    if opt.lo is None or opt.hi is None:
         return
     if opt.lo <= float(value) <= opt.hi:
         return
