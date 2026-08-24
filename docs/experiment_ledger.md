@@ -66377,3 +66377,36 @@ defaults. FOLLOW-UP DECIDED (Josh): DELETE the C-only descent trio q_visit_exp /
 q_visit_floor / q_global_scale from both paths (never in production, no WORKED
 verdict, root-transform family is the winner and stays); refuse-guard only as
 fallback if C ABI entanglement balloons the diff.
+
+### 2026-08-24 03:50 — PR #457 MERGED (descent q-knob deletion) — q_visit_exp / q_visit_floor / q_global_scale are GONE
+
+Both-path simplification per Josh's "simplify both paths". The C is untouched
+(option b): `_mcts_tree.c` keeps the trio as optional positionals with defaults
+1.0/0/-1.0, and both wrapper call sites now pass those exact values via ONE shared
+`_start_gumbel_trailing_args` helper (round-2 fix: a spy tree structurally cannot
+reach the pipelined group site — passing `tree=` disables the pipeline — so per-site
+literals were unobservable at one of two sites; the shared tuple makes one
+observation cover both by construction, proven by re-running the two group-site
+mutants that previously survived). Bit-identical at defaults: 16-cell parity
+battery SHA equal parent/branch; 364→379 parity tests; lint delta zero.
+
+⚑ PREMISE CORRECTION (recorded in docs/rl_loop_audit.md): the deletion spec called
+the trio "silent no-ops on the Python path" — FALSE for the Python ROOT.
+`_root_sigma_scale` read `q_visit_exp` as the `q_visit_exp_root>=90` fallback and
+honored `q_visit_floor>=0`; measured moving the chosen action 4/4 positions at
+non-default values. Deletion is safe because the defaults are now PINNED into both
+paths, not because the knobs were dead.
+
+RESIDUALS (routed, not fixed here):
+- **`full_tree` is a C-ONLY reachable field** — refutes the PR's original "no
+  C-only field remains" claim (Opus F2, corrected in the body). `--cand-gumbel
+  full_tree=0` is accepted, flips the C search to a PUCT descent, is silently
+  ignored on Python, and banks as realized. Task #264 STAYS OPEN scoped to this.
+- `policy_encoding`: read by NEITHER search path (4 external setters).
+- volatility_anchor/factor_clip: inert on BOTH paths (guard chain verified) — no
+  divergence, deferral stands.
+
+Deploy: Python-only, no rebuild, rides the next restart onto main-derived code;
+not data-affecting (bit-identical at production defaults), no readout owed.
+Reviews: Opus APPROVE-WITH-CHANGES (F1-F8, all closed or routed), Grok approve
+(11 findings, all closed or routed). Reviewer ≠ author held at every stage.
