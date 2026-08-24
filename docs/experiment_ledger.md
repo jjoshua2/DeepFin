@@ -66359,3 +66359,21 @@ is deleted. 17/17 mutants; both reviews (Opus APPROVE-WITH-CHANGES → closed; G
 approve) consolidated and applied. Production selfplay behavior UNCHANGED (resilient,
 now observed); expected fallback rate ~0 — a nonzero `action_decode_fallbacks` after
 the next deploy is an action-space regression alarm, not noise. Undeployed on live.
+
+### 2026-08-24 01:58 — PR #455 MERGED (central gumbel config validation) — finding-5 close
+
+validate_gumbel_config() beside the band constants, wired at 9 external boundaries
+(arena SideSearch.__post_init__ + volatility kwargs, audit_targets parse/train/play
+rows, eval_puzzles, search_gain_probe, rare_sound_move_coverage, UCI setoption NaN
+fix). Refuses: non-finite anywhere (numpy scalars included), inert policy_temp,
+topk<2 and halving_div<2 (both silently clamped in Python — the "C rejects it"
+claim was FALSE, corrected), fractional int knobs, --volatility-* with
+--search-shape training (validated-then-discarded combination). The Python halving
+now HONORS halving_div (helpers unified with root_parallel_gumbel; div=2 bit-identity
+proven). 19/19 mutants; Opus + Grok reviews consolidated; the fixer refuted one
+review claim with a mutant (pt != 1.0 clause is load-bearing — policy_temp_active(1.0)
+is False by construction). Undeployed on live; no production behavior change at
+defaults. FOLLOW-UP DECIDED (Josh): DELETE the C-only descent trio q_visit_exp /
+q_visit_floor / q_global_scale from both paths (never in production, no WORKED
+verdict, root-transform family is the winner and stays); refuse-guard only as
+fallback if C ABI entanglement balloons the diff.
