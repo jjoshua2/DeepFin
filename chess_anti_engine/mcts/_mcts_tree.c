@@ -50,6 +50,11 @@
  * evaluations. Providers arrive at run time through their published capsule. */
 #include "_value_provider.h"
 
+/* The solved lattice and the search-time terminal test. Extracted from this
+ * file so the check resolver decides "terminal, and worth what" with the SAME
+ * code the tree does, rather than a second copy that can drift. */
+#include "_search_terminal.h"
+
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
 
@@ -210,11 +215,8 @@ static int extract_cboards(PyObject *list, int32_t n,
  *   DRAW:    STM provably draws (no winning child; at least one drawing child;
  *            no losing child — or terminal stalemate / 50-move / repetition /
  *            insufficient material).
- * Backup is min/max-style and respects the side-flip across plies. */
-#define SOLVED_UNKNOWN  0
-#define SOLVED_WIN      1
-#define SOLVED_LOSS    -1
-#define SOLVED_DRAW     2
+ * Backup is min/max-style and respects the side-flip across plies.
+ * SOLVED_UNKNOWN/WIN/LOSS/DRAW are defined in _search_terminal.h. */
 
 #define VLOSS_MODE_LEGACY        0
 #define VLOSS_MODE_VIRTUAL_MEAN  1
@@ -846,50 +848,9 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
 }
 
 
-/* Flip a solved status across one ply (parent <-> child STM swap).
- *   parent sees a child WIN  → parent considers it LOSS-for-self
- *   parent sees a child LOSS → parent considers it WIN-for-self
- *   DRAW and UNKNOWN are unchanged. */
-static inline int8_t solved_flip(int8_t s) {
-    if (s == SOLVED_WIN) return SOLVED_LOSS;
-    if (s == SOLVED_LOSS) return SOLVED_WIN;
-    return s;  /* DRAW or UNKNOWN */
-}
-
-
-/* Solved status for a known-terminal CBoard. Caller must have already
- * confirmed cboard_is_game_over(b). Companion to cboard_terminal_value:
- * checkmate ⇒ STM lost; everything else terminal (stalemate / 50-move /
- * repetition / insufficient material) ⇒ DRAW. */
-static inline int8_t cboard_terminal_solved_status(const CBoard *b) {
-    return cboard_is_checkmate(b) ? SOLVED_LOSS : SOLVED_DRAW;
-}
-
-
-/* Search-time terminal detection. Returns 1 and writes terminal Q + solved
- * status if the position should be treated as terminal during MCTS search:
- *   - true game-over (checkmate / stalemate / 3-fold / 50-move / insufficient)
- *   - LC0-style 2-fold-as-draw: any prior occurrence inside the search tree
- *     means the side-to-move can force the third repetition, so the position
- *     is draw-or-better for whichever side prefers it. Treating 2-fold as a
- *     hard draw lets the search prune perpetual-check / shuffling lines
- *     immediately instead of waiting for the third visit.
- * Q for 2-fold is 0.0 (draw); cboard_terminal_value already returns 0.0 for
- * any non-game-over position, but we set it explicitly here for clarity. */
-static inline int cboard_search_terminal(const CBoard *b,
-                                          double *out_q, int8_t *out_solved) {
-    if (cboard_is_game_over(b)) {
-        *out_q = (double)cboard_terminal_value(b);
-        *out_solved = cboard_terminal_solved_status(b);
-        return 1;
-    }
-    if (cboard_is_repetition(b)) {
-        *out_q = 0.0;
-        *out_solved = SOLVED_DRAW;
-        return 1;
-    }
-    return 0;
-}
+/* solved_flip, cboard_terminal_solved_status and cboard_search_terminal moved
+ * to _search_terminal.h — the resolver needs them and one definition beats two.
+ */
 
 
 /* Resolve `node`'s solved status from its expanded children, returning the
@@ -4612,9 +4573,21 @@ static PyObject *MCTSTree_find_child(MCTSTreeObject *self, PyObject *args) {
  * each. A provider outside this table is still installable — pass its capsule
  * directly — so adding one needs no edit here; the table only exists so the
  * common case reads as set_value_provider("nnue", path). */
-static const struct { const char *name; const char *module; } CAE_VALUE_PROVIDER_MODULES[] = {
-    {"nnue", "chess_anti_engine.nnue._nnue_ext"},
-    {NULL, NULL}
+/* Providers this build knows by name. ⚑ The ATTRIBUTE is part of the entry, not
+ * a constant: one module publishes several capsules (the raw evaluator and the
+ * two resolver-backed arms), so a hard-wired "value_provider_capsule" would
+ * accept every arm's name and install the same provider for all of them —
+ * exactly a value accepted and then ignored. Any provider not listed here is
+ * still installable by passing its capsule directly. */
+static const struct {
+    const char *name;
+    const char *module;
+    const char *attribute;
+} CAE_VALUE_PROVIDER_MODULES[] = {
+    {"nnue",         "chess_anti_engine.nnue._nnue_ext", "value_provider_capsule"},
+    {"nnue-static",  "chess_anti_engine.nnue._nnue_ext", "static_arm_capsule"},
+    {"nnue-qsearch", "chess_anti_engine.nnue._nnue_ext", "qsearch_arm_capsule"},
+    {NULL, NULL, NULL}
 };
 
 /* Resolve a str-or-capsule argument to the export its publishing module owns.
@@ -4625,10 +4598,12 @@ static const CaeValueProviderExport *resolve_provider_export(PyObject *spec) {
     if (PyUnicode_Check(spec)) {
         const char *name = PyUnicode_AsUTF8(spec);
         if (!name) return NULL;
-        const char *module = NULL;
+        const char *module = NULL, *attribute = NULL;
         for (int i = 0; CAE_VALUE_PROVIDER_MODULES[i].name; i++)
-            if (strcmp(CAE_VALUE_PROVIDER_MODULES[i].name, name) == 0)
+            if (strcmp(CAE_VALUE_PROVIDER_MODULES[i].name, name) == 0) {
                 module = CAE_VALUE_PROVIDER_MODULES[i].module;
+                attribute = CAE_VALUE_PROVIDER_MODULES[i].attribute;
+            }
         if (!module) {
             PyErr_Format(PyExc_ValueError,
                          "no value provider named '%s'; pass its capsule to install "
@@ -4637,7 +4612,7 @@ static const CaeValueProviderExport *resolve_provider_export(PyObject *spec) {
         }
         PyObject *mod = PyImport_ImportModule(module);
         if (!mod) return NULL;
-        capsule = PyObject_GetAttrString(mod, "value_provider_capsule");
+        capsule = PyObject_GetAttrString(mod, attribute);
         Py_DECREF(mod);
         if (!capsule) return NULL;
     } else {
