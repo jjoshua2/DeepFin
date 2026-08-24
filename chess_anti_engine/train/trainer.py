@@ -4272,6 +4272,27 @@ class Trainer:
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
+  # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
+  # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
+  # and never trips the non-finite-GRADIENT guard in `_run_optimizer_step`: it
+  # survives only as a TB column nobody reads. Read off THIS loop's own
+  # accumulated `sums`, not off a value handed down from the producer, and
+  # emitted at most once per iteration -- `train_steps` is called once per
+  # training iteration and this line is outside the step loop.
+  #
+  # Deliberately not a `TrainMetrics` field: F6's finding is that a silent
+  # column is what failed here, so the fix is an active announcement. The
+  # per-term columns already say WHICH head, and they are unchanged.
+        disarmed_nonfinite = float(sums.get("disarmed_nonfinite_terms", 0.0))
+        if disarmed_nonfinite > 0.0:
+            _log.warning(
+                "%.0f zero-weighted loss component reading(s) were non-finite "
+                "this iteration (summed over %d microbatch(es)). The zero "
+                "weight keeps them out of `total`, so no gradient guard can "
+                "see them -- read the per-term loss columns to find which head "
+                "and treat it as a label/data defect, not a benign disarm.",
+                disarmed_nonfinite, n_micro,
+            )
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, n_micro)),
             train_time_s=float(train_time_s),

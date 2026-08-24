@@ -1408,6 +1408,88 @@ def _normalize_sf_wdl_probs(
     return normalize_distribution(p)
 
 
+def _finite_blend_component(
+    probs: torch.Tensor | None,
+    *,
+    weight: torch.Tensor,
+    fallback: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """One side of the value-target blend, with masked-off NaN label rows removed.
+
+    Returns ``(component, claimed_nonfinite_rows)``. The count is ``None`` when
+    the field is absent, and is a device scalar otherwise; the caller must pass
+    it to `_assert_blend_labels_finite` BEFORE the component reaches ``target``.
+
+    ⚑ THE PRE-EXISTING PROTECTION IS KEYED ON FIELD-ABSENCE, NOT ON THE ROW MASK,
+    and that is the hazard this function closes. With the field ABSENT the caller
+    substitutes ``fallback`` wholesale and the blend is finite at any frac. With
+    the field PRESENT and a row NaN, the per-row arithmetic
+    ``weight * probs + (1 - weight) * fallback`` is ``0.0 * nan`` for a row whose
+    own mask is 0 — so a row the blend does not want at all still poisons the
+    target, at ANY frac including 0.0, and from there the CE, ``total`` and every
+    gradient. ``_normalize_sf_wdl_probs`` is not a defence either: `clamp_min`
+    and the renormalise both PROPAGATE NaN rather than sanitize it (a clamp is
+    not a validator), so this test is deliberately made on the NORMALIZED tensor
+    the blend actually consumes rather than on the raw batch field.
+
+    ⚑ TWO REGIMES, AND ONLY ONE OF THEM IS A REGIME.
+      - mask 0 (the row does not claim the label): its content is by definition
+        irrelevant, so the row takes ``fallback`` EXACTLY. `torch.where` selects,
+        it does not average, so nothing about a finite row's value changes.
+      - mask non-zero (the row CLAIMS the label and the label is NaN): dirty
+        label data, not a training regime. Counted here and raised on by
+        `_assert_blend_labels_finite` — silently substituting the fallback there
+        would train the value head on the game outcome while the shard says it
+        has an SF opinion, which is this repo's signature defect exactly.
+
+    ⚑ BIT-IDENTICAL ON EVERY CURRENTLY-FINITE PATH. ``blended`` is the parent
+    expression, character for character, and `torch.where` returns its value
+    unmodified wherever the row is finite — which is every row of every batch
+    that works today. Pinned at FULL RESOLUTION (``torch.equal`` on the
+    component, not ``==`` on a reduced scalar -- a sub-ULP target change does not
+    survive the CE) by
+    `tests/test_value_blend_nan_labels.py::test_the_component_is_bit_identical_to_the_unguarded_expression`.
+    """
+    if probs is None:
+        return fallback, None
+    row_finite = torch.isfinite(probs).all(dim=-1, keepdim=True)
+    claimed_nonfinite = ((weight != 0.0) & ~row_finite).to(torch.float32).sum()
+    blended = weight * probs + (1.0 - weight) * fallback
+    return torch.where(row_finite, blended, fallback), claimed_nonfinite
+
+
+def _assert_blend_labels_finite(
+    counts: tuple[tuple[str, torch.Tensor | None], ...],
+) -> None:
+    """Raise when a value-label row claims to be valid and is non-finite.
+
+    ⚑ ONE host transfer for every field, and it is UNAVOIDABLE: a Python
+    exception is a host decision, so the counts have to be read. Batched into a
+    single `tolist()` rather than one `item()` per field because the training
+    loop already pays exactly one sync per microbatch (`_extract_loss_scalars`),
+    and this must not turn that into three.
+
+    Absent fields contribute no count and are skipped; with every field absent
+    there is no transfer at all.
+    """
+    present = [(name, c) for name, c in counts if c is not None]
+    if not present:
+        return
+    bad = torch.stack([c for _, c in present]).tolist()
+    offenders = [
+        f"{name}: {int(n)} row(s)" for (name, _), n in zip(present, bad, strict=True) if n > 0
+    ]
+    if offenders:
+        raise ValueError(
+            "non-finite value-target label rows that CLAIM to be valid "
+            f"({'; '.join(offenders)}). A row with a zero blend mask may be "
+            "non-finite -- it falls back to the game outcome exactly -- but a "
+            "row with a non-zero mask asserts the label is real, so this is "
+            "dirty label data rather than a training regime. Fix the shard; do "
+            "not lower the mask to hide it."
+        )
+
+
 def _q_to_wdl_probs(q: torch.Tensor) -> torch.Tensor:
     q_clamped = q.clamp(-1.0, 1.0)
     win = q_clamped.clamp_min(0.0)
@@ -1811,19 +1893,26 @@ def compute_loss(
         full_plies=int(wdl_terminal_outcome_full_plies),
         max_plies=float(moves_left_max_plies),
     )
-    if sf_wdl_probs is not None:
-        sf_component = (
-            sf_effective_b * sf_wdl_probs + (1.0 - sf_effective_b) * blend_fallback_target
-        )
-    else:
-        sf_component = blend_fallback_target
     search_available_b = search_available.unsqueeze(1)
-    if search_wdl_probs is not None:
-        search_component = (
-            search_available_b * search_wdl_probs + (1.0 - search_available_b) * blend_fallback_target
-        )
-    else:
-        search_component = blend_fallback_target
+  # ⚑ A PRESENT-BUT-NaN LABEL ROW IS NOT DISARMED BY ITS OWN MASK. `0.0 * nan`
+  # is `nan`, so before this call a row with `has_sf_wdl == 0` and a NaN
+  # `sf_wdl` still poisoned `target` -> `blended_wdl_ce` -> `total`, at ANY
+  # frac including 0.0 and through `w_wdl = 1.0`, which no zero weight could
+  # ever have disarmed. Field ABSENCE was handled (the `is None` fallback);
+  # field PRESENCE with a NaN row was not. See `_finite_blend_component`.
+    sf_component, sf_bad_rows = _finite_blend_component(
+        sf_wdl_probs, weight=sf_effective_b, fallback=blend_fallback_target,
+    )
+    search_component, search_bad_rows = _finite_blend_component(
+        search_wdl_probs, weight=search_available_b, fallback=blend_fallback_target,
+    )
+  # ⚑ MUST PRECEDE THE FIRST USE OF EITHER COMPONENT. A row that CLAIMS the
+  # label and is NaN gets `fallback` from the sanitiser too, so without this
+  # check the value head would train on the game outcome while the shard
+  # asserts an SF opinion -- silently, which is worse than the NaN was.
+    _assert_blend_labels_finite(
+        (("sf_wdl", sf_bad_rows), ("search_wdl", search_bad_rows)),
+    )
     if terminal_taper is None:
   # Bit-identical to the pre-feature blend: same expressions, same order.
         target += sf_wdl_frac_f * sf_component
@@ -2052,6 +2141,24 @@ def compute_loss(
   # config asking for no objective at all should be able to hide.
         total = torch.zeros_like(m_policy)
 
+  # ⚑ WHAT THE `if` ABOVE COSTS: a NaN in a zero-weighted term no longer reaches
+  # `total`, so it no longer trips `_run_optimizer_step`'s non-finite-GRADIENT
+  # guard either. Nothing is left to announce it -- the NaN survives as a silent
+  # TB column that reads like any other diagnostic. This counts exactly the terms
+  # the guard disarmed AND found non-finite, so a zero weight cannot quietly
+  # become a place NaNs go to die. `Trainer.train_steps` is the consumer and logs
+  # it once per iteration off its OWN accumulated value.
+  #
+  # Counted on-device (no `.item()`, no sync): `w == 0.0` is a host-side float
+  # comparison, so only the isfinite reduction touches the GPU, and only for the
+  # terms that are actually off.
+    disarmed_nonfinite_terms = torch.zeros((), device=m_policy.device, dtype=torch.float32)
+    for w, term in weighted_terms:
+        if w == 0.0:
+            disarmed_nonfinite_terms = disarmed_nonfinite_terms + (
+                ~torch.isfinite(term.detach())
+            ).to(torch.float32)
+
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
   #     `wdl_ce` is the name people reach for (it becomes the `wdl_loss`
@@ -2059,6 +2166,10 @@ def compute_loss(
   #   wdl_onehot_ce -> the hard one-hot diagnostic, never in `total`.
     return {
         "total": total,
+  # How many loss components were BOTH weighted off and non-finite. Zero on
+  # every healthy batch; > 0 means a NaN exists that the zero-weight guard is
+  # keeping out of `total` and that therefore no gradient check can see.
+        "disarmed_nonfinite_terms": disarmed_nonfinite_terms,
         "policy_ce": m_policy,
         "wdl_ce": m_blended_wdl,
         "blended_wdl_ce": m_blended_wdl,
