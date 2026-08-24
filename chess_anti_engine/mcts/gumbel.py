@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Literal, overload
 
 import chess
@@ -136,15 +136,110 @@ PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset(
     {"volatility_q_scale", "volatility_fpu"}
 )
 
+# The MIRROR: GumbelConfig fields the PYTHON reference search
+# (`run_gumbel_root_many`) does not implement, while the C fast path does.
+# Same silent-null shape from the other side, and it had no guard at all until
+# 2026-08-24 (narrowed task #264 residual).
+#
+# CLASSIFICATION METHOD -- membership here is decided by finding the line that
+# READS the field on each path, never by the field's name or by which module it
+# "feels" like it belongs to. Per field:
+#
+#   full_tree
+#     C  READS IT: `gumbel_c.run_gumbel_root_many_c` takes `_full_tree =
+#        bool(cfg.full_tree)` and passes it to `start_gumbel_sims`, which
+#        stores it as `g->sel.full_tree` (`_mcts_tree.c`, the `full_tree`
+#        argument of the `start_gumbel_sims` signature).
+#        `tree_gumbel_collect_leaf` then branches on `sel->full_tree`
+#        (`_mcts_tree.c`, the `} else if (sel->full_tree) {` arm) to pick
+#        `tree_gumbel_select_child` when true and `tree_select_child` -- the
+#        PUCT descent -- when false.
+#     PY IGNORES IT: `_collect_forced_leaf` (below) descends through
+#        `_select_full_gumbel_child` UNCONDITIONALLY. The PUCT arm that used to
+#        stand there was deleted as dead code (play-path audit 2026-08-03,
+#        F12), so the string `cfg.full_tree` does not occur anywhere in this
+#        module -- which is exactly what
+#        `test_the_python_gumbel_descent_has_no_puct_arm_left`
+#        (tests/test_inert_gumbel_knobs.py) asserts.
+#
+# ⚑ The two sets are NOT symmetric in how much a guard can close. A Python-only
+# knob is honoured by the path it names, so `assert_c_path_can_run` at the C
+# dispatch is the whole fix: reroute or zero it. A C-only knob at a non-default
+# value is honoured by the C and ignored by the Python, so it needs TWO guards:
+# `assert_python_path_can_run` on the Python dispatch, AND a refusal at the eval
+# boundaries (`validate_gumbel_config`), because those instruments BANK the
+# realized shape before anything has chosen a path.
+C_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset({"full_tree"})
+
+# Per-knob tail appended to the generic refusal in `_c_only_knob_problems`.
+# A table rather than a sentence inside that loop: the loop's own text is true
+# of EVERY C-only knob, while this one is true of `full_tree` alone, and a
+# second knob added to the set above would otherwise silently inherit a
+# paragraph about a PUCT descent it has nothing to do with. `.get(name, "")`,
+# so a knob with nothing extra to say simply says nothing.
+_C_ONLY_KNOB_DETAIL: dict[str, str] = {
+    "full_tree": (
+        ". A false full_tree also swaps the C descent to PUCT at "
+        "c_puct/fpu_reduction, the knobs INERT_GUMBEL_KNOBS makes this same "
+        "CLI refuse"
+    ),
+}
+
+
+def _knob_differs_from_default(cfg: GumbelConfig, base: GumbelConfig, name: str) -> bool:
+    """True when ``cfg.name`` is off its default. ONE rule for both knob sets.
+
+    Compared as floats rather than raw, because the `--*-gumbel` parsers turn
+    every override into one: `full_tree=0` reaches this as `0.0` and
+    `full_tree=1` as `1.0`, against a `True` default that floats to `1.0`. So an
+    explicit request for the shipped default is accepted whichever way it is
+    spelled, and a bool field needs no special case.
+
+    ⚑ Deliberately STRICTER than the consumer's own coercion for a bool.
+    `full_tree=2` floats to `2.0` and is an offender here, while the C's
+    `bool(cfg.full_tree)` would read it as True and run the default search --
+    accepted, silently coerced, and banked as `2.0` in a realized-shape record
+    naming a value nothing ran. That is this codebase's signature defect in
+    miniature, so the strict comparison is the point rather than an accident of
+    using `float`.
+
+    A value `float()` cannot read is an offender too: it is certainly not the
+    default, and raising a bare `TypeError` from inside a guard tells the
+    operator nothing about which knob was wrong. `OverflowError` is in the
+    catch because `float(10**400)` raises THAT and not `ValueError` -- one
+    integer literal wide enough and the guard would have propagated the wrong
+    exception type out of a function whose callers only wrap `ValueError`.
+
+    ⚑ The plain `==` comes FIRST, before any coercion. Both current sets hold
+    numeric fields, but a future C-only knob that is a `str` (an enum-shaped
+    descent mode, say) would otherwise be a permanent offender AT ITS OWN
+    DEFAULT: `float("linear")` raises, the fallback returns True, and every
+    config in the repo fails the guard. Equality is also what "off its default"
+    means; the float coercion is only here for the spellings equality misses.
+    """
+    default = getattr(base, name)
+    value = getattr(cfg, name)
+    if value == default:
+        return False
+    try:
+        return float(value) != float(default)
+    except (TypeError, ValueError, OverflowError):
+        return True
+
 
 def python_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
     """Python-path-only fields on ``cfg`` that are at a non-default value."""
     base = GumbelConfig()
     return tuple(
-        sorted(
-            k for k in PY_ONLY_GUMBEL_KNOBS
-            if float(getattr(cfg, k)) != float(getattr(base, k))
-        )
+        sorted(k for k in PY_ONLY_GUMBEL_KNOBS if _knob_differs_from_default(cfg, base, k))
+    )
+
+
+def c_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
+    """C-path-only fields on ``cfg`` that are at a non-default value."""
+    base = GumbelConfig()
+    return tuple(
+        sorted(k for k in C_ONLY_GUMBEL_KNOBS if _knob_differs_from_default(cfg, base, k))
     )
 
 
@@ -165,6 +260,34 @@ def assert_c_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
         "for them, so it would drop them silently and return a search that "
         "looks like a clean null. Zero them, or route to the Python path "
         "(see PY_ONLY_GUMBEL_KNOBS)."
+    )
+
+
+def assert_python_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse to enter the Python Gumbel path with a C-only knob set.
+
+    The mirror of ``assert_c_path_can_run``, and it sits in the mirror place:
+    the top of ``run_gumbel_root_many``, the single entry point every
+    Python-path dispatch lands on. On the dispatch rather than on a CLI parser
+    for the same reason as the C side -- the CLI is not what chooses the path.
+    Which path runs is decided by ``_HAS_GUMBEL_C`` (is the extension built?)
+    and by ``volatility_search_enabled`` (does the config force Python?), and a
+    caller can hit either without having asked for either.
+
+    Both routes end here, so both are covered: an unbuilt extension and a
+    volatility-forced reroute. That matters because the volatility route is the
+    one that fires on a machine where everything else works.
+    """
+    offenders = c_only_knobs_set(cfg)
+    if not offenders:
+        return
+    raise ValueError(
+        f"{where}: {', '.join(offenders)} are C-path only; call "
+        "run_gumbel_root_many_c (mcts/gumbel_c.py) instead. This path has no "
+        "code for them -- its descent is unconditionally Gumbel -- so it would "
+        "drop them silently and return a search that looks like a clean null. "
+        "Restore the default, or route to the C path "
+        "(see C_ONLY_GUMBEL_KNOBS)."
     )
 
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
@@ -216,24 +339,20 @@ class GumbelConfig:
     cpuct_factor: float = 0.0
     cpuct_base: float = 38739.0
     fpu_reduction: float = 1.2
-    # Exponent on max_visit in the value-transform scale q_scale =
-    # c_scale*(c_visit + max_visit**q_visit_exp). 1.0 = standard linear Gumbel
-    # (default). <1 makes search-Q trust grow sublinearly with depth so the
-    # optimal c_scale is less sim-count-dependent (linear over-trusts at high sims).
-    q_visit_exp: float = 1.0
-    # When True, the per-node descent value-transform scales by the ROOT's max
-    # child-visit (global/search-size) instead of the local node's max_visit, so
-    # q_scale is uniform across the tree. Pairs with q_visit_exp<1 to make the
-    # optimal c_scale sim-invariant (avoids the low-visit-node floor inflation).
-    # C path only (run_gumbel_root_many_c); default False = legacy local behavior.
-    q_global_scale: bool = False
-    # Decoupled (additive) value-transform floor. When >= 0:
-    #   q_scale = q_visit_floor + c_scale * max_visit**q_visit_exp
-    # instead of the legacy   c_scale * (c_visit + max_visit**q_visit_exp),
-    # whose floor (c_scale*c_visit) scales WITH c_scale. Decoupling lets us raise
-    # c_scale (to enable sublinear q_visit_exp) without inflating the early-round
-    # floor that over-trusts noisy Q at high sims. C path only; < 0 = legacy.
-    q_visit_floor: float = -1.0
+    # ⚑ The three DESCENT value-transform knobs that used to sit here --
+    # `q_visit_exp` (exponent on max_visit), `q_global_scale` (scale the descent
+    # by the ROOT's max child-visit) and `q_visit_floor` (additive decoupled
+    # floor) -- were DELETED, never promoted. They were sweep leftovers from the
+    # root/descent split work: no config in this repo ever set one, they are
+    # absent from PLAY_SEARCH_DEFAULTS, and the axis that DID pay off is the
+    # separate ROOT family (`c_scale_root` / `q_visit_exp_root` / `c_visit_root`)
+    # below, which production PLAY runs as the log root.
+    #
+    # The C still accepts all three as optional `start_gumbel_sims` arguments, so
+    # `gumbel_c` passes their former defaults (1.0 / 0 / -1.0) as literals -- see
+    # the call sites there. That keeps the search bit-identical while removing the
+    # knob: deleting a knob pinned at its default is behaviour-identical by
+    # construction, and `tests/test_descent_qknob_deletion_parity.py` measures it.
     # ── sigma does two jobs with one number; this splits them ──────────────
     # The improved policy softmax(log_prior + sigma*Qbar) is used for TWO
     # different purposes that want DIFFERENT sigmas:
@@ -292,30 +411,78 @@ class GumbelConfig:
     # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
     # 2 = standard halving (keep top half; default). 3/4 = more aggressive
     # elimination (fewer rounds, visits concentrate on survivors sooner).
-    # C path only (run_gumbel_root_many_c).
+    # BOTH paths read it: the C at construction (`start_gumbel_sims`), the
+    # Python reference search through the shared `halving_keep_count` /
+    # `halving_rounds_left` below -- see their note, the Python path having its
+    # own hardcoded div-2 copy was a real defect.
     halving_div: int = 2
     # Root-halving c_visit override (value-transform floor at the root sequential-
     # halving site only; descent keeps c_visit). Root and descent want different
     # floors: a large root floor (~670) makes one c_scale fit every sim count's
     # root q_scale, while a small descent floor (c_visit~50) keeps deep subtrees
     # from over-trusting Q. >= 0 sets the root floor; < 0 (default) = use c_visit
-    # at both sites (legacy). C path only (run_gumbel_root_many_c).
+    # at both sites (legacy). BOTH paths read it: the C at construction
+    # (`start_gumbel_sims`), the Python reference search in `_root_sigma_scale`.
     c_visit_root: float = -1.0
     # Root-halving-ONLY value-transform overrides (root and descent want
     # DIFFERENT transforms: the high-sim plateau is a root over-trust problem,
     # but the good mid-sim regret needs a tiny LINEAR descent q_scale). The root
-    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale /
-    # q_visit_exp. Set q_visit_exp_root<0 for a LOG root (slow-growth, sim-
-    # invariant 256->millions) while leaving q_visit_exp=1 for a linear descent.
-    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> use
-    # q_visit_exp (legacy bit-identical). C path only (run_gumbel_root_many_c).
+    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale and is
+    # always LINEAR in max_visit. Set q_visit_exp_root<0 for a LOG root
+    # (slow-growth, sim-invariant 256->millions) while the descent stays linear.
+    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> exponent
+    # 1.0, i.e. a LINEAR root (what selfplay runs). That sentinel used to read
+    # the deleted `q_visit_exp`, whose default was 1.0, so pinning it to the
+    # literal is the same search. BOTH paths read these: the C resolves the
+    # sentinels at construction (`start_gumbel_sims`), the Python reference
+    # search resolves them per call in `_root_sigma_scale`.
     c_scale_root: float = -1.0
     q_visit_exp_root: float = 99.0
+  # ⚑ C-PATH ONLY -- see `C_ONLY_GUMBEL_KNOBS` above for which line reads it on
+  # which path, and `assert_python_path_can_run` for the guard. True = the
+  # Gumbel descent below the root, which is what BOTH paths run and the only
+  # thing the Python path can run.
     full_tree: bool = True
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
+  # ⚑ NOT A SEARCH FIELD -- CARRIED METADATA. Unlike the two encoding fields
+  # above it, NEITHER search path reads this: `gumbel_c` drives the C encoders
+  # off `cfg.input_history_encoding` / `cfg.input_extra_features`, and the
+  # policy WIDTH is inferred from the array instead, by
+  # `_policy_logits_to_full` -> `moves.policy_batch_to_full_if_needed`, which
+  # takes no encoding argument. (Every `*_for_encoding` helper in `moves/encode`
+  # that still has a `policy_encoding` parameter opens with `del
+  # policy_encoding`; train space is always compact 1858.) So this is inference
+  # by SHAPE, and it covers a 1858 net and a 4672 ONNX net without being told.
+  #
+  # Its real consumers, both of which pass it along rather than act on it:
+  #   * `selfplay.match.pick_moves_for_boards` and `uci.__main__._build_engine`
+  #     WRITE it from the loaded checkpoint's own `model.policy_encoding`;
+  #     `tests/test_arena_match_smoke.py` pins that threading.
+  #   * `eval.puzzles.run_puzzle_eval` is the only production READ
+  #     (`gumbel_cfg.policy_encoding`), and it reads it only as the fallback
+  #     source for writing the same field back onto a `dataclasses.replace`.
+  # Net: zero consumers, so it is metadata that says which head produced the
+  # logits, not a knob.
+  #
+  # ⚑ Grepping the NAME finds a third site that is not a third reader:
+  # `inference_cache._ENCODING_ATTRS` lists `"policy_encoding"` as part of the
+  # eval-cache identity, so a cached row cannot be served across an encoding
+  # change. It reads that attribute off whatever `resolve_encoding_source`
+  # walks the wrapper chain to -- in production the MODEL -- and a
+  # `GumbelConfig` is never in that chain. Same name, different object; it does
+  # not make the paragraph above false.
+  #
+  # Documented rather than deleted (the write sites and
+  # their test are real and a 4672-output net is a live case), and rather than
+  # guarded (a guard on a non-default value would refuse `az_4672`, which the
+  # ONNX loader legitimately sets -- `onnx/load.py`). Both halves of that map
+  # are pinned by `test_neither_search_path_reads_policy_encoding` and
+  # `test_the_only_production_reader_of_policy_encoding_is_still_the_one_named`
+  # (tests/test_c_only_gumbel_knobs.py), so this paragraph cannot rot into a
+  # comment about a field that has since grown a consumer.
     policy_encoding: str = MODEL_POLICY_ENCODING
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
@@ -388,6 +555,253 @@ def policy_temp_active(policy_temp: float) -> bool:
     """
     pt = float(policy_temp)
     return math.isfinite(pt) and POLICY_TEMP_MIN <= pt <= POLICY_TEMP_MAX and pt != 1.0
+
+
+# The divisor the C sequential halving silently raises anything smaller to:
+# `g->halving_div = (halving_div >= 2) ? halving_div : 2` (_mcts_tree.c).
+MIN_HALVING_DIV = 2
+
+# The candidate count BOTH Python candidate-selection sites silently raise
+# anything smaller to: `m = max(2, ...)` in `gumbel_c._select_root_candidates`
+# and in `gumbel._init_board_search_state`. ⚑ `topk` never reaches the C at all
+# (zero occurrences in `_mcts_tree.c`): the C is handed the already-chosen
+# candidate LIST, so "the C signature rejects it" -- which an earlier revision
+# of this file claimed as the reason topk needed no check -- was false, and
+# `topk` 0 / 1 / -5 all run m=2 while every record names the operator's number.
+# `topk` is in PLAY_SEARCH_DEFAULTS, so that record is written on every row.
+MIN_TOPK = 2
+
+
+def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse a search config carrying a value the search will not run.
+
+    THE band's second home is not allowed to exist, so this is where every
+    externally-built ``GumbelConfig`` is checked -- CLI overrides, ``setoption``
+    seeds, anything that reaches ``dataclasses.replace`` without passing the
+    yaml loader's validator (``trial_config._policy_temperature``).
+
+    Call it at CONSTRUCTION/OVERRIDE boundaries, not per search call: the hot
+    path deliberately cannot raise (``policy_temp_active`` reads an out-of-band
+    temperature as *off* because it runs per leaf), and that is exactly why the
+    refusal has to happen where the config is built instead.
+
+    ⚑ It refuses rather than repairs. Clamping ``policy_temp=1e300`` to 20.0
+    would run a search the operator did not ask for, and defaulting it to 1.0 is
+    what happens today -- silently, under a record naming 1e300. A sweep over
+    out-of-band temperatures produces identical arms banked as different
+    settings, which is the c_puct Swiss (play-path audit 2026-08-03 F2) with a
+    live knob instead of a dead one.
+
+    What it checks, and why each one is a silent no-op rather than a crash:
+
+    * **every numeric field finite.** Each sentinel in this file is a
+      COMPARISON, and every comparison against ``nan`` is False, so a non-finite
+      knob does not fail loudly -- it takes the fallback arm. ``nan`` is neither
+      ``< 90`` nor ``>= 90``, so ``q_visit_exp_root=nan`` silently reverts the
+      root to the linear exponent 1.0; ``c_scale_root=nan`` silently reverts to
+      ``c_scale``; ``policy_temp=inf`` reads as off.
+    * **``policy_temp`` inside the band.** ⚑ 1.0 is INSIDE the band and valid --
+      it is the identity, and ``policy_temp_active`` reports it as "off" for
+      that reason alone, not because it is out of range. So the check cannot be
+      ``not policy_temp_active(...)``: that would refuse the shipped default and
+      the whole PLAY shape with it. Everything genuinely outside the band
+      reaches ``apply_policy_temp`` and returns the priors untouched.
+    * **``halving_div >= MIN_HALVING_DIV``** and **``topk >= MIN_TOPK``**, both
+      integral. Below the minimum each is silently raised (see the constants);
+      a fractional value is silently TRUNCATED by the ``int()`` every consumer
+      applies, so ``halving_div=2.9`` and ``topk=2.9`` are 2.
+    * **``C_ONLY_GUMBEL_KNOBS`` at their defaults** -- today ``full_tree``. See
+      ``_c_only_knob_problems`` below for why this one needs a second guard
+      when ``PY_ONLY_GUMBEL_KNOBS`` does not.
+
+    What it deliberately does NOT check, so this does not grow into a second
+    opinion about knobs that already have one:
+
+    * the sentinel RANGES (``c_scale_root < 0``, ``c_visit_root < 0``,
+      ``q_visit_exp_root >= 90``, ``target_max_visit_cap <= 0``). Every value
+      inside one of those is a legitimate spelling of "off" rather than a
+      request that got dropped, and ``mcts.search_options.branch_note`` is the
+      shipped answer for telling an operator so.
+    * ``INERT_GUMBEL_KNOBS`` and ``PY_ONLY_GUMBEL_KNOBS`` -- refused by the
+      ``--*-gumbel`` parsers and by ``assert_c_path_can_run`` respectively. A
+      knob with a guard does not need a second one.
+    * ``simulations`` and the rest: no measured silent-clamp site. The rule for
+      adding one is the rule these three met -- point at the line that swallows
+      the value, not at an intuition about what "should" be out of range.
+
+    Raises ``ValueError``; CLI surfaces wrap it in ``SystemExit`` so an operator
+    gets the message and not a traceback.
+    """
+    problems: list[str] = []
+    for f in fields(cfg):
+        value = getattr(cfg, f.name)
+      # ⚑ Coerce, do not isinstance-whitelist. `np.float32(nan)` is not an
+      # instance of `float` (only float64 subclasses it), so a whitelist SKIPS
+      # numpy scalars -- an accept-then-ignore inside the guard against
+      # accept-then-ignore. `str` is excluded first because the encoding fields
+      # are strings and `float("nan")` would parse one spelled that way.
+      # `OverflowError` is in the catch because `float(10**400)` raises THAT,
+      # not `ValueError` -- an int too wide for a float used to escape this
+      # loop as an exception type no caller wraps.
+        if isinstance(value, (bool, str)):
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(numeric):
+            problems.append(
+                f"{f.name}={value!r} is not finite, so every gate that reads it "
+                "takes its fallback arm instead of failing: the search runs a "
+                "shape nobody asked for and the record names yours"
+            )
+  # Deliberately NOT skipped for a non-finite value already reported above:
+  # `nan`/`inf` are out of band too, and the operator-facing phrase "outside
+  # the band" is what tells them the knob -- not the float -- is the problem.
+    pt = float(cfg.policy_temp)
+    if pt != 1.0 and not policy_temp_active(pt):
+        problems.append(
+            f"policy_temp={pt!r} is outside the band where it does anything "
+            f"([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}] inclusive; 1.0 is inside "
+            "it and valid -- the identity), so apply_policy_temp would return "
+            "the priors untouched and the search would run UNTEMPERED (T=1.0) "
+            "while every record of it names your value"
+        )
+    problems.extend(
+        _clamped_int_problems(
+            "halving_div", cfg.halving_div, minimum=MIN_HALVING_DIV,
+            clamped_by=(
+                "the C search (`g->halving_div = (halving_div >= 2) ? "
+                "halving_div : 2`, _mcts_tree.c)"
+            ),
+            runs_instead="STANDARD halving",
+        )
+    )
+    problems.extend(
+        _clamped_int_problems(
+            "topk", cfg.topk, minimum=MIN_TOPK,
+            clamped_by=(
+                "both Python candidate-selection sites (`m = max(2, ...)` in "
+                "gumbel_c._select_root_candidates and in "
+                "gumbel._init_board_search_state; topk never reaches the C)"
+            ),
+            runs_instead=f"a {MIN_TOPK}-candidate root",
+        )
+    )
+    problems.extend(_c_only_knob_problems(cfg))
+    if problems:
+        raise ValueError(f"{where}: " + "; ".join(problems))
+
+
+def _c_only_knob_problems(cfg: GumbelConfig) -> list[str]:
+    """Refusals for a C-path-only knob moved off its default.
+
+    ⚑ This is a SECOND guard on a knob that already has one
+    (``assert_python_path_can_run``), which the docstring above says a knob does
+    not need. ``full_tree`` is the exception, and the reason is what makes it
+    different from ``PY_ONLY_GUMBEL_KNOBS``:
+
+    * A Python-only knob is HONOURED by the path it names. The C dispatch guard
+      is therefore the whole fix -- reroute, or zero it -- and the config is
+      runnable either way.
+    * A C-only knob is honoured by the C and IGNORED by the Python. The dispatch
+      guard makes the Python path fail loudly instead of lying, but the
+      instruments that call this validator BANK a realized shape
+      (``arena_standard.SideSearch.realized_gumbel`` into the JSONL,
+      ``audit_targets`` into its header) at config-assembly time -- before
+      ``_HAS_GUMBEL_C`` or ``volatility_search_enabled`` has chosen anything. A
+      record written before the path is known cannot be truthful about a knob
+      whose meaning depends on the path.
+
+    ⚑ That is true of MOST callers, not all, and the refusal is deliberately
+    unconditional anyway. There are seven ``validate_gumbel_config`` callers;
+    ``scripts/gen_random_selfplay_shards.py`` is a counter-example -- it calls
+    this validator and ``assert_c_path_can_run`` on adjacent lines, so ITS path
+    is known at assembly time and the "banked before the path is chosen"
+    argument does not apply to it. It is refused all the same, and no parameter
+    is offered to exempt it, for two reasons. A gate whose callers can opt out
+    is a gate that eventually nobody is inside, and a caller genuinely wanting a
+    PUCT descent has a cheaper honest route: construct the ``GumbelConfig``
+    directly and hand it to ``run_gumbel_root_many_c``, which never consults
+    this function. So the C capability survives exactly where it is asked for
+    explicitly, and is refused on every path that would record it.
+
+    Of the seven, only ``arena_standard`` and ``audit_targets`` can carry a
+    USER-SUPPLIED ``full_tree`` today -- they are the two with a generic
+    ``k=v`` ``GumbelConfig`` override surface. The other five expose named
+    flags with no ``full_tree`` among them, so for those the refusal is a
+    tripwire against a future flag rather than a live rejection.
+
+    And the value it would let through is worse than a null. A FALSE
+    ``full_tree`` does not turn the descent off, it switches it to
+    ``tree_select_child``, the PUCT descent driven by
+    ``c_puct``/``fpu_reduction`` -- the very knobs ``INERT_GUMBEL_KNOBS`` makes
+    these same CLIs refuse, on the stated grounds that ``full_tree=True`` makes
+    them unreachable. So an accepted ``--cand-gumbel full_tree=0`` would run a
+    PUCT descent the operator cannot tune, pinned at ``GumbelConfig``'s own
+    untuned ``c_puct=2.5`` / ``fpu_reduction=1.2`` rather than the tuned
+    ``PLAY_PUCT_DEFAULTS`` 1.75 / 0.33 -- and it would falsify the refusal
+    message printed two branches away in the same parser.
+
+    ``full_tree=1`` (the shipped default, spelled explicitly) passes, for the
+    same reason ``policy_temp=1.0`` does: it is a real request for the search
+    that actually runs, on BOTH paths, so banking it is truthful.
+
+    The C capability itself is untouched: ``run_gumbel_root_many_c`` still
+    accepts and honours a false ``full_tree`` for a caller that constructs the
+    config directly and knows which path it is on. What is refused is reaching
+    it through an instrument that would bank the answer.
+
+    ⚑ The prose above deliberately spells that value "a false ``full_tree``"
+    rather than as an assignment: ``test_nothing_sets_full_tree_false_anywhere_
+    in_the_tree`` (tests/test_inert_gumbel_knobs.py) greps every non-comment
+    line of the package for the assignment, because something SETTING it false
+    un-inerts ``INERT_GUMBEL_KNOBS``. Discussing the value is not setting it,
+    and the grep is worth more than the nicer sentence.
+    """
+    offenders = c_only_knobs_set(cfg)
+    if not offenders:
+        return []
+    return [
+        f"{name}={getattr(cfg, name)!r} is C-path only (mcts.gumbel."
+        "C_ONLY_GUMBEL_KNOBS): run_gumbel_root_many_c reads it and branches the "
+        "C descent on it, run_gumbel_root_many does not read it at all, so "
+        "which search this is depends on whether the extension is loaded and "
+        "whether volatility forced the Python path -- and the realized-shape "
+        f"record is written before either is known{_C_ONLY_KNOB_DETAIL.get(name, '')}"
+        for name in offenders
+    ]
+
+
+def _clamped_int_problems(
+    name: str, raw: float | int, *, minimum: int, clamped_by: str,
+    runs_instead: str,
+) -> list[str]:
+    """Refusals for an integer knob that is silently clamped and truncated.
+
+    Two ways to lose a value in one knob, so two messages: below ``minimum`` it
+    is raised by the consumer, and a fractional value is truncated by the
+    ``int()`` every consumer applies. Neither says anything at runtime.
+    """
+  # A non-finite value is reported by the finiteness pass; comparing it here
+  # would take the fallback arm and report nothing.
+    value = float(raw)
+    if not math.isfinite(value):
+        return []
+    out: list[str] = []
+    if value < minimum:
+        out.append(
+            f"{name}={raw!r} is below {minimum}, which {clamped_by} silently "
+            f"raises to {minimum}, so the search would run {runs_instead} "
+            "under a record naming your value"
+        )
+    elif not value.is_integer():
+        out.append(
+            f"{name}={raw!r} is not an integer and every consumer applies "
+            f"int(), so the search would run {name}={int(value)} under a "
+            "record naming your value"
+        )
+    return out
 
 
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
@@ -551,22 +965,25 @@ def _root_sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     root-log transform — two different search shapes for one PLAY config.
 
     Falls back to the descent knobs when the root-only ones are unset
-    (``c_visit_root``/``c_scale_root`` < 0, ``q_visit_exp_root`` >= 90),
-    matching the C construction-time resolution.
+    (``c_visit_root``/``c_scale_root`` < 0), matching the C construction-time
+    resolution.
+
+    ⚑ ``q_visit_exp_root >= 90`` resolves to the literal exponent ``1.0``. It
+    used to resolve to ``cfg.q_visit_exp``, one of the three deleted descent
+    knobs, whose default was exactly 1.0 -- so this is the same arithmetic with
+    the dead branch removed, not a behaviour change. The C keeps the same
+    resolution (``q_visit_exp_root < 90 ? q_visit_exp_root : q_visit_exp``)
+    because ``gumbel_c`` passes it the literal 1.0 for ``q_visit_exp``.
+    The deleted ``q_visit_floor`` branch (``floor + csr*mv_term`` when >= 0)
+    was likewise unreachable at its -1.0 default.
     """
     cvr = float(cfg.c_visit_root) if float(cfg.c_visit_root) >= 0.0 else float(cfg.c_visit)
     csr = float(cfg.c_scale_root) if float(cfg.c_scale_root) >= 0.0 else float(cfg.c_scale)
-    qer = (
-        float(cfg.q_visit_exp_root)
-        if float(cfg.q_visit_exp_root) < 90.0
-        else float(cfg.q_visit_exp)
-    )
+    qer = float(cfg.q_visit_exp_root) if float(cfg.q_visit_exp_root) < 90.0 else 1.0
     mv = float(max_visit)
     if qer < 0.0:
         return csr * math.log1p(cvr + mv)
     mv_term = mv if qer == 1.0 else mv**qer
-    if float(cfg.q_visit_floor) >= 0.0:
-        return float(cfg.q_visit_floor) + csr * mv_term
     return csr * (cvr + mv_term)
 
 
@@ -797,6 +1214,13 @@ def _collect_forced_leaf(
   # live here was dead code advertising c_puct/fpu_reduction as live
   # Gumbel knobs (play-path audit 2026-08-03, F12). The PUCT descent is
   # reached through mcts/puct*.py and uci/, not from here.
+  #
+  # ⚑ "Unconditionally" is why `full_tree` is in `C_ONLY_GUMBEL_KNOBS`: the C
+  # path DOES branch on it (`sel->full_tree`), so a config carrying
+  # `full_tree=False` gets two different searches depending on which path a
+  # dispatcher picked, silently. `assert_python_path_can_run` at the top of
+  # `run_gumbel_root_many` refuses it here rather than ignoring it; deleting
+  # that call and re-reading this comment is the mutant.
         _, node = _select_full_gumbel_child(node, cfg=cfg)
         path.append(node)
   # Expanded nodes with children are never terminal — skip is_game_over()
@@ -1054,6 +1478,50 @@ def _collect_forced_leaves_round(
     return leaf_nodes, leaf_paths
 
 
+# --- pure halving-schedule arithmetic (mirrors _mcts_tree.c) ------------------
+#
+# ⚑ These lived in `uci/root_parallel_gumbel.py`, which meant the Python
+# reference search (`run_gumbel_root_many`, below) had its own hardcoded copy of
+# the div-2 schedule and never read `cfg.halving_div` at all. That path is not
+# hypothetical: `selfplay.match.pick_moves_for_boards` routes to it whenever
+# volatility search is on or the C extension is missing, so
+# `--cand-gumbel halving_div=4 --volatility-q-scale 0.5` validated, banked 4 and
+# searched at 2 -- this PR's own defect, inside the fix for it. One
+# implementation now, imported by both.
+
+
+def halving_rounds_left(n_candidates: int, halving_div: int = 2) -> int:
+    """Ceil-divisions of ``n_candidates`` by ``halving_div`` down to 1.
+
+    Mirrors the ``while (tmp > 1) { rounds_left++; tmp = (tmp+div-1)/div; }``
+    loop in ``gss_begin_round``.
+    """
+    div = max(MIN_HALVING_DIV, int(halving_div))
+    rounds = 0
+    tmp = int(n_candidates)
+    while tmp > 1:
+        rounds += 1
+        tmp = (tmp + div - 1) // div
+    return rounds
+
+
+def halving_visits_per_action(
+    n_candidates: int, budget_remaining: int, halving_div: int = 2,
+) -> int:
+    """Per-candidate sims for the current round (``gss_begin_round``)."""
+    if n_candidates <= 1:
+        return int(budget_remaining)
+    rounds_left = halving_rounds_left(n_candidates, halving_div)
+    return max(1, int(budget_remaining) // (int(n_candidates) * rounds_left))
+
+
+def halving_keep_count(n_candidates: int, halving_div: int = 2) -> int:
+    """Survivors after one halving round (``gss_score_and_halve``)."""
+    div = max(MIN_HALVING_DIV, int(halving_div))
+    keep = (int(n_candidates) + div - 1) // div
+    return max(1, min(keep, int(n_candidates) - 1))
+
+
 def _halve_remaining_for_board(
     st: _BoardSearchState,
     *,
@@ -1095,7 +1563,7 @@ def _halve_remaining_for_board(
         ),
         reverse=True,
     )
-    st.remaining = rem[: max(1, (len(rem) + 1) // 2)]
+    st.remaining = rem[: halving_keep_count(len(rem), int(cfg.halving_div))]
 
 
 def _build_improved_policy_for_board(
@@ -1244,6 +1712,14 @@ def run_gumbel_root_many(
     Returns (probs_list, actions, root_values), where root_values are the best
     searched child values from the root perspective.
     """
+  # The mirror of `run_gumbel_root_many_c`'s `assert_c_path_can_run`, in the
+  # mirror place: this is the choke point EVERY Python-path dispatch lands on
+  # (`selfplay.match.pick_moves_for_boards` when the extension is missing or
+  # volatility forced the reroute, `run_gumbel_root`, and every direct caller),
+  # so a C-only knob cannot reach a search that does not read it. BEFORE the
+  # empty-batch early return on purpose: a guard a caller can step around by
+  # passing `[]` is a guard whose absence nothing would show.
+    assert_python_path_can_run(cfg, where="run_gumbel_root_many")
     n_boards = len(boards)
     if n_boards == 0:
         if return_diagnostics:
@@ -1310,12 +1786,9 @@ def run_gumbel_root_many(
         for bi in active:
             rem = states[bi].remaining
             assert rem is not None
-            if len(rem) <= 1:
-                visits_per_action[bi] = int(budget_remaining[bi])
-                continue
-            rounds_left = int(np.ceil(np.log2(len(rem))))
-            vpa = int(budget_remaining[bi] // max(1, len(rem) * rounds_left))
-            visits_per_action[bi] = max(1, vpa)
+            visits_per_action[bi] = halving_visits_per_action(
+                len(rem), int(budget_remaining[bi]), int(cfg.halving_div),
+            )
 
         max_reps = max(visits_per_action.values(), default=0)
         for rep in range(max_reps):

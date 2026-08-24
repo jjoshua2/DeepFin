@@ -964,6 +964,7 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "policy_loss_phase_n_end": 0.0,
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
+    "grad_adaptive_bound_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
     "grad_norm_aurora": 0.0, "grad_norm_adamw": 0.0,
     "grad_nonfinite_skip_rate": 0.0,
@@ -1121,7 +1122,13 @@ def _train_metrics_dict(metrics) -> dict:
         "grad_norm_p95": float(metrics.grad_norm_p95),
         "grad_norm_max": float(metrics.grad_norm_max),
         "grad_clip_rate": float(metrics.grad_clip_rate),
+        # `_adaptive_clip_rate` is how often the adaptive threshold FIRED;
+        # `_adaptive_bound_rate` and `_hard_clip_rate` are how often each clip
+        # BOUND, and those two partition `grad_clip_rate`. Reading the firing
+        # rate as "the adaptive clip was in charge" is wrong whenever the hard
+        # cap sat below the adaptive threshold.
         "grad_adaptive_clip_rate": float(metrics.grad_adaptive_clip_rate),
+        "grad_adaptive_bound_rate": float(metrics.grad_adaptive_bound_rate),
         "grad_hard_clip_rate": float(metrics.grad_hard_clip_rate),
         "grad_norm_samples": int(metrics.grad_norm_samples),
         # Per-optimizer-group split. The clip acts on the AdamW group alone —

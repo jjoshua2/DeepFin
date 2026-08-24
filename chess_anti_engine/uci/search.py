@@ -679,9 +679,14 @@ class SearchWorker:
         single-evaluator gumbel/walker/pucv routing. Idempotent.
 
         Always resets the persistent tree: RPG updates only candidate-child
-        N/W and reconstructs the root value in its own scorer, so a reused
-        tree would leave classic ``gss_score_and_halve`` reading a stale
-        ``W[root]/N[root]``.
+        N/W and reconstructs the root value in its own scorer, so it hands
+        back a tree whose root ``W``/``N`` still sit at the initial eval while
+        its children carry a full search. ``_run_*_chunk`` returns
+        ``self._tree.node_q(self._root_id)`` as the REPORTED root value, so a
+        carried RPG-shaped tree makes the reported score wrong.
+        ⚑ That is now the only reason. The original one — classic
+        ``gss_score_and_halve`` reading ``W[root]/N[root]`` — no longer holds:
+        it takes the fresh ``root_qs``.
         """
         had_pool = self._rpg_pool is not None
         if self._rpg_pool is not None:
@@ -1471,8 +1476,11 @@ class SearchWorker:
             # honor allowed_root_indices, or the restriction is silently ignored.
             #
             # RPG leaves root N/W at the initial eval (it reconstructs root value
-            # in its own scorer). Classic gss_score_and_halve reads W[root]/N[root],
-            # so drop any RPG-shaped tree before the fallback.
+            # in its own scorer), so an RPG-shaped tree's root Q does not describe
+            # its children -- and _run_gumbel_chunk's caller returns
+            # self._tree.node_q(self._root_id) as the REPORTED root value. Drop it.
+            # ⚑ Classic gss_score_and_halve no longer reads W[root]/N[root] (it
+            # takes the fresh root_qs), so that is no longer the reason.
             if self._rpg_pool is not None:
                 self.reset_tree()
             return self._run_gumbel_chunk(

@@ -30452,7 +30452,7 @@ renames the output directory rather than silently mislabelling a cell.
 
 Full write-ups + repros: `scratchpad/code_audit_20260803/{ENCODING,C_WALKER,INFERENCE}_AUDIT.md` (`enc_*`/`cwalk_*`/`inf_*` repros banked alongside). Fix PRs in flight for W1/W2, E1-E4, I1-I4+I6; all deploy-gated items marked below.
 
-- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
+- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate (now `_classify_expanded_root_support` — see the W2b addendum for the rename and the SUPERSET→EQUALITY change) is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
 - **ENCODING: the C and Python encoders are BIT-IDENTICAL in the production regime** (175/v2_threats + lc0_root_legacy_meta + history_rep_fix, 1,654 positions with real history × 3 modes × both versions) — first time measured. 722,888 lc0_1858↔4672 round-trips clean incl. promotions/castling/EP; PR #314's 93-dead-planes accounting confirmed exactly. Defects are COVERAGE: E1 the only C-vs-Py plane oracle is off in every gate (stale docstring; passes today when enabled — fix PR turns it into CI); E2 AOT package verification encodes its distribution in the LEGACY history layout (98/175 planes differ; one keyword); E3 rep_fix flag-ordering has no guard (latent); E4 C encoders infer plane count from the buffer, config never compared (latent). ⚠ our `lc0_1858` is NOT Leela's kMoveStrs promotion ordering — `onnx/load.py` handles it; live trap for BT4 distillation.
 - **INFERENCE: I1 (CONFIRMED, both transports): the slot protocol has NO request identity** — a client that times out (hardcoded 30s) and re-submits is served the PREVIOUS request's policy/WDL; on compact-legal the row is partially reinterpreted metadata bytes = plausible-looking policy from a different position, recordable as training data. Precondition (client reset) documented in-source as observed 2026-07-24; RATE UNMEASURED (log grep in flight). Fix PR in flight (request id/epoch in header; wire-format change, workers+broker restart together). I2: connect never validates layout vs shm size → all-zero policy on plane skew (latent; guard in PR). I3: hang watchdog inert until first successful forward AND excludes _ensure_model — cannot fire on the documented boot-into-wedged-dxg scenario. I4: AOT constants rebound check_full_update=False, nothing binds package↔model. I6: broker busy-spins ~83% of a core at idle. I5 (deferred, separate decision): EncodedEvalCache transparently BYPASSED on the compact UCI path (0 hits/0 misses reads as clean); both cache keys otherwise sound. Gather policy clean; ThreadedDispatcher not on the production selfplay path.
 
@@ -33426,8 +33426,10 @@ an empty square**. The board stays self-consistent, nothing raises, and the
 entire subtree below is a position that cannot arise in chess — encoded, sent to
 the net, and backpropped into the real tree's statistics.
 
-**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`), the check that would
-catch a stale root child set, was short-circuited by
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`; now
+`_classify_expanded_root_support`, after its semantic went from SUPERSET to exact
+support EQUALITY — see the W2b addendum at the end of this section), the check
+that would catch a stale root child set, was short-circuited by
 `allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
 argument, so **the one path that carries a tree across plies (selfplay) was the
 one path the check never ran on** — the by-now familiar shape of a gate that
@@ -33550,6 +33552,75 @@ this project ships, also untouched. Third, the review of this PR found a
 realloc-dangle in the children pool that is **shared with `main` and predates
 this work**; it is recorded here as a known pre-existing defect and deliberately
 not bundled into a correctness fix that is trying to stay reviewable.
+
+### W2b addendum 2026-08-23 — the W2 gate was a SUPERSET check, and the superset is not harmless
+
+**Not an experiment; no verdict, no yardstick, nothing launched.** Recorded here
+because it changes the semantic of an instrument this section defines.
+
+`_expanded_root_covers_actions` accepted a carried root whose child set was any
+SUPERSET of the current search support (`np.isin(actions, child_actions).all()`),
+on the reading that spare children can only help. They cannot. Two production
+paths NARROW the root support below the previous ply's expansion — winning-root
+terminal-draw pruning (`gumbel_c.py`, `root_qs[i] > 0` + immediate draws) and
+`allowed_root_indices_batch` (UCI `searchmoves`) — and the C halving scorer
+`gss_score_and_halve` derives `max_visit`, `total_visits`, the prior-weighted
+`weighted_q`/`mixed_value` and the `min_q`/`max_q` normalisation from ALL of the
+root's children. So an excluded child still moves the Q transform that every
+INCLUDED candidate is scored through. Meanwhile the improved policy is built over
+the current support only, so the eliminator and the returned target disagreed
+about which moves exist. The Python reference (`gumbel.py`) never reuses a tree,
+so its semantic for a narrowed root is a fresh root over the current support.
+
+Fix: the gate is now exact support EQUALITY (`_classify_expanded_root_support`);
+a narrowed support rejects the carried root and rebuilds it over `legal_idx`,
+which the existing fallback already did.
+
+**The rejection counter is SPLIT, because the two rejections mean opposite
+things.** Folding them together would have buried the W1/W2-family corruption
+signal under routine traffic — the narrowed case fires on ordinary winning-root
+selfplay plies, so a shared counter would have been permanently nonzero and the
+alarm unreadable.
+- `root_coverage_miss_count()` / `root_coverage_miss=` keep their names AND their
+  original meaning: the carried root was MISSING an action the search needed, i.e.
+  the tree disagrees with the rules. Still an alarm; still re-triggers the
+  operator line.
+- `root_support_narrowed_count()` / `root_support_narrowed=` is new: every action
+  was present and the root also carried excluded ones. Routine. Announced ONCE
+  per process (one-shot WARNING plus the first operator line) and thereafter only
+  carried along when an alarm prints — a counter that re-triggered every 60 s
+  would train operators to ignore the line the alarms share.
+
+Measured (`tests/test_mcts_transposition_key.py`, all four cases red on the
+parent commit on the PLAYED-MOVE assertion): a carried root holding an extra,
+heavily-visited child changes the *played move* of a search over the narrowed
+support versus the same search on a root built over that support alone. Both
+narrowing paths, both search shapes: `searchmoves` (157↔155) and the winning-root
+draw prune in selfplay's own call shape — `allowed_root_indices_batch=None`, root
+carried with its full legal expansion — at 21 legal/8 support (657 vs 584) and 15
+legal/2 support (804 vs 803).
+
+⚑ Instrument note for whoever reproduces this: the draw prune needs `root_q > 0`,
+but pinning the WDL to a decisive win for EVERY node makes the test vacuous —
+identical `q_hat` across candidates collapses the Q transform to a constant and
+the halving becomes a pure log-prior ranking that no root pollution can move. The
+root batch must be winning while the leaves stay varied.
+
+**⚠ DEPLOY GATED, and this addendum is NOT that gate.** Two reasons, and the
+second is the bigger one:
+1. **Search-shape.** The reuse rate on narrowed-support roots changes, which
+   voids the frozen-search regret baseline (frozen 2026-08-09 20:58).
+2. **DATA-AFFECTING.** On every narrowed ply the stored policy row and
+   `values_out` are now built from a REBUILT, cold root — different survivor,
+   different visit distribution, different value. Winning positions with
+   claimable-draw replies are exactly where the anti-engine curriculum spends
+   time, so this is a change to training rows, not only to played moves. It
+   belongs under the one-data-affecting-change-per-readout-window rule and needs
+   its own entry with a pre-committed yardstick plus an arena readout; if it
+   restarts alongside anything else, that overlap goes in both Confounds lines.
+
+Pure Python: no extension rebuild, but merge ≠ deploy, and a restart is what
+deploys it.
 
 ---
 
@@ -42922,3 +42993,65 @@ already holding 18.3/32 cores, so a PASS is necessary and not sufficient. The ma
 unchanged and is now runnable: repeat arm with `--sf-cache` first, publish `d_obs` and the
 half-width, choose the effect size against the MEASURED resolution, demonstrate that PASS and
 KILL both land inside the statistic's observed range, and only then run arm NEW.
+
+## 2026-08-21 — PR #450: `sf_p0_blend_alpha` productionized (default 0.0 = OFF) — **SUPERSEDES the 2026-08-09 "duplication" retirement of the target-blend arm**
+
+**What ships.** `sf_p0_blend_alpha` (schema `tune:` section, `TrialConfig`-validated to
+[0, 1], default **0.0 = OFF**): at the `train_steps` call boundary the replay buffer is
+wrapped per iteration so sampled batches carry
+`policy_target ← (1−α)·t0 + α·sf_p0_policy_target` on `has_sf_p0` rows, no
+renormalization, every row staying ONE row of weight 1. α=0 runs the unwrapped buffer
+object, bitwise. Live-reloadable in both directions (the wrapper is rebuilt from the
+freshly reloaded config every iteration). At the shipped default this PR is not a
+training-affecting change; activation is governed by the dose-ladder prereg below.
+
+**(a) SUPERSEDED: the 2026-08-09 #373-era ruling** (this ledger: "Soft cross-entropy is
+LINEAR in the target… The new knob was therefore duplication whose only distinguishing
+feature was the defect"). The per-row identity
+`CE((1−α)·t0 + α·s, p) = (1−α)·CE(t0, p) + α·CE(s, p)` is true and was never the
+question. The two routes differ in ROW-WEIGHT normalization, and the ruling's own dose
+table contains the refutation: the additive term is a **masked mean over `has_sf_p0`
+rows**, so on an eligible row its weight relative to the main term is
+`(w_sf_own/w_policy)/f`. Matching teacher SHARE α on eligible rows via `w_sf_own`
+therefore requires `w_sf_own = f·w_policy·α/(1−α)`, which puts the eligible row's TOTAL
+policy-gradient weight at `w_policy/(1−α)` — **1/(1−α)× an ineligible row's (3.33× at
+α=0.7)** — while the target blend holds every row at exactly 1. Equivalence would need
+`w_policy` scaled down on eligible rows only, which a global weight cannot do. The two
+knobs are NOT re-parameterisations of each other: the blend delivers dose α without
+handing a non-random 15–23% subpopulation extra gradient share. The 2026-08-09 defect
+finding against #373's implementation stands; the retirement of the ARM as "duplication"
+is withdrawn.
+
+**(b) Prereg (live branch, banked before this PR):** `d2e07b96d` (dose-ladder
+operational pins: iter-595 ckpt, salvage replay window of 797 shards, 5 arms × 6,000
+steps at batch 512, `a100` adequacy guard), `c72966877` (repair-portfolio routing table
+banked before the ladder read), `a12239709` (ladder aborted by the dead-knob guard: the
+blend key was unreachable on the variant path — the wiring gap whose production-path
+half this PR closes; audit flag fixed, resequenced A → fixed ladder → B → C).
+
+**Hypothesis.** Blending the same-position SF soft teacher into the policy target at
+dose α improves policy target quality on the frozen audit set, without the additive
+route's gradient-share confound.
+
+**Deciding yardstick (exact command, per ladder arm, unchanged from the prereg):**
+`PYTHONPATH=. python3 scripts/audit_targets.py --net <arm_ckpt> --audit data/audit_set_v1.jsonl`
+— each arm judged against `a000`, never against live. **Kill pre-committed: `a070` must
+beat `a000` by ≥ 3.0 cp, else the arm family dies.** Arms: a000/a025/a050/a070/a100.
+
+**Refusals shipped with the knob** (all raise; none degrade silently): α>0 with
+`w_sf_own>0` (double-dose — NOTE live production runs `w_sf_own: 0.0`; `main`'s yaml
+still says 0.1, the stale-yaml trap); α>0 with `rebuild_sf_targets` (the rebuild clears
+`has_sf_p0` after the blend but cannot restore the already-blended target); an iteration
+that trains rows and blends ZERO of them (sf_p0 outage — the shard codec always
+materializes zero flags, so column presence proves nothing); eligible-row sums off 1
+beyond 1e-2 in either source array (downstream `soft_cross_entropy` renormalizes and
+would silently repair the corruption).
+
+**Realized dose is α×f, and f is a property of the corpus, not the config.** Production
+eligibility `has_sf_p0_frac` ≈ 0.15–0.23 (0.2304 banked, trial 379f6 iter 516); the
+ladder's salvage window reads 0.444. Deployment prereg MUST read realized f off the
+wrapper's wiring-proof log line (`blended_rows/total_rows`) before choosing α — a dose
+chosen from the yaml alone is a guess.
+
+**Confounds:** none at the shipped default (α=0 is the identity path, pinned bitwise by
+test).

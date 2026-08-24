@@ -22,6 +22,7 @@ import numpy as np
 from chess_anti_engine.moves import (
     FULL_TO_COMPACT_POLICY,
     POLICY_SIZE,
+    drain_decode_fallback_count,
     move_to_index_for_encoding,
     policy_index_for_encoding,
     policy_mask_to_encoding,
@@ -186,17 +187,26 @@ def _rescore_with_syzygy(
     if not state.game.syzygy_rescore_policy:
         return result, tb_policy_overrides
 
-    # Map each record's ply_index to its position in the records list. The
-    # replay walks every ply in ``move_stack`` (including forced-move plies
+    # Map each record's absolute game ply to its position in the records list.
+    # The replay walks every ply in ``move_stack`` (including forced-move plies
     # that the 1-legal shortcut in ``run_network_turn`` push but skip
     # recording), so a naive ``sample_idx`` counter would overshoot ``t``
     # by the number of skipped forced plies — stamping TB overrides from
     # K+P endgame positions onto the wrong records.
-    record_at_ply = {int(rec.ply_index): t for t, rec in enumerate(records)}
+    # ⚑ FIRST record at a ply wins, matching `blindspot_harvest.pre_move_boards`
+    # exactly. These two walkers key the same map off the same field over the
+    # same replay, and this one used a dict comprehension (LAST wins) while that
+    # one used `setdefault` (FIRST wins) — two different answers to one question,
+    # which is a silent divergence rather than a design. Duplicates should not
+    # occur (each ply produces at most one record), so this only bites on
+    # already-corrupt input; when it does, both walkers now blame the same record.
+    record_at_ply: dict[int, int] = {}
+    for t, rec in enumerate(records):
+        record_at_ply.setdefault(int(rec.ply_index), t)
 
     replay_board = starting.copy()
     for mv in move_stack[opening_len:]:
-        cur_ply = len(replay_board.move_stack)
+        cur_ply = int(replay_board.ply())
         t = record_at_ply.get(cur_ply)
         if t is not None and is_tb_eligible(replay_board):
             best = probe_best_move(replay_board, state.game.syzygy_path)
@@ -498,6 +508,16 @@ def _update_aggregate_stats(
     if pending:
         _merge_outcome_stats(outcome_stats, dict(pending))
         pending.clear()
+    # Action ids that named no legal move and were silently replaced with the
+    # first legal one (`moves/encode.index_to_move_fast`). PROCESS-wide since
+    # the last finalized game, not this game's own count — concurrent games in
+    # one worker share the counter and the shard sums them regardless. It rides
+    # the same path the resume counters do, so a substitution is a number in
+    # result.json rather than a stderr line nobody diffs; a counter no
+    # production path reads would be the same defect it exists to expose.
+    decode_fallbacks = drain_decode_fallback_count()
+    if decode_fallbacks:
+        _inc_outcome(outcome_stats, "action_decode_fallbacks", decode_fallbacks)
     if source.startswith("fenlist"):
         # Blind-spot FEN seeds are otherwise invisible in result.json (the
         # per-source outcome_stats aren't plumbed through the ingest-time

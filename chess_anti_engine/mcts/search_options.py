@@ -180,31 +180,17 @@ SEARCH_OPTIONS: tuple[SearchOption, ...] = (
         "ROOT-only c_visit (descent keeps CVisit). <0 = use CVisit at both "
         "sites (legacy, no split).",
     ),
-    SearchOption(
-        "QVisitExp", "string", "q_visit_exp", 1.0,
-        _GUMBEL_PATHS, 0.0, 2.0,
-        "Exponent on max_visit in the DESCENT q_scale. 1.0 = linear Gumbel. "
-        "On rpg, only the root fallback when QVisitExpRoot >= 90.",
-    ),
+  # ⚑ QVisitExp / QVisitFloor / QGlobalScale were REMOVED from this registry
+  # along with the GumbelConfig fields behind them (never promoted; no config in
+  # this repo set one). A GUI that still sends `setoption name QVisitExp ...`
+  # now gets the registry's normal unknown-option handling instead of an option
+  # that pretended to tune a descent transform nobody had measured.
     SearchOption(
         "QVisitExpRoot", "string", "q_visit_exp_root", float(_PLAY["q_visit_exp_root"]),
         _GUMBEL_PATHS, -10.0, 99.0,
         "ROOT-only value-transform exponent. <0 = LOG root (sim-invariant "
-        "q_scale from 256 to millions of nodes). >=90 = use QVisitExp.",
-    ),
-    SearchOption(
-        "QVisitFloor", "string", "q_visit_floor", -1.0,
-        _GUMBEL_PATHS, -1.0, 10000.0,
-        "Decoupled additive value-transform floor: >=0 gives "
-        "q_scale = floor + c_scale*max_visit^exp instead of the legacy "
-        "coupled c_scale*(c_visit + max_visit^exp). <0 = legacy.",
-    ),
-    SearchOption(
-        "QGlobalScale", "check", "q_global_scale", False,
-        frozenset({"gumbel"}),
-        None, None,
-        "Scale the descent value-transform by the ROOT's max child-visit "
-        "instead of the local node's, so q_scale is uniform across the tree.",
+        "q_scale from 256 to millions of nodes). >=90 = LINEAR root "
+        "(exponent 1.0), which is what selfplay runs.",
     ),
     SearchOption(
         "HalvingDiv", "spin", "halving_div", 2,
@@ -310,22 +296,25 @@ def branch_note(
     raw = _num(values, "q_visit_exp_root")
     if raw >= 90.0:
         return (
-            "every value in [90, 99] is the same search: >= 90 is the 'use "
-            "QVisitExp at the root too' sentinel (_mcts_tree.c:3947). Setting "
-            "it below 90 gives the root its own exponent and DOES change the "
-            "search"
+            "every value in [90, 99] is the same search: >= 90 is the LINEAR "
+            "root sentinel -- the root exponent resolves to 1.0 (_mcts_tree.c "
+            "`q_visit_exp_root = (q_visit_exp_root < 90.0) ? q_visit_exp_root "
+            ": q_visit_exp`, which reads the literal 1.0 gumbel_c now passes "
+            "for the deleted q_visit_exp). Setting it below 90 gives the root "
+            "its own exponent and DOES change the search"
         )
     if raw < 0.0:
         return (
             "every value < 0 is the same search: the LOG root transform is "
-            "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) "
-            "(_mcts_tree.c:1498), which does not contain the exponent at all — "
-            "only its SIGN chose the branch. Crossing to >= 0 selects the power "
-            "branch and CAN change the search"
+            "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) (_mcts_tree.c "
+            "`gss_score_and_halve`, the q_visit_exp_root < 0 arm), which does "
+            "not contain the exponent at all — only its SIGN chose the branch. "
+            "Crossing to >= 0 selects the power branch and CAN change the search"
         )
     return (
         "the power branch: the exponent enters as max_visit**exp ADDED to "
-        "CVisitRoot (_mcts_tree.c:1500-1504), so at CVisitRoot >> max_visit**exp "
+        "CVisitRoot (_mcts_tree.c `gss_score_and_halve`, the else arm: "
+        "`c_scale_root * (cvr + mv_term)`), so at CVisitRoot >> max_visit**exp "
         "it moves q_scale very little. Crossing to < 0 selects the log branch "
         "and CAN change the search"
     )
@@ -362,10 +351,6 @@ def inert_reason(option: SearchOption, path: str, values: Mapping[str, object]) 
         return "rpg reads c_scale only as the root fallback, and CScaleRoot >= 0"
     if option.field == "c_visit" and _num(values, "c_visit_root") >= 0.0:
         return "rpg reads c_visit only as the root fallback, and CVisitRoot >= 0"
-    if option.field == "q_visit_exp" and _num(values, "q_visit_exp_root") < 90.0:
-        return "rpg reads q_visit_exp only as the root fallback, and QVisitExpRoot < 90"
-    if option.field == "q_visit_floor" and _num(values, "q_visit_exp_root") < 0.0:
-        return "the log root transform (QVisitExpRoot < 0) ignores QVisitFloor"
     return None
 
 

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay import match as match_mod
 from chess_anti_engine.selfplay.match import play_match_batch
 
@@ -38,7 +38,9 @@ def _capture_cfgs(monkeypatch: Any) -> list[GumbelConfig]:
         n = len(boards)
         return (
             [np.zeros(POLICY_SIZE, dtype=np.float32)] * n,
-            [next(iter(b.legal_moves)) and 0 for b in boards],
+            # A real action id, not a constant: `play_match_batch` decodes
+            # strictly now and an id that names no legal move raises.
+            [int(move_to_index(next(iter(b.legal_moves)), b)) for b in boards],
             [0.0] * n,
             [np.ones(POLICY_SIZE, dtype=bool)] * n,
         )

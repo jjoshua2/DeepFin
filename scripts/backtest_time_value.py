@@ -74,7 +74,6 @@ class _Searcher:
     def __init__(
         self, checkpoint: str, device: str, *, topk: int, policy_temp: float,
         c_scale: float, c_visit: float, c_visit_root: float,
-        q_visit_exp: float = 1.0, q_global_scale: bool = False, q_visit_floor: float = -1.0,
         c_scale_root: float = -1.0, q_visit_exp_root: float = 99.0,
         compile_mode: str | None = None,
     ) -> None:
@@ -90,9 +89,6 @@ class _Searcher:
         self._c_scale = float(c_scale)
         self._c_visit = float(c_visit)
         self._c_visit_root = float(c_visit_root)
-        self._q_visit_exp = float(q_visit_exp)
-        self._q_global_scale = bool(q_global_scale)
-        self._q_visit_floor = float(q_visit_floor)
         self._c_scale_root = float(c_scale_root)
         self._q_visit_exp_root = float(q_visit_exp_root)
         model = load_model_from_checkpoint(checkpoint, device=device)
@@ -125,8 +121,7 @@ class _Searcher:
             policy_encoding=self._pol_enc, compute_relations=self._use_rel,
             policy_temp=self._policy_temp, topk=self._topk,
             c_scale=self._c_scale, c_visit=self._c_visit,
-            c_visit_root=self._c_visit_root, q_visit_exp=self._q_visit_exp,
-            q_global_scale=self._q_global_scale, q_visit_floor=self._q_visit_floor,
+            c_visit_root=self._c_visit_root,
             c_scale_root=self._c_scale_root, q_visit_exp_root=self._q_visit_exp_root,
         )
         rng = np.random.default_rng(seed)
@@ -252,24 +247,17 @@ def main() -> None:
                     help="root-halving c_visit floor (the root/descent c_scale SPLIT that fixes "
                          "scaling): a large root floor (~900) makes one c_scale fit every sim count "
                          "at the root while descent keeps c_visit~50. -1 = legacy (no split).")
-    ap.add_argument("--q-visit-exp", type=float, default=1.0,
-                    help="descent value-transform exponent on max_visit. 1.0=linear (q_scale grows "
-                         "with visits -> over-trusts the value head at high sims); <1=sublinear "
-                         "(sim-invariant). Test for high-sim scaling past the plateau.")
-    ap.add_argument("--q-global-scale", action="store_true",
-                    help="descent scales q_scale by the ROOT max_visit (uniform across the tree); "
-                         "pairs with --q-visit-exp<1 for sim-invariance.")
-    ap.add_argument("--q-visit-floor", type=float, default=-1.0,
-                    help="decoupled additive floor: q_scale=floor+c_scale*max_visit^exp when >=0.")
+  # --q-visit-exp / --q-global-scale / --q-visit-floor removed with the
+  # GumbelConfig fields behind them (never-promoted descent knobs).
     ap.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
                     help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
                          "--q-visit-exp-root<0 for a LOG root: log needs a big c_scale (~7) while the "
                          "descent stays tiny (~0.025). <0 = use --c-scale at the root too (legacy). "
                          "Default now matches the production play search (root-log).")
     ap.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
-                    help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). <0 = LOG "
+                    help="ROOT-ONLY value-transform exponent (the descent is fixed linear). <0 = LOG "
                          "slow-growth at the root (kills the high-sim plateau) while the descent stays "
-                         "linear (preserves good mid-sim regret). >=90 = use --q-visit-exp (legacy). "
+                         "linear (preserves good mid-sim regret). >=90 = LINEAR root. "
                          "Default now matches the production play search (root-log).")
     ap.add_argument("--compile", dest="compile_mode", nargs="?", const="max-autotune", default=None,
                     help="torch.compile the model (much faster forward; needs the GPU free). "
@@ -302,13 +290,10 @@ def main() -> None:
     searcher = _Searcher(
         args.checkpoint, args.device, topk=args.gumbel_topk, policy_temp=args.policy_temp,
         c_scale=args.c_scale, c_visit=args.c_visit, c_visit_root=args.c_visit_root,
-        q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
-        q_visit_floor=args.q_visit_floor,
         c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
         compile_mode=args.compile_mode,
     )
     print(f"[backtest] c_scale={args.c_scale} c_visit_root={args.c_visit_root} "
-          f"q_visit_exp={args.q_visit_exp} q_global_scale={args.q_global_scale} "
           f"c_scale_root={args.c_scale_root} q_visit_exp_root={args.q_visit_exp_root} "
           f"topk={args.gumbel_topk} policy_temp={args.policy_temp}")
     # snapshot[pos_idx][budget] = features; fill by running each budget over all boards.

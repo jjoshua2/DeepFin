@@ -57,6 +57,7 @@ from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     POLICY_ENCODING_LC0_1858,
     POLICY_SIZE,
+    ActionDecodeError,
     normalize_policy_encoding,
 )
 from chess_anti_engine.model import (
@@ -1373,7 +1374,25 @@ class WorkerSession:
                 task = manifest.get("task") or {"type": "selfplay"}
                 task_type = str(task.get("type", "selfplay")).lower()
                 if task_type == "arena":
-                    self._run_arena(manifest, task)
+                    try:
+                        self._run_arena(manifest, task)
+                    except ActionDecodeError as exc:
+                        # Contain at the process boundary, exactly as the
+                        # selfplay branch below does. `run()` has no other
+                        # `except` and `finally: self._cleanup()` exits, so an
+                        # uncaught raise here would take the whole WORKER down
+                        # over one corrupt measurement. The arena batch is VOID:
+                        # `_run_arena` writes its result JSON only after the
+                        # match returns, so nothing was banked and there is no
+                        # partial row to retract.
+                        self.log.error(
+                            "arena batch VOID: %s. No arena result was written. "
+                            "An action id from the search decoded to no legal "
+                            "move, so this match cannot be scored; re-polling.",
+                            exc,
+                        )
+                        time.sleep(float(self.args.poll_seconds))
+                        continue
                 else:
                     try:
                         self._run_selfplay(manifest)
