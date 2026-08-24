@@ -66589,3 +66589,27 @@ read out (arm 2 mid-training, arm 3 unlaunched):
   `_RAW_SUM_LOSS_KEYS`); hashed loss surface untouched.
 - Closes task #271. NOT deployed to the live branch (production stopped; merges to main
   only — MERGED ≠ DEPLOYED).
+
+### 2026-08-24 — PR #463 MERGED (main 4d3a6586e): rep_fix process-global now restored per test (task #274)
+- The flag `rep_fix.apply` sets is process-global in the compiled encoders and NO test restored
+  it: on main, 3 unrelated test files left 120/143 tests inheriting a set flag and the session
+  ending `False` instead of never-set. Now a `pytest_runtest_protocol` HOOKWRAPPER (v2 — not the
+  v1 autouse fixture, see below) snapshots before EACH test's setup and restores after; #459's
+  inline restore kept as site documentation.
+- ⚑ The v1 function-scoped autouse fixture SHIPPED THE DEFECT IT FIXED, measured: a module-scoped
+  fixture flipping the flag during the first test's setup (test_param_count.py builds the
+  production model, history_rep_fix: true) ran BEFORE the fixture's snapshot — 30/31 tests
+  inherited the flip under v1 (vs 30/31 on main; and v1 ended the session `True`, WORSE), 0/31
+  under the hookwrapper. Caught by Codex in review. Reliance question answered by enumeration:
+  all nine higher-scoped fixtures checked, none needs a flag flip to persist.
+- Second real defect found en route: test_history_rep_fix.py pokes the WRITE-ONLY extension
+  setter directly, desyncing `rep_fix.current()` from the real encoder state — the guard would
+  have believed the sentinel. Its `_reset_flag` now clears the sentinel first; pinned by reading
+  the ENCODER, not the flag.
+- 6/6 mutants killed incl. faithful-revert-to-v1 (killed ONLY by the new module-scope regression
+  test); reviewer independently reproduced that mutant. Suite delta +5 passed / 0 new failures
+  (identical 4 pre-existing reds). hookwrapper=True kept deliberately (pytest>=7 floor; pytest 8's
+  wrapper= spelling does not exist there) — do not modernize.
+- Transferable trap: `git stash` reverts to HEAD — after committing, "main" measurements taken
+  via stash were silently measuring the PR. Compare against a separate detached worktree.
+- Closes task #274. NOT deployed to the live branch (merges to main only — MERGED ≠ DEPLOYED).
