@@ -240,3 +240,67 @@ def test_status_csv_lr_column_is_named_for_the_mean_not_the_trough() -> None:
     trough (~9x below the LR the trunk trains at) — rl_loop_audit I19."""
     assert "lr" not in _STATUS_COLS
     assert "lr_mean" in _STATUS_COLS
+
+
+def test_the_realized_gate_keys_are_reported_from_the_trainer() -> None:
+    """MUTATION: point either column at the config instead of `trainer.*`, or
+    delete the pair from `_build_report_dict`.
+
+    ⚑⚑ THE COLUMN IS THE ONLY DURABLE RECORD OF A SUBSTITUTION. The two
+    fabricated-tail gate keys are sanitized at `Trainer` construction --
+    non-finite falls back to OFF, finite out-of-range clamps into [0, 1] -- and
+    `params.json` is NOT fixed up on the way, because it persists the Ray
+    `config`, i.e. what the operator typed. So a run configured
+    `sf_own_regret_listed_mass_min: 10` trains at `1.0` with its saved config
+    still reading `10`, and `sf_own_regret_gated_frac` cannot separate the two
+    cases -- it reads `0.0` for "deliberately off" and for "disabled by a
+    non-finite value" alike. Without this row the one-time construction warning
+    is the only evidence, and a warning that scrolled past three days ago is not
+    evidence.
+
+    ⚑ ASSERTED WITH A REALIZED VALUE THAT DIFFERS FROM ANY PLAUSIBLE TYPED ONE
+    (0.75 / 0.25, neither a default nor an endpoint), so a column silently wired
+    to a constant, to the identity defaults, or to a clamp of the typed value
+    cannot pass by coincidence.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.tune.trainable_report import _build_report_dict
+    from chess_anti_engine.tune.trial_config import (
+        DriftMetrics,
+        PidResult,
+        RestoreResult,
+        SelfplayResult,
+        TrainingResult,
+        TrialConfig,
+    )
+
+    trainer = SimpleNamespace(
+        opt=SimpleNamespace(param_groups=[{"lr": 3e-4}]),
+        w_wdl=1.0, w_soft=1.0, w_sf_move=1.0, w_categorical=1.0,
+        sf_wdl_frac=0.5, sf_wdl_temperature=1.0, sf_wdl_draw_scale=1.0,
+        sf_wdl_conf_power=1.0,
+        mirror_prob=0.5,
+      # The REALIZED pair, as `Trainer.__init__` would have stored it.
+        sf_own_regret_listed_mass_min=0.75,
+        sf_own_regret_unlisted_scale=0.25,
+        _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
+    )
+    row = _build_report_dict(
+        tc=TrialConfig(), trainer=trainer, pr=PidResult(), sp=SelfplayResult(),
+        tr=TrainingResult(), drift=DriftMetrics(), eval_dict={}, puzzle_dict={},
+        probe_dict=None,
+        wdl_regret_used=0.07, sf_nodes_used=5000,
+        pause_metrics={
+            "paused_seconds": 0.0, "paused_fraction": 0.0, "paused_percent": 0.0,
+        },
+        restore=RestoreResult(), best_loss=1.0, iter_t0=0.0, iteration_idx=1,
+        buf_size=10, holdout_buf_size=1, holdout_frozen=False,
+        holdout_generation=0,
+    )
+
+    assert row["sf_own_regret_listed_mass_min"] == pytest.approx(0.75), (
+        "the realized listed_mass_min did not reach the result row -- an operator "
+        "reading params.json has no way to learn the value was substituted"
+    )
+    assert row["sf_own_regret_unlisted_scale"] == pytest.approx(0.25)

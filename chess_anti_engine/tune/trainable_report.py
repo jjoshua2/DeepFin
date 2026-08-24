@@ -1648,6 +1648,21 @@ def _build_report_dict(
         # adding the yaml key is restart-gated, since the live-yaml validator
         # rejects a key the running code does not define.
         "mirror_prob": float(trainer.mirror_prob),
+        # ⚑ THE FABRICATED-TAIL GATE, REPORTED FROM THE TRAINER'S OWN ATTRIBUTE --
+        # which is the REALIZED pair, not the typed one. Same reason as
+        # `mirror_prob` above and then one more: these two keys are sanitized at
+        # construction (non-finite -> off, finite out-of-range -> clamped to
+        # [0, 1]), so `params.json` and the Ray `config` keep whatever the
+        # operator typed while the trainer runs on something else. A run
+        # configured `listed_mass_min: 10` trains at 1.0 with its persisted
+        # config still saying 10, and `sf_own_regret_gated_frac` cannot tell them
+        # apart -- it reads 0.0 for "off" and for "disabled by fallback" alike.
+        # Without this row the ONE-TIME construction warning is the only evidence
+        # the substitution ever happened, and a warning that scrolled past three
+        # days ago is not evidence. Read this column against the yaml, not the
+        # yaml alone.
+        "sf_own_regret_listed_mass_min": float(trainer.sf_own_regret_listed_mass_min),
+        "sf_own_regret_unlisted_scale": float(trainer.sf_own_regret_unlisted_scale),
         # BOTH of these shape only the AUXILIARY `sf_eval` head's row mask.
         # Neither touches the WDL value target (docs/model_heads.md).
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),

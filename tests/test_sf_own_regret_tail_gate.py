@@ -743,10 +743,17 @@ def test_a_substituted_gate_key_ANNOUNCES_itself_and_is_stored_realized() -> Non
       1. a substitution WARNS, and an in-range pair does NOT (or the warning is
          noise and gets filtered);
       2. what the object STORES is the realized value, not the typed one -- so
-         `_loss_kwargs` and the reported config carry what is actually in force.
+         `_loss_kwargs` and the Ray result row carry what is actually in force.
     Claim 2 is the one that matters for our signature defect: a warning that
     scrolls past while `params.json` still echoes `10` leaves the operator with a
     config file that disagrees with the run.
+
+    ⚑ AND `params.json` STILL DOES ECHO `10` -- that is not fixable at this layer,
+    because it persists the Ray `config` the operator typed. Which is the whole
+    reason `tune/trainable_report.py` emits both REALIZED values as result-row
+    columns, pinned by
+    `tests/test_trainable_report.py::test_the_realized_gate_keys_are_reported_from_the_trainer`.
+    Read the row against the yaml; the yaml alone cannot tell you what ran.
     """
     from chess_anti_engine.train.losses import resolve_sf_regret_gate_keys
 

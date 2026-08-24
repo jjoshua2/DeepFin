@@ -2712,9 +2712,12 @@ class Trainer:
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
   # Fabricated-tail gate. RESOLVED ONCE, HERE, and the REALIZED pair is what this
-  # object stores -- so `_loss_kwargs`, the reported config and anything that reads
-  # these attributes all carry the value actually in force, not the one an operator
-  # typed. `sf_regret_gate_scale` re-applies the same rule (a no-op on an already
+  # object stores -- so `_loss_kwargs`, the Ray RESULT ROW (`trainable_report.py`
+  # emits both from these attributes) and anything else reading them carry the
+  # value actually in force, not the one an operator typed. ⚑ `params.json` is the
+  # exception and it is not fixable here: it persists the Ray `config`, i.e. the
+  # typed value, which is exactly why the realized pair is emitted as a column.
+  # `sf_regret_gate_scale` re-applies the same rule (a no-op on an already
   # resolved pair) so the offline rigs that call it directly are covered too.
   # ⚑ This WARNS and does not raise, unlike the floor's shape keys immediately
   # below; `resolve_sf_regret_gate_keys` records why the two differ.

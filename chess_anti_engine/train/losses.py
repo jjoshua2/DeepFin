@@ -1668,8 +1668,17 @@ def resolve_sf_regret_gate_keys(
     in every bad case, so killing a trial over it would cost more than it saves.
     ⇒ warn loudly, name both numbers, and let the run continue at the safe value.
     The caller that stores the RESULT (``Trainer.__init__``) is what closes the
-    loop: from then on the attribute, ``_loss_kwargs`` and the reported config all
+    loop: from then on the attribute, ``_loss_kwargs`` and the Ray RESULT ROW all
     carry the realized value instead of the typed one.
+
+    ⚑ ``params.json`` DOES NOT. It persists the Ray ``config``, which is what the
+    operator typed, and nothing here rewrites it -- so a run configured
+    ``listed_mass_min: 10`` trains at ``1.0`` with its saved config still saying
+    ``10``. That is why ``tune/trainable_report.py`` emits both realized values as
+    result-row columns: read the ROW against the yaml, never the yaml alone. An
+    earlier revision of this docstring said "the reported config" and meant the
+    row; the ambiguity mattered enough that a reviewer read it as a claim about
+    ``params.json``, which would have been false.
     """
     mass_min = float(listed_mass_min)
     scale = float(unlisted_scale)

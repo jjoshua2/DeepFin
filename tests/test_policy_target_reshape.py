@@ -311,10 +311,18 @@ def test_the_pinned_kwargs_override_only_the_target_shape_and_the_row_selection(
     so the term contributes nothing to ``total`` either way. This is a
     change-before-ARMING, not a change-before-merging.
 
-    ⚑ It also closes a blind spot at the root instead of by widening a digest:
-    ``eval_ruler_id`` hashes the SOURCE of the covered frames, so it moves when
-    ``compute_loss`` is edited but is BLIND to ``sf_regret_gate_scale``, the helper that
-    decides the number. Pinned off, that helper cannot reach the eval measurement.
+    ⚑ It also closes a blind spot at the root instead of by widening a digest.
+    ⚑⚑ AND THE BLIND SPOT IS WIDER THAN AN EARLIER REVISION OF THIS DOCSTRING SAID.
+    It claimed ``eval_ruler_id`` "moves when ``compute_loss`` is edited but is BLIND
+    to ``sf_regret_gate_scale``" -- an asymmetry that does not exist. ``call_closure``
+    follows only functions defined in the trainer module, so ``compute_loss``'s BODY
+    is outside the digest too; ``eval_ruler_id_for``'s own docstring says as much,
+    and ``tests/test_holdout_ruler_identity.py`` records the execution that
+    confirmed it (a dead statement in ``compute_loss`` leaves the pins passing).
+    ⇒ the covered frames on this path are ``_loss_kwargs`` and ``_eval_loss_kwargs``,
+    nothing below them. That makes the pin MORE necessary, not less -- and it means
+    a losses-only change can alter holdout semantics with the ruler id sitting
+    still, so DO NOT read "the id did not move" as "the ruler did not move".
 
     So the invariant is not "only the target shape" but: **every pinned key must
     redefine a column, and no pinned key may be a plain loss weight.** A future key that
