@@ -298,6 +298,45 @@ def test_the_python_reference_search_reads_halving_div() -> None:
     assert not np.array_equal(probs_2, probs_4)
 
 
+@pytest.mark.parametrize("div", [2, 3, 4, 8])
+def test_the_python_halving_keeps_exactly_the_divisors_survivors(div: int) -> None:
+    """The SURVIVOR COUNT specifically, not just "the search came out different".
+
+    ⚑ MEASURED GAP: reverting only ``_halve_remaining_for_board``'s keep count to
+    the old hardcoded ``max(1, (n+1)//2)`` left the end-to-end test above GREEN,
+    because the visits-per-action half of the schedule still read
+    ``halving_div`` and that alone moved the played move. One knob, two consumers
+    -- a test that observes the search's OUTPUT cannot say which of them honoured
+    it, so this one observes the survivor list itself.
+    """
+    import chess
+
+    from chess_anti_engine.mcts.gumbel import (
+        _halve_remaining_for_board,
+        _init_board_search_state,
+    )
+    from chess_anti_engine.moves import POLICY_SIZE
+
+    cfg = GumbelConfig(
+        input_extra_features="v1", simulations=64, topk=16, temperature=0.0,
+        add_noise=False, halving_div=div,
+    )
+    logits = np.random.default_rng(0).standard_normal(POLICY_SIZE).astype(np.float32)
+    state = _init_board_search_state(
+        chess.Board(), pol_logits=logits, root_q=0.0, sim_budget=64, cfg=cfg,
+        rng=np.random.default_rng(1),
+    )
+    assert state.remaining is not None
+    before = len(state.remaining)
+    assert before == 16, "topk candidates expected, or the arithmetic below is moot"
+
+    _halve_remaining_for_board(state, root_q=0.0, cfg=cfg)
+    assert state.remaining is not None
+    assert len(state.remaining) == halving_keep_count(before, div)
+    if div != MIN_HALVING_DIV:
+        assert len(state.remaining) != halving_keep_count(before, MIN_HALVING_DIV)
+
+
 def test_the_validator_reports_every_offending_knob_not_just_the_first() -> None:
     """An operator fixing one knob and re-running for the next is how a sweep
     loses an afternoon."""
