@@ -148,9 +148,7 @@ def build_gumbel_config_from_args(args: argparse.Namespace) -> GumbelConfig:
     """
     cfg = GumbelConfig(
         topk=args.gumbel_topk, c_scale=args.gumbel_c_scale,
-        c_visit=args.gumbel_c_visit, q_visit_exp=args.gumbel_qexp,
-        q_global_scale=args.gumbel_global_scale,
-        q_visit_floor=args.gumbel_qfloor,
+        c_visit=args.gumbel_c_visit,
         halving_div=args.gumbel_halving_div,
         c_visit_root=args.gumbel_cvisit_root,
         c_scale_root=args.gumbel_cscale_root,
@@ -209,16 +207,9 @@ def main() -> None:
   # Gumbel search (mcts.gumbel.INERT_GUMBEL_KNOBS; play-path audit F2), so a
   # sweep over them returned a perfectly reproducible null that read as a
   # measurement.
-    p.add_argument("--gumbel-qexp", type=float, default=1.0,
-                   help="gumbel q_visit_exp: exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
-                        "1.0=linear (default); <1=sublinear (less sim-count-dependent optimum)")
-    p.add_argument("--gumbel-global-scale", action="store_true",
-                   help="gumbel descent scales q_scale by the ROOT max_visit (global) instead of "
-                        "per-node local max_visit; pairs with --gumbel-qexp<1 for sim-invariance")
-    p.add_argument("--gumbel-qfloor", type=float, default=-1.0,
-                   help="gumbel decoupled (additive) value-transform floor: when >=0, "
-                        "q_scale=qfloor+c_scale*max_visit^qexp (floor independent of c_scale). "
-                        "<0 (default) = legacy coupled floor c_scale*(c_visit+max_visit^qexp)")
+  # --gumbel-qexp / --gumbel-global-scale / --gumbel-qfloor removed with the
+  # GumbelConfig fields behind them: three never-promoted DESCENT value-transform
+  # knobs, absent from every config and from PLAY_SEARCH_DEFAULTS.
     p.add_argument("--gumbel-halving-div", type=int, default=2,
                    help="gumbel sequential-halving divisor: each round keeps ceil(n/div). "
                         "2 (default) = standard halving (top half); 3/4 = more aggressive "
@@ -233,10 +224,10 @@ def main() -> None:
                         "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
                         "<0 = use c_scale at the root too (legacy linear)")
     p.add_argument("--gumbel-qexp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
-                   help="gumbel ROOT-ONLY value-transform exponent (descent keeps --gumbel-qexp). "
-                        "-1 (default) = LOG slow-growth: linear root q_scale explodes at high sims "
-                        "and saturates sigma(q); log stays ~100 from 256 to millions of nodes "
-                        "(sim-invariant). >=90 = use --gumbel-qexp at the root too")
+                   help="gumbel ROOT-ONLY value-transform exponent (the descent transform is "
+                        "fixed linear). -1 (default) = LOG slow-growth: linear root q_scale "
+                        "explodes at high sims and saturates sigma(q); log stays ~100 from 256 "
+                        "to millions of nodes (sim-invariant). >=90 = LINEAR root")
     p.add_argument(
         "--mode",
         type=_parse_modes,

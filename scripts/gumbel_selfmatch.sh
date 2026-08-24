@@ -11,9 +11,13 @@
 #   SIMS=8000  GAMES=40
 #   CSA=0.4 CVA=10 TOPKA=32 CPA=2.5 FPUA=1.2     # candidate A
 #   CSB=0.1 CVB=50 TOPKB=32 CPB=2.5 FPUB=1.2     # reference B
-# Gumbel #68 root/descent split — candidate A only, all legacy by default so an
+# Gumbel #68 root/descent split — candidate A only, legacy by default so an
 # unset A reproduces the pre-#68 behavior (B is always legacy). Set to A/B it:
-#   C_VISIT_ROOT=-1  Q_VISIT_FLOOR=-1  Q_VISIT_EXP=1.0  Q_GLOBAL_SCALE=0
+#   C_VISIT_ROOT=-1
+# Q_VISIT_FLOOR / Q_VISIT_EXP / Q_GLOBAL_SCALE are GONE: the three descent
+# value-transform knobs were deleted from GumbelConfig and from the UCI CLI
+# (never promoted, no config ever set one). Setting those env vars now does
+# nothing, which is why they are not read below rather than silently ignored.
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; repo_root="$(cd "${script_dir}/.." && pwd)"; cd "${repo_root}"
 py=".venv/bin/python"
@@ -27,9 +31,8 @@ csa="${CSA:-0.4}"; cva="${CVA:-10}"; topka="${TOPKA:-32}"; cpa="${CPA:-2.5}"; fp
 csb="${CSB:-0.1}"; cvb="${CVB:-50}"; topkb="${TOPKB:-32}"; cpb="${CPB:-2.5}"; fpub="${FPUB:-1.2}"
 # #68 root/descent split (candidate A only; legacy = no effect). Built into a
 # single extra-flag string appended to the A engine command.
-cvr="${C_VISIT_ROOT:--1}"; qvf="${Q_VISIT_FLOOR:--1}"; qve="${Q_VISIT_EXP:-1.0}"; qgs="${Q_GLOBAL_SCALE:-0}"
-splita="--c-visit-root ${cvr} --q-visit-floor ${qvf} --q-visit-exp ${qve}"
-[[ "${qgs}" != "0" ]] && splita="${splita} --q-global-scale"
+cvr="${C_VISIT_ROOT:--1}"
+splita="--c-visit-root ${cvr}"
 la="A_cs${csa}cv${cva}tk${topka}"; lb="B_cs${csb}cv${cvb}tk${topkb}"
 out_base="runs/matches/gumbel_selfmatch_${ts}_${la}_vs_${lb}"
 log="${out_base}.log"; pgn="${out_base}.pgn"

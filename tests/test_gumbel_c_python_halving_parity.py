@@ -72,6 +72,11 @@ from chess_anti_engine.mcts.gumbel import (
     _completed_q_transform,
     _root_sigma_scale,
 )
+from chess_anti_engine.mcts.gumbel_c import (
+    _DELETED_Q_GLOBAL_SCALE,
+    _DELETED_Q_VISIT_EXP,
+    _DELETED_Q_VISIT_FLOOR,
+)
 
 POLICY_SIZE = 4672
 
@@ -231,7 +236,11 @@ def _run_one_halving_round(
         float(cfg.c_scale), float(cfg.c_visit), float(cfg.c_puct),
         float(cfg.fpu_reduction), bool(cfg.full_tree), enc,
         0, 1, c_input_history_mode(cfg.input_history_encoding),
-        None, float(cfg.q_visit_exp), 0, float(cfg.q_visit_floor),
+      # The three deleted descent q-knobs. This harness calls the C entry point
+      # directly, so it must mirror what `gumbel_c` passes -- imported from the
+      # consumer rather than re-typed, so a change there cannot leave this
+      # harness silently searching a different shape than production.
+        None, _DELETED_Q_VISIT_EXP, _DELETED_Q_GLOBAL_SCALE, _DELETED_Q_VISIT_FLOOR,
         int(cfg.halving_div), float(cfg.c_visit_root), float(cfg.c_scale_root),
         float(cfg.q_visit_exp_root), 0,
     )

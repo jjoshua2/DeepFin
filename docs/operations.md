@@ -592,7 +592,7 @@ info string searchconfig PolicyTemperature = 1.0 [LIVE]
 info string searchconfig CScale = 0.025 [LIVE]
 info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
 info string searchconfig QVisitExpRoot = -1.0 [BRANCH] — every value < 0 is the same search: ...
-info string searchconfig 14 live, 1 branch-pinned, 4 inert on path=gumbel
+info string searchconfig 11 live, 1 branch-pinned, 4 inert on path=gumbel
 ```
 
 The path is read off the **live worker**, not off the options: `UseVL true`
@@ -647,10 +647,7 @@ installed descent object. `searchconfig` remains the authority for what a
 | `CVisit` | string | 0 – 1e5 | 50.0 | gumbel; rpg only if `CVisitRoot < 0` | descent transform floor |
 | `CScaleRoot` | string | -1 – 1000 | 7.0 | gumbel, rpg | root-only c_scale; <0 = use `CScale` |
 | `CVisitRoot` | string | -1 – 1e5 | 900.0 | gumbel, rpg | root-only c_visit; <0 = use `CVisit` |
-| `QVisitExp` | string | 0 – 2 | 1.0 | gumbel; rpg only if `QVisitExpRoot >= 90` | descent exponent on max_visit |
-| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
-| `QVisitFloor` | string | -1 – 1e4 | -1.0 | gumbel; rpg only if `QVisitExpRoot >= 0` | additive (decoupled) transform floor; <0 = legacy coupled |
-| `QGlobalScale` | check | — | false | gumbel | scale descent transform by the ROOT max child-visit |
+| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = LINEAR root (exponent 1.0) |
 | `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
 | `Topk` | spin | 2 – 256 | 32 | gumbel, rpg | root candidates |
 | `GumbelScale` | string | 0 – 5 | 0.0 | gumbel, rpg | root Gumbel-noise strength; 0 = deterministic |
@@ -661,6 +658,16 @@ installed descent object. `searchconfig` remains the authority for what a
 | `CPuctFactor` | string | 0 – 100 | 3.89 | walker, pucv, pucv_pool, rpg | 0 = fixed CPuct |
 | `CPuctBase` | string | 1 – 1e9 | 38739.0 | walker, pucv, pucv_pool, rpg | log((N+base)/base) |
 | `FpuReduction` | string | -10 – 10 | 0.33 | walker, pucv, pucv_pool, rpg | first-play-urgency reduction |
+
+**Removed 2026-08-23: `QVisitExp`, `QVisitFloor`, `QGlobalScale`.** They drove
+three DESCENT value-transform knobs on `GumbelConfig` that were never promoted —
+absent from every config in this repo and from `PLAY_SEARCH_DEFAULTS`, sweep
+leftovers from the root/descent split work. The axis that DID pay off is the
+separate ROOT family (`CScaleRoot` / `CVisitRoot` / `QVisitExpRoot`), which is
+untouched and is what production PLAY runs as the log root. The descent
+transform is now fixed linear, which is the search every config here was already
+running. A GUI still sending one of the three gets the normal unknown-option
+handling instead of an option that pretended to tune something.
 
 Names match `scripts/arena_standard.py --cand-gumbel` / `--ref-gumbel` field
 names with the underscores removed and CamelCased (`c_scale` → `CScale`,
@@ -767,7 +774,7 @@ threshold, nothing fitted:
 | current value | what the C does | what is pinned |
 |---|---|---|
 | `< 0` (the shipped `-1.0`) | log root: `CScaleRoot·log1p(CVisitRoot + max_visit)` (`_mcts_tree.c:1498`) | the expression **does not contain the exponent**; only its sign chose the branch, so every negative value is one search |
-| `>= 90` | "use `QVisitExp` at the root too" sentinel (`:3947`) | every value in [90, 99] is one search |
+| `>= 90` | LINEAR root sentinel: the exponent resolves to `1.0` (`:3947`, reading the literal `gumbel_c` passes for the deleted `q_visit_exp`) | every value in [90, 99] is one search |
 | `0 … 90` | power root: `CScaleRoot·(CVisitRoot + max_visit^exp)` (`:1500-1504`) | the exponent is *added to* `CVisitRoot`, so at `CVisitRoot >> max_visit^exp` it moves `q_scale` very little |
 
 **Crossing a boundary changes the search, and the engine must never call that

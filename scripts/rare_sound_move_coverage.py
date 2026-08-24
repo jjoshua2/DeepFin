@@ -1323,7 +1323,7 @@ def build_sim_gumbel_config(
         simulations=int(sims), topk=int(shape.topk), temperature=0.0,
         policy_temp=float(shape.policy_temp), c_scale=float(shape.c_scale),
         c_visit=float(shape.c_visit), c_visit_root=float(shape.c_visit_root),
-        c_scale_root=float(shape.c_scale_root), q_visit_exp=float(shape.q_visit_exp),
+        c_scale_root=float(shape.c_scale_root),
         q_visit_exp_root=float(shape.q_visit_exp_root),
         halving_div=int(shape.halving_div), add_noise=bool(shape.add_noise),
         gumbel_scale=float(shape.gumbel_scale), input_history_encoding=hist,
@@ -1496,7 +1496,6 @@ class SimShape:
     c_visit: float = 50.0
     c_visit_root: float = -1.0
     c_scale_root: float = -1.0
-    q_visit_exp: float = 1.0
     q_visit_exp_root: float = 99.0
     halving_div: int = 2
     vloss_weight: int = 1
@@ -1511,7 +1510,9 @@ class SimShape:
         """
         cvr = self.c_visit_root if self.c_visit_root >= 0.0 else self.c_visit
         csr = self.c_scale_root if self.c_scale_root >= 0.0 else self.c_scale
-        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else self.q_visit_exp
+      # >= 90 = LINEAR root, exponent 1.0. Previously resolved to the descent's
+      # `q_visit_exp`, a deleted GumbelConfig field whose default was 1.0.
+        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else 1.0
         if qer < 0.0:
             return csr * math.log1p(cvr + max_visit)
         mv = max_visit if qer == 1.0 else max_visit**qer
@@ -1577,7 +1578,6 @@ PRODUCTION_SEARCH_SHAPE_REST: dict[str, float] = {
     "c_visit": 50.0,
     "c_visit_root": -1.0,
     "c_scale_root": -1.0,
-    "q_visit_exp": 1.0,
     "q_visit_exp_root": 99.0,
     "halving_div": 2.0,
     "vloss_weight": 1.0,

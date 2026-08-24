@@ -180,6 +180,89 @@ def reset_duplicate_stats() -> None:
     global _dup_rows, _dup_dupes, _dup_calls, _dup_seen, _dup_pad
     _dup_rows = _dup_dupes = _dup_calls = _dup_seen = _dup_pad = 0
 
+
+# The former GumbelConfig.q_visit_exp / q_global_scale / q_visit_floor defaults.
+#
+# Those three DESCENT value-transform knobs were deleted (never promoted, absent
+# from every config and from PLAY_SEARCH_DEFAULTS). The .c was deliberately NOT
+# touched -- editing it would make the next `build_production_extensions.py` a
+# silent deploy -- so `start_gumbel_sims` still takes all three as optional
+# positional arguments, and the arguments AFTER them (halving_div, c_visit_root,
+# c_scale_root, q_visit_exp_root, vloss_mode) are live. They therefore have to be
+# passed positionally, and these are the values that make the C search identical
+# to the pre-deletion default search:
+#
+#   q_visit_exp   1.0   linear max_visit term  (`_mcts_tree.c` mv_term arm)
+#   q_global_scale  0   descent scales by the LOCAL node's max_visit
+#   q_visit_floor -1.0  legacy coupled floor c_scale*(c_visit + mv_term)
+#
+# They are also exactly the C's OWN declared defaults for those parameters
+# (`_mcts_tree.c` MCTSTree_start_gumbel_sims), so the two sides cannot drift
+# apart silently: if the C defaults ever move, the literals here still pin the
+# search this repo measured.
+_DELETED_Q_VISIT_EXP = 1.0
+_DELETED_Q_GLOBAL_SCALE = 0
+_DELETED_Q_VISIT_FLOOR = -1.0
+
+# The trailing positional block of `start_gumbel_sims`, after `enc_buf`:
+#   vloss_weight, target_batch, input_history_mode, rel_buf,
+#   q_visit_exp, q_global_scale, q_visit_floor,
+#   halving_div, c_visit_root, c_scale_root, q_visit_exp_root, vloss_mode
+_StartGumbelTrailingArgs = tuple[
+    int, int, int, NDArray[np.uint8] | None,
+    float, int, float,
+    int, float, float, float, int,
+]
+
+
+def _start_gumbel_trailing_args(
+    *,
+    cfg: GumbelConfig,
+    vloss_weight: int,
+    target_batch: int,
+    vloss_mode: int,
+    rel_buf: NDArray[np.uint8] | None,
+) -> _StartGumbelTrailingArgs:
+    """The twelve trailing positional args both `start_gumbel_sims` sites pass.
+
+    ⚑ ONE definition on purpose, and the duplication it replaces is why.
+    `run_gumbel_root_many_c` starts the C state machine from TWO places -- the
+    pipelined 2-group path (`_trees[g].start_gumbel_sims`) and the sequential
+    path (`tree.start_gumbel_sims`) -- and the block is twelve positional
+    arguments, three of which are the deleted descent q-knobs pinned at their
+    former defaults (see the `_DELETED_Q_*` note above) while the rest are live.
+    A dropped or reordered argument silently shifts every one that follows.
+
+    The two sites cannot be covered by one spy when they are written out twice:
+    a spy is installed by passing `tree=`, and passing `tree=` is exactly what
+    turns the pipeline OFF (see the F5 tree-carry guard above), so a spy tree
+    can only ever reach the sequential site. The group site is NOT dead code in
+    that regime -- `selfplay/match.py` and `scripts/search_gain_probe.py` both
+    call with no `tree=`, so an async evaluator plus >= 64 boards takes the
+    pipeline. Building the tuple in one place makes a single observation of the
+    sequential site cover both by construction.
+    """
+    return (
+        int(vloss_weight),
+        int(target_batch),
+        c_input_history_mode(cfg.input_history_encoding),
+        rel_buf,
+      # The three deleted descent q-knobs, pinned at the exact values their
+      # GumbelConfig defaults carried (q_visit_exp 1.0 = linear, q_global_scale
+      # 0 = local max_visit, q_visit_floor -1.0 = the legacy coupled floor).
+      # The C still accepts them as optional positional args, and the args
+      # AFTER them are live, so they must be passed rather than omitted.
+        _DELETED_Q_VISIT_EXP,
+        _DELETED_Q_GLOBAL_SCALE,
+        _DELETED_Q_VISIT_FLOOR,
+        int(cfg.halving_div),
+        float(cfg.c_visit_root),
+        float(cfg.c_scale_root),
+        float(cfg.q_visit_exp_root),
+        int(vloss_mode),
+    )
+
+
 # Minimum compiled-extension ABI the C search path requires. ABI 2 added the
 # start_gumbel_sims c_scale_root/q_visit_exp_root args; calling an older compiled
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
@@ -1127,16 +1210,15 @@ def run_gumbel_root_many_c(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
                 cast(_EncodeBuffer, _enc_bufs[g]),
-                int(vloss_weight), int(target_batch),
-                c_input_history_mode(cfg.input_history_encoding),
-                None, float(cfg.q_visit_exp),
-                1 if cfg.q_global_scale else 0,
-                float(cfg.q_visit_floor),
-                int(cfg.halving_div),
-                float(cfg.c_visit_root),
-                float(cfg.c_scale_root),
-                float(cfg.q_visit_exp_root),
-                int(vloss_mode),
+              # Shared with the sequential site below; see the helper's note --
+              # a spy tree cannot reach THIS call (passing `tree` disables the
+              # pipeline), so the twelve trailing args are built once.
+              # `rel_buf=None`: the pipeline is gated off when
+              # `cfg.compute_relations` is set.
+                *_start_gumbel_trailing_args(
+                    cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
+                    vloss_mode=vloss_mode, rel_buf=None,
+                ),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -1410,17 +1492,13 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), int(vloss_weight), int(target_batch),
-            c_input_history_mode(cfg.input_history_encoding),
-            _rel_buf,
-            float(cfg.q_visit_exp),
-            1 if cfg.q_global_scale else 0,
-            float(cfg.q_visit_floor),
-            int(cfg.halving_div),
-            float(cfg.c_visit_root),
-            float(cfg.c_scale_root),
-            float(cfg.q_visit_exp_root),
-            int(vloss_mode),
+            cast(np.ndarray, _enc_buf),
+          # Same twelve trailing args as the group site above, from the same
+          # helper: this is the only one of the two an argument spy can observe.
+            *_start_gumbel_trailing_args(
+                cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
+                vloss_mode=vloss_mode, rel_buf=_rel_buf,
+            ),
         )
         _t_prepare += _time.perf_counter() - _tp0
 
