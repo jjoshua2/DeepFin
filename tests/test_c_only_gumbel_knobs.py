@@ -329,7 +329,7 @@ def test_the_volatility_reroute_hits_the_same_guard(
               # their documented default (off), which is the state a
               # never-set flag leaves them in, so restoring the module's own
               # sentinel restores the pair.
-                rep_fix._current = None  # noqa: SLF001
+                rep_fix._current = None
 
 
 def test_production_selfplay_has_no_route_to_the_knob_at_all() -> None:
@@ -431,7 +431,7 @@ def test_an_int_too_wide_for_a_float_is_refused_not_propagated() -> None:
         validate_gumbel_config(_cfg(full_tree=huge), where="test")
   # The finiteness loop's own site: a numeric field, so it reaches that loop
   # rather than the C-only comparison.
-    with pytest.raises(ValueError, match="c_scale|halving_div"):
+    with pytest.raises(ValueError, match=r"c_scale|halving_div"):
         validate_gumbel_config(_cfg(c_scale=huge, halving_div=1), where="test")
 
 
