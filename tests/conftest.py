@@ -22,8 +22,8 @@ The regime is printed on EVERY run, so a capped session is never mistaken for a
 slow one. ⚑ See ``pytest_terminal_summary`` below for why it is emitted there
 and not from ``pytest_report_header``.
 
-The other resident here is ``_restore_rep_fix_process_flag`` at the bottom of
-the file — an autouse guard against a different kind of shared state, the
+The other resident here is the ``pytest_runtest_protocol`` hookwrapper at the
+bottom of the file — a guard against a different kind of shared state, the
 process-global repetition-fix encoder flag. Same placement argument: a conftest
 is the only site that does not depend on the next test author remembering.
 """
@@ -165,8 +165,8 @@ def thread_cap() -> int | None:
     return _CAP
 
 
-@pytest.fixture(autouse=True)
-def _restore_rep_fix_process_flag() -> Iterator[None]:
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol() -> Iterator[None]:
     """Snapshot/restore the process-global ``history_rep_fix`` encoder flag.
 
     ``rep_fix._current`` and the globals it pushes into ``_lc0_ext`` and
@@ -179,17 +179,51 @@ def _restore_rep_fix_process_flag() -> Iterator[None]:
     leak a cross-FILE ordering flake: a test passes or fails on a value some
     other file left behind, and the two files never mention each other.
 
+    ⚑⚑ A HOOKWRAPPER, NOT AN AUTOUSE FIXTURE, AND THE DIFFERENCE IS THE WHOLE
+    GUARANTEE. This was a function-scoped autouse fixture first, and a
+    function-scoped fixture is set up AFTER every broader-scoped one — so a
+    module- or session-scoped fixture that changes the flag has already changed
+    it by the time the snapshot is taken, and the snapshot records the mutated
+    value as if it were the baseline. MEASURED on
+    ``pytest tests/test_param_count.py tests/test_action_decode_strict.py``,
+    whose module-scoped ``production_model`` builds the production config
+    (``history_rep_fix: true``): with the fixture, 31/31 tests ended holding
+    ``True`` and the session exited holding ``True`` — the leak the guard claims
+    to close, intact. ``pytest_runtest_protocol`` wraps the whole
+    setup/call/teardown protocol for one item, so the snapshot precedes every
+    fixture of every scope, and cross-file isolation stops depending on
+    collection order.
+
+    ⚑ The consequence, stated rather than discovered later: a broader-scoped
+    fixture's flag mutation no longer survives into the NEXT test of its own
+    module either — the fixture VALUE is still cached, only the process flag is
+    rewound. Checked before choosing this granularity: no test in this suite
+    relies on such persistence. The only higher-scoped fixture that turns the
+    flag ON is ``test_param_count.py``'s ``production_model``, whose three
+    consumers read ``state_dict``/``named_parameters`` and never encode a board;
+    the other module-scoped model builders (``test_mcts_c_tree``,
+    ``test_threaded_selfplay``, ``test_widen_ffn_aligned``, ``test_e2e_smoke``)
+    all build with the flag OFF, which is what a rewind gives them anyway.
+    ``test_rep_fix_autouse_restore.py`` pins both halves.
+
+    ⚑ It is SENTINEL-BLIND: it observes ``rep_fix.current()``, so a direct poke
+    at an extension's ``set_history_rep_fix`` bypasses it entirely — the C
+    global is write-only from Python, so there is nothing to read back. Every
+    such poke today lives in ``tests/test_history_rep_fix.py``, which repairs
+    itself in ``_force_flag_off``; a new direct-poke author is outside this
+    guard and must do the same.
+
     ⚑ Restoring passes ``boards_discarded=True`` because ``apply`` refuses a
     flip without it, and the keyword is TRUE here rather than a rubber stamp.
     Per ``rep_fix``'s module docstring, per-slot repetition flags are recorded
     at push time and never recomputed, so a ``CBoard`` carried across a flip
     encodes planes matching NEITHER regime (audit E3 measured
     ``[1,0,1,0,1,0,1,0]`` against ``[1,1,1,1,1,1,1,0]`` under either clean
-    regime). This fixture only acts when the finished test CHANGED the flag —
-    and a board that outlived that test was already mis-encoded in the direction
-    the test left it, before this fixture ran. Restoring does not create that
-    hazard; it replaces an order-dependent suite baseline with a deterministic
-    one. The E3 guard still fires inside the test, where the live board is.
+    regime). This hook only acts when the finished test CHANGED the flag — and a
+    board that outlived that test was already mis-encoded in the direction the
+    test left it, before this hook ran. Restoring does not create that hazard;
+    it replaces an order-dependent suite baseline with a deterministic one. The
+    E3 guard still fires inside the test, where the live board is.
 
     ⚑ ``apply`` cannot express "never set" — it takes a ``bool``. So the
     never-set snapshot restores in two steps: put the extensions on their
@@ -197,11 +231,20 @@ def _restore_rep_fix_process_flag() -> Iterator[None]:
     them in, then restore the module's own ``None`` sentinel so ``current()``
     reports the truth rather than a value nobody chose.
 
-    Imported lazily inside the fixture: a conftest is loaded on EVERY pytest
+    ``rep_fix`` is imported lazily: a conftest is loaded on EVERY pytest
     invocation and this package pulls in numpy and chess, and an environment
     without the compiled encoders should reach ``apply`` (which skips missing
     setters with a warning) rather than fail at collection. On the common path,
-    where the test left the flag alone, the fixture makes no calls at all.
+    where the test left the flag alone, nothing is called at all. The hook takes
+    no parameters because pluggy passes an implementation only the hookspec
+    arguments it actually declares, and this one needs none.
+
+    ⚑ ``hookwrapper=True`` (old style) rather than pytest 8's ``wrapper=True``,
+    deliberately: ``pyproject.toml`` declares ``pytest>=7.0`` and the newer
+    spelling does not exist there. Do not "modernize" this without raising the
+    floor. The old style also gives the behaviour wanted here for free — a
+    failing test does not raise at the ``yield``, so the restore runs whatever
+    the test did.
     """
     from chess_anti_engine.encoding import rep_fix
 

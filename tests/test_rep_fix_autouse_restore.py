@@ -1,18 +1,21 @@
-"""The autouse guard on the process-global ``history_rep_fix`` flag works.
+"""The conftest guard on the process-global ``history_rep_fix`` flag works.
 
-``tests/conftest.py``'s ``_restore_rep_fix_process_flag`` is autouse, so nothing
-in the suite requests it and nothing would notice if it stopped doing anything —
-the classic shape of a guard that is accepted and then silently inert. These
-tests run a REAL nested pytest session (``pytest.Pytester``, in-process, so it
-shares this interpreter's globals) whose inner test flips the flag, and then
-assert on the flag THIS process is left holding.
+``tests/conftest.py``'s ``pytest_runtest_protocol`` hookwrapper is implicit, so
+nothing in the suite requests it and nothing would notice if it stopped doing
+anything — the classic shape of a guard that is accepted and then silently
+inert. These tests run a REAL nested pytest session (``pytest.Pytester``,
+in-process, so it shares this interpreter's globals) whose inner tests change the
+flag, and then assert on the flag THIS process is left holding.
 
-⚑ The inner conftest IMPORTS the fixture out of ``tests/conftest.py`` rather
-than restating it. A copied fixture would keep passing while the real one rotted.
+⚑ The inner conftest registers the REAL ``tests/conftest.py`` as a plugin rather
+than restating any of it. A copied guard would keep passing while the real one
+rotted — and naming the mechanism instead of the file would leave these tests
+unable to judge a change of mechanism, which is exactly the change that produced
+this file's newest test.
 
-⚑ Irony guard: the fixture under test also wraps these tests. Each one therefore
+⚑ Irony guard: the guard under test also wraps these tests. Each one therefore
 snapshots the enclosing state itself, restores it in a ``finally``, and asserts
-the final state explicitly — so a broken fixture cannot be what makes this file
+the final state explicitly — so a broken guard cannot be what makes this file
 look clean, and this file cannot leak the state it is testing.
 """
 from __future__ import annotations
@@ -24,9 +27,54 @@ from chess_anti_engine.encoding import rep_fix
 pytest_plugins = ["pytester"]
 
 
+# ⚑ Register the REAL conftest as a plugin rather than importing one name out of
+# it. Two reasons, and the second is the load-bearing one: a copied guard would
+# keep passing while the real one rotted, and naming the mechanism (`the hook`,
+# `the autouse fixture`) would make these tests unable to judge a change of
+# mechanism — the exact change this file exists to pin. As a plugin, whatever
+# `tests/conftest.py` uses to guard the flag is what the nested session runs.
 _INNER_CONFTEST = '''\
-"""Re-export the real autouse fixture, so the nested session runs THAT one."""
-from tests.conftest import _restore_rep_fix_process_flag
+"""Run the nested session under the REAL tests/conftest.py, whatever shape it has."""
+pytest_plugins = ["tests.conftest"]
+'''
+
+# The Codex review scenario, verbatim in shape: a MODULE-scoped fixture that
+# changes the flag during the FIRST test's setup — i.e. before any
+# function-scoped fixture exists to snapshot it. `tests/test_param_count.py`'s
+# `production_model` is the live instance (it builds the production config,
+# whose `history_rep_fix` is true).
+_INNER_MODULE_SCOPED_FLIPPER = '''\
+from pathlib import Path
+
+import pytest
+
+from chess_anti_engine.encoding import rep_fix
+
+
+@pytest.fixture(scope="module")
+def flipping_module_fixture():
+    rep_fix.apply(True, boards_discarded=True)
+    return "built"
+
+
+def test_a_first_test_of_the_module(flipping_module_fixture):
+    assert rep_fix.current() is True
+
+
+def test_b_second_test_of_the_module(flipping_module_fixture):
+    # The fixture VALUE is still cached; only the process flag was rewound.
+    assert flipping_module_fixture == "built"
+    Path(__file__).with_name("second_saw.txt").write_text(repr(rep_fix.current()))
+'''
+
+_INNER_OBSERVER = '''\
+from pathlib import Path
+
+from chess_anti_engine.encoding import rep_fix
+
+
+def test_the_next_file_sees_the_baseline():
+    Path(__file__).with_name("next_file_saw.txt").write_text(repr(rep_fix.current()))
 '''
 
 _INNER_FLIPPING_TEST = '''\
@@ -59,7 +107,7 @@ def _set_flag_state(value: bool | None) -> None:
     """Force the process flag to ``value``, ``None`` included.
 
     ``apply`` takes a ``bool`` and so cannot express "never set"; the two-step
-    below is the same one the fixture uses to restore that snapshot, and the
+    below is the same one the hook uses to restore that snapshot, and the
     same one ``tests/test_c_only_gumbel_knobs.py`` spells out inline. Kept here
     as a local helper rather than imported from the conftest on purpose: the
     restore path is what is under test, and a test must not steer itself with
@@ -125,14 +173,52 @@ def test_the_never_set_sentinel_is_restored_after_the_inner_test(
     assert rep_fix.current() is outer
 
 
-def test_the_fixture_makes_no_calls_when_the_test_left_the_flag_alone(
+def test_a_module_scoped_fixtures_flip_does_not_reach_the_next_file(
+    pytester: pytest.Pytester,
+) -> None:
+    """The Codex finding: a broader-scoped fixture must not evade the snapshot.
+
+    A module-scoped fixture is set up during the FIRST test's setup phase, which
+    is BEFORE any function-scoped fixture — so the function-scoped autouse
+    fixture this guard used to be snapshotted the ALREADY-MUTATED value and
+    restored it faithfully, forever, into every later file. Reproduced here with
+    two inner files: the first flips the flag from a module-scoped fixture, the
+    second must still see the baseline.
+
+    Also pins the deliberate consequence: the SECOND test of the flipping module
+    sees the baseline too, because the flag is rewound after every protocol even
+    though the fixture VALUE stays cached. No test in this suite relies on such
+    persistence — checked against every higher-scoped fixture that builds a
+    model; see the hook's docstring for the enumeration.
+    """
+    pytester.makeconftest(_INNER_CONFTEST)
+    pytester.makepyfile(
+        test_a_module_flipper=_INNER_MODULE_SCOPED_FLIPPER,
+        test_z_observer=_INNER_OBSERVER,
+    )
+
+    outer = rep_fix.current()
+    # `False`, so an inherited `True` is unmistakably the module fixture's.
+    _set_flag_state(False)
+    try:
+        result = pytester.runpytest_inprocess()
+        result.assert_outcomes(passed=3)
+        assert (pytester.path / "next_file_saw.txt").read_text() == "False"
+        assert (pytester.path / "second_saw.txt").read_text() == "False"
+        assert rep_fix.current() is False
+    finally:
+        _set_flag_state(outer)
+    assert rep_fix.current() is outer
+
+
+def test_the_guard_makes_no_calls_when_the_test_left_the_flag_alone(
     pytester: pytest.Pytester,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The common path must stay free.
 
-    Every test in the suite pays this fixture's teardown, so "restores the flag"
-    is only half the contract — the other half is that a test which never
+    Every test in the suite pays this hook's teardown half, so "restores the
+    flag" is only half the contract — the other half is that a test which never
     touched the flag causes no ``apply`` call at all, and therefore no writes
     into the compiled encoders' globals.
     """
