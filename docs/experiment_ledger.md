@@ -66640,3 +66640,29 @@ read out (arm 2 mid-training, arm 3 unlaunched):
   calibrated from a healthy era → task #275. 6/6 mutants (+reviewer's 7th) killed; suite delta 0;
   three review passes (Fable APPROVE, Grok 5 findings, Codex P3 lr-quote fix).
 - Closes task #250. NOT deployed to the live branch (merges to main only — MERGED ≠ DEPLOYED).
+
+### 2026-08-24 — PR #438 MERGED (main 3835ac423): lc0 positive-control training path (27 commits, 08-16→08-24)
+- The training path + applied-value-weight guard behind the #438 positive-control PASS (Δ_heldout
+  +3.62pp, banked) and the mixed-replay ratio ladder (the arms train from this branch's code).
+  Long-tail close-out: 6 Codex waves + agent reviews closed across the PR's life; the final tail
+  (wave 6 + two pin commits that had closed findings with NO review record + the freshness merge)
+  got its own independent review — APPROVE-WITH-CHANGES (issuecomment-5401626616), the reviewer
+  ran a fifth-divergent-key mutant against the regenerated LIVE_TRAINER_PIN (check fires, names
+  the key: the pin regeneration is honest, not drift-blessing).
+- Four P1s fixed pre-merge (838be7b27), all the gate-that-passes-wrongly shape: (A1) arch-pin
+  param crosscheck self-disabled exactly in the stale-pin case → now a named problem; (A2) purity
+  receipt compared unresolved-vs-resolved path strings and never applied the banked frozen_sha256
+  → hash now applied; (A3) converter SF gate was PRESENCE two lines above the search side's
+  COVERAGE check → sibling rule copied; (A4) _publish renamed shard 000000 before discovering a
+  collision on 000001 → two-pass scan-then-move. 6/6 mutants; ⚑ two mutants survived
+  exit-code-only assertions (a second added check also exits 1) — tests pin STDOUT.
+- Freshness merge (f188bfb79): origin/main (60 commits incl. #460/#462/#463) merged in; one
+  conflict in train/losses.py resolved as main's _finite_blend_component mechanism + the branch's
+  two effective-rows counters, BOTH mutation-proven live post-merge. Suite +235→+239 passed vs
+  main, 0 new failures; lint fingerprint delta empty; arch/trainer/replay pin check OK vs the
+  live yaml.
+- Deferred with task #276: eval arch read, the leak-warning accuracy bundle (one instrument —
+  land together), and one disputed factual claim that needs Josh, not a code edit.
+- Ratio-ladder note: the ladder arms keep running from the UNMOVED local branch ref (4b06a164c)
+  in their own worktree — the merge changes nothing under the running job. MERGED ≠ DEPLOYED to
+  the live branch.
