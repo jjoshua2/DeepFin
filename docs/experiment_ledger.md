@@ -66494,3 +66494,12 @@ from a significant kill to a NULL spanning zero. Direction consistent with the
 ladder hypothesis (own-replay share buys back the lc0-fit Elo cost). No verdict
 yet — C1-C5 judge the BEST arm's LAST after all three arms; arm 2 (f=0.50,
 seed 12, bar 0.002) launched next on the free GPU.
+
+**2026-08-24 ~10:15 — RATIO ARM 1 (f=0.25, r2) ARENAS BANKED (diagnostic; verdict
+waits for all arms per prereg):** MID (10k) **−74.1 [−104.6, −44.6]**, LAST (20k)
+**−38.4 [−68.2, −9.1]**, slope +35.7. vs pure lc0 at matched 20k steps (−84.1): the
+25% own-mix HALVES the dip and is still climbing at budget end — the C4 shape if arm 1
+ends best. Realized purity: both checkpoints written under the 0.002 bar. JSONs:
+scratchpad/elo_calib/MIX025_{MID,LAST}_vs_iter595.json. ARM 2 LAUNCHED: f=0.50 seed 12
+bar 0.002, out runs/lc0_mix050_iter595_20260824, 0 refusals; ETA ~17:30 → arenas →
+arm 3 (f=0.75, seed 13).
