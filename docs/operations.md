@@ -55,6 +55,37 @@ cadenced FEN-panel reads + the seed retire/probation step (log
 `scratchpad/live_read/monitor/`); `scripts/ratchet_loop.sh` — the daily strength
 ratchet (log `scratchpad/ratchet_loop.log`).
 
+### ⚑ Nothing restarts training over a deliberate stop
+
+`train.sh stop` touches `/tmp/chess_training.intentional_stop` **before** it kills, and
+every path that can (re)start training now consults it **for itself** — the check lives in
+`scripts/intentional_stop_guard.sh`, which `recover_stall.sh` and `watchdog_pbt.sh`
+source. It used to live only in the *callers*, which covered the watchdog route and left
+the two routes a human drives directly wide open:
+
+| route | before | now |
+|---|---|---|
+| `watchdog_loop.sh` → `recover_stall.sh` (confirmed stall) | caller tested the marker | caller **and** the script |
+| `./scripts/recover_stall.sh` **by hand** | **no check anywhere** | refuses, exit 7 |
+| `bash scripts/watchdog_pbt.sh` (tmux, launches `chess_anti_engine.run` directly) | **no check anywhere** | logs the refusal, does not restart, keeps polling |
+
+A refusal names **every** marker it saw and what that marker holds, so the operator knows
+which file to remove. An intentional-stop marker **or** a pause marker refuses.
+
+To override, pass `--ignore-intentional-stop` (alias `--force`). It is deliberate and
+loud: one log line per marker being ignored, plus a line saying production is being
+restarted against a deliberate stop. It is never the default, and an argument that is
+neither of those two spellings is a usage error (exit 2) rather than a silently ignored
+value — a typo'd override must not read as "the guard did not fire". Only an overridden
+run of `recover_stall.sh` deletes a pause marker; the ordinary path already proved none
+existed, so anything it found would belong to a window that is just opening.
+
+⚑ `watchdog_pbt.sh` is guarded but still **bypasses `train.sh`**: its restart writes no
+`/tmp/chess_training.pid`, runs no C-extension freshness check, starts no observers, and
+exports neither `PYTORCH_NVML_BASED_CUDA_CHECK` nor `CHESS_ANTI_ENGINE_LIVE_CONFIG`. A run
+it starts is one `train.sh status` / `train.sh stop` cannot see. Prefer
+`./scripts/train.sh start`; `watchdog_loop.sh` covers the same ground properly.
+
 **⚑ Ops scripts now operate on THE TREE THEY LIVE IN.** `monitor_fen.sh`,
 `recover_stall.sh`, `run_bootstrap_512x16.sh` and **`bank_rolling_checkpoints.sh`** used
 to `cd` to (or hardcode) an absolute root, so they drove the main checkout no matter where
