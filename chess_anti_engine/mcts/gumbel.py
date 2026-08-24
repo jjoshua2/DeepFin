@@ -136,15 +136,110 @@ PY_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset(
     {"volatility_q_scale", "volatility_fpu"}
 )
 
+# The MIRROR: GumbelConfig fields the PYTHON reference search
+# (`run_gumbel_root_many`) does not implement, while the C fast path does.
+# Same silent-null shape from the other side, and it had no guard at all until
+# 2026-08-24 (narrowed task #264 residual).
+#
+# CLASSIFICATION METHOD -- membership here is decided by finding the line that
+# READS the field on each path, never by the field's name or by which module it
+# "feels" like it belongs to. Per field:
+#
+#   full_tree
+#     C  READS IT: `gumbel_c.run_gumbel_root_many_c` takes `_full_tree =
+#        bool(cfg.full_tree)` and passes it to `start_gumbel_sims`, which
+#        stores it as `g->sel.full_tree` (`_mcts_tree.c`, the `full_tree`
+#        argument of the `start_gumbel_sims` signature).
+#        `tree_gumbel_collect_leaf` then branches on `sel->full_tree`
+#        (`_mcts_tree.c`, the `} else if (sel->full_tree) {` arm) to pick
+#        `tree_gumbel_select_child` when true and `tree_select_child` -- the
+#        PUCT descent -- when false.
+#     PY IGNORES IT: `_collect_forced_leaf` (below) descends through
+#        `_select_full_gumbel_child` UNCONDITIONALLY. The PUCT arm that used to
+#        stand there was deleted as dead code (play-path audit 2026-08-03,
+#        F12), so the string `cfg.full_tree` does not occur anywhere in this
+#        module -- which is exactly what
+#        `test_the_python_gumbel_descent_has_no_puct_arm_left`
+#        (tests/test_inert_gumbel_knobs.py) asserts.
+#
+# ⚑ The two sets are NOT symmetric in how much a guard can close. A Python-only
+# knob is honoured by the path it names, so `assert_c_path_can_run` at the C
+# dispatch is the whole fix: reroute or zero it. A C-only knob at a non-default
+# value is honoured by the C and ignored by the Python, so it needs TWO guards:
+# `assert_python_path_can_run` on the Python dispatch, AND a refusal at the eval
+# boundaries (`validate_gumbel_config`), because those instruments BANK the
+# realized shape before anything has chosen a path.
+C_ONLY_GUMBEL_KNOBS: frozenset[str] = frozenset({"full_tree"})
+
+# Per-knob tail appended to the generic refusal in `_c_only_knob_problems`.
+# A table rather than a sentence inside that loop: the loop's own text is true
+# of EVERY C-only knob, while this one is true of `full_tree` alone, and a
+# second knob added to the set above would otherwise silently inherit a
+# paragraph about a PUCT descent it has nothing to do with. `.get(name, "")`,
+# so a knob with nothing extra to say simply says nothing.
+_C_ONLY_KNOB_DETAIL: dict[str, str] = {
+    "full_tree": (
+        ". A false full_tree also swaps the C descent to PUCT at "
+        "c_puct/fpu_reduction, the knobs INERT_GUMBEL_KNOBS makes this same "
+        "CLI refuse"
+    ),
+}
+
+
+def _knob_differs_from_default(cfg: GumbelConfig, base: GumbelConfig, name: str) -> bool:
+    """True when ``cfg.name`` is off its default. ONE rule for both knob sets.
+
+    Compared as floats rather than raw, because the `--*-gumbel` parsers turn
+    every override into one: `full_tree=0` reaches this as `0.0` and
+    `full_tree=1` as `1.0`, against a `True` default that floats to `1.0`. So an
+    explicit request for the shipped default is accepted whichever way it is
+    spelled, and a bool field needs no special case.
+
+    ⚑ Deliberately STRICTER than the consumer's own coercion for a bool.
+    `full_tree=2` floats to `2.0` and is an offender here, while the C's
+    `bool(cfg.full_tree)` would read it as True and run the default search --
+    accepted, silently coerced, and banked as `2.0` in a realized-shape record
+    naming a value nothing ran. That is this codebase's signature defect in
+    miniature, so the strict comparison is the point rather than an accident of
+    using `float`.
+
+    A value `float()` cannot read is an offender too: it is certainly not the
+    default, and raising a bare `TypeError` from inside a guard tells the
+    operator nothing about which knob was wrong. `OverflowError` is in the
+    catch because `float(10**400)` raises THAT and not `ValueError` -- one
+    integer literal wide enough and the guard would have propagated the wrong
+    exception type out of a function whose callers only wrap `ValueError`.
+
+    ⚑ The plain `==` comes FIRST, before any coercion. Both current sets hold
+    numeric fields, but a future C-only knob that is a `str` (an enum-shaped
+    descent mode, say) would otherwise be a permanent offender AT ITS OWN
+    DEFAULT: `float("linear")` raises, the fallback returns True, and every
+    config in the repo fails the guard. Equality is also what "off its default"
+    means; the float coercion is only here for the spellings equality misses.
+    """
+    default = getattr(base, name)
+    value = getattr(cfg, name)
+    if value == default:
+        return False
+    try:
+        return float(value) != float(default)
+    except (TypeError, ValueError, OverflowError):
+        return True
+
 
 def python_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
     """Python-path-only fields on ``cfg`` that are at a non-default value."""
     base = GumbelConfig()
     return tuple(
-        sorted(
-            k for k in PY_ONLY_GUMBEL_KNOBS
-            if float(getattr(cfg, k)) != float(getattr(base, k))
-        )
+        sorted(k for k in PY_ONLY_GUMBEL_KNOBS if _knob_differs_from_default(cfg, base, k))
+    )
+
+
+def c_only_knobs_set(cfg: GumbelConfig) -> tuple[str, ...]:
+    """C-path-only fields on ``cfg`` that are at a non-default value."""
+    base = GumbelConfig()
+    return tuple(
+        sorted(k for k in C_ONLY_GUMBEL_KNOBS if _knob_differs_from_default(cfg, base, k))
     )
 
 
@@ -165,6 +260,34 @@ def assert_c_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
         "for them, so it would drop them silently and return a search that "
         "looks like a clean null. Zero them, or route to the Python path "
         "(see PY_ONLY_GUMBEL_KNOBS)."
+    )
+
+
+def assert_python_path_can_run(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse to enter the Python Gumbel path with a C-only knob set.
+
+    The mirror of ``assert_c_path_can_run``, and it sits in the mirror place:
+    the top of ``run_gumbel_root_many``, the single entry point every
+    Python-path dispatch lands on. On the dispatch rather than on a CLI parser
+    for the same reason as the C side -- the CLI is not what chooses the path.
+    Which path runs is decided by ``_HAS_GUMBEL_C`` (is the extension built?)
+    and by ``volatility_search_enabled`` (does the config force Python?), and a
+    caller can hit either without having asked for either.
+
+    Both routes end here, so both are covered: an unbuilt extension and a
+    volatility-forced reroute. That matters because the volatility route is the
+    one that fires on a machine where everything else works.
+    """
+    offenders = c_only_knobs_set(cfg)
+    if not offenders:
+        return
+    raise ValueError(
+        f"{where}: {', '.join(offenders)} are C-path only; call "
+        "run_gumbel_root_many_c (mcts/gumbel_c.py) instead. This path has no "
+        "code for them -- its descent is unconditionally Gumbel -- so it would "
+        "drop them silently and return a search that looks like a clean null. "
+        "Restore the default, or route to the C path "
+        "(see C_ONLY_GUMBEL_KNOBS)."
     )
 
 # Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
@@ -315,11 +438,51 @@ class GumbelConfig:
     # search resolves them per call in `_root_sigma_scale`.
     c_scale_root: float = -1.0
     q_visit_exp_root: float = 99.0
+  # ⚑ C-PATH ONLY -- see `C_ONLY_GUMBEL_KNOBS` above for which line reads it on
+  # which path, and `assert_python_path_can_run` for the guard. True = the
+  # Gumbel descent below the root, which is what BOTH paths run and the only
+  # thing the Python path can run.
     full_tree: bool = True
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
+  # ⚑ NOT A SEARCH FIELD -- CARRIED METADATA. Unlike the two encoding fields
+  # above it, NEITHER search path reads this: `gumbel_c` drives the C encoders
+  # off `cfg.input_history_encoding` / `cfg.input_extra_features`, and the
+  # policy WIDTH is inferred from the array instead, by
+  # `_policy_logits_to_full` -> `moves.policy_batch_to_full_if_needed`, which
+  # takes no encoding argument. (Every `*_for_encoding` helper in `moves/encode`
+  # that still has a `policy_encoding` parameter opens with `del
+  # policy_encoding`; train space is always compact 1858.) So this is inference
+  # by SHAPE, and it covers a 1858 net and a 4672 ONNX net without being told.
+  #
+  # Its real consumers, both of which pass it along rather than act on it:
+  #   * `selfplay.match.pick_moves_for_boards` and `uci.__main__._build_engine`
+  #     WRITE it from the loaded checkpoint's own `model.policy_encoding`;
+  #     `tests/test_arena_match_smoke.py` pins that threading.
+  #   * `eval.puzzles.run_puzzle_eval` is the only production READ
+  #     (`gumbel_cfg.policy_encoding`), and it reads it only as the fallback
+  #     source for writing the same field back onto a `dataclasses.replace`.
+  # Net: zero consumers, so it is metadata that says which head produced the
+  # logits, not a knob.
+  #
+  # ⚑ Grepping the NAME finds a third site that is not a third reader:
+  # `inference_cache._ENCODING_ATTRS` lists `"policy_encoding"` as part of the
+  # eval-cache identity, so a cached row cannot be served across an encoding
+  # change. It reads that attribute off whatever `resolve_encoding_source`
+  # walks the wrapper chain to -- in production the MODEL -- and a
+  # `GumbelConfig` is never in that chain. Same name, different object; it does
+  # not make the paragraph above false.
+  #
+  # Documented rather than deleted (the write sites and
+  # their test are real and a 4672-output net is a live case), and rather than
+  # guarded (a guard on a non-default value would refuse `az_4672`, which the
+  # ONNX loader legitimately sets -- `onnx/load.py`). Both halves of that map
+  # are pinned by `test_neither_search_path_reads_policy_encoding` and
+  # `test_the_only_production_reader_of_policy_encoding_is_still_the_one_named`
+  # (tests/test_c_only_gumbel_knobs.py), so this paragraph cannot rot into a
+  # comment about a field that has since grown a consumer.
     policy_encoding: str = MODEL_POLICY_ENCODING
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
@@ -447,6 +610,9 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
       integral. Below the minimum each is silently raised (see the constants);
       a fractional value is silently TRUNCATED by the ``int()`` every consumer
       applies, so ``halving_div=2.9`` and ``topk=2.9`` are 2.
+    * **``C_ONLY_GUMBEL_KNOBS`` at their defaults** -- today ``full_tree``. See
+      ``_c_only_knob_problems`` below for why this one needs a second guard
+      when ``PY_ONLY_GUMBEL_KNOBS`` does not.
 
     What it deliberately does NOT check, so this does not grow into a second
     opinion about knobs that already have one:
@@ -474,11 +640,14 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
       # numpy scalars -- an accept-then-ignore inside the guard against
       # accept-then-ignore. `str` is excluded first because the encoding fields
       # are strings and `float("nan")` would parse one spelled that way.
+      # `OverflowError` is in the catch because `float(10**400)` raises THAT,
+      # not `ValueError` -- an int too wide for a float used to escape this
+      # loop as an exception type no caller wraps.
         if isinstance(value, (bool, str)):
             continue
         try:
             numeric = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if not math.isfinite(numeric):
             problems.append(
@@ -519,8 +688,89 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
             runs_instead=f"a {MIN_TOPK}-candidate root",
         )
     )
+    problems.extend(_c_only_knob_problems(cfg))
     if problems:
         raise ValueError(f"{where}: " + "; ".join(problems))
+
+
+def _c_only_knob_problems(cfg: GumbelConfig) -> list[str]:
+    """Refusals for a C-path-only knob moved off its default.
+
+    ⚑ This is a SECOND guard on a knob that already has one
+    (``assert_python_path_can_run``), which the docstring above says a knob does
+    not need. ``full_tree`` is the exception, and the reason is what makes it
+    different from ``PY_ONLY_GUMBEL_KNOBS``:
+
+    * A Python-only knob is HONOURED by the path it names. The C dispatch guard
+      is therefore the whole fix -- reroute, or zero it -- and the config is
+      runnable either way.
+    * A C-only knob is honoured by the C and IGNORED by the Python. The dispatch
+      guard makes the Python path fail loudly instead of lying, but the
+      instruments that call this validator BANK a realized shape
+      (``arena_standard.SideSearch.realized_gumbel`` into the JSONL,
+      ``audit_targets`` into its header) at config-assembly time -- before
+      ``_HAS_GUMBEL_C`` or ``volatility_search_enabled`` has chosen anything. A
+      record written before the path is known cannot be truthful about a knob
+      whose meaning depends on the path.
+
+    ⚑ That is true of MOST callers, not all, and the refusal is deliberately
+    unconditional anyway. There are seven ``validate_gumbel_config`` callers;
+    ``scripts/gen_random_selfplay_shards.py`` is a counter-example -- it calls
+    this validator and ``assert_c_path_can_run`` on adjacent lines, so ITS path
+    is known at assembly time and the "banked before the path is chosen"
+    argument does not apply to it. It is refused all the same, and no parameter
+    is offered to exempt it, for two reasons. A gate whose callers can opt out
+    is a gate that eventually nobody is inside, and a caller genuinely wanting a
+    PUCT descent has a cheaper honest route: construct the ``GumbelConfig``
+    directly and hand it to ``run_gumbel_root_many_c``, which never consults
+    this function. So the C capability survives exactly where it is asked for
+    explicitly, and is refused on every path that would record it.
+
+    Of the seven, only ``arena_standard`` and ``audit_targets`` can carry a
+    USER-SUPPLIED ``full_tree`` today -- they are the two with a generic
+    ``k=v`` ``GumbelConfig`` override surface. The other five expose named
+    flags with no ``full_tree`` among them, so for those the refusal is a
+    tripwire against a future flag rather than a live rejection.
+
+    And the value it would let through is worse than a null. A FALSE
+    ``full_tree`` does not turn the descent off, it switches it to
+    ``tree_select_child``, the PUCT descent driven by
+    ``c_puct``/``fpu_reduction`` -- the very knobs ``INERT_GUMBEL_KNOBS`` makes
+    these same CLIs refuse, on the stated grounds that ``full_tree=True`` makes
+    them unreachable. So an accepted ``--cand-gumbel full_tree=0`` would run a
+    PUCT descent the operator cannot tune, pinned at ``GumbelConfig``'s own
+    untuned ``c_puct=2.5`` / ``fpu_reduction=1.2`` rather than the tuned
+    ``PLAY_PUCT_DEFAULTS`` 1.75 / 0.33 -- and it would falsify the refusal
+    message printed two branches away in the same parser.
+
+    ``full_tree=1`` (the shipped default, spelled explicitly) passes, for the
+    same reason ``policy_temp=1.0`` does: it is a real request for the search
+    that actually runs, on BOTH paths, so banking it is truthful.
+
+    The C capability itself is untouched: ``run_gumbel_root_many_c`` still
+    accepts and honours a false ``full_tree`` for a caller that constructs the
+    config directly and knows which path it is on. What is refused is reaching
+    it through an instrument that would bank the answer.
+
+    ⚑ The prose above deliberately spells that value "a false ``full_tree``"
+    rather than as an assignment: ``test_nothing_sets_full_tree_false_anywhere_
+    in_the_tree`` (tests/test_inert_gumbel_knobs.py) greps every non-comment
+    line of the package for the assignment, because something SETTING it false
+    un-inerts ``INERT_GUMBEL_KNOBS``. Discussing the value is not setting it,
+    and the grep is worth more than the nicer sentence.
+    """
+    offenders = c_only_knobs_set(cfg)
+    if not offenders:
+        return []
+    return [
+        f"{name}={getattr(cfg, name)!r} is C-path only (mcts.gumbel."
+        "C_ONLY_GUMBEL_KNOBS): run_gumbel_root_many_c reads it and branches the "
+        "C descent on it, run_gumbel_root_many does not read it at all, so "
+        "which search this is depends on whether the extension is loaded and "
+        "whether volatility forced the Python path -- and the realized-shape "
+        f"record is written before either is known{_C_ONLY_KNOB_DETAIL.get(name, '')}"
+        for name in offenders
+    ]
 
 
 def _clamped_int_problems(
@@ -964,6 +1214,13 @@ def _collect_forced_leaf(
   # live here was dead code advertising c_puct/fpu_reduction as live
   # Gumbel knobs (play-path audit 2026-08-03, F12). The PUCT descent is
   # reached through mcts/puct*.py and uci/, not from here.
+  #
+  # ⚑ "Unconditionally" is why `full_tree` is in `C_ONLY_GUMBEL_KNOBS`: the C
+  # path DOES branch on it (`sel->full_tree`), so a config carrying
+  # `full_tree=False` gets two different searches depending on which path a
+  # dispatcher picked, silently. `assert_python_path_can_run` at the top of
+  # `run_gumbel_root_many` refuses it here rather than ignoring it; deleting
+  # that call and re-reading this comment is the mutant.
         _, node = _select_full_gumbel_child(node, cfg=cfg)
         path.append(node)
   # Expanded nodes with children are never terminal — skip is_game_over()
@@ -1455,6 +1712,14 @@ def run_gumbel_root_many(
     Returns (probs_list, actions, root_values), where root_values are the best
     searched child values from the root perspective.
     """
+  # The mirror of `run_gumbel_root_many_c`'s `assert_c_path_can_run`, in the
+  # mirror place: this is the choke point EVERY Python-path dispatch lands on
+  # (`selfplay.match.pick_moves_for_boards` when the extension is missing or
+  # volatility forced the reroute, `run_gumbel_root`, and every direct caller),
+  # so a C-only knob cannot reach a search that does not read it. BEFORE the
+  # empty-batch early return on purpose: a guard a caller can step around by
+  # passing `[]` is a guard whose absence nothing would show.
+    assert_python_path_can_run(cfg, where="run_gumbel_root_many")
     n_boards = len(boards)
     if n_boards == 0:
         if return_diagnostics:
