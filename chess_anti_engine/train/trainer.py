@@ -3994,6 +3994,21 @@ class Trainer:
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():
   # `_RAW_SUM_LOSS_KEYS` are already row sums; the rest are row means.
+  #
+  # ⚑ UNITS TRAP, NAMED SO IT CANNOT BE INHERITED BY ACCIDENT. This branch
+  # decides units by MEMBERSHIP, so a key that is a per-batch COUNT and is not
+  # in `_RAW_SUM_LOSS_KEYS` is multiplied by `n_rows` here and stops being a
+  # count. `disarmed_nonfinite_terms` and `blend_unclaimed_nonfinite_rows` are
+  # exactly that shape. They are inert TODAY only because
+  # `_loss_sums_to_metric_kwargs` drops every key that is not a `TrainMetrics`
+  # field, so the scaled value is computed and thrown away -- and the day one of
+  # them is given a field, this line silently starts publishing rows-times-count.
+  # The fix then is to add it to `_RAW_COUNT_METRIC_FIELDS` (which puts it in
+  # `_RAW_SUM_LOSS_KEYS`) in the SAME change, never to add the field alone.
+  # ⚑ This comment is deliberate: `_compute_metrics` is on the holdout ruler's
+  # hashed call graph, and `digest_source` is blind to comments and docstrings
+  # (measured, and `test_the_production_ruler_id_is_pinned` re-measures it) -- so
+  # a note is free here and a line of code is not.
                 sums[k] = sums.get(k, 0.0) + (v if k in _RAW_SUM_LOSS_KEYS else v * n_rows)
             total_rows += n_rows
 
@@ -4292,6 +4307,20 @@ class Trainer:
                 "see them -- read the per-term loss columns to find which head "
                 "and treat it as a label/data defect, not a benign disarm.",
                 disarmed_nonfinite, n_micro,
+            )
+  # The blend's own substitutions, on the same once-per-iteration rule. An
+  # unclaimed non-finite label row is TOLERATED (it takes the game outcome) and
+  # must still be visible: +-inf and NaN both land here, so a shard writing
+  # -inf -- which `_normalize_sf_wdl_probs`'s clamp would otherwise launder into
+  # a valid-looking distribution -- is reported rather than trained on.
+        blend_unclaimed = float(sums.get("blend_unclaimed_nonfinite_rows", 0.0))
+        if blend_unclaimed > 0.0:
+            _log.warning(
+                "%.0f value-label row reading(s) were non-finite with a zero "
+                "blend mask this iteration (summed over %d microbatch(es)). "
+                "They were replaced with the game outcome, which is correct and "
+                "is still a shard defect -- +-inf and NaN both count here.",
+                blend_unclaimed, n_micro,
             )
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, n_micro)),

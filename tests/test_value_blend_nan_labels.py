@@ -35,6 +35,7 @@ reason. The source-level mutant table is in the PR.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from pathlib import Path
@@ -75,6 +76,13 @@ _UNCLAIMED_FINITE = [0.9, 0.05, 0.05]
 #: term a NaN reaches.
 _PROD_W_SF_EVAL = 0.0
 _PROD_SF_WDL_CONF_POWER = 1.0
+
+#: ⚑ `main`'s yaml is NOT the live production yaml -- they differ on this exact
+#: key (`configs/pbt2_small.yaml:863` on `main` vs the running trial's tree,
+#: which reads 0.0). Both regimes are exercised, and the difference decides
+#: whether a NaN aux term is disarmed-and-counted or reaches `total` and trips
+#: the non-finite-gradient guard. Neither is silent, which is the point.
+_MAIN_YAML_W_SF_EVAL = 0.10
 
 #: A live blend, in production proportions.
 _SF_FRAC = 0.69
@@ -197,9 +205,10 @@ def _f(losses: dict[str, torch.Tensor], key: str) -> float:
 def _unguarded_blend_component(
     probs: torch.Tensor | None,
     *,
+    raw: torch.Tensor | None = None,
     weight: torch.Tensor,
     fallback: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     """`main`'s blend component, character for character, in the new signature.
 
     ⚑ THIS IS THE PARENT EXPRESSION, NOT A PARAPHRASE. It is what the guarded
@@ -207,9 +216,10 @@ def _unguarded_blend_component(
     still produce a NaN on a poisoned one -- otherwise the poison is not a
     poison and every disarm assertion in this file passes for the wrong reason.
     """
+    del raw
     if probs is None:
-        return fallback, None
-    return weight * probs + (1.0 - weight) * fallback, None
+        return fallback, None, None
+    return weight * probs + (1.0 - weight) * fallback, None, None
 
 
 @pytest.fixture
@@ -311,12 +321,14 @@ def test_the_unclaimed_row_takes_the_fallback_and_not_zeros(
     assert _f(nan_side, "wdl_ce") == _f(finite_side, "wdl_ce")
 
     def _zeros_instead(
-        probs: torch.Tensor | None, *, weight: torch.Tensor, fallback: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        probs: torch.Tensor | None, *, raw: torch.Tensor | None = None,
+        weight: torch.Tensor, fallback: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        del raw
         if probs is None:
-            return fallback, None
+            return fallback, None, None
         blended = weight * probs + (1.0 - weight) * fallback
-        return torch.nan_to_num(blended), torch.zeros(())
+        return torch.nan_to_num(blended), torch.zeros(()), torch.zeros(())
 
     monkeypatch.setattr(losses_mod, "_finite_blend_component", _zeros_instead)
     zeroed = _run(_mixed_batch(_UNCLAIMED_NAN))
@@ -436,6 +448,16 @@ def test_a_dampened_row_that_reaches_weight_zero_is_not_an_error() -> None:
     reaches 0.0 with `has_sf_wdl == 1`. Its label is multiplied by zero, so it
     is unclaimed by the only definition that matters to the arithmetic, and the
     fallback is the honest substitute rather than a crash.
+
+    ⚑ WHAT THIS DOES *NOT* SHOW, and an earlier version of this docstring
+    implied that it did: a NON-FINITE row can never BE the dampened one. Every
+    comparison with NaN is False, so a NaN row's `dis_sf_low`/`dis_sf_high` are
+    0 and its `keep` is exactly 1.0 -- "a dampened-to-zero NaN row" is
+    unreachable, not merely tolerated. See
+    `test_a_nan_row_can_never_be_dampened_below_a_full_weight`, which pins that
+    property directly. What this test shows is the reverse pair: the corrupt row
+    is NOT dampened and still raises, and a FINITE row that IS dampened to zero
+    does not.
     """
     batch = _base_batch()
     batch["sf_wdl"] = torch.tensor(
@@ -460,6 +482,185 @@ def test_a_dampened_row_that_reaches_weight_zero_is_not_an_error() -> None:
     )
     losses = _run(batch, sf_search_dampen_sf_low=1.0, sf_search_dampen_sf_high=1.0)
     assert math.isfinite(_f(losses, "total"))
+
+
+# --------------------------------------------------------------------------
+# 2b. ±inf must not be laundered into a valid-looking label.
+# --------------------------------------------------------------------------
+
+_POS_INF = float("inf")
+_NEG_INF = float("-inf")
+
+#: ⚑ `-inf` IS THE DANGEROUS ONE AND IT IS THE ONE THAT LOOKED FINE.
+#: `_normalize_sf_wdl_probs` opens with `clamp_min(0.0)`, so `[-inf, 0.5, 0.5]`
+#: normalises to `[0.0, 0.5, 0.5]` -- an ordinary, plausible distribution. A
+#: finiteness test taken on the NORMALIZED tensor sees nothing and the row
+#: trains. `+inf` survives the clamp and dies at `inf / inf`, so before the raw
+#: test the two infinities behaved OPPOSITELY, decided by a sign.
+_NON_FINITE_LABELS: tuple[tuple[str, list[float]], ...] = (
+    ("nan", [_NAN, _NAN, _NAN]),
+    ("pos_inf", [_POS_INF, 0.5, 0.5]),
+    ("neg_inf", [_NEG_INF, 0.5, 0.5]),
+)
+
+
+def _label_id(case: tuple[str, list[float]]) -> str:
+    return case[0]
+
+
+@pytest.mark.parametrize("case", _NON_FINITE_LABELS, ids=_label_id)
+def test_every_non_finite_label_behaves_the_same_when_unclaimed(
+    case: tuple[str, list[float]],
+) -> None:
+    """NaN, +inf and -inf are ONE case: unclaimed ⇒ fallback, and COUNTED.
+
+    The counted half is not decoration. An unclaimed corrupt row is tolerated,
+    and a guard that silently repairs its input is the accepted-then-ignored
+    shape this repo keeps regrowing -- so the substitution has to leave a
+    reading behind. `-inf` is the row that would otherwise arrive as
+    `[0.0, 0.5, 0.5]` and be counted as nothing at all.
+    """
+    _, row = case
+    corrupt = _run(_sf_batch(row))
+    clean = _run(_sf_batch(_UNCLAIMED_FINITE))
+
+    assert math.isfinite(_f(corrupt, "wdl_ce"))
+    assert math.isfinite(_f(corrupt, "total"))
+    assert _f(corrupt, "wdl_ce") == _f(clean, "wdl_ce")
+    # Rows 2 and 3 are the unclaimed ones.
+    assert _f(corrupt, "blend_unclaimed_nonfinite_rows") == 2.0
+    assert _f(clean, "blend_unclaimed_nonfinite_rows") == 0.0
+
+
+@pytest.mark.parametrize("case", _NON_FINITE_LABELS, ids=_label_id)
+def test_every_non_finite_label_raises_when_claimed(
+    case: tuple[str, list[float]],
+) -> None:
+    """The other half of "one case": claimed ⇒ ValueError, whichever it is."""
+    _, row = case
+    batch = _sf_batch(_UNCLAIMED_FINITE, claimed=(1.0, 0.0, 0.0, 0.0))
+    batch["sf_wdl"] = torch.tensor([list(row), [0.6, 0.2, 0.2], [0.1, 0.1, 0.8], [0.4, 0.4, 0.2]])
+    with pytest.raises(ValueError, match=r"sf_wdl: 1 row\(s\)"):
+        _run(batch)
+
+
+@pytest.mark.parametrize("case", _NON_FINITE_LABELS, ids=_label_id)
+def test_every_non_finite_search_label_raises_when_claimed(
+    case: tuple[str, list[float]],
+) -> None:
+    """The search half carries the same clamp, so it carries the same hole."""
+    _, row = case
+    batch = _search_batch(_UNCLAIMED_FINITE, claimed=(0.0, 1.0, 0.0, 0.0))
+    batch["search_wdl"] = torch.tensor(
+        [[0.3, 0.3, 0.4], list(row), [0.1, 0.1, 0.8], [0.2, 0.2, 0.6]],
+    )
+    with pytest.raises(ValueError, match=r"search_wdl: 1 row\(s\)"):
+        _run(batch)
+
+
+def test_the_clamp_hides_negative_infinity_from_the_normalized_tensor() -> None:
+    """⚑ THE MECHANISM, MEASURED RATHER THAN ASSERTED IN A COMMENT.
+
+    This is the fact the raw-tensor test exists for, and it is checked against
+    `_normalize_sf_wdl_probs` itself so it cannot drift from the real clamp: a
+    `-inf` entry comes out FINITE and normalized, while `+inf` comes out NaN. If
+    this ever stops being true the guard's `raw` argument is load-bearing for a
+    reason that no longer exists, and this test says so first.
+    """
+    normalized = losses_mod._normalize_sf_wdl_probs(
+        torch.tensor([[_NEG_INF, 0.5, 0.5], [_POS_INF, 0.5, 0.5]]),
+    )
+    assert normalized is not None
+    assert torch.isfinite(normalized[0]).all(), "clamp_min laundered -inf into a valid row"
+    assert torch.equal(normalized[0], torch.tensor([0.0, 0.5, 0.5]))
+    assert not torch.isfinite(normalized[1]).all(), "+inf was expected to die at inf/inf"
+
+
+def test_the_guard_refuses_a_present_probs_with_a_missing_raw() -> None:
+    """⚑ THE COUPLING IS ENFORCED, NOT ASSUMED — AND IT WAS UNTESTED.
+
+    `raw` is where the `-inf` test has to happen, so a future call site that
+    passes only the normalized tensor would silently reopen the clamp hole while
+    every existing test stayed green. The function refuses instead of degrading.
+
+    Without this test the refusal is itself the shape this PR exists to remove: a
+    guard that cannot fail. Measured — the mutant that replaces the raise with
+    `raw = probs` SURVIVED the whole file until this case was written, because no
+    call site or test ever reached the branch.
+    """
+    probs = torch.tensor([[0.2, 0.5, 0.3]])
+    with pytest.raises(ValueError, match="clamp_min"):
+        losses_mod._finite_blend_component(
+            probs, raw=None, weight=torch.tensor([[1.0]]), fallback=probs,
+        )
+
+
+def test_a_finite_negative_label_is_still_clamped_not_rejected() -> None:
+    """⚑ THE GUARD MUST NOT WIDEN INTO A RANGE CHECK. `clamp_min(0.0)` on a
+    small negative is the DOCUMENTED intent of `_normalize_sf_wdl_probs`, not a
+    defect, so a claimed row of `[-0.01, 0.5, 0.5]` must still train. Only
+    NON-FINITE raw values are the defect."""
+    batch = _sf_batch(_UNCLAIMED_FINITE, claimed=(1.0, 1.0, 1.0, 1.0))
+    batch["sf_wdl"] = torch.tensor(
+        [[-0.01, 0.5, 0.5], [0.6, 0.2, 0.2], [0.1, 0.1, 0.8], [0.4, 0.4, 0.2]],
+    )
+    losses = _run(batch)
+    assert math.isfinite(_f(losses, "total"))
+    assert _f(losses, "blend_unclaimed_nonfinite_rows") == 0.0
+
+
+def test_a_claimed_nan_label_raises_even_with_the_value_head_off() -> None:
+    """⚑ STATED POLICY, PINNED AS A TEST: the raise is NOT gated on `w_wdl`.
+
+    A corrupt CLAIMED value label is a data defect, and the shard is just as
+    broken on an arm that has the value head weighted off. Gating on the weight
+    would let the same shard pass undetected on the arm that is not looking and
+    then fire later on the arm that is -- with the bad rows already banked in
+    the replay window. `w_wdl = 0.0` is a real configuration (the AZ-purity
+    lane), which is why this is a test and not a sentence.
+    """
+    batch = _sf_batch(_UNCLAIMED_FINITE, claimed=(1.0, 1.0, 0.0, 0.0))
+    batch["sf_wdl"] = torch.tensor(
+        [[0.2, 0.5, 0.3], [_NAN, _NAN, _NAN], [0.1, 0.1, 0.8], [0.4, 0.4, 0.2]],
+    )
+    with pytest.raises(ValueError, match=r"sf_wdl: 1 row\(s\)"):
+        _run(batch, w_wdl=0.0)
+
+
+def test_a_nan_row_can_never_be_dampened_below_a_full_weight() -> None:
+    """⚑ IEEE, AND IT IS LOAD-BEARING FOR WHY A CLAIMED NaN REACHES THE RAISE.
+
+    `keep = 1 - (dampen_low * dis_sf_low + dampen_high * dis_sf_high)`, and both
+    `dis_` terms are built from `sf_sig < 0` / `sf_sig > 0`. Every comparison
+    with NaN is False, so a NaN row's `dis_` terms are 0 and its `keep` is
+    EXACTLY 1.0 -- at any dampening, including 1.0/1.0. "A NaN row dampened to
+    zero weight" is therefore UNREACHABLE, and an earlier docstring here implied
+    it was merely tolerated. The expression below is `compute_loss`'s own, and
+    the end-to-end consequence is asserted underneath it so the two cannot drift
+    apart silently.
+    """
+    sf_sig = torch.tensor([_NAN])
+    sr_sig = torch.tensor([1.0])
+    dis_sf_low = ((sf_sig < 0) & (sr_sig > 0)).float()
+    dis_sf_high = ((sf_sig > 0) & (sr_sig < 0)).float()
+    assert float(dis_sf_low) == 0.0
+    assert float(dis_sf_high) == 0.0
+    keep = 1.0 - (1.0 * dis_sf_low + 1.0 * dis_sf_high)
+    assert float(keep) == 1.0
+
+    # The consequence: a CLAIMED NaN row still reaches the raise at maximum
+    # dampening, because the dampening cannot touch it.
+    batch = _base_batch()
+    batch["sf_wdl"] = torch.tensor(
+        [[0.9, 0.05, 0.05], [_NAN, _NAN, _NAN], [0.1, 0.1, 0.8], [0.4, 0.4, 0.2]],
+    )
+    batch["has_sf_wdl"] = _claimed_mask((1.0, 1.0, 1.0, 1.0))
+    batch["search_wdl"] = torch.tensor(
+        [[0.05, 0.05, 0.9], [0.9, 0.05, 0.05], [0.8, 0.1, 0.1], [0.2, 0.2, 0.6]],
+    )
+    batch["has_search_wdl"] = _claimed_mask((1.0, 1.0, 1.0, 1.0))
+    with pytest.raises(ValueError, match=r"sf_wdl: 1 row\(s\)"):
+        _run(batch, sf_search_dampen_sf_low=1.0, sf_search_dampen_sf_high=1.0)
 
 
 # --------------------------------------------------------------------------
@@ -496,15 +697,15 @@ def test_a_row_with_one_non_finite_entry_is_a_non_finite_row() -> None:
     probs = torch.tensor([[0.2, 0.5, 0.3], [_NAN, 0.4, 0.6]])
     fallback = torch.nn.functional.one_hot(torch.tensor([0, 2]), 3).float()
 
-    unclaimed, bad = losses_mod._finite_blend_component(
-        probs, weight=torch.tensor([[0.0], [0.0]]), fallback=fallback,
+    unclaimed, bad, _ = losses_mod._finite_blend_component(
+        probs, raw=probs, weight=torch.tensor([[0.0], [0.0]]), fallback=fallback,
     )
     assert torch.equal(unclaimed[1], fallback[1]), "the partial-NaN row must take the fallback"
     assert bad is not None
     assert float(bad) == 0.0
 
-    _, claimed_bad = losses_mod._finite_blend_component(
-        probs, weight=torch.tensor([[1.0], [1.0]]), fallback=fallback,
+    _, claimed_bad, _ = losses_mod._finite_blend_component(
+        probs, raw=probs, weight=torch.tensor([[1.0], [1.0]]), fallback=fallback,
     )
     assert claimed_bad is not None
     assert float(claimed_bad) == 1.0
@@ -521,10 +722,10 @@ def test_the_component_is_bit_identical_to_the_unguarded_expression() -> None:
     every finite row is the identical float32 it was before this PR.
     """
     probs, weight, fallback = _component_inputs()
-    guarded, bad = losses_mod._finite_blend_component(
-        probs, weight=weight, fallback=fallback,
+    guarded, bad, _ = losses_mod._finite_blend_component(
+        probs, raw=probs, weight=weight, fallback=fallback,
     )
-    parent, _ = _unguarded_blend_component(probs, weight=weight, fallback=fallback)
+    parent, _, _ = _unguarded_blend_component(probs, weight=weight, fallback=fallback)
 
     assert torch.equal(guarded, parent)
     assert bad is not None
@@ -541,10 +742,10 @@ def test_the_component_comparison_has_bit_resolution(rewrite: str) -> None:
     below anything `pytest.approx` would notice, which is the point.
     """
     probs, weight, fallback = _component_inputs()
-    guarded, _ = losses_mod._finite_blend_component(
-        probs, weight=weight, fallback=fallback,
+    guarded, _, _ = losses_mod._finite_blend_component(
+        probs, raw=probs, weight=weight, fallback=fallback,
     )
-    parent, _ = _unguarded_blend_component(probs, weight=weight, fallback=fallback)
+    parent, _, _ = _unguarded_blend_component(probs, weight=weight, fallback=fallback)
     if rewrite == "reassociated":
         other = fallback + weight * (probs - fallback)
     elif rewrite == "float64":
@@ -600,11 +801,13 @@ def test_the_end_to_end_parity_check_can_fail(
     """NON-VACUITY for the end-to-end parity: a blend that DOES move the value
     loss must be caught, or that test is comparing one code path with itself."""
     def _leans_on_the_fallback(
-        probs: torch.Tensor | None, *, weight: torch.Tensor, fallback: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        probs: torch.Tensor | None, *, raw: torch.Tensor | None = None,
+        weight: torch.Tensor, fallback: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        del raw
         if probs is None:
-            return fallback, None
-        return (0.5 * weight) * probs + (1.0 - 0.5 * weight) * fallback, None
+            return fallback, None, None
+        return (0.5 * weight) * probs + (1.0 - 0.5 * weight) * fallback, None, None
 
     batch = _dampened_batch()
     damped = {
@@ -668,22 +871,61 @@ def test_a_nonfinite_term_at_a_live_weight_is_not_counted() -> None:
 
 
 def test_the_production_shape_reaches_both_halves() -> None:
-    """⚑ ONE BATCH, BOTH ITEMS, AT PRODUCTION KNOB VALUES.
+    """⚑ ONE BATCH, BOTH ITEMS, AT THE LIVE YAML'S KNOB VALUES.
 
     An unclaimed NaN `sf_wdl` row under `sf_wdl_conf_power: 1.0` reaches TWO
     places. `_compute_sf_wdl_mask` multiplies the row mask by
     ``(1 - p_draw)^power``, and ``0.0 * nan`` makes the aux `sf_eval` term NaN
-    -- deliberately NOT sanitised, because `w_sf_eval: 0.0` disarms it and the
-    count below is then the only thing that says the shard is dirty. The value
-    TARGET is the other place, and it has no such escape: `w_wdl` is 1.0.
+    -- deliberately NOT sanitised (see the sibling test for the other weight).
+    At `w_sf_eval: 0.0` the term is disarmed, and the two counts below are then
+    the only things that say the shard is dirty. The value TARGET is the other
+    place, and it has no such escape: `w_wdl` is 1.0.
     """
     losses = _run(
         _sf_batch(_UNCLAIMED_NAN), sf_wdl_conf_power=_PROD_SF_WDL_CONF_POWER,
     )
     assert math.isnan(_f(losses, "sf_eval_ce")), "the aux term is the dirty-data signal"
     assert _f(losses, "disarmed_nonfinite_terms") == 1.0
+    assert _f(losses, "blend_unclaimed_nonfinite_rows") == 2.0
     assert math.isfinite(_f(losses, "wdl_ce")), "the value target must be clean"
     assert math.isfinite(_f(losses, "total"))
+
+
+def test_the_aux_head_is_loud_at_the_main_yaml_weight() -> None:
+    """⚑⚑ THE SAME ROW AT `w_sf_eval: 0.10`, WHICH IS WHAT `main`'s YAML SETS.
+
+    The two yamls disagree, and the disagreement is the whole reason this test
+    exists as a sibling rather than a replacement:
+
+      * live production (`configs/pbt2_small.yaml` on the running trial's tree)
+        runs `w_sf_eval: 0.0` -- the term is disarmed and COUNTED;
+      * `main`'s `configs/pbt2_small.yaml:863` runs `w_sf_eval: 0.10` -- the
+        term is IN `total`.
+
+    Deliberately left un-sanitised in BOTH regimes, and this is the branch that
+    justifies it: at any non-zero weight the NaN reaches `total`, the
+    non-finite-gradient guard in `_run_optimizer_step` trips, the step is
+    SKIPPED and a warning is logged. That is loud. Sanitising the aux head's
+    input would instead fabricate a finite CE out of a corrupt label and train
+    on it quietly -- strictly worse than either regime.
+
+    ⚑ The VALUE TARGET is finite in both, which is this PR's claim and is
+    independent of `w_sf_eval` entirely.
+    """
+    losses = _run(
+        _sf_batch(_UNCLAIMED_NAN),
+        sf_wdl_conf_power=_PROD_SF_WDL_CONF_POWER,
+        w_sf_eval=_MAIN_YAML_W_SF_EVAL,
+    )
+    assert math.isnan(_f(losses, "sf_eval_ce"))
+    assert math.isnan(_f(losses, "total")), "a live weight must reach `total` -- that is LOUD"
+    # Not counted as disarmed: at a live weight the gradient guard is the
+    # instrument, and double-reporting it would dilute the silent case.
+    assert _f(losses, "disarmed_nonfinite_terms") == 0.0
+    # The blend's own row count is weight-independent, so the shard defect is
+    # still reported at either weight.
+    assert _f(losses, "blend_unclaimed_nonfinite_rows") == 2.0
+    assert math.isfinite(_f(losses, "wdl_ce")), "the value target must be clean either way"
 
 
 # --------------------------------------------------------------------------
@@ -779,3 +1021,165 @@ def test_the_trainer_is_silent_on_a_clean_iteration(
     _drive(_trainer(tmp_path), monkeypatch, disarmed=0.0, steps=4)
 
     assert _disarm_warnings(caplog) == []
+
+
+# --------------------------------------------------------------------------
+# 6. The SAME chain with NOTHING stubbed between the two ends.
+# --------------------------------------------------------------------------
+
+
+class _RealHeadModel(nn.Module):
+    """Emits the heads `compute_loss` reads, from real parameters.
+
+    A stub `compute_loss` cannot catch a key rename, because the test writes
+    both sides of the name. This model exists so the REAL `compute_loss` runs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.embed = nn.Embedding(8, 4)
+        self.blocks = nn.ModuleList([nn.Linear(4, 4)])
+        self.head = nn.Linear(1, _ACTIONS)
+        self.wdl_head = nn.Linear(1, 3)
+        self.cat_head = nn.Linear(1, 4)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        driver = x.reshape(x.shape[0], -1)[:, :1]
+        return {
+            "policy": self.head(driver),
+            "wdl": self.wdl_head(driver),
+            "categorical": self.cat_head(driver),
+        }
+
+
+def _real_loss_batch() -> Batch:
+    """A poisoned batch for the REAL `compute_loss`, on the empty-mask route."""
+    batch = _poisoned_categorical_batch()
+    batch["x"] = torch.ones((_B, 1, 1, 1), dtype=torch.float32)
+    return batch
+
+
+def _drive_real(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, batch: Batch, steps: int,
+) -> None:
+    trainer = Trainer(
+        _RealHeadModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+  # ⚑ SET THE WEIGHT ATTRIBUTES, NOT `_loss_kwargs`. That is a PROPERTY built
+  # from them, and it is the production path -- substituting the dict would stub
+  # out the very assembly this test exists to leave real. `w_categorical = 0.0`
+  # is the disarm under test; `w_policy`/`w_wdl` stay at their defaults so
+  # `total` has a real gradient and the optimizer step is a real one.
+    monkeypatch.setattr(trainer, "w_categorical", 0.0)
+    monkeypatch.setattr(trainer, "w_sf_eval", 0.0)
+    monkeypatch.setattr(trainer, "sf_wdl_frac", _SF_FRAC)
+    monkeypatch.setattr(trainer, "search_wdl_frac", _SEARCH_FRAC)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, b: {})
+    monkeypatch.setattr(
+        trainer, "_iter_prefetched_batches",
+        lambda *_a, **_k: iter([{k: v.clone() for k, v in batch.items()} for _ in range(64)]),
+    )
+    trainer.train_steps(cast(Any, None), batch_size=_B, steps=steps)
+
+
+def test_the_whole_chain_carries_the_key_with_nothing_stubbed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑⚑ THE KEY IS WRITTEN BY `compute_loss` AND READ BY `train_steps`, AND
+    NOTHING BETWEEN THEM IS STUBBED HERE.
+
+    The sibling test above monkeypatches `compute_loss`, so it writes BOTH ends
+    of the name: rename the dict key on either side and it still passes while the
+    warning is dead. That is this repo's signature defect wearing a test's
+    clothes. This one runs the real `compute_loss`, the real
+    `_extract_loss_scalars`, the real per-microbatch accumulation into `sums`
+    and the real `train_steps` read -- so the string only appears once in the
+    production path, and a rename at EITHER end fails here.
+    """
+    caplog.set_level(logging.WARNING)
+    _drive_real(tmp_path, monkeypatch, batch=_real_loss_batch(), steps=3)
+
+    warnings = _disarm_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    assert "3 zero-weighted loss component" in warnings[0]
+
+
+def test_the_whole_chain_is_silent_on_a_clean_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NON-VACUITY for the integration test: the same real chain, clean data."""
+    caplog.set_level(logging.WARNING)
+    clean = _real_loss_batch()
+    clean["categorical_t"] = torch.full((_B, 4), 0.25)
+    _drive_real(tmp_path, monkeypatch, batch=clean, steps=3)
+
+    assert _disarm_warnings(caplog) == []
+
+
+def _blend_row_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "value-label row reading" in record.getMessage()
+    ]
+
+
+@pytest.mark.parametrize("case", _NON_FINITE_LABELS, ids=_label_id)
+def test_the_whole_chain_announces_unclaimed_non_finite_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    case: tuple[str, list[float]],
+) -> None:
+    """The row counter, end to end, for all three corrupt encodings. `-inf` is
+    the one that reaches this line only because the finiteness test is taken on
+    the RAW tensor."""
+    _, row = case
+    caplog.set_level(logging.WARNING)
+    batch = _real_loss_batch()
+    batch["categorical_t"] = torch.full((_B, 4), 0.25)
+    batch["sf_wdl"] = _labels(row)
+    batch["has_sf_wdl"] = _claimed_mask()
+    _drive_real(tmp_path, monkeypatch, batch=batch, steps=2)
+
+    warnings = _blend_row_warnings(caplog)
+    assert len(warnings) == 1, warnings
+    # 2 unclaimed rows per microbatch x 2 steps.
+    assert "4 value-label row reading" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "key", ["disarmed_nonfinite_terms", "blend_unclaimed_nonfinite_rows"],
+)
+def test_a_count_key_never_reaches_train_metrics(key: str) -> None:
+    """⚑ UNITS PIN for the eval-path trap named at `_compute_metrics`'s
+    accumulation site.
+
+    Neither counter is in `_RAW_SUM_LOSS_KEYS`, so `_compute_metrics` scales it
+    by `n_rows` and it stops being a count. That is inert TODAY only because
+    `_loss_sums_to_metric_kwargs` drops every key that is not a `TrainMetrics`
+    field -- the scaled value is computed and thrown away. Give either key a
+    field WITHOUT also giving it `_RAW_COUNT_METRIC_FIELDS` membership and the
+    published column silently becomes rows-times-count. Asserting the absence is
+    what turns that comment into something enforceable; the assertion message is
+    the instruction for whoever trips it.
+
+    ⚑ NOT a request to leave them unpublished forever. It is a request to
+    publish them through `_RAW_COUNT_METRIC_FIELDS`, which is the path that
+    carries the right units -- and which puts them in `_RAW_SUM_LOSS_KEYS`, so
+    the first assertion below stops being true at the same moment as the second.
+    """
+    fields = {f.name for f in dataclasses.fields(trainer_mod.TrainMetrics)}
+    published = trainer_mod._loss_sums_to_metric_kwargs({key: 7.0}, 1.0)
+    assert key not in fields, (
+        f"{key} gained a TrainMetrics field. Add it to _RAW_COUNT_METRIC_FIELDS "
+        "in the SAME change, or `_compute_metrics` publishes rows-times-count."
+    )
+    assert key not in trainer_mod._RAW_SUM_LOSS_KEYS
+    assert key not in published
