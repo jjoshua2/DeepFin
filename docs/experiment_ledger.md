@@ -66526,3 +66526,19 @@ read out (arm 2 mid-training, arm 3 unlaunched):
 - Secondary (non-deciding) analysis at close: monotone dose-trend across the
   four points f=0 (banked −41.0) / 0.25 / 0.50 / 0.75 — the trend has more
   resolution than any pairwise contrast at these error bars.
+
+### 2026-08-24 — PR #458 MERGED (main 217c609aa): zero-weight NaN disarm in compute_loss
+- All 13 head-weight terms in `total` now added under `if w == 0.0: continue` (left fold,
+  declaration order — bit-identical to the flat sum at all-nonzero weights). Fixes
+  `0.0 * NaN == NaN` poisoning `total` through weights meaning "off" — the expected regime
+  for gen-0 shards (no SF fields ⇒ empty-mask masked means are NaN). 17/17 mutants killed.
+- Reviews: Opus APPROVE-WITH-CHANGES + Grok MERGE-WITH-FOLLOWUP; consolidated fix pass
+  (backward-raises truth in the all-zero test, field-absent⇒finite blend test at live frac,
+  audit-row rewording, distinctness + -0.0 cases). CI green on 1d35f4c.
+- ⚑ RESIDUAL (task #271, BOTH reviewers reproduced): the value-target BLEND fallback is
+  keyed on FIELD-ABSENCE, not weight — a PRESENT-but-NaN `sf_wdl` tensor still NaNs the
+  target at any frac (0.0×NaN per-row survives the mask; clamp propagates NaN). Absent ⇒
+  finite is now test-pinned (mutant-verified). Plus observability: a zero-weighted NaN term
+  no longer trips the non-finite-grad guard — silent TB column until #271 adds a log.
+- Unblocks: AZ-purity Stage 1 prerequisite 1 (was BLOCKING) and the sfnnue bootstrap lane.
+  NOT deployed to the live branch (production stopped; merges to main only — MERGED ≠ DEPLOYED).
