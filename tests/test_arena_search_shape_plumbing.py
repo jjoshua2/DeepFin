@@ -48,7 +48,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay import match as match_mod
 from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from scripts.arena_standard import (
@@ -233,7 +233,10 @@ def _capture_c_search(monkeypatch: Any) -> list[dict[str, Any]]:
         n = len(boards)
         return (
             [np.zeros(POLICY_SIZE, dtype=np.float32)] * n,
-            [0] * n,
+            # A real action id per board: the arena decodes strictly, so a
+            # constant that names no legal move now raises instead of being
+            # quietly replaced with the first legal move.
+            [int(move_to_index(next(iter(b.legal_moves)), b)) for b in boards],
             [0.0] * n,
             [np.ones(POLICY_SIZE, dtype=bool)] * n,
         )
