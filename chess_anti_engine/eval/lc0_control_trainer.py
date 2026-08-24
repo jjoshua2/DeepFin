@@ -141,6 +141,17 @@ LIVE_TRAINER_PIN: dict[str, Any] = {
             "sf_policy_floor_tau_played": None,
             "sf_policy_floor_tau_top1": 0.15,
             "sf_policy_sparse_ce": False,
+            # ⚑ ADDED by the fabricated-tail gate (PR #447), and NOT hand-edited to
+            # make a test pass: the live yaml does not set either key -- it must
+            # not, until production has restarted onto the code that defines them
+            # -- so `trainer_kwargs_from_config` realizes both at their code
+            # defaults. MEASURED by running that function over the live working
+            # tree's `configs/pbt2_small.yaml`, the same way the rest of this pin
+            # was recorded, rather than copied from the constructor signature.
+            # They are NOT deviations: the control and production both realize the
+            # identity pair, so they stay out of `LC0_TRAINER_DEVIATIONS`.
+            "sf_own_regret_listed_mass_min": 0.0,
+            "sf_own_regret_unlisted_scale": 1.0,
             "sf_search_dampen_sf_high": 0.0,
             "sf_search_dampen_sf_low": 0.0,
             "sf_target_params": {
