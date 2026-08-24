@@ -66410,3 +66410,35 @@ Deploy: Python-only, no rebuild, rides the next restart onto main-derived code;
 not data-affecting (bit-identical at production defaults), no readout owed.
 Reviews: Opus APPROVE-WITH-CHANGES (F1-F8, all closed or routed), Grok approve
 (11 findings, all closed or routed). Reviewer ≠ author held at every stage.
+
+### 2026-08-24 03:58 — PR #456 MERGED (gen-0 shard generator) — the AZ-purity Stage-1 data tool exists
+
+scripts/gen_random_selfplay_shards.py: CPU C-tree gumbel with a stub evaluator
+(uniform prior; --value-source zero|random|material, default zero ≡ random-init
+net), emitting production-loader shards (x 175-plane, policy_target lc0_1858,
+wdl_target int8 STM-POV, no SF keys) + a crash-safe sidecar with orphan-shard
+accounting. Two review rounds (Opus+Grok round 1; 5 extra Grok findings + CI
+annotation-guard round folded in), 16/16 mutants, lint delta zero, 0 skips.
+
+⚑ FACTS THE TOOL'S OWN INSTRUMENTS ESTABLISHED (bank these, they bound Stage 1):
+- The stored policy_target is the search's IMPROVED POLICY, not a visit
+  distribution — and under --value-source zero it is ~uniform on 99.32% of rows
+  (TV<1e-3; sharp only via in-tree terminals). Gen-0's real signal = OUTCOMES +
+  terminal sharpening, NOT the policy target. Measured per-run and written into
+  the sidecar (tv_to_uniform_*), tested by a uniform-emitter mutant.
+- --value-source random manufactures confident targets whose confidence is a
+  hash of piece placement ("sharp and wrong" by construction) — documented as a
+  noise arm only.
+- Throughput at live search defaults, 8 workers: zero 123,420 games/h /
+  20.1M rows/h (median 119 plies); material 89,813 games/h (drawish, longer).
+- ep false-positive guard: chess.Board vs CBoard ep-square semantics differ on
+  BOTH fen() forms; the lockstep guard now compares the ep square only when both
+  sides name one (subset relation makes this tight), repro-pinned both ways.
+- required_run_config in the sidecar is marked enforced:false — the trainer
+  reads nothing from it; with has_sf_wdl≡0 every value component collapses to
+  the game outcome bit-identically, and the real hazard is the orphaned-label
+  telemetry denominator reading a healthy-looking 0.0.
+
+Next: bank the gen-0 corpus (CPU, nice'd, alongside the ladder trainer —
+ownership check by LOG GROWTH, not nvidia-smi). Stage-1 launch itself remains
+gated on Josh's explicit go per the AZ-purity prereg draft.
