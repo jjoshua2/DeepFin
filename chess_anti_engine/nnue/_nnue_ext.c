@@ -1,0 +1,440 @@
+/*
+ * _nnue_ext.c — Python surface for the native NNUE evaluator.
+ *
+ * This module exists so the parity gate, the unit tests and the throughput
+ * benchmark can drive the evaluator directly, without going through the MCTS
+ * tree. The tree gets the SAME evaluator through the value-provider seam
+ * (chess_anti_engine/mcts/_value_provider.h); both include _nnue_impl.h, so
+ * there is one implementation and two callers, not two implementations.
+ *
+ * Positions arrive as CBoard objects built by
+ * chess_anti_engine.encoding._lc0_ext.CBoard.from_board(python_chess_board),
+ * which is the production adapter — so the parity gate exercises the same
+ * position path the tree will.
+ */
+
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include "../encoding/_cboard_impl.h"
+#include "_nnue_impl.h"
+#include "_nnue_provider.h"
+
+/* Mirrors the layout of _lc0_ext.c's PyCBoard, the same way _mcts_tree.c does.
+ * ⚑ Duck-typing a struct across .so boundaries is only safe while the layouts
+ * agree, so unwrap_cboard() checks tp_name rather than trusting the caller. */
+typedef struct {
+    PyObject_HEAD
+    CBoard board;
+} PyCBoardMirror;
+
+static PyObject *NnueInCheckError = NULL;
+
+static const CBoard *unwrap_cboard(PyObject *obj) {
+    /* tp_name is the qualified "_lc0_ext.CBoard"; match on the trailing class
+     * name so a module rename does not silently start accepting anything. */
+    const char *name = Py_TYPE(obj)->tp_name;
+    const char *leaf = name ? strrchr(name, '.') : NULL;
+    leaf = leaf ? leaf + 1 : name;
+    if (!leaf || strcmp(leaf, "CBoard") != 0) {
+        PyErr_Format(PyExc_TypeError,
+                     "expected a CBoard from chess_anti_engine.encoding._lc0_ext, got %s",
+                     name ? name : "?");
+        return NULL;
+    }
+    return &((PyCBoardMirror *)obj)->board;
+}
+
+static void weights_capsule_destructor(PyObject *capsule) {
+    CaeNnueWeights *w = (CaeNnueWeights *)PyCapsule_GetPointer(capsule, "cae.nnue.weights");
+    if (w) cae_nnue_release(w);
+}
+
+static CaeNnueWeights *weights_from_capsule(PyObject *capsule) {
+    CaeNnueWeights *w = (CaeNnueWeights *)PyCapsule_GetPointer(capsule, "cae.nnue.weights");
+    if (!w) PyErr_SetString(PyExc_TypeError, "expected an NNUE weights handle from load()");
+    return w;
+}
+
+PyDoc_STRVAR(load_doc,
+"load(pack_path) -> handle\n\n"
+"mmap a weight pack built by scripts/nnue_pack.py, read-only. Repeated loads of\n"
+"the same path in one process share one mapping. FATAL on any .nnue version but\n"
+"0x7AF32F20 and on anything but the big (threat) architecture.");
+
+static PyObject *py_load(PyObject *Py_UNUSED(self), PyObject *args) {
+    const char *path;
+    if (!PyArg_ParseTuple(args, "s", &path)) return NULL;
+
+    char err[512] = {0};
+    CaeNnueWeights *w;
+    Py_BEGIN_ALLOW_THREADS
+    w = cae_nnue_load(path, err, sizeof(err));
+    Py_END_ALLOW_THREADS
+    if (!w) {
+        PyErr_Format(PyExc_ValueError, "NNUE weight load failed: %s", err[0] ? err : "unknown");
+        return NULL;
+    }
+    PyObject *capsule = PyCapsule_New(w, "cae.nnue.weights", weights_capsule_destructor);
+    if (!capsule) { cae_nnue_release(w); return NULL; }
+    return capsule;
+}
+
+PyDoc_STRVAR(info_doc,
+"info(handle) -> dict\n\n"
+"Architecture and provenance read off the LOADED weights themselves, not off the\n"
+"path that was passed in.");
+
+static PyObject *py_info(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    CaeNnueWeights *w = weights_from_capsule(capsule);
+    if (!w) return NULL;
+    return Py_BuildValue(
+        "{s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:s,s:s,s:i}",
+        "l1", w->l1, "l2", w->l2, "l3", w->l3,
+        "halfka_dims", w->halfka_dims, "threat_dims", w->threat_dims,
+        "layer_stacks", w->layer_stacks, "psqt_buckets", w->psqt_buckets,
+        "net_hash", w->net_hash, "ft_hash", w->ft_hash,
+        "source_sha256", w->sha256_hex, "path", w->path,
+        "avx2", CAE_NNUE_HAVE_AVX2);
+}
+
+PyDoc_STRVAR(source_sha256_doc,
+"source_sha256(handle) -> str\n\n"
+"SHA-256 of the .nnue the pack was built from. Stockfish names its nets\n"
+"nn-<first 12 hex>.nnue, so this is what proves the gate is measuring the same\n"
+"network the engine is running.");
+
+static PyObject *py_source_sha256(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    CaeNnueWeights *w = weights_from_capsule(capsule);
+    if (!w) return NULL;
+    return PyUnicode_FromString(w->sha256_hex);
+}
+
+static int raise_status(int status) {
+    if (status == CAE_VALUE_ERR_IN_CHECK) {
+        PyErr_SetString(NnueInCheckError,
+                        "NNUE evaluation is undefined in check; resolve check nodes "
+                        "recursively (search the evasions) instead of evaluating");
+    } else {
+        PyErr_Format(PyExc_ValueError, "NNUE evaluation failed: %s",
+                     cae_value_status_name(status));
+    }
+    return -1;
+}
+
+PyDoc_STRVAR(evaluate_doc,
+"evaluate(handle, cboard) -> int\n\n"
+"Internal units (psqt/16 + positional/16), side-to-move POV — the same number\n"
+"Stockfish's `eval` prints as '(Big net) NNUE evaluation ... internal units'.\n"
+"Raises InCheckError for a position in check: the network is undefined there and\n"
+"no sentinel is returned that a caller could read as an evaluation.");
+
+static PyObject *py_evaluate(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *board_obj;
+    if (!PyArg_ParseTuple(args, "OO", &capsule, &board_obj)) return NULL;
+    CaeNnueWeights *w = weights_from_capsule(capsule);
+    if (!w) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+
+    int32_t value = 0;
+    int status;
+    Py_BEGIN_ALLOW_THREADS
+    status = cae_nnue_evaluate_cboard(w, board, &value);
+    Py_END_ALLOW_THREADS
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
+    return PyLong_FromLong((long)value);
+}
+
+PyDoc_STRVAR(trace_doc,
+"trace(handle, cboard) -> (bucket, psqt_tuple, positional_tuple)\n\n"
+"Every layer stack's psqt and positional contribution, already divided by\n"
+"OutputScale. This is the localisation instrument: Stockfish's exact line gives\n"
+"only the total, so a per-bucket split is what says WHICH half diverged.");
+
+static PyObject *py_trace(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *board_obj;
+    if (!PyArg_ParseTuple(args, "OO", &capsule, &board_obj)) return NULL;
+    CaeNnueWeights *w = weights_from_capsule(capsule);
+    if (!w) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+
+    CaeNnuePos pos;
+    int status = cae_nnue_pos_from_cboard(board, &pos);
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
+
+    int32_t psqt[CAE_NNUE_PSQT_BUCKETS], positional[CAE_NNUE_PSQT_BUCKETS];
+    Py_BEGIN_ALLOW_THREADS
+    status = cae_nnue_trace(w, &pos, psqt, positional);
+    Py_END_ALLOW_THREADS
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
+
+    PyObject *tp = PyTuple_New(w->psqt_buckets), *tq = PyTuple_New(w->psqt_buckets);
+    if (!tp || !tq) { Py_XDECREF(tp); Py_XDECREF(tq); return NULL; }
+    for (uint32_t b = 0; b < w->psqt_buckets; b++) {
+        PyTuple_SET_ITEM(tp, b, PyLong_FromLong((long)psqt[b]));
+        PyTuple_SET_ITEM(tq, b, PyLong_FromLong((long)positional[b]));
+    }
+    return Py_BuildValue("(iNN)", cae_nnue_bucket(&pos), tp, tq);
+}
+
+PyDoc_STRVAR(active_features_doc,
+"active_features(cboard, perspective) -> (halfka_indices, threat_indices)\n\n"
+"The active feature indices for one perspective (0 = white, 1 = black), sorted.\n"
+"Needs no weights: this is the index computation on its own, so a unit test can\n"
+"assert hand-checkable features on a fixed position.");
+
+static int cmp_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+
+static PyObject *py_active_features(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *board_obj;
+    int perspective;
+    if (!PyArg_ParseTuple(args, "Oi", &board_obj, &perspective)) return NULL;
+    if (perspective != 0 && perspective != 1) {
+        PyErr_SetString(PyExc_ValueError, "perspective must be 0 (white) or 1 (black)");
+        return NULL;
+    }
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+
+    cae_nnue_init_tables();
+    CaeNnuePos pos;
+    int status = cae_nnue_pos_from_cboard(board, &pos);
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
+
+    uint32_t halfka[64];
+    int n_halfka = 0;
+    int ksq = pos.king_sq[perspective];
+    int sq;
+    FOR_EACH_BIT(pos.occupied, sq)
+        halfka[n_halfka++] = cae_nnue_halfka_index(perspective, sq, pos.piece_on[sq], ksq);
+
+    CaeThreatRel rel[CAE_NNUE_MAX_RELATIONS];
+    int n_rel = cae_nnue_threat_relations(&pos, rel);
+    uint32_t threats[CAE_NNUE_MAX_RELATIONS];
+    int n_threats = 0;
+    for (int i = 0; i < n_rel; i++) {
+        uint32_t idx = cae_nnue_threat_index(perspective, rel[i].attacker, rel[i].from,
+                                             rel[i].to, pos.piece_on[rel[i].to], ksq);
+        if (idx < CAE_NNUE_THREAT_DIMS) threats[n_threats++] = idx;
+    }
+    qsort(halfka, (size_t)n_halfka, sizeof(uint32_t), cmp_u32);
+    qsort(threats, (size_t)n_threats, sizeof(uint32_t), cmp_u32);
+
+    PyObject *ta = PyTuple_New(n_halfka), *tb = PyTuple_New(n_threats);
+    if (!ta || !tb) { Py_XDECREF(ta); Py_XDECREF(tb); return NULL; }
+    for (int i = 0; i < n_halfka; i++)
+        PyTuple_SET_ITEM(ta, i, PyLong_FromUnsignedLong(halfka[i]));
+    for (int i = 0; i < n_threats; i++)
+        PyTuple_SET_ITEM(tb, i, PyLong_FromUnsignedLong(threats[i]));
+    return Py_BuildValue("(NN)", ta, tb);
+}
+
+PyDoc_STRVAR(benchmark_doc,
+"benchmark(handle, cboards, repeats, threads) -> (evals, seconds, checksum)\n\n"
+"Time evals/s on REAL positions with feature-index computation included — the\n"
+"scoping projection measured the accumulator gather alone, so this is the number\n"
+"that closes that caveat. In-check boards in the list are skipped and do not\n"
+"count. The checksum exists so an optimiser cannot delete the work.");
+
+static PyObject *py_benchmark(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *seq;
+    int repeats = 1, threads = 1;
+    if (!PyArg_ParseTuple(args, "OOii", &capsule, &seq, &repeats, &threads)) return NULL;
+    CaeNnueWeights *w = weights_from_capsule(capsule);
+    if (!w) return NULL;
+    if (repeats < 1 || threads < 1) {
+        PyErr_SetString(PyExc_ValueError, "repeats and threads must be >= 1");
+        return NULL;
+    }
+
+    PyObject *fast = PySequence_Fast(seq, "cboards must be a sequence");
+    if (!fast) return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(fast);
+    CBoard *boards = (CBoard *)malloc((size_t)(n > 0 ? n : 1) * sizeof(CBoard));
+    if (!boards) { Py_DECREF(fast); return PyErr_NoMemory(); }
+    Py_ssize_t n_boards = 0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        const CBoard *b = unwrap_cboard(PySequence_Fast_GET_ITEM(fast, i));
+        if (!b) { free(boards); Py_DECREF(fast); return NULL; }
+        if (cboard_in_check(b)) continue;   /* the evaluator refuses these */
+        boards[n_boards++] = *b;
+    }
+    Py_DECREF(fast);
+    if (n_boards == 0) {
+        free(boards);
+        PyErr_SetString(PyExc_ValueError, "no evaluable (not-in-check) positions supplied");
+        return NULL;
+    }
+
+    double t0 = 0.0, t1 = 0.0;
+    long long done = 0;
+    long long checksum = 0;
+
+    Py_BEGIN_ALLOW_THREADS
+#ifdef _OPENMP
+    t0 = omp_get_wtime();
+    #pragma omp parallel for num_threads(threads) schedule(static) reduction(+ : done, checksum)
+    for (long long it = 0; it < (long long)repeats * (long long)n_boards; it++) {
+        int32_t v = 0;
+        if (cae_nnue_evaluate_cboard(w, &boards[it % n_boards], &v) == CAE_VALUE_OK) {
+            done++;
+            checksum += v;
+        }
+    }
+    t1 = omp_get_wtime();
+#else
+    struct timespec ts0, ts1;
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
+    for (long long it = 0; it < (long long)repeats * (long long)n_boards; it++) {
+        int32_t v = 0;
+        if (cae_nnue_evaluate_cboard(w, &boards[it % n_boards], &v) == CAE_VALUE_OK) {
+            done++;
+            checksum += v;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    t0 = (double)ts0.tv_sec + 1e-9 * (double)ts0.tv_nsec;
+    t1 = (double)ts1.tv_sec + 1e-9 * (double)ts1.tv_nsec;
+#endif
+    Py_END_ALLOW_THREADS
+
+    free(boards);
+    return Py_BuildValue("(LdL)", done, t1 - t0, checksum);
+}
+
+PyDoc_STRVAR(provider_eval_doc,
+"provider_eval(name, weights_path, cboard) -> int\n\n"
+"Evaluate THROUGH the value-provider vtable rather than by calling the evaluator\n"
+"directly, so a test can prove the seam dispatches rather than that the maths\n"
+"works. The tree uses the same registry.");
+
+static PyObject *py_provider_eval(PyObject *Py_UNUSED(self), PyObject *args) {
+    const char *name, *path;
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "ssO", &name, &path, &board_obj)) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+
+    const CaeValueProvider *vp = cae_value_provider_by_name(name);
+    if (!vp) {
+        PyErr_Format(PyExc_ValueError, "no value provider named %s", name);
+        return NULL;
+    }
+    char err[512] = {0};
+    void *ctx = vp->init(path, err, sizeof(err));
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError, "provider %s init failed: %s", vp->name, err);
+        return NULL;
+    }
+    int32_t value = 0;
+    int status = cae_value_eval(vp, ctx, board, &value);
+    vp->destroy(ctx);
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
+    return PyLong_FromLong((long)value);
+}
+
+PyDoc_STRVAR(provider_names_doc, "provider_names() -> tuple of registered provider names");
+
+static PyObject *py_provider_names(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
+    int n = 0;
+    while (CAE_VALUE_PROVIDERS[n]) n++;
+    PyObject *out = PyTuple_New(n);
+    if (!out) return NULL;
+    for (int i = 0; i < n; i++)
+        PyTuple_SET_ITEM(out, i, PyUnicode_FromString(CAE_VALUE_PROVIDERS[i]->name));
+    return out;
+}
+
+PyDoc_STRVAR(set_simd_doc,
+"set_simd(enabled) -> bool\n\n"
+"Select the AVX2 kernels (True) or the scalar reference kernels (False) at\n"
+"runtime, returning the state actually in force. Both paths are in the same\n"
+"binary on purpose: an unexercised SIMD path is an unchecked one, and the parity\n"
+"gate has to be runnable against each. Raises if SIMD is requested but was not\n"
+"compiled in. Not thread-safe — set it before starting worker threads.");
+
+static PyObject *py_set_simd(PyObject *Py_UNUSED(self), PyObject *args) {
+    int enabled;
+    if (!PyArg_ParseTuple(args, "p", &enabled)) return NULL;
+    if (cae_nnue_set_simd(enabled) != 0) {
+        PyErr_SetString(PyExc_ValueError,
+                        "this build has no AVX2 kernels (compiled without __AVX2__)");
+        return NULL;
+    }
+    return PyBool_FromLong(cae_nnue_simd_active());
+}
+
+PyDoc_STRVAR(simd_active_doc,
+"simd_active() -> bool\n\n"
+"Which kernels the evaluator will actually use, read off the live flag rather\n"
+"than off whatever was requested.");
+
+static PyObject *py_simd_active(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
+    return PyBool_FromLong(cae_nnue_simd_active());
+}
+
+static PyMethodDef module_methods[] = {
+    {"load", py_load, METH_VARARGS, load_doc},
+    {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
+    {"simd_active", py_simd_active, METH_NOARGS, simd_active_doc},
+    {"info", py_info, METH_VARARGS, info_doc},
+    {"source_sha256", py_source_sha256, METH_VARARGS, source_sha256_doc},
+    {"evaluate", py_evaluate, METH_VARARGS, evaluate_doc},
+    {"trace", py_trace, METH_VARARGS, trace_doc},
+    {"active_features", py_active_features, METH_VARARGS, active_features_doc},
+    {"benchmark", py_benchmark, METH_VARARGS, benchmark_doc},
+    {"provider_eval", py_provider_eval, METH_VARARGS, provider_eval_doc},
+    {"provider_names", py_provider_names, METH_NOARGS, provider_names_doc},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef nnue_module = {
+    PyModuleDef_HEAD_INIT,
+    "_nnue_ext",
+    "Native big-net Stockfish-NNUE evaluator (parity/bench/test surface).",
+    -1,
+    module_methods,
+    NULL, NULL, NULL, NULL
+};
+
+PyMODINIT_FUNC PyInit__nnue_ext(void) {
+    cboard_init_all();
+    cae_nnue_init_tables();
+
+    PyObject *m = PyModule_Create(&nnue_module);
+    if (!m) return NULL;
+
+    NnueInCheckError = PyErr_NewExceptionWithDoc(
+        "chess_anti_engine.nnue._nnue_ext.InCheckError",
+        "The NNUE evaluation is undefined for a position in check.\n\n"
+        "Callers must resolve check nodes recursively (search the evasions, which\n"
+        "may themselves give check) before asking for a static evaluation. This\n"
+        "exception is the enforcement backstop for that invariant.",
+        PyExc_ValueError, NULL);
+    if (!NnueInCheckError) { Py_DECREF(m); return NULL; }
+    Py_INCREF(NnueInCheckError);
+    if (PyModule_AddObject(m, "InCheckError", NnueInCheckError) < 0) {
+        Py_DECREF(NnueInCheckError);
+        Py_DECREF(m);
+        return NULL;
+    }
+    PyModule_AddIntConstant(m, "THREAT_DIMS", (long)CAE_NNUE_THREAT_DIMS);
+    PyModule_AddIntConstant(m, "HALFKA_DIMS", (long)CAE_NNUE_HALFKA_DIMS);
+    PyModule_AddIntConstant(m, "PACK_VERSION", (long)CAE_NNUE_PACK_VERSION);
+    PyModule_AddIntConstant(m, "FILE_VERSION", (long)CAE_NNUE_FILE_VERSION);
+    PyModule_AddIntConstant(m, "HAVE_AVX2", (long)CAE_NNUE_HAVE_AVX2);
+    return m;
+}

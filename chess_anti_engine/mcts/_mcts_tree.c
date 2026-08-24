@@ -35,6 +35,12 @@
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
 #include "../encoding/_features_impl.h"
+/* Eval-plugin seam: the tree holds a POINTER to a value provider, never a
+ * hard-wired evaluator call. The NNUE provider is the first one; a leaf qsearch
+ * composes by holding an inner {provider, ctx} pair and recursing through
+ * cae_value_eval(). See _value_provider.h for the in-check contract. */
+#include "_value_provider.h"
+#include "../nnue/_nnue_provider.h"
 
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
@@ -2012,6 +2018,12 @@ typedef struct {
     TreeData tree;
     StoredPrepState stored;
     GumbelSimState gsim;
+    /* The eval seam. NULL until set_value_provider() succeeds; every read of
+     * "which provider is live" goes through THESE fields, so the answer comes
+     * from the consumer's own state rather than from the argument a caller
+     * passed in and might not have had applied. */
+    const CaeValueProvider *value_provider;
+    void *value_provider_ctx;
 } MCTSTreeObject;
 
 
@@ -2118,6 +2130,10 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
 }
 
 static void MCTSTree_dealloc(MCTSTreeObject *self) {
+    if (self->value_provider && self->value_provider->destroy)
+        self->value_provider->destroy(self->value_provider_ctx);
+    self->value_provider = NULL;
+    self->value_provider_ctx = NULL;
     gss_free(&self->gsim);
     stored_free(&self->stored);
     tree_free(&self->tree);
@@ -2129,6 +2145,8 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
     (void)args;
     (void)kwds;
     memset(&self->stored, 0, sizeof(self->stored));
+    self->value_provider = NULL;
+    self->value_provider_ctx = NULL;
     if (tree_init(&self->tree) < 0) {
         PyErr_SetString(PyExc_MemoryError, "Failed to allocate MCTS tree");
         return -1;
@@ -4568,7 +4586,106 @@ static PyObject *MCTSTree_find_child(MCTSTreeObject *self, PyObject *args) {
     return PyLong_FromLong(-1);
 }
 
+/* ================================================================
+ * Eval-plugin seam
+ * ================================================================ */
+
+static PyObject *MCTSTree_set_value_provider(MCTSTreeObject *self, PyObject *args) {
+    const char *name;
+    const char *weights_path;
+    if (!PyArg_ParseTuple(args, "ss", &name, &weights_path))
+        return NULL;
+
+    const CaeValueProvider *vp = cae_value_provider_by_name(name);
+    if (!vp) {
+        PyErr_Format(PyExc_ValueError, "no value provider named '%s'", name);
+        return NULL;
+    }
+    char err[512] = {0};
+    void *ctx;
+    Py_BEGIN_ALLOW_THREADS
+    ctx = vp->init(weights_path, err, sizeof(err));
+    Py_END_ALLOW_THREADS
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError, "value provider '%s' failed to load weights: %s",
+                     vp->name, err[0] ? err : "unknown error");
+        return NULL;
+    }
+    if (self->value_provider && self->value_provider->destroy)
+        self->value_provider->destroy(self->value_provider_ctx);
+    self->value_provider = vp;
+    self->value_provider_ctx = ctx;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_clear_value_provider(MCTSTreeObject *self,
+                                               PyObject *Py_UNUSED(ignored)) {
+    if (self->value_provider && self->value_provider->destroy)
+        self->value_provider->destroy(self->value_provider_ctx);
+    self->value_provider = NULL;
+    self->value_provider_ctx = NULL;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_value_provider_name(MCTSTreeObject *self,
+                                              PyObject *Py_UNUSED(ignored)) {
+    if (!self->value_provider) Py_RETURN_NONE;
+    return PyUnicode_FromString(self->value_provider->name);
+}
+
+static PyObject *MCTSTree_value_provider_eval(MCTSTreeObject *self, PyObject *args) {
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "O", &board_obj))
+        return NULL;
+    if (!self->value_provider) {
+        PyErr_SetString(PyExc_ValueError,
+                        "no value provider set; call set_value_provider(name, path) first");
+        return NULL;
+    }
+    const char *tp = Py_TYPE(board_obj)->tp_name;
+    const char *leaf = tp ? strrchr(tp, '.') : NULL;
+    leaf = leaf ? leaf + 1 : tp;
+    if (!leaf || strcmp(leaf, "CBoard") != 0) {
+        PyErr_Format(PyExc_TypeError, "expected a CBoard, got %s", tp ? tp : "?");
+        return NULL;
+    }
+    const CBoard *board = &((PyCBoard *)board_obj)->board;
+
+    int32_t value = 0;
+    int status;
+    Py_BEGIN_ALLOW_THREADS
+    status = cae_value_eval(self->value_provider, self->value_provider_ctx, board, &value);
+    Py_END_ALLOW_THREADS
+    if (status != CAE_VALUE_OK) {
+        PyErr_Format(PyExc_ValueError, "value provider '%s' refused: %s",
+                     self->value_provider->name, cae_value_status_name(status));
+        return NULL;
+    }
+    return PyLong_FromLong((long)value);
+}
+
 static PyMethodDef MCTSTree_methods[] = {
+    {"set_value_provider", (PyCFunction)MCTSTree_set_value_provider, METH_VARARGS,
+     "set_value_provider(name, weights_path) -> None\n\n"
+     "Install a CPU value provider on the tree's eval seam. The tree stores a\n"
+     "POINTER to the provider's vtable, so a later provider (a leaf qsearch, a\n"
+     "mate-search extension, a composition of both) is an added table entry\n"
+     "rather than a change to this call site. Replacing a provider destroys the\n"
+     "previous context."},
+    {"clear_value_provider", (PyCFunction)MCTSTree_clear_value_provider, METH_NOARGS,
+     "clear_value_provider() -> None — drop the provider and free its context."},
+    {"value_provider_name", (PyCFunction)MCTSTree_value_provider_name, METH_NOARGS,
+     "value_provider_name() -> str or None\n\n"
+     "The name read off the POINTER THE TREE IS HOLDING, not off the argument\n"
+     "that was passed to set_value_provider — so it reports what would actually\n"
+     "be called."},
+    {"value_provider_eval", (PyCFunction)MCTSTree_value_provider_eval, METH_VARARGS,
+     "value_provider_eval(cboard) -> int\n\n"
+     "Evaluate a position through the installed provider, from inside the tree\n"
+     "extension. ⚑ Raises for a position in check: the NNUE evaluation is\n"
+     "undefined there, and callers must resolve check nodes RECURSIVELY (search\n"
+     "the evasions, which may themselves give check) before asking for a static\n"
+     "value. The refusal is the enforcement backstop for that invariant."},
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
