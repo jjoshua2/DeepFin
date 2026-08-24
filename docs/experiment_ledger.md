@@ -66703,3 +66703,11 @@ read out (arm 2 mid-training, arm 3 unlaunched):
   banked UCI anchors (data/gen0/bench_anchors/), bend-of-curve operating point. Corpus launch
   HOLDS until the gate reads out (#273 blocks #270). NOT deployed to the live branch (MERGED ≠
   DEPLOYED).
+
+**2026-08-24 ~19:00 — RATIO ARM 2 (f=0.50) ARENAS BANKED:** MID **−26.1 [−56.0, +3.4]**,
+LAST **−26.1 [−55.2, +2.6]** — slope exactly 0.0 (verified genuine: distinct
+checkpoints by md5, distinct pentanomials summing to the same 0.4625). Much shallower
+dip than arm 1 (MID −26 vs −74) but FLAT from 10k→20k; LAST CI spans 0. If arm 2 ends
+best: C2 requires slope > 0 to extend — slope 0.0 → C3 (close) territory unless arm 3
+changes the picture. Ladder so far: f=0.25 → −38.4 rising; f=0.50 → −26.1 flat.
+ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
