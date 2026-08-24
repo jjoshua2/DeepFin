@@ -1923,5 +1923,16 @@ class DiskReplayBuffer:
         self._prefetch_request = threading.Event()
 
     def __del__(self) -> None:
+  # ⚑ THIS CANNOT STOP A RUNNING PREFETCH THREAD, so do not read it as one.
+  # `_ensure_prefetch_thread` passes the BOUND METHOD `self._prefetch_loop` as
+  # the thread target, and a running thread is an external GC root via
+  # `threading._active` -- so a buffer whose prefetch thread is alive is
+  # strongly reachable and is never collected, and this finaliser never runs.
+  # Measured 2026-08-24: drop the last reference, `gc.collect()` three times,
+  # thread still alive. It fires only for a buffer that never started a thread
+  # (`deterministic_refresh`, `refresh_interval <= 0`, or never sampled), where
+  # it still does useful work releasing the writer lock. Anything that needs
+  # the thread STOPPED must call `close()` explicitly; the test suite does it
+  # from an autouse fixture in `tests/conftest.py`.
         with contextlib.suppress(Exception):
             self.close()

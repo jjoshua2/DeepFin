@@ -29,10 +29,20 @@ is the only site that does not depend on the next test author remembering.
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import sys
+import weakref
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    # Type-only: the runtime lookup goes through `sys.modules` so that this
+    # conftest never drags numpy and zarr into a run that has nothing to do
+    # with replay. See `_reap_replay_prefetch_threads`.
+    from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 
 _ENV = "CAE_TEST_THREADS"
 _DEFAULT_THREADS = 2
@@ -163,6 +173,126 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
 def thread_cap() -> int | None:
     """The session's configured cap, for tests that need to reason about it."""
     return _CAP
+
+
+PREFETCH_THREAD_NAME_PREFIX = "replay-prefetch-"
+
+_REAPED_PREFETCH_BUFFERS = 0
+
+
+def reaped_prefetch_buffer_count() -> int:
+    """How many prefetch-thread-bearing buffers this session has reaped so far.
+
+    Exposed for the same reason ``resolve_thread_cap`` is: so a test can assert
+    against the REALIZED number rather than infer it. "No prefetch thread is
+    alive" is the outcome that matters, but on its own it does not say WHO
+    achieved it — and a fixture that has quietly stopped reaping looks identical
+    to one that reaps, right up until the day something else stops cleaning up
+    too. ``tests/test_replay_prefetch_thread_lifecycle.py`` pins this above zero
+    on a run known to have built buffers, so the day the reaping moves elsewhere
+    (say ``close()`` becomes reachable from ``__del__``) it is reported instead
+    of silently inherited.
+    """
+    return _REAPED_PREFETCH_BUFFERS
+
+
+@pytest.fixture(autouse=True)
+def _reap_replay_prefetch_threads() -> Iterator[None]:
+    """Close every ``DiskReplayBuffer`` whose prefetch thread this test started.
+
+    ``DiskReplayBuffer`` starts a daemon prefetch thread the first time a sample
+    triggers a shuffle refresh, and ``close()`` is what stops it. Tests that
+    never call ``close()`` therefore hand the thread to the REST OF THE SESSION,
+    and it keeps polling on a 0.1s tick forever. Measured on ``main``
+    (2026-08-24): ``pytest tests/test_replay_disk_buffer.py`` alone finishes with
+    **17** live ``replay-prefetch-*`` threads, and every later test in that
+    process runs alongside all of them.
+
+    ⚑⚑ THE LEAK IS NOT MERELY UNTIDY — IT WRITES INTO OTHER TESTS' STDOUT. The
+    orphaned thread still holds the shard paths it was constructed with, and
+    once pytest removes the owning ``tmp_path`` those paths are still TRACKED in
+    ``_shard_paths``. ``_note_shard_load_failure`` classifies a tracked-but-
+    unreadable shard as a REAL fault rather than the benign trim race, so each
+    orphan prints ``[disk_buf] WARNING: shuffle refresh failed to load a TRACKED
+    shard ...`` — into whichever unrelated test happens to be running. The
+    throttle is per buffer (``_SHARD_LOAD_WARN_INTERVAL_S``, 60s), so N orphans
+    give N lines a minute, not one.
+
+    ⚑ ``__del__`` IS NOT THE SAFETY NET IT LOOKS LIKE, AND CANNOT BE. It calls
+    ``close()``, but a running ``threading.Thread`` is an external GC root and
+    the thread's ``target`` is the BOUND METHOD ``self._prefetch_loop`` — so a
+    buffer with a live prefetch thread is strongly reachable from
+    ``threading._active`` and is never collected. Measured directly: drop the
+    last reference, ``gc.collect()`` three times, and the thread is still alive.
+    The finaliser works only in the case that does not matter (no thread ever
+    started), which is why the reaping has to be explicit here.
+
+    Mechanism: wrap ``_ensure_prefetch_thread`` — the single site that creates
+    the thread — so each buffer that actually starts one is recorded, then
+    ``close()`` them at teardown. Recording at the CREATION site rather than at
+    ``__init__`` keeps the reap set exact: buffers built with
+    ``deterministic_refresh`` or ``refresh_interval <= 0`` never start a thread
+    and are never touched.
+
+    ⚑ A function-scoped autouse fixture is right HERE even though the
+    ``pytest_runtest_protocol`` hookwrapper below argues the opposite for the
+    encoder flag, and the difference is snapshot-vs-reap. That hook must observe
+    state that EXISTS BEFORE any fixture runs, so a function-scoped fixture is
+    too late. This one only reaps objects the test itself created during the
+    call phase, so being set up last costs nothing — and being function-scoped
+    is what makes it safe, since a module-scoped fixture's buffer would
+    otherwise be closed out from under the module's second test. Checked when
+    this was written: no fixture in this suite constructs a ``DiskReplayBuffer``
+    at all, every construction is inside a test body.
+
+    ⚑ ``sys.modules`` is consulted rather than importing ``disk_buffer`` here.
+    This fixture is autouse for the WHOLE suite and a conftest import would pull
+    numpy and zarr into every run that has nothing to do with replay. Test
+    modules are imported during collection, which completes before the first
+    test executes, so the module is already present whenever any collected test
+    could build a buffer.
+    """
+    disk_buffer = sys.modules.get("chess_anti_engine.replay.disk_buffer")
+    if disk_buffer is None:
+        yield
+        return
+
+    cls = disk_buffer.DiskReplayBuffer
+    # ⚑ WEAK references, and the choice is load-bearing rather than tidy. A
+    # strong list here would make the FIXTURE the thing keeping every buffer
+    # alive, which silently invalidates any test that reasons about the
+    # buffer's own reachability — `test_prefetch_thread_keeps_its_buffer_alive_
+    # so_del_cannot_close_it` would pass no matter what the thread did. Weak is
+    # also sufficient: a buffer with a running prefetch thread is reachable from
+    # `threading._active` and cannot be collected, so the referent is still
+    # there at teardown precisely when there is a thread to stop. If one HAS
+    # been collected, `__del__` already ran `close()` and there is nothing left
+    # to do.
+    started: weakref.WeakSet[DiskReplayBuffer] = weakref.WeakSet()
+    real = cls._ensure_prefetch_thread
+
+    def _tracking_ensure_prefetch_thread(self: DiskReplayBuffer) -> None:
+        real(self)
+        # Record only on success: `_ensure_prefetch_thread` returns without
+        # starting anything for the suppressed configurations above.
+        if self._prefetch_thread is not None:
+            started.add(self)
+
+    cls._ensure_prefetch_thread = _tracking_ensure_prefetch_thread
+    try:
+        yield
+    finally:
+        global _REAPED_PREFETCH_BUFFERS
+        cls._ensure_prefetch_thread = real
+        # Materialise before closing: `close()` can drop the last strong
+        # reference and mutating a WeakSet while iterating it raises.
+        for buf in list(started):
+            # A test that deliberately leaves a buffer in a broken state must not
+            # turn teardown into an error; the thread is what we are here for.
+            with contextlib.suppress(Exception):
+                buf.close()
+            _REAPED_PREFETCH_BUFFERS += 1
+        started.clear()
 
 
 @pytest.hookimpl(hookwrapper=True)
