@@ -66613,3 +66613,30 @@ read out (arm 2 mid-training, arm 3 unlaunched):
 - Transferable trap: `git stash` reverts to HEAD — after committing, "main" measurements taken
   via stash were silently measuring the PR. Compare against a separate detached worktree.
 - Closes task #274. NOT deployed to the live branch (merges to main only — MERGED ≠ DEPLOYED).
+
+### 2026-08-24 — PR #462 MERGED (main f150ddc4d): I11 zclip warning gated on the BINDING clip + construction-site optimizer-scalar validators (task #250)
+- The I11 median watch fired 124× telling operators to re-set `zclip_max_norm` while printing the
+  statistic that refuted itself (hard-clip 0.0%). Now gated on the hard-clip rate (the comment's own
+  ~10% intent) and the message names whichever clip actually bound. New `grad_adaptive_bound_rate`
+  partitions `grad_clip_rate` with `grad_hard_clip_rate` EXACTLY (fires-vs-binds; `grad_adaptive_
+  clip_rate` from #260 counted a threshold firing above the cap in both old columns).
+- MECHANISM (verified against zclip 1.0.0 source by author AND reviewer): 100% clip rate is NOT
+  normal-by-construction — `step()` feeds the EMA the CLIPPED value on spike steps, so once the
+  adaptive branch fires every step the EMA is fed only its own output: mean pins, var→1e-8,
+  z→9e6. Same gradients, differently-warmed EMA ⇒ opposite attribution. The live 536-row signature
+  (clip 1.000, hard 0.000, median 12.04 vs cap 6.5) is this degenerate fixed point — the run-history
+  artifact of the uncheckpointed EMA (#94), not a statement about the cap. ⇒ SUPERSEDES the
+  2026-08-17 entry's first mechanism AND refines its same-session correction.
+- `matrix_lr_multiplier` / `matrix_weight_decay` / `aux_weight_decay` now validated at TRAINER
+  CONSTRUCTION (explicit isfinite + range — min/max propagate NaN; NOT in from_dict, which would be
+  a category-(b) live-edit kill hazard). Production values pass; 200/0/-1/NaN/inf refused loudly.
+- ⚑ 10th instance of fixing-the-signature-defect-reintroduces-it: the fix's own adaptive-branch
+  message told operators to adjust `zclip_z_thresh`/`zclip_alpha` — construction-only keys with NO
+  live push path — while `set_grad_clip_max_norm`'s docstring records that setter exists BECAUSE a
+  live `zclip_max_norm` edit was once exactly this silent no-op. Caught by Grok in review; message
+  now states restart-gating explicitly, test-pinned.
+- DELIBERATE: the warning stays SILENT on the live degenerate-EMA state (correct per I11's
+  definition, pinned by test). The live-pathology alarm needs a `grad_adaptive_bound_rate` band
+  calibrated from a healthy era → task #275. 6/6 mutants (+reviewer's 7th) killed; suite delta 0;
+  three review passes (Fable APPROVE, Grok 5 findings, Codex P3 lr-quote fix).
+- Closes task #250. NOT deployed to the live branch (merges to main only — MERGED ≠ DEPLOYED).
