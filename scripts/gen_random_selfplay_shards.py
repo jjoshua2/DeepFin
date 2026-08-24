@@ -158,7 +158,9 @@ improved policy collapses to the prior and the stored target is uniform on
 halving has something to rank, and the target carries search signal. That is
 the whole point, and it is MEASURED per run rather than asserted -- read
 ``policy_target_shape`` in the sidecar and compare against the zero run's
-``tv_to_uniform_median`` (~0.005).
+``tv_to_uniform_median``. MEASURED on the same seed and search: **0.0005 under
+``zero`` against 0.5065 under ``sfnnue``**, with the sharp-row share going
+0.99 % → 96.1 %.
 
 ⚑⚑ AND THE TRAP THAT COMES WITH IT -- ``--all-root-moves``, ON by default here.
 Sequential halving picks its root candidates by ``gumbel + log_prior``. At
