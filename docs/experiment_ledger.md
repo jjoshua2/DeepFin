@@ -66442,3 +66442,25 @@ annotation-guard round folded in), 16/16 mutants, lint delta zero, 0 skips.
 Next: bank the gen-0 corpus (CPU, nice'd, alongside the ladder trainer —
 ownership check by LOG GROWTH, not nvidia-smi). Stage-1 launch itself remains
 gated on Josh's explicit go per the AZ-purity prereg draft.
+
+### 2026-08-24 02:01 — LADDER ARM 1 (f=0.25) VOID BY ITS OWN GUARD — relaunched with the accepted-residual bar
+
+The 20k-step run completed but the trainer's REALIZED value-blend guard refused
+both checkpoints (final withheld, mid deleted — by design, no scorable artifact
+survives a refused run): realized own-row outcome-borne mass 0.0010 (3,761 of
+2,560,000 own-row label masses lack sf_wdl; × 0.69 SF share = 0.001014) vs the
+launch bar --mix-own-max-outcome-borne 0.001. Per-source ROUTING guard PASSED —
+the wiring is sound; this is label coverage, not miswiring. Preflight passed at
+launch because it measures the CORPUS-implied share; the realized SAMPLED share
+ran ~1-2% above it (priority/views tilt). 7.6h GPU, no readout. Arms 2/3 would
+fail identically (same own corpus).
+
+AMENDMENT (recorded before relaunch): bar 0.001 → **0.002** for all three arms.
+0.002 is the code's own OWN_OUTCOME_BAR_ABS_FLOOR ("what a fully labelled
+corpus needs"), 2× the measured realized residual, and 5× UNDER the disarm
+ceiling (max(10×required, 0.002) ≈ 0.01) — an accepted-production-residual per
+the trainer's documented path, not a widened kill. The 0.1% game-outcome mass
+is production's own residual (losses.py fallback on unlabeled rows) and is
+present identically in every arm, so it cannot differentiate the ladder's
+contrasts. C1-C5 verdict clauses UNCHANGED. Arm-1 relaunch: same seed 11, same
+init/corpus/steps, fresh out-dir runs/lc0_mix025_iter595_20260824r2.
