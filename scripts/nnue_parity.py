@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,7 +53,14 @@ from typing import Protocol, TextIO
 
 import chess
 
-from scripts.nnue_fens import sample_fens, sample_fens_pooled
+from scripts.nnue_fens import (
+    SampledPosition,
+    read_sample,
+    state_key_of_fen,
+    sample_fens,
+    sample_fens_pooled,
+    write_sample,
+)
 from scripts.nnue_parse import PSQT_BUCKETS
 
 _BIG_EVAL_RE = re.compile(
@@ -235,7 +243,7 @@ def _localise(fen: str, ours: int, theirs: int, nnue_path: Path | None) -> str:
 
 def run_parity(
     backend: Backend,
-    fens: list[str],
+    fens: list[SampledPosition],
     stockfish: StockfishDriver,
     nnue_path: Path | None,
     max_report: int = 10,
@@ -255,19 +263,29 @@ def run_parity(
     checked = 0
     refused = 0
     written = 0
-    for fen in fens:
+    for item in fens:
+        fen = item.fen
+        # ⚑ The resampling unit goes into every row. The sampler walks whole
+        # random games, so positions from one playout are correlated; a banked
+        # row without its cluster key cannot be re-analysed as anything but an
+        # independent draw, which it is not.
+        cluster = {"playout": item.playout, "ply": item.ply}
         try:
             theirs = stockfish.evaluate(fen)
         except InCheckRefused:
             refused += 1
             if observations is not None:
-                observations.write(json.dumps({"fen": fen, "refused": "in_check"}) + "\n")
+                observations.write(
+                    json.dumps({"fen": fen, "refused": "in_check", **cluster}) + "\n"
+                )
                 written += 1
             continue
         ours = backend.evaluate(fen)
         checked += 1
         if observations is not None:
-            observations.write(json.dumps({"fen": fen, "sf": theirs, "ours": ours}) + "\n")
+            observations.write(
+                json.dumps({"fen": fen, "sf": theirs, "ours": ours, **cluster}) + "\n"
+            )
             written += 1
         if ours != theirs:
             detail = (
@@ -312,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
         "engine build along with whatever was being changed.",
     )
     ap.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="allow the observation bank to replace an existing file at that path",
+    )
+    ap.add_argument(
         "--no-observations",
         action="store_true",
         help="skip the observation dump (for a quick local check, not for a gate run)",
@@ -346,21 +369,27 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.fens_in:
-        fens = [ln.strip() for ln in args.fens_in.read_text().splitlines() if ln.strip()]
+        fens = read_sample(args.fens_in)
         stats = None
     else:
         t0 = time.perf_counter()
         if args.seeds > 1:
-            fens, stats = sample_fens_pooled(args.n, args.seeds, base_seed=args.seed)
+            sampled, stats = sample_fens_pooled(args.n, args.seeds, base_seed=args.seed)
         else:
-            fens, stats = sample_fens(args.n, seed=args.seed)
+            sampled, stats = sample_fens(args.n, seed=args.seed)
+        fens = [
+            SampledPosition(f, *stats.origin.get(f, (None, None))) for f in sampled
+        ]
         print(
             f"sampled {len(fens):,} FENs from {args.seeds} seed(s) base {args.seed} "
             f"in {time.perf_counter() - t0:.1f}s"
         )
         print(stats.coverage_report())
     if args.fens_out:
-        args.fens_out.write_text("\n".join(fens) + "\n")
+        if stats is not None:
+            write_sample(args.fens_out, [f.fen for f in fens], stats)
+        else:
+            args.fens_out.write_text("\n".join(f.fen for f in fens) + "\n")
 
     # ⚑ A gate with nothing to compare is not a gate that passed. An empty
     # --fens-in, --n 0, or a sampler regression returning [] each used to print
@@ -380,15 +409,41 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FENs read from   : {args.fens_in}   delivered: {len(fens):,}")
     else:
         print(f"FENs requested   : {args.n:,}   delivered: {len(fens):,}")
+    # ⚑ Distinct EVALUATOR INPUTS and distinct RESAMPLING UNITS, both reported.
+    # "50,000 FENs" is neither of those numbers, and it is the one that flatters.
+    n_states = len({state_key_of_fen(f.fen) for f in fens})
+    n_clusters = len({f.playout for f in fens if f.playout})
+    print(
+        f"distinct states  : {n_states:,} (placement+STM, what the net sees)   "
+        f"playouts: {n_clusters:,}"
+    )
 
     obs_handle: TextIO | None = None
     obs_path: Path | None = None
+    obs_tmp: Path | None = None
     if not args.no_observations:
         obs_path = Path(args.observations)
+        # ⚑⚑ NEVER DESTROY A PRIOR BANK. Opening the destination "wt" truncates
+        # it at once — so a run that then bails out at the provenance check, or
+        # dies on a missing engine, had already wiped an expensive previous
+        # artifact before it discovered it had nothing to write. Two rules:
+        # refuse an existing bank outright unless --overwrite, and stage into a
+        # temp file that is published only once the comparison has actually run.
+        if obs_path.exists() and not args.overwrite:
+            print(
+                f"observation bank {obs_path} already exists. Refusing to overwrite a "
+                "previous run's dump — pass --overwrite, or give --observations a new "
+                "path.",
+                file=sys.stderr,
+            )
+            return 2
+        obs_path.parent.mkdir(parents=True, exist_ok=True)
+        obs_tmp = obs_path.with_name(obs_path.name + f".partial-{os.getpid()}")
         # Held open across the whole run and closed in the finally below; a
         # context manager here would need to wrap the entire engine session.
-        obs_handle = gzip.open(obs_path, "wt", encoding="utf-8")  # noqa: SIM115
+        obs_handle = gzip.open(obs_tmp, "wt", encoding="utf-8")  # noqa: SIM115
 
+    published = False
     try:
         with StockfishDriver(sf_path) as sf:
             print(f"stockfish        : {sf_path}")
@@ -432,6 +487,8 @@ def main(argv: list[str] | None = None) -> int:
                             "stockfish_eval_file": sf.eval_file,
                             "fens_requested": args.n,
                             "fens_delivered": len(fens),
+                            "distinct_states": n_states,
+                            "distinct_playouts": n_clusters,
                             "seed": args.seed,
                             "seeds": args.seeds,
                             "simd": args.simd,
@@ -450,9 +507,17 @@ def main(argv: list[str] | None = None) -> int:
                 observations=obs_handle,
             )
             elapsed = time.perf_counter() - t0
+        published = True
     finally:
         if obs_handle is not None:
             obs_handle.close()
+        if obs_tmp is not None and obs_path is not None:
+            if published:
+                # Atomic within the directory: a reader sees the old bank or the
+                # new one, never a half-written file.
+                os.replace(obs_tmp, obs_path)
+            else:
+                obs_tmp.unlink(missing_ok=True)
 
     print()
     print(f"backend          : {backend.name}")

@@ -29,6 +29,8 @@ from __future__ import annotations
 import random
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import NamedTuple
 
 import chess
 
@@ -51,6 +53,27 @@ def threat_bin(active: int) -> int:
     return len(THREAT_BIN_EDGES)
 
 
+def nnue_state_key(board: chess.Board) -> str:
+    """The part of a position the NNUE evaluator can actually see.
+
+    ⚑ PIECE PLACEMENT AND SIDE TO MOVE, AND NOTHING ELSE. Traced through our own
+    evaluator rather than assumed: ``cae_nnue_pos_from_cboard`` reads the piece
+    bitboards, the colour occupancies and ``turn``; the HalfKAv2_hm index is
+    (square, piece, king square) and the FullThreats index is (attacker, from,
+    to, attacked). No castling right, en-passant square, halfmove clock or
+    fullmove number is read anywhere on that path.
+    ``test_ep_castling_and_clocks_do_not_change_the_evaluation`` asserts it
+    against the compiled evaluator rather than leaving it as a claim in a
+    comment.
+
+    So deduplicating a parity sample on the full FEN OVERSTATES it: the same
+    evaluator input recurs with different clocks — routine in an endgame shuffle
+    — and each copy is counted as another distinct position covered. One full
+    FEN per class is retained, so Stockfish still sees a real position.
+    """
+    return f"{board.board_fen()} {'w' if board.turn else 'b'}"
+
+
 @dataclass
 class SampleStats:
     """What the sampler saw, so a caller can report it instead of assuming it."""
@@ -58,7 +81,15 @@ class SampleStats:
     considered: int = 0
     in_check_excluded: int = 0
     accepted: int = 0
+    duplicate_states: int = 0
     cell_counts: Counter[tuple[int, int]] = field(default_factory=Counter)
+    #: FEN -> (playout key, ply index within that playout). ⚑ THE RESAMPLING
+    #: UNIT. _playout() walks one random game, so the positions it yields are
+    #: strongly correlated: treating them as independent draws understates every
+    #: interval computed over this sample. The unit has to survive into the
+    #: banked artifact, because a later clustered re-analysis cannot reconstruct
+    #: which positions came from the same game from the FENs alone.
+    origin: dict[str, tuple[str, int]] = field(default_factory=dict)
     #: Cell of each FEN this sampler produced. Kept so a caller that DEDUPES or
     #: TRUNCATES the list can recount from the FENs it actually delivered rather
     #: than adding up what the sub-samples originally saw — see
@@ -76,6 +107,7 @@ class SampleStats:
             f"in-check excluded : {self.in_check_excluded:,} "
             f"({100.0 * self.in_check_fraction:.2f}% of considered)",
             f"accepted          : {self.accepted:,}",
+            f"duplicate states  : {self.duplicate_states:,} (same placement+STM, different clocks/ep/castling)",
             "cells (rows = piece-count bucket, cols = threat-density bin):",
         ]
         header = "        " + "".join(f"{b:>10}" for b in range(N_THREAT_BINS))
@@ -140,14 +172,16 @@ def sample_fens(
     per_cell_cap = max(4, 4 * count // (N_BUCKETS * N_THREAT_BINS))
     by_cell: dict[tuple[int, int], list[str]] = {}
     cell_stall: dict[tuple[int, int], int] = {}
-    seen_fens: set[str] = set()
+    seen_states: set[str] = set()
 
     playouts = 0
     while playouts < max_playouts:
         playouts += 1
+        # The resampling unit: every position below comes from THIS random game.
+        playout_key = f"s{seed}p{playouts}"
         added = 0
         grew: set[tuple[int, int]] = set()
-        for board in _playout(rng, capture_bias):
+        for ply, board in enumerate(_playout(rng, capture_bias)):
             stats.considered += 1
             if board.is_check():
                 stats.in_check_excluded += 1
@@ -168,11 +202,14 @@ def sample_fens(
             cell_list = by_cell.setdefault(cell, [])
             if len(cell_list) >= per_cell_cap:
                 continue
-            fen = board.fen()
-            if fen in seen_fens:
+            state = nnue_state_key(board)
+            if state in seen_states:
+                stats.duplicate_states += 1
                 continue
+            fen = board.fen()
             cell_list.append(fen)
-            seen_fens.add(fen)
+            seen_states.add(state)
+            stats.origin[fen] = (playout_key, ply)
             grew.add(cell)
             added += 1
 
@@ -250,11 +287,19 @@ def sample_fens_pooled(
         chunk, stats = sample_fens(per_seed, seed=base_seed + i, **kwargs)  # pyright: ignore[reportArgumentType]
         total.considered += stats.considered
         total.in_check_excluded += stats.in_check_excluded
+        total.duplicate_states += stats.duplicate_states
         total.cell_of.update(stats.cell_of)
+        total.origin.update(stats.origin)
         for fen in chunk:
-            if fen in seen:
+            # ⚑ Cross-seed dedup on the EVALUATOR-VISIBLE state, matching what
+            # each sub-sample already does internally. Two seeds reaching the
+            # same endgame with different clocks are one input to the network,
+            # and counting them twice inflates the coverage the gate claims.
+            state = state_key_of_fen(fen)
+            if state in seen:
+                total.duplicate_states += 1
                 continue
-            seen.add(fen)
+            seen.add(state)
             pooled.append(fen)
         if len(pooled) >= count:
             break
@@ -263,5 +308,52 @@ def sample_fens_pooled(
         total.cell_of[fen] for fen in pooled if fen in total.cell_of
     )
     total.cell_of = {fen: total.cell_of[fen] for fen in pooled if fen in total.cell_of}
+    total.origin = {fen: total.origin[fen] for fen in pooled if fen in total.origin}
     total.accepted = len(pooled)
     return pooled, total
+
+
+def state_key_of_fen(fen: str) -> str:
+    """nnue_state_key() without building a Board: the first two FEN fields."""
+    placement, side = fen.split(" ", 2)[:2]
+    return f"{placement} {side}"
+
+
+class SampledPosition(NamedTuple):
+    """One sampled position and the resampling unit it came from."""
+
+    fen: str
+    playout: str | None
+    ply: int | None
+
+
+def write_sample(path: Path, fens: list[str], stats: SampleStats) -> None:
+    """Write the sample as TSV: fen, playout key, ply index.
+
+    ⚑ The playout key travels WITH the FENs. A plain list of FENs discards the
+    resampling unit, and nothing downstream can reconstruct which positions came
+    from the same random game — so a gate run fed from such a file can only ever
+    bank independent-looking rows for positions that are not independent.
+    """
+    lines = []
+    for fen in fens:
+        playout, ply = stats.origin.get(fen, ("", -1))
+        lines.append(f"{fen}\t{playout}\t{ply}")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def read_sample(path: Path) -> list[SampledPosition]:
+    """Read a sample file: TSV as written above, or one bare FEN per line."""
+    out: list[SampledPosition] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "\t" in line:
+            fen, playout, ply = line.split("\t")
+            out.append(
+                SampledPosition(fen, playout or None, int(ply) if ply != "-1" else None)
+            )
+        else:
+            out.append(SampledPosition(line, None, None))
+    return out

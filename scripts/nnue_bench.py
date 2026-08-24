@@ -60,6 +60,15 @@ def main(argv: list[str] | None = None) -> int:
     from chess_anti_engine.nnue import _nnue_ext
 
     fens = _load_fens(args)
+    # An empty --fens-in or --n 0 otherwise reaches the mean-piece-count divide
+    # below and dies on ZeroDivisionError, which reports a bug in the benchmark
+    # rather than the input error it actually is.
+    if not fens:
+        print(
+            "no FENs to benchmark (empty --fens-in, or --n 0)",
+            file=sys.stderr,
+        )
+        return 2
     py_boards = [chess.Board(f) for f in fens]
 
     # ⚑ Two position sets, because one number here is a lie in both directions.

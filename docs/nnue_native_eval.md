@@ -187,8 +187,19 @@ the tree again:
 
 Weights are mapped `PROT_READ | MAP_PRIVATE`, so every worker on the box shares
 the same physical pages through the page cache; within a process a small
-refcounted cache hands out one mapping per path, double-checked so two threads
+refcounted cache hands out one mapping per file, double-checked so two threads
 racing on the first load still end up with one mapping.
+
+⚑ **The cache key is file identity — `dev`+`inode`+`size`+`mtime` — not the
+pathname.** `nnue_pack.convert()` publishes atomically, so a repacked net arrives
+at the *same* path as a different file. Keyed by path, a long-lived process goes
+on serving the mapping it already had: `set_value_provider(..., same_path)`
+returns success and the tree keeps evaluating with the previous weights, with no
+error and no log line. The identity is taken from the `fstat` of the descriptor
+we actually map, so there is no window in which the file changes between the
+lookup and the mapping. Handles already issued keep their own mapping — that is
+what makes a swap safe rather than a use-after-free; only *new* loads observe
+the replacement.
 
 ### The pack is validated relationally, not just by range
 
@@ -240,7 +251,30 @@ The gate refuses to report anything unless it actually compared:
 * every `(fen, ours, stockfish)` triple is banked to a gzipped JSONL artifact by
   default, not just the mismatches — re-analysing from a summary means re-running
   the engine, which re-rolls the sample and the engine build along with whatever
-  is being changed.
+  is being changed;
+* **every banked row carries its resampling unit** (`playout`, `ply`). The
+  sampler walks whole random games, so positions from one playout are
+  correlated; a row without its cluster key can only be re-analysed as an
+  independent draw, which it is not. The key travels with the FENs in the
+  sample file, so a run driven from `--fens-in` keeps it;
+* **the bank is never destroyed by a failed run.** The gate refuses to overwrite
+  an existing bank without `--overwrite`, and stages into a temp file that is
+  `os.replace`d into position only once the comparison has actually run. It
+  previously opened the destination `"wt"` *before* validating the engine, so a
+  run that then refused had already truncated the previous artifact.
+
+⚑ **The sample is deduplicated on the state the evaluator can see** — piece
+placement plus side to move, and nothing else. Traced through
+`cae_nnue_pos_from_cboard`: no castling right, en-passant square, halfmove clock
+or fullmove number reaches the feature computation, and
+`test_ep_castling_and_clocks_do_not_change_the_evaluation` asserts that against
+the compiled evaluator rather than leaving it as a claim. Deduplicating on the
+full FEN instead lets one evaluator input recur with different clocks — routine
+in an endgame shuffle — and counts each copy as another distinct position
+covered. One full FEN per class is retained, so Stockfish still sees a real
+position. The harness reports distinct states and distinct playouts alongside the
+raw FEN count, because "50,000 FENs" is neither of those numbers and it is the
+one that flatters.
 
 On failure the harness localises in three layers — per-bucket PSQT, per-bucket
 positional, then the total — against `scripts/nnue_reference.py`'s numpy

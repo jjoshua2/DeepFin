@@ -22,6 +22,8 @@ Tests that need the real network are gated on ``CAE_NNUE_TEST_PACK`` /
 from __future__ import annotations
 
 import dataclasses
+import gzip
+import json
 import os
 import struct
 from pathlib import Path
@@ -188,7 +190,11 @@ def build_synthetic_small_nnue(
     }
     desc = b"synthetic test net"
     out = bytearray()
-    out += struct.pack("<III", nnue_parse.VERSION, 0xDEADBEEF, len(desc))
+    # ⚑ A VALID file: the header hash and the per-stack architecture hash are
+    # the real ones for this architecture. They used to be 0xDEADBEEF and
+    # 0xC0FFEE01, which the parser accepted because it only checked that the
+    # stacks agreed with each other.
+    out += struct.pack("<III", nnue_parse.VERSION, SMALL.net_hash, len(desc))
     out += desc
     out += struct.pack("<I", SMALL.ft_hash)
     out += _leb_block(tensors["ft_bias"])
@@ -203,7 +209,7 @@ def build_synthetic_small_nnue(
         fc1_w = rng.integers(-64, 64, size=(l3, nnue_parse.pad(l2 * 2)), dtype=np.int8)
         fc2_b = rng.integers(-64, 64, size=1, dtype=np.int32)
         fc2_w = rng.integers(-64, 64, size=(1, nnue_parse.pad(l3)), dtype=np.int8)
-        out += struct.pack("<I", 0xC0FFEE01)
+        out += struct.pack("<I", SMALL.layer_hash)
         for arr in (fc0_b, fc0_w, fc1_b, fc1_w, fc2_b, fc2_w):
             out += arr.astype(arr.dtype.newbyteorder("<")).tobytes()
         stacks.append(
@@ -219,7 +225,7 @@ def test_parser_round_trips_a_complete_file_and_lands_on_eof() -> None:
 
     assert net.arch.name == "small"
     assert net.version == nnue_parse.VERSION
-    assert net.net_hash == 0xDEADBEEF
+    assert net.net_hash == SMALL.net_hash
     assert net.description == "synthetic test net"
     np.testing.assert_array_equal(net.ft_bias, tensors["ft_bias"].astype(np.int16))
     np.testing.assert_array_equal(net.ft_weight, tensors["ft_weight"].astype(np.int16))
@@ -289,7 +295,9 @@ def test_leb128_decode_matches_a_straightforward_encoder(values: list[int]) -> N
 def _mini_big_net() -> nnue_parse.NnueNet:
     """A big-architecture net with tiny dimensions, for serialisation tests."""
     rng = np.random.default_rng(11)
-    arch = nnue_parse.ArchSpec(name="big", l1=32, l2=3, l3=4, use_threats=True)
+    arch = nnue_parse.ArchSpec(
+        name="big", l1=32, l2=3, l3=4, use_threats=True, layer_hash=BIG.layer_hash
+    )
     stacks = tuple(
         nnue_parse.LayerStack(
             arch_hash=1,
@@ -1507,9 +1515,6 @@ def test_parity_gate_banks_every_observation_not_only_mismatches(
     being changed. The equal rows are the expensive part to reproduce and the
     cheap part to store.
     """
-    import gzip
-    import json
-
     scores = _agreeing_scores(bucket_pack, list(POSITIONS))
     fens = [*POSITIONS, *IN_CHECK_POSITIONS]
     for fen in IN_CHECK_POSITIONS:
@@ -1578,3 +1583,385 @@ def test_pooled_sampling_is_reproducible_from_its_seed() -> None:
     a, _ = sample_fens_pooled(60, seeds=2, base_seed=99)
     b, _ = sample_fens_pooled(60, seeds=2, base_seed=99)
     assert a == b
+
+
+# ===========================================================================
+# Round 2: architecture-hash validation
+# ===========================================================================
+
+
+def _synthetic_small_with(net_hash: int | None = None, layer_hash: int | None = None) -> bytes:
+    """The valid synthetic small net, with one hash field overridden."""
+    blob = bytearray(build_synthetic_small_nnue()[0])
+    if net_hash is not None:
+        struct.pack_into("<I", blob, 4, net_hash)
+    if layer_hash is not None:
+        # Every layer stack's arch hash; find them by their known value.
+        old = struct.pack("<I", SMALL.layer_hash)
+        new = struct.pack("<I", layer_hash)
+        assert blob.count(old) == nnue_parse.LAYER_STACKS
+        blob = bytearray(bytes(blob).replace(old, new))
+    return bytes(blob)
+
+
+def test_parser_rejects_stacks_that_agree_on_the_wrong_architecture() -> None:
+    """⚑ MUTUAL AGREEMENT IS NOT VALIDATION.
+
+    Eight layer stacks agreeing with each other says only that the file is
+    internally consistent. A foreign network whose stacks all carry the same
+    unexpected hash describes a topology this parser does not implement — and
+    the parser would read it with our hard-coded affine/activation chain and
+    convert it into a pack of plausible numbers.
+    """
+    blob = _synthetic_small_with(layer_hash=0xC0FFEE01)
+    with pytest.raises(ValueError, match="is not the 0x6333712A this parser implements"):
+        nnue_parse.parse_bytes(blob)
+
+
+def test_parser_rejects_a_header_hash_that_contradicts_the_file() -> None:
+    """`net_hash` is now RELATED to the architecture instead of merely read."""
+    blob = _synthetic_small_with(net_hash=0xDEADBEEF)
+    with pytest.raises(ValueError, match="does not match this file's own feature"):
+        nnue_parse.parse_bytes(blob)
+
+
+def test_the_expected_net_hash_is_derived_from_the_two_component_hashes() -> None:
+    """Measured on both shipped nets: net_hash == ft_hash ^ layer_hash."""
+    for arch in nnue_parse.ARCHS:
+        assert arch.net_hash == (arch.ft_hash ^ arch.layer_hash) & 0xFFFFFFFF
+    assert BIG.layer_hash == 0x63337116
+    assert SMALL.layer_hash == 0x6333712A
+
+
+# ===========================================================================
+# Round 2: the weight cache notices a pack replaced at the same path
+# ===========================================================================
+
+
+def _bucket_style_pack(path: Path, scale: int) -> None:
+    """A pack whose evaluation is (bucket + 1) * scale // 16."""
+    write_synthetic_pack(
+        path, {"fc2_bias": [(b, (b + 1) * scale) for b in range(nnue_parse.PSQT_BUCKETS)]}
+    )
+
+
+def _atomic_replace(src: Path, dst: Path) -> None:
+    """Publish src over dst the way nnue_pack.convert() does — new inode."""
+    os.replace(src, dst)
+
+
+def test_replacing_a_pack_at_the_same_path_is_observed_by_a_new_load(tmp_path: Path) -> None:
+    """⚑ CACHE HITS ARE KEYED ON FILE IDENTITY, NOT ON THE PATHNAME.
+
+    `nnue_pack.convert()` publishes atomically, so a repacked net arrives at the
+    SAME pathname as a different file. Keyed by path, a long-lived process keeps
+    serving the mapping it already had: `set_value_provider(..., same_path)`
+    returns success and the tree goes on evaluating with the previous weights.
+    No error, no log line — just the wrong numbers, which is this repo's
+    signature defect with the ignored value being a whole network.
+    """
+    pack = tmp_path / "live.pack"
+    _bucket_style_pack(pack, 1600)          # eval == (bucket + 1) * 100
+    first = _nnue_ext.load(str(pack))
+    board = cboard(POSITIONS[0])
+    before = _nnue_ext.evaluate(first, board)
+
+    staged = tmp_path / "staged.pack"
+    _bucket_style_pack(staged, 3200)        # eval == (bucket + 1) * 200
+    _atomic_replace(staged, pack)
+
+    second = _nnue_ext.load(str(pack))
+    after = _nnue_ext.evaluate(second, board)
+
+    assert after == before * 2, (
+        "a new load of a replaced pack still returned the old weights' evaluation"
+    )
+    # The handle taken before the swap keeps its own mapping — that is what makes
+    # the replacement safe rather than a use-after-free for existing users.
+    assert _nnue_ext.evaluate(first, board) == before
+
+
+def test_the_tree_seam_sees_a_replaced_pack_too(tmp_path: Path) -> None:
+    """The path Codex named: set_value_provider on an already-loaded pathname."""
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    pack = tmp_path / "tree.pack"
+    _bucket_style_pack(pack, 1600)
+    tree = MCTSTree()
+    tree.set_value_provider("nnue", str(pack))
+    board = cboard(POSITIONS[0])
+    try:
+        before = tree.value_provider_eval(board)
+        staged = tmp_path / "tree_staged.pack"
+        _bucket_style_pack(staged, 3200)
+        _atomic_replace(staged, pack)
+
+        tree.set_value_provider("nnue", str(pack))
+        assert tree.value_provider_eval(board) == before * 2
+    finally:
+        tree.clear_value_provider()
+
+
+def test_the_same_unchanged_pack_is_still_mapped_once(tmp_path: Path) -> None:
+    """The positive control: identity keying must not defeat sharing.
+
+    Without this, the replacement test above would pass just as well if the
+    cache had been deleted outright.
+    """
+    pack = tmp_path / "shared_identity.pack"
+    _bucket_style_pack(pack, 1600)
+    before = _nnue_ext.weight_cache_size()
+    a = _nnue_ext.load(str(pack))
+    b = _nnue_ext.load(str(pack))
+    assert _nnue_ext.weight_cache_size() == before + 1
+    board = cboard(POSITIONS[0])
+    assert _nnue_ext.evaluate(a, board) == _nnue_ext.evaluate(b, board)
+
+
+# ===========================================================================
+# Round 2: what the evaluator can actually see
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    ("base", "variant"),
+    [
+        # halfmove / fullmove clocks
+        (
+            "r3k2r/pppq1ppp/2np1n2/2b1p1B1/2B1P1b1/2NP1N2/PPPQ1PPP/R3K2R w KQkq - 6 9",
+            "r3k2r/pppq1ppp/2np1n2/2b1p1B1/2B1P1b1/2NP1N2/PPPQ1PPP/R3K2R w KQkq - 41 77",
+        ),
+        # castling rights
+        (
+            "r3k2r/pppq1ppp/2np1n2/2b1p1B1/2B1P1b1/2NP1N2/PPPQ1PPP/R3K2R w KQkq - 6 9",
+            "r3k2r/pppq1ppp/2np1n2/2b1p1B1/2B1P1b1/2NP1N2/PPPQ1PPP/R3K2R w - - 6 9",
+        ),
+        # en-passant square
+        (
+            "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
+            "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+        ),
+    ],
+    ids=["clocks", "castling", "ep"],
+)
+def test_ep_castling_and_clocks_do_not_change_the_evaluation(
+    base: str, variant: str, dense_pack: Path
+) -> None:
+    """⚑ ESTABLISHES what `nnue_state_key` is allowed to drop, by MEASURING it.
+
+    The parity sample dedupes on placement + side to move. That is only correct
+    if nothing else in a FEN reaches the feature computation, and "I read the
+    code and it doesn't" is the kind of claim that silently stops being true.
+    Asserted here against the compiled evaluator, on a pack with nonzero feature
+    weights so a difference would actually show.
+    """
+    handle = _nnue_ext.load(str(dense_pack))
+    assert _nnue_ext.evaluate(handle, cboard(base)) == _nnue_ext.evaluate(
+        handle, cboard(variant)
+    )
+    for perspective in (0, 1):
+        assert _nnue_ext.active_features(cboard(base), perspective) == _nnue_ext.active_features(
+            cboard(variant), perspective
+        )
+
+
+def test_placement_or_side_to_move_DOES_change_the_evaluation(dense_pack: Path) -> None:
+    """The other half: the key's own fields are not inert either."""
+    handle = _nnue_ext.load(str(dense_pack))
+    # ⚑ ASYMMETRIC on purpose. The position used in the tests above is a perfect
+    # mirror, so flipping the side to move genuinely changes nothing there — the
+    # same trap as the POV fixture, and it makes this assertion unfalsifiable
+    # rather than false.
+    white = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 3 3"
+    black = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+    assert _nnue_ext.evaluate(handle, cboard(white)) != _nnue_ext.evaluate(
+        handle, cboard(black)
+    )
+
+
+def test_sampler_dedupes_on_the_nnue_visible_state() -> None:
+    """Positions differing only in clocks are one sample, not several."""
+    from scripts.nnue_fens import nnue_state_key, state_key_of_fen
+
+    a = chess.Board("8/5pk1/6p1/8/1P6/5PKP/8/8 w - - 0 40")
+    b = chess.Board("8/5pk1/6p1/8/1P6/5PKP/8/8 w - - 17 61")
+    assert nnue_state_key(a) == nnue_state_key(b)
+    assert state_key_of_fen(a.fen()) == nnue_state_key(a)
+    assert nnue_state_key(a) != nnue_state_key(chess.Board("8/5pk1/6p1/8/1P6/5PKP/8/8 b - - 0 40"))
+
+
+def test_sampled_positions_carry_their_playout_key() -> None:
+    """⚑ THE RESAMPLING UNIT SURVIVES INTO THE SAMPLE.
+
+    `_playout()` walks a whole random game, so its positions are correlated. A
+    sample that keeps only FENs cannot be re-analysed as clustered data, and the
+    repo protocol keys positions by game ID for exactly that reason.
+    """
+    from scripts.nnue_fens import sample_fens
+
+    fens, stats = sample_fens(80, seed=4242)
+    assert fens
+    assert set(stats.origin) >= set(fens)
+    playouts = {stats.origin[f][0] for f in fens}
+    assert len(playouts) > 1, "expected the sample to span several playouts"
+    assert all(stats.origin[f][1] >= 0 for f in fens)
+    # Positions really do cluster: fewer playouts than positions.
+    assert len(playouts) < len(fens)
+
+
+def test_sample_file_round_trips_the_playout_key(tmp_path: Path) -> None:
+    from scripts.nnue_fens import read_sample, sample_fens, write_sample
+
+    fens, stats = sample_fens(40, seed=99)
+    path = tmp_path / "sample.tsv"
+    write_sample(path, fens, stats)
+    back = read_sample(path)
+
+    assert [s.fen for s in back] == fens
+    for s in back:
+        assert (s.playout, s.ply) == stats.origin[s.fen]
+
+    # A bare FEN file still loads, with no cluster key rather than a fake one.
+    plain = tmp_path / "plain.txt"
+    plain.write_text("\n".join(fens) + "\n")
+    bare = read_sample(plain)
+    assert [s.fen for s in bare] == fens
+    assert all(s.playout is None and s.ply is None for s in bare)
+
+
+# ===========================================================================
+# Round 2: the observation bank is never destroyed by a failed run
+# ===========================================================================
+
+
+def test_a_failed_run_does_not_truncate_the_previous_bank(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """⚑⚑ BANK THE DUMP — INCLUDING THE ONE THAT IS ALREADY THERE.
+
+    The destination was opened "wt" before the engine's provenance was checked,
+    so a run that then refused (unreadable EvalFile, wrong net) had already
+    truncated an expensive previous bank on its way to exiting 2. The failure
+    mode is silent and total: the artifact is gone and the run that destroyed it
+    reports only that it declined to produce a new one.
+    """
+    bank = tmp_path / "obs.jsonl.gz"
+    with gzip.open(bank, "wt", encoding="utf-8") as fh:
+        fh.write('{"record": "previous run"}\n')
+    original = bank.read_bytes()
+
+    code, _ = _run_gate(
+        monkeypatch, tmp_path, bucket_pack, [POSITIONS[0]],
+        eval_file="", extra_args=["--overwrite"],
+    )
+    assert code == 2
+    assert bank.read_bytes() == original, "a refused run destroyed the previous bank"
+
+
+def test_an_existing_bank_is_not_overwritten_without_the_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    bank = tmp_path / "obs.jsonl.gz"
+    with gzip.open(bank, "wt", encoding="utf-8") as fh:
+        fh.write('{"record": "previous run"}\n')
+    original = bank.read_bytes()
+
+    code, fake = _run_gate(monkeypatch, tmp_path, bucket_pack, list(POSITIONS))
+    assert code == 2
+    assert fake.asked == [], "the engine was driven before the bank collision was noticed"
+    assert bank.read_bytes() == original
+
+
+def test_overwrite_publishes_the_new_bank_on_a_successful_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """The positive control: --overwrite really does replace it."""
+    bank = tmp_path / "obs.jsonl.gz"
+    with gzip.open(bank, "wt", encoding="utf-8") as fh:
+        fh.write('{"record": "previous run"}\n')
+
+    code, _ = _run_gate(
+        monkeypatch, tmp_path, bucket_pack, list(POSITIONS), extra_args=["--overwrite"]
+    )
+    assert code == 0
+    with gzip.open(bank, "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert not any(r.get("record") == "previous run" for r in rows)
+    assert len([r for r in rows if "ours" in r]) == len(POSITIONS)
+
+
+def test_no_partial_file_is_left_behind_by_a_refused_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    code, _ = _run_gate(monkeypatch, tmp_path, bucket_pack, [POSITIONS[0]], eval_file="")
+    assert code == 2
+    leftovers = list(tmp_path.glob("*.partial-*"))
+    assert leftovers == [], f"staging file not cleaned up: {leftovers}"
+
+
+def test_banked_rows_carry_the_resampling_unit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bucket_pack: Path
+) -> None:
+    """Every banked row names the playout it came from and its ply within it."""
+    import scripts.nnue_parity as parity
+
+    from scripts.nnue_fens import SampledPosition
+
+    fens = [SampledPosition(fen, f"s1p{i // 3}", i) for i, fen in enumerate(POSITIONS)]
+    scores = _agreeing_scores(bucket_pack, list(POSITIONS))
+    fake = _FakeStockfish(scores, "nn-000000000000.nnue")
+    monkeypatch.setattr(parity, "StockfishDriver", lambda _p: fake)
+
+    bank = tmp_path / "cluster.jsonl.gz"
+    backend = parity.NativeBackend(bucket_pack)
+    with gzip.open(bank, "wt", encoding="utf-8") as fh:
+        result = parity.run_parity(backend, fens, fake, None, observations=fh)  # pyright: ignore[reportArgumentType]
+
+    assert result.checked == len(POSITIONS)
+    with gzip.open(bank, "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert len(rows) == len(POSITIONS)
+    for row, item in zip(rows, fens, strict=True):
+        assert row["playout"] == item.playout
+        assert row["ply"] == item.ply
+    # The clustering is recoverable from the artifact alone.
+    assert len({r["playout"] for r in rows}) < len(rows)
+
+
+# ===========================================================================
+# Round 2: the benchmark rejects an empty sample
+# ===========================================================================
+
+
+def test_benchmark_rejects_an_empty_sample(tmp_path: Path, bucket_pack: Path) -> None:
+    """An empty input is an input error, not a ZeroDivisionError in the report."""
+    import scripts.nnue_bench as bench
+
+    empty = tmp_path / "empty.txt"
+    empty.write_text("")
+    code = bench.main(
+        ["--pack", str(bucket_pack), "--fens-in", str(empty), "--n", "0", "--repeats", "1"]
+    )
+    assert code == 2
+
+
+def test_the_delivered_sample_holds_no_duplicate_evaluator_inputs() -> None:
+    """⚑ The sample's own claim, checked on the sample it delivers.
+
+    Deduping on the full FEN lets the same placement+STM through several times
+    with different clocks, and every copy increments the delivered count and its
+    cell count — so the gate's "N positions covered" counts the same evaluator
+    input more than once.
+    """
+    from scripts.nnue_fens import sample_fens, state_key_of_fen
+
+    # ⚑ 800, not 200. Measured: with the full-FEN key restored, a 200-position
+    # sample happens to deliver no colliding pair, so the assertion below would
+    # hold with the fix reverted — the test would exist and prove nothing. At
+    # 800 the reverted sampler delivers two.
+    fens, stats = sample_fens(800, seed=31337)
+    states = [state_key_of_fen(f) for f in fens]
+    assert len(set(states)) == len(fens), "the delivered sample repeats an evaluator input"
+    assert stats.accepted == len(fens)
+    # And the sampler saw duplicates and rejected them, so this is not vacuous.
+    assert stats.duplicate_states > 0

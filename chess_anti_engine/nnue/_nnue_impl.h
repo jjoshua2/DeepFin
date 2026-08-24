@@ -189,6 +189,19 @@ typedef struct CaeNnueWeights {
 
     char sha256_hex[65];
     char path[4096];
+
+    /* ⚑ THE CACHE KEY IS FILE IDENTITY, NOT THE PATH. A pack replaced at the
+     * same pathname — exactly what nnue_pack.convert() does, atomically — is a
+     * DIFFERENT file behind an unchanged name. Keyed by path, a long-lived
+     * process keeps serving the old mmap while set_value_provider() reports
+     * success, so the tree evaluates with weights nobody intended and nothing
+     * anywhere says so. dev+inode catches an atomic replace (new inode);
+     * size+mtime catch an in-place rewrite (same inode). Handles already issued
+     * keep their mapping, which is what makes the swap safe rather than a
+     * use-after-free; only NEW loads see the replacement. */
+    uint64_t ident_dev, ident_ino;
+    int64_t  ident_size, ident_mtime_sec, ident_mtime_nsec;
+
     int  refcount;                 /* guarded by cae_nnue_cache_lock */
 } CaeNnueWeights;
 
@@ -1030,31 +1043,35 @@ static int cae_nnue_bind(CaeNnueWeights *w, char *err, size_t errlen) {
  * process on the box that maps the same file shares its physical pages through
  * the page cache; within a process the cache below hands out one mapping per
  * path, refcounted. */
-/* Caller must hold cae_nnue_cache_lock. */
-static CaeNnueWeights *cae_nnue_cache_find_locked(const char *path) {
-    for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++)
-        if (cae_nnue_cache[i] && strcmp(cae_nnue_cache[i]->path, path) == 0)
-            return cae_nnue_cache[i];
+/* Caller must hold cae_nnue_cache_lock. Matches on FILE IDENTITY. */
+static CaeNnueWeights *cae_nnue_cache_find_locked(const struct stat *st) {
+    for (int i = 0; i < CAE_NNUE_CACHE_SLOTS; i++) {
+        CaeNnueWeights *c = cae_nnue_cache[i];
+        if (c
+            && c->ident_dev == (uint64_t)st->st_dev
+            && c->ident_ino == (uint64_t)st->st_ino
+            && c->ident_size == (int64_t)st->st_size
+            && c->ident_mtime_sec == (int64_t)st->st_mtim.tv_sec
+            && c->ident_mtime_nsec == (int64_t)st->st_mtim.tv_nsec)
+            return c;
+    }
     return NULL;
 }
 
 static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen) {
     cae_nnue_init_tables();
 
-    pthread_mutex_lock(&cae_nnue_cache_lock);
-    CaeNnueWeights *hit = cae_nnue_cache_find_locked(path);
-    if (hit) {
-        hit->refcount++;
-        pthread_mutex_unlock(&cae_nnue_cache_lock);
-        return hit;
-    }
-    pthread_mutex_unlock(&cae_nnue_cache_lock);
-
     if (strlen(path) >= sizeof(((CaeNnueWeights *)0)->path)) {
         cae_nnue_err(err, errlen, "weight path too long");
         return NULL;
     }
 
+    /* ⚑ Open FIRST, then key the cache on the identity of the file we actually
+     * opened. Statting the path separately would reintroduce a window in which
+     * the file is replaced between the lookup and the map; taking the identity
+     * from the fd we go on to mmap cannot disagree with what we mapped. The
+     * extra open+fstat on a cache hit costs microseconds and is the only way to
+     * notice that the pathname now names a different file. */
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         cae_nnue_err(err, errlen, "cannot open weight pack: %s", strerror(errno));
@@ -1066,6 +1083,17 @@ static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen)
         close(fd);
         return NULL;
     }
+
+    pthread_mutex_lock(&cae_nnue_cache_lock);
+    CaeNnueWeights *hit = cae_nnue_cache_find_locked(&st);
+    if (hit) {
+        hit->refcount++;
+        pthread_mutex_unlock(&cae_nnue_cache_lock);
+        close(fd);
+        return hit;
+    }
+    pthread_mutex_unlock(&cae_nnue_cache_lock);
+
     void *map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (map == MAP_FAILED) {
@@ -1081,6 +1109,11 @@ static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen)
     }
     w->map = map;
     w->map_size = (size_t)st.st_size;
+    w->ident_dev = (uint64_t)st.st_dev;
+    w->ident_ino = (uint64_t)st.st_ino;
+    w->ident_size = (int64_t)st.st_size;
+    w->ident_mtime_sec = (int64_t)st.st_mtim.tv_sec;
+    w->ident_mtime_nsec = (int64_t)st.st_mtim.tv_nsec;
     snprintf(w->path, sizeof(w->path), "%s", path);
     if (cae_nnue_bind(w, err, errlen) != 0) {
         munmap(map, w->map_size);
@@ -1096,7 +1129,7 @@ static CaeNnueWeights *cae_nnue_load(const char *path, char *err, size_t errlen)
      * 62 MB mappings and two cache entries for one file, and nothing ever
      * reports it. Losing the race is fine: drop ours and take theirs. */
     pthread_mutex_lock(&cae_nnue_cache_lock);
-    CaeNnueWeights *raced = cae_nnue_cache_find_locked(path);
+    CaeNnueWeights *raced = cae_nnue_cache_find_locked(&st);
     if (raced) {
         raced->refcount++;
         pthread_mutex_unlock(&cae_nnue_cache_lock);

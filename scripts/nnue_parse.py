@@ -97,16 +97,42 @@ class ArchSpec:
     l3: int
     use_threats: bool
 
+    #: ``Network::get_hash_value()`` for this architecture's layer stack.
+    #:
+    #: ⚑ MEASURED FROM THE SHIPPED NETS, NOT DERIVED — and said so rather than
+    #: dressed up as a derivation. Stockfish's documented layer-hash algebra
+    #: (0xCC03DAE4 per affine, 0x538D24C7 per activation, seeded with
+    #: 0xEC42E90D ^ 2*L1) does NOT reproduce these values for either shipped
+    #: architecture, so writing that chain out would give a constant that is
+    #: wrong in a way whose only symptom is REJECTING VALID FILES. Pinning is
+    #: safe here because the file version is pinned too: this parser accepts
+    #: only 0x7AF32F20, and a topology change necessarily changes that.
+    #:
+    #: big:   nn-f68ec79f0fe3.nnue  layer hash 0x63337116
+    #: small: nn-47fc8b7fff06.nnue  layer hash 0x6333712A
+    layer_hash: int
+
     @property
     def ft_hash(self) -> int:
         """``FeatureTransformer::get_hash_value()`` for this architecture."""
         base = _combine_hash(THREATS_HASH, HALFKA_HASH) if self.use_threats else HALFKA_HASH
         return (base ^ (self.l1 * 2)) & 0xFFFFFFFF
 
+    @property
+    def net_hash(self) -> int:
+        """The header hash this architecture must declare.
+
+        ⚑ DERIVED, and verified against both shipped nets: the file's top-level
+        hash is exactly ``ft_hash ^ layer_hash``. The parser previously read this
+        field and never related it to anything, so a header claiming one
+        architecture while carrying another's layers was accepted.
+        """
+        return (self.ft_hash ^ self.layer_hash) & 0xFFFFFFFF
+
 
 ARCHS: Final = (
-    ArchSpec(name="big", l1=1024, l2=31, l3=32, use_threats=True),
-    ArchSpec(name="small", l1=128, l2=15, l3=32, use_threats=False),
+    ArchSpec(name="big", l1=1024, l2=31, l3=32, use_threats=True, layer_hash=0x63337116),
+    ArchSpec(name="small", l1=128, l2=15, l3=32, use_threats=False, layer_hash=0x6333712A),
 )
 
 
@@ -329,9 +355,28 @@ def parse_bytes(data: bytes) -> NnueNet:
     if leftover != 0:
         raise ValueError(f"parse did not land on EOF: {leftover} bytes left over")
 
+    # ⚑ MUTUAL AGREEMENT IS NOT VALIDATION. Eight stacks that agree with each
+    # other but not with the architecture we selected describe a network this
+    # parser does not implement — and it would go on to read them with our
+    # hard-coded affine/activation topology and emit a pack full of plausible
+    # numbers. The expected hash is what makes this a check rather than a
+    # consistency observation.
     stack_hashes = {stack.arch_hash for stack in stacks}
     if len(stack_hashes) != 1:
         raise ValueError(f"layer stacks disagree on architecture hash: {sorted(stack_hashes)}")
+    got_layer_hash = stack_hashes.pop()
+    if got_layer_hash != arch.layer_hash:
+        raise ValueError(
+            f"layer-stack architecture hash 0x{got_layer_hash:08X} is not the "
+            f"0x{arch.layer_hash:08X} this parser implements for the {arch.name} "
+            "architecture; refusing to reinterpret a foreign layer topology"
+        )
+    if net_hash != arch.net_hash:
+        raise ValueError(
+            f"network hash 0x{net_hash:08X} does not match this file's own feature "
+            f"transformer and layers (0x{arch.ft_hash:08X} ^ 0x{arch.layer_hash:08X} = "
+            f"0x{arch.net_hash:08X})"
+        )
 
     return NnueNet(
         version=version,
