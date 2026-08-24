@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import TYPE_CHECKING
 
 import chess
@@ -487,12 +488,47 @@ def _build_index_to_move_lut() -> np.ndarray:
 _INDEX_TO_MOVE_LUT = _build_index_to_move_lut()
 
 
-def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
-    """Fast index → move using precomputed LUT."""
+class ActionDecodeError(ValueError):
+    """An action id did not name a legal move on this board.
+
+    Raised only by :func:`index_to_move_strict`. The resilient decoders
+    substitute the first legal move instead and count the event — see
+    :func:`decode_fallback_count`.
+    """
+
+    def __init__(self, index: int, board: chess.Board, detail: str) -> None:
+        self.index = int(index)
+        self.fen = board.fen()
+        self.turn = bool(board.turn)
+        self.detail = str(detail)
+        super().__init__(
+            f"action id {self.index} does not decode to a legal move: {self.detail} "
+            f"(side to move {'white' if self.turn else 'black'}, fen {self.fen!r})",
+        )
+
+
+# Every first-legal substitution made by `index_to_move_fast` (hence by
+# `index_to_move`) since process start. A substitution silently changes the move
+# that gets played, so an action-space regression surfaces here before it
+# surfaces anywhere else — and until this counter existed nothing recorded that
+# it had happened at all.
+_DECODE_FALLBACKS = 0
+_DECODE_FALLBACK_WARNED = False
+
+
+def _decode_action(index: int, board: chess.Board) -> chess.Move | None:
+    """LUT decode shared by the resilient and strict decoders.
+
+    Returns ``None`` for the two cases that have no legal decode: the id has no
+    LUT entry for this side to move, and the constructed move is illegal with no
+    legal move encoding back to this id. Handing those back as ``None`` rather
+    than substituting here is what lets the caller choose between resilience and
+    a raise without either one re-deriving the decode rule.
+    """
     entry = _INDEX_TO_MOVE_LUT[int(board.turn), int(index)]
     f, t, promo = int(entry[0]), int(entry[1]), int(entry[2])
     if f < 0:
-        return next(iter(board.legal_moves))
+        return None
 
     # Only apply promotion if a pawn is actually on the from square.
     promotion = None
@@ -508,7 +544,78 @@ def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
     for lm in board.legal_moves:
         if move_to_index(lm, board) == index:
             return lm
-    return next(iter(board.legal_moves))
+    return None
+
+
+def _decode_failure_detail(index: int, board: chess.Board) -> str:
+    """Why :func:`_decode_action` returned ``None``. Error/warning paths only."""
+    entry = _INDEX_TO_MOVE_LUT[int(board.turn), int(index)]
+    f, t, promo = int(entry[0]), int(entry[1]), int(entry[2])
+    if f < 0:
+        return "no LUT entry for this side to move"
+    return (
+        f"LUT produced {chess.SQUARE_NAMES[f]}{chess.SQUARE_NAMES[t]} "
+        f"(promotion piece type {promo}), which is illegal here, and no legal "
+        f"move encodes back to this id"
+    )
+
+
+def _note_decode_fallback(index: int, board: chess.Board) -> None:
+    """Count a first-legal substitution; describe the first one on stderr.
+
+    O(1) on the fallback path: the LUT re-read and the FEN are built only inside
+    the one-shot branch. stderr and not stdout because this module is also on
+    the UCI engine's move path, whose stdout is the protocol channel.
+    """
+    global _DECODE_FALLBACKS, _DECODE_FALLBACK_WARNED
+    _DECODE_FALLBACKS += 1
+    if not _DECODE_FALLBACK_WARNED:
+        _DECODE_FALLBACK_WARNED = True
+        print(
+            f"[moves] action id {int(index)} did not decode to a legal move; "
+            f"SUBSTITUTED the first legal move and kept playing. "
+            f"{_decode_failure_detail(index, board)}; side to move "
+            f"{'white' if board.turn else 'black'}, fen {board.fen()!r}. This "
+            "changes the move that is actually played, so an action-space "
+            "regression shows up here first. Further occurrences are counted, "
+            "not logged; read the total with "
+            "chess_anti_engine.moves.decode_fallback_count().",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def decode_fallback_count() -> int:
+    """First-legal substitutions made by the resilient decoders, since process start."""
+    return _DECODE_FALLBACKS
+
+
+def index_to_move_fast(index: int, board: chess.Board) -> chess.Move:
+    """Fast index → move using precomputed LUT.
+
+    Resilient by design: an id that names no legal move is replaced with the
+    first legal one so a search never dies mid-playout. That substitution is
+    counted, because it is otherwise invisible — nothing downstream can tell the
+    substituted move from a chosen one. Measurement paths want
+    :func:`index_to_move_strict` instead.
+    """
+    m = _decode_action(index, board)
+    if m is None:
+        _note_decode_fallback(index, board)
+        return next(iter(board.legal_moves))
+    return m
+
+
+def index_to_move_strict(index: int, board: chess.Board) -> chess.Move:
+    """Index → move that RAISES :class:`ActionDecodeError` instead of substituting.
+
+    Identical decode to :func:`index_to_move_fast` — they share
+    :func:`_decode_action` and differ only in what they do when it fails.
+    """
+    m = _decode_action(index, board)
+    if m is None:
+        raise ActionDecodeError(int(index), board, _decode_failure_detail(index, board))
+    return m
 
 
 def mirror_policy(policy: np.ndarray) -> np.ndarray:
@@ -586,7 +693,12 @@ def uci_to_policy_index(uci: str, turn: bool) -> int:
 
 
 def index_to_move(index: int, board: chess.Board) -> chess.Move:
-    """Convert a policy index back to a chess.Move. Uses precomputed LUT."""
+    """Convert a policy index back to a chess.Move. Uses precomputed LUT.
+
+    Alias of :func:`index_to_move_fast`, so it substitutes and counts rather
+    than raising; a caller that must not silently play a different move wants
+    :func:`index_to_move_strict`.
+    """
     return index_to_move_fast(index, board)
 
 

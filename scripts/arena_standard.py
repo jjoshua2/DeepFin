@@ -1064,7 +1064,10 @@ def play_paired_games_matched_sims(
                 gumbel_target_batch=side.target_batch,
                 **extra,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: this is the deciding Elo instrument. Substituting a legal
+            # move for an id that decoded to nothing would keep the arena
+            # scoring games under a broken action space.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
 
     def _game_score(i: int) -> float:
         res = adjudicated[i] or boards[i].result(claim_draw=True)
@@ -1303,7 +1306,8 @@ def play_paired_games_matched_sims_rolling(
                 gumbel_target_batch=side.target_batch,
                 **extra,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: same instrument as the chunked path above.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
         for i in active:
             gplies[i] += 1
 
