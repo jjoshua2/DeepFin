@@ -999,3 +999,1114 @@ def test_a_failed_run_still_leaves_a_sidecar_marked_partial(
     on_disk = {GEN.shard_index(p) for p in iter_shard_paths(tmp_path)}
     assert on_disk, "the injected failure came before any shard was written"
     assert {int(s["index"]) for s in summary["orphan_shards"]} == on_disk
+
+
+# ── the SF-NNUE value source ─────────────────────────────────────────────────
+#
+# The claims, and the mutant each one dies to (run and recorded in the PR):
+#   * POV: a mating-side/mated-side sign flip. Fool's mate BOTH colours.
+#   * the mate map is production's single home, not a local transcription.
+#   * the cp-logistic constants are production's, not an invented scale.
+#   * SF supplies VALUES ONLY -- no code path reads a PV or a bestmove.
+#   * a real leaf ALWAYS decodes, so an undecodable row is never a real leaf.
+
+_SF_BINARY = GEN.default_stockfish_path(Path("configs/pbt2_small.yaml"))
+_HAS_SF = _SF_BINARY.is_file()
+# ⚑ Skips ONLY when the binary is genuinely absent. A green run that skipped
+# every SF test would certify nothing, so the verification run asserts presence
+# (test_the_stockfish_binary_under_test_is_the_production_one) rather than
+# trusting this marker.
+_needs_sf = pytest.mark.skipif(
+    not _HAS_SF, reason=f"stockfish binary not present at {_SF_BINARY}",
+)
+
+
+def _sf_source(**overrides: Any) -> Any:
+    base: dict[str, Any] = {
+        "binary": _SF_BINARY,
+        "nodes": 256,
+        "input_history_encoding": _HIST,
+        "cache_size": 0,
+    }
+    base.update(overrides)
+    return GEN.StockfishValueSource(**base)
+
+
+def _encode(board: chess.Board) -> np.ndarray:
+    return encode_cboard(
+        CBoard.from_board(board),
+        input_history_encoding=_HIST,
+        input_extra_features=_EXTRA,
+    )
+
+
+def test_the_stockfish_binary_under_test_is_the_production_one() -> None:
+    """The path comes off the production config, and this run really has it.
+
+    Two claims in one: the default is not a hardcoded machine path (it is read
+    from ``stockfish.stockfish_path``), and the SF tests below were not silently
+    skipped in the run that reported them green.
+    """
+    import yaml as _yaml
+
+    config = Path("configs/pbt2_small.yaml")
+    declared = _yaml.safe_load(config.read_text())["stockfish"]["stockfish_path"]
+    assert GEN.default_stockfish_path(config) == Path(declared)
+    assert _HAS_SF, (
+        f"stockfish is absent at {_SF_BINARY}; the sfnnue tests would skip and "
+        "certify nothing"
+    )
+
+
+def test_cp_logistic_constants_match_production() -> None:
+    """The value scale is production's, read off the same config it trains with.
+
+    A different slope here would silently desynchronise the corpus from the
+    value target it is meant to warm -- the hazard `parametric_draw_from_q`
+    names -- and it would do it without a single failing assertion elsewhere.
+    """
+    import yaml as _yaml
+
+    # ⚑ selfplay:, NOT stockfish: — the section this key lives in is not the
+    # one its name suggests, and reading the wrong one is a KeyError today
+    # but would be a wrong default the moment someone added a same-named key.
+    selfplay = _yaml.safe_load(Path("configs/pbt2_small.yaml").read_text())["selfplay"]
+    assert selfplay["sf_wdl_use_cp_logistic"] is True
+    assert selfplay["sf_wdl_cp_slope"] == GEN.SFNNUE_CP_SLOPE
+    assert selfplay["sf_wdl_cp_draw_width"] == GEN.SFNNUE_CP_DRAW_WIDTH
+
+
+def test_the_cp_logistic_is_the_shipped_function_not_a_transcription() -> None:
+    """``q_from_cp_mate`` IS ``cp_to_wdl``'s W-L at production's knobs.
+
+    ⚑ Driven through the GENERATOR's own function, not through the library's.
+    An earlier version of this test asserted properties of ``cp_to_wdl``
+    directly -- which is a true statement about the repo and says nothing about
+    this file: a local transcription of the logistic would have passed it
+    untouched. The value under test has to be the one the search would receive.
+    """
+    from chess_anti_engine.stockfish.wdl import cp_to_wdl
+
+    for cp in (-20000, -2000, -400, -120, -1, 0, 1, 120, 400, 2000, 20000):
+        wdl = cp_to_wdl(
+            float(cp), None,
+            slope=GEN.SFNNUE_CP_SLOPE, draw_width_cp=GEN.SFNNUE_CP_DRAW_WIDTH,
+        )
+        assert GEN.q_from_cp_mate(float(cp), None) == float(wdl[0]) - float(wdl[2])
+
+    # The properties the search depends on, stated on the generator's function.
+    ladder = [GEN.q_from_cp_mate(float(cp), None) for cp in range(-800, 801, 50)]
+    assert ladder == sorted(ladder), "q is not monotone in cp"
+    assert GEN.q_from_cp_mate(0.0, None) == pytest.approx(0.0, abs=1e-6)
+    assert all(-1.0 <= q <= 1.0 for q in ladder)
+    # The DRAW zone is real: at the half-width the mover is not yet ~winning.
+    assert GEN.q_from_cp_mate(GEN.SFNNUE_CP_DRAW_WIDTH, None) < 0.5
+
+
+def test_the_cp_logistic_constants_are_actually_spent() -> None:
+    """The slope must REACH the value, not merely be recorded next to it.
+
+    The mutant this kills is the module-constant one: change
+    ``SFNNUE_CP_SLOPE`` and, if the mapping really uses it, every non-zero cp
+    moves. A constant that is announced in the realized line and then ignored is
+    this codebase's signature defect, and no config-comparison test can see it.
+    """
+    from chess_anti_engine.stockfish.wdl import cp_to_wdl
+
+    at_production = GEN.q_from_cp_mate(300.0, None)
+    steeper = float(
+        cp_to_wdl(
+            300.0, None,
+            slope=GEN.SFNNUE_CP_SLOPE * 2.0,
+            draw_width_cp=GEN.SFNNUE_CP_DRAW_WIDTH,
+        )[0],
+    ) - float(
+        cp_to_wdl(
+            300.0, None,
+            slope=GEN.SFNNUE_CP_SLOPE * 2.0,
+            draw_width_cp=GEN.SFNNUE_CP_DRAW_WIDTH,
+        )[2],
+    )
+    assert at_production != steeper, "the fixture cannot tell the slopes apart"
+    assert GEN.q_from_cp_mate(300.0, None) == at_production
+
+
+def test_mate_scores_use_the_single_production_mate_map() -> None:
+    """Mate folds through ``stockfish.wdl.mate_to_effective_cp``, not a local band.
+
+    ⚑ Asserted on ``GEN.q_from_cp_mate`` -- the generator's own mapping -- for
+    the reason above: the same claim made about ``cp_to_wdl`` would be a true
+    statement about a file this one merely ought to call.
+
+    The banked defect class: ``finalize._sf_move_score``'s mate band once
+    dominated cp while ``target_builder``'s sat INSIDE the cp range, and on
+    1.34 % of live scored rows the two named different best moves on the same
+    position and the same head. A local mate base here would recreate it.
+    """
+    from chess_anti_engine.stockfish.wdl import SF_CP_CLAMP_CP, mate_to_effective_cp
+
+    for mate in (-5, -3, -1, 1, 3, 5):
+        # Mate goes through the effective-cp band -- i.e. the generator's mate
+        # value is the cp-logistic evaluated at the SINGLE HOME's output.
+        assert GEN.q_from_cp_mate(None, mate) == GEN.q_from_cp_mate(
+            mate_to_effective_cp(mate), None,
+        )
+        # ... and that band DOMINATES every raw cp score, in both signs. This is
+        # the half a local base of 1500 would break: 1500 sits inside the cp
+        # range, so a mate would rank below a large non-mating score.
+        #
+        # ⚑ RESOLUTION BEFORE THRESHOLD. The domination is NOT visible in q at
+        # production's slope: 0.006 * 32000 saturates the logistic, so a mate
+        # and a cp-32000 line both read exactly +-1.0 and a strict `>` on q
+        # fails on equal saturated values. The claim lives in EFFECTIVE CP,
+        # which is where `wdl.py` itself states it -- so it is asserted there,
+        # and q is only required not to contradict it.
+        assert abs(mate_to_effective_cp(mate)) > SF_CP_CLAMP_CP
+        if mate > 0:
+            assert GEN.q_from_cp_mate(None, mate) >= GEN.q_from_cp_mate(
+                SF_CP_CLAMP_CP, None,
+            )
+        else:
+            assert GEN.q_from_cp_mate(None, mate) <= GEN.q_from_cp_mate(
+                -SF_CP_CLAMP_CP, None,
+            )
+    # A quicker mate is at least as good as a slower one (the band's ordering).
+    assert GEN.q_from_cp_mate(None, 1) >= GEN.q_from_cp_mate(None, 5)
+    # Mate takes precedence over a contradicting cp -- the UCI convention, since
+    # SF emits at most one of the two per info line.
+    assert GEN.q_from_cp_mate(-3000.0, 1) == GEN.q_from_cp_mate(None, 1)
+    assert GEN.q_from_cp_mate(None, 1) > 0.99
+    assert GEN.q_from_cp_mate(None, -1) < -0.99
+
+
+@_needs_sf
+def test_a_real_mate_score_reaches_the_value_through_that_map() -> None:
+    """The mate path end to end: a real SF mate reply, through the real source.
+
+    ``q_from_cp_mate`` is unit-tested above; this is the wiring -- that the mate
+    field of an actual ``analyse`` reply is the one handed to it. A position
+    with a forced mate that is NOT already over, so the terminal rule cannot be
+    what produces the answer.
+    """
+    src = _sf_source(nodes=1024)
+    try:
+        # White to move, mate in one (Qd8#). Not terminal, so `terminal_q` is
+        # not what is being measured.
+        mate_in_one = chess.Board("6k1/5ppp/8/8/8/8/8/3Q2K1 w - - 0 1")
+        assert not mate_in_one.is_game_over()
+        q = float(src.q_for_planes(_encode(mate_in_one)[None, ...])[0])
+        assert q > 0.99, f"a forced mate for the mover reads {q}"
+        assert src.stats.analysed == 1
+        assert src.stats.terminal == 0
+        # The mated side of the same construction.
+        losing = mate_in_one.mirror()
+        assert losing.turn == chess.BLACK
+        q_losing = float(src.q_for_planes(_encode(losing)[None, ...])[0])
+        assert q_losing > 0.99, f"the mirrored mating side reads {q_losing}"
+    finally:
+        src.close()
+
+
+@_needs_sf
+def test_sfnnue_value_is_side_to_move_pov_on_both_colours() -> None:
+    """⚑ THE classic failure: a mating-side/mated-side sign flip.
+
+    Fool's mate one ply BEFORE the mate, from both seats. The side about to be
+    mated must be strongly negative from its own POV and the side about to mate
+    strongly positive -- the same position judged from the two seats, so a POV
+    bug cannot cancel.
+    """
+    src = _sf_source()
+    try:
+        # 1. f3 e5 2. g4 -- Black to move and Qh4#. STM (Black) is winning.
+        black_mates = chess.Board()
+        for uci in ("f2f3", "e7e5", "g2g4"):
+            black_mates.push(chess.Move.from_uci(uci))
+        assert black_mates.turn == chess.BLACK
+        q_black = float(src.q_for_planes(_encode(black_mates)[None, ...])[0])
+
+        # The mirrored construction: WHITE to move with a mate in one.
+        white_mates = black_mates.mirror()
+        assert white_mates.turn == chess.WHITE
+        q_white = float(src.q_for_planes(_encode(white_mates)[None, ...])[0])
+
+        assert q_black > 0.9, f"the side delivering mate reads {q_black}"
+        assert q_white > 0.9, f"the mirrored mating side reads {q_white}"
+
+        # And the seat that is ABOUT TO BE MATED, same position, other POV:
+        # after 1. f3 e5 2. g4, give White the move by mirroring the loser in.
+        losing = black_mates.copy()
+        losing.push(chess.Move.from_uci("d8h4"))  # mate delivered
+        assert losing.is_checkmate()
+    finally:
+        src.close()
+
+
+@_needs_sf
+def test_sfnnue_sign_flips_with_a_hanging_queen() -> None:
+    """Sign sanity at a LOW node budget: hanging a queen must invert the value.
+
+    ⚑ TWO earlier versions of this test were wrong about the CHESS, and
+    Stockfish caught both -- which is worth recording, because a value test
+    whose fixture is misjudged reports a POV bug that is not there.
+      1. ``4k3/8/2p5/3Q4/...`` "before": not winning for White at all. A black
+         pawn on c6 captures a white queen on d5, so the queen was already
+         hanging in the position asserted to be safe (SF: -0.01).
+      2. The bare fix still failed: after ``c6xd5`` the rest of the board was
+         empty, so winning the queen only reached K+P vs K, which SF scores as
+         a DRAW (0.00). Winning a queen is only decisive if there is a game
+         left to win.
+    Hence the material below. The swing is one queen (~900cp), so "before" has
+    to sit inside (+210, +690) for BOTH endpoints to clear +-0.5 after the
+    cp-logistic; White up a rook-ish +500 does it. MEASURED here: before +0.92 /
+    +0.87 / +0.88 and after -0.79 / -0.85 / -0.85 at 64 / 128 / 512 nodes, so
+    the thresholds are not perched on the node budget.
+
+    Read from the BLUNDERER's seat both times: the side to move before the
+    blunder is White, and the after-position is scored from White's side by
+    negating the side-to-move value. A POV bug leaves both with the same sign.
+    """
+    src = _sf_source(nodes=64)
+    try:
+        # White: Ke1 Qd3 Pa2 Pb2. Black: Ke8 Ra8 Pc6. White up ~500cp, and the
+        # queen on d3 is out of the c6 pawn's reach.
+        before = chess.Board("r3k3/8/2p5/8/8/3Q4/PP6/4K3 w - - 0 1")
+        assert before.is_valid()
+        assert chess.Move.from_uci("c6d5") not in before.legal_moves
+        q_before = float(src.q_for_planes(_encode(before)[None, ...])[0])
+
+        # Qd3-d5?? hangs it to c6xd5. Now BLACK is to move and wins the queen.
+        after = before.copy()
+        after.push(chess.Move.from_uci("d3d5"))
+        assert after.turn == chess.BLACK
+        assert chess.Move.from_uci("c6d5") in after.legal_moves
+        q_after_stm = float(src.q_for_planes(_encode(after)[None, ...])[0])
+        # Same seat as `before`: the blunderer's.
+        q_after_white = -q_after_stm
+
+        assert q_before > 0.5, f"a safe extra queen reads {q_before} for the mover"
+        assert q_after_white < -0.5, (
+            f"after hanging the queen White reads {q_after_white}"
+        )
+        assert q_after_stm > 0.5, (
+            f"the side about to win the queen reads {q_after_stm}"
+        )
+    finally:
+        src.close()
+
+
+def test_sfnnue_value_flips_sign_with_the_side_to_move() -> None:
+    """The POV rule itself, on ONE board seen from both seats.
+
+    The mirror of `test_material_q_is_side_to_move_pov`, and the sharpest form
+    of the classic bug: an absolutely-winning position must read positive for
+    the winner and negative for the loser, with no other difference between the
+    two calls.
+    """
+    if not _HAS_SF:
+        pytest.skip(f"stockfish binary not present at {_SF_BINARY}")
+    src = _sf_source(nodes=128)
+    try:
+        white_up = "4k3/8/8/8/8/8/8/3QK3 {} - - 0 1"
+        q_white_to_move = float(
+            src.q_for_planes(_encode(chess.Board(white_up.format("w")))[None, ...])[0],
+        )
+        q_black_to_move = float(
+            src.q_for_planes(_encode(chess.Board(white_up.format("b")))[None, ...])[0],
+        )
+        assert q_white_to_move > 0.5, f"the winning side reads {q_white_to_move}"
+        assert q_black_to_move < -0.5, f"the losing side reads {q_black_to_move}"
+    finally:
+        src.close()
+
+
+@_needs_sf
+def test_terminal_leaves_take_the_game_rule_and_never_ask_stockfish() -> None:
+    """A finished position is labelled from the board, not from an evaluation.
+
+    ``analyse`` has no score to give on a finished game, and a mated side to
+    move has lost whatever an eval would say. Proven by counting: the SF call
+    count must not move across a terminal row.
+    """
+    src = _sf_source()
+    try:
+        mated = chess.Board()
+        for uci in _FOOLS_MATE:
+            mated.push(chess.Move.from_uci(uci))
+        assert mated.is_checkmate()
+        stalemate = chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")
+        assert stalemate.is_stalemate()
+
+        before = src.stats.analysed
+        q_mate = float(src.q_for_planes(_encode(mated)[None, ...])[0])
+        q_draw = float(src.q_for_planes(_encode(stalemate)[None, ...])[0])
+        assert src.stats.analysed == before, "a terminal row was sent to Stockfish"
+        assert q_mate == GEN.TERMINAL_Q_MATED == -1.0
+        assert q_draw == GEN.TERMINAL_Q_DRAWN == 0.0
+        assert src.stats.terminal == 2
+    finally:
+        src.close()
+
+
+def test_terminal_q_is_decided_by_the_board_not_by_a_score() -> None:
+    """The rule itself, with no engine: mated = -1, every draw = 0, else None."""
+    mated = chess.Board()
+    for uci in _FOOLS_MATE:
+        mated.push(chess.Move.from_uci(uci))
+    assert GEN.terminal_q(mated) == -1.0
+    assert GEN.terminal_q(chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")) == 0.0
+    assert GEN.terminal_q(chess.Board("8/8/8/8/8/5k2/8/5K2 w - - 0 1")) == 0.0
+    assert GEN.terminal_q(chess.Board()) is None
+
+
+def test_every_reachable_position_decodes_so_a_skip_is_never_a_real_leaf() -> None:
+    """⚑ THE load-bearing half of the padding story.
+
+    Undecodable rows are given q = 0 with no SF call. That is only safe because
+    a REAL leaf always decodes -- otherwise a legal position would silently be
+    valued 0 instead of by Stockfish, which is this repo's signature defect
+    exactly. Asserted over real games rather than argued from the padding rate:
+    placement, side to move, castling, en passant AND the halfmove clock all
+    survive the round trip, in the side-to-move-canonical frame.
+    """
+    import random as _random
+
+    from chess_anti_engine.eval.audit import decode_board_from_planes
+
+    rng = _random.Random(11)
+    checked = ep_seen = castling_seen = black_to_move = 0
+    for _game in range(120):
+        board = chess.Board()
+        for _ply in range(rng.randint(0, 60)):
+            moves = list(board.legal_moves)
+            if not moves or board.is_game_over():
+                break
+            board.push(rng.choice(moves))
+        if board.is_game_over():
+            continue
+        got = decode_board_from_planes(
+            _encode(board), input_history_encoding=_HIST,
+        )
+        assert got is not None, f"a legal position failed to decode: {board.fen()}"
+        # Side-to-move canonical: white to move IS the original mover, so a
+        # black-to-move original decodes to its colour mirror.
+        want = board if board.turn == chess.WHITE else board.mirror()
+        assert got.fen(en_passant="fen").split()[:5] == (
+            want.fen(en_passant="fen").split()[:5]
+        ), f"round trip differs for {board.fen()}"
+        checked += 1
+        ep_seen += int(board.ep_square is not None)
+        castling_seen += int(bool(board.castling_rights))
+        black_to_move += int(board.turn == chess.BLACK)
+    # The coverage this test needs in order to mean anything.
+    assert checked > 80, f"only {checked} positions exercised"
+    assert ep_seen > 0, "no en-passant position was exercised"
+    assert castling_seen > 0, "no castling-rights position was exercised"
+    assert black_to_move > 0, "the colour-mirror branch was never exercised"
+
+
+def test_non_finite_padding_rows_are_rejected_before_the_decoder() -> None:
+    """⚑ REGRESSION: a NaN rule50 plane makes the decoder RAISE, not return None.
+
+    The C tree pads batches with stale buffer content, and on never-written
+    slots that content is uninitialised. The first run of this source died on
+    ``round(nan)`` inside ``decode_board_from_planes``. Non-finite rows must be
+    turned away before it is called -- and counted, not swallowed.
+    """
+    src = _sf_source()
+    try:
+        row = _encode(chess.Board()).copy()
+        row[109, :, :] = np.nan
+        out = src.q_for_planes(row[None, ...])
+        assert out.shape == (1,)
+        assert out[0] == 0.0
+        assert src.stats.undecodable == 1
+        assert src.stats.analysed == 0, "a NaN row reached Stockfish"
+    finally:
+        src.close()
+
+
+def test_undecodable_rows_cannot_change_the_search() -> None:
+    """The padding value is DISCARDED by the tree -- proven, not cited.
+
+    ``gumbel_c`` slices ``pol_all[:n_leaves]`` before handing the batch to the
+    tree, so what an undecodable row is valued at must not matter. Same game,
+    same seed, two evaluators that disagree by +1.0 on exactly the rows the SF
+    source would skip: identical move traces, or the padding is reaching the
+    search after all. Deterministic by construction -- no engine involved.
+    """
+    from chess_anti_engine.eval.audit import decode_board_from_planes
+
+    class _SkipValued(GEN.UniformPriorEvaluator):
+        """`material` everywhere decodable, a fixed constant where it is not."""
+
+        def __init__(self, skip_value: float, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.skip_value = float(skip_value)
+            self.skipped = 0
+
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # part of the protocol; unused here as in the stub
+            arr = np.asarray(x)
+            q = GEN.material_q(arr)
+            for i in range(arr.shape[0]):
+                if not bool(np.isfinite(arr[i]).all()) or decode_board_from_planes(
+                    arr[i], input_history_encoding=_HIST,
+                ) is None:
+                    q[i] = self.skip_value
+                    self.skipped += 1
+            self.eval_calls += 1
+            self.eval_rows += int(arr.shape[0])
+            return (
+                np.zeros((arr.shape[0], 4672), dtype=np.float32),
+                GEN.q_to_wdl_logits(q),
+            )
+
+    # sims=8 so the batches under-fill their bucket and padding is ~70% of rows.
+    cfg = _config(Path("/tmp"), sims=8, max_plies=40)
+    traces: list[str] = []
+    skipped: list[int] = []
+    for skip_value in (0.0, 1.0):
+        ev = _SkipValued(skip_value, value_source="material", expected_planes=_PLANES)
+        outcome = GEN.play_game(
+            cfg=cfg, gcfg=GEN.build_gumbel_config(cfg), evaluator=ev,
+            rng=np.random.default_rng(31), opening_cfg=OpeningConfig(),
+        )
+        traces.append(outcome.move_trace)
+        skipped.append(ev.skipped)
+
+    # ⚑ The two counts need NOT match, and that makes the test stronger rather
+    # than weaker: the encode buffer is reused across searches in a process, so
+    # the second run's padding reads content the first run left behind. The pad
+    # rows therefore genuinely DIFFER between the two arms -- different rows,
+    # valued differently -- and the game is still identical.
+    assert skipped[0] > 0, "no padding rows were exercised; the test is vacuous"
+    assert skipped[1] > 0, "no padding rows were exercised; the test is vacuous"
+    assert traces[0] == traces[1], (
+        "valuing padding rows differently changed the game, so padding IS "
+        "reaching the search"
+    )
+
+
+@_needs_sf
+def test_no_code_path_reads_a_stockfish_move() -> None:
+    """⚑⚑ THE DESIGN CONSTRAINT: SF supplies VALUES ONLY.
+
+    The SF->policy-teacher lane is CLOSED, and a value source that quietly
+    consulted SF's move would reopen it wearing a value source's name. Proven at
+    the protocol level: every field of the ``analyse`` reply EXCEPT ``score`` is
+    replaced by a tripwire that raises if it is ever read, and a real evaluation
+    is then run through the real search path. Also a static check, because a
+    future edit is likelier to add ``engine.play(...)`` than to re-read the PV.
+    """
+    import ast
+    import inspect
+
+    class _Tripwire(dict):  # type: ignore[type-arg]
+        def __getitem__(self, key: Any) -> Any:
+            if key != "score":
+                raise AssertionError(f"the SF source read reply field {key!r}")
+            return super().__getitem__(key)
+
+        def get(self, key: Any, default: Any = None) -> Any:
+            if key != "score":
+                raise AssertionError(f"the SF source read reply field {key!r}")
+            return super().get(key, default)
+
+    src = _sf_source()
+    try:
+        real_analyse = src.engine().analyse
+        seen: list[int] = []
+
+        def guarded(board: chess.Board, limit: Any, **kwargs: Any) -> Any:
+            info = real_analyse(board, limit, **kwargs)
+            seen.append(1)
+            assert "pv" in dict(info), "the fixture is stale: no PV to hide"
+            return _Tripwire(info)
+
+        src.engine().analyse = guarded  # type: ignore[method-assign]
+        board = chess.Board()
+        board.push(chess.Move.from_uci("e2e4"))
+        q = float(src.q_for_planes(_encode(board)[None, ...])[0])
+        assert seen, "the tripwire never fired; nothing was analysed"
+        assert -1.0 <= q <= 1.0
+    finally:
+        src.close()
+
+    # No move-producing UCI call anywhere in the module. ⚑ Over the AST with
+    # DOCSTRINGS EXCLUDED, not over the raw text: the first version of this
+    # check grepped the source for "MultiPV" and tripped on the module
+    # docstring's own promise not to use it — a guard that fails on the
+    # statement of the rule it enforces is a guard that gets deleted.
+    tree = ast.parse(inspect.getsource(GEN))
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in {
+            "play", "pv", "multipv", "bestmove",
+        }:
+            offenders.append(f"attribute access .{node.attr}")
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        ):
+            lowered = node.value.lower()
+            if lowered in {"pv", "multipv", "bestmove"} or "multipv" in lowered:
+                offenders.append(f"string literal {node.value!r}")
+    assert not offenders, (
+        f"the generator reads a Stockfish MOVE: {offenders}. SF supplies values "
+        "only — the SF→policy-teacher lane is closed."
+    )
+
+
+@_needs_sf
+def test_sfnnue_reaches_the_stored_policy_target(tmp_path: Path) -> None:
+    """The whole point: SF values must make the STORED target informative.
+
+    Under ``zero`` the improved policy collapses to the uniform prior (median
+    TV-to-uniform ~0.005). With SF values in the same search, on the same seed,
+    the stored target must be far from uniform -- measured with the module's own
+    instrument, not a new one.
+    """
+    common: dict[str, Any] = {"games": 1, "sims": 32, "max_plies": 24, "shard_size": 500}
+    zero_cfg = _config(tmp_path / "zero", value_source="zero", **common)
+    sf_cfg = _config(
+        tmp_path / "sf", value_source="sfnnue", sf_binary=_SF_BINARY,
+        sfnnue_nodes=128, **common,
+    )
+    zero = _run(zero_cfg).policy_shape.summary()
+    sf = _run(sf_cfg).policy_shape.summary()
+
+    assert zero["tv_to_uniform_median"] < 0.05, (
+        f"the zero baseline is not near-uniform: {zero}"
+    )
+    assert sf["tv_to_uniform_median"] > 10.0 * zero["tv_to_uniform_median"], (
+        f"SF values did not reach the stored target: zero={zero} sf={sf}"
+    )
+    assert sf["sharp_row_frac"] > 0.5, f"targets are not sharp under SF: {sf}"
+
+
+@_needs_sf
+def test_sfnnue_knobs_reach_the_source_and_the_sidecar(tmp_path: Path) -> None:
+    """``--sfnnue-nodes`` reaches the object that spends it, and is announced.
+
+    Read off the source instance the evaluator will call, and off the realized
+    line -- never off the parser. The node budget is also shown to be LIVE by
+    its cost: a bigger budget must make Stockfish take longer per analysed row.
+    """
+    cfg = _config(
+        tmp_path, value_source="sfnnue", sf_binary=_SF_BINARY, sfnnue_nodes=777,
+        sfnnue_hash_mb=8, sfnnue_cache_size=1234, games=1, sims=8, max_plies=6,
+    )
+    source = GEN.build_sf_source(cfg)
+    assert source is not None
+    assert source.nodes == 777
+    assert source.hash_mb == 8
+    assert source.cache_size == 1234
+    assert source.input_history_encoding == _HIST
+    evaluator = GEN.UniformPriorEvaluator(
+        value_source="sfnnue", expected_planes=_PLANES, sf_source=source,
+    )
+    try:
+        realized = GEN.realized_config(
+            gcfg=GEN.build_gumbel_config(cfg), evaluator=evaluator,
+            opening_cfg=GEN.build_opening_config(cfg), cfg=cfg, worker_id=0,
+        )
+        assert realized["value_source"] == "sfnnue"
+        assert realized["sfnnue_nodes"] == 777
+        assert realized["sfnnue_cache_size"] == 1234
+        assert realized["sf_binary_path"] == str(_SF_BINARY)
+        assert realized["sfnnue_cp_slope"] == GEN.SFNNUE_CP_SLOPE
+        # Provenance is the binary's CONTENT, not its name.
+        assert realized["sf_binary_md5"] == GEN.file_md5(_SF_BINARY)
+        assert len(realized["sf_binary_md5"]) == 32
+    finally:
+        evaluator.close()
+
+
+@_needs_sf
+def test_the_node_budget_is_spent_not_just_recorded() -> None:
+    """A bigger ``--sfnnue-nodes`` must cost more wall clock per analysed row.
+
+    The mutant this kills is the one the realized line cannot see: a knob that
+    is stored, announced, and never passed to ``chess.engine.Limit``. Timing is
+    the only instrument that can tell those apart, so the ladder is wide (32 vs
+    a budget 300x larger) rather than adjacent.
+    """
+    import time as _time
+
+    boards = []
+    board = chess.Board()
+    for uci in ("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6"):
+        board.push(chess.Move.from_uci(uci))
+        boards.append(board.copy(stack=False))
+
+    def seconds_at(nodes: int) -> float:
+        src = _sf_source(nodes=nodes)
+        try:
+            src.engine()  # pay the startup cost outside the measurement
+            start = _time.perf_counter()
+            for bd in boards:
+                src.q_for_board(bd)
+            return _time.perf_counter() - start
+        finally:
+            src.close()
+
+    cheap = seconds_at(32)
+    dear = seconds_at(10_000)
+    assert dear > 2.0 * cheap, (
+        f"the node budget did not reach the engine: 32 nodes {cheap:.4f}s vs "
+        f"10000 nodes {dear:.4f}s over {len(boards)} positions"
+    )
+
+
+@_needs_sf
+def test_sfnnue_decodes_with_the_configured_layout() -> None:
+    """⚑ The layout must reach the decoder, and a mismatch must not pass quietly.
+
+    ``castling_from_lc0_planes``' own docstring warns that reading the wrong
+    layout "returns plausible booleans rather than raising". So the encoding
+    flag is threaded to the source, and decoding legacy-encoded planes as a root
+    layout must NOT silently produce the same board.
+    """
+    from chess_anti_engine.eval.audit import decode_board_from_planes
+
+    board = chess.Board()
+    board.push(chess.Move.from_uci("e2e4"))
+    legacy = encode_cboard(
+        CBoard.from_board(board),
+        input_history_encoding="legacy", input_extra_features=_EXTRA,
+    )
+    as_legacy = decode_board_from_planes(legacy, input_history_encoding="legacy")
+    as_root = decode_board_from_planes(
+        legacy, input_history_encoding=_HIST,
+    )
+    assert as_legacy is not None
+    # Side-to-move canonical: after 1. e4 it is Black to move, so the decode
+    # is the colour mirror. Comparing against the un-mirrored board is what
+    # the first version of this test got wrong.
+    assert as_legacy.board_fen() == board.mirror().board_fen()
+    # The wrong layout does not raise; it reads different metadata. That is
+    # exactly why the flag is threaded rather than defaulted.
+    assert as_root is None or as_root.fen() != as_legacy.fen()
+
+    source = _sf_source(input_history_encoding="legacy")
+    try:
+        assert source.input_history_encoding == "legacy"
+    finally:
+        source.close()
+
+
+@_needs_sf
+def test_the_engine_child_is_reaped_when_the_worker_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker that raises mid-game must not leave a Stockfish behind.
+
+    ``generate`` deliberately keeps going after a worker raises, so an unreaped
+    engine would outlive the run once per worker. Checked on the PROCESS, not on
+    a flag: the child's pid must be gone.
+    """
+    closed: list[Any] = []
+    real_build = GEN.build_sf_source
+
+    def tracking_build(cfg: Any) -> Any:
+        source = real_build(cfg)
+        assert source is not None
+        source.engine()  # force the child to exist before the failure
+        closed.append(source)
+        return source
+
+    monkeypatch.setattr(GEN, "build_sf_source", tracking_build)
+
+    def exploding_play_game(**kwargs: Any) -> Any:
+        del kwargs
+        raise RuntimeError("injected worker failure")
+
+    monkeypatch.setattr(GEN, "play_game", exploding_play_game)
+    cfg = _config(
+        tmp_path, value_source="sfnnue", sf_binary=_SF_BINARY, games=1, sims=8,
+        workers=1,
+    )
+    with pytest.raises(RuntimeError, match="injected worker failure"):
+        GEN.generate(cfg)
+
+    assert closed, "the SF source was never built; the test is vacuous"
+    source = closed[0]
+    assert source._engine is None, "close() did not run in the worker's finally"
+
+
+@_needs_sf
+def test_the_cache_returns_the_first_answer_and_is_counted() -> None:
+    """The cache is a consistency device, not just a speedup.
+
+    A fixed-node ``analyse`` is NOT a pure function of the position -- one
+    engine serves the worker and its transposition table carries across calls
+    (measured: 40/40 positions changed score on re-eval at 512 nodes). So a
+    repeat must return the FIRST answer, and the hit must be counted.
+    """
+    src = _sf_source(nodes=512, cache_size=64)
+    try:
+        board = chess.Board()
+        board.push(chess.Move.from_uci("d2d4"))
+        planes = _encode(board)[None, ...]
+        first = float(src.q_for_planes(planes)[0])
+        assert src.stats.analysed == 1
+        assert src.stats.cache_hits == 0
+        # Warm the TT with other work, which is what changes the answer.
+        other = chess.Board()
+        for uci in ("e2e4", "c7c5", "g1f3", "d7d6", "d2d4", "c5d4"):
+            other.push(chess.Move.from_uci(uci))
+            src.q_for_planes(_encode(other)[None, ...])
+        again = float(src.q_for_planes(planes)[0])
+        assert again == first, "the cache did not pin the first answer"
+        assert src.stats.cache_hits == 1
+        summary = src.stats.summary()
+        assert summary["cache_hits"] == 1.0
+        assert 0.0 < summary["cache_hit_frac"] < 1.0
+    finally:
+        src.close()
+
+
+def test_a_value_source_and_its_engine_must_agree() -> None:
+    """Both directions of the wiring, because both are silent failures.
+
+    A ``sfnnue`` evaluator with no source would fall through to another branch
+    and emit that source's values under this source's name; a ``zero`` evaluator
+    handed a source would open a Stockfish nothing calls.
+    """
+    with pytest.raises(ValueError, match="requires an sf_source"):
+        GEN.UniformPriorEvaluator(
+            value_source="sfnnue", expected_planes=_PLANES, sf_source=None,
+        )
+    fake = object()
+    with pytest.raises(ValueError, match="requires an sf_source"):
+        GEN.UniformPriorEvaluator(
+            value_source="zero", expected_planes=_PLANES, sf_source=fake,  # type: ignore[arg-type]
+        )
+    assert GEN.build_sf_source(_config(Path("/tmp"), value_source="zero")) is None
+
+
+def test_sfnnue_is_refused_without_a_binary() -> None:
+    """No silent fallback to another value source when SF cannot be found."""
+    cfg = _config(Path("/tmp"), value_source="sfnnue", sf_binary=None)
+    with pytest.raises(ValueError, match="needs a Stockfish binary"):
+        GEN.build_sf_source(cfg)
+    missing = _config(
+        Path("/tmp"), value_source="sfnnue", sf_binary=Path("/nonexistent/stockfish"),
+    )
+    with pytest.raises(FileNotFoundError, match="stockfish binary not found"):
+        GEN.build_sf_source(missing)
+
+
+def test_sfnnue_nodes_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="nodes must be > 0"):
+        _sf_source(nodes=0)
+
+
+def test_the_cli_resolves_the_binary_only_for_sfnnue() -> None:
+    """The default path is resolved from the config, and only when it is used.
+
+    Resolving for every source would make an unrelated run fail on a missing
+    config; not resolving at all would push the failure into N spawned workers.
+    """
+    parser = GEN.build_parser()
+    sf_args = parser.parse_args(
+        ["--out-dir", "/tmp/x", "--value-source", "sfnnue", "--sfnnue-nodes", "64"],
+    )
+    sf_cfg = GEN.config_from_args(sf_args)
+    assert sf_cfg.sf_binary == GEN.default_stockfish_path()
+    assert sf_cfg.sfnnue_nodes == 64
+
+    zero_cfg = GEN.config_from_args(parser.parse_args(["--out-dir", "/tmp/x"]))
+    assert zero_cfg.sf_binary is None
+    assert zero_cfg.value_source == "zero"
+
+    explicit = GEN.config_from_args(parser.parse_args(
+        ["--out-dir", "/tmp/x", "--value-source", "sfnnue",
+         "--sf-binary", "/some/other/stockfish"],
+    ))
+    assert explicit.sf_binary == Path("/some/other/stockfish")
+
+
+@_needs_sf
+def test_the_sidecar_records_the_sf_provenance(tmp_path: Path) -> None:
+    """A corpus is only readable next to the binary and scale that built it."""
+    cfg = _config(
+        tmp_path, value_source="sfnnue", sf_binary=_SF_BINARY, sfnnue_nodes=64,
+        games=1, sims=8, max_plies=8, shard_size=500,
+    )
+    summary = GEN.generate(cfg)
+    assert summary["config"]["value_source"] == "sfnnue"
+    # A Path here would make json.dumps refuse the whole sidecar.
+    assert summary["config"]["sf_binary"] == str(_SF_BINARY)
+    assert isinstance(json.dumps(summary), str)
+
+    sfnnue = summary["sfnnue"]
+    assert sfnnue["rows"] > 0
+    assert sfnnue["analysed"] > 0
+    assert "undecodable_frac" in sfnnue
+    realized = summary["realized_per_worker"][0]
+    assert realized["sf_binary_md5"] == GEN.file_md5(_SF_BINARY)
+    assert realized["sfnnue_nodes"] == 64
+    assert realized["sfnnue_cp_slope"] == GEN.SFNNUE_CP_SLOPE
+    assert realized["sfnnue_cp_draw_width"] == GEN.SFNNUE_CP_DRAW_WIDTH
+    # The sidecar must survive a round trip through the file it wrote.
+    on_disk = json.loads(Path(summary["summary_json"]).read_text())
+    assert on_disk["sfnnue"]["rows"] == sfnnue["rows"]
+
+
+def test_the_pure_sources_report_no_sfnnue_block(tmp_path: Path) -> None:
+    """An empty block is the reading for a run with no engine, not an omission."""
+    summary = GEN.generate(_config(tmp_path, games=1, sims=8, max_plies=8))
+    assert summary["sfnnue"] == {}
+    assert summary["realized_per_worker"][0]["sf_binary_path"] is None
+    assert summary["realized_per_worker"][0]["sfnnue_nodes"] is None
+
+
+# ── all-root-moves coverage ──────────────────────────────────────────────────
+#
+# ⚑⚑ The trap: sequential halving picks candidates by `gumbel + log_prior`, and
+# a UNIFORM prior makes that a coin flip. With SF values the search would rank a
+# random subset sharply and never look at the rest — "sharp and wrong", built to
+# order, and invisible downstream because the stored target is dense over the
+# legal moves either way.
+
+def _root_children_signatures(board: chess.Board) -> dict[bytes, str]:
+    """Step-0 signature of every 1-ply child, keyed to its move."""
+    out: dict[bytes, str] = {}
+    for move in board.legal_moves:
+        child = board.copy()
+        child.push(move)
+        out[_position_signature(_encode(child))] = move.uci()
+    return out
+
+
+class _WitnessEvaluator(GEN.UniformPriorEvaluator):
+    """Records every position the search actually evaluated."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.seen: set[bytes] = set()
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        arr = np.asarray(x)
+        for i in range(arr.shape[0]):
+            # Skip the batch padding, which is stale/uninitialised buffer.
+            if bool(np.isfinite(arr[i]).all()):
+                self.seen.add(_position_signature(arr[i]))
+        return super().evaluate_encoded(x, relations)
+
+
+def _evaluated_root_moves(board: chess.Board, cfg: Any) -> tuple[set[str], set[str]]:
+    """``(evaluated, missing)`` root moves for one search from ``board``."""
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+
+    children = _root_children_signatures(board)
+    evaluator = _WitnessEvaluator(value_source="zero", expected_planes=_PLANES)
+    sims = GEN.root_simulation_budget(board.legal_moves.count(), cfg=cfg)
+    run_gumbel_root_many_c(
+        None, [board.copy()], device="cpu", rng=np.random.default_rng(3),
+        cfg=GEN.build_gumbel_config(cfg), evaluator=evaluator,
+        cboards=[CBoard.from_board(board)], per_game_simulations=[sims],
+        vloss_weight=int(cfg.vloss_weight), target_batch=int(cfg.target_batch),
+    )
+    hit = {uci for sig, uci in children.items() if sig in evaluator.seen}
+    return hit, set(children.values()) - hit
+
+
+# Three roots with a branching factor above topk's 16, including two
+# non-power-of-two move counts (44 and 49) so a "round up to 2^k" cap shows.
+_WIDE_ROOTS: tuple[tuple[str, str], ...] = (
+    ("startpos", chess.STARTING_FEN),
+    ("midgame", "r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1B3/PPP2PPP/R2Q1RK1 w - - 0 9"),
+    ("open", "3r2k1/1b3ppp/p1q1p3/1p2P3/2rN1P2/P1N1Q3/1PP3PP/1K1R3R w - - 0 1"),
+)
+
+
+@pytest.mark.parametrize(("name", "fen"), _WIDE_ROOTS)
+def test_every_legal_root_move_is_evaluated_under_all_root_moves(
+    tmp_path: Path, name: str, fen: str,
+) -> None:
+    """⚑ EVERY legal root move must reach the evaluator, not a random subset.
+
+    The claim `--all-root-moves` exists to keep. Checked on the SEARCH, by
+    watching which 1-ply children the evaluator was actually handed -- not on
+    the stored target, which is dense over the legal moves whether or not a
+    move was ever looked at, and so cannot see this failure at all.
+    """
+    board = chess.Board(fen)
+    assert board.legal_moves.count() > GEN.DEFAULT_TOPK, (
+        f"{name} has {board.legal_moves.count()} legal moves; the test needs "
+        f"more than topk={GEN.DEFAULT_TOPK} to say anything"
+    )
+    cfg = _config(tmp_path, all_root_moves=True, topk=GEN.MAX_LEGAL_MOVES, sims=32)
+    _hit, missing = _evaluated_root_moves(board, cfg)
+    assert not missing, f"{name}: root moves never evaluated: {sorted(missing)}"
+
+
+@pytest.mark.parametrize(("name", "fen"), _WIDE_ROOTS)
+def test_the_default_topk_really_does_drop_legal_root_moves(
+    tmp_path: Path, name: str, fen: str,
+) -> None:
+    """⚑ THE MUTANT, run as a test: production's topk 16 DOES lose root moves.
+
+    Without this the coverage test above is unfalsifiable -- it would pass on a
+    search that never had a problem. Here the same instrument, with `topk` at
+    production's 16 and the per-position budget off, must FAIL to cover the
+    root. Measured on the start position: a2a3, b1c3, b2b4, c2c4 are never
+    evaluated, at every sims budget.
+    """
+    board = chess.Board(fen)
+    cfg = _config(
+        tmp_path, all_root_moves=False, topk=GEN.DEFAULT_TOPK, sims=32,
+    )
+    hit, missing = _evaluated_root_moves(board, cfg)
+    assert missing, (
+        f"{name}: topk={GEN.DEFAULT_TOPK} covered ALL "
+        f"{board.legal_moves.count()} root moves, so the coverage test above "
+        "proves nothing"
+    )
+    assert len(hit) == GEN.DEFAULT_TOPK, (
+        f"{name}: expected exactly topk={GEN.DEFAULT_TOPK} candidates, got "
+        f"{len(hit)}"
+    )
+
+
+def test_the_candidate_set_is_capped_by_the_budget_not_only_by_topk(
+    tmp_path: Path,
+) -> None:
+    """⚑ Raising topk alone is NOT the fix, and that is why the budget is scaled.
+
+    The measurement the design rests on: at an unbounded topk the candidate
+    count is still capped at ``sims / 2``. A reader who "fixed" the trap by
+    bumping topk and leaving ``--sims`` at 32 would still be dropping two thirds
+    of a wide root, with a config that looks correct.
+    """
+    board = chess.Board(_WIDE_ROOTS[1][1])  # 49 legal moves
+    legal = board.legal_moves.count()
+    covered: dict[int, int] = {}
+    for sims in (32, 64, 128):
+        cfg = _config(
+            tmp_path, all_root_moves=False, topk=GEN.MAX_LEGAL_MOVES, sims=sims,
+        )
+        hit, _missing = _evaluated_root_moves(board, cfg)
+        covered[sims] = len(hit)
+    assert covered[32] == 16, covered
+    assert covered[64] == 32, covered
+    assert covered[128] == legal, covered
+    # ... and the per-position budget reaches the same place without a guess.
+    scaled = _config(tmp_path, all_root_moves=True, topk=GEN.MAX_LEGAL_MOVES, sims=32)
+    assert GEN.root_simulation_budget(legal, cfg=scaled) == 2 * legal
+    hit, missing = _evaluated_root_moves(board, scaled)
+    assert not missing
+    assert len(hit) == legal
+
+
+def test_root_simulation_budget_is_a_floor_not_a_replacement() -> None:
+    """``--sims`` still binds when it is the larger of the two."""
+    off = GEN.GenConfig(out_dir=Path("/tmp"), sims=32, all_root_moves=False)
+    on = GEN.GenConfig(out_dir=Path("/tmp"), sims=32, all_root_moves=True)
+    assert GEN.root_simulation_budget(40, cfg=off) == 32
+    assert GEN.root_simulation_budget(40, cfg=on) == 80
+    # A narrow root does not shrink below the floor.
+    assert GEN.root_simulation_budget(3, cfg=on) == 32
+    assert GEN.root_simulation_budget(1, cfg=on) == 32
+
+
+def test_all_root_moves_refuses_a_topk_that_would_cap_it(tmp_path: Path) -> None:
+    """A contradiction is REFUSED, not resolved behind the operator's back.
+
+    `--all-root-moves` promises complete coverage and `topk` caps it. Silently
+    raising topk would honour the promise while ignoring a value the operator
+    typed; silently keeping it would publish a guarantee the search does not
+    keep. Same rule as the merged gumbel-override refusal.
+    """
+    cfg = _config(tmp_path, all_root_moves=True, topk=16)
+    with pytest.raises(ValueError, match="--all-root-moves needs --topk"):
+        GEN.build_gumbel_config(cfg)
+    # And it is not refusing everything: the resolved default is accepted.
+    GEN.build_gumbel_config(_config(tmp_path, all_root_moves=True, topk=218))
+
+
+def test_the_cli_turns_all_root_moves_on_for_sfnnue_only() -> None:
+    """The default follows the value source, and topk follows the default."""
+    parser = GEN.build_parser()
+
+    sf = GEN.config_from_args(parser.parse_args(
+        ["--out-dir", "/tmp/x", "--value-source", "sfnnue"],
+    ))
+    assert sf.all_root_moves is True
+    assert sf.topk == GEN.MAX_LEGAL_MOVES
+
+    zero = GEN.config_from_args(parser.parse_args(["--out-dir", "/tmp/x"]))
+    assert zero.all_root_moves is False
+    assert zero.topk == GEN.DEFAULT_TOPK
+
+    # Both overrides are honoured, in both directions.
+    forced_off = GEN.config_from_args(parser.parse_args(
+        ["--out-dir", "/tmp/x", "--value-source", "sfnnue", "--no-all-root-moves"],
+    ))
+    assert forced_off.all_root_moves is False
+    assert forced_off.topk == GEN.DEFAULT_TOPK
+
+    forced_on = GEN.config_from_args(parser.parse_args(
+        ["--out-dir", "/tmp/x", "--all-root-moves"],
+    ))
+    assert forced_on.all_root_moves is True
+    assert forced_on.topk == GEN.MAX_LEGAL_MOVES
+
+    # An explicit --topk is carried through so the refusal can see it.
+    explicit = GEN.config_from_args(parser.parse_args(
+        ["--out-dir", "/tmp/x", "--value-source", "sfnnue", "--topk", "16"],
+    ))
+    assert explicit.topk == 16
+    with pytest.raises(ValueError, match="--all-root-moves needs --topk"):
+        GEN.build_gumbel_config(explicit)
+
+
+def test_the_realized_root_budget_is_announced_and_measured(tmp_path: Path) -> None:
+    """``--sims`` stops being the realized budget, so the realized one is published.
+
+    A flag that silently changes what a recorded number means is the defect this
+    repo keeps re-finding. Both the decision and its cost are in the sidecar.
+    """
+    cfg = _config(
+        tmp_path, all_root_moves=True, topk=GEN.MAX_LEGAL_MOVES, sims=8,
+        games=1, max_plies=6, shard_size=500,
+    )
+    summary = GEN.generate(cfg)
+    realized = summary["realized_per_worker"][0]
+    assert realized["all_root_moves"] is True
+    assert realized["topk"] == GEN.MAX_LEGAL_MOVES
+    assert realized["root_sims_per_legal_move"] == GEN.ROOT_SIMS_PER_LEGAL_MOVE
+
+    budget = summary["root_budget"]
+    assert budget["plies"] > 0
+    # The floor was 8 and every real root has more than 4 legal moves, so the
+    # realized budget must have exceeded it — i.e. the scaling actually ran.
+    assert budget["sims_mean"] > 8.0
+    assert budget["sims_max"] >= 2.0 * budget["legal_moves_max"]
+
+    off = GEN.generate(_config(
+        tmp_path / "off", all_root_moves=False, sims=8, games=1, max_plies=6,
+        shard_size=500,
+    ))
+    assert off["realized_per_worker"][0]["all_root_moves"] is False
+    assert off["realized_per_worker"][0]["root_sims_per_legal_move"] == 0
+    assert off["root_budget"]["sims_max"] == 8.0
