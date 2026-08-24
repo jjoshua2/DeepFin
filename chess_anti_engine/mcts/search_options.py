@@ -297,22 +297,24 @@ def branch_note(
     if raw >= 90.0:
         return (
             "every value in [90, 99] is the same search: >= 90 is the LINEAR "
-            "root sentinel -- the root exponent resolves to 1.0 "
-            "(_mcts_tree.c:3947, which reads the literal 1.0 gumbel_c now "
-            "passes for the deleted q_visit_exp). Setting it below 90 gives "
-            "the root its own exponent and DOES change the search"
+            "root sentinel -- the root exponent resolves to 1.0 (_mcts_tree.c "
+            "`q_visit_exp_root = (q_visit_exp_root < 90.0) ? q_visit_exp_root "
+            ": q_visit_exp`, which reads the literal 1.0 gumbel_c now passes "
+            "for the deleted q_visit_exp). Setting it below 90 gives the root "
+            "its own exponent and DOES change the search"
         )
     if raw < 0.0:
         return (
             "every value < 0 is the same search: the LOG root transform is "
-            "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) "
-            "(_mcts_tree.c:1498), which does not contain the exponent at all — "
-            "only its SIGN chose the branch. Crossing to >= 0 selects the power "
-            "branch and CAN change the search"
+            "q_scale = CScaleRoot*log1p(CVisitRoot+max_visit) (_mcts_tree.c "
+            "`gss_score_and_halve`, the q_visit_exp_root < 0 arm), which does "
+            "not contain the exponent at all — only its SIGN chose the branch. "
+            "Crossing to >= 0 selects the power branch and CAN change the search"
         )
     return (
         "the power branch: the exponent enters as max_visit**exp ADDED to "
-        "CVisitRoot (_mcts_tree.c:1500-1504), so at CVisitRoot >> max_visit**exp "
+        "CVisitRoot (_mcts_tree.c `gss_score_and_halve`, the else arm: "
+        "`c_scale_root * (cvr + mv_term)`), so at CVisitRoot >> max_visit**exp "
         "it moves q_scale very little. Crossing to < 0 selects the log branch "
         "and CAN change the search"
     )

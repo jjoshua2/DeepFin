@@ -288,14 +288,18 @@ class GumbelConfig:
     # Sequential-halving divisor: each round keeps ceil(n_cands/halving_div).
     # 2 = standard halving (keep top half; default). 3/4 = more aggressive
     # elimination (fewer rounds, visits concentrate on survivors sooner).
-    # C path only (run_gumbel_root_many_c).
+    # BOTH paths read it: the C at construction (`start_gumbel_sims`), the
+    # Python reference search through the shared `halving_keep_count` /
+    # `halving_rounds_left` below -- see their note, the Python path having its
+    # own hardcoded div-2 copy was a real defect.
     halving_div: int = 2
     # Root-halving c_visit override (value-transform floor at the root sequential-
     # halving site only; descent keeps c_visit). Root and descent want different
     # floors: a large root floor (~670) makes one c_scale fit every sim count's
     # root q_scale, while a small descent floor (c_visit~50) keeps deep subtrees
     # from over-trusting Q. >= 0 sets the root floor; < 0 (default) = use c_visit
-    # at both sites (legacy). C path only (run_gumbel_root_many_c).
+    # at both sites (legacy). BOTH paths read it: the C at construction
+    # (`start_gumbel_sims`), the Python reference search in `_root_sigma_scale`.
     c_visit_root: float = -1.0
     # Root-halving-ONLY value-transform overrides (root and descent want
     # DIFFERENT transforms: the high-sim plateau is a root over-trust problem,
@@ -306,7 +310,9 @@ class GumbelConfig:
     # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> exponent
     # 1.0, i.e. a LINEAR root (what selfplay runs). That sentinel used to read
     # the deleted `q_visit_exp`, whose default was 1.0, so pinning it to the
-    # literal is the same search. C path only (run_gumbel_root_many_c).
+    # literal is the same search. BOTH paths read these: the C resolves the
+    # sentinels at construction (`start_gumbel_sims`), the Python reference
+    # search resolves them per call in `_root_sigma_scale`.
     c_scale_root: float = -1.0
     q_visit_exp_root: float = 99.0
     full_tree: bool = True
