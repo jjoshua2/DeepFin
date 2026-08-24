@@ -131,8 +131,9 @@ def test_a_non_finite_knob_is_refused(field: str, value: float) -> None:
     """Not hygiene: every sentinel in ``gumbel.py`` is a COMPARISON.
 
     ``nan`` is neither ``< 90`` nor ``>= 90``, so ``q_visit_exp_root=nan``
-    silently reverts the root transform to ``q_visit_exp`` -- the fallback arm,
-    taken without a word, under a record naming the operator's value.
+    silently reverts the root transform to the LINEAR exponent 1.0 -- the
+    fallback arm, taken without a word, under a record naming the operator's
+    value.
     """
     cfg = dataclasses.replace(GumbelConfig(), **{field: value})
     with pytest.raises(ValueError, match=field):
@@ -553,8 +554,7 @@ def test_eval_puzzles_gumbel_flags_are_refused() -> None:
     def _args(**kw) -> argparse.Namespace:
         base = {
             "gumbel_topk": 32, "gumbel_c_scale": 0.025, "gumbel_c_visit": 50.0,
-            "gumbel_qexp": 1.0, "gumbel_global_scale": False,
-            "gumbel_qfloor": -1.0, "gumbel_halving_div": 2,
+            "gumbel_halving_div": 2,
             "gumbel_cvisit_root": 900.0, "gumbel_cscale_root": 7.0,
             "gumbel_qexp_root": -1.0,
         }

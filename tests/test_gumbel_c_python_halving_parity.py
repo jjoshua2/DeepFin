@@ -231,7 +231,10 @@ def _run_one_halving_round(
         float(cfg.c_scale), float(cfg.c_visit), float(cfg.c_puct),
         float(cfg.fpu_reduction), bool(cfg.full_tree), enc,
         0, 1, c_input_history_mode(cfg.input_history_encoding),
-        None, float(cfg.q_visit_exp), 0, float(cfg.q_visit_floor),
+      # The three deleted descent q-knobs, at the values `gumbel_c` now passes
+      # as literals (q_visit_exp 1.0 / q_global_scale 0 / q_visit_floor -1.0).
+      # This harness calls the C entry point directly, so it must mirror them.
+        None, 1.0, 0, -1.0,
         int(cfg.halving_div), float(cfg.c_visit_root), float(cfg.c_scale_root),
         float(cfg.q_visit_exp_root), 0,
     )

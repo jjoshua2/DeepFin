@@ -180,6 +180,30 @@ def reset_duplicate_stats() -> None:
     global _dup_rows, _dup_dupes, _dup_calls, _dup_seen, _dup_pad
     _dup_rows = _dup_dupes = _dup_calls = _dup_seen = _dup_pad = 0
 
+
+# The former GumbelConfig.q_visit_exp / q_global_scale / q_visit_floor defaults.
+#
+# Those three DESCENT value-transform knobs were deleted (never promoted, absent
+# from every config and from PLAY_SEARCH_DEFAULTS). The .c was deliberately NOT
+# touched -- editing it would make the next `build_production_extensions.py` a
+# silent deploy -- so `start_gumbel_sims` still takes all three as optional
+# positional arguments, and the arguments AFTER them (halving_div, c_visit_root,
+# c_scale_root, q_visit_exp_root, vloss_mode) are live. They therefore have to be
+# passed positionally, and these are the values that make the C search identical
+# to the pre-deletion default search:
+#
+#   q_visit_exp   1.0   linear max_visit term  (`_mcts_tree.c` mv_term arm)
+#   q_global_scale  0   descent scales by the LOCAL node's max_visit
+#   q_visit_floor -1.0  legacy coupled floor c_scale*(c_visit + mv_term)
+#
+# They are also exactly the C's OWN declared defaults for those parameters
+# (`_mcts_tree.c` MCTSTree_start_gumbel_sims), so the two sides cannot drift
+# apart silently: if the C defaults ever move, the literals here still pin the
+# search this repo measured.
+_DELETED_Q_VISIT_EXP = 1.0
+_DELETED_Q_GLOBAL_SCALE = 0
+_DELETED_Q_VISIT_FLOOR = -1.0
+
 # Minimum compiled-extension ABI the C search path requires. ABI 2 added the
 # start_gumbel_sims c_scale_root/q_visit_exp_root args; calling an older compiled
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
@@ -1129,9 +1153,16 @@ def run_gumbel_root_many_c(
                 cast(_EncodeBuffer, _enc_bufs[g]),
                 int(vloss_weight), int(target_batch),
                 c_input_history_mode(cfg.input_history_encoding),
-                None, float(cfg.q_visit_exp),
-                1 if cfg.q_global_scale else 0,
-                float(cfg.q_visit_floor),
+                None,
+              # The three deleted descent q-knobs, pinned at the exact values
+              # their GumbelConfig defaults carried (q_visit_exp 1.0 = linear,
+              # q_global_scale 0 = local max_visit, q_visit_floor -1.0 = the
+              # legacy coupled floor). The C still accepts them as optional
+              # positional args, and the args AFTER them are live, so they must
+              # be passed rather than omitted. See GumbelConfig's deletion note.
+                _DELETED_Q_VISIT_EXP,
+                _DELETED_Q_GLOBAL_SCALE,
+                _DELETED_Q_VISIT_FLOOR,
                 int(cfg.halving_div),
                 float(cfg.c_visit_root),
                 float(cfg.c_scale_root),
@@ -1413,9 +1444,11 @@ def run_gumbel_root_many_c(
             cast(np.ndarray, _enc_buf), int(vloss_weight), int(target_batch),
             c_input_history_mode(cfg.input_history_encoding),
             _rel_buf,
-            float(cfg.q_visit_exp),
-            1 if cfg.q_global_scale else 0,
-            float(cfg.q_visit_floor),
+          # See the group call site above: the deleted descent q-knobs, pinned
+          # at their former defaults so the C search is bit-identical.
+            _DELETED_Q_VISIT_EXP,
+            _DELETED_Q_GLOBAL_SCALE,
+            _DELETED_Q_VISIT_FLOOR,
             int(cfg.halving_div),
             float(cfg.c_visit_root),
             float(cfg.c_scale_root),

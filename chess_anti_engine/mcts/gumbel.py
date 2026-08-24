@@ -216,24 +216,20 @@ class GumbelConfig:
     cpuct_factor: float = 0.0
     cpuct_base: float = 38739.0
     fpu_reduction: float = 1.2
-    # Exponent on max_visit in the value-transform scale q_scale =
-    # c_scale*(c_visit + max_visit**q_visit_exp). 1.0 = standard linear Gumbel
-    # (default). <1 makes search-Q trust grow sublinearly with depth so the
-    # optimal c_scale is less sim-count-dependent (linear over-trusts at high sims).
-    q_visit_exp: float = 1.0
-    # When True, the per-node descent value-transform scales by the ROOT's max
-    # child-visit (global/search-size) instead of the local node's max_visit, so
-    # q_scale is uniform across the tree. Pairs with q_visit_exp<1 to make the
-    # optimal c_scale sim-invariant (avoids the low-visit-node floor inflation).
-    # C path only (run_gumbel_root_many_c); default False = legacy local behavior.
-    q_global_scale: bool = False
-    # Decoupled (additive) value-transform floor. When >= 0:
-    #   q_scale = q_visit_floor + c_scale * max_visit**q_visit_exp
-    # instead of the legacy   c_scale * (c_visit + max_visit**q_visit_exp),
-    # whose floor (c_scale*c_visit) scales WITH c_scale. Decoupling lets us raise
-    # c_scale (to enable sublinear q_visit_exp) without inflating the early-round
-    # floor that over-trusts noisy Q at high sims. C path only; < 0 = legacy.
-    q_visit_floor: float = -1.0
+    # ⚑ The three DESCENT value-transform knobs that used to sit here --
+    # `q_visit_exp` (exponent on max_visit), `q_global_scale` (scale the descent
+    # by the ROOT's max child-visit) and `q_visit_floor` (additive decoupled
+    # floor) -- were DELETED, never promoted. They were sweep leftovers from the
+    # root/descent split work: no config in this repo ever set one, they are
+    # absent from PLAY_SEARCH_DEFAULTS, and the axis that DID pay off is the
+    # separate ROOT family (`c_scale_root` / `q_visit_exp_root` / `c_visit_root`)
+    # below, which production PLAY runs as the log root.
+    #
+    # The C still accepts all three as optional `start_gumbel_sims` arguments, so
+    # `gumbel_c` passes their former defaults (1.0 / 0 / -1.0) as literals -- see
+    # the call sites there. That keeps the search bit-identical while removing the
+    # knob: deleting a knob pinned at its default is behaviour-identical by
+    # construction, and `tests/test_descent_qknob_deletion_parity.py` measures it.
     # ── sigma does two jobs with one number; this splits them ──────────────
     # The improved policy softmax(log_prior + sigma*Qbar) is used for TWO
     # different purposes that want DIFFERENT sigmas:
@@ -304,11 +300,13 @@ class GumbelConfig:
     # Root-halving-ONLY value-transform overrides (root and descent want
     # DIFFERENT transforms: the high-sim plateau is a root over-trust problem,
     # but the good mid-sim regret needs a tiny LINEAR descent q_scale). The root
-    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale /
-    # q_visit_exp. Set q_visit_exp_root<0 for a LOG root (slow-growth, sim-
-    # invariant 256->millions) while leaving q_visit_exp=1 for a linear descent.
-    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> use
-    # q_visit_exp (legacy bit-identical). C path only (run_gumbel_root_many_c).
+    # reads c_scale_root / q_visit_exp_root; the descent keeps c_scale and is
+    # always LINEAR in max_visit. Set q_visit_exp_root<0 for a LOG root
+    # (slow-growth, sim-invariant 256->millions) while the descent stays linear.
+    # Sentinels: c_scale_root<0 -> use c_scale; q_visit_exp_root>=90 -> exponent
+    # 1.0, i.e. a LINEAR root (what selfplay runs). That sentinel used to read
+    # the deleted `q_visit_exp`, whose default was 1.0, so pinning it to the
+    # literal is the same search. C path only (run_gumbel_root_many_c).
     c_scale_root: float = -1.0
     q_visit_exp_root: float = 99.0
     full_tree: bool = True
@@ -431,7 +429,7 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
       COMPARISON, and every comparison against ``nan`` is False, so a non-finite
       knob does not fail loudly -- it takes the fallback arm. ``nan`` is neither
       ``< 90`` nor ``>= 90``, so ``q_visit_exp_root=nan`` silently reverts the
-      root to ``q_visit_exp``; ``c_scale_root=nan`` silently reverts to
+      root to the linear exponent 1.0; ``c_scale_root=nan`` silently reverts to
       ``c_scale``; ``policy_temp=inf`` reads as off.
     * **``policy_temp`` inside the band.** ⚑ 1.0 is INSIDE the band and valid --
       it is the identity, and ``policy_temp_active`` reports it as "off" for
@@ -448,11 +446,10 @@ def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
     opinion about knobs that already have one:
 
     * the sentinel RANGES (``c_scale_root < 0``, ``c_visit_root < 0``,
-      ``q_visit_exp_root >= 90``, ``q_visit_floor < 0``,
-      ``target_max_visit_cap <= 0``). Every value inside one of those is a
-      legitimate spelling of "off" rather than a request that got dropped, and
-      ``mcts.search_options.branch_note`` is the shipped answer for telling an
-      operator so.
+      ``q_visit_exp_root >= 90``, ``target_max_visit_cap <= 0``). Every value
+      inside one of those is a legitimate spelling of "off" rather than a
+      request that got dropped, and ``mcts.search_options.branch_note`` is the
+      shipped answer for telling an operator so.
     * ``INERT_GUMBEL_KNOBS`` and ``PY_ONLY_GUMBEL_KNOBS`` -- refused by the
       ``--*-gumbel`` parsers and by ``assert_c_path_can_run`` respectively. A
       knob with a guard does not need a second one.
@@ -712,22 +709,25 @@ def _root_sigma_scale(*, max_visit: int, cfg: GumbelConfig) -> float:
     root-log transform — two different search shapes for one PLAY config.
 
     Falls back to the descent knobs when the root-only ones are unset
-    (``c_visit_root``/``c_scale_root`` < 0, ``q_visit_exp_root`` >= 90),
-    matching the C construction-time resolution.
+    (``c_visit_root``/``c_scale_root`` < 0), matching the C construction-time
+    resolution.
+
+    ⚑ ``q_visit_exp_root >= 90`` resolves to the literal exponent ``1.0``. It
+    used to resolve to ``cfg.q_visit_exp``, one of the three deleted descent
+    knobs, whose default was exactly 1.0 -- so this is the same arithmetic with
+    the dead branch removed, not a behaviour change. The C keeps the same
+    resolution (``q_visit_exp_root < 90 ? q_visit_exp_root : q_visit_exp``)
+    because ``gumbel_c`` passes it the literal 1.0 for ``q_visit_exp``.
+    The deleted ``q_visit_floor`` branch (``floor + csr*mv_term`` when >= 0)
+    was likewise unreachable at its -1.0 default.
     """
     cvr = float(cfg.c_visit_root) if float(cfg.c_visit_root) >= 0.0 else float(cfg.c_visit)
     csr = float(cfg.c_scale_root) if float(cfg.c_scale_root) >= 0.0 else float(cfg.c_scale)
-    qer = (
-        float(cfg.q_visit_exp_root)
-        if float(cfg.q_visit_exp_root) < 90.0
-        else float(cfg.q_visit_exp)
-    )
+    qer = float(cfg.q_visit_exp_root) if float(cfg.q_visit_exp_root) < 90.0 else 1.0
     mv = float(max_visit)
     if qer < 0.0:
         return csr * math.log1p(cvr + mv)
     mv_term = mv if qer == 1.0 else mv**qer
-    if float(cfg.q_visit_floor) >= 0.0:
-        return float(cfg.q_visit_floor) + csr * mv_term
     return csr * (cvr + mv_term)
 
 

@@ -136,7 +136,6 @@ class SearchShape:
     c_visit: float
     c_visit_root: float
     c_scale_root: float
-    q_visit_exp: float
     q_visit_exp_root: float
     halving_div: int
     policy_temp: float
@@ -154,7 +153,10 @@ class SearchShape:
         """
         cvr = self.c_visit_root if self.c_visit_root >= 0.0 else self.c_visit
         csr = self.c_scale_root if self.c_scale_root >= 0.0 else self.c_scale
-        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else self.q_visit_exp
+      # >= 90 is the LINEAR-root sentinel: exponent 1.0. It used to resolve to
+      # the descent's `q_visit_exp`, a GumbelConfig field that has been deleted
+      # and whose default was 1.0 -- same arithmetic, one fewer knob.
+        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else 1.0
         if qer < 0.0:
             return csr * math.log1p(cvr + max_visit)
         mv_term = max_visit if qer == 1.0 else max_visit**qer
@@ -166,7 +168,7 @@ class SearchShape:
         return self.c_scale * (self.c_visit + max_visit)
 
     def root_transform_name(self) -> str:
-        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else self.q_visit_exp
+        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else 1.0
         if qer < 0.0:
             return "LOG"
         if qer == 1.0:
@@ -195,7 +197,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 (ops/live-20260725)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=-1.0, c_scale_root=-1.0,
-        q_visit_exp=1.0, q_visit_exp_root=99.0,
+        q_visit_exp_root=99.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="SNAPSHOT of the live yaml as of 2026-08-09: gumbel_c_scale "
@@ -208,7 +210,7 @@ SHAPES: dict[str, SearchShape] = {
         label="origin/main selfplay defaults",
         topk=16, c_scale=0.1, c_visit=50.0,
         c_visit_root=-1.0, c_scale_root=-1.0,
-        q_visit_exp=1.0, q_visit_exp_root=99.0,
+        q_visit_exp_root=99.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="origin/main configs/pbt2_small.yaml + GumbelConfig defaults",
@@ -217,7 +219,7 @@ SHAPES: dict[str, SearchShape] = {
         label="PLAY/UCI (PLAY_SEARCH_DEFAULTS)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=900.0, c_scale_root=7.0,
-        q_visit_exp=1.0, q_visit_exp_root=-1.0,
+        q_visit_exp_root=-1.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=3, target_batch=0,
         provenance="mcts.gumbel.PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT",
@@ -229,7 +231,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 + LOG root (isolation arm)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=900.0, c_scale_root=7.0,
-        q_visit_exp=1.0, q_visit_exp_root=-1.0,
+        q_visit_exp_root=-1.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="live selfplay with c_visit_root/c_scale_root/q_visit_exp_root "
@@ -247,7 +249,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 + sqrt(N) root (untested middle)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=0.0, c_scale_root=6.5,
-        q_visit_exp=1.0, q_visit_exp_root=0.5,
+        q_visit_exp_root=0.5,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="live selfplay, q_visit_exp_root=0.5 (sqrt-N), c_scale_root "
@@ -661,7 +663,6 @@ def build_probe_gumbel_config(
         c_visit=float(shape.c_visit),
         c_visit_root=float(shape.c_visit_root),
         c_scale_root=float(shape.c_scale_root),
-        q_visit_exp=float(shape.q_visit_exp),
         q_visit_exp_root=float(shape.q_visit_exp_root),
         halving_div=int(shape.halving_div),
         add_noise=bool(add_noise),

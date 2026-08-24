@@ -569,8 +569,9 @@ constructs its `GumbelConfig` with an explicit field list — `simulations`, `to
 volatility knobs. `c_visit_root`, `c_scale_root` and `q_visit_exp_root` are **never
 passed**, so they sit at their `GumbelConfig` sentinels (`gumbel.py:193` `-1.0`,
 `:202` `-1.0`, `:203` `99.0`), `gumbel.py:339-343` falls back to
-`c_visit`/`c_scale`/`q_visit_exp`, and the linear transform is selected at both
-sites. `SearchConfig` (`selfplay/config.py`) has no such fields at all — the only
+`c_visit`/`c_scale` and the linear exponent (`q_visit_exp` at the time of
+writing; a literal 1.0 since its deletion on 2026-08-23), and the linear
+transform is selected at both sites. `SearchConfig` (`selfplay/config.py`) has no such fields at all — the only
 `root` knob it carries is `fpu_at_root`. That is the "knob that never reaches the
 worker" pattern, and closing it is a prerequisite task in its own right — roughly
 `SearchConfig` → reco → worker → `network_turn.py`, plus the yaml validator.
@@ -857,8 +858,9 @@ cost of the rejected option:
 ⚑ **The dispatch guard matters more than the CLI.** The known failure mode is a
 `GumbelConfig` field that the Python path honours and the C path silently drops
 — a knob that returns a flawless null. Note `gumbel.py` already documents a
-class of fields as **C path only** (`q_global_scale`, `q_visit_floor`,
-`halving_div`, `c_visit_root`, `c_scale_root`, `q_visit_exp_root`). Any new
+class of fields as **C path only** (`halving_div`, `c_visit_root`,
+`c_scale_root`, `q_visit_exp_root`; `q_global_scale` and `q_visit_floor` were on
+this list until they were DELETED on 2026-08-23 along with `q_visit_exp`). Any new
 stopping knob must be added to whatever inert/py-only registry guards this, and
 **tested at the dispatch site in `network_turn.py`, not at the CLI** — the
 production path never goes through a CLI.
