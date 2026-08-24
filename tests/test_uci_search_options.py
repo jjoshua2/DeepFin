@@ -549,6 +549,13 @@ def test_searchconfig_reports_a_value_the_setoption_actually_applied(
         ("setoption name PolicyTemperature value 0.4", "out of range"),
         ("setoption name PolicyTemperature value 5.5", "out of range"),
         ("setoption name PolicyTemperature value abc", "not a number"),
+      # ⚑ `nan` parses as a float and every comparison against it is False, so
+      # the range pair alone waved it through: stored, reported LIVE by
+      # `searchconfig`, and searched UNTEMPERED because `policy_temp_active(nan)`
+      # is False. `inf` was already refused (it compares out of band); `nan` is
+      # the one value that was silently dropped rather than loudly wrong.
+        ("setoption name PolicyTemperature value nan", "out of range"),
+        ("setoption name CScale value nan", "out of range"),
         ("setoption name Topk value 1", "out of range"),
         ("setoption name HalvingDiv value 1.5", "not a integer"),
         ("setoption name QGlobalScale value yes", "expected true/false"),

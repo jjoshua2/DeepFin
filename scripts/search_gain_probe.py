@@ -627,6 +627,56 @@ class _RowSink:
 # ---------------------------------------------------------------------------
 
 
+def build_probe_gumbel_config(
+    shape: SearchShape,
+    *,
+    sims: int,
+    add_noise: bool = False,
+    gumbel_scale: float = 1.0,
+    hist: str = "legacy",
+    extra: str = "v1",
+    pol_enc: str = "lc0_1858",
+):
+    """The ONE place ``--shape`` / ``--shape-yaml`` / ``--override`` become a config.
+
+    Module-level rather than a closure inside ``run_probe`` for the reason
+    ``audit_targets.build_profile_search_shape`` is: inside the closure the
+    refusal was unreachable without a ~700MB checkpoint load, so nothing could
+    prove the guard runs -- and it fired AFTER the load rather than in the first
+    second. ``main()`` now calls this before touching the checkpoint, and
+    ``tests/test_gumbel_config_validation.py`` drives it directly.
+
+    The encoding arguments default to placeholders because they do not
+    participate in validation (no string field is checked); the run passes the
+    checkpoint's real ones, and the early call in ``main()`` does not need them.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    cfg = GumbelConfig(
+        simulations=int(sims),
+        topk=int(shape.topk),
+        temperature=0.0,
+        policy_temp=float(shape.policy_temp),
+        c_scale=float(shape.c_scale),
+        c_visit=float(shape.c_visit),
+        c_visit_root=float(shape.c_visit_root),
+        c_scale_root=float(shape.c_scale_root),
+        q_visit_exp=float(shape.q_visit_exp),
+        q_visit_exp_root=float(shape.q_visit_exp_root),
+        halving_div=int(shape.halving_div),
+        add_noise=bool(add_noise),
+        gumbel_scale=float(gumbel_scale),
+        input_history_encoding=hist,
+        input_extra_features=extra,
+        policy_encoding=pol_enc,
+    )
+    try:
+        validate_gumbel_config(cfg, where=f"--shape {shape.label}")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    return cfg
+
+
 def run_probe(
     positions: list[ProbePosition],
     *,
@@ -665,23 +715,9 @@ def run_probe(
         tb_probe = SyzygyProbe(syzygy_path)
 
     def _cfg(sims: int) -> GumbelConfig:
-        return GumbelConfig(
-            simulations=int(sims),
-            topk=int(shape.topk),
-            temperature=0.0,
-            policy_temp=float(shape.policy_temp),
-            c_scale=float(shape.c_scale),
-            c_visit=float(shape.c_visit),
-            c_visit_root=float(shape.c_visit_root),
-            c_scale_root=float(shape.c_scale_root),
-            q_visit_exp=float(shape.q_visit_exp),
-            q_visit_exp_root=float(shape.q_visit_exp_root),
-            halving_div=int(shape.halving_div),
-            add_noise=bool(add_noise),
-            gumbel_scale=float(gumbel_scale),
-            input_history_encoding=hist,
-            input_extra_features=extra,
-            policy_encoding=pol_enc,
+        return build_probe_gumbel_config(
+            shape, sims=sims, add_noise=add_noise, gumbel_scale=gumbel_scale,
+            hist=hist, extra=extra, pol_enc=pol_enc,
         )
 
     boards = [p.board for p in positions]
@@ -1498,6 +1534,11 @@ def main() -> None:
             raise SystemExit(f"--shape-yaml {args.shape_yaml} does not exist")
         shape = shape_from_yaml(args.shape_yaml, base=shape)
     shape = apply_overrides(shape, args.override)
+  # Before the checkpoint load and the position sourcing: a shape carrying a
+  # value the search would silently drop should cost a second, not a 700MB load
+  # plus a shard sweep. `run_probe` re-checks per sims rung, which is what makes
+  # the guard unskippable rather than merely early.
+    build_probe_gumbel_config(shape, sims=int(sims_list[0]))
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
         import torch

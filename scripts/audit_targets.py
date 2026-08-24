@@ -138,6 +138,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
 
 import chess
@@ -616,7 +617,9 @@ def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], 
         unreachable while `full_tree=True`, so a sweep over one returns a flat,
         perfectly reproducible null that reads as a measurement;
       * a VALUE that lands inside a real field but outside the band where the
-        field does anything. Today that is `policy_temp` (see below).
+        field does anything -- `mcts.gumbel.validate_gumbel_config` decides,
+        and today that is `policy_temp`, any non-finite number, and a
+        `halving_div` the C would silently raise (see below).
 
     ⚑ The third rule is the same defect as the second, one level down: refusing
     a dead KNOB and then accepting a dead VALUE of a live knob leaves the exact
@@ -666,45 +669,59 @@ def parse_gumbel_overrides(specs: list[str] | None) -> tuple[tuple[str, float], 
                 raise SystemExit(
                     f"--gumbel: {key}={raw!r} is not a number"
                 ) from None
-            _refuse_dead_override(key, value)
             out.append((key, value))
+    _refuse_dead_overrides(out)
     return tuple(out)
 
 
-def _refuse_dead_override(key: str, value: float) -> None:
-    """Refuse a value that reaches the config and is then not read.
+def _refuse_dead_overrides(pairs: list[tuple[str, float]]) -> None:
+    """Refuse values that reach the config and are then not read.
 
-    Consults `mcts.gumbel.policy_temp_active` -- THE definition of "tempering
-    is on", shared with `apply_policy_temp`, both `gumbel_c` bf16 gates and the
-    worker's realized-shape log line -- rather than re-deriving the band here.
-    A guard has to share the criterion's instrument or it is guarding a
-    different question, and a second copy of `0.05 <= T <= 20.0` in this file
-    would drift the day the band moves.
+    Delegates to `mcts.gumbel.validate_gumbel_config` -- the ONE home of the
+    bands, shared with `policy_temp_active`, `apply_policy_temp`, both
+    `gumbel_c` bf16 gates, the worker's realized-shape log line and
+    `arena_standard`'s `--*-gumbel` -- rather than re-deriving anything here. A
+    guard has to share the criterion's instrument or it is guarding a different
+    question, and a second copy of `0.05 <= T <= 20.0` in this file would drift
+    the day the band moves. This function was that second copy until 2026-08-23:
+    it checked `policy_temp` only, so `--gumbel c_scale=nan` still parsed.
+
+    Checked on the ASSEMBLED config rather than per key, because that is the
+    object `_net_candidates` will `dataclasses.replace` the overrides onto.
 
     `policy_temp=1.0` is `policy_temp_active(1.0) == False` but is NOT dead: it
     is the shipped default and an explicit "run the untempered prior" is a real
-    request, so it is allowed through. Everything else the predicate rejects
-    (0, 0.01, 1e300, nan, inf, negatives) is a no-op `apply_policy_temp` will
-    silently swallow.
+    request, so the validator lets it through. Everything else the predicate
+    rejects (0, 0.01, 1e300, nan, inf, negatives) is a no-op `apply_policy_temp`
+    will silently swallow.
     """
-    from chess_anti_engine.mcts.gumbel import (
-        POLICY_TEMP_MAX,
-        POLICY_TEMP_MIN,
-        policy_temp_active,
-    )
+    import dataclasses as _dc
 
-    if key != "policy_temp":
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    if not pairs:
         return
-    if value == 1.0 or policy_temp_active(value):
-        return
-    raise SystemExit(
-        f"--gumbel: policy_temp={value!r} is inside the field but outside the "
-        f"band where it does anything ([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}], "
-        "or exactly 1.0 for the untempered prior), so `apply_policy_temp` "
-        "would return the priors untouched. The audit would score the DEFAULT "
-        "prior and report it under a header naming your value. Refusing to "
-        "run — pick a temperature inside the band, or drop the override."
-    )
+    _refuse_dead_search_cfg(_dc.replace(GumbelConfig(), **dict(pairs)), where="--gumbel")
+
+
+def _refuse_dead_search_cfg(cfg: GumbelConfig, *, where: str) -> None:
+    """`validate_gumbel_config` with this script's exit style.
+
+    A ``SystemExit`` rather than the ``ValueError`` the validator raises: this
+    is a batch audit CLI, so the operator is not present to read a traceback,
+    and the artifact left behind by accepting would be a complete, reproducible,
+    WRONG number.
+    """
+    from chess_anti_engine.mcts.gumbel import validate_gumbel_config
+
+    try:
+        validate_gumbel_config(cfg, where=where)
+    except ValueError as exc:
+        raise SystemExit(
+            f"{exc}. The audit would score the DEFAULT search and report it "
+            "under a header naming your value. Refusing to run — pick a value "
+            "the search reads, or drop the override."
+        ) from None
 
 
 def sf_reference_sets(
@@ -1070,6 +1087,7 @@ def build_profile_search_shape(
             cfg = dataclasses.replace(cfg, **{
                 k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
             })
+        _refuse_dead_search_cfg(cfg, where=_CANDIDATE_NAMES.get(name, name))
         shape = SelfplaySearchShape(
             cfg=cfg,
             vloss_weight=int(p.vloss_weight),
@@ -1120,6 +1138,12 @@ def build_profile_search_shape(
         cfg = dataclasses.replace(cfg, **{
             k: _coerce_override(getattr(base, k), v) for k, v in p.overrides
         })
+  # `--policy-temp` reaches a GumbelConfig HERE and nowhere else, and it does
+  # not go through `parse_gumbel_overrides`, so the parse-time refusal does not
+  # cover it: `--policy-temp 1e300` used to search untempered under a header
+  # printing 1e300 (`policy_temp={prof.policy_temp}`), the same hole
+  # `--cand-gumbel policy_temp=1e300` had in arena_standard.
+    _refuse_dead_search_cfg(cfg, where=_CANDIDATE_NAMES.get(name, name))
     return SelfplaySearchShape(
         cfg=cfg,
         vloss_weight=int(p.vloss_weight),

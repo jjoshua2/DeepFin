@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Literal, overload
 
 import chess
@@ -388,6 +388,167 @@ def policy_temp_active(policy_temp: float) -> bool:
     """
     pt = float(policy_temp)
     return math.isfinite(pt) and POLICY_TEMP_MIN <= pt <= POLICY_TEMP_MAX and pt != 1.0
+
+
+# The divisor the C sequential halving silently raises anything smaller to:
+# `g->halving_div = (halving_div >= 2) ? halving_div : 2` (_mcts_tree.c).
+MIN_HALVING_DIV = 2
+
+# The candidate count BOTH Python candidate-selection sites silently raise
+# anything smaller to: `m = max(2, ...)` in `gumbel_c._select_root_candidates`
+# and in `gumbel._init_board_search_state`. ⚑ `topk` never reaches the C at all
+# (zero occurrences in `_mcts_tree.c`): the C is handed the already-chosen
+# candidate LIST, so "the C signature rejects it" -- which an earlier revision
+# of this file claimed as the reason topk needed no check -- was false, and
+# `topk` 0 / 1 / -5 all run m=2 while every record names the operator's number.
+# `topk` is in PLAY_SEARCH_DEFAULTS, so that record is written on every row.
+MIN_TOPK = 2
+
+
+def validate_gumbel_config(cfg: GumbelConfig, *, where: str) -> None:
+    """Refuse a search config carrying a value the search will not run.
+
+    THE band's second home is not allowed to exist, so this is where every
+    externally-built ``GumbelConfig`` is checked -- CLI overrides, ``setoption``
+    seeds, anything that reaches ``dataclasses.replace`` without passing the
+    yaml loader's validator (``trial_config._policy_temperature``).
+
+    Call it at CONSTRUCTION/OVERRIDE boundaries, not per search call: the hot
+    path deliberately cannot raise (``policy_temp_active`` reads an out-of-band
+    temperature as *off* because it runs per leaf), and that is exactly why the
+    refusal has to happen where the config is built instead.
+
+    ⚑ It refuses rather than repairs. Clamping ``policy_temp=1e300`` to 20.0
+    would run a search the operator did not ask for, and defaulting it to 1.0 is
+    what happens today -- silently, under a record naming 1e300. A sweep over
+    out-of-band temperatures produces identical arms banked as different
+    settings, which is the c_puct Swiss (play-path audit 2026-08-03 F2) with a
+    live knob instead of a dead one.
+
+    What it checks, and why each one is a silent no-op rather than a crash:
+
+    * **every numeric field finite.** Each sentinel in this file is a
+      COMPARISON, and every comparison against ``nan`` is False, so a non-finite
+      knob does not fail loudly -- it takes the fallback arm. ``nan`` is neither
+      ``< 90`` nor ``>= 90``, so ``q_visit_exp_root=nan`` silently reverts the
+      root to ``q_visit_exp``; ``c_scale_root=nan`` silently reverts to
+      ``c_scale``; ``policy_temp=inf`` reads as off.
+    * **``policy_temp`` inside the band.** ⚑ 1.0 is INSIDE the band and valid --
+      it is the identity, and ``policy_temp_active`` reports it as "off" for
+      that reason alone, not because it is out of range. So the check cannot be
+      ``not policy_temp_active(...)``: that would refuse the shipped default and
+      the whole PLAY shape with it. Everything genuinely outside the band
+      reaches ``apply_policy_temp`` and returns the priors untouched.
+    * **``halving_div >= MIN_HALVING_DIV``** and **``topk >= MIN_TOPK``**, both
+      integral. Below the minimum each is silently raised (see the constants);
+      a fractional value is silently TRUNCATED by the ``int()`` every consumer
+      applies, so ``halving_div=2.9`` and ``topk=2.9`` are 2.
+
+    What it deliberately does NOT check, so this does not grow into a second
+    opinion about knobs that already have one:
+
+    * the sentinel RANGES (``c_scale_root < 0``, ``c_visit_root < 0``,
+      ``q_visit_exp_root >= 90``, ``q_visit_floor < 0``,
+      ``target_max_visit_cap <= 0``). Every value inside one of those is a
+      legitimate spelling of "off" rather than a request that got dropped, and
+      ``mcts.search_options.branch_note`` is the shipped answer for telling an
+      operator so.
+    * ``INERT_GUMBEL_KNOBS`` and ``PY_ONLY_GUMBEL_KNOBS`` -- refused by the
+      ``--*-gumbel`` parsers and by ``assert_c_path_can_run`` respectively. A
+      knob with a guard does not need a second one.
+    * ``simulations`` and the rest: no measured silent-clamp site. The rule for
+      adding one is the rule these three met -- point at the line that swallows
+      the value, not at an intuition about what "should" be out of range.
+
+    Raises ``ValueError``; CLI surfaces wrap it in ``SystemExit`` so an operator
+    gets the message and not a traceback.
+    """
+    problems: list[str] = []
+    for f in fields(cfg):
+        value = getattr(cfg, f.name)
+      # ⚑ Coerce, do not isinstance-whitelist. `np.float32(nan)` is not an
+      # instance of `float` (only float64 subclasses it), so a whitelist SKIPS
+      # numpy scalars -- an accept-then-ignore inside the guard against
+      # accept-then-ignore. `str` is excluded first because the encoding fields
+      # are strings and `float("nan")` would parse one spelled that way.
+        if isinstance(value, (bool, str)):
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(numeric):
+            problems.append(
+                f"{f.name}={value!r} is not finite, so every gate that reads it "
+                "takes its fallback arm instead of failing: the search runs a "
+                "shape nobody asked for and the record names yours"
+            )
+  # Deliberately NOT skipped for a non-finite value already reported above:
+  # `nan`/`inf` are out of band too, and the operator-facing phrase "outside
+  # the band" is what tells them the knob -- not the float -- is the problem.
+    pt = float(cfg.policy_temp)
+    if pt != 1.0 and not policy_temp_active(pt):
+        problems.append(
+            f"policy_temp={pt!r} is outside the band where it does anything "
+            f"([{POLICY_TEMP_MIN}, {POLICY_TEMP_MAX}] inclusive; 1.0 is inside "
+            "it and valid -- the identity), so apply_policy_temp would return "
+            "the priors untouched and the search would run UNTEMPERED (T=1.0) "
+            "while every record of it names your value"
+        )
+    problems.extend(
+        _clamped_int_problems(
+            "halving_div", cfg.halving_div, minimum=MIN_HALVING_DIV,
+            clamped_by=(
+                "the C search (`g->halving_div = (halving_div >= 2) ? "
+                "halving_div : 2`, _mcts_tree.c)"
+            ),
+            runs_instead="STANDARD halving",
+        )
+    )
+    problems.extend(
+        _clamped_int_problems(
+            "topk", cfg.topk, minimum=MIN_TOPK,
+            clamped_by=(
+                "both Python candidate-selection sites (`m = max(2, ...)` in "
+                "gumbel_c._select_root_candidates and in "
+                "gumbel._init_board_search_state; topk never reaches the C)"
+            ),
+            runs_instead=f"a {MIN_TOPK}-candidate root",
+        )
+    )
+    if problems:
+        raise ValueError(f"{where}: " + "; ".join(problems))
+
+
+def _clamped_int_problems(
+    name: str, raw: float | int, *, minimum: int, clamped_by: str,
+    runs_instead: str,
+) -> list[str]:
+    """Refusals for an integer knob that is silently clamped and truncated.
+
+    Two ways to lose a value in one knob, so two messages: below ``minimum`` it
+    is raised by the consumer, and a fractional value is truncated by the
+    ``int()`` every consumer applies. Neither says anything at runtime.
+    """
+  # A non-finite value is reported by the finiteness pass; comparing it here
+  # would take the fallback arm and report nothing.
+    value = float(raw)
+    if not math.isfinite(value):
+        return []
+    out: list[str] = []
+    if value < minimum:
+        out.append(
+            f"{name}={raw!r} is below {minimum}, which {clamped_by} silently "
+            f"raises to {minimum}, so the search would run {runs_instead} "
+            "under a record naming your value"
+        )
+    elif not value.is_integer():
+        out.append(
+            f"{name}={raw!r} is not an integer and every consumer applies "
+            f"int(), so the search would run {name}={int(value)} under a "
+            "record naming your value"
+        )
+    return out
 
 
 def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
@@ -1054,6 +1215,50 @@ def _collect_forced_leaves_round(
     return leaf_nodes, leaf_paths
 
 
+# --- pure halving-schedule arithmetic (mirrors _mcts_tree.c) ------------------
+#
+# ⚑ These lived in `uci/root_parallel_gumbel.py`, which meant the Python
+# reference search (`run_gumbel_root_many`, below) had its own hardcoded copy of
+# the div-2 schedule and never read `cfg.halving_div` at all. That path is not
+# hypothetical: `selfplay.match.pick_moves_for_boards` routes to it whenever
+# volatility search is on or the C extension is missing, so
+# `--cand-gumbel halving_div=4 --volatility-q-scale 0.5` validated, banked 4 and
+# searched at 2 -- this PR's own defect, inside the fix for it. One
+# implementation now, imported by both.
+
+
+def halving_rounds_left(n_candidates: int, halving_div: int = 2) -> int:
+    """Ceil-divisions of ``n_candidates`` by ``halving_div`` down to 1.
+
+    Mirrors the ``while (tmp > 1) { rounds_left++; tmp = (tmp+div-1)/div; }``
+    loop in ``gss_begin_round``.
+    """
+    div = max(MIN_HALVING_DIV, int(halving_div))
+    rounds = 0
+    tmp = int(n_candidates)
+    while tmp > 1:
+        rounds += 1
+        tmp = (tmp + div - 1) // div
+    return rounds
+
+
+def halving_visits_per_action(
+    n_candidates: int, budget_remaining: int, halving_div: int = 2,
+) -> int:
+    """Per-candidate sims for the current round (``gss_begin_round``)."""
+    if n_candidates <= 1:
+        return int(budget_remaining)
+    rounds_left = halving_rounds_left(n_candidates, halving_div)
+    return max(1, int(budget_remaining) // (int(n_candidates) * rounds_left))
+
+
+def halving_keep_count(n_candidates: int, halving_div: int = 2) -> int:
+    """Survivors after one halving round (``gss_score_and_halve``)."""
+    div = max(MIN_HALVING_DIV, int(halving_div))
+    keep = (int(n_candidates) + div - 1) // div
+    return max(1, min(keep, int(n_candidates) - 1))
+
+
 def _halve_remaining_for_board(
     st: _BoardSearchState,
     *,
@@ -1095,7 +1300,7 @@ def _halve_remaining_for_board(
         ),
         reverse=True,
     )
-    st.remaining = rem[: max(1, (len(rem) + 1) // 2)]
+    st.remaining = rem[: halving_keep_count(len(rem), int(cfg.halving_div))]
 
 
 def _build_improved_policy_for_board(
@@ -1310,12 +1515,9 @@ def run_gumbel_root_many(
         for bi in active:
             rem = states[bi].remaining
             assert rem is not None
-            if len(rem) <= 1:
-                visits_per_action[bi] = int(budget_remaining[bi])
-                continue
-            rounds_left = int(np.ceil(np.log2(len(rem))))
-            vpa = int(budget_remaining[bi] // max(1, len(rem) * rounds_left))
-            visits_per_action[bi] = max(1, vpa)
+            visits_per_action[bi] = halving_visits_per_action(
+                len(rem), int(budget_remaining[bi]), int(cfg.halving_div),
+            )
 
         max_reps = max(visits_per_action.values(), default=0)
         for rep in range(max_reps):
