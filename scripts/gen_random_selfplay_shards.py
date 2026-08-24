@@ -1362,7 +1362,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-plies", type=int, default=DEFAULT_MAX_PLIES)
     parser.add_argument("--shard-size", type=int, default=DEFAULT_SHARD_SIZE)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--nice", type=int, default=DEFAULT_NICE)
+    parser.add_argument(
+        "--nice", type=int, default=DEFAULT_NICE,
+        help=(
+            "niceness INCREMENT applied by each worker (os.nice semantics, like "
+            "the nice(1) shell builtin), NOT an absolute level: launched from an "
+            "already-niced shell it ADDS to what it inherits, so `nice -n 10 ... "
+            f"--nice {DEFAULT_NICE}` realizes 19 (the ceiling), not {DEFAULT_NICE}. "
+            "The `nice=` field of the startup realized line is the absolute level "
+            "actually in force, read back from os.getpriority — trust that over "
+            "this flag."
+        ),
+    )
     parser.add_argument(
         "--openings", type=Path, default=None,
         help="PGN/PGN.zip/Polyglot opening book; default is the start position.",
