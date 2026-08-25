@@ -66905,3 +66905,42 @@ rationale. Self-authored, Codex-reviewed, CI green on merged head 9b579392b.
   #467's fix). **Next (#273)**: finalize the 2-arm readout prereg — noise floor from two
   same-config cells FIRST, cp-per-unit pinned, leaf-bank ON, deep-SF ruler ~5k/cell, G2 =
   beat UCI@512 labels — then run it.
+
+## 2026-08-25 04:05 — PREREG COMMITTED: native-NNUE 2-arm × sims-ladder label-quality readout (#273 final phase) — noise floor MEASURED FIRST
+
+**Prereg file (the judging document): `scratchpad/az_purity/readout_prereg_final.md`,
+committed with this entry.** Ruler: `scratchpad/az_purity/score_shard_labels.py` (deep-SF
+1M nodes, MultiPV 10, TT cleared per position, 5k rows/cell, settings receipts banked).
+Code sha for every cell: dc0abecf2 (the PR #468 merge). Artifacts:
+`scratchpad/az_purity/readout_artifacts/` (19,873 scored rows banked).
+
+- **Noise floor measured BEFORE thresholds** (two same-config static cells, seeds
+  273001/273002): phase-standardised top-1 deep-SF regret |Δ| = **6.75 cp** (primary);
+  raw 11.56 cp. ⚑ The raw metric's two SAME-CONFIG cells differ significantly (CI
+  [−22.5, −0.5] excludes 0) — the within-cell cluster bootstrap does not contain
+  between-cell variance; anyone reading the bootstrap SE would call an 11.6 cp seed
+  artifact real. That is why the primary is standardised and the threshold comes from
+  the measured floor: **Δ\* = 17 cp** (2.5× floor, Bonferroni z=2.734 over 8 comparisons).
+- **G1 CONFIRMED on full-length cells: 5,180,078 rows/h with the leaf bank ON = 6.37×
+  the 813k gate** (bank costs 15.1%, measured on a bit-identical corpus — which also
+  proved seed-determinism exactly). ⚑ 20-game probes read 2.7× lower — G1 must never be
+  read off a short run.
+- **UCI@512 anchor on the identical ruler/sample: 98.09 cp [90.8, 105.3]**. ⚑⚑ The
+  native static arm at base is **~23–29 cp BEHIND UCI@512 AND behind UCI@32** on the
+  primary (CIs exclude 0) — while BEATING both on expected regret (174.9/183.9 vs 194.2)
+  and blunder mass (0.166/0.170 vs 0.207): its target is flatter (TV-to-uniform 0.468 vs
+  0.497). The metrics disagree in DIRECTION, so the primary + disagreement rule are
+  pre-committed; choosing the ruler after the ladder would have decided the readout.
+- **G2 is a POLICY-label gate** — `wdl_target` is the game outcome; arm values reach the
+  corpus only through `policy_target` and move selection. Stated in the prereg.
+- Ladder rungs MEASURED not assumed: --sims 32/90/180 → realized 44.4/90.0/180.0 =
+  1×/2.03×/4.05× (--sims is a floor under --all-root-moves; naive 32/64/128 would be
+  1×/1.47×/2.88×).
+- **Spec deviation, accepted**: matched wall-clock between arms is degenerate — qsearch
+  measured 22,632 rows/h (229× slower); it runs the same nominal sims ladder with
+  wall-clock REPORTED, and Q-2x/Q-4x are staged behind Q-base beating S-base by ≥ Δ\*.
+- Distribution shift disclosed: native games 82% draws vs anchor 48%; endgame row share
+  0.66 vs 0.59. UCI anchors were generated concurrent with live training (regime
+  confound, stated).
+- ⚑ scratchpad/az_purity/prereg_draft.md and stage1_launch_package.md carry the operator
+  name and stay UNCOMMITTED (the #467 class); the three committed files are scrubbed.
