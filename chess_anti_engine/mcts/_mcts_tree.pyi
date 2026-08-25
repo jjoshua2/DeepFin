@@ -22,11 +22,13 @@ SWDL_DRAW_NET_RAW: int
 SWDL_DRAW_PARAMETRIC_Q: int
 
 # ⚑ Most candidates the Gumbel sampler SCORES per root per halving round.
-# `gss_score_and_halve` clamps above this, so a caller that raises `topk` past it
-# is promising root coverage the search does not deliver — on a root with more
-# legal moves than this, the surplus is dropped unscored while the legal mask
-# still advertises it. Exported so callers read the ceiling instead of assuming
-# their own; absent on an .so built before the constant existed.
+# `gss_score_and_halve` clamps above this, so on a root with more legal moves
+# than this the surplus is dropped from the RANKING unscored. ⚑ Not from the
+# search: budget is deducted before the clamp, so every legal move is still
+# expanded, visited and carries target mass (measured on a 218-legal-move root).
+# The cap costs ranking resolution on wide roots, not coverage. Exported so
+# callers read the ceiling instead of assuming their own; absent on an .so built
+# before the constant existed.
 GSS_MAX_CANDS: int
 
 def set_history_rep_fix(enabled: bool, /) -> None: ...

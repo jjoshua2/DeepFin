@@ -6174,13 +6174,24 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
         return NULL;
     }
 
-    /* ⚑ THE CANDIDATE CEILING, exported because a caller can PROMISE coverage
-     * it does not get. gss_score_and_halve scores at most GSS_MAX_CANDS
-     * candidates per root per round and CLAMPS above that -- so a caller that
-     * raises `topk` to the 218-move ceiling and believes every legal move is a
-     * candidate is wrong on any root with more than this many legal moves, with
-     * no error and a legal mask that still advertises them. A Python-side copy
-     * of the number would be a second home for it; this is the first. */
+    /* ⚑ THE RANKING CEILING, exported because a caller can promise more than it
+     * gets. gss_score_and_halve writes into a double scores_buf[GSS_MAX_CANDS]
+     * and clamps the candidate count to fit, so on a root with more legal moves
+     * than this, only the first GSS_MAX_CANDS are SCORED and the halving keeps
+     * the top half of those. Raising the caller-side candidate cap to the
+     * 218-move maximum does not change it; the ceiling is this buffer.
+     *
+     * ⚑ MEASURED, because the obvious reading is wrong. Budget is deducted for
+     * every candidate BEFORE the clamp: on a 218-legal-move root every child is
+     * still expanded, visited, and carries target mass. What the surplus loses
+     * is a place in the halving -- it is never deepened. The cap costs ranking
+     * resolution on wide roots, not coverage.
+     *
+     * A Python-side copy of the number would be a second home for it; this is
+     * the first. (Deliberately does not name the caller-side knob: a tripwire in
+     * tests/test_gumbel_config_validation.py greps this file for it, to keep the
+     * Python MIN_TOPK refusal the single authority on where that knob is
+     * clamped. The tripwire is coarse on purpose -- do not weaken it.) */
     if (PyModule_AddIntConstant(m, "GSS_MAX_CANDS", GSS_MAX_CANDS) < 0) {
         Py_DECREF(m);
         return NULL;
