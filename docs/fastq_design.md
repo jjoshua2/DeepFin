@@ -216,7 +216,20 @@ tighter windows without an API break).
 
 ## 10. Sequencing
 
-#469 blockers close → #469 merges → #470 retargets to main + review → this PR
-builds on the merged DAG. Layers: this PR = layers 1–2 of the four-layer
-verifier picture; the mate verifier and boundary-targeted verification are
-PR#3/PR#4 on the same DAG.
+#469 blockers close → #469 merges → #470 retargets to main + review →
+**qsearch-on-DAG retrofit** → this PR.
+
+The retrofit interns the EXISTING qsearch (unchanged move policy) on the DAG:
+evaluate-once + cross-call persistence via `set_root`, node-budget flag
+DEFAULT-OFF with a trip counter, full counters surfaced. Its acceptance
+criterion is the oracle FastQ cannot have — **bit-identical values to the
+pre-DAG qsearch on a corpus** (one variable: the substrate) — plus measured
+evals/call reduction and cross-call hit rate. That hit rate sizes the DAG's
+real benefit BEFORE FastQ relies on it, the retrofit doubles as the DAG's
+correctness proof, and it makes the §8 reference arm cheap to run at matrix
+scale. The budget flag stays off wherever the oracle property is being
+asserted; enabling it for production labeling is a measured decision made
+against FastQ, not a default.
+
+Layers: FastQ = layers 1–2 of the four-layer verifier picture; the mate
+verifier and boundary-targeted verification are later PRs on the same DAG.
