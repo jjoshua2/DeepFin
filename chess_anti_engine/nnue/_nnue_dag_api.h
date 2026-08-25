@@ -412,7 +412,7 @@ static PyObject *py_dag_stats(PyObject *Py_UNUSED(self), PyObject *args) {
     int64_t payload_bytes = (int64_t)h->payload_cap * (int64_t)(
         sizeof(CaeNnueState) + sizeof(int32_t) + sizeof(uint8_t));
     return Py_BuildValue(
-        "{s:i,s:i,s:i,s:i,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:L,s:L,s:L}",
+        "{s:i,s:i,s:i,s:i,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:L,s:L,s:L}",
         "root_id", h->dag.root_id,
         "node_count", h->dag.node_count,
         "edge_count", h->dag.edge_count,
