@@ -332,16 +332,29 @@ static int cae_position_dag_link(
     return 1;
 }
 
-/* Validate that `action` really transforms the canonical parent into the
- * supplied child STRUCTURE.  This guards the public plumbing from a very cheap
- * but catastrophic class of graph corruption: an action value being accepted
- * while the child board belongs to some other move. */
+/* Validate that `action` is legal at the canonical parent AND transforms it
+ * into the supplied child STRUCTURE.  The explicit legal-membership check is
+ * load-bearing: cboard_push_index() is a defensive no-op for malformed LUT
+ * entries, so "push then compare" alone could accidentally accept an illegal
+ * no-op edge if a caller also supplied the unchanged position as its child. */
 static int cae_position_dag_edge_matches_board(
     const CaePositionDag *d, int32_t parent, int32_t action, const CBoard *child_board)
 {
     if (parent < 0 || parent >= d->node_count || action < 0 || action >= 4672) return 0;
     CBoard pushed;
     cae_dag_position_to_cboard(&d->positions[parent], &pushed);
+
+    int legal[CBOARD_MAX_LEGAL_MOVES];
+    int n_legal = cboard_legal_move_indices(&pushed, legal, 0);
+    int action_is_legal = 0;
+    for (int i = 0; i < n_legal; i++) {
+        if (legal[i] == action) {
+            action_is_legal = 1;
+            break;
+        }
+    }
+    if (!action_is_legal) return 0;
+
     cboard_push_index(&pushed, action);
     CaeDagPosition got, want;
     cae_dag_position_from_cboard(&pushed, &got);
