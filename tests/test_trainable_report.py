@@ -304,3 +304,75 @@ def test_the_realized_gate_keys_are_reported_from_the_trainer() -> None:
         "reading params.json has no way to learn the value was substituted"
     )
     assert row["sf_own_regret_unlisted_scale"] == pytest.approx(0.25)
+
+
+def test_the_gate_columns_are_a_HARD_attribute_read_not_getattr_with_a_default() -> None:
+    """MUTATION: `float(getattr(trainer, "sf_own_regret_listed_mass_min", 0.0))`.
+
+    ⚑⚑ THAT MUTANT SURVIVES EVERY OTHER TEST IN THE SUITE, and the reason is the
+    point of writing this one. Once the fixtures carry the attribute, a
+    `getattr`-with-default and a hard read are indistinguishable -- equivalence
+    is with respect to the REACHABLE INPUT SET, not in itself. So the guard has
+    to construct the unreachable case on purpose.
+
+    ⚑ WHY THE HARD READ IS THE RIGHT CHOICE, not merely the current one. The
+    default a `getattr` would supply is `0.0`, which is the gate's OFF value --
+    so a trainer-like object that never got the attribute would report a
+    confident "gate off" for a run whose gate might be fully armed. That is this
+    repo's signature defect with the alarm wired to the wrong terminal: the
+    column exists precisely because `params.json` keeps the typed value, and a
+    column that invents a plausible number when it cannot find the real one is
+    worse than no column. `mirror_prob` two lines above is a hard read for the
+    same reason.
+
+    The cost is honest and bounded: a fake trainer in a test must carry both
+    attributes or the row build raises. Three fixtures had to gain them when this
+    column landed, and CI caught all three -- which is the failure mode working.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.tune.trainable_report import _build_report_dict
+    from chess_anti_engine.tune.trial_config import (
+        DriftMetrics,
+        PidResult,
+        RestoreResult,
+        SelfplayResult,
+        TrainingResult,
+        TrialConfig,
+    )
+
+    def _row(**gate: float) -> dict:
+        trainer = SimpleNamespace(
+            opt=SimpleNamespace(param_groups=[{"lr": 3e-4}]),
+            w_wdl=1.0, w_soft=1.0, w_sf_move=1.0, w_categorical=1.0,
+            sf_wdl_frac=0.5, sf_wdl_temperature=1.0, sf_wdl_draw_scale=1.0,
+            sf_wdl_conf_power=1.0, mirror_prob=0.5,
+            _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
+            **gate,
+        )
+        return _build_report_dict(
+            tc=TrialConfig(), trainer=trainer, pr=PidResult(), sp=SelfplayResult(),
+            tr=TrainingResult(), drift=DriftMetrics(), eval_dict={}, puzzle_dict={},
+            probe_dict=None, wdl_regret_used=0.07, sf_nodes_used=5000,
+            pause_metrics={
+                "paused_seconds": 0.0, "paused_fraction": 0.0, "paused_percent": 0.0,
+            },
+            restore=RestoreResult(), best_loss=1.0, iter_t0=0.0, iteration_idx=1,
+            buf_size=10, holdout_buf_size=1, holdout_frozen=False,
+            holdout_generation=0,
+        )
+
+  # Non-degeneracy first: with both attributes present the row builds fine, so a
+  # raise below is about the MISSING attribute and not about the fixture.
+    ok = _row(sf_own_regret_listed_mass_min=0.75, sf_own_regret_unlisted_scale=0.25)
+    assert ok["sf_own_regret_listed_mass_min"] == pytest.approx(0.75)
+    assert ok["sf_own_regret_unlisted_scale"] == pytest.approx(0.25)
+
+  # ⚑ EACH COLUMN IS PINNED ON ITS OWN, and the first version of this test was
+  # VACUOUS for exactly that reason: it dropped BOTH attributes at once, so a
+  # `getattr` default on one column was still masked by the other one raising.
+  # The mutant survived a green test. Withhold one at a time.
+    with pytest.raises(AttributeError):
+        _row(sf_own_regret_unlisted_scale=0.25)     # listed_mass_min withheld
+    with pytest.raises(AttributeError):
+        _row(sf_own_regret_listed_mass_min=0.75)    # unlisted_scale withheld

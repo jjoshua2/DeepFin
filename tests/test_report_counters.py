@@ -34,6 +34,11 @@ def _fake_trainer(*, mirror_prob: float = 0.5) -> Any:
         sf_wdl_temperature=1.0,
         sf_wdl_draw_scale=1.0,
         sf_wdl_conf_power=1.0,
+      # Realized fabricated-tail gate pair (PR #447): `_build_report_dict`
+      # reads these off the trainer, like `mirror_prob`, because the config
+      # keeps the TYPED value and the row is the only faithful record.
+        sf_own_regret_listed_mass_min=0.0,
+        sf_own_regret_unlisted_scale=1.0,
         mirror_prob=mirror_prob,
         # (name, groups, effective_p) per group; only [i][2] is read.
         _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
