@@ -84,6 +84,12 @@ EXIT_STALLED=3
 # train_watchdog.py's EXIT_PAUSE_ABANDONED, and there is no --once here because
 # main's WATCHDOG_MAX_ITERS already provides the same seam.
 EXIT_PAUSE_ABANDONED=6
+# recover_stall.sh's fail-closed refusal ("an operator marker is present"). Kept
+# in step with INTENTIONAL_STOP_EXIT in scripts/intentional_stop_guard.sh, and
+# pinned equal by tests/test_recover_stall_guard.py — this file deliberately
+# does NOT source that library, because a long-running loop must not gain a new
+# way to die at startup for a file it never needed before.
+EXIT_RECOVER_REFUSED=7
 # Last state we ALERTED on, so a persisting condition alerts ONCE per episode
 # rather than once per poll. The 2026-08-08 outage wrote 27 identical STOPPED
 # lines over 4h32m; a file that repeats itself every 10 minutes is a log, not
@@ -207,7 +213,11 @@ while true; do
     # ── auto-recovery on confirmed STALLED (wedged-but-alive) ────────────
     if [ "$AUTO_RECOVER" = 1 ] && [ "$RC" = "$EXIT_STALLED" ] && [ ! -f "$MARKER" ]; then
         now=$(date +%s)
-        last=0; [ -f "$RECOVER_STAMP" ] && last=$(cat "$RECOVER_STAMP" 2>/dev/null || echo 0)
+        # `had_stamp` is what makes the rollback below exact: with no prior
+        # stamp the correct undo is to REMOVE the file, not to write back the
+        # `last=0` sentinel, which would read as "recovered at the epoch".
+        last=0; had_stamp=0
+        [ -f "$RECOVER_STAMP" ] && { had_stamp=1; last=$(cat "$RECOVER_STAMP" 2>/dev/null || echo 0); }
         if [ $((now - last)) -lt "$RECOVER_COOLDOWN_S" ]; then
             # Deduped like any other alert: a stall that persists through the 2h
             # cooldown is ONE piece of news, not one per poll. Un-gated, this
@@ -228,6 +238,32 @@ while true; do
             echo "$now" > "$RECOVER_STAMP"
             # Run recovery to completion before the next poll (it restarts the stack).
             bash scripts/recover_stall.sh >> "$LOGF" 2>&1
+            recover_rc=$?
+            # ⚑ A REFUSAL MUST NOT BURN THE COOLDOWN. The stamp is written
+            # BEFORE the call on purpose — if this loop dies mid-recovery the
+            # anti-flap bound must already be armed — but that made a refusal
+            # cost a full $RECOVER_COOLDOWN_S of suppression for a recovery that
+            # NEVER HAPPENED: the next two hours of genuine stalls would read
+            # "SUPPRESSED (re-stall within cooldown of last recovery)" while no
+            # last recovery existed. Roll the stamp back to exactly what it was.
+            #
+            # Reading $? does NOT change the loop's contract of surviving any
+            # status recover_stall returns: nothing here exits, and this file
+            # has no `set -e`.
+            if [ "$recover_rc" = "$EXIT_RECOVER_REFUSED" ]; then
+                if [ "$had_stamp" = 1 ]; then
+                    echo "$last" > "$RECOVER_STAMP"
+                else
+                    rm -f "$RECOVER_STAMP"
+                fi
+                echo "$(stamp) recover_stall.sh REFUSED (rc=$recover_rc): an operator marker is present; cooldown stamp rolled back" >> "$LOGF"
+                # Its own dedupe key: a marker that keeps refusing is ONE piece
+                # of news, and it is DIFFERENT news from the STALLED verdict --
+                # production is down, auto-recovery is structurally unable to
+                # fix it, and only a human removing the marker will.
+                alert_once "$LAST_ESCALATE_F" "REFUSED-$STATE" \
+                    "AUTO-RECOVER REFUSED by recover_stall.sh (rc=$recover_rc, an operator stop/pause marker is present) — production stays DOWN until a human clears it: $MSG" || true
+            fi
         fi
     fi
 
