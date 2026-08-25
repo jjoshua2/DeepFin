@@ -21,8 +21,11 @@
 # that `watchdog_loop.sh` covers the same ground. Read that as a known defect,
 # not as a clean bill of health.
 #
-# Override the guard with --ignore-intentional-stop (alias: --force), same as
-# recover_stall.sh. WATCHDOG_PBT_MAX_ITERS is a TEST SEAM, not an operator knob:
+# Override the STOP marker with --ignore-intentional-stop (alias: --force). It
+# authorizes exactly ONE restart and is consumed there — a long-lived loop must
+# not hold standing permission to override every later stop. ⚑ It does NOT
+# override a PAUSE marker on this path: see the pause_overridable=0 note in the
+# restart branch. WATCHDOG_PBT_MAX_ITERS is a TEST SEAM, not an operator knob:
 # without it this loop never terminates and its restart branch could only be
 # pinned by reading it.
 
@@ -37,11 +40,22 @@ CONFIG="${TRAIN_CONFIG:-configs/pbt2_small.yaml}"
 LOG="${TRAIN_MONITOR_LOG:-$ROOT/runs/pbt2_small/monitor.log}"
 INTERVAL_SECONDS="${WATCHDOG_INTERVAL_SECONDS:-3600}"
 STOP_MARKER="${WATCHDOG_PBT_STOP_MARKER:-$CAE_STOP_MARKER_DEFAULT}"
-PAUSE_TXT="${WATCHDOG_PBT_PAUSE_TXT:-$ROOT/$CAE_PAUSE_TXT_DEFAULT}"
+TUNE_DIR="${WATCHDOG_PBT_TUNE_DIR:-$ROOT/$CAE_TUNE_DIR_DEFAULT}"
 MAX_ITERS="${WATCHDOG_PBT_MAX_ITERS:-0}"   # 0 = run forever (production)
+# Settle time after a restart before the next poll, so a trainer still importing
+# is not read as "not running" and launched a second time. A TEST SEAM for the
+# same reason as MAX_ITERS: a two-poll test cannot wait 120 real seconds.
+RESTART_SETTLE="${WATCHDOG_PBT_RESTART_SETTLE:-120}"
 
 # An unknown argument is REJECTED, not ignored: a typo'd override that fell
 # through to the default would read as "the guard did not fire".
+#
+# ⚑ THE OVERRIDE AUTHORIZES ONE RESTART, NOT A SESSION. This loop runs for days
+# in a tmux pane. A flag parsed once at launch and left set would turn a single
+# "yes, bring it back up now" into standing permission to override every LATER
+# operator stop, days after the human who typed it walked away — the flag would
+# outlive the intent that justified it. It is CONSUMED at the first restart
+# below (whether or not it was needed), so the second stop is honoured.
 OVERRIDE=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -78,13 +92,35 @@ while true; do
     # the refusal once per $INTERVAL_SECONDS (default 1h) is deliberate: while
     # nothing is running, the refusal line is the only record of WHY, and an
     # operator reading this log needs it more than they need silence.
-    if intentional_stop_guard "$OVERRIDE" log "$STOP_MARKER" "$PAUSE_TXT"; then
+    #
+    # ⚑ THE MARKER SET IS RE-ENUMERATED EACH POLL, for the same reason: a
+    # per-trial pause.txt written since the last poll must be seen.
+    #
+    # ⚑ pause_overridable=0 — THE OVERRIDE DOES NOT REACH A PAUSE HERE. This
+    # branch routes through neither `recover_stall.sh`'s teardown nor
+    # `train.sh start` (whose `clear_pause_markers` renames markers aside), so
+    # it has no way to clear a pause marker correctly. Overriding one would
+    # launch a trial that parks at its own pause check within seconds while this
+    # log said "Restarted with PID N" — a silent wedge, and a worse failure than
+    # the refusal, because the log asserts the opposite of what happened.
+    # `recover_stall.sh` passes 1 because it genuinely can clear the set.
+    PAUSE_MARKERS=()
+    while IFS= read -r _m; do
+      [ -n "$_m" ] && PAUSE_MARKERS+=("$_m")
+    done < <(cae_pause_markers "$TUNE_DIR" "${WATCHDOG_PBT_PAUSE_FILE-}")
+    if intentional_stop_guard "$OVERRIDE" 0 log "$STOP_MARKER" ${PAUSE_MARKERS+"${PAUSE_MARKERS[@]}"}; then
       log "WARNING: Training process not found. Restarting..."
       PYTHONPATH=. python3 -m chess_anti_engine.run \
         --config "$CONFIG" --mode tune --resume >> "$LOG" 2>&1 &
       log "Restarted with PID $!"
+      # ⚑ CONSUME THE AUTHORIZATION. One --ignore-intentional-stop buys one
+      # restart; the next operator stop is honoured like any other.
+      if [ "$OVERRIDE" = 1 ]; then
+        OVERRIDE=0
+        log "override consumed — a later intentional stop will be honoured; re-launch with $CAE_IGNORE_STOP_FLAG to authorize another"
+      fi
       if [ "$MAX_ITERS" -gt 0 ] && [ "$ITER" -ge "$MAX_ITERS" ]; then break; fi
-      sleep 120
+      sleep "$RESTART_SETTLE"
       continue
     fi
     if [ "$MAX_ITERS" -gt 0 ] && [ "$ITER" -ge "$MAX_ITERS" ]; then break; fi

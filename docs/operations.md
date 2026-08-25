@@ -69,16 +69,53 @@ the two routes a human drives directly wide open:
 | `./scripts/recover_stall.sh` **by hand** | **no check anywhere** | refuses, exit 7 |
 | `bash scripts/watchdog_pbt.sh` (tmux, launches `chess_anti_engine.run` directly) | **no check anywhere** | logs the refusal, does not restart, keeps polling |
 
+⚑ One marker class this guard does **not** see, said plainly rather than implied: a pause
+held *only* at the ephemeral Ray-session tune root
+(`/tmp/ray/session_*/artifacts/.../driver_artifacts/`), which is named by the actor and not
+reachable from a shell script. `train_watchdog.find_pause_txt` — the instrument that
+produces the STALLED verdict in the first place — cannot see it either.
+
 A refusal names **every** marker it saw and what that marker holds, so the operator knows
 which file to remove. An intentional-stop marker **or** a pause marker refuses.
+
+**⚑ The pause set is not one file.** The guard enumerates every marker the pause machinery
+itself honours: the tune dir scanned **recursively** — root *and* per-trial
+`train_trial_*/pause.txt`, the same set `train_watchdog.find_pause_txt` walks — plus a
+`pause_file` configured in the live yaml, wherever it points. Checking only
+`runs/pbt2_small/tune/pause.txt` let a per-trial pause through and recovery SIGKILLed a
+deliberately parked run. A marker that is a **dangling symlink** or a directory also
+refuses (`[ -e ]` alone follows the link and reads a dangling one as absent).
 
 To override, pass `--ignore-intentional-stop` (alias `--force`). It is deliberate and
 loud: one log line per marker being ignored, plus a line saying production is being
 restarted against a deliberate stop. It is never the default, and an argument that is
 neither of those two spellings is a usage error (exit 2) rather than a silently ignored
-value — a typo'd override must not read as "the guard did not fire". Only an overridden
-run of `recover_stall.sh` deletes a pause marker; the ordinary path already proved none
-existed, so anything it found would belong to a window that is just opening.
+value — a typo'd override must not read as "the guard did not fire".
+
+**The two scripts differ on purpose, and the difference is what each one can carry out:**
+
+- `recover_stall.sh` **can** override a pause: it restarts through `train.sh start`, whose
+  `clear_pause_markers` renames markers aside properly. An overridden run therefore clears
+  the **whole** enumerated set, not just the root marker. The ordinary path clears nothing
+  — it already proved no marker existed, so anything it found would belong to a window that
+  is just opening.
+- `watchdog_pbt.sh` **cannot**, so it refuses: `--ignore-intentional-stop` there overrides
+  the **stop** marker only. It routes through neither `recover_stall.sh`'s teardown nor
+  `train.sh start`, so a trial it launched over a pause would park at its own pause check
+  within seconds while the log said `Restarted with PID N` — a silent wedge, worse than the
+  refusal because the log asserts the opposite of what happened.
+- On `watchdog_pbt.sh` the flag authorizes **one** restart and is consumed there. That loop
+  runs for days in a tmux pane; a flag left set would turn one "bring it back up now" into
+  standing permission to override every later stop.
+
+**A refusal does not burn the recovery cooldown.** `watchdog_loop.sh` writes its
+`RECOVER_STAMP` *before* invoking `recover_stall.sh` (deliberately — if the loop dies
+mid-recovery the 2 h anti-flap bound must already be armed). On exit 7 it now rolls the
+stamp back to exactly its previous value, logs `cooldown stamp rolled back`, and raises a
+distinct `AUTO-RECOVER REFUSED` alert. Without the rollback a refusal suppressed recovery
+for two hours for a recovery that never happened, and every genuine stall in that window
+reported `SUPPRESSED (re-stall within cooldown of last recovery)` with no last recovery to
+speak of.
 
 ⚑ `watchdog_pbt.sh` is guarded but still **bypasses `train.sh`**: its restart writes no
 `/tmp/chess_training.pid`, runs no C-extension freshness check, starts no observers, and
