@@ -28,6 +28,26 @@ from scripts import nnue_parse
 from tests.test_nnue_native_eval import write_synthetic_pack
 
 
+_DAG_STAT_KEYS = {
+    "root_id",
+    "node_count",
+    "edge_count",
+    "payload_capacity",
+    "probes",
+    "hits",
+    "inserts",
+    "collision_steps",
+    "edge_reuses",
+    "state_inits",
+    "state_makes",
+    "nnue_evals",
+    "node_reuses",
+    "dag_memory_bytes",
+    "nnue_payload_bytes",
+    "memory_bytes",
+}
+
+
 @pytest.fixture(scope="module")
 def dag_pack(tmp_path_factory: pytest.TempPathFactory) -> Path:
     rng = np.random.default_rng(20260825)
@@ -86,6 +106,11 @@ def _push(
     return node_id, child, created
 
 
+def _assert_stats_schema(stats: dict[str, int]) -> None:
+    assert set(stats) == _DAG_STAT_KEYS
+    assert stats["memory_bytes"] == stats["dag_memory_bytes"] + stats["nnue_payload_bytes"]
+
+
 def test_transposed_move_orders_share_one_real_node_and_one_evaluation(dag_pack: Path) -> None:
     weights = _nnue_ext.load(str(dag_pack))
     dag = _nnue_ext.dag_open(weights, 16)
@@ -131,6 +156,7 @@ def test_transposed_move_orders_share_one_real_node_and_one_evaluation(dag_pack:
     assert node_a in children_b.values()
 
     stats = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(stats)
     # root + 4 nodes on A + only 3 new nodes on B; B's fourth is the transposition.
     assert stats["node_count"] == 8
     assert stats["edge_count"] == 8
@@ -176,6 +202,7 @@ def test_action_child_mismatch_is_rejected_before_graph_or_nnue_mutates(dag_pack
     board = chess.Board()
     root, _, _ = _nnue_ext.dag_intern_root(dag, _cboard(board))
     before = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(before)
 
     asked_move = chess.Move.from_uci("e2e4")
     wrong_child = board.copy(stack=True)
@@ -186,6 +213,7 @@ def test_action_child_mismatch_is_rejected_before_graph_or_nnue_mutates(dag_pack
         _nnue_ext.dag_intern_child(dag, root, action, _cboard(wrong_child))
 
     after = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(after)
     assert after["node_count"] == before["node_count"]
     assert after["edge_count"] == before["edge_count"]
     assert after["state_makes"] == before["state_makes"]
@@ -203,6 +231,7 @@ def test_in_check_node_has_state_but_no_fake_static_value(dag_pack: Path) -> Non
     assert value is None
     assert _nnue_ext.dag_value(dag, root) is None
     stats = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(stats)
     assert stats["state_inits"] == 1
     assert stats["nnue_evals"] == 0
 
@@ -223,6 +252,7 @@ def test_in_check_node_has_state_but_no_fake_static_value(dag_pack: Path) -> Non
     assert child_value == _nnue_ext.evaluate(weights, child_cb)
     assert _nnue_ext.dag_value(dag, child_id) == child_value
     stats = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(stats)
     assert stats["state_makes"] == 1
     assert stats["nnue_evals"] == 1
 
@@ -236,11 +266,13 @@ def test_reroot_and_reset_preserve_allocations_but_clear_graph_semantics(dag_pac
 
     _nnue_ext.dag_set_root(dag, child)
     before = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(before)
     assert before["root_id"] == child
     allocated = before["memory_bytes"]
 
     _nnue_ext.dag_reset(dag)
     cleared = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(cleared)
     assert cleared["root_id"] == -1
     assert cleared["node_count"] == 0
     assert cleared["edge_count"] == 0
