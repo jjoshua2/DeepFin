@@ -66813,3 +66813,42 @@ ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
   Rewrite-or-delete is Josh's ops call; stated in the file header and docs/operations.md.
   Also disclosed: a pause held ONLY at the ephemeral Ray-session tune root is invisible
   to both the guard and find_pause_txt (guard and verdict instrument share coverage).
+
+## 2026-08-24 21:40 — PR #464 MERGED (74a34b843) to main: NNUE recursive check-resolver + qsearch arm — #273 PR 2 done
+
+- **What**: `_check_resolver.h` (minimax over evasions, repetition/50-move/mate terminals
+  in-resolver, NNUE never invoked in check) + `_arm_providers.h` leaf-qsearch plugin,
+  terminality extracted byte-faithfully to `_search_terminal.h`; mate band floor 74400
+  vs eval clamp 32000, total separation. Speculative POLICY_LUT.promotion bug fixed en
+  route (quiescence 2.6× faster).
+- **Review**: 3 reviewers, 13 deduped findings, ALL dispositioned. Headline (Grok G1,
+  the signature defect): `qsearch_max_ply`/`qsearch_check_plies` compared against
+  RESOLVER depth-from-root — at defaults `try_checks` was false on exactly the in-check
+  roots the budget exists for; chains ≥4 stood pat. The PR's own bench anomaly (qsearch
+  CHEAPER in check, 8,268/s vs 5,697/s quiet) was this bug measured and mislabeled.
+- ⚑ **My prescribed fix was WRONG and the author refuted it by measurement**: a fresh
+  qsearch ply counter at the leaf hook REFUNDS the budget through every check-resolution
+  excursion — non-terminating (8,378 → 15,327,851 qnodes across one recursion-cap
+  doubling; never finishes at cap 32). Shipped: qply CARRIED across the excursion —
+  resolution is mandatory-and-free, budget buys quiescence moves only. Delta reviewer
+  endorsed carried on the merits (the only variant where the knob bounds what its name
+  says; excursions spend zero qply so deep chains don't starve captures) and reproduced
+  the refund blow-up to the digit. M18's killer is SATURATION vs cap (5,468/8,446/8,446
+  at cap 6/12/32 carried), cheap comparison ordered first so the mutant dies by
+  assertion, not timeout.
+- **Post-fix bench (corrected sampling: matched reservoirs, accumulated stats,
+  history-carrying boards, resolver-complete dedup, per-position JSONL bank)**:
+  in-check qsearch 8,268/s → **468/s** (ratio 0.69× → **11.36×**) — the fix taking
+  effect, visible in the instrument. Static arm blended **144,654/s, 12.7% below own
+  quiet rate**. `qmax_ply_seen` pins at exactly `max_ply`. Also fixed: Fable F1 (value
+  backup unpinned at depth ≥2 — python-chess minimax mirror both arms, reviewer's
+  surviving mutant now dies `700 == -600`), F2/Codex UAF (`fast` DECREFed before the
+  GIL-released loop), atomics on stats reads, mutex on config snapshot.
+- **Gates**: 18/18 mutants, affected set 1285/2 vs 1232/2 at branch point (+53 exact),
+  lint fingerprint byte-identical, CI green on merged head d8463983d. APPROVE-DELTA
+  with 2 P3 nits (stale PR-body paragraphs; `_transposition_key()` private API) —
+  deferred to PR 3.
+- **Next (#273)**: PR 3 = generator integration, then the 2-arm × sims-ladder quality
+  readout vs the banked UCI anchors (≥813k rows/h gate; prereg + noise floor FIRST).
+  ⚑ The readout's arm throughput numbers must come from the POST-fix bench — every
+  pre-fix qsearch number is void.
