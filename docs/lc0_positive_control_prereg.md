@@ -1,6 +1,6 @@
 # PREREG (NOT LAUNCHED): the lc0 positive control
 
-Status: **NOT LAUNCHED. Training is STOPPED and needs Josh's explicit go.**
+Status: **NOT LAUNCHED. Training is STOPPED and needs the operator's explicit go.**
 Written 2026-08-15, before any converted shard has been trained on and before any
 number from this arm is visible. Depends on PR #435 landing.
 
@@ -868,7 +868,7 @@ caveat.
 
 Offline arm. Touches no production weights, no live yaml, no replay window. The only
 shared resource is the GPU, so it requires production training to be stopped —
-which it already is, and which is Josh's call to change.
+which it already is, and which is the operator's call to change.
 
 ## ⚑⚑ AMENDMENT 4 (2026-08-21, written AFTER training completed but BEFORE any score existed): the readout rig had two wiring defects and one missing input; the `Δ_train` sample is pinned here, with its dilution stated before the read
 
@@ -933,3 +933,18 @@ commands (deep-SF value baseline, sigma probe) pointed at the salvage export roo
 the trainer file lives at `seeds/slot_000/trainer.pt` inside it (identity confirmed
 from the export manifest: `picked_row_training_iteration: 595`,
 `checkpoint_000594`). Path fix only; no parameter changes.
+
+## AMENDMENT 9 (2026-08-24, written after all readouts closed): identity redaction — two prose lines edited in place, disclosed here
+
+**Necessary exception to the append-only rule, and the only in-place edit this file has
+had.** Two prose occurrences of the operator's first name (the Status line at the top,
+and one sentence in the readout discussion) were reworded to "the operator". Reason:
+this is a public repository, and `test_no_absolute_home_paths::
+test_no_tracked_file_carries_this_machines_identity` fails on any machine whose login
+matches the name — CI was green only because the runner's login differs. No number,
+threshold, verdict, or mechanism text was touched; the git diff of this change is two
+lines of prose and is the checkable record. Redactions of personal identity are the one
+edit class this document permits in place, because leaving the identity in the history
+of an APPENDED amendment would defeat the redaction's purpose for future occurrences —
+this instance's history retains the name, which is acceptable for a first name already
+public in the repository owner's handle.
