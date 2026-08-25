@@ -37,6 +37,12 @@ The following are intentionally **not** node identity:
 
 Those are path/search-context properties. Two histories can reach the same structural position while differing on a fifty-move claim, repetition, or DeepFin neural input. A future Gumbel consumer may share the structural node and legal edges, but must keep history-sensitive evaluation state in its own overlay. This separation is what allows real chess transpositions to merge without laundering path-dependent draw semantics into a position value.
 
+### Repetition means the structural store is not an acyclicity proof
+
+Chess can return to the same structural position by reversible moves. Because repetition history is intentionally outside canonical node identity, a search can encounter an edge whose structural child is an ancestor node. The storage permits that representation; static NNUE reuse is still sound.
+
+The **path-aware search overlay** must decide repetition/fifty-move terminal semantics before recursively following such an edge. In the intended tactical search, a repetition back-edge is adjudicated on that path rather than recursively expanded forever. A future Gumbel migration has the same obligation. So `CaePositionDag` means canonical transposition-node storage; consumers must not infer that structural interning alone proves the reachable graph is mathematically acyclic.
+
 ## NNUE first consumer
 
 `_nnue_ext` layers `CaeNnueState` and a static value over each canonical node.
@@ -74,7 +80,9 @@ The accumulator array is explicitly 32-byte aligned because the AVX2 kernels use
 
 ## Action integrity
 
-`dag_intern_child(parent, action, child)` does not trust that the action and child correspond. The DAG reconstructs the canonical parent structure, pushes the supplied action, and requires the resulting structural position to equal the supplied child before mutating the graph or evaluating NNUE.
+`dag_intern_child(parent, action, child)` does not trust that the action and child correspond. The DAG reconstructs the canonical parent structure, first requires `action` to occur in that parent's generated legal-action set, then pushes it and requires the resulting structural position to equal the supplied child before mutating the graph or evaluating NNUE.
+
+The explicit legal-membership check matters because `cboard_push_index()` is defensive around malformed actions; push-and-compare alone could otherwise accept an illegal no-op if a caller supplied the unchanged board as the alleged child.
 
 This is a deliberate guard against the repository's recurring failure mode: a parameter can be accepted while the production path silently uses something else.
 
@@ -83,6 +91,8 @@ This is a deliberate guard against the repository's recurring failure mode: a pa
 Rerooting changes only `root_id`; descendants and transposed nodes stay allocated and reusable. `dag_reset()` clears graph semantics and counters but keeps allocations and the retained weight mapping, so a caller can reuse the storage without repeated malloc/mmap churn.
 
 No garbage collector is added in this PR. The first tactical-search consumer is expected to operate on bounded graphs; memory usage is explicit in `dag_stats()`. Once real workloads show the required lifetime, reclamation can be designed around reachability/generations instead of guessed in advance.
+
+The current construction API is single-threaded. A later Gumbel migration with concurrent walkers must add publication/structure synchronization rather than treating the present canonical table as a concurrent container.
 
 ## Observable invariants
 
@@ -104,8 +114,10 @@ nnue_evals <= node_count
 
 with a true transposition increasing `node_reuses` while leaving both `state_makes` and `nnue_evals` unchanged for that request.
 
+The Python test also pins the complete stats key set and `memory_bytes == dag_memory_bytes + nnue_payload_bytes`, so a `Py_BuildValue` format drift cannot silently shift or omit trailing metrics.
+
 ## Intended next layers
 
-The next PR can implement the tactical expansion/termination policy on this graph: checks, captures/promotions, SEE, selective deepening, and backup. That search should keep path-specific repetition/fifty-move state outside the structural node.
+The next PR can implement the tactical expansion/termination policy on this graph: checks, captures/promotions, SEE, selective deepening, and backup. That search should keep path-specific repetition/fifty-move state outside the structural node and terminate repetition back-edges before recursive expansion.
 
 A later Gumbel migration can reuse the same canonical nodes/edges and place sequential-halving statistics in a search-local edge overlay instead of storing `N/W/prior/parent` on the position node. This PR intentionally does not change current Gumbel behavior.
