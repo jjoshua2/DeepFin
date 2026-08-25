@@ -67015,3 +67015,45 @@ mass on every row both corpora; staged-vs-raw verified Δ ≤ 0.026 nats).
   WHY mixing underperforms — that needs the intervention arm. Next: harmonization arm
   prereg (policy temper toward the lc0 band + value-shape decision + ≤6-piece filter as
   SEPARATE levers, one per readout), queued behind the arm-2 extension readout.
+
+## 2026-08-25 08:40 — 2-ARM READOUT VERDICT (#273): G2 FAILS EVERYWHERE, THE BEND RULE INVERTS — pure-native labels lose to UCI@512 and GET WORSE WITH MORE SIMS; HYBRID LANE REVIVES
+
+Executed exactly per the committed prereg (readout_prereg_final.md, 9afba38a6); one code
+sha dc0abecf2, every sidecar code_dirty false, anchors reproduced bit-identically,
+positive control resolved (−14.64 [−24.7, −4.8]). Full tables + row dumps:
+scratchpad/az_purity/readout_artifacts/ladder/ (49,554 scored rows banked).
+
+- **G1**: S-base/2x/4x PASS (4.0–4.6M rows/h, both seeds, ≥500g, leaf bank on).
+  Q-base FAILS at 137,716/123,489 rows/h — ⚑ 6× better than the §9 smoke predicted
+  (the 2.7× cell-length effect + ruler contention), still 5.9–6.6× under the gate.
+- **G2**: **EVERY cell FAILS** on primary AND raw. Δ vs UCI@512 (standardised):
+  S-base +24.2 [+15.8, +32.7], S-2x +31.8, S-4x +37.2, Q-base +17.3 [+8.6, +26.0].
+  ⇒ the §6 pre-commitment fires: **the no-SF-search lane is DEAD; hybrid (SF-search
+  labels over the fast native path) is back on the table.**
+- **⚑⚑ BEND RULE INVERTS — sims are an ANTI-lever on this arm**: base→2x **+7.53 cp
+  [+0.51, +14.60]** (CI excludes 0 — the DEGRADATION is real), 2x→4x +5.47 [−1.6,
+  +12.6]. Mechanism reading: with a UNIFORM prior, added sims concentrate the target on
+  the static evaluator's own Q preferences — search amplifies the evaluator's biases
+  away from deep SF instead of correcting toward it. (Phase mix also walks endgame-heavy
+  with sims: .647→.732→.746.)
+- **Staging gate**: 115.38 ≤ 105.31 FALSE ⇒ Q-2x/Q-4x NOT RUN (not null, not fail).
+  Q-base beats S-base on the primary by 6.92 [−0.28, +13.93] while losing on E[regret]
+  and blunder mass (sharper target, TV 0.481 vs 0.466) — §3 disagreement rule invoked:
+  verdict follows the primary; the sharpness/cp-per-unit sweep is REVIVED as a named
+  separate experiment.
+- **Instrument finding (bounded, no verdict flips)**: the ruler's label cache keys on
+  FEN-without-counters while decode restores the rule50 clock — rows differing only in
+  the 50-move counter collapse (0.24–0.49% of rows, worst case ≤4.95 cp vs margins
+  17–39). SF itself verified deterministic; the variation was entirely the discarded
+  clock. Future preregs: cache key must carry the halfmove clock.
+- Procedural: §10.2's literal one-invocation text was unexecutable (lists cells that
+  exist only post-gate; re-scores anchors §4 pins as never-re-scored) — executed as
+  each-cell-once + banked anchors, flagged not absorbed.
+- **Where this leaves #270/#273**: throughput is PROVEN (up to 39× the UCI anchor);
+  label quality is the deficit and sims cannot buy it back on a uniform prior. Next
+  design decisions (need prereg, likely Josh input on direction): (a) hybrid labels —
+  shallow SF search (the anchors ARE the hybrid: 98–112 cp at 121–163k rows/h) vs
+  (b) volume-vs-quality training test — does 26× more data at +24 cp worse labels win
+  in TRAINING? G2 answered per-row quality, not the training tradeoff; (c) the revived
+  cp-per-unit/sharpness sweep; (d) a real prior in the native search (requires the
+  argpartition→top-by-score fix first, per the #468 P3).
