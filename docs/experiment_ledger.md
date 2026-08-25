@@ -66986,3 +66986,32 @@ best arm and did NOT fire; it is unspent but the lane is closed — reopening re
 new prereg. NEXT (registered): the bootstrap bet (lc0 pretrain from scratch/early
 checkpoint), operator decision; and the v020 veto production experiment, operator
 decision. GPU idle pending Josh.
+
+## 2026-08-25 06:10 — CORPUS-GAP MEASUREMENT (Josh's hypothesis): the two mixed-replay corpora are FAR apart, and on THREE separable axes
+
+Premise tested: mixing underperforms because the corpora are too different to fit
+jointly in a shared trunk. **HOLDS, decisively.** Instruments + full tables banked at
+scratchpad/mix_sharpness_gap/ (SUMMARY.md, results.json, per-row npz; seeds frozen;
+61,681 own + 64,000 lc0 rows, counts predicted before compute; padding carries zero
+mass on every row both corpora; staged-vs-raw verified Δ ≤ 0.026 nats).
+
+- **Policy sharpness**: median target entropy OWN 0.675 vs LC0 1.494 nats — **gap
+  +0.819 [95% CI +0.775, +0.864]** (block bootstrap, cluster-robust). Effective support
+  1.96 vs 4.45 moves; top-1 mass 0.773 vs 0.502. **The net sits BETWEEN (H=0.968,
+  banked 08-19 probe, anchor not same-population)** — the two corpora pull the shared
+  policy head in OPPOSITE directions every batch.
+- **Value-target gap at least as large — and wdl is the only head MCTS uses**: lc0
+  realized value target median D-mass 0.735, E=W−L IQR [−0.075,+0.106]; our blend
+  median D 0.267, E p10/p90 −0.97/+0.93. Half of each mixed value batch contradicts
+  the other's regime.
+- **Support shape categorical**: OWN lives on the Gumbel candidate subset (support/legal
+  p10 = 0.50; 25% of rows near-one-hot at top-1 ≥ 0.96); LC0 has nonzero mass on EVERY
+  legal move on 64,000/64,000 rows. Temperature cannot reconcile this axis.
+- **Phase-uniform** (+0.57 to +0.93 nats across all piece bands) ⇒ target-construction
+  difference, not position mix. Composition: LC0 spends **11.6% of rows at ≤6 pieces**
+  (solved-TB territory — the design-for-6-man rule says these cannot convert) vs OWN
+  0.11%; lc0 opening-heavy 28.2% vs 13.6%.
+- **Causal limit**: confirms the distributions differ; does NOT prove the difference is
+  WHY mixing underperforms — that needs the intervention arm. Next: harmonization arm
+  prereg (policy temper toward the lc0 band + value-shape decision + ≤6-piece filter as
+  SEPARATE levers, one per readout), queued behind the arm-2 extension readout.
