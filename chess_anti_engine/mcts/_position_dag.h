@@ -1,10 +1,11 @@
 /*
- * _position_dag.h — canonical structural chess-position DAG.
+ * _position_dag.h — canonical structural chess-position graph.
  *
  * This is deliberately NOT an MCTS tree and carries no visits, Q, priors,
- * virtual loss, parent pointer, or search-specific solved value.  One structural
- * chess position is one node and any number of parent edges may point at it.
- * Search algorithms layer their own path/edge state on top.
+ * virtual loss, parent pointer, expansion flag, or search-specific solved
+ * value. One structural chess position is one node and any number of parent
+ * edges may point at it. Search algorithms layer their own path/edge/frontier
+ * state on top.
  *
  * Node identity is the current position state that determines legal moves:
  * pieces, side to move, castling rights, and an exercisable en-passant right.
@@ -48,7 +49,6 @@ typedef struct CaePositionDag {
     CaeDagPosition *positions;
     int32_t *first_edge;
     int32_t *out_degree;
-    uint8_t *expanded;
     int32_t node_count;
     int32_t node_cap;
 
@@ -118,7 +118,6 @@ static void cae_position_dag_free(CaePositionDag *d) {
     free(d->positions);
     free(d->first_edge);
     free(d->out_degree);
-    free(d->expanded);
     free(d->edge_action);
     free(d->edge_child);
     free(d->edge_next);
@@ -143,12 +142,11 @@ static int cae_position_dag_init(CaePositionDag *d, int32_t initial_nodes) {
     d->positions = (CaeDagPosition *)calloc((size_t)d->node_cap, sizeof(*d->positions));
     d->first_edge = (int32_t *)malloc((size_t)d->node_cap * sizeof(*d->first_edge));
     d->out_degree = (int32_t *)calloc((size_t)d->node_cap, sizeof(*d->out_degree));
-    d->expanded = (uint8_t *)calloc((size_t)d->node_cap, sizeof(*d->expanded));
     d->edge_action = (int32_t *)malloc((size_t)d->edge_cap * sizeof(*d->edge_action));
     d->edge_child = (int32_t *)malloc((size_t)d->edge_cap * sizeof(*d->edge_child));
     d->edge_next = (int32_t *)malloc((size_t)d->edge_cap * sizeof(*d->edge_next));
     d->hash_table = (int32_t *)malloc((size_t)d->ht_cap * sizeof(*d->hash_table));
-    if (!d->positions || !d->first_edge || !d->out_degree || !d->expanded
+    if (!d->positions || !d->first_edge || !d->out_degree
         || !d->edge_action || !d->edge_child || !d->edge_next || !d->hash_table) {
         cae_position_dag_free(d);
         return -1;
@@ -160,8 +158,8 @@ static int cae_position_dag_init(CaePositionDag *d, int32_t initial_nodes) {
 
 static int cae_position_dag_grow_nodes(CaePositionDag *d) {
     int32_t old_cap = d->node_cap;
+    if (old_cap > INT32_MAX / 2) return -1;
     int32_t new_cap = old_cap * 2;
-    if (new_cap <= old_cap) return -1;
 
 #define CAE_DAG_GROW(field, type) do { \
     type *_p = (type *)realloc(d->field, (size_t)new_cap * sizeof(type)); \
@@ -171,23 +169,20 @@ static int cae_position_dag_grow_nodes(CaePositionDag *d) {
     CAE_DAG_GROW(positions, CaeDagPosition);
     CAE_DAG_GROW(first_edge, int32_t);
     CAE_DAG_GROW(out_degree, int32_t);
-    CAE_DAG_GROW(expanded, uint8_t);
 #undef CAE_DAG_GROW
 
     memset(d->positions + old_cap, 0,
            (size_t)(new_cap - old_cap) * sizeof(*d->positions));
     memset(d->out_degree + old_cap, 0,
            (size_t)(new_cap - old_cap) * sizeof(*d->out_degree));
-    memset(d->expanded + old_cap, 0,
-           (size_t)(new_cap - old_cap) * sizeof(*d->expanded));
     for (int32_t i = old_cap; i < new_cap; i++) d->first_edge[i] = CAE_DAG_NO_NODE;
     d->node_cap = new_cap;
     return 0;
 }
 
 static int cae_position_dag_grow_edges(CaePositionDag *d) {
+    if (d->edge_cap > INT32_MAX / 2) return -1;
     int32_t new_cap = d->edge_cap * 2;
-    if (new_cap <= d->edge_cap) return -1;
 #define CAE_DAG_GROW_EDGE(field) do { \
     int32_t *_p = (int32_t *)realloc(d->field, (size_t)new_cap * sizeof(int32_t)); \
     if (!_p) return -1; \
@@ -226,6 +221,7 @@ static int cae_position_dag_ensure_hash_room(CaePositionDag *d) {
     /* Keep load below 70%.  Open addressing is the canonical store here, not a
      * best-effort cache, so silently overwriting a collision is forbidden. */
     if ((int64_t)(d->node_count + 1) * 10 < (int64_t)d->ht_cap * 7) return 0;
+    if (d->ht_cap > INT32_MAX / 2) return -1;
     return cae_position_dag_rehash(d, d->ht_cap * 2);
 }
 
@@ -269,7 +265,6 @@ static int32_t cae_position_dag_insert_position(
     d->positions[nid] = *p;
     d->first_edge[nid] = CAE_DAG_NO_NODE;
     d->out_degree[nid] = 0;
-    d->expanded[nid] = 0;
 
     int32_t slot = (int32_t)(p->key & (uint64_t)d->ht_mask);
     while (d->hash_table[slot] != CAE_DAG_NO_NODE)
@@ -368,12 +363,6 @@ static int cae_position_dag_set_root(CaePositionDag *d, int32_t node_id) {
     return 0;
 }
 
-static int cae_position_dag_mark_expanded(CaePositionDag *d, int32_t node_id) {
-    if (node_id < 0 || node_id >= d->node_count) return -1;
-    d->expanded[node_id] = 1;
-    return 0;
-}
-
 static void cae_position_dag_reset(CaePositionDag *d) {
     d->node_count = 0;
     d->edge_count = 0;
@@ -385,7 +374,7 @@ static void cae_position_dag_reset(CaePositionDag *d) {
 static int64_t cae_position_dag_memory_bytes(const CaePositionDag *d) {
     int64_t bytes = 0;
     bytes += (int64_t)d->node_cap * (int64_t)(
-        sizeof(CaeDagPosition) + sizeof(int32_t) + sizeof(int32_t) + sizeof(uint8_t));
+        sizeof(CaeDagPosition) + sizeof(int32_t) + sizeof(int32_t));
     bytes += (int64_t)d->edge_cap * (int64_t)(3 * sizeof(int32_t));
     bytes += (int64_t)d->ht_cap * (int64_t)sizeof(int32_t);
     return bytes;
