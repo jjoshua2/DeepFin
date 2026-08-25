@@ -66738,3 +66738,24 @@ ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
   scratchpad/mix075_train.log every 60s (scratchpad/mix075_log_mirror.sh). At completion verify
   summary.json mixed_corpus reads 0.75/0.75 with zero routing_violations (the consumer-side
   receipt; the f=0.75 stdout echo is block-buffered, producer side proven from live argv).
+
+## 2026-08-24 20:25 — PR #465 MERGED (dec933ce8): DiskReplayBuffer prefetch-thread reaper — test-infra, no training effect
+
+- **What**: autouse conftest fixture wraps `_ensure_prefetch_thread` (the single creation
+  site, verified by AST walk not grep), tracks buffers AND their threads in separate
+  WeakSets, closes at teardown, then joins stragglers against a shared 30s deadline.
+  Main leaked 17 daemon prefetch threads across the suite; `__del__` provably cannot
+  fire for a thread-bearing buffer (running thread is a GC root via `threading._active`
+  — measured, 3× gc.collect). 17 → 0.
+- **Review**: Fable fork APPROVE (91da7e17f) + APPROVE-DELTA (672d568f1); Codex 1 inline
+  P2 — `close()` joins only 1.0s then drops the reference, so the fixture treated
+  close() returning as proof of shutdown; fixed by the thread-WeakSet join (this also
+  covers a thread outliving a test's OWN close()). Fork P2 PYTHONPATH-overwrite fixed;
+  fork P2 AST-guard dispositioned future hygiene. Reviewer mutants: partial-reaper and
+  counter-freeze both killed on the intended assertions.
+- **Gates**: lifecycle+rep_fix+disk_buffer files 50-54/54 green BOTH orders; whole-repo
+  lint fingerprint delta vs main EMPTY (17 pre-existing findings identical both sides);
+  CI green on the exact merged head 672d568f1.
+- **Why it matters here**: the orphan threads printed `[disk_buf] WARNING: shuffle
+  refresh failed to load a TRACKED shard` into UNRELATED tests' output — a cross-test
+  pollution source that reads as a replay defect in whatever test it lands on. Task #197.
