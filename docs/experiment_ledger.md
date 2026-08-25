@@ -67075,3 +67075,16 @@ next (the c3866ed91 measured gaps: +0.82 nats policy, contradictory value regime
 categorical support, ≤6-piece composition — levers separate, one per readout);
 (2) then the NNUE-data BOOTSTRAP program (native generator already landed at 6.35M
 rows/h = 7.8× the bootstrap gate, PR #468).
+
+**2026-08-25 ~20:15 — ARM-2 EXTENSION TERMINAL VERDICT: NOT SUCCESS ⇒ MIXED-REPLAY
+LANE CLOSES (judged same-session by the a41db7efc clause: CI excludes 0 positive ⇒
+SUCCESS; anything else closes, no second extension).** Terminal arena seed 67, 400g:
+**−6.95 [−37.22, +23.22]**, score 0.490
+(scratchpad/elo_calib/MIX050EXT_terminal_s67_vs_iter595.json). Trajectory f=0.50:
+20k −0.87 → 40k −6.95 — noise-flat at PARITY with iter-595 while half of every batch
+is lc0 data. READING: mixing at the right dose fully neutralizes the interference but
+converts none of the lc0 signal into a gain from this init. The lane's registered
+successor is the HARMONIZATION program (measured-gap levers, one per readout), lever 1
+= policy temper of OWN targets toward the lc0 band: trainer knob
+`--mix-own-policy-temp` in build (feat/mix-own-policy-temp, agent in flight); τ to be
+CALIBRATED offline against real own-corpus rows before the prereg banks a command.
