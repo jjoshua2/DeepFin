@@ -212,6 +212,14 @@ def test_action_child_mismatch_is_rejected_before_graph_or_nnue_mutates(dag_pack
     with pytest.raises(ValueError, match="does not produce the supplied child"):
         _nnue_ext.dag_intern_child(dag, root, action, _cboard(wrong_child))
 
+    # A push-only validator would have a subtler hole: cboard_push_index() is a
+    # defensive no-op for malformed/illegal LUT entries, so an illegal action
+    # paired with the UNCHANGED board could compare equal and become a fake edge.
+    legal_actions = {move_to_index(move, board) for move in board.legal_moves}
+    illegal_action = next(i for i in range(4672) if i not in legal_actions)
+    with pytest.raises(ValueError, match="does not produce the supplied child"):
+        _nnue_ext.dag_intern_child(dag, root, illegal_action, _cboard(board))
+
     after = _nnue_ext.dag_stats(dag)
     _assert_stats_schema(after)
     assert after["node_count"] == before["node_count"]
