@@ -720,6 +720,11 @@ static PyObject *py_weight_cache_size(PyObject *Py_UNUSED(self), PyObject *Py_UN
     return PyLong_FromLong((long)cae_nnue_cache_size());
 }
 
+/* The reusable graph lives in mcts/_position_dag.h; this NNUE-specific layer is
+ * included here (the sole evaluator-owning translation unit) so it shares the
+ * exact CaeNnueState implementation, SIMD flag, and mapped weights. */
+#include "_nnue_dag_api.h"
+
 static PyMethodDef module_methods[] = {
     {"load", py_load, METH_VARARGS, load_doc},
     {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
@@ -738,6 +743,7 @@ static PyMethodDef module_methods[] = {
     {"arm_open", py_arm_open, METH_VARARGS, arm_open_doc},
     {"arm_handle_eval", py_arm_handle_eval, METH_VARARGS, arm_handle_eval_doc},
     {"arm_stats", py_arm_stats, METH_VARARGS, arm_stats_doc},
+    CAE_NNUE_DAG_METHODS
     {NULL, NULL, 0, NULL}
 };
 
