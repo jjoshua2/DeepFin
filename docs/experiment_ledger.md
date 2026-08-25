@@ -66944,3 +66944,27 @@ Code sha for every cell: dc0abecf2 (the PR #468 merge). Artifacts:
   confound, stated).
 - ⚑ scratchpad/az_purity/prereg_draft.md and stage1_launch_package.md carry the operator
   name and stay UNCOMMITTED (the #467 class); the three committed files are scrubbed.
+
+## 2026-08-25 05:20 — LADDER ARM 3 (f=0.75) READOUT: MID POSITIVE, LAST NEGATIVE — dose-response NON-MONOTONE; C2 FIRES ⇒ ARM-2 EXTENSION (the one pre-authorized)
+
+- **Arm-3 prereg arenas (seeds 65/66, 400g terminal each, baseline iter-595 init,
+  pinned by path+step)**: **MID (step 10032) +16.52 [−12.53, +45.79]** — the only
+  positive MID in the lane; **LAST (step 20000) −32.23 [−62.16, −2.77]** — CI excludes
+  0 negative; **slope −48.75** — the only arm that rises then FALLS (every earlier arm
+  fell then recovered). Dump banked: runs/lc0_mix075_iter595_20260824/arenas_65_66.txt.
+  Training receipt clean: configured/realized 0.75/0.75, zero routing violations.
+- **Assembled ladder (prereg seeds only)** — LAST: f=0 −41.0 / f=0.25 −13.90 /
+  **f=0.50 −0.87** / f=0.75 −32.23; MID: −84.1 / −51.62 / −42.78 / **+16.52**.
+  ⇒ **LAST is NON-MONOTONE with an interior peak at f=0.50**; MID stays monotone in f.
+  Reading: heavier own-replay dilution protects the net EARLY but does not hold to 20k
+  steps — f=0.75's early gain decays while f=0.50 recovers to parity.
+- **Clause verdict (prereg 10fc2f1d4, judged on pre-committed rules)**: best arm =
+  f=0.50 (highest LAST). Its LAST CI spans 0 with slope +41.91 > 0 ⇒ **C2: EXTEND** —
+  arm 2 +20k steps (seed 12, --init-from runs/lc0_mix050_iter595_20260824/checkpoint.pt),
+  then ONE 400g terminal arena vs iter-595. CI excludes 0 positive ⇒ SUCCESS; anything
+  else ⇒ the mixed-replay lane CLOSES with no second extension.
+- ⚑ **THIRD duplicate-session collision**: a concurrent session ran seed-42 arenas again
+  (its LAST −25.23 [−52.51, +1.73] — CI spans 0 where the prereg seed EXCLUDES it;
+  pooling would flip the clause, which is precisely what pinned seeds prevent). Recorded
+  and excluded; its still-running MID arena left untouched. Instrument-frozen check PASS
+  including across the mid-chain ledger-only HEAD advance.
