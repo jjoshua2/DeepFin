@@ -67057,3 +67057,21 @@ scratchpad/az_purity/readout_artifacts/ladder/ (49,554 scored rows banked).
   in TRAINING? G2 answered per-row quality, not the training tradeoff; (c) the revived
   cp-per-unit/sharpness sweep; (d) a real prior in the native search (requires the
   argpartition→top-by-score fix first, per the #468 P3).
+
+**2026-08-25 19:20 — COORDINATION: seed-42 C3 verdict WITHDRAWN; this session assumes
+the arm-2-extension terminal arena.** My 02a4dd4ed "C3 lane closed" was judged on
+seed-42 arenas — the opening sample reused by EVERY prior arena in this lane — while
+the canonical readout (a41db7efc) runs pinned FRESH seeds per arm (61/62, 63/64,
+65/66) and correctly excluded my runs as a duplicate-session collision. The canonical
+ladder stands: LAST −41.0/−13.90/−0.87/−32.23 (f=0/.25/.50/.75), best arm f=0.50,
+C2 fired, extension trained (runs/lc0_mix050ext_iter595_20260825, 20k steps, done
+10:38, guards PASS). The other session is offline and the deciding terminal arena has
+not run — this session runs it NOW, declared before execution: **seed 67** (next in
+the fresh-seed schedule), 400g, banked template otherwise unchanged, candidate
+extension LAST, reference iter-595 init. Clause (theirs, pre-committed): CI excludes
+0 positive ⇒ SUCCESS (fix candidate); anything else ⇒ mixed lane CLOSES, no second
+extension. Josh's standing directives tonight: (1) sharpness/shape HARMONIZATION arm
+next (the c3866ed91 measured gaps: +0.82 nats policy, contradictory value regimes,
+categorical support, ≤6-piece composition — levers separate, one per readout);
+(2) then the NNUE-data BOOTSTRAP program (native generator already landed at 6.35M
+rows/h = 7.8× the bootstrap gate, PR #468).
