@@ -66968,3 +66968,21 @@ Code sha for every cell: dc0abecf2 (the PR #468 merge). Artifacts:
   pooling would flip the clause, which is precisely what pinned seeds prevent). Recorded
   and excluded; its still-running MID arena left untouched. Instrument-frozen check PASS
   including across the mid-chain ledger-only HEAD advance.
+
+**2026-08-25 ~03:25 — RATIO LADDER VERDICT: C3, LANE CLOSED (judged same-session by
+the pre-committed clauses).** Full board (400-game arenas vs iter-595, banked JSONs
+scratchpad/elo_calib/MIX{025,050,075}_{MID,LAST}_vs_iter595.json):
+f=0.25 MID −74.1 → LAST −38.4 (slope +35.7) · f=0.50 −26.1 → −26.1 (slope 0.0) ·
+f=0.75 MID **+10.4 [−17.6, +38.6]** → LAST −25.2 [−52.5, +1.7] (slope −35.7).
+Best arm by LAST = f=0.75 (−25.2, by 0.9 over f=0.50 — inside noise, but the rule is
+the rule); its CI spans 0 AND slope ≤ 0 → **C3: no extension, lane closes.**
+READINGS (diagnostic): (1) own-fraction monotonically controls the dip at MID
+(−74 → −26 → +10) — interference confirmed as the mechanism, dose-responsive. (2) The
+f=0.75 MID point is the FIRST positive point estimate in the entire lc0 lane —
+a mostly-own mix briefly matches/beats iter-595 before overshooting; CI spans 0, not a
+verdict. (3) No arm beats iter-595 at 20k; the arms converge to ≈−25 regardless of
+mix by budget end. (4) The pre-authorized extension was conditional on C2/C4 of the
+best arm and did NOT fire; it is unspent but the lane is closed — reopening requires a
+new prereg. NEXT (registered): the bootstrap bet (lc0 pretrain from scratch/early
+checkpoint), operator decision; and the v020 veto production experiment, operator
+decision. GPU idle pending Josh.
