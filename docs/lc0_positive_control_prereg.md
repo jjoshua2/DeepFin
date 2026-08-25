@@ -933,3 +933,18 @@ commands (deep-SF value baseline, sigma probe) pointed at the salvage export roo
 the trainer file lives at `seeds/slot_000/trainer.pt` inside it (identity confirmed
 from the export manifest: `picked_row_training_iteration: 595`,
 `checkpoint_000594`). Path fix only; no parameter changes.
+
+## AMENDMENT 9 (2026-08-24, written after all readouts closed): identity redaction — two prose lines edited in place, disclosed here
+
+**Necessary exception to the append-only rule, and the only in-place edit this file has
+had.** Two prose occurrences of the operator's first name (the Status line at the top,
+and one sentence in the readout discussion) were reworded to "the operator". Reason:
+this is a public repository, and `test_no_absolute_home_paths::
+test_no_tracked_file_carries_this_machines_identity` fails on any machine whose login
+matches the name — CI was green only because the runner's login differs. No number,
+threshold, verdict, or mechanism text was touched; the git diff of this change is two
+lines of prose and is the checkable record. Redactions of personal identity are the one
+edit class this document permits in place, because leaving the identity in the history
+of an APPENDED amendment would defeat the redaction's purpose for future occurrences —
+this instance's history retains the name, which is acceptable for a first name already
+public in the repository owner's handle.
