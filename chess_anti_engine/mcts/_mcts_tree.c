@@ -4400,6 +4400,55 @@ static PyObject *MCTSTree_get_pending_legal_indices(MCTSTreeObject *self, PyObje
 
 
 /*
+ * pending_leaf_cboards() -> list[CBoard]
+ *
+ * The WHOLE pending batch, in encoded-planes row order: element i is the board
+ * whose planes were written to row i of the buffer start/continue_gumbel_sims
+ * filled, and continue_gumbel_sims consumes row i of pol/wdl for it.
+ *
+ * ⚑ This exists because a CPU value function that is not a neural network --
+ * the native NNUE arms -- cannot read the encoded planes: they need the real
+ * position (castling rights, en passant, the halfmove clock and the repetition
+ * history all change what the check resolver and the quiescence search see, and
+ * none of them survive the plane encoding). Reconstructing a board from planes
+ * would hand such an evaluator a position that merely looks right.
+ *
+ * ⚑ NOT get_pending_tb_leaves(32). That one filters to the SYZYGY-eligible
+ * subset -- castling == 0 AND popcount <= max_pieces -- so it silently drops
+ * every leaf that still has a castling right, which is most of the opening and
+ * middlegame. Reusing it here would evaluate a biased subset of the batch and
+ * leave the rest at whatever the caller padded with. Two different questions,
+ * two methods.
+ */
+static PyObject *MCTSTree_pending_leaf_cboards(MCTSTreeObject *self,
+                                               PyObject *Py_UNUSED(ignored)) {
+    StoredPrepState *s = &self->stored;
+    GumbelSimState *g = &self->gsim;
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "pending_leaf_cboards: no batch pending (phase != 1)");
+        return NULL;
+    }
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "CBoard type not cached; call start_gumbel_sims first");
+        return NULL;
+    }
+    int32_t n = s->n_leaves;
+    PyObject *lst = PyList_New(n);
+    if (!lst) return NULL;
+    for (int32_t i = 0; i < n; i++) {
+        PyCBoard *cp = (PyCBoard *)cb_type->tp_alloc(cb_type, 0);
+        if (!cp) { Py_DECREF(lst); return NULL; }
+        cp->board = s->leaf_cboards[i];
+        PyList_SET_ITEM(lst, i, (PyObject *)cp);
+    }
+    return lst;
+}
+
+
+/*
  * get_pending_tb_leaves(max_pieces) -> (indices: np.int32, list[CBoard])
  *
  * Between start/continue_gumbel_sims returning n_leaves > 0 and the caller
@@ -4830,6 +4879,16 @@ static PyMethodDef MCTSTree_methods[] = {
      "continue_gumbel_sims_legal_bf16(compact_policy_bf16_bits, wdl_float32) -> n_leaves or None."},
     {"get_pending_legal_indices", (PyCFunction)MCTSTree_get_pending_legal_indices, METH_NOARGS,
      "get_pending_legal_indices() -> (legal_flat_int32, legal_counts_int32) for the current pending batch."},
+    {"pending_leaf_cboards", (PyCFunction)MCTSTree_pending_leaf_cboards, METH_NOARGS,
+     "pending_leaf_cboards() -> list[CBoard]\n\n"
+     "The WHOLE pending leaf batch, in encoded-planes ROW ORDER: element i is\n"
+     "the board whose planes went to row i, and continue_gumbel_sims reads row\n"
+     "i of pol/wdl for it. For a CPU value function that cannot read planes --\n"
+     "the native NNUE arms need castling, en passant, the halfmove clock and\n"
+     "the repetition history, none of which the encoding carries.\n\n"
+     "⚑ Not get_pending_tb_leaves(32): that one returns only the SYZYGY-eligible\n"
+     "subset (castling == 0 and few enough pieces), which drops most of the\n"
+     "opening and middlegame."},
     {"get_pending_tb_leaves", (PyCFunction)MCTSTree_get_pending_tb_leaves, METH_VARARGS,
      "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
     {"mark_tb_solved", (PyCFunction)MCTSTree_mark_tb_solved, METH_VARARGS,

@@ -333,6 +333,109 @@ in-check roots without searching anything, so the arm looked *faster* on in-chec
 positions than on quiet ones (0.69×). An arm that costs less where it is supposed
 to do more was the anomaly; 11.36× is the mechanism working.
 
+## Generating shards with an arm
+
+`scripts/gen_random_selfplay_shards.py` grows two value sources,
+`--value-source nnue-static` and `--value-source nnue-qsearch`, so a full
+corpus can be generated with native NNUE values and **no Stockfish process**:
+
+```bash
+PYTHONPATH=. nice -n 10 python3 scripts/gen_random_selfplay_shards.py \
+    --out-dir data/gen0_nnue --games 500 --workers 4 \
+    --value-source nnue-static --nnue-pack big.pack --sims 32 \
+    --run-id gen0_nnue_static
+```
+
+The shards are written by the same code path as every other gen-0 shard, so
+they are schema-identical to the banked UCI anchor sets and the deep-SF ruler
+scores both in one pass. The prior stays uniform; no net is involved.
+
+### ⚑ The arm reads the POSITION, not the planes
+
+`MCTSTree.pending_leaf_cboards()` returns the whole pending leaf batch in
+encoded-planes row order, and that is what the arm evaluates. It has to: check
+resolution needs the legal evasions (castling rights, the en-passant square),
+the fifty-move terminal needs the halfmove clock, and the two-fold terminal that
+makes a perpetual check finite needs the repetition history. **None of those
+survive the 175-plane encoding**, so a board rebuilt from planes would be a
+position that merely looks right and the resolver would score a different tree.
+
+⚑ Not `get_pending_tb_leaves(32)`: that returns only the Syzygy-eligible subset
+(`castling == 0` and few enough pieces), which is empty through most of the
+opening and middlegame.
+
+The generator re-encodes the tree's own first leaf once per worker and requires
+the planes to match; `tests/test_gen_nnue_selfplay_shards.py` does it for every
+row of every batch.
+
+⚑ **Roots are counted apart from leaves.** One root position per ply also goes
+through the arm (the search is handed pre-computed root logits so the leaf
+contract stays exact). The C context cannot tell the two apart, so every rate
+derived from it is over CALLS, is named `in_check_call_frac` rather than
+"leaf fraction", and the sidecar reports `roots` next to `leaves` so a reader
+can price the difference — pooling them would put a per-ply population inside a
+per-leaf rate at a ratio that moves with the sim budget.
+
+⚑ **This is a Python round trip per leaf BATCH, not per leaf.** The scoping
+result that ruled out a Python driver was about a per-LEAF `python-chess` + UCI
+round trip; here one batch of ~8-11 leaves crosses the boundary and the
+evaluation loop itself is C with the GIL released. Measured below, because
+that argument is not the evidence.
+
+### ⚑ The value scale is a free parameter
+
+The arms return Stockfish **internal units**; the banked UCI anchors were
+labelled from Stockfish **search cp** through production's cp-logistic.
+`--nnue-cp-per-unit` bridges the two and its default was measured, not assumed:
+over 786 quiet positions from natural playouts, least squares of SF `go nodes
+512` cp on our static value gives **slope 0.2784, R² 0.877** over
+|internal| ≤ 3000 (median ratio 0.2877; whole range 0.2168, lower because SF's
+cp normalisation compresses large evaluations). The default is **0.28**, which
+also happens to be Stockfish's own `100 / NormalizeToPawnValue`.
+
+⚑ Getting it wrong makes every stored policy target uniformly sharper or
+flatter **with no other symptom** — which is exactly what a label-quality
+readout measures. It is recorded in the sidecar and it must be pinned (or swept
+as its own axis) before cells are compared. Mate scores never go through this
+slope: they are folded through `mate_to_effective_cp`, the single mate→score
+home.
+
+### ⚑ `--all-root-moves` is ON by default for the arms
+
+Under a uniform prior, sequential halving picks its root candidates by the
+Gumbel draw alone — a random subset. With an uninformative value that is
+harmless; with a real one the search ranks a random subset sharply and never
+looks at the rest. The flag raises `topk` to the 218-move ceiling and makes the
+per-root budget `max(--sims, 2 * n_legal)`; a `--topk` that would drop moves is
+**refused**, not quietly raised. The banked UCI anchors were generated with it.
+
+### Throughput, measured
+
+500 games, 4 workers, `nice -n 10`, `--sims 32` (realized mean 45.0 under
+all-root-moves), concurrent with other GPU work on the box:
+
+| arm | rows/h | vs UCI@32 anchor (162,667) | vs the ≥5× gate (813,000) |
+|---|---|---|---|
+| `nnue-static` | **6,143,045** | 37.8× | **7.6×** |
+| `nnue-qsearch` | 26,566 † | 0.16× | 0.03× |
+
+† 8 games, 4 workers, `--max-plies 60` — the qsearch arm is far too slow for a
+500-game point at this budget, and the number is a truncated-game measurement,
+not a like-for-like one.
+
+⚑ **The qsearch arm's cost is heavy-tailed on a real game stream and the
+resolver-bench figure does not predict it.** The bench's stratified pool costs
+~2 quiescence nodes per resolved leaf; inside a game the search steers into
+forcing positions and the same arm spends **~3,264 resolver nodes and ~5,200
+quiescence nodes per leaf**, with 2.4 % of leaves returning mate scores. The
+positions themselves are ordinary — evaluating the same leaves rebuilt from
+their FENs costs the same, so the tree's boards are not pathological.
+
+`--nnue-qsearch-check-plies` is the lever: at 0 the same run does 2.8M
+quiescence nodes instead of 45.9M and delivers **22,228 rows/h instead of
+1,287** (single worker, `--max-plies 60`, same seed) — 17×, and the corpus
+changes with it (mate-band leaves 0.13 % → 2.39 %).
+
 ## The eval seam
 
 `chess_anti_engine/mcts/_value_provider.h` defines:
@@ -540,5 +643,7 @@ spends its time in and is the slower one.
 | `chess_anti_engine/mcts/_check_resolver.h` | recursive check resolution, shared by both arms |
 | `chess_anti_engine/mcts/_search_terminal.h` | the terminal decision, shared with the tree |
 | `chess_anti_engine/nnue/_nnue_ext.c` | Python surface for parity, bench, tests |
+| `scripts/gen_random_selfplay_shards.py` | the shard generator; `--value-source nnue-static` / `nnue-qsearch` |
 | `tests/test_nnue_native_eval.py` | parser, converter, indices, refusal, seam |
 | `tests/test_check_resolver.py` | recursion, terminals, minimax, arm fairness, the knobs |
+| `tests/test_gen_nnue_selfplay_shards.py` | the arms inside the generator: schema, binding, knob liveness |
