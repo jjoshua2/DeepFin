@@ -133,8 +133,8 @@ static PyObject *py_dag_open(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *weights_capsule;
     int initial_nodes = 256;
     if (!PyArg_ParseTuple(args, "O|i", &weights_capsule, &initial_nodes)) return NULL;
-    if (initial_nodes < 1) {
-        PyErr_SetString(PyExc_ValueError, "initial_nodes must be >= 1");
+    if (initial_nodes < 1 || initial_nodes > INT32_MAX / 4) {
+        PyErr_SetString(PyExc_ValueError, "initial_nodes must be 1..INT32_MAX/4");
         return NULL;
     }
     CaeNnueWeights *w = weights_from_capsule(weights_capsule);
@@ -163,8 +163,9 @@ static PyObject *py_dag_open(PyObject *Py_UNUSED(self), PyObject *args) {
 }
 
 /* Finish publishing a NEW structural node only after its NNUE payload is valid.
- * This ordering is load-bearing: an error while refreshing/making an accumulator
- * must not leave a canonical node whose future hits return uninitialised data. */
+ * The current construction API is single-threaded. The state/value are computed
+ * before this helper is called; a future concurrent consumer must add explicit
+ * publication synchronization rather than relying on this ordering. */
 static int32_t cae_nnue_dag_publish_new(
     CaeNnueDagHandle *h,
     const CaeDagPosition *position,
@@ -384,19 +385,6 @@ static PyObject *py_dag_set_root(PyObject *Py_UNUSED(self), PyObject *args) {
     Py_RETURN_NONE;
 }
 
-static PyObject *py_dag_mark_expanded(PyObject *Py_UNUSED(self), PyObject *args) {
-    PyObject *capsule;
-    int node_id;
-    if (!PyArg_ParseTuple(args, "Oi", &capsule, &node_id)) return NULL;
-    CaeNnueDagHandle *h = cae_nnue_dag_from_capsule(capsule);
-    if (!h) return NULL;
-    if (cae_position_dag_mark_expanded(&h->dag, node_id) != 0) {
-        PyErr_SetString(PyExc_ValueError, "node_id out of range");
-        return NULL;
-    }
-    Py_RETURN_NONE;
-}
-
 PyDoc_STRVAR(dag_stats_doc,
 "dag_stats(handle) -> dict\n\n"
 "Structural graph and NNUE-work counters. The invariant this surface exists to\n"
@@ -451,7 +439,6 @@ static PyObject *py_dag_reset(PyObject *Py_UNUSED(self), PyObject *args) {
     {"dag_value", py_dag_value, METH_VARARGS, NULL}, \
     {"dag_children", py_dag_children, METH_VARARGS, NULL}, \
     {"dag_set_root", py_dag_set_root, METH_VARARGS, NULL}, \
-    {"dag_mark_expanded", py_dag_mark_expanded, METH_VARARGS, NULL}, \
     {"dag_stats", py_dag_stats, METH_VARARGS, dag_stats_doc}, \
     {"dag_reset", py_dag_reset, METH_VARARGS, NULL},
 
