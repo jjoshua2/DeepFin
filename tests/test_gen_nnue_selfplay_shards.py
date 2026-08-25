@@ -22,7 +22,9 @@ big net is a runtime artifact and is never required by a test.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,9 @@ import pytest
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.mcts import _mcts_tree
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.nnue import _nnue_ext
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
@@ -62,6 +66,14 @@ CAPTURE_FEN = "8/8/4k3/4p3/3P4/7P/8/4K3 w - - 0 1"
 # Mate in one (Ra8#): quiescence that is allowed to try CHECKS finds it and
 # returns a mate score, where the static arm stands pat on the bucket value.
 CHECK_CHAIN_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+# ⚑ A root with a legal move that DRAWS IMMEDIATELY, for the terminal-shortcut
+# test. K+N vs K+B: Nxe5 leaves K+N vs K, which is insufficient material, so the
+# child is game-over-drawn. The root itself is NOT (KN vs KB is not insufficient
+# under python-chess), it has 12 legal moves, and the bucket pack scores it
+# positive for the mover -- the three conditions `allow_terminal_root_shortcuts`
+# needs before it prunes anything.
+DRAW_CAPTURE_FEN = "4k3/8/8/4b3/8/5N2/8/4K3 w - - 0 1"
+DRAW_CAPTURE_MOVE = "f3e5"
 
 
 @pytest.fixture(autouse=True)
@@ -112,10 +124,15 @@ def _cfg(out_dir: Path, pack: Path | None = None, **overrides: Any) -> Any:
             all_root_moves=True,
             topk=GEN.MAX_LEGAL_MOVES,
             nnue_resolver_max_depth=_nnue_ext.RESOLVER_MAX_DEPTH,
-            nnue_qsearch_max_ply=_nnue_ext.QSEARCH_MAX_PLY,
-            nnue_qsearch_check_plies=_nnue_ext.QSEARCH_CHECK_PLIES,
         )
     base.update(overrides)
+    # ⚑ ARM-SCOPED, mirroring `resolve_arm_knob_defaults`: the quiescence pair
+    # is a number only under `nnue-qsearch` and stays None under `nnue-static`,
+    # which never reads it. A fixture that filled both for either arm would
+    # make every static-arm test run against the shape the P1-1 fix removed.
+    if base.get("value_source") == GEN.VALUE_SOURCE_NNUE_QSEARCH:
+        base.setdefault("nnue_qsearch_max_ply", _nnue_ext.QSEARCH_MAX_PLY)
+        base.setdefault("nnue_qsearch_check_plies", _nnue_ext.QSEARCH_CHECK_PLIES)
     return GEN.GenConfig(**base)
 
 
@@ -185,6 +202,116 @@ def _one_shard(cfg: Any) -> tuple[dict[str, np.ndarray], Any]:
     return load_shard_arrays(paths[0])
 
 
+# ⚑⚑ THE BANKED ANCHOR'S SCHEMA, FROZEN AS A LITERAL. Read off
+# data/gen0/bench_anchors/gen0_bench_32/shard_000000.zarr (the sfnnue nodes-32
+# UCI anchor, 2026-08) and written down here on purpose.
+#
+# The comparison test below generates a reference shard from this same script
+# and diffs the native one against it. That catches an arm-specific divergence
+# and NOTHING ELSE: both sides come out of the same `samples_to_arrays`, so a
+# change to the shared writer moves the reference and the native shard
+# together, the diff stays empty, and the shards silently stop matching the
+# corpus they must be scored beside. A frozen copy is the only side of the
+# comparison that cannot move with the code.
+#
+# 23 arrays: 19 per-row columns and 4 shard-level SCALARS (the underscored
+# ones, which are 0-d and describe the whole shard). Changing this literal means
+# the native cells are no longer schema-compatible with the banked anchors,
+# which is a readout-invalidating event and must be a deliberate edit with a new
+# anchor set behind it.
+#
+# Value is (dtype string, ndim, per-row shape). ndim is carried explicitly
+# because it is the axis a scalar and a length-1 column differ on, and a schema
+# that recorded only the trailing shape would call them equal.
+ANCHOR_SCHEMA: dict[str, tuple[str, int, tuple[int, ...]]] = {
+    "_history_rep_fix": ("<U4", 0, ()),
+    "_input_history_encoding": ("<U20", 0, ()),
+    "_policy_encoding": ("<U8", 0, ()),
+    "_policy_size": ("int32", 0, ()),
+    "game_id": ("int64", 1, ()),
+    "has_game_id": ("uint8", 1, ()),
+    "has_is_network_turn": ("uint8", 1, ()),
+    "has_is_selfplay": ("uint8", 1, ()),
+    "has_legal_mask": ("uint8", 1, ()),
+    "has_moves_left": ("uint8", 1, ()),
+    "has_opening_source_code": ("uint8", 1, ()),
+    "has_ply_index": ("uint8", 1, ()),
+    "has_policy": ("uint8", 1, ()),
+    "is_network_turn": ("uint8", 1, ()),
+    "is_selfplay": ("uint8", 1, ()),
+    "legal_mask": ("uint8", 2, (1858,)),
+    "moves_left": ("float16", 1, ()),
+    "opening_source_code": ("uint8", 1, ()),
+    "ply_index": ("int32", 1, ()),
+    "policy_target": ("float16", 2, (1858,)),
+    "priority": ("float32", 1, ()),
+    "wdl_target": ("int8", 1, ()),
+    "x": ("float16", 4, (175, 8, 8)),
+}
+
+
+def test_native_shard_matches_the_frozen_banked_anchor_schema(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The native shard against a schema that CANNOT move when the code does.
+
+    ⚑ This is the half the generated-reference comparison structurally cannot
+    do. There, both sides are produced by the writer under test; here the
+    expectation is a literal transcribed from the banked UCI anchor the deep-SF
+    ruler already scores. A change to `samples_to_arrays` that renames a column
+    or widens a dtype passes the comparison test and fails this one.
+
+    The string dtypes are compared by KIND and width because numpy renders a
+    fixed-width unicode dtype byte-order-dependently; everything else is exact.
+    """
+    native, _meta = _one_shard(_cfg(tmp_path / "nat", bucket_pack))
+    assert set(native) == set(ANCHOR_SCHEMA), (
+        "the native shard's array set differs from the banked anchor's: "
+        f"extra={sorted(set(native) - set(ANCHOR_SCHEMA))} "
+        f"missing={sorted(set(ANCHOR_SCHEMA) - set(native))}"
+    )
+    for name, (dtype_str, ndim, row_shape) in sorted(ANCHOR_SCHEMA.items()):
+        arr = np.asarray(native[name])
+        expected = np.dtype(dtype_str)
+        assert (arr.dtype.kind, arr.dtype.itemsize) == (
+            expected.kind, expected.itemsize,
+        ), f"{name}: {arr.dtype} != {expected}"
+        assert arr.ndim == ndim, name
+        assert arr.shape[1:] == row_shape, name
+        if ndim:
+            assert arr.shape[0] > 0, name
+
+
+def test_the_frozen_schema_is_the_banked_anchors_own() -> None:
+    """The literal above, checked against the real anchor when it is present.
+
+    ⚑ A frozen literal is only worth what its transcription is worth, and
+    nothing in CI can read a 100 GB corpus. So: skipped when the anchor set is
+    not on this machine, and an exact comparison when it is. That makes the
+    transcription falsifiable on the box the readout runs on, which is the box
+    that matters, without making the suite depend on a runtime artifact.
+    """
+    anchor = Path("data/gen0/bench_anchors/gen0_bench_32")
+    if not anchor.is_dir():
+        pytest.skip("banked UCI anchor set is not present on this machine")
+    paths = sorted(iter_shard_paths(anchor))
+    if not paths:
+        pytest.skip("banked UCI anchor directory holds no shard")
+    arrays, _meta = load_shard_arrays(paths[0])
+    observed = {
+        name: (
+            np.asarray(arr).dtype.str, np.asarray(arr).ndim,
+            np.asarray(arr).shape[1:],
+        )
+        for name, arr in arrays.items()
+    }
+    expected = {
+        name: (np.dtype(dtype).str, ndim, shape)
+        for name, (dtype, ndim, shape) in ANCHOR_SCHEMA.items()
+    }
+    assert observed == expected
+
+
 def test_native_shard_schema_matches_a_gen0_reference_shard(
     tmp_path: Path, bucket_pack: Path,
 ) -> None:
@@ -193,6 +320,10 @@ def test_native_shard_schema_matches_a_gen0_reference_shard(
     A missing optional array, a widened dtype or a changed row shape would all
     still load; what breaks is the JOINT scoring pass over the native cells and
     the banked UCI anchors, and it breaks silently by dropping a column.
+
+    ⚑ Both sides of THIS comparison are generated by the code under test, so it
+    can only find an arm-specific divergence. The frozen-literal test above is
+    what pins the schema against the banked corpus.
     """
     reference, ref_meta = _one_shard(
         _cfg(tmp_path / "ref", value_source=GEN.VALUE_SOURCE_ZERO),
@@ -583,15 +714,60 @@ def test_arm_knobs_are_read_back_from_the_context_not_the_setter(
     assert source.stats.context["qsearch_max_ply"] == 3
 
 
-def test_pack_reaches_the_arm_and_is_named_by_its_hash(
+def test_pack_reaches_the_arm_and_is_named_by_two_distinct_hashes(
     tmp_path: Path, bucket_pack: Path,
 ) -> None:
+    """⚑ The FILE digest and the EMBEDDED source digest are different numbers.
+
+    ``source_sha256`` returns what the packer wrote into the header -- the
+    ``.nnue`` the pack was built FROM. It is provenance, not identity: it
+    survives a truncated, corrupted or hand-edited payload unchanged. Only a
+    hash of the pack's own bytes says which weights ran, so both are reported
+    and this test pins that they are not the same value.
+    """
     cfg = _cfg(tmp_path / "out", bucket_pack)
     source = GEN.build_nnue_source(cfg)
-    assert source.pack_sha256 == _nnue_ext.source_sha256(
+    embedded = _nnue_ext.source_sha256(_nnue_ext.load(str(bucket_pack)))
+    assert source.pack_source_sha256 == embedded
+    assert source.pack_file_sha256 == hashlib.sha256(
+        bucket_pack.read_bytes(),
+    ).hexdigest()
+    assert source.pack_file_sha256 != embedded
+    assert source.kernel in ("avx2", "scalar")
+
+
+def test_the_file_hash_moves_when_the_bytes_do_and_the_source_hash_does_not(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The whole point of P2-9, as an observation rather than an argument.
+
+    Append a byte to a copy of the pack: the header's embedded ``.nnue`` digest
+    is unchanged (it names the upstream net), the file digest moves. Under the
+    old code both packs reported the same ``nnue_pack_sha256`` and the manifest
+    could not tell them apart.
+    """
+    # ⚑ A byte FLIPPED, not appended: the loader checks the declared payload
+    # size, so an appended byte is caught and the corruption this test is about
+    # -- same length, different weights -- would never be reached.
+    raw = bytearray(bucket_pack.read_bytes())
+    raw[-1] ^= 0xFF
+    edited = tmp_path / "edited.pack"
+    edited.write_bytes(bytes(raw))
+    cfg = _cfg(tmp_path / "out", edited)
+    source = GEN.build_nnue_source(cfg)
+    assert source.pack_source_sha256 == _nnue_ext.source_sha256(
         _nnue_ext.load(str(bucket_pack)),
     )
-    assert source.kernel in ("avx2", "scalar")
+    # ⚑ Both directions. "!= the original file's hash" alone is satisfied by a
+    # field that is not a file hash at all -- including the embedded source
+    # digest, which is the very thing this test exists to distinguish. Naming
+    # the EDITED file's hash is what makes it a file hash.
+    assert source.pack_file_sha256 == hashlib.sha256(
+        edited.read_bytes(),
+    ).hexdigest()
+    assert source.pack_file_sha256 != hashlib.sha256(
+        bucket_pack.read_bytes(),
+    ).hexdigest()
 
 
 def test_a_missing_pack_fails_loudly(tmp_path: Path, bucket_pack: Path) -> None:
@@ -698,6 +874,225 @@ def test_all_root_moves_refuses_a_topk_that_would_drop_moves(
         GEN.build_gumbel_config(cfg)
 
 
+def _target_and_mask_at(cfg: Any, opening: OpeningConfig) -> tuple[Any, Any]:
+    outcome, _evaluator = _play(cfg, opening=opening)
+    record = outcome.records[0]
+    return np.asarray(record.policy_probs), np.asarray(record.legal_mask)
+
+
+def test_all_root_moves_turns_off_the_terminal_root_shortcut(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """⚑⚑ P1-3: THE COVERAGE HOLE THE FLAG WAS SUPPOSED TO CLOSE.
+
+    ``allow_terminal_root_shortcuts`` prunes every immediately-DRAWING legal
+    move from a root whose value is positive, BEFORE candidate selection. The
+    move then gets no prior, no visit and zero target probability -- while the
+    stored ``legal_mask`` still advertises it. ``--all-root-moves`` promises
+    every legal root move is a candidate, and the generator was passing
+    ``True`` anyway, so the promise was broken silently and only on the roots
+    where a draw was available.
+
+    The two arms differ in NOTHING ELSE: ``topk`` is 218 on both sides and
+    ``--sims`` is high enough that ``max(sims, 2*n_legal)`` equals ``sims``,
+    so the realized per-root budget is identical and the shortcut flag is the
+    only input that moves. ``DRAW_CAPTURE_FEN``'s Nxe5 leaves K+N vs K.
+    """
+    opening = _fen_openings(tmp_path, DRAW_CAPTURE_FEN)
+    board = chess.Board(DRAW_CAPTURE_FEN)
+    drawing = move_to_index(chess.Move.from_uci(DRAW_CAPTURE_MOVE), board)
+    n_legal = board.legal_moves.count()
+    assert n_legal > 1
+
+    covered, pruned = {}, {}
+    for label, all_root in (("on", True), ("off", False)):
+        cfg = _cfg(
+            tmp_path / f"trs_{label}", bucket_pack, max_plies=1, sims=64,
+            topk=GEN.MAX_LEGAL_MOVES, all_root_moves=all_root,
+        )
+        # Identical realized budget on both sides -- otherwise this compares
+        # two searches rather than one flag.
+        assert GEN.root_simulation_budget(n_legal, cfg=cfg) == 64
+        probs, mask = _target_and_mask_at(cfg, opening)
+        assert bool(mask[drawing]), "the legal mask must advertise the move"
+        covered[label] = float(probs[drawing])
+        pruned[label] = float(probs[drawing]) == 0.0
+
+    # With --all-root-moves the drawing move is a candidate and carries mass.
+    assert covered["on"] > 0.0
+    assert not pruned["on"]
+    # Without it, production's shortcut prunes it: zero mass on a move the mask
+    # says is legal. This half is what makes the fix a real change rather than a
+    # setting that happened to already be right.
+    assert pruned["off"]
+
+
+def test_the_shortcut_flag_reaching_the_search_is_the_one_the_config_implies(
+    tmp_path: Path, bucket_pack: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read at the CONSUMER's own call, not off the realized dict.
+
+    The realized line reports `allow_terminal_root_shortcuts` by recomputing
+    `not cfg.all_root_moves`; that is the producer restating its own intent. The
+    value that matters is the keyword `run_gumbel_root_many_c` actually
+    received, so the test intercepts the call.
+    """
+    seen: list[bool] = []
+    real = GEN.run_gumbel_root_many_c
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(bool(kwargs["allow_terminal_root_shortcuts"]))
+        return real(*args, **kwargs)
+
+    for all_root in (True, False):
+        cfg = _cfg(
+            tmp_path / f"spy{int(all_root)}", bucket_pack, max_plies=1, sims=8,
+            topk=GEN.MAX_LEGAL_MOVES, all_root_moves=all_root,
+        )
+        with monkeypatch.context() as patch:
+            patch.setattr(GEN, "run_gumbel_root_many_c", spy)
+            _play(cfg)
+    assert seen == [False, True], (
+        "all_root_moves=True must DISABLE the shortcut and vice versa"
+    )
+
+
+def test_a_root_wider_than_the_c_candidate_cap_is_counted_and_announced() -> None:
+    """⚑ P1-4: the 218-move promise meets the C sampler's 64-candidate ceiling.
+
+    ``gss_score_and_halve`` clamps the scored candidate set at
+    ``GSS_MAX_CANDS``. ``--topk 218`` therefore cannot be honoured on a root
+    with more than 64 legal moves: the surplus is dropped UNSCORED while the
+    legal mask still lists it. The decision recorded in the source is that the
+    C limit stays where it is and the generator REPORTS every root that
+    exceeded it, so a readout can price the effect instead of discovering it.
+
+    ⚑ The cap is read off the extension, not restated: a build whose ceiling
+    moved must move this test's expectation with it.
+    """
+    assert GEN.GSS_MAX_CANDS == _mcts_tree.GSS_MAX_CANDS
+    stats = GEN.RootBudgetStats()
+    stats.add(legal_moves=61, sims=122, candidate_cap=GEN.GSS_MAX_CANDS)
+    stats.add(
+        legal_moves=GEN.GSS_MAX_CANDS + 7, sims=142,
+        candidate_cap=GEN.GSS_MAX_CANDS,
+    )
+    out = stats.summary()
+    assert out["candidate_cap"] == float(GEN.GSS_MAX_CANDS)
+    assert out["roots_over_candidate_cap"] == 1.0
+    assert out["roots_over_candidate_cap_frac"] == pytest.approx(0.5)
+    assert out["legal_moves_over_cap_max"] == float(GEN.GSS_MAX_CANDS + 7)
+
+
+def test_the_exported_candidate_cap_is_the_compiled_one() -> None:
+    """⚑⚑ ONE NUMBER, TWO HOMES -- and only one of them sizes the buffer.
+
+    ``PyModule_AddIntConstant(m, "GSS_MAX_CANDS", ...)`` is what Python reads;
+    ``double scores_buf[GSS_MAX_CANDS]`` in ``gss_score_and_halve`` is what
+    actually clamps. Nothing makes them agree, and an export that drifted would
+    make the sidecar's `candidate_cap`, the overflow counter and the operator
+    warning all describe a ceiling the search does not have -- silently, since
+    the clamp itself would keep working.
+
+    The behavioural route to this cannot see it: the clamp's effect (which
+    candidates get ranked) is identical whatever Python was told. So the check
+    is against the `#define` in the C source, which is the other home.
+
+    ⚑ It compares against the source that BUILT the loaded module only if the
+    tree has not been edited since; that is the normal state, and a stale .so is
+    a rebuild away from being caught here rather than in the readout.
+    """
+    csrc = Path(_mcts_tree.__file__).with_suffix("")
+    source = csrc.parent / "_mcts_tree.c"
+    if not source.is_file():
+        pytest.skip("C source not present beside the built extension")
+    defines = re.findall(
+        r"^#define\s+GSS_MAX_CANDS\s+(\d+)\s*$", source.read_text(), re.MULTILINE,
+    )
+    assert len(defines) == 1, f"expected exactly one #define, got {defines}"
+    assert int(defines[0]) == _mcts_tree.GSS_MAX_CANDS
+    # And the buffer really is sized by that name, not by a literal that happens
+    # to match -- a `double scores_buf[64]` would pass the check above forever.
+    assert "double scores_buf[GSS_MAX_CANDS];" in source.read_text()
+
+
+def test_a_truncated_leaf_batch_is_refused_rather_than_scored_as_draws(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """⚑⚑ A SHORT BATCH IS THE ONE MISWIRING THE PLANE CHECK CANNOT SEE.
+
+    ``_leaf_boards``'s row-count check is one-directional by necessity: the
+    caller pads the encode buffer to a bucket size, so more rows than boards is
+    normal. And the binding check re-encodes a board and compares planes, which
+    a truncation from the END passes -- every remaining board is still on its
+    correct row. What happens instead is silent: ``evaluate_encoded`` fills
+    ``q[:len(boards)]`` and every unfilled row keeps q = 0, the value of a drawn
+    position, which then backprops into real leaves.
+
+    So the count is cross-checked against ``get_pending_legal_indices``, a
+    different C entry point reporting the same batch. This test forges the
+    disagreement by dropping the last board.
+    """
+    cfg = _cfg(tmp_path / "out", bucket_pack, sims=32, max_plies=1)
+    evaluator = _evaluator(cfg)
+    inner = evaluator._leaf_boards
+
+    def truncating(n_rows: int, _inner: Any = inner) -> Any:
+        boards = _inner(n_rows)
+        return boards[:-1] if len(boards) > 1 else boards
+
+    saw_short_batch = {"n": 0}
+
+    class ShortTree:
+        """The tree, with `pending_leaf_cboards` one board shorter."""
+
+        def __init__(self, tree: Any) -> None:
+            self._tree = tree
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._tree, name)
+
+        def pending_leaf_cboards(self) -> Any:
+            boards = self._tree.pending_leaf_cboards()
+            if len(boards) > 1:
+                saw_short_batch["n"] += 1
+                return boards[:-1]
+            return boards
+
+    del truncating, inner
+    tree = MCTSTree()
+    evaluator.bind_tree(ShortTree(tree))
+    board = chess.Board(WIDE_FEN)
+    cb = _cboard(WIDE_FEN)
+    arm = evaluator.nnue_source
+    pre_pol, pre_wdl = GEN.native_root_logits(cb, source=arm)
+    with pytest.raises(RuntimeError, match="batch is truncated"):
+        GEN.run_gumbel_root_many_c(
+            None, [board], device="cpu", rng=np.random.default_rng(3),
+            cfg=GEN.build_gumbel_config(cfg), evaluator=evaluator, cboards=[cb],
+            tree=tree, pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+            per_game_simulations=[32], allow_terminal_root_shortcuts=False,
+            vloss_weight=1, target_batch=0,
+        )
+    assert saw_short_batch["n"] >= 1, "the forged truncation never happened"
+    evaluator.bind_tree(None)
+
+
+def test_a_run_within_the_candidate_cap_reports_zero_overflow(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The negative control: the counter must not be always-on.
+
+    A counter that reads 1 on every run says nothing. `WIDE_FEN` has 44 legal
+    moves, comfortably under the ceiling, and the sidecar must say so.
+    """
+    cfg = _cfg(tmp_path / "out", bucket_pack, games=1, max_plies=6)
+    budget = _summary(cfg)["root_budget"]
+    assert budget["candidate_cap"] == float(GEN.GSS_MAX_CANDS)
+    assert budget["roots_over_candidate_cap"] == 0.0
+    assert budget["legal_moves_max"] <= GEN.GSS_MAX_CANDS
+
+
 def test_root_budget_is_per_position_and_reported(
     tmp_path: Path, bucket_pack: Path,
 ) -> None:
@@ -753,6 +1148,28 @@ def test_arm_knob_defaults_come_from_the_extension_not_a_local_copy(
     assert cfg.nnue_qsearch_check_plies == 3
 
 
+def test_the_static_arm_resolves_no_quiescence_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ P1-1 at the resolver: the gate is the ARM, not "is there an arm".
+
+    The extension's defaults are moved first, so a resolution that leaked
+    through would show up as 6/3 rather than as a value that could be confused
+    with "nothing was set".
+    """
+    parser = GEN.build_parser()
+    monkeypatch.setattr(_nnue_ext, "RESOLVER_MAX_DEPTH", 29, raising=True)
+    monkeypatch.setattr(_nnue_ext, "QSEARCH_MAX_PLY", 6, raising=True)
+    monkeypatch.setattr(_nnue_ext, "QSEARCH_CHECK_PLIES", 3, raising=True)
+    cfg = GEN.config_from_args(parser.parse_args([
+        "--out-dir", "x", "--value-source", GEN.VALUE_SOURCE_NNUE_STATIC,
+        "--nnue-pack", "p.pack",
+    ]))
+    assert cfg.nnue_resolver_max_depth == 29  # consumed by both arms
+    assert cfg.nnue_qsearch_max_ply is None
+    assert cfg.nnue_qsearch_check_plies is None
+
+
 # ===========================================================================
 # The value mapping
 # ===========================================================================
@@ -784,17 +1201,70 @@ def test_mate_band_values_do_not_go_through_the_centipawn_slope(
 def test_evaluation_band_matches_the_production_cp_logistic(
     tmp_path: Path, bucket_pack: Path,
 ) -> None:
-    """An evaluation is scaled and then mapped by the SHARED converter."""
+    """An evaluation is scaled and then mapped by the SHARED converter.
+
+    ⚑⚑ EVERY NUMBER HERE IS A LITERAL, AND NONE OF THEM IS A DEFAULT. The first
+    version of this test configured the source with ``GEN.NNUE_CP_SLOPE`` and
+    then built the expected value out of ``GEN.NNUE_CP_SLOPE`` -- so both sides
+    moved together and a source that IGNORED ``self.cp_slope`` and hardcoded
+    0.006 passed, which is precisely the defect class the file exists to catch.
+    A test whose expectation is derived from the code under test's own constants
+    is a tautology dressed as an assertion.
+
+    So: three off-default settings, chosen to differ from the production trio in
+    every component, and an expectation built from those same literals.
+    """
     source = GEN.build_nnue_source(
-        _cfg(tmp_path / "out", bucket_pack, nnue_cp_per_unit=0.28),
+        _cfg(
+            tmp_path / "out", bucket_pack,
+            nnue_cp_per_unit=0.4, nnue_cp_slope=0.011, nnue_cp_draw_width=55.0,
+        ),
     )
+    assert (
+        GEN.NNUE_CP_PER_INTERNAL_UNIT, GEN.NNUE_CP_SLOPE, GEN.NNUE_CP_DRAW_WIDTH,
+    ) != (0.4, 0.011, 55.0), "the whole point is that these are NOT the defaults"
     q, is_mate = source.q_from_values(np.array([1000.0]))
     assert not bool(is_mate[0])
-    expected = cp_to_wdl(
-        1000.0 * 0.28, None,
-        slope=GEN.NNUE_CP_SLOPE, draw_width_cp=GEN.NNUE_CP_DRAW_WIDTH,
-    )
+    expected = cp_to_wdl(1000.0 * 0.4, None, slope=0.011, draw_width_cp=55.0)
     assert q[0] == pytest.approx(float(expected[0]) - float(expected[2]), abs=1e-9)
+
+
+def test_the_cp_defaults_are_productions_own_numbers() -> None:
+    """The defaults, pinned against independent literals rather than themselves.
+
+    Separate from the mapping test on purpose: that one proves the knobs are
+    READ, this one proves the values they default to are the live ones. Written
+    as literals so a change to `selfplay.sf_wdl_cp_slope` here has to be a
+    deliberate edit of this line rather than a silent follow-the-constant.
+    """
+    assert GEN.NNUE_CP_SLOPE == 0.006
+    assert GEN.NNUE_CP_DRAW_WIDTH == 120.0
+    assert GEN.NNUE_CP_PER_INTERNAL_UNIT == 0.28
+
+
+def test_the_cp_knobs_reach_the_mapping_one_at_a_time(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """Each of the three moves the answer ON ITS OWN.
+
+    A test that varies all three together cannot tell which one is live: a
+    source that read the scale and hardcoded the slope would still produce a
+    different number. One knob per comparison, the other two held at the same
+    off-default values in both arms.
+    """
+    base = {"nnue_cp_per_unit": 0.4, "nnue_cp_slope": 0.011, "nnue_cp_draw_width": 55.0}
+    values = np.array([1000.0])
+
+    def q_at(tag: str, **changes: float) -> float:
+        cfg = _cfg(tmp_path / tag, bucket_pack, **{**base, **changes})
+        return float(GEN.build_nnue_source(cfg).q_from_values(values)[0][0])
+
+    reference = q_at("ref")
+    assert q_at("scale", nnue_cp_per_unit=0.9) != pytest.approx(reference, abs=1e-9)
+    assert q_at("slope", nnue_cp_slope=0.003) != pytest.approx(reference, abs=1e-9)
+    assert q_at("width", nnue_cp_draw_width=400.0) != pytest.approx(
+        reference, abs=1e-9,
+    )
 
 
 def test_q_from_values_is_monotone(tmp_path: Path, bucket_pack: Path) -> None:
@@ -857,6 +1327,9 @@ def test_summary_records_the_arm_provenance_and_the_throughput_gate_inputs(
     provenance = summary["provenance"]
     assert provenance["code_sha"]
     assert "code_dirty" in provenance
+    # Both endpoints, so a tree that moved mid-run is visible. On a run this
+    # short they agree; the point is that both are recorded.
+    assert provenance["code_sha_at_finish"] == provenance["code_sha"]
     assert provenance["seed"] == cfg.seed
     assert provenance["value_source"] == GEN.VALUE_SOURCE_NNUE_STATIC
     assert provenance["worker_seeds"] == [
@@ -865,7 +1338,12 @@ def test_summary_records_the_arm_provenance_and_the_throughput_gate_inputs(
 
     realized = summary["realized_per_worker"][0]
     assert realized["nnue_arm"] == GEN.VALUE_SOURCE_NNUE_STATIC
-    assert realized["nnue_pack_sha256"] == _nnue_ext.source_sha256(
+    # The FILE digest under `nnue_pack_sha256`, the header's embedded `.nnue`
+    # digest under its own name -- see the two-hash test.
+    assert realized["nnue_pack_sha256"] == hashlib.sha256(
+        bucket_pack.read_bytes(),
+    ).hexdigest()
+    assert realized["nnue_pack_source_sha256"] == _nnue_ext.source_sha256(
         _nnue_ext.load(str(bucket_pack)),
     )
     assert realized["nnue_cp_per_internal_unit"] == cfg.nnue_cp_per_unit
@@ -873,15 +1351,249 @@ def test_summary_records_the_arm_provenance_and_the_throughput_gate_inputs(
     assert realized["all_root_moves"] is True
 
     arm = summary["nnue"]
-    # The two columns the prereg asks every cell to report.
-    assert 0.0 <= arm["in_check_call_frac"] <= 1.0
+    # ⚑ The prereg's two columns, CROSS-CHECKED against the counters they are
+    # derived from. `0.0 <= frac <= 1.0` was the assertion here before and it is
+    # definitionally true of any ratio of two non-negative counters -- it passes
+    # on a numerator wired to the wrong field, on a hardcoded 0.5, and on a
+    # denominator that is `leaves` rather than `calls`. The exact-value test is
+    # `test_the_prereg_rates_are_the_ratios_they_claim_to_be`, on forged
+    # counters; here the same identity is checked on a real run.
+    assert arm["ctx_calls"] > 0
+    assert arm["in_check_call_frac"] == pytest.approx(
+        arm["ctx_calls_in_check"] / arm["ctx_calls"], abs=1e-12,
+    )
+    assert arm["resolver_expansion_factor"] == pytest.approx(
+        arm["ctx_nodes"] / arm["ctx_resolved_leaves"], abs=1e-12,
+    )
+    # `calls` is the arm's own count of positions, and it must account for every
+    # leaf AND every root this run put through it -- a denominator that silently
+    # dropped one population is what makes the rate above meaningless.
+    assert arm["ctx_calls"] == arm["leaves"] + arm["roots"]
     # Roots are counted apart from leaves: one root per ply also goes through
     # the arm, and a rate that pooled them would move with the sim budget.
     assert arm["roots"] == summary["rows"]
     assert arm["resolver_expansion_factor"] >= 1.0
     assert arm["leaves"] > 0
     assert arm["binding_checks"] == 1
+    assert arm["ctx_config_conflicts"] == 0.0
     assert summary["root_budget"]["sims_mean"] > 0
+    assert summary["failed_workers"] == []
+    # OFF by default, and the sidecar says so rather than omitting the block.
+    assert summary["leaf_bank"] == {"enabled": False, "rows": 0, "files": []}
+
+
+def test_a_static_run_publishes_no_quiescence_knob_anywhere(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """⚑⚑ P1-1: THE SIGNATURE DEFECT WITH A RECEIPT ON TOP.
+
+    ``cae_arm_static_eval`` reads ``resolver_max_depth`` and nothing else. The
+    generator nonetheless resolved, stored, snapshotted and PUBLISHED
+    ``qsearch_max_ply=4`` / ``qsearch_check_plies=1`` for a static run -- a value
+    accepted and then silently ignored, which is exactly the failure this repo
+    is built to catch, except that it came with a realized line asserting the
+    opposite.
+
+    The test reads the whole realized line and the config block, not just the
+    two keys, so a future field that reintroduces the number under a new name
+    fails here too.
+    """
+    cfg = _cfg(tmp_path / "out", bucket_pack, games=1, max_plies=8)
+    assert cfg.value_source == GEN.VALUE_SOURCE_NNUE_STATIC
+    summary = _summary(cfg)
+    realized = summary["realized_per_worker"][0]
+    assert realized["nnue_resolver_max_depth"] == _nnue_ext.RESOLVER_MAX_DEPTH
+    assert realized["nnue_qsearch_max_ply"] is None
+    assert realized["nnue_qsearch_check_plies"] is None
+    assert realized["nnue_consumed_knobs"] == ["resolver_max_depth"]
+    assert realized["nnue_arm_config_requested"] == {
+        "resolver_max_depth": _nnue_ext.RESOLVER_MAX_DEPTH,
+    }
+    assert summary["config"]["nnue_qsearch_max_ply"] is None
+    assert summary["config"]["nnue_qsearch_check_plies"] is None
+    # ⚑ And no OTHER field carries it either. The default is 4/1, so a stray
+    # republication would show up as one of those integers under a qsearch name.
+    for key, value in realized.items():
+        if "qsearch" in key:
+            assert value is None, f"{key} republished a knob the static arm ignores"
+
+
+def test_the_qsearch_run_does_publish_both_because_it_reads_both(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The other half of P1-1: absence must be arm-specific, not blanket.
+
+    A "fix" that simply stopped reporting the quiescence pair for every arm
+    would pass the static test above while removing real provenance from the
+    arm that does consume it. Same assertions, opposite expectation.
+    """
+    cfg = _cfg(
+        tmp_path / "out", bucket_pack, games=1, max_plies=8,
+        value_source=GEN.VALUE_SOURCE_NNUE_QSEARCH,
+        nnue_qsearch_max_ply=3, nnue_qsearch_check_plies=2,
+    )
+    realized = _summary(cfg)["realized_per_worker"][0]
+    assert realized["nnue_qsearch_max_ply"] == 3
+    assert realized["nnue_qsearch_check_plies"] == 2
+    assert realized["nnue_consumed_knobs"] == [
+        "resolver_max_depth", "qsearch_max_ply", "qsearch_check_plies",
+    ]
+
+
+def test_banked_leaf_observations_carry_the_raw_score_and_its_settings(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """⚑ P2-5: the RAW arm score, so a scale change is a reanalysis not a rerun.
+
+    ``--nnue-cp-per-unit`` and the cp-logistic are a pure function of the
+    internal value, but only the RESULT reaches ``policy_target``. Without the
+    bank, correcting the scale means playing every game again. With it, the
+    correction is arithmetic over these rows.
+
+    The row must carry enough to redo that arithmetic and to know it is the
+    right corpus: the position, the raw value, the pack the value came from,
+    the cp settings in force, and the cluster key that joins it to a shard row.
+    """
+    cfg = _cfg(
+        tmp_path / "out", bucket_pack, games=1, max_plies=6,
+        bank_leaf_observations=True,
+    )
+    summary = _summary(cfg)
+    bank = GEN.leaf_bank_path(cfg.out_dir, 0)
+    assert bank.exists()
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    assert rows
+    assert summary["leaf_bank"]["enabled"] is True
+    assert summary["leaf_bank"]["rows"] == len(rows)
+    assert summary["leaf_bank"]["files"] == [bank.name]
+
+    row = rows[0]
+    assert row["schema"] == GEN.LEAF_BANK_SCHEMA
+    assert row["arm"] == GEN.VALUE_SOURCE_NNUE_STATIC
+    assert row["role"] in ("leaf", "root")
+    assert chess.Board(row["fen"])  # parses, i.e. it is a position not a label
+    assert row["cp_per_internal_unit"] == cfg.nnue_cp_per_unit
+    assert row["cp_slope"] == cfg.nnue_cp_slope
+    assert row["cp_draw_width"] == cfg.nnue_cp_draw_width
+    assert row["resolver_max_depth"] == _nnue_ext.RESOLVER_MAX_DEPTH
+    # ⚑ Arm-scoped here too: a static run's bank row must not carry a
+    # quiescence setting the arm never read (P1-1).
+    assert "qsearch_max_ply" not in row
+    assert row["pack_file_sha256"] == hashlib.sha256(
+        bucket_pack.read_bytes(),
+    ).hexdigest()
+    assert row["game"] >= 0
+    assert row["ply"] >= 0
+
+    # The value is RAW: it must be reproducible by evaluating that position
+    # through the arm, and it must NOT already be a q in [-1, 1].
+    source = GEN.build_nnue_source(_cfg(tmp_path / "re", bucket_pack))
+    again = _nnue_ext.arm_handle_eval(source._handle, [_cboard(row["fen"])])
+    assert int(again[0]) == int(row["value"])
+    assert abs(int(row["value"])) > 1
+
+
+def test_the_bank_is_off_by_default_and_writes_nothing(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The default costs nothing -- and the sidecar states that it was off."""
+    cfg = _cfg(tmp_path / "out", bucket_pack, games=1, max_plies=6)
+    assert cfg.bank_leaf_observations is False
+    summary = _summary(cfg)
+    assert not GEN.leaf_bank_path(cfg.out_dir, 0).exists()
+    assert summary["leaf_bank"] == {"enabled": False, "rows": 0, "files": []}
+    assert summary["realized_per_worker"][0]["nnue_leaf_bank"] is None
+
+
+def test_a_worker_that_dies_still_reports_the_work_it_did(
+    tmp_path: Path, bucket_pack: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ P2-8: the partial counters travel with the failure.
+
+    A worker that raises after hours of evaluation used to lose its
+    ``WorkerResult`` entirely: shards on disk with no owner, listed as orphans,
+    beside an ``nnue`` block reporting that the arm evaluated nothing. The
+    exception now carries the partial result, and the sidecar folds it in.
+
+    The failure is injected at the SECOND game so there is real work to lose.
+    """
+    cfg = _cfg(
+        tmp_path / "out", bucket_pack, games=3, max_plies=6, shard_size=1,
+    )
+    real_play = GEN.play_game
+    calls = {"n": 0}
+
+    def boom(**kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected worker failure")
+        return real_play(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(GEN, "play_game", boom)
+        with pytest.raises(RuntimeError, match="injected worker failure"):
+            GEN.generate(cfg)
+
+    summary = json.loads(
+        GEN.summary_path_for(cfg, shard_index_start=0).read_text(),
+    )
+    assert summary["partial"] is True
+    assert "injected worker failure" in str(summary["error"])
+    # The dead worker reported: its game, its rows, its shard and its arm work.
+    assert summary["workers_reported"] == 1
+    assert summary["games"] == 1
+    assert summary["rows"] > 0
+    assert summary["shards_written"] == 1
+    assert summary["orphan_shards"] == []
+    assert summary["nnue"]["leaves"] > 0
+    assert summary["failed_workers"] == [
+        {"worker_id": 0, "error": "RuntimeError: injected worker failure"},
+    ]
+
+
+def test_the_code_identity_is_captured_before_the_workers_start(
+    tmp_path: Path, bucket_pack: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ P2-10: WHEN the sha is read is part of what it means.
+
+    Read at summary time it names the tree as it stands AFTER a run that can
+    span a night -- so a branch switch, a rebase or a stash anywhere in that
+    window relabels a corpus with code that produced none of it.
+
+    ⚑ THE ORDERING IS NOT VISIBLE IN THE VALUES, and the first version of this
+    test proved it the hard way: with `git_sha` made a counter, a summary-time
+    capture still yields `code_sha == "sha001"` and a later
+    `code_sha_at_finish`, because "first call" is relative to whenever the
+    capturing started. The mutant that moved the capture past the workers
+    survived. So the instrument is the ORDER OF TWO EVENTS: how many sha reads
+    had happened by the time the first game was played. At launch capture that
+    is >= 1; at summary capture it is 0.
+    """
+    calls = {"n": 0}
+    at_first_game: list[int] = []
+    real_play = GEN.play_game
+
+    def counting_sha() -> str:
+        calls["n"] += 1
+        return f"sha{calls['n']:03d}"
+
+    def spy_play(**kwargs: Any) -> Any:
+        at_first_game.append(calls["n"])
+        return real_play(**kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(GEN, "git_sha", counting_sha)
+        patch.setattr(GEN, "play_game", spy_play)
+        cfg = _cfg(tmp_path / "out", bucket_pack, games=1, max_plies=6)
+        summary = _summary(cfg)
+
+    assert at_first_game, "the spy never saw a game"
+    assert at_first_game[0] >= 1, (
+        "the code identity must be read BEFORE the first game is played"
+    )
+    assert summary["provenance"]["code_sha"] == "sha001"
+    assert summary["provenance"]["code_sha_at_finish"] != "sha001"
+    assert calls["n"] >= 2
 
 
 def test_summary_of_a_pure_source_reports_no_arm(tmp_path: Path) -> None:
@@ -956,3 +1668,219 @@ def test_a_non_positive_cp_per_unit_is_refused(
         GEN.build_nnue_source(
             _cfg(tmp_path / "out", bucket_pack, nnue_cp_per_unit=0.0),
         )
+
+
+@pytest.mark.parametrize(
+    "knob", ["nnue_cp_per_unit", "nnue_cp_slope", "nnue_cp_draw_width"],
+)
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_cp_knob_is_refused(
+    tmp_path: Path, bucket_pack: Path, knob: str, bad: float,
+) -> None:
+    """⚑⚑ NaN PASSES EVERY COMPARISON-BASED GUARD, because every comparison
+    against NaN is False. ``nan > 0`` is False and ``nan <= 0`` is False, so a
+    positivity check written either way LETS IT THROUGH -- and it then reaches
+    ``cp_to_wdl_array``, makes every W and L NaN, makes ``q`` NaN, and lands in
+    ``policy_target`` as a silent corruption of the whole corpus. The infinities
+    are here because they take the opposite route through the same hole: they
+    pass a positivity check honestly and saturate the logistic to a constant.
+    """
+    with pytest.raises(ValueError, match="must be finite"):
+        GEN.build_nnue_source(_cfg(tmp_path / "out", bucket_pack, **{knob: bad}))
+
+
+def test_a_nan_scale_would_have_reached_the_target(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """The negative control for the guard above: prove the hole was real.
+
+    A refusal test alone cannot show the refusal matters -- it passes just as
+    well if the value was harmless. This drives ``q_from_values`` on a source
+    whose scale is NaN (set past the constructor, which is what the missing
+    check amounted to) and watches the target go NaN.
+    """
+    source = GEN.build_nnue_source(_cfg(tmp_path / "out", bucket_pack))
+    source.cp_slope = float("nan")
+    q, _is_mate = source.q_from_values(np.array([1000.0]))
+    assert bool(np.isnan(q[0])), "a NaN slope must in fact poison the value"
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--nnue-qsearch-max-ply", "0"),
+        ("--nnue-qsearch-check-plies", "0"),
+    ],
+)
+def test_a_quiescence_flag_on_the_static_arm_is_refused(
+    tmp_path: Path, bucket_pack: Path, flag: str, value: str,
+) -> None:
+    """⚑ P2-7 + P1-1: NOT SILENTLY NULLED, REFUSED.
+
+    ``--nnue-qsearch-max-ply 0 --value-source nnue-static`` reads like the
+    quiescence arm's own negative control. It used to parse, be replaced with
+    None, and produce a default-configured static run -- a command line that
+    documents an experiment the corpus is not.
+    """
+    with pytest.raises(SystemExit, match="read only by"):
+        GEN.main([
+            "--out-dir", str(tmp_path / "out"), "--games", "1",
+            "--value-source", GEN.VALUE_SOURCE_NNUE_STATIC,
+            "--nnue-pack", str(bucket_pack), flag, value,
+        ])
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--nnue-resolver-max-depth", "8"),
+        ("--nnue-qsearch-max-ply", "2"),
+        ("--nnue-cp-per-unit", "0.5"),
+        ("--nnue-cp-slope", "0.01"),
+        ("--nnue-cp-draw-width", "80"),
+    ],
+)
+def test_an_arm_flag_on_a_pure_source_is_refused(
+    tmp_path: Path, flag: str, value: str,
+) -> None:
+    """Every arm flag, not just the pack. The pack was the only one that refused
+    before, and only because a missing file would have crashed anyway."""
+    with pytest.raises(SystemExit, match="would ignore it"):
+        GEN.main([
+            "--out-dir", str(tmp_path / "out"), "--games", "1",
+            "--value-source", GEN.VALUE_SOURCE_ZERO, flag, value,
+        ])
+
+
+def test_supplying_a_cp_flag_at_its_own_default_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """⚑ The reason the parser holds a sentinel rather than the constant.
+
+    Typing the default value is still typing the flag, and a run whose command
+    line names a knob its value source cannot read is mislabelled whatever the
+    number was. argparse cannot tell "typed the default" from "typed nothing"
+    unless the parser default is a sentinel -- so this test is what stops that
+    indirection from being simplified away.
+    """
+    with pytest.raises(SystemExit, match="would ignore it"):
+        GEN.main([
+            "--out-dir", str(tmp_path / "out"), "--games", "1",
+            "--value-source", GEN.VALUE_SOURCE_ZERO,
+            "--nnue-cp-slope", str(GEN.NNUE_CP_SLOPE),
+        ])
+
+
+def test_banking_without_an_arm_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="has no arm"):
+        GEN.main([
+            "--out-dir", str(tmp_path / "out"), "--games", "1",
+            "--value-source", GEN.VALUE_SOURCE_ZERO, "--bank-leaf-observations",
+        ])
+
+
+# ===========================================================================
+# Merging across workers — a peak is not a sum
+# ===========================================================================
+
+
+def _stats(**context: int) -> Any:
+    return GEN.NnueArmStats(leaves=1, context=dict(context))
+
+
+def test_merging_workers_sums_counters_and_takes_the_max_of_peaks() -> None:
+    """⚑⚑ P1-2: `max_depth_seen` IS A PEAK, AND SUMMING IT INVENTS A CUTOFF.
+
+    The C side merges these with an atomic MAX inside one context, so the value
+    a worker reports is already "the deepest this worker went". Adding four
+    workers' peaks together reports 128 for a run whose depth cap is 32 -- a
+    number that cannot occur, sitting next to `ctx_depth_cutoffs` which is what
+    a reader would check against it. Forged counters, because the point is the
+    arithmetic and a real run cannot be made to produce a chosen peak.
+    """
+    a = _stats(calls=10, nodes=100, max_depth_seen=31, qmax_ply_seen=4)
+    b = _stats(calls=7, nodes=70, max_depth_seen=12, qmax_ply_seen=2)
+    a.merge(b)
+    assert a.context["calls"] == 17
+    assert a.context["nodes"] == 170
+    assert a.context["max_depth_seen"] == 31
+    assert a.context["qmax_ply_seen"] == 4
+
+
+def test_merging_workers_reports_a_configuration_conflict_rather_than_hiding_it(
+) -> None:
+    """Config keys are neither summed nor maxed: they must AGREE.
+
+    Two workers at different resolver depths are not one cell, and summing
+    32 + 8 = 40 or maxing to 32 would publish a configuration neither ran.
+    """
+    a = _stats(resolver_max_depth=32, calls=1)
+    b = _stats(resolver_max_depth=8, calls=1)
+    a.merge(b)
+    assert a.context["resolver_max_depth"] == 8  # the shallowest, not the sum
+    assert a.context_conflicts == {"resolver_max_depth": [8, 32]}
+    assert a.summary()["ctx_config_conflicts"] == 1.0
+
+
+def test_every_arm_stats_key_is_classified(bucket_pack: Path) -> None:
+    """⚑⚑ THE KEY SET COMES OFF A LIVE HANDLE, NOT OFF THE TRANSCRIPTION.
+
+    The three `_CTX_*_KEYS` sets are a Python copy of what `arm_stats_dict`
+    emits, and a copy only has to be incomplete once. It was: `qterminal_draw`
+    and `qply_cutoffs` were missing, every forged-dict unit test passed, and the
+    first real two-worker qsearch run died in `merge` -- correctly, but in
+    production rather than in CI.
+
+    So the expectation is the extension's own answer. A new C counter fails
+    here, before it can stop a generation run.
+    """
+    handle = _nnue_ext.arm_open(
+        GEN.VALUE_SOURCE_NNUE_QSEARCH, str(bucket_pack),
+    )
+    keys = set(dict(_nnue_ext.arm_stats(handle)))
+    classified = (
+        GEN._CTX_COUNTER_KEYS | GEN._CTX_PEAK_KEYS | GEN._CTX_CONFIG_KEYS
+    )
+    assert keys, "arm_stats returned nothing"
+    assert keys <= classified, f"unclassified arm_stats keys: {sorted(keys - classified)}"
+    # And nothing classified that the extension does not emit -- a stale entry
+    # here is a key that silently never merges.
+    assert classified <= keys, f"classified but absent: {sorted(classified - keys)}"
+    # The three sets must be disjoint, or a key's merge rule depends on which
+    # `elif` happens to come first.
+    assert GEN._CTX_COUNTER_KEYS.isdisjoint(GEN._CTX_PEAK_KEYS)
+    assert GEN._CTX_COUNTER_KEYS.isdisjoint(GEN._CTX_CONFIG_KEYS)
+    assert GEN._CTX_PEAK_KEYS.isdisjoint(GEN._CTX_CONFIG_KEYS)
+
+
+def test_an_unclassified_context_key_refuses_to_merge() -> None:
+    """A new C counter must be classified before it can be merged.
+
+    ⚑ Not a default-to-sum: whichever rule is the fallback becomes the silent
+    answer for every future key, and summing was how `max_depth_seen` came to
+    read 128. The refusal is the whole mechanism.
+    """
+    a = _stats(brand_new_counter=1)
+    b = _stats(brand_new_counter=1)
+    with pytest.raises(ValueError, match="not classified"):
+        a.merge(b)
+
+
+def test_the_prereg_rates_are_the_ratios_they_claim_to_be() -> None:
+    """The two reported columns, at values a real run cannot be made to produce.
+
+    ⚑ The assertion this replaces was ``0.0 <= in_check_call_frac <= 1.0``,
+    which is definitionally satisfied by any ratio of non-negative counters --
+    true of a hardcoded 0.5, of the wrong numerator, and of a denominator that
+    used `leaves` instead of `calls`. Forged counters give it an exact value.
+    """
+    stats = GEN.NnueArmStats(
+        leaves=90, roots=10,
+        context={
+            "calls": 100, "calls_in_check": 25,
+            "nodes": 700, "resolved_leaves": 350,
+        },
+    )
+    out = stats.summary()
+    assert out["in_check_call_frac"] == pytest.approx(0.25)
+    assert out["resolver_expansion_factor"] == pytest.approx(2.0)

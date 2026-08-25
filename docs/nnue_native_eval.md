@@ -409,6 +409,49 @@ looks at the rest. The flag raises `topk` to the 218-move ceiling and makes the
 per-root budget `max(--sims, 2 * n_legal)`; a `--topk` that would drop moves is
 **refused**, not quietly raised. The banked UCI anchors were generated with it.
 
+It also turns **off** `allow_terminal_root_shortcuts`. That shortcut prunes
+every immediately-drawing legal move from a root whose value is positive,
+*before* candidate selection — so the move is never evaluated, gets zero target
+probability, and the stored legal mask advertises it anyway. On a root with a
+repetition or a drawing capture available that is exactly the coverage hole the
+flag exists to close, and it is silent (the target is dense over the legal set
+either way). Production's topk-capped path keeps the shortcut, where it is a
+real saving and no coverage is promised.
+
+### ⚑ The C sampler's ranking ceiling, and what it actually costs
+
+`gss_score_and_halve` writes into a `double scores_buf[GSS_MAX_CANDS]` (64) and
+clamps `n_cands` to fit it, so `--topk 218` cannot be honoured in full on a root
+with more legal moves than that. **Measured, because the obvious reading is
+wrong**: on the 218-legal-move position
+`R6R/3Q4/1Q4Q1/4Q3/2Q4Q/Q4Q2/pp1Q4/kBNN1KB1 w - - 0 1` at `--all-root-moves`
+(realized budget 436), every one of the 218 root children is expanded and
+visited and the stored target has non-zero mass on all 218. Budget is deducted
+for every candidate before the clamp. What the surplus loses is a place in the
+**ranking**: candidates past the ceiling are dropped from the halving unscored
+and are never deepened. The cap costs ranking resolution on wide roots, not
+coverage.
+
+The C limit stays at 64 and the generator **reports** every root that exceeded
+it (`root_budget.roots_over_candidate_cap`, `legal_moves_over_cap_max`, and a
+one-shot warning). Over 500 measured games the widest root had **61** legal
+moves and the counter read 0; the banked UCI anchors' widest was 65.
+
+### ⚑ Banking the raw leaf observations
+
+`--bank-leaf-observations` writes one JSONL row per arm evaluation beside the
+shards (`leaf_observations_w<id>.jsonl`): the **raw internal score**, the FEN,
+the pack's file digest, the cp settings in force, and the `(game, ply)` cluster
+key. `--nnue-cp-per-unit` and the cp-logistic are a pure function of that raw
+value, so with the bank a scale correction or a different estimator is a
+**reanalysis**; without it the arithmetic is baked into `policy_target` and the
+only way back is to replay the games.
+
+It is **off by default** because it is one row per evaluated position: measured
+at ~399 bytes/row, which is ~11 MB for an 8-game qsearch run and would be
+~113 GB/h at the static arm's rate. **Every preregistered readout cell must be
+generated with it on**; exploratory and throughput runs need not be.
+
 ### Throughput, measured
 
 500 games, 4 workers, `nice -n 10`, `--sims 32` (realized mean 45.0 under
@@ -416,12 +459,18 @@ all-root-moves), concurrent with other GPU work on the box:
 
 | arm | rows/h | vs UCI@32 anchor (162,667) | vs the ≥5× gate (813,000) |
 |---|---|---|---|
-| `nnue-static` | **6,143,045** | 37.8× | **7.6×** |
-| `nnue-qsearch` | 26,566 † | 0.16× | 0.03× |
+| `nnue-static` | **6,345,273** | 39.0× | **7.8×** |
+| `nnue-qsearch` | 36,609 † | 0.22× | 0.05× |
 
-† 8 games, 4 workers, `--max-plies 60` — the qsearch arm is far too slow for a
-500-game point at this budget, and the number is a truncated-game measurement,
-not a like-for-like one.
+† 8 games, 4 workers, `--max-plies 60`, **and with `--bank-leaf-observations`
+on** — the qsearch arm is far too slow for a 500-game point at this budget, and
+because every game is truncated at 60 plies this is **not** a like-for-like
+number: truncated games are the cheap prefix of a game, so it flatters the arm
+rather than understating it. Read it as an order of magnitude, not a rate.
+
+`wall_seconds` (and therefore `rows_per_hour`) **includes shard writing**: the
+workers write shards inside the timed region, which is the honest accounting for
+a corpus generator whose product is the files.
 
 ⚑ **The qsearch arm's cost is heavy-tailed on a real game stream and the
 resolver-bench figure does not predict it.** The bench's stratified pool costs

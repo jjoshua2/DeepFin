@@ -6174,5 +6174,17 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
         return NULL;
     }
 
+    /* ⚑ THE CANDIDATE CEILING, exported because a caller can PROMISE coverage
+     * it does not get. gss_score_and_halve scores at most GSS_MAX_CANDS
+     * candidates per root per round and CLAMPS above that -- so a caller that
+     * raises `topk` to the 218-move ceiling and believes every legal move is a
+     * candidate is wrong on any root with more than this many legal moves, with
+     * no error and a legal mask that still advertises them. A Python-side copy
+     * of the number would be a second home for it; this is the first. */
+    if (PyModule_AddIntConstant(m, "GSS_MAX_CANDS", GSS_MAX_CANDS) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
     return m;
 }

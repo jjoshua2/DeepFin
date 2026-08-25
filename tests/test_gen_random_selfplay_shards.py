@@ -974,6 +974,21 @@ def test_a_failed_run_still_leaves_a_sidecar_marked_partial(
     ``generate`` before ``main`` wrote anything, leaving real files on disk with
     NO record of what produced them — and the next invocation's
     ``next_shard_index`` then folded them into the corpus silently.
+
+    ⚑⚑ THE EXPECTATION MOVED, DELIBERATELY, and the old one is worth writing
+    down because it looked like a passing guard. It asserted
+    ``workers_reported == 0`` and that every shard on disk was an ORPHAN — i.e.
+    it pinned the behaviour that a dead worker's result is thrown away. That is
+    the weaker outcome: the shards were real, the games were real, and the
+    sidecar described a run that had done nothing, with the files listed under
+    a heading that means "nobody claims these".
+
+    ``WorkerFailure`` now carries the partial ``WorkerResult`` back, so the
+    crashed worker REPORTS: its games, its rows, the shards it flushed, and
+    (for the native arms) what its evaluator did. The failure is still fatal and
+    the run is still ``partial``; what changed is that the accounting survives.
+    Orphans are now what the name says — shards no worker accounted for — and on
+    this single-worker run there are none.
     """
     real_play = GEN.play_game
     state = {"n": 0}
@@ -994,8 +1009,46 @@ def test_a_failed_run_still_leaves_a_sidecar_marked_partial(
     summary = json.loads(sidecars[0].read_text())
     assert summary["partial"] is True
     assert "injected worker failure" in summary["error"]
-    assert summary["workers_reported"] == 0
-    # Every shard the dead worker wrote is named, not silently inherited.
+    # The dead worker reported, PARTIALLY: three games played before the raise.
+    assert summary["workers_reported"] == 1
+    assert summary["games"] == 3
+    assert summary["rows"] > 0
+    assert summary["failed_workers"] == [
+        {"worker_id": 0, "error": "RuntimeError: injected worker failure"},
+    ]
+    # Every shard the dead worker wrote is ACCOUNTED FOR, not inherited: the
+    # shard list covers what is on disk and nothing is left orphaned.
     on_disk = {GEN.shard_index(p) for p in iter_shard_paths(tmp_path)}
     assert on_disk, "the injected failure came before any shard was written"
-    assert {int(s["index"]) for s in summary["orphan_shards"]} == on_disk
+    assert {int(s["index"]) for s in summary["shards"]} == on_disk
+    assert summary["orphan_shards"] == []
+
+
+def test_a_shard_no_worker_claims_is_still_reported_as_an_orphan(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE BACKSTOP MUST NOT HOLLOW OUT THE GUARD IT BACKS.
+
+    Carrying a dead worker's partial result back (``WorkerFailure``) removed the
+    only case that used to produce an orphan, so the test above now asserts
+    ``orphan_shards == []`` — and with nothing else exercising the mechanism, a
+    change that broke orphan detection entirely would pass the whole suite. The
+    mechanism still matters: a worker the OS kills, or one whose process pool
+    breaks, returns NO result at all and its shards are on disk with nobody
+    claiming them.
+
+    So this drives ``orphan_shards`` directly, with a shard that exists and a
+    claim set that does not include it.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    claimed = GEN.local_shard_path(out, 4)
+    unclaimed = GEN.local_shard_path(out, 7)
+    for path in (claimed, unclaimed):
+        path.mkdir(parents=True, exist_ok=True)
+    found = GEN.orphan_shards(out_dir=out, shard_index_start=0, claimed={4})
+    assert [s["index"] for s in found] == [7]
+    assert found[0]["path"] == unclaimed.name
+    # Below the run's starting index is a PREVIOUS run's shard, not this run's
+    # orphan -- the boundary that keeps re-running into a directory honest.
+    assert GEN.orphan_shards(out_dir=out, shard_index_start=8, claimed=set()) == []
