@@ -67088,3 +67088,22 @@ successor is the HARMONIZATION program (measured-gap levers, one per readout), l
 = policy temper of OWN targets toward the lc0 band: trainer knob
 `--mix-own-policy-temp` in build (feat/mix-own-policy-temp, agent in flight); τ to be
 CALIBRATED offline against real own-corpus rows before the prereg banks a command.
+
+**2026-08-25 PREREG — HARMONIZATION LEVER 1: policy temper of OWN targets toward the
+lc0 band.** HYPOTHESIS: the f=0.50 mix stalls at parity because the two corpora's
+policy targets fight (+0.82 nats gap, opposite pulls per batch); tempering OWN rows'
+main policy target into the lc0 entropy band removes that fight and converts mixing
+from parity to gain. CALIBRATION (banked, scratchpad/temper_tau_calibration.result.json,
+n=6,979 real own rows): untempered median 0.691 nats (cross-checks the 0.675
+measurement); τ grid 2.0→1.387 / 2.5→1.706; **τ=2.2 chosen** (interpolated ≈1.45,
+inside the lc0 band 1.494±). Singleton-support rows 1.1% — the categorical-support
+limit is marginal at this dose. ARM (ONE lever this readout; value-shape and ≤6-piece
+filter stay queued): f=0.50, seed 14, τ=2.2, bar 0.002, 20k steps, iter-595 init,
+`--mix-own-policy-temp 2.2` — LAUNCH GATED on feat/mix-own-policy-temp landing with
+review + mutation evidence (agent in flight); the run's realized own-target entropy
+line is the take-effect observable and MUST read ≈1.4-1.5. YARDSTICK: MID+LAST 400g
+arenas vs iter-595, fresh seeds 68/69. CLAUSES: LAST CI excludes 0 positive ⇒ SUCCESS
+(fix candidate). LAST CI spans 0 ⇒ NULL (parity not broken; lever 2 next). LAST CI
+excludes 0 negative ⇒ KILL (tempering hurts; lever 2 next with lever 1 reverted).
+Comparator at matched steps: untempered f=0.50 curve (MID −42.78 / LAST −0.87, seeds
+63/64) — diagnostic only.
