@@ -66852,3 +66852,12 @@ ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
   readout vs the banked UCI anchors (≥813k rows/h gate; prereg + noise floor FIRST).
   ⚑ The readout's arm throughput numbers must come from the POST-fix bench — every
   pre-fix qsearch number is void.
+
+## 2026-08-24 22:05 — PR #467 MERGED (5a5cab41f): prereg-doc identity scrub + AMENDMENT 9
+
+Two prose first-name occurrences in docs/lc0_positive_control_prereg.md reworded —
+public repo, and they made `test_no_absolute_home_paths` red locally on main for every
+worktree on this machine (CI green only by runner-login luck; two agents burned time
+re-explaining it tonight). Codex's one finding (post-cutoff edit must be a dated
+amendment) fixed by appending AMENDMENT 9 with the explicit redaction-exception
+rationale. Self-authored, Codex-reviewed, CI green on merged head 9b579392b.
