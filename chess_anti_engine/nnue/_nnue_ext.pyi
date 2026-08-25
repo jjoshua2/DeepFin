@@ -10,6 +10,16 @@ PACK_VERSION: int
 FILE_VERSION: int
 HAVE_AVX2: int
 
+# Check-resolver / quiescence constants, exported so a test pins the C values
+# rather than a Python restatement of them.
+RESOLVER_EVAL_CLAMP: int
+RESOLVER_MATE_BASE: int
+RESOLVER_MATE_PLY_STEP: int
+RESOLVER_MAX_PLIES: int
+RESOLVER_MAX_DEPTH: int
+QSEARCH_MAX_PLY: int
+QSEARCH_CHECK_PLIES: int
+
 class InCheckError(ValueError):
     """The NNUE evaluation is undefined for a position in check.
 
@@ -22,6 +32,12 @@ class InCheckError(ValueError):
 # on their eval seam, instead of including its header and getting a second copy
 # of its kernel flag and weight cache.
 value_provider_capsule: object
+
+# The two race arms, published under the same capsule name and ABI. Both resolve
+# check nodes recursively before evaluating; they differ only in what happens at
+# a resolved non-check node (static NNUE vs tactical quiescence).
+static_arm_capsule: object
+qsearch_arm_capsule: object
 
 def load(pack_path: str, /) -> object: ...
 def set_simd(enabled: bool, /) -> bool: ...
@@ -39,3 +55,12 @@ def benchmark(
 ) -> tuple[int, float, int]: ...
 def provider_eval(name: str, weights_path: str, board: CBoard, /) -> int: ...
 def provider_names() -> tuple[str, ...]: ...
+def set_arm_config(
+    resolver_max_depth: int, qsearch_max_ply: int, qsearch_check_plies: int, /
+) -> dict[str, int]: ...
+def arm_eval(
+    name: str, weights_path: str, boards: list[CBoard], /
+) -> tuple[list[int], dict[str, int]]: ...
+def arm_open(name: str, weights_path: str, /) -> object: ...
+def arm_handle_eval(handle: object, boards: list[CBoard], /) -> list[int]: ...
+def arm_stats(handle: object, /) -> dict[str, int]: ...

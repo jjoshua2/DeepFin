@@ -39,6 +39,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
         (
             "chess_anti_engine/mcts/_mcts_tree.c",
             "chess_anti_engine/mcts/_value_provider.h",
+            "chess_anti_engine/mcts/_search_terminal.h",
             "chess_anti_engine/encoding/_cboard_impl.h",
             "chess_anti_engine/encoding/_features_impl.h",
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
@@ -50,7 +51,10 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/nnue/_nnue_ext.c",
             "chess_anti_engine/nnue/_nnue_impl.h",
             "chess_anti_engine/nnue/_nnue_provider.h",
+            "chess_anti_engine/nnue/_arm_providers.h",
             "chess_anti_engine/mcts/_value_provider.h",
+            "chess_anti_engine/mcts/_check_resolver.h",
+            "chess_anti_engine/mcts/_search_terminal.h",
             "chess_anti_engine/encoding/_cboard_impl.h",
             # Reached through _cboard_impl.h, not included directly — the
             # freshness question is what the OBJECT was compiled from, so the

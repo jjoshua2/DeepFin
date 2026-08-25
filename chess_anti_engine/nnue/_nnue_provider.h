@@ -51,19 +51,9 @@ static const CaeValueProvider CAE_NNUE_PROVIDER = {
     cae_nnue_provider_kernel_name,
 };
 
-/* The registry the tree looks a provider up in by name. PR 1 ships exactly one
- * entry; the point of the table is that the next one is an append, not a
- * rewrite of the call site. */
-static const CaeValueProvider *const CAE_VALUE_PROVIDERS[] = {
-    &CAE_NNUE_PROVIDER,
-    NULL
-};
-
-static const CaeValueProvider *cae_value_provider_by_name(const char *name) {
-    for (int i = 0; CAE_VALUE_PROVIDERS[i]; i++)
-        if (strcmp(CAE_VALUE_PROVIDERS[i]->name, name) == 0)
-            return CAE_VALUE_PROVIDERS[i];
-    return NULL;
-}
+/* The registry (CAE_VALUE_PROVIDERS / cae_value_provider_by_name) moved to
+ * _arm_providers.h when the resolver-backed arms joined it. It has to live in
+ * whichever header knows about EVERY provider, and a registry that listed only
+ * some of them would answer provider_names() with a truthful-looking subset. */
 
 #endif /* CAE_NNUE_PROVIDER_H */

@@ -110,11 +110,228 @@ evaluating and its `eval` command refuses outright, printing
   position or a terminal is reached.
 - The refusal is the **enforcement backstop** for that invariant, not a
   substitute for it. A caller that leans on the refusal has a hole in its
-  search. The resolver itself is tree-side search infrastructure and lands
-  separately; it is a shared mandatory layer, not part of any one arm.
+  search. The resolver itself is tree-side search infrastructure — a shared
+  mandatory layer, not part of any one arm. It is described below.
 
 The parity sample excludes in-check FENs by construction and **reports the
 excluded fraction** rather than dropping them silently.
+
+## The check resolver
+
+`chess_anti_engine/mcts/_check_resolver.h`. Recursive, minimax, integer, and
+**parameterised by what happens at a resolved non-check node** (`CaeLeafEvalFn`)
+— that parameter is the only thing the two race arms differ in.
+
+- **In check** → generate evasions and recurse on each; back up by **maximising
+  for the side to move**, negating each child (a child's value is child-STM POV).
+  Never an average: the side to move has no choice about being in check and must
+  survive every reply.
+- **No evasions** → mate. ⚑ **Tested BEFORE the draw rules**, because
+  `cboard_is_game_over` checks the fifty-move clock and "no legal moves" without
+  asking whether the side to move is in check — so consulting it first would
+  score a checkmate at clock ≥ 100 as a draw, and a draw is a plausible 0 that
+  nothing downstream can distinguish from a real one.
+- **Terminal** (stalemate, three-fold, fifty-move, insufficient material, and
+  LC0-style **two-fold as draw**) → 0. The decision comes from
+  `cboard_search_terminal`, moved into `mcts/_search_terminal.h` so the tree and
+  the resolver answer it with one piece of code rather than two that drift.
+- **Not in check, not terminal** → call the leaf hook.
+
+**Why it terminates.** Every step is a move, so it either resets the halfmove
+clock or repeats a position within the current reversible run; a perpetual check
+therefore hits the two-fold terminal. The depth cap (32) is a backstop for the
+pathological remainder and is **counted** (`depth_cutoffs`), not assumed away —
+0 on every position in the bench, and the counter is pinned as *capable* of
+firing by a test that caps the recursion at 1 ply.
+
+### Score scale
+
+⚑ **Search-internal, and NOT centipawns.** Values are in the evaluator's own
+internal units so a resolved value is a drop-in replacement for the static
+evaluation it stands in for. It shares numeric constants with `stockfish/wdl.py`
+by deliberate analogy, **not** by shared definition; a resolver score must never
+reach the training-target pipeline as cp, and `mate_to_effective_cp` remains the
+single home for the mate→cp mapping.
+
+| | value | why |
+|---|---|---|
+| `CAE_RESOLVER_EVAL_CLAMP` | 32000 | every raw evaluation is clamped into ±this |
+| `CAE_RESOLVER_MATE_BASE` | 100000 | mate at depth 0 |
+| `CAE_RESOLVER_MATE_PLY_STEP` | 100 | deeper mates are worth less, so a shorter mate is preferred |
+| mate band floor | 74400 | `100000 − 256×100` |
+
+**The mate band cannot overlap the evaluation band** — 74400 > 32000, pinned by
+test. This is audit N1's defect class in a new scale: the codebase once carried
+two mate→cp formulas, one of which folded mates into a range real evaluations
+reach, so on 1.34% of live rows a mate scored *below* a plain evaluation. The
+clamp is measured rather than guessed: over the 49,619-position parity pool the
+largest |evaluation| is 14,295, so it never binds and its job is to make the
+separation total rather than empirical.
+
+⚑ A **mate-band value from the leaf hook passes through unclamped**; only an
+evaluation is clamped. Quiescence can legitimately return a mate it found below
+the node, and an unconditional clamp would silently demote a forced mate to a
+merely good position. A hook returning a raw evaluation clamps it itself, where
+"this is not a mate score" is known.
+
+## The two race arms
+
+Both are providers on the same seam, published from `_nnue_ext` as
+`static_arm_capsule` / `qsearch_arm_capsule` and installable by name.
+
+| provider | leaf at a resolved non-check node |
+|---|---|
+| `nnue` | *(refuses in check — the backstop, unchanged)* |
+| `nnue-static` | the static NNUE evaluation |
+| `nnue-qsearch` | stand-pat quiescence over captures, promotions, and checks |
+
+⚑⚑ **Arm fairness is structural.** Check resolution is mandatory correctness
+work, so it must not appear as a cost of the qsearch arm — and the guarantee is
+that it is *one component both arms call*, not a promise. The qsearch arm cannot
+bypass it: its leaf hook is reachable only from inside the resolver, and every
+child it generates that is in check goes back through `cae_resolve_node` rather
+than to the evaluator. With quiescence off (`qsearch_max_ply=0`) the two arms
+agree exactly, node for node — that is the arm's own negative control and it is
+asserted.
+
+⚑ The two arms' *total* resolver counts differ, and that is correct: quiescence
+walks into check nodes of its own, and resolving those is quiescence's cost. The
+counters are comparable because they are defined identically, not because they
+are equal.
+
+### Quiescence budget — measured, not chosen
+
+This quiescence has no SEE or delta pruning, so its cost is close to exponential
+in the ply budget while its value saturates early. Over 600 stratified positions
+with the real big net, each budget scored against the deepest available:
+
+| `max_ply` | qnodes/eval | mean \|v − v@8\| | positions differing (of 600) |
+|---|---|---|---|
+| 0 | 1.0 | 985.7 | 201 |
+| 1 | 10.2 | 201.5 | 101 |
+| 2 | 12.0 | 182.3 | 62 |
+| 3 | 58.7 | 14.0 | 43 |
+| **4** | **72.4** | **6.5** | **20** |
+| 6 | 345.2 | 4.2 | 10 |
+| 8 | 1796.5 | 0.0 | 0 |
+
+4 to 8 is 25× the work to close a mean 6.5 internal units (~0.4 cp) on 20 of 600
+positions, so **4 is the default**. ⚑ The tail is not closed: max |v − v@8| is
+2425 units at both 3 and 4 plies, so a handful of positions really do need
+depth — which is why it is a knob and not a constant.
+
+### ⚑⚑ Two counters, and conflating them was a real bug
+
+The mutual recursion carries **two** numbers, and they are not interchangeable:
+
+| | counts | bounded by |
+|---|---|---|
+| `depth` | plies below the **resolution root**, through both directions | `resolver_max_depth`; also what mate distance is measured in |
+| `qply` | plies of **quiescence** | `qsearch_max_ply`, `qsearch_check_plies` |
+
+The first version passed `depth` as quiescence's ply. The resolver only calls its
+leaf hook at a **non-check** node, so an in-check root entered quiescence at
+`depth >= 1` — and `try_checks = (ply < check_plies)` at the default
+`check_plies = 1` was therefore **false on exactly the positions the check budget
+exists for**. A check chain 4 deep entered quiescence at ply 4 and stood pat
+without looking at a single capture. Both knobs were accepted, consumed, and
+silently meant something else.
+
+⚑ The obvious fix — reset `qply` to 0 at the leaf hook — is also wrong, and worse:
+it **refunds** the budget. Quiescence plays a check, the resolver resolves it, and
+the resolver's leaves start quiescence again with a full allowance. Measured, it
+does not finish. So the count is **carried** across the excursion: check
+resolution is mandatory and free, quiescence moves are what the budget buys.
+
+What separates carried from refunded is that quiescence work **saturates** as the
+recursion cap rises, because quiescence is bounded by its own budget and not the
+resolver's. At `max_ply=2, check_plies=2` on the four chain positions:
+
+| `resolver_max_depth` | carried (shipped) | refunded |
+|---|---|---|
+| 6 | 5,468 qnodes | 8,378 |
+| 12 | 8,446 | 15,327,851 |
+| 32 | 8,446 | *(does not finish)* |
+
+Every counter still looks obedient under a refund — `qmax_ply_seen` caps at
+`max_ply` because each restart caps at `max_ply` all over again — so the test that
+catches it asserts saturation, not a counter.
+
+### The knobs, and where they take effect
+
+`_nnue_ext.set_arm_config(resolver_max_depth, qsearch_max_ply,
+qsearch_check_plies)` sets what **new** contexts are built with. ⚑⚑ **It is read
+at `init()`, not at `eval()`**: a context snapshots its configuration and keeps
+it for life, so a setter that appeared to retune a running provider would be
+this repo's signature defect wearing a fix's clothes. The numbers a batch
+actually ran under are therefore reported **out of the context that ran them**
+(`arm_eval`'s stats dict, `arm_stats(handle)`), never restated from the globals.
+The triple is read and written under a mutex, so a context can never be built
+from a half-updated configuration.
+
+### Overhead
+
+```bash
+PYTHONPATH=. nice -n 19 python3 scripts/nnue_resolver_bench.py \
+    --pack big.pack --quiet-n 2000 --check-n 500 --bank runs/resolver_bench.jsonl
+```
+
+⚑ **The overhead is not one number**, and quoting it as one hides the only thing
+it depends on: `blended = (1-f)*quiet + f*in_check`, where `f` is the in-check
+rate of the position stream — a property of the corpus generator, not of the
+resolver.
+
+⚑⚑ **Both conditions are sampled from ONE stream, with matched weights.** An
+earlier version blended the *stratified* pool's rate (round-robin over
+(bucket, threat-bin) cells, which deliberately over-represents thin ones) with a
+first-N in-check pool from raw playouts. Weighting two differently-drawn
+conditional samples by the natural in-check fraction estimates neither
+distribution — it describes a population nobody generated. Both pools are now
+reservoir-sampled over the same fixed set of playouts, and `f` is measured on
+that same stream. The stratified pool is still reported, labelled **COVERAGE**,
+and is never blended.
+
+⚑ **Positions carry their move history.** Rebuilding a board from its FEN throws
+away the move stack, and the resolver consults it — two-fold repetition is what
+makes a perpetual check terminate. A FEN-only pool measures a resolver that can
+never see a repetition.
+
+⚑ **The dedup key is resolver-complete**, not the parity sampler's
+placement + side-to-move: castling and en passant change the evasions, the
+halfmove clock decides the fifty-move terminal, and the history decides the
+two-fold one.
+
+⚑ It reports each arm against **its own quiet rate**, not only against the raw
+evaluator: that baseline runs through a different harness
+(`_nnue_ext.benchmark`), and the static arm has measured *faster* than it, which
+is a harness difference and certainly not a speedup from adding work.
+
+⚑ `--repeats` uses **one long-lived context** across all passes. Re-creating it
+per pass reset the counters while time and eval count accumulated, understating
+every counter in the table by the repeat factor.
+
+⚑ `--bank` writes **one JSONL row per position** — FEN, value, the arm settings
+as the context reported them, and the game/ply cluster key — staged and
+`os.replace`d. An aggregate cannot be re-stratified, and a rerun happens on a box
+whose load has moved on.
+
+Measured on the big net, AVX2, 400 playouts → 72,430 positions, f = 0.0472,
+2000 quiet + 500 in-check:
+
+| arm | quiet | in-check | blended @ f=0.0472 |
+|---|---|---|---|
+| `nnue-static` | 165,688/s | 40,633/s | **144,654/s — 12.7% below its own quiet rate** |
+| `nnue-qsearch` | 5,321/s | 468/s | 3,572/s |
+
+An in-check evaluation costs **4.08×** a quiet one through the static arm and
+**11.36×** through the qsearch arm; the recursion reached depth 3 (static) / 14
+(qsearch) and `depth_cutoffs` was **0**.
+
+⚑ **The qsearch arm's in-check rate is 17.7× lower than before the ply fix**
+(8,268/s → 468/s), and the old number was the bug showing: quiescence stood pat on
+in-check roots without searching anything, so the arm looked *faster* on in-check
+positions than on quiet ones (0.69×). An arm that costs less where it is supposed
+to do more was the anomaly; 11.36× is the mechanism working.
 
 ## The eval seam
 
@@ -315,8 +532,13 @@ spends its time in and is the slower one.
 | `scripts/nnue_fens.py` | stratified, in-check-excluding FEN sampler |
 | `scripts/nnue_parity.py` | the gate: exact integer equality against Stockfish |
 | `scripts/nnue_bench.py` | throughput, index computation included |
+| `scripts/nnue_resolver_bench.py` | resolver overhead, blended at the measured in-check rate |
 | `chess_anti_engine/nnue/_nnue_impl.h` | the evaluator |
 | `chess_anti_engine/nnue/_nnue_provider.h` | the evaluator as a value provider |
+| `chess_anti_engine/nnue/_arm_providers.h` | the two race arms + the provider registry |
 | `chess_anti_engine/mcts/_value_provider.h` | the seam and its status contract |
+| `chess_anti_engine/mcts/_check_resolver.h` | recursive check resolution, shared by both arms |
+| `chess_anti_engine/mcts/_search_terminal.h` | the terminal decision, shared with the tree |
 | `chess_anti_engine/nnue/_nnue_ext.c` | Python surface for parity, bench, tests |
 | `tests/test_nnue_native_eval.py` | parser, converter, indices, refusal, seam |
+| `tests/test_check_resolver.py` | recursion, terminals, minimax, arm fairness, the knobs |

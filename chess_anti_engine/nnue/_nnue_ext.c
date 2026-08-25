@@ -27,7 +27,9 @@
 
 #include "../encoding/_cboard_impl.h"
 #include "_nnue_impl.h"
-#include "_nnue_provider.h"
+/* Pulls in _nnue_provider.h and ../mcts/_check_resolver.h, and owns the provider
+ * registry — the raw evaluator plus the two resolver-backed race arms. */
+#include "_arm_providers.h"
 
 /* Mirrors the layout of _lc0_ext.c's PyCBoard, the same way _mcts_tree.c does. */
 typedef struct {
@@ -373,6 +375,299 @@ static PyObject *py_provider_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     return PyLong_FromLong((long)value);
 }
 
+PyDoc_STRVAR(arm_eval_doc,
+"arm_eval(name, weights_path, boards) -> (values, stats)\n\n"
+"Evaluate a LIST of positions through ONE resolver-backed arm context, then\n"
+"report that context's own accumulated counters.\n\n"
+"⚑ The counters come off the ctx the provider's eval() wrote them into — the\n"
+"consumer's own state — not off anything this function recomputed. A caller can\n"
+"therefore ask 'how much work did check resolution actually do' and get an\n"
+"answer produced by the code that did it. One ctx across the whole list is the\n"
+"point: the accumulation path (the atomic merge) is exercised, and the in-check\n"
+"leaf fraction is a fraction of something.\n\n"
+"stats keys: calls, calls_in_check, nodes, resolved_leaves, terminal_mate,\n"
+"terminal_draw, depth_cutoffs, max_depth_seen, qnodes, qterminal_draw,\n"
+"qply_cutoffs, qmax_ply_seen, plus resolver_max_depth / qsearch_max_ply /\n"
+"qsearch_check_plies.\n\n"
+"⚑ Those last three are read off THE CONTEXT THAT RAN, not off the module\n"
+"globals set_arm_config() writes. A context snapshots its configuration at\n"
+"init(), so after a set_arm_config() the globals and a long-lived context can\n"
+"legitimately disagree — and the number that governed this batch is the\n"
+"context's. Reporting the global here would be a knob that looks applied.");
+
+/* Resolve a provider name to one of the resolver-backed arms. */
+static const CaeValueProvider *arm_provider_by_name(const char *name) {
+    const CaeValueProvider *vp = cae_value_provider_by_name(name);
+    if (!vp) {
+        PyErr_Format(PyExc_ValueError, "no value provider named %s", name);
+        return NULL;
+    }
+    if (!cae_provider_is_arm(vp)) {
+        PyErr_Format(PyExc_ValueError,
+                     "provider '%s' is not a resolver-backed arm and reports no "
+                     "resolver statistics; use provider_eval for it", vp->name);
+        return NULL;
+    }
+    return vp;
+}
+
+/* ⚑ ATOMIC LOADS, because the writes are atomic. cae_arm_merge_stats() adds into
+ * these with __atomic_fetch_add from inside a GIL-released eval, so a plain load
+ * here is a data race — the GIL orders this reader against other PYTHON code,
+ * not against a C worker thread that never took it. Relaxed on both sides: the
+ * counters are diagnostic and order nothing. */
+#define ARM_STAT_U64(field) ((unsigned long long)__atomic_load_n(&(field), __ATOMIC_RELAXED))
+#define ARM_STAT_U32(field) ((unsigned int)__atomic_load_n(&(field), __ATOMIC_RELAXED))
+
+static PyObject *arm_stats_dict(const CaeArmCtx *ctx) {
+    const CaeArmStats *s = &ctx->totals;
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:I,s:K,s:K,s:K,s:I,s:i,s:i,s:i}",
+        "calls", ARM_STAT_U64(s->resolver.calls),
+        "calls_in_check", ARM_STAT_U64(s->resolver.calls_in_check),
+        "nodes", ARM_STAT_U64(s->resolver.nodes),
+        "resolved_leaves", ARM_STAT_U64(s->resolver.resolved_leaves),
+        "terminal_mate", ARM_STAT_U64(s->resolver.terminal_mate),
+        "terminal_draw", ARM_STAT_U64(s->resolver.terminal_draw),
+        "depth_cutoffs", ARM_STAT_U64(s->resolver.depth_cutoffs),
+        "max_depth_seen", ARM_STAT_U32(s->resolver.max_depth_seen),
+        "qnodes", ARM_STAT_U64(s->qnodes),
+        "qterminal_draw", ARM_STAT_U64(s->qterminal_draw),
+        "qply_cutoffs", ARM_STAT_U64(s->qply_cutoffs),
+        "qmax_ply_seen", ARM_STAT_U32(s->qmax_ply_seen),
+        /* ⚑ NOT atomic, and correctly so: a context's configuration is written
+         * once at init() and never again, which is the whole point of the
+         * snapshot. There is no writer to race with. */
+        "resolver_max_depth", ctx->resolver_max_depth,
+        "qsearch_max_ply", ctx->qsearch_max_ply,
+        "qsearch_check_plies", ctx->qsearch_check_plies);
+}
+
+PyDoc_STRVAR(set_arm_config_doc,
+"set_arm_config(resolver_max_depth, qsearch_max_ply, qsearch_check_plies) -> dict\n\n"
+"Set the configuration NEW arm contexts will be built with, returning what is in\n"
+"force. qsearch_max_ply=0 collapses quiescence to a stand-pat, which makes the\n"
+"qsearch arm's leaf identical to the static arm's — the arm's own negative\n"
+"control.\n\n"
+"⚑ Takes effect at the next init(), not on contexts that already exist: they\n"
+"snapshot their configuration when they are built. Read what a batch actually\n"
+"used out of arm_eval()'s stats, not back out of this function.");
+
+static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
+    int depth, max_ply, check_plies;
+    if (!PyArg_ParseTuple(args, "iii", &depth, &max_ply, &check_plies)) return NULL;
+    char err[256] = {0};
+    if (cae_arm_set_config(depth, max_ply, check_plies, err, sizeof(err)) != 0) {
+        PyErr_SetString(PyExc_ValueError, err);
+        return NULL;
+    }
+    CaeArmConfig cfg;
+    cae_arm_get_config(&cfg);
+    return Py_BuildValue("{s:i,s:i,s:i}",
+                         "resolver_max_depth", cfg.resolver_max_depth,
+                         "qsearch_max_ply", cfg.qsearch_max_ply,
+                         "qsearch_check_plies", cfg.qsearch_check_plies);
+}
+
+static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
+    const char *name, *path;
+    PyObject *seq;
+    if (!PyArg_ParseTuple(args, "ssO", &name, &path, &seq)) return NULL;
+
+    const CaeValueProvider *vp = arm_provider_by_name(name);
+    if (!vp) return NULL;
+
+    /* ⚑⚑ `fast` IS HELD UNTIL THE LAST BOARD POINTER IS CONSUMED, and that is a
+     * lifetime rule, not tidiness. PySequence_Fast returns a NEW list for an
+     * iterator or a custom sequence — for a list or tuple it just returns the
+     * argument. `boards[]` points INTO the CBoard objects that list owns, so
+     * dropping it before the eval loop drops the only reference to every board
+     * and hands the GIL-released loop a dangling pointer. The one input shape
+     * that would crash (a generator) is the one no test happened to pass. */
+    PyObject *fast = PySequence_Fast(seq, "boards must be a sequence of CBoard");
+    if (!fast) return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(fast);
+
+    /* Unwrap every board BEFORE loading weights: a TypeError halfway through
+     * would otherwise leak the ctx, and the type check is the cheap part. */
+    const CBoard **boards = NULL;
+    if (n > 0) {
+        boards = (const CBoard **)PyMem_Malloc((size_t)n * sizeof(*boards));
+        if (!boards) { Py_DECREF(fast); return PyErr_NoMemory(); }
+        for (Py_ssize_t i = 0; i < n; i++) {
+            boards[i] = unwrap_cboard(PySequence_Fast_GET_ITEM(fast, i));
+            if (!boards[i]) { PyMem_Free(boards); Py_DECREF(fast); return NULL; }
+        }
+    }
+
+    char err[512] = {0};
+    void *ctx = vp->init(path, err, sizeof(err));
+    if (!ctx) {
+        PyMem_Free(boards);
+        Py_DECREF(fast);
+        PyErr_Format(PyExc_ValueError, "provider %s init failed: %s", vp->name, err);
+        return NULL;
+    }
+
+    int32_t *raw = NULL;
+    if (n > 0) {
+        raw = (int32_t *)PyMem_Malloc((size_t)n * sizeof(*raw));
+        if (!raw) {
+            vp->destroy(ctx);
+            PyMem_Free(boards);
+            Py_DECREF(fast);
+            return PyErr_NoMemory();
+        }
+    }
+
+    /* ⚑ ONE GIL release around the WHOLE batch, not one per board. Timing this
+     * against _nnue_ext.benchmark() is the point of the surface, and a
+     * per-board acquire/release would bill the arms for GIL churn the baseline
+     * does not pay — an overhead measurement that measures the harness. */
+    Py_ssize_t failed_at = -1;
+    int failed_status = CAE_VALUE_OK;
+    Py_BEGIN_ALLOW_THREADS
+    for (Py_ssize_t i = 0; i < n; i++) {
+        int status = cae_value_eval(vp, ctx, boards[i], &raw[i]);
+        if (status != CAE_VALUE_OK) { failed_at = i; failed_status = status; break; }
+    }
+    Py_END_ALLOW_THREADS
+    PyMem_Free(boards);
+    Py_DECREF(fast);   /* every boards[] pointer has now been consumed */
+
+    if (failed_at >= 0) {
+        raise_status(failed_status);
+        PyMem_Free(raw);
+        vp->destroy(ctx);
+        return NULL;
+    }
+
+    PyObject *values = PyList_New(n);
+    if (!values) { PyMem_Free(raw); vp->destroy(ctx); return NULL; }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = PyLong_FromLong((long)raw[i]);
+        if (!item) { Py_DECREF(values); PyMem_Free(raw); vp->destroy(ctx); return NULL; }
+        PyList_SET_ITEM(values, i, item);
+    }
+    PyMem_Free(raw);
+
+    PyObject *stats = arm_stats_dict((const CaeArmCtx *)ctx);
+    vp->destroy(ctx);
+    if (!stats) { Py_DECREF(values); return NULL; }
+    return Py_BuildValue("(NN)", values, stats);
+}
+
+/* ================================================================
+ * Long-lived arm handles
+ * ================================================================
+ *
+ * arm_eval() builds a context, uses it, and drops it. That is convenient and it
+ * is NOT how a corpus generator works: the generator holds one context for a
+ * whole run and the counters that matter are the run's, not a batch's. It is
+ * also the only shape in which the configuration snapshot is OBSERVABLE — a
+ * context outlives a set_arm_config(), and the numbers it reports must be the
+ * ones it was built with. A surface where the two can never disagree cannot
+ * demonstrate which of them is being reported.
+ */
+
+typedef struct {
+    const CaeValueProvider *vp;
+    void *ctx;
+} ArmHandle;
+
+static void arm_handle_destructor(PyObject *capsule) {
+    ArmHandle *h = (ArmHandle *)PyCapsule_GetPointer(capsule, "cae.nnue.arm");
+    if (!h) return;
+    if (h->vp && h->ctx) h->vp->destroy(h->ctx);
+    PyMem_Free(h);
+}
+
+static ArmHandle *arm_handle_from_capsule(PyObject *capsule) {
+    ArmHandle *h = (ArmHandle *)PyCapsule_GetPointer(capsule, "cae.nnue.arm");
+    if (!h) PyErr_SetString(PyExc_TypeError, "expected an arm handle from arm_open()");
+    return h;
+}
+
+PyDoc_STRVAR(arm_open_doc,
+"arm_open(name, weights_path) -> handle\n\n"
+"Build one arm context and keep it. It snapshots set_arm_config()'s values NOW\n"
+"and uses them for its whole life, so a later set_arm_config() does not retune\n"
+"it — read arm_stats(handle) to see what it is really running.");
+
+static PyObject *py_arm_open(PyObject *Py_UNUSED(self), PyObject *args) {
+    const char *name, *path;
+    if (!PyArg_ParseTuple(args, "ss", &name, &path)) return NULL;
+    const CaeValueProvider *vp = arm_provider_by_name(name);
+    if (!vp) return NULL;
+
+    char err[512] = {0};
+    void *ctx = vp->init(path, err, sizeof(err));
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError, "provider %s init failed: %s", vp->name, err);
+        return NULL;
+    }
+    ArmHandle *h = (ArmHandle *)PyMem_Malloc(sizeof(*h));
+    if (!h) { vp->destroy(ctx); return PyErr_NoMemory(); }
+    h->vp = vp;
+    h->ctx = ctx;
+    PyObject *capsule = PyCapsule_New(h, "cae.nnue.arm", arm_handle_destructor);
+    if (!capsule) { vp->destroy(ctx); PyMem_Free(h); return NULL; }
+    return capsule;
+}
+
+PyDoc_STRVAR(arm_stats_doc,
+"arm_stats(handle) -> dict\n\n"
+"⚑ The counters and the configuration OF THAT CONTEXT, accumulated across every\n"
+"evaluation it has done. The configuration keys are the context's own fields, so\n"
+"they can differ from what set_arm_config() currently holds — and when they do,\n"
+"the context's is the number that governed the work.");
+
+static PyObject *py_arm_stats(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    ArmHandle *h = arm_handle_from_capsule(capsule);
+    if (!h) return NULL;
+    return arm_stats_dict((const CaeArmCtx *)h->ctx);
+}
+
+PyDoc_STRVAR(arm_handle_eval_doc,
+"arm_handle_eval(handle, boards) -> list[int]\n\n"
+"Evaluate through an arm_open() context, accumulating into its counters.");
+
+static PyObject *py_arm_handle_eval(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *seq;
+    if (!PyArg_ParseTuple(args, "OO", &capsule, &seq)) return NULL;
+    ArmHandle *h = arm_handle_from_capsule(capsule);
+    if (!h) return NULL;
+
+    PyObject *fast = PySequence_Fast(seq, "boards must be a sequence of CBoard");
+    if (!fast) return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(fast);
+    PyObject *values = PyList_New(n);
+    if (!values) { Py_DECREF(fast); return NULL; }
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+        const CBoard *board = unwrap_cboard(PySequence_Fast_GET_ITEM(fast, i));
+        if (!board) { Py_DECREF(values); Py_DECREF(fast); return NULL; }
+        int32_t value = 0;
+        int status;
+        Py_BEGIN_ALLOW_THREADS
+        status = cae_value_eval(h->vp, h->ctx, board, &value);
+        Py_END_ALLOW_THREADS
+        if (status != CAE_VALUE_OK) {
+            raise_status(status);
+            Py_DECREF(values);
+            Py_DECREF(fast);
+            return NULL;
+        }
+        PyObject *item = PyLong_FromLong((long)value);
+        if (!item) { Py_DECREF(values); Py_DECREF(fast); return NULL; }
+        PyList_SET_ITEM(values, i, item);
+    }
+    Py_DECREF(fast);
+    return values;
+}
+
 PyDoc_STRVAR(provider_names_doc, "provider_names() -> tuple of registered provider names");
 
 static PyObject *py_provider_names(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
@@ -438,6 +733,11 @@ static PyMethodDef module_methods[] = {
     {"benchmark", py_benchmark, METH_VARARGS, benchmark_doc},
     {"provider_eval", py_provider_eval, METH_VARARGS, provider_eval_doc},
     {"provider_names", py_provider_names, METH_NOARGS, provider_names_doc},
+    {"arm_eval", py_arm_eval, METH_VARARGS, arm_eval_doc},
+    {"set_arm_config", py_set_arm_config, METH_VARARGS, set_arm_config_doc},
+    {"arm_open", py_arm_open, METH_VARARGS, arm_open_doc},
+    {"arm_handle_eval", py_arm_handle_eval, METH_VARARGS, arm_handle_eval_doc},
+    {"arm_stats", py_arm_stats, METH_VARARGS, arm_stats_doc},
     {NULL, NULL, 0, NULL}
 };
 
@@ -488,6 +788,37 @@ PyMODINIT_FUNC PyInit__nnue_ext(void) {
         Py_DECREF(m);
         return NULL;
     }
+
+    /* The two race arms, published the same way and under the same capsule name.
+     * Same shape, same ABI, different vtable — so a consumer installs one by
+     * handing the tree an attribute, with no consumer-side edit per arm. */
+    static CaeValueProviderExport arm_exports[2];
+    static const struct { const char *attr; const CaeValueProvider *vp; } arm_pub[2] = {
+        {"static_arm_capsule", &CAE_ARM_STATIC_PROVIDER},
+        {"qsearch_arm_capsule", &CAE_ARM_QSEARCH_PROVIDER},
+    };
+    for (int i = 0; i < 2; i++) {
+        arm_exports[i].abi_version = CAE_VALUE_PROVIDER_ABI;
+        arm_exports[i].struct_size = (uint32_t)sizeof(CaeValueProviderExport);
+        arm_exports[i].provider = arm_pub[i].vp;
+        arm_exports[i].in_check_error = (struct _object *)NnueInCheckError;
+        PyObject *cap = PyCapsule_New(&arm_exports[i],
+                                      CAE_VALUE_PROVIDER_CAPSULE_NAME, NULL);
+        if (!cap) { Py_DECREF(m); return NULL; }
+        if (PyModule_AddObject(m, arm_pub[i].attr, cap) < 0) {
+            Py_DECREF(cap);
+            Py_DECREF(m);
+            return NULL;
+        }
+    }
+
+    PyModule_AddIntConstant(m, "RESOLVER_EVAL_CLAMP", (long)CAE_RESOLVER_EVAL_CLAMP);
+    PyModule_AddIntConstant(m, "RESOLVER_MATE_BASE", (long)CAE_RESOLVER_MATE_BASE);
+    PyModule_AddIntConstant(m, "RESOLVER_MATE_PLY_STEP", (long)CAE_RESOLVER_MATE_PLY_STEP);
+    PyModule_AddIntConstant(m, "RESOLVER_MAX_PLIES", (long)CAE_RESOLVER_MAX_PLIES);
+    PyModule_AddIntConstant(m, "RESOLVER_MAX_DEPTH", (long)CAE_RESOLVER_DEFAULT_MAX_DEPTH);
+    PyModule_AddIntConstant(m, "QSEARCH_MAX_PLY", (long)CAE_QSEARCH_DEFAULT_MAX_PLY);
+    PyModule_AddIntConstant(m, "QSEARCH_CHECK_PLIES", (long)CAE_QSEARCH_DEFAULT_CHECK_PLIES);
 
     PyModule_AddIntConstant(m, "THREAT_DIMS", (long)CAE_NNUE_THREAT_DIMS);
     PyModule_AddIntConstant(m, "HALFKA_DIMS", (long)CAE_NNUE_HALFKA_DIMS);
