@@ -283,25 +283,102 @@ def test_the_eval_path_is_wired_to_the_pinned_kwargs() -> None:
         )
 
 
-def test_the_pinned_kwargs_override_only_the_target_shape() -> None:
-    """``_eval_loss_kwargs`` must pin the reshape and change NOTHING else --
-    pinning a loss weight would make eval's ``total`` stop matching the trained
-    objective, which is the same ruler-drift defect in the other direction."""
+def test_the_pinned_kwargs_override_only_the_target_shape_and_the_row_selection() -> None:
+    """``_eval_loss_kwargs`` pins what CHANGES A COLUMN'S DEFINITION, and nothing else.
+
+    ⚑⚑ THIS TEST'S RULE WAS DELIBERATELY REVISED, AND THE TENSION IS REAL -- read this
+    before "fixing" it in either direction. The original rule was "pin the reshape and
+    change NOTHING else", justified as: *pinning a loss weight would make eval's
+    ``total`` stop matching the trained objective, which is the same ruler-drift defect
+    in the other direction.* That concern is correct and still applies to WEIGHTS. A
+    weight scales a term over the rows already in the window, so eval measuring the
+    unweighted term is a straightforward mismatch with training.
+
+    The two ``sf_own_regret`` gate keys are NOT weights, and that is why they are pinned:
+    the gate applies **per row, on a data-dependent predicate**, so it changes WHICH
+    rows the ``sf_own_regret`` column is computed over. It redefines the column rather
+    than scaling it. Unpinned, the measured cost is not subtle -- an **unchanged model**
+    reads ``sf_own_regret`` 0.4174 -> 0.2112, a 2x move produced entirely by a training
+    knob, so arming the arm would look like the eval loss improving with zero learning.
+
+    ⚑ THE PRICE, stated rather than hidden: while the arm is armed, eval's ``total``
+    genuinely is NOT the trained objective for this one term -- exactly the defect the
+    original docstring named. We take that trade because eval's job here is to be a
+    STABLE RULER across arm and baseline, and a ruler that moves with the intervention
+    cannot compare them. ``test_loss``, the best-model handover and the promotion
+    comparison all read this number.
+    ⚑ The divergence is EXACTLY ZERO today: ``w_sf_own_regret: 0.0`` on the live yaml,
+    so the term contributes nothing to ``total`` either way. This is a
+    change-before-ARMING, not a change-before-merging.
+
+    ⚑ It also closes a blind spot at the root instead of by widening a digest.
+    ⚑⚑ AND THE BLIND SPOT IS WIDER THAN AN EARLIER REVISION OF THIS DOCSTRING SAID.
+    It claimed ``eval_ruler_id`` "moves when ``compute_loss`` is edited but is BLIND
+    to ``sf_regret_gate_scale``" -- an asymmetry that does not exist. ``call_closure``
+    follows only functions defined in the trainer module, so ``compute_loss``'s BODY
+    is outside the digest too; ``eval_ruler_id_for``'s own docstring says as much,
+    and ``tests/test_holdout_ruler_identity.py`` records the execution that
+    confirmed it (a dead statement in ``compute_loss`` leaves the pins passing).
+    ⇒ the covered frames on this path are ``_loss_kwargs`` and ``_eval_loss_kwargs``,
+    nothing below them. That makes the pin MORE necessary, not less -- and it means
+    a losses-only change can alter holdout semantics with the ruler id sitting
+    still, so DO NOT read "the id did not move" as "the ruler did not move".
+
+    So the invariant is not "only the target shape" but: **every pinned key must
+    redefine a column, and no pinned key may be a plain loss weight.** A future key that
+    merely scales a term belongs in ``_loss_kwargs`` only.
+    """
     import inspect
 
     from chess_anti_engine.train.trainer import Trainer
 
     stub = type("S", (), {
-        "_loss_kwargs": {"policy_target_temp": 1.30, "w_policy": 1.0, "w_sf_own": 0.1},
+        "_loss_kwargs": {
+            "policy_target_temp": 1.30,
+            "w_policy": 1.0,
+            "w_sf_own": 0.1,
+            "sf_own_regret_listed_mass_min": 0.8,
+            "sf_own_regret_unlisted_scale": 0.25,
+        },
     })()
     prop = inspect.getattr_static(Trainer, "_eval_loss_kwargs")
     assert isinstance(prop, property)
     assert prop.fget is not None
+
+    # ⚑⚑ NON-DEGENERACY FIRST, and it is not ceremony: a mutant that deleted the two
+    # gate keys from the stub above left this whole file GREEN. `_eval_loss_kwargs` is
+    # `{**self._loss_kwargs, <pins>}`, so it ADDS the keys whether or not the trainer
+    # had them -- and then asserting `pinned[key] == <identity>` passes without ever
+    # proving the pin OVERRODE anything. The stub's values must be non-identity, and
+    # that must be asserted here, or the override is untested.
+    train_side = stub._loss_kwargs  # pyright: ignore[reportAttributeAccessIssue]
+    for key, identity in (
+        ("policy_target_temp", 1.0),
+        ("sf_own_regret_listed_mass_min", 0.0),
+        ("sf_own_regret_unlisted_scale", 1.0),
+    ):
+        assert key in train_side, f"stub lost {key}; the override would be untested"
+        assert train_side[key] != identity, (
+            f"stub's {key} is already the identity, so pinning it proves nothing"
+        )
+
     pinned = prop.fget(stub)
+    # Target SHAPE pinned to the identity.
     assert pinned["policy_target_temp"] == 1.0
-    assert {k: v for k, v in pinned.items() if k != "policy_target_temp"} == {
-        "w_policy": 1.0, "w_sf_own": 0.1,
-    }
+    # Row SELECTION pinned to the identity: mass_min 0.0 can match no row (policy mass
+    # is non-negative) and scale 1.0 downweights nothing even if one did.
+    assert pinned["sf_own_regret_listed_mass_min"] == 0.0
+    assert pinned["sf_own_regret_unlisted_scale"] == 1.0
+    # ⚑ Everything else passes through UNTOUCHED -- in particular `w_sf_own_regret`
+    # itself, which is a weight. If a later edit starts pinning weights too, this fails.
+    assert {
+        k: v for k, v in pinned.items()
+        if k not in {
+            "policy_target_temp",
+            "sf_own_regret_listed_mass_min",
+            "sf_own_regret_unlisted_scale",
+        }
+    } == {"w_policy": 1.0, "w_sf_own": 0.1}
 
 
 # ── The underflow the max-scaling makes impossible ──────────────────────────

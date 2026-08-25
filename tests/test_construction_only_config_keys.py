@@ -161,6 +161,14 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
             "sf_policy_floor_tau_played",
         )
     },
+    # The fabricated-tail gate on `sf_own_regret`. Read ONCE into
+    # `Trainer._loss_kwargs` at construction, exactly like `policy_target_temp`
+    # above, and for the same reason: these are not loss WEIGHTS, they select WHICH
+    # ROWS the term applies to, so a mid-run change re-interprets rows already in
+    # the replay window and would split a day-plus readout across two different
+    # term populations with nothing in the metrics able to say where the split fell.
+    "sf_own_regret_listed_mass_min": {"chess_anti_engine/train/trainer.py"},
+    "sf_own_regret_unlisted_scale": {"chess_anti_engine/train/trainer.py"},
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,

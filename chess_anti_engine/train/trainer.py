@@ -97,6 +97,7 @@ from .losses import (
     compute_loss,
     normalize_value_blend_fracs,
     policy_target_temp_active,
+    resolve_sf_regret_gate_keys,
     retemper_main_policy_target,
     search_inclusion_guarantee_tau,
     warn_if_below_search_inclusion,
@@ -1010,6 +1011,16 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # Share of the rows `sf_own_regret` acted on that the fabricated-tail gate
+  # scaled DOWN. ⚑ A `_RATIO_METRIC_FIELDS` entry without a field here is not a
+  # missing metric, it is a CRASH: `_ratio_metric_kwargs` emits its keys
+  # UNFILTERED (unlike the loss-key loop, which filters on
+  # `_TRAIN_METRICS_FIELDS`), so `_build_metrics` splats an unknown name into
+  # `TrainMetrics(**...)` and raises `TypeError` on iteration 1 -- on both the
+  # train and EVAL paths, inside a `try:` that has a `finally:` and zero
+  # `except`. Measured: the trial dies mid-iteration. Every entry in that table
+  # needs a field here.
+    sf_own_regret_gated_frac: float = 0.0
   # SF-approved-move probability floor (`w_sf_policy_floor`). `m_sf_policy_floor`
   # is the masked mean deficit; `sf_policy_floor_binds_frac` is the share of the
   # SAME eligible rows on which the floor actually bound on at least one move.
@@ -1408,6 +1419,10 @@ _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetric
 _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own": ("sf_own_ce_sum", "sf_own_rows"),
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
+  # Fabricated-tail gate share. Same denominator as `m_sf_own_regret` above, on
+  # purpose: it answers "of the rows this term acted on, what share did the gate
+  # scale down", and reads exactly 0.0 at the identity defaults.
+    "sf_own_regret_gated_frac": ("sf_own_regret_gated_rows", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
   # The floor's two columns, over the sf_p0-regret eligible rows -- literally
@@ -2083,12 +2098,32 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
-  # Spelled as a literal `config.get` rather than `_f(...)` DELIBERATELY:
-  # tests/test_startup_only_config_keys.py derives the startup-only set from
-  # literal config reads, and a key read through the `_f` helper is invisible
-  # to it. Declaring this one startup-only while the instrument cannot see it
-  # would be exactly the hand-override that file's docstring forbids.
+  # ⚑ EVERY STARTUP-ONLY KEY BELOW IS SPELLED AS A LITERAL `config.get` RATHER THAN
+  # `_f(...)`, DELIBERATELY: tests/test_startup_only_config_keys.py derives the
+  # startup-only set from literal config reads, and a key read through the `_f`
+  # helper is INVISIBLE to it. Declaring one startup-only while the instrument
+  # cannot see it would be exactly the hand-override that file's docstring forbids.
+  #
+  # ⚑⚑ THIS COMMENT WAS ALREADY HERE AND THE TWO GATE KEYS WERE ADDED THROUGH `_f`
+  # ANYWAY, two lines below it. Two independent consequences, both real:
+  #   * `test_the_hand_maintained_startup_only_set_is_derivable` went RED -- the keys
+  #     appear in neither the startup nor the loop read-set, so the deriver reported
+  #     them as "declared startup-only but the source shows a live consumer";
+  #   * `test_construction_only_keys_have_no_live_consumer` went GREEN **VACUOUSLY**.
+  #     Its `_config_read_pattern` matches only `.get("k"`, `["k"]`, `tc.k`, so with
+  #     an `_f` read it can see NO read anywhere -- it could neither confirm the
+  #     declared reader file nor find an undeclared one. A reviewer's mutant that
+  #     pointed the declaration at `worker.py`, a file which never reads the key,
+  #     still passed. **A green from that test carried zero information.**
+  # ⇒ keeping these three together, under one comment, so the next key added here
+  #   inherits the rule instead of the trap.
         "policy_target_temp": float(config.get("policy_target_temp", 1.0)),
+        "sf_own_regret_listed_mass_min": float(
+            config.get("sf_own_regret_listed_mass_min", 0.0),
+        ),
+        "sf_own_regret_unlisted_scale": float(
+            config.get("sf_own_regret_unlisted_scale", 1.0),
+        ),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
@@ -2224,6 +2259,8 @@ class Trainer:
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
+        sf_own_regret_listed_mass_min: float = 0.0,
+        sf_own_regret_unlisted_scale: float = 1.0,
         w_sf_policy_floor: float = 0.0,
         sf_policy_floor_delta_cp: float | None = None,
         sf_policy_floor_tau: float | None = None,
@@ -2674,6 +2711,22 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
+  # Fabricated-tail gate. RESOLVED ONCE, HERE, and the REALIZED pair is what this
+  # object stores -- so `_loss_kwargs`, the Ray RESULT ROW (`trainable_report.py`
+  # emits both from these attributes) and anything else reading them carry the
+  # value actually in force, not the one an operator typed. ⚑ `params.json` is the
+  # exception and it is not fixable here: it persists the Ray `config`, i.e. the
+  # typed value, which is exactly why the realized pair is emitted as a column.
+  # `sf_regret_gate_scale` re-applies the same rule (a no-op on an already
+  # resolved pair) so the offline rigs that call it directly are covered too.
+  # ⚑ This WARNS and does not raise, unlike the floor's shape keys immediately
+  # below; `resolve_sf_regret_gate_keys` records why the two differ.
+        (
+            self.sf_own_regret_listed_mass_min,
+            self.sf_own_regret_unlisted_scale,
+        ) = resolve_sf_regret_gate_keys(
+            sf_own_regret_listed_mass_min, sf_own_regret_unlisted_scale,
+        )
   # SF-approved-move floor. The WEIGHT is a plain live-pushable attribute like
   # every other `w_*` (`TRAINER_WEIGHT_KEYS`); the SHAPE is resolved ONCE, here,
   # and validated at construction so a bad tau kills startup rather than the
@@ -3352,6 +3405,8 @@ class Trainer:
         return {
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
+            "sf_own_regret_listed_mass_min": self.sf_own_regret_listed_mass_min,
+            "sf_own_regret_unlisted_scale": self.sf_own_regret_unlisted_scale,
             "soft_policy_min_tv": self.soft_policy_min_tv,
             "policy_target_temp": self.policy_target_temp,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,
@@ -3421,8 +3476,40 @@ class Trainer:
         RECORD OVER instead of freezing it. Weight MAGNITUDES are still
         excluded, deliberately -- see `active_loss_terms` for why hashing them
         would abolish the comparison rather than tighten it.
+
+        ⚑⚑ THE FABRICATED-TAIL GATE IS PINNED OFF, and it is pinned by the
+        redefines-vs-scales criterion above rather than by category. It LOOKS
+        like a weight —
+        `sf_own_regret * scale` — but it is applied PER ROW on a data-dependent
+        predicate, so it changes WHICH rows the term is measured over. That
+        REDEFINES the column instead of scaling it: an unchanged model reads a
+        different `sf_own_regret`, measured 0.4174 -> 0.2112 on one identical
+        model/batch, a 2x move from a training knob. Left unpinned, arming the arm
+        would look like the eval loss improving with zero model change — the
+        false-positive class this project is repeatedly burned by — and every
+        arm-vs-baseline comparison of that column would compare two rulers.
+
+        ⚑ This also closes the ID's blind spot at the root rather than by widening
+        a digest closure. ⚑⚑ AND THE BLIND SPOT IS WIDER THAN AN EARLIER REVISION
+        OF THIS PARAGRAPH CLAIMED. It said the id "moves when `compute_loss` is
+        edited but is blind to `sf_regret_gate_scale`" -- an asymmetry that does
+        not exist. `eval_ruler_id_for`'s own docstring below says recursion stops
+        at this module's edge, so the closure is blind to `compute_loss`'s BODY
+        too; VERIFIED BY EXECUTION (a dead statement inserted into `compute_loss`
+        leaves the pins in `tests/test_holdout_ruler_identity.py` passing, one
+        inserted into this property fails them). ⇒ the pin is MORE necessary than
+        the false version argued, not less: nothing downstream of `_loss_kwargs`
+        is watched at all, so the gate could otherwise move the eval number with
+        the id sitting perfectly still. With it pinned off, no code below this
+        line can affect the eval measurement, and there is nothing for the
+        closure to have to see.
         """
-        return {**self._loss_kwargs, "policy_target_temp": 1.0}
+        return {
+            **self._loss_kwargs,
+            "policy_target_temp": 1.0,
+            "sf_own_regret_listed_mass_min": 0.0,
+            "sf_own_regret_unlisted_scale": 1.0,
+        }
 
     def _ruler_loss_weights(self) -> dict[str, float]:
         """The loss weights the holdout ruler's identity is keyed on.

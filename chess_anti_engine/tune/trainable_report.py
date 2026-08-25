@@ -906,6 +906,7 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "sf_policy_floor_truncated_frac": 0.0,
     "sf_policy_floor_member_count_applied": 0.0,
     "sf_policy_floor_applied_mass": 0.0,
+    "sf_own_regret_gated_frac": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -1050,6 +1051,13 @@ def _train_metrics_dict(metrics) -> dict:
             metrics.sf_policy_floor_member_count_applied,
         ),
         "sf_policy_floor_applied_mass": float(metrics.sf_policy_floor_applied_mass),
+        # ⚑ Share of the rows `sf_own_regret` acted on that the fabricated-tail
+        # gate scaled DOWN. This column is the ONLY observation that proves the
+        # gate reached the production path, so it has to land in the Ray result
+        # row -- TensorBoard event files rotate per Ray session and are a
+        # non-sink (see the TrainMetrics comment above `batches_drawn`). Reads
+        # exactly 0.0 at the identity defaults.
+        "sf_own_regret_gated_frac": float(metrics.sf_own_regret_gated_frac),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration
@@ -1640,6 +1648,21 @@ def _build_report_dict(
         # adding the yaml key is restart-gated, since the live-yaml validator
         # rejects a key the running code does not define.
         "mirror_prob": float(trainer.mirror_prob),
+        # ⚑ THE FABRICATED-TAIL GATE, REPORTED FROM THE TRAINER'S OWN ATTRIBUTE --
+        # which is the REALIZED pair, not the typed one. Same reason as
+        # `mirror_prob` above and then one more: these two keys are sanitized at
+        # construction (non-finite -> off, finite out-of-range -> clamped to
+        # [0, 1]), so `params.json` and the Ray `config` keep whatever the
+        # operator typed while the trainer runs on something else. A run
+        # configured `listed_mass_min: 10` trains at 1.0 with its persisted
+        # config still saying 10, and `sf_own_regret_gated_frac` cannot tell them
+        # apart -- it reads 0.0 for "off" and for "disabled by fallback" alike.
+        # Without this row the ONE-TIME construction warning is the only evidence
+        # the substitution ever happened, and a warning that scrolled past three
+        # days ago is not evidence. Read this column against the yaml, not the
+        # yaml alone.
+        "sf_own_regret_listed_mass_min": float(trainer.sf_own_regret_listed_mass_min),
+        "sf_own_regret_unlisted_scale": float(trainer.sf_own_regret_unlisted_scale),
         # BOTH of these shape only the AUXILIARY `sf_eval` head's row mask.
         # Neither touches the WDL value target (docs/model_heads.md).
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),

@@ -630,9 +630,39 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 #   full_pass  78aaaf430abf66f1 -> (#373) a76f440cdb36b72f
 #                               -> (#375) 079f56e31e6b9501
 #                               -> MERGED 73ff47d368fbe10e
+#                               -> (#448) 8b16fe4b481f457d
+#                               -> (#447) 198dec2bb016d62e
 #   sampled    afbf4cc1de454249 -> (#373) 20696c6766732998
 #                               -> (#375) 4ca17596e4a59a90
 #                               -> MERGED f41625e40b98e987
+#                               -> (#448) 7bc9ed3c7fd30ac0
+#                               -> (#447) 007a74b1e31d47cf
+#
+# ⚑ (#447) THE FABRICATED-TAIL GATE. Source-hash-only, and it moved for a change
+# that is a BIT-EXACT identity at its defaults. Per this file's own maintenance
+# contract that is the mechanism working, not a false alarm: an operator WILL see
+# one `holdout_generation` bump and one best-model handover at the next restart.
+#
+# ⚑⚑ IT DID NOT MOVE BECAUSE `compute_loss` WAS EDITED, AND AN EARLIER REVISION OF
+# THIS BLOCK SAID IT DID. `compute_loss`'s BODY IS NOT A COVERED FRAME --
+# `Trainer.eval_ruler_id_for`'s own docstring says so in as many words ("Recursion
+# stops at anything defined outside this module: `compute_loss`'s body, the
+# encoders, torch/numpy"). VERIFIED BY EXECUTION: inserting a dead statement into
+# `compute_loss` leaves this pin PASSING; inserting one into `_eval_loss_kwargs`
+# fails it. Corroborated by history -- PR #438 rewrote `compute_loss`'s value-blend
+# block and these pins did not move. The frames that actually moved here are
+# `Trainer._loss_kwargs` and `_eval_loss_kwargs`, which gain two keys each.
+# ⇒ quoting "compute_loss is covered" is not a harmless simplification: it is the
+# reason someone would expect a `losses.py`-only change to bump the ruler, and it
+# would not.
+#
+# ⚑⚑ The gate itself is PINNED OFF in `_eval_loss_kwargs`, so the eval MEASUREMENT
+# cannot move when the arm is armed. That is deliberate and it is what keeps this a
+# one-time bump rather than a per-arm one: without the pin, arming the gate would
+# change `sf_own_regret` on an UNCHANGED model (measured 0.4174 -> 0.2112, a 2x move)
+# while leaving this id STILL, because the digest closure stops at this module's
+# edge and is blind to BOTH `sf_regret_gate_scale` and `compute_loss` itself.
+# Pinning closes that blind spot at the root instead of widening the closure.
 # ⚑ The sampled id is computed at steps=5, the pre-PR-277 ruler's own budget,
 # which is `sampled`'s own default -- NOT at steps=0. steps is hashed into the
 # id, so a steps=0 sampled pin is simply a different measurement; a previous PR
@@ -640,9 +670,10 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # tree `sampled(steps=0)` is e0f28fe544f1cbac, and the pin below is not it.
 # Nothing the best-model comparison reads (`test_loss` and the per-head losses)
 # changed on either side, so records stay comparable across the handover.
-# ⚑ MOVED AGAIN by the `sf_policy_floor` term (this PR): `compute_loss` and
-# `Trainer._loss_kwargs` are both covered frames, and the term adds a parameter,
-# a computation and two reported scalars to the first plus one key to the second.
+# ⚑ MOVED AGAIN by the `sf_policy_floor` term (PR #448). ⚑ The frame that moved
+# is `Trainer._loss_kwargs`, which gains a key -- NOT `compute_loss`, whose body
+# is outside the digest closure however much the term changes it. An earlier
+# revision of this line named both; see the correction above.
 #
 # THE MEASUREMENT IS SOURCE-HASH-ONLY, AND HERE THAT CLAIM IS EXECUTED RATHER
 # THAN ARGUED: at the shipped default `w_sf_policy_floor: 0.0` the term is not
@@ -673,7 +704,22 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # regression: deploying it fires ONE best-model handover per running trial.
 # Previous values: "v1:full_pass:ba74408d1e9e98fa" (pre-PR), then
 # "v1:full_pass:441d302e9fdeb0fa" (loss_shape=), now the `objective=` snapshot.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:8b16fe4b481f457d"
+#
+# ⚑ RE-PINNED AGAIN by the fabricated-tail gate (this PR). ⚑ THE MOVING FRAMES ARE
+# `Trainer._loss_kwargs` AND `_eval_loss_kwargs`, which gain two keys each. The
+# `compute_loss` changes (two parameters, the `sf_regret_gate_scale` call, one
+# reported scalar) contribute NOTHING to the digest -- its body is outside the
+# closure, verified by execution; see the correction above. TENTH declared false
+# positive, and the cheapest of
+# the lot to argue: at the shipped defaults (`listed_mass_min: 0.0`,
+# `unlisted_scale: 1.0`) the gate is a BIT-EXACT identity, pinned by
+# `tests/test_sf_own_regret_tail_gate.py`, and eval pins it off unconditionally
+# regardless of what the yaml sets. So nothing the best-model comparison reads
+# changes numerically; the id moves, and deploying it fires ONE
+# `holdout_generation` bump and one best-model handover per running trial.
+# Previous values: "v1:full_pass:8b16fe4b481f457d",
+# "v1:sampled:7bc9ed3c7fd30ac0".
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:198dec2bb016d62e"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -685,7 +731,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:8b16fe4b481f457d"
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
 # Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
-PRE_PR277_SAMPLED_RULER = "v1:sampled:7bc9ed3c7fd30ac0"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:007a74b1e31d47cf"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

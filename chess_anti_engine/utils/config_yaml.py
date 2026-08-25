@@ -299,6 +299,14 @@ _TRAIN_KEYS = (
     "sf_policy_floor_tau",
     "sf_policy_floor_tau_top1",
     "sf_policy_floor_tau_played",
+    # Fabricated-tail gate on `sf_own_regret` (train/losses.py). Same reasoning as
+    # `policy_target_temp` directly above: these are NOT loss weights, they select
+    # WHICH ROWS the term applies to, so a mid-run edit re-interprets rows already
+    # in the window. Startup-only keeps them out of the every-iteration live-push
+    # set AND out of the salvage-donor overlay. `listed_mass_min: 0.0` +
+    # `unlisted_scale: 1.0` is OFF and is the code default, and it is a bit-exact
+    # identity rather than merely a small one.
+    "sf_own_regret_listed_mass_min", "sf_own_regret_unlisted_scale",
 )
 
 # tune section: all 1:1 passthrough.
