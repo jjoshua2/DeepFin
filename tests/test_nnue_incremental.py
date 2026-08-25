@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Iterator
 from pathlib import Path
 
 import chess
@@ -79,7 +80,7 @@ def _run(provider: str, pack: Path, boards: list[chess.Board]) -> tuple[list[int
 
 
 @pytest.fixture(autouse=True)
-def _bounded_qsearch() -> None:
+def _bounded_qsearch() -> Iterator[None]:
     """Keep the parity gate tactical but cheap; quiet checks are a separate cost axis."""
     _nnue_ext.set_arm_config(12, 3, 0)
     yield
@@ -97,7 +98,7 @@ def test_incremental_qsearch_is_exactly_the_refresh_search(dense_psqt_pack: Path
 
     assert inc_values == ref_values
     # Accumulator maintenance is not allowed to alter a cutoff, terminal, or
-    # resolver decision.  These stats describe the search tree, not the NNUE
+    # resolver decision. These stats describe the search tree, not the NNUE
     # implementation, so they must remain byte-for-byte equivalent as integers.
     assert inc_stats == ref_stats
 
