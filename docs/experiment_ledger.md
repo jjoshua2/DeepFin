@@ -66759,3 +66759,28 @@ ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
 - **Why it matters here**: the orphan threads printed `[disk_buf] WARNING: shuffle
   refresh failed to load a TRACKED shard` into UNRELATED tests' output — a cross-test
   pollution source that reads as a replay defect in whatever test it lands on. Task #197.
+
+## 2026-08-24 20:55 — PR #447 MERGED (fb14d820e) to main: loss-path guard waves 1-4 + base retarget
+
+- **The 15-test red was NEVER the PR's**: #447 was the only recent PR based on
+  `ops/live-20260725`, and CI tests the merge into base — main's config-policy guards
+  fired on the LIVE yaml's keys (era_probe_*, replay_shard_recency_exponent,
+  gumbel_target_max_visit_cap, gumbel_target_untempered_prior). Proven by running the
+  same 8 files on base-without-PR: identical 15 failures, PR delta ZERO.
+- **The fixer did NOT follow my merge-main instruction** — with base=live, merging
+  main in would have carried main's yaml onto the live branch at merge time,
+  wholesale-reverting the live production config. It rebuilt the branch on main and
+  retargeted the base instead (REST; `gh pr edit --base` silently no-ops — trap again).
+  Old head banked at backup/pr447-pre-main-rebase.
+- **Review**: four prior waves + independent tail review of the 4 self-authored rebase
+  commits (APPROVE, no findings). Interdiff old-payload vs rebuilt-payload: 3 files
+  byte-identical, 2 comment-only, losses.py exactly 2 disclosed deltas —
+  isnan→isfinite on both gate keys (closes Codex's ±inf thread) and a hoisted-target
+  reuse whose dropped None-check guarded an unreachable branch. `policy_legal_bool`
+  decline re-verified by execution (fabricated 1858-move legal set on unflagged
+  all-zero rows — decline stands, rationale corrected). LIVE_TRAINER_PIN fix is in the
+  pin's own terms (deleting it makes ControlTrainerDrift fire, 3 tests). Mutants 31/31.
+- **Gates**: CI green on merged head 68bb084ae (7729 passed); whole-suite delta vs
+  main 0; lint delta EMPTY.
+- ⚑ NOT DEPLOYED to the live branch — main-only until the next live-branch sync.
+  Task #248; the w_sf_own_regret SCHEDULE arm (#252) remains separately gated.
