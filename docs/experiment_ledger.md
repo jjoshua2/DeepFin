@@ -66861,3 +66861,47 @@ worktree on this machine (CI green only by runner-login luck; two agents burned 
 re-explaining it tonight). Codex's one finding (post-cutoff edit must be a dated
 amendment) fixed by appending AMENDMENT 9 with the explicit redaction-exception
 rationale. Self-authored, Codex-reviewed, CI green on merged head 9b579392b.
+
+## 2026-08-25 02:15 — PR #468 MERGED (dc0abecf2) to main: native-NNUE selfplay generator — #273 PR 3 done; STATIC ARM CLEARS THE THROUGHPUT GATE 7.8×
+
+- **What**: gen_random_selfplay_shards.py extended with native arms (nnue-static /
+  nnue-qsearch) via a new read-only C accessor `MCTSTree.pending_leaf_cboards()` (by-value
+  CBoard copies incl. hash_stack — repetition/50-move terminals see real history). The
+  #461/#464 provider seam is BYPASSED deliberately: the Gumbel sim loop never consults
+  set_value_provider, so the arm runs arm_open/arm_handle_eval on the whole pending batch —
+  one Python crossing per ~9.5-leaf batch. Anchor-identical shard schema; run-level sidecar
+  provenance.
+- **⚑ THE NUMBER**: static arm **6,345,273 rows/h** (500g, 4 workers, nice, concurrent) =
+  **7.8× the ≥813,000 rows/h gate (5× UCI@32)** — 39× the UCI@32 anchor itself. The
+  CPU-forever NNUE bootstrap lane (#270) is now REAL on throughput; what remains is label
+  QUALITY (the preregistered 2-arm readout). qsearch arm: 26.6k rows/h real-stream
+  (heavy-tailed resolver+quiescence cost the bench pool structurally missed; check-plies 0
+  → 17× cheaper) — its G1 fail is the expected branch; prereg treats that as a finding
+  (hybrid revives), not tuning.
+- **Review**: 3 reviewers, 15 deduped findings, all dispositioned; fork APPROVE +
+  APPROVE-DELTA. Substantive fixes: static runs no longer accept/publish qsearch knobs they
+  don't read (Grok, signature defect self-evidenced in the PR body's own example); peak
+  stats (max_depth_seen) merged with max not sum, key classification read off a LIVE handle
+  after a hard-coded set refused in production; --all-root-moves now disables terminal-root
+  shortcuts (a drawing move at a positive root was pruned with zero target mass while the
+  legal mask advertised it); GSS_MAX_CANDS=64 premise HALF-REFUTED by measurement — all 218
+  children are expanded/visited/carry mass, the cap costs only ranking resolution (argpartition
+  ⇒ arbitrary scored subset: harmless under uniform prior, MUST become top-by-score before a
+  real prior drives this script); truncated leaf batch would have backpropped q=0 silently —
+  now cross-checked against get_pending_legal_indices (0.05%); isfinite validators; payload
+  hash not header digest; start-time git provenance; opt-in --bank-leaf-observations (readout
+  cells MUST run with it on — the cp scale is re-analyzable, not re-runnable).
+- ⚑ **--nnue-cp-per-unit 0.28 is a FREE PARAMETER** (LSQ vs SF go-nodes-512, R² 0.877) that
+  sets target sharpness with no other symptom — the prereg must pin or sweep it BEFORE any
+  cell comparison.
+- **Gates**: 34/34 mutants (2 C, real rebuilds; 4 initially missed — 2 harness name-matching
+  bug, 2 weak tests, all fixed); +78 tests delta-clean; lint delta EMPTY; CI green on merged
+  head 630597a01. One post-fix CI red was main's topk TEXT-TRIPWIRE firing on a C comment —
+  guard kept, comment reworded. ⚑ Method: ~16 tests in this repo read files AS TEXT
+  (tripwires) — no diff-derived test set can find them; sweep tests for touched FILE NAMES
+  before pushing.
+- **Known debts**: conflict pending with unmerged feat/gen0-sfnnue-value-source (same file);
+  main's docs/experiment_ledger.md carries the operator name (pre-existing, same class as
+  #467's fix). **Next (#273)**: finalize the 2-arm readout prereg — noise floor from two
+  same-config cells FIRST, cp-per-unit pinned, leaf-bank ON, deep-SF ruler ~5k/cell, G2 =
+  beat UCI@512 labels — then run it.
