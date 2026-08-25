@@ -220,6 +220,43 @@ positions, so **4 is the default**. ⚑ The tail is not closed: max |v − v@8| 
 2425 units at both 3 and 4 plies, so a handful of positions really do need
 depth — which is why it is a knob and not a constant.
 
+### ⚑⚑ Two counters, and conflating them was a real bug
+
+The mutual recursion carries **two** numbers, and they are not interchangeable:
+
+| | counts | bounded by |
+|---|---|---|
+| `depth` | plies below the **resolution root**, through both directions | `resolver_max_depth`; also what mate distance is measured in |
+| `qply` | plies of **quiescence** | `qsearch_max_ply`, `qsearch_check_plies` |
+
+The first version passed `depth` as quiescence's ply. The resolver only calls its
+leaf hook at a **non-check** node, so an in-check root entered quiescence at
+`depth >= 1` — and `try_checks = (ply < check_plies)` at the default
+`check_plies = 1` was therefore **false on exactly the positions the check budget
+exists for**. A check chain 4 deep entered quiescence at ply 4 and stood pat
+without looking at a single capture. Both knobs were accepted, consumed, and
+silently meant something else.
+
+⚑ The obvious fix — reset `qply` to 0 at the leaf hook — is also wrong, and worse:
+it **refunds** the budget. Quiescence plays a check, the resolver resolves it, and
+the resolver's leaves start quiescence again with a full allowance. Measured, it
+does not finish. So the count is **carried** across the excursion: check
+resolution is mandatory and free, quiescence moves are what the budget buys.
+
+What separates carried from refunded is that quiescence work **saturates** as the
+recursion cap rises, because quiescence is bounded by its own budget and not the
+resolver's. At `max_ply=2, check_plies=2` on the four chain positions:
+
+| `resolver_max_depth` | carried (shipped) | refunded |
+|---|---|---|
+| 6 | 5,468 qnodes | 8,378 |
+| 12 | 8,446 | 15,327,851 |
+| 32 | 8,446 | *(does not finish)* |
+
+Every counter still looks obedient under a refund — `qmax_ply_seen` caps at
+`max_ply` because each restart caps at `max_ply` all over again — so the test that
+catches it asserts saturation, not a counter.
+
 ### The knobs, and where they take effect
 
 `_nnue_ext.set_arm_config(resolver_max_depth, qsearch_max_ply,
@@ -229,34 +266,72 @@ it for life, so a setter that appeared to retune a running provider would be
 this repo's signature defect wearing a fix's clothes. The numbers a batch
 actually ran under are therefore reported **out of the context that ran them**
 (`arm_eval`'s stats dict, `arm_stats(handle)`), never restated from the globals.
+The triple is read and written under a mutex, so a context can never be built
+from a half-updated configuration.
 
 ### Overhead
 
 ```bash
 PYTHONPATH=. nice -n 19 python3 scripts/nnue_resolver_bench.py \
-    --pack big.pack --n 2000 --in-check 500
+    --pack big.pack --quiet-n 2000 --check-n 500 --bank runs/resolver_bench.jsonl
 ```
 
 ⚑ **The overhead is not one number**, and quoting it as one hides the only thing
-it depends on: `blended = (1−f)·quiet + f·in_check`, where `f` is the in-check
+it depends on: `blended = (1-f)*quiet + f*in_check`, where `f` is the in-check
 rate of the position stream — a property of the corpus generator, not of the
-resolver. The bench measures the two costs separately and blends them at the `f`
-the sampler itself observed (0.047 over 977k positions of seeded random play).
+resolver.
 
-⚑ It reports the arm against **its own quiet rate**, not only against the raw
+⚑⚑ **Both conditions are sampled from ONE stream, with matched weights.** An
+earlier version blended the *stratified* pool's rate (round-robin over
+(bucket, threat-bin) cells, which deliberately over-represents thin ones) with a
+first-N in-check pool from raw playouts. Weighting two differently-drawn
+conditional samples by the natural in-check fraction estimates neither
+distribution — it describes a population nobody generated. Both pools are now
+reservoir-sampled over the same fixed set of playouts, and `f` is measured on
+that same stream. The stratified pool is still reported, labelled **COVERAGE**,
+and is never blended.
+
+⚑ **Positions carry their move history.** Rebuilding a board from its FEN throws
+away the move stack, and the resolver consults it — two-fold repetition is what
+makes a perpetual check terminate. A FEN-only pool measures a resolver that can
+never see a repetition.
+
+⚑ **The dedup key is resolver-complete**, not the parity sampler's
+placement + side-to-move: castling and en passant change the evasions, the
+halfmove clock decides the fifty-move terminal, and the history decides the
+two-fold one.
+
+⚑ It reports each arm against **its own quiet rate**, not only against the raw
 evaluator: that baseline runs through a different harness
 (`_nnue_ext.benchmark`), and the static arm has measured *faster* than it, which
 is a harness difference and certainly not a speedup from adding work.
 
-Measured on the big net, AVX2, 2000 quiet + 500 in-check positions:
+⚑ `--repeats` uses **one long-lived context** across all passes. Re-creating it
+per pass reset the counters while time and eval count accumulated, understating
+every counter in the table by the repeat factor.
 
-| arm | quiet | in-check | blended @ f=0.047 |
+⚑ `--bank` writes **one JSONL row per position** — FEN, value, the arm settings
+as the context reported them, and the game/ply cluster key — staged and
+`os.replace`d. An aggregate cannot be re-stratified, and a rerun happens on a box
+whose load has moved on.
+
+Measured on the big net, AVX2, 400 playouts → 72,430 positions, f = 0.0472,
+2000 quiet + 500 in-check:
+
+| arm | quiet | in-check | blended @ f=0.0472 |
 |---|---|---|---|
-| `nnue-static` | 134,890/s | 39,363/s | **121,174/s — 10.2% below its own quiet rate** |
-| `nnue-qsearch` | 5,697/s | 8,268/s | 5,781/s |
+| `nnue-static` | 165,688/s | 40,633/s | **144,654/s — 12.7% below its own quiet rate** |
+| `nnue-qsearch` | 5,321/s | 468/s | 3,572/s |
 
-An in-check evaluation costs **3.43×** a quiet one through the static arm; the
-recursion reached depth 3 and `depth_cutoffs` was **0**.
+An in-check evaluation costs **4.08×** a quiet one through the static arm and
+**11.36×** through the qsearch arm; the recursion reached depth 3 (static) / 14
+(qsearch) and `depth_cutoffs` was **0**.
+
+⚑ **The qsearch arm's in-check rate is 17.7× lower than before the ply fix**
+(8,268/s → 468/s), and the old number was the bug showing: quiescence stood pat on
+in-check roots without searching anything, so the arm looked *faster* on in-check
+positions than on quiet ones (0.69×). An arm that costs less where it is supposed
+to do more was the anomaly; 11.36× is the mechanism working.
 
 ## The eval seam
 

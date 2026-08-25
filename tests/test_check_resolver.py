@@ -20,6 +20,7 @@ what makes it possible to assert the BACKUP rather than just its plausibility.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import chess
@@ -123,6 +124,158 @@ def perpetual(*sans: str) -> chess.Board:
     for san in sans:
         board.push_san(san)
     return board
+
+
+# ===========================================================================
+# A value-level mirror of the resolver, over python-chess
+# ===========================================================================
+#
+# ⚑ WHY A VALUE MIRROR AND NOT JUST A SHAPE CHECK. The depth and terminal-counter
+# assertions elsewhere in this file constrain the tree the resolver WALKS. They
+# say nothing about the number it hands back, and a reviewer demonstrated the gap
+# with a mutant that negates the backup only at depth >= 2:
+#
+#     int32_t from_our_side = (depth >= 2) ? child_value : -child_value;
+#
+# It survived all 46 tests while returning +700 where the truth is -600. Every
+# counter still matched, because the mutant changes no control flow at all.
+#
+# ⚑ WHAT IS AND IS NOT INDEPENDENT HERE. Move generation, check detection, mate
+# and stalemate, repetition and the fifty-move clock all come from python-chess —
+# a third party to our C. The synthetic pack's evaluation is arithmetic this file
+# already documents ((bucket + 1) * 100), not a second copy of the evaluator.
+# `_mirror_insufficient_material` is TRANSCRIBED from cboard_insufficient_material
+# rather than taken from python-chess, because the two implement different rules
+# (python-chess is stricter about KNN vs K) and the resolver's job is to match the
+# board layer it actually calls. That one predicate is therefore not independent,
+# and it is the only one; the backup arithmetic the mutant broke is fully checked.
+
+_MIRROR_CLAMP = 32000
+_MIRROR_MATE_BASE = 100000
+_MIRROR_MATE_STEP = 100
+
+
+def mirror_eval(board: chess.Board) -> int:
+    """The synthetic pack's evaluation: (bucket + 1) * 100, clamped."""
+    bucket = (bin(board.occupied).count("1") - 1) // 4
+    return max(-_MIRROR_CLAMP, min(_MIRROR_CLAMP, (bucket + 1) * 100))
+
+
+def _mirror_insufficient_material(board: chess.Board) -> bool:
+    """Transcribed from cboard_insufficient_material — see the note above."""
+    if board.pawns or board.rooks or board.queens:
+        return False
+    total = bin(board.occupied).count("1")
+    if total <= 2:
+        return True
+    if total == 3 and (board.knights or board.bishops):
+        return True
+    if total == 4 and bin(board.bishops).count("1") == 2:
+        light = 0x55AA55AA55AA55AA
+        on_light = bin(board.bishops & light).count("1")
+        return on_light in (0, 2)
+    return False
+
+
+def mirror_drawn(board: chess.Board) -> bool:
+    """cboard_search_terminal's boolean: game over, or LC0-style two-fold."""
+    if board.halfmove_clock >= 100:
+        return True
+    if board.is_repetition(3):
+        return True
+    if _mirror_insufficient_material(board):
+        return True
+    if not any(board.legal_moves):
+        return True
+    return board.is_repetition(2)
+
+
+MirrorLeaf = Callable[[chess.Board, int], int]
+
+
+def mirror_resolve(board: chess.Board, depth: int, max_depth: int = 32) -> int:
+    """cae_resolve_node, in python-chess. Leaf = the static evaluation."""
+    return _mirror_resolve(board, depth, max_depth, leaf=lambda b, _d: mirror_eval(b))
+
+
+def _mirror_resolve(
+    board: chess.Board, depth: int, max_depth: int, leaf: MirrorLeaf
+) -> int:
+    if not board.is_check():
+        if mirror_drawn(board):
+            return 0
+        value = leaf(board, depth)
+        # Mate-band values pass through; only an evaluation is clamped.
+        if abs(value) >= _MIRROR_MATE_BASE - 256 * _MIRROR_MATE_STEP:
+            return value
+        return max(-_MIRROR_CLAMP, min(_MIRROR_CLAMP, value))
+
+    moves = list(board.legal_moves)
+    # ⚑ Mate before the draw rules, mirroring the C for the same reason.
+    if not moves:
+        return -(_MIRROR_MATE_BASE - min(depth, 256) * _MIRROR_MATE_STEP)
+    if mirror_drawn(board):
+        return 0
+    if depth >= max_depth:
+        return 0
+
+    # `moves` is non-empty here, so the sentinel is always replaced; it is an int
+    # rather than None so the return type is one thing.
+    best = -(1 << 30)
+    for move in moves:
+        board.push(move)
+        child = _mirror_resolve(board, depth + 1, max_depth, leaf)
+        board.pop()
+        best = max(best, -child)
+    return best
+
+
+def mirror_qsearch_arm(
+    board: chess.Board, max_ply: int, check_plies: int, max_depth: int = 32
+) -> int:
+    """The qsearch arm end to end: resolver, with quiescence at its leaves.
+
+    Plain negamax with no window. Fail-soft alpha-beta at a full root window
+    returns the exact minimax value, so the C's pruning must not change the
+    answer — which is the point of comparing against an unpruned mirror.
+
+    ⚑ `handoff` is the CARRIED quiescence ply. Restarting it at 0 inside an
+    excursion refunds the budget and does not terminate; using the resolver's
+    depth makes an in-check root start over budget. Both were real, and both are
+    what this mirror pins.
+    """
+
+    def q_leaf(b: chess.Board, depth: int, handoff: int) -> int:
+        return _q_node(b, handoff, depth)
+
+    def _q_node(b: chess.Board, qply: int, depth: int) -> int:
+        stand_pat = mirror_eval(b)
+        if qply >= max_ply or depth >= max_depth:
+            return stand_pat
+        best = stand_pat
+        for move in b.legal_moves:
+            tactical = b.is_capture(move) or move.promotion is not None
+            if not tactical and qply >= check_plies:
+                continue
+            b.push(move)
+            try:
+                if not tactical and not b.is_check():
+                    continue
+                if b.is_check():
+                    child = _mirror_resolve(
+                        b, depth + 1, max_depth,
+                        leaf=lambda bb, dd, h=qply + 1: q_leaf(bb, dd, h),
+                    )
+                elif mirror_drawn(b):
+                    child = 0
+                else:
+                    child = _q_node(b, qply + 1, depth + 1)
+            finally:
+                b.pop()
+            best = max(best, -child)
+        return best
+
+    return _mirror_resolve(board, 0, max_depth, leaf=lambda b, d: q_leaf(b, d, 0))
 
 
 def python_chess_chain_depth(board: chess.Board, depth: int = 0) -> int:
@@ -520,6 +673,167 @@ def test_a_back_rank_rook_lift_is_not_a_promotion(bucket_pack: Path) -> None:
 # ===========================================================================
 
 
+def test_the_backed_up_value_matches_an_independent_minimax(bucket_pack: Path) -> None:
+    """⚑⚑ THE VALUE AT EVERY DEPTH, against a python-chess mirror.
+
+    The mutant this exists for negates the backup only at depth >= 2:
+
+        int32_t from_our_side = (depth >= 2) ? child_value : -child_value;
+
+    It changes no control flow, so every depth and terminal counter in this file
+    still matched and all 46 tests passed — while CHAIN_FENS[3] came back +700
+    instead of -600. Only a value-level comparison can see it.
+    """
+    for depth, fen in sorted(CHAIN_FENS.items()):
+        values, _stats = arm("nnue-static", bucket_pack, [fen])
+        assert values[0] == mirror_resolve(chess.Board(fen), 0), f"chain depth {depth}"
+    # The mirror is only worth something if it disagrees with a wrong answer, and
+    # these positions are the ones the surviving mutant got wrong.
+    assert mirror_resolve(chess.Board(CHAIN_FENS[3]), 0) == -600
+    assert mirror_resolve(chess.Board(CHAIN_FENS[4]), 0) == 400
+    assert mirror_resolve(chess.Board(CHAIN_FENS[5]), 0) == -600
+
+
+def test_the_qsearch_arm_value_matches_an_independent_minimax(bucket_pack: Path) -> None:
+    """The whole composed mechanism — resolver, quiescence, and the carried ply.
+
+    The mirror is unpruned negamax; the C is fail-soft alpha-beta. At a full root
+    window those must agree exactly, so this also pins that the pruning is sound.
+    """
+    _nnue_ext.set_arm_config(32, 2, 1)
+    fens = [chess.STARTING_FEN, SCHOLAR_MATE, *CHAIN_FENS.values()]
+    values, _stats = arm("nnue-qsearch", bucket_pack, fens)
+    for fen, value in zip(fens, values, strict=True):
+        assert value == mirror_qsearch_arm(chess.Board(fen), 2, 1), fen
+
+
+# ===========================================================================
+# The quiescence budgets, exercised where they were broken
+# ===========================================================================
+
+
+def test_the_check_budget_governs_from_an_IN_CHECK_root(bucket_pack: Path) -> None:
+    """⚑⚑ THE BUG THIS EXISTS FOR: BOTH BUDGETS WERE THE RESOLVER'S DEPTH.
+
+    Quiescence used to be handed the resolver's depth-from-root as its ply. The
+    resolver only calls its leaf hook at a NON-CHECK node, so an in-check root
+    entered quiescence at ply >= 1 — and `try_checks = (ply < check_plies)` at the
+    default check_plies=1 was therefore FALSE on exactly the positions the check
+    budget exists for. Every knob test in this file used a quiet root, where
+    ply == 0 and the bug is invisible.
+
+    So: from IN-CHECK roots, raising the check budget must do more work.
+    """
+    qnodes: list[int] = []
+    for check_plies in (0, 1, 2):
+        _nnue_ext.set_arm_config(32, 4, check_plies)
+        _values, stats = arm("nnue-qsearch", bucket_pack, list(CHAIN_FENS.values()))
+        assert stats["qsearch_check_plies"] == check_plies
+        qnodes.append(stats["qnodes"])
+
+    assert qnodes[1] > qnodes[0], (
+        f"check_plies=1 did no more work than 0 ({qnodes[1]} vs {qnodes[0]}); "
+        "the budget is not reaching quiescence from an in-check root"
+    )
+    assert qnodes[2] > qnodes[1], (
+        f"check_plies=2 did no more work than 1 ({qnodes[2]} vs {qnodes[1]})"
+    )
+
+
+def test_the_ply_budget_governs_from_an_IN_CHECK_root(bucket_pack: Path) -> None:
+    """And the ply counter reported back is QUIESCENCE plies, not resolver depth.
+
+    CHAIN_FENS[5] resolves 5 plies deep, so under the old conflation
+    `qmax_ply_seen` would have reported the resolver's depth and the budget would
+    have cut quiescence off before it made a single move.
+    """
+    previous: int = 0
+    for max_ply in (0, 1, 2, 3, 4):
+        _nnue_ext.set_arm_config(32, max_ply, min(1, max_ply))
+        _values, stats = arm("nnue-qsearch", bucket_pack, [CHAIN_FENS[5]])
+        assert stats["qsearch_max_ply"] == max_ply
+        # ⚑ Exactly the budget, not merely bounded by it: a counter that tracked
+        # resolver depth would exceed it (this chain resolves 5 deep).
+        assert stats["qmax_ply_seen"] == max_ply
+        assert stats["qnodes"] > previous
+        assert stats["depth_cutoffs"] == 0
+        previous = stats["qnodes"]
+
+
+def test_a_check_excursion_does_not_refund_the_quiescence_budget(
+    bucket_pack: Path,
+) -> None:
+    """⚑ The budget is CARRIED through the resolver, not restarted at its leaves.
+
+    Restarting it at 0 is the obvious reading of "quiescence gets its own
+    counter", and it does not terminate: quiescence plays a checking move, the
+    resolver resolves it, and the resolver's leaves start quiescence again with a
+    full allowance. Measured — it ran for minutes on CHAIN_FENS[5] at
+    qsearch_max_ply=1 before being killed.
+
+    The observable consequence of carrying it is that the work stays bounded and
+    the reported quiescence ply never exceeds the budget, even though the
+    resolver recursion around it goes far deeper.
+    """
+    _nnue_ext.set_arm_config(32, 2, 2)
+    _values, stats = arm("nnue-qsearch", bucket_pack, list(CHAIN_FENS.values()))
+    assert stats["qmax_ply_seen"] <= 2
+    assert stats["max_depth_seen"] > stats["qmax_ply_seen"], (
+        "the resolver never went deeper than quiescence, so this position cannot "
+        "distinguish a carried budget from a restarted one"
+    )
+    assert stats["depth_cutoffs"] == 0
+
+
+def test_quiescence_work_saturates_as_the_recursion_cap_rises(
+    bucket_pack: Path,
+) -> None:
+    """⚑⚑ THE OBSERVATION THAT CATCHES A REFUNDED BUDGET.
+
+    A refund leaves every counter looking obedient — `qmax_ply_seen` still caps at
+    max_ply, because each restart caps at max_ply all over again — and on this
+    pack it does not even change the returned values, since a side-symmetric
+    evaluation means only a mate or a draw can move a number. Both of the obvious
+    assertions therefore pass against the bug.
+
+    What a refund cannot hide is that it makes quiescence's cost a function of the
+    RESOLVER's cap. With the budget carried, quiescence is bounded by its own
+    budget and the work SATURATES: raising the cap past the point where the check
+    chains end changes nothing. Measured on these four positions at
+    max_ply=2, check_plies=2:
+
+        cap    carried (shipped)    refunded
+          6            5,468           8,378
+         12            8,446      15,327,851
+         32            8,446         (does not finish)
+
+    The order below matters: the cheap comparison runs first, so the mutant dies
+    at cap 12 and never reaches the cap-32 case it would hang on. A mutant killed
+    by a timeout is reported as inconclusive, not dead.
+    """
+    fens = list(CHAIN_FENS.values())
+
+    _nnue_ext.set_arm_config(6, 2, 2)
+    _v6, s6 = arm("nnue-qsearch", bucket_pack, fens)
+    _nnue_ext.set_arm_config(12, 2, 2)
+    v12, s12 = arm("nnue-qsearch", bucket_pack, fens)
+
+    assert s12["qnodes"] < 3 * s6["qnodes"], (
+        f"doubling the recursion cap multiplied quiescence work "
+        f"{s6['qnodes']} -> {s12['qnodes']}; the quiescence budget is being "
+        "refunded across check excursions instead of carried"
+    )
+
+    _nnue_ext.set_arm_config(32, 2, 2)
+    v32, s32 = arm("nnue-qsearch", bucket_pack, fens)
+    assert s32["qnodes"] == s12["qnodes"], "quiescence work did not saturate"
+    assert v32 == v12
+
+    # And the values are right, not merely stable.
+    for fen, value in zip(fens, v32, strict=True):
+        assert value == mirror_qsearch_arm(chess.Board(fen), 2, 2, max_depth=32), fen
+
+
 def test_the_configuration_is_reported_from_the_context_that_ran(bucket_pack: Path) -> None:
     """⚑ ANNOUNCED FROM THE CONSUMER'S OWN PARAMETER.
 
@@ -736,9 +1050,16 @@ def test_randomised_cross_check_against_python_chess(bucket_pack: Path) -> None:
     checked = 0
     mated = 0
     drawn = 0
+    deep = 0
+    # ⚑ 250 plies, not 90. At 90 the walk produced 215 in-check positions and ZERO
+    # in-check draws, so `drawn > 0` below would have been asserting something the
+    # generator cannot deliver — which is how the tautological `drawn >= 0` it
+    # replaced got written in the first place. Measured: 60 games x 250 plies gives
+    # ~900 in-check roots, 4 mates and 2 draws. The fix for a population that is
+    # too thin is a bigger population, not a weaker assertion.
     for _ in range(60):
         board = chess.Board()
-        for _ply in range(90):
+        for _ply in range(250):
             moves = list(board.legal_moves)
             if not moves:
                 break
@@ -751,19 +1072,78 @@ def test_randomised_cross_check_against_python_chess(bucket_pack: Path) -> None:
             assert stats["max_depth_seen"] == python_chess_chain_depth(board.copy(stack=True))
             assert stats["depth_cutoffs"] == 0
 
+            # ⚑ THE VALUE, not just the shape. An earlier version of this test
+            # asserted the recursion depth and the terminal counters and nothing
+            # about what came back, and a reviewer's mutant that flips the backup
+            # sign only at depth >= 2 survived all 46 tests in the file. Depth is
+            # a property of the tree walked; the value is the thing consumers use.
+            assert value == mirror_resolve(board, 0), board.fen()
+
             if board.is_checkmate():
                 mated += 1
                 assert value == -_nnue_ext.RESOLVER_MATE_BASE
                 assert stats["terminal_mate"] == 1
-            elif board.is_repetition(2) or board.is_fifty_moves():
+            elif mirror_drawn(board):
+                # ⚑ mirror_drawn, not a hand-picked subset of it. An earlier
+                # version tested only repetition and the fifty-move clock, and an
+                # in-check K+N vs K — drawn by INSUFFICIENT MATERIAL — fell
+                # through to the else branch and was asserted to expand. The
+                # draw branch has to be the same predicate the resolver uses.
                 drawn += 1
                 assert value == 0
                 assert stats["terminal_draw"] == 1
             else:
-                assert stats["terminal_mate"] == 0 or stats["max_depth_seen"] > 0
+                # A live in-check root that is neither mate nor an immediate draw
+                # MUST have been expanded — one node would mean it was scored as
+                # a terminal it is not.
+                assert stats["nodes"] > 1
+                assert stats["max_depth_seen"] >= 1
+                deep += 1
 
-    # ⚑ The population is asserted, not assumed. A cross-check that happened to
-    # draw no in-check positions would pass while testing nothing.
-    assert checked > 200, f"only {checked} in-check positions reached the resolver"
+    # ⚑ THE POPULATION IS ASSERTED, NOT ASSUMED — and every branch's counter gets
+    # a real bound. `assert drawn >= 0` stood here once under this same comment,
+    # which is true of any count and therefore says nothing: the draw branch could
+    # have gone unexercised for the whole run and this would still have passed.
+    assert checked > 700, f"only {checked} in-check positions reached the resolver"
     assert mated > 0, "no checkmate was reached; the mate branch went unexercised"
-    assert drawn >= 0
+    assert deep > 500, f"only {deep} roots were actually expanded"
+    assert drawn > 0, "no in-check draw was reached; the draw branch went unexercised"
+
+
+def test_randomised_cross_check_of_the_qsearch_arm(bucket_pack: Path) -> None:
+    """The same check, driving the arm that composes quiescence with the resolver.
+
+    ⚑ THE STATIC ARM'S CROSS-CHECK CANNOT COVER THIS. It never enters quiescence,
+    so it exercises neither budget, neither the carried handoff ply, nor the
+    re-entry from quiescence back into the resolver — the whole mechanism the
+    ply-conflation bug lived in. A smaller budget and fewer roots, because the
+    mirror is unpruned and Python.
+    """
+    import random
+
+    _nnue_ext.set_arm_config(32, 2, 1)
+    rng = random.Random(987654321)
+    checked = 0
+    disagreed_with_static = 0
+    for _ in range(25):
+        board = chess.Board()
+        for _ply in range(80):
+            moves = list(board.legal_moves)
+            if not moves:
+                break
+            board.push(rng.choice(moves))
+            if not board.is_check():
+                continue
+            checked += 1
+            value, stats = arm_board("nnue-qsearch", bucket_pack, board)
+            assert value == mirror_qsearch_arm(board, 2, 1), board.fen()
+            assert stats["qmax_ply_seen"] <= 2
+            assert stats["depth_cutoffs"] == 0
+            static_value, _s = arm_board("nnue-static", bucket_pack, board)
+            if static_value != value:
+                disagreed_with_static += 1
+
+    assert checked > 60, f"only {checked} in-check positions reached the qsearch arm"
+    # ⚑ Quiescence has to have CHANGED something, or this is the static arm's
+    # cross-check wearing a different name and it would pass with the arm off.
+    assert disagreed_with_static > 0, "quiescence never changed a value"

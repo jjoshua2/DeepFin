@@ -411,22 +411,33 @@ static const CaeValueProvider *arm_provider_by_name(const char *name) {
     return vp;
 }
 
+/* ⚑ ATOMIC LOADS, because the writes are atomic. cae_arm_merge_stats() adds into
+ * these with __atomic_fetch_add from inside a GIL-released eval, so a plain load
+ * here is a data race — the GIL orders this reader against other PYTHON code,
+ * not against a C worker thread that never took it. Relaxed on both sides: the
+ * counters are diagnostic and order nothing. */
+#define ARM_STAT_U64(field) ((unsigned long long)__atomic_load_n(&(field), __ATOMIC_RELAXED))
+#define ARM_STAT_U32(field) ((unsigned int)__atomic_load_n(&(field), __ATOMIC_RELAXED))
+
 static PyObject *arm_stats_dict(const CaeArmCtx *ctx) {
     const CaeArmStats *s = &ctx->totals;
     return Py_BuildValue(
         "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:I,s:K,s:K,s:K,s:I,s:i,s:i,s:i}",
-        "calls", (unsigned long long)s->resolver.calls,
-        "calls_in_check", (unsigned long long)s->resolver.calls_in_check,
-        "nodes", (unsigned long long)s->resolver.nodes,
-        "resolved_leaves", (unsigned long long)s->resolver.resolved_leaves,
-        "terminal_mate", (unsigned long long)s->resolver.terminal_mate,
-        "terminal_draw", (unsigned long long)s->resolver.terminal_draw,
-        "depth_cutoffs", (unsigned long long)s->resolver.depth_cutoffs,
-        "max_depth_seen", (unsigned int)s->resolver.max_depth_seen,
-        "qnodes", (unsigned long long)s->qnodes,
-        "qterminal_draw", (unsigned long long)s->qterminal_draw,
-        "qply_cutoffs", (unsigned long long)s->qply_cutoffs,
-        "qmax_ply_seen", (unsigned int)s->qmax_ply_seen,
+        "calls", ARM_STAT_U64(s->resolver.calls),
+        "calls_in_check", ARM_STAT_U64(s->resolver.calls_in_check),
+        "nodes", ARM_STAT_U64(s->resolver.nodes),
+        "resolved_leaves", ARM_STAT_U64(s->resolver.resolved_leaves),
+        "terminal_mate", ARM_STAT_U64(s->resolver.terminal_mate),
+        "terminal_draw", ARM_STAT_U64(s->resolver.terminal_draw),
+        "depth_cutoffs", ARM_STAT_U64(s->resolver.depth_cutoffs),
+        "max_depth_seen", ARM_STAT_U32(s->resolver.max_depth_seen),
+        "qnodes", ARM_STAT_U64(s->qnodes),
+        "qterminal_draw", ARM_STAT_U64(s->qterminal_draw),
+        "qply_cutoffs", ARM_STAT_U64(s->qply_cutoffs),
+        "qmax_ply_seen", ARM_STAT_U32(s->qmax_ply_seen),
+        /* ⚑ NOT atomic, and correctly so: a context's configuration is written
+         * once at init() and never again, which is the whole point of the
+         * snapshot. There is no writer to race with. */
         "resolver_max_depth", ctx->resolver_max_depth,
         "qsearch_max_ply", ctx->qsearch_max_ply,
         "qsearch_check_plies", ctx->qsearch_check_plies);
@@ -450,10 +461,12 @@ static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
         PyErr_SetString(PyExc_ValueError, err);
         return NULL;
     }
+    CaeArmConfig cfg;
+    cae_arm_get_config(&cfg);
     return Py_BuildValue("{s:i,s:i,s:i}",
-                         "resolver_max_depth", g_arm_resolver_max_depth,
-                         "qsearch_max_ply", g_arm_qsearch_max_ply,
-                         "qsearch_check_plies", g_arm_qsearch_check_plies);
+                         "resolver_max_depth", cfg.resolver_max_depth,
+                         "qsearch_max_ply", cfg.qsearch_max_ply,
+                         "qsearch_check_plies", cfg.qsearch_check_plies);
 }
 
 static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
@@ -464,6 +477,13 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     const CaeValueProvider *vp = arm_provider_by_name(name);
     if (!vp) return NULL;
 
+    /* ⚑⚑ `fast` IS HELD UNTIL THE LAST BOARD POINTER IS CONSUMED, and that is a
+     * lifetime rule, not tidiness. PySequence_Fast returns a NEW list for an
+     * iterator or a custom sequence — for a list or tuple it just returns the
+     * argument. `boards[]` points INTO the CBoard objects that list owns, so
+     * dropping it before the eval loop drops the only reference to every board
+     * and hands the GIL-released loop a dangling pointer. The one input shape
+     * that would crash (a generator) is the one no test happened to pass. */
     PyObject *fast = PySequence_Fast(seq, "boards must be a sequence of CBoard");
     if (!fast) return NULL;
     Py_ssize_t n = PySequence_Fast_GET_SIZE(fast);
@@ -479,12 +499,12 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
             if (!boards[i]) { PyMem_Free(boards); Py_DECREF(fast); return NULL; }
         }
     }
-    Py_DECREF(fast);
 
     char err[512] = {0};
     void *ctx = vp->init(path, err, sizeof(err));
     if (!ctx) {
         PyMem_Free(boards);
+        Py_DECREF(fast);
         PyErr_Format(PyExc_ValueError, "provider %s init failed: %s", vp->name, err);
         return NULL;
     }
@@ -492,7 +512,12 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     int32_t *raw = NULL;
     if (n > 0) {
         raw = (int32_t *)PyMem_Malloc((size_t)n * sizeof(*raw));
-        if (!raw) { vp->destroy(ctx); PyMem_Free(boards); return PyErr_NoMemory(); }
+        if (!raw) {
+            vp->destroy(ctx);
+            PyMem_Free(boards);
+            Py_DECREF(fast);
+            return PyErr_NoMemory();
+        }
     }
 
     /* ⚑ ONE GIL release around the WHOLE batch, not one per board. Timing this
@@ -508,6 +533,7 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     }
     Py_END_ALLOW_THREADS
     PyMem_Free(boards);
+    Py_DECREF(fast);   /* every boards[] pointer has now been consumed */
 
     if (failed_at >= 0) {
         raise_status(failed_status);

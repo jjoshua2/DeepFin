@@ -4796,12 +4796,16 @@ static PyMethodDef MCTSTree_methods[] = {
     {"value_provider_eval", (PyCFunction)MCTSTree_value_provider_eval, METH_VARARGS,
      "value_provider_eval(cboard) -> int\n\n"
      "Evaluate a position through the installed provider, from inside the tree\n"
-     "extension. ⚑ Raises for a position in check — as the provider's OWN\n"
-     "InCheckError, so a caller catches by type rather than by message text: the\n"
-     "NNUE evaluation is undefined there, and callers must resolve check nodes\n"
-     "RECURSIVELY (search the evasions, which may themselves give check) before\n"
-     "asking for a static value. The refusal is the enforcement backstop for\n"
-     "that invariant, not a substitute for it."},
+     "extension.\n\n"
+     "⚑ WHETHER A POSITION IN CHECK RAISES DEPENDS ON THE PROVIDER, and that is\n"
+     "the seam working as designed rather than an inconsistency. The RAW 'nnue'\n"
+     "provider refuses one — as its OWN InCheckError, so a caller catches by type\n"
+     "rather than by message text — because the NNUE evaluation is undefined\n"
+     "there. The resolver-backed arms ('nnue-static', 'nnue-qsearch') answer it,\n"
+     "because resolving the check recursively is exactly what they add.\n\n"
+     "The raw provider's refusal is the enforcement backstop for that invariant,\n"
+     "not a substitute for it: a caller that leans on it has a hole in its\n"
+     "search."},
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,

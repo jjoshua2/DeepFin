@@ -92,11 +92,33 @@
  * a running provider would be exactly that. So the numbers a context actually
  * used are reported back out of THAT CONTEXT (see CaeArmCtx and the stats dict),
  * never restated from these globals. */
+/* ⚑ GUARDED BY A MUTEX, not by the GIL. init() runs from several call sites —
+ * arm_open, arm_eval, and MCTSTree.set_value_provider — and "do all of them hold
+ * the GIL, today and after the next edit" is a premise about code elsewhere, not
+ * a property of this file. A torn read here would build a context with one
+ * knob's old value and another's new one, and nothing downstream could tell. The
+ * lock makes the triple a unit; the cost is one uncontended lock per context. */
+static pthread_mutex_t g_arm_config_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_arm_resolver_max_depth   = CAE_RESOLVER_DEFAULT_MAX_DEPTH;
 static int g_arm_qsearch_max_ply      = CAE_QSEARCH_DEFAULT_MAX_PLY;
 static int g_arm_qsearch_check_plies  = CAE_QSEARCH_DEFAULT_CHECK_PLIES;
 
-/* Returns 0, or -1 with a reason written into err. */
+typedef struct CaeArmConfig {
+    int resolver_max_depth;
+    int qsearch_max_ply;
+    int qsearch_check_plies;
+} CaeArmConfig;
+
+static void cae_arm_get_config(CaeArmConfig *out) {
+    pthread_mutex_lock(&g_arm_config_lock);
+    out->resolver_max_depth = g_arm_resolver_max_depth;
+    out->qsearch_max_ply = g_arm_qsearch_max_ply;
+    out->qsearch_check_plies = g_arm_qsearch_check_plies;
+    pthread_mutex_unlock(&g_arm_config_lock);
+}
+
+/* Returns 0, or -1 with a reason written into err. Validates BEFORE taking the
+ * lock so a rejected call cannot leave the triple half-written. */
 static int cae_arm_set_config(int resolver_max_depth, int qsearch_max_ply,
                               int qsearch_check_plies, char *err, size_t errlen) {
     if (resolver_max_depth < 1 || resolver_max_depth > CAE_RESOLVER_MAX_PLIES) {
@@ -106,7 +128,13 @@ static int cae_arm_set_config(int resolver_max_depth, int qsearch_max_ply,
     }
     /* 0 is meaningful and allowed: quiescence collapses to a stand-pat, which
      * makes the qsearch arm's leaf identical to the static arm's. That is the
-     * negative control for the whole arm, so it must be reachable. */
+     * negative control for the whole arm, so it must be reachable.
+     *
+     * The upper bound is resolver_max_depth because depth >= qply always (both
+     * increment together from a depth that is already >= 0), so a quiescence
+     * budget above the recursion cap could never be reached — a knob that is
+     * accepted and then cannot take effect, which is the thing this file exists
+     * to stop shipping. */
     if (qsearch_max_ply < 0 || qsearch_max_ply > resolver_max_depth) {
         cae_nnue_err(err, errlen, "qsearch_max_ply must be in [0, resolver_max_depth=%d], got %d",
                      resolver_max_depth, qsearch_max_ply);
@@ -117,9 +145,11 @@ static int cae_arm_set_config(int resolver_max_depth, int qsearch_max_ply,
                      qsearch_max_ply, qsearch_check_plies);
         return -1;
     }
+    pthread_mutex_lock(&g_arm_config_lock);
     g_arm_resolver_max_depth = resolver_max_depth;
     g_arm_qsearch_max_ply = qsearch_max_ply;
     g_arm_qsearch_check_plies = qsearch_check_plies;
+    pthread_mutex_unlock(&g_arm_config_lock);
     return 0;
 }
 
@@ -136,7 +166,9 @@ typedef struct CaeArmStats {
      * the static arm's, and that comparison is the readout. */
     uint64_t qnodes;           /* qsearch nodes entered (one stand-pat each) */
     uint64_t qterminal_draw;   /* draws found inside quiescence */
-    uint64_t qply_cutoffs;     /* stood pat because the ply budget ran out */
+    uint64_t qply_cutoffs;     /* stood pat because a ply budget ran out */
+    /* ⚑ Plies of QUIESCENCE, not depth below the resolution root. The two are
+     * different numbers and reporting the wrong one was a real bug here. */
     uint32_t qmax_ply_seen;
 } CaeArmStats;
 
@@ -229,6 +261,24 @@ typedef struct CaeQsearchCtx {
     const CaeArmCtx *arm;
     const CaeResolverCtx *resolver;   /* the SAME resolver, re-entered for checks */
     CaeArmStats *stats;               /* the per-call block, not the accumulator */
+
+    /* ⚑⚑ THE QUIESCENCE PLY IN FORCE WHEN QUIESCENCE HANDED OFF TO THE RESOLVER.
+     *
+     * The resolver's leaf hook has to start quiescence at SOME ply, and neither
+     * obvious answer is right:
+     *   - the resolver's `depth` (the original bug) makes an in-check root start
+     *     quiescence already over budget;
+     *   - a literal 0 REFUNDS the budget: quiescence plays a checking move, the
+     *     resolver resolves it, and its leaves restart quiescence with a full
+     *     allowance — measured, and it does not finish. A knob that cannot bound
+     *     the work it names is not a budget.
+     * So the count is CARRIED across the excursion. Check resolution is mandatory
+     * and free; quiescence moves are what the budget buys.
+     *
+     * Mutable, saved and restored around each excursion. Safe because this struct
+     * is a per-call stack object and the recursion is depth-first — there is one
+     * live path at a time, and no other thread can see it. */
+    int handoff_qply;
 } CaeQsearchCtx;
 
 /* Does this legal move change material — capture, en passant, or promotion?
@@ -256,53 +306,95 @@ static inline int cae_qsearch_is_tactical(const CBoard *b, int from_sq, int to_s
     return 0;
 }
 
+/* ⚑⚑ TWO COUNTERS, AND CONFLATING THEM IS A REAL BUG THIS CODE ONCE HAD.
+ *
+ *   `depth` — plies below the RESOLUTION ROOT, through both directions of the
+ *             mutual recursion. It bounds the whole thing (resolver_max_depth)
+ *             and it is what mate scores are measured in, so it must keep
+ *             increasing monotonically no matter which side of the recursion
+ *             we are on.
+ *   `qply`  — plies of QUIESCENCE, reset to 0 every time the resolver hands a
+ *             node to the leaf hook. Both quiescence budgets are counted in it.
+ *
+ * The first version passed the resolver's `depth` as quiescence's ply. The
+ * resolver only calls its leaf hook at a NON-CHECK node, so an in-check root
+ * enters quiescence at depth >= 1 — and `try_checks = (ply < check_plies)` with
+ * the default check_plies=1 was therefore FALSE on exactly the positions the
+ * check budget exists for. A check chain 4 deep entered quiescence at ply 4 and
+ * stood pat without looking at a single capture. Both knobs were accepted,
+ * consumed, and silently meant something else: this repo's signature defect,
+ * inside the fix for the last one.
+ *
+ * TERMINATION still holds, and on `depth` rather than on `qply`: every edge in
+ * either direction increments depth, both sides test it against
+ * resolver_max_depth, so no cycle can restart a budget. `qply` only ever makes
+ * quiescence stop SOONER. */
+
 /* Known to be neither terminal nor in check. */
-static int cae_qsearch_node(const CaeQsearchCtx *q, const CBoard *b, int ply,
+static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, int qply, int depth,
                             int32_t alpha, int32_t beta, int32_t *out_value);
 
-/* Dispatch a child.
+/* Dispatch a child. `depth` is the CHILD's depth below the resolution root.
  *
  * ⚑ THE ORDER MATCHES cae_resolve_node'S, AND FOR THE SAME REASON: in check
  * goes first. cboard_is_game_over() tests the fifty-move clock and the "no legal
  * moves" condition without asking whether the side to move is in check, so
  * testing drawn-ness first would score a CHECKMATE as a draw. The resolver
  * scores mate; only once it has declined does "no moves" mean stalemate. */
-static int cae_qsearch_child(const CaeQsearchCtx *q, const CBoard *b, int ply,
+static int cae_qsearch_child(CaeQsearchCtx *q, const CBoard *b, int qply, int depth,
                              int32_t alpha, int32_t beta, int32_t *out_value) {
     if (cboard_in_check(b)) {
         /* ⚑ BACK THROUGH THE SHARED RESOLVER. The evaluator is undefined in
          * check, so a checking move's child is RESOLVED, never evaluated — the
          * same code, and the same cost, that the static arm pays. The resolver
          * takes no window: it is exact minimax, and a bound would change what
-         * its result means to whoever stores it. */
-        return cae_resolve_node(q->resolver, b, ply, out_value);
+         * its result means to whoever stores it.
+         *
+         * `depth`, not `qply`: the resolver measures mate distance from the
+         * resolution root, and it owns the cap that makes all of this finite.
+         *
+         * ⚑ The quiescence budget is CARRIED into the excursion, so quiescence
+         * resumed at the resolver's leaves picks up where it left off instead of
+         * being handed a fresh allowance. Save/restore, because this frame
+         * resumes its own sibling loop afterwards. */
+        int saved = q->handoff_qply;
+        q->handoff_qply = qply;
+        int rc = cae_resolve_node(q->resolver, b, depth, out_value);
+        q->handoff_qply = saved;
+        return rc;
     }
     if (cae_resolver_is_drawn(b)) {
         q->stats->qterminal_draw++;
         *out_value = 0;
         return CAE_VALUE_OK;
     }
-    return cae_qsearch_node(q, b, ply, alpha, beta, out_value);
+    return cae_qsearch_node(q, b, qply, depth, alpha, beta, out_value);
 }
 
 /* The leaf hook for the qsearch arm: the resolver hands it a node it has already
  * established is neither in check nor terminal, and quiescence takes over from
  * there. A full window, because the resolver above it is exact minimax and no
- * bound from it can be carried across. */
+ * bound from it can be carried across.
+ *
+ * ⚑ QUIESCENCE RESUMES AT handoff_qply, NOT AT THE RESOLVER'S DEPTH. "How many
+ * plies of quiescence have I done" is what both quiescence budgets ask, and the
+ * resolver's depth is not an answer to it — it counts forced evasions too. At the
+ * resolution root handoff_qply is 0; inside an excursion quiescence itself
+ * started, it is the ply quiescence had reached. See CaeQsearchCtx. */
 static int cae_arm_qsearch_leaf(void *leaf_ctx, const CBoard *board, int ply,
                                 int32_t *out_value) {
-    const CaeQsearchCtx *q = (const CaeQsearchCtx *)leaf_ctx;
-    return cae_qsearch_node(q, board, ply, -CAE_QSEARCH_INF, CAE_QSEARCH_INF,
-                            out_value);
+    CaeQsearchCtx *q = (CaeQsearchCtx *)leaf_ctx;
+    return cae_qsearch_node(q, board, q->handoff_qply, ply,
+                            -CAE_QSEARCH_INF, CAE_QSEARCH_INF, out_value);
 }
 
 /* Stand-pat quiescence over captures, promotions, and — for the first
  * qsearch_check_plies plies — checking moves. Fail-soft negamax. */
-static int cae_qsearch_node(const CaeQsearchCtx *q, const CBoard *b, int ply,
+static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, int qply, int depth,
                             int32_t alpha, int32_t beta, int32_t *out_value) {
     const CaeArmCtx *arm = q->arm;
     q->stats->qnodes++;
-    if ((uint32_t)ply > q->stats->qmax_ply_seen) q->stats->qmax_ply_seen = (uint32_t)ply;
+    if ((uint32_t)qply > q->stats->qmax_ply_seen) q->stats->qmax_ply_seen = (uint32_t)qply;
 
     int32_t stand_pat = 0;
     int status = cae_nnue_evaluate_cboard(arm->weights, b, &stand_pat);
@@ -312,11 +404,10 @@ static int cae_qsearch_node(const CaeQsearchCtx *q, const CBoard *b, int ply,
     if (stand_pat >= beta) { *out_value = stand_pat; return CAE_VALUE_OK; }
     if (stand_pat > alpha) alpha = stand_pat;
 
-    /* ⚑ ONE PLY BUDGET, SHARED WITH THE RESOLVER. `ply` counts depth below the
-     * resolution root through BOTH directions of the mutual recursion, so a
-     * qsearch -> resolver -> qsearch chain cannot outlive it by restarting a
-     * counter of its own. */
-    if (ply >= arm->qsearch_max_ply || ply >= arm->resolver_max_depth) {
+    /* The quiescence budget is in qply; the recursion cap that makes the whole
+     * mutual recursion finite is in depth. See the ⚑⚑ block above for why these
+     * cannot be the same number. */
+    if (qply >= arm->qsearch_max_ply || depth >= arm->resolver_max_depth) {
         q->stats->qply_cutoffs++;
         /* ⚑ stand_pat, NOT alpha. No move was searched here, so stand_pat is
          * this node's value; alpha at this point is max(stand_pat, whatever the
@@ -329,7 +420,7 @@ static int cae_qsearch_node(const CaeQsearchCtx *q, const CBoard *b, int ply,
 
     int moves[CBOARD_MAX_LEGAL_MOVES];
     int n = cboard_legal_move_indices(b, moves, 0);
-    int try_checks = (ply < arm->qsearch_check_plies);
+    int try_checks = (qply < arm->qsearch_check_plies);
     int32_t best = stand_pat;
 
     for (int i = 0; i < n; i++) {
@@ -348,7 +439,8 @@ static int cae_qsearch_node(const CaeQsearchCtx *q, const CBoard *b, int ply,
         if (!tactical && !gives_check) continue;
 
         int32_t child_value = 0;
-        int rc = cae_qsearch_child(q, &child, ply + 1, -beta, -alpha, &child_value);
+        int rc = cae_qsearch_child(q, &child, qply + 1, depth + 1, -beta, -alpha,
+                                   &child_value);
         if (rc != CAE_VALUE_OK) return rc;
         child_value = -child_value;   /* a child's value is child-STM POV */
 
@@ -375,11 +467,14 @@ static void *cae_arm_init(const char *weights_path, char *err, size_t errlen) {
         return NULL;
     }
     ctx->weights = w;
-    /* Snapshotted here, once. See the ⚑⚑ on the globals: the ctx's own copy is
-     * what every eval through it uses and what its stats report. */
-    ctx->resolver_max_depth = g_arm_resolver_max_depth;
-    ctx->qsearch_max_ply = g_arm_qsearch_max_ply;
-    ctx->qsearch_check_plies = g_arm_qsearch_check_plies;
+    /* Snapshotted here, once, as a UNIT under the lock. See the ⚑⚑ on the
+     * globals: the ctx's own copy is what every eval through it uses and what
+     * its stats report. */
+    CaeArmConfig cfg;
+    cae_arm_get_config(&cfg);
+    ctx->resolver_max_depth = cfg.resolver_max_depth;
+    ctx->qsearch_max_ply = cfg.qsearch_max_ply;
+    ctx->qsearch_check_plies = cfg.qsearch_check_plies;
     ctx->refcount = 1;
     cae_arm_stats_reset(&ctx->totals);
     return ctx;
@@ -431,6 +526,7 @@ static int cae_arm_qsearch_eval(void *ctx_void, const CBoard *board, int32_t *ou
     q.arm = ctx;
     q.resolver = &rc;
     q.stats = &local;
+    q.handoff_qply = 0;   /* the resolution root's own leaves start quiescence */
     rc.leaf_eval = cae_arm_qsearch_leaf;
     rc.leaf_ctx = &q;
     rc.max_depth = ctx->resolver_max_depth;
