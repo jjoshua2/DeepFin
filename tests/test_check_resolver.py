@@ -958,8 +958,20 @@ def test_set_arm_config_rejects_an_incoherent_configuration(
 # ===========================================================================
 
 
-def test_the_registry_lists_both_arms_alongside_the_raw_evaluator() -> None:
-    assert _nnue_ext.provider_names() == ("nnue", "nnue-static", "nnue-qsearch")
+def test_the_registry_lists_both_arms_and_the_oracle_beside_the_raw_evaluator() -> None:
+    """⚑ FOUR ENTRIES, NOT THREE. ``ARMS`` is the two RACE arms; the registry
+    also carries ``nnue-qsearch-refresh``, the full-refresh oracle the
+    incremental accumulator is measured against (tests/test_nnue_incremental.py).
+    An oracle is a provider like any other and has to be listed here, so the
+    expectation is the whole tuple rather than the race arms alone — a new
+    provider must be named on purpose, not absorbed silently.
+    """
+    assert _nnue_ext.provider_names() == (
+        "nnue",
+        "nnue-static",
+        "nnue-qsearch",
+        "nnue-qsearch-refresh",
+    )
 
 
 def test_each_name_installs_a_DIFFERENT_provider_in_the_tree(bucket_pack: Path) -> None:
