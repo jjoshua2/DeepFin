@@ -66784,3 +66784,32 @@ ARM 3 LAUNCHING: f=0.75, seed 13, bar 0.002.
   main 0; lint delta EMPTY.
 - ⚑ NOT DEPLOYED to the live branch — main-only until the next live-branch sync.
   Task #248; the w_sf_own_regret SCHEDULE arm (#252) remains separately gated.
+
+## 2026-08-24 21:05 — PR #466 MERGED (78e66accf) to main: intentional-stop guard moved INTO the operations — task #177 closed
+
+- **Three relaunch routes, two previously unguarded on main**: watchdog_loop.sh (caller-side
+  check, kept), `recover_stall.sh` by hand (NO check on main — the live branch's guard
+  commit 42e72d6cb was never PR'd), and the never-audited `scripts/watchdog_pbt.sh`
+  (nothing calls it; a human in tmux starts it and it relaunches training hourly on its
+  own authority). Guard now lives in sourced `intentional_stop_guard.sh`, called by the
+  OPERATION itself; override `--ignore-intentional-stop` (alias `--force`); unknown argv
+  exits 2.
+- **Review round 2 (Codex 4 P1 + convergent P2, all FIXED)**: full pause-marker set
+  enumerated (root + trial_dir + tc.pause_file — matches find_pause_txt, pinned by a
+  superset test); watchdog_pbt override REFUSES on pause (asymmetry deliberate: it can't
+  clear markers correctly, and recover_stall clears the re-enumerated set post-teardown,
+  rm -f never -rf); RECOVER_STAMP rolled back on rc=7 so a refusal doesn't burn the 2h
+  cooldown (loop still survives rc=7); override consumed after ONE restart — a launch
+  flag is not permanent license; dangling-symlink marker now refuses (`-e || -L`).
+- ⚑ **The fixer's first mutation run was VACUOUS and it caught itself**: pytest
+  unimportable under a stripped env ⇒ all 14 mutants "survived" a zero-failure baseline.
+  Harness now parses junit XML and aborts unless the 24 tests executed. Signature defect
+  pointed at the verification layer — same class as the 2026-08-16 lint-exit incident.
+- **Gates**: 14/14 mutants (junit-verified 24/24 executed); delta reviewer APPROVE-DELTA
+  with 3 own mutants killed; tests main 106 → branch 130 (+24 exactly the new file);
+  lint delta EMPTY; CI green on merged head a0f525c60.
+- **Recorded, not fixed**: watchdog_pbt.sh bypasses train.sh entirely (no pidfile, no
+  freshness gate, no observers — a run it starts is invisible to train.sh status/stop).
+  Rewrite-or-delete is Josh's ops call; stated in the file header and docs/operations.md.
+  Also disclosed: a pause held ONLY at the ephemeral Ray-session tune root is invisible
+  to both the guard and find_pause_txt (guard and verdict instrument share coverage).
