@@ -438,29 +438,48 @@ def test_a_window_bounded_subtree_never_poisons_a_later_full_window_search(
     into a node during the first search would be returned as a stand-pat during
     the second.
 
-    Every capture child is checked rather than one hand-picked node, so the test
-    does not depend on knowing which child happened to fail high.
+    ⚑ EVERY TACTICAL PARENT IS USED, NOT A HAND-PICKED ONE, AND THAT IS WHAT
+    MAKES THE TEST SENSITIVE. The first version of this fixture searched only
+    Kiwipete and its capture children and PASSED under the mutant it exists to
+    kill — a cached fail-high poisoned two rows out of 457, and neither was a
+    child of Kiwipete. A window bound can be written at any node the search
+    cuts off at, so the fixture has to span every parent whose children it then
+    asks about rather than assume the interesting cutoff is nearby.
     """
-    parent = chess.Board(TACTICAL_FENS[0])
+    parents = [chess.Board(fen) for fen in TACTICAL_FENS]
     children = []
-    for move in parent.legal_moves:
-        if not parent.is_capture(move):
-            continue
-        child = parent.copy(stack=True)
-        child.push(move)
-        children.append(child)
-    assert len(children) >= 4
+    for parent in parents:
+        for move in parent.legal_moves:
+            if not parent.is_capture(move):
+                continue
+            child = parent.copy(stack=True)
+            child.push(move)
+            children.append(child)
+    assert len(children) >= 15
 
     exact, _stats = _run(ORACLE, dag_pack, children)
 
     shared = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
-    # The narrow-window pass: the parent's own search visits every one of them.
-    _nnue_ext.arm_handle_eval(shared, _cboards([parent]))
+    # The narrow-window pass: each parent's own search visits its own children,
+    # under whatever (alpha, beta) the move ordering happened to reach them by.
+    _nnue_ext.arm_handle_eval(shared, _cboards(parents))
+
+    # ⚑ ONLY THE NON-CHECK CHILDREN ARE REQUIRED TO BE INTERNED. A capture that
+    # GIVES CHECK produces a child this arm deliberately never interns — the
+    # resolver takes it, and NNUE is undefined there. Such a child still belongs
+    # in the rows below: as a top-level board its evasions resolve to quiescence
+    # leaves that ARE in the store, so a bound cached one level deeper reaches
+    # it. Demanding it be interned would fail the fixture for a correct
+    # implementation; dropping it from the rows would drop the row this mutant
+    # actually poisons.
+    quiet_children = [child for child in children if not child.is_check()]
+    assert len(quiet_children) >= 10
     interned = [
-        _nnue_ext.arm_dag_lookup(shared, CBoard.from_board(child)) for child in children
+        _nnue_ext.arm_dag_lookup(shared, CBoard.from_board(child))
+        for child in quiet_children
     ]
     assert all(node is not None for node in interned), (
-        "the parent's search did not reach these children; the fixture cannot "
+        "the parents' searches did not reach these children; the fixture cannot "
         "put a bound on them and the test would be vacuous"
     )
 
@@ -468,7 +487,7 @@ def test_a_window_bounded_subtree_never_poisons_a_later_full_window_search(
     after = _nnue_ext.arm_handle_eval(shared, _cboards(children))
     assert after == exact
 
-    # …and a store that never saw the parent agrees, so the shared-store answer
+    # …and a store that never saw the parents agrees, so the shared-store answer
     # is not merely self-consistent.
     fresh = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
     assert _nnue_ext.arm_handle_eval(fresh, _cboards(children)) == exact
