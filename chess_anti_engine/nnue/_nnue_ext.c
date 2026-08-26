@@ -539,8 +539,13 @@ static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
 static PyObject *fastq_stats_dict(const CaeArmCtx *ctx) {
     const CaeFastqStats *s = &ctx->fastq_totals;
     return Py_BuildValue(
+        /* ⚑ 21 K (the u64 counters), then 1 I (max_ply_seen), then 4 i (the
+         * context's config snapshot) = 26 pairs.  An earlier revision had 20 K
+         * and Py_BuildValue silently consumed only 25 of the 26 pairs, dropping
+         * see_recapture_exempt entirely and reading terminal_draw through "I".
+         * A short format string does not raise; it truncates the dict. */
         "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
-        "s:K,s:K,s:K,s:K,s:I,s:i,s:i,s:i,s:i}",
+        "s:K,s:K,s:K,s:K,s:K,s:I,s:i,s:i,s:i,s:i}",
         "calls", ARM_STAT_U64(s->calls),
         "nodes", ARM_STAT_U64(s->nodes),
         "evasion_nodes", ARM_STAT_U64(s->evasion_nodes),

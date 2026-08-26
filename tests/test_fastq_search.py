@@ -1465,3 +1465,39 @@ def test_the_one_shot_eval_reports_the_counters_that_moved(eval_pack: Path) -> N
     _qvalues, qstats = _nnue_ext.arm_eval(REFERENCE_ARM, str(eval_pack), [board])
     assert qstats["nnue_evals"] > 0
     assert "resolved_leaves" in qstats
+
+
+def test_fastq_stats_publishes_every_configured_knob_it_snapshots(
+    eval_pack: Path,
+) -> None:
+    """⚑ THE REALIZED SNAPSHOT MUST CARRY EVERY KNOB, NOT MOST OF THEM.
+
+    ``fastq_stats()`` is the ONLY surface a caller can use to prove a requested
+    knob reached the context that will run.  A ``Py_BuildValue`` format string
+    one specifier short does not raise: it silently builds a dict without the
+    LAST pair, so the knob that vanishes is always ``see_recapture_exempt``, and
+    every existing test kept passing because they read the counters instead.
+
+    The behavioural test above (``..._reaches_the_search``) proves the knob
+    changes the search; it cannot prove the snapshot reports it, which is what a
+    requested-vs-realized check consumes.  So assert the key set directly, and
+    round-trip every knob through a non-default value so a specifier that is
+    present but misaligned is caught too.
+    """
+    for values in ((4, 32, 200, 1), (3, 16, 150, 0)):
+        max_qply, node_cap, delta_margin, exempt = values
+        _nnue_ext.fastq_set_config(max_qply, node_cap, delta_margin, exempt)
+        handle = _nnue_ext.arm_open(ARM, str(eval_pack))
+        snapshot = _nnue_ext.fastq_stats(handle)
+        realized = {
+            "max_qply": snapshot["max_qply"],
+            "node_cap": snapshot["node_cap"],
+            "delta_margin": snapshot["delta_margin"],
+            "see_recapture_exempt": snapshot["see_recapture_exempt"],
+        }
+        assert realized == {
+            "max_qply": max_qply,
+            "node_cap": node_cap,
+            "delta_margin": delta_margin,
+            "see_recapture_exempt": exempt,
+        }
