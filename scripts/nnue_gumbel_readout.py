@@ -75,7 +75,12 @@ ORACLE_ARMS: tuple[str, str] = (ARM_QSEARCH, ARM_QSEARCH_DAG)
 #: Report schema. 2 replaced the single-cell top level with ``cells`` +
 #: ``repeats`` + ``provenance``; a consumer that reads schema 1's flat keys off
 #: a schema 2 file gets a KeyError rather than a plausible wrong number.
-REPORT_SCHEMA = 2
+#: 3 split schema 2's ``workers`` — which meant REQUESTED — into
+#: ``workers_active`` (the throughput denominator, after empty buckets are
+#: dropped) and ``workers_requested`` (provenance). The key was RENAMED rather
+#: than redefined for the same reason the counter exists at all: a stale reader
+#: must fail, not silently divide by the wrong number.
+REPORT_SCHEMA = 3
 
 StatsSurface = Literal["arm", "fastq"]
 
@@ -1069,9 +1074,17 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
         "arm": arm,
         "repeat": cfg.repeat,
         "games": games,
-        # Active is the throughput denominator; requested is provenance.
-        # When games < workers, _build_worker_specs drops empty buckets.
-        "workers": len(results),
+        # ⚑ ACTIVE IS THE THROUGHPUT DENOMINATOR; requested is provenance.
+        # When games < workers, `_build_worker_specs` drops the empty buckets,
+        # so the requested count over-states the divisor.
+        #
+        # ⚑ AND IT IS NAMED `workers_active`, NOT `workers`. Schema 2 shipped a
+        # `workers` that meant REQUESTED. Redefining that key in place would
+        # hand every existing consumer a plausible wrong number — the exact
+        # failure this file's schema counter exists to prevent (see
+        # REPORT_SCHEMA: "a KeyError rather than a plausible wrong number").
+        # A renamed key plus a schema bump makes a stale reader fail loudly.
+        "workers_active": len(results),
         "workers_requested": cfg.workers,
         "plies": plies,
         "wall_s": wall_s,

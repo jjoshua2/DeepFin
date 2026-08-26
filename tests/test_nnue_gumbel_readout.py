@@ -1215,3 +1215,50 @@ def test_the_cli_accepts_the_whole_matrix_in_one_invocation(tmp_path: Path) -> N
     assert [c.arm for c in plan.arm_configs] == [
         readout.ARM_QSEARCH, readout.ARM_QSEARCH_DAG,
     ]
+
+
+def test_the_report_divides_throughput_by_ACTIVE_workers_not_requested() -> None:
+    """⚑ THE DENOMINATOR IS THE ONE THAT RAN, and it is pinned here.
+
+    `_build_worker_specs` drops empty buckets, so asking for 8 workers on 1
+    game runs 1. A report that published the REQUESTED count as the throughput
+    divisor would understate per-worker throughput by 8x while looking
+    perfectly well-formed — this repo's signature defect (a number that does
+    not mean what its name says) landing on the readout's headline metric.
+
+    The follow-up commit that fixed this covered `_build_worker_specs` only,
+    so the reported field itself was unpinned: reverting `_aggregate` to
+    `cfg.workers` failed no test. This closes that.
+
+    ⚑ It is `workers_active`, not `workers`. Schema 2 shipped `workers` meaning
+    REQUESTED, so redefining it in place would hand a stale consumer a
+    plausible wrong number; the rename plus the REPORT_SCHEMA 3 bump makes that
+    reader fail loudly instead. Both are asserted below.
+
+    Mutants that must kill it: `"workers_active": cfg.workers`; restoring the
+    key name to `"workers"`; leaving REPORT_SCHEMA at 2.
+    """
+    ext = FakeExt()
+    cfg = _run_config(
+        readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext),
+        workers=8, games=1,
+    )
+    provider = ext.arm_stats(ext.arm_open(readout.ARM_QSEARCH, "x"))
+    report = readout._aggregate([_worker_result(provider)], cfg, wall_s=1.0)
+
+    assert report["workers_active"] == 1, (
+        "one result was aggregated, so one worker ran"
+    )
+    assert report["workers_requested"] == 8, (
+        "the request is provenance and must survive alongside the realized count"
+    )
+    assert report["workers_active"] != report["workers_requested"], (
+        "if these agree the test cannot see the bug it exists for"
+    )
+    assert "workers" not in report, (
+        "schema 2's `workers` meant requested; a stale reader must KeyError "
+        "rather than silently read a redefined key"
+    )
+    assert readout.REPORT_SCHEMA >= 3, (
+        "the key rename is a breaking report change and must carry a bump"
+    )
