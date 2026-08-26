@@ -2,8 +2,8 @@
 
 Successor to the measured profile of the qsearch labeling path (py-spy `--native`,
 2,254 samples; banked and ledgered 2026-08-25, including the correction entry that
-replaced the earlier wrong Amdahl inference). Status: PLAN — each section becomes
-its own PR, ordering per §6. The qsearch-on-DAG retrofit and FastQ
+replaced the earlier wrong Amdahl inference). Status: PARTLY SHIPPED — S2 measured at −14.3% qsearch wall (#475), **S1 killed
+at design time** (§2), S3 still bench-gated (§4); ordering per §6. The qsearch-on-DAG retrofit and FastQ
 (`docs/fastq_design.md`) cut *nodes*; this plan cuts *cost per node*.
 
 ## 1. The measured baseline
@@ -21,7 +21,41 @@ All from the banked profile (ledger 2026-08-25) unless marked:
 Eval-side total ≈ **63%** of qsearch wall (27.2 + ~30 + 5.6 — the earlier
 "65–70%" draft claim was arithmetic drift; use the sum of the measured parts).
 
-## 2. PR-S1 — lazy eval (two-tier node value on the DAG)
+## 2. PR-S1 — lazy eval (two-tier node value on the DAG) — ⚑ KILLED 2026-08-26
+
+**STATUS: DEAD. The §2.3 gate fired; the whole section below is kept as the
+spec the gate was written against, not as work to do.** Predicted
+propagate-skip **0.488%** against the pre-committed 20% floor, on a banked
+201,671-probe dump (ledger 2026-08-26; `m` = 2806.1, held-out miss 0.0099%, so
+the margin is honest — it is not a calibration that can be retried wider).
+
+⚑ **Do not re-open this on the 0.488%.** That number reads as "the margin came
+out too wide, tune it", and the kill is not that. Two facts from the dump close
+the lane structurally:
+
+- **41.31% of stand-pat probes carry a fully-open window** (α, β = ∓200000),
+  and 44.12% are half-open. A fully-open window is uncuttable by *any* margin,
+  so ~41% of the population is unreachable before precision enters the
+  argument at all.
+- **The oracle ceiling — skip at `m = 0`, a hypothetically perfect
+  zero-uncertainty margin — is 34.07%**, worth `34.07% × 27.2% =` **9.27% of
+  qsearch wall. S2 measured 14.3%.** Even a *perfect* lazy eval loses to a PR
+  that is already built and measured.
+
+MECHANISM: our PSQT term is not a cheap approximation of our own evaluation.
+`|full − psqt|` is p50 **521**, mean 633, p99.9 2551, against `sd(full)` ≈
+**1950** — the residual is a third of the signal's own scale. Regressing `full`
+on `psqt` gives **slope 0.9175, Pearson r 0.9410**: the two are on the same
+scale, checked precisely because a scale mismatch is the one defect that would
+have faked a wide margin and produced a false kill. SF's lazy trick works
+because HalfKA's PSQT part *is* most of its eval. Ours is not; the positional
+network carries the signal.
+
+Re-open only if the net architecture changes such that PSQT carries most of the
+eval — and then re-measure the **window** distribution first, because a
+skip-rate metric over a population that is 41% unbounded windows is capped
+before any margin is chosen.
+
 
 SF skips the expensive positional network when the cheap material/PSQT part is
 already far outside the window. Our complication: the DAG stores the static
@@ -157,12 +191,15 @@ any corpus truncation is printed, not defaulted.
 
 ## 6. Sequencing
 
-qsearch-on-DAG retrofit (in flight) → FastQ-4+ → **the S1 calibration dump**
-(cheap instrumentation, no search change — it needs only the retrofit's
-provider) → **S1-vs-S2 order decided by that dump**: build S1 first only if
-its predicted propagate-skip saving (skip rate × 27.2%) exceeds S2's expected
-8–14%; otherwise S2 first. (An earlier draft hard-ordered S1 first on a "~2×"
-share ratio — the honest ratio is 27.2/18 ≈ 1.5×, and at S1's own 20% kill
-floor its saving is ~5.4 points, *below* S2's expectation, so the order is a
-measurement, not an assumption.) Then the verifier-net bench → S3 or its
-funeral.
+qsearch-on-DAG retrofit ✅ (#472) → FastQ-4+ ✅ (#473) → the S1 calibration
+dump ✅ (banked, ledger 2026-08-26) → **S1-vs-S2 order RESOLVED BY THAT DUMP:
+S2 first, and S1 never** (§2). S2 (#475) measured **−14.3% qsearch wall**,
+inside the §3 band; S1's *oracle ceiling* was 9.27%, so the ordering question
+answered itself more decisively than the share ratio could have. The dump was
+worth running for exactly this reason: an earlier draft hard-ordered S1 first
+on a "~2×" share ratio, the honest ratio was 27.2/18 ≈ 1.5×, and the truth was
+that S1 had no viable version at all.
+
+Remaining: the verifier-net bench → S3 or its funeral (§4). Note §4's
+asymmetry still holds in the direction that matters — S3 is the only
+our-net-specific item, so it is the only one a bench outcome can strand.
