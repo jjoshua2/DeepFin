@@ -40,13 +40,40 @@ def sample_boards(*, games: int, every: int, seed: int) -> list[CBoard]:
     return out
 
 
-def run(handle: object, boards: list[CBoard], repeats: int) -> tuple[list[int], float, dict[str, int]]:
-    values: list[int] = []
+def timed(handle: object, boards: list[CBoard]) -> tuple[list[int], float]:
     start = time.perf_counter()
-    for _ in range(repeats):
-        values = _nnue_ext.arm_handle_eval(handle, boards)
-    elapsed = time.perf_counter() - start
-    return values, elapsed, _nnue_ext.arm_stats(handle)
+    values = _nnue_ext.arm_handle_eval(handle, boards)
+    return values, time.perf_counter() - start
+
+
+def run_alternating(
+    inc: object, refresh: object, boards: list[CBoard], repeats: int
+) -> tuple[list[int], list[int], dict[str, float]]:
+    """Time both providers, swapping which one goes first on each repetition.
+
+    ⚑ ORDER IS A BIAS OF THE SAME ORDER AS THE EFFECT. Timing the incremental
+    arm first every time hands it the cold caches, the first turbo ramp and the
+    first page faults, and gives the refresh arm a machine the other one just
+    warmed up — on the same boards, through the same weights. Alternating
+    cancels it; keeping the two orders apart in the return says how big it was,
+    so a "speedup" that is really a position-in-the-run effect is visible
+    instead of averaged into the headline.
+    """
+    walls = {"inc_first": 0.0, "inc_second": 0.0, "ref_first": 0.0, "ref_second": 0.0}
+    inc_values: list[int] = []
+    ref_values: list[int] = []
+    for rep in range(repeats):
+        if rep % 2 == 0:
+            inc_values, dt = timed(inc, boards)
+            walls["inc_first"] += dt
+            ref_values, dt = timed(refresh, boards)
+            walls["ref_second"] += dt
+        else:
+            ref_values, dt = timed(refresh, boards)
+            walls["ref_first"] += dt
+            inc_values, dt = timed(inc, boards)
+            walls["inc_second"] += dt
+    return inc_values, ref_values, walls
 
 
 def main() -> int:
@@ -74,8 +101,11 @@ def main() -> int:
     _nnue_ext.arm_handle_eval(inc, boards[: min(16, len(boards))])
     _nnue_ext.arm_handle_eval(refresh, boards[: min(16, len(boards))])
 
-    inc_values, inc_s, inc_stats = run(inc, boards, args.repeats)
-    ref_values, ref_s, ref_stats = run(refresh, boards, args.repeats)
+    inc_values, ref_values, walls = run_alternating(inc, refresh, boards, args.repeats)
+    inc_s = walls["inc_first"] + walls["inc_second"]
+    ref_s = walls["ref_first"] + walls["ref_second"]
+    inc_stats = _nnue_ext.arm_stats(inc)
+    ref_stats = _nnue_ext.arm_stats(refresh)
 
     if inc_values != ref_values:
         mismatch = next(i for i, (a, b) in enumerate(zip(inc_values, ref_values, strict=True)) if a != b)
@@ -110,7 +140,26 @@ def main() -> int:
     )
     print(f"incremental: {evals / inc_s:,.0f} roots/s  wall={inc_s:.3f}s")
     print(f"refresh:     {evals / ref_s:,.0f} roots/s  wall={ref_s:.3f}s")
-    print(f"speedup:     {speedup:.3f}x")
+    print(f"speedup:     {speedup:.3f}x  (order-alternated over {args.repeats} repeats)")
+
+    # Both orders only exist once there are at least two repetitions. Print them
+    # separately so a speedup that is really a went-second effect is visible.
+    # Incremental leads on even repetitions, refresh on odd ones.
+    even_reps, odd_reps = (args.repeats + 1) // 2, args.repeats // 2
+    if odd_reps:
+        per = len(boards)
+        rates = {
+            "inc_first": per * even_reps / walls["inc_first"],
+            "inc_second": per * odd_reps / walls["inc_second"],
+            "ref_first": per * odd_reps / walls["ref_first"],
+            "ref_second": per * even_reps / walls["ref_second"],
+        }
+        print(
+            f"  by order:  incremental {rates['inc_first']:,.0f} first / "
+            f"{rates['inc_second']:,.0f} second"
+            f"   refresh {rates['ref_first']:,.0f} first / "
+            f"{rates['ref_second']:,.0f} second"
+        )
     print(f"qnodes:      {inc_stats['qnodes']:,}  values: EXACT")
     return 0
 
