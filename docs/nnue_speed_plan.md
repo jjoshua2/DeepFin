@@ -2,11 +2,12 @@
 
 Successor to the measured profile of the qsearch labeling path (py-spy `--native`,
 2,254 samples; banked and ledgered 2026-08-25, including the correction entry that
-replaced the earlier wrong Amdahl inference). Status: PARTLY SHIPPED — S2 measured
-at −14.3% qsearch wall (#475), the **preregistered qsearch-DAG S1 global-margin
-design was killed at design time** (§2), and S3 is still bench-gated (§4). The
-qsearch-on-DAG retrofit and FastQ (`docs/fastq_design.md`) cut *nodes*; this plan
-cuts *cost per node*.
+replaced the earlier wrong Amdahl inference). Status: ACTIVE PLAN — S2 is built
+and measured at −14.3% qsearch wall in open PR #475 but is **not shipped until
+that PR merges**; the **preregistered qsearch-DAG S1 global-margin design was
+killed at design time** (§2), and S3 is still bench-gated (§4). The qsearch-on-DAG
+retrofit and FastQ (`docs/fastq_design.md`) cut *nodes*; this plan cuts *cost per
+node*.
 
 ## 1. The measured baseline
 
@@ -180,20 +181,25 @@ decision rule. S2 is net-independent; S3 is our-net-specific. The qsearch S1
 verdict above is already closed for its registered population and does not need
 the verifier bench.
 
-## 5. The regression gate (specified with S1, applies to all)
+## 5. The regression gate — reassigned to S2/#475 after S1 died
 
-A `bench`-style fixed-corpus harness that **fails, not reports**: nonzero exit
-on any node-count change (the correctness tripwire; value-changing knobs are
-asserted by their own oracle) or on a µs/node regression **> 3%** vs the banked
-baseline. Reports µs/node, evals/s, node counts, per-provider counters. No silent
-caps: any corpus truncation is printed, not defaulted.
+The gate remains a required deliverable; killing its original owner does not
+kill the acceptance criterion. **S2/#475 now owns it and must carry it before
+merge** (or depend on a prerequisite gate PR that lands first): a `bench`-style
+fixed-corpus harness that **fails, not reports**. It exits nonzero on any
+node-count change (the correctness tripwire; value-changing knobs are asserted
+by their own oracle) or on a µs/node regression **> 3%** vs the banked baseline.
+It reports µs/node, evals/s, node counts and per-provider counters. No silent
+caps: any corpus truncation is printed, not defaulted. The same harness then
+rides unchanged with every later per-node speed PR, including S3 if S3 survives
+its verifier-net gate.
 
 ## 6. Sequencing
 
 qsearch-on-DAG retrofit ✅ (#472) → FastQ-4+ ✅ (#473) → registered qsearch-DAG
 S1 calibration ✅ → **registered qsearch S1 killed by its own 20% probe gate** →
-S2 (#475), which measured **−14.3% qsearch wall** and remains the next speed win
-to land.
+S2 (**open #475**, measured **−14.3% qsearch wall**, pending current-head CI,
+review and the §5 regression-gate deliverable) → merge only after those gates.
 
 The calibration does **not** establish “S1 never” for FastQ or every possible
 conditional margin, and it no longer tries to compare a probe-weighted `m=0`
