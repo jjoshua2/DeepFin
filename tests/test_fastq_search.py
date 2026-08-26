@@ -1227,3 +1227,241 @@ def test_an_equal_see_tie_is_broken_by_mvv_lva(eval_pack: Path) -> None:
         "both children were expanded; node_cap=1 did not isolate the first move"
     )
     assert _nnue_ext.fastq_stats(handle)["nodes"] == 2
+
+
+# ===========================================================================
+# Rule draws (50-move / repetition / insufficient material)
+# ===========================================================================
+
+#: ⚑ EVERY FACT BELOW COMES FROM THE CBoard AT THE SEARCH NODE, NEVER FROM THE
+#: DAG PAYLOAD. Halfmove clock and repetition history are exactly what the
+#: canonical position EXCLUDES (§4.2), so drawn-ness cannot be cached against a
+#: node: two search paths reaching the same structural position can disagree
+#: about whether it is drawn and both are right. The fixtures below therefore
+#: carry their clock in the FEN and are read per visit.
+
+#: In check, 50-move clock already at 100, and one evasion is a CAPTURE — which
+#: resets the clock, so that child is NOT drawn and carries a real evaluation.
+#: That is what makes this row discriminating: searching the evasions instead of
+#: adjudicating returns the capture's score.
+DRAW_IN_CHECK_FIFTY_FEN = "kR6/8/8/3r4/8/8/8/7K b - - 100 60"
+
+#: In check from Nb6 with K+N vs K on the board.
+#: ⚑ THIS ROW CANNOT DISCRIMINATE AND IS KEPT ANYWAY, LABELLED. Insufficient
+#: material is closed under moving — a position with no pawns cannot gain
+#: material — so every evasion is also drawn and the searched answer coincides
+#: with 0. It guards the CLASS (an in-check node must consult the draw rules)
+#: without being able to fail if only this rule regresses. Saying so is the
+#: point; an undocumented vacuous fixture is what this file exists to avoid.
+DRAW_IN_CHECK_INSUFFICIENT_FEN = "k7/8/1N6/8/8/8/8/4K3 b - - 0 1"
+
+#: Quiet nodes, same two rules. These guard the branch that was ALREADY correct.
+DRAW_QUIET_FIFTY_FEN = "4k3/8/8/3p4/4P3/8/8/4K3 w - - 100 60"
+DRAW_QUIET_INSUFFICIENT_FEN = "k7/8/2N5/8/8/8/8/4K3 b - - 0 1"
+
+_DRAW_FENS = (
+    DRAW_IN_CHECK_FIFTY_FEN,
+    DRAW_IN_CHECK_INSUFFICIENT_FEN,
+    DRAW_QUIET_FIFTY_FEN,
+    DRAW_QUIET_INSUFFICIENT_FEN,
+)
+
+
+@pytest.mark.parametrize("fen", list(_DRAW_FENS))
+def test_a_rule_drawn_position_scores_zero_in_check_or_not(
+    eval_pack: Path, fen: str
+) -> None:
+    """The in-check branch used to skip the draw rules entirely.
+
+    `cae_resolve_node` tests mate, then `cae_resolver_is_drawn`, then recurses.
+    FastQ owns its evasion recursion (§3.2) and had only the mate half, so an
+    in-check position that was already over by 50-move, repetition or
+    insufficient material had its evasions searched and returned a live score.
+
+    ⚑ ORDER IS MATE-THEN-DRAW AND SWAPPING IT BREAKS MATES. `cae_resolver_is_drawn`
+    is `cboard_search_terminal`, which answers 1 for CHECKMATE too — it reports
+    "terminal", not "drawn". The mate tests elsewhere in this file are what would
+    catch the swap.
+    """
+    board = chess.Board(fen)
+    values, stats, _handle = _run(eval_pack, [board])
+    assert values[0] == 0, f"a rule-drawn position scored {values[0]}"
+    assert stats["terminal_draw"] >= 1
+    assert stats["nodes"] == 1, "a decided position should not have been searched"
+
+    # The reference arm is the ruler for this whole class, not a second opinion.
+    reference = _nnue_ext.arm_open(REFERENCE_ARM, str(eval_pack))
+    assert (
+        _nnue_ext.arm_handle_eval(reference, [CBoard.from_board(board)])[0] == 0
+    ), "qsearch disagrees; the two arms must adjudicate this class identically"
+
+
+def test_the_in_check_draw_fixture_can_actually_fail(eval_pack: Path) -> None:
+    """⚑ ANTI-VACUITY FOR THE ROW ABOVE, BECAUSE THREE OF THE FOUR CANNOT FAIL.
+
+    Both insufficient-material rows and the quiet 50-move row return 0 whether or
+    not the in-check branch consults the draw rules — their evasions are drawn
+    too, so the searched answer is 0 by coincidence. Only
+    DRAW_IN_CHECK_FIFTY_FEN discriminates, because Kxb8 resets the halfmove clock
+    and that child carries a real evaluation. Measured with the draw check
+    deleted: it returned 2103.
+
+    This asserts the property that makes it discriminating, so the row cannot
+    quietly become another one that always passes.
+    """
+    board = chess.Board(DRAW_IN_CHECK_FIFTY_FEN)
+    assert board.is_check()
+    assert board.halfmove_clock >= 100
+    resets = [m for m in board.legal_moves if board.is_capture(m) or board.piece_type_at(m.from_square) == chess.PAWN]
+    assert resets, "no evasion resets the clock, so every child is drawn too"
+    child = board.copy(stack=False)
+    child.push(resets[0])
+    assert child.halfmove_clock == 0
+    weights = _nnue_ext.load(str(eval_pack))
+    assert _nnue_ext.evaluate(weights, CBoard.from_board(child)) != 0, (
+        "the clock-resetting child evaluates to 0 anyway; the fixture is vacuous"
+    )
+
+
+# ===========================================================================
+# §3.4's recapture exemption applies to the square just CAPTURED on
+# ===========================================================================
+
+#: In check. Every evasion is a non-capture, and at one of those children a
+#: SEE-negative capture lands on the evasion's destination square. Swept: the
+#: exemption count is 0 with the capture test and 1 without it.
+EXEMPT_EVASION_FEN = "rnbqkbnr/ppp2ppp/8/1B1pp3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 3"
+
+#: A quiet root whose tactical list contains PROMOTIONS that capture nothing —
+#: the other way a non-capture reaches cae_fastq_child_value. Swept: 0 vs 3.
+EXEMPT_PROMOTION_FEN = "rnq1kbn1/p3p2r/5ppp/2p5/p2P2P1/2PP1b1N/RP1BBP1P/1N1QK2R b Kq - 0 14"
+
+
+@pytest.mark.parametrize("fen", [EXEMPT_EVASION_FEN, EXEMPT_PROMOTION_FEN])
+def test_a_non_capture_does_not_create_a_recapture_square(
+    eval_pack: Path, fen: str
+) -> None:
+    """§3.4 exempts a SEE-negative capture on "the square just captured on".
+
+    The first version recorded EVERY child's destination, so a non-capturing
+    evasion — or a quiet promotion — handed the next node an exemption for a
+    square nothing had been captured on, and a losing capture there was searched
+    instead of pruned. Both routes are covered: the evasion loop passes every
+    legal move through, and the tactical loop passes promotions that capture
+    nothing.
+
+    ⚑ Anti-vacuity is the control test below, not an assertion here: `== 0` is
+    trivially satisfied by an exemption that never fires anywhere.
+    """
+    _values, stats, _handle = _run(eval_pack, [chess.Board(fen)])
+    assert stats["see_prunes"] > 0, (
+        "nothing was SEE-pruned, so there was no exemption decision to get wrong"
+    )
+    assert stats["recapture_exemptions"] == 0, (
+        f"{stats['recapture_exemptions']} exemptions granted where no capture "
+        "created a recapture square"
+    )
+
+
+#: A real recapture: a SEE-negative capture onto the square the parent just
+#: captured on. ⚑ SWEPT UNDER BOTH PACKS, unlike RECAPTURE_FEN above, which fires
+#: 11 exemptions on the production net and ZERO on the synthetic one — the
+#: PSQT-only pack moves stand-pat, which moves alpha, which delta-prunes the
+#: capture before the exemption is ever consulted. A control fixture that is
+#: vacuous under the mandatory pack is not a control.
+RECAPTURE_BOTH_PACKS_FEN = (
+    "rn2k1nr/pbqp2p1/7p/1pp1p2R/P1PP4/1P2p3/1Q1BNPP1/2KR1BN1 b kq - 1 16"
+)
+
+
+def test_a_real_recapture_is_still_exempt(eval_pack: Path) -> None:
+    """The control: narrowing the rule must not switch the exemption off entirely.
+
+    Without this, `recapture_exemptions == 0` above would be satisfied by a
+    feature that no longer works at all — which is the failure mode a tightening
+    change actually risks, and the one this very commit could have introduced.
+    """
+    _values, stats, _handle = _run(eval_pack, [chess.Board(RECAPTURE_BOTH_PACKS_FEN)])
+    assert stats["recapture_exemptions"] > 0, (
+        "the exemption never fires any more; the capture test disabled it"
+    )
+
+
+# ===========================================================================
+# §6 delta_margin at the extreme — the knob must saturate, not invert
+# ===========================================================================
+
+#: int32 max. A margin this large is a request to DISABLE delta pruning.
+_INT32_MAX = 2**31 - 1
+
+
+def test_an_enormous_delta_margin_disables_pruning_rather_than_inverting(
+    eval_pack: Path,
+) -> None:
+    """⚑⚑ THE KNOB USED TO REVERSE AT THE TOP OF ITS RANGE.
+
+    Delta pruning skips a capture when `stand_pat + victim + margin <= alpha`.
+    In int32 a near-INT_MAX margin makes that sum WRAP NEGATIVE, so the sum is
+    suddenly below every alpha and everything is pruned: "prune less" becomes
+    "prune everything", silently, with no error and a plausible-looking node
+    count. This is the §6 extreme-value mutation for `delta_margin` — the knob is
+    proven to reach the search AND to mean the same thing at the end of its range
+    as in the middle.
+
+    The comparison is done in int64 rather than the knob being capped, because a
+    cap turns an out-of-range request into a different in-range one, which is the
+    same class of silent substitution.
+    """
+    board = chess.Board(KNOB_FEN)
+    huge, huge_stats, _h1 = _run(eval_pack, [board], delta_margin=_INT32_MAX)
+    safe, safe_stats, _h2 = _run(eval_pack, [board], delta_margin=1_000_000)
+    _tight, tight_stats, _h3 = _run(eval_pack, [board], delta_margin=0)
+
+    assert huge_stats["delta_prunes"] == 0, (
+        f"a margin of INT32_MAX pruned {huge_stats['delta_prunes']} moves; the "
+        "arithmetic wrapped and the knob inverted"
+    )
+    # Anti-vacuity: the knob does something at this position, so 0 is a result
+    # rather than the only value it ever takes.
+    assert tight_stats["delta_prunes"] > 0, "delta pruning never fires here"
+
+    # Two ways of saying "no pruning" must agree exactly.
+    assert safe_stats["delta_prunes"] == 0
+    assert huge[0] == safe[0], (
+        f"INT32_MAX gave {huge[0]} where 1e6 gave {safe[0]}; the extreme value "
+        "is not being read as the same instruction"
+    )
+    assert huge_stats["nodes"] == safe_stats["nodes"]
+    assert huge_stats["delta_margin"] == _INT32_MAX, "the knob did not reach the context"
+
+
+# ===========================================================================
+# The one-shot arm_eval() surface reports FastQ's own counters
+# ===========================================================================
+
+
+def test_the_one_shot_eval_reports_the_counters_that_moved(eval_pack: Path) -> None:
+    """⚑⚑ THE THIRD PLACE THIS DEFECT LIVED, AND THE FIRST TWO WERE FIXED FIRST.
+
+    `arm_stats()` refused a FastQ handle; `fastq_stats()` refused a non-FastQ
+    one. `arm_eval()` builds its own context and never sees a handle, so it went
+    on returning `CaeArmStats` for an arm that never writes them — a
+    fully-populated dict of zeros with `nnue_evals` among them.
+
+    Fixing a defect class in the two places you happen to be looking at is how
+    the third survives, which is why this asserts the surface rather than the
+    two that were already closed.
+    """
+    board = CBoard.from_board(chess.Board(KNOB_FEN))
+    values, stats = _nnue_ext.arm_eval(ARM, str(eval_pack), [board])
+    assert len(values) == 1
+    assert stats["nnue_evals"] > 0, "the one-shot path still reports resolver zeros"
+    # A FastQ-only key, so this is the right dict rather than a coincidence.
+    assert "quiet_returns" in stats
+    assert stats["calls"] == 1
+    _assert_counter_identity(stats)
+
+    # The other arms are untouched and still get the resolver block.
+    _qvalues, qstats = _nnue_ext.arm_eval(REFERENCE_ARM, str(eval_pack), [board])
+    assert qstats["nnue_evals"] > 0
+    assert "resolved_leaves" in qstats

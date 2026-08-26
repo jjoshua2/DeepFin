@@ -143,6 +143,10 @@ typedef struct CaeFastqMove {
     int32_t see;
     int32_t victim;   /* for delta pruning, and the MVV half of the tiebreak */
     int32_t attacker; /* the LVA half */
+    /* ⚑ A PROMOTION REACHES THIS LOOP WITHOUT BEING A CAPTURE, so "is in the
+     * tactical list" does not imply "captured something" and the recapture
+     * square cannot be inferred from membership. */
+    int is_capture;
 } CaeFastqMove;
 
 /* §5's ordering: SEE descending, MVV-LVA as the tiebreak WITHIN an equal-SEE
@@ -186,6 +190,7 @@ static int cae_fastq_tactical_moves(
         if (promo == 0 && !cae_fastq_is_capture(b, &pm)) continue;
         out[count].action = moves[i];
         out[count].to_sq = pm.to_sq;
+        out[count].is_capture = cae_fastq_is_capture(b, &pm);
         out[count].see = cae_see_capture(b, pm.from_sq, pm.to_sq, promo);
         out[count].victim = cae_fastq_victim_value(b, &pm);
         {
@@ -264,10 +269,18 @@ static int cae_fastq_intern_child(
     return CAE_VALUE_OK;
 }
 
-/* One child: push the move, intern, recurse negamax. */
+/* One child: push the move, intern, recurse negamax.
+ *
+ * ⚑⚑ `was_capture` IS WHAT MAKES THE RECAPTURE SQUARE MEAN ITS NAME. §3.4
+ * exempts a SEE-negative capture only on "the square just captured on". The
+ * first version recorded EVERY child's destination, so a non-capturing evasion
+ * — or a quiet promotion — handed the next node an exemption for a square
+ * nothing was captured on, and a losing capture there was searched instead of
+ * pruned. The evasion loop is where this bites hardest: every legal evasion goes
+ * through here, and almost none of them are captures. */
 static int cae_fastq_child_value(
     CaeFastqCtx *q, const CBoard *b, int32_t node_id, int action, int to_sq,
-    int ply, int32_t alpha, int32_t beta, int32_t *out_value)
+    int was_capture, int ply, int32_t alpha, int32_t beta, int32_t *out_value)
 {
     CBoard child;
     memcpy(&child, b, sizeof(CBoard));
@@ -278,7 +291,7 @@ static int cae_fastq_child_value(
     if (status != CAE_VALUE_OK) return status;
 
     const int saved_square = q->recapture_square;
-    q->recapture_square = to_sq;
+    q->recapture_square = was_capture ? to_sq : -1;
     int32_t child_value = 0;
     const int rc = cae_fastq_node(q, &child, child_id, ply + 1, -beta, -alpha, &child_value);
     q->recapture_square = saved_square;
@@ -343,6 +356,30 @@ static int cae_fastq_node(
             q->path_len--;
             return CAE_VALUE_OK;
         }
+        /* ⚑⚑ A RULE DRAW ENDS AN IN-CHECK NODE TOO, AND THIS BRANCH USED TO MISS
+         * IT. Being in check does not stop the 50-move counter, a repetition, or
+         * insufficient material: K+N vs K can give check with the material
+         * already dead. Without this, such a node searched its evasions and
+         * returned a nonzero score for a position that is over.
+         *
+         * ⚑ THE ORDER IS MATE-THEN-DRAW AND IT IS NOT INTERCHANGEABLE.
+         * cae_resolver_is_drawn is cboard_search_terminal, which answers 1 for
+         * CHECKMATE as well — it reports "terminal", not "drawn". Testing it
+         * first would score every mate as 0. cae_resolve_node
+         * (_check_resolver.h) has the same two lines in the same order for the
+         * same reason; this is that rule applied, not a second opinion.
+         *
+         * ⚑ THE FACT COMES FROM `b`, NOT FROM THE NODE. Halfmove clock and
+         * repetition history are exactly what the canonical DAG position
+         * EXCLUDES (§4.2), so this must never be cached in the payload: two
+         * search paths reaching the same structural node can disagree about
+         * whether it is drawn, and both are right. */
+        if (cae_resolver_is_drawn(b)) {
+            q->stats->terminal_draw++;
+            *out_value = 0;
+            q->path_len--;
+            return CAE_VALUE_OK;
+        }
         best = -CAE_FASTQ_INF;
         int searched = 0;
         for (int i = 0; i < n_moves; i++) {
@@ -351,7 +388,8 @@ static int cae_fastq_node(
             const PolicyMove pm = POLICY_LUT[b->turn][moves[i]];
             int32_t value = 0;
             status = cae_fastq_child_value(
-                q, b, node_id, moves[i], pm.to_sq, ply, alpha, beta, &value);
+                q, b, node_id, moves[i], pm.to_sq, cae_fastq_is_capture(b, &pm),
+                ply, alpha, beta, &value);
             if (status != CAE_VALUE_OK) goto done;
             searched = 1;
             if (value > best) best = value;
@@ -467,7 +505,16 @@ static int cae_fastq_node(
             /* §3.4 delta pruning. ⚑ PER VISIT, NEVER STORED: it reads `alpha`,
              * so folding it into the certificate would let the first caller's
              * window decide the answer for every later one. */
-            if (stand_pat + mv->victim + q->cfg.delta_margin <= alpha) {
+            /* ⚑⚑ int64, BECAUSE A BIG MARGIN MUST MEAN "PRUNE LESS". In int32
+             * a near-INT_MAX delta_margin wraps this sum NEGATIVE, so the
+             * request to disable delta pruning turns into prune-everything —
+             * the knob inverts instead of saturating. The operands are bounded
+             * (stand_pat is clamped to ±32000, victim to a promoted queen) so
+             * only the knob can overflow, and widening the comparison is enough;
+             * capping the knob would instead make an out-of-range value silently
+             * become a different in-range one. */
+            if ((int64_t)stand_pat + mv->victim + q->cfg.delta_margin
+                <= (int64_t)alpha) {
                 q->stats->delta_prunes++;
                 continue;
             }
@@ -480,7 +527,8 @@ static int cae_fastq_node(
 
             int32_t value = 0;
             status = cae_fastq_child_value(
-                q, b, node_id, mv->action, mv->to_sq, ply, alpha, beta, &value);
+                q, b, node_id, mv->action, mv->to_sq, mv->is_capture,
+                ply, alpha, beta, &value);
             if (status != CAE_VALUE_OK) goto done;
             if (value > best) best = value;
             if (best > alpha) alpha = best;
