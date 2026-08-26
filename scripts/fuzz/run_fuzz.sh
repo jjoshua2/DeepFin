@@ -25,6 +25,32 @@ cd "$(dirname "$0")/../.."
 
 MODE="${1:-libfuzzer}"
 
+# ⚑ MUST STAY IN LOCK-STEP WITH _CBOARD_FAST_SLIDER_MACROS IN setup.py.
+# tests/test_slider_tables.py parses both and fails if they diverge — without
+# the defines the libFuzzer harness compiles CBoard's LEGACY ray walkers, so it
+# would fuzz an implementation production does not run while reporting coverage
+# of "the CBoard C implementation". The `diff` and `batch` modes get these for
+# free: they go through setup.py.
+CBOARD_FAST_SLIDER_DEFINES=(
+  -DDEEPFIN_FAST_SLIDERS=1
+  -Dinit_attack_tables=init_attack_tables_reference
+  -Dslider_attacks=slider_attacks_reference
+  -Dbishop_attacks=bishop_attacks_reference
+  -Drook_attacks=rook_attacks_reference
+  -Dqueen_attacks=queen_attacks_reference
+  -Dis_attacked_by=is_attacked_by_reference
+)
+
+# Backend selection matches setup.py's: plain clang defines no __BMI2__, so this
+# fuzzes the MAGIC arm — the one the portable worker wheels and CI ship. Set
+# FUZZ_NATIVE=1 to fuzz whatever arm this host's -march=native selects instead
+# (PEXT on Zen 3+/Haswell+). Both arms are worth fuzzing; neither covers the
+# other, because the index computation is the part that differs.
+FUZZ_ARCH_FLAGS=()
+if [ "${FUZZ_NATIVE:-0}" = "1" ]; then
+  FUZZ_ARCH_FLAGS=(-march=native)
+fi
+
 run_sanitized_py() {
   CAE_EXT_SANITIZE=address,undefined python3 setup.py build_ext --inplace --force
   local LIBASAN
@@ -41,6 +67,7 @@ case "$MODE" in
     SECONDS_BUDGET="${2:-120}"
     mkdir -p scripts/fuzz/corpus
     clang -g -O1 -fsanitize=fuzzer,address,undefined \
+      "${FUZZ_ARCH_FLAGS[@]}" "${CBOARD_FAST_SLIDER_DEFINES[@]}" \
       -Ichess_anti_engine/encoding \
       scripts/fuzz/cboard_libfuzzer.c -lm \
       -o scripts/fuzz/cboard_fuzz

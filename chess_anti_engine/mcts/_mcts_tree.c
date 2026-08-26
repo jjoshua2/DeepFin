@@ -6118,6 +6118,7 @@ static PyMethodDef module_methods[] = {
     {"temperature_resample", py_temperature_resample, METH_VARARGS,
      "temperature_resample(probs, temps, actions, rand_vals) -> None. "
      "Apply per-game temperature and resample actions in-place. GIL released."},
+    DEEPFIN_SLIDER_PY_METHODS
     {NULL}
 };
 
@@ -6214,6 +6215,16 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * Python MIN_TOPK refusal the single authority on where that knob is
      * clamped. The tripwire is coarse on purpose -- do not weaken it.) */
     if (PyModule_AddIntConstant(m, "GSS_MAX_CANDS", GSS_MAX_CANDS) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    /* Which slider backend THIS binary compiled: "pext", "magic", or "rays".
+     * The tree carries its own copy of CBoard's movegen — a provider reaches it
+     * through a capsule, never an #include — so this answers only for
+     * _mcts_tree.so and must be read per module. */
+    if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
+                                   DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
         Py_DECREF(m);
         return NULL;
     }
