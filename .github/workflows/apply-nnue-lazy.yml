@@ -16,7 +16,7 @@ jobs:
         with:
           ref: perf/nnue-lazy-eval
           fetch-depth: 0
-      - name: Disambiguate the one repeated allocator fragment
+      - name: Disambiguate the one repeated target fragment
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -28,8 +28,8 @@ jobs:
               raise RuntimeError('replace_function anchor missing')
           s = s.replace(anchor, helper + anchor, 1)
           call_prefix = '''replace_once(\n    store_h,\n    """    free(h->states);\\n    free(h->values);\\n    free(h->value_valid);\\n    free(h->quiet_bits);\\n""",'''
-          if s.count(call_prefix) != 2:
-              raise RuntimeError(f'expected two ambiguous free calls, got {s.count(call_prefix)}')
+          if s.count(call_prefix) != 1:
+              raise RuntimeError(f'expected one transformer call, got {s.count(call_prefix)}')
           idx = s.find(call_prefix)
           s = s[:idx] + s[idx:].replace('replace_once(', 'replace_first(', 1)
           p.write_text(s)
