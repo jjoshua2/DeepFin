@@ -23,6 +23,14 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_features_ext.c",
             "chess_anti_engine/encoding/_features_impl.h",
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            # This extension is built WITHOUT DEEPFIN_FAST_SLIDERS, so the
+            # preprocessor never actually opens the slider header. It is listed
+            # anyway because this list mirrors the textual include graph (that
+            # is what the coverage test walks, and what keeps a missing entry
+            # from hiding): the cost of the extra edge is one unnecessary
+            # rebuild, and the cost of omitting it would be a silent stale .so
+            # the day someone does give this extension the macros.
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
     ),
     ExtensionSpec(
@@ -32,6 +40,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_cboard_impl.h",
             "chess_anti_engine/encoding/_features_impl.h",
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
     ),
     ExtensionSpec(
@@ -43,6 +52,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/encoding/_cboard_impl.h",
             "chess_anti_engine/encoding/_features_impl.h",
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
     ),
     ExtensionSpec(
@@ -67,6 +77,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             # freshness question is what the OBJECT was compiled from, so the
             # graph is transitive and the list has to be too.
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
         ),
     ),
 )
