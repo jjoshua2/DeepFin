@@ -44,6 +44,31 @@
 #include "../mcts/_position_dag.h"
 #include "_nnue_state.h"
 
+/* ⚑⚑ THE CERTIFICATE IS A FACT ABOUT THE POSITION, NEVER A SEARCH RESULT.
+ * `quiet(node) := !in_check && no promotion available && no capture with
+ * SEE >= 0` (docs/fastq_design.md §3.1). Every term is computable from the
+ * structural position ALONE — the same pieces/turn/castling/exercisable-ep tuple
+ * the DAG keys on — so a certificate computed under one caller's window is
+ * correct for every other caller, and for every path that reaches the node.
+ * That is precisely why it may be stored, and it is why §4.2's ban on caching
+ * backed-up search values does not touch it.
+ *
+ * The tempting extra term is delta pruning: "no capture can affect THIS caller's
+ * alpha". It looks like it belongs here and it must NOT be stored — it depends
+ * on alpha, so the first caller's window would silently decide the answer for
+ * everyone afterwards. Delta pruning is a per-visit decision in the search
+ * (§3.4); §8 mutant 1 folds it in here and a test has to fail.
+ *
+ * COMPONENTS ARE STORED, NOT JUST THE BOOLEAN, so a test can tell "quiet because
+ * nothing hangs" apart from "quiet because we never looked". */
+#define CAE_DAG_CERT_COMPUTED  0x01u  /* the other bits mean nothing without it */
+#define CAE_DAG_CERT_IN_CHECK  0x02u
+#define CAE_DAG_CERT_PROMOTION 0x04u  /* a promotion is available to the mover */
+#define CAE_DAG_CERT_GOOD_CAP  0x08u  /* some capture has SEE >= 0 */
+
+#define CAE_DAG_CERT_LOUD (CAE_DAG_CERT_IN_CHECK | CAE_DAG_CERT_PROMOTION \
+                           | CAE_DAG_CERT_GOOD_CAP)
+
 typedef struct CaeNnueDagHandle {
     CaePositionDag dag;
     CaeNnueWeights *weights;
@@ -54,6 +79,14 @@ typedef struct CaeNnueDagHandle {
     CaeNnueState *states;
     int32_t *values;
     uint8_t *value_valid;
+    /* FastQ's quiet certificate (docs/fastq_design.md §3.1/§4.1), one byte per
+     * node, lazily filled. It lives HERE rather than in the search because it is
+     * a window-independent, history-free fact about the structural position —
+     * the same class of thing as the static value beside it — and storing it is
+     * what makes it survive across calls. It is NOT a search result: see the
+     * ⚑⚑ block on CAE_DAG_CERT_* above. Zero means "not computed yet", which is
+     * also what a reset leaves behind. */
+    uint8_t *quiet_bits;
     int32_t payload_cap;
 
     uint64_t state_inits;
@@ -72,10 +105,12 @@ static void cae_nnue_dag_store_release(CaeNnueDagHandle *h) {
     free(h->states);
     free(h->values);
     free(h->value_valid);
+    free(h->quiet_bits);
     h->weights = NULL;
     h->states = NULL;
     h->values = NULL;
     h->value_valid = NULL;
+    h->quiet_bits = NULL;
     h->payload_cap = 0;
 }
 
@@ -92,23 +127,28 @@ static int cae_nnue_dag_grow_payload(CaeNnueDagHandle *h, int32_t need) {
     if (posix_memalign((void **)&new_states, 32, state_bytes) != 0) return -1;
     int32_t *new_values = (int32_t *)malloc((size_t)new_cap * sizeof(*new_values));
     uint8_t *new_valid = (uint8_t *)calloc((size_t)new_cap, sizeof(*new_valid));
-    if (!new_values || !new_valid) {
+    uint8_t *new_cert = (uint8_t *)calloc((size_t)new_cap, sizeof(*new_cert));
+    if (!new_values || !new_valid || !new_cert) {
         free(new_states);
         free(new_values);
         free(new_valid);
+        free(new_cert);
         return -1;
     }
     if (h->payload_cap > 0) {
         memcpy(new_states, h->states, (size_t)h->payload_cap * sizeof(*new_states));
         memcpy(new_values, h->values, (size_t)h->payload_cap * sizeof(*new_values));
         memcpy(new_valid, h->value_valid, (size_t)h->payload_cap * sizeof(*new_valid));
+        memcpy(new_cert, h->quiet_bits, (size_t)h->payload_cap * sizeof(*new_cert));
     }
     free(h->states);
     free(h->values);
     free(h->value_valid);
+    free(h->quiet_bits);
     h->states = new_states;
     h->values = new_values;
     h->value_valid = new_valid;
+    h->quiet_bits = new_cert;
     h->payload_cap = new_cap;
     return 0;
 }
@@ -131,14 +171,16 @@ static int cae_nnue_dag_store_init(
 
 static void cae_nnue_dag_store_reset(CaeNnueDagHandle *h) {
     cae_position_dag_reset(&h->dag);
-    if (h->payload_cap > 0)
+    if (h->payload_cap > 0) {
         memset(h->value_valid, 0, (size_t)h->payload_cap * sizeof(*h->value_valid));
+        memset(h->quiet_bits, 0, (size_t)h->payload_cap * sizeof(*h->quiet_bits));
+    }
     h->state_inits = h->state_makes = h->nnue_evals = h->node_reuses = 0;
 }
 
 static int64_t cae_nnue_dag_payload_bytes(const CaeNnueDagHandle *h) {
     return (int64_t)h->payload_cap * (int64_t)(
-        sizeof(CaeNnueState) + sizeof(int32_t) + sizeof(uint8_t));
+        sizeof(CaeNnueState) + sizeof(int32_t) + sizeof(uint8_t) + sizeof(uint8_t));
 }
 
 /* Finish publishing a NEW structural node only after its NNUE payload is valid.
@@ -158,6 +200,11 @@ static int32_t cae_nnue_dag_publish_new(
     h->states[node_id] = *state;
     h->values[node_id] = value;
     h->value_valid[node_id] = (uint8_t)(value_valid ? 1 : 0);
+    /* A fresh node has no certificate yet. calloc() already zeroes new capacity,
+     * but a node id is only reused after a reset, and being explicit here is
+     * what stops a stale certificate from outliving the position that earned
+     * it. */
+    h->quiet_bits[node_id] = 0;
     return node_id;
 }
 

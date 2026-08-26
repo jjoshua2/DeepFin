@@ -23,6 +23,16 @@ QSEARCH_CHECK_PLIES: int
 # constant so a test never restates the default in Python.
 QSEARCH_DAG_NODE_CAP: int
 
+# FastQ-4+ (docs/fastq_design.md) defaults and quiet-certificate bits.
+FASTQ_MAX_QPLY: int
+FASTQ_NODE_CAP: int
+FASTQ_DELTA_MARGIN: int
+FASTQ_RECAPTURE_EXEMPT: int
+CERT_COMPUTED: int
+CERT_IN_CHECK: int
+CERT_PROMOTION: int
+CERT_GOOD_CAP: int
+
 class InCheckError(ValueError):
     """The NNUE evaluation is undefined for a position in check.
 
@@ -81,6 +91,8 @@ def arm_eval(
 ) -> tuple[list[int], dict[str, int]]: ...
 def arm_open(name: str, weights_path: str, /) -> object: ...
 def arm_handle_eval(handle: object, boards: list[CBoard], /) -> list[int]: ...
+# ⚑ Raises ValueError on an "nnue-fastq" handle: these are the resolver's
+# counters and FastQ runs its own search, so all of them would read zero.
 def arm_stats(handle: object, /) -> dict[str, int]: ...
 
 # The position DAG owned by a DAG-backed arm context ("nnue-qsearch-dag"). Every
@@ -90,6 +102,30 @@ def arm_dag_stats(arm_handle: object, /) -> dict[str, int]: ...
 def arm_dag_lookup(arm_handle: object, board: CBoard, /) -> int | None: ...
 def arm_dag_value(arm_handle: object, node_id: int, /) -> int | None: ...
 def arm_dag_reset(arm_handle: object, /) -> None: ...
+
+# Static exchange evaluation, in internal units (pawn = 100), for the side to
+# move. The same function the FastQ search orders and gates with. `promotion`
+# takes python-chess's piece constants, which match the C encoding: 0 none,
+# 2 knight .. 5 queen. Pins and checks are ignored by construction.
+def see(
+    board: CBoard, from_square: int, to_square: int, promotion: int = 0, /
+) -> int: ...
+
+# FastQ's quiet certificate (§3.1) and its knobs (§6). `fastq_certificate` takes
+# NO window argument by construction; `fastq_stats` reports the CONTEXT's own
+# knob snapshot, not the module globals set by `fastq_set_config`.
+def fastq_certificate(board: CBoard, /) -> int: ...
+def fastq_stored_certificate(arm_handle: object, board: CBoard, /) -> int | None: ...
+def fastq_set_config(
+    max_qply: int = ...,
+    node_cap: int = ...,
+    delta_margin: int = ...,
+    see_recapture_exempt: int = ...,
+    /,
+) -> dict[str, int]: ...
+# ⚑ Raises ValueError on any handle that is not "nnue-fastq": only that arm
+# accumulates these counters, so every one would read zero elsewhere.
+def fastq_stats(arm_handle: object, /) -> dict[str, int]: ...
 
 # Canonical structural-position graph. The object handle owns no Python objects;
 # the C side retains the mmap'd NNUE weights independently of the load() capsule.

@@ -498,6 +498,7 @@ def test_production_provider_is_wired_to_incremental_and_oracle_to_refresh() -> 
         "nnue-qsearch",
         "nnue-qsearch-refresh",
         "nnue-qsearch-dag",
+        "nnue-fastq",
     }
 
     # Compared as a whole map rather than name by name, so a provider added
@@ -507,6 +508,24 @@ def test_production_provider_is_wired_to_incremental_and_oracle_to_refresh() -> 
         "nnue-qsearch": ("cae_arm_init", "cae_arm_qsearch_eval_incremental"),
         "nnue-qsearch-refresh": ("cae_arm_init", "cae_arm_qsearch_eval_refresh"),
         "nnue-qsearch-dag": ("cae_arm_init_dag", "cae_arm_qsearch_eval_dag"),
+        "nnue-fastq": ("cae_arm_init_fastq", "cae_arm_fastq_eval"),
+    }
+
+    # ⚑⚑ AND THE FLAG THAT DECIDES WHETHER MCTSTree WILL INSTALL IT. Both
+    # DAG-backed arms drive the store's non-atomic probe -> evaluate -> publish
+    # -> link path, and FastQ additionally writes the quiet certificate into the
+    # node payload; neither may run on tree threads with the GIL released.
+    #
+    # This is the reading that cannot be satisfied by omission. From Python those
+    # two are refused because they are absent from the tree's NAME TABLE, which
+    # would look identical if requires_gil were 0 — so the value is pinned here,
+    # off the vtable initializer itself.
+    assert {name: e["requires_gil"] for name, e in providers.items()} == {
+        "nnue-static": "0",
+        "nnue-qsearch": "0",
+        "nnue-qsearch-refresh": "0",
+        "nnue-qsearch-dag": "1",
+        "nnue-fastq": "1",
     }
 
 

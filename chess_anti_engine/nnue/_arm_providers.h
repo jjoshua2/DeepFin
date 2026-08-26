@@ -68,6 +68,11 @@
 #include "_nnue_dag_store.h"
 #include "_nnue_provider.h"
 #include "_nnue_state.h"
+/* FastQ-4+. Included after the store because the quiet certificate lives in the
+ * node payload, and after _fastq_see.h (pulled in by _nnue_ext.c ahead of this
+ * header) because the certificate and the move gate are both SEE-based. */
+#include "_fastq_certificate.h"
+#include "_fastq_search.h"
 
 /* Quiescence configuration.
  *
@@ -149,6 +154,14 @@ static int g_arm_qsearch_max_ply      = CAE_QSEARCH_DEFAULT_MAX_PLY;
 static int g_arm_qsearch_check_plies  = CAE_QSEARCH_DEFAULT_CHECK_PLIES;
 static int g_arm_dag_node_cap         = CAE_QSEARCH_DEFAULT_DAG_NODE_CAP;
 
+/* FastQ's §6 knobs. A separate quadruple from the qsearch arm's, under the SAME
+ * lock: they are set by different callers but a context snapshots both, and one
+ * lock for one snapshot is what keeps that read a unit. */
+static int g_fastq_max_qply        = CAE_FASTQ_DEFAULT_MAX_QPLY;
+static int g_fastq_node_cap        = CAE_FASTQ_DEFAULT_NODE_CAP;
+static int g_fastq_delta_margin    = CAE_FASTQ_DEFAULT_DELTA_MARGIN;
+static int g_fastq_recapture_exempt = CAE_FASTQ_DEFAULT_RECAPTURE_EXEMPT;
+
 typedef struct CaeArmConfig {
     int resolver_max_depth;
     int qsearch_max_ply;
@@ -163,6 +176,61 @@ static void cae_arm_get_config(CaeArmConfig *out) {
     out->qsearch_check_plies = g_arm_qsearch_check_plies;
     out->dag_node_cap = g_arm_dag_node_cap;
     pthread_mutex_unlock(&g_arm_config_lock);
+}
+
+static void cae_fastq_get_config(CaeFastqConfig *out) {
+    pthread_mutex_lock(&g_arm_config_lock);
+    out->max_qply = g_fastq_max_qply;
+    out->node_cap = g_fastq_node_cap;
+    out->delta_margin = g_fastq_delta_margin;
+    out->see_recapture_exempt = g_fastq_recapture_exempt;
+    pthread_mutex_unlock(&g_arm_config_lock);
+}
+
+/* Returns 0, or -1 with a reason in err. Validates before taking the lock.
+ *
+ * ⚑ THE BANDS ARE WIDE ON PURPOSE. §6 lists variants 2/4/6/8 for max_qply and
+ * 16/32/48/64 for node_cap, but a band that admitted only the listed variants
+ * would make the knob-threading mutants of §8.8 unrunnable — those work by
+ * setting a knob to an EXTREME and watching a fixture's node count move. The
+ * validator's job is to reject the incoherent, not to enforce the experiment
+ * matrix. */
+static int cae_fastq_set_config(int max_qply, int node_cap, int delta_margin,
+                                int see_recapture_exempt,
+                                char *err, size_t errlen) {
+    /* 0 is meaningful: quiescence collapses to a pure stand-pat, which is the
+     * negative control for the whole verifier and must stay reachable. */
+    if (max_qply < 0 || max_qply >= CAE_FASTQ_MAX_PATH) {
+        cae_nnue_err(err, errlen, "max_qply must be in [0, %d), got %d",
+                     CAE_FASTQ_MAX_PATH, max_qply);
+        return -1;
+    }
+    /* 0 disables the tripwire. Negative is rejected rather than folded to 0:
+     * "-1 means unlimited" would be a second spelling of off that reads like a
+     * value. */
+    if (node_cap < 0) {
+        cae_nnue_err(err, errlen, "node_cap must be >= 0 (0 disables it), got %d",
+                     node_cap);
+        return -1;
+    }
+    /* A negative margin would PRUNE MORE than no margin at all, inverting the
+     * knob's meaning; 0 is the "no slack" end and is allowed. */
+    if (delta_margin < 0) {
+        cae_nnue_err(err, errlen, "delta_margin must be >= 0, got %d", delta_margin);
+        return -1;
+    }
+    if (see_recapture_exempt != 0 && see_recapture_exempt != 1) {
+        cae_nnue_err(err, errlen, "see_recapture_exempt must be 0 or 1, got %d",
+                     see_recapture_exempt);
+        return -1;
+    }
+    pthread_mutex_lock(&g_arm_config_lock);
+    g_fastq_max_qply = max_qply;
+    g_fastq_node_cap = node_cap;
+    g_fastq_delta_margin = delta_margin;
+    g_fastq_recapture_exempt = see_recapture_exempt;
+    pthread_mutex_unlock(&g_arm_config_lock);
+    return 0;
 }
 
 /* Returns 0, or -1 with a reason written into err. Validates BEFORE taking the
@@ -293,6 +361,14 @@ typedef struct CaeArmCtx {
      * search threads, and an atomic in the resolver's inner loop would tax the
      * hot path to maintain a counter. */
     CaeArmStats totals;
+
+    /* FastQ's snapshot and running totals. Present on every arm context because
+     * the contexts share one type and one set of retain/destroy/stats plumbing;
+     * only the "nnue-fastq" provider ever fills them, and arm_stats() reports
+     * THESE fields rather than the globals, so a reader is told what governed
+     * this context rather than what was most recently set. */
+    CaeFastqConfig fastq_cfg;
+    CaeFastqStats fastq_totals;
 } CaeArmCtx;
 
 /* Raise *slot to `v` if v is larger. Relaxed: the counter is diagnostic and
@@ -784,8 +860,12 @@ static void *cae_arm_init_ex(const char *weights_path, char *err, size_t errlen,
             return NULL;
         }
     }
+    /* FastQ's knobs are snapshotted for every context, under the same lock, so
+     * a context that later turns out to be a FastQ one is already consistent. */
+    cae_fastq_get_config(&ctx->fastq_cfg);
     ctx->refcount = 1;
     cae_arm_stats_reset(&ctx->totals);
+    cae_fastq_stats_reset(&ctx->fastq_totals);
     return ctx;
 }
 
@@ -794,6 +874,15 @@ static void *cae_arm_init(const char *weights_path, char *err, size_t errlen) {
 }
 
 static void *cae_arm_init_dag(const char *weights_path, char *err, size_t errlen) {
+    return cae_arm_init_ex(weights_path, err, errlen, 1);
+}
+
+/* FastQ is DAG-backed by construction (§4): evaluate-once and cross-call
+ * persistence are not optional features of it, they are how it reaches its
+ * evaluation budget. It shares cae_arm_init_dag's body for that reason and
+ * exists as its own symbol so the vtable pairs a name with a substrate rather
+ * than leaving it to a caller to remember. */
+static void *cae_arm_init_fastq(const char *weights_path, char *err, size_t errlen) {
     return cae_arm_init_ex(weights_path, err, errlen, 1);
 }
 
@@ -901,6 +990,87 @@ static int cae_arm_qsearch_eval_dag(
     return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, CAE_QSUB_DAG);
 }
 
+/* ================================================================
+ * FastQ-4+ entry point
+ * ================================================================ */
+
+/* Merged ONCE per top-level eval from a per-call block on the stack, matching
+ * cae_arm_merge_stats' contract: eval() must be reentrant across threads, and an
+ * atomic in the recursion's inner loop would tax the hot path for a counter. */
+static void cae_fastq_merge_stats(CaeFastqStats *dst, const CaeFastqStats *src) {
+#define CAE_FQ_ADD(field) \
+    __atomic_fetch_add(&dst->field, src->field, __ATOMIC_RELAXED)
+    CAE_FQ_ADD(calls);
+    CAE_FQ_ADD(nodes);
+    CAE_FQ_ADD(evasion_nodes);
+    CAE_FQ_ADD(nodes_created);
+    CAE_FQ_ADD(nodes_created_in_check);
+    CAE_FQ_ADD(nnue_evals);
+    CAE_FQ_ADD(hits_within_call);
+    CAE_FQ_ADD(hits_cross_call);
+    CAE_FQ_ADD(quiet_certificates);
+    CAE_FQ_ADD(quiet_certificate_hits);
+    CAE_FQ_ADD(quiet_returns);
+    CAE_FQ_ADD(see_prunes);
+    CAE_FQ_ADD(delta_prunes);
+    CAE_FQ_ADD(recapture_exemptions);
+    CAE_FQ_ADD(stand_pat_cutoffs);
+    CAE_FQ_ADD(move_cutoffs);
+    CAE_FQ_ADD(budget_trips);
+    CAE_FQ_ADD(path_ceilings);
+    CAE_FQ_ADD(cycle_draws);
+    CAE_FQ_ADD(terminal_mate);
+    CAE_FQ_ADD(terminal_draw);
+#undef CAE_FQ_ADD
+    cae_arm_atomic_max_u32(&dst->max_ply_seen, src->max_ply_seen);
+}
+
+static int cae_arm_fastq_eval(void *ctx_void, const CBoard *board, int32_t *out_value) {
+    CaeArmCtx *ctx = (CaeArmCtx *)ctx_void;
+    /* A context built by cae_arm_init() has no store and cannot run this search.
+     * The vtable pairs the two, so reaching here without one means the pairing
+     * itself is broken — a hard error rather than a silent fall back to some
+     * other substrate returning plausible numbers under this name. */
+    if (!ctx || !ctx->dag) return CAE_VALUE_ERR_NOT_LOADED;
+
+    CaeFastqStats local;
+    cae_fastq_stats_reset(&local);
+    local.calls = 1;
+
+    CaeFastqCtx q;
+    memset(&q, 0, sizeof(q));
+    q.store = ctx->dag;
+    q.stats = &local;
+    q.cfg = ctx->fastq_cfg;
+    q.dag_watermark = ctx->dag->dag.node_count;
+    q.nodes_used = 0;
+    q.path_len = 0;
+    q.recapture_square = -1;
+
+    int32_t root_id = CAE_DAG_NO_NODE;
+    int created = 0;
+    int status = cae_nnue_dag_intern_position(ctx->dag, board, &root_id, &created);
+    if (status == CAE_VALUE_OK) {
+        if (created) {
+            local.nodes_created++;
+            if (cboard_in_check(board)) local.nodes_created_in_check++;
+            else local.nnue_evals++;
+        } else if (root_id < q.dag_watermark) {
+            local.hits_cross_call++;
+        } else {
+            local.hits_within_call++;
+        }
+        /* §4.4: the graph persists and the root advances rather than resetting,
+         * which is what makes a cross-call hit possible at all. */
+        cae_position_dag_set_root(&ctx->dag->dag, root_id);
+        status = cae_fastq_node(&q, board, root_id, 0,
+                                -CAE_FASTQ_INF, CAE_FASTQ_INF, out_value);
+    }
+
+    cae_fastq_merge_stats(&ctx->fastq_totals, &local);
+    return status;
+}
+
 static const CaeValueProvider CAE_ARM_STATIC_PROVIDER = {
     "nnue-static",
     cae_arm_init,
@@ -951,6 +1121,22 @@ static const CaeValueProvider CAE_ARM_QSEARCH_DAG_PROVIDER = {
           * REFUSES this provider at install because it cannot. */
 };
 
+/* ⚑ requires_gil = 1, FOR THE SAME REASON THE DAG ARM SETS IT. FastQ drives the
+ * same store, so it runs the same non-atomic probe -> evaluate -> publish -> link
+ * path, and it additionally WRITES the quiet certificate into the node payload.
+ * MCTSTree refuses this provider at install (resolve_provider_export reads this
+ * field), which is the enforcement — not the fact that no capsule is exported
+ * for it, which is only ergonomics. */
+static const CaeValueProvider CAE_ARM_FASTQ_PROVIDER = {
+    "nnue-fastq",
+    cae_arm_init_fastq,
+    cae_arm_fastq_eval,
+    cae_arm_retain,
+    cae_arm_destroy,
+    cae_arm_kernel_name,
+    1,
+};
+
 /* ================================================================
  * The registry
  * ================================================================
@@ -965,6 +1151,7 @@ static const CaeValueProvider *const CAE_VALUE_PROVIDERS[] = {
     &CAE_ARM_QSEARCH_PROVIDER,
     &CAE_ARM_QSEARCH_REFRESH_PROVIDER,
     &CAE_ARM_QSEARCH_DAG_PROVIDER,
+    &CAE_ARM_FASTQ_PROVIDER,
     NULL
 };
 
@@ -983,7 +1170,8 @@ static inline int cae_provider_is_arm(const CaeValueProvider *vp) {
     return vp == &CAE_ARM_STATIC_PROVIDER
         || vp == &CAE_ARM_QSEARCH_PROVIDER
         || vp == &CAE_ARM_QSEARCH_REFRESH_PROVIDER
-        || vp == &CAE_ARM_QSEARCH_DAG_PROVIDER;
+        || vp == &CAE_ARM_QSEARCH_DAG_PROVIDER
+        || vp == &CAE_ARM_FASTQ_PROVIDER;
 }
 
 /* ⚑⚑ DOES A BATCH THROUGH THIS PROVIDER HAVE TO KEEP THE GIL? Read straight off

@@ -26,6 +26,12 @@
 #endif
 
 #include "../encoding/_cboard_impl.h"
+/* FastQ's static exchange evaluator. Included before _arm_providers.h because
+ * the FastQ search gates and orders moves with it. ⚑ It is deliberately NOT
+ * encoding/_features_impl.h's feat_see_capture — that one feeds production
+ * model input planes and is on a different value scale; see the ⚑⚑ block at the
+ * top of _fastq_see.h before "unifying" them. */
+#include "_fastq_see.h"
 #include "_nnue_impl.h"
 /* Pulls in _nnue_provider.h and ../mcts/_check_resolver.h, and owns the provider
  * registry — the raw evaluator plus the two resolver-backed race arms. */
@@ -527,6 +533,43 @@ static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
                          "dag_node_cap", cfg.dag_node_cap);
 }
 
+/* FastQ's counter block. Lives beside arm_stats_dict because BOTH eval surfaces
+ * have to choose between them, and a chooser whose two branches are 600 lines
+ * apart is how the one-shot path came to answer the wrong one. */
+static PyObject *fastq_stats_dict(const CaeArmCtx *ctx) {
+    const CaeFastqStats *s = &ctx->fastq_totals;
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:I,s:i,s:i,s:i,s:i}",
+        "calls", ARM_STAT_U64(s->calls),
+        "nodes", ARM_STAT_U64(s->nodes),
+        "evasion_nodes", ARM_STAT_U64(s->evasion_nodes),
+        "nodes_created", ARM_STAT_U64(s->nodes_created),
+        "nodes_created_in_check", ARM_STAT_U64(s->nodes_created_in_check),
+        "nnue_evals", ARM_STAT_U64(s->nnue_evals),
+        "hits_within_call", ARM_STAT_U64(s->hits_within_call),
+        "hits_cross_call", ARM_STAT_U64(s->hits_cross_call),
+        "quiet_certificates", ARM_STAT_U64(s->quiet_certificates),
+        "quiet_certificate_hits", ARM_STAT_U64(s->quiet_certificate_hits),
+        "quiet_returns", ARM_STAT_U64(s->quiet_returns),
+        "see_prunes", ARM_STAT_U64(s->see_prunes),
+        "delta_prunes", ARM_STAT_U64(s->delta_prunes),
+        "recapture_exemptions", ARM_STAT_U64(s->recapture_exemptions),
+        "stand_pat_cutoffs", ARM_STAT_U64(s->stand_pat_cutoffs),
+        "move_cutoffs", ARM_STAT_U64(s->move_cutoffs),
+        "budget_trips", ARM_STAT_U64(s->budget_trips),
+        "path_ceilings", ARM_STAT_U64(s->path_ceilings),
+        "cycle_draws", ARM_STAT_U64(s->cycle_draws),
+        "terminal_mate", ARM_STAT_U64(s->terminal_mate),
+        "terminal_draw", ARM_STAT_U64(s->terminal_draw),
+        "max_ply_seen", ARM_STAT_U32(s->max_ply_seen),
+        /* ⚑ THE CONTEXT'S OWN SNAPSHOT. See the docstring. */
+        "max_qply", ctx->fastq_cfg.max_qply,
+        "node_cap", ctx->fastq_cfg.node_cap,
+        "delta_margin", ctx->fastq_cfg.delta_margin,
+        "see_recapture_exempt", ctx->fastq_cfg.see_recapture_exempt);
+}
+
 static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     const char *name, *path;
     PyObject *seq;
@@ -616,7 +659,20 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     }
     PyMem_Free(raw);
 
-    PyObject *stats = arm_stats_dict((const CaeArmCtx *)ctx);
+    /* ⚑⚑ THE THIRD INSTANCE OF ONE DEFECT, AND THE FIRST TWO WERE FIXED IN THIS
+     * PR. arm_stats() refused a FastQ handle, fastq_stats() refused a non-FastQ
+     * one — and this path, which builds its own context and never sees a handle,
+     * went on handing back CaeArmStats for an arm that does not write them: a
+     * fully-populated dict of zeros, nnue_evals included. Fixing a defect class
+     * in the two places you happen to be looking at is how the third survives.
+     *
+     * Dispatched rather than refused: the evaluation itself is correct here and
+     * only the counter block was wrong, so returning the right one keeps the
+     * one-shot surface usable instead of amputating it. The keys both dicts
+     * share (calls, nodes, nnue_evals) carry the same meaning in each. */
+    PyObject *stats = (vp == &CAE_ARM_FASTQ_PROVIDER)
+                          ? fastq_stats_dict((const CaeArmCtx *)ctx)
+                          : arm_stats_dict((const CaeArmCtx *)ctx);
     vp->destroy(ctx);
     if (!stats) { Py_DECREF(values); return NULL; }
     return Py_BuildValue("(NN)", values, stats);
@@ -685,13 +741,29 @@ PyDoc_STRVAR(arm_stats_doc,
 "⚑ The counters and the configuration OF THAT CONTEXT, accumulated across every\n"
 "evaluation it has done. The configuration keys are the context's own fields, so\n"
 "they can differ from what set_arm_config() currently holds — and when they do,\n"
-"the context's is the number that governed the work.");
+"the context's is the number that governed the work.\n\n"
+"Raises ValueError on an \"nnue-fastq\" handle: these are the RESOLVER's counters\n"
+"and FastQ runs its own search, so every one of them would read zero. Use\n"
+"fastq_stats() there.");
 
 static PyObject *py_arm_stats(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *capsule;
     if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
     ArmHandle *h = arm_handle_from_capsule(capsule);
     if (!h) return NULL;
+    /* ⚑⚑ REFUSE RATHER THAN REPORT ZEROS. These counters describe the check
+     * resolver and its quiescence; FastQ shares neither, so an "nnue-fastq"
+     * handle would answer nnue_evals = 0 forever. A zero that means "this
+     * question does not apply here" is indistinguishable from one that means
+     * "nothing happened", and reading it as efficiency is a mistake that
+     * survives review because the number looks like an answer. arm_dag_stats()
+     * already refuses an arm that owns no store for the same reason. */
+    if (h->vp == &CAE_ARM_FASTQ_PROVIDER) {
+        PyErr_SetString(PyExc_ValueError,
+                        "arm_stats() reports the check resolver's counters, which "
+                        "nnue-fastq does not use; call fastq_stats(handle)");
+        return NULL;
+    }
     return arm_stats_dict((const CaeArmCtx *)h->ctx);
 }
 
@@ -901,6 +973,150 @@ static PyObject *py_arm_dag_reset(PyObject *Py_UNUSED(self), PyObject *args) {
     Py_RETURN_NONE;
 }
 
+PyDoc_STRVAR(fastq_certificate_doc,
+"fastq_certificate(board) -> int\n\n"
+"FastQ's quiet certificate for `board`, computed from scratch (§3.1). Bit 0 is\n"
+"COMPUTED, bit 1 IN_CHECK, bit 2 PROMOTION available, bit 3 a capture with\n"
+"SEE >= 0. Quiet means bit 0 set and bits 1-3 clear.\n\n"
+"⚑ THERE IS NO WINDOW ARGUMENT AND THERE MUST NEVER BE ONE. Every term is a\n"
+"function of the position alone, which is what makes the result storable against\n"
+"a canonical DAG node. §8 mutant 1 folds a window-dependent term (delta pruning)\n"
+"in here and a test has to fail.");
+
+static PyObject *py_fastq_certificate(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "O", &board_obj)) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+    cboard_init_all();
+    return PyLong_FromUnsignedLong((unsigned long)cae_fastq_certificate(board));
+}
+
+PyDoc_STRVAR(fastq_stored_certificate_doc,
+"fastq_stored_certificate(arm_handle, board) -> int | None\n\n"
+"The certificate this arm's DAG currently HOLDS for `board`'s structural node,\n"
+"or None if the position was never interned or its certificate never computed.\n\n"
+"Reads the store rather than recomputing, which is what lets a test compare what\n"
+"the search cached against what the position actually is.");
+
+static PyObject *py_fastq_stored_certificate(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *board_obj;
+    if (!PyArg_ParseTuple(args, "OO", &capsule, &board_obj)) return NULL;
+    ArmHandle *h = arm_handle_from_capsule(capsule);
+    if (!h) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+    const CaeArmCtx *ctx = (const CaeArmCtx *)h->ctx;
+    if (!ctx->dag) Py_RETURN_NONE;
+    CaeDagPosition pos;
+    cae_dag_position_from_cboard(board, &pos);
+    int32_t node = cae_position_dag_find_position(&ctx->dag->dag, &pos);
+    if (node == CAE_DAG_NO_NODE) Py_RETURN_NONE;
+    const uint8_t bits = ctx->dag->quiet_bits[node];
+    if (!(bits & CAE_DAG_CERT_COMPUTED)) Py_RETURN_NONE;
+    return PyLong_FromUnsignedLong((unsigned long)bits);
+}
+
+PyDoc_STRVAR(fastq_set_config_doc,
+"fastq_set_config(max_qply, node_cap, delta_margin, see_recapture_exempt) -> dict\n\n"
+"Set FastQ's §6 knobs and return the values now in effect.\n\n"
+"⚑ THIS AFFECTS CONTEXTS CREATED AFTER IT, NOT RUNNING ONES. Every arm context\n"
+"snapshots the knobs once at init(), so a context already open keeps what it was\n"
+"built with — and fastq_stats() reports that context's OWN snapshot rather than\n"
+"these globals, which is how you tell the two apart.");
+
+static PyObject *py_fastq_set_config(PyObject *Py_UNUSED(self), PyObject *args) {
+    int max_qply = CAE_FASTQ_DEFAULT_MAX_QPLY;
+    int node_cap = CAE_FASTQ_DEFAULT_NODE_CAP;
+    int delta_margin = CAE_FASTQ_DEFAULT_DELTA_MARGIN;
+    int recapture_exempt = CAE_FASTQ_DEFAULT_RECAPTURE_EXEMPT;
+    if (!PyArg_ParseTuple(args, "|iiii", &max_qply, &node_cap, &delta_margin,
+                          &recapture_exempt))
+        return NULL;
+    char err[256] = {0};
+    if (cae_fastq_set_config(max_qply, node_cap, delta_margin, recapture_exempt,
+                             err, sizeof(err)) != 0) {
+        PyErr_SetString(PyExc_ValueError, err);
+        return NULL;
+    }
+    CaeFastqConfig cfg;
+    cae_fastq_get_config(&cfg);
+    return Py_BuildValue("{s:i,s:i,s:i,s:i}",
+                         "max_qply", cfg.max_qply,
+                         "node_cap", cfg.node_cap,
+                         "delta_margin", cfg.delta_margin,
+                         "see_recapture_exempt", cfg.see_recapture_exempt);
+}
+
+PyDoc_STRVAR(fastq_stats_doc,
+"fastq_stats(arm_handle) -> dict\n\n"
+"FastQ's counters accumulated over this context's life, plus the knob values\n"
+"THIS context is running (docs/fastq_design.md §7).\n\n"
+"⚑ The four config keys are read off the context's own snapshot, not off the\n"
+"module globals: a caller who sets a knob and then reads it back here is being\n"
+"told what governed the search, which is the only reading that can catch a knob\n"
+"that was accepted and then silently ignored.\n\n"
+"Raises ValueError on a handle that is not \"nnue-fastq\": no other arm writes\n"
+"these counters, so every one of them would read zero. Use arm_stats() there.\n\n"
+"`nnue_evals + nodes_created_in_check == nodes_created` is the evaluate-once\n"
+"identity; the in-check term is there because an in-check node is published with\n"
+"no static value, the NNUE evaluation being undefined in check.");
+
+static PyObject *py_fastq_stats(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    ArmHandle *h = arm_handle_from_capsule(capsule);
+    if (!h) return NULL;
+    /* ⚑⚑ THE MIRROR OF arm_stats()'s REFUSAL, AND IT IS THE SAME DEFECT FACING
+     * THE OTHER WAY. Only cae_arm_fastq_eval ever writes ctx->fastq_totals, so
+     * on a qsearch handle every counter here is a zeroed struct — including
+     * nnue_evals, on an arm that just did thousands of evaluations. Refusing was
+     * only half a fix while the other direction still answered zeros. */
+    if (h->vp != &CAE_ARM_FASTQ_PROVIDER) {
+        PyErr_SetString(PyExc_ValueError,
+                        "fastq_stats() reports FastQ's own counters, which only "
+                        "an nnue-fastq handle accumulates; call arm_stats(handle)");
+        return NULL;
+    }
+    return fastq_stats_dict((const CaeArmCtx *)h->ctx);
+}
+
+PyDoc_STRVAR(see_doc,
+"see(board, from_square, to_square, promotion=0) -> int\n\n"
+"Static exchange evaluation of one capture, in internal units (pawn = 100),\n"
+"for the side to move on `board`. This is the SAME function the FastQ search\n"
+"orders and gates with — not a reimplementation for tests — so a fixture that\n"
+"pins a value here pins the search's behaviour.\n\n"
+"`promotion` uses python-chess's own piece constants, which coincide with the\n"
+"C encoding: 0 none, 2 knight, 3 bishop, 4 rook, 5 queen.\n\n"
+"Pins are ignored by construction (static SEE): an absolutely pinned attacker\n"
+"still counts. That is a documented approximation, not a defect — see the\n"
+"expected-divergence rows in tests/test_fastq_see.py.");
+
+static PyObject *py_see(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *board_obj;
+    int from_sq, to_sq, promotion = 0;
+    if (!PyArg_ParseTuple(args, "Oii|i", &board_obj, &from_sq, &to_sq, &promotion))
+        return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+    if (from_sq < 0 || from_sq > 63 || to_sq < 0 || to_sq > 63) {
+        PyErr_SetString(PyExc_ValueError, "from_square and to_square must be in 0..63");
+        return NULL;
+    }
+    if (promotion != 0 && (promotion < 2 || promotion > 5)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "promotion must be 0 (none) or 2..5 (knight..queen)");
+        return NULL;
+    }
+    if (piece_type_at(board, from_sq) < 0) {
+        PyErr_SetString(PyExc_ValueError, "from_square is empty");
+        return NULL;
+    }
+    cboard_init_all();
+    return PyLong_FromLong((long)cae_see_capture(board, from_sq, to_sq, promotion));
+}
+
 static PyMethodDef module_methods[] = {
     {"load", py_load, METH_VARARGS, load_doc},
     {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
@@ -923,6 +1139,12 @@ static PyMethodDef module_methods[] = {
     {"arm_dag_lookup", py_arm_dag_lookup, METH_VARARGS, arm_dag_lookup_doc},
     {"arm_dag_value", py_arm_dag_value, METH_VARARGS, arm_dag_value_doc},
     {"arm_dag_reset", py_arm_dag_reset, METH_VARARGS, arm_dag_reset_doc},
+    {"see", py_see, METH_VARARGS, see_doc},
+    {"fastq_certificate", py_fastq_certificate, METH_VARARGS, fastq_certificate_doc},
+    {"fastq_stored_certificate", py_fastq_stored_certificate, METH_VARARGS,
+     fastq_stored_certificate_doc},
+    {"fastq_set_config", py_fastq_set_config, METH_VARARGS, fastq_set_config_doc},
+    {"fastq_stats", py_fastq_stats, METH_VARARGS, fastq_stats_doc},
     CAE_NNUE_DAG_METHODS
     {NULL, NULL, 0, NULL}
 };
@@ -1009,6 +1231,15 @@ PyMODINIT_FUNC PyInit__nnue_ext(void) {
      * rather than against a Python restatement of it. */
     PyModule_AddIntConstant(m, "QSEARCH_DAG_NODE_CAP",
                             (long)CAE_QSEARCH_DEFAULT_DAG_NODE_CAP);
+    PyModule_AddIntConstant(m, "CERT_COMPUTED", (long)CAE_DAG_CERT_COMPUTED);
+    PyModule_AddIntConstant(m, "CERT_IN_CHECK", (long)CAE_DAG_CERT_IN_CHECK);
+    PyModule_AddIntConstant(m, "CERT_PROMOTION", (long)CAE_DAG_CERT_PROMOTION);
+    PyModule_AddIntConstant(m, "CERT_GOOD_CAP", (long)CAE_DAG_CERT_GOOD_CAP);
+    PyModule_AddIntConstant(m, "FASTQ_MAX_QPLY", (long)CAE_FASTQ_DEFAULT_MAX_QPLY);
+    PyModule_AddIntConstant(m, "FASTQ_NODE_CAP", (long)CAE_FASTQ_DEFAULT_NODE_CAP);
+    PyModule_AddIntConstant(m, "FASTQ_DELTA_MARGIN", (long)CAE_FASTQ_DEFAULT_DELTA_MARGIN);
+    PyModule_AddIntConstant(m, "FASTQ_RECAPTURE_EXEMPT",
+                            (long)CAE_FASTQ_DEFAULT_RECAPTURE_EXEMPT);
 
     PyModule_AddIntConstant(m, "THREAT_DIMS", (long)CAE_NNUE_THREAT_DIMS);
     PyModule_AddIntConstant(m, "HALFKA_DIMS", (long)CAE_NNUE_HALFKA_DIMS);
