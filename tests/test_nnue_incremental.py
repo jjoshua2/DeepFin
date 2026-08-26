@@ -113,14 +113,34 @@ def test_parity_fixture_really_exercises_qsearch(dense_psqt_pack: Path) -> None:
 
 
 def test_production_provider_is_wired_to_incremental_and_oracle_to_refresh() -> None:
+    """Each provider name is bound to ITS OWN init and eval, pinned in the source.
+
+    ⚑ THE PREVIOUS EXPECTATION COULD NEVER MATCH, and the file was red for it.
+    A CaeValueProvider is {name, init, eval, retain, destroy, kernel_name}, so
+    ``cae_arm_init`` sits between the name and the eval and
+    ``'"nnue-qsearch",\\n    cae_arm_qsearch_eval_incremental,'`` is not a
+    substring of anything. The fix is to assert the REAL shape — the full
+    (name, init, eval) triple — not to relax the assertion until it passes: a
+    substring loose enough to survive that mistake would also survive the
+    mis-wiring this test exists to catch.
+
+    Pinning the init is not padding. ``cae_arm_init_dag`` is the only entry that
+    builds the DAG store and the only one that lets the node budget out of 0, so
+    a "nnue-qsearch-dag" row paired with plain ``cae_arm_init`` would be a
+    provider whose whole substrate silently did not exist.
+    """
     source = (
         Path(__file__).resolve().parents[1]
         / "chess_anti_engine"
         / "nnue"
         / "_arm_providers.h"
     ).read_text(encoding="utf-8")
-    assert '"nnue-qsearch",\n    cae_arm_qsearch_eval_incremental,' in source
-    assert '"nnue-qsearch-refresh",\n    cae_arm_qsearch_eval_refresh,' in source
+    for name, init, eval_fn in (
+        ("nnue-qsearch", "cae_arm_init", "cae_arm_qsearch_eval_incremental"),
+        ("nnue-qsearch-refresh", "cae_arm_init", "cae_arm_qsearch_eval_refresh"),
+        ("nnue-qsearch-dag", "cae_arm_init_dag", "cae_arm_qsearch_eval_dag"),
+    ):
+        assert f'"{name}",\n    {init},\n    {eval_fn},\n' in source, name
 
 
 @pytest.mark.skipif(not os.environ.get("CAE_NNUE_TEST_PACK"), reason="needs real NNUE pack")

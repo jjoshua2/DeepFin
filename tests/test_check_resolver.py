@@ -958,8 +958,40 @@ def test_set_arm_config_rejects_an_incoherent_configuration(
 # ===========================================================================
 
 
-def test_the_registry_lists_both_arms_alongside_the_raw_evaluator() -> None:
-    assert _nnue_ext.provider_names() == ("nnue", "nnue-static", "nnue-qsearch")
+def test_the_registry_lists_every_arm_alongside_the_raw_evaluator() -> None:
+    """FIVE providers, and the tuple is exact rather than a membership check.
+
+    ⚑ THE COUNT IS THE POINT, WHICH IS WHY THIS ASSERTION IS AN EQUALITY. The
+    registry is the single answer to "which providers exist", so a provider
+    added without a deliberate edit here — or one silently dropped — has to
+    break a test rather than be absorbed. This tuple was left at three when
+    ``nnue-qsearch-refresh`` landed and the file went red; that is the assertion
+    working, not the assertion being wrong.
+
+    What the five are, and why each earns a row:
+
+      nnue                  the raw evaluator, which REFUSES a position in check
+      nnue-static           check resolution + a static NNUE leaf
+      nnue-qsearch          the same resolution + tactical quiescence: PRODUCTION
+      nnue-qsearch-refresh  that same quiescence over a full NNUE refresh at
+                            every node — the substrate oracle for the
+                            incremental accumulator
+      nnue-qsearch-dag      that same quiescence over a canonical position DAG —
+                            one evaluation per structural position, persisted
+                            across calls
+
+    The last two are SUBSTRATES, not searches: they exist so that a change to
+    how evaluations are obtained can be proved not to have changed the search
+    that consumes them. Only the first three are installable in MCTSTree — see
+    ARMS and test_the_dag_arm_is_not_installable_in_the_tree.
+    """
+    assert _nnue_ext.provider_names() == (
+        "nnue",
+        "nnue-static",
+        "nnue-qsearch",
+        "nnue-qsearch-refresh",
+        "nnue-qsearch-dag",
+    )
 
 
 def test_each_name_installs_a_DIFFERENT_provider_in_the_tree(bucket_pack: Path) -> None:
