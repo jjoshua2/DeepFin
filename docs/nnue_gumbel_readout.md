@@ -240,8 +240,10 @@ differed — and the report checks the ones that can:
 `pack_source_sha256` · `kernel` (avx2 vs scalar — a **multi-fold** wall factor) ·
 `seed` · `games_per_cell` · `workers` · `sims_floor` · `topk` · `max_plies` ·
 `all_root_moves` · the cp triple · `nice_requested` **and** `nice_realized` ·
-`banking` · `dag_reset` · `repeats` · `arms` · `python` · the Git HEAD/dirty
-flag · and the actual loaded `_nnue_ext` / `_mcts_tree` paths and SHA-256 hashes.
+`banking` · `dag_reset` · `repeats` · `arms` · `python` · the Git HEAD,
+tracked-diff SHA-256 and dirty flag at **both** matrix endpoints · the native
+module pathname SHA-256 snapshots · and, authoritatively, the GNU build-ids read
+from the already mapped `_nnue_ext` / `_mcts_tree` ELF images.
 
 Mixed kernels, mixed niceness, a pack whose file hash is not the one the parent
 hashed, and disagreeing per-worker arm configuration each make the report
@@ -271,14 +273,17 @@ already settled that question the same way (`NnueArmStats.context_conflicts`).
 6. **Memory**: `dag_per_game.nodes_peak_per_game` and
    `memory_peak_per_worker_bytes`.
 7. **Search shape/coverage**: root-budget and termination data in each worker's
-   detail record, plus the banked leaf population for the standardized deep-SF
-   quality readout.
+   detail record, plus the banked **end-to-end trace population** for diagnosing
+   how each arm changes the leaves production Gumbel actually visits.
 
-The harness does not claim that similarity to qsearch is strength. The deciding
-quality comparison remains the standardized deep-Stockfish target-quality
-readout described by the AZ-purity framework. The point of this script is to
-produce the **production-shaped leaf population and raw observations** needed to
-run that decision honestly.
+The harness does not claim that similarity to qsearch is strength, and these
+end-to-end banks are **not** the input population for a paired evaluator-quality
+verdict: each arm helped choose its own later leaves. The deciding standardized
+deep-Stockfish evaluator-quality comparison must be a separate frozen-driver /
+shadow-arm experiment in which all candidate evaluators score the same positions
+without feeding values back into MCTSTree. This readout measures production
+throughput, reuse, search shape, and endogenous trace distributions; it does not
+silently turn those endogenous populations into paired quality evidence.
 
 ## Exit codes
 
