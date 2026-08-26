@@ -112,7 +112,7 @@ class FakeExt:
     def load(self, path: str):
         return ("weights", path)
 
-    def source_sha256(self, handle: object):
+    def source_sha256(self, _handle: object):
         return "a" * 64
 
     def simd_active(self):
@@ -142,13 +142,14 @@ def _pack(tmp_path: Path) -> Path:
 
 
 def test_arm_specs_are_the_three_intended_experimental_cells() -> None:
-    assert readout.ARM_SPECS == {
+    expected = {
         "nnue-qsearch": readout.ArmSpec("nnue-qsearch", False, "arm", True, False),
         "nnue-qsearch-dag": readout.ArmSpec(
             "nnue-qsearch-dag", True, "arm", True, False,
         ),
         "nnue-fastq": readout.ArmSpec("nnue-fastq", True, "fastq", False, True),
     }
+    assert expected == readout.ARM_SPECS
 
 
 def test_defaults_come_from_the_extension_for_the_selected_arm() -> None:
