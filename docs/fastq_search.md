@@ -34,7 +34,15 @@ both arms at qply 4 (`QSEARCH_MAX_PLY` is compiled at 4, so they are
 depth-paired), FastQ at its §6 defaults (node_cap 32, delta_margin 200,
 recapture exemption on).
 
-    PYTHONPATH=. python3 scripts/fastq_reference_arm.py --pack <production.pack>
+    PYTHONPATH=. python3 scripts/fastq_reference_arm.py \
+        --pack <production.pack> --dump fastq_rows.jsonl
+
+⚑ `--dump` writes one JSON object per row — both arms' values, the sign and
+mate-band flags, per-row eval count and wall time, whether the cap tripped, the
+SEE/delta prune counts, and whether the root offered a quiet check. **Every
+attribution below is re-derived from that file, not from the aggregates.** A
+printed mean cannot confirm or refute a claim about WHICH rows differ, so the
+claim and its evidence would otherwise live in different places.
 
 ### NNUE evaluations per call
 
@@ -42,35 +50,61 @@ recapture exemption on).
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `nnue-qsearch` | 431.84 | 35 | 958 | 6018 | 14403 | 0.212 | 0.233 | 0.555 |
 | `nnue-qsearch-dag` | 342.67 | 32 | 798 | 4388 | 8250 | 0.231 | 0.221 | 0.548 |
-| `nnue-fastq` | **6.44** | 4 | 15 | 31 | 32 | 0.520 | 0.424 | 0.056 |
+| `nnue-fastq` | **6.41** | 4 | 15 | 31 | 32 | 0.520 | 0.424 | 0.056 |
 
-§1's target is 5–20 evaluations per leaf. FastQ's mean is 6.44 and 94.4% of calls
+§1's target is 5–20 evaluations per leaf. FastQ's mean is 6.41 and 94.4% of calls
 sit at 20 or below; the distribution's whole tail is the 32-node cap.
+
+### Wall per call
+
+| arm | p50 | p99 | max |
+| --- | ---: | ---: | ---: |
+| `nnue-qsearch` | 199.7 µs | 36.8 ms | 89.1 ms |
+| `nnue-qsearch-dag` | 302.2 µs | 66.4 ms | 419.3 ms |
+| `nnue-fastq` | **47.0 µs** | **346.6 µs** | 8.9 ms |
+
+⚑ **§7 ASKS FOR WALL p50/p99 AND IT IS MEASURED IN THE HARNESS, NOT AS A C
+COUNTER.** Deliberate, and the reasoning is worth stating because "the doc
+promises a counter that does not exist" is the failure being avoided: a per-call
+`clock_gettime` in the hot path buys a number dominated by whatever else the
+machine is running (usually live training), and a p50/p99 needs per-call samples
+— a histogram or reservoir — inside a search whose entire purpose is to be
+cheap. The harness already loops per call, so it takes the same measurement for
+free and identically for every arm. **Eval count remains the deciding
+instrument** because it is deterministic and reproducible; these figures were
+taken alongside a live training run and should be read as ratios, not
+absolutes.
 
 ⚑ **431.84 IS NOT §1's "~72 AVERAGE", AND THE RATIO IS THE PART THAT TRANSFERS.**
 This corpus is deliberately tactical-heavy — it is every capture child of a set of
 tactical FENs, built to make the DAG share subtrees — so qsearch costs far more
 here than on a general leaf population. The same-rows reduction is **67×**
-(431.84 → 6.44); quoting FastQ's 6.44 against §1's 72 would be comparing two
+(431.84 → 6.41); quoting FastQ's 6.41 against §1's 72 would be comparing two
 different populations, which is a mistake this repo has made before.
 
 The middle row separates the two independent changes: the DAG substrate alone
 buys 431.84 → 342.67 (1.26×), and the move policy plus pruning buys the remaining
-342.67 → 6.44 (53×). Attributing all 67× to either one would be wrong.
+342.67 → 6.41 (53×). Attributing all 67× to either one would be wrong.
 
 ### Value agreement vs `nnue-qsearch`
 
 | | |
 | --- | ---: |
 | **sign agreement (§8 primary)** | **458/467 = 0.9807** |
-| identical | 379/467 = 0.8116 |
+| identical | 377/467 = 0.8073 |
+| value-differing rows | 90/467 = 0.1928 |
 | median \|Δ\| | 0 |
-| p95 \|Δ\| | 341 |
+| p95 \|Δ\| (all rows) | 341 |
 | \|Δ\| > 50 | 77/467 = 0.1649 |
-| \|Δ\| > 100 | 63/467 = 0.1349 |
-| \|Δ\| > 250 | 33/467 = 0.0707 |
+| \|Δ\| > 100 | 62/467 = 0.1328 |
+| \|Δ\| > 250 | 32/467 = 0.0685 |
 | mate-band rows | 8 (7 differing) |
-| non-mate rows | 459: mean \|Δ\| 41.95, p95 298, max 1211 |
+| non-mate rows (459) | mean \|Δ\| **40.54**, p95 **298**, max 1211 |
+
+⚑ **THE TWO p95 FIGURES ARE NOT INTERCHANGEABLE.** 341 is over all 467 rows and
+is pulled up by the mate band; 298 is over the 459 non-mate rows and is the one
+that pairs with the 40.54 mean. Quoting the non-mate mean next to the all-rows
+p95 mixes two populations.
 
 Mate-band rows are reported separately because a mate score is not a large
 centipawn number: one row where one arm found a mate moves a 467-row mean by
@@ -81,7 +115,17 @@ whole-corpus mean \|Δ\| including them is 1528.96 and means nothing.
 established — it is carried in the harness as the control that proves the
 substrate is not what moves the numbers.
 
-### Where the 16 differing rows come from — attributed, not assumed
+### Where the differing rows come from — re-derived from the dump
+
+**90 of 467 rows differ in value at all (19.3%).** Of those, **74 differ only in
+MAGNITUDE** — same sign, outside the mate band, mean \|Δ\| 216.12 and max 1211.
+Those are ordinary pruning differences and are not evidence of anything beyond
+"the two searches are not the same search".
+
+The **16** rows discussed below are the sign-or-mate subset: 9 that disagree in
+sign plus 7 mate-band rows that differ. Saying "16 differing rows" without the 90
+understates how much the arms diverge; saying "90 differing rows" without the
+split overstates how much of it matters.
 
 **7 differing mate-band rows: the check policy, and it is a stated non-goal.**
 All 7 offer a quiet check at the root (7/7, against a 111/467 = 23.8% base rate).
@@ -93,14 +137,15 @@ but it does mean **FastQ must not be used as a mate oracle**.
 
 **9 sign disagreements: the SEE gate and delta pruning, NOT the check policy and
 NOT the budget.** Only 1 of the 9 offers a root quiet check — 11%, *below* the
-23.8% base rate, so the check policy is ruled out rather than merely unmentioned.
-They are ordinary pruning differences: qsearch searches every capture, FastQ
-declines SEE-negative ones (0–13 SEE prunes on these rows) and delta-prunes
-against the window (0–18).
+111/467 = 23.8% base rate, so the check policy is ruled out rather than merely
+unmentioned. They are ordinary pruning differences: qsearch searches every
+capture, FastQ declines SEE-negative ones (0–13 SEE prunes on these rows) and
+delta-prunes against the window (0–18).
 
-**The node cap is not the driver.** It tripped on 1 of the 17 differing rows and
-on 11 of the 450 agreeing ones. §3.4 calls it a tripwire rather than a tuned knob,
-and `budget_trips` is what makes that claim checkable.
+**The node cap is not the driver.** It tripped on 11 of 467 rows in total: 1 of
+the 16 sign-or-mate rows and 10 of the 450 sign-agreeing non-mate rows. §3.4
+calls it a tripwire rather than a tuned knob, and `budget_trips` — now recorded
+per row in the dump — is what makes that claim checkable rather than asserted.
 
 ⚑ **AGREEMENT WITH qsearch IS NOT THE TARGET AND 0.9807 IS NOT A STRENGTH
 RESULT.** §8 says so explicitly: the deciding readout for any production claim is
@@ -136,11 +181,90 @@ header block.
 
 **3. §5's "no full SEE exists today" premise is wrong, and the duplication is
 deliberate.** `encoding/_features_impl.h` already has `feat_see_capture`. It is
-not reused: it lives in a different extension, uses pawn units rather than
-centipawns, handles neither en passant nor promotion, and — decisively — feeds the
-`FEAT_EXTRA_V3_SEE` production model input planes, so widening it to satisfy §5
-would silently change the training input distribution. The four reasons are in the
-⚑⚑ block at the top of `_fastq_see.h`; read it before "unifying" them.
+not reused because it lives in a different extension, uses pawn units rather than
+centipawns, and is square-based rather than move-based — so it handles neither en
+passant (whose victim does not stand on the capture square) nor promotion, both
+of which §5 requires.
+
+⚑⚑ **AN EARLIER REVISION OF THIS PR CLAIMED A FOURTH, DECISIVE REASON — that
+`feat_see_capture` feeds the live net's input planes — AND IT WAS FALSE.** Its
+output reaches only the `FEAT_EXTRA_V3_SEE` planes, and `v3_see` is a separate
+65-plane family from the 63-plane `v2_threats` that `configs/pbt2_small.yaml`
+selects; the graded-SEE planes are appended after index 63 and exist only when
+`v3_see` is chosen. Changing `feat_see_capture` would **not** move the live input
+distribution. This is the "diff the file you measured against production" trap,
+committed inside a PR whose whole subject is that class of defect. The true
+residual reason is weaker: `v3_see` is a shipped encoder with a closed
+experimental verdict, so changing it would silently cost that verdict's
+reproducibility.
+
+`tests/test_fastq_see.py::test_the_two_SEEs_in_this_repo_must_not_be_unified`
+turns the comment into a tripwire — it pins one en-passant case where the two
+MUST disagree (FastQ scores it 100; the `v3_see` planes are entirely zero because
+the loop only visits occupied squares), with an ordinary capture asserted first
+so the comparison is not two silent zeros.
+
+**4. §5's move ordering is implemented as specified, after the first version was
+not.** §5 says "used for BOTH ordering (best SEE first) and gating — one
+computation. MVV-LVA exists only as the pre-SEE tiebreak." The first
+implementation sorted by SEE descending and left ties in move-generation order,
+which is not the same thing. Measured before deciding: **233 of the 348 corpus
+nodes with two or more tactical moves (67.0%) contain an equal-SEE tie, and
+MVV-LVA reorders a tie group at 120 of them (34.5%)** — so this was a silent
+dependence on an unrelated implementation detail across a third of all nodes,
+not a corner case. Adopting the tiebreak also measurably lowered the cost
+(6.44 → 6.41 evaluations per call) at unchanged sign agreement, so it is both
+what the spec says and the better of the two.
+
+## Two defects this PR shipped and then fixed
+
+Recorded because both are instances of the class the PR exists to guard against,
+and because the second one's *obvious repair does not work*.
+
+**An in-check budget trip returned a supermate.** An in-check node has no
+stand-pat, so the evasion loop seeds `best` at `-CAE_FASTQ_INF`; when the budget
+refused the FIRST evasion, that seed left the function as −200000 and the parent
+negated it to **+200000 — twice `RESOLVER_MATE_BASE`**, a score better than
+mate-in-0 from a node the search never looked at. The §8 harness classifies
+anything past the eval clamp as a mate, so it would have been banked as FastQ
+finding a forced win. Reachable on ordinary rows, not just crafted ones: 13
+corpus rows returned ±200000 at `node_cap=2`.
+
+⚑ Every budget test asserted only `budget_trips > 0` and an evaluation count. All
+of them passed with the bug in place, because none of them looked at the number
+that came back.
+
+⚑⚑ **"Return `alpha`, mirroring the path-ceiling branch" REPRODUCES IT EXACTLY.**
+`cae_arm_fastq_eval` enters the root with `beta = +CAE_FASTQ_INF`, the root passes
+`beta` down unchanged, and `cae_fastq_child_value` negates it — so a
+first-generation child's `alpha` **is** `-CAE_FASTQ_INF`. Run as a mutant, that
+repair failed with the identical `returned 200000`. The path-ceiling branch had
+the same defect and was fixed alongside. The fix returns `cae_resolver_clamp(beta)`:
+`beta` so an unsearched move cannot be *promoted* (returning `alpha` claims a
+fail-low, which the parent reads as a fail-HIGH on the move that reached the
+node), and the clamp because `beta` is `-alpha_parent` and an in-check parent's
+alpha starts at `-CAE_FASTQ_INF` too — without it the escape just moves up one
+level. The invariant is: **a node the search declined to look at never emits a
+mate-magnitude score.** Real mates are untouched; they come from the terminal
+branch.
+
+⚑ No corpus row reaches the clamp half — swept at `node_cap` 1/2/3/4 with the
+clamp removed, zero escapes. It needs a root in check whose evasions give check
+back, which is a composed shape, so
+`test_a_trip_below_an_in_check_ROOT_stays_in_range_too` carries a crafted fixture.
+"We could not find it" and "it cannot happen" are different claims.
+
+**The stand-pat was not clamped where `cae_qsearch_node` clamps its own.** The DAG
+stores the raw NNUE value by contract, so the clamp belongs at every reader.
+Unobservable with the production net (largest raw evaluation on the corpus is
+4546 against a clamp of 32000) — which is exactly why it needed a test rather
+than an argument: at a synthetic PSQT magnitude of 200,000, **147 of 444 non-check
+rows evaluate past the clamp and reach 89,044**, inside the mate band.
+
+**`fastq_stats()` answered zeros for any non-FastQ handle** — the mirror of the
+`arm_stats()` refusal added in this PR's fifth commit, and a reminder that fixing
+one direction of a defect and leaving the other is this codebase's documented
+failure mode for exactly this class. Both directions now raise.
 
 ## Knobs (§6)
 
@@ -159,6 +283,18 @@ effect out of the search's own counters; each of those tests was run against a
 mutant that ignores the context and uses the compiled default, and each killed it.
 
 ## Counters (§7)
+
+⚑ **`beta_cutoffs` WAS SPLIT INTO `stand_pat_cutoffs` AND `move_cutoffs`.** One
+name covered two different events — a node that never generated a move, and a
+node that searched at least one and then cut — so the counter could not answer
+the only question it gets asked, which is how often the move loop paid off. A
+counter that cannot answer its own question is the same defect as one that reads
+zero.
+
+⚑ **`arm_stats()` and `fastq_stats()` each REFUSE the other arm's handle.**
+FastQ's counters live in a separate block from the check resolver's, and reading
+the wrong one returns a fully-populated struct of zeros — including
+`nnue_evals` — which looks like an answer. Both directions raise instead.
 
 The evaluate-once identity is asserted, in the form that is actually true:
 

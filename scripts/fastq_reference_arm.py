@@ -26,9 +26,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
+import time
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple, TypeVar
 
 import chess
 
@@ -48,48 +51,88 @@ REFERENCE = "nnue-qsearch"
 SUBJECT = "nnue-fastq"
 
 
-def _eval_counter(arm: str):
-    """The counter that actually moves for this arm.
+class ArmRun(NamedTuple):
+    """One arm's sweep: per-row values and per-row cost, plus the live handle."""
 
-    ⚑ THIS SCRIPT IS WHY arm_stats() NOW REFUSES A FastQ HANDLE. FastQ keeps its
-    own counter block (§7) because its node vocabulary differs from the
-    resolver's, and the first version of this harness read
-    arm_stats()["nnue_evals"] for every arm — which for FastQ was a permanent 0.
-    It printed `nnue-fastq mean 0.00 median 0 max 0` across all 467 rows, which
-    is indistinguishable from a perfect result. The C refuses that call now, so
-    the mistake is caught rather than published; this dispatch is what makes the
-    right counter the one that gets read.
+    values: list[int]
+    evals: list[int]
+    wall_us: list[float]
+    trips: list[int]
+    see_prunes: list[int]
+    delta_prunes: list[int]
+    handle: object
+
+
+#: FastQ counters recorded per row so the attribution in docs/fastq_search.md is
+#: re-derivable from the dump instead of only from the prose that describes it.
+_PER_ROW_COUNTERS = ("budget_trips", "see_prunes", "delta_prunes")
+
+
+def _counters(arm: str, handle: object) -> dict[str, int]:
+    """The counter block that actually moves for this arm.
+
+    ⚑ arm_stats() AND fastq_stats() EACH REFUSE THE OTHER ARM'S HANDLE, and that
+    refusal is why this function is short. The first version of this harness read
+    arm_stats()["nnue_evals"] for every arm — which for FastQ was a permanent 0 —
+    and printed `nnue-fastq mean 0.00 median 0 max 0` across all 467 rows,
+    indistinguishable from a perfect result on a PR whose headline is an
+    evaluation-count reduction. Both directions now raise rather than answer
+    zeros, so this dispatch cannot silently pick the wrong block.
     """
     if arm == SUBJECT:
-        return lambda handle: _nnue_ext.fastq_stats(handle)["nnue_evals"]
-    return lambda handle: _nnue_ext.arm_stats(handle)["nnue_evals"]
+        return _nnue_ext.fastq_stats(handle)
+    return _nnue_ext.arm_stats(handle)
 
 
-def _per_call(arm: str, pack: Path, boards: Sequence[chess.Board]):
-    """Evaluate row by row, recording each call's own NNUE-evaluation cost.
+def _per_call(arm: str, pack: Path, boards: Sequence[chess.Board]) -> ArmRun:
+    """Evaluate row by row, recording each call's own cost.
 
     One handle for the whole sweep, so an arm that persists work across calls
     gets credit for it — that persistence is the point of the DAG substrate, and
     a fresh handle per row would measure a configuration nothing runs.
+
+    ⚑ §7 ASKS FOR WALL p50/p99 AND IT IS MEASURED HERE, NOT IN THE C COUNTERS.
+    Deliberate: a per-call clock_gettime in the hot path buys a number dominated
+    by whatever else this machine is running (usually live training), and a
+    p50/p99 needs per-call samples — a histogram or reservoir — inside a search
+    whose whole point is to be cheap. The harness already loops per call, so it
+    takes the same measurement for free and identically for every arm. Eval count
+    stays the DECIDING instrument because it is deterministic; wall time is
+    reported alongside it, never instead of it.
     """
     handle = _nnue_ext.arm_open(arm, str(pack))
-    read_evals = _eval_counter(arm)
     values: list[int] = []
     evals: list[int] = []
-    previous = 0
+    wall_us: list[float] = []
+    tracked: dict[str, list[int]] = {k: [] for k in _PER_ROW_COUNTERS}
+    previous = _counters(arm, handle)
     for board in boards:
-        values.append(_nnue_ext.arm_handle_eval(handle, [CBoard.from_board(board)])[0])
-        total = read_evals(handle)
-        evals.append(total - previous)
-        previous = total
+        cboard = CBoard.from_board(board)
+        start = time.perf_counter()
+        values.append(_nnue_ext.arm_handle_eval(handle, [cboard])[0])
+        wall_us.append((time.perf_counter() - start) * 1e6)
+        now = _counters(arm, handle)
+        evals.append(now["nnue_evals"] - previous["nnue_evals"])
+        for key in _PER_ROW_COUNTERS:
+            tracked[key].append(now.get(key, 0) - previous.get(key, 0))
+        previous = now
     if sum(evals) == 0:
         raise RuntimeError(f"{arm} reported zero NNUE evaluations; wrong counter")
-    return values, evals, handle
+    return ArmRun(
+        values,
+        evals,
+        wall_us,
+        tracked["budget_trips"],
+        tracked["see_prunes"],
+        tracked["delta_prunes"],
+        handle,
+    )
 
 
-def _quantile(sorted_values: Sequence[int], q: float) -> int:
-    if not sorted_values:
-        return 0
+_Number = TypeVar("_Number", int, float)
+
+
+def _quantile(sorted_values: Sequence[_Number], q: float) -> _Number:
     index = min(len(sorted_values) - 1, int(q * (len(sorted_values) - 1) + 0.5))
     return sorted_values[index]
 
@@ -163,6 +206,57 @@ def _report_evals(name: str, evals: list[int]) -> None:
     )
 
 
+def _report_wall(name: str, wall_us: list[float]) -> None:
+    ordered = sorted(wall_us)
+    print(
+        f"  {name:<18} p50 {_quantile(ordered, 0.50):9.1f}us  "
+        f"p99 {_quantile(ordered, 0.99):9.1f}us  max {ordered[-1]:9.1f}us"
+    )
+
+
+def _write_dump(path: Path, results: dict[str, ArmRun]) -> None:
+    """One JSON object per corpus row, so every claim in the summary is re-derivable.
+
+    ⚑⚑ THE SUMMARY ALONE IS NOT EVIDENCE, WHICH IS WHY THIS EXISTS. Aggregates
+    cannot be re-attributed after the fact: "the differing rows are the check
+    policy, not the budget" is a claim about WHICH rows, and a printed mean can
+    neither confirm nor refute it. Anyone can now re-derive the split — or find a
+    different one — without rerunning the sweep or trusting the prose.
+    """
+    subject = results[SUBJECT]
+    reference = results[REFERENCE]
+    dag_values = results["nnue-qsearch-dag"].values
+    clamp = _nnue_ext.RESOLVER_EVAL_CLAMP
+
+    with path.open("w", encoding="utf-8") as out:
+        for i, board in enumerate(CORPUS):
+            fastq, qsearch = subject.values[i], reference.values[i]
+            legal = list(board.legal_moves)
+            row = {
+                "fen": board.fen(),
+                "fastq": fastq,
+                "qsearch": qsearch,
+                "qsearch_dag": dag_values[i],
+                "delta": fastq - qsearch,
+                "sign_fastq": _sign(fastq),
+                "sign_qsearch": _sign(qsearch),
+                "sign_agree": _sign(fastq) == _sign(qsearch),
+                "mate_band": max(abs(fastq), abs(qsearch)) > clamp,
+                "fastq_evals": subject.evals[i],
+                "qsearch_evals": reference.evals[i],
+                "fastq_wall_us": round(subject.wall_us[i], 2),
+                "root_in_check": board.is_check(),
+                "root_quiet_check_available": any(
+                    not board.is_capture(m) and not m.promotion and board.gives_check(m)
+                    for m in legal
+                ),
+                "cap_tripped": subject.trips[i] > 0,
+                "see_prunes": subject.see_prunes[i],
+                "delta_prunes": subject.delta_prunes[i],
+            }
+            out.write(json.dumps(row) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pack", type=Path, required=True, help="NNUE weights pack.")
@@ -173,6 +267,10 @@ def main() -> int:
     parser.add_argument(
         "--node-cap", type=int, default=_nnue_ext.FASTQ_NODE_CAP,
         help="FastQ's §3.4 budget tripwire; 0 disables it.",
+    )
+    parser.add_argument(
+        "--dump", type=Path, default=None,
+        help="Write the per-row JSONL the summary is derived from.",
     )
     args = parser.parse_args()
 
@@ -200,15 +298,19 @@ def main() -> int:
 
     print("NNUE evaluations per call")
     for arm in ARMS:
-        _report_evals(arm, results[arm][1])
+        _report_evals(arm, results[arm].evals)
+
+    print("\nWall per call (§7; measured here, not in the C counters — see _per_call)")
+    for arm in ARMS:
+        _report_wall(arm, results[arm].wall_us)
 
     print(f"\n{SUBJECT} vs {REFERENCE}")
-    _report_values(results[SUBJECT][0], results[REFERENCE][0])
+    _report_values(results[SUBJECT].values, results[REFERENCE].values)
 
     print(f"\nnnue-qsearch-dag vs {REFERENCE}  (substrate only; must be identical)")
-    _report_values(results["nnue-qsearch-dag"][0], results[REFERENCE][0])
+    _report_values(results["nnue-qsearch-dag"].values, results[REFERENCE].values)
 
-    fastq_counters = _nnue_ext.fastq_stats(results[SUBJECT][2])
+    fastq_counters = _nnue_ext.fastq_stats(results[SUBJECT].handle)
     print("\nFastQ counters (§7)")
     for key in sorted(fastq_counters):
         print(f"  {key:<24} {fastq_counters[key]}")
@@ -217,6 +319,10 @@ def main() -> int:
         == fastq_counters["nodes_created"]
     )
     print(f"  evaluate-once identity   {'HOLDS' if identity else '*** BROKEN ***'}")
+
+    if args.dump:
+        _write_dump(args.dump, results)
+        print(f"\nper-row dump: {args.dump}  ({len(CORPUS)} rows)")
     return 0 if identity else 1
 
 
