@@ -52,6 +52,8 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
             "chess_anti_engine/nnue/_nnue_impl.h",
             "chess_anti_engine/nnue/_nnue_provider.h",
             "chess_anti_engine/nnue/_arm_providers.h",
+            "chess_anti_engine/nnue/_nnue_dag_api.h",
+            "chess_anti_engine/mcts/_position_dag.h",
             "chess_anti_engine/mcts/_value_provider.h",
             "chess_anti_engine/mcts/_check_resolver.h",
             "chess_anti_engine/mcts/_search_terminal.h",
