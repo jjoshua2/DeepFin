@@ -59,22 +59,6 @@ static CaeNnueDagHandle *cae_nnue_dag_from_capsule(PyObject *capsule) {
     return h;
 }
 
-/* Turn a store status into the exception it names. Never called with
- * CAE_VALUE_OK; the store's own two codes are not seam statuses, so
- * raise_status() would mislabel them. */
-static void cae_nnue_dag_raise(int status) {
-    if (status == CAE_NNUE_DAG_ERR_NO_MEMORY) {
-        PyErr_NoMemory();
-        return;
-    }
-    if (status == CAE_NNUE_DAG_ERR_LINK) {
-        PyErr_SetString(PyExc_RuntimeError,
-                        "new DAG node could not be linked to its parent");
-        return;
-    }
-    raise_status(status);
-}
-
 static PyObject *cae_nnue_dag_value_object(const CaeNnueDagHandle *h, int32_t node_id) {
     /* Bound against the PAYLOAD array, not against dag.node_count: the two are
      * kept in step only by cae_nnue_dag_publish_new(), and the graph layer can
@@ -181,7 +165,7 @@ static PyObject *py_dag_intern_root(PyObject *Py_UNUSED(self), PyObject *args) {
     int32_t node_id = CAE_DAG_NO_NODE;
     int created = 0;
     int status = cae_nnue_dag_intern_position(h, board, &node_id, &created);
-    if (status != CAE_VALUE_OK) { cae_nnue_dag_raise(status); return NULL; }
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
 
     h->dag.root_id = node_id;
     return cae_nnue_dag_result(h, node_id, created);
@@ -246,7 +230,7 @@ static PyObject *py_dag_intern_child(PyObject *Py_UNUSED(self), PyObject *args) 
     int created = 0;
     int status = cae_nnue_dag_intern_child(
         h, parent_id, action, child_board, &node_id, &created);
-    if (status != CAE_VALUE_OK) { cae_nnue_dag_raise(status); return NULL; }
+    if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
     return cae_nnue_dag_result(h, node_id, created);
 }
 

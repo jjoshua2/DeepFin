@@ -160,6 +160,21 @@ That is the point of doing this before the tactical search proper. A new search 
 
 `tests/test_qsearch_dag_parity.py` owns all of it.
 
+### The numbers, at `resolver_depth=12 qply=3 check_plies=1` over the 457-row corpus
+
+| | |
+| --- | --- |
+| quiescence nodes, both arms | 61,520 (equal, as required) |
+| oracle NNUE evaluations | 61,520 (one per node, by construction) |
+| DAG NNUE evaluations | **53,416** — 8,104 fewer, **13.2%** |
+| probe hits | 6,025 within-call + 2,079 cross-call |
+| cross-call share of hits | 25.7% |
+| `dag_memory_bytes` | **362 MB for 53,416 nodes ≈ 6.7 KB/node** |
+
+⚑ **The saving is 13.2%, not a multiple, and the memory figure is the reason to care.** A `CaeNnueState` is dominated by a 2×1024 `int16` accumulator, so the store costs ~6.7 KB per canonical position — 362 MB after one 457-position corpus. §4.4 of `docs/fastq_design.md` deferred the eviction/reset cadence decision until there were measurements; these are they, and they say the cadence question is real rather than theoretical. On this corpus a `dag_reset()` per position would forfeit only the 25.7% of hits that are cross-call, which is the trade the cadence decision is actually about.
+
+The 13.2% is also a *floor* for what a workload with more overlap would see: these rows come from 24 independent scripted games plus crafted FENs, so most of them share nothing. The shared-subtree measurement is the other end of the range — re-running an identical call costs **zero** evaluations, and a capture child of an already-searched parent costs 133 against a cold store's 160.
+
 ### The counters, and the watermark that splits the hits
 
 `arm_stats()` carries `nnue_evals` for **every** arm, counted inside the code that calls the evaluator. It is not a restatement of `qnodes`: for the incremental and refresh substrates the two are equal by construction (each quiescence node evaluates its own stand-pat), and for the DAG substrate they diverge by exactly the reuse achieved. That is what makes "evaluate once per canonical position" an observation rather than a description of an intention.

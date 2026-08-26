@@ -147,11 +147,26 @@ static PyObject *py_source_sha256(PyObject *Py_UNUSED(self), PyObject *args) {
     return PyUnicode_FromString(w->sha256_hex);
 }
 
+/* ⚑ ONE HOME FOR status -> exception, INCLUDING THE POSITION DAG'S OWN CODES.
+ * The store returns CAE_NNUE_DAG_ERR_* rather than a seam status because the
+ * seam has no out-of-memory code, and those propagate out of BOTH surfaces: the
+ * Python probe API raises them directly, and the "nnue-qsearch-dag" arm returns
+ * them up through cae_value_eval() like any other failure. A second raiser that
+ * knew only one of the two paths would report a failed allocation in the search
+ * as cae_value_status_name()'s "unknown value-provider status" — a real error
+ * arriving under a name that says nothing about what happened. */
 static int raise_status(int status) {
     if (status == CAE_VALUE_ERR_IN_CHECK) {
         PyErr_SetString(NnueInCheckError,
                         "NNUE evaluation is undefined in check; resolve check nodes "
                         "recursively (search the evasions) instead of evaluating");
+    } else if (status == CAE_NNUE_DAG_ERR_NO_MEMORY) {
+        PyErr_NoMemory();
+    } else if (status == CAE_NNUE_DAG_ERR_LINK) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "a DAG node could not be linked to its parent; single-threaded "
+                        "construction cannot produce this, so it is the signature of "
+                        "concurrent use of one store");
     } else {
         PyErr_Format(PyExc_ValueError, "NNUE evaluation failed: %s",
                      cae_value_status_name(status));
