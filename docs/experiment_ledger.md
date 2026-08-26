@@ -67170,3 +67170,16 @@ still decides per the test-all directive. Added arm (d): the SF DUAL policy as
 actually shipped — big net by default, small net when |simple eval| exceeds the
 imbalance threshold — since it is SF's own engineered speed/stability trade and costs
 nothing extra once both nets are packed.
+
+**2026-08-26 — HARMONIZATION LEVER 1 LAUNCHED (gate cleared).** Knob merged as
+`b46e61e88` on feat/lc0-continuation after: 5 mutants killed across two installments,
+grok clean bill (τ provably reaches every trained batch path; the only bypass is
+fail-loud), and the review's three follow-ups closed (fail-loud guard when an active
+temper reaches zero batches — pinned from BOTH sides: fires on an inert hook, silent
+at τ=1.0). Run: τ=2.2, f=0.50, seed 14, bar 0.002, 20k steps, iter-595 init, out
+runs/lc0_mix050_temper22_iter595_20260826, zero refusals at launch. READOUT VALIDITY
+CHECKLIST (from the review, applied before ANY clause is judged): summary.json
+mixed_corpus.own_policy_temper must show own_policy_temp 2.2 / temp_active true /
+device_batches_tempered == device_batches_seen > 0 / entropy_after ≈ 1.4-1.5 nats >
+entropy_before / losses_policy_target_temp 1.0 / batches_without_source_vector 0 /
+unrouted 0. Then MID+LAST 400g arenas, seeds 68/69, clauses per the 604b5ca58 prereg.
