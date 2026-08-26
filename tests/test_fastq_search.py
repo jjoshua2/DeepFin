@@ -837,6 +837,41 @@ def test_fastq_is_registered_and_declares_itself_non_reentrant() -> None:
         tree.set_value_provider(ARM, "unused-path")
 
 
+def test_arm_stats_refuses_a_fastq_handle_instead_of_reporting_zeros(
+    eval_pack: Path,
+) -> None:
+    """⚑⚑ THE NUMBER IT WOULD HAVE RETURNED IS A PLAUSIBLE-LOOKING ZERO.
+
+    `arm_stats` reports the check RESOLVER's counters. FastQ runs its own search
+    and touches none of them, so on a FastQ handle every key — `nnue_evals` most
+    dangerously — would read 0 no matter how much work the arm did. Zero there is
+    indistinguishable from an idle handle, and "0 NNUE evaluations" reads as
+    astonishing efficiency rather than as the wrong counter.
+
+    This is not hypothetical: scripts/fastq_reference_arm.py was written against
+    `arm_stats` first and reported `nnue-fastq mean 0.00 median 0 max 0` across
+    all 467 rows, which is exactly what a perfect result would look like.
+
+    The refusal follows the convention `arm_dag_stats` already set — it raises on
+    an arm that owns no store rather than reporting a zero that could be mistaken
+    for an idle one.
+    """
+    handle = _open(eval_pack)
+    _eval(handle, [chess.Board(KNOB_FEN)])
+
+    with pytest.raises(ValueError, match="fastq_stats"):
+        _nnue_ext.arm_stats(handle)
+
+    # Anti-vacuity: the counter the caller wanted is non-zero, so the refusal
+    # replaced a WRONG answer rather than a missing one.
+    assert _nnue_ext.fastq_stats(handle)["nnue_evals"] > 0
+
+    # The refusal is arm-specific, not a blanket break of arm_stats.
+    reference = _nnue_ext.arm_open(REFERENCE_ARM, str(eval_pack))
+    _nnue_ext.arm_handle_eval(reference, [CBoard.from_board(chess.Board(KNOB_FEN))])
+    assert _nnue_ext.arm_stats(reference)["nnue_evals"] > 0
+
+
 def test_the_arm_refuses_to_run_without_its_store() -> None:
     """The vtable pairs cae_arm_init_fastq with cae_arm_fastq_eval.
 

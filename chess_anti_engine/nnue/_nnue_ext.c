@@ -691,13 +691,29 @@ PyDoc_STRVAR(arm_stats_doc,
 "⚑ The counters and the configuration OF THAT CONTEXT, accumulated across every\n"
 "evaluation it has done. The configuration keys are the context's own fields, so\n"
 "they can differ from what set_arm_config() currently holds — and when they do,\n"
-"the context's is the number that governed the work.");
+"the context's is the number that governed the work.\n\n"
+"Raises ValueError on an \"nnue-fastq\" handle: these are the RESOLVER's counters\n"
+"and FastQ runs its own search, so every one of them would read zero. Use\n"
+"fastq_stats() there.");
 
 static PyObject *py_arm_stats(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *capsule;
     if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
     ArmHandle *h = arm_handle_from_capsule(capsule);
     if (!h) return NULL;
+    /* ⚑⚑ REFUSE RATHER THAN REPORT ZEROS. These counters describe the check
+     * resolver and its quiescence; FastQ shares neither, so an "nnue-fastq"
+     * handle would answer nnue_evals = 0 forever. A zero that means "this
+     * question does not apply here" is indistinguishable from one that means
+     * "nothing happened", and reading it as efficiency is a mistake that
+     * survives review because the number looks like an answer. arm_dag_stats()
+     * already refuses an arm that owns no store for the same reason. */
+    if (h->vp == &CAE_ARM_FASTQ_PROVIDER) {
+        PyErr_SetString(PyExc_ValueError,
+                        "arm_stats() reports the check resolver's counters, which "
+                        "nnue-fastq does not use; call fastq_stats(handle)");
+        return NULL;
+    }
     return arm_stats_dict((const CaeArmCtx *)h->ctx);
 }
 

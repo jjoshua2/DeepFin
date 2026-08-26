@@ -51,12 +51,14 @@ SUBJECT = "nnue-fastq"
 def _eval_counter(arm: str):
     """The counter that actually moves for this arm.
 
-    ⚑ arm_stats() REPORTS ZERO FOR FastQ, AND ZERO IS A PLAUSIBLE-LOOKING NUMBER.
-    FastQ keeps its own counter block (§7) because its node vocabulary differs
-    from the resolver's; reading arm_stats()["nnue_evals"] for it returns a
-    permanent 0, which reads as "astonishingly efficient" rather than as
-    "wrong counter". This function exists so that mistake has one place to be
-    made and it is made correctly.
+    ⚑ THIS SCRIPT IS WHY arm_stats() NOW REFUSES A FastQ HANDLE. FastQ keeps its
+    own counter block (§7) because its node vocabulary differs from the
+    resolver's, and the first version of this harness read
+    arm_stats()["nnue_evals"] for every arm — which for FastQ was a permanent 0.
+    It printed `nnue-fastq mean 0.00 median 0 max 0` across all 467 rows, which
+    is indistinguishable from a perfect result. The C refuses that call now, so
+    the mistake is caught rather than published; this dispatch is what makes the
+    right counter the one that gets read.
     """
     if arm == SUBJECT:
         return lambda handle: _nnue_ext.fastq_stats(handle)["nnue_evals"]
