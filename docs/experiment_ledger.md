@@ -67107,3 +67107,26 @@ arenas vs iter-595, fresh seeds 68/69. CLAUSES: LAST CI excludes 0 positive ⇒ 
 excludes 0 negative ⇒ KILL (tempering hurts; lever 2 next with lever 1 reverted).
 Comparator at matched steps: untempered f=0.50 curve (MID −42.78 / LAST −0.87, seeds
 63/64) — diagnostic only.
+
+**2026-08-25 ~22:50 — #469 blockers CLOSED + real-net bench: incremental NNUE = 1.047×,
+eval is only ~6% of qsearch wall.** Implementer closed all three review blockers
+(registry tuple; never-matching tripwire replaced with a positional-parse + source↔
+binary join; the parity fixture was blind in THREE compounding ways — zero accumulator
+weights, sign-monotone corruption masked by quiescence max, non-antisymmetric skip —
+each proven by mutants, scalar kernels now parametrized). Real-net bench (nn-f68ec79f0fe3,
+order-alternated, 1,076 roots × 3, qply 4): incremental 322 vs refresh 307 roots/s =
+**1.047×, values EXACT over 1,716,580 qnodes**. Amdahl: 0.47s saved of 10.5s ⇒
+full-refresh eval ≈ 6% of qsearch wall — the other ~94% (movegen, board copy, resolver
+plumbing) is the real cost, per Josh's read ("if we don't get SF's boost it's other
+inefficiencies"). ⇒ #469 is correct and necessary-but-not-sufficient; a qsearch
+per-node cost PROFILE is now a named follow-up PR alongside the retrofit/FastQ stack.
+Known-undetectable residue (documented in the module): a 16-lane AVX2 loop-bound bug
+class sits at ~0.3cp, below end-to-end resolution — needs exported row helpers to unit.
+#470 two-lane review COMPLETE: grok "approve with comments"; Opus VERIFIED review finds
+no production-path correctness defect but three merge-holds — H1 tautological headline
+invariant (the falsifiable one is state_inits+state_makes==node_count), H2 test suite
+VACUOUS for stale-value-on-transposition (mutant survived; synthetic pack evaluates the
+transposing pair identically), H3 GIL released around a use-after-free window (silent
+corruption driven at 6 threads). DECISION (mine, disclosed): H3 fix = HOLD the GIL
+around state_make/evaluate — µs-scale calls, single-threaded design becomes
+self-enforcing; a future concurrent consumer reintroduces release with real synchronization.
