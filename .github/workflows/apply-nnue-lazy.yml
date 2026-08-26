@@ -29,30 +29,28 @@ jobs:
               raise RuntimeError('replace_function anchor missing')
           s = s.replace(anchor, helper + anchor, 1)
 
-          # The release() and grow() paths contain the same four-free target
-          # fragment. Only the first transformer call uses that short fragment;
-          # make its target operation explicitly first-match while keeping every
-          # other replacement strict.
           call_prefix = '''replace_once(\n    store_h,\n    """    free(h->states);\\n    free(h->values);\\n    free(h->value_valid);\\n    free(h->quiet_bits);\\n""",'''
           if s.count(call_prefix) != 1:
               raise RuntimeError(f'expected one transformer call, got {s.count(call_prefix)}')
           idx = s.find(call_prefix)
           s = s[:idx] + s[idx:].replace('replace_once(', 'replace_first(', 1)
 
-          # Current _arm_providers.h continues the FastQ comment on the same
-          # line after the period. Match only the stable prefix so the existing
-          # explanatory text is retained verbatim.
           old_anchor = '''static int g_arm_dag_node_cap         = CAE_QSEARCH_DEFAULT_DAG_NODE_CAP;\\n\\n/* FastQ's §6 knobs.\\n'''
           new_anchor = '''static int g_arm_dag_node_cap         = CAE_QSEARCH_DEFAULT_DAG_NODE_CAP;\\n\\n/* FastQ's §6 knobs.'''
           if s.count(old_anchor) != 1:
               raise RuntimeError(f'expected one arm old anchor, got {s.count(old_anchor)}')
           s = s.replace(old_anchor, new_anchor, 1)
-          # The replacement literal repeats the same comment prefix once.
           old_tail = '''\\n\\n/* FastQ's §6 knobs.\\n""",\n)'''
           new_tail = '''\\n\\n/* FastQ's §6 knobs.""",\n)'''
           if s.count(old_tail) != 1:
               raise RuntimeError(f'expected one arm replacement tail, got {s.count(old_tail)}')
           s = s.replace(old_tail, new_tail, 1)
+
+          old_marker = '"static void cae_qsearch_note_intern(\\n",'
+          new_marker = '"static void cae_qsearch_note_intern(",'
+          if s.count(old_marker) != 1:
+              raise RuntimeError(f'expected one qsearch note marker, got {s.count(old_marker)}')
+          s = s.replace(old_marker, new_marker, 1)
 
           p.write_text(s)
           PY
