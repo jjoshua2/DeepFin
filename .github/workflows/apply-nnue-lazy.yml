@@ -23,16 +23,16 @@ jobs:
           p = Path('scripts/_apply_nnue_lazy_pr.py')
           s = p.read_text()
           helper = '''\n\ndef replace_first(path: str, old: str, new: str) -> None:\n    text = read(path)\n    if old not in text:\n        raise RuntimeError(f"{path}: first-match fragment not found: {old[:80]!r}")\n    write(path, text.replace(old, new, 1))\n'''
-          s = s.replace('\n\ndef replace_function(path: str, marker: str, new_func: str) -> None:\n', helper + '\n\ndef replace_function(path: str, marker: str, new_func: str) -> None:\n', 1)
-          lines = s.splitlines()
-          # Original guarded failure identifies this call exactly. It is the release()
-          # block; the later identical free block is the grow/reallocation path and is
-          # patched separately with its assignment tail as part of the match.
-          target = 117
-          if not lines[target].strip().startswith('replace_once('):
-              raise RuntimeError(f'unexpected transformer line {target + 1}: {lines[target]!r}')
-          lines[target] = lines[target].replace('replace_once(', 'replace_first(', 1)
-          p.write_text('\n'.join(lines) + '\n')
+          anchor = '\n\ndef replace_function(path: str, marker: str, new_func: str) -> None:\n'
+          if anchor not in s:
+              raise RuntimeError('replace_function anchor missing')
+          s = s.replace(anchor, helper + anchor, 1)
+          call_prefix = '''replace_once(\n    store_h,\n    """    free(h->states);\\n    free(h->values);\\n    free(h->value_valid);\\n    free(h->quiet_bits);\\n""",'''
+          if s.count(call_prefix) != 2:
+              raise RuntimeError(f'expected two ambiguous free calls, got {s.count(call_prefix)}')
+          idx = s.find(call_prefix)
+          s = s[:idx] + s[idx:].replace('replace_once(', 'replace_first(', 1)
+          p.write_text(s)
           PY
       - name: Apply guarded patch
         run: python3 scripts/_apply_nnue_lazy_pr.py
