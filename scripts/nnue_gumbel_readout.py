@@ -503,11 +503,11 @@ def _git_provenance() -> dict[str, object]:
     """Best-effort source revision. Native binary hashes remain authoritative."""
     try:
         head = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL,
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1], text=True, stderr=subprocess.DEVNULL,
         ).strip()
         dirty = bool(subprocess.check_output(
             ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=ROOT, text=True, stderr=subprocess.DEVNULL,
+            cwd=Path(__file__).resolve().parents[1], text=True, stderr=subprocess.DEVNULL,
         ).strip())
         return {"git_head": head, "git_tracked_dirty": dirty}
     except (OSError, subprocess.CalledProcessError):
@@ -962,7 +962,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         input_extra_features=base.input_extra_features,
     )
     from chess_anti_engine.mcts import _mcts_tree as mcts_ext
-    nnue_ext_path, nnue_ext_sha = _module_identity(source._ext)
+    nnue_ext_path, nnue_ext_sha = _module_identity(_load_ext())
     mcts_ext_path, mcts_ext_sha = _module_identity(mcts_ext)
     setup_s = time.perf_counter() - setup_started
     policy = gen.PolicyShapeStats()
