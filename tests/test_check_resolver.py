@@ -20,6 +20,7 @@ what makes it possible to assert the BACKUP rather than just its plausibility.
 
 from __future__ import annotations
 
+import ctypes
 from collections.abc import Callable
 from pathlib import Path
 
@@ -1046,6 +1047,171 @@ def test_an_arm_can_be_installed_from_its_capsule_directly(bucket_pack: Path) ->
         assert tree.value_provider_name() == "nnue-qsearch"
     finally:
         tree.clear_value_provider()
+
+
+class _CaeValueProvider(ctypes.Structure):
+    """Mirrors CaeValueProvider in mcts/_value_provider.h, field for field."""
+
+    _fields_ = (
+        ("name", ctypes.c_char_p),
+        ("init", ctypes.c_void_p),
+        ("eval", ctypes.c_void_p),
+        ("retain", ctypes.c_void_p),
+        ("destroy", ctypes.c_void_p),
+        ("kernel_name", ctypes.c_void_p),
+        ("requires_gil", ctypes.c_int),
+    )
+
+
+class _CaeValueProviderExport(ctypes.Structure):
+    """Mirrors CaeValueProviderExport — the capsule payload."""
+
+    _fields_ = (
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("provider", ctypes.POINTER(_CaeValueProvider)),
+        ("in_check_error", ctypes.c_void_p),
+    )
+
+
+def _clone_export_with_requires_gil(source_capsule: object, requires_gil: int):
+    """A capsule identical to a WORKING provider's but for ``requires_gil``.
+
+    ⚑ ONE BIT DIFFERS, AND THAT IS WHAT MAKES THE MUTANT LEGIBLE. The vtable is
+    copied from the live ``nnue-qsearch`` export, so every function pointer is
+    real: with the install guard dropped, the tree installs it and runs, and the
+    test fails on "did not raise" rather than dying in a segfault that proves
+    nothing. Building the struct from scratch with dummy pointers would make the
+    mutant run a crash instead of a failing assertion.
+
+    The layout is asserted against the extension's own numbers below, so a C
+    struct change breaks this loudly instead of silently reading the wrong
+    offsets — the hazard of describing a C ABI from Python.
+    """
+    pythonapi = ctypes.pythonapi
+    pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
+    pythonapi.PyCapsule_GetPointer.argtypes = (ctypes.py_object, ctypes.c_char_p)
+    pythonapi.PyCapsule_New.restype = ctypes.py_object
+    pythonapi.PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
+
+    raw = pythonapi.PyCapsule_GetPointer(source_capsule, _CAPSULE_NAME)
+    assert raw, "could not read the source capsule"
+    source = ctypes.cast(raw, ctypes.POINTER(_CaeValueProviderExport)).contents
+
+    # The mirror is only trustworthy if the real capsule reads back correctly.
+    assert source.struct_size == ctypes.sizeof(_CaeValueProviderExport), (
+        "CaeValueProviderExport layout drifted from this test's mirror"
+    )
+    assert source.provider.contents.name == b"nnue-qsearch"
+    assert source.provider.contents.requires_gil == 0
+
+    # Module-lifetime storage: the capsule hands out a pointer, so these must
+    # outlive every use. Kept in a module-level list rather than a local.
+    vtable = _CaeValueProvider()
+    ctypes.memmove(ctypes.byref(vtable), ctypes.byref(source.provider.contents),
+                   ctypes.sizeof(_CaeValueProvider))
+    vtable.name = b"fake-non-reentrant"
+    vtable.requires_gil = requires_gil
+
+    export = _CaeValueProviderExport()
+    export.abi_version = source.abi_version
+    export.struct_size = source.struct_size
+    export.provider = ctypes.pointer(vtable)
+    export.in_check_error = source.in_check_error
+
+    _KEEPALIVE.extend((vtable, export))
+    return pythonapi.PyCapsule_New(ctypes.byref(export), _CAPSULE_NAME, None)
+
+
+_CAPSULE_NAME = b"cae.value_provider.v1"
+_KEEPALIVE: list[object] = []
+
+
+def test_the_tree_refuses_a_provider_that_declares_eval_non_reentrant(
+    bucket_pack: Path,
+) -> None:
+    """⚑⚑ THE GUARD IS AT THE DOOR, NOT THE ABSENCE OF A DOORWAY.
+
+    ``MCTSTree`` evaluates from several threads with the GIL released, so a
+    provider whose ``eval`` is not reentrant — the position-DAG arm — must not be
+    installable. It is tempting to call that settled by not exporting a capsule
+    and not listing the name, and it is NOT: ``resolve_provider_export`` accepts
+    a capsule handed in directly, and the name table's own comment invites
+    exactly that. An exclusion that rests on unreachability breaks the moment
+    someone exports the capsule symmetrically with the other arms, and the rule
+    the docs state would never have run.
+
+    So the refusal is tested through a capsule the name table has NEVER heard
+    of, carrying a real vtable with ``requires_gil`` set. Nothing about this
+    capsule's route resembles the DAG arm's, which is the point: the guard keys
+    on the declaration, not on who is asking.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    hostile = _clone_export_with_requires_gil(_nnue_ext.qsearch_arm_capsule, 1)
+
+    tree = MCTSTree()
+    with pytest.raises(ValueError, match="non-reentrant"):
+        tree.set_value_provider(hostile, str(bucket_pack))
+    # And nothing was installed on the way to refusing.
+    assert tree.value_provider_name() is None
+
+
+def test_the_refusal_keys_on_the_flag_and_not_on_the_capsule_being_unfamiliar(
+    bucket_pack: Path,
+) -> None:
+    """The control the test above needs to mean anything.
+
+    Same construction, same unfamiliar capsule, ``requires_gil`` CLEARED — and
+    it installs. Without this, "an unknown capsule is rejected" would explain the
+    refusal just as well as the flag does, and the flag would be untested.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    benign = _clone_export_with_requires_gil(_nnue_ext.qsearch_arm_capsule, 0)
+
+    tree = MCTSTree()
+    tree.set_value_provider(benign, str(bucket_pack))
+    try:
+        assert tree.value_provider_name() == "fake-non-reentrant"
+        assert tree.value_provider_eval(cboard(chess.STARTING_FEN)) == arm(
+            "nnue-qsearch", bucket_pack, [chess.STARTING_FEN]
+        )[0][0]
+    finally:
+        tree.clear_value_provider()
+
+
+def test_every_shipped_provider_declares_whether_it_is_reentrant(
+    bucket_pack: Path,
+) -> None:
+    """The three tree-installable providers are reentrant; the DAG arm is not.
+
+    ⚑ Read through the capsule ABI — the same field ``MCTSTree`` gates on — so
+    this cannot drift from what the guard sees. The DAG arm publishes no capsule
+    (deliberately), so its declaration is checked the only way it is observable
+    from Python: it must be refused by name, and by the flag's message rather
+    than by the name table's "no value provider named" one.
+    """
+    from chess_anti_engine.mcts._mcts_tree import MCTSTree
+
+    pythonapi = ctypes.pythonapi
+    pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
+    pythonapi.PyCapsule_GetPointer.argtypes = (ctypes.py_object, ctypes.c_char_p)
+    for capsule in (
+        _nnue_ext.value_provider_capsule,
+        _nnue_ext.static_arm_capsule,
+        _nnue_ext.qsearch_arm_capsule,
+    ):
+        raw = pythonapi.PyCapsule_GetPointer(capsule, _CAPSULE_NAME)
+        export = ctypes.cast(raw, ctypes.POINTER(_CaeValueProviderExport)).contents
+        assert export.provider.contents.requires_gil == 0, export.provider.contents.name
+
+    # The DAG arm is not in the name table, so this is the table's refusal — the
+    # ergonomic layer. The flag is what stops it when a capsule IS supplied,
+    # which the two tests above cover.
+    tree = MCTSTree()
+    with pytest.raises(ValueError, match="no value provider named"):
+        tree.set_value_provider("nnue-qsearch-dag", str(bucket_pack))
 
 
 def test_arm_eval_refuses_a_provider_that_keeps_no_resolver_statistics(

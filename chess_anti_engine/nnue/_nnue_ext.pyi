@@ -40,10 +40,16 @@ value_provider_capsule: object
 # check nodes recursively before evaluating; they differ only in what happens at
 # a resolved non-check node (static NNUE vs tactical quiescence).
 #
-# ⚑ "nnue-qsearch-refresh" and "nnue-qsearch-dag" are deliberately NOT published
-# as capsules and are not installable in MCTSTree. The refresh arm is a
-# diagnostic oracle, and the DAG arm's store has a single-threaded construction
-# path while the tree drives its provider from several search threads.
+# ⚑ "nnue-qsearch-refresh" and "nnue-qsearch-dag" are not published as capsules:
+# the refresh arm is a diagnostic oracle, and the DAG arm's store has a
+# single-threaded construction path while the tree drives its provider from
+# several search threads.
+#
+# ⚑ NOT PUBLISHING IS CONVENIENCE, NOT THE GUARD. MCTSTree accepts a capsule
+# handed to it directly, so "we did not export one" would stop working the
+# moment anyone exported it symmetrically with the two above. The DAG arm's
+# vtable sets `requires_gil`, and MCTSTree refuses ANY provider that declares it
+# — by name or by capsule. That is the enforcement; this is the ergonomics.
 static_arm_capsule: object
 qsearch_arm_capsule: object
 

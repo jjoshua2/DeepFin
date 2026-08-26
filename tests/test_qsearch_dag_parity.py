@@ -83,6 +83,61 @@ IN_CHECK_FENS = [
     "4k3/8/8/8/8/8/4R3/4K3 b - - 0 1",
 ]
 
+#: The three row classes the bit-identity claim leans on hardest, crafted rather
+#: than left to the RNG. Each is a place where the DAG substrate and the
+#: refresh-per-node oracle could disagree for a DIFFERENT structural reason, so
+#: "several hundred rows" is not evidence that any of them was covered:
+#:
+#: * **Promotion.** The piece set changes across the edge, so
+#:   ``cae_nnue_state_make``'s incremental diff must retire a pawn feature and
+#:   introduce a queen/rook/bishop/knight one. The oracle refreshes from the
+#:   board and structurally cannot get that wrong, which is exactly why only the
+#:   DAG arm can fail here. Under-promotions and capture-promotions are included
+#:   because they take different branches of the same diff.
+#: * **En passant.** The DAG's node identity keeps the ep square only when a
+#:   capture onto it is actually available — a canonicalisation the oracle does
+#:   not perform at all, because it has no identity. If that predicate were
+#:   wrong in either direction, two distinct positions would share a node and
+#:   each would be handed the other's value.
+#: * **In check with only quiet evasions.** The resolver recurses with no
+#:   tactical child to take, so the node it finally evaluates is reached by a
+#:   path that never goes through the capture shortcut. It is the one shape that
+#:   exercises interning along a purely quiet evasion chain.
+#:
+#: ⚑ Seeded scripted play does already produce a handful of each (2 / 3 / 4 at
+#: the current seed). That is luck, not coverage: reseeding or lengthening the
+#: games could take any class to zero and the parity gate would still report a
+#: pass. These rows are what make the counts below a property of the fixture.
+#: ⚑ THE PROMOTION ROWS CARRY MATERIAL ON PURPOSE, AND IT TOOK TWO TRIES. The
+#: obvious crafting — a lone pawn, two kings — is wrong here twice: bare K+P vs K
+#: evaluates to exactly 0 on a PSQT-only net (the degeneracy this module's
+#: docstring already bans), and adding just enough force to fix that instead lets
+#: the resolver find mate, parking the row in the mate band where the diversity
+#: assertion filters it straight back out. The rows below are the third shape:
+#: enough defensive material that no mate exists at `resolver_depth=12`, and
+#: enough imbalance that every one returns a distinct non-zero value.
+EDGE_CASE_FENS = [
+    # Promotion available. Each offers BOTH a quiet push-promotion and a
+    # capture-promotion, which are different branches of the accumulator diff:
+    # a push retires one pawn feature, a capture retires the captured piece's
+    # too. Spread over the shapes that could be handled separately — black to
+    # move, a knight as the captured piece, live castling rights in the node
+    # identity, and a promotion that gives check.
+    "r4rk1/1P3ppp/7p/8/8/7P/5PP1/R4RK1 w - - 0 1",
+    "n4rk1/1P3ppp/7p/8/8/7P/5PP1/R4RK1 w - - 0 1",
+    "r4rk1/5ppp/7p/8/8/7P/1p3PP1/R4RK1 b - - 0 1",
+    "r3k2r/1P3ppp/7p/8/8/7P/5PP1/R4RK1 w kq - 0 1",
+    "2r2rk1/1P3ppp/7p/8/8/7P/5PP1/R4RK1 w - - 0 1",
+    # A legal en passant capture, both colours, plus one where the ep capture is
+    # the only tactical move in the position.
+    "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+    "rnbqkbnr/pppp1ppp/8/8/3pP3/5N2/PPP2PPP/RNBQKB1R b KQkq e3 0 3",
+    "8/8/8/8/4pP2/8/8/K3k3 b - f3 0 1",
+    # In check with no capture among the evasions.
+    "k6R/8/8/8/8/8/8/K7 b - - 0 1",
+    "4k3/8/8/8/8/8/8/4RK2 b - - 0 1",
+]
+
 #: Two move orders reaching one structural position, twice over. Both lines are
 #: colour-asymmetric on purpose (see the module docstring), and the corpus
 #: containing BOTH orders is what puts real transpositions in front of the DAG.
@@ -224,7 +279,9 @@ def _tactical_children() -> list[chess.Board]:
 
 
 def _corpus() -> list[chess.Board]:
-    boards = [chess.Board(fen) for fen in (*QUIET_FENS, *IN_CHECK_FENS)]
+    boards = [
+        chess.Board(fen) for fen in (*QUIET_FENS, *IN_CHECK_FENS, *EDGE_CASE_FENS)
+    ]
     boards.extend(_tactical_children())
     boards.extend(_transposition_pairs())
     boards.extend(_scripted_games())
@@ -282,6 +339,30 @@ def test_the_corpus_is_large_and_really_spans_what_it_claims_to() -> None:
     assert len(CORPUS) >= 300
     assert sum(1 for b in CORPUS if b.is_check()) >= 3
     assert sum(1 for b in CORPUS if any(b.is_capture(m) for m in b.legal_moves)) >= 100
+
+    # ⚑ The three classes from EDGE_CASE_FENS. Bit-identity over a corpus is only
+    # as strong as what the corpus PROVABLY spans, and each of these is a place
+    # the substrates could diverge for its own reason (see that list's comment).
+    # The floors are what the crafted rows guarantee by construction, NOT what
+    # the current seed happens to produce — a threshold tuned to the observed
+    # count would go quietly vacuous the first time the scripted games shifted.
+    promotions = sum(
+        1 for b in CORPUS if any(m.promotion is not None for m in b.legal_moves)
+    )
+    en_passants = sum(1 for b in CORPUS if b.has_legal_en_passant())
+    quiet_evasions_only = sum(
+        1
+        for b in CORPUS
+        if b.is_check()
+        and any(True for _ in b.legal_moves)
+        and not any(b.is_capture(m) for m in b.legal_moves)
+    )
+    assert promotions >= 5, f"corpus spans no promotions ({promotions})"
+    assert en_passants >= 3, f"corpus spans no en passant captures ({en_passants})"
+    assert quiet_evasions_only >= 2, (
+        f"corpus has no in-check row whose evasions are all quiet "
+        f"({quiet_evasions_only})"
+    )
     # Transpositions: the same STRUCTURAL position under more than one row.
     #
     # ⚑ The key canonicalises en passant the way the DAG does — an ep square is

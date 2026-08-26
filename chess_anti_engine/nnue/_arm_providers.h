@@ -908,6 +908,7 @@ static const CaeValueProvider CAE_ARM_STATIC_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
 };
 
 static const CaeValueProvider CAE_ARM_QSEARCH_PROVIDER = {
@@ -917,6 +918,7 @@ static const CaeValueProvider CAE_ARM_QSEARCH_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
 };
 
 static const CaeValueProvider CAE_ARM_QSEARCH_REFRESH_PROVIDER = {
@@ -926,6 +928,7 @@ static const CaeValueProvider CAE_ARM_QSEARCH_REFRESH_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
 };
 
 /* ⚑ ITS OWN init(), AND THAT IS THE WIRING THAT MATTERS. cae_arm_init_dag is
@@ -942,6 +945,10 @@ static const CaeValueProvider CAE_ARM_QSEARCH_DAG_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    1,   /* ⚑ NOT reentrant: the store's probe -> evaluate -> publish -> link
+          * path is not atomic and a concurrent publish frees the accumulator
+          * array another thread is reading. Consumers must serialize; MCTSTree
+          * REFUSES this provider at install because it cannot. */
 };
 
 /* ================================================================
@@ -979,20 +986,23 @@ static inline int cae_provider_is_arm(const CaeValueProvider *vp) {
         || vp == &CAE_ARM_QSEARCH_DAG_PROVIDER;
 }
 
-/* ⚑⚑ DOES A BATCH THROUGH THIS PROVIDER HAVE TO KEEP THE GIL? The DAG store's
- * construction path is single-threaded — probe, evaluate, publish, link is not
- * atomic and cae_nnue_dag_grow_payload() free()s an array another thread may be
- * reading — and _nnue_dag_api.h chose to ENFORCE that by holding the GIL rather
- * than to document it and hope. The same store reached from C needs the same
- * enforcement, so _nnue_ext.c asks this question before releasing the GIL around
- * a batch. Releasing it here would make two Python threads sharing one arm
- * handle a use-after-free, which is exactly the failure the API layer measured
- * (node_count 87 for 21 distinct positions at 6 threads).
+/* ⚑⚑ DOES A BATCH THROUGH THIS PROVIDER HAVE TO KEEP THE GIL? Read straight off
+ * the vtable's own requires_gil field — see the ⚑⚑ on it in
+ * ../mcts/_value_provider.h. This used to be a list of vtable pointers
+ * maintained HERE, which made it a second answer to a question the provider
+ * already answers, and one only this module consulted: MCTSTree never saw it,
+ * so the tree's exclusion of the DAG arm rested on the provider being
+ * unreachable rather than on this rule. Now there is one field, every consumer
+ * reads it, and MCTSTree refuses such a provider at install.
  *
- * This is also why the DAG arm is deliberately NOT published as a tree capsule:
- * MCTSTree drives its value provider from several search threads. */
+ * The rule itself is unchanged: the DAG store's probe -> evaluate -> publish ->
+ * link path is not atomic and cae_nnue_dag_grow_payload() free()s an array
+ * another thread may be reading, so _nnue_ext.c does not release the GIL around
+ * a batch through such an arm. Releasing it would make two Python threads
+ * sharing one arm handle a use-after-free — the failure the API layer measured
+ * (node_count 87 for 21 distinct positions at 6 threads). */
 static inline int cae_provider_requires_gil(const CaeValueProvider *vp) {
-    return vp == &CAE_ARM_QSEARCH_DAG_PROVIDER;
+    return cae_value_requires_gil(vp);
 }
 
 #endif /* CAE_ARM_PROVIDERS_H */

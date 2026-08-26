@@ -293,7 +293,17 @@ static int cae_nnue_dag_intern_child(
          * return neither -1 nor 0 nor -2. -2 in particular would mean two
          * constructions interleaved, which the retained GIL prevents. Kept as a
          * loud failure rather than an assert because it is the shape a future
-         * concurrent consumer would hit first. */
+         * concurrent consumer would hit first.
+         *
+         * ⚑ AND IT DELIBERATELY DOES NOT ROLL THE NODE BACK. Review suggested
+         * un-publishing here so the identity would survive. Declined, and the
+         * reasoning is the point: single-threaded this branch cannot be taken,
+         * so any rollback code would be untestable and unexercised — and the
+         * ONLY way to get here is the concurrent use this store forbids. In
+         * that case a loud RuntimeError plus a broken
+         * state_inits + state_makes == node_count is exactly the alarm the
+         * identity exists to be. Quietly repairing the graph would convert the
+         * one observable symptom of a real misuse into silence. */
         return link_rc == -1 ? CAE_NNUE_DAG_ERR_NO_MEMORY : CAE_NNUE_DAG_ERR_LINK;
     }
     h->state_makes++;

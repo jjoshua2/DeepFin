@@ -159,7 +159,8 @@ That is the point of doing this before the tactical search proper. A new search 
 
 | property | how it is measured |
 | --- | --- |
-| bit-identity | every row of a ~460-position corpus (openings, middlegames, tactics, in-check, endgames) returns the oracle's exact value, and the twelve search-shape counters match as a block |
+| bit-identity | every row of a ~470-position corpus (openings, middlegames, tactics, in-check, endgames) returns the oracle's exact value, and the twelve search-shape counters match as a block |
+| corpus span | the corpus is asserted to CONTAIN the classes the claim leans on — promotions, legal en passant, and in-check rows whose evasions are all quiet — rather than left to the RNG that happens to supply a few |
 | evaluate-once | `nnue_evals` is strictly below the oracle's, and equals `dag_nodes_interned` |
 | reuse accounting | `nnue_evals + dag_hits_within_call + dag_hits_cross_call == qnodes` |
 | persistence | a second call over a shared subtree costs strictly fewer evaluations than a cold store; re-running an identical call costs **zero** |
@@ -168,26 +169,26 @@ That is the point of doing this before the tactical search proper. A new search 
 
 ⚑ **The real-net arm is not decoration — it kills a mutant the synthetic arm does not.** Under the "cache a fail-high search value in the node payload" mutant, `test_the_dag_holds_the_static_evaluation_and_never_a_searched_one[real]` FAILS while `[synthetic]` passes: on the PSQT-only pack that fixture's quiescence value and static value happen not to separate the poisoned node. A synthetic-only gate would have reported that mutant caught by three tests when it is really caught by four, and the missing one is the test named after the property.
 
-### The numbers, over the 457-row corpus
+### The numbers, over the 467-row corpus
 
 Both nets, both at `resolver_depth=12 qply=3 check_plies=1` (what the test module runs):
 
 | | synthetic PSQT pack | real net `nn-f68ec79f0fe3` |
 | --- | --- | --- |
-| quiescence nodes, both arms | 61,520 (equal, as required) | 58,588 (equal) |
-| oracle NNUE evaluations | 61,520 (one per node) | 58,588 |
-| DAG NNUE evaluations | **53,416** — **13.2%** fewer | **50,745** — **13.4%** fewer |
-| probe hits | 6,025 within + 2,079 cross | 5,684 within + 2,159 cross |
-| cross-call share of hits | 25.7% | 27.5% |
-| `dag_memory_bytes` | 362 MB / 53,416 nodes ≈ 6.7 KB/node | ≈ same (the state size is the net's, not the pack's) |
+| quiescence nodes, both arms | 62,010 (equal, as required) | 59,081 (equal) |
+| oracle NNUE evaluations | 62,010 (one per node) | 59,081 |
+| DAG NNUE evaluations | **53,863** — **13.1%** fewer | **51,203** — **13.3%** fewer |
+| probe hits | 6,061 within + 2,086 cross | 5,714 within + 2,164 cross |
+| cross-call share of hits | 25.6% | 27.5% |
+| `dag_memory_bytes` | 362 MB / 53,863 nodes ≈ 6.6 KB/node | ≈ same (the state size is the net's, not the pack's) |
 
-⚑ **The saving grows with quiescence depth, so the test module's figure is a floor twice over.** At the C defaults (`32/4/1`) the same corpus and the same real net read oracle 201,039 → DAG 159,433, a **20.7%** saving with 8,288 cross-call hits — deeper search revisits more, which is the direction that matters for the tactical consumer this substrate exists for. The module runs the shallower config to stay cheap in CI, not because it is the interesting one.
+⚑ **The saving grows with quiescence depth, so the test module's figure is a floor twice over.** At the C defaults (`32/4/1`) the same corpus and the same real net read oracle 201,671 → DAG 160,026, a **20.6%** saving with 8,293 cross-call hits — deeper search revisits more, which is the direction that matters for the tactical consumer this substrate exists for. The module runs the shallower config to stay cheap in CI, not because it is the interesting one.
 
-⚑ **Both nets agree bitwise on all 457 rows**, and the corpus is checked to be able to tell them apart first: 420 distinct non-mate values and 457/457 non-zero on the real net. Agreement over a corpus that scored 0 everywhere would be worth nothing, which is how a symmetric fixture once made a whole module vacuous.
+⚑ **Both nets agree bitwise on all 467 rows**, and the corpus is checked to be able to tell them apart first: 430 distinct non-mate values and 467/467 non-zero on the real net. Agreement over a corpus that scored 0 everywhere would be worth nothing, which is how a symmetric fixture once made a whole module vacuous.
 
-⚑ **The saving is 13.2%, not a multiple, and the memory figure is the reason to care.** A `CaeNnueState` is dominated by a 2×1024 `int16` accumulator, so the store costs ~6.7 KB per canonical position — 362 MB after one 457-position corpus. §4.4 of `docs/fastq_design.md` deferred the eviction/reset cadence decision until there were measurements; these are they, and they say the cadence question is real rather than theoretical. On this corpus a `dag_reset()` per position would forfeit only the 25.7% of hits that are cross-call, which is the trade the cadence decision is actually about.
+⚑ **The saving is 13.1%, not a multiple, and the memory figure is the reason to care.** A `CaeNnueState` is dominated by a 2×1024 `int16` accumulator, so the store costs ~6.6 KB per canonical position — 362 MB after one 467-position corpus. §4.4 of `docs/fastq_design.md` deferred the eviction/reset cadence decision until there were measurements; these are they, and they say the cadence question is real rather than theoretical. On this corpus a `dag_reset()` per position would forfeit only the 25.6% of hits that are cross-call, which is the trade the cadence decision is actually about.
 
-The 13.2% is also a *floor* for what a workload with more overlap would see: these rows come from 24 independent scripted games plus crafted FENs, so most of them share nothing. The shared-subtree measurement is the other end of the range — re-running an identical call costs **zero** evaluations, and a capture child of an already-searched parent costs 133 against a cold store's 160.
+The 13.1% is also a *floor* for what a workload with more overlap would see: these rows come from 24 independent scripted games plus crafted FENs, so most of them share nothing. The shared-subtree measurement is the other end of the range — re-running an identical call costs **zero** evaluations, and a capture child of an already-searched parent costs 133 against a cold store's 160.
 
 ### The counters, and the watermark that splits the hits
 
@@ -211,7 +212,14 @@ The cap is consulted by this arm only. `CaeArmCtx.dag_node_cap` is set from the 
 
 ### Threading, again
 
-`nnue-qsearch-dag` is deliberately **not** published as a tree capsule and `MCTSTree` does not know the name. The store's probe → evaluate → publish → link path is not atomic and a concurrent publish can `free()` the accumulator array another thread is reading — the same failure measured above. `_nnue_ext` therefore does not release the GIL around a batch evaluated through this arm (`cae_provider_requires_gil()`), which enforces the constraint the way `dag_intern_child()` does rather than documenting it and hoping. Installing it in the tree must wait for real synchronization, not for a name to be added to a table.
+The store's probe → evaluate → publish → link path is not atomic and a concurrent publish can `free()` the accumulator array another thread is reading — the same failure measured above. So the provider's vtable sets **`requires_gil`** (`CaeValueProvider`, `_value_provider.h`), which declares `eval()` non-reentrant, and two consumers act on it:
+
+- `_nnue_ext` does not release the GIL around a batch evaluated through such an arm;
+- **`MCTSTree` refuses to install one at all**, in `resolve_provider_export()` — after the capsule is resolved and before anything is installed, which is the only point *both* install routes pass through.
+
+⚑ **An earlier version of this section claimed the second half and did not implement it.** The predicate was a list of vtable pointers inside the publishing module that only that module's own batch loops consulted; the tree never saw it. The tree's exclusion actually rested on the DAG arm being *unreachable* — absent from `CAE_VALUE_PROVIDER_MODULES`, no capsule exported — and the name table's own comment invites callers to install a provider by passing its capsule directly. Exporting `qsearch_dag_arm_capsule` symmetrically with the other two arms would therefore have handed tree threads the non-atomic path with the GIL released while the guard named in these docs never ran: a value accepted and then silently ignored, inside the fix for that defect. The flag now lives in the vtable, every consumer reads the same field, and `tests/test_check_resolver.py` installs a fake provider through the real capsule ABI to prove the refusal fires for a capsule the name table has never heard of.
+
+Not publishing the capsule remains true and is ergonomics; the vtable flag is the enforcement. Installing this arm in the tree must wait for real synchronization, not for a name to be added to a table.
 
 ## Intended next layers
 
