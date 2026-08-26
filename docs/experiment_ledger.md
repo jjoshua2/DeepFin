@@ -67196,3 +67196,19 @@ supersedes the fail-loud-alarm ordering), castling canonicalized to the 4 define
 (0 vs 16 interned two nodes for one position), capacity bound pushed into
 cae_position_dag_init (int32 sizing UB). CI green on the merged head. Next per
 docs/fastq_design.md §10: qsearch-on-DAG retrofit (in flight) → FastQ-4+.
+
+**2026-08-26 — QSEARCH-ON-DAG RETROFIT MERGED (#472, 960c26e2a).** The §10 oracle PR:
+fifth provider `nnue-qsearch-dag` runs the UNCHANGED qsearch on the canonical DAG.
+Bit-identical to `nnue-qsearch` on a 467-row corpus (both synthetic AND real
+nn-f68ec79f0fe3; corpus span asserted: promotions/EP/check-evasions; anti-vacuity
+precondition proves the ruler discriminates first). Eval saving 13.3% real at module
+config, **20.6% at the C defaults**, floors (corpus mostly transposition-free);
+cross-call hits 27.5% of hits; identical repeat call = 0 evals; `evals+hits==qnodes`.
+6.7KB/node, 362MB/corpus — the §4.4 eviction-cadence input, decision still owed.
+Guard moved to the real door after grok's signature-defect catch: `requires_gil` is a
+CaeValueProvider field (ABI 1→2) refused in `resolve_provider_export()` on BOTH
+install routes. Substrate selection is a parsed-enum value check (a name check passes
+under `CAE_QSUB_REFRESH = 0` while the oracle silently runs incremental — mutant B).
+Reviews: grok full pass, findings closed; Codex no-showed three summons (recorded on
+the PR as a no-show, NOT a zero-finding pass). CI green on the merged head.
+Next: FastQ-4+ per docs/fastq_design.md, then the S1 calibration dump.
