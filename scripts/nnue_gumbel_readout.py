@@ -49,6 +49,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
@@ -382,6 +383,52 @@ def readout_arm_config_plan(config: ResolvedArmConfig) -> gen.ArmConfigPlan:
         stats="fastq_stats",
         consumes_qsearch=False,
     )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+
+    """Replace a result artifact all-or-nothing on the same filesystem."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_name: str | None = None
+
+    try:
+
+        with tempfile.NamedTemporaryFile(
+
+            mode="w", encoding="utf-8", dir=path.parent,
+
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+
+        ) as f:
+
+            tmp_name = f.name
+
+            f.write(text)
+
+            f.flush()
+
+            os.fsync(f.fileno())
+
+        os.replace(tmp_name, path)
+
+        tmp_name = None
+
+    finally:
+
+        if tmp_name is not None:
+
+            try:
+
+                Path(tmp_name).unlink()
+
+            except FileNotFoundError:
+
+                pass
+
+
+
 
 
 def _sha256_file(path: Path) -> str:
@@ -1022,7 +1069,10 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
         "arm": arm,
         "repeat": cfg.repeat,
         "games": games,
-        "workers": cfg.workers,
+        # Active is the throughput denominator; requested is provenance.
+        # When games < workers, _build_worker_specs drops empty buckets.
+        "workers": len(results),
+        "workers_requested": cfg.workers,
         "plies": plies,
         "wall_s": wall_s,
         "search_wall_s": search_wall_s,
@@ -1491,8 +1541,7 @@ def main() -> int:
     print(text)
     if args.json is not None:
         path = Path(args.json)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text + "\n", encoding="utf-8")
+        _atomic_write_text(path, text + "\n")
     # ⚑ THE ARTIFACT IS WRITTEN FIRST, THEN THE FAILURE IS REPORTED. A gate that
     # raises before the JSON exists destroys the evidence for the finding it
     # just made; exit code 2 with `admissible: false` on disk is a hard failure
