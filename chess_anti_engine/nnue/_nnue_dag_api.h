@@ -145,8 +145,16 @@ static PyObject *py_dag_open(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *weights_capsule;
     int initial_nodes = 256;
     if (!PyArg_ParseTuple(args, "O|i", &weights_capsule, &initial_nodes)) return NULL;
-    if (initial_nodes < 1 || initial_nodes > INT32_MAX / 4) {
-        PyErr_SetString(PyExc_ValueError, "initial_nodes must be 1..INT32_MAX/4");
+    /* ValueError is the documented answer for an out-of-range capacity, and the
+     * bound is CAE_DAG_MAX_INIT_NODES — the same constant cae_position_dag_init()
+     * enforces for itself. Two layers deliberately: this one names the argument
+     * that was wrong, and the graph layer refuses regardless of which consumer
+     * called it, so removing either still fails cleanly instead of overflowing
+     * the int32 capacity derivations. */
+    if (initial_nodes < 1 || initial_nodes > CAE_DAG_MAX_INIT_NODES) {
+        PyErr_Format(PyExc_ValueError,
+                     "initial_nodes must be 1..%d (got %d)",
+                     (int)CAE_DAG_MAX_INIT_NODES, initial_nodes);
         return NULL;
     }
     CaeNnueWeights *w = weights_from_capsule(weights_capsule);
@@ -337,24 +345,30 @@ static PyObject *py_dag_intern_child(PyObject *Py_UNUSED(self), PyObject *args) 
         if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
     }
 
+    /* ⚑ RESERVE THE EDGE BEFORE PUBLISHING THE NODE. The link's only remaining
+     * failure is the edge-array growth allocation, and taking it here — while
+     * the DAG is still untouched — is what keeps every failure path clean.
+     * Publishing first and discovering the allocation failure afterwards left a
+     * node in the canonical table that no edge reached: a retry found it and
+     * reported reuse, its NNUE work was never accounted, and
+     * state_inits + state_makes == node_count was broken permanently rather
+     * than transiently. Reserve-first means the caller either gets a complete
+     * node+edge or an untouched DAG, so the identity holds on EVERY path,
+     * MemoryError included. */
+    if (cae_position_dag_reserve_edge(&h->dag) != 0) return PyErr_NoMemory();
+
     int32_t node_id = cae_nnue_dag_publish_new(
         h, &child_pos, &state, value, value_valid);
     if (node_id == CAE_DAG_NO_NODE) return PyErr_NoMemory();
     int link_rc = cae_position_dag_link(&h->dag, parent_id, action, node_id);
     if (link_rc != 1) {
-        /* The node is already published, and that is NOT an unreachable leak:
-         * it is in the canonical table, so a retry FINDS it and the request
-         * becomes an ordinary transposition that only has to add the edge. What
-         * is lost is this call's edge and its state_makes/nnue_evals
-         * accounting, which is why state_inits + state_makes == node_count
-         * fires here — that identity is the alarm for a published-but-
-         * unaccounted node, so do not "fix" it by counting the work earlier.
-         *
-         * -1 is the edge-array growth allocation (parent/child/action were all
-         * range-checked, so no other -1 cause survives). -2 means the action
-         * already maps to a different child, which single-threaded construction
-         * cannot produce — it is the signature of concurrent construction. */
-        if (link_rc == -1) return PyErr_NoMemory();
+        /* Unreachable by construction now: the edge is reserved, the parent,
+         * child and action are all in range, and no edge for this action exists
+         * (child_for_action() reported none above), so link() can return
+         * neither -1 nor 0 nor -2. -2 in particular would mean two constructions
+         * interleaved, which the retained GIL prevents. Kept as a loud failure
+         * rather than an assert because it is the shape a future concurrent
+         * consumer would hit first. */
         PyErr_SetString(PyExc_RuntimeError, "new DAG node could not be linked to its parent");
         return NULL;
     }
@@ -438,6 +452,9 @@ PyDoc_STRVAR(dag_stats_doc,
 "state_inits + state_makes read 21 against a node_count of 87, because\n"
 "duplicate publications produced nodes whose work was never accounted (their\n"
 "link failed).\n\n"
+"It now holds on EVERY path, allocation failure included: the child's edge is\n"
+"reserved before the node is published, so a construction either completes or\n"
+"leaves the DAG untouched.\n\n"
 "⚑ Do NOT read nnue_evals <= node_count as the invariant. It holds by\n"
 "construction on every path — a node is published at most once per evaluation —\n"
 "and duplicating nodes makes it MORE satisfied, so it is exactly blind to the\n"

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 
 import chess
 import numpy as np
@@ -53,6 +54,18 @@ _DAG_STAT_KEYS = {
     "nnue_payload_bytes",
     "memory_bytes",
 }
+
+
+#: Mirrors the C constants the tests reason about. Kept here rather than parsed
+#: so a drift in either direction shows up as a failing assertion.
+_DAG_API_HEADER = (
+    Path(__file__).resolve().parents[1] / "chess_anti_engine" / "nnue" / "_nnue_dag_api.h"
+)
+_POSITION_DAG_HEADER = (
+    Path(__file__).resolve().parents[1] / "chess_anti_engine" / "mcts" / "_position_dag.h"
+)
+CAE_DAG_MIN_EDGE_CAP = 32
+CAE_DAG_MAX_INIT_NODES = (2**31 - 1) // 4
 
 
 #: PSQT weight magnitude. ⚑ Load-bearing, not arbitrary: at the original ±32 the
@@ -357,6 +370,8 @@ def test_growth_past_initial_caps_preserves_every_id_value_and_edge(dag_pack: Pa
     # >45 nodes forces a rehash: the table starts at 64 slots and rehashes to
     # keep load under 70%.
     assert grown["node_count"] > 45
+    # Past the initial 32-edge array too, so the reserve/grow path really ran.
+    assert grown["edge_count"] > CAE_DAG_MIN_EDGE_CAP
     assert grown["payload_capacity"] > initial["payload_capacity"]
     assert grown["dag_memory_bytes"] > initial["dag_memory_bytes"]
     assert grown["nnue_payload_bytes"] > initial["nnue_payload_bytes"]
@@ -406,6 +421,117 @@ def test_dag_lookup_is_a_graph_read_that_does_no_nnue_work(dag_pack: Path) -> No
     assert hit["hits"] == miss["hits"] + 1
     assert hit["node_reuses"] == miss["node_reuses"]
     assert hit["nnue_evals"] == miss["nnue_evals"]
+
+
+def test_undefined_castling_bits_are_not_a_second_structural_node(dag_pack: Path) -> None:
+    """castling=15 and castling=15|16 are ONE position, so they get one node.
+
+    ``CBoard.from_raw()`` stores the caller's low byte of castling unmasked,
+    while ``cboard_compute_hash()`` indexes ``ZOBRIST_CASTLING[castling & 0xF]``
+    and movegen only tests the four defined bits. Comparing the raw byte in the
+    DAG's structural equality therefore split one position into two nodes that
+    share a hash and a legal-move set — one-node-per-structural-position broken
+    by a bit nothing else in the engine looks at.
+    """
+    weights = _nnue_ext.load(str(dag_pack))
+    dag = _nnue_ext.dag_open(weights, 16)
+
+    board = chess.Board()
+
+    def raw(castling: int) -> CBoard:
+        return CBoard.from_raw(
+            int(board.pawns), int(board.knights), int(board.bishops),
+            int(board.rooks), int(board.queens), int(board.kings),
+            int(board.occupied_co[chess.WHITE]), int(board.occupied_co[chess.BLACK]),
+            1,                     # white to move
+            castling,
+            -1,                    # no ep square
+            0,
+        )
+
+    clean, dirty = raw(0xF), raw(0xF | 0x10)
+    # The defect this test exists for has to be present in the INPUT, or the
+    # test proves nothing: the two boards really do differ in the raw byte...
+    assert clean.castling != dirty.castling
+    assert (clean.castling & 0xF) == (dirty.castling & 0xF)
+    # ...and the rest of the engine already treats them as the same position.
+    assert _nnue_ext.evaluate(weights, clean) == _nnue_ext.evaluate(weights, dirty)
+
+    first, first_value, first_created = _nnue_ext.dag_intern_root(dag, clean)
+    second, second_value, second_created = _nnue_ext.dag_intern_root(dag, dirty)
+    assert first_created is True
+    assert second_created is False
+    assert second == first
+    assert second_value == first_value
+
+    assert _nnue_ext.dag_lookup(dag, dirty) == first
+    stats = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(stats)
+    assert stats["node_count"] == 1
+    assert stats["hits"] >= 1
+
+
+def test_dag_open_rejects_a_capacity_that_would_overflow_its_sizing(dag_pack: Path) -> None:
+    """An out-of-range capacity is a ValueError, not an overflowed allocation.
+
+    ``cae_position_dag_init()`` derives both the edge capacity and the hash size
+    as ``initial_nodes * 2`` in int32, so a capacity above INT32_MAX/2 wraps to a
+    negative capacity that reaches ``malloc`` as an enormous ``size_t``. The
+    bound is enforced twice — argument-shaped here, and again inside the graph
+    layer for every future consumer of the header.
+    """
+    weights = _nnue_ext.load(str(dag_pack))
+
+    for bad in (1 << 30, CAE_DAG_MAX_INIT_NODES + 1, 0, -1):
+        with pytest.raises(ValueError, match="initial_nodes must be"):
+            _nnue_ext.dag_open(weights, bad)
+
+    # ...and a genuinely large-but-legal capacity still opens and works.
+    dag = _nnue_ext.dag_open(weights, 1 << 16)
+    stats = _nnue_ext.dag_stats(dag)
+    _assert_stats_schema(stats)
+    assert stats["payload_capacity"] == 1 << 16
+    assert stats["node_count"] == 0
+    root, value, created = _nnue_ext.dag_intern_root(dag, _cboard(chess.Board()))
+    assert created is True
+    assert value == _nnue_ext.evaluate(weights, _cboard(chess.Board()))
+    assert _nnue_ext.dag_lookup(dag, _cboard(chess.Board())) == root
+
+
+def test_child_edge_is_reserved_before_the_node_is_published() -> None:
+    """Source-order gate: reserve, THEN publish.
+
+    ⚑ Pinned by source rather than by behaviour on purpose. The only way to
+    reach the branch is an edge-array allocation failure, which no Python-level
+    input can provoke — the capacity guard rejects the sizes that would, and a
+    real malloc failure is not something a test may induce in-process. So the
+    ordering that makes the failure clean is asserted where it is decidable.
+    Publishing first and reserving after leaves a node in the canonical table
+    that no edge reaches, which a retry then reports as reuse and which breaks
+    ``state_inits + state_makes == node_count`` permanently.
+    """
+    source = _DAG_API_HEADER.read_text(encoding="utf-8")
+    body = source.split("static PyObject *py_dag_intern_child(", 1)
+    assert len(body) == 2, "py_dag_intern_child not found; the gate would be vacuous"
+    body = body[1].split("\nstatic ", 1)[0]
+
+    reserve = body.find("cae_position_dag_reserve_edge(")
+    publish = body.find("cae_nnue_dag_publish_new(")
+    link = body.find("cae_position_dag_link(&h->dag, parent_id, action, node_id)")
+    assert reserve != -1, "the new child path no longer reserves edge capacity"
+    assert publish != -1
+    assert link != -1
+    assert reserve < publish < link
+
+    # The reserve helper must be the growing one, not a bare capacity read.
+    graph = _POSITION_DAG_HEADER.read_text(encoding="utf-8")
+    helper = re.search(
+        r"static int cae_position_dag_reserve_edge\(CaePositionDag \*d\) \{(.*?)\n\}",
+        graph,
+        re.S,
+    )
+    assert helper is not None
+    assert "cae_position_dag_grow_edges(d)" in helper.group(1)
 
 
 def test_structural_identity_excludes_draw_history_but_includes_usable_ep(dag_pack: Path) -> None:

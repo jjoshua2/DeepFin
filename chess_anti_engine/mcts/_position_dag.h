@@ -36,6 +36,27 @@
 #define CAE_DAG_MIN_EDGE_CAP 32
 #define CAE_DAG_MIN_HT_CAP 64
 
+/* Largest initial capacity cae_position_dag_init() will accept. The bound lives
+ * HERE, next to the arithmetic it protects: init derives edge_cap and the hash
+ * size as `initial_nodes * 2` in int32, so anything above INT32_MAX/2 overflows
+ * a signed multiply, and the next power of two above that overflows again. Every
+ * caller — the NNUE surface today, the tactical-search consumer next — inherits
+ * the check instead of being trusted to repeat it. INT32_MAX/4 leaves headroom
+ * for both derivations plus next_pow2's final doubling. */
+#define CAE_DAG_MAX_INIT_NODES (INT32_MAX / 4)
+
+/* Castling bits that are part of structural identity: WK|WQ|BK|BQ. ⚑ This is
+ * canonicalization, NOT input validation. cboard_compute_hash() already indexes
+ * ZOBRIST_CASTLING[castling & 0xF] and movegen only ever tests these four bits,
+ * so two boards differing above bit 3 have the same hash AND the same legal
+ * moves — they ARE one structural position, and the node key has to agree with
+ * the ruler the rest of the engine uses. Comparing the raw byte instead made
+ * castling=15 and castling=31 intern as two nodes with one hash, breaking
+ * one-node-per-position. (Only CBoard.from_raw() can carry such bits: it stores
+ * the caller's low byte unmasked, while from_board() builds the mask from four
+ * named python-chess rights.) */
+#define CAE_DAG_CASTLING_MASK 0xF
+
 typedef struct CaeDagPosition {
     uint64_t key;
     uint64_t bb[6];
@@ -91,7 +112,7 @@ static inline void cae_dag_position_from_cboard(const CBoard *b, CaeDagPosition 
     memcpy(out->bb, b->bb, sizeof(out->bb));
     memcpy(out->occ, b->occ, sizeof(out->occ));
     out->turn = b->turn;
-    out->castling = b->castling;
+    out->castling = (uint8_t)(b->castling & CAE_DAG_CASTLING_MASK);
     out->ep_square = cboard_ep_capture_available(b) ? b->ep_square : -1;
 }
 
@@ -134,6 +155,12 @@ static void cae_position_dag_free(CaePositionDag *d) {
 static int cae_position_dag_init(CaePositionDag *d, int32_t initial_nodes) {
     memset(d, 0, sizeof(*d));
     d->root_id = CAE_DAG_NO_NODE;
+    /* Refuse before deriving anything: the two `* 2` derivations below are
+     * int32, so an unchecked capacity produces a NEGATIVE cap that then reaches
+     * malloc as a huge size_t. Rejected here rather than clamped — a capacity
+     * this large is a caller bug, and silently shrinking it would hand back a
+     * DAG that is not the one that was asked for. */
+    if (initial_nodes > CAE_DAG_MAX_INIT_NODES) return -1;
     if (initial_nodes < CAE_DAG_MIN_NODE_CAP) initial_nodes = CAE_DAG_MIN_NODE_CAP;
     d->node_cap = initial_nodes;
     d->edge_cap = initial_nodes * 2;
@@ -199,6 +226,20 @@ static int cae_position_dag_grow_edges(CaePositionDag *d) {
 #undef CAE_DAG_GROW_EDGE
     d->edge_cap = new_cap;
     return 0;
+}
+
+/* Make room for ONE more edge without adding it.
+ *
+ * This exists so a caller that publishes an expensive payload before linking can
+ * take the only failure the link still has — the edge-array growth — BEFORE it
+ * mutates anything. cae_position_dag_link() grows on demand, which is fine when
+ * nothing has been published yet and wrong when something has: a link that fails
+ * after publication leaves a node in the canonical table that no edge reaches.
+ * Returns 0 when the next link is guaranteed not to allocate, -1 on failure
+ * (and then the DAG is untouched). */
+static int cae_position_dag_reserve_edge(CaePositionDag *d) {
+    if (d->edge_count < d->edge_cap) return 0;
+    return cae_position_dag_grow_edges(d);
 }
 
 static int cae_position_dag_rehash(CaePositionDag *d, int32_t new_cap) {
