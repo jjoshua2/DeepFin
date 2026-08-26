@@ -28,7 +28,10 @@ Stages, and why each is here:
              measured => report as a miss against the prediction, investigate
              before merging."
   fastq    — the `nnue-fastq` arm, which reaches the sliders through both
-             movegen and `cae_see_capture`'s x-ray swap loop.
+             movegen and `cae_see_capture`'s x-ray swap loop. Its corpus is
+             structurally deduplicated before timing because FastQ's canonical
+             DAG persists across rows of one handle; otherwise each game's
+             repeated start/opening prefix becomes a cache-hit benchmark.
 """
 
 from __future__ import annotations
@@ -59,6 +62,25 @@ def corpus(games: int, plies: int, seed: int) -> list[chess.Board]:
             boards.append(board.copy())
             board.push(rng.choice(sorted(board.legal_moves, key=lambda m: m.uci())))
     return boards
+
+
+def dedupe_structural_positions(boards: list[chess.Board]) -> list[chess.Board]:
+    """Keep the first occurrence of each structural chess position.
+
+    The key deliberately omits move clocks and history, matching the canonical
+    NNUE DAG's position identity. `en_passant="legal"` prevents a nominal EP
+    square that cannot produce a legal capture from splitting one structure
+    into two benchmark rows.
+    """
+    seen: set[str] = set()
+    out: list[chess.Board] = []
+    for board in boards:
+        key = " ".join(board.fen(en_passant="legal").split()[:4])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(board)
+    return out
 
 
 def bench_movegen(boards: list[chess.Board], repeats: int) -> dict[str, float]:
@@ -108,6 +130,7 @@ def main() -> int:
     args = parser.parse_args()
 
     pool = corpus(games=400, plies=60, seed=args.seed)
+    fastq_pool = dedupe_structural_positions(pool)
     # ⚑ REPORT WHICH BINARIES WERE ACTUALLY TIMED. This script is normally run
     # from one checkout with PYTHONPATH pointing at another, and an editable
     # install or a cwd that happens to contain `chess_anti_engine/` will shadow
@@ -124,6 +147,7 @@ def main() -> int:
             "_nnue_ext": getattr(_nnue_ext, "SLIDER_BACKEND", "unknown(pre-change build)"),
         },
         "pool": len(pool),
+        "fastq_structural_unique_pool": len(fastq_pool),
     }
     out["movegen"] = bench_movegen(pool[: args.movegen_positions], args.repeats)
     if args.pack:
@@ -132,7 +156,7 @@ def main() -> int:
         out["qsearch"] = bench_arm("nnue-qsearch", args.pack,
                                    pool[: args.qsearch_positions], args.repeats)
         out["fastq"] = bench_arm("nnue-fastq", args.pack,
-                                 pool[: args.fastq_positions], args.repeats)
+                                 fastq_pool[: args.fastq_positions], args.repeats)
 
     if args.json:
         print(json.dumps(out))
