@@ -67273,3 +67273,46 @@ non-constructibility argument (1.86M-position hunt, zero all-evasion cycles) + a
 that fires when the move policy widens. Default-off: no yaml key, no capsule,
 requires_gil set. NEXT: S1 calibration dump (speed plan §6), then S1-vs-S2 order
 decided by that dump.
+
+**2026-08-26 — S1 LAZY EVAL: KILL AT DESIGN TIME (speed plan §2.3 gate fired).** The
+pre-committed clause was "predicted propagate-skip < 20% of probes ⇒ S1 dies at design
+time, with the dump banked as the evidence". Banked dump:
+`scratchpad/s1_calibration/dump_20260826.jsonl` (sha256 `66b00414b2…`, **201,671**
+stand-pat probes, real net, the 467-position `test_qsearch_dag_parity` corpus, production
+search config `resolver_max_depth=32 qsearch_max_ply=4 qsearch_check_plies=1
+dag_node_cap=0`; run reproduced bit-identically twice; 0 in-check rows, as §2.2 requires
+— in-check nodes never stand-pat). `m` = p99.9 of `|full − psqt|` + 10% slack = **2806.1**;
+held-out miss rate **0.0099%** (floor 0.20%, passes, so the margin is honest and no
+recalibration was owed). **PREDICTED SKIP 0.488% vs the 20% floor — KILL.** Recomputed
+independently from the banked JSONL, not read off the agent's summary: 0.488% reproduces.
+**⚑ THE KILL IS STRUCTURAL, NOT A MARGIN-TUNING MISS, and the deciding number is not
+0.488%.** Two facts from the dump kill the whole class:
+- **41.31% of probes carry a FULL-OPEN window** (α,β = ∓200000) and **44.12% are
+  half-open**. A fully-open window is uncuttable by *any* margin, so ~41% of the
+  population is structurally unreachable before precision enters the argument.
+- **The oracle ceiling — skip at `m=0`, i.e. a hypothetically perfect zero-uncertainty
+  margin — is 34.07%**, worth `34.07% × 27.2% =` **9.27% of qsearch wall**. S2 (PEXT/magic
+  sliders, #475) **measured 14.3%**. ⇒ **even a PERFECT lazy eval loses to the PR that is
+  already built and measured.** There is no version of S1 worth building.
+MECHANISM: our PSQT term is not a cheap approximation of our own eval. `|full − psqt|` is
+p50 **521**, mean **633**, p99.9 **2551**, against `sd(full)` ≈ 1950 — the residual is a
+third of the signal's own scale. Regression of `full` on `psqt` gives **slope 0.9175,
+Pearson r 0.9410, intercept 406.5**: the two are on the SAME scale (this was checked
+precisely because a scale mismatch is the one defect that would have FAKED the wide margin
+and produced a false kill — it is not present). The positional network carries the signal;
+SF's lazy trick relies on HalfKA's PSQT being most of the eval, and ours is not.
+⇒ **§6 SEQUENCING RESOLVED: S2 first, and S1 never.** The plan left the order to this dump
+precisely because the honest share ratio was 27.2/18 ≈ 1.5×, not the "~2×" of an earlier
+draft; the dump settles it far more decisively than the ratio would have.
+⚑ CORRECTION TO THE IMPLEMENTING AGENT'S REPORT: it reported bare `./scripts/lint.sh` as
+"exit 0, 0 findings" on both its branch and the fork point. Re-run in its own worktree at
+its own commit `79d23c46c`: **`LINT_EXIT=1`, 13 errors** — matching the `origin/main`
+baseline, so its delta-zero conclusion survives, but the absolute claim was false. Standing
+trap, again: read the exit code, never the eyeballed tail.
+ARTEFACTS KEPT (the dump is the evidence the clause demanded): branch
+`perf/nnue-lazy-calibration` @ `79d23c46c`, +965/−11 over 8 files — the split evaluator
+`cae_nnue_state_evaluate_split()` (returns the PSQT term the existing function already
+computed and discarded, at zero added cost), the DAG `psqt` mirror, `arm_dump_*`, the two
+runner/analysis scripts, and 18 tests with 2 killed mutants. NOT merged and NOT proposed:
+it is instrumentation for a lane that is now closed. NEXT: S2 (#475) merges on its own
+measurement; the verifier-net bench then decides S3 or its funeral, per §4.
