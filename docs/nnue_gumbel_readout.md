@@ -39,22 +39,28 @@ Everything a game depends on is a pure function of the seed:
 So at one seed `nnue-qsearch` and `nnue-qsearch-dag` **must** play byte-identical
 games. Each cell publishes
 
-* `games_detail[i].digest` — `sha256("<game>:<start_fen>:<move_trace>:<result>:<termination>")`
-* `games_digest` — one digest over all of them, ordered by game index
+* `games_detail[i].digest` — the game trajectory/termination digest;
+* `games_detail[i].search_digest` — the exact improved-policy/legal-mask plus
+  returned-root-value sequence for that game;
+* `games_digest` and `searches_digest` — ordered whole-cell digests of those two
+  independent views.
 
 and when both cells are in one report the top-level `oracle` block compares them.
 
-> **If `oracle.digests_agree` is `false`, the decomposition is VOID.** The two
-> cells did not play the same games, so no wall-clock difference between them is
-> attributable to the DAG substrate — it is attributable to a different search.
+> **If `oracle.digests_agree` is `false`, the decomposition is VOID.** It
+> now requires BOTH game-trajectory equality and improved-policy/search-output
+> equality. Equal played moves alone are insufficient: sequential halving can
+> absorb changed leaf values while still choosing the same move.
 > The report says so in `inadmissible_reasons`, `admissible` goes `false`, and
 > the process exits **2**. The same holds across two separate invocations: the
 > digests are comparable whenever `provenance.seed` and the search block match.
 
-The oracle is live, not decorative, and its sensitivity has been measured rather
-than assumed. Perturbing evaluated leaf values in the DAG arm only (+500 internal
-units on one leaf of the first *N* leaf batches, `--games 2 --sims 8
---max-plies 12 --seed 7`):
+The old trajectory-only oracle was measured and shown to absorb several
+perturbed leaves before a move changed. That experiment is retained below as the
+reason the current schema also digests the improved-policy/search output: the
+stronger oracle catches a changed target even when the played move is unchanged.
+Perturbing evaluated leaf values in the DAG arm only (+500 internal units on one
+leaf of the first *N* leaf batches, `--games 2 --sims 8 --max-plies 12 --seed 7`):
 
 | perturbed leaf values | `digests_agree` | exit |
 |---|---|---|
@@ -93,8 +99,10 @@ The reset retains allocations. This gives two useful properties at once:
    reusable, which is the cross-ply benefit the DAG exists to measure;
 2. graphs cannot accumulate semantic nodes forever.
 
-The report therefore names graph sizes `*_per_game`. `memory_peak_per_worker_bytes`
-is different: because reset retains capacity it is the worker's resident DAG
+The per-game work fields are DELTAS of the cumulative `arm_dag_stats()`
+snapshot. This matters for `never`/`every-N-games`: summing absolute snapshots
+would count game 1 again in game 2, game 3, and so on. Resource peaks remain
+absolute snapshots. `memory_peak_per_worker_bytes` is the worker's resident DAG
 allocation high-water mark, not the sum of positions seen over the run.
 
 No DAG-backed provider is installed in `MCTSTree`. `nnue-qsearch-dag` and
@@ -105,9 +113,10 @@ path.
 
 ## Knob ownership is strict
 
-The command accepts both qsearch-family and FastQ-family flags so the three cells
-can be driven by one tool, but it refuses a knob the selected provider does not
-consume.
+The command accepts both qsearch-family and FastQ-family flags so the three
+cells can be driven by one tool. In a multi-arm matrix, a supplied knob is legal
+when at least one selected cell consumes it, and each `ResolvedArmConfig` copies
+only its own fields. In a single-arm invocation, foreign knobs are still refused.
 
 For `nnue-qsearch` / `nnue-qsearch-dag`:
 
@@ -186,8 +195,12 @@ thermal drift, page-cache warming and an arriving neighbour job across every
 cell instead of loading them onto whichever ran last. `order` records the
 sequence that actually ran.
 
-To bank leaf observations for the deep-SF quality readout, add the flag to the
-**same** command so every cell pays it:
+To bank raw end-to-end trace observations, add the flag to the **same**
+command so every cell pays it. **These files are NOT a paired deep-SF evaluator
+quality sample**: each arm drives its own Gumbel search, so changing FastQ can
+change which later leaves exist. A paired quality experiment needs a frozen
+driver population with shadow arms that do not feed values back into MCTSTree.
+This PR deliberately does not claim that attribution:
 
 ```bash
 PYTHONPATH=. python scripts/nnue_gumbel_readout.py \
@@ -205,7 +218,11 @@ uniform-prior root. `--topk` is validated in the parent **before** any worker
 spawns.
 
 Bank files are opened `"x"`: a rerun that would append into the previous run's
-rows fails instead. Rows carry FEN, the raw internal value, an `is_mate` flag,
+rows fails instead. Rows carry FEN plus `halfmove_clock`, `hash_stack_len`,
+`hist_len`, and `fen_reconstructs_full_search_state`. FEN does NOT carry the
+CBoard repetition hash stack: a row with that flag false must be excluded by any
+FEN-only history-sensitive scorer rather than silently reconstructed as a fresh
+position. Rows also carry the raw internal value, an `is_mate` flag,
 the game/ply cluster, the pack hash, the cp mapping, the realized arm knobs, the
 `run_id` / `seed` / `repeat` / `worker_id` that identify the run, **and the three
 mate-band constants** (`RESOLVER_MATE_BASE`, `RESOLVER_MATE_PLY_STEP`,
@@ -223,7 +240,11 @@ differed — and the report checks the ones that can:
 `pack_source_sha256` · `kernel` (avx2 vs scalar — a **multi-fold** wall factor) ·
 `seed` · `games_per_cell` · `workers` · `sims_floor` · `topk` · `max_plies` ·
 `all_root_moves` · the cp triple · `nice_requested` **and** `nice_realized` ·
-`banking` · `dag_reset` · `repeats` · `arms` · `python`.
+`banking` · `dag_reset` · `repeats` · `arms` · `python` · the Git HEAD,
+tracked-diff SHA-256 and dirty flag at **both** matrix endpoints (an unavailable
+Git snapshot is itself inadmissible) · the native module pathname SHA-256
+snapshots · and, authoritatively, the GNU build-ids read from the already mapped
+`_lc0_ext` / `_nnue_ext` / `_mcts_tree` ELF images.
 
 Mixed kernels, mixed niceness, a pack whose file hash is not the one the parent
 hashed, and disagreeing per-worker arm configuration each make the report
@@ -253,14 +274,17 @@ already settled that question the same way (`NnueArmStats.context_conflicts`).
 6. **Memory**: `dag_per_game.nodes_peak_per_game` and
    `memory_peak_per_worker_bytes`.
 7. **Search shape/coverage**: root-budget and termination data in each worker's
-   detail record, plus the banked leaf population for the standardized deep-SF
-   quality readout.
+   detail record, plus the banked **end-to-end trace population** for diagnosing
+   how each arm changes the leaves production Gumbel actually visits.
 
-The harness does not claim that similarity to qsearch is strength. The deciding
-quality comparison remains the standardized deep-Stockfish target-quality
-readout described by the AZ-purity framework. The point of this script is to
-produce the **production-shaped leaf population and raw observations** needed to
-run that decision honestly.
+The harness does not claim that similarity to qsearch is strength, and these
+end-to-end banks are **not** the input population for a paired evaluator-quality
+verdict: each arm helped choose its own later leaves. The deciding standardized
+deep-Stockfish evaluator-quality comparison must be a separate frozen-driver /
+shadow-arm experiment in which all candidate evaluators score the same positions
+without feeding values back into MCTSTree. This readout measures production
+throughput, reuse, search shape, and endogenous trace distributions; it does not
+silently turn those endogenous populations into paired quality evidence.
 
 ## Exit codes
 

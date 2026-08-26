@@ -445,7 +445,12 @@ GSS_MAX_CANDS: int = int(getattr(_mcts_tree_ext, "GSS_MAX_CANDS", 64))
 #: ``RESOLVER_MAX_PLIES`` -- three build-vintage constants that were absent from
 #: the artifact. A reanalysis that guessed them would silently run the mate rows
 #: through the centipawn slope, which is the banked N1 defect in a new scale.
-LEAF_BANK_SCHEMA = 2
+#:
+#: 3 (2026-08-26) records whether FEN is sufficient to reconstruct the native
+#: arm's repetition/search state. FEN carries the halfmove clock but not the
+#: CBoard repetition hash stack; rows with a non-empty stack are explicitly NOT
+#: admissible to a FEN-only history-sensitive scorer.
+LEAF_BANK_SCHEMA = 3
 
 # Standard piece values in centipawns, indexed the way decode_step0_bitboards
 # returns them: columns 0-5 are "us" P/N/B/R/Q/K, 6-11 are "them". The king
@@ -1125,6 +1130,17 @@ class NnueArmValueSource:
                         "arm": self.arm,
                         "role": role,
                         "fen": board.fen(),
+                        "halfmove_clock": int(board.halfmove_clock),
+                        "hash_stack_len": int(board.hash_stack_len),
+                        "hist_len": int(board.hist_len),
+                        # `hash_stack_len` is cleared only at game/root start or
+                        # after a pawn move/capture. Across such a zeroing move
+                        # the current piece/pawn state cannot equal an earlier
+                        # position, so retained `hist_hash` entries cannot make
+                        # the current state a repetition. FEN already carries
+                        # the halfmove clock. Requiring hist_len == 0 here would
+                        # therefore reject safe rows after every zeroing move.
+                        "fen_reconstructs_full_search_state": bool(board.hash_stack_len == 0),
                         "value": int(value),
                         "is_mate": bool(mate),
                         "game": int(game),
@@ -1444,6 +1460,10 @@ class PlyRecord:
     legal_mask: np.ndarray    # (4672,) bool
     pov_white: bool           # side to move AT THIS PLY
     ply_index: int
+    # Exact scalar returned by run_gumbel_root_many_c for this root. NaN is a
+    # compatibility sentinel for any non-readout constructor that predates this
+    # field; the readout oracle refuses non-finite values rather than hashing it.
+    search_value: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -2047,7 +2067,7 @@ def play_game(
                 )
                 if arm is not None else (None, None)
             )
-            probs, acts, _values, masks, _tree, _root_ids = run_gumbel_root_many_c(
+            probs, acts, values, masks, _tree, _root_ids = run_gumbel_root_many_c(
                 None,
                 [board],
                 device="cpu",
@@ -2091,6 +2111,7 @@ def play_game(
                 legal_mask=np.asarray(masks[0]),
                 pov_white=bool(cb.turn),
                 ply_index=int(cb.ply),
+                search_value=float(values[0]),
             ),
         )
         cb.push_index(action)

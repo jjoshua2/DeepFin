@@ -258,10 +258,14 @@ def _args(arm: str, **overrides: Any) -> argparse.Namespace:
 
 
 class _FenOnly:
-    """The only thing ``_bank_batch`` asks a board for."""
+    """Minimal bank-writer board, including schema-3 history metadata."""
 
     def __init__(self, fen: str) -> None:
         self._fen = fen
+        fields = fen.split()
+        self.halfmove_clock = int(fields[4]) if len(fields) > 4 else 0
+        self.hash_stack_len = 0
+        self.hist_len = 0
 
     def fen(self) -> str:
         return self._fen
@@ -925,23 +929,43 @@ def test_games_digest_is_order_independent_but_content_sensitive() -> None:
     assert readout.games_digest([a, b]) != readout.games_digest([a, c])
 
 
+def test_searches_digest_refuses_an_unpopulated_component() -> None:
+    missing = readout.GameRecord(
+        game=0, plies=1, result="1-0", termination="t", digest="aa",
+    )
+    with pytest.raises(ValueError, match="no search_digest"):
+        readout.searches_digest([missing])
+
+
 def test_the_oracle_voids_the_decomposition_when_the_digests_differ() -> None:
     same = {
-        readout.ARM_QSEARCH: [{"repeat": 0, "games_digest": "same"}],
-        readout.ARM_QSEARCH_DAG: [{"repeat": 0, "games_digest": "same"}],
+        readout.ARM_QSEARCH: [{
+            "repeat": 0, "games_digest": "same", "searches_digest": "search-same",
+        }],
+        readout.ARM_QSEARCH_DAG: [{
+            "repeat": 0, "games_digest": "same", "searches_digest": "search-same",
+        }],
     }
     assert readout._oracle(same)["digests_agree"] is True
     differ = {
-        readout.ARM_QSEARCH: [{"repeat": 0, "games_digest": "left"}],
-        readout.ARM_QSEARCH_DAG: [{"repeat": 0, "games_digest": "right"}],
+        readout.ARM_QSEARCH: [{
+            "repeat": 0, "games_digest": "left", "searches_digest": "search-same",
+        }],
+        readout.ARM_QSEARCH_DAG: [{
+            "repeat": 0, "games_digest": "right", "searches_digest": "search-same",
+        }],
     }
     assert readout._oracle(differ)["digests_agree"] is False
     # One cell alone cannot claim the comparison it did not make.
-    alone = {readout.ARM_FASTQ: [{"repeat": 0, "games_digest": "x"}]}
+    alone = {readout.ARM_FASTQ: [{
+        "repeat": 0, "games_digest": "x", "searches_digest": "sx",
+    }]}
     assert readout._oracle(alone) == {
         "arms": [readout.ARM_QSEARCH, readout.ARM_QSEARCH_DAG],
         "available": False,
         "digests_agree": None,
+        "game_digests_agree": None,
+        "search_digests_agree": None,
     }
 
 
@@ -1121,11 +1145,18 @@ def test_repeats_interleave_the_cells_rather_than_running_them_in_blocks(
             "arm": cfg.arm_config.arm,
             "repeat": cfg.repeat,
             "games_digest": f"digest-{cfg.repeat}",
+            "searches_digest": f"search-{cfg.repeat}",
             "inadmissible_reasons": [],
             "nice_realized": [0],
             "workers_detail": [{
                 "kernel": "scalar", "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
+                "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
+                "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
             }],
         }
 
@@ -1174,11 +1205,18 @@ def test_the_provenance_block_carries_what_makes_three_cells_one_experiment(
             "arm": cfg.arm_config.arm,
             "repeat": cfg.repeat,
             "games_digest": "same",
+            "searches_digest": "search-same",
             "inadmissible_reasons": [],
             "nice_realized": [0],
             "workers_detail": [{
                 "kernel": next(kernels), "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
+                "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
+                "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
             }],
         }
 
@@ -1262,3 +1300,310 @@ def test_the_report_divides_throughput_by_ACTIVE_workers_not_requested() -> None
     assert readout.REPORT_SCHEMA >= 3, (
         "the key rename is a breaking report change and must carry a bump"
     )
+
+
+
+# --- #474 current-head measurement-integrity regression tests ---
+
+def test_plan_refuses_nonpositive_max_plies(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--max-plies", "0",
+    ])
+    with pytest.raises(ValueError, match="max-plies must be positive"):
+        readout.plan_from_args(args)
+
+
+def test_multi_arm_matrix_scopes_explicit_knobs_to_the_consuming_cells(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--arm", readout.ARM_QSEARCH_DAG,
+        "--arm", readout.ARM_FASTQ,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--nnue-qsearch-max-ply", "3",
+        "--dag-node-cap", "0",
+        "--fastq-max-qply", "6",
+    ])
+    plan = readout.plan_from_args(args)
+    by_arm = {cfg.arm: cfg for cfg in plan.arm_configs}
+    assert by_arm[readout.ARM_QSEARCH].qsearch_max_ply == 3
+    assert by_arm[readout.ARM_QSEARCH].fastq_max_qply is None
+    assert by_arm[readout.ARM_QSEARCH_DAG].dag_node_cap == 0
+    assert by_arm[readout.ARM_FASTQ].fastq_max_qply == 6
+    assert by_arm[readout.ARM_FASTQ].qsearch_max_ply is None
+
+
+def test_matrix_still_refuses_a_knob_no_selected_arm_consumes(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--fastq-max-qply", "6",
+    ])
+    with pytest.raises(ValueError, match=r"no.*nnue-fastq|nnue-fastq is not selected"):
+        readout.plan_from_args(args)
+
+
+def test_persistent_dag_snapshots_are_differenced_not_resummed() -> None:
+    first = dict(_DAG_SNAPSHOT)
+    second = dict(first)
+    second.update({
+        "node_count": 115,
+        "edge_count": 177,
+        "probes": 220,
+        "hits": 54,
+        "inserts": 115,
+        "state_makes": 75,
+        "memory_bytes": first["memory_bytes"] + 1024,
+    })
+    assert second["state_inits"] + second["state_makes"] == second["node_count"]
+    stats = readout.DagGameStats()
+    stats.add(first)
+    stats.add(second, previous=first)
+    summary = stats.summary()
+    assert summary["nodes_per_game"] == pytest.approx((110 + 5) / 2)
+    assert summary["edges_per_game"] == pytest.approx((170 + 7) / 2)
+    assert summary["hits"] == 54
+    assert summary["probes"] == 220
+    assert summary["state_makes"] == 75
+
+
+def test_dag_delta_refuses_a_counter_that_goes_backwards_without_reset() -> None:
+    first = dict(_DAG_SNAPSHOT)
+    second = dict(first)
+    second["hits"] -= 1
+    stats = readout.DagGameStats()
+    stats.add(first)
+    with pytest.raises(ValueError, match="went backwards"):
+        stats.add(second, previous=first)
+
+
+def test_search_output_digest_refuses_an_empty_trace() -> None:
+    with pytest.raises(ValueError, match="empty search-output trace"):
+        readout.search_output_digest([])
+
+
+def test_file_stamp_detects_a_changed_file(tmp_path: Path) -> None:
+    path = tmp_path / "stable.bin"
+    path.write_bytes(b"before")
+    stamp = readout._file_stamp(path)
+    path.write_bytes(b"after")
+    with pytest.raises(RuntimeError, match="changed while this worker was running"):
+        readout._assert_file_unchanged("test file", path, stamp)
+
+
+def test_search_output_digest_catches_a_target_change_that_game_digest_cannot() -> None:
+    row_a = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.125,
+    )
+    row_b = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.6, 0.4], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.125,
+    )
+    same_game = readout.game_digest(
+        game_index=0, start_fen="start", move_trace="e2e4", result="*", termination="max",
+    )
+    left = readout.GameRecord(0, 1, "*", "max", same_game, readout.search_output_digest([row_a]))
+    right = readout.GameRecord(0, 1, "*", "max", same_game, readout.search_output_digest([row_b]))
+    cells = {
+        readout.ARM_QSEARCH: [{"repeat": 0, "games_digest": readout.games_digest([left]),
+                               "searches_digest": readout.searches_digest([left])}],
+        readout.ARM_QSEARCH_DAG: [{"repeat": 0, "games_digest": readout.games_digest([right]),
+                                   "searches_digest": readout.searches_digest([right])}],
+    }
+    oracle = readout._oracle(cells)
+    assert oracle["game_digests_agree"] is True
+    assert oracle["search_digests_agree"] is False
+    assert oracle["digests_agree"] is False
+
+
+def test_search_output_digest_catches_a_root_value_change_with_same_policy() -> None:
+    row_a = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.125,
+    )
+    row_b = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.25,
+    )
+    assert readout.search_output_digest([row_a]) != readout.search_output_digest([row_b])
+
+
+def test_source_provenance_change_during_matrix_voids_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ext = FakeExt()
+    pack = _pack(tmp_path)
+    snapshots = iter((
+        {
+            "git_head": "same", "git_tracked_dirty": True,
+            "git_tracked_diff_sha256": "a" * 64,
+        },
+        {
+            "git_head": "same", "git_tracked_dirty": True,
+            "git_tracked_diff_sha256": "b" * 64,
+        },
+    ))
+    monkeypatch.setattr(readout, "_git_provenance", lambda: next(snapshots))
+
+    def fake_cell(cfg: readout.RunConfig) -> dict[str, Any]:
+        return {
+            "arm": cfg.arm_config.arm,
+            "repeat": cfg.repeat,
+            "games_digest": "same",
+            "searches_digest": "search-same",
+            "inadmissible_reasons": [],
+            "nice_realized": [0],
+            "workers_detail": [{
+                "kernel": "scalar", "pack_source_sha256": "a" * 64,
+                "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
+                "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
+                "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
+            }],
+        }
+
+    monkeypatch.setattr(readout, "run_cell", fake_cell)
+    plan = readout.ReadoutPlan(
+        arm_configs=(readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext),),
+        pack=pack, games=1, workers=1, seed=1, sims=8,
+        topk=gen.MAX_LEGAL_MOVES, max_plies=10, all_root_moves=True,
+        cp_per_internal_unit=0.28, cp_slope=0.006, cp_draw_width=120.0,
+        bank_path=None, run_id="t", nice=0,
+        dag_reset_every=readout.DAG_RESET_EVERY_GAME, repeats=1,
+    )
+    report = readout.run(plan)
+    assert report["admissible"] is False
+    assert any("source provenance changed" in r for r in report["inadmissible_reasons"])
+    assert report["provenance"]["git_head"] == "same"
+    assert report["provenance"]["git_end_head"] == "same"
+    assert report["provenance"]["git_tracked_dirty"] is True
+    assert report["provenance"]["git_end_tracked_dirty"] is True
+    assert report["provenance"]["git_tracked_diff_sha256"] == "a" * 64
+    assert report["provenance"]["git_end_tracked_diff_sha256"] == "b" * 64
+    assert report["provenance"]["git_changed_during_run"] is True
+
+
+def test_unavailable_git_provenance_voids_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ext = FakeExt()
+    pack = _pack(tmp_path)
+    unavailable = {
+        "git_head": None,
+        "git_tracked_dirty": None,
+        "git_tracked_diff_sha256": None,
+    }
+    monkeypatch.setattr(readout, "_git_provenance", lambda: dict(unavailable))
+
+    def fake_cell(cfg: readout.RunConfig) -> dict[str, Any]:
+        return {
+            "arm": cfg.arm_config.arm,
+            "repeat": cfg.repeat,
+            "games_digest": "same",
+            "searches_digest": "search-same",
+            "inadmissible_reasons": [],
+            "nice_realized": [0],
+            "workers_detail": [{
+                "kernel": "scalar", "pack_source_sha256": "a" * 64,
+                "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
+                "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
+                "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
+            }],
+        }
+
+    monkeypatch.setattr(readout, "run_cell", fake_cell)
+    plan = readout.ReadoutPlan(
+        arm_configs=(readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext),),
+        pack=pack, games=1, workers=1, seed=1, sims=8,
+        topk=gen.MAX_LEGAL_MOVES, max_plies=10, all_root_moves=True,
+        cp_per_internal_unit=0.28, cp_slope=0.006, cp_draw_width=120.0,
+        bank_path=None, run_id="t", nice=0,
+        dag_reset_every=readout.DAG_RESET_EVERY_GAME, repeats=1,
+    )
+    report = readout.run(plan)
+    assert report["admissible"] is False
+    assert report["provenance"]["git_provenance_available"] is False
+    assert any("source provenance is unavailable" in r for r in report["inadmissible_reasons"])
+
+
+def test_quality_scope_explicitly_forbids_paired_attribution_from_end_to_end_cells() -> None:
+    assert readout.QUALITY_SCOPE["population"] == "end_to_end_arm_selected"
+    assert readout.QUALITY_SCOPE["paired_evaluator_quality"] is False
+    assert readout.QUALITY_SCOPE["deep_sf_paired_input_admissible"] is False
+
+
+def test_native_module_identity_reads_the_loaded_elf_build_id() -> None:
+    from chess_anti_engine.encoding import _lc0_ext
+    from chess_anti_engine.mcts import _mcts_tree
+
+    for module in (_lc0_ext, _nnue_ext, _mcts_tree):
+        path, digest, build_id, stamp = readout._module_identity(module)
+        assert digest == readout._sha256_file(Path(path))
+        assert stamp[0] == digest
+        assert len(build_id) >= 16
+        int(build_id, 16)
+
+
+def test_late_integrity_failure_is_preserved_as_inadmissible_cell() -> None:
+    ext = FakeExt()
+    cfg = _run_config(readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext))
+    provider = ext.arm_stats(ext.arm_open(readout.ARM_QSEARCH, "x"))
+    worker = _worker_result(provider)
+    worker.integrity_reasons.append("NNUE pack changed while this worker was running")
+    report = readout._aggregate([worker], cfg, wall_s=1.0)
+    assert report["admissible"] is False
+    assert any(
+        "late integrity check failed" in reason
+        for reason in report["inadmissible_reasons"]
+    )
+
+
+def test_leaf_bank_marks_when_fen_does_not_reconstruct_repetition_history() -> None:
+    import io
+
+    sink = io.StringIO()
+    source: Any = object.__new__(gen.NnueArmValueSource)
+    source._bank = sink
+    source.arm = readout.ARM_QSEARCH
+    source.pack_file_sha256 = "f" * 64
+    source.cp_per_internal_unit = 0.28
+    source.cp_slope = 0.006
+    source.cp_draw_width = 120.0
+    source.mate_base = 100000.0
+    source.mate_ply_step = 1.0
+    source.mate_max_plies = 128.0
+    source.bank_identity = {}
+    source.realized = {}
+    source.bank_rows = 0
+    board: Any = argparse.Namespace(
+        fen=lambda: "8/8/8/8/8/8/8/K6k w - - 7 9",
+        halfmove_clock=7,
+        hash_stack_len=3,
+        hist_len=7,
+    )
+    gen.NnueArmValueSource._bank_batch(
+        source, [board], np.array([10.0]), np.array([False]),
+        role="leaf", cluster=(2, 3),
+    )
+    row = json.loads(sink.getvalue())
+    assert row["schema"] >= 3
+    assert row["halfmove_clock"] == 7
+    assert row["hash_stack_len"] == 3
+    assert row["fen_reconstructs_full_search_state"] is False
