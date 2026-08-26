@@ -16,10 +16,17 @@ class ExtensionSpec:
     dependencies: tuple[str, ...]
 
 
+# setup.py is a compile input, not merely packaging metadata: it owns extension
+# macro sets, native/LTO flags and which translation units receive them. A
+# setup-only change can therefore change the binary while leaving every C/header
+# mtime untouched. Keep it in every extension's freshness dependency set.
+_SETUP_DEP = "setup.py"
+
 EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         "chess_anti_engine.encoding._features_ext",
         (
+            _SETUP_DEP,
             "chess_anti_engine/encoding/_features_ext.c",
             "chess_anti_engine/encoding/_features_impl.h",
             "chess_anti_engine/encoding/_bitboard_planes_impl.h",
@@ -36,6 +43,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         "chess_anti_engine.encoding._lc0_ext",
         (
+            _SETUP_DEP,
             "chess_anti_engine/encoding/_lc0_ext.c",
             "chess_anti_engine/encoding/_cboard_impl.h",
             "chess_anti_engine/encoding/_features_impl.h",
@@ -46,6 +54,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         "chess_anti_engine.mcts._mcts_tree",
         (
+            _SETUP_DEP,
             "chess_anti_engine/mcts/_mcts_tree.c",
             "chess_anti_engine/mcts/_value_provider.h",
             "chess_anti_engine/mcts/_search_terminal.h",
@@ -58,6 +67,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         "chess_anti_engine.nnue._nnue_ext",
         (
+            _SETUP_DEP,
             "chess_anti_engine/nnue/_nnue_ext.c",
             "chess_anti_engine/nnue/_nnue_impl.h",
             "chess_anti_engine/nnue/_nnue_provider.h",
