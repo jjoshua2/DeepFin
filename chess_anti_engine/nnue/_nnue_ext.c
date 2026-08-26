@@ -26,6 +26,12 @@
 #endif
 
 #include "../encoding/_cboard_impl.h"
+/* FastQ's static exchange evaluator. Included before _arm_providers.h because
+ * the FastQ search gates and orders moves with it. ⚑ It is deliberately NOT
+ * encoding/_features_impl.h's feat_see_capture — that one feeds production
+ * model input planes and is on a different value scale; see the ⚑⚑ block at the
+ * top of _fastq_see.h before "unifying" them. */
+#include "_fastq_see.h"
 #include "_nnue_impl.h"
 /* Pulls in _nnue_provider.h and ../mcts/_check_resolver.h, and owns the provider
  * registry — the raw evaluator plus the two resolver-backed race arms. */
@@ -901,6 +907,42 @@ static PyObject *py_arm_dag_reset(PyObject *Py_UNUSED(self), PyObject *args) {
     Py_RETURN_NONE;
 }
 
+PyDoc_STRVAR(see_doc,
+"see(board, from_square, to_square, promotion=0) -> int\n\n"
+"Static exchange evaluation of one capture, in internal units (pawn = 100),\n"
+"for the side to move on `board`. This is the SAME function the FastQ search\n"
+"orders and gates with — not a reimplementation for tests — so a fixture that\n"
+"pins a value here pins the search's behaviour.\n\n"
+"`promotion` uses python-chess's own piece constants, which coincide with the\n"
+"C encoding: 0 none, 2 knight, 3 bishop, 4 rook, 5 queen.\n\n"
+"Pins are ignored by construction (static SEE): an absolutely pinned attacker\n"
+"still counts. That is a documented approximation, not a defect — see the\n"
+"expected-divergence rows in tests/test_fastq_see.py.");
+
+static PyObject *py_see(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *board_obj;
+    int from_sq, to_sq, promotion = 0;
+    if (!PyArg_ParseTuple(args, "Oii|i", &board_obj, &from_sq, &to_sq, &promotion))
+        return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+    if (from_sq < 0 || from_sq > 63 || to_sq < 0 || to_sq > 63) {
+        PyErr_SetString(PyExc_ValueError, "from_square and to_square must be in 0..63");
+        return NULL;
+    }
+    if (promotion != 0 && (promotion < 2 || promotion > 5)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "promotion must be 0 (none) or 2..5 (knight..queen)");
+        return NULL;
+    }
+    if (piece_type_at(board, from_sq) < 0) {
+        PyErr_SetString(PyExc_ValueError, "from_square is empty");
+        return NULL;
+    }
+    cboard_init_all();
+    return PyLong_FromLong((long)cae_see_capture(board, from_sq, to_sq, promotion));
+}
+
 static PyMethodDef module_methods[] = {
     {"load", py_load, METH_VARARGS, load_doc},
     {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
@@ -923,6 +965,7 @@ static PyMethodDef module_methods[] = {
     {"arm_dag_lookup", py_arm_dag_lookup, METH_VARARGS, arm_dag_lookup_doc},
     {"arm_dag_value", py_arm_dag_value, METH_VARARGS, arm_dag_value_doc},
     {"arm_dag_reset", py_arm_dag_reset, METH_VARARGS, arm_dag_reset_doc},
+    {"see", py_see, METH_VARARGS, see_doc},
     CAE_NNUE_DAG_METHODS
     {NULL, NULL, 0, NULL}
 };
