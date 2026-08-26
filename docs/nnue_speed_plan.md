@@ -2,9 +2,11 @@
 
 Successor to the measured profile of the qsearch labeling path (py-spy `--native`,
 2,254 samples; banked and ledgered 2026-08-25, including the correction entry that
-replaced the earlier wrong Amdahl inference). Status: PARTLY SHIPPED — S2 measured at −14.3% qsearch wall (#475), **S1 killed
-at design time** (§2), S3 still bench-gated (§4); ordering per §6. The qsearch-on-DAG retrofit and FastQ
-(`docs/fastq_design.md`) cut *nodes*; this plan cuts *cost per node*.
+replaced the earlier wrong Amdahl inference). Status: PARTLY SHIPPED — S2 measured
+at −14.3% qsearch wall (#475), the **preregistered qsearch-DAG S1 global-margin
+design was killed at design time** (§2), and S3 is still bench-gated (§4). The
+qsearch-on-DAG retrofit and FastQ (`docs/fastq_design.md`) cut *nodes*; this plan
+cuts *cost per node*.
 
 ## 1. The measured baseline
 
@@ -21,41 +23,51 @@ All from the banked profile (ledger 2026-08-25) unless marked:
 Eval-side total ≈ **63%** of qsearch wall (27.2 + ~30 + 5.6 — the earlier
 "65–70%" draft claim was arithmetic drift; use the sum of the measured parts).
 
-## 2. PR-S1 — lazy eval (two-tier node value on the DAG) — ⚑ KILLED 2026-08-26
+## 2. PR-S1 — lazy eval (two-tier node value on the DAG) — ⚑ REGISTERED QSEARCH DESIGN KILLED 2026-08-26
 
-**STATUS: DEAD. The §2.3 gate fired; the whole section below is kept as the
-spec the gate was written against, not as work to do.** Predicted
-propagate-skip **0.488%** against the pre-committed 20% floor, on a banked
-201,671-probe dump (ledger 2026-08-26; `m` = 2806.1, held-out miss 0.0099%, so
-the margin is honest — it is not a calibration that can be retried wider).
+**STATUS: DO NOT BUILD THE PREREGISTERED GLOBAL-MARGIN S1 FOR QSEARCH-DAG.** The
+§2.3 gate fired on the population it named: predicted bound-served stand-pat
+probes were **0.488%**, against the pre-committed **20%** floor, over 201,671
+qsearch-DAG stand-pat probes. The registered margin was `m = 2806.1` (p99.9 of
+`|full − psqt|` plus the preregistered 10% slack), with held-out miss rate
+**0.0099%**.
 
-⚑ **Do not re-open this on the 0.488%.** That number reads as "the margin came
-out too wide, tune it", and the kill is not that. Two facts from the dump close
-the lane structurally:
+That result is enough to kill **this registered design** because its kill rule
+was explicitly probe-weighted and fixed before measurement. It is *not* evidence
+for the stronger statements an earlier revision made:
 
-- **41.31% of stand-pat probes carry a fully-open window** (α, β = ∓200000),
-  and 44.12% are half-open. A fully-open window is uncuttable by *any* margin,
-  so ~41% of the population is unreachable before precision enters the
-  argument at all.
-- **The oracle ceiling — skip at `m = 0`, a hypothetically perfect
-  zero-uncertainty margin — is 34.07%**, worth `34.07% × 27.2% =` **9.27% of
-  qsearch wall. S2 measured 14.3%.** Even a *perfect* lazy eval loses to a PR
-  that is already built and measured.
+- FastQ was **not** separately calibrated. Its SEE/delta/certificate/bounded
+  recursion changes both the node population and the `(alpha, beta)`
+  distribution, so qsearch's window frequencies are not FastQ's frequencies.
+- The dump did not carry canonical DAG node identity / created-vs-hit state.
+  Therefore probe skip rate cannot be multiplied by the 27.2% fresh-propagation
+  wall share: repeated probes of one already-upgraded node do not pay another FC
+  propagation. The earlier `34.07% × 27.2% = 9.27%` "oracle wall ceiling" is
+  withdrawn.
+- A smaller or conditional margin was not preregistered or swept. The current
+  evidence does not prove that every possible lazy-eval policy is useless until
+  the network architecture changes.
 
-MECHANISM: our PSQT term is not a cheap approximation of our own evaluation.
-`|full − psqt|` is p50 **521**, mean 633, p99.9 2551, against `sd(full)` ≈
-**1950** — the residual is a third of the signal's own scale. Regressing `full`
-on `psqt` gives **slope 0.9175, Pearson r 0.9410**: the two are on the same
-scale, checked precisely because a scale mismatch is the one defect that would
-have faked a wide margin and produced a false kill. SF's lazy trick works
-because HalfKA's PSQT part *is* most of its eval. Ours is not; the positional
-network carries the signal.
+Useful diagnostics from the same qsearch-DAG dump remain informative, but are
+**probe-population diagnostics, not wall-time ceilings**:
 
-Re-open only if the net architecture changes such that PSQT carries most of the
-eval — and then re-measure the **window** distribution first, because a
-skip-rate metric over a population that is 41% unbounded windows is capped
-before any margin is chosen.
+- **41.31%** of logged stand-pat probes carried a fully-open window
+  (`alpha,beta = -200000,+200000`), and another **44.12%** were half-open. A
+  fully-open visit cannot be served by a stand-pat bound at that visit.
+- At `m = 0`, the probe-level skip opportunity was **34.07%**. This is useful as
+  a window-distribution diagnostic only; without node identity and upgrade
+  ordering it is not a saved-propagation fraction.
+- `|full − psqt|` was p50 **521**, mean **633**, p99.9 **2551**, against
+  `sd(full) ≈ 1950`. Regressing `full` on `psqt` gave slope **0.9175** and
+  Pearson **r = 0.9410**, which rules out a simple scale mismatch as the reason
+  the registered margin became wide.
 
+The practical planning verdict is still simple: **do not spend an implementation
+PR on the registered qsearch S1.** S2 already measured as a strong engineering
+win. Revisit lazy evaluation only with a new preregistration and population —
+for example a FastQ-specific dump or a genuinely different conditional-bound
+scheme — and measure unique-node upgrade savings rather than converting probe
+frequency directly to wall time.
 
 SF skips the expensive positional network when the cheap material/PSQT part is
 already far outside the window. Our complication: the DAG stores the static
@@ -67,87 +79,76 @@ computed, never *what* is stored.
 
 ### 2.1 Stored facts and the accessor
 
+This is the specification that would apply if lazy evaluation is revisited; it
+is retained because it captures the correctness boundary independent of the
+failed qsearch economics.
+
 - Node payload carries a value **tier**: `PSQT_ONLY` (cheap: PSQT accumulators
   only, no FC propagate) or `FULL`. Both are exact, position-intrinsic facts —
-  the tier records how much of the (deterministic) evaluation has been computed
-  for this position, not anything about any visit, window, or search path, so
-  it is history-free in §4.2's sense. Upgrades are monotone
+  the tier records how much of the deterministic evaluation has been computed,
+  not anything about a visit, window, or search path. Upgrades are monotone
   (`PSQT_ONLY → FULL`); a `FULL` value is never recomputed. Nothing
-  window-dependent is ever stored, which is what separates this from the §9
-  non-goal (a TT with bound flags stores *search outcomes*; this stores
-  degrees of completion of one pure function).
+  window-dependent is stored.
 - Consumers never read the raw value field. The single accessor is
   `dag_value_for_window(node, alpha, beta) -> (kind, score)` where `kind` is
-  `EXACT` (FULL value, computed now if needed) or `LOWER`/`UPPER` (a proven
-  bound sufficient for this window, node left at `PSQT_ONLY`). Routing every
-  consumer through one tier-aware accessor is what makes the no-leak claim
-  hold *for the actual readers*, not just in principle: the retrofit provider
-  and FastQ's §3.3 `stand_pat = dag static value` line both switch to this
-  call, and **the S1 PR amends `docs/fastq_design.md` §3.3/§4.1 in the same
-  commit** — a consumer reading the value field directly is the named mutant
-  (test: a direct-read arm must diverge on a crafted PSQT_ONLY node).
+  `EXACT` (FULL value, computed now if needed) or `LOWER`/`UPPER` (a certified
+  bound sufficient for this visit, node left at `PSQT_ONLY`). Any future
+  qsearch/FastQ consumer must route through this accessor rather than bypassing
+  tier semantics.
 - Tier upgrade is a second write to a published payload. It inherits the DAG's
-  threading rule (GIL held; single-threaded enforced — see the history section
-  of `docs/nnue_position_dag.md` for why that rule is written in blood): the
-  upgrade happens under the same discipline, and the comment at the write site
-  must say a future concurrent consumer needs the upgrade inside the same
-  critical section as the probe.
+  threading rule (GIL held; single-threaded enforced). A future concurrent
+  consumer needs probe/upgrade publication inside the same critical section.
 
 ### 2.2 Fail-soft semantics (exact, so two implementers match)
 
-Let `m` be the calibrated margin (§2.3) and `p` the PSQT_ONLY value. The
-calibration property is `|full − p| ≤ m` (empirical, not proven — §2.3).
+Let `m` be the calibrated margin and `p` the PSQT_ONLY value. The calibration
+property is `|full − p| ≤ m` (empirical, not proven).
 
-- If `p − m ≥ beta`: stand-pat cutoff. Fail-soft return is **`p − m`** (the
-  proven lower bound), NOT `p` — returning the unproven point estimate would
-  smuggle an uncertified value into parent bookkeeping.
-- If `p + m ≤ alpha`: fail-low; the score contribution is **`p + m`** (the
-  proven upper bound) and search continues per the caller's recursion.
+- If `p − m ≥ beta`: stand-pat cutoff. Fail-soft return is **`p − m`**, not `p`.
+- If `p + m ≤ alpha`: fail-low; the score contribution is **`p + m`** and search
+  continues per the caller's recursion.
 - Otherwise, and at every point where the position's own value is *returned*
   rather than merely cut on — terminal quiet/max-qply returns, and in-check
-  nodes (which never stand-pat, per §3.3, so never take the lazy path at
-  all) — compute `FULL`, store it, use it. **Only a cutoff may use a bound;
+  nodes — compute `FULL`, store it, use it. **Only a cutoff may use a bound;
   every returned static value is FULL.**
 
-### 2.3 Calibration, and the pre-committed kill
+### 2.3 Calibration, and the pre-committed qsearch kill
 
-- The dump instruments the **retrofit provider** on its corpus runs and logs
-  `(psqt_value, full_value, alpha, beta)` at every real stand-pat probe — the
-  windows are recorded precisely so the skip prediction is computable; a
-  windowless `(psqt, full)` dump cannot predict a window-dependent skip.
-- `m` = observed p999 of `|full − psqt|` on that dump **plus slack fixed at
-  10% of p999, chosen here, before the dump exists**. This is an empirical
-  tail bound, not a proof: misses beyond `m` are possible off-distribution.
-  Quantify the miss rate on a held-out half of the dump and report it in the
-  PR; a held-out miss rate above 0.2% at the chosen `m` kills the margin and
-  forces recalibration wider.
-- Predicted skip rate = fraction of logged probes where `psqt ± m` clears the
-  logged window (computable BEFORE any implementation, from the dump alone —
-  the predict-the-exact-count rule). **Kill: predicted propagate-skip < 20% of
-  probes ⇒ S1 dies at design time**, with the dump banked as the evidence.
-- Mutant discipline for the margin itself: the `margin=0` arm must run on a
-  fixture where `|full − psqt| > 0` is first *asserted* (else the mutant test
-  is vacuously green), and `margin=∞` must be bit-identical to lazy-off.
+- The registered dump instruments the **qsearch-DAG retrofit provider** and logs
+  `(psqt_value, full_value, alpha, beta)` at every stand-pat probe. The windows
+  are required because a windowless `(psqt, full)` dump cannot predict whether
+  a visit is bound-serviceable.
+- `m` = observed p99.9 of `|full − psqt|` plus slack fixed at **10% of p99.9**
+  before the dump. Held-out miss rate above **0.2%** kills the margin and forces
+  recalibration wider.
+- Registered predicted skip rate = fraction of logged **probes** where
+  `psqt ± m` clears the logged window. **Kill: predicted probe skip < 20% ⇒ the
+  registered qsearch S1 dies at design time.** It measured **0.488%**, so that
+  decision is closed without implementing the search accessor.
+- ⚑ This registered probe metric is sufficient for its own go/no-go rule, but
+  it is **not a wall-time estimator** for an evaluate-once DAG. To estimate
+  saved FC propagations, a future dump must also identify canonical nodes and
+  whether each visit created, hit, or upgraded the node, then replay the actual
+  first-probe/upgrade sequence.
+- Mutant discipline for the margin itself, if revisited: `margin=0` must run on
+  a fixture where `|full − psqt| > 0` is first asserted, and `margin=∞` must be
+  bit-identical to lazy-off.
 
 ### 2.4 Counters (the evaluate-once identity, redefined on purpose)
 
-Two tiers split "evaluation" and the identity must not silently loosen (the
-DAG's own history: a strict `==` once drifted to `≤` and went blind — see
-`docs/nnue_position_dag.md`). S1 defines:
+A future implementation would define:
 
-- `full_evals` — FC propagates. Identity: **`full_evals == nodes_at_FULL`**
-  (monotone upgrade ⇒ at most one propagate per node, ever).
-- `psqt_probes` — PSQT_ONLY bound uses (cutoffs served without propagate).
-- The DAG's `state_inits + state_makes == node_count` is untouched.
+- `full_evals` — FC propagates. Identity: **`full_evals == nodes_at_FULL`**.
+- `psqt_probes` — PSQT_ONLY bound uses.
+- The DAG's `state_inits + state_makes == node_count` remains untouched.
 
-Both identities are asserted at every stats read in the S1 tests.
+Both identities must be asserted at every stats read.
 
 ### 2.5 Oracle discipline
 
-Lazy is a knob, default-off. The retrofit's bit-identity corpus always runs
-lazy-off. A separate corpus asserts the lazy arm's *search values* satisfy:
-equal to lazy-off wherever no bound was used, and bound-consistent (the §2.2
-inequalities, re-checked against a lazy-off replay) wherever one was.
+Lazy would remain a default-off knob. The retrofit's bit-identity corpus runs
+lazy-off. A separate corpus must assert the lazy arm's *search values* are equal
+to lazy-off wherever no bound is used and bound-consistent wherever one is.
 
 ## 3. PR-S2 — magic/PEXT sliders
 
@@ -174,32 +175,32 @@ sets. Candidate cuts — incremental threat-plane maintenance, or narrowing the
 verifier input. **Do not build before the verifier-net bench reads out**: if
 the bench seats the SF big net as the labeling verifier (the operator's
 registered prior), the verifier path stops paying the FullThreats tax and S3
-is dead at design time. The bench's own prereg (its ledger entry, not this
-file) carries the seating decision rule. Note the asymmetry: S1's tier scheme
-is verifier-agnostic (every candidate net has a cheap PSQT part) and S2 is
-net-independent, so neither is stranded by any bench outcome — only S3 is
-our-net-specific.
+is dead at design time. The bench's own preregistration carries the seating
+decision rule. S2 is net-independent; S3 is our-net-specific. The qsearch S1
+verdict above is already closed for its registered population and does not need
+the verifier bench.
 
-## 5. The regression gate (rides with PR-S1, applies to all)
+## 5. The regression gate (specified with S1, applies to all)
 
 A `bench`-style fixed-corpus harness that **fails, not reports**: nonzero exit
-on any node-count change (the correctness tripwire; value-changing knobs like
-lazy are asserted by their own §2.5 oracle instead, and run through the gate
-with the knob off) or on a µs/node regression **> 3%** vs the banked baseline.
-Reports µs/node, evals/s, node counts, per-provider counters. No silent caps:
-any corpus truncation is printed, not defaulted.
+on any node-count change (the correctness tripwire; value-changing knobs are
+asserted by their own oracle) or on a µs/node regression **> 3%** vs the banked
+baseline. Reports µs/node, evals/s, node counts, per-provider counters. No silent
+caps: any corpus truncation is printed, not defaulted.
 
 ## 6. Sequencing
 
-qsearch-on-DAG retrofit ✅ (#472) → FastQ-4+ ✅ (#473) → the S1 calibration
-dump ✅ (banked, ledger 2026-08-26) → **S1-vs-S2 order RESOLVED BY THAT DUMP:
-S2 first, and S1 never** (§2). S2 (#475) measured **−14.3% qsearch wall**,
-inside the §3 band; S1's *oracle ceiling* was 9.27%, so the ordering question
-answered itself more decisively than the share ratio could have. The dump was
-worth running for exactly this reason: an earlier draft hard-ordered S1 first
-on a "~2×" share ratio, the honest ratio was 27.2/18 ≈ 1.5×, and the truth was
-that S1 had no viable version at all.
+qsearch-on-DAG retrofit ✅ (#472) → FastQ-4+ ✅ (#473) → registered qsearch-DAG
+S1 calibration ✅ → **registered qsearch S1 killed by its own 20% probe gate** →
+S2 (#475), which measured **−14.3% qsearch wall** and remains the next speed win
+to land.
 
-Remaining: the verifier-net bench → S3 or its funeral (§4). Note §4's
-asymmetry still holds in the direction that matters — S3 is the only
-our-net-specific item, so it is the only one a bench outcome can strand.
+The calibration does **not** establish “S1 never” for FastQ or every possible
+conditional margin, and it no longer tries to compare a probe-weighted `m=0`
+rate to S2's wall-time result. Those are separate experiments if they ever
+become worth running. Given FastQ's already tiny tactical work, there is no
+current reason to schedule them ahead of higher-value work.
+
+Remaining after S2/readout integration: the verifier-net bench → S3 or its
+funeral (§4), plus whatever the production-Gumbel FastQ readout says about
+quality, persistence and CPU scheduling.
