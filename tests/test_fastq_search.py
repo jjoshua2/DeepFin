@@ -538,6 +538,249 @@ def test_evasions_are_charged_to_the_budget_too(eval_pack: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# What a budget trip RETURNS, not just that it happened
+# ---------------------------------------------------------------------------
+
+#: Rxe7+ is the only tactical move and it gives check, so at node_cap 1 the root
+#: spends the whole budget reaching the in-check child and that child's evasion
+#: loop trips on iteration 0 — the exact first-iteration case.
+TRIP_IN_CHECK_FEN = CAPTURE_CHECK_FEN = "4k3/4r3/8/8/8/8/4R3/4K2R w K - 0 1"
+
+
+def test_an_in_check_budget_trip_returns_a_value_not_a_supermate(
+    eval_pack: Path,
+) -> None:
+    """⚑⚑ THE BUG THIS CATCHES SHIPPED, AND ITS SYMPTOM LOOKED LIKE SUCCESS.
+
+    An in-check node has no stand-pat — the NNUE evaluation is undefined in
+    check — so the evasion loop seeds `best` at -CAE_FASTQ_INF. If the budget
+    refuses the FIRST evasion, that seed is what left the function: -200000,
+    which the parent negated to +200000. That is twice CAE_RESOLVER_MATE_BASE, a
+    score better than mate-in-0, produced by a node the search declined to look
+    at — and the §8 harness classifies anything past the eval clamp as a mate, so
+    it would have been banked as FastQ finding a forced win.
+
+    ⚑ EVERY PRIOR BUDGET TEST ASSERTED ONLY `budget_trips > 0` AND AN EVALUATION
+    COUNT. All of them passed with the bug in place, because none of them looked
+    at the number that came back. That is why this asserts the VALUE.
+
+    ⚑ The obvious repair — "return alpha, like the path-ceiling branch" — does
+    NOT fix it, which the assertions below would catch: cae_arm_fastq_eval enters
+    the root with beta = +CAE_FASTQ_INF, so a first-generation child's alpha IS
+    -CAE_FASTQ_INF and returning it reproduces -200000 exactly.
+    """
+    board = chess.Board(TRIP_IN_CHECK_FEN)
+    capture = chess.Move.from_uci("e2e7")
+    assert board.gives_check(capture)
+
+    uncapped, _uncapped_stats, _h = _run(eval_pack, [board], node_cap=0)
+    values, stats, _handle = _run(eval_pack, [board], node_cap=1)
+
+    # Anti-vacuity: the trip must have happened, in the IN-CHECK branch, on
+    # iteration 0. nodes == 2 is root + the in-check child and nothing below it,
+    # so the evasion loop provably broke before evaluating a single evasion.
+    assert stats["budget_trips"] > 0, "the cap never bound"
+    assert stats["evasion_nodes"] == 1, "no in-check node was reached"
+    assert stats["nodes"] == 2, (
+        f"expected root + the in-check child only, got {stats['nodes']} nodes; "
+        "the evasion loop did not trip on its first iteration"
+    )
+
+    value = values[0]
+    assert abs(value) <= _nnue_ext.RESOLVER_EVAL_CLAMP, (
+        f"a budget trip returned {value}, outside the evaluation range "
+        f"(±{_nnue_ext.RESOLVER_EVAL_CLAMP}); pre-fix this was ±200000"
+    )
+    assert abs(value) < _nnue_ext.RESOLVER_MATE_BASE, (
+        f"a budget trip returned the mate-band score {value} from a node the "
+        "search never looked at"
+    )
+    # The trip really changed the answer, so the fallback path is what produced
+    # the value asserted above rather than the search having finished anyway.
+    assert value != uncapped[0]
+    _assert_counter_identity(stats)
+
+
+def test_a_normal_node_budget_trip_returns_at_least_its_stand_pat(
+    eval_pack: Path,
+) -> None:
+    """The other branch: a node that is NOT in check has a stand-pat to fall back
+    on, and fail-soft means its answer can only be at or above it.
+
+    Paired with the in-check test above because the two branches reach the budget
+    by different routes and only one of them had a value to return.
+    """
+    board = chess.Board(BUDGET_FEN)
+    assert not board.is_check(), "this test is about the non-check branch"
+
+    weights = _nnue_ext.load(str(eval_pack))
+    stand_pat = _nnue_ext.evaluate(weights, CBoard.from_board(board))
+    values, stats, _handle = _run(eval_pack, [board], node_cap=2)
+
+    assert stats["budget_trips"] > 0, "the cap never bound"
+    assert values[0] >= stand_pat, (
+        f"a budget trip returned {values[0]}, below the node's own stand-pat "
+        f"{stand_pat}; fail-soft cannot go below the bound it started from"
+    )
+    assert abs(values[0]) <= _nnue_ext.RESOLVER_EVAL_CLAMP
+    _assert_counter_identity(stats)
+
+
+#: Black is in check from Nb6 and EVERY legal evasion gives discovered check back
+#: (the Ra4 battery on Ke4 opens the moment the black king leaves rank 4). Crafted,
+#: because the corpus has no such row: Kb4/Kd4 stay on the rank, so a3 and the
+#: white king's own square are what remove them, leaving Kc5/Kb5/Kc3/Kb3.
+ROOT_IN_CHECK_ALL_EVASIONS_CHECK_FEN = "8/8/1N6/8/r1k1K3/P7/8/8 b - - 0 1"
+
+
+def test_a_trip_below_an_in_check_ROOT_stays_in_range_too(eval_pack: Path) -> None:
+    """⚑⚑ THE CLAMP IS NOT BELT-AND-BRACES; THIS IS THE CASE THAT NEEDS IT.
+
+    Returning `beta` instead of `alpha` stops a budget trip from PROMOTING an
+    unsearched move, but beta is -alpha_parent — and an in-check parent's alpha
+    starts at -CAE_FASTQ_INF as well. So when the parent is itself in check with
+    an untouched window, beta IS +CAE_FASTQ_INF and the escape simply moves up a
+    level: the child returns +200000, the parent negates it to -200000, and that
+    is what leaves the arm.
+
+    ⚑ NO CORPUS ROW REACHES THIS. Swept at node_cap 1/2/3/4 with the clamp
+    removed: zero escapes, on all 4xN rows. It needs a root that is in check whose
+    evasions give check back, which is a composed shape — so the mutant for the
+    clamp survived every corpus-based test until this fixture existed. That is the
+    difference between "we could not find it" and "it cannot happen", and only
+    one of those is a reason to drop a guard.
+
+    node_cap=1 puts the trip on the root's first evasion, and every evasion here
+    gives check, so the assertion does not depend on move ORDER.
+    """
+    board = chess.Board(ROOT_IN_CHECK_ALL_EVASIONS_CHECK_FEN)
+    assert board.is_check(), "the ROOT must be in check"
+    moves = list(board.legal_moves)
+    assert moves, "fixture is mate; there is no evasion to trip on"
+    assert all(board.gives_check(m) for m in moves), (
+        "every evasion must give check, or the child may not be an in-check node"
+    )
+
+    values, stats, _handle = _run(eval_pack, [board], node_cap=1)
+    assert stats["budget_trips"] > 0
+    assert stats["evasion_nodes"] >= 2, "root and child must both be in check"
+    assert abs(values[0]) <= _nnue_ext.RESOLVER_EVAL_CLAMP, (
+        f"a trip under an in-check root returned {values[0]}, outside "
+        f"±{_nnue_ext.RESOLVER_EVAL_CLAMP}"
+    )
+
+
+def test_no_value_leaves_the_evaluation_range_anywhere_on_the_corpus(
+    eval_pack: Path,
+) -> None:
+    """The invariant as a sweep, at a cap tight enough to trip constantly.
+
+    A crafted fixture proves the fix on one shape; this proves no OTHER shape
+    reaches the same escape. Mate scores are the one legitimate way past the
+    clamp, so they are allowed by name rather than by magnitude.
+    """
+    values, stats, _handle = _run(eval_pack, CORPUS, node_cap=2)
+    assert stats["budget_trips"] > 100, "the cap barely bound; sweep is too easy"
+
+    def _legal(v: int) -> bool:
+        if abs(v) <= _nnue_ext.RESOLVER_EVAL_CLAMP:
+            return True
+        # A real mate score: within MATE_BASE, ply-discounted downward.
+        floor = _nnue_ext.RESOLVER_MATE_BASE - (
+            _nnue_ext.RESOLVER_MATE_PLY_STEP * _nnue_ext.RESOLVER_MAX_PLIES
+        )
+        return floor <= abs(v) <= _nnue_ext.RESOLVER_MATE_BASE
+
+    bad = [(b.fen(), v) for b, v in zip(CORPUS, values, strict=True) if not _legal(v)]
+    assert not bad, f"{len(bad)} values escaped the evaluation range: {bad[:3]}"
+
+
+#: Raw NNUE output past CAE_RESOLVER_EVAL_CLAMP is unreachable with the
+#: production net (max |v| = 4546 over the corpus), so clamp parity with
+#: cae_qsearch_node can only be tested against a pack built to exceed it.
+#: Measured at this magnitude: 147 of 444 non-check corpus rows evaluate past the
+#: clamp, reaching 89044 — which is inside the mate band the §8 harness
+#: classifies on.
+_HUGE_PSQT_MAGNITUDE = 200_000
+
+
+@pytest.fixture(scope="module")
+def huge_psqt_pack(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    rng = np.random.default_rng(20260826)
+    path = tmp_path_factory.mktemp("fastq-huge") / "huge-psqt.pack"
+    write_synthetic_pack(
+        path,
+        blobs={
+            "ft_psqt": [
+                (
+                    0,
+                    rng.integers(
+                        -_HUGE_PSQT_MAGNITUDE,
+                        _HUGE_PSQT_MAGNITUDE + 1,
+                        size=nnue_parse.HALFKA_DIMS * nnue_parse.PSQT_BUCKETS,
+                        dtype=np.int32,
+                    ),
+                )
+            ],
+            "threat_psqt": [
+                (
+                    0,
+                    rng.integers(
+                        -_HUGE_PSQT_MAGNITUDE,
+                        _HUGE_PSQT_MAGNITUDE + 1,
+                        size=nnue_parse.THREAT_DIMS * nnue_parse.PSQT_BUCKETS,
+                        dtype=np.int32,
+                    ),
+                )
+            ],
+        },
+    )
+    return path
+
+
+def test_the_stand_pat_is_clamped_the_way_qsearch_clamps_it(
+    huge_psqt_pack: Path,
+) -> None:
+    """cae_qsearch_node clamps its stand-pat; FastQ reads the same DAG and did not.
+
+    ⚑ THE DAG STORES THE RAW NNUE VALUE ON PURPOSE — that is the store's contract
+    and the qsearch-dag arm depends on it — so the clamp belongs at every reader,
+    and a reader that skips it is a reader whose values can leave the evaluation
+    range without any budget trip being involved.
+
+    ⚑ ANTI-VACUITY IS THE WHOLE DIFFICULTY HERE. With the production net the
+    largest raw evaluation on this corpus is 4546 against a clamp of 32000, so
+    the clamp is unobservable and a test using it would pass whether or not the
+    clamp existed. The first assertion below fails the test if the pack ever
+    stops exceeding the clamp, which is what stops this from quietly becoming
+    that test again.
+    """
+    weights = _nnue_ext.load(str(huge_psqt_pack))
+    quiet_rows = [b for b in CORPUS if not b.is_check()]
+    raw = [
+        _nnue_ext.evaluate(weights, CBoard.from_board(b)) for b in quiet_rows
+    ]
+    over = [v for v in raw if abs(v) > _nnue_ext.RESOLVER_EVAL_CLAMP]
+    assert len(over) > 50, (
+        f"only {len(over)} raw evaluations exceed the clamp; this pack no longer "
+        "exercises clamping and the test below would be vacuous"
+    )
+
+    values, _stats, _handle = _run(huge_psqt_pack, quiet_rows, node_cap=0)
+    escaped = [
+        (b.fen(), v)
+        for b, v in zip(quiet_rows, values, strict=True)
+        if abs(v) > _nnue_ext.RESOLVER_EVAL_CLAMP
+        and abs(v) < _nnue_ext.RESOLVER_MATE_BASE
+        - _nnue_ext.RESOLVER_MATE_PLY_STEP * _nnue_ext.RESOLVER_MAX_PLIES
+    ]
+    assert not escaped, (
+        f"{len(escaped)} unclamped static values reached the search output: "
+        f"{escaped[:3]}"
+    )
+
+
 # ===========================================================================
 # §8.6 — check policy
 # ===========================================================================
@@ -665,10 +908,6 @@ def test_the_move_policy_never_generates_a_quiet_check(
         "a child was in check, so a check was GENERATED rather than resolved"
     )
     _assert_counter_identity(stats)
-
-
-#: A capture that GIVES check, whose reply is a forced king move.
-CAPTURE_CHECK_FEN = "4k3/4r3/8/8/8/8/4R3/4K2R w K - 0 1"
 
 
 def test_a_capture_that_gives_check_gets_exact_evasion_resolution(
@@ -872,11 +1111,119 @@ def test_arm_stats_refuses_a_fastq_handle_instead_of_reporting_zeros(
     assert _nnue_ext.arm_stats(reference)["nnue_evals"] > 0
 
 
-def test_the_arm_refuses_to_run_without_its_store() -> None:
-    """The vtable pairs cae_arm_init_fastq with cae_arm_fastq_eval.
+def test_fastq_stats_refuses_a_non_fastq_handle_instead_of_reporting_zeros(
+    eval_pack: Path,
+) -> None:
+    """⚑⚑ THE MIRROR OF THE TEST ABOVE, AND THE HALF THAT WAS MISSING.
 
-    There is no configuration in which a FastQ context lacks a DAG, so this
-    pins that the eval refuses rather than silently falling back to some other
-    substrate returning plausible numbers under this name.
+    Refusing arm_stats() on a FastQ handle closed one direction and left the
+    other wide open: only cae_arm_fastq_eval writes ctx->fastq_totals, so
+    fastq_stats() on a qsearch handle read a zeroed struct and reported
+    nnue_evals = 0 for an arm that had just done thousands of evaluations. Same
+    silent-wrongness shape, same plausible-looking zero, opposite direction.
+
+    Fixing one direction of a defect and leaving the other is this codebase's
+    documented failure mode for exactly this class, which is why the pair is
+    asserted together.
+    """
+    reference = _nnue_ext.arm_open(REFERENCE_ARM, str(eval_pack))
+    _nnue_ext.arm_handle_eval(reference, [CBoard.from_board(chess.Board(KNOB_FEN))])
+
+    with pytest.raises(ValueError, match="arm_stats"):
+        _nnue_ext.fastq_stats(reference)
+
+    # Anti-vacuity: the handle really did work, so the zeroed struct would have
+    # been a wrong answer rather than an honest "nothing happened".
+    assert _nnue_ext.arm_stats(reference)["nnue_evals"] > 0
+
+    # And the refusal is arm-specific: a FastQ handle still answers.
+    handle = _open(eval_pack)
+    _eval(handle, [chess.Board(KNOB_FEN)])
+    assert _nnue_ext.fastq_stats(handle)["nnue_evals"] > 0
+
+
+def test_a_fastq_context_always_owns_a_dag_store(eval_pack: Path) -> None:
+    """⚑ RENAMED, BECAUSE THE OLD NAME PROMISED SOMETHING THE BODY NEVER DID.
+
+    This was `test_the_arm_refuses_to_run_without_its_store`, and its whole body
+    was `assert provider_names().count(ARM) == 1` — a registration check wearing
+    a refusal check's name. The refusal it claimed (cae_arm_fastq_eval returning
+    CAE_VALUE_ERR_NOT_LOADED on a store-less context) is UNREACHABLE from Python
+    by construction: the vtable pairs cae_arm_init_fastq with cae_arm_fastq_eval,
+    so every context reaching the eval was built by an init that makes a store.
+    A test cannot assert an unreachable branch, and pretending otherwise is worse
+    than not testing it.
+
+    What IS assertable is the property that makes the branch unreachable, so that
+    is what this asserts: every FastQ handle owns a DAG. arm_dag_lookup raises on
+    an arm with no store, so a successful lookup is the store's existence
+    observed rather than assumed. The init/eval PAIRING itself is pinned in
+    tests/test_nnue_incremental.py, which parses the vtable initializer.
     """
     assert _nnue_ext.provider_names().count(ARM) == 1
+
+    handle = _open(eval_pack)
+    board = chess.Board()
+    _eval(handle, [board])
+    # Raises ValueError on an arm that owns no store, so reaching a node id at
+    # all is the assertion.
+    assert _nnue_ext.arm_dag_lookup(handle, CBoard.from_board(board)) is not None
+    assert _nnue_ext.arm_dag_stats(handle)["node_count"] > 0
+
+
+# ===========================================================================
+# §5 move ordering — SEE descending, MVV-LVA as the tiebreak
+# ===========================================================================
+
+#: Two captures with IDENTICAL SEE (both 0) and very different victims: Qxd4
+#: wins a queen and is recaptured by a queen, axb5 wins a pawn and is recaptured
+#: by a pawn. SEE alone cannot separate them; MVV-LVA puts the queen first.
+#: Crafted, because the corpus has exactly one two-capture tied-SEE row and its
+#: two victims are both pawns (one via en passant), so it cannot discriminate.
+MVV_LVA_TIEBREAK_FEN = "4k3/8/p7/1p2p3/P2q4/8/8/3QK3 w - - 0 1"
+
+
+def test_an_equal_see_tie_is_broken_by_mvv_lva(eval_pack: Path) -> None:
+    """§5: "MVV-LVA exists only as the pre-SEE tiebreak" — asserted, not assumed.
+
+    ⚑ ORDERING IS NORMALLY UNOBSERVABLE, WHICH IS WHY THIS USES node_cap=1. With
+    a budget of one node the root expands its FIRST move and nothing else, so the
+    DAG afterwards contains exactly one child — and which one it is IS the
+    ordering decision, read directly rather than inferred from a node count.
+
+    ⚑ Ties are not a corner case here: 233 of the 348 corpus nodes with two or
+    more tactical moves (67.0%) contain an equal-SEE tie, and MVV-LVA reorders a
+    tie group at 120 of them (34.5%). Leaving ties to move-generation order was
+    a silent dependence on an unrelated implementation detail across a third of
+    all nodes.
+    """
+    board = chess.Board(MVV_LVA_TIEBREAK_FEN)
+    captures = [m for m in board.legal_moves if board.is_capture(m)]
+    assert len(captures) == 2, "fixture must offer exactly two captures"
+    by_uci = {m.uci(): m for m in captures}
+    preferred, other = by_uci["d1d4"], by_uci["a4b5"]
+
+    # Anti-vacuity: the tie is real and MVV-LVA is the only thing separating them.
+    scored = [
+        _nnue_ext.see(CBoard.from_board(board), m.from_square, m.to_square, 0)
+        for m in captures
+    ]
+    assert scored[0] == scored[1], "the fixture's SEEs are no longer tied"
+    assert board.piece_type_at(preferred.to_square) == chess.QUEEN
+    assert board.piece_type_at(other.to_square) == chess.PAWN
+
+    handle = _open(eval_pack, max_qply=1, node_cap=1)
+    _eval(handle, [board])
+
+    def child(move: chess.Move) -> object:
+        after = board.copy(stack=False)
+        after.push(move)
+        return _nnue_ext.arm_dag_lookup(handle, CBoard.from_board(after))
+
+    assert child(preferred) is not None, (
+        "the higher-victim capture was not the move the search picked first"
+    )
+    assert child(other) is None, (
+        "both children were expanded; node_cap=1 did not isolate the first move"
+    )
+    assert _nnue_ext.fastq_stats(handle)["nodes"] == 2

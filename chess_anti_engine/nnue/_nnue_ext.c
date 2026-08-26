@@ -1006,6 +1006,8 @@ PyDoc_STRVAR(fastq_stats_doc,
 "module globals: a caller who sets a knob and then reads it back here is being\n"
 "told what governed the search, which is the only reading that can catch a knob\n"
 "that was accepted and then silently ignored.\n\n"
+"Raises ValueError on a handle that is not \"nnue-fastq\": no other arm writes\n"
+"these counters, so every one of them would read zero. Use arm_stats() there.\n\n"
 "`nnue_evals + nodes_created_in_check == nodes_created` is the evaluate-once\n"
 "identity; the in-check term is there because an in-check node is published with\n"
 "no static value, the NNUE evaluation being undefined in check.");
@@ -1015,6 +1017,17 @@ static PyObject *py_fastq_stats(PyObject *Py_UNUSED(self), PyObject *args) {
     if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
     ArmHandle *h = arm_handle_from_capsule(capsule);
     if (!h) return NULL;
+    /* ⚑⚑ THE MIRROR OF arm_stats()'s REFUSAL, AND IT IS THE SAME DEFECT FACING
+     * THE OTHER WAY. Only cae_arm_fastq_eval ever writes ctx->fastq_totals, so
+     * on a qsearch handle every counter here is a zeroed struct — including
+     * nnue_evals, on an arm that just did thousands of evaluations. Refusing was
+     * only half a fix while the other direction still answered zeros. */
+    if (h->vp != &CAE_ARM_FASTQ_PROVIDER) {
+        PyErr_SetString(PyExc_ValueError,
+                        "fastq_stats() reports FastQ's own counters, which only "
+                        "an nnue-fastq handle accumulates; call arm_stats(handle)");
+        return NULL;
+    }
     const CaeArmCtx *ctx = (const CaeArmCtx *)h->ctx;
     const CaeFastqStats *s = &ctx->fastq_totals;
     return Py_BuildValue(
@@ -1034,7 +1047,8 @@ static PyObject *py_fastq_stats(PyObject *Py_UNUSED(self), PyObject *args) {
         "see_prunes", ARM_STAT_U64(s->see_prunes),
         "delta_prunes", ARM_STAT_U64(s->delta_prunes),
         "recapture_exemptions", ARM_STAT_U64(s->recapture_exemptions),
-        "beta_cutoffs", ARM_STAT_U64(s->beta_cutoffs),
+        "stand_pat_cutoffs", ARM_STAT_U64(s->stand_pat_cutoffs),
+        "move_cutoffs", ARM_STAT_U64(s->move_cutoffs),
         "budget_trips", ARM_STAT_U64(s->budget_trips),
         "path_ceilings", ARM_STAT_U64(s->path_ceilings),
         "cycle_draws", ARM_STAT_U64(s->cycle_draws),

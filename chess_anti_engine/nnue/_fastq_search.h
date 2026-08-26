@@ -71,7 +71,14 @@ typedef struct CaeFastqStats {
     uint64_t see_prunes;
     uint64_t delta_prunes;
     uint64_t recapture_exemptions;   /* SEE-negative captures kept anyway */
-    uint64_t beta_cutoffs;
+    /* ⚑ SPLIT, BECAUSE ONE "beta_cutoffs" MEANT TWO DIFFERENT EVENTS. A
+     * stand-pat cutoff is a node that never generated a move; a move cutoff is a
+     * node that searched at least one. Summing them under one name made the
+     * counter unable to answer the only question it gets asked — how often did
+     * the move loop actually pay off — and a counter that cannot answer its own
+     * question is the same defect as one that reads zero. */
+    uint64_t stand_pat_cutoffs;
+    uint64_t move_cutoffs;
     uint64_t budget_trips;
     uint64_t path_ceilings;
     uint64_t cycle_draws;
@@ -134,8 +141,18 @@ typedef struct CaeFastqMove {
     int action;      /* policy index */
     int to_sq;
     int32_t see;
-    int32_t victim;  /* for delta pruning */
+    int32_t victim;   /* for delta pruning, and the MVV half of the tiebreak */
+    int32_t attacker; /* the LVA half */
 } CaeFastqMove;
+
+/* §5's ordering: SEE descending, MVV-LVA as the tiebreak WITHIN an equal-SEE
+ * group. Returns >0 when `a` should come first. */
+static inline int cae_fastq_move_before(const CaeFastqMove *a, const CaeFastqMove *b)
+{
+    if (a->see != b->see) return a->see > b->see;
+    if (a->victim != b->victim) return a->victim > b->victim;
+    return a->attacker < b->attacker;
+}
 
 static inline int32_t cae_fastq_victim_value(const CBoard *b, const PolicyMove *pm)
 {
@@ -171,6 +188,10 @@ static int cae_fastq_tactical_moves(
         out[count].to_sq = pm.to_sq;
         out[count].see = cae_see_capture(b, pm.from_sq, pm.to_sq, promo);
         out[count].victim = cae_fastq_victim_value(b, &pm);
+        {
+            const int att_pt = piece_type_at(b, pm.from_sq);
+            out[count].attacker = att_pt >= 0 ? CAE_SEE_VALUE[att_pt] : 0;
+        }
         count++;
     }
     /* Insertion sort, descending by SEE. n is tiny (tactical moves at a real
@@ -178,7 +199,7 @@ static int cae_fastq_tactical_moves(
     for (int i = 1; i < count; i++) {
         const CaeFastqMove key = out[i];
         int j = i - 1;
-        while (j >= 0 && out[j].see < key.see) {
+        while (j >= 0 && cae_fastq_move_before(&key, &out[j])) {
             out[j + 1] = out[j];
             j--;
         }
@@ -296,9 +317,13 @@ static int cae_fastq_node(
      * simply chose to stop. */
     if (q->path_len >= CAE_FASTQ_MAX_PATH) {
         q->stats->path_ceilings++;
+        /* Same fallback rule as the budget trip below, for the same reason: in
+         * check there is no stand-pat, and `alpha` here can be -CAE_FASTQ_INF,
+         * which the parent would negate into a supermate. See the ⚑⚑ block on
+         * the evasion loop's `if (!searched)`. */
         *out_value = (!in_check && q->store->value_valid[node_id])
-                         ? q->store->values[node_id]
-                         : alpha;
+                         ? cae_resolver_clamp(q->store->values[node_id])
+                         : cae_resolver_clamp(beta);
         return CAE_VALUE_OK;
     }
     q->path[q->path_len++] = node_id;
@@ -319,6 +344,7 @@ static int cae_fastq_node(
             return CAE_VALUE_OK;
         }
         best = -CAE_FASTQ_INF;
+        int searched = 0;
         for (int i = 0; i < n_moves; i++) {
             if (cae_fastq_budget_spent(q)) break;
             q->nodes_used++;
@@ -327,10 +353,51 @@ static int cae_fastq_node(
             status = cae_fastq_child_value(
                 q, b, node_id, moves[i], pm.to_sq, ply, alpha, beta, &value);
             if (status != CAE_VALUE_OK) goto done;
+            searched = 1;
             if (value > best) best = value;
             if (best > alpha) alpha = best;
-            if (alpha >= beta) { q->stats->beta_cutoffs++; break; }
+            if (alpha >= beta) { q->stats->move_cutoffs++; break; }
         }
+        /* ⚑⚑ THE BUDGET CAN TRIP ON ITERATION 0, AND -CAE_FASTQ_INF IS NOT A
+         * VALUE. An in-check node has no stand-pat to fall back on — the NNUE
+         * evaluation is undefined in check — so `best` is seeded at -INF and, if
+         * the very first evasion is refused by the budget, that seed is what
+         * leaves this function. -200000 negates to +200000 at the parent, which
+         * is TWICE CAE_RESOLVER_MATE_BASE: a "mate" score better than mate in 0,
+         * from a node the search declined to look at. The §8 harness classifies
+         * anything past the eval clamp as a mate, so it would have been reported
+         * as FastQ finding a forced win.
+         *
+         * ⚑⚑ "RETURN alpha, LIKE THE PATH-CEILING BRANCH ABOVE" REPRODUCES THE
+         * BUG, WHICH IS WHY THIS RETURNS SOMETHING ELSE. Trace the root call:
+         * cae_arm_fastq_eval enters with beta = +CAE_FASTQ_INF, the root passes
+         * `beta` down unchanged, and cae_fastq_child_value negates it — so a
+         * first-generation child's alpha IS -CAE_FASTQ_INF. Returning alpha
+         * there returns -200000 and the parent negates it to +200000: the exact
+         * supermate this block exists to prevent. The path-ceiling branch had the
+         * same defect and is fixed with it.
+         *
+         * TWO THINGS ARE NEEDED, and only together:
+         *
+         *   1. `beta`, not `alpha`. Returning alpha claims a fail-LOW, which the
+         *      parent reads as a fail-HIGH on the move that reached here — a
+         *      budget trip would make a checking move look GOOD. Returning beta
+         *      claims a fail-high here, which the parent reads as "no
+         *      improvement", so an unsearched move cannot become the best move.
+         *      Neither is sound — nothing was searched — but only one of them can
+         *      promote a move the search declined to look at.
+         *
+         *   2. The clamp. beta is -alpha_parent, and an in-check parent's alpha
+         *      starts at -CAE_FASTQ_INF too, so beta can itself be ±200000 and
+         *      the escape just moves up one level. Clamping is what actually
+         *      enforces the invariant: A NODE THE SEARCH DECLINED TO LOOK AT
+         *      NEVER EMITS A MATE-MAGNITUDE SCORE. Real mates are unaffected —
+         *      they come from the n_moves == 0 branch above, which is untouched.
+         *
+         * The residual distortion is bounded by the eval clamp and COUNTED:
+         * budget_trips is what turns it from a silent wrong number into §3.4's
+         * "nonzero trip rate outside crafted fixtures is a finding". */
+        if (!searched) best = cae_resolver_clamp(beta);
         *out_value = best;
         goto done;
     }
@@ -349,10 +416,19 @@ static int cae_fastq_node(
         status = CAE_VALUE_ERR_BAD_POS;
         goto done;
     }
-    const int32_t stand_pat = q->store->values[node_id];
+    /* ⚑ CLAMPED ON READ, THE SAME WAY cae_qsearch_node CLAMPS ITS STAND-PAT.
+     * The DAG stores the RAW NNUE value — that is the store's contract and the
+     * qsearch-dag arm depends on it — so the clamp belongs at every reader, and
+     * a reader that skips it is a reader whose search values can leave the
+     * evaluation range. Measured: with a high-magnitude synthetic pack, 147 of
+     * 444 non-check corpus rows evaluate past CAE_RESOLVER_EVAL_CLAMP and reach
+     * 89044, which is inside the mate band the §8 harness classifies on. Not
+     * reachable with the production net (max |v| = 4546), which is exactly why
+     * it needs a test rather than an argument. */
+    const int32_t stand_pat = cae_resolver_clamp(q->store->values[node_id]);
 
     if (stand_pat >= beta) {
-        q->stats->beta_cutoffs++;
+        q->stats->stand_pat_cutoffs++;
         *out_value = stand_pat;
         goto done;
     }
@@ -408,7 +484,7 @@ static int cae_fastq_node(
             if (status != CAE_VALUE_OK) goto done;
             if (value > best) best = value;
             if (best > alpha) alpha = best;
-            if (alpha >= beta) { q->stats->beta_cutoffs++; break; }
+            if (alpha >= beta) { q->stats->move_cutoffs++; break; }
         }
         *out_value = best;
     }

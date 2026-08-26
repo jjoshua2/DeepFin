@@ -123,6 +123,8 @@ def fastq_set_config(
     see_recapture_exempt: int = ...,
     /,
 ) -> dict[str, int]: ...
+# ⚑ Raises ValueError on any handle that is not "nnue-fastq": only that arm
+# accumulates these counters, so every one would read zero elsewhere.
 def fastq_stats(arm_handle: object, /) -> dict[str, int]: ...
 
 # Canonical structural-position graph. The object handle owns no Python objects;

@@ -1014,7 +1014,8 @@ static void cae_fastq_merge_stats(CaeFastqStats *dst, const CaeFastqStats *src) 
     CAE_FQ_ADD(see_prunes);
     CAE_FQ_ADD(delta_prunes);
     CAE_FQ_ADD(recapture_exemptions);
-    CAE_FQ_ADD(beta_cutoffs);
+    CAE_FQ_ADD(stand_pat_cutoffs);
+    CAE_FQ_ADD(move_cutoffs);
     CAE_FQ_ADD(budget_trips);
     CAE_FQ_ADD(path_ceilings);
     CAE_FQ_ADD(cycle_draws);
