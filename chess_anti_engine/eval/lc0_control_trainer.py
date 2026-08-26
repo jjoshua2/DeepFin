@@ -154,6 +154,19 @@ LIVE_TRAINER_PIN: dict[str, Any] = {
             "sf_own_regret_unlisted_scale": 1.0,
             "sf_search_dampen_sf_high": 0.0,
             "sf_search_dampen_sf_low": 0.0,
+            # ⚑ ADDED by the SF conditional-KL extraction (PR #479), on the same
+            # terms as the `sf_own_regret_*` pair above and for the same reason:
+            # the live yaml sets NEITHER key -- it must not, until production has
+            # restarted onto the code that defines them -- so
+            # `trainer_kwargs_from_config` realizes both at their code defaults.
+            # MEASURED by running `trainer_kwargs_signature` over the live working
+            # tree's `configs/pbt2_small.yaml` under this branch's code, which
+            # reported these two as the ONLY keys absent from the pin and ZERO
+            # value drift on every shared key. NOT copied from the constructor
+            # signature, and NOT hand-edited to make CI green. They are NOT
+            # deviations: control and production both realize the identity pair,
+            # so they stay out of `LC0_TRAINER_DEVIATIONS`.
+            "sf_shape_temp_cp": None,
             "sf_target_params": {
                     "sf_policy_cp_temp": 16.2,
                     "sf_policy_label_smooth": 0.01,
@@ -184,6 +197,7 @@ LIVE_TRAINER_PIN: dict[str, Any] = {
             "w_sf_own": 0.0,
             "w_sf_own_regret": 0.0,
             "w_sf_policy_floor": 0.8,
+            "w_sf_shape": 0.0,  # see the `sf_shape_temp_cp` note above
             "w_sf_volatility": 0.05,
             "w_soft": 1.0,
             "w_volatility": 0.1,
