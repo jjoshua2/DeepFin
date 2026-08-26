@@ -67230,3 +67230,25 @@ live to revert — experiment-only knob; production untouched). NEXT per prereg:
 GUEST (lc0) rows' value target toward the own regime (D-mass 0.735 → ≈0.267), never
 the own rows' — lever 1 showed degrading own targets costs real Elo. Calibration probe
 before any knob: measure both corpora's D-mass on real rows, pick the remap, bank it.
+
+**2026-08-26 — PREREG harmonization LEVER 2: guest-row value-shape (D-mass remap).**
+HYPOTHESIS: the value-regime gap (lc0 search_wdl mean D 0.666 on real rows, fresh
+probe banked scratchpad/dmass_lambda_calibration.result.json; own realized blend
+D ≈0.267 per c3866ed91) drives value-side interference in the mix; remapping ONLY the
+lc0 rows' search_wdl toward the own regime removes the fight without touching own
+targets (lever 1's kill: own-target quality is load-bearing — the guest moves, never
+the host). KNOB: `--mix-lc0-value-dmass-lambda` — p_D' = λ·p_D, W/L renormalized
+proportionally, rows with p_D=1 unchanged; applies to lc0-source rows only, before the
+value loss; own rows byte-untouched (λ=1.0 early-return byte-identity like the temper
+knob). CALIBRATION: λ grid on 24,000 real lc0 rows — λ=0.4 → mean D 0.285 (≈ own
+0.267); **λ=0.4 chosen**. ARM (ONE lever; ≤6-piece filter stays queued): f=0.50,
+seed 15, λ=0.4, bar 0.002, 20k steps, iter-595 init, temper OFF (lever 1 reverted).
+LAUNCH GATED on the knob landing with review + mutation evidence; take-effect
+observable: summary.json must report realized per-source value-target D-mass, lc0-side
+≈0.285, own-side unchanged, remapped_batches == seen > 0. YARDSTICK: MID+LAST 400g
+arenas vs iter-595, canonical instrument (matched_sims, search-shape play), fresh
+seeds 70/71. CLAUSES: LAST CI excludes 0 positive ⇒ SUCCESS (fix candidate). Spans 0 ⇒
+NULL (lever 3 = ≤6-piece filter next). Excludes 0 negative ⇒ KILL (value-shape
+harmonization hurts; lever 3 next, lever 2 reverted). Comparator: untempered f=0.50
+MID −42.78 / LAST −0.87 (seeds 63/64), lever-1 curve −41.0/−29.6 (seeds 68/69) —
+diagnostic only. Confounds: none live; GPU idle otherwise.
