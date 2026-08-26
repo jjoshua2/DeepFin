@@ -1392,11 +1392,11 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
     # the one paying for the banking.
     search_wall_s = max((r.elapsed_s for r in results), default=0.0)
     reasons: list[str] = []
-    for result in results:
-        for reason in result.integrity_reasons:
-            reasons.append(
-                f"worker {result.worker_id} late integrity check failed: {reason}",
-            )
+    reasons.extend(
+        f"worker {result.worker_id} late integrity check failed: {reason}"
+        for result in results
+        for reason in result.integrity_reasons
+    )
     if conflicts:
         reasons.append(f"workers disagreed about arm configuration: {conflicts}")
     if dag.state_identity_violations:
