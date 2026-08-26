@@ -106,6 +106,18 @@ static CaeNnueDagHandle *cae_nnue_dag_from_capsule(PyObject *capsule) {
 }
 
 static PyObject *cae_nnue_dag_value_object(const CaeNnueDagHandle *h, int32_t node_id) {
+    /* Bound against the PAYLOAD array, not against dag.node_count: the two are
+     * kept in step only by cae_nnue_dag_publish_new(), and the graph layer can
+     * legitimately create a node without a payload obligation
+     * (cae_position_dag_intern_board() does exactly that). A caller-supplied id
+     * must not be able to read past the payload arrays because a different
+     * writer grew the graph. */
+    if (node_id < 0 || node_id >= h->payload_cap) {
+        PyErr_Format(PyExc_IndexError,
+                     "DAG node %d has no NNUE payload slot (payload_capacity %d)",
+                     node_id, h->payload_cap);
+        return NULL;
+    }
     if (!h->value_valid[node_id]) {
         Py_INCREF(Py_None);
         return Py_None;
@@ -183,6 +195,26 @@ static int32_t cae_nnue_dag_publish_new(
     return node_id;
 }
 
+/* ⚑⚑ THE CONSTRUCTION CALLS BELOW DELIBERATELY KEEP THE GIL.
+ *
+ * cae_nnue_state_init/state_make/state_evaluate are µs-scale, so there is
+ * nothing to win by releasing it — and releasing it is what makes the
+ * documented single-threaded constraint unenforceable rather than merely
+ * documented. With a release window between "probe found nothing" and
+ * "publish", two Python threads interning the same position both miss, both
+ * publish, and the second link fails: MEASURED at 6 threads on the pre-fix
+ * build, node_count 87 for 21 distinct structural positions. Worse, the make
+ * reads &h->states[parent_id] inside that window while another thread's
+ * publish can run cae_nnue_dag_grow_payload(), which free()s that very array —
+ * a use-after-free reading an accumulator that has been handed back to malloc.
+ *
+ * Holding the GIL makes each of these functions atomic against other Python
+ * threads, so probe -> evaluate -> publish -> link cannot interleave.
+ * A future concurrent consumer must NOT simply reinstate Py_BEGIN_ALLOW_THREADS
+ * here: it has to add real synchronization first — a single-owner check or a
+ * lock spanning probe/publish/link, plus payload storage that a concurrent grow
+ * cannot free under a reader (stable chunks or RCU-style retirement). */
+
 PyDoc_STRVAR(dag_intern_root_doc,
 "dag_intern_root(handle, cboard) -> (node_id, value_or_none, created)\n\n"
 "Intern a structural root and make it the DAG's current root. Halfmove clock and\n"
@@ -207,19 +239,15 @@ static PyObject *py_dag_intern_root(PyObject *Py_UNUSED(self), PyObject *args) {
         return cae_nnue_dag_result(h, existing, 0);
     }
 
+    /* GIL held on purpose — see the block comment above dag_intern_root_doc. */
     CaeNnueState state;
-    int status;
-    Py_BEGIN_ALLOW_THREADS
-    status = cae_nnue_state_init(h->weights, board, &state);
-    Py_END_ALLOW_THREADS
+    int status = cae_nnue_state_init(h->weights, board, &state);
     if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
 
     int value_valid = !state.pos.in_check;
     int32_t value = 0;
     if (value_valid) {
-        Py_BEGIN_ALLOW_THREADS
         status = cae_nnue_state_evaluate(h->weights, &state, &value);
-        Py_END_ALLOW_THREADS
         if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
     }
 
@@ -282,6 +310,11 @@ static PyObject *py_dag_intern_child(PyObject *Py_UNUSED(self), PyObject *args) 
     if (existing != CAE_DAG_NO_NODE) {
         int link_rc = cae_position_dag_link(&h->dag, parent_id, action, existing);
         if (link_rc < 0) {
+            /* -1 here can only be the edge-array growth allocation: parent,
+             * child and action were all range-checked above, and -2 is
+             * unreachable because child_for_action() just reported no edge for
+             * this action. Report the allocation failure AS one. */
+            if (link_rc == -1) return PyErr_NoMemory();
             PyErr_SetString(PyExc_RuntimeError, "failed to link an existing DAG child");
             return NULL;
         }
@@ -289,20 +322,18 @@ static PyObject *py_dag_intern_child(PyObject *Py_UNUSED(self), PyObject *args) 
         return cae_nnue_dag_result(h, existing, 0);
     }
 
+    /* GIL held on purpose — see the block comment above dag_intern_root_doc.
+     * &h->states[parent_id] is exactly the pointer a concurrent grow would
+     * free() under this read. */
     CaeNnueState state;
-    int status;
-    Py_BEGIN_ALLOW_THREADS
-    status = cae_nnue_state_make(
+    int status = cae_nnue_state_make(
         h->weights, &h->states[parent_id], child_board, &state);
-    Py_END_ALLOW_THREADS
     if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
 
     int value_valid = !state.pos.in_check;
     int32_t value = 0;
     if (value_valid) {
-        Py_BEGIN_ALLOW_THREADS
         status = cae_nnue_state_evaluate(h->weights, &state, &value);
-        Py_END_ALLOW_THREADS
         if (status != CAE_VALUE_OK) { raise_status(status); return NULL; }
     }
 
@@ -311,8 +342,19 @@ static PyObject *py_dag_intern_child(PyObject *Py_UNUSED(self), PyObject *args) 
     if (node_id == CAE_DAG_NO_NODE) return PyErr_NoMemory();
     int link_rc = cae_position_dag_link(&h->dag, parent_id, action, node_id);
     if (link_rc != 1) {
-        /* Single-threaded Python construction means this should be impossible;
-         * failing loudly is safer than leaving an unreachable canonical node. */
+        /* The node is already published, and that is NOT an unreachable leak:
+         * it is in the canonical table, so a retry FINDS it and the request
+         * becomes an ordinary transposition that only has to add the edge. What
+         * is lost is this call's edge and its state_makes/nnue_evals
+         * accounting, which is why state_inits + state_makes == node_count
+         * fires here — that identity is the alarm for a published-but-
+         * unaccounted node, so do not "fix" it by counting the work earlier.
+         *
+         * -1 is the edge-array growth allocation (parent/child/action were all
+         * range-checked, so no other -1 cause survives). -2 means the action
+         * already maps to a different child, which single-threaded construction
+         * cannot produce — it is the signature of concurrent construction. */
+        if (link_rc == -1) return PyErr_NoMemory();
         PyErr_SetString(PyExc_RuntimeError, "new DAG node could not be linked to its parent");
         return NULL;
     }
@@ -387,9 +429,36 @@ static PyObject *py_dag_set_root(PyObject *Py_UNUSED(self), PyObject *args) {
 
 PyDoc_STRVAR(dag_stats_doc,
 "dag_stats(handle) -> dict\n\n"
-"Structural graph and NNUE-work counters. The invariant this surface exists to\n"
-"make observable is nnue_evals <= node_count, with transposition hits increasing\n"
-"node_reuses but NOT state_makes or nnue_evals.");
+"Structural graph and NNUE-work counters.\n\n"
+"⚑ The headline invariant is the exact identity\n\n"
+"    state_inits + state_makes == node_count\n\n"
+"every canonical node was published by exactly one accounted NNUE state\n"
+"construction, and no node exists without one. It is FALSIFIABLE, and it has\n"
+"fired: at 6 threads on a build that released the GIL around state_make,\n"
+"state_inits + state_makes read 21 against a node_count of 87, because\n"
+"duplicate publications produced nodes whose work was never accounted (their\n"
+"link failed).\n\n"
+"⚑ Do NOT read nnue_evals <= node_count as the invariant. It holds by\n"
+"construction on every path — a node is published at most once per evaluation —\n"
+"and duplicating nodes makes it MORE satisfied, so it is exactly blind to the\n"
+"failure it looks like it is watching.\n\n"
+"Counters that do not mean what their names suggest:\n"
+"  hits            canonical-table probe hits: THE transposition signal. A new\n"
+"                  parent reaching an already-interned structural position\n"
+"                  increments it (it also counts a re-request of a position\n"
+"                  already interned, so read it against inserts/probes).\n"
+"  node_reuses     NOT the transposition signal: it additionally counts a\n"
+"                  repeated identical (parent, action) request, which never\n"
+"                  probes the table at all.\n"
+"  edge_reuses     ONLY that caller redundancy — an exact duplicate\n"
+"                  (parent, action, child) edge request. Never a transposition.\n"
+"  collision_steps linear-probe DISPLACEMENT: occupied slots stepped over,\n"
+"                  whatever their key. It is not a count of 64-bit key\n"
+"                  collisions, which open addressing makes far rarer than this\n"
+"                  number.\n"
+"  probes          find_position() calls, including pure dag_lookup() reads.\n\n"
+"A true transposition raises hits and node_reuses and leaves state_makes and\n"
+"nnue_evals unchanged for that request.");
 
 static PyObject *py_dag_stats(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *capsule;

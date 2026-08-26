@@ -67,7 +67,12 @@ typedef struct CaePositionDag {
     int32_t root_id;
 
     /* Operation counters are part of the abstraction: a consumer claiming DAG
-     * reuse has to be able to show that canonical hits actually occurred. */
+     * reuse has to be able to show that canonical hits actually occurred.
+     * `hits` is the reuse signal (a probe that landed on an existing canonical
+     * node); `collision_steps` is linear-probe DISPLACEMENT — occupied slots
+     * stepped over, whatever their key — and NOT a count of 64-bit key
+     * collisions; `edge_reuses` counts only an exact duplicate edge request,
+     * which is caller redundancy rather than a transposition. */
     uint64_t probes;
     uint64_t hits;
     uint64_t inserts;
