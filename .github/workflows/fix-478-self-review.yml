@@ -1,0 +1,43 @@
+name: Apply 478 self-review fixes
+
+on:
+  push:
+    branches: [fix/474-measurement-integrity]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/474-measurement-integrity
+      - name: Fix provenance implementation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/nnue_gumbel_readout.py')
+          s = p.read_text()
+          old = 'cwd=ROOT, text=True, stderr=subprocess.DEVNULL,'
+          if s.count(old) != 2:
+              raise SystemExit(f'expected 2 ROOT cwd uses, got {s.count(old)}')
+          s = s.replace(old, 'cwd=Path(__file__).resolve().parents[1], text=True, stderr=subprocess.DEVNULL,')
+          old2 = 'nnue_ext_path, nnue_ext_sha = _module_identity(source._ext)'
+          if s.count(old2) != 1:
+              raise SystemExit(f'expected one private extension read, got {s.count(old2)}')
+          s = s.replace(old2, 'nnue_ext_path, nnue_ext_sha = _module_identity(_load_ext())')
+          p.write_text(s)
+          PY
+          python3 -m py_compile scripts/nnue_gumbel_readout.py
+          git diff --check
+      - name: Remove workflow and commit
+        run: |
+          rm .github/workflows/fix-478-self-review.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "readout: fix source-provenance lookup"
+          git push origin HEAD:fix/474-measurement-integrity
