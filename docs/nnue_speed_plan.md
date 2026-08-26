@@ -2,10 +2,10 @@
 
 Successor to the measured profile of the qsearch labeling path (py-spy `--native`,
 2,254 samples; banked and ledgered 2026-08-25, including the correction entry that
-replaced the earlier wrong Amdahl inference). Status: ACTIVE PLAN — S2 is built
-and measured at −14.3% qsearch wall in open PR #475 but is **not shipped until
-that PR merges**; the **preregistered qsearch-DAG S1 global-margin design was
-killed at design time** (§2), and S3 is still bench-gated (§4). The qsearch-on-DAG
+replaced the earlier wrong Amdahl inference). Status: ACTIVE PLAN — S2 is
+**merged** (#475, `21b11fd82`) at a measured −14.3% qsearch wall; the
+**preregistered qsearch-DAG S1 global-margin design was killed at design time**
+(§2), and S3 is still bench-gated (§4). The qsearch-on-DAG
 retrofit and FastQ (`docs/fastq_design.md`) cut *nodes*; this plan cuts *cost per
 node*.
 
@@ -198,8 +198,17 @@ its verifier-net gate.
 
 qsearch-on-DAG retrofit ✅ (#472) → FastQ-4+ ✅ (#473) → registered qsearch-DAG
 S1 calibration ✅ → **registered qsearch S1 killed by its own 20% probe gate** →
-S2 (**open #475**, measured **−14.3% qsearch wall**, pending current-head CI,
-review and the §5 regression-gate deliverable) → merge only after those gates.
+S2 ✅ (#475, `21b11fd82`, measured **−14.3% qsearch wall**) — its gates were
+met before merge: perft parity on published counts, per-binary backend
+assertions, CI legs building both the magic and PEXT arms, and the §5
+regression-gate deliverable landed executable.
+
+⚑ One number from that PR is **superseded, not confirmed**: the FastQ row
+(8.3%) was measured before `dedupe_structural_positions`, so persistent-DAG
+hits across repeated game prefixes were being counted as slider speed. The
+deciding qsearch and movegen figures are unaffected — the dedup applies to the
+fastq stage only — but re-measure before quoting the fastq number as a slider
+result.
 
 The calibration does **not** establish “S1 never” for FastQ or every possible
 conditional margin, and it no longer tries to compare a probe-weighted `m=0`
