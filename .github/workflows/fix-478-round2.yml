@@ -1,0 +1,35 @@
+name: Fix 478 review round 2
+
+on:
+  push:
+    branches: [fix/474-measurement-integrity]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/474-measurement-integrity
+          fetch-depth: 0
+      - name: Apply guarded repair round
+        run: python3 scripts/_fix_478_round2.py
+      - name: Remove bootstrap files
+        run: |
+          rm scripts/_fix_478_round2.py
+          rm .github/workflows/fix-478-round2.yml
+      - name: Static sanity
+        run: |
+          python3 -m py_compile scripts/nnue_gumbel_readout.py scripts/gen_random_selfplay_shards.py tests/test_nnue_gumbel_readout.py
+          git diff --check
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "readout: close current #478 review and CI findings"
+          git push origin HEAD:fix/474-measurement-integrity
