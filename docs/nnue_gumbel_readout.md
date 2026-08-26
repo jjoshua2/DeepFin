@@ -40,8 +40,8 @@ So at one seed `nnue-qsearch` and `nnue-qsearch-dag` **must** play byte-identica
 games. Each cell publishes
 
 * `games_detail[i].digest` — the game trajectory/termination digest;
-* `games_detail[i].search_digest` — the exact improved-policy/legal-mask output
-  sequence for that game;
+* `games_detail[i].search_digest` — the exact improved-policy/legal-mask plus
+  returned-root-value sequence for that game;
 * `games_digest` and `searches_digest` — ordered whole-cell digests of those two
   independent views.
 
@@ -241,9 +241,10 @@ differed — and the report checks the ones that can:
 `seed` · `games_per_cell` · `workers` · `sims_floor` · `topk` · `max_plies` ·
 `all_root_moves` · the cp triple · `nice_requested` **and** `nice_realized` ·
 `banking` · `dag_reset` · `repeats` · `arms` · `python` · the Git HEAD,
-tracked-diff SHA-256 and dirty flag at **both** matrix endpoints · the native
-module pathname SHA-256 snapshots · and, authoritatively, the GNU build-ids read
-from the already mapped `_nnue_ext` / `_mcts_tree` ELF images.
+tracked-diff SHA-256 and dirty flag at **both** matrix endpoints (an unavailable
+Git snapshot is itself inadmissible) · the native module pathname SHA-256
+snapshots · and, authoritatively, the GNU build-ids read from the already mapped
+`_lc0_ext` / `_nnue_ext` / `_mcts_tree` ELF images.
 
 Mixed kernels, mixed niceness, a pack whose file hash is not the one the parent
 hashed, and disagreeing per-worker arm configuration each make the report

@@ -1151,6 +1151,8 @@ def test_repeats_interleave_the_cells_rather_than_running_them_in_blocks(
             "workers_detail": [{
                 "kernel": "scalar", "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
                 "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
@@ -1209,6 +1211,8 @@ def test_the_provenance_block_carries_what_makes_three_cells_one_experiment(
             "workers_detail": [{
                 "kernel": next(kernels), "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
                 "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
@@ -1393,11 +1397,13 @@ def test_search_output_digest_catches_a_target_change_that_game_digest_cannot() 
         ply_index=0,
         policy_probs=np.array([0.5, 0.5], dtype=np.float32),
         legal_mask=np.array([True, True]),
+        search_value=0.125,
     )
     row_b = argparse.Namespace(
         ply_index=0,
         policy_probs=np.array([0.6, 0.4], dtype=np.float32),
         legal_mask=np.array([True, True]),
+        search_value=0.125,
     )
     same_game = readout.game_digest(
         game_index=0, start_fen="start", move_trace="e2e4", result="*", termination="max",
@@ -1414,6 +1420,22 @@ def test_search_output_digest_catches_a_target_change_that_game_digest_cannot() 
     assert oracle["game_digests_agree"] is True
     assert oracle["search_digests_agree"] is False
     assert oracle["digests_agree"] is False
+
+
+def test_search_output_digest_catches_a_root_value_change_with_same_policy() -> None:
+    row_a = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.125,
+    )
+    row_b = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+        search_value=0.25,
+    )
+    assert readout.search_output_digest([row_a]) != readout.search_output_digest([row_b])
 
 
 def test_source_provenance_change_during_matrix_voids_the_report(
@@ -1444,6 +1466,8 @@ def test_source_provenance_change_during_matrix_voids_the_report(
             "workers_detail": [{
                 "kernel": "scalar", "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
                 "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
@@ -1472,6 +1496,53 @@ def test_source_provenance_change_during_matrix_voids_the_report(
     assert report["provenance"]["git_changed_during_run"] is True
 
 
+def test_unavailable_git_provenance_voids_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ext = FakeExt()
+    pack = _pack(tmp_path)
+    unavailable = {
+        "git_head": None,
+        "git_tracked_dirty": None,
+        "git_tracked_diff_sha256": None,
+    }
+    monkeypatch.setattr(readout, "_git_provenance", lambda: dict(unavailable))
+
+    def fake_cell(cfg: readout.RunConfig) -> dict[str, Any]:
+        return {
+            "arm": cfg.arm_config.arm,
+            "repeat": cfg.repeat,
+            "games_digest": "same",
+            "searches_digest": "search-same",
+            "inadmissible_reasons": [],
+            "nice_realized": [0],
+            "workers_detail": [{
+                "kernel": "scalar", "pack_source_sha256": "a" * 64,
+                "pack_file_sha256": readout._sha256_file(pack),
+                "lc0_ext_path": "/tmp/_lc0_ext.so", "lc0_ext_sha256": "d" * 64,
+                "lc0_ext_loaded_build_id": "3" * 40,
+                "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
+                "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
+            }],
+        }
+
+    monkeypatch.setattr(readout, "run_cell", fake_cell)
+    plan = readout.ReadoutPlan(
+        arm_configs=(readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext),),
+        pack=pack, games=1, workers=1, seed=1, sims=8,
+        topk=gen.MAX_LEGAL_MOVES, max_plies=10, all_root_moves=True,
+        cp_per_internal_unit=0.28, cp_slope=0.006, cp_draw_width=120.0,
+        bank_path=None, run_id="t", nice=0,
+        dag_reset_every=readout.DAG_RESET_EVERY_GAME, repeats=1,
+    )
+    report = readout.run(plan)
+    assert report["admissible"] is False
+    assert report["provenance"]["git_provenance_available"] is False
+    assert any("source provenance is unavailable" in r for r in report["inadmissible_reasons"])
+
+
 def test_quality_scope_explicitly_forbids_paired_attribution_from_end_to_end_cells() -> None:
     assert readout.QUALITY_SCOPE["population"] == "end_to_end_arm_selected"
     assert readout.QUALITY_SCOPE["paired_evaluator_quality"] is False
@@ -1479,14 +1550,29 @@ def test_quality_scope_explicitly_forbids_paired_attribution_from_end_to_end_cel
 
 
 def test_native_module_identity_reads_the_loaded_elf_build_id() -> None:
+    from chess_anti_engine.encoding import _lc0_ext
     from chess_anti_engine.mcts import _mcts_tree
 
-    for module in (_nnue_ext, _mcts_tree):
+    for module in (_lc0_ext, _nnue_ext, _mcts_tree):
         path, digest, build_id, stamp = readout._module_identity(module)
         assert digest == readout._sha256_file(Path(path))
         assert stamp[0] == digest
         assert len(build_id) >= 16
         int(build_id, 16)
+
+
+def test_late_integrity_failure_is_preserved_as_inadmissible_cell() -> None:
+    ext = FakeExt()
+    cfg = _run_config(readout.resolve_arm_config(_args(readout.ARM_QSEARCH), ext))
+    provider = ext.arm_stats(ext.arm_open(readout.ARM_QSEARCH, "x"))
+    worker = _worker_result(provider)
+    worker.integrity_reasons.append("NNUE pack changed while this worker was running")
+    report = readout._aggregate([worker], cfg, wall_s=1.0)
+    assert report["admissible"] is False
+    assert any(
+        "late integrity check failed" in reason
+        for reason in report["inadmissible_reasons"]
+    )
 
 
 def test_leaf_bank_marks_when_fen_does_not_reconstruct_repetition_history() -> None:

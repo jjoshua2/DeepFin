@@ -1460,6 +1460,10 @@ class PlyRecord:
     legal_mask: np.ndarray    # (4672,) bool
     pov_white: bool           # side to move AT THIS PLY
     ply_index: int
+    # Exact scalar returned by run_gumbel_root_many_c for this root. NaN is a
+    # compatibility sentinel for any non-readout constructor that predates this
+    # field; the readout oracle refuses non-finite values rather than hashing it.
+    search_value: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -2063,7 +2067,7 @@ def play_game(
                 )
                 if arm is not None else (None, None)
             )
-            probs, acts, _values, masks, _tree, _root_ids = run_gumbel_root_many_c(
+            probs, acts, values, masks, _tree, _root_ids = run_gumbel_root_many_c(
                 None,
                 [board],
                 device="cpu",
@@ -2107,6 +2111,7 @@ def play_game(
                 legal_mask=np.asarray(masks[0]),
                 pov_white=bool(cb.turn),
                 ply_index=int(cb.ply),
+                search_value=float(values[0]),
             ),
         )
         cb.push_index(action)

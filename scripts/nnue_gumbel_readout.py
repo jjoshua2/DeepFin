@@ -21,9 +21,9 @@ a game is a pure function of the seed: ``gumbel_c.py`` draws exactly
 none at ``temperature <= 0`` (production, and this tool's, ``DEFAULT_TEMPERATURE``
 is ``0.0``), and ``sample_starting_board`` short-circuits with no book.  So
 ``nnue-qsearch`` and ``nnue-qsearch-dag`` at one seed MUST play byte-identical
-games.  Each cell therefore publishes a per-game digest over
-``(game_index, start_fen, move_trace, result, termination)`` and a ``games_digest``
-over all of them.  **Differing digests VOID the decomposition**: the DAG cell is
+games.  Each cell therefore publishes a per-game trajectory digest plus a
+search-output digest over the exact improved policy, legal mask, and returned
+root value at every ply.  **Differing digests VOID the decomposition**: the DAG cell is
 then no longer the same experiment as the control and no wall-clock difference
 between them can be attributed to the substrate.
 
@@ -86,7 +86,10 @@ ORACLE_ARMS: tuple[str, str] = (ARM_QSEARCH, ARM_QSEARCH_DAG)
 #: 4 adds a search-output digest to the qsearch/DAG oracle and native-binary
 #: provenance. A schema-3 reader must not mistake game-trajectory equality for
 #: the stronger search-output equality this version requires.
-REPORT_SCHEMA = 4
+#: 5 strengthens that digest with the exact root value returned by production
+#: Gumbel and adds _lc0_ext to loaded-native-image provenance. A schema-4 reader
+#: must not treat policy/mask equality alone as complete search-output parity.
+REPORT_SCHEMA = 5
 
 QUALITY_SCOPE: dict[str, object] = {
     "population": "end_to_end_arm_selected",
@@ -527,6 +530,23 @@ def _assert_file_unchanged(label: str, path: Path, expected: FileStamp) -> None:
         )
 
 
+def _late_file_stability_reason(
+    label: str, path: Path, expected: FileStamp,
+) -> str | None:
+    """Return a late integrity failure as evidence instead of destroying it.
+
+    Setup-time integrity failures still raise: no completed measurement exists
+    yet. After search completes, however, artifact-first semantics require the
+    worker to return the finding so the parent can write an inadmissible JSON
+    report and exit 2 rather than lose a multi-hour run to a traceback.
+    """
+    try:
+        _assert_file_unchanged(label, path, expected)
+    except (OSError, RuntimeError) as exc:
+        return str(exc)
+    return None
+
+
 class _Elf64Phdr(ctypes.Structure):
     _fields_ = [
         ("p_type", ctypes.c_uint32),
@@ -663,6 +683,14 @@ def _git_provenance() -> dict[str, object]:
             "git_tracked_dirty": None,
             "git_tracked_diff_sha256": None,
         }
+
+
+def _git_provenance_available(meta: dict[str, object]) -> bool:
+    """Whether a snapshot can actually identify the tracked Python source."""
+    return all(
+        meta.get(key) is not None
+        for key in ("git_head", "git_tracked_dirty", "git_tracked_diff_sha256")
+    )
 
 
 #: This process's niceness before the harness touched it, as a one-element list
@@ -848,7 +876,7 @@ class GameRecord:
 
 
 def search_output_digest(rows: list[Any]) -> str:
-    """Digest the exact improved-policy/search output for every stored ply."""
+    """Digest policy, legal mask and the exact returned root value per ply."""
     if not rows:
         raise ValueError(
             "cannot hash an empty search-output trace; no improved policy was observed",
@@ -858,8 +886,15 @@ def search_output_digest(rows: list[Any]) -> str:
         h.update(int(row.ply_index).to_bytes(8, "little", signed=True))
         policy = np.asarray(row.policy_probs, dtype="<f4")
         legal = np.asarray(row.legal_mask, dtype=np.uint8)
+        search_value = float(row.search_value)
+        if not bool(np.isfinite(search_value)):
+            raise ValueError(
+                f"ply {row.ply_index} has no finite returned root value; "
+                "search-output parity cannot be verified",
+            )
         h.update(policy.tobytes(order="C"))
         h.update(legal.tobytes(order="C"))
+        h.update(struct.pack("<d", search_value))
     return h.hexdigest()
 
 
@@ -1022,6 +1057,9 @@ class WorkerResult:
     pack_file_sha256: str
     pack_source_sha256: str
     nice_realized: int
+    lc0_ext_path: str = ""
+    lc0_ext_sha256: str = ""
+    lc0_ext_loaded_build_id: str = ""
     nnue_ext_path: str = ""
     nnue_ext_sha256: str = ""
     nnue_ext_loaded_build_id: str = ""
@@ -1030,6 +1068,7 @@ class WorkerResult:
     mcts_ext_loaded_build_id: str = ""
     arm_config_requested: dict[str, int] = field(default_factory=dict)
     arm_config_realized: dict[str, int] = field(default_factory=dict)
+    integrity_reasons: list[str] = field(default_factory=list)
 
 
 def _base_gen_config(cfg: RunConfig) -> gen.GenConfig:
@@ -1126,7 +1165,11 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         input_history_encoding=base.input_history_encoding,
         input_extra_features=base.input_extra_features,
     )
+    from chess_anti_engine.encoding import _lc0_ext as lc0_ext
     from chess_anti_engine.mcts import _mcts_tree as mcts_ext
+    (
+        lc0_ext_path, lc0_ext_sha, lc0_ext_build_id, lc0_ext_stamp,
+    ) = _module_identity(lc0_ext)
     (
         nnue_ext_path, nnue_ext_sha, nnue_ext_build_id, nnue_ext_stamp,
     ) = _module_identity(_load_ext())
@@ -1193,14 +1236,19 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         evaluator.close()
     elapsed = time.perf_counter() - started
     # Integrity I/O is deliberately outside `elapsed`: it gates the measurement
-    # and must not become part of the arm-throughput comparison.
-    _assert_file_unchanged("NNUE pack", cfg.pack, worker_pack_stamp_before)
-    _assert_file_unchanged(
-        "_nnue_ext pathname", Path(nnue_ext_path), nnue_ext_stamp,
-    )
-    _assert_file_unchanged(
-        "_mcts_tree pathname", Path(mcts_ext_path), mcts_ext_stamp,
-    )
+    # and must not become part of the arm-throughput comparison. These are LATE
+    # checks, after completed search work, so preserve failures in the report
+    # rather than raising and destroying the evidence.
+    late_integrity_reasons = [
+        reason
+        for label, path, stamp in (
+            ("NNUE pack", cfg.pack, worker_pack_stamp_before),
+            ("_lc0_ext pathname", Path(lc0_ext_path), lc0_ext_stamp),
+            ("_nnue_ext pathname", Path(nnue_ext_path), nnue_ext_stamp),
+            ("_mcts_tree pathname", Path(mcts_ext_path), mcts_ext_stamp),
+        )
+        if (reason := _late_file_stability_reason(label, path, stamp)) is not None
+    ]
     return WorkerResult(
         worker_id=spec.worker_id,
         games=len(spec.game_indices),
@@ -1228,6 +1276,9 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         pack_file_sha256=source.pack_file_sha256,
         pack_source_sha256=source.pack_source_sha256,
         nice_realized=nice_realized,
+        lc0_ext_path=lc0_ext_path,
+        lc0_ext_sha256=lc0_ext_sha,
+        lc0_ext_loaded_build_id=lc0_ext_build_id,
         nnue_ext_path=nnue_ext_path,
         nnue_ext_sha256=nnue_ext_sha,
         nnue_ext_loaded_build_id=nnue_ext_build_id,
@@ -1236,6 +1287,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         mcts_ext_loaded_build_id=mcts_ext_build_id,
         arm_config_requested=dict(source.requested),
         arm_config_realized=dict(source.realized),
+        integrity_reasons=late_integrity_reasons,
     )
 
 
@@ -1340,6 +1392,11 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
     # the one paying for the banking.
     search_wall_s = max((r.elapsed_s for r in results), default=0.0)
     reasons: list[str] = []
+    for result in results:
+        for reason in result.integrity_reasons:
+            reasons.append(
+                f"worker {result.worker_id} late integrity check failed: {reason}",
+            )
     if conflicts:
         reasons.append(f"workers disagreed about arm configuration: {conflicts}")
     if dag.state_identity_violations:
@@ -1675,6 +1732,10 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             order.append({"arm": arm_config.arm, "repeat": repeat})
     wall_s = time.perf_counter() - started
     git_meta_end = _git_provenance()
+    git_provenance_available = (
+        _git_provenance_available(git_meta_start)
+        and _git_provenance_available(git_meta_end)
+    )
     git_changed_during_run = git_meta_start != git_meta_end
 
     every = [c for runs in cells.values() for c in runs]
@@ -1687,17 +1748,27 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     file_shas = sorted({
         str(w["pack_file_sha256"]) for c in every for w in c["workers_detail"]
     })
+    lc0_binary_shas = sorted({
+        str(w["lc0_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
     nnue_binary_shas = sorted({
         str(w["nnue_ext_sha256"]) for c in every for w in c["workers_detail"]
     })
     mcts_binary_shas = sorted({
         str(w["mcts_ext_sha256"]) for c in every for w in c["workers_detail"]
     })
+    lc0_binary_paths = sorted({
+        str(w["lc0_ext_path"]) for c in every for w in c["workers_detail"]
+    })
     nnue_binary_paths = sorted({
         str(w["nnue_ext_path"]) for c in every for w in c["workers_detail"]
     })
     mcts_binary_paths = sorted({
         str(w["mcts_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    lc0_loaded_build_ids = sorted({
+        str(w["lc0_ext_loaded_build_id"])
+        for c in every for w in c["workers_detail"]
     })
     nnue_loaded_build_ids = sorted({
         str(w["nnue_ext_loaded_build_id"])
@@ -1711,7 +1782,13 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
         f"cell {c['arm']} repeat {c['repeat']}: {reason}"
         for c in every for reason in c["inadmissible_reasons"]
     ]
-    if git_changed_during_run:
+    if not git_provenance_available:
+        reasons.append(
+            "tracked source provenance is unavailable at one or both matrix "
+            f"endpoints: start={git_meta_start}, end={git_meta_end}; the report "
+            "cannot identify the Python source that produced every cell",
+        )
+    elif git_changed_during_run:
         reasons.append(
             "tracked source provenance changed while the matrix was running: "
             f"start={git_meta_start}, end={git_meta_end}; the report cannot "
@@ -1729,16 +1806,33 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "differ by a multi-fold wall factor, so these cells are not one "
             "experiment",
         )
-    if len(nnue_loaded_build_ids) != 1 or len(mcts_loaded_build_ids) != 1:
+    loaded_native_ids = {
+        "_lc0_ext": lc0_loaded_build_ids,
+        "_nnue_ext": nnue_loaded_build_ids,
+        "_mcts_tree": mcts_loaded_build_ids,
+    }
+    bad_loaded_native_ids = {
+        name: ids for name, ids in loaded_native_ids.items()
+        if len(ids) != 1 or not ids[0]
+    }
+    if bad_loaded_native_ids:
         reasons.append(
-            "workers executed different loaded native images: "
-            f"_nnue_ext={nnue_loaded_build_ids}, "
-            f"_mcts_tree={mcts_loaded_build_ids}"
+            "workers did not execute one proven loaded native image per "
+            f"extension: {bad_loaded_native_ids}"
         )
-    if len(nnue_binary_shas) != 1 or len(mcts_binary_shas) != 1:
+    pathname_native_shas = {
+        "_lc0_ext": lc0_binary_shas,
+        "_nnue_ext": nnue_binary_shas,
+        "_mcts_tree": mcts_binary_shas,
+    }
+    bad_pathname_native_shas = {
+        name: shas for name, shas in pathname_native_shas.items()
+        if len(shas) != 1 or not shas[0]
+    }
+    if bad_pathname_native_shas:
         reasons.append(
-            "workers observed different native-module pathname files: "
-            f"_nnue_ext={nnue_binary_shas}, _mcts_tree={mcts_binary_shas}"
+            "workers did not observe one stable native-module pathname file "
+            f"per extension: {bad_pathname_native_shas}"
         )
     nice_realized = sorted({int(n) for c in every for n in c["nice_realized"]})
     if len(nice_realized) > 1:
@@ -1766,6 +1860,12 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "pack_file_sha256": pack_sha,
             "pack_source_sha256": source_shas[0] if len(source_shas) == 1 else source_shas,
             "kernel": kernels[0] if len(kernels) == 1 else kernels,
+            "lc0_ext_path": lc0_binary_paths[0] if len(lc0_binary_paths) == 1 else lc0_binary_paths,
+            "lc0_ext_sha256": lc0_binary_shas[0] if len(lc0_binary_shas) == 1 else lc0_binary_shas,
+            "lc0_ext_loaded_build_id": (
+                lc0_loaded_build_ids[0]
+                if len(lc0_loaded_build_ids) == 1 else lc0_loaded_build_ids
+            ),
             "nnue_ext_path": nnue_binary_paths[0] if len(nnue_binary_paths) == 1 else nnue_binary_paths,
             "nnue_ext_sha256": nnue_binary_shas[0] if len(nnue_binary_shas) == 1 else nnue_binary_shas,
             "nnue_ext_loaded_build_id": (
@@ -1779,6 +1879,7 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
                 if len(mcts_loaded_build_ids) == 1 else mcts_loaded_build_ids
             ),
             **git_meta_start,
+            "git_provenance_available": git_provenance_available,
             "git_end_head": git_meta_end["git_head"],
             "git_end_tracked_dirty": git_meta_end["git_tracked_dirty"],
             "git_end_tracked_diff_sha256": git_meta_end["git_tracked_diff_sha256"],
