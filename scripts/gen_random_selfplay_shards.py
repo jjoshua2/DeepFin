@@ -235,7 +235,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import chess
 import numpy as np
@@ -436,7 +436,16 @@ ROOT_SIMS_PER_LEGAL_MOVE = 2  # the sims/2 candidate cap, inverted
 GSS_MAX_CANDS: int = int(getattr(_mcts_tree_ext, "GSS_MAX_CANDS", 64))
 
 #: Schema of the opt-in per-leaf observation bank (``--bank-leaf-observations``).
-LEAF_BANK_SCHEMA = 1
+#:
+#: 2 (2026-08-26) added the mate-band CONSTANTS and an ``is_mate`` flag to every
+#: row. Schema 1 banked a raw value plus the cp triple, which is enough to
+#: re-derive an evaluation and NOT enough to re-derive a mate: above the band
+#: floor the number is a mate distance in plies, and turning it back into a
+#: score needs ``RESOLVER_MATE_BASE`` / ``RESOLVER_MATE_PLY_STEP`` /
+#: ``RESOLVER_MAX_PLIES`` -- three build-vintage constants that were absent from
+#: the artifact. A reanalysis that guessed them would silently run the mate rows
+#: through the centipawn slope, which is the banked N1 defect in a new scale.
+LEAF_BANK_SCHEMA = 2
 
 # Standard piece values in centipawns, indexed the way decode_step0_bitboards
 # returns them: columns 0-5 are "us" P/N/B/R/Q/K, 6-11 are "them". The king
@@ -698,6 +707,113 @@ class NnueArmStats:
         return out
 
 
+@dataclass(frozen=True)
+class ArmConfigPlan:
+    """One arm's configuration, split into what the C setter takes and what the
+    arm READS.
+
+    ⚑ THE TWO SETS ARE NOT THE SAME, and conflating them is P1-1. ``set_arm_config``
+    validates its arguments as a chain, so the static arm has to hand it a
+    quiescence pair ``cae_arm_static_eval`` will never look at; ``consumed`` is
+    what keeps that pair out of every report.
+
+    ⚑ ``setter`` and ``stats`` name ``_nnue_ext`` functions rather than holding
+    bound ones. A plan therefore stays picklable across a process spawn, and it
+    cannot smuggle in a third surface: both fields are checked against the two
+    real ones, so a typo is a refusal rather than an ``AttributeError`` deep
+    inside a worker.
+
+    ``consumes_qsearch`` lives here, not in a subclass, because it is a property
+    of the PLAN. An override that reproduced the constructor to add an arm is
+    exactly how it went missing once: ``scripts/nnue_gumbel_readout.py``'s copy
+    of this class never set it at all.
+    """
+
+    setter: str
+    setter_args: tuple[int, ...]
+    consumed: dict[str, int]
+    stats: str
+    consumes_qsearch: bool
+
+    _SETTERS: ClassVar[frozenset[str]] = frozenset({
+        "set_arm_config", "fastq_set_config",
+    })
+    _STATS: ClassVar[frozenset[str]] = frozenset({"arm_stats", "fastq_stats"})
+
+    def __post_init__(self) -> None:
+        if self.setter not in self._SETTERS:
+            raise ValueError(
+                f"arm config setter must be one of {sorted(self._SETTERS)}, got "
+                f"{self.setter!r}",
+            )
+        if self.stats not in self._STATS:
+            raise ValueError(
+                f"arm stats surface must be one of {sorted(self._STATS)}, got "
+                f"{self.stats!r}",
+            )
+
+
+def generator_arm_config_plan(
+    *,
+    arm: str,
+    resolver_max_depth: int,
+    qsearch_max_ply: int | None,
+    qsearch_check_plies: int | None,
+    ext: Any,
+) -> ArmConfigPlan:
+    """The plan for the two arms THIS generator runs, with their own refusals.
+
+    Split out of ``NnueArmValueSource.__init__`` so a subclass can supply a
+    different plan without reproducing the constructor around it — see
+    ``ArmConfigPlan`` for why reproducing it is the failure this shape prevents.
+    """
+    wants_qsearch = arm == VALUE_SOURCE_NNUE_QSEARCH
+    if not wants_qsearch and (
+        qsearch_max_ply is not None or qsearch_check_plies is not None
+    ):
+        raise ValueError(
+            f"{arm} does not consume the quiescence knobs (cae_arm_static_eval "
+            "reads resolver_max_depth only); pass them as None rather than "
+            "letting them be stored and reported unused",
+        )
+    if wants_qsearch and (qsearch_max_ply is None or qsearch_check_plies is None):
+        raise ValueError(
+            f"{arm} consumes qsearch_max_ply and qsearch_check_plies; both "
+            "must be given",
+        )
+    # ⚑ `set_arm_config` takes all three unconditionally, so the static arm
+    # still has to hand it SOMETHING for the quiescence pair. It gets the
+    # extension's own compiled-in defaults -- not a caller value, and not a
+    # number this class then republishes. That is the whole point of P1-1:
+    # the value exists in the context because the C setter demands it, and
+    # `consumed` keeps it out of every report because the static evaluator
+    # never reads it.
+    # The clamp is for the static path only, and it exists because
+    # `set_arm_config` validates the triple as a chain
+    # (check_plies <= max_ply <= resolver_max_depth): a static run at
+    # `--nnue-resolver-max-depth 1` would otherwise be REFUSED over a
+    # default it does not consume.
+    qmax = (
+        int(qsearch_max_ply) if qsearch_max_ply is not None
+        else min(int(ext.QSEARCH_MAX_PLY), int(resolver_max_depth))
+    )
+    qchk = (
+        int(qsearch_check_plies) if qsearch_check_plies is not None
+        else min(int(ext.QSEARCH_CHECK_PLIES), qmax)
+    )
+    consumed = {"resolver_max_depth": int(resolver_max_depth)}
+    if wants_qsearch:
+        consumed["qsearch_max_ply"] = qmax
+        consumed["qsearch_check_plies"] = qchk
+    return ArmConfigPlan(
+        setter="set_arm_config",
+        setter_args=(int(resolver_max_depth), qmax, qchk),
+        consumed=consumed,
+        stats="arm_stats",
+        consumes_qsearch=wants_qsearch,
+    )
+
+
 class NnueArmValueSource:
     """One of the two native NNUE race arms, as a batched value function.
 
@@ -731,38 +847,65 @@ class NnueArmValueSource:
     explicitly there is REFUSED rather than absorbed.
     """
 
+    #: ⚑ THE ARM WHITELIST IS A ClassVar, NOT A MODULE GLOBAL READ INLINE, and
+    #: that is the whole point: a subclass with more arms WIDENS this and calls
+    #: ``super().__init__()`` normally, instead of skipping the constructor to
+    #: get past the check. The skip is the failure this replaces —
+    #: ``scripts/nnue_gumbel_readout.py``'s reproduced constructor had already
+    #: drifted from this one (it never set ``consumes_qsearch``), and a
+    #: reproduction inherits none of this file's later edits by construction.
+    _ALLOWED_ARMS: ClassVar[tuple[str, ...]] = NNUE_ARM_SOURCES
+
     def __init__(
         self,
         *,
         arm: str,
         pack: Path,
-        resolver_max_depth: int,
-        qsearch_max_ply: int | None,
-        qsearch_check_plies: int | None,
         cp_per_internal_unit: float,
         cp_slope: float,
         cp_draw_width: float,
+        resolver_max_depth: int | None = None,
+        qsearch_max_ply: int | None = None,
+        qsearch_check_plies: int | None = None,
         leaf_bank: Path | None = None,
+        leaf_bank_mode: str = "x",
+        plan: ArmConfigPlan | None = None,
+        ext: Any | None = None,
+        pack_file_sha256: str | None = None,
+        bank_identity: dict[str, Any] | None = None,
     ) -> None:
-        from chess_anti_engine.nnue import _nnue_ext
+        resolved_ext: Any = ext
+        if resolved_ext is None:
+            from chess_anti_engine.nnue import _nnue_ext
 
-        if arm not in NNUE_ARM_SOURCES:
-            raise ValueError(f"arm must be one of {NNUE_ARM_SOURCES}, got {arm!r}")
-        wants_qsearch = arm == VALUE_SOURCE_NNUE_QSEARCH
-        if not wants_qsearch and (
-            qsearch_max_ply is not None or qsearch_check_plies is not None
-        ):
+            resolved_ext = _nnue_ext
+
+        if arm not in self._ALLOWED_ARMS:
             raise ValueError(
-                f"{arm} does not consume the quiescence knobs (cae_arm_static_eval "
-                "reads resolver_max_depth only); pass them as None rather than "
-                "letting them be stored and reported unused",
+                f"arm must be one of {self._ALLOWED_ARMS}, got {arm!r}",
             )
-        if wants_qsearch and (
-            qsearch_max_ply is None or qsearch_check_plies is None
+        if plan is None:
+            if resolver_max_depth is None:
+                raise ValueError(
+                    "resolver_max_depth is required when no ArmConfigPlan is "
+                    "supplied: it is the first argument of the C setter",
+                )
+            plan = generator_arm_config_plan(
+                arm=arm,
+                resolver_max_depth=resolver_max_depth,
+                qsearch_max_ply=qsearch_max_ply,
+                qsearch_check_plies=qsearch_check_plies,
+                ext=resolved_ext,
+            )
+        elif (
+            resolver_max_depth is not None
+            or qsearch_max_ply is not None
+            or qsearch_check_plies is not None
         ):
             raise ValueError(
-                f"{arm} consumes qsearch_max_ply and qsearch_check_plies; both "
-                "must be given",
+                "an ArmConfigPlan already names every knob this arm will "
+                "request; passing resolver/qsearch knobs beside it would let "
+                "the two disagree with nothing reading the loser",
             )
         # ⚑ isfinite, not `> 0`. Every comparison against NaN is False, so a NaN
         # slope sails through a positivity check and then propagates: the value
@@ -789,49 +932,36 @@ class NnueArmValueSource:
                 "--nnue-cp-slope must be > 0 and --nnue-cp-draw-width >= 0, got "
                 f"{cp_slope!r} / {cp_draw_width!r}",
             )
-        self._ext = _nnue_ext
+        self._ext = resolved_ext
         self.arm = str(arm)
         self.pack = Path(pack)
-        self.consumes_qsearch = wants_qsearch
+        self.consumes_qsearch = bool(plan.consumes_qsearch)
+        self._stats_call = str(plan.stats)
         self.cp_per_internal_unit = float(cp_per_internal_unit)
         self.cp_slope = float(cp_slope)
         self.cp_draw_width = float(cp_draw_width)
-        # ⚑ `set_arm_config` takes all three unconditionally, so the static arm
-        # still has to hand it SOMETHING for the quiescence pair. It gets the
-        # extension's own compiled-in defaults -- not a caller value, and not a
-        # number this class then republishes. That is the whole point of P1-1:
-        # the value exists in the context because the C setter demands it, and
-        # `consumed_keys` keeps it out of every report because the static
-        # evaluator never reads it.
-        # The clamp is for the static path only, and it exists because
-        # `set_arm_config` validates the triple as a chain
-        # (check_plies <= max_ply <= resolver_max_depth): a static run at
-        # `--nnue-resolver-max-depth 1` would otherwise be REFUSED over a
-        # default it does not consume.
-        qmax = (
-            int(qsearch_max_ply) if qsearch_max_ply is not None
-            else min(int(_nnue_ext.QSEARCH_MAX_PLY), int(resolver_max_depth))
-        )
-        qchk = (
-            int(qsearch_check_plies) if qsearch_check_plies is not None
-            else min(int(_nnue_ext.QSEARCH_CHECK_PLIES), qmax)
-        )
-        # Set BEFORE arm_open: the triple is read at init() and a context keeps
-        # it for life, so setting it afterwards would configure the next
+        # Set BEFORE arm_open: the configuration is read at init() and a context
+        # keeps it for life, so setting it afterwards would configure the next
         # context and leave this one running the previous values.
-        stored = dict(
-            _nnue_ext.set_arm_config(int(resolver_max_depth), qmax, qchk),
-        )
-        self._handle = _nnue_ext.arm_open(self.arm, str(self.pack))
-        self.stats = NnueArmStats(context=dict(_nnue_ext.arm_stats(self._handle)))
-        self.consumed_keys = (
-            ("resolver_max_depth", "qsearch_max_ply", "qsearch_check_plies")
-            if self.consumes_qsearch else ("resolver_max_depth",)
-        )
-        self.requested = {k: int(stored[k]) for k in self.consumed_keys}
+        getattr(resolved_ext, plan.setter)(*plan.setter_args)
+        self._handle = resolved_ext.arm_open(self.arm, str(self.pack))
+        self.stats = NnueArmStats(context=self.provider_stats())
+        self.consumed_keys = tuple(plan.consumed)
+        # ⚑ THE CALLER'S OWN DICT, NOT THE SETTER'S ECHO. `set_arm_config`
+        # returns what it stored, which is the producer's copy of the request
+        # AFTER any clamp the setter applies -- and a clamp that also landed in
+        # the context would make the requested-vs-realized check below compare
+        # a clamped value against itself and pass. The only reading that can
+        # catch it is the number the caller asked for.
+        self.requested = {k: int(v) for k, v in plan.consumed.items()}
         self.realized = {
             key: int(self.stats.context[key]) for key in self.consumed_keys
         }
+        if self.realized != self.requested:
+            raise RuntimeError(
+                f"{self.arm} context did not realize the requested knobs: "
+                f"requested={self.requested} realized={self.realized}",
+            )
         # ⚑ TWO DIFFERENT HASHES, and the one that was here before is not the
         # one a reader assumes. `source_sha256` returns the digest the packer
         # EMBEDDED in the header -- it names the `.nnue` the pack was built
@@ -839,22 +969,57 @@ class NnueArmValueSource:
         # keeps reporting it. The identity of the bytes the arm actually mapped
         # is a hash of the file; both are reported, each under its own name.
         self.pack_source_sha256 = str(
-            _nnue_ext.source_sha256(_nnue_ext.load(str(self.pack))),
+            resolved_ext.source_sha256(resolved_ext.load(str(self.pack))),
         )
-        self.pack_file_sha256 = _sha256_file(self.pack)
-        self.kernel = "avx2" if _nnue_ext.simd_active() else "scalar"
-        self._bank = None if leaf_bank is None else leaf_bank.open("a")
+        # Hashing a 100+ MB pack is ~40 ms of pure I/O that has nothing to do
+        # with the arm; a caller timing a throughput cell hashes ONCE in the
+        # parent and hands the digest down rather than paying it per worker
+        # inside its own measured window.
+        self.pack_file_sha256 = (
+            _sha256_file(self.pack) if pack_file_sha256 is None
+            else str(pack_file_sha256)
+        )
+        self.kernel = "avx2" if resolved_ext.simd_active() else "scalar"
+        # ⚑ "x" IS THE DEFAULT, and "a" is a decision a caller has to state.
+        # A rerun that appends silently produces one file whose rows come from
+        # two different runs, and nothing downstream can split them again. The
+        # one caller that legitimately appends is this generator itself, whose
+        # shard writer already resumes into a populated out_dir by SKIPPING the
+        # indices it finds (see `flush`) -- its bank resumes alongside them, and
+        # saying so at that call site is the point of the parameter.
+        if leaf_bank_mode not in ("x", "a"):
+            raise ValueError(
+                "leaf_bank_mode must be 'x' (refuse an existing file) or 'a' "
+                f"(resume into it), got {leaf_bank_mode!r}",
+            )
+        self._bank = None if leaf_bank is None else leaf_bank.open(leaf_bank_mode)
         self.leaf_bank_path = None if leaf_bank is None else leaf_bank
         self.bank_rows = 0
+        #: Extra identity fields stamped on EVERY banked row. Empty for the
+        #: generator, which writes one bank per (out_dir, worker) and records
+        #: the rest in its sidecar; a harness that can aim several cells at one
+        #: directory has to carry the identity in the row itself.
+        self.bank_identity = dict(bank_identity or {})
         # Above the mate band floor a value is a mate score in PLIES, not an
         # evaluation in internal units -- read off the extension's own exported
         # constants so a change to the C scale cannot leave a stale copy here.
         self.mate_band_floor = float(
-            _nnue_ext.RESOLVER_MATE_BASE
-            - _nnue_ext.RESOLVER_MAX_PLIES * _nnue_ext.RESOLVER_MATE_PLY_STEP,
+            resolved_ext.RESOLVER_MATE_BASE
+            - resolved_ext.RESOLVER_MAX_PLIES * resolved_ext.RESOLVER_MATE_PLY_STEP,
         )
-        self.mate_base = float(_nnue_ext.RESOLVER_MATE_BASE)
-        self.mate_ply_step = float(_nnue_ext.RESOLVER_MATE_PLY_STEP)
+        self.mate_base = float(resolved_ext.RESOLVER_MATE_BASE)
+        self.mate_ply_step = float(resolved_ext.RESOLVER_MATE_PLY_STEP)
+        self.mate_max_plies = float(resolved_ext.RESOLVER_MAX_PLIES)
+
+    def provider_stats(self) -> dict[str, int]:
+        """This arm's OWN counter surface, named by its plan.
+
+        ⚑ The extension refuses the wrong one in both directions (a FastQ handle
+        to ``arm_stats``, a qsearch handle to ``fastq_stats``), so choosing by
+        plan rather than by an inline branch is what keeps a new arm from
+        quietly reading a zeroed struct.
+        """
+        return dict(getattr(self._ext, self._stats_call)(self._handle))
 
     def q_from_values(self, raw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Arm values (internal units, or a mate score) → (q in [-1,1], mate mask).
@@ -910,7 +1075,7 @@ class NnueArmValueSource:
         )
         q, is_mate = self.q_from_values(raw)
         if self._bank is not None:
-            self._bank_batch(boards, raw, role=role, cluster=cluster)
+            self._bank_batch(boards, raw, is_mate, role=role, cluster=cluster)
         if role == "root":
             self.stats.roots += int(q.size)
             self.stats.mate_band_roots += int(is_mate.sum())
@@ -924,6 +1089,7 @@ class NnueArmValueSource:
         self,
         boards: list[CBoard],
         raw: np.ndarray,
+        is_mate: np.ndarray,
         *,
         role: str,
         cluster: tuple[int, int] | None,
@@ -937,10 +1103,21 @@ class NnueArmValueSource:
         REANALYSIS rather than a regeneration of the corpus. Without it the
         arithmetic is baked into ``policy_target`` and the only way back is to
         play the games again.
+
+        ⚑⚑ AND "RAW VALUE + THE CP TRIPLE" IS NOT ENOUGH ON ITS OWN. Above
+        ``mate_band_floor`` the number is a mate distance in PLIES, and the map
+        back to a score needs three compiled-in constants. Schema 1 banked
+        neither the constants nor the band verdict, so a reanalysis had to
+        supply the BUILD VINTAGE's values from outside the artifact — and one
+        that guessed would run the mate rows through the centipawn slope, which
+        is exactly the defect ``q_from_values`` exists to prevent. The flag is
+        banked beside them because it is the arm's OWN verdict, not a threshold
+        the reader re-applies.
         """
         assert self._bank is not None
         game, ply = (-1, -1) if cluster is None else cluster
-        for board, value in zip(boards, raw.tolist(), strict=True):
+        mates = np.asarray(is_mate, dtype=bool).tolist()
+        for board, value, mate in zip(boards, raw.tolist(), mates, strict=True):
             self._bank.write(
                 json.dumps(
                     {
@@ -949,12 +1126,17 @@ class NnueArmValueSource:
                         "role": role,
                         "fen": board.fen(),
                         "value": int(value),
+                        "is_mate": bool(mate),
                         "game": int(game),
                         "ply": int(ply),
                         "pack_file_sha256": self.pack_file_sha256,
                         "cp_per_internal_unit": self.cp_per_internal_unit,
                         "cp_slope": self.cp_slope,
                         "cp_draw_width": self.cp_draw_width,
+                        "resolver_mate_base": self.mate_base,
+                        "resolver_mate_ply_step": self.mate_ply_step,
+                        "resolver_max_plies": self.mate_max_plies,
+                        **self.bank_identity,
                         **self.realized,
                     },
                     sort_keys=True,
@@ -965,7 +1147,7 @@ class NnueArmValueSource:
 
     def refresh_context_stats(self) -> None:
         """Copy the live context's counters into the reported stats."""
-        self.stats.context = dict(self._ext.arm_stats(self._handle))
+        self.stats.context = self.provider_stats()
 
     def close(self) -> None:
         """Freeze the context counters. The handle itself is refcounted in C."""
@@ -990,7 +1172,23 @@ class UniformPriorEvaluator:
     fit the batch, is a hard failure. Falling back to a plane-derived value
     there would be this repo's signature defect: a corpus labelled by an
     evaluator nobody asked for, with no symptom.
+
+    ⚑ THE TWO WHITELISTS ARE ClassVars SO A SUBCLASS CAN WIDEN THEM AND STILL
+    CALL ``super().__init__()``. They were module globals read inline, which
+    left a subclass with a new arm exactly one option: skip the constructor and
+    reproduce its body. ``scripts/nnue_gumbel_readout.py`` did that, and its
+    twin in ``NnueArmValueSource`` had already drifted — a reproduced
+    constructor inherits none of the original's later edits, and nothing warns.
     """
+
+    #: Every value source this evaluator will accept at all.
+    _ALLOWED_VALUE_SOURCES: ClassVar[tuple[str, ...]] = VALUE_SOURCES
+    #: The subset that REQUIRES an ``NnueArmValueSource``, and which the other
+    #: sources must refuse. Kept separate from the whitelist above because the
+    #: cross-check below is an XOR over exactly this set, not over the whole
+    #: menu: widening one without the other is how a native arm would be
+    #: accepted while its source was quietly optional.
+    _NATIVE_VALUE_SOURCES: ClassVar[tuple[str, ...]] = NNUE_ARM_SOURCES
 
     def __init__(
         self,
@@ -1002,11 +1200,12 @@ class UniformPriorEvaluator:
         input_history_encoding: str = LC0_HISTORY_ROOT_LEGACY_META,
         input_extra_features: str = EXTRA_FEATURES_V2_THREATS,
     ) -> None:
-        if value_source not in VALUE_SOURCES:
+        if value_source not in self._ALLOWED_VALUE_SOURCES:
             raise ValueError(
-                f"value_source must be one of {VALUE_SOURCES}, got {value_source!r}",
+                f"value_source must be one of {self._ALLOWED_VALUE_SOURCES}, "
+                f"got {value_source!r}",
             )
-        if (value_source in NNUE_ARM_SOURCES) != (nnue_source is not None):
+        if (value_source in self._NATIVE_VALUE_SOURCES) != (nnue_source is not None):
             raise ValueError(
                 f"value_source {value_source!r} and nnue_source disagree: the two "
                 "native arms REQUIRE a source and the other three refuse one, "
@@ -1575,6 +1774,13 @@ def build_nnue_source(
         cp_slope=float(cfg.nnue_cp_slope),
         cp_draw_width=float(cfg.nnue_cp_draw_width),
         leaf_bank=leaf_bank if cfg.bank_leaf_observations else None,
+        # ⚑ APPEND, DELIBERATELY, and only here. A second run into a populated
+        # `out_dir` is a supported workflow for this generator -- `flush` skips
+        # the shard indices already present rather than refusing -- so its bank
+        # has to resume with them. ⚑ That does mean two runs' rows share one
+        # file with colliding (game, ply) cluster keys; that is pre-existing and
+        # is NOT fixed here, it is recorded. Every other caller gets "x".
+        leaf_bank_mode="a",
     )
 
 

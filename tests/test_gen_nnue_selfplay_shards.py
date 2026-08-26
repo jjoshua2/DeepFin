@@ -1493,6 +1493,63 @@ def test_banked_leaf_observations_carry_the_raw_score_and_its_settings(
     assert abs(int(row["value"])) > 1
 
 
+def test_the_generators_bank_resumes_with_its_shards_and_every_other_caller_does_not(
+    tmp_path: Path, bucket_pack: Path,
+) -> None:
+    """⚑ THE BANK'S OPEN MODE IS A DECISION, AND IT IS STATED AT ONE CALL SITE.
+
+    ``NnueArmValueSource`` now defaults to ``"x"``: a second run that silently
+    appended would produce one file whose rows came from two runs, and nothing
+    downstream could split them again. THIS generator is the one caller that
+    legitimately appends -- a run into a populated ``out_dir`` is supported, and
+    ``flush`` resumes by SKIPPING the shard indices already present -- so its
+    bank has to resume with them, and ``build_nnue_source`` says so explicitly.
+
+    Both halves are asserted, because either alone would be satisfied by the
+    wrong constant.
+    """
+    cfg = _cfg(tmp_path / "out", bucket_pack, bank_leaf_observations=True)
+    bank = GEN.leaf_bank_path(cfg.out_dir, 0)
+    bank.parent.mkdir(parents=True, exist_ok=True)
+
+    first = GEN.build_nnue_source(cfg, leaf_bank=bank)
+    assert first is not None
+    first.close()
+    seeded = bank.read_text()
+    # The generator appends: a second source over the same path must open.
+    second = GEN.build_nnue_source(cfg, leaf_bank=bank)
+    assert second is not None
+    second.close()
+    assert bank.read_text() == seeded  # opened for append, nothing truncated
+
+    # ⚑ And the DEFAULT refuses, so a caller that did not think about it fails.
+    with pytest.raises(FileExistsError):
+        GEN.NnueArmValueSource(
+            arm=GEN.VALUE_SOURCE_NNUE_STATIC,
+            pack=bucket_pack,
+            resolver_max_depth=int(_nnue_ext.RESOLVER_MAX_DEPTH),
+            qsearch_max_ply=None,
+            qsearch_check_plies=None,
+            cp_per_internal_unit=0.28,
+            cp_slope=0.006,
+            cp_draw_width=120.0,
+            leaf_bank=bank,
+        )
+    with pytest.raises(ValueError, match="leaf_bank_mode must be"):
+        GEN.NnueArmValueSource(
+            arm=GEN.VALUE_SOURCE_NNUE_STATIC,
+            pack=bucket_pack,
+            resolver_max_depth=int(_nnue_ext.RESOLVER_MAX_DEPTH),
+            qsearch_max_ply=None,
+            qsearch_check_plies=None,
+            cp_per_internal_unit=0.28,
+            cp_slope=0.006,
+            cp_draw_width=120.0,
+            leaf_bank=tmp_path / "other.jsonl",
+            leaf_bank_mode="w",
+        )
+
+
 def test_the_bank_is_off_by_default_and_writes_nothing(
     tmp_path: Path, bucket_pack: Path,
 ) -> None:
