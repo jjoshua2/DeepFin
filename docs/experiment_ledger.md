@@ -67183,3 +67183,16 @@ mixed_corpus.own_policy_temper must show own_policy_temp 2.2 / temp_active true 
 device_batches_tempered == device_batches_seen > 0 / entropy_after ≈ 1.4-1.5 nats >
 entropy_before / losses_policy_target_temp 1.0 / batches_without_source_vector 0 /
 unrouted 0. Then MID+LAST 400g arenas, seeds 68/69, clauses per the 604b5ca58 prereg.
+
+**2026-08-26 — NNUE SUBSTRATE LANDED.** #469 merged (47a3a50e6) after its recorded
+blockers closed (accumulator-sensitive parity fixture, registry/tripwire tests; real-net
+exact parity 8-passed at head; Codex's fresh P2 was stale — reviewed the pre-fix head).
+#470 retargeted to main and merged (717ce391d) after two review rounds: H1 identity
+(state_inits+state_makes==node_count, asserted at every stats read), H2 vacuity root
+cause (colour-symmetric fixture + tiny PSQT) fixed with an asymmetric transposition
+test, H3 GIL held across interning (race reproduced pre-fix, gone post-fix), then
+Codex round: reserve-edge-before-publish (identity now holds on EVERY path incl. OOM —
+supersedes the fail-loud-alarm ordering), castling canonicalized to the 4 defined bits
+(0 vs 16 interned two nodes for one position), capacity bound pushed into
+cae_position_dag_init (int32 sizing UB). CI green on the merged head. Next per
+docs/fastq_design.md §10: qsearch-on-DAG retrofit (in flight) → FastQ-4+.
