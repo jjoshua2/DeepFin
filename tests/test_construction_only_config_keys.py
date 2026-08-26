@@ -169,6 +169,14 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
     # term populations with nothing in the metrics able to say where the split fell.
     "sf_own_regret_listed_mass_min": {"chess_anti_engine/train/trainer.py"},
     "sf_own_regret_unlisted_scale": {"chess_anti_engine/train/trainer.py"},
+    # SF-shape teacher temperature. Same two readers and the same split: the
+    # Trainer folds it into a frozen `SfShapeParams` at construction, and
+    # `TrialConfig.from_dict` re-reads it every iteration purely to re-run the
+    # range check and discards the result.
+    "sf_shape_temp_cp": {
+        "chess_anti_engine/train/trainer.py",
+        "chess_anti_engine/tune/trial_config.py",
+    },
 }
 
 # A config READ, as opposed to a mention: `tc.key`, `config["key"]`,

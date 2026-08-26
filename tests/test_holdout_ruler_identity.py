@@ -632,11 +632,13 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 #                               -> MERGED 73ff47d368fbe10e
 #                               -> (#448) 8b16fe4b481f457d
 #                               -> (#447) 198dec2bb016d62e
+#                               -> (#449x) 55a35e2267523cd1
 #   sampled    afbf4cc1de454249 -> (#373) 20696c6766732998
 #                               -> (#375) 4ca17596e4a59a90
 #                               -> MERGED f41625e40b98e987
 #                               -> (#448) 7bc9ed3c7fd30ac0
 #                               -> (#447) 007a74b1e31d47cf
+#                               -> (#449x) 9ec998de89c227c7
 #
 # ⚑ (#447) THE FABRICATED-TAIL GATE. Source-hash-only, and it moved for a change
 # that is a BIT-EXACT identity at its defaults. Per this file's own maintenance
@@ -719,7 +721,13 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `holdout_generation` bump and one best-model handover per running trial.
 # Previous values: "v1:full_pass:8b16fe4b481f457d",
 # "v1:sampled:7bc9ed3c7fd30ac0".
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:198dec2bb016d62e"
+# ⚑ MOVED BY THE SF-SHAPE EXTRACTION (#449x): `w_sf_shape` joins
+# `TRAINER_WEIGHT_KEYS`, and `eval_ruler.active_loss_terms` hashes that set,
+# so the id MUST move — that is the term being placed under the ruler, not a
+# regression. Neither input branch's literal was correct for the merged state:
+# main had 198dec2bb016d62e, feat/sf-shape-target had 2314f8551ad19148, and the
+# merged key set (main's keys PLUS w_sf_shape) hashes to a third value.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:55a35e2267523cd1"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -731,7 +739,8 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:198dec2bb016d62e"
   # `_iter_prefetched_batches` where full_pass covers `_iter_full_pass_batches`),
   # so it catches drift in a frame the production pin cannot see.
 # Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
-PRE_PR277_SAMPLED_RULER = "v1:sampled:007a74b1e31d47cf"
+# Moved by the same #449x key-set change; see PRODUCTION_FULL_PASS_RULER above.
+PRE_PR277_SAMPLED_RULER = "v1:sampled:9ec998de89c227c7"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
