@@ -67316,3 +67316,39 @@ computed and discarded, at zero added cost), the DAG `psqt` mirror, `arm_dump_*`
 runner/analysis scripts, and 18 tests with 2 killed mutants. NOT merged and NOT proposed:
 it is instrumentation for a lane that is now closed. NEXT: S2 (#475) merges on its own
 measurement; the verifier-net bench then decides S3 or its funeral, per §4.
+
+**2026-08-26 — HARMONIZATION LEVER 2 LAUNCHED (gate cleared).** Knob merged as
+`956eff877` on feat/lc0-continuation (the lane is local-only — no origin branch, so no
+PR/CI, same as lever 1's `b46e61e88`). Gate evidence: separate-agent review returned
+"would merge as-is"; its naming finding closed in `bcef54859` — the counter
+`lc0_rows_passthrough_hard_draw` was renamed `lc0_rows_hard_draw_band` because rows at
+`p_D >= HARD_DRAW_P_D` (0.999) are NOT passed through, they land at
+`p_D / (1 + p_D - lam*p_D)`; only `lc0_rows_exact_draw` (p_D == 1.0) is a genuine
+passthrough. ⚑ The shipped code had a COMMENT explaining why the name was wrong. That is
+not a fix — and this counter is the take-effect observable the prereg reads, so a
+misnamed one is the signature defect sitting on the instrument itself. Targeted suite
+green (`test_lc0_control_mix.py` + `test_lc0_control_continuation.py`, exit 0). Bare
+lint DELTA vs the parent = **ZERO**: 13 findings, byte-identical list. ⚑ The raw counts
+were 13 (parent) vs 153 (branch) and the +140 is an ARTEFACT — all 140 are
+`reportMissingModuleSource` across ~140 unrelated test files, because the scratchpad
+worktree lacks the installed sources; the 13 real findings (12 `reportArgumentType`, 1
+`reportOperatorIssue`) are identical. A raw count difference across two worktrees is not
+a delta until the rule mix is compared.
+RUN: λ=0.4, f=0.50, seed 15, bar 0.002, 20k steps, iter-595 init (salvage
+`pre_lc0_control_20260819/seeds/slot_000/trainer.pt`, step 171327, sha256 `62f4ad8d41…`),
+temper OFF at its inert 1.0 default (ONE lever), out
+`runs/lc0_mix050_dmass04_iter595_20260826`, launched from
+`/home/josh/chess-438-merge-review` with the same 122 lc0 shard dirs and the same own
+shards lever 1 used — byte-identical arm apart from the lever, so the curves compare.
+READOUT VALIDITY CHECKLIST (apply BEFORE judging any clause, per lever 1's precedent):
+`summary.json` `mixed_corpus.lc0_value_dmass` must show `lc0_value_dmass_lambda` 0.4 /
+`lc0_value_dmass_active` true / `device_batches_remapped == device_batches_seen > 0` /
+`search_wdl_draw_mass_after_by_source["lc0"]` ≈ **0.285** against a `_before` of ≈0.735 /
+`search_wdl_draw_mass_delta_by_source["own"]` == **0.0** (own rows byte-untouched — this
+is the one that proves the lever moved the GUEST and not the host) /
+`device_batches_without_search_wdl` and `unrouted_compute_loss_calls` 0. Then MID+LAST
+400g arenas vs iter-595, matched_sims, search-shape `play`, fresh seeds 70/71, clauses
+per the d967326db prereg. Comparator curves (diagnostic only): untempered f=0.50
+MID −42.78 / LAST −0.87 (seeds 63/64); lever-1 τ=2.2 MID −41.0 / LAST −29.6 (seeds
+68/69). Confounds: none live — production training is stopped and the GPU was idle at
+launch.
