@@ -16,6 +16,28 @@ jobs:
         with:
           ref: feat/nnue-gumbel-readout
           fetch-depth: 0
+      - name: Escape embedded target docstrings in transformer source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/_fix_474_integrity.py')
+          s = p.read_text()
+          docstrings = [
+              '''    """Refuse a supplied knob only when NO selected cell consumes it.\n\n    Per-cell resolution still copies only the fields its provider reads. The\n    distinction matters for a mixed matrix: a FastQ knob is foreign to qsearch\n    but live in the FastQ cell, so rejecting it while resolving qsearch makes\n    non-default matrix experiments impossible.\n    """''',
+              '''    """Best-effort source revision. Native binary hashes remain authoritative."""''',
+              '''    """Digest the exact improved-policy/search output for every stored ply."""''',
+              '''    """One digest over a cell's whole game set, ordered by game index."""''',
+              '''    """One digest over each game's improved-policy/search outputs."""''',
+          ]
+          for needle in docstrings:
+              if needle not in s:
+                  raise RuntimeError(f'embedded docstring not found: {needle.splitlines()[0]!r}')
+              escaped = needle.replace('"""', '\\"\\"\\"')
+              s = s.replace(needle, escaped)
+          p.write_text(s)
+          PY
+      - name: Parse transformer
+        run: python3 -m py_compile scripts/_fix_474_integrity.py
       - name: Apply guarded fix round
         run: python3 scripts/_fix_474_integrity.py
       - name: Remove bootstrap files
