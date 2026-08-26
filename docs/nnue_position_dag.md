@@ -41,6 +41,8 @@ Those are path/search-context properties. Two histories can reach the same struc
 
 Chess can return to the same structural position by reversible moves. Because repetition history is intentionally outside canonical node identity, a search can encounter an edge whose structural child is an ancestor node. The storage permits that representation; static NNUE reuse is still sound.
 
+This is tested, not just asserted: `1.Nf3 Nf6 2.Ng1 Ng8` closes a four-edge cycle whose child id **is** the root id, and `dag_children()` reports that back-edge like any other edge.
+
 The **path-aware search overlay** must decide repetition/fifty-move terminal semantics before recursively following such an edge. In the intended tactical search, a repetition back-edge is adjudicated on that path rather than recursively expanded forever. A future Gumbel migration has the same obligation. So `CaePositionDag` means canonical transposition-node storage; consumers must not infer that structural interning alone proves the reachable graph is mathematically acyclic.
 
 ## NNUE first consumer
@@ -92,7 +94,18 @@ Rerooting changes only `root_id`; descendants and transposed nodes stay allocate
 
 No garbage collector is added in this PR. The first tactical-search consumer is expected to operate on bounded graphs; memory usage is explicit in `dag_stats()`. Once real workloads show the required lifetime, reclamation can be designed around reachability/generations instead of guessed in advance.
 
-The current construction API is single-threaded. A later Gumbel migration with concurrent walkers must add publication/structure synchronization rather than treating the present canonical table as a concurrent container.
+## Threading: single-threaded, and enforced rather than promised
+
+The construction API is single-threaded, and `dag_intern_root()` / `dag_intern_child()` **hold the GIL across `state_init` / `state_make` / `evaluate`** so that constraint enforces itself: with no release window inside those functions, another Python thread cannot interleave between the canonical probe and the publish.
+
+This is a deliberate reversal. The first version released the GIL around each NNUE call, which cost nothing to write and made the documented constraint unobservable:
+
+- 6 threads interning the same 20 children produced **87 nodes for 21 distinct structural positions**, and 66 `RuntimeError`s from the duplicates' failed links;
+- worse, `cae_nnue_state_make()` reads `&h->states[parent_id]` inside that window while another thread's publish can run `cae_nnue_dag_grow_payload()`, which `free()`s that array — a use-after-free reading an accumulator already handed back to `malloc`.
+
+With the GIL held, the same probe reads 21 nodes for 21 positions, no duplicate ids and no errors, and a 2-ply 6-thread probe (2400 requests, growth to 512 payload slots mid-run) reads 421 for 421 with every value equal to a full refresh. The calls are µs-scale, so nothing measurable is given up.
+
+A later Gumbel migration with concurrent walkers must **not** simply reinstate `Py_BEGIN_ALLOW_THREADS` here. It needs real synchronization first: single-owner checks or a lock spanning probe → publish → link, plus payload storage a concurrent grow cannot free under a reader (stable chunks or RCU-style retirement).
 
 ## Observable invariants
 
@@ -106,13 +119,29 @@ The current construction API is single-threaded. A later Gumbel migration with c
 - actual static evaluations (`nnue_evals`);
 - allocated DAG and NNUE payload bytes.
 
-The important relationship is:
+The headline invariant is the exact identity:
 
 ```text
-nnue_evals <= node_count
+state_inits + state_makes == node_count
 ```
 
-with a true transposition increasing `node_reuses` while leaving both `state_makes` and `nnue_evals` unchanged for that request.
+Every canonical node was published by exactly one accounted NNUE state construction, and no node exists without one. `tests/test_nnue_position_dag.py` asserts it at *every* stats read.
+
+**It is the headline because it is falsifiable, and it has fired.** A 6-thread probe against a build that released the GIL around `cae_nnue_state_make()` read `21 == 87`: threads that both missed the canonical probe both published the same structural position, and each duplicate's `link()` then failed, so its work was never accounted. The identity is therefore also the alarm for a published-but-unlinked node — which is why the counters are incremented *after* a successful link and must not be moved earlier to make the error path "tidy". Such a node is not leaked or unreachable: it is in the canonical table, so a retry finds it and the request becomes an ordinary transposition that only has to add the edge. (When the link fails because the edge array could not grow, the API now raises `MemoryError` rather than reporting an allocation failure as a `RuntimeError`.)
+
+⚑ **`nnue_evals <= node_count` is not an invariant worth reading.** It holds by construction on every path — a node is published at most once per evaluation — and duplicating nodes only widens the margin, so it is precisely blind to the failure it appears to watch. Measured against a deliberate double-publish mutant: the identity fires (`5 == 9` false) while the old relationship stays green and merely loosens, from `5 <= 5` to `5 <= 9`. It was the documented headline before this review.
+
+Counters that do not mean what their names suggest:
+
+| counter | what it actually counts |
+| --- | --- |
+| `hits` | canonical-table probe hits — **the transposition signal**. A new parent reaching an already-interned position increments it; so does a re-request of a position already interned (including a plain `dag_lookup()`), so read it against `probes`/`inserts`. |
+| `node_reuses` | **not** the transposition signal: it additionally counts a repeated identical `(parent, action)` request, which never probes the table at all. |
+| `edge_reuses` | only that caller redundancy — an exact duplicate `(parent, action, child)` edge request. Never a transposition. |
+| `collision_steps` | linear-probe **displacement**: occupied slots stepped over, whatever their key. Not a count of 64-bit key collisions, which are far rarer than this number. |
+| `probes` | `find_position()` calls, `dag_lookup()` reads included. |
+
+A true transposition raises `hits` and `node_reuses` and leaves `state_makes` and `nnue_evals` unchanged for that request.
 
 The Python test also pins the complete stats key set and `memory_bytes == dag_memory_bytes + nnue_payload_bytes`, so a `Py_BuildValue` format drift cannot silently shift or omit trailing metrics.
 
