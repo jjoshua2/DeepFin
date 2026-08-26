@@ -107,4 +107,12 @@ static void bitboard_to_plane_black(uint64_t bb, float *out) {
 
 #endif /* BB_PLANE_USE_AVX2 */
 
+/* CBoard's legacy slider functions are defined immediately before this shared
+ * header. CBoard builds rename those helpers to *_reference, then install the
+ * PEXT/magic implementations here so all subsequent legal-move/search code
+ * compiles against the table-backed versions. */
+#ifdef DEEPFIN_FAST_SLIDERS
+#include "_slider_attacks_impl.h"
+#endif
+
 #endif /* BITBOARD_PLANES_IMPL_H */
