@@ -67252,3 +67252,24 @@ NULL (lever 3 = ≤6-piece filter next). Excludes 0 negative ⇒ KILL (value-sha
 harmonization hurts; lever 3 next, lever 2 reverted). Comparator: untempered f=0.50
 MID −42.78 / LAST −0.87 (seeds 63/64), lever-1 curve −41.0/−29.6 (seeds 68/69) —
 diagnostic only. Confounds: none live; GPU idle otherwise.
+
+**2026-08-26 — FASTQ-4+ MERGED (#473, 2de7be311).** The bounded tactical verifier:
+`nnue-fastq` (sixth provider) — captures/promotions only, checks resolved never
+generated, owned evasion recursion, SEE (own evaluator + brute-force oracle; separate
+from feat_see_capture with an EP divergence tripwire), MVV-LVA tiebreak (adopted by
+measurement: 67% equal-SEE ties), delta pruning in int64, cap-32 tripwire. MEASURED:
+**6.37 evals/leaf mean (median 4, p99 31) = 67× vs same-rows qsearch** (431.84; §1's
+~72 was the labeling average, not this corpus — ratio transfers, absolute doesn't);
+sign agreement 0.9807 with all 16 sign-or-mate differences ATTRIBUTED (7/7 mate rows
+on root quiet checks — NOT a mate oracle by design; 9 sign rows are SEE/delta, 1/9
+quiet-check rate rules the policy out); per-row dump banked. Wall p50 48.7µs vs
+qsearch 216µs. Review: grok (B1 fake-supermate — clamp(beta), the reviewer's own
+alpha repair reproduced the bug as mutant B1b; corpus sweeps at caps 1–4 could NOT
+kill beta-without-clamp, only a composed evasions-give-check-back fixture could) +
+Codex (rule-draw adjudication — 2103-vs-0 repro; recapture square set by non-captures;
+third zeros-for-wrong-handle instance; delta-margin int32 wrap). 15 named mutants
+killed across rounds; §8.4's repetition mutant SURVIVES with a constructive
+non-constructibility argument (1.86M-position hunt, zero all-evasion cycles) + a test
+that fires when the move policy widens. Default-off: no yaml key, no capsule,
+requires_gil set. NEXT: S1 calibration dump (speed plan §6), then S1-vs-S2 order
+decided by that dump.
