@@ -294,8 +294,12 @@ def resolve_arm_config(
             )
 
     if spec.consumes_qsearch_knobs:
-        dag_cap = args.dag_node_cap
-        if selected == ARM_QSEARCH and dag_cap is not None:
+        dag_cap = args.dag_node_cap if selected == ARM_QSEARCH_DAG else None
+        if (
+            selected == ARM_QSEARCH
+            and args.dag_node_cap is not None
+            and strict_foreign_knobs
+        ):
             raise ValueError(
                 "nnue-qsearch has no DAG and cannot consume --dag-node-cap",
             )
@@ -729,9 +733,19 @@ def games_digest(records: list[GameRecord]) -> str:
 
 
 def searches_digest(records: list[GameRecord]) -> str:
-    """One digest over each game's improved-policy/search outputs."""
+    """One digest over each game's improved-policy/search outputs.
+
+    An empty component is not a value: it means the strengthened oracle was
+    never populated. Refuse it so a future constructor that forgets the field
+    cannot make two unverified cells agree on the same empty digest.
+    """
     h = hashlib.sha256()
     for record in sorted(records, key=lambda r: r.game):
+        if not record.search_digest:
+            raise ValueError(
+                f"game {record.game} has no search_digest; search-output parity "
+                "cannot be verified",
+            )
         h.update(f"{record.game}:{record.search_digest}\n".encode())
     return h.hexdigest()
 
@@ -1481,6 +1495,7 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     # pure I/O with nothing to do with the arm; it used to happen inside every
     # worker, inside the window `plies_per_s` divides by.
     pack_sha = _sha256_file(plan.pack)
+    git_meta_start = _git_provenance()
     started_utc = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     cells: dict[str, list[dict[str, Any]]] = {}
@@ -1493,6 +1508,8 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             cells.setdefault(arm_config.arm, []).append(readout)
             order.append({"arm": arm_config.arm, "repeat": repeat})
     wall_s = time.perf_counter() - started
+    git_meta_end = _git_provenance()
+    git_changed_during_run = git_meta_start != git_meta_end
 
     every = [c for runs in cells.values() for c in runs]
     kernels = sorted({
@@ -1516,11 +1533,16 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     mcts_binary_paths = sorted({
         str(w["mcts_ext_path"]) for c in every for w in c["workers_detail"]
     })
-    git_meta = _git_provenance()
     reasons = [
         f"cell {c['arm']} repeat {c['repeat']}: {reason}"
         for c in every for reason in c["inadmissible_reasons"]
     ]
+    if git_changed_during_run:
+        reasons.append(
+            "tracked source provenance changed while the matrix was running: "
+            f"start={git_meta_start}, end={git_meta_end}; the report cannot "
+            "attribute all cells to one source state",
+        )
     if file_shas != [pack_sha]:
         reasons.append(
             f"workers mapped a pack whose file hash {file_shas} is not the "
@@ -1568,7 +1590,10 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "nnue_ext_sha256": nnue_binary_shas[0] if len(nnue_binary_shas) == 1 else nnue_binary_shas,
             "mcts_ext_path": mcts_binary_paths[0] if len(mcts_binary_paths) == 1 else mcts_binary_paths,
             "mcts_ext_sha256": mcts_binary_shas[0] if len(mcts_binary_shas) == 1 else mcts_binary_shas,
-            **git_meta,
+            **git_meta_start,
+            "git_end_head": git_meta_end["git_head"],
+            "git_end_tracked_dirty": git_meta_end["git_tracked_dirty"],
+            "git_changed_during_run": git_changed_during_run,
             "seed": plan.seed,
             "games_per_cell": plan.games,
             "workers": plan.workers,

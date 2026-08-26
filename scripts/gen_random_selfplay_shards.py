@@ -1133,6 +1133,13 @@ class NnueArmValueSource:
                         "halfmove_clock": int(board.halfmove_clock),
                         "hash_stack_len": int(board.hash_stack_len),
                         "hist_len": int(board.hist_len),
+                        # `hash_stack_len` is cleared only at game/root start or
+                        # after a pawn move/capture. Across such a zeroing move
+                        # the current piece/pawn state cannot equal an earlier
+                        # position, so retained `hist_hash` entries cannot make
+                        # the current state a repetition. FEN already carries
+                        # the halfmove clock. Requiring hist_len == 0 here would
+                        # therefore reject safe rows after every zeroing move.
                         "fen_reconstructs_full_search_state": bool(board.hash_stack_len == 0),
                         "value": int(value),
                         "is_mate": bool(mate),
