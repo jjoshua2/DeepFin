@@ -23,23 +23,75 @@ two cells here therefore measures the evaluate-once substrate under real Gumbel
 leaf traffic. A further difference between `nnue-qsearch-dag` and `nnue-fastq`
 is search-policy work.
 
-## DAG lifetime
+## ⚑⚑ The oracle, and what voids the decomposition
 
-A DAG-backed worker owns one arm context for its lifetime, but the graph is
-reset **before each game**:
+The control cell's bit-identity is a **free oracle**, and this harness spends it
+rather than throwing it away.
 
-```text
-worker
-  game 0: reset -> search every ply with one persistent graph
-  game 1: reset -> search every ply with one persistent graph
-  ...
-```
+Everything a game depends on is a pure function of the seed:
+
+* `gumbel_c.py` draws exactly `legal_idx.size` uniforms per ply;
+* `sample_action_with_temperature` draws **zero** at `temperature <= 0`, and
+  both production and this tool run `DEFAULT_TEMPERATURE = 0.0`;
+* `sample_starting_board` short-circuits when there is no opening book, which
+  is this tool's only mode.
+
+So at one seed `nnue-qsearch` and `nnue-qsearch-dag` **must** play byte-identical
+games. Each cell publishes
+
+* `games_detail[i].digest` — `sha256("<game>:<start_fen>:<move_trace>:<result>:<termination>")`
+* `games_digest` — one digest over all of them, ordered by game index
+
+and when both cells are in one report the top-level `oracle` block compares them.
+
+> **If `oracle.digests_agree` is `false`, the decomposition is VOID.** The two
+> cells did not play the same games, so no wall-clock difference between them is
+> attributable to the DAG substrate — it is attributable to a different search.
+> The report says so in `inadmissible_reasons`, `admissible` goes `false`, and
+> the process exits **2**. The same holds across two separate invocations: the
+> digests are comparable whenever `provenance.seed` and the search block match.
+
+The oracle is live, not decorative, and its sensitivity has been measured rather
+than assumed. Perturbing evaluated leaf values in the DAG arm only (+500 internal
+units on one leaf of the first *N* leaf batches, `--games 2 --sims 8
+--max-plies 12 --seed 7`):
+
+| perturbed leaf values | `digests_agree` | exit |
+|---|---|---|
+| 0 | true | 0 |
+| 1 | true | 0 |
+| 5 | true | 0 |
+| **6** | **false** | **2** |
+
+⚑ Read the top of that table as a real property, not a weakness: sequential
+halving **absorbs** a handful of changed leaves without changing a move, so the
+digest is a test of the search's *decisions*, which is the thing the wall-clock
+comparison depends on. It is not a bit-level checksum of the evaluator; the
+value-level parity proof for that is #472's, and `tests/test_qsearch_dag_parity.py`
+is where it lives.
+
+## DAG lifetime, and the cadence is a knob
+
+A DAG-backed worker owns one arm context for its lifetime. `--dag-reset` chooses
+when the graph is cleared:
+
+| `--dag-reset` | meaning |
+|---|---|
+| `game` (default) | reset before every game — the preregistered policy |
+| `never` | one graph for the worker's whole game list |
+| `every-N-games` | reset every N games |
+
+`fastq_design.md` §4.4 is explicit that the persistence policy is to be **chosen
+from measurement, not assumed** — and this harness *is* that measurement. A tool
+that could only produce the one preselected point could not inform the choice it
+exists to inform. The realized cadence is in `provenance.dag_reset` and in each
+cell's `dag_reset`.
 
 The reset retains allocations. This gives two useful properties at once:
 
-1. nodes discovered by an earlier ply in the same game remain reusable on later
-   plies, which is the cross-ply benefit the DAG exists to measure;
-2. unrelated games cannot accumulate semantic nodes forever.
+1. nodes discovered by an earlier ply in the same cadence window remain
+   reusable, which is the cross-ply benefit the DAG exists to measure;
+2. graphs cannot accumulate semantic nodes forever.
 
 The report therefore names graph sizes `*_per_game`. `memory_peak_per_worker_bytes`
 is different: because reset retains capacity it is the worker's resident DAG
@@ -71,10 +123,22 @@ For `nnue-fastq`:
 - `--fastq-delta-margin`
 - `--fastq-recapture-exempt`
 
+⚑ **`--dag-node-cap > 0` is REFUSED on `nnue-qsearch-dag`.** `set_arm_config`'s
+own docstring says why: above 0, a node that trips the cap stands pat and
+increments `dag_budget_trips`, "so an arm with a binding cap no longer matches
+the oracle". A capped DAG cell is not a control. `--allow-binding-dag-node-cap`
+exists for deliberately measuring the capped arm, and the report is inadmissible
+anyway if `provider_stats.dag_budget_trips > 0` — the cap *actually binding* is
+the condition, not merely being set.
+
 Unspecified consumed knobs are read from the compiled `_nnue_ext` constants,
 not copied as Python numeric defaults. Configuration is applied before
-`arm_open()` and then read back from the **context that will actually run**.
-The tool raises if requested and realized snapshots differ.
+`arm_open()` and then read back from the **context that will actually run**;
+the tool raises if requested and realized snapshots differ, and "requested" is
+the caller's own dict rather than the setter's echo (a setter that clamped and
+echoed the request would otherwise compare a clamped value with itself). Both
+the requested and the realized values are published, each under its own name:
+`arm_config` and `arm_config_realized`.
 
 The stats surface is likewise provider-owned: FastQ is read only through
 `fastq_stats()`, qsearch through `arm_stats()`, and DAG resource/canonical-table
@@ -82,51 +146,113 @@ state through `arm_dag_stats()`. The extension intentionally raises on the wrong
 surface, so the readout never turns an all-zero wrong-counter block into a
 plausible measurement.
 
-## Suggested first matrix
+## Counter identities that must hold
 
-Use identical seeds and search settings for all three commands:
+`fastq_design.md` §7 names two counter identities, and every term of both is in
+the report. They are now checked rather than merely publishable:
+
+| field | identity | source |
+|---|---|---|
+| `identities.evaluate_once_identity_ok` | `nnue_evals + nodes_created_in_check == nodes_created` | `fastq_stats()` |
+| `identities.dag_state_identity_ok` | `state_inits + state_makes == node_count`, per snapshot | `arm_dag_stats()` |
+
+A violation makes the cell inadmissible and the process exit 2. The artifact is
+still written first: a gate that raised before the JSON existed would destroy
+the evidence for the finding it had just made.
+
+## The matrix — one command, comparable cells
+
+⚑ **The three cells must be run with identical settings, and that now includes
+banking.** The previous version of this page enabled `--bank-leaf-observations`
+on the FastQ cell only. Banking is a `board.fen()` + `json.dumps` + write **per
+evaluated position, inside the timed window** — so it was charged to exactly the
+cell whose speedup was the headline. The flag is now matrix-wide: it applies to
+every cell or to none, `provenance.banking` records which, and each worker's
+file is named for its `(arm, repeat, worker)` so three cells aimed at one path
+cannot merge.
 
 ```bash
 PYTHONPATH=. python scripts/nnue_gumbel_readout.py \
-  --arm nnue-qsearch --nnue-pack big.pack \
-  --games 64 --workers 8 --sims 32 \
-  --json data/readout_qsearch.json
+  --arm nnue-qsearch --arm nnue-qsearch-dag --arm nnue-fastq \
+  --nnue-pack "$NNUE_PACK" \
+  --games 64 --workers 8 --sims 32 --repeats 3 \
+  --json data/readout_matrix.json
+```
 
-PYTHONPATH=. python scripts/nnue_gumbel_readout.py \
-  --arm nnue-qsearch-dag --nnue-pack big.pack \
-  --games 64 --workers 8 --sims 32 \
-  --json data/readout_qsearch_dag.json
+`--repeats N` runs the whole cell set N times **interleaved** — `(repeat, then
+cell)`, never all of arm A before any of arm B. A fixed-order single pass
+measures the machine's first hour against its third; interleaving spreads
+thermal drift, page-cache warming and an arriving neighbour job across every
+cell instead of loading them onto whichever ran last. `order` records the
+sequence that actually ran.
 
+To bank leaf observations for the deep-SF quality readout, add the flag to the
+**same** command so every cell pays it:
+
+```bash
 PYTHONPATH=. python scripts/nnue_gumbel_readout.py \
-  --arm nnue-fastq --nnue-pack big.pack \
+  --arm nnue-qsearch --arm nnue-qsearch-dag --arm nnue-fastq \
+  --nnue-pack "$NNUE_PACK" \
   --games 64 --workers 8 --sims 32 \
-  --json data/readout_fastq.json \
-  --bank-leaf-observations data/readout_fastq_leaves.jsonl
+  --json data/readout_matrix_banked.json \
+  --bank-leaf-observations data/readout_leaves.jsonl
 ```
 
 `--all-root-moves` defaults on for this harness and `--topk` therefore defaults
 to the engine's exported maximum legal-move count. This matches the native-arm
 quality/readout cells rather than silently ranking a Gumbel-random subset of a
-uniform-prior root.
+uniform-prior root. `--topk` is validated in the parent **before** any worker
+spawns.
 
-When banking is enabled each worker writes a separate `*.wNN.jsonl` file, so
-there is no shared-file lock or interleaved JSON. Rows retain FEN, raw internal
-value, game/ply cluster, pack hash, cp mapping, and the realized arm knobs. The
-raw value makes a later scale correction or deep-SF reanalysis possible without
-replaying the games.
+Bank files are opened `"x"`: a rerun that would append into the previous run's
+rows fails instead. Rows carry FEN, the raw internal value, an `is_mate` flag,
+the game/ply cluster, the pack hash, the cp mapping, the realized arm knobs, the
+`run_id` / `seed` / `repeat` / `worker_id` that identify the run, **and the three
+mate-band constants** (`RESOLVER_MATE_BASE`, `RESOLVER_MATE_PLY_STEP`,
+`RESOLVER_MAX_PLIES`). Those last three are what make a later cp reconstruction
+self-contained: above the band floor the raw value is a mate distance in plies,
+and a reader who had to supply the build vintage's constants from outside the
+artifact would silently run the mate rows through the centipawn slope.
+
+## Provenance: proving the cells are one experiment
+
+`provenance` carries everything that would make two cells incomparable if it
+differed — and the report checks the ones that can:
+
+`run_id` · `started_utc` · `pack_path` · `pack_file_sha256` ·
+`pack_source_sha256` · `kernel` (avx2 vs scalar — a **multi-fold** wall factor) ·
+`seed` · `games_per_cell` · `workers` · `sims_floor` · `topk` · `max_plies` ·
+`all_root_moves` · the cp triple · `nice_requested` **and** `nice_realized` ·
+`banking` · `dag_reset` · `repeats` · `arms` · `python`.
+
+Mixed kernels, mixed niceness, a pack whose file hash is not the one the parent
+hashed, and disagreeing per-worker arm configuration each make the report
+inadmissible or are recorded in `provider_stats_conflicts`. ⚑ A worker
+configuration disagreement is **recorded, not raised on**: raising at the
+aggregation step throws away a finished multi-hour run, and the generator
+already settled that question the same way (`NnueArmStats.context_conflicts`).
 
 ## Read the output in this order
 
-1. **Throughput**: `plies_per_s` / `games_per_h`.
-2. **Actual arm work**: `arm_io.nnue_evals_per_top_level_call` and the raw
-   provider counters.
-3. **FastQ tripwire**: `fastq.budget_trip_rate`. A nontrivial rate is a finding,
-   not an invitation to silently raise the cap.
-4. **Reuse**: FastQ/qsearch-DAG within- and cross-call counters plus
+1. **Is it admissible?** `admissible` and `inadmissible_reasons`, then
+   `oracle.digests_agree`. Everything below is void if these are not clean.
+2. **Throughput**: `search_plies_per_s` for the arm comparison — it divides by
+   the widest worker's *search* window. `plies_per_s` is the end-to-end figure
+   and includes pool startup and each worker's `ext.load()` + `arm_open()` mmap;
+   `setup_wall_s` is how much that was. The pack file hash is computed once in
+   the parent, before any clock starts, and is not in either window.
+3. **Actual arm work**: `arm_io.nnue_evals_per_top_level_call` and the raw
+   provider counters. Read `provider_stats_classification` beside them: the
+   `store_endpoint_sizes` group is summed across workers as a **resource
+   endpoint total**, not a count of positions the run saw.
+4. **FastQ tripwire**: `fastq.budget_trip_rate`. A nontrivial rate is a finding,
+   not an invitation to silently raise the cap. ⚑ `null` means `calls == 0`,
+   i.e. nothing ran — it is not the healthy zero.
+5. **Reuse**: FastQ/qsearch-DAG within- and cross-call counters plus
    `dag_per_game.canonical_hit_rate`.
-5. **Memory**: `dag_per_game.nodes_peak_per_game` and
+6. **Memory**: `dag_per_game.nodes_peak_per_game` and
    `memory_peak_per_worker_bytes`.
-6. **Search shape/coverage**: root-budget and termination data in each worker's
+7. **Search shape/coverage**: root-budget and termination data in each worker's
    detail record, plus the banked leaf population for the standardized deep-SF
    quality readout.
 
@@ -135,6 +261,16 @@ quality comparison remains the standardized deep-Stockfish target-quality
 readout described by the AZ-purity framework. The point of this script is to
 produce the **production-shaped leaf population and raw observations** needed to
 run that decision honestly.
+
+## Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | every gate passed |
+| 2 | the report was written and is **inadmissible** — read `inadmissible_reasons` |
+
+`assert_admissible(report)` is the library-side equivalent for a caller that
+wants the exception instead.
 
 ## Non-goals
 
