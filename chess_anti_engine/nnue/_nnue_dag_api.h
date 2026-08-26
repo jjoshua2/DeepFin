@@ -19,12 +19,11 @@
  * The tactical solver can resolve its evasions without inventing a sentinel
  * evaluation.
  *
- * ⚑ THE SPLIT EXISTS SO A C CONSUMER CAN SHARE THE ACCOUNTING, not just the
- * arrays. A search driving the same store from C must increment state_inits,
- * state_makes and nnue_evals the way this file does, or the store's headline
- * identity quietly becomes a property of one caller. So publication happens in
- * exactly two places — cae_nnue_dag_intern_position and
- * cae_nnue_dag_intern_child — and both callers go through them.
+ * ⚑ THIS IS NOT THE ONLY CONSUMER ANY MORE. The "nnue-qsearch-dag" arm in
+ * _arm_providers.h drives the same store from C, so a counter read through
+ * dag_stats() here and one read through arm_stats() there are the SAME numbers
+ * produced by the SAME code — see cae_nnue_dag_intern_position /
+ * cae_nnue_dag_intern_child, which are the only functions that publish.
  */
 
 #ifndef CAE_NNUE_DAG_API_H
@@ -157,8 +156,11 @@ static PyObject *py_dag_open(PyObject *Py_UNUSED(self), PyObject *args) {
  * A future concurrent consumer must NOT simply reinstate Py_BEGIN_ALLOW_THREADS
  * here: it has to add real synchronization first — a single-owner check or a
  * lock spanning probe/publish/link, plus payload storage that a concurrent grow
- * cannot free under a reader (stable chunks or RCU-style retirement). The rule
- * binds every consumer of the store, not just this file. */
+ * cannot free under a reader (stable chunks or RCU-style retirement).
+ *
+ * ⚑ THE SAME RULE BINDS THE "nnue-qsearch-dag" ARM, and it obeys it the same
+ * way: _nnue_ext.c does not release the GIL around a batch evaluated through a
+ * DAG-backed arm. */
 
 PyDoc_STRVAR(dag_intern_root_doc,
 "dag_intern_root(handle, cboard) -> (node_id, value_or_none, created)\n\n"

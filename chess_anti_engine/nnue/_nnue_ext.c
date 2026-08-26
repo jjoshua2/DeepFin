@@ -387,9 +387,16 @@ PyDoc_STRVAR(arm_eval_doc,
 "leaf fraction is a fraction of something.\n\n"
 "stats keys: calls, calls_in_check, nodes, resolved_leaves, terminal_mate,\n"
 "terminal_draw, depth_cutoffs, max_depth_seen, qnodes, qterminal_draw,\n"
-"qply_cutoffs, qmax_ply_seen, plus resolver_max_depth / qsearch_max_ply /\n"
-"qsearch_check_plies.\n\n"
-"⚑ Those last three are read off THE CONTEXT THAT RAN, not off the module\n"
+"qply_cutoffs, qmax_ply_seen, nnue_evals, dag_nodes_interned,\n"
+"dag_hits_within_call, dag_hits_cross_call, dag_budget_trips, dag_node_count,\n"
+"dag_edge_count, dag_memory_bytes, dag_enabled, plus resolver_max_depth /\n"
+"qsearch_max_ply / qsearch_check_plies / dag_node_cap.\n\n"
+"⚑ nnue_evals is NOT a restatement of qnodes. It equals qnodes for the\n"
+"incremental and refresh substrates and is strictly smaller for\n"
+"'nnue-qsearch-dag', by exactly the reuse the DAG achieved. The dag_* counters\n"
+"are 0 for every other arm, and dag_enabled says whether that 0 means 'no store'\n"
+"or 'a store that did nothing'.\n\n"
+"⚑ Those config keys are read off THE CONTEXT THAT RAN, not off the module\n"
 "globals set_arm_config() writes. A context snapshots its configuration at\n"
 "init(), so after a set_arm_config() the globals and a long-lived context can\n"
 "legitimately disagree — and the number that governed this batch is the\n"
@@ -421,8 +428,22 @@ static const CaeValueProvider *arm_provider_by_name(const char *name) {
 
 static PyObject *arm_stats_dict(const CaeArmCtx *ctx) {
     const CaeArmStats *s = &ctx->totals;
+    /* ⚑ THE DAG FIGURES COME OFF THE CONTEXT'S OWN STORE, NOT OFF A COPY. A
+     * context without one reports zeros — and `dag_enabled` is what separates
+     * "this arm has no DAG" from "this arm has one and it did nothing", which is
+     * the difference a bare 0 cannot express. */
+    int64_t dag_bytes = 0;
+    int32_t dag_nodes = 0;
+    int32_t dag_edges = 0;
+    if (ctx->dag) {
+        dag_bytes = cae_position_dag_memory_bytes(&ctx->dag->dag)
+                    + cae_nnue_dag_payload_bytes(ctx->dag);
+        dag_nodes = ctx->dag->dag.node_count;
+        dag_edges = ctx->dag->dag.edge_count;
+    }
     return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:I,s:K,s:K,s:K,s:I,s:i,s:i,s:i}",
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:I,s:K,s:K,s:K,s:I,s:K,"
+        "s:K,s:K,s:K,s:K,s:i,s:i,s:i,s:L,s:i,s:i,s:i,s:i}",
         "calls", ARM_STAT_U64(s->resolver.calls),
         "calls_in_check", ARM_STAT_U64(s->resolver.calls_in_check),
         "nodes", ARM_STAT_U64(s->resolver.nodes),
@@ -435,38 +456,60 @@ static PyObject *arm_stats_dict(const CaeArmCtx *ctx) {
         "qterminal_draw", ARM_STAT_U64(s->qterminal_draw),
         "qply_cutoffs", ARM_STAT_U64(s->qply_cutoffs),
         "qmax_ply_seen", ARM_STAT_U32(s->qmax_ply_seen),
+        "nnue_evals", ARM_STAT_U64(s->nnue_evals),
+        "dag_nodes_interned", ARM_STAT_U64(s->dag_nodes_interned),
+        "dag_hits_within_call", ARM_STAT_U64(s->dag_hits_within_call),
+        "dag_hits_cross_call", ARM_STAT_U64(s->dag_hits_cross_call),
+        "dag_budget_trips", ARM_STAT_U64(s->dag_budget_trips),
         /* ⚑ NOT atomic, and correctly so: a context's configuration is written
          * once at init() and never again, which is the whole point of the
          * snapshot. There is no writer to race with. */
         "resolver_max_depth", ctx->resolver_max_depth,
         "qsearch_max_ply", ctx->qsearch_max_ply,
-        "qsearch_check_plies", ctx->qsearch_check_plies);
+        "qsearch_check_plies", ctx->qsearch_check_plies,
+        "dag_memory_bytes", (long long)dag_bytes,
+        "dag_node_count", (int)dag_nodes,
+        "dag_edge_count", (int)dag_edges,
+        "dag_node_cap", ctx->dag_node_cap,
+        "dag_enabled", ctx->dag ? 1 : 0);
 }
 
 PyDoc_STRVAR(set_arm_config_doc,
-"set_arm_config(resolver_max_depth, qsearch_max_ply, qsearch_check_plies) -> dict\n\n"
+"set_arm_config(resolver_max_depth, qsearch_max_ply, qsearch_check_plies\n"
+"               [, dag_node_cap]) -> dict\n\n"
 "Set the configuration NEW arm contexts will be built with, returning what is in\n"
 "force. qsearch_max_ply=0 collapses quiescence to a stand-pat, which makes the\n"
 "qsearch arm's leaf identical to the static arm's — the arm's own negative\n"
 "control.\n\n"
+"dag_node_cap defaults to 0 (OFF) and is consulted ONLY by 'nnue-qsearch-dag'.\n"
+"⚑ Omitting it RESETS it to 0 rather than leaving it: the four values are one\n"
+"configuration, and a call that set three of them while silently keeping a\n"
+"fourth from an earlier call would make what a context was built with depend on\n"
+"call history. Above 0 it caps the expanding quiescence nodes one top-level DAG\n"
+"evaluation may spend; a node that trips stands pat and increments\n"
+"dag_budget_trips, so an arm with a binding cap no longer matches the oracle.\n\n"
 "⚑ Takes effect at the next init(), not on contexts that already exist: they\n"
 "snapshot their configuration when they are built. Read what a batch actually\n"
 "used out of arm_eval()'s stats, not back out of this function.");
 
 static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
     int depth, max_ply, check_plies;
-    if (!PyArg_ParseTuple(args, "iii", &depth, &max_ply, &check_plies)) return NULL;
+    int dag_node_cap = CAE_QSEARCH_DEFAULT_DAG_NODE_CAP;
+    if (!PyArg_ParseTuple(args, "iii|i", &depth, &max_ply, &check_plies, &dag_node_cap))
+        return NULL;
     char err[256] = {0};
-    if (cae_arm_set_config(depth, max_ply, check_plies, err, sizeof(err)) != 0) {
+    if (cae_arm_set_config(depth, max_ply, check_plies, dag_node_cap,
+                           err, sizeof(err)) != 0) {
         PyErr_SetString(PyExc_ValueError, err);
         return NULL;
     }
     CaeArmConfig cfg;
     cae_arm_get_config(&cfg);
-    return Py_BuildValue("{s:i,s:i,s:i}",
+    return Py_BuildValue("{s:i,s:i,s:i,s:i}",
                          "resolver_max_depth", cfg.resolver_max_depth,
                          "qsearch_max_ply", cfg.qsearch_max_ply,
-                         "qsearch_check_plies", cfg.qsearch_check_plies);
+                         "qsearch_check_plies", cfg.qsearch_check_plies,
+                         "dag_node_cap", cfg.dag_node_cap);
 }
 
 static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
@@ -523,15 +566,22 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     /* ⚑ ONE GIL release around the WHOLE batch, not one per board. Timing this
      * against _nnue_ext.benchmark() is the point of the surface, and a
      * per-board acquire/release would bill the arms for GIL churn the baseline
-     * does not pay — an overhead measurement that measures the harness. */
+     * does not pay — an overhead measurement that measures the harness.
+     *
+     * ⚑⚑ …AND NO RELEASE AT ALL FOR A DAG-BACKED ARM. See
+     * cae_provider_requires_gil(): that arm's store has a single-threaded
+     * construction path, and holding the GIL is how this module ENFORCES that
+     * rather than documenting it. Written out rather than using the
+     * Py_BEGIN/END_ALLOW_THREADS macro pair, because the release has to be
+     * conditional and those macros open a brace. */
     Py_ssize_t failed_at = -1;
     int failed_status = CAE_VALUE_OK;
-    Py_BEGIN_ALLOW_THREADS
+    PyThreadState *save = cae_provider_requires_gil(vp) ? NULL : PyEval_SaveThread();
     for (Py_ssize_t i = 0; i < n; i++) {
         int status = cae_value_eval(vp, ctx, boards[i], &raw[i]);
         if (status != CAE_VALUE_OK) { failed_at = i; failed_status = status; break; }
     }
-    Py_END_ALLOW_THREADS
+    if (save) PyEval_RestoreThread(save);
     PyMem_Free(boards);
     Py_DECREF(fast);   /* every boards[] pointer has now been consumed */
 
@@ -646,14 +696,19 @@ static PyObject *py_arm_handle_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *values = PyList_New(n);
     if (!values) { Py_DECREF(fast); return NULL; }
 
+    /* ⚑⚑ A DAG-BACKED ARM KEEPS THE GIL — see cae_provider_requires_gil(). Two
+     * Python threads sharing one such handle would otherwise interleave
+     * probe/evaluate/publish and read an accumulator array a concurrent grow
+     * had already free()d. */
+    int keep_gil = cae_provider_requires_gil(h->vp);
     for (Py_ssize_t i = 0; i < n; i++) {
         const CBoard *board = unwrap_cboard(PySequence_Fast_GET_ITEM(fast, i));
         if (!board) { Py_DECREF(values); Py_DECREF(fast); return NULL; }
         int32_t value = 0;
         int status;
-        Py_BEGIN_ALLOW_THREADS
+        PyThreadState *save = keep_gil ? NULL : PyEval_SaveThread();
         status = cae_value_eval(h->vp, h->ctx, board, &value);
-        Py_END_ALLOW_THREADS
+        if (save) PyEval_RestoreThread(save);
         if (status != CAE_VALUE_OK) {
             raise_status(status);
             Py_DECREF(values);
@@ -725,6 +780,112 @@ static PyObject *py_weight_cache_size(PyObject *Py_UNUSED(self), PyObject *Py_UN
  * exact CaeNnueState implementation, SIMD flag, and mapped weights. */
 #include "_nnue_dag_api.h"
 
+/* ================================================================
+ * The DAG inside a DAG-backed arm
+ * ================================================================
+ *
+ * ⚑⚑ WITHOUT THESE THE STORE IS UNOBSERVABLE, AND AN UNOBSERVABLE CACHE IS
+ * INDISTINGUISHABLE FROM NO CACHE. "nnue-qsearch-dag" owns its store rather than
+ * being handed one, because a provider is built through the eval seam's
+ * init(name, weights_path) and there is nowhere in that signature to pass a
+ * capsule. So the three questions a reader of this PR has to be able to answer
+ * from outside — how big did the graph get, does it really persist across calls,
+ * and what happens when it is cleared — are answered here, through the SAME
+ * stats builder dag_stats() uses, so the two surfaces cannot drift into
+ * disagreeing about one store. */
+
+static CaeNnueDagHandle *arm_dag_from_capsule(PyObject *capsule) {
+    ArmHandle *h = arm_handle_from_capsule(capsule);
+    if (!h) return NULL;
+    CaeNnueDagHandle *store = ((const CaeArmCtx *)h->ctx)->dag;
+    if (!store) {
+        PyErr_Format(PyExc_ValueError,
+                     "arm '%s' is not DAG-backed and owns no position DAG; open "
+                     "'nnue-qsearch-dag' for one", h->vp->name);
+        return NULL;
+    }
+    return store;
+}
+
+PyDoc_STRVAR(arm_dag_stats_doc,
+"arm_dag_stats(arm_handle) -> dict\n\n"
+"The position DAG owned by a DAG-backed arm context, in dag_stats()'s exact\n"
+"schema and built by the same code — including the state_inits + state_makes ==\n"
+"node_count identity, which the arm's own interning has to keep satisfying.\n\n"
+"⚑ These are the STORE's counters. The arm's view of the same work — how many of\n"
+"its probe hits landed on nodes from earlier calls, how many evaluations it\n"
+"performed — is in arm_stats(), because only the arm knows where one call ended\n"
+"and the next began.");
+
+static PyObject *py_arm_dag_stats(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    CaeNnueDagHandle *store = arm_dag_from_capsule(capsule);
+    if (!store) return NULL;
+    return cae_nnue_dag_stats_dict(store);
+}
+
+PyDoc_STRVAR(arm_dag_lookup_doc,
+"arm_dag_lookup(arm_handle, cboard) -> int | None\n\n"
+"The canonical node id this arm's DAG holds for a position, or None. A graph\n"
+"read that does no NNUE work — but it IS a probe, so it moves the store's\n"
+"probes/hits counters like any other.");
+
+static PyObject *py_arm_dag_lookup(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule, *board_obj;
+    if (!PyArg_ParseTuple(args, "OO", &capsule, &board_obj)) return NULL;
+    CaeNnueDagHandle *store = arm_dag_from_capsule(capsule);
+    if (!store) return NULL;
+    const CBoard *board = unwrap_cboard(board_obj);
+    if (!board) return NULL;
+    int32_t node_id = cae_position_dag_find_board(&store->dag, board);
+    if (node_id == CAE_DAG_NO_NODE) Py_RETURN_NONE;
+    return PyLong_FromLong((long)node_id);
+}
+
+PyDoc_STRVAR(arm_dag_value_doc,
+"arm_dag_value(arm_handle, node_id) -> int | None\n\n"
+"The value this arm's DAG holds for a node — None for a position in check,\n"
+"which owns an accumulator but no static evaluation.\n\n"
+"⚑⚑ THIS IS THE INSTRUMENT FOR THE ONE THING THE DAG MAY NEVER DO. What comes\n"
+"back must be the STATIC NNUE evaluation of that position — the same number\n"
+"evaluate() returns — and never a backed-up quiescence result. The two differ on\n"
+"any position with a tactic, so an assertion against evaluate() can tell them\n"
+"apart; without this accessor a search value written into a node would be\n"
+"invisible until it changed an answer, which is precisely the class of defect\n"
+"that hides for months.");
+
+static PyObject *py_arm_dag_value(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    int node_id;
+    if (!PyArg_ParseTuple(args, "Oi", &capsule, &node_id)) return NULL;
+    CaeNnueDagHandle *store = arm_dag_from_capsule(capsule);
+    if (!store) return NULL;
+    if (node_id < 0 || node_id >= store->dag.node_count) {
+        PyErr_SetString(PyExc_ValueError, "node_id out of range");
+        return NULL;
+    }
+    return cae_nnue_dag_value_object(store, node_id);
+}
+
+PyDoc_STRVAR(arm_dag_reset_doc,
+"arm_dag_reset(arm_handle) -> None\n\n"
+"Drop every node, edge and payload this arm's DAG holds, keeping the\n"
+"allocations. RESET IS EXPLICIT and nothing else performs one: the store\n"
+"persists across evaluations, across batches and across a reroot, which is the\n"
+"only reason a cross-call hit can exist. The arm's OWN counters are untouched —\n"
+"they accumulate over the context's life, and zeroing them here would erase the\n"
+"evidence of the work the reset is discarding.");
+
+static PyObject *py_arm_dag_reset(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyObject *capsule;
+    if (!PyArg_ParseTuple(args, "O", &capsule)) return NULL;
+    CaeNnueDagHandle *store = arm_dag_from_capsule(capsule);
+    if (!store) return NULL;
+    cae_nnue_dag_store_reset(store);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef module_methods[] = {
     {"load", py_load, METH_VARARGS, load_doc},
     {"set_simd", py_set_simd, METH_VARARGS, set_simd_doc},
@@ -743,6 +904,10 @@ static PyMethodDef module_methods[] = {
     {"arm_open", py_arm_open, METH_VARARGS, arm_open_doc},
     {"arm_handle_eval", py_arm_handle_eval, METH_VARARGS, arm_handle_eval_doc},
     {"arm_stats", py_arm_stats, METH_VARARGS, arm_stats_doc},
+    {"arm_dag_stats", py_arm_dag_stats, METH_VARARGS, arm_dag_stats_doc},
+    {"arm_dag_lookup", py_arm_dag_lookup, METH_VARARGS, arm_dag_lookup_doc},
+    {"arm_dag_value", py_arm_dag_value, METH_VARARGS, arm_dag_value_doc},
+    {"arm_dag_reset", py_arm_dag_reset, METH_VARARGS, arm_dag_reset_doc},
     CAE_NNUE_DAG_METHODS
     {NULL, NULL, 0, NULL}
 };
@@ -825,6 +990,10 @@ PyMODINIT_FUNC PyInit__nnue_ext(void) {
     PyModule_AddIntConstant(m, "RESOLVER_MAX_DEPTH", (long)CAE_RESOLVER_DEFAULT_MAX_DEPTH);
     PyModule_AddIntConstant(m, "QSEARCH_MAX_PLY", (long)CAE_QSEARCH_DEFAULT_MAX_PLY);
     PyModule_AddIntConstant(m, "QSEARCH_CHECK_PLIES", (long)CAE_QSEARCH_DEFAULT_CHECK_PLIES);
+    /* Exported so a test pins "the node budget ships OFF" against the C value
+     * rather than against a Python restatement of it. */
+    PyModule_AddIntConstant(m, "QSEARCH_DAG_NODE_CAP",
+                            (long)CAE_QSEARCH_DEFAULT_DAG_NODE_CAP);
 
     PyModule_AddIntConstant(m, "THREAT_DIMS", (long)CAE_NNUE_THREAT_DIMS);
     PyModule_AddIntConstant(m, "HALFKA_DIMS", (long)CAE_NNUE_HALFKA_DIMS);
