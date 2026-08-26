@@ -1,0 +1,32 @@
+name: Apply S1 lazy eval
+
+on:
+  push:
+    branches: [perf/nnue-lazy-eval]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/nnue-lazy-eval
+          fetch-depth: 0
+      - name: Apply guarded patch
+        run: python3 scripts/_apply_nnue_lazy_pr.py
+      - name: Remove bootstrap files
+        run: |
+          rm scripts/_apply_nnue_lazy_pr.py
+          rm .github/workflows/apply-nnue-lazy.yml
+      - name: Commit implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "nnue: add default-off S1 lazy DAG evaluation"
+          git push origin HEAD:perf/nnue-lazy-eval
