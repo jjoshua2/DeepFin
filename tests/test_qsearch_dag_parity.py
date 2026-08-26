@@ -28,6 +28,7 @@ scripted lines below are asymmetric and the crafted FENs are material-imbalanced
 
 from __future__ import annotations
 
+import os
 import random
 from collections.abc import Iterator
 from pathlib import Path
@@ -112,6 +113,40 @@ def dag_pack(tmp_path_factory: pytest.TempPathFactory) -> Path:
         path,
         blobs={"ft_psqt": [(0, halfka)], "threat_psqt": [(0, threats)]},
     )
+    return path
+
+
+@pytest.fixture(scope="module", params=["synthetic", "real"])
+def eval_pack(request: pytest.FixtureRequest, dag_pack: Path) -> Path:
+    """The substrate-parity tests run against BOTH nets, from one test body.
+
+    ⚑⚑ A SYNTHETIC PACK IS THE H2 VACUITY TRAP'S OWN SHAPE. This file's fixture
+    is PSQT-only: the accumulator, the transformer output and every fc0/fc1
+    activation are unexercised, so a substrate defect living in the parts a
+    dense-PSQT net never lights up would agree with the oracle on every row and
+    the gate would report a pass it had not earned. That is not hypothetical
+    here — the ±32 magnitude this file rejects once made every value assertion
+    in the DAG suite near-vacuous, and the fix was a bigger synthetic net, which
+    is the same class of answer.
+
+    So the real net is the second parameter rather than a separate test: one
+    body, two substrates, and the real one SKIPS rather than fails when
+    CAE_NNUE_TEST_PACK is unset, because CI has no 111 MB net. The synthetic run
+    stays mandatory — it is the one that always executes, and it is the one that
+    can catch a regression in a pull request.
+
+    ⚑ Copy-pasting the body for the real net would have been the wrong shape
+    twice over: two bodies drift, and the drift lands on the arm that almost
+    never runs.
+    """
+    if request.param == "synthetic":
+        return dag_pack
+    env = os.environ.get("CAE_NNUE_TEST_PACK")
+    if not env:
+        pytest.skip("needs the real NNUE pack (set CAE_NNUE_TEST_PACK)")
+    path = Path(env)
+    if not path.is_file():
+        pytest.skip(f"CAE_NNUE_TEST_PACK does not exist: {path}")
     return path
 
 
@@ -267,16 +302,25 @@ def test_the_corpus_is_large_and_really_spans_what_it_claims_to() -> None:
     assert len(set(keys)) < len(keys)
 
 
-def test_the_dag_arm_returns_the_oracles_value_on_every_corpus_row(dag_pack: Path) -> None:
-    """THE headline: one variable changed, and no row moved.
+def test_the_dag_arm_returns_the_oracles_value_on_every_corpus_row(eval_pack: Path) -> None:
+    """THE headline: one variable changed, and no row moved. Both nets.
 
     Bitwise equality on every row, and the search-shape counters equal as a
     block — the DAG arm must not merely agree on values but walk the identical
     tree, because a substrate that pruned differently could agree by luck on a
     corpus and diverge on the next one.
     """
-    oracle_values, oracle_stats = _run(ORACLE, dag_pack, CORPUS)
-    dag_values, dag_stats = _run(DAG_ARM, dag_pack, CORPUS)
+    oracle_values, oracle_stats = _run(ORACLE, eval_pack, CORPUS)
+    dag_values, dag_stats = _run(DAG_ARM, eval_pack, CORPUS)
+
+    # ⚑ THE RULER IS PROVED ABLE TO DISCRIMINATE BEFORE AGREEMENT IS ASSERTED.
+    # "Every row matches" is trivially true of a corpus that scores 0 everywhere
+    # — which is exactly how a symmetric fixture on a PSQT-only net once made a
+    # whole module's value assertions vacuous. So the values have to be spread
+    # out before their equality means anything.
+    non_mate = [v for v in oracle_values if abs(v) < _nnue_ext.RESOLVER_MATE_BASE // 2]
+    assert len(set(non_mate)) > len(CORPUS) // 2, "corpus values are too degenerate to compare"
+    assert sum(1 for v in oracle_values if v != 0) > len(CORPUS) - 10
 
     assert dag_values == oracle_values
     assert {k: dag_stats[k] for k in SEARCH_SHAPE_KEYS} == {
@@ -288,7 +332,7 @@ def test_the_dag_arm_returns_the_oracles_value_on_every_corpus_row(dag_pack: Pat
 
 
 def test_the_dag_arm_evaluates_strictly_fewer_positions_than_the_oracle(
-    dag_pack: Path,
+    eval_pack: Path,
 ) -> None:
     """The evaluate-once win, read off the counters rather than assumed.
 
@@ -296,8 +340,8 @@ def test_the_dag_arm_evaluates_strictly_fewer_positions_than_the_oracle(
     both arms, so this is a comparison between two consumers' own numbers and
     not between a measurement and a model of one.
     """
-    _oracle_values, oracle_stats = _run(ORACLE, dag_pack, CORPUS)
-    _dag_values, dag_stats = _run(DAG_ARM, dag_pack, CORPUS)
+    _oracle_values, oracle_stats = _run(ORACLE, eval_pack, CORPUS)
+    _dag_values, dag_stats = _run(DAG_ARM, eval_pack, CORPUS)
 
     # The oracle evaluates once per quiescence node, by construction.
     assert oracle_stats["nnue_evals"] == oracle_stats["qnodes"]
@@ -319,8 +363,8 @@ def test_the_dag_arm_evaluates_strictly_fewer_positions_than_the_oracle(
     assert dag_stats["dag_memory_bytes"] > 0
 
 
-def test_the_stores_own_identity_holds_through_the_arms_interning(dag_pack: Path) -> None:
-    handle = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+def test_the_stores_own_identity_holds_through_the_arms_interning(eval_pack: Path) -> None:
+    handle = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     _nnue_ext.arm_handle_eval(handle, _cboards(CORPUS))
     store = _nnue_ext.arm_dag_stats(handle)
     _assert_store_identity(store)
@@ -333,7 +377,7 @@ def test_the_stores_own_identity_holds_through_the_arms_interning(dag_pack: Path
 
 
 def test_a_second_call_over_a_shared_subtree_hits_nodes_the_first_call_created(
-    dag_pack: Path,
+    eval_pack: Path,
 ) -> None:
     """Cross-call reuse: the number FastQ's case rests on, measured here.
 
@@ -353,7 +397,7 @@ def test_a_second_call_over_a_shared_subtree_hits_nodes_the_first_call_created(
     child = parent.copy(stack=True)
     child.push(move)
 
-    handle = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+    handle = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     _nnue_ext.arm_handle_eval(handle, _cboards([parent]))
     after_first = _nnue_ext.arm_stats(handle)
     assert after_first["dag_hits_cross_call"] == 0  # nothing existed before it
@@ -367,7 +411,7 @@ def test_a_second_call_over_a_shared_subtree_hits_nodes_the_first_call_created(
     warm_evals = after_second["nnue_evals"] - after_first["nnue_evals"]
 
     # The control: the same board through a store that never saw the parent.
-    cold_handle = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+    cold_handle = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     _nnue_ext.arm_handle_eval(cold_handle, _cboards([child]))
     cold_evals = _nnue_ext.arm_stats(cold_handle)["nnue_evals"]
 
@@ -384,7 +428,7 @@ def test_a_second_call_over_a_shared_subtree_hits_nodes_the_first_call_created(
 
 
 def test_the_dag_holds_the_static_evaluation_and_never_a_searched_one(
-    dag_pack: Path,
+    eval_pack: Path,
 ) -> None:
     """⚑⚑ THE FORBIDDEN THING, ASSERTED DIRECTLY AT THE NODE.
 
@@ -394,12 +438,12 @@ def test_the_dag_holds_the_static_evaluation_and_never_a_searched_one(
     position (the qsearch value differs from the static one), because on a quiet
     position they coincide and the assertion would be vacuous.
     """
-    weights = _nnue_ext.load(str(dag_pack))
+    weights = _nnue_ext.load(str(eval_pack))
     board = chess.Board(TACTICAL_FENS[0])
     cboard = CBoard.from_board(board)
 
     static_value = _nnue_ext.evaluate(weights, cboard)
-    handle = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+    handle = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     searched_value = _nnue_ext.arm_handle_eval(handle, [cboard])[0]
     assert searched_value != static_value, "fixture is quiet; it cannot discriminate"
 
@@ -426,7 +470,7 @@ def test_the_dag_holds_the_static_evaluation_and_never_a_searched_one(
 
 
 def test_a_window_bounded_subtree_never_poisons_a_later_full_window_search(
-    dag_pack: Path,
+    eval_pack: Path,
 ) -> None:
     """The two-window fixture: one position, two windows, two correct answers.
 
@@ -457,9 +501,9 @@ def test_a_window_bounded_subtree_never_poisons_a_later_full_window_search(
             children.append(child)
     assert len(children) >= 15
 
-    exact, _stats = _run(ORACLE, dag_pack, children)
+    exact, _stats = _run(ORACLE, eval_pack, children)
 
-    shared = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+    shared = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     # The narrow-window pass: each parent's own search visits its own children,
     # under whatever (alpha, beta) the move ordering happened to reach them by.
     _nnue_ext.arm_handle_eval(shared, _cboards(parents))
@@ -489,7 +533,7 @@ def test_a_window_bounded_subtree_never_poisons_a_later_full_window_search(
 
     # …and a store that never saw the parents agrees, so the shared-store answer
     # is not merely self-consistent.
-    fresh = _nnue_ext.arm_open(DAG_ARM, str(dag_pack))
+    fresh = _nnue_ext.arm_open(DAG_ARM, str(eval_pack))
     assert _nnue_ext.arm_handle_eval(fresh, _cboards(children)) == exact
 
 

@@ -164,18 +164,26 @@ That is the point of doing this before the tactical search proper. A new search 
 | reuse accounting | `nnue_evals + dag_hits_within_call + dag_hits_cross_call == qnodes` |
 | persistence | a second call over a shared subtree costs strictly fewer evaluations than a cold store; re-running an identical call costs **zero** |
 
-`tests/test_qsearch_dag_parity.py` owns all of it.
+`tests/test_qsearch_dag_parity.py` owns all of it, and runs the six substrate-parity tests against **both** nets from one body: a parametrised `eval_pack` fixture yields the synthetic pack (always) and the real net (when `CAE_NNUE_TEST_PACK` is set, skipped otherwise, since CI has no 111 MB net).
 
-### The numbers, at `resolver_depth=12 qply=3 check_plies=1` over the 457-row corpus
+⚑ **The real-net arm is not decoration — it kills a mutant the synthetic arm does not.** Under the "cache a fail-high search value in the node payload" mutant, `test_the_dag_holds_the_static_evaluation_and_never_a_searched_one[real]` FAILS while `[synthetic]` passes: on the PSQT-only pack that fixture's quiescence value and static value happen not to separate the poisoned node. A synthetic-only gate would have reported that mutant caught by three tests when it is really caught by four, and the missing one is the test named after the property.
 
-| | |
-| --- | --- |
-| quiescence nodes, both arms | 61,520 (equal, as required) |
-| oracle NNUE evaluations | 61,520 (one per node, by construction) |
-| DAG NNUE evaluations | **53,416** — 8,104 fewer, **13.2%** |
-| probe hits | 6,025 within-call + 2,079 cross-call |
-| cross-call share of hits | 25.7% |
-| `dag_memory_bytes` | **362 MB for 53,416 nodes ≈ 6.7 KB/node** |
+### The numbers, over the 457-row corpus
+
+Both nets, both at `resolver_depth=12 qply=3 check_plies=1` (what the test module runs):
+
+| | synthetic PSQT pack | real net `nn-f68ec79f0fe3` |
+| --- | --- | --- |
+| quiescence nodes, both arms | 61,520 (equal, as required) | 58,588 (equal) |
+| oracle NNUE evaluations | 61,520 (one per node) | 58,588 |
+| DAG NNUE evaluations | **53,416** — **13.2%** fewer | **50,745** — **13.4%** fewer |
+| probe hits | 6,025 within + 2,079 cross | 5,684 within + 2,159 cross |
+| cross-call share of hits | 25.7% | 27.5% |
+| `dag_memory_bytes` | 362 MB / 53,416 nodes ≈ 6.7 KB/node | ≈ same (the state size is the net's, not the pack's) |
+
+⚑ **The saving grows with quiescence depth, so the test module's figure is a floor twice over.** At the C defaults (`32/4/1`) the same corpus and the same real net read oracle 201,039 → DAG 159,433, a **20.7%** saving with 8,288 cross-call hits — deeper search revisits more, which is the direction that matters for the tactical consumer this substrate exists for. The module runs the shallower config to stay cheap in CI, not because it is the interesting one.
+
+⚑ **Both nets agree bitwise on all 457 rows**, and the corpus is checked to be able to tell them apart first: 420 distinct non-mate values and 457/457 non-zero on the real net. Agreement over a corpus that scored 0 everywhere would be worth nothing, which is how a symmetric fixture once made a whole module vacuous.
 
 ⚑ **The saving is 13.2%, not a multiple, and the memory figure is the reason to care.** A `CaeNnueState` is dominated by a 2×1024 `int16` accumulator, so the store costs ~6.7 KB per canonical position — 362 MB after one 457-position corpus. §4.4 of `docs/fastq_design.md` deferred the eviction/reset cadence decision until there were measurements; these are they, and they say the cadence question is real rather than theoretical. On this corpus a `dag_reset()` per position would forfeit only the 25.7% of hits that are cross-call, which is the trade the cadence decision is actually about.
 
