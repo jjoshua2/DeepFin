@@ -960,7 +960,7 @@ def test_set_arm_config_rejects_an_incoherent_configuration(
 
 
 def test_the_registry_lists_every_arm_alongside_the_raw_evaluator() -> None:
-    """FIVE providers, and the tuple is exact rather than a membership check.
+    """SIX providers, and the tuple is exact rather than a membership check.
 
     ⚑ THE COUNT IS THE POINT, WHICH IS WHY THIS ASSERTION IS AN EQUALITY. The
     registry is the single answer to "which providers exist", so a provider
@@ -969,7 +969,7 @@ def test_the_registry_lists_every_arm_alongside_the_raw_evaluator() -> None:
     ``nnue-qsearch-refresh`` landed and the file went red; that is the assertion
     working, not the assertion being wrong.
 
-    What the five are, and why each earns a row:
+    What the six are, and why each earns a row:
 
       nnue                  the raw evaluator, which REFUSES a position in check
       nnue-static           check resolution + a static NNUE leaf
@@ -980,11 +980,23 @@ def test_the_registry_lists_every_arm_alongside_the_raw_evaluator() -> None:
       nnue-qsearch-dag      that same quiescence over a canonical position DAG —
                             one evaluation per structural position, persisted
                             across calls
+      nnue-fastq            FastQ-4+ (docs/fastq_design.md): a DIFFERENT search
+                            on that same DAG — capture/promotion-only moves, SEE
+                            and delta pruning, owned evasion recursion, a node
+                            budget. ~6 evaluations per call against qsearch's
+                            ~72.
 
-    The last two are SUBSTRATES, not searches: they exist so that a change to
-    how evaluations are obtained can be proved not to have changed the search
-    that consumes them. Only the first three are installable in MCTSTree — see
-    ARMS and test_the_dag_arm_is_not_installable_in_the_tree.
+    ⚑ THE LAST TWO ARE NOT THE SAME KIND OF THING, WHICH IS THE DISTINCTION THIS
+    LIST EXISTS TO KEEP STRAIGHT. `nnue-qsearch-refresh` and `nnue-qsearch-dag`
+    are SUBSTRATES: the same search with a different source for the stand-pat
+    number, which is what lets a substrate change be proved not to have altered
+    the search. `nnue-fastq` is a different SEARCH that happens to share the DAG
+    substrate — it is deliberately NOT a fourth CaeQsearchSubstrate, because that
+    enum means "where the number comes from" and nothing else.
+
+    Only the first three are installable in MCTSTree — see ARMS,
+    test_the_dag_arm_is_not_installable_in_the_tree, and
+    test_every_shipped_provider_declares_whether_it_is_reentrant.
     """
     assert _nnue_ext.provider_names() == (
         "nnue",
@@ -992,6 +1004,7 @@ def test_the_registry_lists_every_arm_alongside_the_raw_evaluator() -> None:
         "nnue-qsearch",
         "nnue-qsearch-refresh",
         "nnue-qsearch-dag",
+        "nnue-fastq",
     )
 
 
@@ -1184,13 +1197,16 @@ def test_the_refusal_keys_on_the_flag_and_not_on_the_capsule_being_unfamiliar(
 def test_every_shipped_provider_declares_whether_it_is_reentrant(
     bucket_pack: Path,
 ) -> None:
-    """The three tree-installable providers are reentrant; the DAG arm is not.
+    """The three tree-installable providers are reentrant; the DAG-backed two are not.
 
     ⚑ Read through the capsule ABI — the same field ``MCTSTree`` gates on — so
-    this cannot drift from what the guard sees. The DAG arm publishes no capsule
-    (deliberately), so its declaration is checked the only way it is observable
-    from Python: it must be refused by name, and by the flag's message rather
-    than by the name table's "no value provider named" one.
+    this cannot drift from what the guard sees. Neither `nnue-qsearch-dag` nor
+    `nnue-fastq` publishes a capsule (deliberately), so from Python their
+    declaration is only observable as a refusal. ⚑ THAT REFUSAL IS THE NAME
+    TABLE'S, NOT THE FLAG'S — the ergonomic layer, not the enforcement. The flag
+    is what stops a capsule handed over directly, and
+    tests/test_nnue_incremental.py pins its VALUE by parsing the vtable
+    initializer, which is the reading that cannot be satisfied by omission.
     """
     from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
@@ -1210,8 +1226,9 @@ def test_every_shipped_provider_declares_whether_it_is_reentrant(
     # ergonomic layer. The flag is what stops it when a capsule IS supplied,
     # which the two tests above cover.
     tree = MCTSTree()
-    with pytest.raises(ValueError, match="no value provider named"):
-        tree.set_value_provider("nnue-qsearch-dag", str(bucket_pack))
+    for name in ("nnue-qsearch-dag", "nnue-fastq"):
+        with pytest.raises(ValueError, match="no value provider named"):
+            tree.set_value_provider(name, str(bucket_pack))
 
 
 def test_arm_eval_refuses_a_provider_that_keeps_no_resolver_statistics(

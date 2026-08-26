@@ -23,6 +23,16 @@ QSEARCH_CHECK_PLIES: int
 # constant so a test never restates the default in Python.
 QSEARCH_DAG_NODE_CAP: int
 
+# FastQ-4+ (docs/fastq_design.md) defaults and quiet-certificate bits.
+FASTQ_MAX_QPLY: int
+FASTQ_NODE_CAP: int
+FASTQ_DELTA_MARGIN: int
+FASTQ_RECAPTURE_EXEMPT: int
+CERT_COMPUTED: int
+CERT_IN_CHECK: int
+CERT_PROMOTION: int
+CERT_GOOD_CAP: int
+
 class InCheckError(ValueError):
     """The NNUE evaluation is undefined for a position in check.
 
@@ -98,6 +108,20 @@ def arm_dag_reset(arm_handle: object, /) -> None: ...
 def see(
     board: CBoard, from_square: int, to_square: int, promotion: int = 0, /
 ) -> int: ...
+
+# FastQ's quiet certificate (§3.1) and its knobs (§6). `fastq_certificate` takes
+# NO window argument by construction; `fastq_stats` reports the CONTEXT's own
+# knob snapshot, not the module globals set by `fastq_set_config`.
+def fastq_certificate(board: CBoard, /) -> int: ...
+def fastq_stored_certificate(arm_handle: object, board: CBoard, /) -> int | None: ...
+def fastq_set_config(
+    max_qply: int = ...,
+    node_cap: int = ...,
+    delta_margin: int = ...,
+    see_recapture_exempt: int = ...,
+    /,
+) -> dict[str, int]: ...
+def fastq_stats(arm_handle: object, /) -> dict[str, int]: ...
 
 # Canonical structural-position graph. The object handle owns no Python objects;
 # the C side retains the mmap'd NNUE weights independently of the load() capsule.
