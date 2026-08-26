@@ -67352,3 +67352,19 @@ per the d967326db prereg. Comparator curves (diagnostic only): untempered f=0.50
 MID −42.78 / LAST −0.87 (seeds 63/64); lever-1 τ=2.2 MID −41.0 / LAST −29.6 (seeds
 68/69). Confounds: none live — production training is stopped and the GPU was idle at
 launch.
+
+**2026-08-26 — LEVER 2 COMPARABILITY NOTE (amends the launch entry above).** Lever 2
+raised the I11 watch line at its first readout: `grad-norm median 8.767 over 88 steps
+past the pre-committed watch threshold 4.75 with zclip_max_norm=6.50, clip rate 100.0%,
+hard-clip 0.0%`. ⚑ This is NOT a lever effect and must not be read as one. Lever 1's
+banked summary reads `grad_norm_median 8.923 / grad_clip_rate 1.0 /
+grad_adaptive_clip_rate 1.0 / grad_hard_clip_rate 0.0` — the same regime to ~2%. It is a
+standing property of the whole mixed-corpus lane, shared by the untempered baseline the
+clauses compare against, so the arm-to-arm comparison is unaffected. What it does mean:
+**every Elo number this lane has produced was made under an adaptive clip that fires on
+100% of steps**, i.e. zclip acting as a uniform LR scaler rather than a tail guard
+(`docs/rl_loop_audit.md` I11). Also note the two optimizer groups are nowhere near each
+other — lever 1 banked `grad_norm_aurora 2.185` against `grad_norm_adamw 10.250` — so
+"the gradient norm" is not one number here, and a fix aimed at the reported median would
+be aimed at the AdamW group. Not actioned inside this readout window (one data-affecting
+change per window); it is a lane-wide instrument question, owed its own entry.
