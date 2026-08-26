@@ -34,7 +34,7 @@ import math
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -519,7 +519,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
     policy = gen.PolicyShapeStats()
     budget = gen.RootBudgetStats()
     dag_games = DagGameStats()
-    terminations = {k: 0 for k in gen.TERMINATIONS}
+    terminations = dict.fromkeys(gen.TERMINATIONS, 0)
     plies = 0
     started = time.perf_counter()
     try:
