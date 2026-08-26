@@ -67162,3 +67162,11 @@ speed (roots/s, µs/qnode) AND downstream label quality vs deep SF (the standard
 primary). A HalfKA-only retrain of our net is a conditional fourth arm, only if (a)
 loses on speed to the SF nets while beating them on quality. Rides on the FastQ
 harness; own prereg before running.
+
+**2026-08-26 addendum to the verifier-net bench:** Operator prior (Josh): the SF BIG
+net (nn-f68ec79f0fe3) should win — more stable, and SF itself plays the big net except
+at large material imbalances. Registered as a PREDICTION, not a verdict; the bench
+still decides per the test-all directive. Added arm (d): the SF DUAL policy as
+actually shipped — big net by default, small net when |simple eval| exceeds the
+imbalance threshold — since it is SF's own engineered speed/stability trade and costs
+nothing extra once both nets are packed.
