@@ -67368,3 +67368,35 @@ other — lever 1 banked `grad_norm_aurora 2.185` against `grad_norm_adamw 10.25
 "the gradient norm" is not one number here, and a fix aimed at the reported median would
 be aimed at the AdamW group. Not actioned inside this readout window (one data-affecting
 change per window); it is a lane-wide instrument question, owed its own entry.
+
+**2026-08-26 — ⚑⚑ CORRECTION TO THE S1 KILL ENTRY (0dc50ee22). THE "9.27% ORACLE WALL
+CEILING" IS WITHDRAWN.** Caught by Josh on #477. The entry above multiplied a
+**probe-level** skip frequency (34.07% at `m=0`) by the profile's **27.2% fresh-FC-propagate
+wall share** and reported the product as a wall-time ceiling. Those are two different
+denominators and the product is not a quantity. The dump logged `(psqt, full, alpha, beta,
+in_check)` per stand-pat PROBE and carried **no canonical DAG node identity and no
+created-vs-hit state**. Under the DAG a node upgraded to FULL never propagates again, so
+repeated probes of an already-upgraded node cost ZERO further propagation — probe frequency
+therefore cannot be converted to saved propagations without the unique-node upgrade
+ordering the dump does not contain. ⇒ **RETRACTED: "oracle ceiling 9.27%", "even a perfect
+lazy eval loses to S2", "S1 never", and "§6 resolved: S2 first, S1 never" in its strong
+form.** This is the denominator-mismatch failure this ledger has flagged repeatedly in
+other people's numbers (`same_name_different_population`, the views-denominator entry) —
+committed here by the author of those warnings, in the same session that wrote them.
+**WHAT SURVIVES, UNCHANGED:** the preregistered qsearch-DAG **global-margin** S1 is DEAD by
+its own pre-committed rule, and that rule was itself probe-weighted and fixed before the
+dump existed — predicted bound-served probes **0.488%** vs a **20%** floor, `m` = 2806.1,
+held-out miss 0.0099%. A 40× shortfall is not a threshold quibble. The practical planning
+verdict is also unchanged: **do not spend an implementation PR on the registered qsearch
+S1**; S2 is the measured win.
+**WHAT IS NOW OPEN AGAIN (was wrongly closed):** (a) **FastQ was never separately
+calibrated** — its SEE/delta/certificate/bounded recursion changes BOTH the node population
+and the `(alpha,beta)` distribution, so qsearch's window frequencies are not FastQ's and
+the kill does not reach that population; (b) **no smaller or conditional margin was
+preregistered or swept**, so "every possible lazy policy is useless" was never tested;
+(c) any revisit must measure **unique-node upgrade savings**, not probe frequency.
+The window diagnostics stand as DIAGNOSTICS ONLY, not ceilings: 41.31% of probes fully
+open, 44.12% half-open, 34.07% probe-level skip opportunity at `m=0`; `|full − psqt|` p50
+521 / mean 633 / p99.9 2551 against `sd(full)` ≈ 1950, with `full ~ psqt` slope 0.9175 and
+r 0.9410 — which still rules out a scale mismatch as the reason the registered margin came
+out wide. Canonical wording now lives in `docs/nnue_speed_plan.md` §2 as amended on #477.
