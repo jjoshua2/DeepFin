@@ -684,7 +684,17 @@ static int feat_piece_type_at(const uint64_t pieces[6], int sq) {
     return -1;
 }
 
-/* Static exchange evaluation (pawns) for ``initiator`` capturing on ``square``.
+/* ⚑⚑ THE REPO HAS A SECOND SEE, AND THE TWO ARE DELIBERATELY DIFFERENT.
+ * chess_anti_engine/nnue/_fastq_see.h's cae_see_capture is move-based, works in
+ * internal (centipawn-scale) units, and handles en passant and promotion; this
+ * one is square-based, works in pawn units, and handles neither. Read the ⚑⚑
+ * block at the top of that file before "unifying" them — and note that changing
+ * THIS function silently invalidates the reproducibility of the closed v3_see
+ * feature verdict, since these are the only planes it feeds.
+ * tests/test_fastq_see.py pins one case where the two MUST disagree, so a
+ * unification breaks a test rather than passing quietly.
+ *
+ * Static exchange evaluation (pawns) for ``initiator`` capturing on ``square``.
  * Iterative least-valuable-attacker swap-off with negamax fold-back. Mutates
  * local copies of the piece bitboards / occupancy as pieces are consumed (so
  * sliders revealed once a closer same-line attacker is removed ARE counted),

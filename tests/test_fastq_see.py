@@ -140,6 +140,32 @@ AGREEING_FIXTURES = [
         "d2d5",
         -400,
     ),
+    # ⚑⚑ THE TWO ROWS ABOVE ARE NAMED "x-ray" AND DO NOT TEST X-RAY. MEASURED:
+    # with the reveal deleted (`occ &= ~sq_bit(lva_sq)` removed) both still
+    # return -400, because the swap is already losing by the time the hidden
+    # slider would matter — white wins a pawn and loses a rook either way, so
+    # whether the piece behind ever joins changes nothing. They are correct rows
+    # that happen to be blind to the property their name claims. Kept as valid
+    # data; the two rows below are the ones that actually bind.
+    #
+    # Here the reveal DECIDES the sign: Rd2xd5 wins the pawn, Rd6 recaptures,
+    # and the revealed Rd1 wins the rook back — +100 with x-ray, -400 without.
+    (
+        "x-ray reveal decides the sign",
+        "4k3/8/3r4/3p4/8/8/3R4/3RK3 w - - 0 1",
+        "d2d5",
+        100,
+    ),
+    # ⚑ THREE DEEP, so a reveal must itself reveal another. Rd3xd5, Rd6 takes,
+    # Rd2 (revealed) takes, Rd7 takes, Rd1 (revealed again) takes. An evaluator
+    # that re-scanned occupancy once and then stopped gets this wrong even though
+    # it passes the two-deep row above it.
+    (
+        "three-deep x-ray, each reveal uncovering the next",
+        "4k3/3r4/3r4/3p4/8/3R4/3R4/3RK3 w - - 0 1",
+        "d3d5",
+        100,
+    ),
     # En passant: the victim is not on the destination square.
     ("en passant", "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2", "e5d6", 100),
     # ⚑ EN PASSANT WHERE THE VICTIM WAS BLOCKING THE SWAP, WHICH THE ROW ABOVE
@@ -464,3 +490,75 @@ def test_the_legality_exemption_is_narrow_rather_than_a_blanket_excuse() -> None
     assert len(excused) < len(exempt) // 10, (
         f"{len(excused)}/{len(exempt)} exempt rows disagree"
     )
+
+
+# ===========================================================================
+# The OTHER SEE — a tripwire against unifying them
+# ===========================================================================
+
+#: A capture whose victim stands on the destination square. Both implementations
+#: see it, which is what makes the divergence row below a divergence rather than
+#: a dead encoder.
+_SHARED_FIXTURE = ("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", chess.D5)
+
+#: An en-passant capture. The victim is on e4/f5 — NOT on the destination square
+#: — so a square-keyed evaluator cannot express this capture at all.
+_EP_FIXTURE = ("8/8/8/8/4pP2/8/8/K3k3 b - f3 0 1", "e4f3", chess.F3)
+
+
+def test_the_two_SEEs_in_this_repo_must_not_be_unified() -> None:
+    """⚑⚑ A DIVERGENCE-IS-EXPECTED TEST, SO "UNIFY THEM" BREAKS SOMETHING.
+
+    `feat_see_capture` (encoding/_features_impl.h) and `cae_see_capture`
+    (nnue/_fastq_see.h) are both static exchange evaluators in this repo, and the
+    reasons they are separate live in a comment at the top of each file. A
+    comment is not a tripwire: someone who never opens either file can still
+    delete one and route both callers at the other, and every existing test would
+    pass — the feature planes have their own tests, FastQ's SEE has its own
+    oracle, and neither notices that the OTHER one changed.
+
+    So the difference is asserted. The two are observed through the only surface
+    that shows both: FastQ's `see()` directly, and `feat_see_capture` through the
+    v3_see planes it is the sole feeder of.
+
+    ⚑ ANTI-VACUITY FIRST. The shared fixture proves the plane encoder is live and
+    agrees on an ordinary capture, so the EP row below is a real disagreement and
+    not two silent zeros.
+
+    ⚑ THE PLANES ARE NOT PRODUCTION INPUT. v3_see is a separate 65-plane family
+    from the 63-plane v2_threats `configs/pbt2_small.yaml` selects, so this test
+    reads a research encoder, not the live one. That is deliberate and is the
+    correction to an earlier claim in _fastq_see.h that said otherwise.
+    """
+    from chess_anti_engine.encoding import features
+
+    fen, uci, square = _SHARED_FIXTURE
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci)
+    shared_planes = features.extra_feature_planes_c(board, version="v3_see")
+    # [64] is "their pieces' SEE when WE initiate", in pawn units clipped to ±1.
+    assert shared_planes[64].flatten()[square] == pytest.approx(0.125), (
+        "the v3_see encoder no longer scores an ordinary hanging capture; the "
+        "divergence assertion below would be comparing two dead zeros"
+    )
+    assert _see(board, move) == 100, "FastQ's SEE no longer scores it either"
+
+    fen, uci, square = _EP_FIXTURE
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci)
+    assert move in board.legal_moves
+    assert board.is_en_passant(move)
+
+    assert _see(board, move) == 100, (
+        "FastQ's SEE must score the en-passant capture; it is move-based"
+    )
+    ep_planes = features.extra_feature_planes_c(board, version="v3_see")
+    assert ep_planes[63].flatten()[square] == 0.0
+    assert ep_planes[64].flatten()[square] == 0.0
+    unified = (
+        "feat_see_capture now expresses en passant, so the two evaluators may "
+        "have been unified — read the ⚑⚑ block at the top of _fastq_see.h and "
+        "docs/fastq_search.md before deleting this test"
+    )
+    assert not ep_planes[63].any(), unified
+    assert not ep_planes[64].any(), unified

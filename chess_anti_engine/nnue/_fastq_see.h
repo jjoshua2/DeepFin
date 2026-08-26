@@ -9,8 +9,8 @@
  *
  * ⚑⚑ THIS IS NOT THE REPO'S ONLY SEE, AND THE OTHER ONE MUST NOT BE REUSED HERE.
  * `feat_see_capture` in encoding/_features_impl.h is a working swap evaluator,
- * and reusing it would look like the obvious anti-duplication move. It is the
- * wrong call for four independent reasons, the last of which is disqualifying:
+ * and reusing it would look like the obvious anti-duplication move. Three
+ * reasons, each sufficient on its own:
  *
  *   1. It is compiled into _lc0_ext / _features_ext / _mcts_tree, NOT into
  *      _nnue_ext, which includes only _cboard_impl.h. Reaching it means pulling
@@ -18,20 +18,31 @@
  *   2. Its values are pawn units {1,3,3,5,9,1000}. FastQ's delta pruning
  *      compares a victim's value against an NNUE stand-pat in internal units,
  *      so the scale has to match the evaluator, not a feature plane.
- *   3. It handles neither en passant nor promotion, both of which §5 requires.
- *   4. ⚑ IT FEEDS PRODUCTION MODEL INPUTS. Its output is normalised into the
- *      FEAT_EXTRA_V3_SEE planes (_features_impl.h:902-934), which are part of
- *      the 175-plane v2_threats encoding the live net is trained on. "Fixing"
- *      it to add EP and promotion would silently change the input distribution
- *      mid-run — a training-affecting change, which per CLAUDE.md needs a
- *      ledger entry and a readout, and has no business riding inside a search
- *      PR.
+ *   3. It is square-based, not move-based — it answers "what happens if the
+ *      swap on this square starts" — and it handles neither en passant (whose
+ *      victim does not stand on the capture square, so the plane loop never
+ *      even visits it) nor promotion. §5 requires both.
+ *
+ * ⚑⚑ AN EARLIER REVISION OF THIS BLOCK CLAIMED A FOURTH, "DISQUALIFYING" REASON:
+ * that feat_see_capture feeds the live net's input planes. THAT WAS WRONG, and
+ * it is the "diff the file you measured against production" trap in miniature.
+ * Its output reaches only the FEAT_EXTRA_V3_SEE planes (_features_impl.h:902-934),
+ * and v3_see is a SEPARATE 65-plane family from the 63-plane v2_threats that
+ * `configs/pbt2_small.yaml` selects — the graded-SEE planes are appended after
+ * index 63 and exist only when v3_see is chosen. Production does not read them,
+ * so changing feat_see_capture would NOT move the live input distribution.
+ *
+ * What is true instead, and it is a weaker claim: v3_see is a shipped encoder
+ * with a CLOSED experimental verdict (the v3 feature family was tested and
+ * rejected). Changing feat_see_capture would silently invalidate the
+ * reproducibility of that verdict without touching production. Reasons 1-3 are
+ * what actually decide this; reason 4 is a caution, not a disqualification.
  *
  * ⇒ two SEEs exist ON PURPOSE, at different scales, for different consumers.
- * Do not unify them without a ledger entry that owns the feature-distribution
- * change. tests/test_fastq_see.py pins this file's behaviour against a
- * brute-force oracle; the feature-plane one has its own callers and its own
- * tolerances.
+ * tests/test_fastq_see.py pins this file's behaviour against a brute-force
+ * oracle AND pins one case where the two must disagree, so unifying them breaks
+ * a test rather than passing quietly. The reverse pointer lives above
+ * feat_see_capture itself.
  *
  * ⚑ Pins are deliberately ignored (static SEE, Stockfish-style): an attacker
  * that is absolutely pinned to its own king is still counted. This is a known
