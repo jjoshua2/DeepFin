@@ -533,6 +533,43 @@ static PyObject *py_set_arm_config(PyObject *Py_UNUSED(self), PyObject *args) {
                          "dag_node_cap", cfg.dag_node_cap);
 }
 
+/* FastQ's counter block. Lives beside arm_stats_dict because BOTH eval surfaces
+ * have to choose between them, and a chooser whose two branches are 600 lines
+ * apart is how the one-shot path came to answer the wrong one. */
+static PyObject *fastq_stats_dict(const CaeArmCtx *ctx) {
+    const CaeFastqStats *s = &ctx->fastq_totals;
+    return Py_BuildValue(
+        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
+        "s:K,s:K,s:K,s:K,s:I,s:i,s:i,s:i,s:i}",
+        "calls", ARM_STAT_U64(s->calls),
+        "nodes", ARM_STAT_U64(s->nodes),
+        "evasion_nodes", ARM_STAT_U64(s->evasion_nodes),
+        "nodes_created", ARM_STAT_U64(s->nodes_created),
+        "nodes_created_in_check", ARM_STAT_U64(s->nodes_created_in_check),
+        "nnue_evals", ARM_STAT_U64(s->nnue_evals),
+        "hits_within_call", ARM_STAT_U64(s->hits_within_call),
+        "hits_cross_call", ARM_STAT_U64(s->hits_cross_call),
+        "quiet_certificates", ARM_STAT_U64(s->quiet_certificates),
+        "quiet_certificate_hits", ARM_STAT_U64(s->quiet_certificate_hits),
+        "quiet_returns", ARM_STAT_U64(s->quiet_returns),
+        "see_prunes", ARM_STAT_U64(s->see_prunes),
+        "delta_prunes", ARM_STAT_U64(s->delta_prunes),
+        "recapture_exemptions", ARM_STAT_U64(s->recapture_exemptions),
+        "stand_pat_cutoffs", ARM_STAT_U64(s->stand_pat_cutoffs),
+        "move_cutoffs", ARM_STAT_U64(s->move_cutoffs),
+        "budget_trips", ARM_STAT_U64(s->budget_trips),
+        "path_ceilings", ARM_STAT_U64(s->path_ceilings),
+        "cycle_draws", ARM_STAT_U64(s->cycle_draws),
+        "terminal_mate", ARM_STAT_U64(s->terminal_mate),
+        "terminal_draw", ARM_STAT_U64(s->terminal_draw),
+        "max_ply_seen", ARM_STAT_U32(s->max_ply_seen),
+        /* ⚑ THE CONTEXT'S OWN SNAPSHOT. See the docstring. */
+        "max_qply", ctx->fastq_cfg.max_qply,
+        "node_cap", ctx->fastq_cfg.node_cap,
+        "delta_margin", ctx->fastq_cfg.delta_margin,
+        "see_recapture_exempt", ctx->fastq_cfg.see_recapture_exempt);
+}
+
 static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     const char *name, *path;
     PyObject *seq;
@@ -622,7 +659,20 @@ static PyObject *py_arm_eval(PyObject *Py_UNUSED(self), PyObject *args) {
     }
     PyMem_Free(raw);
 
-    PyObject *stats = arm_stats_dict((const CaeArmCtx *)ctx);
+    /* ⚑⚑ THE THIRD INSTANCE OF ONE DEFECT, AND THE FIRST TWO WERE FIXED IN THIS
+     * PR. arm_stats() refused a FastQ handle, fastq_stats() refused a non-FastQ
+     * one — and this path, which builds its own context and never sees a handle,
+     * went on handing back CaeArmStats for an arm that does not write them: a
+     * fully-populated dict of zeros, nnue_evals included. Fixing a defect class
+     * in the two places you happen to be looking at is how the third survives.
+     *
+     * Dispatched rather than refused: the evaluation itself is correct here and
+     * only the counter block was wrong, so returning the right one keeps the
+     * one-shot surface usable instead of amputating it. The keys both dicts
+     * share (calls, nodes, nnue_evals) carry the same meaning in each. */
+    PyObject *stats = (vp == &CAE_ARM_FASTQ_PROVIDER)
+                          ? fastq_stats_dict((const CaeArmCtx *)ctx)
+                          : arm_stats_dict((const CaeArmCtx *)ctx);
     vp->destroy(ctx);
     if (!stats) { Py_DECREF(values); return NULL; }
     return Py_BuildValue("(NN)", values, stats);
@@ -1028,38 +1078,7 @@ static PyObject *py_fastq_stats(PyObject *Py_UNUSED(self), PyObject *args) {
                         "an nnue-fastq handle accumulates; call arm_stats(handle)");
         return NULL;
     }
-    const CaeArmCtx *ctx = (const CaeArmCtx *)h->ctx;
-    const CaeFastqStats *s = &ctx->fastq_totals;
-    return Py_BuildValue(
-        "{s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,s:K,"
-        "s:K,s:K,s:K,s:K,s:I,s:i,s:i,s:i,s:i}",
-        "calls", ARM_STAT_U64(s->calls),
-        "nodes", ARM_STAT_U64(s->nodes),
-        "evasion_nodes", ARM_STAT_U64(s->evasion_nodes),
-        "nodes_created", ARM_STAT_U64(s->nodes_created),
-        "nodes_created_in_check", ARM_STAT_U64(s->nodes_created_in_check),
-        "nnue_evals", ARM_STAT_U64(s->nnue_evals),
-        "hits_within_call", ARM_STAT_U64(s->hits_within_call),
-        "hits_cross_call", ARM_STAT_U64(s->hits_cross_call),
-        "quiet_certificates", ARM_STAT_U64(s->quiet_certificates),
-        "quiet_certificate_hits", ARM_STAT_U64(s->quiet_certificate_hits),
-        "quiet_returns", ARM_STAT_U64(s->quiet_returns),
-        "see_prunes", ARM_STAT_U64(s->see_prunes),
-        "delta_prunes", ARM_STAT_U64(s->delta_prunes),
-        "recapture_exemptions", ARM_STAT_U64(s->recapture_exemptions),
-        "stand_pat_cutoffs", ARM_STAT_U64(s->stand_pat_cutoffs),
-        "move_cutoffs", ARM_STAT_U64(s->move_cutoffs),
-        "budget_trips", ARM_STAT_U64(s->budget_trips),
-        "path_ceilings", ARM_STAT_U64(s->path_ceilings),
-        "cycle_draws", ARM_STAT_U64(s->cycle_draws),
-        "terminal_mate", ARM_STAT_U64(s->terminal_mate),
-        "terminal_draw", ARM_STAT_U64(s->terminal_draw),
-        "max_ply_seen", ARM_STAT_U32(s->max_ply_seen),
-        /* ⚑ THE CONTEXT'S OWN SNAPSHOT. See the docstring. */
-        "max_qply", ctx->fastq_cfg.max_qply,
-        "node_cap", ctx->fastq_cfg.node_cap,
-        "delta_margin", ctx->fastq_cfg.delta_margin,
-        "see_recapture_exempt", ctx->fastq_cfg.see_recapture_exempt);
+    return fastq_stats_dict((const CaeArmCtx *)h->ctx);
 }
 
 PyDoc_STRVAR(see_doc,

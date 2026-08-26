@@ -50,9 +50,9 @@ claim and its evidence would otherwise live in different places.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `nnue-qsearch` | 431.84 | 35 | 958 | 6018 | 14403 | 0.212 | 0.233 | 0.555 |
 | `nnue-qsearch-dag` | 342.67 | 32 | 798 | 4388 | 8250 | 0.231 | 0.221 | 0.548 |
-| `nnue-fastq` | **6.41** | 4 | 15 | 31 | 32 | 0.520 | 0.424 | 0.056 |
+| `nnue-fastq` | **6.37** | 4 | 14 | 31 | 32 | 0.520 | 0.424 | 0.056 |
 
-§1's target is 5–20 evaluations per leaf. FastQ's mean is 6.41 and 94.4% of calls
+§1's target is 5–20 evaluations per leaf. FastQ's mean is 6.37 and 94.4% of calls
 sit at 20 or below; the distribution's whole tail is the 32-node cap.
 
 ### Wall per call
@@ -79,12 +79,12 @@ absolutes.
 This corpus is deliberately tactical-heavy — it is every capture child of a set of
 tactical FENs, built to make the DAG share subtrees — so qsearch costs far more
 here than on a general leaf population. The same-rows reduction is **67×**
-(431.84 → 6.41); quoting FastQ's 6.41 against §1's 72 would be comparing two
+(431.84 → 6.37); quoting FastQ's 6.37 against §1's 72 would be comparing two
 different populations, which is a mistake this repo has made before.
 
 The middle row separates the two independent changes: the DAG substrate alone
 buys 431.84 → 342.67 (1.26×), and the move policy plus pruning buys the remaining
-342.67 → 6.41 (53×). Attributing all 67× to either one would be wrong.
+342.67 → 6.37 (53×). Attributing all 67× to either one would be wrong.
 
 ### Value agreement vs `nnue-qsearch`
 
@@ -213,8 +213,63 @@ nodes with two or more tactical moves (67.0%) contain an equal-SEE tie, and
 MVV-LVA reorders a tie group at 120 of them (34.5%)** — so this was a silent
 dependence on an unrelated implementation detail across a third of all nodes,
 not a corner case. Adopting the tiebreak also measurably lowered the cost
-(6.44 → 6.41 evaluations per call) at unchanged sign agreement, so it is both
+(6.44 → 6.41 evaluations per call, 6.37 after the recapture-square fix below)
+at unchanged sign agreement, so it is both
 what the spec says and the better of the two.
+
+## Four more found in review — rule draws, the recapture square, one-shot stats, an inverting knob
+
+**An in-check node did not consult the draw rules.** `cae_resolve_node` tests
+mate, then `cae_resolver_is_drawn`, then recurses; FastQ owns its evasion
+recursion (§3.2) and had only the mate half. A position already over by 50-move,
+repetition or insufficient material had its evasions searched and returned a live
+score — measured at 2103 where the reference arm says 0.
+
+⚑ **THE ORDER IS MATE-THEN-DRAW AND IT IS NOT INTERCHANGEABLE.**
+`cae_resolver_is_drawn` is `cboard_search_terminal`, which answers 1 for
+CHECKMATE as well — it reports "terminal", not "drawn". Testing it first scores
+every mate as 0.
+
+⚑ **THE FACT COMES FROM THE BOARD, NEVER FROM THE NODE.** Halfmove clock and
+repetition history are exactly what the canonical DAG position EXCLUDES (§4.2),
+so drawn-ness must not be cached in the payload: two search paths reaching the
+same structural node can disagree about whether it is drawn, and both are right.
+
+⚑ **THREE OF THE FOUR DRAW FIXTURES CANNOT FAIL, AND THEY SAY SO.** Insufficient
+material is closed under moving — a position with no pawns cannot gain material —
+so every evasion of an insufficient-material node is also drawn and the searched
+answer coincides with 0. Only a 50-move node with a clock-RESETTING evasion
+(a capture or pawn move) discriminates, because that child carries a real
+evaluation. `test_the_in_check_draw_fixture_can_actually_fail` asserts the
+property that makes it discriminating.
+
+**The recapture exemption was granted by non-captures.** §3.4 exempts a
+SEE-negative capture only on "the square just captured on", and every child's
+destination was being recorded — so a non-capturing evasion, or a quiet
+promotion, handed the next node an exemption for a square nothing was captured
+on. Both routes have a fixture (swept: 0 exemptions with the capture test, 1 and
+3 without). Cost: 6.41 → 6.37 evaluations per call, values unchanged.
+
+⚑ The control (`test_a_real_recapture_is_still_exempt`) needed its own sweep: the
+original recapture fixture fires 11 exemptions on the production net and **zero**
+on the synthetic one, because a PSQT-only pack moves stand-pat, which moves
+alpha, which delta-prunes the capture before the exemption is consulted. A
+control that is vacuous under the mandatory pack is not a control.
+
+**`arm_eval("nnue-fastq", ...)` returned the resolver's zeros** — the third
+instance of the family fixed twice already in this PR (`arm_stats`,
+`fastq_stats`). It builds its own context and never sees a handle, so neither
+refusal covered it. Dispatched rather than refused: the evaluation itself was
+correct and only the counter block was wrong.
+
+**`delta_margin` inverted at the top of its range.** Delta pruning skips a
+capture when `stand_pat + victim + margin <= alpha`; in int32 a near-INT_MAX
+margin wraps that sum negative, so "prune less" silently became "prune
+everything" — measured, INT32_MAX pruned 33 moves where the correct answer is 0.
+The comparison is now int64 rather than the knob being capped, because a cap
+turns an out-of-range request into a different in-range one, which is the same
+class of silent substitution. This doubles as §6's extreme-value mutation for
+`delta_margin`.
 
 ## Two defects this PR shipped and then fixed
 
