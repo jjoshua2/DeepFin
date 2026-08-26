@@ -868,6 +868,7 @@ class NnueArmValueSource:
         qsearch_max_ply: int | None = None,
         qsearch_check_plies: int | None = None,
         leaf_bank: Path | None = None,
+        leaf_bank_mode: str = "x",
         plan: ArmConfigPlan | None = None,
         ext: Any | None = None,
         pack_file_sha256: str | None = None,
@@ -979,11 +980,19 @@ class NnueArmValueSource:
             else str(pack_file_sha256)
         )
         self.kernel = "avx2" if resolved_ext.simd_active() else "scalar"
-        # ⚑ "x", NOT "a". A rerun that appends silently produces one file whose
-        # rows come from two different runs, and nothing downstream can split
-        # them again -- the rows do carry a run_id now, but a reader who does
-        # not know to group by it reads the union as one population.
-        self._bank = None if leaf_bank is None else leaf_bank.open("x")
+        # ⚑ "x" IS THE DEFAULT, and "a" is a decision a caller has to state.
+        # A rerun that appends silently produces one file whose rows come from
+        # two different runs, and nothing downstream can split them again. The
+        # one caller that legitimately appends is this generator itself, whose
+        # shard writer already resumes into a populated out_dir by SKIPPING the
+        # indices it finds (see `flush`) -- its bank resumes alongside them, and
+        # saying so at that call site is the point of the parameter.
+        if leaf_bank_mode not in ("x", "a"):
+            raise ValueError(
+                "leaf_bank_mode must be 'x' (refuse an existing file) or 'a' "
+                f"(resume into it), got {leaf_bank_mode!r}",
+            )
+        self._bank = None if leaf_bank is None else leaf_bank.open(leaf_bank_mode)
         self.leaf_bank_path = None if leaf_bank is None else leaf_bank
         self.bank_rows = 0
         #: Extra identity fields stamped on EVERY banked row. Empty for the
@@ -1765,6 +1774,13 @@ def build_nnue_source(
         cp_slope=float(cfg.nnue_cp_slope),
         cp_draw_width=float(cfg.nnue_cp_draw_width),
         leaf_bank=leaf_bank if cfg.bank_leaf_observations else None,
+        # ⚑ APPEND, DELIBERATELY, and only here. A second run into a populated
+        # `out_dir` is a supported workflow for this generator -- `flush` skips
+        # the shard indices already present rather than refusing -- so its bank
+        # has to resume with them. ⚑ That does mean two runs' rows share one
+        # file with colliding (game, ply) cluster keys; that is pre-existing and
+        # is NOT fixed here, it is recorded. Every other caller gets "x".
+        leaf_bank_mode="a",
     )
 
 
