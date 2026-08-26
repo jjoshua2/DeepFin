@@ -145,6 +145,45 @@ A true transposition raises `hits` and `node_reuses` and leaves `state_makes` an
 
 The Python test also pins the complete stats key set and `memory_bytes == dag_memory_bytes + nnue_payload_bytes`, so a `Py_BuildValue` format drift cannot silently shift or omit trailing metrics.
 
+## First search consumer: `nnue-qsearch-dag`
+
+The DAG's first search-side consumer is a **retrofit**, not a new search. `nnue-qsearch-dag` runs the existing quiescence — the same move policy, ordering, ply/depth budgets and fail-soft arithmetic, out of the *same* `cae_qsearch_node()` function — and changes only where a node's stand-pat number comes from. `nnue-qsearch` is left untouched and becomes the **oracle**.
+
+That is the point of doing this before the tactical search proper. A new search has nothing to be checked against; a retrofit has an exact one, so the DAG substrate can be proved correct on its own before anything relies on it:
+
+| property | how it is measured |
+| --- | --- |
+| bit-identity | every row of a ~460-position corpus (openings, middlegames, tactics, in-check, endgames) returns the oracle's exact value, and the twelve search-shape counters match as a block |
+| evaluate-once | `nnue_evals` is strictly below the oracle's, and equals `dag_nodes_interned` |
+| reuse accounting | `nnue_evals + dag_hits_within_call + dag_hits_cross_call == qnodes` |
+| persistence | a second call over a shared subtree costs strictly fewer evaluations than a cold store; re-running an identical call costs **zero** |
+
+`tests/test_qsearch_dag_parity.py` owns all of it.
+
+### The counters, and the watermark that splits the hits
+
+`arm_stats()` carries `nnue_evals` for **every** arm, counted inside the code that calls the evaluator. It is not a restatement of `qnodes`: for the incremental and refresh substrates the two are equal by construction (each quiescence node evaluates its own stand-pat), and for the DAG substrate they diverge by exactly the reuse achieved. That is what makes "evaluate once per canonical position" an observation rather than a description of an intention.
+
+The DAG-only counters split a probe hit into **within-call** and **cross-call** using a node-id watermark: ids are dense, monotonic and never recycled, so the `node_count` captured at the start of each top-level call partitions every later hit exactly — below the mark is a node an earlier call created. Cross-call hit rate is the number the eviction/reset cadence decision waits on, so it has to be a measurement and not an estimate. `dag_enabled` distinguishes "this arm has no store" from "this arm has one that did nothing"; a bare `0` cannot.
+
+### What the search may never write back
+
+The DAG stores a `CaeNnueState` and the **static** NNUE value — window-independent, history-free facts. No alpha–beta result is ever written into a node. A backed-up value depends on the `(alpha, beta)` it was searched under and, with cross-call persistence, on a path this graph deliberately does not model; caching one would make a position answer differently depending on which window reached it first.
+
+This is asserted at the node rather than argued: `arm_dag_value()` exposes the stored number, and the test requires it to equal `evaluate()` — first *proving* on that fixture that the quiescence value and the static value differ, so the assertion cannot pass vacuously. A separate two-window fixture searches the same positions under a narrow window (inside a parent's quiescence, where they fail high or low) and then under the full window at top level, through one persistent store, and requires both answers to be the window-correct ones.
+
+Two path-sensitive verdicts are consequently never interned at all: in-check positions (handed to the resolver, and NNUE is undefined there) and drawn positions (decided from the halfmove clock and repetition history, which are not node identity).
+
+### The node budget
+
+`set_arm_config(..., dag_node_cap)` caps the expanding quiescence nodes one top-level DAG evaluation may spend. It **ships off** (`0`), and off is what every parity assertion runs under — a binding cap makes the arm return a value that is deliberately not the oracle's, so it cannot be a default. On a trip the node stands pat, which is window-independent and matches what the ply-budget cutoff already returns, and `dag_budget_trips` counts it.
+
+The cap is consulted by this arm only. `CaeArmCtx.dag_node_cap` is set from the configuration for a DAG-backed context and to a hard `0` for every other, in one place, and `arm_stats()` reports *that field* — so a caller who sets the knob and reads `0` back off `nnue-qsearch` is being told the truth rather than shown the global it just wrote. Check resolution is not budgeted: forced evasions are mandatory shared correctness work, and charging them here would make the knob mean "how much correctness may this arm skip".
+
+### Threading, again
+
+`nnue-qsearch-dag` is deliberately **not** published as a tree capsule and `MCTSTree` does not know the name. The store's probe → evaluate → publish → link path is not atomic and a concurrent publish can `free()` the accumulator array another thread is reading — the same failure measured above. `_nnue_ext` therefore does not release the GIL around a batch evaluated through this arm (`cae_provider_requires_gil()`), which enforces the constraint the way `dag_intern_child()` does rather than documenting it and hoping. Installing it in the tree must wait for real synchronization, not for a name to be added to a table.
+
 ## Intended next layers
 
 The next PR can implement the tactical expansion/termination policy on this graph: checks, captures/promotions, SEE, selective deepening, and backup. That search should keep path-specific repetition/fifty-move state outside the structural node and terminate repetition back-edges before recursive expansion.
