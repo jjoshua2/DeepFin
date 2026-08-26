@@ -102,7 +102,38 @@ typedef struct CaeValueProvider {
      * observe the state of the code that will really run rather than the state
      * of its own copy. NULL when the provider has no kernel choice to report. */
     const char *(*kernel_name)(void);
+
+    /* ⚑⚑ NONZERO DECLARES THAT eval() IS *NOT* REENTRANT — the one carve-out
+     * from the contract on eval() above, and the reason it lives in the VTABLE
+     * rather than in any consumer's private list.
+     *
+     * A provider sets this when its eval mutates state shared across calls that
+     * a concurrent call would corrupt: the position-DAG arm's probe -> evaluate
+     * -> publish -> link path is not atomic, and its payload grow() frees an
+     * accumulator array another thread may be reading. Such a provider must be
+     * driven with the GIL held (or otherwise serialized).
+     *
+     * ⚑ WHY HERE AND NOT IN A CONSUMER-SIDE PREDICATE. The first version of
+     * this guard was a function in the publishing module that listed the
+     * affected vtables by pointer, and only that module's own batch loops
+     * consulted it. MCTSTree never did — so the tree's exclusion rested on the
+     * provider merely not being REACHABLE (absent from the name table, no
+     * capsule exported), not on the stated rule. Exporting a capsule
+     * symmetrically with the other arms, which the name table's own comment
+     * invites, would have handed tree threads the non-atomic path with the GIL
+     * released while the guard named in the docs never ran. That is a value
+     * accepted and then silently ignored — this codebase's signature defect,
+     * inside the fix for it. In the vtable, every consumer sees it, and
+     * MCTSTree refuses such a provider AT INSTALL regardless of how it was
+     * named or reached. */
+    int requires_gil;
 } CaeValueProvider;
+
+/* Does driving this provider require holding the GIL / serializing calls?
+ * Read off the vtable the consumer actually holds, never off a name. */
+static inline int cae_value_requires_gil(const CaeValueProvider *vp) {
+    return vp && vp->requires_gil;
+}
 
 /* Dispatch helper — the one call site a composing provider uses on its inner
  * evaluator, and the one the tree uses on its own. */
@@ -127,7 +158,13 @@ static inline void cae_value_destroy(const CaeValueProvider *vp, void *ctx) {
  * ================================================================ */
 
 #define CAE_VALUE_PROVIDER_CAPSULE_NAME "cae.value_provider.v1"
-#define CAE_VALUE_PROVIDER_ABI 1u
+/* ⚑ BUMPED TO 2 WHEN CaeValueProvider GAINED requires_gil. struct_size below
+ * covers only CaeValueProviderExport's own layout, so a change to the VTABLE
+ * struct is invisible to it: a stale consumer would keep reading the fields it
+ * knows, never see the new one, and silently skip the guard that field exists
+ * to arm. The version is what makes that combination refuse to load instead.
+ * (The capsule NAME is an identifier, not the version, and stays as it is.) */
+#define CAE_VALUE_PROVIDER_ABI 2u
 
 /* PyObject, forward-declared: this header stays usable without Python.h, and
  * `struct _object *` is exactly what PyObject * is. */

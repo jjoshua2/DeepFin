@@ -64,8 +64,21 @@ _DAG_API_HEADER = (
 _POSITION_DAG_HEADER = (
     Path(__file__).resolve().parents[1] / "chess_anti_engine" / "mcts" / "_position_dag.h"
 )
+_DAG_STORE_HEADER = (
+    Path(__file__).resolve().parents[1] / "chess_anti_engine" / "nnue" / "_nnue_dag_store.h"
+)
 CAE_DAG_MIN_EDGE_CAP = 32
 CAE_DAG_MAX_INIT_NODES = (2**31 - 1) // 4
+
+
+def _strip_c_comments(source: str) -> str:
+    """Remove /* ... */ and // ... so a source-order gate orders CODE.
+
+    These headers document themselves heavily and name the functions they
+    discuss, so searching raw text finds the prose first. This file's C has no
+    string literals containing comment openers, which is what lets a regex do.
+    """
+    return re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.S)
 
 
 #: PSQT weight magnitude. ⚑ Load-bearing, not arbitrary: at the original ±32 the
@@ -509,11 +522,26 @@ def test_child_edge_is_reserved_before_the_node_is_published() -> None:
     Publishing first and reserving after leaves a node in the canonical table
     that no edge reaches, which a retry then reports as reuse and which breaks
     ``state_inits + state_makes == node_count`` permanently.
+
+    ⚑ THE GATE FOLLOWED THE CODE, AND COVERS MORE THAN IT USED TO. The publish
+    path moved out of ``py_dag_intern_child`` into ``cae_nnue_dag_intern_child``
+    in ``_nnue_dag_store.h`` when the store gained a second consumer (the
+    ``nnue-qsearch-dag`` arm drives it from C). Leaving the gate pointed at the
+    Python surface would have made it vacuous — the string it looks for is no
+    longer there — and, worse, would have left the ordering unpinned for BOTH
+    callers. Pointed at the store, one gate now covers the Python surface and
+    the search.
     """
-    source = _DAG_API_HEADER.read_text(encoding="utf-8")
-    body = source.split("static PyObject *py_dag_intern_child(", 1)
-    assert len(body) == 2, "py_dag_intern_child not found; the gate would be vacuous"
-    body = body[1].split("\nstatic ", 1)[0]
+    source = _DAG_STORE_HEADER.read_text(encoding="utf-8")
+    body = source.split("static int cae_nnue_dag_intern_child(", 1)
+    assert len(body) == 2, "cae_nnue_dag_intern_child not found; the gate would be vacuous"
+    # ⚑ COMMENTS STRIPPED FIRST, because a source-order gate that searches raw
+    # text orders PROSE. This function's own comment explains why the parent's
+    # state is read before any publish and names cae_nnue_dag_publish_new() to
+    # do it — so the un-stripped body put "publish" ~2000 characters ahead of
+    # the reserve call and the gate failed against code that is correct.
+    body = _strip_c_comments(body[1].split("\nstatic ", 1)[0])
+    assert "⚑" not in body, "comment stripping failed; the gate would order prose"
 
     reserve = body.find("cae_position_dag_reserve_edge(")
     publish = body.find("cae_nnue_dag_publish_new(")
@@ -522,6 +550,15 @@ def test_child_edge_is_reserved_before_the_node_is_published() -> None:
     assert publish != -1
     assert link != -1
     assert reserve < publish < link
+
+    # And the Python surface must NOT have grown a second copy of the publish
+    # path: one publisher is what makes the accounting and this ordering hold
+    # for every caller rather than for whichever one was edited last. Comments
+    # stripped for the same reason as above — that file DISCUSSES the publisher
+    # in its bounds-check comment, and a raw substring test cannot tell talking
+    # about it from calling it.
+    api = _strip_c_comments(_DAG_API_HEADER.read_text(encoding="utf-8"))
+    assert "cae_nnue_dag_publish_new(" not in api
 
     # The reserve helper must be the growing one, not a bare capacity read.
     graph = _POSITION_DAG_HEADER.read_text(encoding="utf-8")

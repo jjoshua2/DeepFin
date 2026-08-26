@@ -19,6 +19,9 @@ RESOLVER_MAX_PLIES: int
 RESOLVER_MAX_DEPTH: int
 QSEARCH_MAX_PLY: int
 QSEARCH_CHECK_PLIES: int
+# The DAG arm's node-budget tripwire ships OFF (0); pinned here against the C
+# constant so a test never restates the default in Python.
+QSEARCH_DAG_NODE_CAP: int
 
 class InCheckError(ValueError):
     """The NNUE evaluation is undefined for a position in check.
@@ -36,6 +39,17 @@ value_provider_capsule: object
 # The two race arms, published under the same capsule name and ABI. Both resolve
 # check nodes recursively before evaluating; they differ only in what happens at
 # a resolved non-check node (static NNUE vs tactical quiescence).
+#
+# ⚑ "nnue-qsearch-refresh" and "nnue-qsearch-dag" are not published as capsules:
+# the refresh arm is a diagnostic oracle, and the DAG arm's store has a
+# single-threaded construction path while the tree drives its provider from
+# several search threads.
+#
+# ⚑ NOT PUBLISHING IS CONVENIENCE, NOT THE GUARD. MCTSTree accepts a capsule
+# handed to it directly, so "we did not export one" would stop working the
+# moment anyone exported it symmetrically with the two above. The DAG arm's
+# vtable sets `requires_gil`, and MCTSTree refuses ANY provider that declares it
+# — by name or by capsule. That is the enforcement; this is the ergonomics.
 static_arm_capsule: object
 qsearch_arm_capsule: object
 
@@ -56,7 +70,11 @@ def benchmark(
 def provider_eval(name: str, weights_path: str, board: CBoard, /) -> int: ...
 def provider_names() -> tuple[str, ...]: ...
 def set_arm_config(
-    resolver_max_depth: int, qsearch_max_ply: int, qsearch_check_plies: int, /
+    resolver_max_depth: int,
+    qsearch_max_ply: int,
+    qsearch_check_plies: int,
+    dag_node_cap: int = 0,
+    /,
 ) -> dict[str, int]: ...
 def arm_eval(
     name: str, weights_path: str, boards: list[CBoard], /
@@ -64,6 +82,14 @@ def arm_eval(
 def arm_open(name: str, weights_path: str, /) -> object: ...
 def arm_handle_eval(handle: object, boards: list[CBoard], /) -> list[int]: ...
 def arm_stats(handle: object, /) -> dict[str, int]: ...
+
+# The position DAG owned by a DAG-backed arm context ("nnue-qsearch-dag"). Every
+# one of these raises ValueError on an arm that owns no store, rather than
+# reporting a zero that could be mistaken for an idle one.
+def arm_dag_stats(arm_handle: object, /) -> dict[str, int]: ...
+def arm_dag_lookup(arm_handle: object, board: CBoard, /) -> int | None: ...
+def arm_dag_value(arm_handle: object, node_id: int, /) -> int | None: ...
+def arm_dag_reset(arm_handle: object, /) -> None: ...
 
 # Canonical structural-position graph. The object handle owns no Python objects;
 # the C side retains the mmap'd NNUE weights independently of the load() capsule.

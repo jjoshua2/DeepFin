@@ -1,5 +1,5 @@
 /*
- * _arm_providers.h — the two race arms, as providers on the eval seam.
+ * _arm_providers.h — the race arms, as providers on the eval seam.
  *
  * PR 1 shipped one provider: "nnue", the raw evaluator, which REFUSES a position
  * in check. That refusal is a contract, not a limitation, and it stays exactly
@@ -11,10 +11,31 @@
  *   "nnue-static"   recursive check resolution + a static NNUE leaf
  *   "nnue-qsearch"  the SAME check resolution + tactical quiescence beyond it
  *
- * It also keeps "nnue-qsearch-refresh" as a diagnostic oracle: same qsearch,
- * same values, but the old full NNUE refresh at every qnode. Production uses the
- * incremental provider; the refresh provider exists so a speed optimisation can
- * never silently change the search it is supposed to accelerate.
+ * plus two providers that run the SAME quiescence over a different EVALUATION
+ * SUBSTRATE, so that a change to how evaluations are obtained can never quietly
+ * change the search that consumes them:
+ *
+ *   "nnue-qsearch-refresh"  the old full NNUE refresh at every qnode
+ *   "nnue-qsearch-dag"      one evaluation per canonical structural position,
+ *                           held in a CaePositionDag that persists across calls
+ *
+ * ⚑⚑ THE THREE QUIESCENCE ARMS SHARE ONE SEARCH FUNCTION, AND THAT IS THE WHOLE
+ * DESIGN. cae_qsearch_node() below is entered by all three; the substrate enum
+ * selects only where a node's stand-pat NUMBER comes from. Move policy,
+ * ordering, the ply and depth budgets, the fail-soft window arithmetic and the
+ * cutoff rule are one copy of one piece of code. A forked "DAG version of the
+ * qsearch" would make bit-identity a promise maintained by review; sharing the
+ * body makes it structural, which is why "nnue-qsearch" can serve as the ORACLE
+ * for "nnue-qsearch-dag" rather than merely as a similar arm.
+ *
+ * ⚑ WHAT THE DAG MAY HOLD, AND WHAT IT MAY NEVER HOLD. Nodes carry a
+ * CaeNnueState and a static NNUE value — window-independent, history-free facts
+ * about a structural position, in the exact sense of _nnue_state.h's ⚑ block.
+ * NO alpha-beta result is ever written back: a backed-up value depends on the
+ * (alpha, beta) it was searched under and, with cross-call persistence, on a
+ * path this graph deliberately does not model. Caching one would make the same
+ * position answer differently depending on which window happened to reach it
+ * first. Search values live in the recursion, on the stack, and nowhere else.
  *
  * ⚑⚑ ARM FAIRNESS IS STRUCTURAL, NOT A PROMISE. Check resolution is mandatory
  * correctness work: without it either arm would ask the evaluator for a number
@@ -44,7 +65,9 @@
 #include <stdlib.h>
 
 #include "../mcts/_check_resolver.h"
+#include "_nnue_dag_store.h"
 #include "_nnue_provider.h"
+#include "_nnue_state.h"
 
 /* Quiescence configuration.
  *
@@ -75,6 +98,23 @@
  * "the budget was enough" stays an observation, not a belief. */
 #define CAE_QSEARCH_DEFAULT_MAX_PLY     4
 #define CAE_QSEARCH_DEFAULT_CHECK_PLIES 1
+
+/* ⚑⚑ THE NODE BUDGET IS A TRIPWIRE AND IT SHIPS OFF. 0 disables it, and 0 is
+ * the default, because "nnue-qsearch-dag returns exactly what nnue-qsearch
+ * returns" is the property the DAG substrate is judged on and a cap that binds
+ * would break it. Turning it on is a measured decision, not a default: it makes
+ * the arm return early on positions the oracle searches out, so every trip is a
+ * value that is NOT the oracle's. Trips are counted (dag_budget_trips) so a
+ * nonzero rate is an observation rather than a belief.
+ *
+ * ⚑ IT COUNTS EXPANDING QSEARCH NODES, and only in the DAG arm. A node that
+ * stands pat — beta cutoff, ply budget, depth cap — spends no budget because it
+ * spends no expansion. Check RESOLUTION is not budgeted at all: forced evasions
+ * are mandatory correctness work shared with the static arm (see the ⚑ ARM
+ * FAIRNESS block in ../mcts/_check_resolver.h), and charging them here would
+ * make the knob mean "how much correctness may this arm skip". The recursion
+ * cap that bounds resolution is resolver_max_depth, which is a separate knob. */
+#define CAE_QSEARCH_DEFAULT_DAG_NODE_CAP 0
 
 /* Wider than any score the resolver can produce (mate base is 100000), so an
  * initial window of +-this prunes nothing. */
@@ -107,11 +147,13 @@ static pthread_mutex_t g_arm_config_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_arm_resolver_max_depth   = CAE_RESOLVER_DEFAULT_MAX_DEPTH;
 static int g_arm_qsearch_max_ply      = CAE_QSEARCH_DEFAULT_MAX_PLY;
 static int g_arm_qsearch_check_plies  = CAE_QSEARCH_DEFAULT_CHECK_PLIES;
+static int g_arm_dag_node_cap         = CAE_QSEARCH_DEFAULT_DAG_NODE_CAP;
 
 typedef struct CaeArmConfig {
     int resolver_max_depth;
     int qsearch_max_ply;
     int qsearch_check_plies;
+    int dag_node_cap;
 } CaeArmConfig;
 
 static void cae_arm_get_config(CaeArmConfig *out) {
@@ -119,13 +161,15 @@ static void cae_arm_get_config(CaeArmConfig *out) {
     out->resolver_max_depth = g_arm_resolver_max_depth;
     out->qsearch_max_ply = g_arm_qsearch_max_ply;
     out->qsearch_check_plies = g_arm_qsearch_check_plies;
+    out->dag_node_cap = g_arm_dag_node_cap;
     pthread_mutex_unlock(&g_arm_config_lock);
 }
 
 /* Returns 0, or -1 with a reason written into err. Validates BEFORE taking the
- * lock so a rejected call cannot leave the triple half-written. */
+ * lock so a rejected call cannot leave the quadruple half-written. */
 static int cae_arm_set_config(int resolver_max_depth, int qsearch_max_ply,
-                              int qsearch_check_plies, char *err, size_t errlen) {
+                              int qsearch_check_plies, int dag_node_cap,
+                              char *err, size_t errlen) {
     if (resolver_max_depth < 1 || resolver_max_depth > CAE_RESOLVER_MAX_PLIES) {
         cae_nnue_err(err, errlen, "resolver_max_depth must be in [1, %d], got %d",
                      CAE_RESOLVER_MAX_PLIES, resolver_max_depth);
@@ -150,10 +194,20 @@ static int cae_arm_set_config(int resolver_max_depth, int qsearch_max_ply,
                      qsearch_max_ply, qsearch_check_plies);
         return -1;
     }
+    /* 0 is OFF and is the default; anything above it is a hard cap on expanding
+     * DAG-arm quiescence nodes per top-level call. Negative is rejected rather
+     * than folded to 0: "-1 means unlimited" would be a second spelling of off
+     * that reads like a value. */
+    if (dag_node_cap < 0) {
+        cae_nnue_err(err, errlen, "dag_node_cap must be >= 0 (0 disables it), got %d",
+                     dag_node_cap);
+        return -1;
+    }
     pthread_mutex_lock(&g_arm_config_lock);
     g_arm_resolver_max_depth = resolver_max_depth;
     g_arm_qsearch_max_ply = qsearch_max_ply;
     g_arm_qsearch_check_plies = qsearch_check_plies;
+    g_arm_dag_node_cap = dag_node_cap;
     pthread_mutex_unlock(&g_arm_config_lock);
     return 0;
 }
@@ -175,6 +229,32 @@ typedef struct CaeArmStats {
     /* ⚑ Plies of QUIESCENCE, not depth below the resolution root. The two are
      * different numbers and reporting the wrong one was a real bug here. */
     uint32_t qmax_ply_seen;
+
+    /* ⚑⚑ NNUE EVALUATIONS THIS ARM ACTUALLY PERFORMED — the counter the DAG
+     * substrate exists to move. It is NOT a restatement of qnodes: the two are
+     * equal for the incremental and refresh substrates (every qnode evaluates
+     * its own stand-pat) and they diverge for the DAG substrate exactly by the
+     * reuse it achieves. Counting it here, from inside the code that calls the
+     * evaluator, is what makes "evaluate once per canonical position" an
+     * observation instead of a claim about a design. */
+    uint64_t nnue_evals;
+
+    /* DAG substrate only; identically zero in the other arms, and the arm's
+     * dag_enabled flag says which of the two reasons a zero has.
+     *
+     * ⚑ THE WITHIN/CROSS SPLIT IS A NODE-ID WATERMARK, not a guess. Node ids
+     * are handed out densely and monotonically (nid = node_count++) and are
+     * never recycled, so the node_count captured at the START of a top-level
+     * provider call partitions the graph exactly: a probe hit returning an id
+     * BELOW that mark is a node some EARLIER call created (a cross-call hit,
+     * the number that sizes persistence), and an id at or above it is one this
+     * same call created (a within-call transposition). A reset zeroes
+     * node_count, and the mark is taken after any reset, so the partition
+     * survives it. */
+    uint64_t dag_nodes_interned;    /* canonical positions this arm created */
+    uint64_t dag_hits_within_call;  /* probe hit on a node created by THIS call */
+    uint64_t dag_hits_cross_call;   /* probe hit on a node from an EARLIER call */
+    uint64_t dag_budget_trips;      /* nodes that stood pat on the node budget */
 } CaeArmStats;
 
 static inline void cae_arm_stats_reset(CaeArmStats *s) { memset(s, 0, sizeof(*s)); }
@@ -186,6 +266,20 @@ typedef struct CaeArmCtx {
     /* How many qsearch plies also try non-capturing CHECKS. Testing a quiet move
      * for check costs a push, so the budget is bounded rather than unlimited. */
     int qsearch_check_plies;
+
+    /* ⚑ THE CAP THAT GOVERNS *THIS* CONTEXT, and the only place the decision
+     * "does this arm consult the node budget at all" is taken. It is the
+     * configured value for a DAG-backed context and a hard 0 for every other,
+     * so the other arms are untouched by construction rather than by a branch
+     * in the search — and arm_stats() reports THIS field, so a reader sees the
+     * number that governed rather than the global that was set. */
+    int dag_node_cap;
+
+    /* The evaluation substrate, snapshotted from the provider that built this
+     * context. NULL unless that provider is "nnue-qsearch-dag", in which case
+     * this context OWNS the store and it persists across every eval() through
+     * the context — which is what makes a cross-call hit possible at all. */
+    CaeNnueDagHandle *dag;
 
     /* retain()/destroy() are a refcount PAIR per the seam contract, and the
      * count lives HERE rather than being inferred from the weights': the weight
@@ -228,6 +322,14 @@ static void cae_arm_merge_stats(CaeArmStats *dst, const CaeArmStats *src) {
     __atomic_fetch_add(&dst->qnodes, src->qnodes, __ATOMIC_RELAXED);
     __atomic_fetch_add(&dst->qterminal_draw, src->qterminal_draw, __ATOMIC_RELAXED);
     __atomic_fetch_add(&dst->qply_cutoffs, src->qply_cutoffs, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&dst->nnue_evals, src->nnue_evals, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&dst->dag_nodes_interned, src->dag_nodes_interned,
+                       __ATOMIC_RELAXED);
+    __atomic_fetch_add(&dst->dag_hits_within_call, src->dag_hits_within_call,
+                       __ATOMIC_RELAXED);
+    __atomic_fetch_add(&dst->dag_hits_cross_call, src->dag_hits_cross_call,
+                       __ATOMIC_RELAXED);
+    __atomic_fetch_add(&dst->dag_budget_trips, src->dag_budget_trips, __ATOMIC_RELAXED);
 
     cae_arm_atomic_max_u32(&dst->resolver.max_depth_seen, src->resolver.max_depth_seen);
     cae_arm_atomic_max_u32(&dst->qmax_ply_seen, src->qmax_ply_seen);
@@ -237,19 +339,30 @@ static void cae_arm_merge_stats(CaeArmStats *dst, const CaeArmStats *src) {
  * Arm A — static NNUE leaf
  * ================================================================ */
 
+/* ⚑ THE LEAF CARRIES THE PER-CALL STATS BLOCK, NOT JUST THE CONTEXT. The static
+ * arm's leaf is the one place it calls the evaluator, so it is the only place
+ * that can count nnue_evals from the consumer's own code — and that counter has
+ * to exist in every arm or the DAG arm's "strictly fewer evaluations" claim
+ * would be measured against a number no other arm reports. */
+typedef struct CaeStaticLeafCtx {
+    const CaeArmCtx *arm;
+    CaeArmStats *stats;   /* the per-call block, merged once at the top level */
+} CaeStaticLeafCtx;
+
 /* The leaf hook for the static arm. `ply` is unused: a static evaluation does
  * not depend on how deep it was reached. */
 static int cae_arm_static_leaf(void *leaf_ctx, const CBoard *board, int ply,
                                int32_t *out_value) {
     (void)ply;
-    const CaeArmCtx *ctx = (const CaeArmCtx *)leaf_ctx;
+    const CaeStaticLeafCtx *leaf = (const CaeStaticLeafCtx *)leaf_ctx;
     int32_t v = 0;
     /* ⚑ Through the evaluator's normal entry point, refusal and all. The
      * resolver calls this only at a non-check node, so a refusal here would mean
      * the resolver had a hole — and it surfaces as a hard error rather than as a
      * plausible number. */
-    int status = cae_nnue_evaluate_cboard(ctx->weights, board, &v);
+    int status = cae_nnue_evaluate_cboard(leaf->arm->weights, board, &v);
     if (status != CAE_VALUE_OK) return status;
+    leaf->stats->nnue_evals++;
     /* Clamped AT THE HOOK, where "this is a raw evaluation and not a mate score"
      * is known. The resolver passes mate-band values through untouched (it has
      * to — the qsearch hook can legitimately return one), so a raw evaluation
@@ -259,277 +372,51 @@ static int cae_arm_static_leaf(void *leaf_ctx, const CBoard *board, int ply,
 }
 
 /* ================================================================
- * Incremental NNUE state for qsearch
- * ================================================================
- *
- * CBoard search is already make-on-copy: every child is memcpy(parent), then
- * cboard_push_index(child). Mirror that exact ownership rule for NNUE. A state
- * belongs to one board and a child state is derived from the parent state plus
- * the already-pushed child board. There is deliberately NO unmake API here.
- * Unmake only buys something if the search itself becomes one mutable DFS board;
- * with owned child copies it would add reversible bookkeeping and another way to
- * corrupt a sibling for no saved work.
- *
- * HalfKAv2_hm is cheap to update exactly from changed squares while the king
- * bucket is unchanged. FullThreats is more global: moving one blocker can alter
- * several sliding relations. We therefore cache the ACTIVE threat indices and
- * diff the old/new sorted sets. That still avoids touching the dozens of 1024-
- * wide weight rows whose features did not change. A king move changes the
- * orientation/bucket for an entire perspective, so that perspective falls back
- * to the existing exact full refresh. The cache is capped at Stockfish's own
- * active-threat ceiling (128); an unexpected wider legal position also falls
- * back rather than becoming a correctness assumption.
- */
-#define CAE_NNUE_INC_THREAT_CACHE 128
-
-typedef struct CaeNnueState {
-    CaeNnuePos pos;
-    CaeNnueAcc acc;
-    uint32_t threat_idx[2][CAE_NNUE_INC_THREAT_CACHE];
-    uint16_t threat_count[2];
-    uint8_t threat_cache_valid;
-} CaeNnueState;
-
-static inline void cae_nnue_inc_sub_row_i16(int16_t *acc, const int16_t *row, uint32_t n) {
-#if CAE_NNUE_HAVE_AVX2
-    if (cae_nnue_simd_enabled) {
-        for (uint32_t j = 0; j < n; j += 16) {
-            __m256i a = _mm256_load_si256((const __m256i *)(acc + j));
-            __m256i b = _mm256_loadu_si256((const __m256i *)(row + j));
-            _mm256_store_si256((__m256i *)(acc + j), _mm256_sub_epi16(a, b));
-        }
-        return;
-    }
-#endif
-    for (uint32_t j = 0; j < n; j++)
-        acc[j] = (int16_t)((uint16_t)acc[j] - (uint16_t)row[j]);
-}
-
-static inline void cae_nnue_inc_sub_row_i8(int16_t *acc, const int8_t *row, uint32_t n) {
-#if CAE_NNUE_HAVE_AVX2
-    if (cae_nnue_simd_enabled) {
-        for (uint32_t j = 0; j < n; j += 16) {
-            __m256i a = _mm256_load_si256((const __m256i *)(acc + j));
-            __m128i w8 = _mm_loadu_si128((const __m128i *)(row + j));
-            _mm256_store_si256((__m256i *)(acc + j),
-                               _mm256_sub_epi16(a, _mm256_cvtepi8_epi16(w8)));
-        }
-        return;
-    }
-#endif
-    for (uint32_t j = 0; j < n; j++)
-        acc[j] = (int16_t)((uint16_t)acc[j] - (uint16_t)(int16_t)row[j]);
-}
-
-static inline void cae_nnue_inc_sort_u32(uint32_t *v, int n) {
-    /* Tiny lists (normally ~tens of entries): insertion sort beats pulling a
-     * comparator/function-pointer qsort into every make. */
-    for (int i = 1; i < n; i++) {
-        uint32_t x = v[i];
-        int j = i;
-        while (j > 0 && v[j - 1] > x) {
-            v[j] = v[j - 1];
-            j--;
-        }
-        v[j] = x;
-    }
-}
-
-static int cae_nnue_inc_build_threat_cache(
-    const CaeNnueWeights *w,
-    const CaeNnuePos *p,
-    uint32_t out[2][CAE_NNUE_INC_THREAT_CACHE],
-    uint16_t counts[2],
-    uint8_t *valid)
-{
-    CaeThreatRel rel[CAE_NNUE_MAX_RELATIONS];
-    int n_rel = cae_nnue_threat_relations(p, rel);
-    if (n_rel < 0) return CAE_VALUE_ERR_BAD_POS;
-    counts[0] = counts[1] = 0;
-    *valid = 0;
-
-    /* Cache size is an optimisation boundary, not a validity boundary. The
-     * evaluator itself accepts the larger relation buffer; this path simply
-     * declines to delta-update it. */
-    if (n_rel > CAE_NNUE_INC_THREAT_CACHE) return CAE_VALUE_OK;
-
-    for (int perspective = 0; perspective < 2; perspective++) {
-        int ksq = p->king_sq[perspective];
-        for (int i = 0; i < n_rel; i++) {
-            uint32_t idx = cae_nnue_threat_index(
-                perspective, rel[i].attacker, rel[i].from, rel[i].to,
-                p->piece_on[rel[i].to], ksq);
-            if (idx >= w->threat_dims) continue;
-            if (counts[perspective] >= CAE_NNUE_INC_THREAT_CACHE) {
-                counts[0] = counts[1] = 0;
-                return CAE_VALUE_OK;
-            }
-            out[perspective][counts[perspective]++] = idx;
-        }
-        cae_nnue_inc_sort_u32(out[perspective], counts[perspective]);
-    }
-    *valid = 1;
-    return CAE_VALUE_OK;
-}
-
-static inline void cae_nnue_inc_halfka_feature(
-    const CaeNnueWeights *w, CaeNnueAcc *a, int perspective,
-    int sq, int piece, int ksq, int add)
-{
-    uint32_t idx = cae_nnue_halfka_index(perspective, sq, piece, ksq);
-    const int16_t *row = w->ft_weight + (size_t)idx * w->l1;
-    if (add) cae_nnue_add_row_i16(a->acc[perspective], row, w->l1);
-    else cae_nnue_inc_sub_row_i16(a->acc[perspective], row, w->l1);
-
-    const int32_t *prow = w->ft_psqt + (size_t)idx * w->psqt_buckets;
-    for (uint32_t k = 0; k < w->psqt_buckets; k++)
-        a->psqt[perspective][k] += add ? prow[k] : -prow[k];
-}
-
-static inline void cae_nnue_inc_threat_feature(
-    const CaeNnueWeights *w, CaeNnueAcc *a, int perspective, uint32_t idx, int add)
-{
-    const int8_t *row = w->threat_weight + (size_t)idx * w->l1;
-    if (add) cae_nnue_add_row_i8(a->acc[perspective], row, w->l1);
-    else cae_nnue_inc_sub_row_i8(a->acc[perspective], row, w->l1);
-
-    const int32_t *prow = w->threat_psqt + (size_t)idx * w->psqt_buckets;
-    for (uint32_t k = 0; k < w->psqt_buckets; k++)
-        a->psqt[perspective][k] += add ? prow[k] : -prow[k];
-}
-
-static int cae_nnue_state_init(
-    const CaeNnueWeights *w, const CBoard *board, CaeNnueState *out)
-{
-    CaeNnuePos pos;
-    int rc = cae_nnue_pos_from_cboard(board, &pos);
-    if (rc != CAE_VALUE_OK) return rc;
-
-    rc = cae_nnue_refresh(w, &pos, &out->acc);
-    if (rc != CAE_VALUE_OK) return rc;
-    out->pos = pos;
-    return cae_nnue_inc_build_threat_cache(
-        w, &pos, out->threat_idx, out->threat_count, &out->threat_cache_valid);
-}
-
-static int cae_nnue_state_evaluate(
-    const CaeNnueWeights *w, const CaeNnueState *state, int32_t *out_value)
-{
-    if (!w) return CAE_VALUE_ERR_NOT_LOADED;
-    if (state->pos.in_check) return CAE_VALUE_ERR_IN_CHECK;
-    int bucket = cae_nnue_bucket(&state->pos);
-    int rc = cae_nnue_check_bucket(w, bucket);
-    if (rc != CAE_VALUE_OK) return rc;
-
-    uint8_t ft[CAE_NNUE_MAX_L1] __attribute__((aligned(32)));
-    int32_t psqt = cae_nnue_transform(w, &state->acc, state->pos.side_to_move, bucket, ft);
-    int32_t positional = cae_nnue_propagate(w, ft, bucket);
-    *out_value = psqt / CAE_NNUE_OUTPUT_SCALE + positional / CAE_NNUE_OUTPUT_SCALE;
-    return CAE_VALUE_OK;
-}
-
-static int cae_nnue_state_make(
-    const CaeNnueWeights *w,
-    const CaeNnueState *parent,
-    const CBoard *child_board,
-    CaeNnueState *out)
-{
-    CaeNnuePos next;
-    int rc = cae_nnue_pos_from_cboard(child_board, &next);
-    if (rc != CAE_VALUE_OK) return rc;
-
-    uint32_t new_threat[2][CAE_NNUE_INC_THREAT_CACHE] = {{0}};
-    uint16_t new_count[2] = {0, 0};
-    uint8_t new_valid = 0;
-    rc = cae_nnue_inc_build_threat_cache(w, &next, new_threat, new_count, &new_valid);
-    if (rc != CAE_VALUE_OK) return rc;
-
-    /* Copy is intentional. Search already gives each child its own CBoard; the
-     * accumulator follows the same ownership model, so sibling state cannot be
-     * corrupted and no unmake log is required. ~5 KiB/node is small beside the
-     * weight-row traffic this removes and can be revisited only if profiling
-     * identifies the copy itself as the next bottleneck. */
-    *out = *parent;
-
-    int refresh_perspective[2];
-    for (int perspective = 0; perspective < 2; perspective++) {
-        refresh_perspective[perspective] =
-            !parent->threat_cache_valid || !new_valid
-            || parent->pos.king_sq[perspective] != next.king_sq[perspective];
-    }
-
-    CaeNnueAcc fresh;
-    if (refresh_perspective[0] || refresh_perspective[1]) {
-        rc = cae_nnue_refresh(w, &next, &fresh);
-        if (rc != CAE_VALUE_OK) return rc;
-    }
-
-    for (int perspective = 0; perspective < 2; perspective++) {
-        if (refresh_perspective[perspective]) {
-            memcpy(out->acc.acc[perspective], fresh.acc[perspective],
-                   (size_t)w->l1 * sizeof(int16_t));
-            memcpy(out->acc.psqt[perspective], fresh.psqt[perspective],
-                   (size_t)w->psqt_buckets * sizeof(int32_t));
-            continue;
-        }
-
-        int ksq = next.king_sq[perspective];
-        for (int sq = 0; sq < 64; sq++) {
-            int old_piece = parent->pos.piece_on[sq];
-            int new_piece = next.piece_on[sq];
-            if (old_piece == new_piece) continue;
-            if (old_piece)
-                cae_nnue_inc_halfka_feature(w, &out->acc, perspective,
-                                            sq, old_piece, ksq, 0);
-            if (new_piece)
-                cae_nnue_inc_halfka_feature(w, &out->acc, perspective,
-                                            sq, new_piece, ksq, 1);
-        }
-
-        /* Sorted multiset difference. Equal indices cancel; old-only rows are
-         * subtracted and new-only rows are added. This handles sliding rays,
-         * captures, en-passant and promotions without trying to predict which
-         * threat relations a move is capable of changing. */
-        int i = 0, j = 0;
-        int old_n = parent->threat_count[perspective];
-        int new_n = new_count[perspective];
-        while (i < old_n || j < new_n) {
-            if (i < old_n && j < new_n
-                && parent->threat_idx[perspective][i] == new_threat[perspective][j]) {
-                i++;
-                j++;
-            } else if (j >= new_n
-                       || (i < old_n
-                           && parent->threat_idx[perspective][i] < new_threat[perspective][j])) {
-                cae_nnue_inc_threat_feature(
-                    w, &out->acc, perspective, parent->threat_idx[perspective][i], 0);
-                i++;
-            } else {
-                cae_nnue_inc_threat_feature(
-                    w, &out->acc, perspective, new_threat[perspective][j], 1);
-                j++;
-            }
-        }
-    }
-
-    out->pos = next;
-    out->threat_cache_valid = new_valid;
-    out->threat_count[0] = new_count[0];
-    out->threat_count[1] = new_count[1];
-    if (new_valid)
-        memcpy(out->threat_idx, new_threat, sizeof(new_threat));
-    return CAE_VALUE_OK;
-}
-
-/* ================================================================
  * Arm B — tactical quiescence beyond the mandatory resolution
  * ================================================================ */
+
+/* Where a node's stand-pat NUMBER comes from. Nothing else about the search
+ * varies with it — see the ⚑⚑ block at the top of this file. */
+typedef enum CaeQsearchSubstrate {
+    CAE_QSUB_INCREMENTAL = 0,   /* production: make-on-copy accumulator */
+    CAE_QSUB_REFRESH     = 1,   /* oracle: a full NNUE refresh at every qnode */
+    CAE_QSUB_DAG         = 2    /* one evaluation per canonical position */
+} CaeQsearchSubstrate;
+
+/* What the current node's evaluation is reachable through. Exactly one field is
+ * meaningful, chosen by the substrate.
+ *
+ * ⚑⚑ THE DAG ARM CARRIES AN ID, NOT A POINTER, AND THAT IS A LIFETIME RULE.
+ * Publishing a child can call cae_nnue_dag_grow_payload(), which free()s the
+ * states array — so a `const CaeNnueState *` into the store, held across the
+ * move loop the way the incremental substrate holds its stack state, would be a
+ * use-after-free reading an accumulator that has been handed back to malloc.
+ * An id survives the growth; the store re-derives the pointer per call. */
+typedef struct CaeQNodeRef {
+    const CaeNnueState *state;   /* INCREMENTAL: the caller's stack state */
+    int32_t node_id;             /* DAG: the canonical node, else CAE_DAG_NO_NODE */
+} CaeQNodeRef;
+
+static inline CaeQNodeRef cae_qnode_ref_none(void) {
+    CaeQNodeRef ref = {NULL, CAE_DAG_NO_NODE};
+    return ref;
+}
 
 typedef struct CaeQsearchCtx {
     const CaeArmCtx *arm;
     const CaeResolverCtx *resolver;   /* the SAME resolver, re-entered for checks */
     CaeArmStats *stats;               /* the per-call block, not the accumulator */
-    int incremental;                  /* 1 production, 0 full-refresh oracle */
+    int substrate;                    /* CaeQsearchSubstrate */
+    CaeNnueDagHandle *store;          /* CAE_QSUB_DAG only; owned by the arm ctx */
+
+    /* node_count at the START of this top-level call. A probe hit below the mark
+     * is a node an EARLIER call created. See the ⚑ on CaeArmStats. */
+    int32_t dag_watermark;
+
+    /* The cap in force for this call (0 = off) and what it has spent. Per call,
+     * because the budget bounds one evaluation's work, not the context's life. */
+    int node_cap;
+    uint64_t nodes_used;
 
     /* ⚑⚑ THE QUIESCENCE PLY IN FORCE WHEN QUIESCENCE HANDED OFF TO THE RESOLVER.
      *
@@ -599,21 +486,51 @@ static inline int cae_qsearch_is_tactical(const CBoard *b, int from_sq, int to_s
  * resolver_max_depth, so no cycle can restart a budget. `qply` only ever makes
  * quiescence stop SOONER. */
 
-/* Known to be neither terminal nor in check. `state` is NULL only for the
- * retained full-refresh oracle. */
-static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueState *state,
+/* Known to be neither terminal nor in check. `ref` names the node's evaluation
+ * in whichever substrate this context runs. */
+static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, CaeQNodeRef ref,
                             int qply, int depth, int32_t alpha, int32_t beta,
                             int32_t *out_value);
 
-/* Dispatch a child. `depth` is the CHILD's depth below the resolution root.
+/* Record what a DAG intern did, and classify a hit against this call's node-id
+ * watermark. `node_id` is the interned node and `created` is 1 when it was NEW.
+ *
+ * ⚑ nnue_evals IS INCREMENTED HERE AND NOWHERE ELSE FOR THIS SUBSTRATE, because
+ * here is where the evaluation actually happened — inside the intern, once,
+ * against a position that had never been seen. A node that comes back as a hit
+ * cost no evaluation, which is the entire claim the DAG arm makes; counting one
+ * per qnode instead would report the oracle's number and make the claim
+ * unfalsifiable. The value_valid test is not decoration: a node published
+ * without a static value (in check) is published without an evaluation, and
+ * this arm must not count one for it. */
+static void cae_qsearch_note_intern(CaeQsearchCtx *q, int32_t node_id, int created) {
+    if (created) {
+        q->stats->dag_nodes_interned++;
+        if (q->store->value_valid[node_id]) q->stats->nnue_evals++;
+        return;
+    }
+    if (node_id < q->dag_watermark) q->stats->dag_hits_cross_call++;
+    else q->stats->dag_hits_within_call++;
+}
+
+/* Dispatch a child. `depth` is the CHILD's depth below the resolution root, and
+ * `action` is the policy index of the move that produced it — used only by the
+ * DAG substrate, which records it as a real graph edge.
  *
  * ⚑ THE ORDER MATCHES cae_resolve_node'S, AND FOR THE SAME REASON: in check
  * goes first. cboard_is_game_over() tests the fifty-move clock and the "no legal
  * moves" condition without asking whether the side to move is in check, so
  * testing drawn-ness first would score a CHECKMATE as a draw. The resolver
- * scores mate; only once it has declined does "no moves" mean stalemate. */
+ * scores mate; only once it has declined does "no moves" mean stalemate.
+ *
+ * ⚑ THE TWO EARLY EXITS ARE PATH-SENSITIVE AND THEREFORE NEVER INTERNED. Being
+ * in check is structural, but the DAG arm hands those to the resolver rather
+ * than storing them; drawn-ness is decided by cboard_search_terminal() from the
+ * halfmove clock and the repetition history, which are deliberately NOT node
+ * identity. Interning either verdict would put a path property in a graph whose
+ * whole contract is that it holds none. */
 static int cae_qsearch_child(CaeQsearchCtx *q, const CBoard *b,
-                             const CaeNnueState *parent_state,
+                             CaeQNodeRef parent_ref, int action,
                              int qply, int depth, int32_t alpha, int32_t beta,
                              int32_t *out_value) {
     if (cboard_in_check(b)) {
@@ -643,14 +560,27 @@ static int cae_qsearch_child(CaeQsearchCtx *q, const CBoard *b,
         *out_value = 0;
         return CAE_VALUE_OK;
     }
-    if (!q->incremental)
-        return cae_qsearch_node(q, b, NULL, qply, depth, alpha, beta, out_value);
-    if (!parent_state) return CAE_VALUE_ERR_NOT_LOADED;
 
+    CaeQNodeRef ref = cae_qnode_ref_none();
+    if (q->substrate == CAE_QSUB_REFRESH)
+        return cae_qsearch_node(q, b, ref, qply, depth, alpha, beta, out_value);
+
+    if (q->substrate == CAE_QSUB_DAG) {
+        if (parent_ref.node_id == CAE_DAG_NO_NODE) return CAE_VALUE_ERR_NOT_LOADED;
+        int created = 0;
+        int rc = cae_nnue_dag_intern_child(
+            q->store, parent_ref.node_id, action, b, &ref.node_id, &created);
+        if (rc != CAE_VALUE_OK) return rc;
+        cae_qsearch_note_intern(q, ref.node_id, created);
+        return cae_qsearch_node(q, b, ref, qply, depth, alpha, beta, out_value);
+    }
+
+    if (!parent_ref.state) return CAE_VALUE_ERR_NOT_LOADED;
     CaeNnueState child_state;
-    int rc = cae_nnue_state_make(q->arm->weights, parent_state, b, &child_state);
+    int rc = cae_nnue_state_make(q->arm->weights, parent_ref.state, b, &child_state);
     if (rc != CAE_VALUE_OK) return rc;
-    return cae_qsearch_node(q, b, &child_state, qply, depth, alpha, beta, out_value);
+    ref.state = &child_state;
+    return cae_qsearch_node(q, b, ref, qply, depth, alpha, beta, out_value);
 }
 
 /* The leaf hook for the qsearch arm: the resolver hands it a node it has already
@@ -666,20 +596,65 @@ static int cae_qsearch_child(CaeQsearchCtx *q, const CBoard *b,
 static int cae_arm_qsearch_leaf(void *leaf_ctx, const CBoard *board, int ply,
                                 int32_t *out_value) {
     CaeQsearchCtx *q = (CaeQsearchCtx *)leaf_ctx;
-    if (!q->incremental)
-        return cae_qsearch_node(q, board, NULL, q->handoff_qply, ply,
-                                -CAE_QSEARCH_INF, CAE_QSEARCH_INF, out_value);
-
+    CaeQNodeRef ref = cae_qnode_ref_none();
     CaeNnueState state;
-    int rc = cae_nnue_state_init(q->arm->weights, board, &state);
-    if (rc != CAE_VALUE_OK) return rc;
-    return cae_qsearch_node(q, board, &state, q->handoff_qply, ply,
+
+    if (q->substrate == CAE_QSUB_DAG) {
+        /* No parent to derive from: the resolver reached this node through
+         * CBoard-only recursion, so the miss path refreshes rather than makes.
+         * It is still ONE evaluation for the position, and a later call that
+         * arrives here again pays nothing. */
+        int created = 0;
+        int rc = cae_nnue_dag_intern_position(q->store, board, &ref.node_id, &created);
+        if (rc != CAE_VALUE_OK) return rc;
+        cae_qsearch_note_intern(q, ref.node_id, created);
+        /* ⚑ ply 0 IS THE POSITION THE CALLER ASKED ABOUT, and rerooting there is
+         * the persistence policy: nodes stay alive across calls and the root
+         * follows the caller. A call whose board is IN CHECK never reaches this
+         * hook at ply 0 — the resolver is recursing — so that call leaves the
+         * root where it was, which is honest: this arm interns no in-check node,
+         * so there is no node for it to become. */
+        if (ply == 0) cae_position_dag_set_root(&q->store->dag, ref.node_id);
+    } else if (q->substrate == CAE_QSUB_INCREMENTAL) {
+        int rc = cae_nnue_state_init(q->arm->weights, board, &state);
+        if (rc != CAE_VALUE_OK) return rc;
+        ref.state = &state;
+    }
+
+    return cae_qsearch_node(q, board, ref, q->handoff_qply, ply,
                             -CAE_QSEARCH_INF, CAE_QSEARCH_INF, out_value);
+}
+
+/* This node's stand-pat, from whichever substrate the context runs.
+ *
+ * ⚑ THE DAG BRANCH PERFORMS NO EVALUATION AND COUNTS NONE. Its number was
+ * computed once, when the position was interned, and counted there — so a node
+ * reached a second time costs a probe. The in-check refusal is kept as the
+ * enforcement backstop rather than as a defensive nicety: this arm never interns
+ * an in-check position, so a node without a static value arriving here would
+ * mean the resolver had a hole, and it must surface as a hard error instead of
+ * as a plausible zero. */
+static int cae_qsearch_stand_pat(CaeQsearchCtx *q, const CBoard *b,
+                                 const CaeQNodeRef *ref, int32_t *out_value) {
+    if (q->substrate == CAE_QSUB_DAG) {
+        if (ref->node_id < 0 || ref->node_id >= q->store->dag.node_count)
+            return CAE_VALUE_ERR_NOT_LOADED;
+        if (!q->store->value_valid[ref->node_id]) return CAE_VALUE_ERR_IN_CHECK;
+        *out_value = q->store->values[ref->node_id];
+        return CAE_VALUE_OK;
+    }
+
+    int status = ref->state
+        ? cae_nnue_state_evaluate(q->arm->weights, ref->state, out_value)
+        : cae_nnue_evaluate_cboard(q->arm->weights, b, out_value);
+    if (status != CAE_VALUE_OK) return status;
+    q->stats->nnue_evals++;
+    return CAE_VALUE_OK;
 }
 
 /* Stand-pat quiescence over captures, promotions, and — for the first
  * qsearch_check_plies plies — checking moves. Fail-soft negamax. */
-static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueState *state,
+static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, CaeQNodeRef ref,
                             int qply, int depth, int32_t alpha, int32_t beta,
                             int32_t *out_value) {
     const CaeArmCtx *arm = q->arm;
@@ -687,9 +662,7 @@ static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueStat
     if ((uint32_t)qply > q->stats->qmax_ply_seen) q->stats->qmax_ply_seen = (uint32_t)qply;
 
     int32_t stand_pat = 0;
-    int status = state
-        ? cae_nnue_state_evaluate(arm->weights, state, &stand_pat)
-        : cae_nnue_evaluate_cboard(arm->weights, b, &stand_pat);
+    int status = cae_qsearch_stand_pat(q, b, &ref, &stand_pat);
     if (status != CAE_VALUE_OK) return status;
     stand_pat = cae_resolver_clamp(stand_pat);
 
@@ -706,6 +679,27 @@ static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueStat
          * caller already had), and returning that would report a sibling's score
          * as this node's. Fail-soft means "return the best value you actually
          * found", and the best value found here is the one evaluation made. */
+        *out_value = stand_pat;
+        return CAE_VALUE_OK;
+    }
+
+    /* ⚑⚑ THE NODE BUDGET, AND WHY IT SITS EXACTLY HERE. `node_cap` is 0 for
+     * every arm but a DAG-backed one and 0 by default even for that (see
+     * CAE_QSEARCH_DEFAULT_DAG_NODE_CAP), so with the flag off this branch is not
+     * taken and the arm's arithmetic is the oracle's, instruction for
+     * instruction — which is what lets "nnue-qsearch" be the oracle at all.
+     *
+     * Placed AFTER the ply cutoff so it charges only nodes that are about to
+     * EXPAND: a node that stands pat costs nothing to expand, so charging it
+     * would make the budget count something other than the work it bounds. The
+     * value returned on a trip is stand_pat, for the same reason the ply cutoff
+     * returns it — no move was searched here, so this node's own evaluation is
+     * the best value actually found, and returning alpha would report a
+     * sibling's score. It is also WINDOW-INDEPENDENT, which matters: a trip must
+     * not make this node's answer depend on the (alpha, beta) it arrived
+     * under. */
+    if (q->node_cap > 0 && ++q->nodes_used > (uint64_t)q->node_cap) {
+        q->stats->dag_budget_trips++;
         *out_value = stand_pat;
         return CAE_VALUE_OK;
     }
@@ -731,7 +725,7 @@ static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueStat
         if (!tactical && !gives_check) continue;
 
         int32_t child_value = 0;
-        int rc = cae_qsearch_child(q, &child, state, qply + 1, depth + 1,
+        int rc = cae_qsearch_child(q, &child, ref, moves[i], qply + 1, depth + 1,
                                    -beta, -alpha, &child_value);
         if (rc != CAE_VALUE_OK) return rc;
         child_value = -child_value;   /* a child's value is child-STM POV */
@@ -749,7 +743,13 @@ static int cae_qsearch_node(CaeQsearchCtx *q, const CBoard *b, const CaeNnueStat
  * The provider vtables
  * ================================================================ */
 
-static void *cae_arm_init(const char *weights_path, char *err, size_t errlen) {
+/* The DAG store starts at this many nodes. Growth is geometric and preserves
+ * every id, value and edge, so this is a first-allocation size and not a limit;
+ * it is sized for a quiescence tree rather than for a whole game. */
+#define CAE_ARM_DAG_INITIAL_NODES 1024
+
+static void *cae_arm_init_ex(const char *weights_path, char *err, size_t errlen,
+                             int use_dag) {
     CaeNnueWeights *w = cae_nnue_load(weights_path, err, errlen);
     if (!w) return NULL;
     CaeArmCtx *ctx = (CaeArmCtx *)calloc(1, sizeof(CaeArmCtx));
@@ -767,9 +767,34 @@ static void *cae_arm_init(const char *weights_path, char *err, size_t errlen) {
     ctx->resolver_max_depth = cfg.resolver_max_depth;
     ctx->qsearch_max_ply = cfg.qsearch_max_ply;
     ctx->qsearch_check_plies = cfg.qsearch_check_plies;
+    /* ⚑ THE ONE PLACE "does this context consult the node budget" IS DECIDED.
+     * A non-DAG context stores a hard 0, so the search's cap test is false for
+     * it by construction — and arm_stats() reports this field, so a caller that
+     * sets the knob and then reads a 0 back off a non-DAG arm is being told the
+     * truth rather than shown the global it just wrote. */
+    ctx->dag_node_cap = use_dag ? cfg.dag_node_cap : 0;
+    if (use_dag) {
+        ctx->dag = (CaeNnueDagHandle *)calloc(1, sizeof(*ctx->dag));
+        if (!ctx->dag
+            || cae_nnue_dag_store_init(ctx->dag, w, CAE_ARM_DAG_INITIAL_NODES) != 0) {
+            free(ctx->dag);
+            cae_nnue_release(w);
+            free(ctx);
+            cae_nnue_err(err, errlen, "out of memory building the position DAG");
+            return NULL;
+        }
+    }
     ctx->refcount = 1;
     cae_arm_stats_reset(&ctx->totals);
     return ctx;
+}
+
+static void *cae_arm_init(const char *weights_path, char *err, size_t errlen) {
+    return cae_arm_init_ex(weights_path, err, errlen, 0);
+}
+
+static void *cae_arm_init_dag(const char *weights_path, char *err, size_t errlen) {
+    return cae_arm_init_ex(weights_path, err, errlen, 1);
 }
 
 static void *cae_arm_retain(void *ctx_void) {
@@ -784,6 +809,13 @@ static void cae_arm_destroy(void *ctx_void) {
     if (!ctx) return;
     /* acq_rel so every write made through a reference happens-before the free. */
     if (__atomic_fetch_sub(&ctx->refcount, 1, __ATOMIC_ACQ_REL) != 1) return;
+    if (ctx->dag) {
+        /* The store holds its OWN retain on the same mapping, so this release
+         * and the ctx's below are a pair of matched decrements, not a double
+         * free of one reference. */
+        cae_nnue_dag_store_release(ctx->dag);
+        free(ctx->dag);
+    }
     cae_nnue_release(ctx->weights);
     free(ctx);
 }
@@ -797,9 +829,13 @@ static int cae_arm_static_eval(void *ctx_void, const CBoard *board, int32_t *out
     CaeArmStats local;
     cae_arm_stats_reset(&local);
 
+    CaeStaticLeafCtx leaf;
+    leaf.arm = ctx;
+    leaf.stats = &local;
+
     CaeResolverCtx rc;
     rc.leaf_eval = cae_arm_static_leaf;
-    rc.leaf_ctx = ctx;
+    rc.leaf_ctx = &leaf;
     rc.max_depth = ctx->resolver_max_depth;
     rc.stats = &local.resolver;
 
@@ -809,7 +845,7 @@ static int cae_arm_static_eval(void *ctx_void, const CBoard *board, int32_t *out
 }
 
 static int cae_arm_qsearch_eval_mode(
-    void *ctx_void, const CBoard *board, int32_t *out_value, int incremental)
+    void *ctx_void, const CBoard *board, int32_t *out_value, int substrate)
 {
     CaeArmCtx *ctx = (CaeArmCtx *)ctx_void;
     CaeArmStats local;
@@ -820,7 +856,16 @@ static int cae_arm_qsearch_eval_mode(
     q.arm = ctx;
     q.resolver = &rc;
     q.stats = &local;
-    q.incremental = incremental;
+    q.substrate = substrate;
+    q.store = ctx->dag;
+    /* ⚑ THE WATERMARK IS TAKEN HERE, PER CALL, and it is what makes "cross-call"
+     * a measurement rather than an adjective: every node already in the graph
+     * was created by an earlier call, and node ids are dense, monotonic and
+     * never recycled, so this one integer partitions every later probe hit
+     * exactly. A store the arm does not have contributes no hits at all. */
+    q.dag_watermark = ctx->dag ? ctx->dag->dag.node_count : 0;
+    q.node_cap = ctx->dag_node_cap;
+    q.nodes_used = 0;
     q.handoff_qply = 0;   /* the resolution root's own leaves start quiescence */
     rc.leaf_eval = cae_arm_qsearch_leaf;
     rc.leaf_ctx = &q;
@@ -835,13 +880,25 @@ static int cae_arm_qsearch_eval_mode(
 static int cae_arm_qsearch_eval_incremental(
     void *ctx_void, const CBoard *board, int32_t *out_value)
 {
-    return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, 1);
+    return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, CAE_QSUB_INCREMENTAL);
 }
 
 static int cae_arm_qsearch_eval_refresh(
     void *ctx_void, const CBoard *board, int32_t *out_value)
 {
-    return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, 0);
+    return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, CAE_QSUB_REFRESH);
+}
+
+static int cae_arm_qsearch_eval_dag(
+    void *ctx_void, const CBoard *board, int32_t *out_value)
+{
+    CaeArmCtx *ctx = (CaeArmCtx *)ctx_void;
+    /* A context built by cae_arm_init() cannot reach this eval — the vtable
+     * pairs them — so a missing store means the pairing itself was broken, and
+     * that surfaces as a hard error rather than as a silent fall back to the
+     * incremental substrate returning plausible numbers under the wrong name. */
+    if (!ctx || !ctx->dag) return CAE_VALUE_ERR_NOT_LOADED;
+    return cae_arm_qsearch_eval_mode(ctx_void, board, out_value, CAE_QSUB_DAG);
 }
 
 static const CaeValueProvider CAE_ARM_STATIC_PROVIDER = {
@@ -851,6 +908,7 @@ static const CaeValueProvider CAE_ARM_STATIC_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
 };
 
 static const CaeValueProvider CAE_ARM_QSEARCH_PROVIDER = {
@@ -860,6 +918,7 @@ static const CaeValueProvider CAE_ARM_QSEARCH_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
 };
 
 static const CaeValueProvider CAE_ARM_QSEARCH_REFRESH_PROVIDER = {
@@ -869,6 +928,27 @@ static const CaeValueProvider CAE_ARM_QSEARCH_REFRESH_PROVIDER = {
     cae_arm_retain,
     cae_arm_destroy,
     cae_arm_kernel_name,
+    0,   /* reentrant: per-call state is on the stack */
+};
+
+/* ⚑ ITS OWN init(), AND THAT IS THE WIRING THAT MATTERS. cae_arm_init_dag is
+ * the only entry that allocates the store and the only one that lets the node
+ * budget out of 0, so "is this a DAG-backed arm" is a property of the vtable
+ * rather than of a name string a caller might mistype. Pairing this name with
+ * cae_arm_init would produce a context with no store, and cae_arm_qsearch_eval_dag
+ * refuses that instead of quietly running the incremental substrate under this
+ * name — see tests/test_nnue_incremental.py, which pins both halves of the pair. */
+static const CaeValueProvider CAE_ARM_QSEARCH_DAG_PROVIDER = {
+    "nnue-qsearch-dag",
+    cae_arm_init_dag,
+    cae_arm_qsearch_eval_dag,
+    cae_arm_retain,
+    cae_arm_destroy,
+    cae_arm_kernel_name,
+    1,   /* ⚑ NOT reentrant: the store's probe -> evaluate -> publish -> link
+          * path is not atomic and a concurrent publish frees the accumulator
+          * array another thread is reading. Consumers must serialize; MCTSTree
+          * REFUSES this provider at install because it cannot. */
 };
 
 /* ================================================================
@@ -884,6 +964,7 @@ static const CaeValueProvider *const CAE_VALUE_PROVIDERS[] = {
     &CAE_ARM_STATIC_PROVIDER,
     &CAE_ARM_QSEARCH_PROVIDER,
     &CAE_ARM_QSEARCH_REFRESH_PROVIDER,
+    &CAE_ARM_QSEARCH_DAG_PROVIDER,
     NULL
 };
 
@@ -901,7 +982,27 @@ static const CaeValueProvider *cae_value_provider_by_name(const char *name) {
 static inline int cae_provider_is_arm(const CaeValueProvider *vp) {
     return vp == &CAE_ARM_STATIC_PROVIDER
         || vp == &CAE_ARM_QSEARCH_PROVIDER
-        || vp == &CAE_ARM_QSEARCH_REFRESH_PROVIDER;
+        || vp == &CAE_ARM_QSEARCH_REFRESH_PROVIDER
+        || vp == &CAE_ARM_QSEARCH_DAG_PROVIDER;
+}
+
+/* ⚑⚑ DOES A BATCH THROUGH THIS PROVIDER HAVE TO KEEP THE GIL? Read straight off
+ * the vtable's own requires_gil field — see the ⚑⚑ on it in
+ * ../mcts/_value_provider.h. This used to be a list of vtable pointers
+ * maintained HERE, which made it a second answer to a question the provider
+ * already answers, and one only this module consulted: MCTSTree never saw it,
+ * so the tree's exclusion of the DAG arm rested on the provider being
+ * unreachable rather than on this rule. Now there is one field, every consumer
+ * reads it, and MCTSTree refuses such a provider at install.
+ *
+ * The rule itself is unchanged: the DAG store's probe -> evaluate -> publish ->
+ * link path is not atomic and cae_nnue_dag_grow_payload() free()s an array
+ * another thread may be reading, so _nnue_ext.c does not release the GIL around
+ * a batch through such an arm. Releasing it would make two Python threads
+ * sharing one arm handle a use-after-free — the failure the API layer measured
+ * (node_count 87 for 21 distinct positions at 6 threads). */
+static inline int cae_provider_requires_gil(const CaeValueProvider *vp) {
+    return cae_value_requires_gil(vp);
 }
 
 #endif /* CAE_ARM_PROVIDERS_H */

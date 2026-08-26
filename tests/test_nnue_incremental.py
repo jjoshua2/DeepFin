@@ -387,7 +387,21 @@ def test_parity_fixture_really_exercises_qsearch(dense_pack: Path) -> None:
 
 #: ``CaeValueProvider``'s fields, in declaration order. The initializers are
 #: positional, so this list is what gives a parsed field its meaning.
-PROVIDER_FIELDS = ("name", "init", "eval", "retain", "destroy", "kernel_name")
+#:
+#: ⚑ ``requires_gil`` is the seventh field, added when the DAG arm landed. The
+#: field-count assertion below is what forced this line to be updated rather
+#: than letting a seven-field initializer be read through a six-name map, which
+#: would have silently re-labelled ``kernel_name`` as ``destroy`` and every
+#: field after it — a parse that still "passes" while meaning something else.
+PROVIDER_FIELDS = (
+    "name",
+    "init",
+    "eval",
+    "retain",
+    "destroy",
+    "kernel_name",
+    "requires_gil",
+)
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _PROVIDER_STRUCT = re.compile(
@@ -398,10 +412,38 @@ _REGISTRY_ARRAY = re.compile(
     r"CAE_VALUE_PROVIDERS\[\]\s*=\s*\{(?P<body>[^{}]*)\}\s*;", re.DOTALL
 )
 _QSEARCH_WRAPPER = re.compile(
-    r"cae_arm_qsearch_eval_(?P<mode>incremental|refresh)\s*\([^)]*\)\s*\{(?P<body>[^{}]*)\}",
+    r"cae_arm_qsearch_eval_(?P<mode>incremental|refresh|dag)\s*"
+    r"\([^)]*\)\s*\{(?P<body>[^{}]*)\}",
     re.DOTALL,
 )
 _MODE_CALL = re.compile(r"cae_arm_qsearch_eval_mode\s*\((?P<args>[^)]*)\)", re.DOTALL)
+_SUBSTRATE_ENUM = re.compile(
+    r"typedef\s+enum\s+CaeQsearchSubstrate\s*\{(?P<body>[^{}]*)\}", re.DOTALL
+)
+
+
+def _substrate_enum_values(source: str) -> dict[str, int]:
+    """``CaeQsearchSubstrate``'s enumerators and the integers they resolve to.
+
+    C's implicit numbering is honoured (an enumerator without ``=`` is one more
+    than the previous), because the point of reading this enum is to compare
+    VALUES and a parse that assumed every entry was explicit would quietly
+    report equal ones as distinct.
+    """
+    match = _SUBSTRATE_ENUM.search(source)
+    assert match is not None, "CaeQsearchSubstrate enum not found"
+    values: dict[str, int] = {}
+    nxt = 0
+    for raw in match.group("body").split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        name, sep, literal = item.partition("=")
+        if sep:
+            nxt = int(literal.strip(), 0)
+        values[name.strip()] = nxt
+        nxt += 1
+    return values
 
 
 def _uncommented(path: Path) -> str:
@@ -439,34 +481,81 @@ def _provider_initializers(*paths: Path) -> dict[str, dict[str, str]]:
 
 
 def test_production_provider_is_wired_to_incremental_and_oracle_to_refresh() -> None:
-    """The struct field that decides which implementation each name gets."""
+    """The struct fields that decide which implementation each name gets.
+
+    ⚑ THE init IS PINNED TOO, AND IT IS NOT PADDING. ``cae_arm_init_dag`` is the
+    only entry that allocates the DAG store and the only one that lets the node
+    budget out of 0, so "is this a DAG-backed arm" is a property of the vtable
+    rather than of a name string. Pair ``nnue-qsearch-dag`` with plain
+    ``cae_arm_init`` and the result is a provider whose entire substrate
+    silently does not exist; an eval-only assertion would still pass, because
+    the eval callback would be the right one — it would simply have no store to
+    run against.
+    """
     providers = _provider_initializers(ARM_PROVIDERS_H)
-    assert set(providers) == {"nnue-static", "nnue-qsearch", "nnue-qsearch-refresh"}
+    assert set(providers) == {
+        "nnue-static",
+        "nnue-qsearch",
+        "nnue-qsearch-refresh",
+        "nnue-qsearch-dag",
+    }
 
-    assert providers["nnue-qsearch"]["eval"] == "cae_arm_qsearch_eval_incremental"
-    assert providers["nnue-qsearch-refresh"]["eval"] == "cae_arm_qsearch_eval_refresh"
-    assert providers["nnue-static"]["eval"] == "cae_arm_static_eval"
+    # Compared as a whole map rather than name by name, so a provider added
+    # without a row here fails instead of being skipped over.
+    assert {name: (e["init"], e["eval"]) for name, e in providers.items()} == {
+        "nnue-static": ("cae_arm_init", "cae_arm_static_eval"),
+        "nnue-qsearch": ("cae_arm_init", "cae_arm_qsearch_eval_incremental"),
+        "nnue-qsearch-refresh": ("cae_arm_init", "cae_arm_qsearch_eval_refresh"),
+        "nnue-qsearch-dag": ("cae_arm_init_dag", "cae_arm_qsearch_eval_dag"),
+    }
 
 
-def test_the_two_qsearch_wrappers_pass_opposite_incremental_flags() -> None:
+def test_each_qsearch_wrapper_selects_a_DIFFERENT_substrate() -> None:
     """One frame below the struct, and invisible to the parity gate.
 
-    Both providers route through ``cae_arm_qsearch_eval_mode``; only the trailing
-    ``incremental`` argument separates them. Wire the struct correctly onto two
-    wrappers that both pass 1 and the parity test compares the incremental path
-    against itself — it agrees perfectly, and the oracle has quietly stopped
-    being an oracle.
+    Every qsearch provider routes through ``cae_arm_qsearch_eval_mode``; only
+    the trailing substrate argument separates them. Wire the structs correctly
+    onto wrappers that all pass the same substrate and the parity test compares
+    the incremental path against itself — it agrees perfectly, and the oracle
+    has quietly stopped being an oracle.
+
+    ⚑⚑ ASSERTING THE ARGUMENT *NAMES* WOULD NOT BE THAT TEST ANY MORE. This
+    used to read ``{"incremental": "1", "refresh": "0"}``, where opposite
+    literals were self-evidently opposite. The DAG arm turned the boolean into
+    ``CaeQsearchSubstrate``, and three distinct spellings prove nothing about
+    three distinct behaviours: ``CAE_QSUB_REFRESH = 0`` would leave the names
+    below untouched, every wrapper still passing "its own" constant, and the
+    refresh oracle silently running the incremental substrate. So the enum is
+    parsed and its VALUES are required to be distinct. That check is the test;
+    the name map is only how each wrapper is tied to one of them.
     """
-    flags: dict[str, str] = {}
-    for match in _QSEARCH_WRAPPER.finditer(_uncommented(ARM_PROVIDERS_H)):
+    source = _uncommented(ARM_PROVIDERS_H)
+
+    substrates: dict[str, str] = {}
+    for match in _QSEARCH_WRAPPER.finditer(source):
         call = _MODE_CALL.search(match.group("body"))
         assert call is not None, (
             f"cae_arm_qsearch_eval_{match.group('mode')} no longer delegates to "
-            "cae_arm_qsearch_eval_mode; this test can no longer read the flag"
+            "cae_arm_qsearch_eval_mode; this test can no longer read the substrate"
         )
-        flags[match.group("mode")] = call.group("args").split(",")[-1].strip()
+        substrates[match.group("mode")] = call.group("args").split(",")[-1].strip()
 
-    assert flags == {"incremental": "1", "refresh": "0"}
+    assert substrates == {
+        "incremental": "CAE_QSUB_INCREMENTAL",
+        "refresh": "CAE_QSUB_REFRESH",
+        "dag": "CAE_QSUB_DAG",
+    }
+
+    values = _substrate_enum_values(source)
+    assert set(values) == set(substrates.values()), (
+        f"the wrappers pass {sorted(set(substrates.values()))} but "
+        f"CaeQsearchSubstrate declares {sorted(values)}"
+    )
+    selected = [values[name] for name in substrates.values()]
+    assert len(set(selected)) == len(selected), (
+        f"two qsearch wrappers select the SAME substrate value: {values} — "
+        "the oracle is no longer an oracle"
+    )
 
 
 def test_the_registry_the_binary_reports_is_the_one_this_source_declares() -> None:

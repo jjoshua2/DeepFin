@@ -49,6 +49,7 @@ static const CaeValueProvider CAE_NNUE_PROVIDER = {
     cae_nnue_provider_retain,
     cae_nnue_provider_destroy,
     cae_nnue_provider_kernel_name,
+    0,   /* reentrant: eval reads mapped weights and writes only its out-param */
 };
 
 /* The registry (CAE_VALUE_PROVIDERS / cae_value_provider_by_name) moved to

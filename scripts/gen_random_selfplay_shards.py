@@ -561,6 +561,12 @@ def random_q(x: np.ndarray, *, salt: int) -> np.ndarray:
 _CTX_COUNTER_KEYS: frozenset[str] = frozenset({
     "calls", "calls_in_check", "nodes", "resolved_leaves", "depth_cutoffs",
     "terminal_mate", "terminal_draw", "qnodes", "qterminal_draw", "qply_cutoffs",
+    # The DAG-substrate arm's work counters. `nnue_evals` is emitted by EVERY
+    # arm (it is where the evaluator was actually called); the `dag_*` four are
+    # identically zero unless the context is DAG-backed, which `dag_enabled`
+    # below is what distinguishes from "backed, and it did nothing".
+    "nnue_evals", "dag_nodes_interned", "dag_hits_within_call",
+    "dag_hits_cross_call", "dag_budget_trips",
 })
 #: Peaks. `max` across workers; a sum is meaningless and a mean would hide the
 #: tail these exist to expose.
@@ -568,8 +574,29 @@ _CTX_PEAK_KEYS: frozenset[str] = frozenset({"max_depth_seen", "qmax_ply_seen"})
 #: Settings, not measurements. Every worker builds its context from the same
 #: config, so these must AGREE; a disagreement is a real finding (a worker that
 #: ran a different arm configuration) and is surfaced rather than averaged away.
+#:
+#: `dag_enabled` is a 0/1 FLAG and belongs here rather than with the counters:
+#: summing it over four workers reads 4, which is not a quantity of anything.
+#: Workers all run one arm, so a disagreement is the same class of finding as a
+#: depth mismatch.
 _CTX_CONFIG_KEYS: frozenset[str] = frozenset({
     "resolver_max_depth", "qsearch_max_ply", "qsearch_check_plies",
+    "dag_node_cap", "dag_enabled",
+})
+#: ⚑ A FOURTH KIND, AND IT IS NOT A COUNTER. These are the CURRENT SIZE of a
+#: worker's position DAG, not an accumulated count of anything — a store that
+#: was reset reports a smaller number than it did a moment ago, which no counter
+#: in the set above can do. Summing them across workers is still the right merge
+#: and gives a RESOURCE TOTAL: the stores are disjoint (one per context), so the
+#: sum is how many nodes are held and how many bytes are allocated in the run.
+#:
+#: It is NOT the number of distinct positions the run saw. Two workers that meet
+#: the same position each hold it, and the sum counts it twice. Filing these as
+#: counters would merge them identically and lose exactly that caveat, which is
+#: the "a metric that does not mean what its name says" defect this block exists
+#: to prevent.
+_CTX_STORE_SIZE_KEYS: frozenset[str] = frozenset({
+    "dag_node_count", "dag_edge_count", "dag_memory_bytes",
 })
 
 
@@ -625,7 +652,7 @@ class NnueArmStats:
                     # deep as its shallowest worker, and a conflict is reported
                     # rather than smoothed either way.
                     self.context[key] = min(self.context[key], value)
-            elif key in _CTX_COUNTER_KEYS:
+            elif key in _CTX_COUNTER_KEYS or key in _CTX_STORE_SIZE_KEYS:
                 self.context[key] += value
             else:
                 # ⚑ Not a default: a new C counter must be classified before it
@@ -634,8 +661,9 @@ class NnueArmStats:
                 # 128 in the first place.
                 raise ValueError(
                     f"arm_stats key {key!r} is not classified as a counter, a "
-                    "peak or a config value; add it to one of _CTX_*_KEYS in "
-                    "gen_random_selfplay_shards.py before merging it",
+                    "peak, a store size or a config value; add it to one of "
+                    "_CTX_*_KEYS in gen_random_selfplay_shards.py before "
+                    "merging it",
                 )
 
     def summary(self) -> dict[str, float]:
@@ -661,7 +689,7 @@ class NnueArmStats:
             # a reader needs to price the difference.
             out["in_check_call_frac"] = float(ctx.get("calls_in_check", 0)) / calls
             out["resolver_expansion_factor"] = float(ctx.get("nodes", 0)) / resolved
-        for key in sorted(_CTX_COUNTER_KEYS | _CTX_PEAK_KEYS):
+        for key in sorted(_CTX_COUNTER_KEYS | _CTX_PEAK_KEYS | _CTX_STORE_SIZE_KEYS):
             if key in ctx:
                 out[f"ctx_{key}"] = float(ctx[key])
         # A merged run whose workers disagreed about their arm configuration is

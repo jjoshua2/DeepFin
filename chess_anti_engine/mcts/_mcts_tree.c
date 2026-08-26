@@ -4704,6 +4704,27 @@ static const CaeValueProviderExport *resolve_provider_export(PyObject *spec) {
                         "(init/eval/retain/destroy are all mandatory)");
         return NULL;
     }
+    /* ⚑⚑ REFUSED AT THE DOOR, NOT BY BEING UNREACHABLE. The tree evaluates from
+     * several search threads with the GIL released, so a provider that declares
+     * eval() non-reentrant cannot be driven here at all — see requires_gil in
+     * _value_provider.h.
+     *
+     * This check is deliberately HERE, after the capsule has been resolved and
+     * before anything is installed, because that is the only point BOTH routes
+     * pass through: the name table above, and a capsule handed in directly.
+     * Filtering by name would leave the direct-capsule route open, which is the
+     * route the table's own comment invites callers to use — and the guard
+     * would then be a rule the code states and does not apply. */
+    if (cae_value_requires_gil(ex->provider)) {
+        PyErr_Format(PyExc_ValueError,
+                     "value provider '%s' declares eval() non-reentrant "
+                     "(requires_gil) and cannot be installed in MCTSTree, which "
+                     "evaluates from several threads with the GIL released; drive "
+                     "it through a single-threaded surface such as "
+                     "_nnue_ext.arm_open()/arm_eval()",
+                     ex->provider->name ? ex->provider->name : "?");
+        return NULL;
+    }
     return ex;
 }
 

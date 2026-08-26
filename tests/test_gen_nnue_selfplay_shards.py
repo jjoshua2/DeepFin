@@ -1825,7 +1825,7 @@ def test_merging_workers_reports_a_configuration_conflict_rather_than_hiding_it(
 def test_every_arm_stats_key_is_classified(bucket_pack: Path) -> None:
     """⚑⚑ THE KEY SET COMES OFF A LIVE HANDLE, NOT OFF THE TRANSCRIPTION.
 
-    The three `_CTX_*_KEYS` sets are a Python copy of what `arm_stats_dict`
+    The four `_CTX_*_KEYS` sets are a Python copy of what `arm_stats_dict`
     emits, and a copy only has to be incomplete once. It was: `qterminal_draw`
     and `qply_cutoffs` were missing, every forged-dict unit test passed, and the
     first real two-worker qsearch run died in `merge` -- correctly, but in
@@ -1838,19 +1838,23 @@ def test_every_arm_stats_key_is_classified(bucket_pack: Path) -> None:
         GEN.VALUE_SOURCE_NNUE_QSEARCH, str(bucket_pack),
     )
     keys = set(dict(_nnue_ext.arm_stats(handle)))
-    classified = (
-        GEN._CTX_COUNTER_KEYS | GEN._CTX_PEAK_KEYS | GEN._CTX_CONFIG_KEYS
+    sets = (
+        GEN._CTX_COUNTER_KEYS,
+        GEN._CTX_PEAK_KEYS,
+        GEN._CTX_CONFIG_KEYS,
+        GEN._CTX_STORE_SIZE_KEYS,
     )
+    classified = frozenset().union(*sets)
     assert keys, "arm_stats returned nothing"
     assert keys <= classified, f"unclassified arm_stats keys: {sorted(keys - classified)}"
     # And nothing classified that the extension does not emit -- a stale entry
     # here is a key that silently never merges.
     assert classified <= keys, f"classified but absent: {sorted(classified - keys)}"
-    # The three sets must be disjoint, or a key's merge rule depends on which
+    # The sets must be PAIRWISE disjoint, or a key's merge rule depends on which
     # `elif` happens to come first.
-    assert GEN._CTX_COUNTER_KEYS.isdisjoint(GEN._CTX_PEAK_KEYS)
-    assert GEN._CTX_COUNTER_KEYS.isdisjoint(GEN._CTX_CONFIG_KEYS)
-    assert GEN._CTX_PEAK_KEYS.isdisjoint(GEN._CTX_CONFIG_KEYS)
+    for i, first in enumerate(sets):
+        for second in sets[i + 1:]:
+            assert first.isdisjoint(second), sorted(first & second)
 
 
 def test_an_unclassified_context_key_refuses_to_merge() -> None:
