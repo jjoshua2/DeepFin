@@ -22,3 +22,8 @@ def compute_relation_matrices(
     king_sq_them: int,
     turn_white: bool | int,
 ) -> NDArray[np.uint8]: ...
+
+# Which sliding-attack implementation THIS extension was compiled with:
+# "pext", "magic", or "rays". Published by every extension so a test can ask the
+# shipped binary rather than the build system — see encoding/_slider_attacks_impl.h.
+SLIDER_BACKEND: str

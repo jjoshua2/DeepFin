@@ -242,3 +242,15 @@ def temperature_resample(
     actions: NDArray[np.int32],
     rand_vals: NDArray[np.float64],
 ) -> None: ...
+
+# Which sliding-attack implementation THIS extension was compiled with:
+# "pext", "magic", or "rays". Published by every extension so a test can ask the
+# shipped binary rather than the build system — see encoding/_slider_attacks_impl.h.
+SLIDER_BACKEND: str
+
+def slider_selftest(seed: int = ..., samples: int = ..., /) -> int:
+    """Mismatches between this module's slider tables and its own ray walker.
+
+    Uses full-board occupancies, so unlike the import-time check it can see a
+    wrong relevant-occupancy mask. Zero is the only acceptable result.
+    """

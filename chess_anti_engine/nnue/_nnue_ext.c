@@ -1151,6 +1151,7 @@ static PyMethodDef module_methods[] = {
     {"fastq_set_config", py_fastq_set_config, METH_VARARGS, fastq_set_config_doc},
     {"fastq_stats", py_fastq_stats, METH_VARARGS, fastq_stats_doc},
     CAE_NNUE_DAG_METHODS
+    DEEPFIN_SLIDER_PY_METHODS
     {NULL, NULL, 0, NULL}
 };
 
@@ -1251,5 +1252,13 @@ PyMODINIT_FUNC PyInit__nnue_ext(void) {
     PyModule_AddIntConstant(m, "PACK_VERSION", (long)CAE_NNUE_PACK_VERSION);
     PyModule_AddIntConstant(m, "FILE_VERSION", (long)CAE_NNUE_FILE_VERSION);
     PyModule_AddIntConstant(m, "HAVE_AVX2", (long)CAE_NNUE_HAVE_AVX2);
+
+    /* ⚑ Which slider backend THIS binary compiled: "pext", "magic", or "rays".
+     * qsearch, the recursive check resolver, FastQ and FastQ's SEE x-ray loop
+     * all run the copy of CBoard's movegen compiled into THIS .so — the tree's
+     * copy is unreachable from here, since a provider reaches the tree through
+     * a capsule rather than an #include. "rays" means this module ray-walks no
+     * matter what the other extensions were built with. */
+    PyModule_AddStringConstant(m, "SLIDER_BACKEND", DEEPFIN_SLIDER_BACKEND_NAME);
     return m;
 }
