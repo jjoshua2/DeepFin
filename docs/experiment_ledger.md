@@ -67212,3 +67212,21 @@ under `CAE_QSUB_REFRESH = 0` while the oracle silently runs incremental — muta
 Reviews: grok full pass, findings closed; Codex no-showed three summons (recorded on
 the PR as a no-show, NOT a zero-finding pass). CI green on the merged head.
 Next: FastQ-4+ per docs/fastq_design.md, then the S1 calibration dump.
+
+**2026-08-26 — LEVER 1 VERDICT: KILL (pre-committed clause, same session).** Validity
+checklist passed in full (τ=2.2 on 20,000/20,000 batches; own-row entropy 0.726 →
+1.452 nats, dead in the 1.4–1.5 band; loss temp 1.0; zero unrouted). Arenas at the
+canonical instrument (matched_sims, search-shape play, 400g, fresh seeds):
+MID s68 **−41.0 [−71.5, −11.2]**, LAST s69 **−29.6 [−58.5, −1.1]**. LAST CI excludes 0
+negative ⇒ KILL: tempering hurts. Banked: scratchpad/elo_calib/TEMPER22_{MID,LAST}_*.json.
+DIAGNOSTIC (the informative part): vs the untempered f=0.50 comparator (seeds 63/64),
+MID is IDENTICAL (−41.0 vs −42.8) but LAST loses the entire recovery (−29.6 vs −0.87).
+Flattening own policy targets did not touch the early interference dip at all — it
+removed the late own-row advantage that pulled the mix back to parity. ⇒ the +0.82-nats
+sharpness gap is NOT the interference mechanism, and own-target quality is load-bearing
+(consistent with TRAINING-TEMP > STRENGTH-OPTIMAL-TEMP). Lever 1 reverted (nothing
+live to revert — experiment-only knob; production untouched). NEXT per prereg: lever 2
+(value-shape), ONE lever this readout. Direction UPDATED by this kill: reshape the
+GUEST (lc0) rows' value target toward the own regime (D-mass 0.735 → ≈0.267), never
+the own rows' — lever 1 showed degrading own targets costs real Elo. Calibration probe
+before any knob: measure both corpora's D-mass on real rows, pick the remap, bank it.
