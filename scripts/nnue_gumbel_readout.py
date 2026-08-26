@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -80,7 +81,22 @@ ORACLE_ARMS: tuple[str, str] = (ARM_QSEARCH, ARM_QSEARCH_DAG)
 #: dropped) and ``workers_requested`` (provenance). The key was RENAMED rather
 #: than redefined for the same reason the counter exists at all: a stale reader
 #: must fail, not silently divide by the wrong number.
-REPORT_SCHEMA = 3
+#: 4 adds a search-output digest to the qsearch/DAG oracle and native-binary
+#: provenance. A schema-3 reader must not mistake game-trajectory equality for
+#: the stronger search-output equality this version requires.
+REPORT_SCHEMA = 4
+
+QUALITY_SCOPE: dict[str, object] = {
+    "population": "end_to_end_arm_selected",
+    "paired_evaluator_quality": False,
+    "deep_sf_paired_input_admissible": False,
+    "reason": (
+        "each arm drives its own Gumbel search, so FastQ may change which later "
+        "leaves exist; per-arm banks are trace artifacts, not a paired evaluator "
+        "quality sample. A frozen-driver/shadow-arm experiment is required for "
+        "paired deep-SF attribution."
+    ),
+}
 
 StatsSurface = Literal["arm", "fastq"]
 
@@ -230,6 +246,7 @@ def _load_ext() -> Any:
 
 def resolve_arm_config(
     args: argparse.Namespace, ext: Any | None = None, *, arm: str | None = None,
+    strict_foreign_knobs: bool = True,
 ) -> ResolvedArmConfig:
     """Resolve only knobs the selected provider consumes; refuse every other one.
 
@@ -263,17 +280,18 @@ def resolve_arm_config(
         args.fastq_delta_margin,
         args.fastq_recapture_exempt,
     )
-    if spec.consumes_qsearch_knobs and any(v is not None for v in f_values):
-        raise ValueError(
-            f"{selected} does not consume --fastq-* knobs; remove them rather "
-            "than recording settings the selected provider will ignore",
-        )
-    if spec.consumes_fastq_knobs and any(v is not None for v in q_values):
-        raise ValueError(
-            f"{selected} does not consume qsearch/resolver/DAG-qsearch knobs; "
-            "remove them rather than recording settings the selected provider "
-            "will ignore",
-        )
+    if strict_foreign_knobs:
+        if spec.consumes_qsearch_knobs and any(v is not None for v in f_values):
+            raise ValueError(
+                f"{selected} does not consume --fastq-* knobs; remove them rather "
+                "than recording settings the selected provider will ignore",
+            )
+        if spec.consumes_fastq_knobs and any(v is not None for v in q_values):
+            raise ValueError(
+                f"{selected} does not consume qsearch/resolver/DAG-qsearch knobs; "
+                "remove them rather than recording settings the selected provider "
+                "will ignore",
+            )
 
     if spec.consumes_qsearch_knobs:
         dag_cap = args.dag_node_cap
@@ -346,6 +364,35 @@ def resolve_arm_config(
             else int(args.fastq_recapture_exempt)
         ),
     )
+
+
+def _validate_matrix_knobs(args: argparse.Namespace, arms: list[str]) -> None:
+    """Refuse a supplied knob only when NO selected cell consumes it.
+
+    Per-cell resolution still copies only the fields its provider reads. The
+    distinction matters for a mixed matrix: a FastQ knob is foreign to qsearch
+    but live in the FastQ cell, so rejecting it while resolving qsearch makes
+    non-default matrix experiments impossible.
+    """
+    selected = set(arms)
+    qsearch_family = {ARM_QSEARCH, ARM_QSEARCH_DAG}
+    q_common = (
+        args.nnue_resolver_max_depth,
+        args.nnue_qsearch_max_ply,
+        args.nnue_qsearch_check_plies,
+    )
+    fastq = (
+        args.fastq_max_qply,
+        args.fastq_node_cap,
+        args.fastq_delta_margin,
+        args.fastq_recapture_exempt,
+    )
+    if any(v is not None for v in q_common) and not (selected & qsearch_family):
+        raise ValueError("qsearch/resolver knobs were supplied but no qsearch-family arm is selected")
+    if args.dag_node_cap is not None and ARM_QSEARCH_DAG not in selected:
+        raise ValueError("--dag-node-cap was supplied but nnue-qsearch-dag is not selected")
+    if any(v is not None for v in fastq) and ARM_FASTQ not in selected:
+        raise ValueError("--fastq-* knobs were supplied but nnue-fastq is not selected")
 
 
 def readout_arm_config_plan(config: ResolvedArmConfig) -> gen.ArmConfigPlan:
@@ -442,6 +489,29 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 22), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _module_identity(module: Any) -> tuple[str, str]:
+    raw = getattr(module, "__file__", None)
+    if not raw:
+        raise RuntimeError(f"native module {module!r} has no __file__; cannot prove binary identity")
+    path = Path(str(raw)).resolve()
+    return str(path), _sha256_file(path)
+
+
+def _git_provenance() -> dict[str, object]:
+    """Best-effort source revision. Native binary hashes remain authoritative."""
+    try:
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT, text=True, stderr=subprocess.DEVNULL,
+        ).strip())
+        return {"git_head": head, "git_tracked_dirty": dirty}
+    except (OSError, subprocess.CalledProcessError):
+        return {"git_head": None, "git_tracked_dirty": None}
 
 
 #: This process's niceness before the harness touched it, as a one-element list
@@ -623,6 +693,19 @@ class GameRecord:
     result: str
     termination: str
     digest: str
+    search_digest: str = ""
+
+
+def search_output_digest(rows: list[Any]) -> str:
+    """Digest the exact improved-policy/search output for every stored ply."""
+    h = hashlib.sha256()
+    for row in rows:
+        h.update(int(row.ply_index).to_bytes(8, "little", signed=True))
+        policy = np.asarray(row.policy_probs, dtype="<f4")
+        legal = np.asarray(row.legal_mask, dtype=np.uint8)
+        h.update(policy.tobytes(order="C"))
+        h.update(legal.tobytes(order="C"))
+    return h.hexdigest()
 
 
 def game_digest(
@@ -645,6 +728,14 @@ def games_digest(records: list[GameRecord]) -> str:
     return h.hexdigest()
 
 
+def searches_digest(records: list[GameRecord]) -> str:
+    """One digest over each game's improved-policy/search outputs."""
+    h = hashlib.sha256()
+    for record in sorted(records, key=lambda r: r.game):
+        h.update(f"{record.game}:{record.search_digest}\n".encode())
+    return h.hexdigest()
+
+
 @dataclass
 class DagGameStats:
     games: int = 0
@@ -663,30 +754,44 @@ class DagGameStats:
     #: satisfying" it, so a non-zero count is a broken substrate, not a finding.
     state_identity_violations: int = 0
 
-    def add(self, stats: dict[str, int]) -> None:
-        """Fold one ``arm_dag_stats()`` snapshot in, by its REAL key names.
+    def add(
+        self, stats: dict[str, int], *, previous: dict[str, int] | None = None,
+    ) -> None:
+        """Fold one snapshot as DELTA work plus absolute resource peaks.
 
-        ⚑ SUBSCRIPT, NOT ``.get``.  This read used to be
-        ``stats.get("nodes", stats.get("node_count", 0))``; the C layer publishes
-        ``node_count`` and has never published ``nodes``, so the live branch was
-        the fallback -- and the test fake returned the dead names, so every test
-        exercised the branch production cannot reach.  Deleting the fallback in
-        that shape left the suite green and made every real run report
-        ``nodes_per_game: 0.0``.
+        `arm_dag_stats()` counters are cumulative since the last reset. Under
+        `--dag-reset never/every-N`, summing each absolute snapshot counts early
+        games repeatedly. `previous=None` means a reset boundary; otherwise all
+        cumulative fields must be monotone and only their deltas are charged to
+        this game. The construction identity is checked on the absolute snapshot
+        before any differencing.
         """
         self.games += 1
+        prev = {} if previous is None else previous
+
+        def delta(key: str) -> int:
+            current = int(stats[key])
+            before = int(prev.get(key, 0))
+            if current < before:
+                raise ValueError(
+                    f"DAG cumulative counter {key} went backwards without a "
+                    f"declared reset: {before} -> {current}"
+                )
+            return current - before
+
         nodes = int(stats["node_count"])
         edges = int(stats["edge_count"])
         memory = int(stats["memory_bytes"])
         state_inits = int(stats["state_inits"])
         state_makes = int(stats["state_makes"])
-        self.nodes_sum += nodes
-        self.edges_sum += edges
-        self.hits_sum += int(stats["hits"])
-        self.probes_sum += int(stats["probes"])
-        self.inserts_sum += int(stats["inserts"])
-        self.state_inits_sum += state_inits
-        self.state_makes_sum += state_makes
+
+        self.nodes_sum += delta("node_count")
+        self.edges_sum += delta("edge_count")
+        self.hits_sum += delta("hits")
+        self.probes_sum += delta("probes")
+        self.inserts_sum += delta("inserts")
+        self.state_inits_sum += delta("state_inits")
+        self.state_makes_sum += delta("state_makes")
         if state_inits + state_makes != nodes:
             self.state_identity_violations += 1
         self.memory_peak = max(self.memory_peak, memory)
@@ -752,6 +857,10 @@ class WorkerResult:
     pack_file_sha256: str
     pack_source_sha256: str
     nice_realized: int
+    nnue_ext_path: str = ""
+    nnue_ext_sha256: str = ""
+    mcts_ext_path: str = ""
+    mcts_ext_sha256: str = ""
     arm_config_requested: dict[str, int] = field(default_factory=dict)
     arm_config_realized: dict[str, int] = field(default_factory=dict)
 
@@ -818,10 +927,13 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
     base = _base_gen_config(cfg)
     gcfg = gen.build_gumbel_config(base)
     opening_cfg = gen.build_opening_config(base)
+    # Hash in THIS worker, immediately around the open. The parent hash is an
+    # expectation, not evidence of what a worker actually mapped.
+    worker_pack_sha_before = _sha256_file(cfg.pack)
     source = ReadoutArmSource(
         config=cfg.arm_config,
         pack=cfg.pack,
-        pack_file_sha256=cfg.pack_file_sha256,
+        pack_file_sha256=worker_pack_sha_before,
         cp_per_internal_unit=cfg.cp_per_internal_unit,
         cp_slope=cfg.cp_slope,
         cp_draw_width=cfg.cp_draw_width,
@@ -834,20 +946,31 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
             "seed": int(cfg.seed),
             "repeat": int(cfg.repeat),
             "worker_id": int(spec.worker_id),
+            "population_kind": "end_to_end_arm_selected",
         },
     )
+    worker_pack_sha_after = _sha256_file(cfg.pack)
+    if worker_pack_sha_after != worker_pack_sha_before:
+        raise RuntimeError(
+            "NNUE pack changed while this worker was opening it: "
+            f"{worker_pack_sha_before} -> {worker_pack_sha_after}"
+        )
     evaluator = ReadoutEvaluator(
         source=source,
         expected_planes=gen.input_plane_count(base.input_extra_features),
         input_history_encoding=base.input_history_encoding,
         input_extra_features=base.input_extra_features,
     )
+    from chess_anti_engine.mcts import _mcts_tree as mcts_ext
+    nnue_ext_path, nnue_ext_sha = _module_identity(source._ext)
+    mcts_ext_path, mcts_ext_sha = _module_identity(mcts_ext)
     setup_s = time.perf_counter() - setup_started
     policy = gen.PolicyShapeStats()
     budget = gen.RootBudgetStats()
     dag_games = DagGameStats()
     terminations = dict.fromkeys(gen.TERMINATIONS, 0)
     records: list[GameRecord] = []
+    dag_previous: dict[str, int] | None = None
     plies = 0
     started = time.perf_counter()
     try:
@@ -864,6 +987,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
                 and position % cfg.dag_reset_every == 0
             ):
                 source.reset_game()
+                dag_previous = None
             rng = np.random.default_rng(int(cfg.seed) + int(game_index))
             outcome = gen.play_game(
                 cfg=base,
@@ -888,12 +1012,14 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
                     result=str(outcome.result),
                     termination=str(outcome.termination),
                 ),
+                search_digest=search_output_digest(outcome.records),
             ))
             for row in outcome.records:
                 policy.add(gen.policy_tv_to_uniform(row.policy_probs, row.legal_mask))
             dag = source.dag_stats()
             if dag is not None:
-                dag_games.add(dag)
+                dag_games.add(dag, previous=dag_previous)
+                dag_previous = dag
     finally:
         evaluator.close()
     elapsed = time.perf_counter() - started
@@ -924,6 +1050,10 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         pack_file_sha256=source.pack_file_sha256,
         pack_source_sha256=source.pack_source_sha256,
         nice_realized=nice_realized,
+        nnue_ext_path=nnue_ext_path,
+        nnue_ext_sha256=nnue_ext_sha,
+        mcts_ext_path=mcts_ext_path,
+        mcts_ext_sha256=mcts_ext_sha,
         arm_config_requested=dict(source.requested),
         arm_config_realized=dict(source.realized),
     )
@@ -1135,6 +1265,7 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
         "dag_reset": _dag_reset_label(cfg.dag_reset_every),
         "terminations": terminations,
         "games_digest": games_digest(records),
+        "searches_digest": searches_digest(records),
         "games_detail": [asdict(rec) for rec in sorted(records, key=lambda r: r.game)],
         "bank_rows": sum(r.bank_rows for r in results),
         "bank_files": [r.bank_file for r in results if r.bank_file is not None],
@@ -1295,32 +1426,41 @@ class ReadoutPlan:
 
 
 def _oracle(cells: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    """Compare the qsearch and qsearch-DAG per-game digests, repeat by repeat.
-
-    ⚑ Present only when BOTH cells ran in this report.  Two digests from two
-    invocations are comparable too -- they are a pure function of the seed and
-    the settings, both of which ``provenance`` pins -- but this tool can only
-    speak for the runs it made, so it says ``available: false`` rather than
-    implying a comparison it did not perform.
-    """
+    """Require both trajectory AND improved-policy/search-output parity."""
     left, right = ORACLE_ARMS
     if left not in cells or right not in cells:
-        return {"arms": list(ORACLE_ARMS), "available": False, "digests_agree": None}
+        return {
+            "arms": list(ORACLE_ARMS), "available": False,
+            "digests_agree": None, "game_digests_agree": None,
+            "search_digests_agree": None,
+        }
+    if len(cells[left]) != len(cells[right]):
+        return {
+            "arms": list(ORACLE_ARMS), "available": True,
+            "digests_agree": False, "game_digests_agree": False,
+            "search_digests_agree": False,
+            "reason": "qsearch and qsearch-DAG repeat counts differ",
+        }
     per_repeat: list[dict[str, Any]] = []
-    for a, b in zip(cells[left], cells[right], strict=False):
+    for a, b in zip(cells[left], cells[right], strict=True):
+        game_agree = a["games_digest"] == b["games_digest"]
+        search_agree = a["searches_digest"] == b["searches_digest"]
         per_repeat.append({
             "repeat": a["repeat"],
-            left: a["games_digest"],
-            right: b["games_digest"],
-            "agree": a["games_digest"] == b["games_digest"],
+            "game_digest": {left: a["games_digest"], right: b["games_digest"]},
+            "search_digest": {left: a["searches_digest"], right: b["searches_digest"]},
+            "game_agree": game_agree,
+            "search_agree": search_agree,
+            "agree": game_agree and search_agree,
         })
     return {
         "arms": list(ORACLE_ARMS),
         "available": True,
+        "game_digests_agree": bool(per_repeat) and all(r["game_agree"] for r in per_repeat),
+        "search_digests_agree": bool(per_repeat) and all(r["search_agree"] for r in per_repeat),
         "digests_agree": bool(per_repeat) and all(r["agree"] for r in per_repeat),
         "per_repeat": per_repeat,
     }
-
 
 def run(plan: ReadoutPlan) -> dict[str, Any]:
     """Run every cell of the matrix, interleaving repeats.
@@ -1364,6 +1504,19 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     file_shas = sorted({
         str(w["pack_file_sha256"]) for c in every for w in c["workers_detail"]
     })
+    nnue_binary_shas = sorted({
+        str(w["nnue_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
+    mcts_binary_shas = sorted({
+        str(w["mcts_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
+    nnue_binary_paths = sorted({
+        str(w["nnue_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    mcts_binary_paths = sorted({
+        str(w["mcts_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    git_meta = _git_provenance()
     reasons = [
         f"cell {c['arm']} repeat {c['repeat']}: {reason}"
         for c in every for reason in c["inadmissible_reasons"]
@@ -1380,6 +1533,11 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "differ by a multi-fold wall factor, so these cells are not one "
             "experiment",
         )
+    if len(nnue_binary_shas) != 1 or len(mcts_binary_shas) != 1:
+        reasons.append(
+            "workers loaded different native binaries: "
+            f"_nnue_ext={nnue_binary_shas}, _mcts_tree={mcts_binary_shas}"
+        )
     nice_realized = sorted({int(n) for c in every for n in c["nice_realized"]})
     if len(nice_realized) > 1:
         reasons.append(
@@ -1390,10 +1548,10 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     oracle = _oracle(cells)
     if oracle["available"] and not oracle["digests_agree"]:
         reasons.append(
-            "the nnue-qsearch and nnue-qsearch-dag per-game digests DIFFER: the "
-            "two cells did not play the same games, so no wall-clock difference "
-            "between them is attributable to the DAG substrate. The "
-            "decomposition is VOID.",
+            "the nnue-qsearch and nnue-qsearch-dag oracle DIFFERED in game "
+            "trajectory and/or improved-policy search output; the two cells did "
+            "not execute the same search, so no wall-clock difference is "
+            "attributable purely to the DAG substrate. The decomposition is VOID.",
         )
 
     report: dict[str, Any] = {
@@ -1406,6 +1564,11 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "pack_file_sha256": pack_sha,
             "pack_source_sha256": source_shas[0] if len(source_shas) == 1 else source_shas,
             "kernel": kernels[0] if len(kernels) == 1 else kernels,
+            "nnue_ext_path": nnue_binary_paths[0] if len(nnue_binary_paths) == 1 else nnue_binary_paths,
+            "nnue_ext_sha256": nnue_binary_shas[0] if len(nnue_binary_shas) == 1 else nnue_binary_shas,
+            "mcts_ext_path": mcts_binary_paths[0] if len(mcts_binary_paths) == 1 else mcts_binary_paths,
+            "mcts_ext_sha256": mcts_binary_shas[0] if len(mcts_binary_shas) == 1 else mcts_binary_shas,
+            **git_meta,
             "seed": plan.seed,
             "games_per_cell": plan.games,
             "workers": plan.workers,
@@ -1432,6 +1595,7 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
         },
         "order": order,
         "oracle": oracle,
+        "quality_scope": dict(QUALITY_SCOPE),
         "cells": cells,
         "inadmissible_reasons": reasons,
         "admissible": not reasons,
@@ -1519,8 +1683,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def plan_from_args(args: argparse.Namespace) -> ReadoutPlan:
     arms = list(dict.fromkeys(args.arm))
+    _validate_matrix_knobs(args, arms)
     return ReadoutPlan(
-        arm_configs=tuple(resolve_arm_config(args, arm=a) for a in arms),
+        arm_configs=tuple(
+            resolve_arm_config(args, arm=a, strict_foreign_knobs=False) for a in arms
+        ),
         pack=Path(args.nnue_pack),
         games=int(args.games),
         workers=int(args.workers),
