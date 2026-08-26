@@ -178,12 +178,12 @@ def regression_gate(
         if not isinstance(cur, dict) or not isinstance(base, dict):
             failures.append(f"missing {section} section in baseline/current")
             continue
-        for key in keys:
-            if cur.get(key) != base.get(key):
-                failures.append(
-                    f"{section}.{key} changed: baseline={base.get(key)!r}, "
-                    f"current={cur.get(key)!r}",
-                )
+        failures.extend(
+            f"{section}.{key} changed: baseline={base.get(key)!r}, "
+            f"current={cur.get(key)!r}"
+            for key in keys
+            if cur.get(key) != base.get(key)
+        )
 
     cur_q = current.get("qsearch")
     base_q = baseline.get("qsearch")
