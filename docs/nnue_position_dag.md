@@ -27,6 +27,8 @@ A DAG node is the **current structural position** that determines legal moves:
 
 This is the same semantic boundary as `cboard_transposition_key()`.
 
+⚑ **Castling is compared masked to its four defined bits** (`CAE_DAG_CASTLING_MASK`). `CBoard.from_raw()` stores the caller's low byte unmasked, while `cboard_compute_hash()` indexes `ZOBRIST_CASTLING[castling & 0xF]` and movegen only ever tests WK/WQ/BK/BQ — so two boards differing above bit 3 have the same hash *and* the same legal moves. Comparing the raw byte split that one position into two nodes sharing a hash. The mask is canonicalization to what the rest of the engine already consumes, not input validation: rejecting such a board would make the DAG refuse a position the evaluator and movegen accept.
+
 The following are intentionally **not** node identity:
 
 - halfmove clock;
@@ -92,6 +94,8 @@ This is a deliberate guard against the repository's recurring failure mode: a pa
 
 Rerooting changes only `root_id`; descendants and transposed nodes stay allocated and reusable. `dag_reset()` clears graph semantics and counters but keeps allocations and the retained weight mapping, so a caller can reuse the storage without repeated malloc/mmap churn.
 
+`dag_open()`'s `initial_nodes` is bounded by `CAE_DAG_MAX_INIT_NODES` (`INT32_MAX/4`) and an out-of-range value raises **`ValueError`**. The bound is enforced twice on purpose: at the Python surface, where it can name the argument, and inside `cae_position_dag_init()` itself, because that function derives both the edge capacity and the hash size as `initial_nodes * 2` in int32 — an unchecked capacity wraps negative and reaches `malloc` as an enormous `size_t`. The graph layer is meant to be reused by the tactical search next, so the check belongs next to the arithmetic rather than in whichever caller happens to remember it.
+
 No garbage collector is added in this PR. The first tactical-search consumer is expected to operate on bounded graphs; memory usage is explicit in `dag_stats()`. Once real workloads show the required lifetime, reclamation can be designed around reachability/generations instead of guessed in advance.
 
 ## Threading: single-threaded, and enforced rather than promised
@@ -127,7 +131,9 @@ state_inits + state_makes == node_count
 
 Every canonical node was published by exactly one accounted NNUE state construction, and no node exists without one. `tests/test_nnue_position_dag.py` asserts it at *every* stats read.
 
-**It is the headline because it is falsifiable, and it has fired.** A 6-thread probe against a build that released the GIL around `cae_nnue_state_make()` read `21 == 87`: threads that both missed the canonical probe both published the same structural position, and each duplicate's `link()` then failed, so its work was never accounted. The identity is therefore also the alarm for a published-but-unlinked node — which is why the counters are incremented *after* a successful link and must not be moved earlier to make the error path "tidy". Such a node is not leaked or unreachable: it is in the canonical table, so a retry finds it and the request becomes an ordinary transposition that only has to add the edge. (When the link fails because the edge array could not grow, the API now raises `MemoryError` rather than reporting an allocation failure as a `RuntimeError`.)
+**It is the headline because it is falsifiable, and it has fired.** A 6-thread probe against a build that released the GIL around `cae_nnue_state_make()` read `21 == 87`: threads that both missed the canonical probe both published the same structural position, and each duplicate's `link()` then failed, so its work was never accounted.
+
+**It now holds on every path, allocation failure included.** A new child's edge is *reserved* — `cae_position_dag_reserve_edge()`, which grows the edge arrays if needed — **before** the node is published to the canonical table, so the link that follows cannot allocate and cannot fail. Publishing first was the earlier shape, and it was wrong in a way the identity itself exposed: an edge-growth failure after publication left a node in the table that no edge reached, a retry found it and reported *reuse*, its NNUE work was never accounted, and the identity was broken permanently rather than transiently. A construction now either completes or leaves the DAG untouched, and an out-of-memory edge reservation raises `MemoryError` rather than reporting an allocation failure as a `RuntimeError`.
 
 ⚑ **`nnue_evals <= node_count` is not an invariant worth reading.** It holds by construction on every path — a node is published at most once per evaluation — and duplicating nodes only widens the margin, so it is precisely blind to the failure it appears to watch. Measured against a deliberate double-publish mutant: the identity fires (`5 == 9` false) while the old relationship stays green and merely loosens, from `5 <= 5` to `5 <= 9`. It was the documented headline before this review.
 

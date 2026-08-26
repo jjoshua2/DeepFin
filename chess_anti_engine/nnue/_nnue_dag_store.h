@@ -263,17 +263,37 @@ static int cae_nnue_dag_intern_child(
         if (status != CAE_VALUE_OK) return status;
     }
 
+    /* ⚑ RESERVE THE EDGE BEFORE PUBLISHING THE NODE. The link's only remaining
+     * failure is the edge-array growth allocation, and taking it here — while
+     * the DAG is still untouched — is what keeps every failure path clean.
+     * Publishing first and discovering the allocation failure afterwards left a
+     * node in the canonical table that no edge reached: a retry found it and
+     * reported reuse, its NNUE work was never accounted, and
+     * state_inits + state_makes == node_count was broken permanently rather
+     * than transiently. Reserve-first means the caller either gets a complete
+     * node+edge or an untouched DAG, so the identity holds on EVERY path,
+     * MemoryError included.
+     *
+     * ⚑ IT LIVES HERE RATHER THAN IN THE PYTHON SURFACE, and that is the whole
+     * reason this function exists. The fix landed on _nnue_dag_api.h while the
+     * search consumer was being written; leaving it there would have given the
+     * Python path a clean OOM and the C search the old orphan-node behaviour,
+     * from one store, with the identity that is supposed to detect it holding
+     * for one caller and not the other. */
+    if (cae_position_dag_reserve_edge(&h->dag) != 0)
+        return CAE_NNUE_DAG_ERR_NO_MEMORY;
+
     int32_t node_id = cae_nnue_dag_publish_new(h, &child_pos, &state, value, value_valid);
     if (node_id == CAE_DAG_NO_NODE) return CAE_NNUE_DAG_ERR_NO_MEMORY;
     int link_rc = cae_position_dag_link(&h->dag, parent_id, action, node_id);
     if (link_rc != 1) {
-        /* The node is already published, and that is NOT an unreachable leak:
-         * it is in the canonical table, so a retry FINDS it and the request
-         * becomes an ordinary transposition that only has to add the edge. What
-         * is lost is this call's edge and its state_makes/nnue_evals
-         * accounting, which is why state_inits + state_makes == node_count
-         * fires here — that identity is the alarm for a published-but-
-         * unaccounted node, so do not "fix" it by counting the work earlier. */
+        /* Unreachable by construction now: the edge is reserved, parent, child
+         * and action are all in range, and no edge for this action exists (the
+         * caller checked, or the probe above found no node), so link() can
+         * return neither -1 nor 0 nor -2. -2 in particular would mean two
+         * constructions interleaved, which the retained GIL prevents. Kept as a
+         * loud failure rather than an assert because it is the shape a future
+         * concurrent consumer would hit first. */
         return link_rc == -1 ? CAE_NNUE_DAG_ERR_NO_MEMORY : CAE_NNUE_DAG_ERR_LINK;
     }
     h->state_makes++;

@@ -99,8 +99,16 @@ static PyObject *py_dag_open(PyObject *Py_UNUSED(self), PyObject *args) {
     PyObject *weights_capsule;
     int initial_nodes = 256;
     if (!PyArg_ParseTuple(args, "O|i", &weights_capsule, &initial_nodes)) return NULL;
-    if (initial_nodes < 1 || initial_nodes > INT32_MAX / 4) {
-        PyErr_SetString(PyExc_ValueError, "initial_nodes must be 1..INT32_MAX/4");
+    /* ValueError is the documented answer for an out-of-range capacity, and the
+     * bound is CAE_DAG_MAX_INIT_NODES — the same constant cae_position_dag_init()
+     * enforces for itself. Two layers deliberately: this one names the argument
+     * that was wrong, and the graph layer refuses regardless of which consumer
+     * called it, so removing either still fails cleanly instead of overflowing
+     * the int32 capacity derivations. */
+    if (initial_nodes < 1 || initial_nodes > CAE_DAG_MAX_INIT_NODES) {
+        PyErr_Format(PyExc_ValueError,
+                     "initial_nodes must be 1..%d (got %d)",
+                     (int)CAE_DAG_MAX_INIT_NODES, initial_nodes);
         return NULL;
     }
     CaeNnueWeights *w = weights_from_capsule(weights_capsule);
@@ -309,6 +317,9 @@ PyDoc_STRVAR(dag_stats_doc,
 "state_inits + state_makes read 21 against a node_count of 87, because\n"
 "duplicate publications produced nodes whose work was never accounted (their\n"
 "link failed).\n\n"
+"It now holds on EVERY path, allocation failure included: the child's edge is\n"
+"reserved before the node is published, so a construction either completes or\n"
+"leaves the DAG untouched.\n\n"
 "⚑ Do NOT read nnue_evals <= node_count as the invariant. It holds by\n"
 "construction on every path — a node is published at most once per evaluation —\n"
 "and duplicating nodes makes it MORE satisfied, so it is exactly blind to the\n"
