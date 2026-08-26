@@ -96,6 +96,22 @@ def _ext_link_args(*, openmp: bool = False) -> list[str]:
     return args
 
 
+# _cboard_impl.h defines the original ray walkers before its shared
+# bitboard-plane include boundary. These aliases retain those definitions as
+# an exhaustive oracle; _slider_attacks_impl.h undefines the aliases at that
+# boundary and installs table-backed PEXT/magic helpers for all subsequent
+# move-generation and search code.
+_CBOARD_FAST_SLIDER_MACROS = [
+    ("DEEPFIN_FAST_SLIDERS", "1"),
+    ("init_attack_tables", "init_attack_tables_reference"),
+    ("slider_attacks", "slider_attacks_reference"),
+    ("bishop_attacks", "bishop_attacks_reference"),
+    ("rook_attacks", "rook_attacks_reference"),
+    ("queen_attacks", "queen_attacks_reference"),
+    ("is_attacked_by", "is_attacked_by_reference"),
+]
+
+
 features_ext = Extension(
     "chess_anti_engine.encoding._features_ext",
     sources=["chess_anti_engine/encoding/_features_ext.c"],
@@ -108,6 +124,7 @@ lc0_ext = Extension(
     "chess_anti_engine.encoding._lc0_ext",
     sources=["chess_anti_engine/encoding/_lc0_ext.c"],
     include_dirs=[np.get_include()],
+    define_macros=_CBOARD_FAST_SLIDER_MACROS,
     extra_compile_args=_ext_compile_args(),
     extra_link_args=_ext_link_args(),
 )
@@ -119,6 +136,7 @@ mcts_tree_ext = Extension(
     # seam's provider header) rather than calling across a .so boundary, so it
     # needs the encoding headers both files share.
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
+    define_macros=_CBOARD_FAST_SLIDER_MACROS,
     extra_compile_args=_mcts_compile_args(),
     extra_link_args=_ext_link_args(openmp=True),
 )
