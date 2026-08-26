@@ -67130,3 +67130,25 @@ transposing pair identically), H3 GIL released around a use-after-free window (s
 corruption driven at 6 threads). DECISION (mine, disclosed): H3 fix = HOLD the GIL
 around state_make/evaluate — µs-scale calls, single-threaded design becomes
 self-enforcing; a future concurrent consumer reintroduces release with real synchronization.
+
+**2026-08-25 ~23:40 — CORRECTION + qsearch profile: the "eval ≈6%" Amdahl inference
+was WRONG; eval is ~65-70% of qsearch wall and `cae_nnue_propagate` is the single
+biggest cost.** py-spy native profile of the qply-4 bench (2,254 samples, both arms in
+one process, banked scratchpad/qsearch_pyspy.json): cae_nnue_propagate 27.2% (FC
+forward — runs identically in BOTH arms, untouched by #469), accumulator row
+arithmetic ~30% (mm256 add/store + add_row_i8/i16, split across refresh-arm full sums
+and incremental deltas), movegen ~18% (slider_attacks 10.5% + nn_ray_attacks 1.9% —
+ray-walking, NOT magics), threat-feature maintenance ~5.6% (threat_index/relations +
+inc_sort_u32). The earlier 6% figure inferred eval share from the 1.047× saving by
+assuming incremental ≈ free — false: the incremental path pays the FullThreats
+multiset diff/sort + 5.4KB state copies, and propagate dominates either way. WHY SF
+GETS A HUGE BOOST AND WE DON'T (Josh's question, now answered mechanically): SF's
+HalfKA deltas are 2-4 rows with no threat features and its non-eval node cost is tiny;
+our deltas carry the threat multiset machinery and the FC forward dwarfs the
+accumulator saving. PROFILE-PR TARGET LIST (in expected-yield order): (1) LAZY EVAL —
+PSQT-first stand-pat with a margin, skip the full propagate when far outside the
+window (SF-style; attacks the 27% directly and most qnodes are cutoffs); (2) magic/
+PEXT sliders (attacks the 12% ray-walk share); (3) cheapen or cache the FullThreats
+delta (the #470 DAG's evaluate-once also amortizes it); (4) FastQ node-count cuts are
+orthogonal and multiplicative. Depth explosion quantified for the FastQ case: qnodes/
+root 1.2/31/554/6,530 at qply 0/2/4/6 (×11.8 from 4→6) at flat ~5.6µs/node.
