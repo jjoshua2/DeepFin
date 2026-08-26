@@ -1152,7 +1152,9 @@ def test_repeats_interleave_the_cells_rather_than_running_them_in_blocks(
                 "kernel": "scalar", "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
             }],
         }
 
@@ -1208,7 +1210,9 @@ def test_the_provenance_block_carries_what_makes_three_cells_one_experiment(
                 "kernel": next(kernels), "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
             }],
         }
 
@@ -1297,6 +1301,16 @@ def test_the_report_divides_throughput_by_ACTIVE_workers_not_requested() -> None
 
 # --- #474 current-head measurement-integrity regression tests ---
 
+def test_plan_refuses_nonpositive_max_plies(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--max-plies", "0",
+    ])
+    with pytest.raises(ValueError, match="max-plies must be positive"):
+        readout.plan_from_args(args)
+
+
 def test_multi_arm_matrix_scopes_explicit_knobs_to_the_consuming_cells(tmp_path: Path) -> None:
     args = readout.build_parser().parse_args([
         "--arm", readout.ARM_QSEARCH,
@@ -1360,6 +1374,20 @@ def test_dag_delta_refuses_a_counter_that_goes_backwards_without_reset() -> None
         stats.add(second, previous=first)
 
 
+def test_search_output_digest_refuses_an_empty_trace() -> None:
+    with pytest.raises(ValueError, match="empty search-output trace"):
+        readout.search_output_digest([])
+
+
+def test_file_stamp_detects_a_changed_file(tmp_path: Path) -> None:
+    path = tmp_path / "stable.bin"
+    path.write_bytes(b"before")
+    stamp = readout._file_stamp(path)
+    path.write_bytes(b"after")
+    with pytest.raises(RuntimeError, match="changed while this worker was running"):
+        readout._assert_file_unchanged("test file", path, stamp)
+
+
 def test_search_output_digest_catches_a_target_change_that_game_digest_cannot() -> None:
     row_a = argparse.Namespace(
         ply_index=0,
@@ -1394,8 +1422,14 @@ def test_source_provenance_change_during_matrix_voids_the_report(
     ext = FakeExt()
     pack = _pack(tmp_path)
     snapshots = iter((
-        {"git_head": "start", "git_tracked_dirty": False},
-        {"git_head": "end", "git_tracked_dirty": False},
+        {
+            "git_head": "same", "git_tracked_dirty": True,
+            "git_tracked_diff_sha256": "a" * 64,
+        },
+        {
+            "git_head": "same", "git_tracked_dirty": True,
+            "git_tracked_diff_sha256": "b" * 64,
+        },
     ))
     monkeypatch.setattr(readout, "_git_provenance", lambda: next(snapshots))
 
@@ -1411,7 +1445,9 @@ def test_source_provenance_change_during_matrix_voids_the_report(
                 "kernel": "scalar", "pack_source_sha256": "a" * 64,
                 "pack_file_sha256": readout._sha256_file(pack),
                 "nnue_ext_path": "/tmp/_nnue_ext.so", "nnue_ext_sha256": "b" * 64,
+                "nnue_ext_loaded_build_id": "1" * 40,
                 "mcts_ext_path": "/tmp/_mcts_tree.so", "mcts_ext_sha256": "c" * 64,
+                "mcts_ext_loaded_build_id": "2" * 40,
             }],
         }
 
@@ -1427,8 +1463,12 @@ def test_source_provenance_change_during_matrix_voids_the_report(
     report = readout.run(plan)
     assert report["admissible"] is False
     assert any("source provenance changed" in r for r in report["inadmissible_reasons"])
-    assert report["provenance"]["git_head"] == "start"
-    assert report["provenance"]["git_end_head"] == "end"
+    assert report["provenance"]["git_head"] == "same"
+    assert report["provenance"]["git_end_head"] == "same"
+    assert report["provenance"]["git_tracked_dirty"] is True
+    assert report["provenance"]["git_end_tracked_dirty"] is True
+    assert report["provenance"]["git_tracked_diff_sha256"] == "a" * 64
+    assert report["provenance"]["git_end_tracked_diff_sha256"] == "b" * 64
     assert report["provenance"]["git_changed_during_run"] is True
 
 
@@ -1438,22 +1478,22 @@ def test_quality_scope_explicitly_forbids_paired_attribution_from_end_to_end_cel
     assert readout.QUALITY_SCOPE["deep_sf_paired_input_admissible"] is False
 
 
-def test_native_module_identity_hashes_the_actual_loaded_file(tmp_path: Path) -> None:
-    binary = tmp_path / "fake.so"
-    binary.write_bytes(b"one build")
-    module = argparse.Namespace(__file__=str(binary))
-    path, digest = readout._module_identity(module)
-    assert path == str(binary.resolve())
-    assert digest == readout._sha256_file(binary)
-    binary.write_bytes(b"different build")
-    assert readout._sha256_file(binary) != digest
+def test_native_module_identity_reads_the_loaded_elf_build_id() -> None:
+    from chess_anti_engine.mcts import _mcts_tree
+
+    for module in (_nnue_ext, _mcts_tree):
+        path, digest, build_id, stamp = readout._module_identity(module)
+        assert digest == readout._sha256_file(Path(path))
+        assert stamp[0] == digest
+        assert len(build_id) >= 16
+        int(build_id, 16)
 
 
 def test_leaf_bank_marks_when_fen_does_not_reconstruct_repetition_history() -> None:
     import io
 
     sink = io.StringIO()
-    source = object.__new__(gen.NnueArmValueSource)
+    source: Any = object.__new__(gen.NnueArmValueSource)
     source._bank = sink
     source.arm = readout.ARM_QSEARCH
     source.pack_file_sha256 = "f" * 64
@@ -1466,7 +1506,7 @@ def test_leaf_bank_marks_when_fen_does_not_reconstruct_repetition_history() -> N
     source.bank_identity = {}
     source.realized = {}
     source.bank_rows = 0
-    board = argparse.Namespace(
+    board: Any = argparse.Namespace(
         fen=lambda: "8/8/8/8/8/8/8/K6k w - - 7 9",
         halfmove_clock=7,
         hash_stack_len=3,
