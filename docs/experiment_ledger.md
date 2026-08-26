@@ -67400,3 +67400,36 @@ open, 44.12% half-open, 34.07% probe-level skip opportunity at `m=0`; `|full −
 521 / mean 633 / p99.9 2551 against `sd(full)` ≈ 1950, with `full ~ psqt` slope 0.9175 and
 r 0.9410 — which still rules out a scale mismatch as the reason the registered margin came
 out wide. Canonical wording now lives in `docs/nnue_speed_plan.md` §2 as amended on #477.
+
+**2026-08-26 — S2 MERGED (#475, 21b11fd82) AND THE GUMBEL READOUT MERGED (#474,
+8dfb72cc2).** S2 = PEXT/magic slider attack tables replacing the ray walkers.
+MEASURED: **qsearch wall −14.3%** (235 → 274 rows/s), the TOP of the 8–14% band §3
+pre-committed before measurement; movegen 21.4M → 48.7M moves/s (−56% wall); 6 rounds
+with arm order flipped each round (order effect ≤1.9% per cell), median-of-6 14.7%,
+reproduced on a second harness/corpus at +14.4%. Mechanism checks: movegen is ~18% of
+qsearch wall and its wall fell 56% ⇒ predicts 10.1%; the extra ~4 points are slider users
+the profile never bucketed as movegen (`is_attacked_by` in the check resolver, SEE's
+x-ray loop). PEXT is gated by CPU FAMILY, not merely `__BMI2__` — `znver1`/`znver2`/
+`bdver4` microcode it at ~18× latency and take the magic path; production (Zen 3) takes
+PEXT. Oracle: `tests/test_perft.py` — the repo had **no perft test of any kind** before
+this PR, while §3 named perft as the acceptance oracle.
+⚑ **THE DECIDING NUMBER WAS UNMEASURABLE FOR MOST OF THE PR'S LIFE.** `setup.py` applied
+`_CBOARD_FAST_SLIDER_MACROS` to `lc0_ext` and `mcts_tree_ext` but NOT to `nnue_ext`, so
+`_fastq_see.h`'s `bishop_attacks`/`rook_attacks` compiled to the ray walkers **inside the
+binary that does the searching**. Fixed in `d7869a667`. The follow-up added `setup.py` to
+every extension's freshness dependency set, which is the general form of the same bug:
+setup.py owns the macro sets, so a setup-only edit changes the binary while leaving every
+C/header mtime untouched and a freshness check passes on a stale `.so`.
+⚑ **THE FastQ ROW (8.3%) IS SUPERSEDED, NOT CONFIRMED.** It was measured before
+`dedupe_structural_positions` landed; persistent-DAG hits across repeated game prefixes
+were being counted as slider speed. qsearch and movegen are unaffected (the dedup applies
+to the fastq stage only), so the acceptance clause is met on the stage it named. Re-measure
+before quoting the fastq figure as a slider result.
+#474 = the production-Gumbel readout driver. Two gaps closed at merge time in `025ed3e4f`:
+the throughput denominator was changed to the workers that actually RAN (empty buckets are
+dropped when games < workers) but the reported field was UNPINNED — reverting `_aggregate`
+to `cfg.workers` failed no test; and the key was REDEFINED IN PLACE, schema 2 having
+shipped `workers` meaning REQUESTED. Renamed `workers_active`, `REPORT_SCHEMA` 2 → 3, so a
+stale consumer gets a KeyError instead of a plausible wrong number — the rule that file's
+own schema comment states. NEXT per speed plan §6: S1 is dead (see the correction entry),
+so the remaining item is the verifier-net bench → S3 or its funeral.
