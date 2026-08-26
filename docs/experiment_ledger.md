@@ -67152,3 +67152,13 @@ PEXT sliders (attacks the 12% ray-walk share); (3) cheapen or cache the FullThre
 delta (the #470 DAG's evaluate-once also amortizes it); (4) FastQ node-count cuts are
 orthogonal and multiplicative. Depth explosion quantified for the FastQ case: qnodes/
 root 1.2/31/554/6,530 at qply 0/2/4/6 (×11.8 from 4→6) at flat ~5.6µs/node.
+
+**2026-08-26 — OPERATOR DIRECTIVE (Josh): the verifier-net fork is decided
+EMPIRICALLY.** "Test all and see what works best." Plan of record: once FastQ exists,
+a three-arm bench on its harness — (a) our FullThreats net, (b) SF big
+nn-f68ec79f0fe3 (packed 2026-08-25), (c) SF small nn-47fc8b7fff06 (to fetch; parser
+supports both per its own layer-hash table) — same FastQ, same positions; readouts =
+speed (roots/s, µs/qnode) AND downstream label quality vs deep SF (the standardized
+primary). A HalfKA-only retrain of our net is a conditional fourth arm, only if (a)
+loses on speed to the SF nets while beating them on quality. Rides on the FastQ
+harness; own prereg before running.
