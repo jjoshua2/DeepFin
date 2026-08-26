@@ -21,9 +21,9 @@ a game is a pure function of the seed: ``gumbel_c.py`` draws exactly
 none at ``temperature <= 0`` (production, and this tool's, ``DEFAULT_TEMPERATURE``
 is ``0.0``), and ``sample_starting_board`` short-circuits with no book.  So
 ``nnue-qsearch`` and ``nnue-qsearch-dag`` at one seed MUST play byte-identical
-games.  Each cell therefore publishes a per-game digest over
-``(game_index, start_fen, move_trace, result, termination)`` and a ``games_digest``
-over all of them.  **Differing digests VOID the decomposition**: the DAG cell is
+games.  Each cell therefore publishes a per-game trajectory digest plus a
+search-output digest over the exact improved policy, legal mask, and returned
+root value at every ply.  **Differing digests VOID the decomposition**: the DAG cell is
 then no longer the same experiment as the control and no wall-clock difference
 between them can be attributed to the substrate.
 
@@ -43,11 +43,14 @@ path, so the concurrency guard is neither weakened nor bypassed.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import logging
 import os
 import re
+import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -80,7 +83,25 @@ ORACLE_ARMS: tuple[str, str] = (ARM_QSEARCH, ARM_QSEARCH_DAG)
 #: dropped) and ``workers_requested`` (provenance). The key was RENAMED rather
 #: than redefined for the same reason the counter exists at all: a stale reader
 #: must fail, not silently divide by the wrong number.
-REPORT_SCHEMA = 3
+#: 4 adds a search-output digest to the qsearch/DAG oracle and native-binary
+#: provenance. A schema-3 reader must not mistake game-trajectory equality for
+#: the stronger search-output equality this version requires.
+#: 5 strengthens that digest with the exact root value returned by production
+#: Gumbel and adds _lc0_ext to loaded-native-image provenance. A schema-4 reader
+#: must not treat policy/mask equality alone as complete search-output parity.
+REPORT_SCHEMA = 5
+
+QUALITY_SCOPE: dict[str, object] = {
+    "population": "end_to_end_arm_selected",
+    "paired_evaluator_quality": False,
+    "deep_sf_paired_input_admissible": False,
+    "reason": (
+        "each arm drives its own Gumbel search, so FastQ may change which later "
+        "leaves exist; per-arm banks are trace artifacts, not a paired evaluator "
+        "quality sample. A frozen-driver/shadow-arm experiment is required for "
+        "paired deep-SF attribution."
+    ),
+}
 
 StatsSurface = Literal["arm", "fastq"]
 
@@ -230,6 +251,7 @@ def _load_ext() -> Any:
 
 def resolve_arm_config(
     args: argparse.Namespace, ext: Any | None = None, *, arm: str | None = None,
+    strict_foreign_knobs: bool = True,
 ) -> ResolvedArmConfig:
     """Resolve only knobs the selected provider consumes; refuse every other one.
 
@@ -263,21 +285,26 @@ def resolve_arm_config(
         args.fastq_delta_margin,
         args.fastq_recapture_exempt,
     )
-    if spec.consumes_qsearch_knobs and any(v is not None for v in f_values):
-        raise ValueError(
-            f"{selected} does not consume --fastq-* knobs; remove them rather "
-            "than recording settings the selected provider will ignore",
-        )
-    if spec.consumes_fastq_knobs and any(v is not None for v in q_values):
-        raise ValueError(
-            f"{selected} does not consume qsearch/resolver/DAG-qsearch knobs; "
-            "remove them rather than recording settings the selected provider "
-            "will ignore",
-        )
+    if strict_foreign_knobs:
+        if spec.consumes_qsearch_knobs and any(v is not None for v in f_values):
+            raise ValueError(
+                f"{selected} does not consume --fastq-* knobs; remove them rather "
+                "than recording settings the selected provider will ignore",
+            )
+        if spec.consumes_fastq_knobs and any(v is not None for v in q_values):
+            raise ValueError(
+                f"{selected} does not consume qsearch/resolver/DAG-qsearch knobs; "
+                "remove them rather than recording settings the selected provider "
+                "will ignore",
+            )
 
     if spec.consumes_qsearch_knobs:
-        dag_cap = args.dag_node_cap
-        if selected == ARM_QSEARCH and dag_cap is not None:
+        dag_cap = args.dag_node_cap if selected == ARM_QSEARCH_DAG else None
+        if (
+            selected == ARM_QSEARCH
+            and args.dag_node_cap is not None
+            and strict_foreign_knobs
+        ):
             raise ValueError(
                 "nnue-qsearch has no DAG and cannot consume --dag-node-cap",
             )
@@ -346,6 +373,35 @@ def resolve_arm_config(
             else int(args.fastq_recapture_exempt)
         ),
     )
+
+
+def _validate_matrix_knobs(args: argparse.Namespace, arms: list[str]) -> None:
+    """Refuse a supplied knob only when NO selected cell consumes it.
+
+    Per-cell resolution still copies only the fields its provider reads. The
+    distinction matters for a mixed matrix: a FastQ knob is foreign to qsearch
+    but live in the FastQ cell, so rejecting it while resolving qsearch makes
+    non-default matrix experiments impossible.
+    """
+    selected = set(arms)
+    qsearch_family = {ARM_QSEARCH, ARM_QSEARCH_DAG}
+    q_common = (
+        args.nnue_resolver_max_depth,
+        args.nnue_qsearch_max_ply,
+        args.nnue_qsearch_check_plies,
+    )
+    fastq = (
+        args.fastq_max_qply,
+        args.fastq_node_cap,
+        args.fastq_delta_margin,
+        args.fastq_recapture_exempt,
+    )
+    if any(v is not None for v in q_common) and not (selected & qsearch_family):
+        raise ValueError("qsearch/resolver knobs were supplied but no qsearch-family arm is selected")
+    if args.dag_node_cap is not None and ARM_QSEARCH_DAG not in selected:
+        raise ValueError("--dag-node-cap was supplied but nnue-qsearch-dag is not selected")
+    if any(v is not None for v in fastq) and ARM_FASTQ not in selected:
+        raise ValueError("--fastq-* knobs were supplied but nnue-fastq is not selected")
 
 
 def readout_arm_config_plan(config: ResolvedArmConfig) -> gen.ArmConfigPlan:
@@ -442,6 +498,199 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 22), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+FileStamp = tuple[str, int, int, int, int, int]
+
+
+def _file_stamp(path: Path) -> FileStamp:
+    """Hash + inode/timestamp stamp, refusing a file that changes while read."""
+    before = path.stat()
+    digest = _sha256_file(path)
+    after = path.stat()
+    before_meta = (
+        int(before.st_dev), int(before.st_ino), int(before.st_size),
+        int(before.st_mtime_ns), int(before.st_ctime_ns),
+    )
+    after_meta = (
+        int(after.st_dev), int(after.st_ino), int(after.st_size),
+        int(after.st_mtime_ns), int(after.st_ctime_ns),
+    )
+    if before_meta != after_meta:
+        raise RuntimeError(f"file changed while it was being fingerprinted: {path}")
+    return (digest, *after_meta)
+
+
+def _assert_file_unchanged(label: str, path: Path, expected: FileStamp) -> None:
+    current = _file_stamp(path)
+    if current != expected:
+        raise RuntimeError(
+            f"{label} changed while this worker was running: "
+            f"before={expected}, after={current}"
+        )
+
+
+def _late_file_stability_reason(
+    label: str, path: Path, expected: FileStamp,
+) -> str | None:
+    """Return a late integrity failure as evidence instead of destroying it.
+
+    Setup-time integrity failures still raise: no completed measurement exists
+    yet. After search completes, however, artifact-first semantics require the
+    worker to return the finding so the parent can write an inadmissible JSON
+    report and exit 2 rather than lose a multi-hour run to a traceback.
+    """
+    try:
+        _assert_file_unchanged(label, path, expected)
+    except (OSError, RuntimeError) as exc:
+        return str(exc)
+    return None
+
+
+class _Elf64Phdr(ctypes.Structure):
+    _fields_ = [
+        ("p_type", ctypes.c_uint32),
+        ("p_flags", ctypes.c_uint32),
+        ("p_offset", ctypes.c_uint64),
+        ("p_vaddr", ctypes.c_uint64),
+        ("p_paddr", ctypes.c_uint64),
+        ("p_filesz", ctypes.c_uint64),
+        ("p_memsz", ctypes.c_uint64),
+        ("p_align", ctypes.c_uint64),
+    ]
+
+
+class _DlPhdrInfo(ctypes.Structure):
+    _fields_ = [
+        ("dlpi_addr", ctypes.c_uint64),
+        ("dlpi_name", ctypes.c_char_p),
+        ("dlpi_phdr", ctypes.POINTER(_Elf64Phdr)),
+        ("dlpi_phnum", ctypes.c_uint16),
+    ]
+
+
+_PT_NOTE = 4
+_NT_GNU_BUILD_ID = 3
+
+
+def _loaded_elf_build_id(path: Path) -> str:
+    """GNU build-id from the mapped ELF image, not the current pathname bytes.
+
+    The readout's production host and CI are 64-bit little-endian Linux. Failing
+    closed elsewhere is preferable to publishing a pathname hash as proof of an
+    image that may already have been replaced on disk.
+    """
+    if not sys.platform.startswith("linux") or ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise RuntimeError(
+            "loaded native-image provenance requires 64-bit Linux dl_iterate_phdr",
+        )
+    target = str(path.resolve())
+    found: list[str] = []
+    callback_errors: list[str] = []
+    callback_type = ctypes.CFUNCTYPE(
+        ctypes.c_int,
+        ctypes.POINTER(_DlPhdrInfo),
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+    )
+
+    def visit(info_ptr: Any, _size: int, _data: Any) -> int:
+        try:
+            info = info_ptr.contents
+            raw_name = info.dlpi_name
+            if not raw_name:
+                return 0
+            loaded_name = os.path.realpath(os.fsdecode(raw_name))
+            if loaded_name != target:
+                return 0
+            base = int(info.dlpi_addr)
+            for i in range(int(info.dlpi_phnum)):
+                ph = info.dlpi_phdr[i]
+                if int(ph.p_type) != _PT_NOTE:
+                    continue
+                blob = ctypes.string_at(base + int(ph.p_vaddr), int(ph.p_memsz))
+                offset = 0
+                while offset + 12 <= len(blob):
+                    namesz, descsz, note_type = struct.unpack_from("=III", blob, offset)
+                    offset += 12
+                    if namesz > len(blob) - offset:
+                        break
+                    name = blob[offset:offset + namesz]
+                    offset += (namesz + 3) & ~3
+                    if descsz > len(blob) - offset:
+                        break
+                    desc = blob[offset:offset + descsz]
+                    offset += (descsz + 3) & ~3
+                    if (
+                        note_type == _NT_GNU_BUILD_ID
+                        and name.rstrip(b"\0") == b"GNU"
+                        and desc
+                    ):
+                        found.append(desc.hex())
+            return 1
+        except Exception as exc:  # callback exceptions cannot cross ctypes safely
+            callback_errors.append(repr(exc))
+            return 1
+
+    callback = callback_type(visit)
+    process: Any = ctypes.CDLL(None)
+    iterate: Any = process.dl_iterate_phdr
+    iterate.argtypes = [callback_type, ctypes.c_void_p]
+    iterate.restype = ctypes.c_int
+    iterate(callback, None)
+    if callback_errors:
+        raise RuntimeError(
+            f"failed reading loaded ELF build-id for {target}: {callback_errors[0]}",
+        )
+    unique = sorted(set(found))
+    if len(unique) != 1:
+        raise RuntimeError(
+            f"expected exactly one GNU build-id in loaded image {target}, got {unique}",
+        )
+    return unique[0]
+
+
+def _module_identity(module: Any) -> tuple[str, str, str, FileStamp]:
+    raw = getattr(module, "__file__", None)
+    if not raw:
+        raise RuntimeError(f"native module {module!r} has no __file__; cannot prove binary identity")
+    path = Path(str(raw)).resolve()
+    stamp = _file_stamp(path)
+    loaded_build_id = _loaded_elf_build_id(path)
+    return str(path), stamp[0], loaded_build_id, stamp
+
+
+def _git_provenance() -> dict[str, object]:
+    """Tracked source identity, including the actual dirty-tree contents."""
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo, text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        tracked_diff = subprocess.check_output(
+            ["git", "diff", "--binary", "HEAD", "--"],
+            cwd=repo, stderr=subprocess.DEVNULL,
+        )
+        return {
+            "git_head": head,
+            "git_tracked_dirty": bool(tracked_diff),
+            "git_tracked_diff_sha256": hashlib.sha256(tracked_diff).hexdigest(),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {
+            "git_head": None,
+            "git_tracked_dirty": None,
+            "git_tracked_diff_sha256": None,
+        }
+
+
+def _git_provenance_available(meta: dict[str, object]) -> bool:
+    """Whether a snapshot can actually identify the tracked Python source."""
+    return all(
+        meta.get(key) is not None
+        for key in ("git_head", "git_tracked_dirty", "git_tracked_diff_sha256")
+    )
 
 
 #: This process's niceness before the harness touched it, as a one-element list
@@ -623,6 +872,30 @@ class GameRecord:
     result: str
     termination: str
     digest: str
+    search_digest: str = ""
+
+
+def search_output_digest(rows: list[Any]) -> str:
+    """Digest policy, legal mask and the exact returned root value per ply."""
+    if not rows:
+        raise ValueError(
+            "cannot hash an empty search-output trace; no improved policy was observed",
+        )
+    h = hashlib.sha256()
+    for row in rows:
+        h.update(int(row.ply_index).to_bytes(8, "little", signed=True))
+        policy = np.asarray(row.policy_probs, dtype="<f4")
+        legal = np.asarray(row.legal_mask, dtype=np.uint8)
+        search_value = float(row.search_value)
+        if not bool(np.isfinite(search_value)):
+            raise ValueError(
+                f"ply {row.ply_index} has no finite returned root value; "
+                "search-output parity cannot be verified",
+            )
+        h.update(policy.tobytes(order="C"))
+        h.update(legal.tobytes(order="C"))
+        h.update(struct.pack("<d", search_value))
+    return h.hexdigest()
 
 
 def game_digest(
@@ -645,6 +918,24 @@ def games_digest(records: list[GameRecord]) -> str:
     return h.hexdigest()
 
 
+def searches_digest(records: list[GameRecord]) -> str:
+    """One digest over each game's improved-policy/search outputs.
+
+    An empty component is not a value: it means the strengthened oracle was
+    never populated. Refuse it so a future constructor that forgets the field
+    cannot make two unverified cells agree on the same empty digest.
+    """
+    h = hashlib.sha256()
+    for record in sorted(records, key=lambda r: r.game):
+        if not record.search_digest:
+            raise ValueError(
+                f"game {record.game} has no search_digest; search-output parity "
+                "cannot be verified",
+            )
+        h.update(f"{record.game}:{record.search_digest}\n".encode())
+    return h.hexdigest()
+
+
 @dataclass
 class DagGameStats:
     games: int = 0
@@ -663,30 +954,44 @@ class DagGameStats:
     #: satisfying" it, so a non-zero count is a broken substrate, not a finding.
     state_identity_violations: int = 0
 
-    def add(self, stats: dict[str, int]) -> None:
-        """Fold one ``arm_dag_stats()`` snapshot in, by its REAL key names.
+    def add(
+        self, stats: dict[str, int], *, previous: dict[str, int] | None = None,
+    ) -> None:
+        """Fold one snapshot as DELTA work plus absolute resource peaks.
 
-        ⚑ SUBSCRIPT, NOT ``.get``.  This read used to be
-        ``stats.get("nodes", stats.get("node_count", 0))``; the C layer publishes
-        ``node_count`` and has never published ``nodes``, so the live branch was
-        the fallback -- and the test fake returned the dead names, so every test
-        exercised the branch production cannot reach.  Deleting the fallback in
-        that shape left the suite green and made every real run report
-        ``nodes_per_game: 0.0``.
+        `arm_dag_stats()` counters are cumulative since the last reset. Under
+        `--dag-reset never/every-N`, summing each absolute snapshot counts early
+        games repeatedly. `previous=None` means a reset boundary; otherwise all
+        cumulative fields must be monotone and only their deltas are charged to
+        this game. The construction identity is checked on the absolute snapshot
+        before any differencing.
         """
         self.games += 1
+        prev = {} if previous is None else previous
+
+        def delta(key: str) -> int:
+            current = int(stats[key])
+            before = int(prev.get(key, 0))
+            if current < before:
+                raise ValueError(
+                    f"DAG cumulative counter {key} went backwards without a "
+                    f"declared reset: {before} -> {current}"
+                )
+            return current - before
+
         nodes = int(stats["node_count"])
         edges = int(stats["edge_count"])
         memory = int(stats["memory_bytes"])
         state_inits = int(stats["state_inits"])
         state_makes = int(stats["state_makes"])
-        self.nodes_sum += nodes
-        self.edges_sum += edges
-        self.hits_sum += int(stats["hits"])
-        self.probes_sum += int(stats["probes"])
-        self.inserts_sum += int(stats["inserts"])
-        self.state_inits_sum += state_inits
-        self.state_makes_sum += state_makes
+
+        self.nodes_sum += delta("node_count")
+        self.edges_sum += delta("edge_count")
+        self.hits_sum += delta("hits")
+        self.probes_sum += delta("probes")
+        self.inserts_sum += delta("inserts")
+        self.state_inits_sum += delta("state_inits")
+        self.state_makes_sum += delta("state_makes")
         if state_inits + state_makes != nodes:
             self.state_identity_violations += 1
         self.memory_peak = max(self.memory_peak, memory)
@@ -752,8 +1057,18 @@ class WorkerResult:
     pack_file_sha256: str
     pack_source_sha256: str
     nice_realized: int
+    lc0_ext_path: str = ""
+    lc0_ext_sha256: str = ""
+    lc0_ext_loaded_build_id: str = ""
+    nnue_ext_path: str = ""
+    nnue_ext_sha256: str = ""
+    nnue_ext_loaded_build_id: str = ""
+    mcts_ext_path: str = ""
+    mcts_ext_sha256: str = ""
+    mcts_ext_loaded_build_id: str = ""
     arm_config_requested: dict[str, int] = field(default_factory=dict)
     arm_config_realized: dict[str, int] = field(default_factory=dict)
+    integrity_reasons: list[str] = field(default_factory=list)
 
 
 def _base_gen_config(cfg: RunConfig) -> gen.GenConfig:
@@ -818,10 +1133,14 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
     base = _base_gen_config(cfg)
     gcfg = gen.build_gumbel_config(base)
     opening_cfg = gen.build_opening_config(base)
+    # Hash in THIS worker, immediately around the open. The parent hash is an
+    # expectation, not evidence of what a worker actually mapped.
+    worker_pack_stamp_before = _file_stamp(cfg.pack)
+    worker_pack_sha_before = worker_pack_stamp_before[0]
     source = ReadoutArmSource(
         config=cfg.arm_config,
         pack=cfg.pack,
-        pack_file_sha256=cfg.pack_file_sha256,
+        pack_file_sha256=worker_pack_sha_before,
         cp_per_internal_unit=cfg.cp_per_internal_unit,
         cp_slope=cfg.cp_slope,
         cp_draw_width=cfg.cp_draw_width,
@@ -834,7 +1153,11 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
             "seed": int(cfg.seed),
             "repeat": int(cfg.repeat),
             "worker_id": int(spec.worker_id),
+            "population_kind": "end_to_end_arm_selected",
         },
+    )
+    _assert_file_unchanged(
+        "NNUE pack while opening", cfg.pack, worker_pack_stamp_before,
     )
     evaluator = ReadoutEvaluator(
         source=source,
@@ -842,12 +1165,24 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         input_history_encoding=base.input_history_encoding,
         input_extra_features=base.input_extra_features,
     )
+    from chess_anti_engine.encoding import _lc0_ext as lc0_ext
+    from chess_anti_engine.mcts import _mcts_tree as mcts_ext
+    (
+        lc0_ext_path, lc0_ext_sha, lc0_ext_build_id, lc0_ext_stamp,
+    ) = _module_identity(lc0_ext)
+    (
+        nnue_ext_path, nnue_ext_sha, nnue_ext_build_id, nnue_ext_stamp,
+    ) = _module_identity(_load_ext())
+    (
+        mcts_ext_path, mcts_ext_sha, mcts_ext_build_id, mcts_ext_stamp,
+    ) = _module_identity(mcts_ext)
     setup_s = time.perf_counter() - setup_started
     policy = gen.PolicyShapeStats()
     budget = gen.RootBudgetStats()
     dag_games = DagGameStats()
     terminations = dict.fromkeys(gen.TERMINATIONS, 0)
     records: list[GameRecord] = []
+    dag_previous: dict[str, int] | None = None
     plies = 0
     started = time.perf_counter()
     try:
@@ -864,6 +1199,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
                 and position % cfg.dag_reset_every == 0
             ):
                 source.reset_game()
+                dag_previous = None
             rng = np.random.default_rng(int(cfg.seed) + int(game_index))
             outcome = gen.play_game(
                 cfg=base,
@@ -888,15 +1224,31 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
                     result=str(outcome.result),
                     termination=str(outcome.termination),
                 ),
+                search_digest=search_output_digest(outcome.records),
             ))
             for row in outcome.records:
                 policy.add(gen.policy_tv_to_uniform(row.policy_probs, row.legal_mask))
             dag = source.dag_stats()
             if dag is not None:
-                dag_games.add(dag)
+                dag_games.add(dag, previous=dag_previous)
+                dag_previous = dag
     finally:
         evaluator.close()
     elapsed = time.perf_counter() - started
+    # Integrity I/O is deliberately outside `elapsed`: it gates the measurement
+    # and must not become part of the arm-throughput comparison. These are LATE
+    # checks, after completed search work, so preserve failures in the report
+    # rather than raising and destroying the evidence.
+    late_integrity_reasons = [
+        reason
+        for label, path, stamp in (
+            ("NNUE pack", cfg.pack, worker_pack_stamp_before),
+            ("_lc0_ext pathname", Path(lc0_ext_path), lc0_ext_stamp),
+            ("_nnue_ext pathname", Path(nnue_ext_path), nnue_ext_stamp),
+            ("_mcts_tree pathname", Path(mcts_ext_path), mcts_ext_stamp),
+        )
+        if (reason := _late_file_stability_reason(label, path, stamp)) is not None
+    ]
     return WorkerResult(
         worker_id=spec.worker_id,
         games=len(spec.game_indices),
@@ -924,8 +1276,18 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         pack_file_sha256=source.pack_file_sha256,
         pack_source_sha256=source.pack_source_sha256,
         nice_realized=nice_realized,
+        lc0_ext_path=lc0_ext_path,
+        lc0_ext_sha256=lc0_ext_sha,
+        lc0_ext_loaded_build_id=lc0_ext_build_id,
+        nnue_ext_path=nnue_ext_path,
+        nnue_ext_sha256=nnue_ext_sha,
+        nnue_ext_loaded_build_id=nnue_ext_build_id,
+        mcts_ext_path=mcts_ext_path,
+        mcts_ext_sha256=mcts_ext_sha,
+        mcts_ext_loaded_build_id=mcts_ext_build_id,
         arm_config_requested=dict(source.requested),
         arm_config_realized=dict(source.realized),
+        integrity_reasons=late_integrity_reasons,
     )
 
 
@@ -1030,6 +1392,11 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
     # the one paying for the banking.
     search_wall_s = max((r.elapsed_s for r in results), default=0.0)
     reasons: list[str] = []
+    reasons.extend(
+        f"worker {result.worker_id} late integrity check failed: {reason}"
+        for result in results
+        for reason in result.integrity_reasons
+    )
     if conflicts:
         reasons.append(f"workers disagreed about arm configuration: {conflicts}")
     if dag.state_identity_violations:
@@ -1135,6 +1502,7 @@ def _aggregate(results: list[WorkerResult], cfg: RunConfig, wall_s: float) -> di
         "dag_reset": _dag_reset_label(cfg.dag_reset_every),
         "terminations": terminations,
         "games_digest": games_digest(records),
+        "searches_digest": searches_digest(records),
         "games_detail": [asdict(rec) for rec in sorted(records, key=lambda r: r.game)],
         "bank_rows": sum(r.bank_rows for r in results),
         "bank_files": [r.bank_file for r in results if r.bank_file is not None],
@@ -1226,8 +1594,8 @@ def _build_worker_specs(cfg: RunConfig) -> list[WorkerSpec]:
 
 def run_cell(cfg: RunConfig) -> dict[str, Any]:
     """One arm, one repeat."""
-    if cfg.games <= 0 or cfg.workers <= 0:
-        raise ValueError("games and workers must be positive")
+    if cfg.games <= 0 or cfg.workers <= 0 or cfg.max_plies <= 0:
+        raise ValueError("games, workers, and max_plies must be positive")
     if not cfg.pack.is_file():
         raise FileNotFoundError(cfg.pack)
     # ⚑ VALIDATE THE SEARCH CONFIG IN THE PARENT, BEFORE ANY SPAWN. It was only
@@ -1295,32 +1663,41 @@ class ReadoutPlan:
 
 
 def _oracle(cells: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
-    """Compare the qsearch and qsearch-DAG per-game digests, repeat by repeat.
-
-    ⚑ Present only when BOTH cells ran in this report.  Two digests from two
-    invocations are comparable too -- they are a pure function of the seed and
-    the settings, both of which ``provenance`` pins -- but this tool can only
-    speak for the runs it made, so it says ``available: false`` rather than
-    implying a comparison it did not perform.
-    """
+    """Require both trajectory AND improved-policy/search-output parity."""
     left, right = ORACLE_ARMS
     if left not in cells or right not in cells:
-        return {"arms": list(ORACLE_ARMS), "available": False, "digests_agree": None}
+        return {
+            "arms": list(ORACLE_ARMS), "available": False,
+            "digests_agree": None, "game_digests_agree": None,
+            "search_digests_agree": None,
+        }
+    if len(cells[left]) != len(cells[right]):
+        return {
+            "arms": list(ORACLE_ARMS), "available": True,
+            "digests_agree": False, "game_digests_agree": False,
+            "search_digests_agree": False,
+            "reason": "qsearch and qsearch-DAG repeat counts differ",
+        }
     per_repeat: list[dict[str, Any]] = []
-    for a, b in zip(cells[left], cells[right], strict=False):
+    for a, b in zip(cells[left], cells[right], strict=True):
+        game_agree = a["games_digest"] == b["games_digest"]
+        search_agree = a["searches_digest"] == b["searches_digest"]
         per_repeat.append({
             "repeat": a["repeat"],
-            left: a["games_digest"],
-            right: b["games_digest"],
-            "agree": a["games_digest"] == b["games_digest"],
+            "game_digest": {left: a["games_digest"], right: b["games_digest"]},
+            "search_digest": {left: a["searches_digest"], right: b["searches_digest"]},
+            "game_agree": game_agree,
+            "search_agree": search_agree,
+            "agree": game_agree and search_agree,
         })
     return {
         "arms": list(ORACLE_ARMS),
         "available": True,
+        "game_digests_agree": bool(per_repeat) and all(r["game_agree"] for r in per_repeat),
+        "search_digests_agree": bool(per_repeat) and all(r["search_agree"] for r in per_repeat),
         "digests_agree": bool(per_repeat) and all(r["agree"] for r in per_repeat),
         "per_repeat": per_repeat,
     }
-
 
 def run(plan: ReadoutPlan) -> dict[str, Any]:
     """Run every cell of the matrix, interleaving repeats.
@@ -1341,6 +1718,7 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     # pure I/O with nothing to do with the arm; it used to happen inside every
     # worker, inside the window `plies_per_s` divides by.
     pack_sha = _sha256_file(plan.pack)
+    git_meta_start = _git_provenance()
     started_utc = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     cells: dict[str, list[dict[str, Any]]] = {}
@@ -1353,6 +1731,12 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             cells.setdefault(arm_config.arm, []).append(readout)
             order.append({"arm": arm_config.arm, "repeat": repeat})
     wall_s = time.perf_counter() - started
+    git_meta_end = _git_provenance()
+    git_provenance_available = (
+        _git_provenance_available(git_meta_start)
+        and _git_provenance_available(git_meta_end)
+    )
+    git_changed_during_run = git_meta_start != git_meta_end
 
     every = [c for runs in cells.values() for c in runs]
     kernels = sorted({
@@ -1364,10 +1748,52 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     file_shas = sorted({
         str(w["pack_file_sha256"]) for c in every for w in c["workers_detail"]
     })
+    lc0_binary_shas = sorted({
+        str(w["lc0_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
+    nnue_binary_shas = sorted({
+        str(w["nnue_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
+    mcts_binary_shas = sorted({
+        str(w["mcts_ext_sha256"]) for c in every for w in c["workers_detail"]
+    })
+    lc0_binary_paths = sorted({
+        str(w["lc0_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    nnue_binary_paths = sorted({
+        str(w["nnue_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    mcts_binary_paths = sorted({
+        str(w["mcts_ext_path"]) for c in every for w in c["workers_detail"]
+    })
+    lc0_loaded_build_ids = sorted({
+        str(w["lc0_ext_loaded_build_id"])
+        for c in every for w in c["workers_detail"]
+    })
+    nnue_loaded_build_ids = sorted({
+        str(w["nnue_ext_loaded_build_id"])
+        for c in every for w in c["workers_detail"]
+    })
+    mcts_loaded_build_ids = sorted({
+        str(w["mcts_ext_loaded_build_id"])
+        for c in every for w in c["workers_detail"]
+    })
     reasons = [
         f"cell {c['arm']} repeat {c['repeat']}: {reason}"
         for c in every for reason in c["inadmissible_reasons"]
     ]
+    if not git_provenance_available:
+        reasons.append(
+            "tracked source provenance is unavailable at one or both matrix "
+            f"endpoints: start={git_meta_start}, end={git_meta_end}; the report "
+            "cannot identify the Python source that produced every cell",
+        )
+    elif git_changed_during_run:
+        reasons.append(
+            "tracked source provenance changed while the matrix was running: "
+            f"start={git_meta_start}, end={git_meta_end}; the report cannot "
+            "attribute all cells to one source state",
+        )
     if file_shas != [pack_sha]:
         reasons.append(
             f"workers mapped a pack whose file hash {file_shas} is not the "
@@ -1380,6 +1806,34 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "differ by a multi-fold wall factor, so these cells are not one "
             "experiment",
         )
+    loaded_native_ids = {
+        "_lc0_ext": lc0_loaded_build_ids,
+        "_nnue_ext": nnue_loaded_build_ids,
+        "_mcts_tree": mcts_loaded_build_ids,
+    }
+    bad_loaded_native_ids = {
+        name: ids for name, ids in loaded_native_ids.items()
+        if len(ids) != 1 or not ids[0]
+    }
+    if bad_loaded_native_ids:
+        reasons.append(
+            "workers did not execute one proven loaded native image per "
+            f"extension: {bad_loaded_native_ids}"
+        )
+    pathname_native_shas = {
+        "_lc0_ext": lc0_binary_shas,
+        "_nnue_ext": nnue_binary_shas,
+        "_mcts_tree": mcts_binary_shas,
+    }
+    bad_pathname_native_shas = {
+        name: shas for name, shas in pathname_native_shas.items()
+        if len(shas) != 1 or not shas[0]
+    }
+    if bad_pathname_native_shas:
+        reasons.append(
+            "workers did not observe one stable native-module pathname file "
+            f"per extension: {bad_pathname_native_shas}"
+        )
     nice_realized = sorted({int(n) for c in every for n in c["nice_realized"]})
     if len(nice_realized) > 1:
         reasons.append(
@@ -1390,10 +1844,10 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
     oracle = _oracle(cells)
     if oracle["available"] and not oracle["digests_agree"]:
         reasons.append(
-            "the nnue-qsearch and nnue-qsearch-dag per-game digests DIFFER: the "
-            "two cells did not play the same games, so no wall-clock difference "
-            "between them is attributable to the DAG substrate. The "
-            "decomposition is VOID.",
+            "the nnue-qsearch and nnue-qsearch-dag oracle DIFFERED in game "
+            "trajectory and/or improved-policy search output; the two cells did "
+            "not execute the same search, so no wall-clock difference is "
+            "attributable purely to the DAG substrate. The decomposition is VOID.",
         )
 
     report: dict[str, Any] = {
@@ -1406,6 +1860,30 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
             "pack_file_sha256": pack_sha,
             "pack_source_sha256": source_shas[0] if len(source_shas) == 1 else source_shas,
             "kernel": kernels[0] if len(kernels) == 1 else kernels,
+            "lc0_ext_path": lc0_binary_paths[0] if len(lc0_binary_paths) == 1 else lc0_binary_paths,
+            "lc0_ext_sha256": lc0_binary_shas[0] if len(lc0_binary_shas) == 1 else lc0_binary_shas,
+            "lc0_ext_loaded_build_id": (
+                lc0_loaded_build_ids[0]
+                if len(lc0_loaded_build_ids) == 1 else lc0_loaded_build_ids
+            ),
+            "nnue_ext_path": nnue_binary_paths[0] if len(nnue_binary_paths) == 1 else nnue_binary_paths,
+            "nnue_ext_sha256": nnue_binary_shas[0] if len(nnue_binary_shas) == 1 else nnue_binary_shas,
+            "nnue_ext_loaded_build_id": (
+                nnue_loaded_build_ids[0]
+                if len(nnue_loaded_build_ids) == 1 else nnue_loaded_build_ids
+            ),
+            "mcts_ext_path": mcts_binary_paths[0] if len(mcts_binary_paths) == 1 else mcts_binary_paths,
+            "mcts_ext_sha256": mcts_binary_shas[0] if len(mcts_binary_shas) == 1 else mcts_binary_shas,
+            "mcts_ext_loaded_build_id": (
+                mcts_loaded_build_ids[0]
+                if len(mcts_loaded_build_ids) == 1 else mcts_loaded_build_ids
+            ),
+            **git_meta_start,
+            "git_provenance_available": git_provenance_available,
+            "git_end_head": git_meta_end["git_head"],
+            "git_end_tracked_dirty": git_meta_end["git_tracked_dirty"],
+            "git_end_tracked_diff_sha256": git_meta_end["git_tracked_diff_sha256"],
+            "git_changed_during_run": git_changed_during_run,
             "seed": plan.seed,
             "games_per_cell": plan.games,
             "workers": plan.workers,
@@ -1432,6 +1910,7 @@ def run(plan: ReadoutPlan) -> dict[str, Any]:
         },
         "order": order,
         "oracle": oracle,
+        "quality_scope": dict(QUALITY_SCOPE),
         "cells": cells,
         "inadmissible_reasons": reasons,
         "admissible": not reasons,
@@ -1519,8 +1998,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def plan_from_args(args: argparse.Namespace) -> ReadoutPlan:
     arms = list(dict.fromkeys(args.arm))
+    if int(args.max_plies) <= 0:
+        raise ValueError("--max-plies must be positive")
+    _validate_matrix_knobs(args, arms)
     return ReadoutPlan(
-        arm_configs=tuple(resolve_arm_config(args, arm=a) for a in arms),
+        arm_configs=tuple(
+            resolve_arm_config(args, arm=a, strict_foreign_knobs=False) for a in arms
+        ),
         pack=Path(args.nnue_pack),
         games=int(args.games),
         workers=int(args.workers),
