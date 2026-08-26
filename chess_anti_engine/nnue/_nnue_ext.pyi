@@ -142,3 +142,15 @@ def dag_children(handle: object, node_id: int, /) -> list[tuple[int, int]]: ...
 def dag_set_root(handle: object, node_id: int, /) -> None: ...
 def dag_stats(handle: object, /) -> dict[str, int]: ...
 def dag_reset(handle: object, /) -> None: ...
+
+# Which sliding-attack implementation THIS extension was compiled with:
+# "pext", "magic", or "rays". Published by every extension so a test can ask the
+# shipped binary rather than the build system — see encoding/_slider_attacks_impl.h.
+SLIDER_BACKEND: str
+
+def slider_selftest(seed: int = ..., samples: int = ..., /) -> int:
+    """Mismatches between this module's slider tables and its own ray walker.
+
+    Uses full-board occupancies, so unlike the import-time check it can see a
+    wrong relevant-occupancy mask. Zero is the only acceptable result.
+    """

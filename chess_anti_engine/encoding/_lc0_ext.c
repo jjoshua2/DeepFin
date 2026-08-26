@@ -1323,6 +1323,7 @@ static PyMethodDef methods[] = {
      "encode_full_batch(boards_seq, out_ndarray, hist_mode=0, n_extra=34) -> None. "
      "Encode N CBoards into a pre-allocated (N, 112+n_extra, 8, 8) float32 array. "
      "hist_mode: 0=full history, 1=lc0_root, 2=lc0_root_legacy_meta."},
+    DEEPFIN_SLIDER_PY_METHODS
     {NULL, NULL, 0, NULL}
 };
 
@@ -1341,6 +1342,15 @@ PyMODINIT_FUNC PyInit__lc0_ext(void) {
     if (PyType_Ready(&PyCBoardType) < 0) return NULL;
     Py_INCREF(&PyCBoardType);
     PyModule_AddObject(m, "CBoard", (PyObject*)&PyCBoardType);
+
+    /* Which slider backend THIS binary compiled: "pext", "magic", or "rays".
+     * Read off the shipped .so, not off the build system's intent — see the
+     * gate comment in encoding/_slider_attacks_impl.h. */
+    if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
+                                   DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
 
     return m;
 }

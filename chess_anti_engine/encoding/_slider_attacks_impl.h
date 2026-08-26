@@ -1,10 +1,20 @@
 /*
  * Table-backed sliding attacks for CBoard.
  *
- * Native BMI2 builds use PEXT indexing. Portable builds use generated magic
- * multipliers with the same relevant occupancy masks and packed table sizes.
+ * Two backends, chosen at BUILD time, never per lookup:
+ *   "pext"  — BMI2 PEXT indexing. Selected on x86-64 BMI2 targets EXCEPT the
+ *             CPU families where PEXT is microcoded; see the gate below.
+ *   "magic" — generated magic multipliers. Everything else, including every
+ *             portable build (so CI, and the distributed worker wheels).
+ * Both use the same relevant-occupancy masks and the same packed table sizes,
+ * so they are interchangeable and differ only in how the index is formed. Each
+ * module publishes which one it got as SLIDER_BACKEND ("pext" / "magic", or
+ * "rays" for a module built without fast sliders at all), because "which
+ * backend does this .so run" has to be answerable from the binary rather than
+ * from the build system's intent.
+ *
  * The build preserves the legacy ray walker as *_reference; it is used to
- * populate and exhaustively verify these tables at module initialization.
+ * populate and verify these tables at module initialization.
  */
 #ifndef DEEPFIN_SLIDER_ATTACKS_IMPL_H
 #define DEEPFIN_SLIDER_ATTACKS_IMPL_H
@@ -18,11 +28,51 @@
 #undef queen_attacks
 #undef is_attacked_by
 
-#if defined(__BMI2__) && (defined(__x86_64__) || defined(__i386__))
-#include <immintrin.h>
-#define DEEPFIN_SLIDER_USE_PEXT 1
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdio.h>
+
+/* ⚑ THE BACKEND GATE. Compile-time only — there is deliberately no per-lookup
+ * runtime branch in the hot path.
+ *
+ * __x86_64__ (not __i386__): GCC exposes _pext_u64 only on x86-64, so a 32-bit
+ * BMI2 target that selected PEXT would fail to compile.
+ *
+ * The __znver1__/__znver2__/__bdver4__ exclusion is the interesting part.
+ * `PEXT r64,r64,r64` is MICROCODED on AMD Zen 1, Zen 2 and Excavator — roughly
+ * 18 cycles, against ~3 on Zen 3+ and Intel Haswell+ — yet those parts define
+ * __BMI2__ under -march=native exactly like the fast ones. Gating on __BMI2__
+ * alone would therefore hand a volunteer worker on a Ryzen 3000 the SLOWEST of
+ * our three implementations while it followed the documented production build
+ * recipe, and nothing would say so. Stockfish declines to imply USE_PEXT from
+ * -march=native for this same reason. Excluding the three slow families keeps
+ * PEXT on where it is genuinely fast — including this project's Zen 3
+ * production host, which must land on "pext" — and drops those hosts to magic,
+ * which is faster there. (bdver1..3 need no exclusion: they predate BMI2, so
+ * __BMI2__ is not defined and they fall through to magic anyway. znver4/znver5
+ * inherit Zen 3's fast PEXT and are deliberately NOT excluded.)
+ *
+ * Margin, measured on the Zen 3 host over the same slider-primitive sample:
+ * PEXT 5.87ms, magic 6.96ms, legacy ray walker 21.04ms. So PEXT is worth ~19%
+ * over magic and both are worth ~3x over the walker — the exclusion protects a
+ * large downside while conceding a modest upside, which is the right trade for
+ * a build that ships to machines we do not own.
+ *
+ * ⚑ RESIDUAL GAP, stated rather than papered over: the exclusion recognizes a
+ * CPU family only when the build NAMES one, which -march=native does and which
+ * is how both the production recipe and any worker following it build. A build
+ * that asks for a feature LEVEL instead (-march=x86-64-v3, or bare -mbmi2)
+ * defines __BMI2__ with no __znverN__, so a Zen 2 host built that way would
+ * still select PEXT. Read SLIDER_BACKEND off the built module to find out what
+ * a given binary actually chose. */
+#if defined(__BMI2__) && defined(__x86_64__) \
+    && !defined(__znver1__) && !defined(__znver2__) && !defined(__bdver4__)
+#  include <immintrin.h>
+#  define DEEPFIN_SLIDER_USE_PEXT 1
+#  define DEEPFIN_SLIDER_BACKEND_NAME "pext"
 #else
-#define DEEPFIN_SLIDER_USE_PEXT 0
+#  define DEEPFIN_SLIDER_USE_PEXT 0
+#  define DEEPFIN_SLIDER_BACKEND_NAME "magic"
 #endif
 
 #define DEEPFIN_ROOK_TABLE_SIZE 102400
@@ -78,6 +128,23 @@ static const uint64_t DEEPFIN_BISHOP_MAGICS[64] = {
 };
 #endif
 
+/* A distributed selfplay worker that hits one of these dies inside a module
+ * import with no output at all, which is indistinguishable from a segfault at
+ * the other end of the pipeline. Say what mismatched, on stderr, before
+ * aborting. */
+#define DEEPFIN_SLIDER_FATAL(...)                                            \
+    do {                                                                     \
+        fflush(stdout);                                                      \
+        fprintf(stderr, "deepfin sliders [%s] FATAL: ",                      \
+                DEEPFIN_SLIDER_BACKEND_NAME);                                \
+        fprintf(stderr, __VA_ARGS__);                                        \
+        fputc('\n', stderr);                                                 \
+        fflush(stderr);                                                      \
+        abort();                                                             \
+    } while (0)
+
+#define DEEPFIN_SLIDER_KIND(bishop_like) ((bishop_like) ? "bishop" : "rook")
+
 static uint64_t deepfin_slider_relevant_mask(int sq, int bishop_like) {
     uint64_t mask = 0ULL;
     int start = bishop_like ? 1 : 0;
@@ -117,12 +184,23 @@ static void deepfin_slider_init_one(
     do {
         uint32_t idx = deepfin_slider_index(subset, mask, magic, shift);
         if (offset + idx >= table_size)
-            abort();
+            DEEPFIN_SLIDER_FATAL(
+                "%s sq=%d index out of range: offset=%" PRIu32 " idx=%" PRIu32
+                " (table_size=%" PRIu32 ") mask=0x%016" PRIx64
+                " subset=0x%016" PRIx64,
+                DEEPFIN_SLIDER_KIND(bishop_like), sq, offset, idx, table_size,
+                mask, subset);
         uint64_t attack = slider_attacks_reference(sq, subset, bishop_like);
 #if !DEEPFIN_SLIDER_USE_PEXT
         uint64_t prior = table[offset + idx];
         if (prior != 0ULL && prior != attack)
-            abort();
+            DEEPFIN_SLIDER_FATAL(
+                "%s sq=%d DESTRUCTIVE magic collision at slot %" PRIu32
+                ": magic=0x%016" PRIx64 " shift=%u mask=0x%016" PRIx64
+                " subset=0x%016" PRIx64 " stored=0x%016" PRIx64
+                " incoming=0x%016" PRIx64,
+                DEEPFIN_SLIDER_KIND(bishop_like), sq, offset + idx, magic,
+                (unsigned)shift, mask, subset, prior, attack);
 #endif
         table[offset + idx] = attack;
         subset = (subset - mask) & mask;
@@ -180,20 +258,91 @@ static inline int is_attacked_by(int sq, uint64_t occ,
     return 0;
 }
 
+/* ⚑⚑ THIS CHECK IS CIRCULAR WITH RESPECT TO THE MASK, AND ON ITS OWN IT IS NOT
+ * THE SAFETY STORY.
+ *
+ * It Carry-Ripples over the SAME mask the table was filled from, comparing
+ * reference(sq, s) against a slot that was WRITTEN as reference(sq, s). It
+ * therefore cannot construct an occupancy with a bit outside the mask, and so
+ * it cannot see a wrong mask at all: a popcount-preserving edit to
+ * deepfin_slider_relevant_mask (drop a real blocker from a ray, keep the edge
+ * square instead) leaves the table-size assertion satisfied and passes this
+ * loop cleanly, while producing thousands of wrong attack sets on real
+ * full-board occupancies. The magic backend aborts on such an edit only
+ * incidentally — its multipliers were generated against the CORRECT masks, so
+ * a changed mask makes them collide destructively — which means the arm that
+ * survives the bad edit is PEXT, the one with no collision check by
+ * construction.
+ *
+ * The mask itself is pinned by deepfin_slider_verify_mask below, and the
+ * arm-against-arm differential over occupancies WITH off-mask bits lives in
+ * deepfin_slider_selftest, driven from pytest rather than paid at every
+ * process start. */
 static void deepfin_slider_verify_one(int sq, int bishop_like, uint64_t mask) {
     uint64_t subset = 0ULL;
     do {
         uint64_t expected = slider_attacks_reference(sq, subset, bishop_like);
         uint64_t actual = slider_attacks(sq, subset, bishop_like);
         if (expected != actual)
-            abort();
+            DEEPFIN_SLIDER_FATAL(
+                "%s sq=%d table disagrees with the ray walker: "
+                "mask=0x%016" PRIx64 " subset=0x%016" PRIx64
+                " expected=0x%016" PRIx64 " table=0x%016" PRIx64,
+                DEEPFIN_SLIDER_KIND(bishop_like), sq, mask, subset, expected,
+                actual);
         subset = (subset - mask) & mask;
     } while (subset != 0ULL);
 }
 
-static void init_slider_attack_tables(void) {
-    if (deepfin_slider_tables_initialized) return;
+/* The mask is complete iff occupying every square in it blocks each ray exactly
+ * where a FULL board would. Non-circular, because the right-hand side uses an
+ * occupancy the Carry-Rippler above can never reach: ~0 sets the off-mask bits
+ * the mask claims are irrelevant. Cost is 128 ray walks, once. */
+static void deepfin_slider_verify_mask(int sq, int bishop_like, uint64_t mask) {
+    uint64_t masked = slider_attacks_reference(sq, mask, bishop_like);
+    uint64_t full = slider_attacks_reference(sq, ~0ULL, bishop_like);
+    if (masked != full)
+        DEEPFIN_SLIDER_FATAL(
+            "%s sq=%d relevant mask is INCOMPLETE: mask=0x%016" PRIx64
+            " attacks(mask)=0x%016" PRIx64 " attacks(full)=0x%016" PRIx64
+            " differ at 0x%016" PRIx64
+            " — a blocker square is missing from the mask, so table lookups "
+            "will read the wrong slot for real occupancies",
+            DEEPFIN_SLIDER_KIND(bishop_like), sq, mask, masked, full,
+            masked ^ full);
+}
 
+/* Arm-against-arm differential over occupancies with OFF-MASK bits set, which
+ * is the class deepfin_slider_verify_one structurally cannot reach. Returns the
+ * number of mismatches; 0 is the only acceptable answer. Pure C so every
+ * extension that compiles these tables can publish it and be checked as the
+ * binary it actually ships. xorshift64* keeps the stream reproducible from the
+ * seed without depending on any host RNG. */
+static long deepfin_slider_selftest(uint64_t seed, long samples) {
+    uint64_t state = seed ? seed : 0x9E3779B97F4A7C15ULL;
+    long mismatches = 0;
+    for (long i = 0; i < samples; i++) {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        uint64_t occupied = state * 0x2545F4914F6CDD1DULL;
+        /* Vary the density too: a uniform 50%-full board never exercises the
+         * long-ray cases that a sparse endgame occupancy produces. */
+        if ((i & 3) == 1) occupied &= (occupied >> 7) | (occupied << 7);
+        if ((i & 3) == 2) occupied |= (occupied >> 11) | (occupied << 11);
+        for (int sq = 0; sq < 64; sq++) {
+            for (int bishop_like = 0; bishop_like < 2; bishop_like++) {
+                uint64_t expected =
+                    slider_attacks_reference(sq, occupied, bishop_like);
+                uint64_t actual = slider_attacks(sq, occupied, bishop_like);
+                if (expected != actual) mismatches++;
+            }
+        }
+    }
+    return mismatches;
+}
+
+static void deepfin_slider_build_tables(void) {
     uint32_t rook_offset = 0, bishop_offset = 0;
     for (int sq = 0; sq < 64; sq++) {
         uint64_t rook_mask = deepfin_slider_relevant_mask(sq, 0);
@@ -227,22 +376,105 @@ static void init_slider_attack_tables(void) {
 
     if (rook_offset != DEEPFIN_ROOK_TABLE_SIZE ||
         bishop_offset != DEEPFIN_BISHOP_TABLE_SIZE)
-        abort();
+        DEEPFIN_SLIDER_FATAL(
+            "packed table size mismatch: rook %" PRIu32 " (expected %d), "
+            "bishop %" PRIu32 " (expected %d)",
+            rook_offset, DEEPFIN_ROOK_TABLE_SIZE, bishop_offset,
+            DEEPFIN_BISHOP_TABLE_SIZE);
 
-    /* Exhaustive equivalence over every relevant blocker subset. Edge and
-     * off-ray occupancy bits cannot affect a slider attack, so this covers
-     * every board occupancy while retaining the old ray walker as oracle. */
-    deepfin_slider_tables_initialized = 1;
+    /* The mask check runs FIRST: every claim the loop below makes is
+     * conditional on the mask being the right one, and it is the only one of
+     * the two that can see a mask defect. */
+    for (int sq = 0; sq < 64; sq++) {
+        deepfin_slider_verify_mask(sq, 0, DEEPFIN_ROOK_MASKS[sq]);
+        deepfin_slider_verify_mask(sq, 1, DEEPFIN_BISHOP_MASKS[sq]);
+    }
+
+    /* Exhaustive equivalence over every relevant blocker subset — see the
+     * circularity warning on deepfin_slider_verify_one for what this does and
+     * does not establish. The lookups it calls do not consult
+     * deepfin_slider_tables_initialized, so the flag is set only once every
+     * check has passed: no caller ever observes it true over an unverified
+     * table. */
     for (int sq = 0; sq < 64; sq++) {
         deepfin_slider_verify_one(sq, 0, DEEPFIN_ROOK_MASKS[sq]);
         deepfin_slider_verify_one(sq, 1, DEEPFIN_BISHOP_MASKS[sq]);
     }
+    deepfin_slider_tables_initialized = 1;
+}
+
+/* ⚑ NOT "single-threaded by precondition" — MADE safe, following the
+ * pthread_once precedent at _nnue_impl.h:316/395. The precondition was already
+ * untrue on paper: _features_impl.h reaches init_tables_features() ->
+ * init_attack_tables() from inside threaded compute paths, and today those
+ * short-circuit only because PyInit happened to run first under the GIL. That
+ * is an ordering accident, not an invariant, and the failure it guards against
+ * is a second thread reading a half-filled 102,400-entry table — silent wrong
+ * attack sets, not a crash. pthread_once makes latecomers block until the
+ * tables are built AND verified. */
+static pthread_once_t deepfin_slider_tables_once = PTHREAD_ONCE_INIT;
+
+static void init_slider_attack_tables(void) {
+    pthread_once(&deepfin_slider_tables_once, deepfin_slider_build_tables);
 }
 
 static void init_attack_tables(void) {
     init_attack_tables_reference();
     init_slider_attack_tables();
 }
+
+/* ================================================================
+ * Python surface — defined once here and pasted into each extension's method
+ * table by DEEPFIN_SLIDER_PY_METHODS, following the CAE_NNUE_DAG_METHODS
+ * precedent in nnue/_nnue_dag_api.h.
+ *
+ * ⚑ It has to be PER-MODULE, not one shared helper module. These are
+ * header-only statics, so every .so carries its OWN tables, its OWN ray walker
+ * and its OWN backend selection — which is exactly how _nnue_ext came to ship
+ * ray-walking sliders while _lc0_ext and _mcts_tree were table-backed, with no
+ * test able to see the difference. Asking one module proves nothing about
+ * another; each binary answers for itself.
+ *
+ * Guarded on Py_PYTHON_H so scripts/fuzz/cboard_libfuzzer.c, which includes
+ * _cboard_impl.h with no Python at all, still compiles.
+ * ================================================================ */
+#ifdef Py_PYTHON_H
+
+PyDoc_STRVAR(deepfin_slider_selftest_doc,
+"slider_selftest(seed=..., samples=...) -> int\n\n"
+"Differential-test THIS module's slider tables against THIS module's legacy ray\n"
+"walker over pseudo-random FULL-BOARD occupancies, and return the mismatch\n"
+"count. Zero is the only acceptable answer.\n\n"
+"Full-board is the point. The exhaustive check at module init walks the\n"
+"Carry-Rippler over each square's relevant mask, so every occupancy it can\n"
+"build has zero bits outside that mask -- it is circular with respect to the\n"
+"mask and cannot detect a wrong one. These occupancies set off-mask bits, so a\n"
+"mask that dropped a real blocker shows up here as thousands of mismatches.\n\n"
+"Each sample tests all 64 squares x {rook, bishop}, i.e. 128 comparisons.");
+
+static PyObject *deepfin_slider_selftest_py(PyObject *Py_UNUSED(self),
+                                            PyObject *args) {
+    unsigned long long seed = 0x243F6A8885A308D3ULL;
+    long samples = 2000;
+    if (!PyArg_ParseTuple(args, "|Kl", &seed, &samples))
+        return NULL;
+    if (samples < 0) {
+        PyErr_SetString(PyExc_ValueError, "samples must be >= 0");
+        return NULL;
+    }
+    init_attack_tables();
+    long mismatches;
+    Py_BEGIN_ALLOW_THREADS
+    mismatches = deepfin_slider_selftest((uint64_t)seed, samples);
+    Py_END_ALLOW_THREADS
+    return PyLong_FromLong(mismatches);
+}
+
+#define DEEPFIN_SLIDER_PY_METHODS                                            \
+    {"slider_selftest", deepfin_slider_selftest_py, METH_VARARGS,            \
+     deepfin_slider_selftest_doc},
+
+#endif /* Py_PYTHON_H */
 
 #endif /* DEEPFIN_FAST_SLIDERS */
 #endif /* DEEPFIN_SLIDER_ATTACKS_IMPL_H */
