@@ -1,7 +1,12 @@
 """Build C extensions (called by setuptools via pyproject.toml).
 
 Environment variables:
-  CAE_EXT_NATIVE=1     — add -march=native (non-portable wheels)
+  CAE_EXT_NATIVE=1     — add -march=native (non-portable wheels). This is also
+                         what selects the BMI2 PEXT slider backend, on the CPU
+                         families where PEXT is fast; the family exclusion and
+                         its reasoning live at the gate in
+                         encoding/_slider_attacks_impl.h. A portable build gets
+                         the magic backend, which is correct and expected.
   CAE_EXT_LTO=1        — add -flto at compile and link time
   CAE_EXT_SANITIZE=X   — add -fsanitize=X -fno-omit-frame-pointer -g
                          e.g. CAE_EXT_SANITIZE=address,undefined
@@ -101,7 +106,23 @@ def _ext_link_args(*, openmp: bool = False) -> list[str]:
 # an exhaustive oracle; _slider_attacks_impl.h undefines the aliases at that
 # boundary and installs table-backed PEXT/magic helpers for all subsequent
 # move-generation and search code.
-_CBOARD_FAST_SLIDER_MACROS = [
+#
+# ⚑ THESE MACROS ARE PER-EXTENSION AND THEY DO NOT TRAVEL. The headers are
+# header-only statics, so every .so that includes _cboard_impl.h compiles its
+# OWN slider code, and only the extensions listed below get the fast one. In
+# particular the C tree does NOT hand its sliders to the NNUE search: a value
+# provider reaches the tree through a PyCapsule, never an #include
+# (chess_anti_engine/mcts/_value_provider.h), so qsearch, the check resolver,
+# FastQ and FastQ's SEE x-ray loop all execute the copy compiled into
+# _nnue_ext.so. Give the macros to every extension that includes
+# _cboard_impl.h; verify per-.so with
+#   objdump -d <so> | grep -c pext        # native/BMI2 build
+# and treat an unchanged count as "the macros did not reach this extension".
+# The annotation is load-bearing for the type gate: setuptools declares
+# define_macros as list[tuple[str, str | None]] (None means a bare -D), and a
+# bare list literal infers as list[tuple[str, str]], which is invariant and so
+# not assignable.
+_CBOARD_FAST_SLIDER_MACROS: list[tuple[str, str | None]] = [
     ("DEEPFIN_FAST_SLIDERS", "1"),
     ("init_attack_tables", "init_attack_tables_reference"),
     ("slider_attacks", "slider_attacks_reference"),
@@ -112,6 +133,20 @@ _CBOARD_FAST_SLIDER_MACROS = [
 ]
 
 
+# ⚑ NO fast-slider macros here, deliberately. _features_ext.c includes
+# _features_impl.h ALONE and never _cboard_impl.h, so _CBOARD_IMPL_H is
+# undefined and it compiles the standalone feat_rook_attacks/feat_bishop_attacks
+# ray walkers under their own names — names these macros do not rename and
+# _slider_attacks_impl.h does not define. Defining DEEPFIN_FAST_SLIDERS here
+# would not redirect one call: on a portable build it is inert (nothing pulls
+# _slider_attacks_impl.h in), and on a native build __AVX2__ makes
+# _features_impl.h include _bitboard_planes_impl.h, which would then pull
+# _slider_attacks_impl.h into a translation unit with no slider_attacks_reference
+# and no RAY_DF/PAWN_ATTACKS — a build failure, not a speedup. Making this
+# extension table-backed means giving _features_impl.h's standalone branch its
+# own tables, which is a separate change with its own oracle; it is also not on
+# the search hot path (these sliders serve v3_xray/attack-map plane encoding,
+# once per encoded position, not per search node).
 features_ext = Extension(
     "chess_anti_engine.encoding._features_ext",
     sources=["chess_anti_engine/encoding/_features_ext.c"],
@@ -132,9 +167,18 @@ lc0_ext = Extension(
 mcts_tree_ext = Extension(
     "chess_anti_engine.mcts._mcts_tree",
     sources=["chess_anti_engine/mcts/_mcts_tree.c"],
-    # The tree compiles the NNUE evaluator in directly (via the eval-plugin
-    # seam's provider header) rather than calling across a .so boundary, so it
-    # needs the encoding headers both files share.
+    # The tree includes the encoding headers directly (_cboard_impl.h,
+    # _features_impl.h, and the eval-plugin seam _value_provider.h, which itself
+    # includes _cboard_impl.h for the CBoard type in the eval() signature), so it
+    # needs the encoding include dir.
+    #
+    # ⚑ It does NOT compile the NNUE evaluator in. A provider reaches the tree
+    # through a PyCapsule, never an #include — see the "HOW A PROVIDER REACHES
+    # THE TREE" contract in mcts/_value_provider.h, which exists precisely
+    # because a header-only evaluator duplicated into the tree would give the
+    # tree a second copy of the evaluator's kernel flag and weight cache. So the
+    # macros below make the TREE's own movegen table-backed and reach nothing
+    # inside _nnue_ext.so; that extension is given them separately.
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
     define_macros=_CBOARD_FAST_SLIDER_MACROS,
     extra_compile_args=_mcts_compile_args(),
@@ -152,6 +196,14 @@ nnue_ext = Extension(
     "chess_anti_engine.nnue._nnue_ext",
     sources=["chess_anti_engine/nnue/_nnue_ext.c"],
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
+    # ⚑ THIS IS THE EXTENSION PR-S2 EXISTS FOR. _nnue_ext.c includes
+    # _cboard_impl.h and compiles in qsearch, the recursive check resolver,
+    # FastQ and FastQ's SEE x-ray loop (_fastq_see.h calls bishop_attacks/
+    # rook_attacks directly). None of that is reachable from _mcts_tree.so's
+    # copy — the tree calls a provider through a capsule, not an #include — so
+    # without these macros the whole NNUE search ray-walks no matter what the
+    # other two extensions were built with.
+    define_macros=_CBOARD_FAST_SLIDER_MACROS,
     # OpenMP: the throughput benchmark measures the multi-thread scaling the
     # native-generator gate is decided on, so it has to actually run threaded.
     extra_compile_args=_mcts_compile_args(),

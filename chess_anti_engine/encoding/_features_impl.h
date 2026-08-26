@@ -77,6 +77,26 @@
 #include "_bitboard_planes_impl.h"
 #endif
 
+/* ⚑ Same guard as the one at the end of _cboard_impl.h, repeated here because
+ * _features_ext.c reaches this header WITHOUT CBoard. That path is the sneakier
+ * one: the include above is conditional on __AVX2__, so on a portable build
+ * DEEPFIN_FAST_SLIDERS would not even pull the slider header in, and the flag
+ * would be accepted and ignored with no symptom whatsoever. (On a native build
+ * it instead fails to compile, since _slider_attacks_impl.h needs CBoard's
+ * RAY_DF/PAWN_ATTACKS/slider_attacks_reference, which this translation unit
+ * does not have.) _features_ext deliberately gets no fast-slider macros — see
+ * the comment above features_ext in setup.py — and this makes any attempt to
+ * add them loud in both build configurations rather than only one. */
+#if defined(DEEPFIN_FAST_SLIDERS) && !defined(DEEPFIN_SLIDER_ATTACKS_IMPL_H)
+#  error "DEEPFIN_FAST_SLIDERS is defined but _slider_attacks_impl.h was never \
+included — the fast sliders are NOT installed. _features_impl.h only pulls the \
+plane header under __AVX2__, so this flag is silently inert on portable builds."
+#endif
+
+#ifndef DEEPFIN_SLIDER_BACKEND_NAME
+#  define DEEPFIN_SLIDER_BACKEND_NAME "rays"
+#endif
+
 /* ================================================================
  * Precomputed tables
  * ================================================================ */
