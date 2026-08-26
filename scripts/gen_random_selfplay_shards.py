@@ -445,7 +445,12 @@ GSS_MAX_CANDS: int = int(getattr(_mcts_tree_ext, "GSS_MAX_CANDS", 64))
 #: ``RESOLVER_MAX_PLIES`` -- three build-vintage constants that were absent from
 #: the artifact. A reanalysis that guessed them would silently run the mate rows
 #: through the centipawn slope, which is the banked N1 defect in a new scale.
-LEAF_BANK_SCHEMA = 2
+#:
+#: 3 (2026-08-26) records whether FEN is sufficient to reconstruct the native
+#: arm's repetition/search state. FEN carries the halfmove clock but not the
+#: CBoard repetition hash stack; rows with a non-empty stack are explicitly NOT
+#: admissible to a FEN-only history-sensitive scorer.
+LEAF_BANK_SCHEMA = 3
 
 # Standard piece values in centipawns, indexed the way decode_step0_bitboards
 # returns them: columns 0-5 are "us" P/N/B/R/Q/K, 6-11 are "them". The king
@@ -1125,6 +1130,10 @@ class NnueArmValueSource:
                         "arm": self.arm,
                         "role": role,
                         "fen": board.fen(),
+                        "halfmove_clock": int(board.halfmove_clock),
+                        "hash_stack_len": int(board.hash_stack_len),
+                        "hist_len": int(board.hist_len),
+                        "fen_reconstructs_full_search_state": bool(board.hash_stack_len == 0),
                         "value": int(value),
                         "is_mate": bool(mate),
                         "game": int(game),

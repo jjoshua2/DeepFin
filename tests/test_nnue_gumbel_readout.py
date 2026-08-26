@@ -1262,3 +1262,148 @@ def test_the_report_divides_throughput_by_ACTIVE_workers_not_requested() -> None
     assert readout.REPORT_SCHEMA >= 3, (
         "the key rename is a breaking report change and must carry a bump"
     )
+
+
+
+# --- #474 current-head measurement-integrity regression tests ---
+
+def test_multi_arm_matrix_scopes_explicit_knobs_to_the_consuming_cells(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--arm", readout.ARM_QSEARCH_DAG,
+        "--arm", readout.ARM_FASTQ,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--nnue-qsearch-max-ply", "3",
+        "--dag-node-cap", "0",
+        "--fastq-max-qply", "6",
+    ])
+    plan = readout.plan_from_args(args)
+    by_arm = {cfg.arm: cfg for cfg in plan.arm_configs}
+    assert by_arm[readout.ARM_QSEARCH].qsearch_max_ply == 3
+    assert by_arm[readout.ARM_QSEARCH].fastq_max_qply is None
+    assert by_arm[readout.ARM_QSEARCH_DAG].dag_node_cap == 0
+    assert by_arm[readout.ARM_FASTQ].fastq_max_qply == 6
+    assert by_arm[readout.ARM_FASTQ].qsearch_max_ply is None
+
+
+def test_matrix_still_refuses_a_knob_no_selected_arm_consumes(tmp_path: Path) -> None:
+    args = readout.build_parser().parse_args([
+        "--arm", readout.ARM_QSEARCH,
+        "--nnue-pack", str(tmp_path / "pack"),
+        "--fastq-max-qply", "6",
+    ])
+    with pytest.raises(ValueError, match="no.*nnue-fastq|nnue-fastq is not selected"):
+        readout.plan_from_args(args)
+
+
+def test_persistent_dag_snapshots_are_differenced_not_resummed() -> None:
+    first = dict(_DAG_SNAPSHOT)
+    second = dict(first)
+    second.update({
+        "node_count": 115,
+        "edge_count": 177,
+        "probes": 220,
+        "hits": 54,
+        "inserts": 115,
+        "state_makes": 75,
+        "memory_bytes": first["memory_bytes"] + 1024,
+    })
+    assert second["state_inits"] + second["state_makes"] == second["node_count"]
+    stats = readout.DagGameStats()
+    stats.add(first)
+    stats.add(second, previous=first)
+    summary = stats.summary()
+    assert summary["nodes_per_game"] == pytest.approx((110 + 5) / 2)
+    assert summary["edges_per_game"] == pytest.approx((170 + 7) / 2)
+    assert summary["hits"] == 54
+    assert summary["probes"] == 220
+    assert summary["state_makes"] == 75
+
+
+def test_dag_delta_refuses_a_counter_that_goes_backwards_without_reset() -> None:
+    first = dict(_DAG_SNAPSHOT)
+    second = dict(first)
+    second["hits"] -= 1
+    stats = readout.DagGameStats()
+    stats.add(first)
+    with pytest.raises(ValueError, match="went backwards"):
+        stats.add(second, previous=first)
+
+
+def test_search_output_digest_catches_a_target_change_that_game_digest_cannot() -> None:
+    row_a = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.5, 0.5], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+    )
+    row_b = argparse.Namespace(
+        ply_index=0,
+        policy_probs=np.array([0.6, 0.4], dtype=np.float32),
+        legal_mask=np.array([True, True]),
+    )
+    same_game = readout.game_digest(
+        game_index=0, start_fen="start", move_trace="e2e4", result="*", termination="max",
+    )
+    left = readout.GameRecord(0, 1, "*", "max", same_game, readout.search_output_digest([row_a]))
+    right = readout.GameRecord(0, 1, "*", "max", same_game, readout.search_output_digest([row_b]))
+    cells = {
+        readout.ARM_QSEARCH: [{"repeat": 0, "games_digest": readout.games_digest([left]),
+                               "searches_digest": readout.searches_digest([left])}],
+        readout.ARM_QSEARCH_DAG: [{"repeat": 0, "games_digest": readout.games_digest([right]),
+                                   "searches_digest": readout.searches_digest([right])}],
+    }
+    oracle = readout._oracle(cells)
+    assert oracle["game_digests_agree"] is True
+    assert oracle["search_digests_agree"] is False
+    assert oracle["digests_agree"] is False
+
+
+def test_quality_scope_explicitly_forbids_paired_attribution_from_end_to_end_cells() -> None:
+    assert readout.QUALITY_SCOPE["population"] == "end_to_end_arm_selected"
+    assert readout.QUALITY_SCOPE["paired_evaluator_quality"] is False
+    assert readout.QUALITY_SCOPE["deep_sf_paired_input_admissible"] is False
+
+
+def test_native_module_identity_hashes_the_actual_loaded_file(tmp_path: Path) -> None:
+    binary = tmp_path / "fake.so"
+    binary.write_bytes(b"one build")
+    module = argparse.Namespace(__file__=str(binary))
+    path, digest = readout._module_identity(module)
+    assert path == str(binary.resolve())
+    assert digest == readout._sha256_file(binary)
+    binary.write_bytes(b"different build")
+    assert readout._sha256_file(binary) != digest
+
+
+def test_leaf_bank_marks_when_fen_does_not_reconstruct_repetition_history() -> None:
+    import io
+
+    sink = io.StringIO()
+    source = object.__new__(gen.NnueArmValueSource)
+    source._bank = sink
+    source.arm = readout.ARM_QSEARCH
+    source.pack_file_sha256 = "f" * 64
+    source.cp_per_internal_unit = 0.28
+    source.cp_slope = 0.006
+    source.cp_draw_width = 120.0
+    source.mate_base = 100000.0
+    source.mate_ply_step = 1.0
+    source.mate_max_plies = 128.0
+    source.bank_identity = {}
+    source.realized = {}
+    source.bank_rows = 0
+    board = argparse.Namespace(
+        fen=lambda: "8/8/8/8/8/8/8/K6k w - - 7 9",
+        halfmove_clock=7,
+        hash_stack_len=3,
+        hist_len=7,
+    )
+    gen.NnueArmValueSource._bank_batch(
+        source, [board], np.array([10.0]), np.array([False]),
+        role="leaf", cluster=(2, 3),
+    )
+    row = json.loads(sink.getvalue())
+    assert row["schema"] >= 3
+    assert row["halfmove_clock"] == 7
+    assert row["hash_stack_len"] == 3
+    assert row["fen_reconstructs_full_search_state"] is False
