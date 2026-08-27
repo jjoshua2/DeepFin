@@ -69708,6 +69708,56 @@ experiment; no yardstick owed. If shard size or selfplay throughput regresses af
 next restart, this is the first suspect to check before anything else.
 
 **Confounds:** rides the same restart as every other main-merge change; see the merge
+
+#### 2026-08-27 — PREREG: #438 lc0 CONTROL — THE FROZEN SINGLE 2× EXTENSION FIRES (77,088 steps, from-scratch, same code/config/corpus/seed)
+
+Executes the extension the original prereg froze in `e6ad55cb9` ("FREEZE the step budget
+at 38,544 (single 2x extension 77,088)"). Josh authorised using the idle GPU for the
+from-scratch lc0 recipe control (production intentionally stopped; nothing armed).
+
+**Question:** Match B proved fit→Elo CONVERTS on clean lc0 targets (+196.7 [+160.8,
++236.9] LAST-vs-MID) while Match A put LAST at −404.6 [−466.1, −357.0] vs production
+iter-595. Does the Elo-per-step slope survive a budget doubling? This prices the
+from-scratch NNUE-bootstrap restart: if the curve is flat by 77k steps, steps are not
+the lever and the restart needs better/more data, not longer training.
+
+**Setup — SAME experiment, longer budget:** fresh from-scratch run (a resume would put
+MID and LAST on different LR trajectories — the rig's own docstring forbids it) in a NEW
+detached worktree `~/projects/chess-lc0ctl2x` at **`e6ad55cb9`** (the exact window-6
+commit; the 438 worktree has since moved onto lever-2 code). Same
+`configs/lc0_positive_control.yaml`, same 122 `data/lc0_rows/*/` dirs, same frozen
+holdout v2, same seed 0, batch 512. `--steps 77088`,
+`--out-dir runs/lc0_control_2x_20260827`, default mid-frac 0.5 ⇒ **MID lands at 38,544 —
+the 1× budget — a free same-step schedule-effect read** against the banked 1× LAST.
+Fresh purity receipt written to `data/lc0_control_purity_receipt_2x.json` (the 1× summary
+banks the old receipt BY PATH; it is not overwritten). Expected ~16h at window-6's
+1.34 steps/s. Corpus exposure ≈0.50× (1× was 0.2513×) — no repeat concerns.
+
+**DECIDING YARDSTICK (final-only, no rolling reads, seed 42):**
+```
+PYTHONPATH=. python3 scripts/arena_standard.py   --candidate runs/lc0_control_2x_20260827/checkpoint.pt   --reference runs/lc0_control_20260820/checkpoint.pt   --mode matched_sims --sims 100 --games 400 --no-rolling --seed 42   --search-shape play
+```
+**SUCCESS:** pentanomial CI strictly ABOVE 0 — the slope is alive at 2×; a further
+extension needs a NEW prereg (this entry authorises none).
+**KILL:** CI strictly BELOW 0 — 2× is WORSE: schedule pathology; the recipe, not the
+budget, is wrong.
+**NULL:** CI overlaps 0 — the lc0-recipe Elo curve is flat by 77k steps ⇒ scaling steps
+is not the lever for the restart.
+
+**Secondary (calibration, same command shape):** LAST(2×) vs production iter-595
+(`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt`, the Match-A
+reference) — expectation registered below. **Tertiary (free):** MID(2×) vs LAST(1×),
+same step count, isolates the schedule-length effect.
+
+**Registered predictions (before any number exists):** linear extrapolation of Match B
+says LAST(2×) vs LAST(1×) ≈ +150–200; we EXPECT sublinear (+60–150). Secondary:
+−404.6 plus the primary's gain.
+
+**Confounds:** LR-schedule length differs from 1× by construction (single-run schedules
+are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
+0.2513×. Concurrent CPU load (two review agents, the shadow readout when it runs) —
+GPU-side the box is otherwise idle.
+
 commit for the full delta.
 
 ---
