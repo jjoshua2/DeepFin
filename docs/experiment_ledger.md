@@ -69881,6 +69881,59 @@ gated by the standing audit-first rule when launched.
    specifically — re-measure the sims bend under this prior before concluding search
    depth cannot pay pre-net.
 
+#### 2026-08-27 — PREREG: AUDIT-GATE LADDER, FULL SET — the candidate labelers meet the frozen deep-SF ruler (n=4000, minutes of CPU)
+
+The audit-first gate (`scripts/audit_label_candidates.py`, merged `c35940418`,
+independently reviewed + findings closed) prices every registered bootstrap-labeler
+candidate on the frozen `data/audit_set_v1.jsonl` BEFORE any corpus generation or
+training compute. Deep labels are pre-banked, so the run's only engine cost is the
+arms' own shallow searches (~minutes). Runs beside the shadow readout's generation
+(CPU): the gate is a burst, not a load.
+
+**Question:** (1) Does the rooted-MultiPV labeler (candidate 5's value engine,
+`sfroot-2048-mpv20`) hold per-child `sf-2048` quality at its measured ~11x lower
+wall cost when n=50's +/-14pp smoke noise collapses to +/-1.5pp? (2) Where does the
+per-child SF node ladder flatten (candidate 1)? (3) How far behind is the NNUE lane
+(fastq/qsearch) that owns the 31x generation throughput?
+
+**DECIDING YARDSTICK (one command, banked rows):**
+```
+PYTHONPATH=. python3 scripts/audit_label_candidates.py \
+  --audit-set data/audit_set_v1.jsonl --nnue-pack data/nnue/nn-f68ec79f0fe3.pack \
+  --arms nnue-static,nnue-fastq,nnue-qsearch,sf-512,sf-2048,sf-8192,sfroot-2048-mpv20,sfroot-2048-mpvall,sfroot-8192-mpv20 \
+  --json data/audit_label_ladder_20260827/report.json \
+  --dump-per-position data/audit_label_ladder_20260827/rows.jsonl --dump-move-values
+```
+
+**Pre-committed rules, judged on PAIRED per-position top1_regret_cp (position is
+the resampling unit; row bootstrap, 95% CI), with top1% and unlisted% read beside
+it (the censoring floor makes raw regret means incomparable across arms with
+different unlisted rates — the rule below therefore leans on top1% for
+cross-family reads and paired regret within-family):**
+- **ADVANCE (rooted lane leads):** `sfroot-2048-mpv20` top1% within 2.0pp of
+  `sf-2048` (paired difference CI containing 0 or excluding 0 by <2.0pp) AND
+  better than `nnue-qsearch` top1% by a CI excluding 0. Corpus-generation prereg
+  then builds on rooted SF MultiPV + Gumbel selection.
+- **FALL BACK (per-child lane leads):** rooted loses to `sf-2048` by a CI
+  excluding 0 and >=2.0pp -> the lead labeler is the cheapest `sf-<nodes>` rung
+  whose top1% is within 2.0pp of `sf-8192`'s.
+- **NNUE lane verdict is informational either way:** its gap to the winning SF
+  lane is banked as the measured price of the 31x throughput; no kill fires on it
+  here (the shadow readout owns the fastq-vs-qsearch decision).
+- **Ladder-flat read (candidate 1):** if `sf-8192` gains <1.5pp top1 over
+  `sf-2048`, the up-ladder is flattening at labeler-scale nodes and candidate 1's
+  "more nodes" lever is priced accordingly.
+
+**Registered expectations (before any number):** smoke ordering holds (static <
+fastq < qsearch < sf-512 < sf-2048 ~ sfroot-2048-mpv20); mpvall does not beat
+mpv20 at equal nodes; sf-8192 gains 2-5pp over sf-2048.
+
+**Confounds:** concurrent shadow-readout generation (CPU) — the gate is minutes of
+burst; the frozen set's MultiPV=10 censoring floors unlisted choices optimistically
+(disclosed per-arm as unlisted%, per-row in the dump); s/pos numbers are
+contention-dependent and read as ORDER only, not calibration.
+
+
 ---
 
 ## 2026-08-17 — #440 AMENDMENT — **THE MANDATED REPEAT CONTROL READS 0 BY CACHE CONSTRUCTION, AND THE >300cp GATE CANNOT PASS**
