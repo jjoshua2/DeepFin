@@ -1428,7 +1428,10 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
     git_start = readout._git_provenance()
     started_utc = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
-    proof = (
+  # Annotated: the skipped literal alone infers `dict[str, int | None | bool]`,
+  # and the union with the proof's `dict[str, Any]` then rejects
+  # `int(proof.get("games", 0))` at the cell_meta stamp below.
+    proof: dict[str, Any] = (
         prove_shadow_inertness(cfg, games=prove_games) if prove_games > 0
         else {"games": 0, "digests_agree": None, "skipped": True}
     )
