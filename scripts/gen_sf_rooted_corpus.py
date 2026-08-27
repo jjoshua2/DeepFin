@@ -80,7 +80,11 @@ WHAT A WORKER HOLDS, AND WHAT IT DOES WHEN IT DIES
   how much of its duplication the bound let through.
 * A WORKER THAT DIES DOES NOT DESTROY THE RUN'S BOOKKEEPING.  Its slot records
   the exception and the game/ply it died on, the surviving workers finish, and
-  ``summary.json`` is written with a top-level ``failed_workers``.  The process
+  ``summary.json`` is written with a top-level ``failed_workers``.  One residual:
+  a HARD-killed worker process (OOM-kill/segfault) breaks the shared pool, so an
+  in-flight peer's future fails too -- both slots are marked failed and any
+  already-closed shards of theirs exist on disk unindexed by ``summary["shards"]``.
+  Python-level failures never do this; ``run_worker`` catches them.  The process
   exit code is still nonzero -- a partial corpus is a fact to record, not a
   success to report.
 
@@ -189,7 +193,9 @@ DEFAULT_RUN_ID = "gen_sf_rooted_corpus"
 #: entries it actually held, because move counts differ by position mix.
 DEFAULT_DEDUP_CACHE_MAX = 2_000_000
 
-#: Deadline on ONE readline from Stockfish.  ``StockfishUCI``'s own default is
+#: Deadline on ONE WHOLE ``go`` exchange (search), not one readline -- the
+#: clock starts before the read loop, same semantics as the driver's own
+#: ``search``.  ``StockfishUCI``'s own default is
 #: 60 s, sized for the node-limited searches production runs; this generator's
 #: deepest rung is a ``go depth 13`` on a cold table, which is a different order
 #: of wall time, and a deadline that expires POISONS the engine (see
@@ -2176,7 +2182,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sf-hash-mb", type=int, default=DEFAULT_SF_HASH_MB)
     p.add_argument(
         "--sf-read-timeout", type=float, default=DEFAULT_SF_READ_TIMEOUT_S,
-        help=f"deadline in seconds on ONE readline from Stockfish (default "
+        help=f"deadline in seconds on one WHOLE search (the full go exchange; default "
              f"{DEFAULT_SF_READ_TIMEOUT_S}). Expiry POISONS the engine rather "
              "than retrying, so size it above the deepest rung's worst case.",
     )
