@@ -1563,9 +1563,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             steps_done += this_window
             if n_windows > 1:
+                # flush=True is load-bearing: stdout redirected to a file is
+                # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
+                # invisible between flushes — the 2026-08-27 2x run read as
+                # "stalled for 3 hours" while perfectly healthy.
                 print(f"[train] window {window_index + 1}/{n_windows} "
                       f"({this_window} steps) done, "
-                      f"{steps_done} of {int(args.steps)}")
+                      f"{steps_done} of {int(args.steps)}", flush=True)
 
     if metrics is None:
         raise SystemExit(
