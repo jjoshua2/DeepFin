@@ -67547,3 +67547,61 @@ shipped `workers` meaning REQUESTED. Renamed `workers_active`, `REPORT_SCHEMA` 2
 stale consumer gets a KeyError instead of a plausible wrong number — the rule that file's
 own schema comment states. NEXT per speed plan §6: S1 is dead (see the correction entry),
 so the remaining item is the verifier-net bench → S3 or its funeral.
+
+#### 2026-08-26 — LEVER 2 KILL: guest-row D-mass remap LOSES, and it does NOT dip-and-recover
+
+**VERDICT: KILL**, by the pre-committed clause in the prereg (`d967326db`): *"Excludes 0
+negative ⇒ KILL (value-shape harmonization hurts; lever 3 next, lever 2 reverted)."*
+
+| readout | seed | games | score | Elo | 95% CI |
+|---|---|---|---|---|---|
+| MID (10,032 steps) | 70 | 400 | 0.42375 ± 0.01991 | **−53.40** | [−81.6, −25.9] |
+| LAST (20,000 steps) | 71 | 400 | 0.40125 ± 0.02081 | **−69.53** | [−99.6, −40.5] |
+
+Canonical instrument both rows: `matched_sims`, 100 sims/side, search-shape play, 200 paired
+openings, syzygy adjudication on, `game_log_agrees: true`, `truncated: false`.
+`DMASS04MID_vs_iter595.json` / `DMASS04_vs_iter595.json`.
+
+**TAKE-EFFECT VERIFIED BEFORE THE VERDICT WAS READ** (the prereg's own observable):
+`mixed_corpus.lc0_value_dmass` reports `lc0_value_dmass_lambda 0.4`, `..._active true`,
+`device_batches_remapped 20000 == device_batches_seen 20000`, `rows_without_search_wdl 0/0`,
+lc0-side search-WDL D-mass **0.6464 → 0.2733 (Δ −0.3731)**, own-side delta **exactly 0.0**.
+The knob did what it says on the rows it says. This is a verdict about the INTERVENTION, not
+about a dead knob.
+
+⚑ The prereg predicted the lc0 before-mass at **0.666** from a 24,000-row calibration probe;
+the realized in-run value over 5,120,000 rows is **0.6464**, remapping to 0.2733 against a
+predicted ≈0.285. Agreement. (An earlier note in this session quoted 0.735 as the prereg
+baseline — that number is from the corpus-comparison probe, a DIFFERENT population, and is not
+this arm's baseline. [[same_name_different_population]].)
+
+**⚑⚑ IT GOT WORSE FROM MID TO LAST, WHICH BREAKS THE LANE'S ESTABLISHED SHAPE.** Every prior
+mixed-corpus arm dips at MID and recovers by LAST. This one does the opposite:
+
+| arm | MID | LAST | shape |
+|---|---|---|---|
+| untempered f=0.50 (seeds 63/64) | −42.78 | **−0.87** | deep dip, near-full recovery |
+| lever 1, own temper τ=2.2 (seeds 68/69) | −41.0 | −29.6 | dip, partial recovery |
+| **lever 2, guest D-mass λ=0.4 (seeds 70/71)** | −53.40 | **−69.53** | **dip, then WORSE** |
+
+So lever 2 is not "the same cost paid differently" — it is the only arm in the lane whose
+damage COMPOUNDS with training. At LAST it is ~69 Elo below the untempered control that shares
+its f, bar, shards, init and step count and differs ONLY in λ. Confounds: none live; GPU
+otherwise idle; the two arms differ in seed (12 vs 15) as all arms in this lane do.
+
+**WHAT THE LANE NOW SAYS.** Two harmonization levers, two kills, from opposite ends:
+lever 1 degraded the OWN targets to match the guest and lost (`c61495f9f`); lever 2 left own
+targets byte-identical and reshaped only the GUEST value rows, and lost harder. The surviving
+reading is that the value-regime gap is not a fight to be settled by making the two corpora
+resemble each other — reshaping either side's value target costs more than the mismatch does.
+
+**LEVER 2 IS REVERTED**: `--mix-lc0-value-dmass-lambda` returns to its inert default 1.0. The
+knob stays in the code (byte-identity early-return at λ=1.0, verified by the launch echo) so the
+arm is reproducible; nothing enables it.
+
+**⚑ LEVER 3 IS NOT AUTOMATIC.** The prereg names the ≤6-piece filter next. It is a materially
+DIFFERENT intervention — it REMOVES guest rows rather than reshaping any target — so these two
+kills do not directly predict it, and it is consistent with the standing design rule that
+≤6-man is solved territory. But it is now the third bet in a lane that is 0-for-2 with the
+damage compounding, and it deserves an explicit go/no-go rather than inheriting the prereg's
+"next".
