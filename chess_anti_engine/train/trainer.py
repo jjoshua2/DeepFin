@@ -3052,6 +3052,22 @@ class Trainer:
             f"at_or_above_deterministic_rank_tau={floored >= guarantee}",
             flush=True,
         )
+      # ⚑ ANNOUNCED FROM THE CONSUMER'S OWN OBJECT, like the floor above: this
+      # reads `self._loss_kwargs["sf_shape"]`, the exact object `compute_loss`
+      # is handed, NOT `self.w_sf_shape` and NOT the yaml. A line rebuilt from
+      # `self` would agree with a trainer that dropped the config on the floor,
+      # which is the trap this repo has already paid for. It prints
+      # unconditionally, including at `w=0.0`, because "the term is present and
+      # inert" and "the term never got wired" are the two states an operator
+      # most needs to tell apart -- and the shipped weight is 0.0, so a
+      # print-only-when-active line would be invisible exactly when it matters.
+        sf_shape = self._loss_kwargs["sf_shape"]
+        print(
+            f"[trainer] sf_shape w={sf_shape.w!r} temp_cp={sf_shape.temp_cp!r} "
+            f"active={sf_shape.w != 0.0} "
+            f"in_ruler_shape={'sf_shape_temp_cp' in self._ruler_loss_shape()}",
+            flush=True,
+        )
 
     def sync_search_width(self, gumbel_topk: object) -> None:
         """Re-point the SF-policy floor at the LIVE root width.
@@ -3705,12 +3721,26 @@ class Trainer:
         `w` itself is deliberately absent: membership already covers it, and
         including the value here would reintroduce the magnitude hash that
         `active_loss_terms` argues against.
+
+        ⚑ EVERY restart-required shape parameter of an ACTIVE term belongs here,
+        and the set is not "the floor's". `sf_shape_temp_cp` is the SF-shape
+        term's teacher temperature: it sets the entropy of `q_S`, so retuning it
+        changes what `m_sf_shape` measures exactly as `tau` does for the floor.
+        It ships as an uncalibrated placeholder that is expected to be tuned
+        before the term is taken seriously, so "it will never change" is the
+        opposite of true. Omitting it would let a re-tuned objective inherit the
+        previous ruler id across a same-trial restart and compare its new
+        `test_loss` against the old record -- the PR #277 failure this whole
+        mechanism exists to prevent.
         """
         shape: dict[str, float] = {}
         floor = self._eval_loss_kwargs.get("sf_policy_floor")
         if floor is not None and float(getattr(floor, "w", 0.0)) != 0.0:
             for field in ("delta_cp", "tau", "tau_top1", "tau_played"):
                 shape[f"sf_policy_floor_{field}"] = float(getattr(floor, field))
+        sf_shape = self._eval_loss_kwargs.get("sf_shape")
+        if sf_shape is not None and float(getattr(sf_shape, "w", 0.0)) != 0.0:
+            shape["sf_shape_temp_cp"] = float(getattr(sf_shape, "temp_cp"))
         return shape
 
     def _amp_context(self):

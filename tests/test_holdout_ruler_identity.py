@@ -721,13 +721,42 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `holdout_generation` bump and one best-model handover per running trial.
 # Previous values: "v1:full_pass:8b16fe4b481f457d",
 # "v1:sampled:7bc9ed3c7fd30ac0".
-# ⚑ MOVED BY THE SF-SHAPE EXTRACTION (#449x): `w_sf_shape` joins
-# `TRAINER_WEIGHT_KEYS`, and `eval_ruler.active_loss_terms` hashes that set,
-# so the id MUST move — that is the term being placed under the ruler, not a
-# regression. Neither input branch's literal was correct for the merged state:
-# main had 198dec2bb016d62e, feat/sf-shape-target had 2314f8551ad19148, and the
-# merged key set (main's keys PLUS w_sf_shape) hashes to a third value.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:55a35e2267523cd1"
+# ⚑ MOVED BY THE SF-SHAPE EXTRACTION (#479). Neither input branch's literal was
+# correct for the merged state: main had 198dec2bb016d62e, feat/sf-shape-target
+# had 2314f8551ad19148, and the merged state hashes to a third value.
+#
+# ⚑⚑ CORRECTED — AN EARLIER REVISION OF THIS COMMENT NAMED THE WRONG MECHANISM,
+# and it was wrong in the direction that matters. It said "`w_sf_shape` joins
+# `TRAINER_WEIGHT_KEYS`, and `active_loss_terms` hashes that set, so the id MUST
+# move". Both constants below are computed with `loss_weights=NO_TERMS`, so
+# `active_loss_terms` returns `()` on main AND on this branch and contributes
+# NOTHING to either digest. MEASURED by an independent review of #479, two
+# mutants against this branch:
+#   delete "w_sf_shape" from TRAINER_WEIGHT_KEYS  -> both ids UNCHANGED
+#   delete the one `"sf_shape": replace(...)` line
+#     from `Trainer._loss_kwargs`                 -> both ids revert to EXACTLY
+#                                                    main's 198dec2bb016d62e /
+#                                                    007a74b1e31d47cf
+# ⇒ these ids move for exactly ONE reason: the SOURCE DIGEST of
+# `Trainer._loss_kwargs`, which this PR edited. The 561 changed lines of
+# `losses.py` contribute nothing, consistent with this file's earlier note.
+# Read that before "fixing" a red pin here: reverting `TRAINER_WEIGHT_KEYS`
+# will not restore these values, and the recorded rule would have sent the next
+# maintainer to the wrong file.
+#
+# The SEPARATE and still-true claim, tested independently below: a NON-ZERO
+# `w_sf_shape` moves the ruler through membership, which is the term being
+# placed under the ruler rather than a regression.
+#
+# ⚑ MOVED AGAIN BY REVIEW ROUND 2 (55a35e2267523cd1 -> 04c0d4c38bab4185,
+# 9ec998de89c227c7 -> 6980ebfe4e1fc5a1). `_ruler_loss_shape` gained the
+# `sf_shape_temp_cp` branch -- the fix for an independent review finding that
+# the SF-shape term's teacher temperature sat OUTSIDE the ruler while the term
+# was active. `_ruler_loss_shape` is in the measured-source set, so correcting
+# it moves the digest. That is the SAME mechanism corrected above (source
+# digest, not `active_loss_terms`), demonstrated a second time: this move also
+# has nothing to do with `TRAINER_WEIGHT_KEYS`.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:04c0d4c38bab4185"
   # ⚑ RENAMED (review #2, N4). This was `PRODUCTION_SAMPLED_RULER`, and that
   # name was false: production NEVER runs the sampled ruler. `trainable_phases`
   # calls `eval_full_pass` (and the async path with `full_pass=True`), and
@@ -740,7 +769,7 @@ PRODUCTION_FULL_PASS_RULER = "v1:full_pass:55a35e2267523cd1"
   # so it catches drift in a frame the production pin cannot see.
 # Re-pinned with the above; previous value "v1:sampled:cceec01bb2efc6d9".
 # Moved by the same #449x key-set change; see PRODUCTION_FULL_PASS_RULER above.
-PRE_PR277_SAMPLED_RULER = "v1:sampled:9ec998de89c227c7"
+PRE_PR277_SAMPLED_RULER = "v1:sampled:6980ebfe4e1fc5a1"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -1392,6 +1421,45 @@ def test_ruler_loss_shape_reads_the_consumers_object_and_only_when_active() -> N
 
     # Absent entirely (a trainer built without the term) must not raise.
     assert Trainer._ruler_loss_shape(SimpleNamespace(_eval_loss_kwargs={})) == {}  # pyright: ignore[reportArgumentType]
+
+    # ⚑ THE SF-SHAPE TERM IS UNDER THE SAME RULE, and it was NOT when this
+    # feature first landed: `_ruler_loss_shape` read only `sf_policy_floor`, so
+    # `sf_shape_temp_cp` -- the teacher temperature that sets `q_S`'s entropy,
+    # and an explicitly uncalibrated placeholder everyone expects to tune --
+    # sat OUTSIDE the ruler. Retuning it across a same-trial restart would have
+    # kept the old ruler id and scored the new objective against the old
+    # record. Found by an independent review of PR #479; this case is the
+    # regression guard, and it fails against that version of the method.
+    from chess_anti_engine.train.losses import SfShapeParams
+
+    shape_on = SimpleNamespace(_eval_loss_kwargs={
+        "sf_shape": SfShapeParams(w=0.7, temp_cp=100.0),
+    })
+    got = Trainer._ruler_loss_shape(shape_on)  # pyright: ignore[reportArgumentType]
+    assert got["sf_shape_temp_cp"] == 100.0
+    assert "w_sf_shape" not in got  # membership covers the weight, as above
+
+    # Retuning the temperature MUST move the shape dict, or the ruler cannot
+    # see it. This is the observation that separates "hashed" from "wired".
+    retuned = SimpleNamespace(_eval_loss_kwargs={
+        "sf_shape": SfShapeParams(w=0.7, temp_cp=250.0),
+    })
+    assert Trainer._ruler_loss_shape(retuned) != got  # pyright: ignore[reportArgumentType]
+
+    # OFF: inert at the shipped weight, exactly like the floor.
+    shape_off = SimpleNamespace(_eval_loss_kwargs={
+        "sf_shape": SfShapeParams(w=0.0, temp_cp=999.0),
+    })
+    assert Trainer._ruler_loss_shape(shape_off) == {}  # pyright: ignore[reportArgumentType]
+
+    # Both active at once: neither term may shadow the other's shape keys.
+    both = SimpleNamespace(_eval_loss_kwargs={
+        "sf_policy_floor": SfPolicyFloorParams(w=0.8, delta_cp=20.0, tau=0.15),
+        "sf_shape": SfShapeParams(w=0.7, temp_cp=100.0),
+    })
+    merged = Trainer._ruler_loss_shape(both)  # pyright: ignore[reportArgumentType]
+    assert merged["sf_policy_floor_delta_cp"] == 20.0
+    assert merged["sf_shape_temp_cp"] == 100.0
 
 
 def test_async_eval_scores_the_snapshot_under_its_own_objective() -> None:

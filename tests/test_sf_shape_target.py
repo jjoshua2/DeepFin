@@ -881,3 +881,168 @@ def test_the_columns_reach_the_result_row() -> None:
     assert row["policy_support_gap"] == pytest.approx(-0.06)
     assert row["policy_support_size"] == pytest.approx(15.9)
     assert row["policy_tail_mass_ours"] == pytest.approx(0.048)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Review round 2 (PR #479): two independent reviewers, complementary findings.
+# Every guard below is a REGRESSION guard -- each one fails against the version
+# of the code that shipped to review, and the mutant is named in the docstring.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_nan_regret_row_leaves_every_sf_shape_column_finite() -> None:
+    """One NaN must not take out the readout for the whole iteration.
+
+    MUTANT: restore `* surfaced_f` in `regret_cp_given_s` -- `0.0 * NaN == NaN`,
+    so masking by multiplication does not mask. The reported value is an
+    ITERATION-WIDE SUM, so a single bad row poisoned the column for every row
+    behind it. `total` was never at risk; the claim that was false is
+    "NaN-tolerant by construction" applied to the READOUT.
+    """
+    outputs, batch = _tiny_batch()
+    reg = batch["sf_p0_regret_t"].clone()
+    reg[0, 3] = float("nan")
+    batch = {**batch, "sf_p0_regret_t": reg}
+
+    for w in (0.0, 0.7):
+        got = compute_loss(outputs, batch, sf_shape=SfShapeParams(w=w))
+        bad = {
+            k: float(v.detach())
+            for k, v in got.items()
+            if k.startswith("sf_shape") and not math.isfinite(float(v.detach()))
+        }
+        assert not bad, f"non-finite sf_shape columns at w={w}: {bad}"
+        assert math.isfinite(float(got["total"].detach()))
+
+
+def test_p_sf_best_is_zero_on_an_empty_surfaced_set() -> None:
+    """MUTANT: delete `* (count > 0)` in `p_sf_best`.
+
+    Survived the shipped suite (M17). With the guard gone, a row whose set is
+    empty -- a NaN row, or one fully at the 1000 cp cap -- reports `p_own` at an
+    arbitrary FABRICATED index as though it were SF's best move. The existing
+    empty-set test asserts only `kl` and `grad`, so the column was unpinned.
+    """
+    reg = torch.full((1, 6), 500.0)          # every entry ties -> nothing surfaced
+    legal = torch.ones((1, 6), dtype=torch.bool)
+    logits = torch.zeros((1, 6), requires_grad=True)
+    out = sf_shape_conditional_kl(logits, torch.softmax(logits, -1), reg, legal,
+                                  params=SfShapeParams(w=0.7))
+    assert float(out.surfaced_count[0].detach()) == 0.0
+    assert float(out.p_sf_best[0].detach()) == 0.0
+    assert float(out.kl[0].detach()) == 0.0
+
+
+def test_the_two_surfaced_set_rules_diverge_only_on_a_fully_covered_row() -> None:
+    """⚑ TWO recoveries of S exist in this module and they DISAGREE. Pinned, not fixed.
+
+    `sf_surfaced_move_mask` (this feature) takes the FULL-ROW max;
+    `_sf_regret_surfaced_and_row_max` (#447, consumed by the LIVE
+    `sf_policy_floor` at `w = 0.8`) takes the LEGAL-ONLY max. The writer puts the
+    fill `d` on uncovered LEGAL indices, so on a PARTIALLY covered row both rules
+    agree. On a FULLY covered row no legal index carries `d`, the legal-only max
+    IS the worst real regret, and `reg < row_max` drops SF's worst legal move
+    from the set.
+
+    ⚑ DELIBERATELY NOT UNIFIED HERE, and the reason is scope, not taste.
+    Unifying downward would regress this term to a rule that is wrong on fully
+    covered rows. Unifying upward would change which moves the LIVE floor term
+    trains on -- a training-affecting change that needs its own ledger entry,
+    prereg and readout, not a drive-by inside a default-off PR. This test exists
+    so the divergence is discoverable and cannot widen silently.
+    """
+    from chess_anti_engine.train.losses import _sf_regret_surfaced_and_row_max
+
+    legal = torch.tensor([[True, True, True, True, False, False]])
+
+    partial = torch.tensor([[10.0, 25.0, 40.0, 60.0, 60.0, 60.0]])
+    new_p, _ = sf_surfaced_move_mask(partial, legal)
+    old_p, _ = _sf_regret_surfaced_and_row_max(partial, legal)
+    assert new_p.tolist() == old_p.tolist(), "partially covered rows must agree"
+
+    full = torch.tensor([[10.0, 25.0, 40.0, 55.0, 90.0, 90.0]])
+    new_f, _ = sf_surfaced_move_mask(full, legal)
+    old_f, _ = _sf_regret_surfaced_and_row_max(full, legal)
+    assert new_f[0].tolist() == [True, True, True, True, False, False]
+    assert old_f[0].tolist() == [True, True, True, False, False, False]
+    assert new_f.tolist() != old_f.tolist()
+
+
+def test_a_nonzero_weight_moves_the_policy_gradient_only_inside_the_set() -> None:
+    """The take-effect observation, through `total.backward()` -- not the kernel.
+
+    The shipped suite asserted the gradient property on `sf_shape_conditional_kl`
+    in isolation and the weight property on the loss VALUE, but never drove
+    `compute_loss` -> `total.backward()`. So "the term reaches the optimizer"
+    rested on reading the composition rather than on running it. MUTANT: hard-wire
+    the weighted term to 0.0, or drop it from `weighted_terms` -- both leave the
+    isolated-kernel tests green.
+    """
+    outputs, batch = _tiny_batch()
+    logits = outputs["policy"]
+    surfaced, _ = sf_surfaced_move_mask(
+        batch["sf_p0_regret_t"], batch["legal_mask"].to(torch.bool),
+    )
+
+    def grad_at(w: float) -> torch.Tensor:
+        lg = logits.detach().clone().requires_grad_(True)
+        loss = compute_loss({**outputs, "policy": lg}, batch,
+                            sf_shape=SfShapeParams(w=w))
+        loss["total"].backward()
+        assert lg.grad is not None
+        return lg.grad.detach().clone()
+
+    off, on = grad_at(0.0), grad_at(0.7)
+    outside = ~surfaced
+    assert torch.equal(off[outside], on[outside]), "gradient moved OUTSIDE the set"
+    assert not torch.equal(off[surfaced], on[surfaced]), "no gradient reached the set"
+
+
+def test_the_temperature_band_rejects_the_silent_absurdity() -> None:
+    """MUTANT: delete the band check -- `1e-9` is then accepted in silence.
+
+    CLAUDE.md category (c): in-schema, in-sign, never range-checked, and the
+    slowest failure to notice. `sf_shape_temp_cp` is a DIVISOR whose own
+    docstring says it must be swept, so hand-typed values are expected. Outside
+    the band `q_S` collapses to a delta or flattens to uniform and
+    `sf_shape_h_sf_given_s` -- the column the calibration is read off -- stops
+    meaning anything, WITHOUT looking wrong.
+    """
+    from chess_anti_engine.train.losses import (
+        SF_SHAPE_TEMP_CP_MAX,
+        SF_SHAPE_TEMP_CP_MIN,
+    )
+
+    SfShapeParams(w=0.0, temp_cp=SF_SHAPE_TEMP_CP_MIN)   # endpoints inclusive
+    SfShapeParams(w=0.0, temp_cp=SF_SHAPE_TEMP_CP_MAX)
+    SfShapeParams(w=0.0, temp_cp=SF_SHAPE_TEMP_CP_DEFAULT)
+
+    for bad in (1e-9, 0.5, 1e5, 1e12):
+        with pytest.raises(ValueError, match="sf_shape_temp_cp"):
+            SfShapeParams(w=0.0, temp_cp=bad)
+
+    # The pre-existing sign/finiteness guard must still fire on its own terms.
+    for bad in (0.0, -5.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="sf_shape_temp_cp"):
+            SfShapeParams(w=0.0, temp_cp=bad)
+
+
+def test_the_trainer_announces_sf_shape_from_the_consumers_object(tmp_path, capsys) -> None:
+    """MUTANT: rebuild the line from `self.w_sf_shape` instead of `_loss_kwargs`.
+
+    That mutant still prints a plausible line while the object `compute_loss`
+    actually receives is whatever the trainer forwarded -- the exact "announce
+    from the consumer's own parameter" trap. Printing unconditionally (including
+    at the shipped `w=0.0`) is deliberate: "present and inert" and "never wired"
+    are the two states this line exists to separate.
+    """
+    _trainer({"w_sf_shape": 0.37, "sf_shape_temp_cp": 42.0}, tmp_path)
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("[trainer] sf_shape ")]
+    assert len(line) == 1, "expected exactly one sf_shape announcement"
+    assert "w=0.37" in line[0]
+    assert "temp_cp=42.0" in line[0]
+    assert "active=True" in line[0]
+    # The knob is under the ruler when it is on -- the operator-visible half of
+    # the fix an independent review of #479 found missing.
+    assert "in_ruler_shape=True" in line[0]

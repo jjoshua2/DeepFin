@@ -1353,14 +1353,22 @@ def sf_policy_floor_deficit(
 #
 # ⚑ IT IS A PLACEHOLDER, NOT A CALIBRATION, AND NOTHING HERE ESTABLISHES IT.
 # The knob this term turns is exactly the ENTROPY of the teacher, so it must be
-# CHOSEN so that `sf_shape_target_entropy` lands on a reference conditional
+# CHOSEN so that `sf_shape_h_sf_given_s` lands on a reference conditional
 # entropy measured on real rows -- not hand-tuned toward whatever makes the loss
 # curve look good, which is the "arm that is the gradient of the metric" trap.
 # 100.0 is a round number picked to be readable, the term ships at `w = 0.0`, and
 # the calibration is deliberately out of scope for the change that introduced it.
-# `sf_shape_target_entropy` is reported at zero weight precisely so the
+# `sf_shape_h_sf_given_s` is reported at zero weight precisely so the
 # calibration can be done from production rows before the term is ever switched on.
 SF_SHAPE_TEMP_CP_DEFAULT = 100.0
+
+# Typo band for the above, in the same centipawn units. NOT a calibration
+# claim -- deliberately far wider than any temperature anyone would ship -- and
+# NOT a substitute for the sweep the default's comment demands. Its only job is
+# to keep an in-sign absurdity (the `zclip_max_norm: 1e-9` shape) from being
+# accepted in silence and quietly emptying the entropy column.
+SF_SHAPE_TEMP_CP_MIN = 1.0
+SF_SHAPE_TEMP_CP_MAX = 10000.0
 
 
 @dataclass(frozen=True)
@@ -1392,6 +1400,24 @@ class SfShapeParams:
             raise ValueError(
                 f"sf_shape_temp_cp must be finite and > 0 (it is a divisor, in "
                 f"centipawns), got {self.temp_cp!r}"
+            )
+  # ⚑ AND A BAND, because "> 0" leaves the `zclip_max_norm: 1e-9` shape open:
+  # in-sign, absurd, silently accepted, and slow to notice -- CLAUDE.md's
+  # category (c). This key is a DIVISOR in centipawns whose own docstring says
+  # it MUST be swept against a reference conditional entropy, so values will be
+  # typed into it by hand. Outside this band `q_S` is a delta (tiny) or uniform
+  # (huge), and `sf_shape_h_sf_given_s` -- the column the calibration is read
+  # off -- becomes meaningless rather than wrong-looking.
+  # The band is wide on purpose: it is a typo guard, not a calibration claim.
+  # 1 cp cannot be a sensible teacher temperature and 10000 cp is 100 pawns.
+  # This makes a bad value a LOUD launch failure instead of a quiet instrument
+  # corruption; the key is startup-only, so it cannot kill a running trial from
+  # a mid-run edit the way a live-read validated key can.
+        if not (SF_SHAPE_TEMP_CP_MIN <= temp <= SF_SHAPE_TEMP_CP_MAX):
+            raise ValueError(
+                f"sf_shape_temp_cp must be within "
+                f"[{SF_SHAPE_TEMP_CP_MIN}, {SF_SHAPE_TEMP_CP_MAX}] centipawns "
+                f"(a typo guard, not a calibration claim), got {self.temp_cp!r}"
             )
 
     @classmethod
@@ -1524,24 +1550,34 @@ def matched_support_entropy_stats(
     are available from these columns and neither is asserted anywhere in this
     file.
     """
-    p = probs.to(torch.float32)
-    t = target.to(torch.float32)
-    support = t > 0.0
-    if legal is not None:
-        support = support & legal
-    sup = support.to(torch.float32)
-    tiny = torch.finfo(torch.float32).tiny
-    p_mass = (p * sup).sum(-1, keepdim=True)
-    t_mass = (t * sup).sum(-1, keepdim=True)
-  # `clamp_min` on the DIVISOR only. An empty support (a row with no policy
-  # target) then gives an all-zero conditional, whose `row_entropy` is 0.0 and
-  # whose tail mass is 1.0 -- the honest reading, and finite.
-    return MatchedSupportStats(
-        h_ours=row_entropy(p * sup / p_mass.clamp_min(tiny)),
-        h_target=row_entropy(t * sup / t_mass.clamp_min(tiny)),
-        support_size=sup.sum(-1),
-        tail_mass_ours=1.0 - p_mass.squeeze(-1),
-    )
+  # ⚑ `no_grad`, not a per-field `.detach()`. `probs` is the LIVE `base_probs`
+  # tensor, so without this the class's own "all are detached" contract was
+  # false: `h_ours` and `tail_mass_ours` came back as autograd products, and the
+  # only thing keeping them out of the objective was that no caller happened to
+  # sum them. That is a promise held up by luck rather than by the code, and it
+  # is the shape this repo's review doctrine names -- an asserted safety
+  # property that nothing enforces. Reported by an independent review of
+  # PR #479. `no_grad` also drops the graph for the whole block rather than
+  # building it and discarding it four times.
+    with torch.no_grad():
+        p = probs.to(torch.float32)
+        t = target.to(torch.float32)
+        support = t > 0.0
+        if legal is not None:
+            support = support & legal
+        sup = support.to(torch.float32)
+        tiny = torch.finfo(torch.float32).tiny
+        p_mass = (p * sup).sum(-1, keepdim=True)
+        t_mass = (t * sup).sum(-1, keepdim=True)
+      # `clamp_min` on the DIVISOR only. An empty support (a row with no policy
+      # target) then gives an all-zero conditional, whose `row_entropy` is 0.0
+      # and whose tail mass is 1.0 -- the honest reading, and finite.
+        return MatchedSupportStats(
+            h_ours=row_entropy(p * sup / p_mass.clamp_min(tiny)),
+            h_target=row_entropy(t * sup / t_mass.clamp_min(tiny)),
+            support_size=sup.sum(-1),
+            tail_mass_ours=1.0 - p_mass.squeeze(-1),
+        )
 
 
 @dataclass(frozen=True)
@@ -1687,8 +1723,28 @@ def sf_shape_conditional_kl(
   # in opposite orders, and one of them is right. Reported in CP rather than in
   # the vector's normalized units so it needs no mental multiplication by the
   # 1000 cp cap.
+          # ⚑⚑ `torch.where`, NOT `* surfaced_f`. Masking a NaN by MULTIPLYING by
+          # 0.0 does not mask it: `0.0 * NaN == NaN`. A single non-finite entry
+          # in `sf_p0_regret` -- on exactly the entries the surfaced rule then
+          # excludes -- used to poison this whole column, and because the
+          # reported value is an iteration-wide SUM, one bad row took out the
+          # readout for the entire iteration. That defeats the point of the
+          # change: this instrument has to be readable at `w_sf_shape: 0.0`
+          # while the temperature is being calibrated, and
+          # `sf_shape_regret_cp_given_s` is the most interpretable of the six.
+          # `total` was never at risk (the term is excluded at w=0 and the KL
+          # itself is computed on the masked set) -- but "NaN-tolerant by
+          # construction" was a claim about the READOUT too, and it was false
+          # for this one column. Found by an independent review of PR #479;
+          # the guard is pinned by a test that asserts every `sf_shape*` column
+          # is finite on a NaN regret row.
+          # [[a_clamp_is_not_a_validator_nan_propagates]]
             regret_cp_given_s=(
-                (log_p.exp() * surfaced_f * reg).sum(-1) * SF_OWN_REGRET_CAP_CP
+                (
+                    log_p.exp()
+                    * torch.where(surfaced, reg, torch.zeros_like(reg))
+                ).sum(-1)
+                * SF_OWN_REGRET_CAP_CP
             ),
         )
 
@@ -2479,7 +2535,7 @@ def compute_loss(
     nothing about the rest of the move list. ``None`` is the same as the
     all-default object: weight 0.0, so ``total`` is bit-identical to a build
     without the term, while the entropy instrument
-    (``sf_shape_target_entropy_sum`` and friends) is reported either way -- it is
+    (``sf_shape_h_sf_given_s_sum`` and friends) is reported either way -- it is
     a MONITOR first and a loss second, and the drift it watches for ran for
     months because no column carried it.
 
@@ -3110,7 +3166,7 @@ def compute_loss(
     )
   # The FULL legal-support entropy of `policy_own`, kept as the continuity column
   # with the ledger's historical 0.6784. ⚑ It is NOT comparable to
-  # `sf_shape_target_entropy` (support ~27 legal moves against ~5.6 surfaced);
+  # `sf_shape_h_sf_given_s` (support ~27 legal moves against ~5.6 surfaced);
   # it is published so a number can be traced to its support instead of guessed.
     sf_shape_h_ours_full_legal_sum, _ = masked_sum_and_count(
         shape_out.h_ours_full_legal, sf_p0_regret_base,
