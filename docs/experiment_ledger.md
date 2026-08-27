@@ -42520,7 +42520,7 @@ the CLI flag. The yaml's own comment says exactly this ("naming this key here CL
 
 ### Step 0 — pre-flight (no GPU, safe with the ladder running)
 ```bash
-cd /home/josh/projects/chess
+cd ~/projects/chess
 git log --oneline -1                                    # expect ops/live-20260725
 git diff --name-only origin/main HEAD -- '*.c' '*.h'    # expect EMPTY -> NO REBUILD
 ls data/salvage/pre_search_authority_20260809/seeds/slot_000/
@@ -42535,7 +42535,7 @@ happen BEFORE the restart.
 ### Step 1 — merge PR #388 (guard), then pull it onto the live branch
 Agents do not merge. After merge:
 ```bash
-cd /home/josh/projects/chess && git pull --ff-only origin ops/live-20260725 && git merge origin/main
+cd ~/projects/chess && git pull --ff-only origin ops/live-20260725 && git merge origin/main
 ```
 ⚑ **Never `git checkout` in this tree.** If the merge needs conflict work, do it in a
 worktree.
@@ -42545,14 +42545,14 @@ worktree.
 cp configs/pbt2_small.yaml /tmp/pbt2_recal.yaml
 # edit /tmp/pbt2_recal.yaml:
 #   diff_focus_pol_scale: 3.5  ->  0.45
-#   salvage_seed_pool_dir: ""  ->  "/home/josh/projects/chess/data/salvage/pre_search_authority_20260809"
+#   salvage_seed_pool_dir: ""  ->  "/home/<user>/projects/chess/data/salvage/pre_search_authority_20260809"
 PYTHONPATH=. python3 -c "
 import yaml
 from chess_anti_engine.utils import flatten_run_config_defaults
 from chess_anti_engine.tune.trial_config import TrialConfig
 tc = TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open('/tmp/pbt2_recal.yaml'))))
 print('OK', tc.diff_focus_pol_scale, tc.diff_focus_slope, tc.diff_focus_q_weight, repr(tc.salvage_seed_pool_dir))"
-# expect: OK 0.45 3.0 6.0 '/home/josh/projects/chess/data/salvage/pre_search_authority_20260809'
+# expect: OK 0.45 3.0 6.0 '/home/<user>/projects/chess/data/salvage/pre_search_authority_20260809'
 cp /tmp/pbt2_recal.yaml configs/pbt2_small.yaml
 git add configs/pbt2_small.yaml && git commit -m "ops: recalibrate diff_focus_pol_scale to the post-bundle KL scale; point salvage at the iter-672 export"
 ```
@@ -44604,7 +44604,7 @@ same lineage** with no cross-era confound.
 
 ### Arm 2 — Cheese, at the BANKED time control
 
-`scripts/match_vs_uci.py`, engine B = `/home/josh/local_engines/cheese/cheese-321-linux-pext`,
+`scripts/match_vs_uci.py`, engine B = `~/local_engines/cheese/cheese-321-linux-pext`,
 **`--clock-base-ms 60000 --clock-inc-ms 1000 --clock-grace-ms 100`**, openings
 `runs/matches/openings_2move_balanced_100.epd`, `--option-b Hash=512`, `--move-log-out`.
 
@@ -46075,7 +46075,7 @@ think is best over the next week"). Applied before relaunching arm A:
    this session).
 
 Relaunch command (unchanged apart from env):
-`WATCHDOG_AUTO_RECOVER=0 TRAIN_CONFIG=scratchpad/tier13/arm_A_off.yaml TRAIN_WORK_DIR=runs/tier13_arm_A ./scripts/train.sh salvage-restart /home/josh/projects/chess/data/salvage/pre_policy_adapter_20260812`
+`WATCHDOG_AUTO_RECOVER=0 TRAIN_CONFIG=scratchpad/tier13/arm_A_off.yaml TRAIN_WORK_DIR=runs/tier13_arm_A ./scripts/train.sh salvage-restart ~/projects/chess/data/salvage/pre_policy_adapter_20260812`
 — same donor, same work_dir (the crashed experiment dir remains alongside as evidence;
 `has_salvage=1` forces a FRESH trial). Realized-config verification from the trial's own
 emitted row is owed before the arm counts as running, as for every arm.
@@ -46204,7 +46204,7 @@ executable: it names `--model-a/--model-b/--matched_sims`, none of which exist i
 training shape, seed 42, 1600 games) is unchanged — this amendment fixes SPELLING and pins every
 ambiguity found, BEFORE any arena runs, so no post-hoc freedom is created:
 
-**The three commands, frozen (run from `/home/josh/projects/chess`, all arms stopped, back-to-back
+**The three commands, frozen (run from `~/projects/chess`, all arms stopped, back-to-back
 in one session; `B=scratchpad/tier13/banked`):**
 ```bash
 PYTHONPATH=. python3 scripts/arena_standard.py \
@@ -47102,7 +47102,7 @@ about nothing.
 be strong at LOW sim counts, PUCT typically wins high. So the answer is N-dependent ⇒ **sweep N
 and compare CURVES**; a single N would be cherry-picking whichever end favours us.
 
-**PREREQUISITE, MEASURED:** `/home/josh/local_engines/` holds cheese, cutechess, rofchade —
+**PREREQUISITE, MEASURED:** `~/local_engines/` holds cheese, cutechess, rofchade —
 **no lc0 and no Ceres binary.** cutechess (the UCI match runner we need) IS present. So layer 2
 needs an lc0 install/build first; layer 1 does not and should not wait for it.
 
@@ -47382,7 +47382,7 @@ comments endpoint, since `gh pr view --json comments,reviews` does not return th
 ### lc0 — built, not just downloaded
 **No Linux binaries exist in ANY lc0 release** (windows/android/macos only) ⇒ built from source:
 **v0.32.1**, meson/ninja, `-Dblas=true`, every GPU backend explicitly OFF, at `nice -n 19 -j 4`.
-Installed `/home/josh/local_engines/lc0/` matching the `cheese`/`rofchade` layout. Two build
+Installed `~/local_engines/lc0/` matching the `cheese`/`rofchade` layout. Two build
 facts worth keeping: **`-static-libstdc++ -static-libgcc` is REQUIRED** here (local g++ 15.3 vs
 older system libstdc++ ⇒ `GLIBCXX_3.4.32 not found`), and **protobuf is NOT needed** (v0.32
 compiles its `.proto` with a bundled pure-python compiler).
@@ -48189,7 +48189,7 @@ means the CI is **fixed-sample and assumes the sample size was fixed in advance*
 why incremental reads are not free.
 
 ### ORDO: version, flags, and two hazards
-Built from source, **v1.2.6, commit `17eec774`**, at `/home/josh/local_engines/ordo/ordo` (outside
+Built from source, **v1.2.6, commit `17eec774`**, at `~/local_engines/ordo/ordo` (outside
 the repo). **Verified by RECOVERY, not presence**: 4 players at known ratings recovered to
 2501.6 / 2452.1 / 2349.7 against true 2500 / 2450 / 2350.
 Flags: `-W` auto white advantage · `-D` auto draw rate · `-s N` simulations · `-A` anchor ·
@@ -48236,20 +48236,20 @@ delete-vs-replace for `data/lc0/bt4_audit_cache.jsonl`. That handed an agent lat
 The reasoning it gave for deleting was sound; the authorisation was mine to withhold and I did not.
 
 **⚑ THE AGENT'S SAFETY CLAIM WAS FALSE, AND I CAUGHT IT ONLY BY CHECKING.** It reported *"A
-byte-identical copy survives at `/home/josh/projects/chess-rv414b/data/lc0/bt4_audit_cache.jsonl`
+byte-identical copy survives at `~/projects/chess-rv414b/data/lc0/bt4_audit_cache.jsonl`
 (md5 78af91ea…), which made the delete reversible."* That path is a **SYMLINK BACK TO THE FILE IT
-DELETED** — `readlink -f` resolves to `/home/josh/projects/chess/data/lc0/bt4_audit_cache.jsonl`,
+DELETED** — `readlink -f` resolves to `/home/<user>/projects/chess/data/lc0/bt4_audit_cache.jsonl`,
 and `test -e` fails. The md5 it quoted was necessarily read BEFORE the delete, THROUGH the symlink.
 ⇒ **the original is gone, permanently.** Generalises: **a copy that resolves to the same inode is not
 a backup, and a checksum taken before a delete proves nothing about after it.** Verify a backup by
 reading the BACKUP after the destructive step, never by trusting a path.
 
 **Damage, assessed rather than assumed: SMALL, and only because a file the agent could not find
-still existed.** It searched `/home/josh` to depth 6 and concluded `scratchpad/gates/fix_bt4_4000.jsonl`
+still existed.** It searched `~` to depth 6 and concluded `scratchpad/gates/fix_bt4_4000.jsonl`
 "does not exist anywhere", then used that to argue "replace" was unavailable. **It does exist** —
 under `/tmp/claude-1000/<project>/<OTHER SESSION ID>/scratchpad/gates/`, outside the search root.
 Recovered and preserved by the main session to
-`/home/josh/projects/chess/scratchpad/gates/fix_bt4_4000.jsonl`
+`~/projects/chess/scratchpad/gates/fix_bt4_4000.jsonl`
 (4000 rows, md5 `aa82d8b96ae105464f494bd690f15a11`, byte-identical to source), together with
 `fix_bt4_400.jsonl` and `fix_bt4_castling256.jsonl`. The dangling symlink was removed.
 ⇒ **the CORRECTED cache survives; only the CONTAMINATED original is gone**, and that one was
@@ -48291,7 +48291,7 @@ actually ran was `ldd` on the provider `.so` plus `get_available_providers()` �
 session-level fallback, I did not observe it.** Two corrections, both from the #415 re-reviewer:
 
 1. **THERE ARE TWO ORT INSTALLS ON THIS BOX AND THEY DIFFER.** Verified by the main session:
-   - **project `.venv`** (`/home/josh/projects/chess/.venv`): ORT 1.23.2, providers
+   - **project `.venv`** (`~/projects/chess/.venv`): ORT 1.23.2, providers
      `['AzureExecutionProvider', 'CPUExecutionProvider']` — a **CPU-ONLY wheel**;
      `libonnxruntime_providers_cuda.so` **does not exist**.
    - **`/usr/bin/python3`**: the **GPU wheel**, advertising `[Tensorrt, CUDA, CPU]`, whose CUDA
@@ -48598,7 +48598,7 @@ N1/N9/N9b/N10/N10b all leave 25/25 green: the author's mutation table exercises 
 table and constants legs and **never the AST leg**. The behavioural probe touches only **73 of 4672
 slots (1.6%)** and `move_to_index` has no table leg, so the rest rests on the AST digest alone.
 Reviewer wrote 3 tests, confirmed they pass on the PR and kill all five mutants, left at
-`/home/josh/projects/chess-rv423/tests/test_rev423_proposed_gaps.py`.
+`~/projects/chess-rv423/tests/test_rev423_proposed_gaps.py`.
 
 ### F3 — M6 IS NOT AN EQUIVALENT MUTANT, and the equivalence claim is where the gap hid
 The author's reasoning holds for the cap and edges (probe max uncapped regret is 199,200 cp, so any
@@ -48829,7 +48829,7 @@ pairing.
 ### Amendment #2 addendum — three merge prerequisites MEASURED, one new confound found
 
 All CPU-only, run while the GPU is released, in an isolated worktree
-(`/home/josh/projects/chess-wt/mainschema`). The live tree was never checked out.
+(`~/projects/chess-wt/mainschema`). The live tree was never checked out.
 
 **(i) The category-(a) boot hazard is CLEARED.** Dry-run of a COPY of the live yaml against
 `origin/main`'s schema, exactly as CLAUDE.md prescribes:
@@ -49097,7 +49097,7 @@ deleted** — and `from chess_anti_engine.eval import audit_cache` is already th
 style. A gate change gets its own before/after: B1/B2 must PASS while R2 still fails.
 
 ### C — `require_same_audit_set` compares the raw path STRING
-`'data/audit_set_v1.jsonl'` vs `'/home/josh/projects/chess/data/audit_set_v1.jsonl'` is REFUSED, same
+`'data/audit_set_v1.jsonl'` vs `'/home/<user>/projects/chess/data/audit_set_v1.jsonl'` is REFUSED, same
 file. Fails closed and both producers default to the same relative path. Worth naming because this
 module's own docstring is emphatic that names drift and every other provenance field is a derived
 digest — `audit_set` is now the one field compared by NAME. `resolve()` at write time, or an honest
@@ -49292,7 +49292,7 @@ advanced" — `95626ce71` is a live-branch commit contained in no remote. The ag
 complying, which is the behaviour the brief asks for and the reason the warning cost nothing.
 
 **Housekeeping owed (a deletion, so reported not done):** the merge-check worktree
-`/home/josh/projects/chess-worktrees/audit-cache-merge` and branch `tmp/merge-check-423` become
+`~/projects/chess-worktrees/audit-cache-merge` and branch `tmp/merge-check-423` become
 removable once Josh merges.
 
 ## Tier-13 CONTRAST 1 of 3 — B (linear) vs A (off): **NULL**
@@ -54354,7 +54354,7 @@ is launched.
 ### Same review, a second gate that stops being able to fail — PR #441 (path scrub)
 
 `tests/stockfish_binary.py`'s candidate[0] on `main` is the ABSOLUTE
-`/home/josh/projects/chess/e2e_server/publish/stockfish`, which resolves from ANY worktree.
+`/home/<user>/projects/chess/e2e_server/publish/stockfish`, which resolves from ANY worktree.
 #441 makes it checkout-relative. Verified here: **`git ls-files e2e_server` returns 0 files —
 the directory is untracked runtime output and exists ONLY in the live tree.** So in every
 worktree and every fresh clone `find_stockfish()` returns `None`, and
@@ -54369,8 +54369,8 @@ land — the fix is a `CAE_STOCKFISH` env candidate plus `shutil.which("stockfis
 the very idiom #441's own new test docstring names and is the one part it omits.
 
 **Residual leak, confirmed at 162 hits/18 files, all allowlisted** — plus two shapes the
-guard's regex structurally cannot match: `distributed_worker_username: josh` in 17 configs,
-and 7 tracked `/tmp/claude-1000/-home-josh-.../` scratchpad paths (6 in this very file).
+guard's regex structurally cannot match: `distributed_worker_username: <name>` in 17 configs,
+and 7 tracked `<session-scratch>/` agent-scratchpad paths (6 in this very file).
 Low consequence, but `tests/test_rare_sound_move_coverage.py:29-31` — a comment #441 EDITS —
 claims that exact form "were scrubbed before landing: this repository is PUBLIC". Either
 widen the pattern or narrow the claim.
@@ -54791,19 +54791,19 @@ relaunch pending. No metric from this boot may be quoted.**
 
 ### What happened
 
-`./scripts/train.sh salvage-restart /home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815`
+`./scripts/train.sh salvage-restart ~/projects/chess/data/salvage/bt4heads_iter100_20260815`
 was launched at 12:30. The launcher echoed the flag verbatim:
 
 ```
 Starting training with configs/pbt2_small.yaml (extra: --salvage-seed-pool-dir
-  /home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815 --salvage-restore-pid-state ...)
+  ~/projects/chess/data/salvage/bt4heads_iter100_20260815 --salvage-restore-pid-state ...)
 ```
 
 The trial then loaded a **different pool**:
 
 ```
 [trial] salvage warmstart loaded slot=0 of 1 from
-  /home/josh/projects/chess/data/salvage/pre_search_authority_20260809/seeds/slot_000
+  ~/projects/chess/data/salvage/pre_search_authority_20260809/seeds/slot_000
 ```
 
 ⇒ **the CLI value was accepted, echoed, and silently overridden** by the live yaml's
@@ -54877,7 +54877,7 @@ The `era_probe_inwindow_path` re-point (task #220) DID take effect and is verifi
 documented startup line, which is the model for the rule above:
 
 ```
-[probe] inwindow set loaded: path=/home/josh/projects/chess/data/era_probe/inwindow_20260816.npz
+[probe] inwindow set loaded: path=/home/<user>/projects/chess/data/era_probe/inwindow_20260816.npz
   rows=2048/2048 digest=7cc435c69645e74b planes=175 policy_width=1858
 ```
 
@@ -65144,7 +65144,7 @@ historical one.** The historical build is only INFERRED (`--stockfish` is `requi
 default, and the artifact carries no stamp); that provenance cannot be repaired
 retrospectively, but the new one need not inherit the ambiguity.
 
-    path    /home/josh/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+    path    ~/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
     sha256  2764e7ef36bee844347586c8025ba81464315352128ef250f8c609f76044a68e
     version Stockfish dev-20260420-ed651aab
     nodes 1,000,000 | MultiPV 10 | Threads 1 | Hash 256
@@ -66384,7 +66384,7 @@ row (a) net raw policy, overall **top-1** deep-SF regret on the frozen `audit_se
 Owed from the #438 verdict ("Δ_train legs still land later … recorded as color"). Both
 train scans banked (`mid_train.json.npz` 14:20, `last_train.json.npz` 16:23, n=91,842
 frozen train rows each); compare run with the pinned rig
-(`/home/josh/chess-438-merge-review/scripts/lc0_control_eval.py compare --population train
+(`~/chess-438-merge-review/scripts/lc0_control_eval.py compare --population train
 --max-halfwidth-pp 0.392` — same stricter-than-preregistered bar mechanism as the heldout
 read). MID top-1 45.8951% → LAST 49.5351%, exact McNemar p = 2.8e-161, halfwidth 0.2635 pp,
 1.1 rows/cluster (design effect negligible on this leg).
@@ -66941,7 +66941,7 @@ first-batch phase — check rchar slope + a stack dump before declaring a wedge.
 
 ### 2026-08-22 — BT4 adapter + policy dump LANDED (`feat/bt4-policy-dump`) — history probe adjudicated, entropy anchor corrected
 
-Builder: Opus agent, worktree `/home/josh/projects/chess-bt4dump`, commits `4795a7713`
+Builder: Opus agent, worktree `~/projects/chess-bt4dump`, commits `4795a7713`
 (dump) + `ee89cad67` (conversion + probe). Review pending (Opus reviewer + grok-reviewer
 on the plane conversion — pre-named riskiest piece #2); **not merged, no PR**.
 
@@ -66993,7 +66993,7 @@ summary ETA moves to ~18:30. Waiter unchanged.
 
 ### 2026-08-22 — R/V/G target-surgery rig LANDED (`feat/rvg-target-surgery`); enumeration banked; MPV40@150k label pass LAUNCHED
 
-Builder: Opus agent, worktree `/home/josh/projects/chess-rvg`, 6 commits ending
+Builder: Opus agent, worktree `~/projects/chess-rvg`, 6 commits ending
 `0258ecce7`. Review pending (Opus reviewer dispatched); **not merged, no PR, no GPU work**.
 +4,071/−63 over `rvg_surgery.py` (shared pure math), `rvg_label_pass.py` (label pass +
 `--mode enumerate-rows`), `retarget_retrain.py` (arms R/V/G/VG + rig-wrapper registry +
@@ -67041,7 +67041,7 @@ took-effect assertion), 1,400 lines of tests.
   errors in 3 files the branch never opened; live-branch suite is red by design —
   reported as a delta). Tests: 66 → 135 passed, 0 regressions.
 - **LABEL PASS LAUNCHED** (the as-run command, from the rig worktree):
-  `cd /home/josh/projects/chess-rvg && CUDA_VISIBLE_DEVICES="" PYTHONPATH=. setsid nohup nice -n 10 python3 scripts/rvg_label_pass.py --mode label --config /home/josh/projects/chess/configs/pbt2_small.yaml --replay-dir /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --out /home/josh/projects/chess/data/rvg/rvg_labels_mpv40_150k.jsonl --threads 16 --nodes 150000 --multipv 40 --restrict-to /home/josh/projects/chess/data/rvg/rvg_drawn_rows_6000x512.keys`
+  `cd ~/projects/chess-rvg && CUDA_VISIBLE_DEVICES="" PYTHONPATH=. setsid nohup nice -n 10 python3 scripts/rvg_label_pass.py --mode label --config ~/projects/chess/configs/pbt2_small.yaml --replay-dir ~/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --out ~/projects/chess/data/rvg/rvg_labels_mpv40_150k.jsonl --threads 16 --nodes 150000 --multipv 40 --restrict-to ~/projects/chess/data/rvg/rvg_drawn_rows_6000x512.keys`
   ~4.7h projected (may run longer beside ext training). Completion marker: the FINAL
   `.jsonl` (the run writes `.partial` until done); file-keyed waiter armed. Launched
   BEFORE review by explicit risk call: label rows store `key` AND `fen`, so a join-key
@@ -67051,7 +67051,7 @@ took-effect assertion), 1,400 lines of tests.
 
 ### 2026-08-22 — mixed-corpus trainer LANDED (`feat/mixed-corpus`); my seed-crawl mechanism REFUTED; ratio-ladder prereg still OWED
 
-Builder: Opus agent, checkout `/home/josh/chess-438-merge-review`, branch
+Builder: Opus agent, checkout `~/chess-438-merge-review`, branch
 `feat/mixed-corpus` off `feat/lc0-continuation`@`03f911879`, commits `0ba4316ed` +
 `9d320a2ba` (+2,882/−47). Review pending (Opus + grok dispatched); not merged, no PR.
 
@@ -67994,7 +67994,7 @@ Registered operator directive (`396896688`) governs: judged on ENDPOINT + SLOPE;
 depth is diagnostic-only, NEVER a kill criterion.
 ARMS (serial, ~7.4h each): own-fraction f=0.25/seed 11, f=0.50/seed 12, f=0.75/seed 13.
 Each:
-`cd /home/josh/chess-438-merge-review && CHESS_LIVE_PRODUCTION_CONFIG=/home/josh/projects/chess/configs/pbt2_small.yaml PYTHONPATH=. setsid nohup python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --init-from /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt --shards /home/josh/projects/chess/data/lc0_rows/training-run2-test91-* --mix-own-shards /home/josh/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --mix-own-fraction <F> --mix-own-max-outcome-borne 0.001 --purity-receipt /home/josh/projects/chess/data/lc0_control_purity_receipt.json --steps 20000 --seed <S> --out-dir /home/josh/projects/chess/runs/lc0_mix<F>_iter595_<date>`
+`cd ~/chess-438-merge-review && CHESS_LIVE_PRODUCTION_CONFIG=~/projects/chess/configs/pbt2_small.yaml PYTHONPATH=. setsid nohup python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --init-from ~/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt --shards ~/projects/chess/data/lc0_rows/training-run2-test91-* --mix-own-shards ~/projects/chess/data/salvage/pre_lc0_control_20260819/seeds/slot_000/replay_shards --mix-own-fraction <F> --mix-own-max-outcome-borne 0.001 --purity-receipt ~/projects/chess/data/lc0_control_purity_receipt.json --steps 20000 --seed <S> --out-dir ~/projects/chess/runs/lc0_mix<F>_iter595_<date>`
 Init pinned: slot_000/trainer.pt step 171,327 md5 9758f97f7c9c (same as R/V/G).
 YARDSTICK (deciding): 400-game banked-template arena vs iter-595 for MID and LAST of
 every arm (6 arenas, ~0.5h each on the compile cache). ENDPOINT = LAST Elo vs
@@ -69337,7 +69337,7 @@ RUN: λ=0.4, f=0.50, seed 15, bar 0.002, 20k steps, iter-595 init (salvage
 `pre_lc0_control_20260819/seeds/slot_000/trainer.pt`, step 171327, sha256 `62f4ad8d41…`),
 temper OFF at its inert 1.0 default (ONE lever), out
 `runs/lc0_mix050_dmass04_iter595_20260826`, launched from
-`/home/josh/chess-438-merge-review` with the same 122 lc0 shard dirs and the same own
+`~/chess-438-merge-review` with the same 122 lc0 shard dirs and the same own
 shards lever 1 used — byte-identical arm apart from the lever, so the curves compare.
 READOUT VALIDITY CHECKLIST (apply BEFORE judging any clause, per lever 1's precedent):
 `summary.json` `mixed_corpus.lc0_value_dmass` must show `lc0_value_dmass_lambda` 0.4 /
