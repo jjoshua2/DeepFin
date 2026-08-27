@@ -69754,6 +69754,54 @@ says LAST(2×) vs LAST(1×) ≈ +150–200; we EXPECT sublinear (+60–150). Sec
 −404.6 plus the primary's gain.
 
 **Confounds:** LR-schedule length differs from 1× by construction (single-run schedules
+
+#### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
+
+The frozen-driver/shadow-arm harness (`feat/nnue-shadow-label-readout`, `91e74aadd`;
+independently reviewed, inertness proof mutation-verified, F1 closed) removes the
+selection effect that made FastQ's quality unmeasurable: ONE driver (nnue-qsearch)
+chooses every position through the production C Gumbel path; fastq / qsearch /
+qsearch-dag label the SAME rows as inert observers, digest-proved not to move the
+search. Scope: uniform prior, startpos-only games (stated in cell_meta), STM labels.
+
+**Hypothesis:** FastQ's 1-ply labels match qsearch's in deep-SF quality on identical
+positions. If so, its 31.2x throughput (7.67M plies/h at 8/32 cores) makes it the
+bootstrap labeler for the NNUE-base restart.
+
+**Generation (launched this session, ~1h CPU, GPU untouched):** from the branch
+worktree, `--driver nnue-qsearch --games 400 --workers 2 --prove-games 4
+--nnue-pack data/nnue/nn-f68ec79f0fe3.pack` (pack built this session from the
+banked .nnue). Admissibility is the harness's own gates; an inadmissible report
+kills the run before any Stockfish is spent.
+
+**DECIDING YARDSTICK (exact command, run only on an admissible report):**
+```
+PYTHONPATH=. python3 scratchpad/az_purity/score_shard_labels.py \
+  --cell q=<out>/cells/oneply__nnue-qsearch \
+  --cell fastq=<out>/cells/oneply__nnue-fastq \
+  --cell dag=<out>/cells/oneply__nnue-qsearch-dag \
+  --cell search=<out>/cells/search_gumbel__nnue-qsearch \
+  --stockfish <sf> --positions 5000 --nodes 1000000 --multipv 10 \
+  --out-json <out>/label_quality.json --dump-rows <out>/rows.jsonl
+```
+**PRIMARY METRIC — registered against the known 60x dilution:** whole-sample paired
+deltas are diluted ~60x by the ~1.67% fastq-vs-qsearch discordance rate (smoke), so
+the deciding number is the **corpus-level expected penalty** = discordance_rate x
+mean paired Δ(top1_regret_cp) on the DISCORDANT rows (top-1 differs; forced-move
+rows excluded via has_policy), computed from `rows.jsonl`. Discordant-rows-only is
+registered HERE, in advance — not adopted post-hoc.
+
+**ADOPT FASTQ:** expected corpus penalty <= 2.0 cp.
+**KEEP QSEARCH:** > 2.0 cp with 95% CI excluding 2.0.
+**CI overlapping 2.0:** ONE 2x row extension (preregistered here; no further).
+
+**Registered expectations:** qsearch|dag is a zero_resolution pair (bit-identity,
+#472) — it validates the join, contributes no decision. The search cell anchors to
+the banked G2 series distributionally, not row-for-row.
+
+**Confounds:** runs concurrent with the 2x lc0 control (GPU) — this readout is
+CPU-only; the deep-SF scoring is CPU and throttled below the trainer's loaders.
+
 are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
 0.2513×. Concurrent CPU load (two review agents, the shadow readout when it runs) —
 GPU-side the box is otherwise idle.
