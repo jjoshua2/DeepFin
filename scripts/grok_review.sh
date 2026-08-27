@@ -48,10 +48,20 @@ SLUG="$(printf '%s' "${TARGET:-$WORKTREE}" | tr -c 'A-Za-z0-9' '_' | cut -c1-40)
 RAW="$OUT_DIR/grok_${MODE}_${SLUG}_${STAMP}.txt"
 PROMPT="$OUT_DIR/prompt_${MODE}_${SLUG}_${STAMP}.md"
 
-# ⚑ SNAPSHOT, ALWAYS. Omitting --always-approve does NOT make grok read-only: measured
-# 2026-08-22, it rewrote four files in a live worktree mid-review and contaminated a
-# builder agent's uncommitted work. The live tree is also re-read by training every
-# iteration, so a stray write there is a production incident, not an inconvenience.
+# ⚑⚑ SNAPSHOT, ALWAYS — IT IS THE ONLY THING THAT WORKS. NO GROK FLAG MAKES HEADLESS GROK
+# READ-ONLY. Measured 2026-08-26, four mechanisms, each asked to overwrite a file; ALL
+# FOUR were accepted and ALL FOUR wrote it anyway:
+#   --disallowed-tools search_replace,write        -> wrote the file
+#   --permission-mode plan                         -> wrote the file
+#   --deny bash --deny write --deny search_replace -> wrote the file
+#   (default, no --always-approve)                 -> wrote 4 files in a live worktree,
+#                                                     measured 2026-08-22
+# The --deny run narrated "by whatever path is available" and then did it. These flags are
+# this repo's own signature defect wearing someone else's logo: a value accepted and then
+# silently ignored. Do NOT swap the snapshot for a flag, however convincing its name --
+# `--worktree` is no help either, the CLI states outright that headless mode ignores it.
+# The live tree is re-read by training every iteration, so a stray write there is a
+# production incident, not an inconvenience.
 SNAP="$(mktemp -d)"
 cleanup() { rm -rf "$SNAP"; }
 trap cleanup EXIT
