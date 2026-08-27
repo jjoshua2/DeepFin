@@ -69839,7 +69839,11 @@ gated by the standing audit-first rule when launched.
 5. **ROOTED SF MULTIPV-16 + GUMBEL PLAY-SELECTION (Josh, 2026-08-27 — the lead
    candidate).** One SF search per position, MultiPV 16 at nodes N: the multipv cp
    list IS the soft policy target (through the production cp-logistic) and PV1's cp
-   the value target; the PLAYED move is drawn Gumbel/temperature-style from the cp
+   the value target; WIDTH IS A MEASURED AXIS, not fixed at 16 (that number only
+   mirrored gumbel_topk) — default 20 (MPV20 covers 95.3% of bad-tail mass; MPV6's
+   60.9% is also where the 74%-fabricated-regret trap lives), with mpv40/mpvall rungs
+   priced by the audit gate's per-arm wall-time column (banked: ~7x at MPV40,
+   sublinear); the PLAYED move is drawn Gumbel/temperature-style from the cp
    distribution for game diversity — the STORED target stays the SF distribution,
    never one-hot of the sampled move. Cheaper and stronger per node than the
    per-child sf-<nodes> construction (one shared tree vs ~30 child calls); both are
