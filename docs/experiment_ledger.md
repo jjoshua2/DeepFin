@@ -67712,3 +67712,92 @@ substitute for a paired arena.
 
 **Reproduce:** `python3 scratchpad/external_teacher_gate_paired.py data/lc0/ours_g1586_audit_cache_topk256_20260826.jsonl`
 (prints the reproduction check, both gate rows, the churn decomposition and the paired tests).
+
+#### 2026-08-27 — FIRST RUN OF THE #474 GUMBEL READOUT: FastQ IS 31.2× qsearch, THE DAG CELL OOMs, AND THE QUALITY GATE DOES NOT EXIST
+
+`scripts/nnue_gumbel_readout.py` landed with #474 on 2026-08-25 and had **never been
+run** — zero artifacts on disk. Run tonight on the idle box (training stopped), from a
+worktree on `origin/main` because the entire `chess_anti_engine/nnue/` package is
+main-only and the live tree has none of it.
+
+**THROUGHPUT — the headline, and it is a throughput result ONLY.** 96 games × 2 repeats,
+8 of 32 cores, `--sims 32`, pack `nn-f68ec79f0fe3` (sha256 self-verifying against its
+canonical name), `--all-root-moves` ON (the arm default).
+
+| arm | plies/s (rep0 / rep1) | mean | spread | plies/h @ 8 workers |
+|---|---|---|---|---|
+| `nnue-fastq` | 2109.45 / 2152.97 | **2131.21** | 1.021× | **7.67M** |
+| `nnue-qsearch` | 69.17 / 67.58 | 68.38 | 1.023× | 0.25M |
+
+**FastQ / qsearch = 31.2×.** Both repeats agree to ~2%, so this is a measurement, not a
+sample. Against the RL loop's ~170k unique positions/hour it is **≈45×**, at a quarter of
+the box.
+
+**⚑⚑ AND IT IS NOT A LABEL-QUALITY RESULT. THE INSTRUMENT SAYS SO ITSELF.** The report's
+own `quality_scope` block:
+
+```
+"deep_sf_paired_input_admissible": false,
+"paired_evaluator_quality": false,
+"population": "end_to_end_arm_selected",
+"reason": "each arm drives its own Gumbel search, so FastQ may change which later
+ leaves exist; per-arm banks are trace artifacts, not a paired evaluator quality
+ sample. A frozen-driver/shadow-arm experiment is required for paired deep-SF
+ attribution."
+```
+
+A selection effect: you cannot compare evaluators on positions each evaluator chose for
+itself. **The frozen-driver/shadow-arm harness it names does not exist.** Nor is there a
+route around it: `gen_random_selfplay_shards.py --value-source` accepts only
+`{zero, random, material, nnue-static, nnue-qsearch}` — **no fastq, no dag** — so
+`score_shard_labels.py`, which takes shard DIRECTORIES, physically cannot score the
+tactical arm; and the `--bank-leaf-observations` corpus that #474's PR calls "the input
+for the subsequent standardized deep-SF target-quality readout" is written by two scripts
+and **read by none**. ⇒ FastQ's label quality is not unmeasured by oversight; **no
+instrument in this repo can currently measure it.** #473's headline 0.98 figure is sign
+agreement with QSEARCH, and G2 measured qsearch at +17.3cp WORSE than shallow-SF@512 —
+faithfully reproducing an evaluator we measured as worse is not evidence of quality
+[[internal_equivalence_cannot_find_a_shared_wrong_rule]].
+
+**⚑ THE DAG CELL OOMs.** At 12 workers the run died `BrokenProcessPool`; the kernel log
+names it: `Out of memory: Killed process 19308 (python3) total-vm:40263420kB,
+**anon-rss:15574080kB**` — **15.6 GB RSS in ONE worker**, on a 98 GB box. The 4-game smoke
+had already shown `nnue-qsearch-dag` at **7.48 plies/s against plain qsearch's 14.26 —
+1.9× SLOWER**, which is what unbounded graph growth looks like, not what reuse looks like.
+`--dag-node-cap` / `--allow-binding-dag-node-cap` exist and nobody has had to set them.
+⇒ **per-worker DAG memory, not CPU, is the binding constraint on parallel generation**,
+and that is exactly the resource a bootstrap corpus spends. The 8-worker FastQ run above
+did not OOM.
+
+**THE FREE ORACLE PASSED.** `nnue-qsearch` and `nnue-qsearch-dag` produced byte-identical
+per-game AND per-search digests (`game_digests_agree`, `search_digests_agree`, over the
+exact improved policy, legal mask and root value at every ply) under the real production
+C Gumbel path — confirming #472's bit-identity end-to-end rather than on its 467-row
+corpus.
+
+**⚑ OPERATIONAL DEFECT, worth its own fix: the harness cannot run against this repo's own
+production build.** It refuses to start without a GNU build-id (its source↔binary join),
+and `scripts/build_production_extensions.py` lists `LDFLAGS` in `_TRANSIENT_BUILD_ENV` and
+strips it, emitting none. Worked around by invoking `setup.py build_ext --inplace --force`
+directly with `-Wl,--build-id=sha1` — a linker note section, no codegen effect, so the
+timings above stand. Nothing in CI covers this because the harness had never been run.
+
+**PREREQUISITE CHECKED AND CLOSED before the run:** the "argpartition → top-by-score" item
+the G2 writeup listed as blocking a real prior is `--all-root-moves`, which "defaults ON
+for the arms" precisely because under a uniform prior sequential halving picks root
+candidates by the Gumbel draw alone and a real value would otherwise rank a random subset.
+
+**⚑ SCOPE, stated: this readout is UNIFORM-PRIOR.** It takes no checkpoint — it drives
+`gen_random_selfplay_shards.play_game()`, whose docstring is "uniform prior, no teacher…
+no net is involved anywhere, at any point." So it does NOT lift G2's uniform-prior
+inversion (+7.53 cp per sims doubling); that finding remains the correct model for the
+from-random case, and the real-prior regime is still unmeasured with no harness for it.
+
+**NEXT, in order:** (1) build the frozen-driver/shadow-arm harness — one driver, both
+evaluators scoring the SAME leaves — because it gates every quality claim in this lane;
+(2) characterize DAG memory vs `--dag-node-cap` and pick a cap from measurement;
+(3) add `nnue-fastq` / `nnue-qsearch-dag` to `VALUE_SOURCES` so shards, and therefore the
+banked ruler, can reach them.
+
+Artifacts: `scratchpad/nnue_qs_vs_fastq.json`, `scratchpad/nnue_readout_smoke.json`,
+`scratchpad/readout_full.log` (the OOM), `scratchpad/qs_vs_fastq.log`.
