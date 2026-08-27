@@ -68,6 +68,22 @@ THE STREAM RULES, MEASURED AGAINST THE REAL BINARY (2026-08-27)
 * A game-over position emits no PV lines at all, so it is never searched: the
   loop tests termination BEFORE it searches.
 
+WHAT A WORKER HOLDS, AND WHAT IT DOES WHEN IT DIES
+--------------------------------------------------
+* THE PER-WORKER DEDUP CACHE IS COMPACT AND BOUNDED.  It stores the two things
+  selection actually reads -- the uci list and one ``float32`` value vector --
+  rather than the banked ``PvLine`` objects, and it holds at most
+  ``--dedup-cache-max`` positions with FIFO eviction.  ⚑ AN EVICTED POSITION
+  THAT RECURS IS RE-SEARCHED AND RE-BANKED, exactly as a position first reached
+  by a second worker already is (the cache has always been per-worker).  The
+  eviction count is in the summary next to the dup counters so a corpus states
+  how much of its duplication the bound let through.
+* A WORKER THAT DIES DOES NOT DESTROY THE RUN'S BOOKKEEPING.  Its slot records
+  the exception and the game/ply it died on, the surviving workers finish, and
+  ``summary.json`` is written with a top-level ``failed_workers``.  The process
+  exit code is still nonzero -- a partial corpus is a fact to record, not a
+  success to report.
+
 WHAT IS SHARED RATHER THAN RESTATED
 -----------------------------------
 The mate band and the cp->wdl mapping are ``scripts/audit_label_candidates``'s,
@@ -93,6 +109,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import hashlib
 import importlib
@@ -106,7 +123,7 @@ import os
 import statistics
 import sys
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -157,6 +174,28 @@ DEFAULT_SF_HASH_MB = 64
 DEFAULT_NICE = 15
 DEFAULT_SEED = 20260827
 DEFAULT_RUN_ID = "gen_sf_rooted_corpus"
+
+#: Positions one worker's dedup cache holds before it starts evicting.  A bound
+#: rather than "however many the run sees": the cache is the one structure here
+#: that grows with the corpus instead of with the machine, and a 100M-position
+#: burn would otherwise ask for tens of GiB per worker.
+#:
+#: MEASURED 2026-08-27 (``entry_bytes`` on a 33-legal-move middlegame): **816
+#: bytes per entry**, so this default is **~1.5 GiB per worker**.  The same
+#: position cost 9,929 bytes as the ``tuple[PvLine, ...]`` the cache used to
+#: hold -- 18.5 GiB at this bound, per worker, which is what made the bound and
+#: the compaction one change rather than two.  ⚑ The number is not assumed: each
+#: run publishes its OWN ``dedup_cache_bytes_per_entry_est``, measured off the
+#: entries it actually held, because move counts differ by position mix.
+DEFAULT_DEDUP_CACHE_MAX = 2_000_000
+
+#: Deadline on ONE readline from Stockfish.  ``StockfishUCI``'s own default is
+#: 60 s, sized for the node-limited searches production runs; this generator's
+#: deepest rung is a ``go depth 13`` on a cold table, which is a different order
+#: of wall time, and a deadline that expires POISONS the engine (see
+#: ``StockfishDesyncError``) rather than retrying.  300 s is the burn-safe
+#: setting; it is a flag because the right value follows the staircase.
+DEFAULT_SF_READ_TIMEOUT_S = 300.0
 
 #: ``--staircase`` phase-1 width spelling for "one PV per legal move".
 WIDTH_ALL = "all"
@@ -441,8 +480,12 @@ def parse_depth_blocks(
             lines=ranked,
             emissions=seen,
             complete=len(ranked) == int(expected_lines),
-            # Cumulative and monotone within an iteration, so the largest value
-            # banked at this depth IS the count at the iteration's completion.
+            # Cumulative and monotone within an iteration, so this is the
+            # largest count among the lines that WON their rank -- the
+            # iteration's count as of its first emission.  ⚑ Not necessarily
+            # its last: the measured end-of-search flush re-emits the same ranks
+            # with a larger `nodes`, and first-emission-wins discards that
+            # update, so read this as a floor on the iteration's final count.
             nodes_at_depth=max(node_counts) if node_counts else None,
         ))
     return StreamParse(
@@ -550,6 +593,133 @@ class PositionSearch:
     value_full_width: bool
 
 
+@dataclass(frozen=True, eq=False, slots=True)
+class SelectionValues:
+    """The two arrays move selection reads, and NOTHING else.
+
+    A ``PositionSearch`` is what gets BANKED; this is what gets CACHED, and the
+    difference is the whole reason the type exists.  Selection needs a move to
+    play and a value per move; the banked ``PvLine`` also carries a rank and a
+    per-line node count, which are an order of magnitude more bytes and are
+    already in the shard.  MEASURED 2026-08-27 on a 33-legal-move middlegame:
+    **816 bytes** here against **9,929** for the ``tuple[PvLine, ...]`` this
+    replaced in the cache -- 12.2x, and the difference between ~1.5 GiB and
+    ~18.5 GiB per worker at ``DEFAULT_DEDUP_CACHE_MAX``.
+
+    ⚑ ``eq=False`` on purpose: a generated ``__eq__`` over a numpy field returns
+    an ARRAY, and ``a == b`` then raises "truth value is ambiguous" at whatever
+    call site first compares two of these.  Identity is the honest default for a
+    cache entry.
+
+    ⚑ ``float32``, not ``float64``.  Effective cp is integral centipawns and the
+    mate band tops out around 1e5, both exact in float32 (integers are exact to
+    2**24), so the narrower dtype is free here.  ``q_of`` widens back to float64
+    before the shared mapping sees it, and selection therefore reads the same
+    number on a cache HIT as it did on the first-seen search -- which is why
+    ``play_game`` builds this object once and selects through it BOTH times
+    rather than selecting off the ``PvLine`` list the first time.
+    """
+
+    moves: tuple[str, ...]
+    effective_cp: np.ndarray
+
+    @classmethod
+    def from_lines(cls, lines: Sequence[PvLine]) -> SelectionValues:
+        """Compact one ranked block.  ⚑ The uci strings are INTERNED.
+
+        A uci move is a from-square, a to-square and an optional promotion, so
+        the spellings Stockfish can ever emit are a few thousand objects at
+        most -- while a corpus worker caches millions of positions whose move
+        lists are drawn from exactly that set.  Interning makes every cached
+        list share one object per spelling, which is where most of the 12x came
+        from: without it each entry pays ~1.8 KB for 35 strings it holds
+        millions of copies of.
+        """
+        return cls(
+            moves=tuple(sys.intern(str(pv.move)) for pv in lines),
+            effective_cp=np.asarray(
+                [pv.effective_cp for pv in lines], dtype=np.float32,
+            ),
+        )
+
+
+#: Node-count observations one phase's median estimator keeps.  4096 ints is
+#: 32 KB per phase and does not grow; the exact median needs every observation,
+#: which at three searches per position is ~84 MB per million positions per
+#: worker held for the lifetime of the run to produce four numbers.
+NODES_RESERVOIR_MAX = 4096
+
+#: Seed for the reservoir's replacement draws, mixed with the phase index.
+#: Fixed rather than entropy: a summary statistic that moves between two
+#: byte-identical runs is a number nobody can diff, and the reservoir is the
+#: only place in this file where the SUMMARY (not the corpus) is sampled.
+_RESERVOIR_SEED = 20260827
+
+
+@dataclass
+class NodeSamples:
+    """Running node-count aggregates for one staircase phase.
+
+    Everything here is O(1) in the number of searches except the reservoir,
+    which is bounded by ``NODES_RESERVOIR_MAX``.
+
+    ⚑ THE MEDIAN IS AN ESTIMATE AND ITS KEY SAYS SO.  ``median_est_reservoir``
+    is the median of a uniform sample of the phase's node counts, not of the
+    phase's node counts -- a distinction that is invisible in a summary whose
+    key is called ``median``, and this file's whole posture is that a number
+    states what it is.
+    """
+
+    n: int = 0
+    total: int = 0
+    minimum: int = 0
+    maximum: int = 0
+    reservoir: list[int] = field(default_factory=list)
+    log2_buckets: Counter[int] = field(default_factory=Counter)
+    rng: np.random.Generator = field(
+        default_factory=lambda: np.random.default_rng(_RESERVOIR_SEED),
+    )
+
+    def add(self, nodes: int) -> None:
+        value = int(nodes)
+        self.n += 1
+        self.total += value
+        self.minimum = value if self.n == 1 else min(self.minimum, value)
+        self.maximum = value if self.n == 1 else max(self.maximum, value)
+        # -1 is the "no node count reported" bucket, as it was when this was a
+        # separate counter.
+        self.log2_buckets[int(math.log2(value)) if value > 0 else -1] += 1
+        if len(self.reservoir) < NODES_RESERVOIR_MAX:
+            self.reservoir.append(value)
+            return
+        # Algorithm R: observation `n` replaces a uniformly chosen slot with
+        # probability capacity/n, which keeps the kept sample uniform over
+        # everything seen without the kept sample ever growing.
+        slot = int(self.rng.integers(0, self.n))
+        if slot < NODES_RESERVOIR_MAX:
+            self.reservoir[slot] = value
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "n": self.n,
+            "mean": (self.total / self.n) if self.n else math.nan,
+            "median_est_reservoir": (
+                statistics.median(self.reservoir) if self.reservoir else math.nan
+            ),
+            "median_est_reservoir_n": len(self.reservoir),
+            "median_est_reservoir_capacity": NODES_RESERVOIR_MAX,
+            "min": self.minimum if self.n else 0,
+            "max": self.maximum if self.n else 0,
+            "total": int(self.total),
+            # log2 buckets rather than raw values: a per-search list over a
+            # million-position corpus is a second corpus, and the shape is what
+            # a cost model needs. -1 is the "no node count reported" bucket.
+            "log2_buckets": {
+                str(k): int(v) for k, v in sorted(self.log2_buckets.items())
+            },
+        }
+
+
 @dataclass
 class SearchStats:
     """Anomaly and cost counters, accumulated over a worker's whole run."""
@@ -565,8 +735,7 @@ class SearchStats:
     duplicate_iteration_flushes: int = 0
     incomplete_final_blocks: int = 0
     selection_not_full_width: int = 0
-    nodes_log2_by_phase: dict[int, Counter[int]] = field(default_factory=dict)
-    nodes_by_phase: dict[int, list[int]] = field(default_factory=dict)
+    nodes_by_phase: dict[int, NodeSamples] = field(default_factory=dict)
 
     def add_phase(self, phase: PhaseResult) -> None:
         self.searches += 1
@@ -576,10 +745,15 @@ class SearchStats:
         self.unscored_lines += phase.parse.unscored_lines
         self.emission_count_violations += phase.parse.emission_count_violations
         self.duplicate_iteration_flushes += phase.parse.duplicate_iteration_flushes
-        nodes = phase.nodes_total
-        self.nodes_by_phase.setdefault(phase.index, []).append(nodes)
-        bucket = int(math.log2(nodes)) if nodes > 0 else -1
-        self.nodes_log2_by_phase.setdefault(phase.index, Counter())[bucket] += 1
+        samples = self.nodes_by_phase.get(phase.index)
+        if samples is None:
+            # Per-phase stream, so the phases' reservoirs do not replace the
+            # same slots at the same counts as each other.
+            samples = NodeSamples(
+                rng=np.random.default_rng([_RESERVOIR_SEED, int(phase.index)]),
+            )
+            self.nodes_by_phase[phase.index] = samples
+        samples.add(phase.nodes_total)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -600,27 +774,10 @@ class SearchStats:
                 "selection_not_full_width": self.selection_not_full_width,
             },
             "nodes_by_phase": {
-                str(idx): _nodes_histogram(
-                    values, self.nodes_log2_by_phase.get(idx, Counter()),
-                )
-                for idx, values in sorted(self.nodes_by_phase.items())
+                str(idx): samples.summary()
+                for idx, samples in sorted(self.nodes_by_phase.items())
             },
         }
-
-
-def _nodes_histogram(values: Sequence[int], log2: Counter[int]) -> dict[str, Any]:
-    return {
-        "n": len(values),
-        "mean": statistics.fmean(values) if values else math.nan,
-        "median": statistics.median(values) if values else math.nan,
-        "min": min(values) if values else 0,
-        "max": max(values) if values else 0,
-        "total": int(sum(values)),
-        # log2 buckets rather than raw values: a per-search list over a
-        # million-position corpus is a second corpus, and the shape is what a
-        # cost model needs. -1 is the "no node count reported" bucket.
-        "log2_buckets": {str(k): int(v) for k, v in sorted(log2.items())},
-    }
 
 
 class StaircaseSearcher:
@@ -748,10 +905,10 @@ class StaircaseSearcher:
             value_full_width=full_width,
         )
 
-    def q_of(self, values: Sequence[PvLine]) -> np.ndarray:
+    def q_of(self, values: SelectionValues) -> np.ndarray:
         """Root-seat q in [-1, 1] for a value vector, through the SHARED map."""
         return gate.q_from_effective_cp(
-            np.asarray([pv.effective_cp for pv in values], dtype=np.float64),
+            np.asarray(values.effective_cp, dtype=np.float64),
             slope=self.cp_slope,
             draw_width_cp=self.cp_draw_width,
         )
@@ -860,6 +1017,106 @@ def game_phase(*, ply: int, piece_count: int) -> str:
     if int(ply) <= OPENING_MAX_PLY:
         return PHASE_OPENING
     return PHASE_MIDDLEGAME
+
+
+#: What one ``OrderedDict`` slot costs beyond the key and value objects.
+#: MEASURED 2026-08-27, CPython 3.10, ``sys.getsizeof`` on containers built with
+#: 100k and 200k entries: 105.40 and 105.40 bytes per entry (a plain ``dict`` is
+#: ~52; the linked list ``OrderedDict`` keeps the insertion order in is the
+#: rest).  Pinned as a constant because the point of the bound is a memory
+#: number a reader can act on, and one that omits the container understates the
+#: cache by a fifth.
+_ORDERED_DICT_SLOT_BYTES = 106
+
+
+def entry_bytes(key: str, values: SelectionValues) -> int:
+    """The MARGINAL bytes one more cached entry costs.
+
+    ⚑ THE UCI SPELLINGS ARE DELIBERATELY NOT IN THIS NUMBER.
+    ``SelectionValues.from_lines`` interns them, so the few thousand distinct
+    spellings are ONE set of objects shared by every entry in the process --
+    a few hundred KB once, for any cache size.  Charging each entry for 35
+    strings it shares with millions of others would treble the reported cost and
+    make the flag's memory claim wrong in the direction that leads a reader to
+    under-size the cache.  The 8-byte pointers to them ARE counted, inside
+    ``getsizeof(values.moves)``.
+    """
+    return (
+        _ORDERED_DICT_SLOT_BYTES
+        + sys.getsizeof(key)
+        + sys.getsizeof(values)
+        + sys.getsizeof(values.moves)
+        # numpy's `__sizeof__` includes the data buffer for an array that owns
+        # it, which this one does.
+        + sys.getsizeof(values.effective_cp)
+    )
+
+
+class DedupCache:
+    """One worker's first-seen value cache: COMPACT, and BOUNDED with FIFO.
+
+    ⚑⚑ AN EVICTED POSITION THAT RECURS IS RE-SEARCHED AND RE-BANKED.  That is
+    the documented consequence of the bound, not a defect of it, and it is the
+    same thing that already happens to a position two workers both reach -- the
+    cache has always been per-worker (``merge_dedup``'s ``cache_scope``).  So
+    the corpus can hold two rows with one ``dedup_key``, they are two genuine
+    independent searches of one position, and ``dedup_cache_evictions`` in the
+    summary is how a consumer knows to expect them.
+
+    FIFO rather than LRU on purpose.  LRU would keep the opening tree resident
+    forever and evict the endgame positions a game is currently walking through,
+    which is the opposite of where the cheap hits are; FIFO is also one
+    ``popitem`` with no per-hit bookkeeping, and a cache read on the hot path
+    should not write.
+    """
+
+    def __init__(self, *, max_entries: int) -> None:
+        if int(max_entries) <= 0:
+            raise ValueError(
+                f"--dedup-cache-max must be positive, got {max_entries!r}; a "
+                "non-positive bound evicts every entry the instant it is "
+                "stored, which is the cache turned off wearing a size flag",
+            )
+        self.max_entries = int(max_entries)
+        self._entries: OrderedDict[str, SelectionValues] = OrderedDict()
+        self.evictions = 0
+        self._bytes = 0
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def get(self, key: str) -> SelectionValues | None:
+        """Serve a position, WITHOUT touching the eviction order (FIFO)."""
+        return self._entries.get(key)
+
+    def put(self, key: str, values: SelectionValues) -> None:
+        if key in self._entries:
+            return
+        self._entries[key] = values
+        self._bytes += entry_bytes(key, values)
+        while len(self._entries) > self.max_entries:
+            evicted_key, evicted = self._entries.popitem(last=False)
+            self._bytes -= entry_bytes(evicted_key, evicted)
+            self.evictions += 1
+
+    def summary(self) -> dict[str, Any]:
+        """The realized cost of the bound, not the requested one."""
+        return {
+            "dedup_cache_max_entries": self.max_entries,
+            "dedup_cache_entries": len(self._entries),
+            "dedup_cache_evictions": self.evictions,
+            "dedup_cache_bytes_est": int(self._bytes),
+            "dedup_cache_bytes_per_entry_est": (
+                self._bytes / len(self._entries) if self._entries else math.nan
+            ),
+            "dedup_cache_eviction_policy": "fifo",
+            # Spelled out in the summary as well as in `--help`, because the
+            # summary is what a consumer of the corpus reads.
+            "dedup_cache_eviction_semantics": (
+                "an evicted position that recurs is re-searched and RE-BANKED; "
+                "two rows may share a dedup_key"
+            ),
+        }
 
 
 # -- results ------------------------------------------------------------------
@@ -1008,9 +1265,11 @@ class WorkerSpec:
     out_dir: Path
     sf_binary: str
     sf_hash_mb: int
+    sf_read_timeout_s: float
     syzygy_path: str
     staircase: str
     seed: int
+    dedup_cache_max: int
     temp_plies: int
     temp_high: float
     temp_low: float
@@ -1045,6 +1304,23 @@ class DedupStats:
             "first_seen_by_phase": {p: int(self.first_seen[p]) for p in GAME_PHASES},
             "dup_hits_by_phase": {p: int(self.hits[p]) for p in GAME_PHASES},
         }
+
+
+@dataclass
+class WorkerProgress:
+    """Where a worker currently IS.  Read only when it dies.
+
+    A crashed worker's slot has to say more than "it crashed": the game and ply
+    are what makes the failure reproducible (the selection stream is seeded from
+    exactly ``(seed, worker, game, tag, ply)``), and they are the only thing
+    that distinguishes a bad position from a bad engine.  ⚑ Required rather than
+    optional on ``play_game``: a progress recorder a caller can forget to pass
+    is a value accepted and then silently ignored, which is the defect class
+    this repo keeps re-finding.
+    """
+
+    game_id: int | None = None
+    ply: int | None = None
 
 
 @dataclass
@@ -1092,11 +1368,14 @@ def play_game(
     searcher: StaircaseSearcher,
     opening_cfg: OpeningConfig,
     game_id: int,
-    cache: dict[str, tuple[PvLine, ...]],
+    cache: DedupCache,
     dedup: DedupStats,
+    progress: WorkerProgress,
 ) -> GameOutcome:
     """One game: sample an opening, then search-select-push until it ends."""
     searcher.new_game()
+    progress.game_id = int(game_id)
+    progress.ply = None
     start = sample_starting_board(
         rng=book_rng(seed=spec.seed, worker_id=spec.worker_id, game_id=game_id),
         cfg=opening_cfg,
@@ -1109,6 +1388,7 @@ def play_game(
     unavailable = 0
     ply = 0
     while True:
+        progress.ply = ply
         if board.is_game_over(claim_draw=True):
             termination = "natural"
             result_pgn = board.result(claim_draw=True)
@@ -1142,8 +1422,10 @@ def play_game(
         else:
             dedup.first_seen[phase] += 1
             search = searcher.search_position(board)
-            values = search.values
-            cache[key] = values
+            # ⚑ Selection reads the COMPACT object on the first visit too, so a
+            # cache-served ply and a first-seen ply cannot disagree about q.
+            values = SelectionValues.from_lines(search.values)
+            cache.put(key, values)
 
         temp, temp_phase = temperature_for(
             ply,
@@ -1158,7 +1440,7 @@ def play_game(
                 seed=spec.seed, worker_id=spec.worker_id, game_id=game_id, ply=ply,
             ),
         )
-        played = values[chosen].move
+        played = values.moves[chosen]
 
         if search is not None and piece_count >= MIN_BANKED_PIECES:
             rows.append({
@@ -1182,7 +1464,7 @@ def play_game(
                     "schedule_phase": temp_phase,
                     "temp_plies": int(spec.temp_plies),
                     "value_depth": search.value_depth,
-                    "value_width": len(values),
+                    "value_width": len(values.moves),
                     "value_full_width": search.value_full_width,
                     "legal_moves": board.legal_moves.count(),
                     "seed_material": [
@@ -1246,8 +1528,70 @@ def apply_nice(target: int) -> int:
     return int(os.getpriority(os.PRIO_PROCESS, 0))
 
 
+def worker_failure(
+    exc: BaseException, *, progress: WorkerProgress, games_completed: int,
+) -> dict[str, Any]:
+    """What a dead worker's slot says.
+
+    ``str(exc)`` is empty for several real exception types, so the type name is
+    recorded separately rather than folded in -- a ``failed`` entry reading
+    ``""`` names nothing at all.
+    """
+    return {
+        "exception_type": type(exc).__name__,
+        "exception": str(exc),
+        "last_game_id": progress.game_id,
+        "last_ply": progress.ply,
+        "games_completed": int(games_completed),
+    }
+
+
+def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, Any]:
+    """A summary slot for a worker whose PROCESS died, not just its game loop.
+
+    ``run_worker`` records its own failures and still returns its real counters;
+    this is the other half -- an OOM kill or a segfault takes the process before
+    any of that runs, and the parent then has nothing but the spec.  Every key
+    the merge functions read is present and zeroed (through the same
+    ``DedupStats``/``SearchStats`` summaries a live worker uses, so the shapes
+    cannot drift apart), and the realized stamp says UNAVAILABLE rather than
+    echoing the flags -- there is no engine to have realized anything.
+    """
+    return {
+        "worker_id": spec.worker_id,
+        "failed": failure,
+        "games": 0,
+        "rows": 0,
+        "wall_s": math.nan,
+        "plies_total": 0,
+        "plies_mean": math.nan,
+        "plies_max": 0,
+        "terminations": {},
+        "adjudications": {},
+        "opening_sources": {},
+        "adjudication_unavailable_plies": 0,
+        "dedup": {
+            **DedupStats().summary(),
+            **DedupCache(max_entries=int(spec.dedup_cache_max)).summary(),
+        },
+        "search": SearchStats().summary(),
+        "shards": [],
+        "codec": "none",
+        "realized": {"unavailable_worker_process_died": True},
+    }
+
+
 def run_worker(spec: WorkerSpec) -> dict[str, Any]:
-    """One worker: its own engine, its own shards, its own counters."""
+    """One worker: its own engine, its own shards, its own counters.
+
+    ⚑ IT DOES NOT RAISE ON A FATAL ERROR OF ITS OWN.  A worker that dies has
+    still produced shards, counters and a realized stamp, and letting the
+    exception out would take the whole run's ``summary.json`` with it -- eight
+    hours of other workers' searches lost to one engine's pty.  The failure is
+    RECORDED in this slot (``failed``), the run keeps going, and ``main`` exits
+    nonzero on the merged list.  What it must never do is return a slot that
+    looks healthy.
+    """
     nice_realized = apply_nice(spec.nice)
     staircase = parse_staircase(spec.staircase)
     engine = StockfishUCI(
@@ -1257,6 +1601,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         syzygy_path=spec.syzygy_path,
         nice=int(spec.nice),
         threads=1,
+        read_timeout_s=float(spec.sf_read_timeout_s),
     )
     searcher = StaircaseSearcher(
         engine=engine,
@@ -1268,8 +1613,9 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     writer = ShardWriter(
         out_dir=spec.out_dir, worker_id=spec.worker_id, shard_rows=spec.shard_rows,
     )
-    cache: dict[str, tuple[PvLine, ...]] = {}
+    cache = DedupCache(max_entries=int(spec.dedup_cache_max))
     dedup = DedupStats()
+    progress = WorkerProgress()
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
     opening_sources: Counter[str] = Counter()
@@ -1277,12 +1623,13 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     rows_written = 0
     games = 0
     unavailable = 0
+    failure: dict[str, Any] | None = None
     started = time.perf_counter()
     try:
         for game_id in spec.game_ids:
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
-                game_id=game_id, cache=cache, dedup=dedup,
+                game_id=game_id, cache=cache, dedup=dedup, progress=progress,
             )
             for row in outcome.rows:
                 writer.write(row)
@@ -1296,12 +1643,23 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
                 else f"syzygy_wdl_{outcome.adjudication['wdl']}"
             ] += 1
             opening_sources[outcome.opening_source] += 1
+    except Exception as exc:
+        failure = worker_failure(exc, progress=progress, games_completed=games)
+        _LOG.exception(
+            "worker %d died on game %s ply %s; recording the slot and letting "
+            "the run finish", spec.worker_id, progress.game_id, progress.ply,
+        )
     finally:
         writer.close()
-        engine.close()
+        # ⚑ The engine is the thing that most plausibly just died, and a close()
+        # that raises on the way out of a RECORDED failure would turn it back
+        # into an unrecorded one.
+        with contextlib.suppress(Exception):
+            engine.close()
     wall_s = time.perf_counter() - started
     return {
         "worker_id": spec.worker_id,
+        "failed": failure,
         "games": games,
         "rows": rows_written,
         "wall_s": wall_s,
@@ -1312,13 +1670,16 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "adjudications": dict(adjudications),
         "opening_sources": dict(opening_sources),
         "adjudication_unavailable_plies": unavailable,
-        "dedup": dedup.summary(),
+        "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
         "shards": writer.shards,
         "codec": writer.codec,
         "realized": {
             **searcher.realized(),
             "nice": nice_realized,
+            # Read off the cache object, not off the spec: a bound that never
+            # reached the cache is exactly the failure the stamp exists for.
+            "dedup_cache_max": cache.max_entries,
             "shard_rows": writer.shard_rows,
             "codec": writer.codec,
             "opening_book_path": opening_cfg.opening_book_path,
@@ -1360,6 +1721,41 @@ def default_syzygy_path() -> str:
     )
 
 
+def refuse_unopenable_syzygy(syzygy_path: str) -> tuple[str, ...]:
+    """Refuse unless EVERY named tablebase directory opens.  Returns them.
+
+    ⚑⚑ ``get_tablebase`` ON THE WHOLE PAIR IS NOT THIS CHECK.  It adds the
+    directories it can and returns a handle when AT LEAST ONE of them worked, so
+    ``<real 3-4-5 dir>:/typo/syzygy_6`` opens, passes, and then silently answers
+    ``None`` to every 6-man probe for the length of the burn -- the run's
+    ``<=6``-man games reach the ply cap with no result instead of being
+    adjudicated, and nothing anywhere says why.  That is the same shape as
+    Stockfish silently ignoring an illegal ``searchmoves``: a value accepted and
+    then quietly dropped.  Production's own path is a PAIR (the 6-man DTZ lives
+    in the second directory, see CLAUDE.md), so the half-open case is the
+    realistic one, not a corner.
+    """
+    components = tuple(
+        part.strip() for part in str(syzygy_path).split(os.pathsep) if part.strip()
+    )
+    if not components:
+        raise ValueError(
+            f"--syzygy-path {syzygy_path!r} names no directory. Adjudication is "
+            "what gives a <=6-man game its result, so a run without it would "
+            "bank rows whose value target is null.",
+        )
+    dead = [name for name in components if get_tablebase(name) is None]
+    if dead:
+        raise ValueError(
+            f"--syzygy-path {syzygy_path!r} names {len(components)} directories "
+            f"and {', '.join(repr(d) for d in dead)} opened no tablebase. Every "
+            "component must open: a half-open pair probes what the live half "
+            "holds and answers None for everything else, which is a corpus "
+            "whose <=6-man games silently stop being adjudicated.",
+        )
+    return components
+
+
 def split_games(total: int, workers: int) -> list[list[int]]:
     """Deal ``total`` game ids round-robin, so every worker's ids are distinct."""
     if int(total) <= 0:
@@ -1388,6 +1784,8 @@ def config_stamp(args: argparse.Namespace, *, sf_binary: str) -> dict[str, Any]:
         "max_plies": int(args.max_plies),
         "shard_rows": int(args.shard_rows),
         "sf_hash_mb": int(args.sf_hash_mb),
+        "sf_read_timeout_s": float(args.sf_read_timeout),
+        "dedup_cache_max": int(args.dedup_cache_max),
         "syzygy_path": str(args.syzygy_path),
         "nice": int(args.nice),
         "cp_slope": float(args.cp_slope),
@@ -1419,6 +1817,8 @@ def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     seen = sum(int(r["dedup"]["positions_first_seen"]) for r in results)
     hits = sum(int(r["dedup"]["dup_hits"]) for r in results)
     total = seen + hits
+    cached = sum(int(r["dedup"]["dedup_cache_entries"]) for r in results)
+    cache_bytes = sum(int(r["dedup"]["dedup_cache_bytes_est"]) for r in results)
     return {
         "positions_visited": total,
         "positions_first_seen": seen,
@@ -1436,6 +1836,26 @@ def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         # searched twice and banked twice.  Stated rather than left for a reader
         # to discover from a duplicate `dedup_key` in the corpus.
         "cache_scope": "per_worker",
+        # ⚑ ... and the SAME thing happens within one worker once the bound
+        # starts evicting, which is why this count sits next to `dup_hits`
+        # rather than in a diagnostics corner: it is the number of duplicate
+        # `dedup_key`s the corpus may contain for a reason other than scope.
+        "dedup_cache_evictions": sum(
+            int(r["dedup"]["dedup_cache_evictions"]) for r in results
+        ),
+        "dedup_cache_entries": cached,
+        "dedup_cache_max_entries_per_worker": max(
+            int(r["dedup"]["dedup_cache_max_entries"]) for r in results
+        ),
+        "dedup_cache_bytes_est": cache_bytes,
+        "dedup_cache_bytes_per_entry_est": (
+            cache_bytes / cached if cached else math.nan
+        ),
+        "dedup_cache_eviction_policy": "fifo",
+        "dedup_cache_eviction_semantics": (
+            "an evicted position that recurs is re-searched and RE-BANKED; "
+            "two rows may share a dedup_key"
+        ),
     }
 
 
@@ -1451,6 +1871,7 @@ def merge_search(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     mins: dict[str, list[int]] = {}
     maxs: dict[str, list[int]] = {}
     buckets: dict[str, Counter[str]] = {}
+    medians: dict[str, dict[str, float]] = {}
     for result in results:
         for phase, cell in result["search"]["nodes_by_phase"].items():
             name = str(phase)
@@ -1458,6 +1879,9 @@ def merge_search(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
             totals[name] += int(cell["total"])
             mins.setdefault(name, []).append(int(cell["min"]))
             maxs.setdefault(name, []).append(int(cell["max"]))
+            medians.setdefault(name, {})[str(result["worker_id"])] = float(
+                cell["median_est_reservoir"],
+            )
             into = buckets.setdefault(name, Counter())
             for bucket, count in cell["log2_buckets"].items():
                 into[str(bucket)] += int(count)
@@ -1468,6 +1892,17 @@ def merge_search(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
             "mean": (totals[name] / counts[name]) if counts[name] else math.nan,
             "min": min(mins[name]),
             "max": max(maxs[name]),
+            # ⚑ PER WORKER, and no pooled median.  n, total, min and max merge
+            # exactly; a median does not.  Concatenating the workers' equal-size
+            # reservoirs would weight a worker that searched 10k positions the
+            # same as one that searched 10, so the "merged median" would be a
+            # number with no population -- and it would look exactly as
+            # authoritative as the four beside it.  Publishing them separately
+            # is the honest shape, and it is what makes the estimate reach
+            # `summary.json` at all: the per-worker search block does not.
+            "median_est_reservoir_by_worker": dict(sorted(
+                medians[name].items(), key=lambda kv: int(kv[0]),
+            )),
             "log2_buckets": dict(sorted(
                 buckets[name].items(), key=lambda kv: int(kv[0]),
             )),
@@ -1509,6 +1944,14 @@ def build_summary(
         "plies_total": sum(int(r["plies_total"]) for r in results),
         "rows_per_game": (rows / games) if games else math.nan,
         "s_per_row": (wall_s / rows) if rows else math.nan,
+        # ⚑ TOP LEVEL, and empty on a healthy run.  A partial corpus that reads
+        # like a complete one is the whole hazard here: every other number in
+        # this file is a sum over the workers that reported, and a reader has no
+        # way to know one of them stopped early unless the summary says so.
+        "failed_workers": [
+            {"worker_id": r["worker_id"], **r["failed"]}
+            for r in results if r["failed"] is not None
+        ],
         "dedup": merge_dedup(results),
         "search": search,
         "terminations": merge_counters(results, "terminations"),
@@ -1539,7 +1982,7 @@ def build_summary(
 def format_summary(summary: dict[str, Any]) -> str:
     dedup = summary["dedup"]
     search = summary["search"]
-    return "\n".join([
+    lines = [
         f"games={summary['games']} rows={summary['rows']} "
         f"plies={summary['plies_total']}",
         f"positions searched={search['positions_searched']} "
@@ -1548,9 +1991,19 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"(open={dedup['dup_hits_by_phase']['opening']} "
         f"mid={dedup['dup_hits_by_phase']['middlegame']} "
         f"end={dedup['dup_hits_by_phase']['endgame']})",
+        f"dedup cache entries={dedup['dedup_cache_entries']} "
+        f"evictions={dedup['dedup_cache_evictions']} "
+        f"bytes/entry={dedup['dedup_cache_bytes_per_entry_est']:.0f}",
         f"anomalies={search['anomalies']}",
         f"terminations={summary['terminations']}",
-    ])
+    ]
+    lines.extend(
+        f"FAILED worker {failed['worker_id']}: {failed['exception_type']}: "
+        f"{failed['exception']} (game {failed['last_game_id']} "
+        f"ply {failed['last_ply']}, {failed['games_completed']} games done)"
+        for failed in summary["failed_workers"]
+    )
+    return "\n".join(lines)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -1566,17 +2019,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"--temp-plies must be >= 0, got {args.temp_plies!r}")
     if int(args.max_plies) <= 0:
         raise ValueError(f"--max-plies must be positive, got {args.max_plies!r}")
+    if int(args.dedup_cache_max) <= 0:
+        raise ValueError(
+            f"--dedup-cache-max must be positive, got {args.dedup_cache_max!r}",
+        )
+    if not float(args.sf_read_timeout) > 0.0 or not math.isfinite(
+        float(args.sf_read_timeout),
+    ):
+        raise ValueError(
+            f"--sf-read-timeout must be finite and positive, got "
+            f"{args.sf_read_timeout!r}: a non-positive deadline expires on the "
+            "first read and poisons the engine before it has said anything",
+        )
     buckets = split_games(int(args.games), int(args.workers))
     out_dir = Path(args.out_dir)
     refuse_populated_dir(out_dir)
 
     syzygy_path = str(args.syzygy_path)
-    if get_tablebase(syzygy_path) is None:
-        raise ValueError(
-            f"--syzygy-path {syzygy_path!r} opened no tablebase directory. "
-            "Adjudication is what gives a <=6-man game its result, so a run "
-            "without it would bank rows whose value target is null.",
-        )
+    refuse_unopenable_syzygy(syzygy_path)
     sf_binary = str(args.stockfish)
     engine_record = announce_engine("gen_sf_rooted_corpus", sf_binary)
     try:
@@ -1594,9 +2054,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             out_dir=out_dir,
             sf_binary=sf_binary,
             sf_hash_mb=int(args.sf_hash_mb),
+            sf_read_timeout_s=float(args.sf_read_timeout),
             syzygy_path=syzygy_path,
             staircase=format_staircase(staircase),
             seed=int(args.seed),
+            dedup_cache_max=int(args.dedup_cache_max),
             temp_plies=int(args.temp_plies),
             temp_high=float(args.temp_high),
             temp_low=float(args.temp_low),
@@ -1616,6 +2078,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     started_utc = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
+    results: list[dict[str, Any]]
     if len(specs) == 1:
         # In process for a single worker: a pool adds a spawn, a second torch
         # import and a pickling hop to buy nothing, and the smoke run is the
@@ -1623,9 +2086,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         results = [run_worker(specs[0])]
     else:
         ctx = multiprocessing.get_context("spawn")
+        results = []
         with ProcessPoolExecutor(max_workers=len(specs), mp_context=ctx) as pool:
-            futures = [pool.submit(run_worker, spec) for spec in specs]
-            results = [future.result() for future in as_completed(futures)]
+            futures = {pool.submit(run_worker, spec): spec for spec in specs}
+            for future in as_completed(futures):
+                spec = futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    # ⚑ `run_worker` records its OWN failures and returns; this
+                    # is the process dying under it -- an OOM kill, a segfault,
+                    # a pickling error on the way home -- where there is no slot
+                    # to have recorded anything. Synthesised rather than
+                    # re-raised, so one dead process does not take the other
+                    # workers' summary with it.
+                    _LOG.exception("worker %d process died", spec.worker_id)
+                    results.append(failed_worker_slot(
+                        spec,
+                        worker_failure(
+                            exc, progress=WorkerProgress(), games_completed=0,
+                        ),
+                    ))
     results.sort(key=lambda r: int(r["worker_id"]))
     wall_s = time.perf_counter() - started
 
@@ -1680,8 +2161,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--temp-low", type=float, default=DEFAULT_TEMP_LOW)
     p.add_argument("--max-plies", type=int, default=DEFAULT_MAX_PLIES)
     p.add_argument("--shard-rows", type=int, default=DEFAULT_SHARD_ROWS)
+    p.add_argument(
+        "--dedup-cache-max", type=int, default=DEFAULT_DEDUP_CACHE_MAX,
+        help=f"positions ONE WORKER's dedup cache holds before it evicts, FIFO "
+             f"(default {DEFAULT_DEDUP_CACHE_MAX}, measured at ~816 bytes per "
+             "entry = ~1.5 GiB per worker). ⚑ An evicted position that recurs "
+             "is RE-SEARCHED and RE-BANKED, so the corpus can hold two rows "
+             "with one dedup_key -- the same thing that already happens when "
+             "two workers reach one position, and the count is published as "
+             "the summary's dedup_cache_evictions. Each run publishes its own "
+             "realized bytes per entry; read it before raising this.",
+    )
     p.add_argument("--stockfish", type=Path, default=default_stockfish())
     p.add_argument("--sf-hash-mb", type=int, default=DEFAULT_SF_HASH_MB)
+    p.add_argument(
+        "--sf-read-timeout", type=float, default=DEFAULT_SF_READ_TIMEOUT_S,
+        help=f"deadline in seconds on ONE readline from Stockfish (default "
+             f"{DEFAULT_SF_READ_TIMEOUT_S}). Expiry POISONS the engine rather "
+             "than retrying, so size it above the deepest rung's worst case.",
+    )
     p.add_argument(
         "--syzygy-path", default=default_syzygy_path(),
         help="OS-separated tablebase directories, handed to BOTH the engine "
@@ -1717,7 +2215,10 @@ def main(argv: list[str] | None = None) -> int:
         with open(Path(args.json), "x", encoding="utf-8") as fh:
             json.dump(summary, fh, indent=2, sort_keys=True, default=_json_default)
             fh.write("\n")
-    return 0
+    # ⚑ The summary is WRITTEN either way -- a partial corpus with a stamp beats
+    # no corpus -- but the exit code is the only thing a shell loop reads, and a
+    # run that lost a worker did not do what it was asked to.
+    return 1 if summary["failed_workers"] else 0
 
 
 if __name__ == "__main__":

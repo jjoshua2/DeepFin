@@ -23,7 +23,10 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import math
+import os
 import threading
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, cast
 
@@ -65,13 +68,38 @@ def smoke_syzygy() -> Path | None:
     return None
 
 
+def production_syzygy() -> str | None:
+    """The PRODUCTION pair, when both of its directories are present.
+
+    The smoke set stops at 4 men, and a 6-man verdict is a different claim: the
+    black-to-move adjudication test below needs a table only the production pair
+    holds.  ``default_syzygy_path`` already does the two-root lookup, so this is
+    only the "is it actually there" half.
+    """
+    path = corpus.default_syzygy_path()
+    if all(Path(part).is_dir() for part in path.split(os.pathsep)):
+        return path
+    return None
+
+
 SMOKE_SYZYGY = smoke_syzygy()
+PRODUCTION_SYZYGY = production_syzygy()
 
 MATE_GAME_FEN = "6k1/5ppp/8/3n4/8/8/7P/R3K3 b - - 0 1"
 MATE_GAME_SCRIPT = ("d5c3", "a1a8")
 
 CAPTURE_CHAIN_FEN = "7k/8/6n1/8/1n1b4/2R5/1Q6/K7 w - - 0 1"
 CAPTURE_CHAIN_SCRIPT = ("b2b4", "d4c3", "b4c3")
+
+#: 7 men, WHITE to move.  ``Qxa5`` reaches a 6-man KQRvKPP with BLACK to move,
+#: which the production pair calls a loss for black -- so the game's result is
+#: "1-0" and the adjudicated position's own ``wdl`` is 0.  Those two numbers
+#: disagreeing is the whole point of the fixture; see the test.
+BLACK_ADJUDICATION_FEN = "7k/6pp/8/n7/8/8/Q7/K6R w - - 0 1"
+BLACK_ADJUDICATION_SCRIPT = ("a2a5",)
+
+#: What a scripted engine raises when a test asks it to die mid-game.
+SCRIPTED_ENGINE_DEATH = "the scripted engine died mid-search"
 
 
 def hashed_cp(uci: str) -> int:
@@ -93,7 +121,8 @@ class ScriptedEngine:
 
     def __init__(
         self, *, multipv: int = 1, preferred: tuple[str, ...] = (),
-        final_depth_offset: int = 0,
+        final_depth_offset: int = 0, deep_favourite: str | None = None,
+        deep_from_depth: int = 0, raise_on_go: int | None = None,
     ) -> None:
         self.commands: list[str] = []
         self.multipv = int(multipv)
@@ -101,6 +130,18 @@ class ScriptedEngine:
         #: Subtracted from every requested depth, to script a search that stops
         #: short of its ask.
         self.final_depth_offset = int(final_depth_offset)
+        #: A move scored ``+PREFERRED_CP`` from ``deep_from_depth`` and
+        #: ``-PREFERRED_CP`` below it, i.e. a ranking that CHANGES WITH DEPTH.
+        #: Without one this fake's ordering is depth-invariant, and "the deepest
+        #: iteration's ranking" is then indistinguishable from "the shallowest
+        #: iteration's ranking" -- which is exactly the choice
+        #: ``deepest_block_with_width`` makes.
+        self.deep_favourite = deep_favourite
+        self.deep_from_depth = int(deep_from_depth)
+        #: 1-based index of the ``go`` command to die on, to script an engine
+        #: that fails PART WAY THROUGH a worker rather than at startup.
+        self.raise_on_go = raise_on_go
+        self.go_count = 0
         self.fen = chess.STARTING_FEN
         self._pending: list[str] = []
 
@@ -114,13 +155,18 @@ class ScriptedEngine:
         elif cmd.startswith("position fen "):
             self.fen = cmd[len("position fen "):]
         elif cmd.startswith("go "):
+            self.go_count += 1
+            if self.raise_on_go is not None and self.go_count == self.raise_on_go:
+                raise RuntimeError(SCRIPTED_ENGINE_DEATH)
             self._pending.extend(self._reply_to(cmd))
 
     def readline(self, _deadline: float) -> str:
         return self._pending.pop(0)
 
     # -- engine behaviour --------------------------------------------------
-    def score_of(self, uci: str) -> int:
+    def score_of(self, uci: str, *, depth: int) -> int:
+        if uci == self.deep_favourite:
+            return PREFERRED_CP if depth >= self.deep_from_depth else -PREFERRED_CP
         return PREFERRED_CP if uci in self.preferred else hashed_cp(uci)
 
     def _reply_to(self, go_cmd: str) -> list[str]:
@@ -133,19 +179,23 @@ class ScriptedEngine:
             root = toks[toks.index("searchmoves") + 1:]
         else:
             root = [m.uci() for m in chess.Board(self.fen).legal_moves]
-        # Ordered like a real MultiPV list: rank 1 is the best score.  Ties
-        # break on the uci so the ordering is total.
-        root.sort(key=lambda uci: (-self.score_of(uci), uci))
-        root = root[: max(1, self.multipv)]
         lines: list[str] = []
+        ranked: list[str] = []
         for d in range(1, max(1, depth - self.final_depth_offset) + 1):
-            for rank, mv in enumerate(root, start=1):
+            # Ranked PER ITERATION, like a real MultiPV list: rank 1 is the best
+            # score AT THIS DEPTH.  Ties break on the uci so the order is total.
+            # With no `deep_favourite` the key is depth-invariant and every
+            # iteration reproduces the single ordering this used to emit.
+            ranked = sorted(
+                root, key=lambda uci, d=d: (-self.score_of(uci, depth=d), uci),
+            )[: max(1, self.multipv)]
+            for rank, mv in enumerate(ranked, start=1):
                 lines.append(
                     f"info depth {d} seldepth {d + 2} multipv {rank} "
-                    f"score cp {self.score_of(mv)} nodes {1000 * d + rank} "
-                    f"pv {mv}\n",
+                    f"score cp {self.score_of(mv, depth=d)} "
+                    f"nodes {1000 * d + rank} pv {mv}\n",
                 )
-        lines.append(f"bestmove {root[0] if root else '0000'}\n")
+        lines.append(f"bestmove {ranked[0] if ranked else '0000'}\n")
         return lines
 
     # -- assertion helpers -------------------------------------------------
@@ -181,6 +231,34 @@ def uci_double(engine: ScriptedEngine, **attrs: Any) -> StockfishUCI:
     return cast(StockfishUCI, sf)
 
 
+class InlineExecutor:
+    """A ``ProcessPoolExecutor`` stand-in that runs each submission in process.
+
+    Same surface ``run`` uses -- context manager, ``submit`` returning a
+    ``Future``, results read through ``as_completed`` -- so the multi-worker
+    branch is exercised rather than bypassed.  A spawn pool cannot carry a
+    monkeypatched module into its children, which is why the scripted-engine
+    tests cannot use the real one.
+    """
+
+    def __init__(self, **_kwargs: Any) -> None:
+        pass
+
+    def __enter__(self) -> InlineExecutor:
+        return self
+
+    def __exit__(self, *_exc: Any) -> bool:
+        return False
+
+    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> Future[Any]:
+        future: Future[Any] = Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except Exception as exc:  # a worker whose PROCESS would have died
+            future.set_exception(exc)
+        return future
+
+
 def searcher_for(
     engine: ScriptedEngine, *, staircase: str = corpus.DEFAULT_STAIRCASE, **attrs: Any,
 ) -> corpus.StaircaseSearcher:
@@ -199,9 +277,13 @@ def worker_spec(tmp_path: Path, **overrides: Any) -> corpus.WorkerSpec:
         "out_dir": tmp_path,
         "sf_binary": "/nonexistent/stockfish",
         "sf_hash_mb": 64,
+        # Matches `uci_double`'s, so a test that does not care about the
+        # timeout sees the double it built rather than a disagreement.
+        "sf_read_timeout_s": 5.0,
         "syzygy_path": "/nonexistent/syzygy",
         "staircase": corpus.DEFAULT_STAIRCASE,
         "seed": 7,
+        "dedup_cache_max": corpus.DEFAULT_DEDUP_CACHE_MAX,
         "temp_plies": 20,
         # Tiny on both rungs: the scripted preference then decides every move.
         "temp_high": 0.01,
@@ -244,7 +326,9 @@ def play(
     outcome = corpus.play_game(
         spec=spec, searcher=searcher,
         opening_cfg=fen_opening(fen, tmp_path),
-        game_id=spec.game_ids[0], cache={}, dedup=dedup,
+        game_id=spec.game_ids[0],
+        cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+        dedup=dedup, progress=corpus.WorkerProgress(),
     )
     return outcome, searcher, dedup
 
@@ -374,6 +458,33 @@ def test_the_measured_end_of_search_flush_is_classified_not_alarmed_on() -> None
     assert parsed.re_emissions_disagreeing == 0
     assert parsed.emission_count_violations == 1
     assert parsed.duplicate_iteration_flushes == 1
+
+
+def test_an_agreeing_partial_re_emission_is_a_violation_but_not_a_flush() -> None:
+    """The flush classifier's EXACT condition: ``2 x width``, not ``> width``.
+
+    Mutation caught: relaxing the classifier to "more emissions than expected
+    with nothing disagreeing".  The signature the module docstring measured is a
+    WHOLE ITERATION emitted twice; a PARTIAL re-emission -- one rank arriving
+    again, agreeing -- is a different stream shape and is not what was measured.
+    Under the relaxed rule it would be filed as the benign flush, and the
+    corpus-level identity ``emission_count_violations == duplicate_iteration_
+    flushes`` would then read "we saw nothing but the flush" about a run in
+    which we saw something else.  Agreement alone is not the signature.
+    """
+    block = [
+        info(4, 1, 40, "e2e4", 90),
+        info(4, 2, 12, "d2d4", 95),
+        info(4, 3, 5, "g1f3", 99),
+    ]
+    parsed = corpus.parse_depth_blocks([*block, block[0]], expected_lines=3)
+
+    assert [pv.move for pv in parsed.blocks[0].lines] == ["e2e4", "d2d4", "g1f3"]
+    assert parsed.blocks[0].emissions == 4
+    assert parsed.re_emissions == 1
+    assert parsed.re_emissions_disagreeing == 0
+    assert parsed.emission_count_violations == 1
+    assert parsed.duplicate_iteration_flushes == 0, "4 is not 2 x 3"
 
 
 def test_a_bound_line_never_wins_a_rank_and_is_counted() -> None:
@@ -529,6 +640,39 @@ def test_an_illegal_narrowing_move_is_refused_by_the_drivers_own_validator() -> 
         )
 
 
+def test_the_narrowing_reads_the_deepest_iteration_not_the_shallowest() -> None:
+    """A ranking that CHANGES WITH DEPTH, so the choice of block is visible.
+
+    ⚑ THIS IS WHY THE FAKE GREW A DEPTH-DEPENDENT MODE.  With a depth-invariant
+    engine every iteration of a phase emits the same order, so
+    ``deepest_block_with_width`` returning the SHALLOWEST full-width block is
+    indistinguishable from it returning the deepest -- and the deep phases of
+    this staircase exist entirely to correct the shallow scout's ranking.  Here
+    ``d5c3`` is refuted below depth 4 and best at depth 4, so the shallow answer
+    and the deep answer are opposite.
+
+    Mutation caught: ``min(full, key=...)`` in ``deepest_block_with_width``.
+    The narrowing then hands the deep rung the moves the SCOUT'S FIRST GUESS
+    liked, and every phase after it spends its budget on refuted moves while
+    reporting a perfectly well-formed staircase.
+    """
+    engine = ScriptedEngine(deep_favourite="d5c3", deep_from_depth=4)
+    searcher = searcher_for(engine, staircase="all:4,3:6")
+
+    search = searcher.search_position(chess.Board(MATE_GAME_FEN))
+
+    scout = search.phases[0]
+    assert [b.depth for b in scout.parse.blocks] == [1, 2, 3, 4]
+    assert scout.parse.blocks[0].lines[0].move != "d5c3", "refuted at depth 1"
+    assert scout.parse.blocks[-1].lines[0].move == "d5c3", "best at depth 4"
+
+    # The narrowing carries the DEEPEST iteration's order into `searchmoves`...
+    assert engine.go_lines[1].split("searchmoves ")[1].split()[0] == "d5c3"
+    # ... and selection reads the same block.
+    assert search.value_depth == 4
+    assert search.values[0].move == "d5c3"
+
+
 def test_selection_reads_the_full_width_scout_not_the_narrowed_rung() -> None:
     engine = ScriptedEngine()
     searcher = searcher_for(engine)
@@ -540,6 +684,54 @@ def test_selection_reads_the_full_width_scout_not_the_narrowed_rung() -> None:
     assert search.value_depth == 9
     assert search.value_full_width is True
     assert searcher.stats.selection_not_full_width == 0
+
+
+# ── search cost aggregates ───────────────────────────────────────────────────
+
+
+def test_the_node_stats_are_running_aggregates_with_a_bounded_sample() -> None:
+    """Exact where it can be, sampled where it cannot, and it says which.
+
+    Mutation caught: keeping every observation (the shape this replaced).  A
+    per-search list is ~84 MB per million positions per worker, held for the
+    life of the run to produce four numbers -- and it never appears in any
+    output, so nothing but this assertion notices it is there.
+    """
+    samples = corpus.NodeSamples(rng=np.random.default_rng(0))
+    for value in range(1, 10_001):
+        samples.add(value)
+    cell = samples.summary()
+
+    assert (cell["n"], cell["min"], cell["max"]) == (10_000, 1, 10_000)
+    assert cell["total"] == sum(range(1, 10_001))
+    assert cell["mean"] == pytest.approx(5000.5)
+    assert cell["log2_buckets"]["0"] == 1, "only the value 1 lands in bucket 0"
+
+    # ⚑ The sample is BOUNDED and the key says the median is an estimate.
+    assert len(samples.reservoir) == corpus.NODES_RESERVOIR_MAX
+    assert cell["median_est_reservoir_n"] == corpus.NODES_RESERVOIR_MAX
+    assert cell["median_est_reservoir_capacity"] == corpus.NODES_RESERVOIR_MAX
+    assert "median" not in cell, "an estimate must not wear the exact name"
+    assert cell["median_est_reservoir"] == pytest.approx(5000.5, rel=0.05)
+
+
+def test_an_empty_node_cell_reports_nothing_rather_than_zero() -> None:
+    cell = corpus.NodeSamples().summary()
+    assert cell["n"] == 0
+    assert math.isnan(cell["mean"])
+    assert math.isnan(cell["median_est_reservoir"])
+    assert (cell["min"], cell["max"], cell["total"]) == (0, 0, 0)
+
+
+def test_the_search_stats_bucket_node_counts_per_phase(tmp_path: Path) -> None:
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    _, searcher, _ = play(MATE_GAME_FEN, tmp_path, engine=engine)
+
+    cells = searcher.stats.summary()["nodes_by_phase"]
+    assert set(cells) == {"0", "1", "2"}
+    assert all(cell["n"] == 2 for cell in cells.values()), "two searched plies"
+    assert all(cell["median_est_reservoir_n"] == 2 for cell in cells.values())
+    assert all(cell["max"] >= cell["min"] > 0 for cell in cells.values())
 
 
 # ── the shared cp -> q mapping ───────────────────────────────────────────────
@@ -555,7 +747,9 @@ def test_the_generator_and_the_gate_share_one_cp_mapping_object(
     Stockfish arms and this generator be one mapping rather than three.
     """
     searcher = searcher_for(ScriptedEngine())
-    values = (corpus.PvLine(rank=1, move="e2e4", effective_cp=50.0, nodes=1),)
+    values = corpus.SelectionValues.from_lines(
+        (corpus.PvLine(rank=1, move="e2e4", effective_cp=50.0, nodes=1),),
+    )
     before = searcher.q_of(values)
 
     def reversed_map(eff_cp, *, slope, draw_width_cp):
@@ -616,6 +810,16 @@ def test_the_temperature_knob_changes_what_gets_played() -> None:
 
 
 def test_the_selection_draw_is_reproducible_and_has_no_wall_clock() -> None:
+    """Same material, same draw; DIFFERENT worker, different draw.
+
+    Mutation caught: dropping ``worker_id`` from the seed material.  Two workers
+    would then walk the same games move for move from any shared position, and
+    the corpus would silently be worth a fraction of its wall time.  ⚑ The
+    worker arm compares the SEQUENCES, not one ``gumbel_choice`` index: over
+    three values the argmax collides often enough that a single draw is not
+    evidence, which is how the previous ``isinstance(..., int)`` assertion came
+    to be vacuous.
+    """
     q = np.array([0.4, 0.35, 0.3])
     first = corpus.gumbel_choice(
         q, temp=1.0,
@@ -625,14 +829,11 @@ def test_the_selection_draw_is_reproducible_and_has_no_wall_clock() -> None:
         q, temp=1.0,
         rng=corpus.selection_rng(seed=5, worker_id=2, game_id=9, ply=11),
     )
-    other_worker = corpus.gumbel_choice(
-        q, temp=1.0,
-        rng=corpus.selection_rng(seed=5, worker_id=3, game_id=9, ply=11),
-    )
     assert first == again
-    # Different workers draw different noise, so two workers on one position do
-    # not play the same move.
-    assert isinstance(other_worker, int)
+
+    worker_a = corpus.selection_rng(seed=5, worker_id=2, game_id=9, ply=11)
+    worker_b = corpus.selection_rng(seed=5, worker_id=3, game_id=9, ply=11)
+    assert not np.array_equal(worker_a.random(16), worker_b.random(16))
 
 
 def test_the_book_stream_and_the_selection_stream_are_tagged_apart() -> None:
@@ -691,6 +892,155 @@ def test_the_dedup_key_drops_the_fullmove_number_and_keeps_the_halfmove_clock(
     assert corpus.dedup_key(a) != corpus.dedup_key(c)
 
 
+def one_value(move: str, cp: float = 0.0) -> corpus.SelectionValues:
+    return corpus.SelectionValues.from_lines(
+        (corpus.PvLine(rank=1, move=move, effective_cp=cp, nodes=1),),
+    )
+
+
+def test_the_cache_entry_is_the_compact_pair_not_the_banked_lines() -> None:
+    """What the cache holds, and why it is ~10x smaller than what gets banked.
+
+    Mutation caught: caching the ``tuple[PvLine, ...]`` (the shape this
+    replaced) -- ~10.3 KiB per 35-move position against ~0.8 KiB here, which at
+    the default bound is the difference between a worker that fits on the box
+    and one that does not.  Two of the three savings are asserted directly: the
+    per-line rank/nodes are simply not here, and the uci spellings are INTERNED,
+    so a million cached positions share one object per spelling rather than
+    holding a million copies of ``"e2e4"``.
+    """
+    lines = (
+        corpus.PvLine(rank=1, move="e2e4", effective_cp=31.0, nodes=100),
+        corpus.PvLine(rank=2, move="d2d4", effective_cp=-12.5, nodes=110),
+    )
+    values = corpus.SelectionValues.from_lines(lines)
+
+    assert values.moves == ("e2e4", "d2d4")
+    assert values.effective_cp.dtype == np.float32
+    np.testing.assert_array_equal(
+        values.effective_cp, np.array([31.0, -12.5], dtype=np.float32),
+    )
+
+    # A spelling built at RUNTIME is a distinct object until it is interned.
+    joined = "".join(("e2", "e4"))
+    again = corpus.SelectionValues.from_lines(
+        (corpus.PvLine(rank=1, move=joined, effective_cp=0.0, nodes=1),),
+    )
+    assert again.moves[0] is values.moves[0], "the uci spellings must be interned"
+
+
+def test_the_cached_q_is_the_same_number_the_first_visit_selected_on() -> None:
+    """float32 storage must not move the selection between visit 1 and visit 2.
+
+    The narrow dtype is what makes the entry small; it is safe only because
+    effective cp is integral centipawns and the mate band is exact in float32.
+    ⚑ And because selection reads the COMPACT object on the first visit too --
+    a generator that selected off the ``PvLine`` list first and off the cache
+    afterwards could play a different move on a repeat of the same position and
+    nothing would say so.
+    """
+    searcher = searcher_for(ScriptedEngine())
+    lines = tuple(
+        corpus.PvLine(rank=i + 1, move=m, effective_cp=cp, nodes=10 * i)
+        for i, (m, cp) in enumerate(
+            (("e2e4", 31.0), ("d2d4", -12.0), ("g1f3", 4000.0)),
+        )
+    )
+    compact = corpus.SelectionValues.from_lines(lines)
+
+    exact = gate.q_from_effective_cp(
+        np.asarray([pv.effective_cp for pv in lines], dtype=np.float64),
+        slope=gen.NNUE_CP_SLOPE, draw_width_cp=gen.NNUE_CP_DRAW_WIDTH,
+    )
+    np.testing.assert_array_equal(searcher.q_of(compact), exact)
+
+
+def test_the_dedup_cache_bound_evicts_the_oldest_and_counts_it() -> None:
+    """FIFO, not LRU, and the eviction is COUNTED rather than absorbed."""
+    cache = corpus.DedupCache(max_entries=2)
+    values = {key: one_value(move) for key, move in (
+        ("k0", "a2a3"), ("k1", "b2b3"), ("k2", "c2c3"), ("k3", "d2d3"),
+    )}
+    for key in ("k0", "k1", "k2"):
+        cache.put(key, values[key])
+
+    assert len(cache) == 2
+    assert cache.evictions == 1
+    assert cache.get("k0") is None, "the OLDEST entry is the one that goes"
+    assert cache.get("k1") is values["k1"]
+
+    # ⚑ A hit does not save an entry: serving k1 must not reorder it, or the
+    # cache would be an LRU and would keep the opening tree resident forever.
+    cache.put("k3", values["k3"])
+    assert cache.get("k1") is None
+    assert cache.evictions == 2
+
+    summary = cache.summary()
+    assert summary["dedup_cache_max_entries"] == 2
+    assert summary["dedup_cache_entries"] == 2
+    assert summary["dedup_cache_evictions"] == 2
+    assert summary["dedup_cache_eviction_policy"] == "fifo"
+    assert "RE-BANKED" in summary["dedup_cache_eviction_semantics"]
+    # The realized cost of the bound, measured off the entries it holds.
+    per_entry = summary["dedup_cache_bytes_per_entry_est"]
+    assert per_entry > 0.0
+    assert summary["dedup_cache_bytes_est"] == pytest.approx(2 * per_entry)
+
+
+def test_a_re_put_of_a_cached_key_is_not_a_second_entry() -> None:
+    cache = corpus.DedupCache(max_entries=2)
+    first = one_value("a2a3")
+    cache.put("k0", first)
+    cache.put("k0", one_value("b2b3"))
+    assert len(cache) == 1
+    assert cache.get("k0") is first, "the first-seen values are the ones kept"
+    assert cache.evictions == 0
+
+
+def test_a_non_positive_dedup_cache_bound_is_refused() -> None:
+    with pytest.raises(ValueError, match="dedup-cache-max must be positive"):
+        corpus.DedupCache(max_entries=0)
+
+
+def test_an_evicted_position_is_re_searched_and_re_banked(tmp_path: Path) -> None:
+    """The BOUND's semantic, end to end, and the counters that disclose it.
+
+    Mutation caught: an unbounded cache (dropping the eviction loop, which is
+    what the plain ``dict`` this replaced was).  Game 1 then serves both of game
+    0's positions from cache, banks nothing, and ``dedup_cache_evictions``
+    stays 0 -- so this test fails on all three of its counts.
+
+    ⚑ The re-banked rows are NOT a defect: they are two genuine independent
+    searches of one position, exactly like the two rows two workers already
+    produce for a shared position, and the summary says how many to expect.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    spec = worker_spec(tmp_path, dedup_cache_max=1)
+    searcher = searcher_for(engine)
+    dedup = corpus.DedupStats()
+    cache = corpus.DedupCache(max_entries=spec.dedup_cache_max)
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+
+    first = corpus.play_game(
+        spec=spec, searcher=searcher, opening_cfg=opening,
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+    )
+    second = corpus.play_game(
+        spec=spec, searcher=searcher, opening_cfg=opening,
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+    )
+
+    assert [row["dedup_key"] for row in second.rows] == [
+        row["dedup_key"] for row in first.rows
+    ]
+    assert len(second.rows) == 2, "an evicted position is banked again"
+    assert cache.evictions >= 2
+    assert sum(dedup.hits.values()) == 0, "the bound let every repeat through"
+    assert searcher.stats.positions == 4
+    # ... and the corpus is otherwise unchanged: same moves, same result.
+    assert (second.plies, second.result_pgn) == (first.plies, first.result_pgn)
+
+
 def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
     tmp_path: Path,
 ) -> None:
@@ -701,12 +1051,12 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
     spec = worker_spec(tmp_path)
     searcher = searcher_for(engine)
     dedup = corpus.DedupStats()
-    cache: dict[str, tuple[corpus.PvLine, ...]] = {}
+    cache = corpus.DedupCache(max_entries=spec.dedup_cache_max)
     opening = fen_opening(MATE_GAME_FEN, tmp_path)
 
     first = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup,
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
     )
     go_lines_after_first = len(engine.go_lines)
     searched_after_first = searcher.stats.positions
@@ -714,7 +1064,7 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
 
     second = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup,
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
     )
 
     assert len(first.rows) == 2
@@ -821,6 +1171,53 @@ def test_a_four_man_position_is_adjudicated_exactly_and_backfilled_with_sign(
     assert row["result"] == 1.0
     assert row["result_pgn"] == "1-0"
     assert row["adjudication"] == outcome.adjudication
+
+
+@pytest.mark.skipif(
+    PRODUCTION_SYZYGY is None, reason="the production 6-man pair is absent",
+)
+def test_a_black_to_move_adjudication_is_a_white_win_not_a_black_one(
+    tmp_path: Path,
+) -> None:
+    """The other side of ``_adjudicate``: the probe's seat is BLACK's.
+
+    ``Qxa5`` walks 7 -> 6 men into a KQRvKPP that Syzygy calls a LOSS for the
+    side to move -- and the side to move is black, so the game's result is
+    "1-0".  Those two numbers pointing opposite ways is the whole fixture:
+    ``probe_wdl`` answers from the ADJUDICATED POSITION's own seat and
+    ``tb_adjudicate_result`` is what turns that into a PGN result.
+
+    ⚑ Mutation caught: restating the wdl -> result convention locally
+    (``{0: "0-1", 1: "1/2-1/2", 2: "1-0"}``) instead of delegating, which is
+    precisely what ``_adjudicate``'s docstring warns against.  Every existing
+    adjudication test here reaches a WHITE-to-move terminal position, where the
+    two conventions agree and the mutant survives; this one has black to move,
+    so the mutant writes ``-1.0`` onto a row whose side WON.  A well-formed,
+    plausible, silently inverted value target.
+    """
+    assert PRODUCTION_SYZYGY is not None
+    engine = ScriptedEngine(preferred=BLACK_ADJUDICATION_SCRIPT)
+    outcome, _, _ = play(
+        BLACK_ADJUDICATION_FEN, tmp_path, engine=engine,
+        syzygy_path=PRODUCTION_SYZYGY,
+    )
+
+    assert outcome.termination == "syzygy"
+    assert outcome.adjudication is not None
+    terminal = chess.Board(outcome.adjudication["fen"])
+    assert terminal.turn == chess.BLACK, "the fixture's whole point"
+    assert outcome.adjudication["piece_count"] == 6
+    # BLACK is to move and is LOSING there ...
+    assert outcome.adjudication["wdl"] == 0
+    # ... which is a WHITE win for the game.
+    assert outcome.result_pgn == "1-0"
+
+    # Every banked row's sign is its OWN mover's.
+    assert [(row["stm"], row["result"]) for row in outcome.rows] == [("w", 1.0)]
+    for row in outcome.rows:
+        assert row["result"] == corpus.result_from_pov(
+            outcome.result_pgn, white_to_move=row["stm"] == "w",
+        )
 
 
 def test_both_seats_of_one_game_get_opposite_result_signs(tmp_path: Path) -> None:
@@ -1035,6 +1432,62 @@ def test_the_default_syzygy_path_is_the_production_pair() -> None:
     assert tuple(Path(p).name for p in default) == corpus.SYZYGY_DIR_NAMES
 
 
+@pytest.mark.skipif(
+    SMOKE_SYZYGY is None, reason="the 3-4 man smoke tablebase is absent",
+)
+def test_every_syzygy_component_must_open_not_just_one() -> None:
+    """⚑⚑ A HALF-OPEN PAIR IS THE FAILURE THIS CHECK EXISTS FOR.
+
+    ``get_tablebase`` returns a handle when AT LEAST ONE listed directory
+    opened, so the old ``get_tablebase(pair) is None`` test passed on
+    ``<real dir>:/typo/syzygy_6`` -- and production's path IS a pair whose
+    second half holds the 6-man DTZ.  The burn would then run to completion with
+    every 6-man probe silently answering ``None``: no adjudication, no result on
+    the rows, and nothing in any log.  Both orders are checked because "the
+    first component works" is exactly the state that made the old check pass.
+
+    Mutation caught: the previous whole-path ``get_tablebase(...) is None``.
+    """
+    assert SMOKE_SYZYGY is not None
+    live = str(SMOKE_SYZYGY)
+    dead = "/nonexistent/syzygy_6"
+
+    assert corpus.refuse_unopenable_syzygy(live) == (live,)
+    assert corpus.refuse_unopenable_syzygy(f"{live}{os.pathsep}{live}") == (live, live)
+
+    with pytest.raises(ValueError, match=dead):
+        corpus.refuse_unopenable_syzygy(f"{live}{os.pathsep}{dead}")
+    with pytest.raises(ValueError, match=dead):
+        corpus.refuse_unopenable_syzygy(f"{dead}{os.pathsep}{live}")
+    with pytest.raises(ValueError, match="names no directory"):
+        corpus.refuse_unopenable_syzygy("")
+
+
+@pytest.mark.skipif(
+    PRODUCTION_SYZYGY is None, reason="the production 6-man pair is absent",
+)
+def test_the_production_pair_opens_on_both_halves() -> None:
+    assert PRODUCTION_SYZYGY is not None
+    components = corpus.refuse_unopenable_syzygy(PRODUCTION_SYZYGY)
+    assert len(components) == 2
+
+
+@pytest.mark.skipif(
+    SMOKE_SYZYGY is None, reason="the 3-4 man smoke tablebase is absent",
+)
+def test_a_run_refuses_a_half_open_syzygy_pair_before_it_writes_anything(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "run"
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(out_dir), "--games", "1",
+        "--syzygy-path", f"{SMOKE_SYZYGY}{os.pathsep}/nonexistent/syzygy_6",
+    ])
+    with pytest.raises(ValueError, match="Every component must open"):
+        corpus.run(args)
+    assert not out_dir.exists(), "the refusal lands before the corpus directory"
+
+
 def test_the_config_stamp_hash_moves_with_every_knob() -> None:
     parser = corpus.build_parser()
     base = parser.parse_args(["--out-dir", "/tmp/x", "--games", "1"])
@@ -1051,19 +1504,23 @@ def test_the_config_stamp_hash_moves_with_every_knob() -> None:
 def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     workers = [
         {
-            "worker_id": 0, "games": 2, "rows": 5, "plies_total": 40,
+            "worker_id": 0, "failed": None, "games": 2, "rows": 5,
+            "plies_total": 40,
             "terminations": {"natural": 2}, "adjudications": {"none": 2},
             "opening_sources": {"start": 2}, "adjudication_unavailable_plies": 1,
             "dedup": {
                 "positions_first_seen": 8, "dup_hits": 2,
                 "first_seen_by_phase": {"opening": 8, "middlegame": 0, "endgame": 0},
                 "dup_hits_by_phase": {"opening": 2, "middlegame": 0, "endgame": 0},
+                "dedup_cache_entries": 8, "dedup_cache_evictions": 3,
+                "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 8000,
             },
             "search": {
                 "positions_searched": 8, "searches": 24, "search_s": 4.0,
                 "anomalies": {"re_emissions": 1, "duplicate_iteration_flushes": 2},
                 "nodes_by_phase": {
                     "0": {"n": 8, "total": 80, "min": 5, "max": 15,
+                          "median_est_reservoir": 9.5,
                           "log2_buckets": {"3": 8}},
                 },
             },
@@ -1071,19 +1528,27 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "realized": {"sf_hash_mb": 64},
         },
         {
-            "worker_id": 1, "games": 1, "rows": 3, "plies_total": 20,
+            "worker_id": 1,
+            "failed": {
+                "exception_type": "RuntimeError", "exception": "engine died",
+                "last_game_id": 4, "last_ply": 17, "games_completed": 1,
+            },
+            "games": 1, "rows": 3, "plies_total": 20,
             "terminations": {"syzygy": 1}, "adjudications": {"syzygy_wdl_2": 1},
             "opening_sources": {"start": 1}, "adjudication_unavailable_plies": 0,
             "dedup": {
                 "positions_first_seen": 4, "dup_hits": 0,
                 "first_seen_by_phase": {"opening": 4, "middlegame": 0, "endgame": 0},
                 "dup_hits_by_phase": {"opening": 0, "middlegame": 0, "endgame": 0},
+                "dedup_cache_entries": 4, "dedup_cache_evictions": 0,
+                "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 4400,
             },
             "search": {
                 "positions_searched": 4, "searches": 12, "search_s": 2.0,
                 "anomalies": {"re_emissions": 0, "bound_lines": 3},
                 "nodes_by_phase": {
                     "0": {"n": 4, "total": 20, "min": 2, "max": 9,
+                          "median_est_reservoir": 4.0,
                           "log2_buckets": {"3": 3, "4": 1}},
                 },
             },
@@ -1108,6 +1573,22 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
     assert summary["dedup"]["positions_visited"] == 14
+    # The bound's counters merge as sums; the bound itself is per worker.
+    assert summary["dedup"]["dedup_cache_evictions"] == 3
+    assert summary["dedup"]["dedup_cache_entries"] == 12
+    assert summary["dedup"]["dedup_cache_max_entries_per_worker"] == 5
+    assert summary["dedup"]["dedup_cache_bytes_per_entry_est"] == pytest.approx(
+        12400 / 12,
+    )
+    # ⚑ One worker died. The merged rows/games above are still ITS SURVIVORS'
+    # numbers, which is exactly why the failure has to be at the top level.
+    assert summary["failed_workers"] == [
+        {
+            "worker_id": 1, "exception_type": "RuntimeError",
+            "exception": "engine died", "last_game_id": 4, "last_ply": 17,
+            "games_completed": 1,
+        },
+    ]
     assert summary["search"]["anomalies"] == {
         "re_emissions": 1, "bound_lines": 3, "duplicate_iteration_flushes": 2,
     }
@@ -1115,6 +1596,10 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     nodes = summary["search"]["nodes_by_phase"]["0"]
     assert (nodes["n"], nodes["total"], nodes["min"], nodes["max"]) == (12, 100, 2, 15)
     assert nodes["log2_buckets"] == {"3": 11, "4": 1}
+    # ⚑ The median estimate REACHES the merged summary -- per worker, because
+    # pooling equal-size reservoirs over unequal n would invent a population.
+    assert nodes["median_est_reservoir_by_worker"] == {"0": 9.5, "1": 4.0}
+    assert "median_est_reservoir" not in nodes, "no pooled median is claimed"
     assert summary["engine"]["sha256"] == "d" * 64
     assert summary["engine"]["id_name"] == "Stockfish test"
     assert set(summary["config_realized_by_worker"]) == {"0", "1"}
@@ -1144,11 +1629,16 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     result = corpus.run_worker(worker_spec(out_dir, game_ids=(0, 1)))
 
     assert result["games"] == 2
+    assert result["failed"] is None
     # Game 1 replays game 0's positions, so every one of them is cache-served.
     assert result["rows"] == 2
     assert result["dedup"]["dup_hits"] == 2
+    assert result["dedup"]["dedup_cache_entries"] == 2
+    assert result["dedup"]["dedup_cache_evictions"] == 0
+    assert result["dedup"]["dedup_cache_bytes_per_entry_est"] > 0.0
     assert result["terminations"] == {"natural": 2}
     assert result["realized"]["sf_hash_mb"] == 64
+    assert result["realized"]["dedup_cache_max"] == corpus.DEFAULT_DEDUP_CACHE_MAX
     assert result["realized"]["max_plies"] == 50
     assert result["realized"]["seed"] == 7
     assert result["realized"]["opening_book_path"] is None
@@ -1188,6 +1678,7 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
     assert summary["games"] == 1
     assert summary["rows"] == 2
     assert summary["schema"] == corpus.SUMMARY_SCHEMA
+    assert summary["failed_workers"] == []
     assert summary["config_requested"]["games"] == 1
     assert summary["config_realized_by_worker"]["0"][corpus.KEY_TT_CARRIED] is True
     assert summary["banked_rows_min_piece_count"] == corpus.MIN_BANKED_PIECES
@@ -1202,6 +1693,172 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
 
     with pytest.raises(FileExistsError, match="already holds files"):
         corpus.run(corpus.build_parser().parse_args(argv))
+
+
+def test_the_read_timeout_flag_reaches_the_engine_it_configures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Take-effect, not acceptance: the value is read BACK off the engine.
+
+    Mutation caught: accepting ``--sf-read-timeout`` and never passing it to
+    ``StockfishUCI`` -- the flag then parses, stamps itself into
+    ``config_requested``, and the engine quietly keeps the driver's 60 s
+    default.  This repo's signature defect, and a stamp echoed from the args
+    could not see it, which is why ``realized`` reads
+    ``engine.read_timeout_s``.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    constructed: dict[str, Any] = {}
+
+    def build(*_args: Any, **kwargs: Any) -> StockfishUCI:
+        constructed.update(kwargs)
+        # The double is built FROM what run_worker passed, so a plumbing that
+        # never happened cannot be papered over here either.
+        return uci_double(engine, read_timeout_s=float(kwargs["read_timeout_s"]))
+
+    monkeypatch.setattr(corpus, "StockfishUCI", build)
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, sf_read_timeout_s=12.5))
+
+    assert constructed["read_timeout_s"] == 12.5
+    assert result["realized"]["sf_read_timeout_s"] == 12.5
+
+
+def test_the_read_timeout_default_is_stated_and_a_bad_one_is_refused() -> None:
+    args = corpus.build_parser().parse_args(["--out-dir", "/tmp/x", "--games", "1"])
+    assert args.sf_read_timeout == corpus.DEFAULT_SF_READ_TIMEOUT_S
+    assert corpus.config_stamp(args, sf_binary="/bin/sf")["sf_read_timeout_s"] == (
+        corpus.DEFAULT_SF_READ_TIMEOUT_S
+    )
+    for bad in ("0", "-1", "nan"):
+        with pytest.raises(ValueError, match="finite and positive"):
+            corpus.run(corpus.build_parser().parse_args(
+                ["--out-dir", "/tmp/x", "--games", "1", "--sf-read-timeout", bad],
+            ))
+
+
+def test_a_worker_that_dies_mid_game_records_its_slot_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead worker returns a FAILED slot with everything it earned.
+
+    Mutation caught: letting the exception out of ``run_worker``.  With a pool
+    that is one dead engine taking the whole run's ``summary.json`` -- every
+    other worker's searches included -- and with a single worker it is a
+    traceback where a partial corpus with a stamp should have been.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT, raise_on_go=4)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *args, **kwargs: uci_double(engine),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+
+    failed = result["failed"]
+    assert failed is not None
+    assert failed["exception_type"] == "RuntimeError"
+    assert failed["exception"] == SCRIPTED_ENGINE_DEATH
+    # Ply 0's three rungs ran; the fourth `go` is ply 1's first.
+    assert (failed["last_game_id"], failed["last_ply"]) == (0, 1)
+    assert failed["games_completed"] == 0
+
+    # ... and the slot is still a slot: every counter the merge reads is there.
+    assert result["games"] == 0
+    assert result["search"]["positions_searched"] == 1, "ply 0 finished"
+    assert result["dedup"]["positions_first_seen"] == 2
+    assert result["shards"] == []
+
+
+def test_a_dead_worker_does_not_take_the_other_workers_summary_with_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two workers, one dies: the survivor's rows and the summary both land.
+
+    ⚑ The pool is replaced by an INLINE executor rather than skipped: ``run``'s
+    multi-worker branch is the code under test (submit / ``as_completed`` /
+    per-future result), and a spawn pool cannot carry a monkeypatched module
+    into its children, so this is the only way to drive that branch against a
+    scripted engine.
+    """
+    healthy = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    dying = ScriptedEngine(preferred=MATE_GAME_SCRIPT, raise_on_go=4)
+    engines = [healthy, dying]  # popped in submission order: worker 0, then 1
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *args, **kwargs: uci_double(engines.pop(0)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", InlineExecutor)
+    out_dir = tmp_path / "run"
+
+    code = corpus.main([
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+    ])
+
+    assert code == 1, "a run that lost a worker did not do what it was asked"
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert [f["worker_id"] for f in summary["failed_workers"]] == [1]
+    assert summary["failed_workers"][0]["exception"] == SCRIPTED_ENGINE_DEATH
+    assert summary["failed_workers"][0]["last_ply"] == 1
+    # The survivor's game is complete and banked.
+    assert summary["games"] == 1
+    assert summary["rows"] == 2
+    rows = [
+        row for shard in summary["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+    assert [row["worker_id"] for row in rows] == [0, 0]
+    assert "FAILED worker 1" in corpus.format_summary(summary)
+
+
+def test_a_worker_whose_process_dies_still_gets_a_mergeable_slot(
+    tmp_path: Path,
+) -> None:
+    """The other half: an OOM kill leaves nothing for ``run_worker`` to record.
+
+    The synthesised slot has to carry every key the merge functions subscript,
+    or one dead process still takes the summary -- just from ``merge_dedup``
+    instead of from the worker.
+    """
+    spec = worker_spec(tmp_path, worker_id=3)
+    failure = corpus.worker_failure(
+        MemoryError("killed"), progress=corpus.WorkerProgress(), games_completed=0,
+    )
+    slot = corpus.failed_worker_slot(spec, failure)
+
+    summary = corpus.build_summary(
+        results=[slot], requested={"run_id": "t"}, config_sha="abc",
+        engine_record={"path": "/bin/sf"}, engine_id_name=None,
+        staircase=corpus.parse_staircase(corpus.DEFAULT_STAIRCASE),
+        started_utc="2026-08-27T00:00:00+00:00", wall_s=1.0,
+    )
+
+    assert summary["rows"] == 0
+    assert summary["failed_workers"] == [
+        {
+            "worker_id": 3, "exception_type": "MemoryError", "exception": "killed",
+            "last_game_id": None, "last_ply": None, "games_completed": 0,
+        },
+    ]
+    assert summary["config_realized_by_worker"]["3"] == {
+        "unavailable_worker_process_died": True,
+    }
+    assert json.loads(json.dumps(summary, default=corpus._json_default))
 
 
 # ── the real engine ──────────────────────────────────────────────────────────
