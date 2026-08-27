@@ -174,6 +174,26 @@ NATIVE_ARMS: tuple[str, ...] = (
     gen.VALUE_SOURCE_NNUE_STATIC, *readout.READOUT_ARMS,
 )
 
+#: The arms that intern a canonical DAG store, and therefore the ONLY consumers
+#: of ``--dag-max-nodes`` and ``--dag-reset-every``. Derived from the readout's
+#: own ``ArmSpec.uses_dag`` for the same reason ``NATIVE_ARMS`` is derived: a new
+#: DAG-backed arm there must not need an edit here to be recognised.
+#:
+#: ⚑ IT IS NOT ``{nnue-qsearch-dag}``. ``nnue-fastq`` is DAG-backed too, and
+#: ``open_arms`` hands it a live ``dag_source`` -- so a hand-written set that
+#: named only the obvious arm would refuse a knob the selected arm does read,
+#: which is the same defect as accepting one it does not.
+DAG_BACKED_ARMS: frozenset[str] = frozenset(
+    name for name, spec in readout.ARM_SPECS.items() if spec.uses_dag
+)
+
+#: ``--dag-reset-every``'s default: drop a DAG-backed arm's memo every position.
+#: It lives here rather than in ``add_argument`` because the flag's argparse
+#: default is ``None`` -- "not supplied", which is what lets ``validate_knobs``
+#: tell an explicit value from an absent one -- so the number itself needs a home
+#: both the resolver and a test can read.
+DEFAULT_DAG_RESET_EVERY = 1
+
 #: ``sf-<nodes>``. The node budget is IN THE ARM NAME rather than in a flag,
 #: because a ladder is several arms in one run and a single ``--sf-nodes``
 #: would silently give them all the same budget.
@@ -902,6 +922,16 @@ class GateConfig:
     def native_arms(self) -> tuple[str, ...]:
         return tuple(a for a in self.arms if a in NATIVE_ARMS)
 
+    @property
+    def dag_arms(self) -> tuple[str, ...]:
+        """The selected arms with a canonical DAG store -- possibly none.
+
+        The store knobs are stamped into the report only when this is non-empty:
+        a ``dag_max_nodes`` printed beside a run with no DAG store reads as a
+        setting that shaped the numbers, and it did not.
+        """
+        return tuple(a for a in self.arms if a in DAG_BACKED_ARMS)
+
 
 def _static_arm_source(cfg: GateConfig, **kwargs: Any) -> gen.NnueArmValueSource:
     """``nnue-static`` through the GENERATOR's own knob gating.
@@ -977,7 +1007,6 @@ def open_arms(
                     ),
                     hash_mb=cfg.sf_hash_mb, nice=max(0, cfg.nice),
                 )
-                clear_transposition_table(engine)
                 if spec.rooted:
                     rooted.append(RootedStockfishArm(
                         spec=spec, engine=engine, cp_slope=cfg.cp_slope,
@@ -990,6 +1019,15 @@ def open_arms(
                         cp_draw_width=cfg.cp_draw_width,
                         fresh_per_position=cfg.sf_fresh_per_position,
                     ))
+                # ⚑ THE COLD START HAPPENS AFTER THE ARM IS REGISTERED, and the
+                # order is the whole point. `clear_transposition_table` talks
+                # UCI -- it can time out, or find a child that died during the
+                # handshake -- and the cleanup below can only close arms that
+                # are already in these lists. Clearing first left a live
+                # Stockfish subprocess owned by nobody for the rest of the run.
+                # No arm searches during construction, so deferring the clear
+                # costs nothing: the table is still cold at the first search.
+                clear_transposition_table(engine)
                 continue
             bank = _bank_path(cfg.bank_observations, name)
             source: gen.NnueArmValueSource
@@ -1359,15 +1397,36 @@ def run(cfg: GateConfig) -> dict[str, Any]:
             "started_utc": started_utc,
             "audit_set": str(cfg.audit_set),
             "audit_set_sha256": audit_sha,
+            # ⚑ REQUESTED AND REALIZED, the same split as `nice_*` below and as
+            # each arm's `multipv_requested` / `multipv_realized_*`. `limit` is
+            # what the CLI ASKED for (0 = all); `limit_realized` is how many
+            # rows the slice actually yielded, which is smaller whenever the
+            # audit set is shorter than the ask. Publishing the ask alone is a
+            # value that reads as a measurement of what was scored and is not
+            # one -- and it is inert to whether the slice is applied at all.
             "limit": int(cfg.limit),
+            "limit_realized": len(positions),
             "pack_path": str(cfg.pack) if cfg.native_arms else None,
             "pack_file_sha256": None if pack_stamp is None else pack_stamp[0],
             "oneply_sigma": float(cfg.oneply_sigma),
-            "cp_per_internal_unit": float(cfg.cp_per_internal_unit),
+            # ⚑ NULL RATHER THAN A NUMBER WHEN NO SELECTED ARM CONSUMED IT.
+            # `cp_per_internal_unit` converts the NATIVE arms' internal units;
+            # the Stockfish arms are handed cp already and never touch it, so
+            # stamping it on an SF-only run publishes a knob that reads as
+            # having shaped the numbers when nothing read it. `cp_slope` and
+            # `cp_draw_width` are NOT gated: `q_from_effective_cp` is on every
+            # arm's path, Stockfish arms included.
+            "cp_per_internal_unit": (
+                float(cfg.cp_per_internal_unit) if cfg.native_arms else None
+            ),
             "cp_slope": float(cfg.cp_slope),
             "cp_draw_width": float(cfg.cp_draw_width),
-            "dag_max_nodes": int(cfg.dag_max_nodes),
-            "dag_reset_every_positions": int(cfg.dag_reset_every),
+            "dag_max_nodes": (
+                int(cfg.dag_max_nodes) if cfg.dag_arms else None
+            ),
+            "dag_reset_every_positions": (
+                int(cfg.dag_reset_every) if cfg.dag_arms else None
+            ),
             "sf_binary": None if cfg.sf_binary is None else str(cfg.sf_binary),
             "sf_binary_sha256": (
                 None if cfg.sf_binary is None
@@ -1456,16 +1515,23 @@ def build_parser() -> argparse.ArgumentParser:
              "position's search into the next. Expensive; the default is one "
              "cold start per RUN and the verdict is stamped in the report.",
     )
+    # ⚑ `default=None` MEANS "NOT SUPPLIED", not "no value". Both knobs are
+    # refused on a run with no DAG-backed arm, and a refusal that cannot tell an
+    # explicit value from argparse's own default cannot fire. The numbers they
+    # fall back to are `shadow.DEFAULT_DAG_MAX_NODES` and
+    # `DEFAULT_DAG_RESET_EVERY`, resolved in `config_from_args`.
     p.add_argument(
-        "--dag-max-nodes", type=int, default=shadow.DEFAULT_DAG_MAX_NODES,
+        "--dag-max-nodes", type=int, default=None,
         help="canonical-store watchdog for the DAG-backed arms. 0 disables it, "
-             "which is how the DAG arm OOMs.",
+             "which is how the DAG arm OOMs. Default "
+             f"{shadow.DEFAULT_DAG_MAX_NODES}.",
     )
     p.add_argument(
-        "--dag-reset-every", type=int, default=1,
+        "--dag-reset-every", type=int, default=None,
         help="drop a DAG-backed arm's memo every N positions (0 = never). "
-             "Audit rows are independent draws, so the default keeps one row's "
-             "cost from depending on the row before it.",
+             "Audit rows are independent draws, so the default "
+             f"({DEFAULT_DAG_RESET_EVERY}) keeps one row's cost from depending "
+             "on the row before it.",
     )
     p.add_argument("--json", type=Path, default=None)
     p.add_argument("--dump-per-position", type=Path, default=None)
@@ -1491,7 +1557,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fastq-delta-margin", type=int, default=None)
     p.add_argument("--fastq-recapture-exempt", type=int, choices=(0, 1), default=None)
 
-    p.add_argument("--nnue-cp-per-unit", type=float, default=gen.NNUE_CP_PER_INTERNAL_UNIT)
+    # ⚑ Also `default=None` for "not supplied", and for the same reason: this
+    # one is read by the NATIVE arms alone and is refused without one. Its
+    # fallback is `gen.NNUE_CP_PER_INTERNAL_UNIT`. `--nnue-cp-slope` and
+    # `--nnue-cp-draw-width` keep their eager defaults -- every arm consumes
+    # them, so there is nothing to refuse and nothing to tell apart.
+    p.add_argument("--nnue-cp-per-unit", type=float, default=None)
     p.add_argument("--nnue-cp-slope", type=float, default=gen.NNUE_CP_SLOPE)
     p.add_argument("--nnue-cp-draw-width", type=float, default=gen.NNUE_CP_DRAW_WIDTH)
     return p
@@ -1532,8 +1603,18 @@ def validate_knobs(args: argparse.Namespace, arms: Sequence[str]) -> None:
     is ``nnue-static`` -- and ``cae_arm_static_eval`` is precisely the consumer
     that DOES read it. Restating the rule is the smaller error than silently
     dropping a knob the selected arm consumes.
+
+    ⚑ THE RULE APPLIES IN BOTH DIRECTIONS, and the second half was the gap. The
+    per-arm knobs below were refused while the WHOLE-RUN ones -- the pack, the
+    cp-per-unit conversion, the DAG store bounds, the native leaf bank -- were
+    accepted on a Stockfish-only run, where nothing reads any of them.
+    ``--nnue-cp-per-unit`` was the worst of the four because ``run`` STAMPED it
+    into ``provenance``: a value no arm consumed, published beside the numbers
+    as if it had shaped them.
     """
     selected = set(arms)
+    native = selected & set(NATIVE_ARMS)
+    dag_backed = selected & DAG_BACKED_ARMS
     resolver_family = {gen.VALUE_SOURCE_NNUE_STATIC, readout.ARM_QSEARCH,
                        readout.ARM_QSEARCH_DAG}
     qsearch_family = {readout.ARM_QSEARCH, readout.ARM_QSEARCH_DAG}
@@ -1562,6 +1643,34 @@ def validate_knobs(args: argparse.Namespace, arms: Sequence[str]) -> None:
     ) and readout.ARM_FASTQ not in selected:
         raise ValueError(
             "--fastq-* knobs were supplied but nnue-fastq is not selected",
+        )
+    if args.nnue_pack is not None and not native:
+        raise ValueError(
+            f"--nnue-pack is the NATIVE arms' weights and only {NATIVE_ARMS} "
+            "evaluate with it; no native arm is selected, so the pack would be "
+            "read by nothing and not even stamped",
+        )
+    if args.nnue_cp_per_unit is not None and not native:
+        raise ValueError(
+            "--nnue-cp-per-unit converts the NATIVE arms' internal units to "
+            "cp; the Stockfish arms are handed cp already and never read it. "
+            "No native arm is selected, and the report used to stamp this "
+            "value anyway.",
+        )
+    if args.bank_observations is not None and not native:
+        raise ValueError(
+            "--bank-observations banks the NATIVE arms' raw scores through the "
+            "generator's own leaf bank; no native arm is selected, so no bank "
+            "file would be written. The Stockfish arms bank through "
+            "--dump-per-position --dump-move-values instead.",
+        )
+    if any(
+        v is not None for v in (args.dag_max_nodes, args.dag_reset_every)
+    ) and not dag_backed:
+        raise ValueError(
+            "--dag-max-nodes / --dag-reset-every bound and reset a DAG-backed "
+            f"arm's canonical store; none of {sorted(DAG_BACKED_ARMS)} is "
+            "selected, so there is no store to watch or drop",
         )
 
 
@@ -1600,7 +1709,23 @@ def config_from_args(args: argparse.Namespace) -> GateConfig:
             "non-positive sigma flattens or inverts every label without "
             "failing any check",
         )
-    if int(args.dag_max_nodes) < 0 or int(args.dag_reset_every) < 0:
+    # ⚑ `None` here is "not supplied", which `validate_knobs` has already used
+    # to decide whether the knob had a consumer at all. The fallbacks are the
+    # values the eager argparse defaults used to carry, so an unset run is
+    # unchanged and only an EXPLICIT knob on a consumer-less run is refused.
+    cp_per_internal_unit = (
+        gen.NNUE_CP_PER_INTERNAL_UNIT if args.nnue_cp_per_unit is None
+        else float(args.nnue_cp_per_unit)
+    )
+    dag_max_nodes = (
+        shadow.DEFAULT_DAG_MAX_NODES if args.dag_max_nodes is None
+        else int(args.dag_max_nodes)
+    )
+    dag_reset_every = (
+        DEFAULT_DAG_RESET_EVERY if args.dag_reset_every is None
+        else int(args.dag_reset_every)
+    )
+    if dag_max_nodes < 0 or dag_reset_every < 0:
         raise ValueError("--dag-max-nodes and --dag-reset-every must be >= 0")
     # ⚑ The readout resolver's DAG-cap refusal is about the SIBLING tool's
     # decomposition: it needs nnue-qsearch-dag to stay bit-identical to
@@ -1627,11 +1752,11 @@ def config_from_args(args: argparse.Namespace) -> GateConfig:
         ),
         limit=int(args.limit),
         oneply_sigma=sigma,
-        cp_per_internal_unit=float(args.nnue_cp_per_unit),
+        cp_per_internal_unit=cp_per_internal_unit,
         cp_slope=float(args.nnue_cp_slope),
         cp_draw_width=float(args.nnue_cp_draw_width),
-        dag_max_nodes=int(args.dag_max_nodes),
-        dag_reset_every=int(args.dag_reset_every),
+        dag_max_nodes=dag_max_nodes,
+        dag_reset_every=dag_reset_every,
         sf_binary=sf_binary,
         sf_hash_mb=int(args.sf_hash_mb),
         sf_fresh_per_position=bool(args.sf_fresh_per_position),

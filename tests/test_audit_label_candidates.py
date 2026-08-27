@@ -12,6 +12,18 @@ looking right, because none of them raises on its own:
 * the BANNED SOURCE -- the shallow-SF sidecar beside the audit set ran on a
   dirty shared transposition table and must never be read.
 
+And three more that a review found the tool could be wrong about while every
+one of the tests above stayed green, because each is a check or a value that
+LOOKS present and does not act:
+
+* the UNWIRED GUARD -- ``_refuse_move_set_drift`` was exercised only by a direct
+  call, so deleting its call site in ``run`` broke nothing here;
+* the INERT SLICE -- ``--limit`` was consumed nowhere a test could see, and
+  ``provenance.limit`` echoed the REQUEST, so a skipped slice left no trace;
+* the KNOB WITH NO CONSUMER -- ``--nnue-cp-per-unit``, ``--nnue-pack``,
+  ``--bank-observations`` and the DAG store bounds were accepted on runs whose
+  selected arms read none of them, and the first was stamped into the report.
+
 The mutants that pin them are recorded in the PR description; each was made,
 watched to fail these tests, and reverted.
 """
@@ -47,6 +59,18 @@ _ROOT_FEN = "r3k2r/pppq1ppp/2n1bn2/3pp3/3PP3/2N1BN2/PPPQ1PPP/R3K2R w KQkq - 0 1"
 _MATE_IN_ONE_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
 #: White can stalemate with several queen moves, or mate with others.
 _STALEMATE_FEN = "7k/5Q2/6K1/8/8/8/8/8 w - - 0 1"
+#: The SAME position with BLACK to move -- i.e. NOT side-to-move canonical.
+#: `eval.audit.legal_full_indices` encodes every audit row as white
+#: (`uci_to_policy_index(uci, True)`) while `CBoard` encodes from the side to
+#: move, so the two disagree about EVERY action id here: measured 37 legal moves
+#: each, symmetric difference 74, zero overlap.
+_BLACK_TO_MOVE_FEN = "r3k2r/pppq1ppp/2n1bn2/3pp3/3PP3/2N1BN2/PPPQ1PPP/R3K2R b KQkq - 0 1"
+#: Three distinct white-to-move rows, for the ``--limit`` slice.
+_THREE_FENS = (
+    _ROOT_FEN,
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    _MATE_IN_ONE_FEN,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -783,6 +807,13 @@ def test_the_dirty_tt_shallow_sf_cache_is_never_opened(
     assert decoy.exists()
     assert report["positions_scored"] == 1
     assert set(report["arms"]) == {"nnue-static", "nnue-fastq"}
+    # The positive control for the consumer-gated stamps, on the REAL run path:
+    # nnue-static consumes the cp-per-unit conversion and nnue-fastq is
+    # DAG-backed, so both stamps carry numbers here rather than null.
+    assert report["provenance"]["cp_per_internal_unit"] == pytest.approx(
+        gen.NNUE_CP_PER_INTERNAL_UNIT,
+    )
+    assert report["provenance"]["dag_max_nodes"] == shadow.DEFAULT_DAG_MAX_NODES
 
 
 def test_the_report_stamps_the_audit_set_and_states_the_censoring_rule(
@@ -843,6 +874,43 @@ def test_a_fastq_knob_reaches_the_arms_own_realized_config(
             arm.close()
 
 
+def test_a_stockfish_engine_is_closed_when_its_cold_start_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``ucinewgame`` must not leak the subprocess it was talking to.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is calling ``clear_transposition_table`` BEFORE
+    the arm is appended to ``child``/``rooted``. ``open_arms``'s cleanup walks
+    those lists, so an engine that was constructed and not yet registered is a
+    live Stockfish nobody owns -- and the clear is exactly the step that can
+    fail, because it is the first thing that talks UCI.
+    """
+    engines: list[FakeEngine] = []
+
+    def fake_stockfish(*args: Any, **kwargs: Any) -> FakeEngine:
+        del args, kwargs
+        engine = FakeEngine()
+        engines.append(engine)
+        return engine
+
+    def failing_clear(engine: Any) -> None:
+        del engine
+        raise RuntimeError("ucinewgame handshake timed out")
+
+    monkeypatch.setattr(gate, "StockfishUCI", fake_stockfish)
+    monkeypatch.setattr(gate, "clear_transposition_table", failing_clear)
+
+    names, specs = gate.parse_arms("sf-512")
+    cfg = gate_config(
+        tmp_path / "unread.jsonl", names,
+        sf_specs=specs, sf_binary=Path("stockfish"),
+    )
+    with pytest.raises(RuntimeError, match="ucinewgame handshake timed out"):
+        gate.open_arms(cfg, pack_sha=None)
+    assert len(engines) == 1, "the engine constructor was not the one patched"
+    assert engines[0].closed is True, "the failed cold start leaked its engine"
+
+
 def test_the_default_fastq_width_is_the_extensions_own(
     tmp_path: Path, synthetic_pack: Path,
 ) -> None:
@@ -864,6 +932,21 @@ def test_the_default_fastq_width_is_the_extensions_own(
             arm.close()
 
 
+def refusal_args(arms: str, *extra: str) -> argparse.Namespace:
+    """CLI args for one refusal case, with a pack IFF a native arm needs one.
+
+    ⚑ THE PACK IS CONDITIONAL, and that is load-bearing. ``--nnue-pack`` is
+    itself one of the knobs a Stockfish-only run refuses, so passing it on every
+    row would make each sf-only case raise the PACK's message before reaching
+    the knob the row is about -- every row still red, every row proving the
+    wrong thing.
+    """
+    argv = ["--arms", arms, *extra]
+    if any(a in gate.NATIVE_ARMS for a in arms.split(",")):
+        argv += ["--nnue-pack", "unused.pack"]
+    return gate.build_parser().parse_args(argv)
+
+
 @pytest.mark.parametrize(
     ("arms", "flag", "value", "message"),
     [
@@ -871,16 +954,104 @@ def test_the_default_fastq_width_is_the_extensions_own(
         ("nnue-fastq", "--nnue-qsearch-max-ply", "2", "--nnue-qsearch-"),
         ("nnue-fastq", "--dag-node-cap", "8", "--dag-node-cap"),
         ("sf-512", "--nnue-resolver-max-depth", "8", "--nnue-resolver-max-depth"),
+        # ⚑ THE WHOLE-RUN KNOBS, which were accepted in silence. The first is
+        # the worst of them: it was also STAMPED into `provenance`, so an
+        # SF-only report published a native-arm conversion factor beside numbers
+        # no arm had used it to produce.
+        ("sf-512", "--nnue-cp-per-unit", "300", "--nnue-cp-per-unit"),
+        ("sf-512", "--bank-observations", "bank.jsonl", "--bank-observations"),
+        ("sf-512", "--dag-max-nodes", "1000", "--dag-max-nodes"),
+        ("sf-512", "--dag-reset-every", "4", "--dag-reset-every"),
+        ("sfroot-2048-mpv20", "--nnue-cp-per-unit", "300", "--nnue-cp-per-unit"),
+        # ⚑ NATIVE IS NOT THE SAME SET AS DAG-BACKED. `nnue-static` and
+        # `nnue-qsearch` intern no canonical store, so the store knobs have no
+        # consumer on those runs either.
+        ("nnue-static", "--dag-max-nodes", "1000", "--dag-max-nodes"),
+        ("nnue-qsearch", "--dag-reset-every", "4", "--dag-reset-every"),
     ],
 )
 def test_a_knob_no_selected_arm_consumes_is_refused(
     arms: str, flag: str, value: str, message: str,
 ) -> None:
-    args = gate.build_parser().parse_args([
-        "--arms", arms, "--nnue-pack", "unused.pack", flag, value,
-    ])
     with pytest.raises(ValueError, match=message):
+        gate.config_from_args(refusal_args(arms, flag, value))
+
+
+def test_a_stockfish_only_run_refuses_the_native_pack() -> None:
+    """``--nnue-pack`` on a run with no native arm: read by nothing, not stamped.
+
+    It gets its own test rather than a parametrize row because ``refusal_args``
+    is what decides whether to pass a pack, and a helper cannot test itself.
+    """
+    args = gate.build_parser().parse_args([
+        "--arms", "sf-512", "--nnue-pack", "unused.pack",
+    ])
+    with pytest.raises(ValueError, match="--nnue-pack"):
         gate.config_from_args(args)
+
+
+def test_a_dag_backed_run_still_accepts_every_whole_run_knob() -> None:
+    """The control for the refusals: an arm that DOES consume them gets them.
+
+    A refusal that fired on the consuming arm too would pass every test above
+    and make the tool unusable, so the accepting direction is asserted on the
+    resolved config rather than assumed.
+    """
+    cfg = gate.config_from_args(gate.build_parser().parse_args([
+        "--arms", "nnue-qsearch-dag", "--nnue-pack", "unused.pack",
+        "--nnue-cp-per-unit", "300", "--dag-max-nodes", "4096",
+        "--dag-reset-every", "4", "--bank-observations", "bank.jsonl",
+    ]))
+    assert cfg.cp_per_internal_unit == pytest.approx(300.0)
+    assert cfg.dag_max_nodes == 4096
+    assert cfg.dag_reset_every == 4
+    assert cfg.bank_observations == Path("bank.jsonl")
+    assert cfg.dag_arms == ("nnue-qsearch-dag",)
+    # nnue-fastq is DAG-backed too, read off ArmSpec.uses_dag rather than named.
+    assert sorted(gate.DAG_BACKED_ARMS) == ["nnue-fastq", "nnue-qsearch-dag"]
+
+
+def test_the_sentinel_defaults_resolve_to_the_values_they_replaced() -> None:
+    """``default=None`` must not change what an UNSET run does.
+
+    The three knobs moved to a "not supplied" sentinel so the refusals above can
+    tell an explicit value from argparse's own default. This is the check that
+    the move did not quietly redefine the defaults themselves.
+    """
+    cfg = gate.config_from_args(gate.build_parser().parse_args([
+        "--arms", "nnue-qsearch-dag", "--nnue-pack", "unused.pack",
+    ]))
+    assert cfg.cp_per_internal_unit == gen.NNUE_CP_PER_INTERNAL_UNIT
+    assert cfg.dag_max_nodes == shadow.DEFAULT_DAG_MAX_NODES
+    assert cfg.dag_reset_every == gate.DEFAULT_DAG_RESET_EVERY == 1
+
+
+def test_a_report_stamps_a_whole_run_knob_only_when_an_arm_consumed_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No native arm, no DAG arm -> the knobs stamp NULL, not their defaults.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is stamping ``float(cfg.cp_per_internal_unit)``
+    unconditionally. A number on the face of a report reads as a setting that
+    shaped it; on a run with no native arm nothing read this one, and a default
+    printed there is indistinguishable from a value that was applied.
+    """
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(_ROOT_FEN, listed=[(legal_ucis_of(_ROOT_FEN)[0], 10)]),
+    ])
+    arm = ScriptedChildArm("scripted", {})
+    provenance = run_with_arms(
+        monkeypatch, gate_config(audit, (arm.arm,)), [arm],
+    )["provenance"]
+    assert provenance["cp_per_internal_unit"] is None
+    assert provenance["dag_max_nodes"] is None
+    assert provenance["dag_reset_every_positions"] is None
+    assert provenance["pack_path"] is None
+    # The cp logistic IS on every arm's path, Stockfish arms included, so these
+    # two are real numbers on the same report. The null above is a consumer
+    # claim, not a blanket "no native arm, no cp fields".
+    assert provenance["cp_slope"] == pytest.approx(gen.NNUE_CP_SLOPE)
+    assert provenance["cp_draw_width"] == pytest.approx(gen.NNUE_CP_DRAW_WIDTH)
 
 
 def test_the_static_arm_still_consumes_the_resolver_depth() -> None:
@@ -904,3 +1075,128 @@ def test_the_probe_and_the_audit_scorer_must_agree_on_the_move_set() -> None:
     position = argparse.Namespace(key="k", fen=_ROOT_FEN)
     with pytest.raises(RuntimeError, match="different move set"):
         gate._refuse_move_set_drift(cast(Any, position), probe, idxs)
+
+
+def test_a_black_to_move_audit_row_is_refused_through_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The drift guard is WIRED INTO ``run``, proved by a row that trips it.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is deleting the ``_refuse_move_set_drift``
+    call from ``run``. The test above calls the guard directly, so it passes on
+    an unwired guard -- a check that cannot fire is this repo's signature defect
+    wearing a helper's name.
+
+    ⚑ AND THE DRIFT IS REAL, NOT HYPOTHETICAL. ``eval.audit`` hard-codes
+    ``uci_to_policy_index(uci, True)`` because audit rows are meant to be
+    side-to-move canonical; ``CBoard`` encodes from the side to move. On this
+    row the two index sets are DISJOINT -- 37 legal moves each, symmetric
+    difference 74 -- so the ``full[legal_idxs]`` gather in ``child_label`` reads
+    4672-vector entries the softmax never wrote.
+
+    ⚑ WHAT THE UNWIRED MUTANT ACTUALLY DOES, MEASURED rather than assumed: it
+    dies one line further on in ``probe_order_for`` with a bare
+    ``KeyError: 4641``. So the guard is not buying "raises instead of not
+    raising" -- it is buying a NAMED position, its FEN and the symmetric
+    difference in place of a dict lookup blowing up two helpers deep. The gather
+    IS silent in the other direction: where the audit set is a strict SUBSET of
+    the probe's (a legal move ``uci_to_policy_index`` declines to encode), every
+    later lookup succeeds and the label is simply built on less than the full
+    move mass, with nothing raising anywhere.
+    """
+    fen = _BLACK_TO_MOVE_FEN
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(fen, listed=[(u, 100 - 10 * i)
+                               for i, u in enumerate(legal_ucis_of(fen)[:5])]),
+    ])
+    arm = ScriptedChildArm("scripted", {})
+    with pytest.raises(RuntimeError, match="different move set"):
+        run_with_arms(monkeypatch, gate_config(audit, (arm.arm,)), [arm])
+    # The arm WAS driven before the refusal, so the guard is inside the scoring
+    # loop and not a precondition `run` could have checked on the file alone.
+    assert arm.positions == 1
+
+
+def test_the_same_row_with_white_to_move_scores_without_the_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control for the test above: the guard fires on the SEAT, not the row.
+
+    Without this, a ``_refuse_move_set_drift`` that raised unconditionally would
+    pass the black-to-move test and break the tool.
+    """
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(_ROOT_FEN, listed=[(u, 100 - 10 * i)
+                                     for i, u in enumerate(legal_ucis_of(_ROOT_FEN)[:5])]),
+    ])
+    arm = ScriptedChildArm("scripted", {})
+    report = run_with_arms(monkeypatch, gate_config(audit, (arm.arm,)), [arm])
+    assert report["positions_scored"] == 1
+
+
+# ── 18-19. the --limit slice ─────────────────────────────────────────────────
+
+
+def limited_audit_set(path: Path) -> Path:
+    return write_audit_set(path, [
+        audit_row(fen, listed=[(legal_ucis_of(fen)[0], 10)]) for fen in _THREE_FENS
+    ])
+
+
+def test_the_limit_bounds_the_rows_the_arms_are_actually_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--limit 2`` on a 3-row set: two rows scored, two arm calls, no more.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is dropping the slice
+    (``positions = positions[: cfg.limit]``). Nothing downstream notices: the
+    run simply scores every row in the file, the report is well-formed, and
+    ``provenance.limit`` still echoes the 2 that was asked for -- so the one
+    number a reader would check to catch it is the number that lies.
+    """
+    audit = limited_audit_set(tmp_path / "audit.jsonl")
+    arm = ScriptedChildArm("scripted", {})
+    dump = tmp_path / "rows.jsonl"
+    report = run_with_arms(
+        monkeypatch,
+        gate_config(audit, (arm.arm,), limit=2, dump_per_position=dump),
+        [arm],
+    )
+    assert report["audit_positions_in_file"] == 3
+    assert report["positions_scored"] == 2
+    # The arm itself was driven twice, which is the claim `positions_scored`
+    # would still make if the slice had been skipped and two rows had failed to
+    # encode instead.
+    assert arm.positions == 2
+    assert len(dump.read_text(encoding="utf-8").splitlines()) == 2
+    assert report["provenance"]["limit"] == 2
+    assert report["provenance"]["limit_realized"] == 2
+
+
+def test_the_realized_limit_is_the_slice_and_not_the_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A limit larger than the file: the REQUEST is 5 and the REALIZED is 3.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is stamping ``int(cfg.limit)`` under both
+    keys. ``provenance.limit`` is what the CLI asked for and cannot be a
+    measurement of anything; ``limit_realized`` is how many rows the slice
+    yielded, and the two only coincide when the ask happened to fit.
+    """
+    audit = limited_audit_set(tmp_path / "audit.jsonl")
+    arm = ScriptedChildArm("scripted", {})
+    report = run_with_arms(
+        monkeypatch, gate_config(audit, (arm.arm,), limit=5), [arm],
+    )
+    assert report["provenance"]["limit"] == 5
+    assert report["provenance"]["limit_realized"] == 3
+    assert report["positions_scored"] == 3
+    assert arm.positions == 3
+
+    # 0 means "all", and the realized value says so rather than repeating 0.
+    unlimited = ScriptedChildArm("scripted", {})
+    whole = run_with_arms(
+        monkeypatch, gate_config(audit, (unlimited.arm,), limit=0), [unlimited],
+    )
+    assert whole["provenance"]["limit"] == 0
+    assert whole["provenance"]["limit_realized"] == 3
