@@ -1362,13 +1362,45 @@ def sf_policy_floor_deficit(
 # calibration can be done from production rows before the term is ever switched on.
 SF_SHAPE_TEMP_CP_DEFAULT = 100.0
 
-# Typo band for the above, in the same centipawn units. NOT a calibration
-# claim -- deliberately far wider than any temperature anyone would ship -- and
-# NOT a substitute for the sweep the default's comment demands. Its only job is
-# to keep an in-sign absurdity (the `zclip_max_norm: 1e-9` shape) from being
-# accepted in silence and quietly emptying the entropy column.
+# Band for the above, in the same centipawn units. The LOWER bound is a typo guard
+# (an in-sign absurdity like `1e-9` -- the `zclip_max_norm` shape -- would be accepted
+# in silence and quietly empty the entropy column).
+#
+# ⚑⚑ THE UPPER BOUND IS NOT A TYPO GUARD. IT IS A SOUNDNESS LIMIT OF THE SURFACED-SET
+# RECOVERY, AND IT IS DERIVED, NOT CHOSEN. `sf_surfaced_move_mask` recovers S from the
+# regret vector alone, and a REAL SF move sitting at the `SF_OWN_REGRET_CAP_CP` cap ties
+# the writer's fill and is DROPPED from S -- the one-directional lossiness that function's
+# docstring admits. That docstring then argues the loss is harmless "because the teacher
+# gives such a move ~0 weight anyway", and THAT argument is temperature-dependent:
+#
+#     relative teacher weight of a capped move = exp(-SF_OWN_REGRET_CAP_CP / temp_cp)
+#       temp_cp =  100  ->  4.5e-5   negligible, the argument holds
+#       temp_cp = 1000  ->  0.368    A THIRD OF THE BEST MOVE'S MASS, silently missing
+#
+# An earlier revision of this file set the ceiling to 10000 as a round "obviously wide
+# enough" number, which made that unsoundness REACHABLE -- and the deferred calibration is
+# explicitly a TEMPERATURE SWEEP, so it walks straight into it. Found by an independent
+# grok review of PR #479. [[wiring_a_dead_knob_can_arm_a_crash]]
+#
+# So the ceiling is the largest temperature at which a capped move stays below
+# SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT of the best move's mass:
+#     temp_cp <= SF_OWN_REGRET_CAP_CP / ln(1 / eps)
+# ⚑ Raising this ceiling REQUIRES first fixing the recovery (a fill strictly above the
+# cap, which is a WRITER change and reprocesses shards). Do not widen it to unblock a
+# high-temperature arm; the arm would be training on a teacher missing its heaviest tail.
 SF_SHAPE_TEMP_CP_MIN = 1.0
-SF_SHAPE_TEMP_CP_MAX = 10000.0
+# eps is a JUDGEMENT CALL and is stated as one. 1e-2 admits the ~200 cp region the
+# existing temperature-sweep test already exercises (evidence about what this repo
+# considers a plausible teacher temperature) while still excluding the regime where the
+# omission is gross: a capped move carries 1% of the best move's mass at the ceiling and
+# 37% at temp_cp=1000. It was 1e-3 for one revision, chosen for roundness rather than for
+# a reason, and that silently outlawed a temperature the suite already used -- picking the
+# constant to make a test pass would be the trap, but so is keeping an arbitrary one that
+# blocks legitimate work.
+SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT = 1.0e-2
+SF_SHAPE_TEMP_CP_MAX = float(
+    int(SF_OWN_REGRET_CAP_CP / math.log(1.0 / SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT))
+)
 
 
 @dataclass(frozen=True)
@@ -2773,9 +2805,24 @@ def compute_loss(
         )
         sf_floor = floor_out.deficit
         sf_floor_binds = floor_out.binds
-        shape_out = sf_shape_conditional_kl(
-            masked_base, po_probs, reg_vec, sf_legal, params=shape_params,
-        )
+      # ⚑ THE GRAPH IS BUILT ONLY WHEN THE TERM IS IN THE OBJECTIVE, and the decision
+      # lives HERE rather than inside the kernel. `sf_shape_conditional_kl` is a maths
+      # function and stays unconditionally differentiable -- an earlier revision put this
+      # guard inside it and broke five kernel tests that legitimately check gradient
+      # properties at default params, which is the signal that the policy belonged at the
+      # CALLER. At the shipped `w = 0.0` the KL VALUE is still wanted (`m_sf_shape` is the
+      # instrument the whole change exists to expose) but its GRAPH is not: the term is
+      # skipped below under `if w == 0.0: continue`, so `total.backward()` never traverses
+      # it, while every microbatch carrying `sf_p0_regret_t` still allocated a full-width
+      # fp32 log-softmax graph that stayed alive until the losses dict dropped. A
+      # default-ON memory tax for a default-OFF term. Found by an independent grok review
+      # of PR #479. Values are identical either way; only graph recording changes.
+        with torch.set_grad_enabled(
+            torch.is_grad_enabled() and float(shape_params.w) != 0.0
+        ):
+            shape_out = sf_shape_conditional_kl(
+                masked_base, po_probs, reg_vec, sf_legal, params=shape_params,
+            )
   # "Did the term SELECT anything", the column that separates a weight that
   # reaches the loss and does nothing from a dead knob. A row with fewer than two
   # surfaced moves is EXACTLY zero at every weight (see

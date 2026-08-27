@@ -365,7 +365,7 @@ def test_a_lower_temperature_sharpens_the_teacher() -> None:
                 logits, probs, reg, legal, params=SfShapeParams(temp_cp=t),
             ).h_sf_given_s
         )
-        for t in (10.0, 50.0, 200.0, 1000.0)
+        for t in (10.0, 50.0, 100.0, 200.0)  # 1000.0 dropped: out of the soundness band
     ]
     assert entropies == sorted(entropies), entropies
     # The flattest end approaches uniform over the three surfaced moves.
@@ -869,6 +869,14 @@ def test_the_columns_reach_the_result_row() -> None:
     ))
     assert row["m_sf_shape"] == 0.5
     assert row["sf_shape_entropy_gap"] == 0.5
+  # ⚑ THESE TWO WERE SET IN THE FIXTURE AND NEVER ASSERTED, so a mutant dropping
+  # them from `_train_metrics_dict` stayed green -- the Ray result row would omit
+  # the column while TensorBoard (`asdict`) still showed it, and the two operator
+  # surfaces would disagree with nothing failing. `sf_shape_active_frac` is the
+  # SELECTION column the comments tell an operator to read FIRST, so it is the
+  # worst one to lose. Found by an independent grok review of PR #479.
+    assert row["sf_shape_active_frac"] == 0.9
+    assert row["sf_shape_h_ours_full_legal"] == 0.68
     assert row["sf_shape_sharper_frac"] == 0.64
     assert row["sf_shape_surfaced_moves"] == pytest.approx(5.57)
     assert row["sf_shape_h_ours_given_s"] == pytest.approx(0.7)
@@ -1046,3 +1054,31 @@ def test_the_trainer_announces_sf_shape_from_the_consumers_object(tmp_path, caps
     # The knob is under the ruler when it is on -- the operator-visible half of
     # the fix an independent review of #479 found missing.
     assert "in_ruler_shape=True" in line[0]
+
+
+def test_the_temperature_ceiling_keeps_a_capped_move_negligible() -> None:
+    """The ceiling is a SOUNDNESS limit of the recovery, not a round number.
+
+    `sf_surfaced_move_mask` drops a real SF move sitting at `SF_OWN_REGRET_CAP_CP`,
+    because it ties the writer's fill. The docstring calls that harmless "because the
+    teacher gives it ~0 weight anyway" -- and that argument is TEMPERATURE-DEPENDENT.
+    At the ceiling a capped move must still be negligible; at temp_cp=1000 it would
+    carry e^-1 = 0.368 of the best move's mass while being silently absent.
+
+    MUTANT: set SF_SHAPE_TEMP_CP_MAX back to the round 10000.0 it briefly was.
+    Found by an independent grok review of PR #479.
+    """
+    from chess_anti_engine.train.losses import (
+        SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT,
+        SF_SHAPE_TEMP_CP_MAX,
+    )
+
+    at_ceiling = math.exp(-SF_OWN_REGRET_CAP_CP / SF_SHAPE_TEMP_CP_MAX)
+    assert at_ceiling <= SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT, (
+        f"a capped move carries {at_ceiling:.4f} of the best move's mass at the "
+        f"ceiling temp_cp={SF_SHAPE_TEMP_CP_MAX}, above the "
+        f"{SF_SHAPE_CAPPED_MOVE_MAX_WEIGHT} the recovery's soundness argument assumes"
+    )
+    # And the regime the review found must stay out of bounds.
+    with pytest.raises(ValueError, match="sf_shape_temp_cp"):
+        SfShapeParams(w=0.0, temp_cp=1000.0)

@@ -1442,13 +1442,13 @@ def test_ruler_loss_shape_reads_the_consumers_object_and_only_when_active() -> N
     # Retuning the temperature MUST move the shape dict, or the ruler cannot
     # see it. This is the observation that separates "hashed" from "wired".
     retuned = SimpleNamespace(_eval_loss_kwargs={
-        "sf_shape": SfShapeParams(w=0.7, temp_cp=250.0),
+        "sf_shape": SfShapeParams(w=0.7, temp_cp=200.0),  # in-band retune
     })
     assert Trainer._ruler_loss_shape(retuned) != got  # pyright: ignore[reportArgumentType]
 
     # OFF: inert at the shipped weight, exactly like the floor.
     shape_off = SimpleNamespace(_eval_loss_kwargs={
-        "sf_shape": SfShapeParams(w=0.0, temp_cp=999.0),
+        "sf_shape": SfShapeParams(w=0.0, temp_cp=200.0),  # in-band; w=0 is what makes it inert
     })
     assert Trainer._ruler_loss_shape(shape_off) == {}  # pyright: ignore[reportArgumentType]
 
