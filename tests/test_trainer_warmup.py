@@ -1313,7 +1313,7 @@ def _zeroed_metrics(**overrides: Any) -> TrainMetrics:
 def test_grad_clip_metric_kwargs_aggregates_the_whole_iteration() -> None:
     kwargs = trainer_mod._grad_clip_metric_kwargs(
         [1.0, 5.0, 3.0, 4.0],
-        {"clipped": 2, "adaptive_clip": 1, "hard_clip": 1},
+        {"clipped": 2, "adaptive_clip": 1, "adaptive_bound": 1, "hard_clip": 1},
     )
 
     assert kwargs["grad_norm_mean"] == pytest.approx(3.25)
@@ -1322,6 +1322,7 @@ def test_grad_clip_metric_kwargs_aggregates_the_whole_iteration() -> None:
     assert kwargs["grad_norm_max"] == pytest.approx(5.0)
     assert kwargs["grad_clip_rate"] == pytest.approx(0.5)
     assert kwargs["grad_adaptive_clip_rate"] == pytest.approx(0.25)
+    assert kwargs["grad_adaptive_bound_rate"] == pytest.approx(0.25)
     assert kwargs["grad_hard_clip_rate"] == pytest.approx(0.25)
     assert kwargs["grad_norm_samples"] == 4
     assert trainer_mod._grad_clip_metric_kwargs([], {}) == {}
@@ -1356,7 +1357,14 @@ def test_run_optimizer_step_collects_clip_stats_off_the_tb_log_stride(
         batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
     )
 
-    assert set(step_opt_stats) >= {"grad_norm", "total_norm", "clipped", "hard_clip", "adaptive_clip", "lr"}
+    # `adaptive_bound` is named here deliberately: this is the ONLY clip-flag
+    # check that runs the real `_run_optimizer_step` -> `_zclip_step` path
+    # rather than a stub, so a flag missing from the real emitter would
+    # otherwise survive every stubbed test in the suite.
+    assert set(step_opt_stats) >= {
+        "grad_norm", "total_norm", "clipped", "hard_clip", "adaptive_clip",
+        "adaptive_bound", "lr",
+    }
     assert step_opt_stats["grad_norm"] > 0.0
     assert step_opt_stats["total_norm"] == pytest.approx(step_opt_stats["grad_norm"])
     assert step_opt_stats["lr"] == pytest.approx(float(trainer._base_lrs()[0]))
@@ -1413,10 +1421,24 @@ def test_grad_norm_median_past_watch_threshold_warns(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The median half of I11's condition, with the hard-clip half satisfied.
+
+    UPDATED 2026-08-24: I11's condition is a conjunction (median past
+    GRAD_NORM_MEDIAN_WATCH *and* hard-clip rate past
+    GRAD_HARD_CLIP_RATE_WATCH), and the gate now says so. This case keeps its
+    original intent — a median past the watch must still fire, and a median
+    below it must still stay silent — and supplies the hard-clip rate that the
+    original `_zeroed_metrics` left at 0.0. The 0.0 case is now a test of its
+    own, `test_watch_is_silent_on_a_high_median_with_zero_hard_clips` in
+    tests/test_zclip_watch_gate_and_optimizer_scalars.py, because it is the
+    production false positive rather than an incidental default.
+    """
     trainer = _make_trainer(tmp_path, zclip_max_norm=5.0)
     metrics = _zeroed_metrics(
         grad_norm_samples=200,
         grad_norm_median=trainer_mod.GRAD_NORM_MEDIAN_WATCH + 0.1,
+        grad_clip_rate=0.40,
+        grad_hard_clip_rate=0.40,
     )
 
     with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):

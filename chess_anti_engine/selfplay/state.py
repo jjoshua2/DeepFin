@@ -216,6 +216,8 @@ class _NetRecord:
         "policy_probs",
         "pos_hash",
         "pov_color",
+        "prior_top1_index",
+        "prior_top1_prob",
         "priority",
         "priority_policy_kl",
         "priority_q_delta",
@@ -248,8 +250,11 @@ class _NetRecord:
     # position. The one piece of bookkeeping that lets selfplay/resume.py
     # re-encode ``x`` from a replayed move list instead of persisting the
     # 44.8 KB of planes: it names the exact position each record was taken at,
-    # without relying on ply_index (whose origin differs between the C and
-    # Python play paths). -1 = not tracked; such a game is never resumed.
+    # without relying on ply_index. ``ply_index`` is absolute game ply on BOTH
+    # play paths, but it still cannot serve here: it counts from the start of
+    # the GAME, while this counts from the start of ``move_idx_history``, and a
+    # seeded opening puts those two origins an arbitrary number of plies apart.
+    # -1 = not tracked; such a game is never resumed.
     move_offset: int
     # ``CBoard.zobrist_hash`` of the position this record was taken at, read at
     # capture time. selfplay/resume.py checks it after replaying the move list:
@@ -277,6 +282,21 @@ class _NetRecord:
     sf_played_move_index: int | None
     sf_played_rank: int | None
     sf_played_regret: float | None
+    # Raw root policy prior top-1 (full 4672 action id) and its prior mass,
+    # read off the net's logits BEFORE search re-ranks them. Same theta as the
+    # move search then chose, by construction -- that pairing is the whole
+    # point, and it exists nowhere else once policy_probs (the SEARCH-improved
+    # target) is the only thing that reaches a shard. None when
+    # GameConfig.record_prior_top1 is off, and on rows with no net prior at all
+    # (the SF-refute opponent row built in selfplay/stockfish_turn.py).
+    # ⚑ prior_top1_prob is a softmax at T = 1.0 over the legal moves: the NET's
+    # mass on that move, NOT the mass search seeded its tree with (search
+    # divides the root logits by gumbel_policy_temp, production 1.5, so the
+    # search's prior is flatter and this number is the higher of the two). The
+    # INDEX is unaffected -- argmax is temperature-invariant. Rationale for
+    # storing the untempered one: selfplay/network_turn._prior_top1.
+    prior_top1_index: int | None
+    prior_top1_prob: float | None
     sf_legal_mask: np.ndarray | None
     gumbel_policy_diag: dict[str, float] | None
     # SF-refute opp row: this record is the SF-to-move position of a refute ply
@@ -330,6 +350,8 @@ class _NetRecord:
         self.sf_played_move_index = None
         self.sf_played_rank = None
         self.sf_played_regret = None
+        self.prior_top1_index = None
+        self.prior_top1_prob = None
         self.sf_legal_mask = None
         self.gumbel_policy_diag = gumbel_policy_diag
         self.is_sf_refute_opp = False

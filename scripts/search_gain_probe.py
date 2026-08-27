@@ -69,7 +69,7 @@ live is [[same_name_different_population]]. To measure TODAY's shape, point
     PYTHONPATH=. python3 scripts/search_gain_probe.py \\
         --checkpoint data/ruler_reads_20260808/trainer.pt \\
         --shape live_selfplay_20260809 \\
-        --shape-yaml /home/josh/projects/chess/configs/pbt2_small.yaml \\
+        --shape-yaml ~/projects/chess/configs/pbt2_small.yaml \\
         --sims 1,8,32,64,128,256 --positions 512 --out scratchpad/probe.jsonl
 
 Usage (a dated snapshot, when reproducing a banked number rather than measuring
@@ -136,7 +136,6 @@ class SearchShape:
     c_visit: float
     c_visit_root: float
     c_scale_root: float
-    q_visit_exp: float
     q_visit_exp_root: float
     halving_div: int
     policy_temp: float
@@ -154,7 +153,10 @@ class SearchShape:
         """
         cvr = self.c_visit_root if self.c_visit_root >= 0.0 else self.c_visit
         csr = self.c_scale_root if self.c_scale_root >= 0.0 else self.c_scale
-        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else self.q_visit_exp
+      # >= 90 is the LINEAR-root sentinel: exponent 1.0. It used to resolve to
+      # the descent's `q_visit_exp`, a GumbelConfig field that has been deleted
+      # and whose default was 1.0 -- same arithmetic, one fewer knob.
+        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else 1.0
         if qer < 0.0:
             return csr * math.log1p(cvr + max_visit)
         mv_term = max_visit if qer == 1.0 else max_visit**qer
@@ -166,7 +168,7 @@ class SearchShape:
         return self.c_scale * (self.c_visit + max_visit)
 
     def root_transform_name(self) -> str:
-        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else self.q_visit_exp
+        qer = self.q_visit_exp_root if self.q_visit_exp_root < 90.0 else 1.0
         if qer < 0.0:
             return "LOG"
         if qer == 1.0:
@@ -195,7 +197,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 (ops/live-20260725)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=-1.0, c_scale_root=-1.0,
-        q_visit_exp=1.0, q_visit_exp_root=99.0,
+        q_visit_exp_root=99.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="SNAPSHOT of the live yaml as of 2026-08-09: gumbel_c_scale "
@@ -208,7 +210,7 @@ SHAPES: dict[str, SearchShape] = {
         label="origin/main selfplay defaults",
         topk=16, c_scale=0.1, c_visit=50.0,
         c_visit_root=-1.0, c_scale_root=-1.0,
-        q_visit_exp=1.0, q_visit_exp_root=99.0,
+        q_visit_exp_root=99.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="origin/main configs/pbt2_small.yaml + GumbelConfig defaults",
@@ -217,7 +219,7 @@ SHAPES: dict[str, SearchShape] = {
         label="PLAY/UCI (PLAY_SEARCH_DEFAULTS)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=900.0, c_scale_root=7.0,
-        q_visit_exp=1.0, q_visit_exp_root=-1.0,
+        q_visit_exp_root=-1.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=3, target_batch=0,
         provenance="mcts.gumbel.PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT",
@@ -229,7 +231,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 + LOG root (isolation arm)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=900.0, c_scale_root=7.0,
-        q_visit_exp=1.0, q_visit_exp_root=-1.0,
+        q_visit_exp_root=-1.0,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="live selfplay with c_visit_root/c_scale_root/q_visit_exp_root "
@@ -247,7 +249,7 @@ SHAPES: dict[str, SearchShape] = {
         label="LIVE selfplay SNAPSHOT 2026-08-09 + sqrt(N) root (untested middle)",
         topk=32, c_scale=0.025, c_visit=50.0,
         c_visit_root=0.0, c_scale_root=6.5,
-        q_visit_exp=1.0, q_visit_exp_root=0.5,
+        q_visit_exp_root=0.5,
         halving_div=2, policy_temp=1.0,
         vloss_weight=1, target_batch=0,
         provenance="live selfplay, q_visit_exp_root=0.5 (sqrt-N), c_scale_root "
@@ -627,6 +629,55 @@ class _RowSink:
 # ---------------------------------------------------------------------------
 
 
+def build_probe_gumbel_config(
+    shape: SearchShape,
+    *,
+    sims: int,
+    add_noise: bool = False,
+    gumbel_scale: float = 1.0,
+    hist: str = "legacy",
+    extra: str = "v1",
+    pol_enc: str = "lc0_1858",
+):
+    """The ONE place ``--shape`` / ``--shape-yaml`` / ``--override`` become a config.
+
+    Module-level rather than a closure inside ``run_probe`` for the reason
+    ``audit_targets.build_profile_search_shape`` is: inside the closure the
+    refusal was unreachable without a ~700MB checkpoint load, so nothing could
+    prove the guard runs -- and it fired AFTER the load rather than in the first
+    second. ``main()`` now calls this before touching the checkpoint, and
+    ``tests/test_gumbel_config_validation.py`` drives it directly.
+
+    The encoding arguments default to placeholders because they do not
+    participate in validation (no string field is checked); the run passes the
+    checkpoint's real ones, and the early call in ``main()`` does not need them.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    cfg = GumbelConfig(
+        simulations=int(sims),
+        topk=int(shape.topk),
+        temperature=0.0,
+        policy_temp=float(shape.policy_temp),
+        c_scale=float(shape.c_scale),
+        c_visit=float(shape.c_visit),
+        c_visit_root=float(shape.c_visit_root),
+        c_scale_root=float(shape.c_scale_root),
+        q_visit_exp_root=float(shape.q_visit_exp_root),
+        halving_div=int(shape.halving_div),
+        add_noise=bool(add_noise),
+        gumbel_scale=float(gumbel_scale),
+        input_history_encoding=hist,
+        input_extra_features=extra,
+        policy_encoding=pol_enc,
+    )
+    try:
+        validate_gumbel_config(cfg, where=f"--shape {shape.label}")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    return cfg
+
+
 def run_probe(
     positions: list[ProbePosition],
     *,
@@ -665,23 +716,9 @@ def run_probe(
         tb_probe = SyzygyProbe(syzygy_path)
 
     def _cfg(sims: int) -> GumbelConfig:
-        return GumbelConfig(
-            simulations=int(sims),
-            topk=int(shape.topk),
-            temperature=0.0,
-            policy_temp=float(shape.policy_temp),
-            c_scale=float(shape.c_scale),
-            c_visit=float(shape.c_visit),
-            c_visit_root=float(shape.c_visit_root),
-            c_scale_root=float(shape.c_scale_root),
-            q_visit_exp=float(shape.q_visit_exp),
-            q_visit_exp_root=float(shape.q_visit_exp_root),
-            halving_div=int(shape.halving_div),
-            add_noise=bool(add_noise),
-            gumbel_scale=float(gumbel_scale),
-            input_history_encoding=hist,
-            input_extra_features=extra,
-            policy_encoding=pol_enc,
+        return build_probe_gumbel_config(
+            shape, sims=sims, add_noise=add_noise, gumbel_scale=gumbel_scale,
+            hist=hist, extra=extra, pol_enc=pol_enc,
         )
 
     boards = [p.board for p in positions]
@@ -1498,6 +1535,11 @@ def main() -> None:
             raise SystemExit(f"--shape-yaml {args.shape_yaml} does not exist")
         shape = shape_from_yaml(args.shape_yaml, base=shape)
     shape = apply_overrides(shape, args.override)
+  # Before the checkpoint load and the position sourcing: a shape carrying a
+  # value the search would silently drop should cost a second, not a 700MB load
+  # plus a shard sweep. `run_probe` re-checks per sims rung, which is what makes
+  # the guard unskippable rather than merely early.
+    build_probe_gumbel_config(shape, sims=int(sims_list[0]))
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
         import torch

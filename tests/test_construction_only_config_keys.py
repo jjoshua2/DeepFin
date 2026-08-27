@@ -91,6 +91,24 @@ _ALLOWED_CONSUMER_FILES = {
     "chess_anti_engine/tune/trainable_init.py",
     "chess_anti_engine/tune/trainable_config_ops.py",
     "chess_anti_engine/utils/config_yaml.py",
+  # ⚑ ADDED 2026-08-17, WITH A VERDICT RATHER THAN REFLEXIVELY. The lc0 control's
+  # replay pin names every construction-only buffer key as a string literal, and
+  # the question this test asks is "does any of those files READ the key AFTER
+  # STARTUP" — because that is what would make freezing the key wrong.
+  #
+  # It does not, and the reason is structural rather than a promise: the module's
+  # only entry points are `replay_kwargs_signature` (a pure config -> kwargs
+  # projection) and `assert_control_matches_live_replay`, and both are called
+  # exactly twice per process — once by `preflight_replay` at launch and once to
+  # build the `DiskReplayBuffer` in the same function, before any step. There is
+  # no reload path, no per-iteration hook and no live-sync loop in the file. The
+  # arm it serves is an OFFLINE supervised driver with no `_reload_yaml_into_config`
+  # at all, so there is no mid-run edit for a value to reach.
+  #
+  # ⚑ This is the same class of consumer as `trainable_init.py` one line up —
+  # it reads the key to CONSTRUCT the buffer — and it is added for that reason,
+  # not because it was inconvenient to have the test fail.
+    "chess_anti_engine/eval/lc0_control_replay.py",
 }
 
 
@@ -142,6 +160,22 @@ _STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
             "sf_policy_floor_tau_top1",
             "sf_policy_floor_tau_played",
         )
+    },
+    # The fabricated-tail gate on `sf_own_regret`. Read ONCE into
+    # `Trainer._loss_kwargs` at construction, exactly like `policy_target_temp`
+    # above, and for the same reason: these are not loss WEIGHTS, they select WHICH
+    # ROWS the term applies to, so a mid-run change re-interprets rows already in
+    # the replay window and would split a day-plus readout across two different
+    # term populations with nothing in the metrics able to say where the split fell.
+    "sf_own_regret_listed_mass_min": {"chess_anti_engine/train/trainer.py"},
+    "sf_own_regret_unlisted_scale": {"chess_anti_engine/train/trainer.py"},
+    # SF-shape teacher temperature. Same two readers and the same split: the
+    # Trainer folds it into a frozen `SfShapeParams` at construction, and
+    # `TrialConfig.from_dict` re-reads it every iteration purely to re-run the
+    # range check and discards the result.
+    "sf_shape_temp_cp": {
+        "chess_anti_engine/train/trainer.py",
+        "chess_anti_engine/tune/trial_config.py",
     },
 }
 

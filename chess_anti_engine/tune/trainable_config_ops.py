@@ -310,6 +310,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             record_lc0_root_input=tc.record_lc0_root_input,
             history_rep_fix=tc.history_rep_fix,
             record_dense_sf_policy=tc.record_dense_sf_policy,
+            record_prior_top1=tc.record_prior_top1,
             record_sf_p0_policy=tc.record_sf_p0_policy,
             record_sf_p0_regret=tc.record_sf_p0_regret,
             record_fast_ply_value=tc.record_fast_ply_value,
@@ -597,6 +598,13 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #                      the replay window. Pushing it live would move the training
 #                      target mid-window with no restart boundary to mark where a
 #                      readout's data changed shape.
+#   sf_own_regret_listed_mass_min / sf_own_regret_unlisted_scale -- the
+#                      fabricated-tail gate on `sf_own_regret`. Same reason as
+#                      `policy_target_temp`: these are not loss WEIGHTS, they
+#                      select WHICH ROWS the term applies to, so a live edit
+#                      changes the term's population mid-window with no restart
+#                      boundary to mark it. The arm's readout is a day-plus paired
+#                      arena, which is exactly the window that must not move.
 _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "iterations",
     "puzzle_epd",
@@ -614,6 +622,13 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "sf_policy_floor_tau",
     "sf_policy_floor_tau_top1",
     "sf_policy_floor_tau_played",
+    "sf_own_regret_listed_mass_min",
+    "sf_own_regret_unlisted_scale",
+  # SF-shape teacher temperature, same class and the same reason: the Trainer
+  # folds it into a frozen `SfShapeParams` at construction, so a live edit
+  # provably cannot reach the loss. The WEIGHT `w_sf_shape` is NOT here -- it is
+  # live-pushed every iteration off `TRAINER_WEIGHT_KEYS`.
+    "sf_shape_temp_cp",
 })
 
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is

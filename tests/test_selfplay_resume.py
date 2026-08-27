@@ -41,6 +41,8 @@ from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.selfplay.resume import (
     RESUME_FILE_SUFFIX,
     RESUME_FORMAT_VERSION,
+    count_unclaimed_resume_files,
+    initial_resume_counts,
     resume_inflight_games,
     should_resume_game,
     suspend_inflight_games,
@@ -280,6 +282,7 @@ def _assert_record_identical(before: Any, after: Any, where: str) -> None:
                  "priority", "priority_policy_kl", "priority_q_delta",
                  "sample_weight", "keep_prob", "sf_move_index",
                  "sf_played_move_index", "sf_played_rank", "sf_played_regret",
+                 "prior_top1_index", "prior_top1_prob",
                  "gumbel_policy_diag", "is_sf_refute_opp"):
         assert getattr(before, name) == getattr(after, name), f"{where}: {name}"
 
@@ -426,6 +429,14 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
             rec.sf_policy_target is not None
             for recs in before.values() for rec in recs
         ), "no SF labels captured — the expensive fields would go untested"
+        # ⚑ NON-VACUITY. `_assert_record_identical` compares prior_top1_* by
+        # equality, and `None == None` passes — so the two fields are in that
+        # list for nothing unless the session actually captured them. Assert on
+        # the SOURCE records before the round-trip, not on what came back.
+        assert any(
+            rec.prior_top1_index is not None
+            for recs in before.values() for rec in recs
+        ), "no prior_top1 captured — the round-trip assertion would be vacuous"
 
         assert _suspend_all(state, out_dir) == len(before)
 
@@ -678,6 +689,65 @@ def _resume_one(path: Path, game: GameConfig) -> Any:
     return target, report
 
 
+def test_prior_top1_survives_suspend_and_resume(tmp_path: Path) -> None:
+    """The round-trip the RESUME_FORMAT_VERSION 1 -> 2 bump was paid for.
+
+    (The constant is at 3 now — v3 redefined `ply_index` as absolute game ply
+    on both play paths. The v2 columns this test guards are unaffected by that,
+    so the assertion below is still the one the *v2* bump exists for; do not
+    read "1 -> 2" as the current version.)
+
+    ⚑ This is the assertion the format bump exists for. `prior_top1_index` /
+    `prior_top1_prob` are captured from the ply's raw policy logits, so — unlike
+    ``x`` / ``relations`` / the legal mask — they CANNOT be recomputed from the
+    replayed board. If they do not survive the npz they are gone, and the PR
+    that bumped the format paid a session of dropped in-flight games for
+    nothing. Deleting the two `_rebuild_record` restore lines used to leave
+    every suite green; it fails here.
+
+    Values are chosen to make the weak passes impossible:
+
+    * distinct per record, so a constant fill or a row permutation cannot pass;
+    * dyadic probabilities, so "equal" means bit-equal through the float64
+      column rather than equal-after-rounding;
+    * one record deliberately carries NO prior, so absence must round-trip as
+      absence — a decoder that dropped the presence flag and restored 0 / 0.0
+      would otherwise look correct on the other rows.
+    """
+    game = _game_config()
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6)
+    state.done_arr[1] = 1  # keep slot 1 out of the way
+
+    recs = state.samples_per_game[0]
+    assert len(recs) >= 3, "need a row with a prior, a second one, and an absent one"
+    want: list[tuple[int | None, float | None]] = [
+        (101 + 7 * k, 0.125 + 0.0625 * k) for k in range(len(recs))
+    ]
+    want[-1] = (None, None)
+    for rec, (idx, prob) in zip(recs, want, strict=True):
+        rec.prior_top1_index = idx
+        rec.prior_top1_prob = prob
+    present = [idx for idx, _ in want if idx is not None]
+    assert len(present) >= 2
+    assert len(set(present)) == len(present)
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(state, out_dir) == 1
+    target, report = _resume_one(_state_files(out_dir)[0], game)
+    assert report.resumed == 1
+    assert report.discarded == 0
+
+    got = [r for i in range(target.batch_size) for r in target.samples_per_game[i]]
+    assert len(got) == len(recs)
+    for k, (rec, (idx, prob)) in enumerate(zip(got, want, strict=True)):
+        assert rec.prior_top1_index == idx, f"record {k}: prior_top1_index"
+        assert rec.prior_top1_prob == prob, f"record {k}: prior_top1_prob"
+    # ...and the restored objects are not the ones we wrote (a resume that
+    # handed back the SOURCE records would pass everything above by identity).
+    assert all(a is not b for a, b in zip(recs, got, strict=True))
+
+
 def test_negative_control_dropped_move_is_rejected(tmp_path: Path) -> None:
     """Drop one move from the persisted list. Every later record then belongs
     to a different position — but NOT a different colour (the side to move at a
@@ -815,7 +885,10 @@ def test_negative_control_zeroed_tail_hash_is_rejected(tmp_path: Path) -> None:
 def test_negative_control_tampered_ply_index_is_rejected(tmp_path: Path) -> None:
     """`ply_index` is not derivable from the moves, and finalize keys its
     sf_p0 one-ply shift off it — a wrong value shifts a teacher instead of
-    failing. On the C play path it must equal the replayed CBoard ply."""
+    failing. Under resume format v3 it must equal the replayed CBoard ply on
+    EVERY play path; the check is no longer gated on the file's `has_c_ply`.
+    This case is the C-path one — see the `_python_fallback` twin below for the
+    half the gate used to skip."""
     path, game, _src = _one_suspended_game(tmp_path)
 
     def _shift(arrays: dict[str, Any]) -> None:
@@ -826,6 +899,72 @@ def test_negative_control_tampered_ply_index_is_rejected(tmp_path: Path) -> None
 
     assert report.resumed == 0
     assert report.reasons.get("ply_index_mismatch") == 1
+
+
+def test_negative_control_tampered_ply_index_is_rejected_on_python_fallback(
+    tmp_path: Path,
+) -> None:
+    """The same tamper on a file whose producer had NO C ply path.
+
+    ⚑ This is the assertion the unconditional check exists for, and the suite
+    had none: with the old `check_ply = bool(meta.get("has_c_ply"))` gate, a
+    Python-fallback file's `ply_index` was never validated at all, so a wrong
+    value rode straight into finalize's ply-keyed teacher shifts. Restoring
+    that gate must make THIS test fail; the C-path twin above stays green under
+    it, which is exactly why it could not catch the regression.
+
+    Both the producing and the resuming state carry `has_c_ply = False` —
+    `should_resume_game` refuses a cross-convention file before the replay is
+    reached, so a fallback file can only be validated by a fallback session.
+    """
+    game = _game_config()
+    src = _fresh_state(game, batch_size=2)
+    src.has_c_ply = False
+    _fill_slot(src, 0, plies=6)
+    src.done_arr[1] = 1
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(src, out_dir) == 1
+    path = _state_files(out_dir)[0]
+    assert _meta_of(_load_arrays(path))["has_c_ply"] is False
+
+    def _shift(arrays: dict[str, Any]) -> None:
+        arrays["ply_index"] = arrays["ply_index"] + 100
+
+    _rewrite(path, _shift)
+
+    target = _fresh_state(game, batch_size=2)
+    target.has_c_ply = False
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 0
+    assert report.reasons.get("ply_index_mismatch") == 1
+    assert not any(target.resumed_from_disk)
+
+
+def test_untampered_python_fallback_game_still_resumes(tmp_path: Path) -> None:
+    """The fallback negative control above must fail for the TAMPER, not for
+    being a fallback file: an unmodified `has_c_ply=False` game resumes
+    cleanly under the unconditional ply check."""
+    game = _game_config()
+    src = _fresh_state(game, batch_size=2)
+    src.has_c_ply = False
+    _fill_slot(src, 0, plies=6)
+    src.done_arr[1] = 1
+
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(src, out_dir) == 1
+
+    target = _fresh_state(game, batch_size=2)
+    target.has_c_ply = False
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 1
+    assert report.reasons == {}
 
 
 def test_a_game_from_another_trial_is_discarded(tmp_path: Path) -> None:
@@ -1367,12 +1506,19 @@ def test_no_trial_id_at_session_start_warns(
 
 
 def test_a_game_from_the_other_ply_convention_is_rejected(tmp_path: Path) -> None:
-    """`ply_index` means CBoard.ply on the C path but len(move_stack) on the
-    Python fallback — different origins for a seeded opening. `has_c_ply` says
-    which convention the stored values use; a session on the OTHER convention
-    cannot validate them (the replay's ply check keys off the file's own flag)
-    and finalize keys its sf_p0 one-ply shift off ply_index, so the game must
-    be refused, not resumed under a reinterpreted index."""
+    """`has_c_ply` pins a file to the execution path that produced it.
+
+    As of resume format v3, `ply_index` is ABSOLUTE game ply on both paths, so
+    the flag no longer changes what that field MEANS. It is kept as a
+    conservative compatibility gate because the two paths still maintain their
+    live board/history objects differently.
+
+    ⚑ The refusal is therefore a fact about THIS session's BUILD (did
+    `_mcts_tree.batch_process_ply` import?), not a defect of the file: the same
+    game is resumable by a worker whose extension loaded. So it must PRESERVE
+    the file rather than unlink it — `ply_convention_mismatch` is in
+    `_PRESERVE_FILE_REASONS`. Without that, one worker with a broken extension
+    deletes every game the C-path workers suspended."""
     path, game, _src = _one_suspended_game(tmp_path)
 
     def _flip(arrays: dict[str, Any]) -> None:
@@ -1386,6 +1532,11 @@ def test_a_game_from_the_other_ply_convention_is_rejected(tmp_path: Path) -> Non
     assert report.resumed == 0
     assert report.reasons.get("ply_convention_mismatch") == 1
     assert not any(target.resumed_from_disk)
+    # Refused, but NOT destroyed: counted as preserved and left on disk under
+    # its original name for a session whose build matches.
+    assert report.preserved == 1
+    assert report.discarded == 0
+    assert path.exists()
 
 
 # ── the worker->play_batch wirings ───────────────────────────────────────────
@@ -1427,7 +1578,7 @@ def _wired_session(tmp_path: Path) -> Any:
     session._pending_sf_refute = []
     session._resume_counts_lock = threading.Lock()
     session._resume_counts = {
-        "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+        **initial_resume_counts(),
     }
     session._resume_skip_reasons = {}
     # Collaborators outside the wiring under test.
@@ -1580,3 +1731,413 @@ def test_run_selfplay_keeps_hooks_dark_with_the_flag_off(
     (kw,) = captured
     assert kw["on_suspend"] is None
     assert session._resume_counts["resumed"] == 0
+
+
+def test_surplus_suspended_games_are_stranded_and_only_the_new_counter_sees_them(
+    tmp_path: Path,
+) -> None:
+    """⚑ SUPPLY > DEMAND, which is the only regime in which this can fire.
+
+    `resume_inflight_games` walks `sorted(glob(...))` and breaks at
+    `report.resumed >= len(slots)`. It is DEMAND-driven: it restores as many
+    games as the restarting threads have slots for, and stops. When the previous
+    session suspended MORE games than the new one asks for, the surplus is never
+    claimed, never decoded, and so never reaches `note()` or `note_preserved()`.
+
+    Both pre-existing counters therefore read a TRUTHFUL ZERO on a real loss:
+    `discarded` counts files the resume examined and rejected, and
+    `suspend_skipped` counts games suspend failed to write. Neither is wrong;
+    neither can see this. The stranded files then expire at DEFAULT_MAX_AGE_S
+    and the sweep deletes them.
+
+    MEASURED in production first (2026-08-14 arm-B pause/resume): suspend 3046,
+    resume 3017, and exactly 29 *.game.npz left in worker_02's directory --
+    the entire gap, in one worker, with discarded=0 and suspend_skipped=0
+    everywhere. This test reproduces that shape in miniature.
+
+    ⚑ A version of this test with batch_size >= the number of suspended games
+    would pass with the new counter hard-wired to 0, which is why the asserted
+    numbers are pinned exactly rather than as "> 0".
+    """
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1  # keep the fourth slot out of the way
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(source, out_dir) == 3, "the SUPPLY side must be 3"
+    assert count_unclaimed_resume_files(out_dir) == 3
+
+    # DEMAND is one slot. Two games cannot be placed anywhere.
+    target = _fresh_state(game, batch_size=1, seed=11)
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    )
+
+    assert report.resumed == 1, "demand was one slot"
+    # THE BLIND SPOT, asserted as such: a real loss with both counters clean.
+    assert report.discarded == 0, "nothing was examined-and-rejected"
+    assert report.preserved == 0, "nothing was refused about our state either"
+    assert report.reasons == {}, "no reason is recorded, because none applies"
+    # THE COUNTER THAT SEES IT.
+    assert count_unclaimed_resume_files(out_dir) == 2, (
+        "two suspended games are stranded on disk and every pre-existing "
+        "counter reports zero loss"
+    )
+    # And they are whole games, not claim/tmp debris the sweep owns.
+    assert len(_state_files(out_dir)) == 2
+    assert not list(out_dir.glob("*.claimed"))
+
+    # ⚑ The counter must count STRANDED GAMES, not directory entries. Debris
+    # from an interrupted suspend/resume belongs to `sweep_orphan_state_files`,
+    # and counting it here would inflate a loss metric with files that are not
+    # lost games -- turning the one instrument that sees this loss into one that
+    # cries wolf. Added because a mutant returning `glob("*")` instead of
+    # `glob(f"*{RESUME_FILE_SUFFIX}")` SURVIVED the assertions above.
+    (out_dir / f"deadbeef{RESUME_FILE_SUFFIX}.claimed").write_bytes(b"x")
+    (out_dir / f"deadbeef{RESUME_FILE_SUFFIX}.tmp").write_bytes(b"x")
+    (out_dir / "unrelated.txt").write_bytes(b"x")
+    assert count_unclaimed_resume_files(out_dir) == 2, (
+        "claim/tmp debris and foreign files must not be counted as stranded games"
+    )
+
+
+
+
+def _resume_ready_session(tmp_path: Path, in_dir: Path, *, hooks: int = 1) -> Any:
+    """`_bare_session` plus the fields `_resume_inflight_games` itself reads.
+
+    Deliberately a real `WorkerSession` and the real methods: the whole point of
+    these tests is the WIRING between the leftover count, the log line and
+    `pending_outcome_stats`, which a hand-rolled stand-in would not exercise.
+
+    ``hooks`` is the settle barrier's expected registration count -- the number
+    of selfplay threads this session would run.
+    """
+    import threading
+
+    session = _bare_session(tmp_path)
+    session.resume_dir = in_dir
+    session._resume_counts_lock = threading.Lock()
+    session._resume_counts = initial_resume_counts()
+    session._resume_skip_reasons = {}
+    session._resume_compat_fingerprint_active = FINGERPRINT
+    session._resume_trial_id_active = TRIAL_ID
+    session._resume_hooks_expected = int(hooks)
+    session._resume_hooks_done = 0
+    session.model_sha = ""
+    session.model_step = 0
+    return session
+
+
+def _settled_line(caplog: pytest.LogCaptureFixture) -> dict[str, int]:
+    """The `selfplay resume settled:` line, parsed into its named fields.
+
+    Parsing BY NAME rather than by position is what makes an argument-order
+    mutation detectable: a swapped `%d` pair still prints a well-formed line,
+    and a positional read would happily agree with it.
+    """
+    lines = [
+        r.getMessage() for r in caplog.records
+        if "selfplay resume settled:" in r.getMessage()
+    ]
+    assert len(lines) == 1, f"expected exactly one settled line, got {lines}"
+    body = lines[0].split("selfplay resume settled:", 1)[1].split(" dir=", 1)[0]
+    return {k: int(v) for k, v in (tok.split("=") for tok in body.split())}
+
+
+def test_leftover_count_is_taken_once_after_the_last_hook_not_per_hook(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The settle barrier, which is the whole reason this number is trustworthy.
+
+    The hooks run one per selfplay thread against a SHARED directory, so a
+    reading taken by any hook but the last counts files another thread is about
+    to claim. Here hook 1 resumes one game and leaves two on disk; if the count
+    were emitted per hook it would report 2 as leftovers -- and hook 2 then
+    claims them both, so the true answer is 0.
+
+    Exactly one settled line must exist, and it must say 0.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    session = _resume_ready_session(tmp_path, in_dir, hooks=2)
+    session._resume_inflight_games(_fresh_state(game, batch_size=1, seed=11))
+    # Mid-flight the directory really does hold two unclaimed games...
+    assert count_unclaimed_resume_files(in_dir) == 2
+    assert not [
+        r for r in caplog.records if "selfplay resume settled:" in r.getMessage()
+    ], "no settled line may be emitted before the last hook has run"
+
+    session._resume_inflight_games(_fresh_state(game, batch_size=4, seed=12))
+
+    fields = _settled_line(caplog)
+    assert fields["resumed"] == 3, "all three games were placed, across two hooks"
+    assert fields["left_on_disk"] == 0, (
+        "nothing was stranded -- a per-hook count would have cried wolf with 2"
+    )
+    assert count_unclaimed_resume_files(in_dir) == 0, "and the disk agrees"
+
+
+def test_settled_line_reports_the_stranded_games_from_the_real_resume_dir(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The wiring, end to end, in the regime where the loss is real.
+
+    Supply 3, demand 1, one hook: two games are stranded and no pre-existing
+    counter can see them. Four mutations of this method survived the whole suite
+    (`tests/test_selfplay_resume.py` plus all of `tests/test_worker*.py`) when
+    only `count_unclaimed_resume_files` itself was covered: hard-wiring the
+    count to 0, globbing a directory that is not `self.resume_dir`, swapping
+    printf arguments, and reverting the emit guard. Each is a way for a live
+    worker to report no loss while games rot on disk -- the house defect exactly
+    (a value computed, then silently not delivered).
+
+    Values are pinned and ASYMMETRIC so an argument swap cannot reproduce them.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    target = _fresh_state(game, batch_size=1, seed=11)
+    session = _resume_ready_session(tmp_path, in_dir, hooks=1)
+    session._resume_inflight_games(target)
+
+    fields = _settled_line(caplog)
+    assert fields["resumed"] == 1
+    assert fields["discarded"] == 0, "nothing was examined-and-rejected"
+    assert fields["preserved"] == 0, "nothing was refused about our state either"
+    assert fields["left_on_disk"] == 2, (
+        "the two stranded games must reach the settled line, counted from the "
+        "session's real resume_dir"
+    )
+    # The loss must also leave the worker's log file: a log line is not part of
+    # the experiment metric stream, so a suspend-vs-resume reconciliation that
+    # reads only result.json would still see an unexplained gap.
+    assert target.pending_outcome_stats["resume_left_on_disk"] == 2
+    assert target.pending_outcome_stats["resume_preserved_games"] == 0
+    # And it is loud, because 0.95% of a restart's in-flight games went missing
+    # the last time this happened and nothing said so.
+    assert [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "never claimed" in r.getMessage()
+    ], "an unexplained leftover must warn, not just appear in an INFO line"
+
+
+def test_left_on_disk_counts_preserved_files_and_does_not_warn_about_them(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `left_on_disk` is NOT a stranded count, and must never be read as one.
+
+    A file refused for a `_PRESERVE_FILE_REASONS` reason is renamed BACK into
+    the directory on purpose, so it still matches the glob. Demand here is ample
+    (4 slots for 3 games), so NOTHING is stranded -- and `left_on_disk` still
+    reads 3. `no_trial_id` is documented as routine, which puts the
+    maximum-magnitude false alarm in the most ordinary state there is.
+
+    Hence `preserved` on the same line, and hence the warning keying on
+    `left_on_disk > preserved` rather than on `left_on_disk` alone.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    session = _resume_ready_session(tmp_path, in_dir, hooks=1)
+    session._resume_trial_id_active = "some-other-trial"
+    session._resume_inflight_games(_fresh_state(game, batch_size=4, seed=11))
+
+    fields = _settled_line(caplog)
+    assert fields["resumed"] == 0
+    assert fields["discarded"] == 0, "a preserved file is refused, not discarded"
+    assert fields["preserved"] == 3, (
+        "the preserved count must appear on the line, or left_on_disk=3 reads "
+        "as three lost games when nothing was lost"
+    )
+    assert fields["left_on_disk"] == 3, (
+        "preserved files are renamed back into the directory and DO match the "
+        "glob -- documented behaviour, not a bug in the counter"
+    )
+    assert not [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "never claimed" in r.getMessage()
+    ], "routine preservation must not raise the lost-games alarm"
+
+
+def test_a_raising_resume_still_settles_the_leftover_count(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hook that raised still consumed one of the registrations.
+
+    If the failure path returned before touching the barrier, a session whose
+    restore blew up would never emit a settled line at all -- and a failed
+    restore is exactly when files pile up. The worst case would be the one case
+    with no count.
+    """
+    caplog.set_level("INFO", logger="test-worker")
+    game = _game_config()
+    source = _fresh_state(game, batch_size=4)
+    for slot in range(3):
+        _fill_slot(source, slot, plies=6)
+    source.done_arr[3] = 1
+    in_dir = tmp_path / "resume"
+    assert _suspend_all(source, in_dir) == 3
+
+    session = _resume_ready_session(tmp_path, in_dir, hooks=1)
+    # A state the resume cannot work with: decode/placement raises inside
+    # resume_inflight_games, which the hook swallows and logs.
+    session._resume_inflight_games(cast(Any, object()))
+
+    fields = _settled_line(caplog)
+    assert fields["left_on_disk"] == 3, (
+        "every suspended game is still on disk, and the settled line must say so "
+        "even though the restore raised"
+    )
+
+
+@pytest.mark.parametrize(
+    ("threaded", "games", "expected"),
+    [(False, 64, 1), (True, 64, None), (True, 1, None)],
+)
+def test_settle_barrier_is_sized_from_the_path_the_session_actually_takes(
+    tmp_path: Path, threaded: bool, games: int, expected: int | None,
+) -> None:
+    """The barrier's denominator, read on the production path.
+
+    The tests above set `_resume_hooks_expected` directly, so a defect in the
+    line that COMPUTES it would not show up there -- the settled count would
+    simply never fire (denominator too high) or fire on a mid-flight reading
+    (too low), and every assertion above would still pass. That is the house
+    defect shape, so the arithmetic is read here rather than presence-checked.
+    """
+    from types import SimpleNamespace
+
+    session = _bare_session(tmp_path)
+    session.args = cast(Any, SimpleNamespace(
+        threaded_selfplay=threaded, selfplay_threads=32,
+    ))
+    got = session._resume_hooks_for_session(games)
+
+    if expected is not None:
+        assert got == expected, "the single path builds exactly one state"
+    else:
+        assert got == session._selfplay_state_count(games), (
+            "the threaded path must expect one hook per selfplay thread"
+        )
+    assert got >= 1, "a zero denominator would settle on the very first hook"
+
+
+def test_the_barrier_denominator_equals_the_hooks_the_threaded_run_fires(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The barrier's denominator against the hook count the session REALLY fires.
+
+    ⚑ The test above cannot see this. On the threaded branch its assertion is
+    `got == session._selfplay_state_count(games)` -- and `_resume_hooks_for_session`
+    RETURNS `self._selfplay_state_count(games)`, so both sides move together for
+    any mutation of the shared helper, and neither side moves at all for a
+    mutation of `_run_selfplay_threaded`'s `n_threads`. MEASURED: rewriting
+    `n_threads` to `state_count - 1` leaves that test GREEN. It catches a changed
+    RETURN (sizing off `games_per_batch` fails it) and nothing else. The number
+    that has to match is not `_selfplay_state_count`, it is how many times
+    `on_state_ready` actually runs -- decided in a different method. Two methods,
+    one number, no test joining them.
+
+    Drift there is silent in the worst direction. Too high and `_settle_resume_leftovers`
+    never reaches its denominator: no settled line, no `left_on_disk > preserved`
+    warning, and no `resume_left_on_disk` in `pending_outcome_stats` -- a worker
+    stranding games reports exactly what a healthy one reports. Too low and it
+    settles on a mid-flight reading and reports a number about a race. Both are
+    this repo's signature defect: computed, accepted, then silently not delivered.
+
+    So this drives the REAL `_dispatch_selfplay_one_shard` into the REAL
+    `_run_selfplay_threaded` with `play_batch` faked, counts the registrations
+    independently, and demands the settle fire exactly once on that count.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import chess_anti_engine.worker as worker_mod
+
+    caplog.set_level("INFO", logger="test-worker")
+    in_dir = tmp_path / "resume"
+    in_dir.mkdir()
+    # Two stranded files so the settled line is emitted at all (it is guarded on
+    # a nonzero count) and so `left_on_disk` is asymmetric to the hook count.
+    for i in range(2):
+        (in_dir / f"g{i}{RESUME_FILE_SUFFIX}").write_bytes(b"x")
+
+    registrations: list[Any] = []
+    reg_lock = threading.Lock()
+
+    def _fake_play_batch(_model: Any, **kwargs: Any) -> tuple[list[Any], Any]:
+        state = SimpleNamespace(pending_outcome_stats={})
+        with reg_lock:
+            registrations.append(state)
+        kwargs["on_state_ready"](state)
+        return [], "stats"
+
+    monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
+
+    session = _resume_ready_session(tmp_path, in_dir, hooks=1)
+    # Deliberately left at the constructor default of 1: the dispatch must SIZE
+    # the barrier itself. Seeding it here would hide the very line under test.
+    session.args = cast(Any, SimpleNamespace(
+        threaded_selfplay=True, selfplay_threads=4,
+    ))
+    session.rng = np.random.default_rng(0)
+    session.device = "cpu"
+    session.model = None
+    session.sf = object()
+    session.inference_client = object()
+    session._direct_evaluator = None
+    session._resume_inflight_enabled = True
+    session._suspend_inflight_games = None
+    session._stop_fn = None
+    session._pause_fn = None
+    session._on_completed_game = None
+    session._record_selfplay_phase_timing = None
+    session._check_model_update = None
+    session._live_states_lock = threading.Lock()
+    session._live_states = []
+    session._pending_live_override = None
+    session._aggregate_thread_stats = lambda stats: stats
+    session._build_shared_diff_focus_norm = lambda cfgs, gpb: None
+
+    # 16 games over 4 threads: the state count is the THREAD count here, so a
+    # barrier sized off `games_per_batch` would be 16 and never settle.
+    session._dispatch_selfplay_one_shard(
+        games_per_batch=16, cfgs={}, need_local_model=False,
+    )
+
+    assert len(registrations) == 4, (
+        "the threaded run must fire one on_state_ready per selfplay thread"
+    )
+    assert session._resume_hooks_expected == len(registrations), (
+        "the settle barrier's denominator and the hooks the session really "
+        "fires are computed in two different methods and must agree"
+    )
+    fields = _settled_line(caplog)  # asserts EXACTLY one settled line
+    assert fields["hooks"] == len(registrations)
+    assert fields["left_on_disk"] == 2, "counted from the session's real resume_dir"
+    # Taken by the LAST hook: an earlier reading describes a race, and only the
+    # state that settled carries the number out to result.json.
+    settled = [s for s in registrations if s.pending_outcome_stats]
+    assert len(settled) == 1, "the leftover count must be published exactly once"
+    assert settled[0].pending_outcome_stats["resume_left_on_disk"] == 2

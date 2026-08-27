@@ -216,6 +216,50 @@ def test_width_survives_the_manifest_round_trip(want: int | None) -> None:
     assert tuple(rebuilt.policy_future.q.weight.shape) == (_TRUNK, _TRUNK)
 
 
+def test_EVERY_model_config_field_reaches_the_manifest() -> None:
+    """⚑⚑ The generalisation of the test above, and the reason it is not enough.
+
+    `model_config_to_manifest_dict` is HAND-ENUMERATED. The test above pins one
+    key, and this module's docstring calls a manifest omission "the maximally
+    silent failure" — but a per-key test only ever protects the key someone
+    remembered to write it for. Measured by independent review of PR #439:
+    deleting `"input_square_embedding"` (a real architecture field) from the
+    writer passes 15 test files, EXIT 0, and 30 of the 44 `ModelConfig` fields
+    are asserted against the manifest nowhere at all.
+
+    ⚑ The neighbouring guard already learned this. `model_config_identity_key`'s
+    docstring records that its hand-written tuple "listed 35 of 41 fields and
+    had silently drifted", omitting five SHAPE-CHANGING ones, and it was
+    rewritten to derive from `dataclasses.fields` precisely so that a newly
+    added field defaults to BEING carried. This asserts the same property for
+    the manifest, which is the wire format the identity key is computed off.
+
+    Deriving it means the next `ModelConfig` field fails HERE — one line naming
+    the field — instead of shipping a worker that silently rebuilds the wrong
+    architecture. The single rename is spelled out rather than tolerated by a
+    fuzzy match, so a second rename also has to be declared.
+    """
+    fields = {f.name for f in dataclasses.fields(ModelConfig)}
+    # The one deliberate rename between the dataclass and the wire format.
+    expected = (fields - {"use_gradient_checkpointing"}) | {"gradient_checkpointing"}
+    manifest = set(model_config_to_manifest_dict(_cfg(None)))
+
+    assert not (expected - manifest), (
+        "ModelConfig field(s) missing from the manifest: "
+        f"{sorted(expected - manifest)}. A field absent here is not sent to the "
+        "workers, so they rebuild a DIFFERENT architecture and "
+        "load_state_dict_tolerant drops the mismatched tensors with only a "
+        "print(); model_config_identity_key is computed off the config rebuilt "
+        "from this manifest, so the broker's guard cannot tell them apart "
+        "either. Add the field to model_config_to_manifest_dict."
+    )
+    assert not (manifest - expected), (
+        f"manifest carries key(s) with no ModelConfig field: "
+        f"{sorted(manifest - expected)}. Either add the field or declare the "
+        "rename in this test."
+    )
+
+
 @pytest.mark.parametrize("want", _WIDTHS)
 def test_width_reaches_the_model_config_production_builds(want: int | None) -> None:
     """⚑ yaml -> TrialConfig -> ModelConfig. `model_config_from_flat_config` is

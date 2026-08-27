@@ -265,6 +265,1289 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## READOUT (2026-08-14) — the MultiPV-6 censored tail is worth **207 cp**, not the 565 cp we assign (α = 0.17)
+
+**⚑ TERMINOLOGY: this is WITHHELD WIDE-SF TRUTH, not ground truth.** Ranks 7–40 are genuinely
+withheld observations, but they are the output of the historical MultiPV-40 search — not deep-SF
+truth and not mathematics. Combined with the MPV40≠MPV6 caveat below, keep the wording precise.
+
+**This is the answer the CAST pricing was withdrawn for.** No CAST, no played-move
+proxy, no calibration inversion: take the wide-MultiPV era's own labels, hide everything below
+rank 6, and score the candidate tail representations against the values that were hidden.
+Instrument: `scratchpad/tail_screen.py` (to be productionised as
+`scripts/tail_censor_screen.py`). Population: `d2003` / `cdb96` / `0f888`, last 10 shards each,
+**n = 8,246 rows** carrying an exact P0-adjacent wide label.
+
+**Policy-weighted hidden-tail regret** — the quantity the loss actually integrates,
+`sum_{a in tail} p(a)·r(a)`:
+
+| representation | value | bias vs truth |
+|---|---|---|
+| **TRUE (revealed ranks 7–40)** | **206.6 cp** | — |
+| `r_6` censor (α = 0, the audit ruler's rule) | 131.0 cp | **−75.7 cp** |
+| **current midpoint (α = 1, `finalize`'s rule)** | **565.5 cp** | **+358.8 cp** |
+| maximal (α = 2) | 1000 cp | — |
+
+⇒ **FITTED α = 0.174** (per-position median 0.145, IQR [0.046, 0.365]; 339 degenerate
+`1−r_6 < 0.05` rows suppressed). **The current midpoint overstates the censored tail by
+2.74×**, and both conventions are biased in OPPOSITE directions with the midpoint ~4.7× the
+larger error. The pre-registered `[0, 2]` range mattered: α landed at 0.17, but the fit had to
+be free to exceed 1 for that to carry information.
+
+**The rank curve is why a flat imputation cannot work** — regret rises smoothly with rank while
+policy mass collapses:
+
+| rank | mean regret | mean policy mass |
+|---|---|---|
+| 7 | 186 cp | **0.0277** |
+| 10 | 237 cp | 0.0146 |
+| 15 | 311 cp | 0.0057 |
+| 31 | 524 cp | 0.0008 |
+| 40 | 635 cp | **0.00006** |
+
+The assigned 565 cp is roughly correct for rank ~34 — a rank that essentially never carries
+probability. ⚑ **The rank>40 coverage limit is empirically nil:** policy mass on legal moves the
+wide label never scored is **1.1e-4**, because MultiPV 40 covered **98.3% of legal moves**
+(median 100%). This screen therefore sees essentially the whole tail, not a near slice.
+
+**⚑ METHOD FAILURE CAUGHT BY ITS OWN DIAGNOSTIC — the first run of this screen was WRONG.**
+It weighted row *t*'s policy by row *t*'s OWN `sf_multipv_raw`, which describes the position
+AFTER row *t*'s move. Symptoms: a coverage fraction of **1.04** (structurally impossible) and
+**90.6%** of policy mass on "unscored" moves. Corrected by the P0 shift — SF's read of THIS
+position is the PREVIOUS ply's block — after which coverage reads 0.983 and unscored mass
+1.1e-4. The pre-fix numbers (TRUE 295 cp, α = 0.37) are VOID. Report an impossible-valued
+diagnostic next to every headline; this one caught a wrong result before it was banked.
+
+### ⚑⚑ RE-RUN UNDER THE NET'S OWN PRIOR — the training-relevant weighting. VERDICT: REAL DEFECT.
+
+`w_sf_own_regret` is **`sum(softmax(legal-masked policy_own) * r)`** (`train/losses.py:888-890`)
+— the net's OWN prior, **not** the stored `policy_target`. The first pass above weighted by
+`policy_target`, which is the search-target answer, not the one the auxiliary experiences.
+Re-run with `data/tail_screen_20260814/checkpoint_000218` (`5ce02`, Aug 12), n = 5,193:
+
+| representation | value | bias |
+|---|---|---|
+| TRUE (withheld wide-SF) | **206.4 cp** | — |
+| `r_6` censor (α = 0) | 129.9 cp | −76.5 cp |
+| current midpoint (α = 1) | 564.9 cp | **+358.5 cp** |
+
+**α = 0.1759 under the prior against 0.1741 under the MCTS target** — the answer is essentially
+INSENSITIVE to which distribution weights it. That is a robustness result worth having: the
+2.74× is not an artifact of the weighting choice.
+
+**GRADIENT FIDELITY.** Matching a scalar mean does not mean inducing the right gradient. For
+`L = p·r` the logit gradient is `dL/dz = p ⊙ (r − E_p[r])`, so with wide labels a
+full-information reference is computable and each censor can be scored against it:
+
+| variant | cos sim | rel L2 (pooled) | rel L2 (median) | tail pressure | vs TRUE |
+|---|---|---|---|---|---|
+| TRUE | 1.0000 | 0 | 0 | 0.010638 | 1.00× |
+| `r_6` censor | 0.8681 | 0.5288 | 0.1988 | 0.005270 | 0.50× |
+| **midpoint (live rule)** | **0.8552** | **1.2681** | **1.5390** | 0.041118 | **3.87×** |
+| fitted α | **0.9023** | **0.4940** | 0.2697 | 0.011575 | 1.09× |
+
+⇒ **The live midpoint's error is LARGER THAN THE GRADIENT ITSELF (pooled rel L2 = 1.27)** and it
+applies **3.87× the true pressure** pushing mass off the censored tail. `r_6` errs the other way
+at 0.50×. Fitted α lands at 1.09× with less than half the midpoint's L2.
+
+**⚑ TWO DIFFERENT α's, AND THEY NEARLY COINCIDE.** `α = 0.1759` above was fitted to match the
+policy-weighted E[regret]. That is not the same objective as matching the GRADIENT, so the
+gradient-optimal α was fitted separately — and it is closed form, because `g(α)` is LINEAR in α:
+with `u = 1_hidden · (1−r_6)/2`, `r(α) = r_0 + αu` (r_0 = tail filled at `r_6`), hence
+`g(α) = g_0 + α·d` with `d = p ⊙ (u − p·u)`, and the pooled least-squares optimum is
+`α_grad = Σ⟨d, g_true − g_0⟩ / Σ⟨d, d⟩`. No search.
+
+| α | value | cos sim | rel L2 (pooled) | tail pressure vs TRUE |
+|---|---|---|---|---|
+| `α_value` (matches E[regret]) | 0.1759 | 0.9023 | 0.4940 | 1.09× |
+| `α_grad` (least-squares on the gradient) | **0.1408** | 0.9054 | 0.4919 | **0.97×** |
+
+Unclipped, so the `[0,2]` bound never bound. **Optimising directly for the gradient buys almost
+nothing** — cosine 0.9023 → 0.9054, pooled L2 0.4940 → 0.4919. ⇒ **one scalar α in ~0.14–0.18
+serves both objectives**, and the distinction is not worth carrying in the design. (`α_grad` is
+the smaller of the two because the least-squares weighting emphasises rows with more hidden
+mass.) Both are ~6× below the live midpoint's α = 1.
+
+⚑ **AND THE CEILING IS IRREDUCIBLE, WHICH IS THE ACTIONABLE PART.** Even at the
+gradient-OPTIMAL α, cosine tops out at **0.905**. The residual ~0.095 is not a mis-fitted α —
+it is what a CONSTANT tail costs, because one number cannot separate rank 7 (186 cp) from rank
+40 (635 cp). ⇒ **Do not tune α further.** A better constant is not the answer.
+
+⚑⚑ **BUT DO NOT READ THE RANK CURVE AS "IMPLEMENT RANK-DECAYING REGRET FOR RANKS 7+".**
+**Hidden SF rank does not exist at live MultiPV 6.** The historical MPV40 data knows an omitted
+move was rank 7 rather than rank 30; production MPV6 knows only that the move was not surfaced.
+The rank curve DIAGNOSES why a constant fails — it is not a usable target. Anyone proposing a
+rank-shaped tail must first say where the rank comes from at label time. The implementable
+candidates are:
+- a **prior-aware / residual** tail, where unseen moves keep the NETWORK's own ordering
+  (`p_teacher(a) ∝ p_base(a)·exp(−β r)` with one shared censored value, so the tail's relative
+  order is the student's and is never attributed to Stockfish);
+- an **adaptive common α** driven by observable ROOT features (`r_6`, legal count, entropy,
+  phase) — only if the real-MPV6 panel shows it beats a fixed α;
+- **buying the information**: targeted `searchmoves` / ΔQ queries on student-important moves,
+  which is the only option that actually creates the missing rank knowledge.
+
+(An earlier revision of this section closed with "the answer is a rank-decaying tail". That
+line is **retracted** by the paragraph above: it named a target that cannot be built from
+production labels. What survives it is the measurement — fitting α buys the aggregate pressure,
+not the per-action direction, with cosine capped at 0.855–0.902 for all three constants.)
+
+⚑ **The pooled statistic is the reportable one.** The per-row mean relative L2 read **4557** for
+the midpoint: rows where `‖g_true‖ ≈ 0` divide by near-zero and one dominated the average.
+Pooled `sqrt(Σ‖Δ‖² / Σ‖g_true‖²)` and the median are both reported.
+
+**What this does NOT establish.**
+1. The pinned net is **Aug 12**, two days stale, because the live trial had no checkpoint and
+   `runs/pbt2_small/best_model.pt` is from
+   **2026-04-14** and must not be used as "current" [[best_model_ruler_mixing]]. The checkpoint
+   was copied OUT of the tune dir because Ray prunes.
+2. **MultiPV 40 truncated to 6 is not a real MultiPV 6 search.** Width changes root-search
+   allocation, so this answers "given a top-6 cutoff, how should the unknown be represented"
+   and NOT "what does today's MPV6 fail to surface". The calibration panel for that is a few
+   hundred current positions run at production-shaped ~200k MPV6 against a wide search.
+3. Positions are the wide-label era's distribution.
+
+### ⚑⚑ SUPERSEDED 2026-08-16 — the 08-15 panel numbers below are VOID (baseline-mixing confound)
+
+An independent review (reviewer ≠ author) found that `build_rows(substitute=True)` mixed two
+regret BASELINES: `r_k` came from PROD's own best while the substituted tail came from
+MATCHED's/DEEP's. `to_regret` measures each arm against ITS OWN best, so a uniform level shift
+between arms **cancels out of every regret difference** — `cross_arm_check` reads exactly
+1.000 — while landing **entirely on the substituted tail**, the one quantity being measured.
+The falsifier's domain (the top-6 moves both arms surfaced) and the confound's domain (the
+absolute level) are disjoint. A test now pins the leak at exactly 20 cp under a 20 cp shift
+while the ratio stays 1.000.
+
+Fixed by REMOVING the dependence, not checking for it: `rebase_offset()` maps the truth arm's
+raw scores into PROD's frame per row before any regret is taken. Re-run:
+
+| panel | 08-15 (confounded) | 08-16 (rebased) | shift |
+|---|---|---|---|
+| (A) MATCHED-substituted — PRIMARY | 0.1986 [0.092, 0.302] | **0.2719 [0.1838, 0.3751]** | **+0.073** |
+| (A) tablebase-free | 0.2252 [0.142, 0.321] | 0.2096 [0.1342, 0.3093] | −0.016 |
+| (B) DEEP-substituted | 0.0979 [0.015, 0.177] | **0.1976 [0.1252, 0.2781]** | **+0.100** |
+| (B′) ALL-DEEP | −0.0002 [−0.073, 0.066] | 0.0567 [−0.0242, 0.1514] | +0.057 |
+
+**α was biased LOW**, so the old numbers OVERSTATED how wrong the midpoint is: the overstatement
+ratio is **2.11×–2.87×**, not the 2.54×–3.15× banked on 08-15. Three other review findings also
+landed (`alpha_grad` fitted on a superset of the population whose L2 it claimed to minimise;
+never-scored moves entering the reference with a fabricated `r_k`; no `is_selfplay` filter) —
+see the 08-16 screen re-run below, where they moved α by <0.002 combined.
+
+### READOUT (2026-08-16) — the midpoint verdict is ROBUST; "the historical α transfers" is NOT
+
+**Judged by the rule pre-committed 2026-08-14 18:37.** Falsifier first: PROD vs MATCHED
+**1.066**, inside the pre-registered [0.90, 1.111]. Primary is (A), all positions,
+**α_value = 0.2719 [0.1838, 0.3751]**.
+
+| clause | fires? | consequence |
+|---|---|---|
+| CI excludes 1.0 from below | **YES** (upper bound 0.375) | **the live midpoint IS too harsh on production labels** |
+| CI covers 0.1759 | **NO** (lower bound 0.1838) | the historical screen does **not** transfer on the primary |
+
+⇒ By the letter of the pre-committed table this reads as the FOURTH row ("a THIRD number").
+**⚑⚑ THAT VERDICT IS WITHDRAWN — TWICE OVER, AND BOTH REASONS ARE METHOD FAULTS OF MINE:**
+1. **The margin was manufactured by the wrong resampling unit.** The lower bound 0.1838 excluded
+   0.1759 by **0.008** while the CI resampled ROWS. Adjacent plies of one game are not independent
+   replicas, so that interval was too narrow. Fixed to a GAME-CLUSTER bootstrap.
+2. **The primary instrument is invalid** (see the retraction below). A pre-registered criterion
+   evaluated on an instrument that does not measure a well-defined quantity is not a verdict.
+
+#### The GAME-CLUSTER rerun landed (2026-08-16, `scratchpad/panel_clustered.json`, seed 1)
+
+Same seed and same 500 positions, so **every point estimate is byte-identical** to the row-bootstrap
+run — the correct signature, since the resampling unit changes the interval and not the estimate.
+
+| arm | n_games/n_rows | α_value | ROW CI | GAME-CLUSTER CI | width | covers 0.1779 |
+|---|---|---|---|---|---|---|
+| (B) **PRIMARY** deep_substituted | 395/498 | 0.1976 | [0.1252, 0.2781] | **[0.1249, 0.2780]** | 1.00× | **YES** |
+| (A) MATCHED — diagnostic only | 395/498 | 0.2719 | [0.1838, 0.3751] | [0.1805, 0.3846] | 1.07× | no, **by 0.0026** |
+| (A) MATCHED, TB-free | 370/453 | 0.2096 | [0.1342, 0.3093] | [0.1198, 0.3190] | 1.14× | **YES** |
+| (B') ALL-DEEP | 394/496 | 0.0567 | [−0.0242, 0.1514] | [−0.0389, 0.1444] | 1.04× | no, by 0.0335 |
+
+⚑ **Clustering barely moved the panel, and the reason is structural: the panel's sampler already
+draws ~ONE position per game (1.26 rows/game).** So its row bootstrap was already close to a game
+bootstrap by construction, and there was almost no within-game correlation left to absorb. This
+does NOT generalise to the truncation screen, which runs **5.4 rows/game** (925 games / 5028 rows)
+— that is where the clustering fix genuinely bites. ⇒ *the same method fix has very different
+force on two instruments; check the rows-per-cluster ratio before claiming a clustered CI
+changed (or did not change) anything.*
+
+⇒ **MATCHED's exclusion of the historical α collapsed from 0.008 to 0.0026** — a coin flip, not a
+regime shift. Combined with its ill-posed estimand, nothing rests on it. The PRIMARY (B) **covers**
+0.1779. **All four arms exclude α = 1.0 on BOTH α_value and α_grad** (α_grad upper bounds 0.1247–0.2288).
+
+⚑ The banked `scratchpad/panel_clustered.log` carries **stale LABELS** — it prints "(A)
+SELF-CONSISTENCY — PRIMARY" and "row bootstrap draws" because the interpreter had already loaded
+the pre-edit file when the relabel was written ([[running_scripts_keep_the_old_file]]). The
+NUMBERS are the clustered ones (`n_games` is banked in the JSON, which is only computed under
+clustering). Trust `panel_clustered.json`; the current script prints the corrected labels.
+
+**The honest statement is:** the historical point estimate does not reproduce *exactly* on the
+production panel, and the evidence does not establish a genuine regime shift. Across every
+credible instrument α is **O(0.1–0.25)**, while **α = 1 is decisively wrong**.
+
+**What survives, and it is the load-bearing half:** every arm, every population, both
+instruments, and both the confounded and corrected fits put α far below 1.0 and the
+overstatement at **2.1×–2.9×**. The live midpoint being much too harsh is not in question.
+What is no longer supported is the sharper claim that the wide-era α = 0.176 carries over
+unchanged — the honest range on production labels is now **α ≈ 0.06–0.37 depending on the arm**,
+and the arms disagree more than any one of their CIs suggests.
+
+⚑⚑ **RETRACTED: "(A) IS AN UPPER BOUND" WAS NEVER ESTABLISHED.** I wrote that on 08-15 from
+"a weaker search sees bigger gaps", supported by (A) TRUE 224.4 cp sitting above (B)'s 181.0.
+**That is an observation, not a monotonicity argument.** Widening MultiPV at a fixed budget both
+weakens and widens the search: it can miss refutations (scoring bad moves too generously, biasing
+α DOWN) as easily as it can inflate gaps. Nothing here fixes the sign, and one paired comparison
+does not fix it either. Codex raised this as a P1 and is right.
+
+⇒ **(A) IS NOT A VALID INSTRUMENT FOR THIS QUESTION, AND THAT DEMOTES THE PRE-REGISTRATION'S OWN
+PRIMARY.** The deeper problem is that (A)'s target quantity may not exist: "what would the label's
+own search have said about the moves it did not surface" presumes a counterfactual that a fixed
+node budget cannot realise, because you cannot vary width while holding search strength. So the
+08-14 pre-registration named a primary that turned out not to measure a well-defined thing.
+**Honouring a pre-registration does not mean treating a later-invalidated instrument as truth** —
+it means saying so rather than quietly switching to the arm that agrees. The valid arms are (B)
+and (A)-tablebase-free, and they DO cover 0.1759; (B′) answers a different question.
+
+**A matched-STRENGTH wide arm is the missing instrument** — full width at whatever node budget
+restores PROD's median depth 12 — and until it exists the transfer question is open, not answered
+in either direction.
+
+⚑ **α_value and α_grad NO LONGER COINCIDE on the panel** — (A) reads 0.2719 vs 0.1018. The
+ledger's earlier "one scalar in ~0.14–0.18 serves both objectives" was a SCREEN-population
+statement and does not hold here. Do not carry it across populations.
+
+### SUPERSEDED READOUT (2026-08-15) — retained for the audit trail; numbers VOID, see above
+
+Judged by the rule pre-committed below at 18:37 on 2026-08-14, before the run reported.
+`scripts/mpv6_tail_panel.py`, 500 positions from the live MPV6 era, banked to
+`scratchpad/mpv6_tail_panel_spread_20260815.json`.
+
+| panel | α_value (95% CI, 1000 row draws) | vs 1.0 | vs 0.1759 | midpoint / TRUE |
+|---|---|---|---|---|
+| **(A) MATCHED-substituted — PRIMARY** | **0.1986 [0.0922, 0.3022]** | **excludes** | **covers** | 569.4 / 224.4 = **2.54×** |
+| (A) tablebase-free (n=458) | 0.2252 [0.1416, 0.3213] | excludes | covers | 558.1 / 215.8 = 2.59× |
+| (B) DEEP-substituted | 0.0979 [0.0147, 0.1766] | excludes | covers (edge) | 569.4 / 181.0 = **3.15×** |
+| (B′) ALL-DEEP | −0.0002 [−0.0729, 0.0663] | excludes | EXCLUDES | 590.5 / 181.0 = 3.26× |
+
+⇒ **BOTH pre-committed clauses fire: the CI excludes 1.0 from below AND covers 0.1759.** The
+live midpoint IS too harsh on production labels, and the MultiPV-40 truncation screen's answer
+TRANSFERS — it was not an artifact of truncating a wide label. The historical screen read
+564.9 / 206.4 = **2.74×**; the panel reads **2.54×** (A) and **3.15×** (B) on real MPV6 data
+from a different era, a different net-weighting population, and a different instrument.
+
+⚑ **The pre-registered negative branch did NOT fire.** It was written down precisely so it
+could: "if the CI covers 1.0, α = 0.1759 was an MPV-40 truncation artifact." The n=6 smoke had
+pointed at 0.92, i.e. AT 1.0. It did not survive n=500.
+
+⚑⚑ **(B′) IS THE SHARPEST STATEMENT AND IT IS NOT THE SAME CLAIM.** Under one uniformly-deep
+ruler scoring EVERY move, α = **−0.0002 [−0.073, 0.066]** and the `r_6` censor's bias is
+**+0.1 cp** — the censored tail is worth *the worst surfaced move*, full stop. That is
+`eval/audit.py::move_regrets`'s optimistic floor being exactly right and
+`finalize._build_sf_p0_regret_vector`'s midpoint being 3.26× too high. It is a DIFFERENT claim
+from (A)/(B) because it also re-scores the surfaced moves (its `r_6` is 181.1 cp against
+production's actual 138.9), so it does not tell production what to do with the `r_6` it has.
+
+**⚑ MY OWN FALSIFIER WAS TOO GENEROUS, AND THE SAME RUN SAYS SO.** PROD vs MATCHED read
+**1.102** against a pre-registered band of [0.90, 1.111] — a pass by 0.009. But two other
+printed diagnostics show the arm is compromised anyway: MATCHED's median depth is **9** against
+PROD's **12**, and their bestmove agreement is **0.574**. **At a fixed node budget you cannot
+widen MultiPV without weakening the search**, so the (A) counterfactual — "what would the
+label's own search have said" — has no clean instrument, and a ratio band was the wrong
+falsifier for it. The correct one is DEPTH PARITY, which (A) structurally cannot meet.
+⇒ **(A)'s α is an UPPER BOUND, not a clean read**, and the data agrees: a weaker search sees
+bigger gaps, so (A)'s withheld truth is 224.4 cp against (B)'s 181.0. Record the lesson as
+[[guard_must_share_the_criterion_instrument]]: the band tested the ratio, the assumption lived
+in the depth.
+
+**Population correction, caught before banking.** The first run (`..._20260814.json`) drew all
+500 positions from ONE shard — one worker's upload batch, a few dozen correlated games —
+because `sample_positions` filled from the front. Fixed to a per-shard quota. Point estimates
+moved ≤0.07 and every CI **widened 7-47%** (deep_all +47%), which is exactly the direction a
+correlated population biases them. Both populations give the same verdict; only the first one's
+confidence was unearned.
+
+**What this does NOT establish.**
+1. **No training change is licensed by this entry.** Moving the imputation from `(worst+1)/2`
+   to `worst + α(1−worst)/2` with α ≈ 0.15 is the obvious candidate and it is training-affecting,
+   so it needs its OWN entry with a pre-committed yardstick and kill rule before launch. The
+   number here is an input to that entry, not a substitute for it.
+2. Cosine tops out at **0.81** for every constant, worse than the historical screen's 0.905.
+   A constant tail still cannot reproduce the within-tail gradient, and hidden SF rank still
+   does not exist at MPV 6 — see the retraction above.
+3. The CI is over ROWS. It does not cover Stockfish's own per-position noise, and PROD/MATCHED
+   carry the 3-4-5 tablebases while DEEP carries the pair (the TB-free split is reported).
+4. One net (`checkpoint_000218`, Aug 12), one era, `lc0_1858`. The prior weighting is the
+   training-relevant one (`train/losses.py:888-890`), not `policy_target`.
+
+### PRE-REGISTERED 2026-08-14 18:37, JUDGED ABOVE — the real MultiPV-6 calibration panel
+
+⚑ **Registered BEFORE the run finished, because the whole point is not to choose the reading
+after seeing it.** `scripts/mpv6_tail_panel.py`, 500 positions from the LIVE (MultiPV-6) era.
+
+**Why the screen above cannot answer this.** A node budget is spent ACROSS PVs, so MultiPV 6
+at 150k nodes and MultiPV 40 at 150k nodes do not give rank 6 the same search. The screen's
+`r_6` is a rank-6 regret from a **40-wide** search; production's comes from a **6-wide** one.
+α = 0.1759 is a fact about the wide-label era, and whether it transfers is exactly what is
+unmeasured.
+
+**Three arms, on the same positions** (all production values MEASURED, not read off the
+config's face): PROD = MultiPV 6 / **150,000 nodes** (the realized median of
+`sf_label_meta[:,0]`, pinned at `sf_label_nodes_floor` — the 200k **cap** is not what runs) /
+Hash 17MB / `stockfish_syzygy_path`, which is the **3-4-5 directory ALONE**. MATCHED =
+identical except full width. DEEP = full width, 4M nodes, Hash 512MB, the full syzygy pair.
+DEEP's budget is measured too: at MultiPV 64 it needs ~4M nodes to out-depth PROD (median 16
+vs 12); at 200k it reads depth **10**, i.e. SHALLOWER than what it grades.
+
+**PRIMARY:** arm (A) = MATCHED-substituted `α_value` with a 1000-draw row bootstrap. Surfaced
+moves keep PROD's own regrets, so only the CENSORING varies.
+
+**FALSIFIER, stated first:** PROD vs MATCHED cross-arm regret ratio must lie in
+**[0.90, 1.111]**. These differ only in width at an identical budget; outside that band,
+widening the search changed the surfaced scores too and the primary is VOID, not merely noisy.
+(Smoke read 1.009.)
+
+**PRE-COMMITTED READING RULE** — on the primary's 95% CI:
+
+| the CI... | verdict |
+|---|---|
+| excludes 1.0 from below | the live midpoint IS too harsh on production labels, by the measured factor |
+| covers 1.0 | ⚑ **the live midpoint is NOT shown to be wrong**, and α = 0.1759 does NOT transfer — it was an artifact of MPV-40 truncation |
+| covers 0.1759 | the historical screen transfers to production |
+| excludes BOTH 0.1759 and 1.0 | a THIRD number; neither the historical result nor the live rule stands, and the tail needs re-deriving from this panel alone |
+
+⚑ **"Covers 1.0" is a real possible outcome and is a NEGATIVE result for the whole tail
+thesis.** It is written here so it cannot later be reported as "inconclusive". The smoke run
+(n=6, useless for inference but not for direction) read α ≈ 0.92 — i.e. it pointed AT 1.0, not
+at 0.176. If the full run holds that, the finding is that the MultiPV-40 truncation screen
+answered a question production does not ask.
+
+**Reported alongside, not instead:** the same fit on the tablebase-free subset (PROD/MATCHED
+carry the 3-4-5 set, DEEP carries the pair, so TB positions are where the arms differ by
+construction), and arms (B)/(B') from the DEEP ruler, which re-score the SURFACED moves too and
+therefore indict the whole label rather than its tail — a separate question, not a better
+answer to this one.
+
+### READOUT (2026-08-16) — ⚑⚑ RELATIONAL SF6 SUPERVISION **LOSES**, and the top-6-only half is GEOMETRICALLY FORBIDDEN
+
+**Question** (from the CAST/MDT solver-structure framing): if you know only Stockfish's six
+scored candidates, does a RELATIONAL loss — pairwise order, margins, indifference bands, with NO
+fabricated values for unobserved moves — recover more of the full-information policy gradient
+than the best constant-tail rule? **Answer: no.** `scripts/relational_sf6_screen.py`
+(branch `relational/sf6-screen`), 5059 rows of the wide-MPV40 era, held-out split by `game_id`.
+
+**Best relational 0.9049 vs the constant tail 0.9158 on the SAME held-out rows: −0.0110.**
+⚑ The hurdle was RE-MEASURED on the held-out rows rather than compared against the published
+0.9054 — using the published figure would have silently gifted the relational side ~0.01.
+
+⚑⚑ **THE ANSWER IS STRUCTURAL, NOT EMPIRICAL — AND IT IS ONE LINE OF ALGEBRA.**
+
+    dL/dz_i = p_i (r_i − E_p[r]) = Σ_j p_i p_j (r_i − r_j)
+
+Verified exactly (max abs diff 2.8e-17). **The reference gradient IS a pairwise object, and its
+pair term is the regret DIFFERENCE.** So:
+- **surfaced × surfaced**: the difference is OBSERVED ⇒ that block is recoverable exactly (pinned
+  to machine precision by a test).
+- **surfaced × tail**: needs a tail **MAGNITUDE** — precisely what relational supervision declines
+  to supply and what a fitted α does supply.
+- **tail × tail**: also unobserved, and a CONSTANT tail zeroes it by construction (all tail
+  regrets equal ⇒ every `r_i − r_j` inside T is 0) while `g_true`'s is not. **MEASURED, not
+  asserted** (n=1908 wide-era rows, pooled): `‖g_TT‖ / ‖g_true‖` = **0.2137**, and
+  `‖g_ST‖ / ‖g_true‖` = **0.7769**. So a constant tail *mis-scales* 78% of the reference and
+  *deletes* 21% of it outright. That is a ceiling no choice of α can lift, and it is why cosine
+  caps near 0.905 however α is fitted.
+
+  ⚑ **I predicted 5–15% for the T×T share and measured 21.4% — outside my band, so the
+  explanation is owed.** I reasoned only from the per-pair weight (`p_i p_j`, a product of two
+  small numbers) and ignored two things that dominate it: **count** — ~21 tail moves give ~420
+  tail×tail pairs against ~126 surfaced×tail — and **spread**, since tail regrets range from
+  ~186 cp at rank 7 to ~635 cp at rank 40, so the `r_i − r_j` factors inside T are large. Weight
+  per pair is small; the block is not.
+
+⇒ **fifteen pairwise labels from six SF values are not fifteen new pieces of supervision.** They
+are the same information re-expressed; the regret gradient already IS their aggregate. The
+bottleneck is not extracting more algebra from observed values, it is ACQUIRING the missing
+cross-boundary comparisons.
+
+Relational supervision is not a different *kind* of information here. It is the same object with
+one block deleted.
+
+**CEILING 1 — top-6-only support is forbidden before any loss design.** A loss over only the six
+surfaced logits has a gradient supported on six coordinates, so its cosine is bounded by the
+fraction of ‖g_true‖ living there:
+
+| measure | agent (pre-review-fix estimator) | independent recompute (post-fix) |
+|---|---|---|
+| mean / row | **0.8432** | **0.8794** |
+| pooled | 0.8276 | 0.7894 |
+| median | 0.9076 | 0.9672 |
+| p10 | 0.6051 | 0.6700 |
+
+Both below the 0.9054 hurdle on both measures ⇒ **the top-6-only half is answered by geometry.**
+Cause: the net's prior puts real mass outside SF's six (mean 15–20%, **p90 ≈ 0.64**), so the
+censored tail carries ~21–29% of the reference gradient's energy.
+
+**CEILING 2 — the escape exists and then collapses.** "Move X was not surfaced" IS an observation
+(`r_X ≥ r_6`), so an UNMARGINED surfaced-over-tail constraint may legitimately place gradient on
+the tail. Ceiling **0.9934**. But its `t→∞` limit is `−p_i·mass(T)` / `+p_j·mass(S)` — gradient
+proportional to the prior with ONE global magnitude, i.e. **the shape of a constant tail with its
+fitted scale playing α's role.** ⇒ **the order constraint does not escape the constant tail; it
+BECOMES one.**
+
+**Secondary readings.**
+- **Indifference weighting helps** (`w_ij = min(1, |Q_i−Q_j|/τ)`): **+0.0249** (0.8831 vs 0.8582),
+  isolated by a single-knob ablation. ⚑ Read it narrowly: it says SF's tiny WITHIN-top-6 score
+  differences carry enough noise/irrelevant sharpening that treating near-ties as equivalent
+  improves use of the OBSERVED block. **It does not touch censoring.** Worth keeping as an add-on
+  for any future SF-ranking or regret auxiliary, not as an answer to the tail.
+- **Listwise CE is ANTI-correlated (−0.133)**, not broken: matching a sharpened SF distribution
+  opposes a gradient that wants mass shifted by *current prior* weight. It also invents a
+  temperature, so it never belonged in the "no fabricated values" class.
+- **Pure pairwise within the six reads 0.6531**; hinge/Borda-limit variants 0.4024.
+
+⚑ **SIDE FINDING THAT REFRAMES THE INCUMBENT: much of the constant tail's direction comes from
+SET MEMBERSHIP, not the six VALUES.** Permuting SF's scores within a row and refitting leaves the
+constant tail at cos **0.6445** against 0.9159 with true scores. (A different permutation scheme
+read 0.4349; the schemes differ — mine permutes across all scored moves and recomputes `r_6` — so
+quote the MECHANISM, not a decimal.)
+
+⚑ **Say "the cosine retains ~70% of its magnitude", NOT "70% of the information survives".**
+Cosine is not linear in information: a ratio of two cosines is not a fraction of gradient content
+explained, and an earlier draft of this entry said so. The defensible claim is the qualitative
+one — destroying SF's score ordering entirely still leaves a surprisingly large cosine, because
+surfaced-set membership plus the prior's own geometry already fixes most of the direction. That
+is consistent with the algebra: what the target mostly encodes is *which moves SF looked at*,
+plus one magnitude.
+
+**What this does NOT establish.**
+1. **ΔQ is untouched, and this SHARPENS it.** The screen bounds what is extractable from SF's
+   EXISTING six; it says nothing about *buying* the missing S×T / T×T comparisons. ⇒ the negative
+   **strengthens** ΔQ by naming what has to be purchased. And the missing block is not generically
+   "surfaced × tail" — it is specifically *comparisons involving high-prior, student-important
+   moves that SF6 did not evaluate*, which is a far cheaper query policy than "every disagreement".
+2. **Branch/counterfactual solver structure is NOT falsified by this.** The screen tested one
+   reading of the CAST/MDT idea — richer supervision from the SAME root solver output — and that
+   loses for the algebraic reason above. The other reading, how solver decisions change ACROSS
+   states (`Q(s,a_A) − Q(s,a_B)` versus the same contrast at `s'`), carries information no single
+   root's six scalars contain. Not pursued now because ΔQ is cheaper and closer to the
+   demonstrated hole, but it is untested, not refuted.
+3. **Era.** MultiPV-**40** wide-label data. Real MPV-6 constant-tail cosines top out ~0.81–0.87
+   (2026-08-16 panel), so the exact numbers are era-specific; the ceiling argument is geometric
+   and should transfer, but that is an argument, not a measurement.
+4. The screen ran on the estimator BEFORE the 08-16 review fixes (n=5059, α 0.1759 vs the
+   corrected n=5028, α 0.1779). The shift is <0.002 and the ceiling is geometric, so the verdict
+   is unaffected — but the exact cosines are on the older pipeline.
+5. Four losing variants remain edge-pinned; closed analytically (every pure-order variant
+   converges to the Borda limit, and the pinned hinge and the closed-form limit agree to 4 dp)
+   rather than by widening the search again.
+
+### PRE-REGISTERED (2026-08-16) — ΔQ as an INFORMATION-VALUE experiment, not a loss
+
+⚑ **Registered before any code.** The relational-SF6 negative above says exactly where the hole
+is (the S×T / T×T blocks), so ΔQ is now the cheapest instrument aimed at it. **Phase 1 measures
+whether the missing comparison is worth buying. It does NOT add a loss, a target, or a config
+key** — that decision needs its own entry after this one reads out.
+
+**Query policy — buy only the comparisons that are actually missing.** For each row let `a_P` be
+the raw-prior top move and `a_M` the Gumbel/MCTS move (recoverable offline via
+`cast_probe.recover_played_move`, 1380/1380). Then:
+
+| case | action |
+|---|---|
+| `a_P == a_M` | nothing to adjudicate — no query |
+| both already in SF6 | **ΔQ is free**, already banked in `sf_multipv_raw` |
+| exactly one outside SF6 | **buy it** — this IS the missing S×T relation |
+| both outside SF6 | buy both — the missing T×T relation, the most valuable case |
+
+#### STEP-0 READOUT (2026-08-16) — a cheap AVAILABILITY PROXY screen, ~60% already covered
+
+⚑⚑ **THIS IS NOT "WE OWN 60% OF THE ΔQ DATASET" — AN EARLIER REVISION OF THIS ENTRY SAID
+THAT AND IT OVERCLAIMED.** Three gaps sit between this number and the live question, and
+none closes with more rows:
+
+1. **NOT SAME-MODEL.** The live pair is `a_P = argmax π_θ(s)` vs `a_M = MCTS_θ(s)` for ONE
+   θ. Here `a_P` is a chosen checkpoint re-run over historical positions while `a_M` is the
+   move the ORIGINAL generating net played. **The replay schema does not persist the
+   generating prior** — `_NetRecord.policy_probs` never reaches a shard, only the improved
+   `policy_target` does (verified against `replay/shard.py`'s field list) — so the
+   same-model pairing is **not recoverable offline at all**. It requires a prospective run.
+2. **SIMULATED WIDTH ≠ REAL WIDTH.** Ranks > k are hidden from MPV-40 labels, but #428
+   measured that changing width at a fixed node budget changes the SEARCH (median depth
+   12 → 9 at width 6 → 64). A truncated MPV40 block is not what a real MPV6 search would
+   have produced. **Do not say the rate "transfers structurally".**
+3. **SELECTION.** ~75% attrition from unstored child plies (table below).
+
+⇒ Read the percentage as an ORDER OF MAGNITUDE establishing that "check what we already
+hold before querying" is worth building — not as a calibration.
+
+`scripts/dq_free_dataset_screen.py`, 18 wide-era shards, k=6 simulated, prior from
+`checkpoint_000218`. Costs nothing and needed no `searchmoves`: a re-read of banked shards,
+run BEFORE the query path merged.
+
+| | n | share |
+|---|---|---|
+| usable rows (played move recovered) | 1177 | — |
+| prior == search — nothing to adjudicate | 649 | 0.551 |
+| **DISAGREE — the ΔQ pool** | **528** | **0.449** |
+|  ↳ both already in SF6 — **ΔQ IS FREE** | 315 | **0.597** |
+|  ↳ exactly one outside — buy it (S×T) | 163 | 0.309 |
+|  ↳ both outside — buy both (T×T) | 50 | 0.095 |
+
+⇒ **~40% of the disagreements need a query; ~60% are already covered.** Recovery was
+clean: 1177 recovered, **0 ambiguous**.
+
+⚑ **"BOTH OUTSIDE" IS NOT 2× THE QUERY BUDGET.** One root-restricted search —
+`searchmoves a_prior a_search` at MultiPV 2 — returns both candidate evaluations. The T×T
+bucket is informationally harder, not twice as expensive.
+
+⚑⚑ **A FIRST PASS OF THIS SCREEN MEASURED THE WRONG PAIR AND READ 0.713 FREE.** It compared
+the prior's top move against **SF's own best** instead of against the SEARCH move. SF's best
+is rank 1 BY CONSTRUCTION, so "both candidates surfaced" silently degenerates into "is the
+net's move surfaced" and the free fraction comes out too high. The corrected pairing reads
+**0.597**. ⇒ the pre-registered 4-way split REQUIRES the played move
+(`cast_probe.recover_played_move`), and `argmax(policy_target)` is not it.
+[[same_name_different_population]].
+
+⚑ **THE ΔQ-MAGNITUDE SPLIT IS A TAUTOLOGY — DO NOT QUOTE IT.** The screen also reports
+"free" rows at median 21 cp vs "buyable" at 100 cp, which reads as *queries buy the big ΔQ*.
+It is forced: "buyable" MEANS SF ranked the net's move 7th or worse, so its regret is ≥ that
+row's `r_k` by construction while every free row's is ≤ `r_k`. The split conditions on the
+compared quantity. Only the ABSOLUTE scale is a reading (unpriced moves: median 100 cp, p90
+601 cp — real gaps, not garbage). [[never_condition_a_control_on_its_own_outcome]].
+
+⚑⚑ **THE CONFIDENCE GATE DOES NOT SURVIVE THE POPULATION FIX — RETRACTED.**
+An earlier revision of this entry reported "P(query | confidence) is MONOTONE, 0.720 →
+0.171, a 4.2× spread ⇒ a usable pre-query gate". **That curve was binned over
+`classify`'s prior-vs-SF-BEST rows while the headline split came from the corrected
+prior-vs-SEARCH pairing** — two different populations printed under one heading, visually
+indistinguishable. A query is needed when EITHER candidate is outside SF6; the old binning
+only ever asked about the prior's move.
+
+Recomputed on the ACTUAL 528 disagreements (`scratchpad/dq_pairs_refactored.json`):
+
+| prior confidence | n | P(any query) | P(S×T) | P(T×T) |
+|---|---|---|---|---|
+| [0.0, 0.2) | **17** | 0.941 | 0.235 | **0.706** |
+| [0.2, 0.4) | 132 | 0.545 | 0.424 | 0.121 |
+| [0.4, 0.6) | 167 | 0.311 | 0.240 | 0.072 |
+| [0.6, 0.8) | 124 | **0.363** | 0.323 | 0.040 |
+| [0.8, 1.0) | 88 | 0.318 | 0.261 | 0.057 |
+
+**NOT MONOTONE** — it rises again at [0.6, 0.8), and the top three bins are flat within
+noise (0.311 / 0.363 / 0.318). The entire apparent spread rides on the lowest bin at
+**n=17**. ⇒ above confidence 0.4, prior confidence buys **essentially nothing**; the query
+rate is ~1/3 regardless. This FAILS
+[[proxy_must_be_monotone_in_the_intervention]] and no graded gate should be built on it.
+
+**One signal does survive, as a hypothesis:** T×T concentrates at low confidence (0.706 vs
+0.04–0.12 elsewhere) — when the net is unsure, BOTH candidates tend to sit outside SF6.
+n=17, so this is a direction to test prospectively, not a finding.
+
+#### SELECTION CHECK — no material bias DETECTED on measured observables
+
+Recovered vs dropped rows on observables computable BEFORE recovery, so any gap is a
+selection effect rather than an outcome:
+
+| observable | recovered | dropped | ratio |
+|---|---|---|---|
+| **top1_in_sf6** | 0.835 | 0.826 | **1.011** |
+| prior_top1 | 0.658 | 0.658 | 1.000 |
+| legal_moves | 29.219 | 29.205 | 1.000 |
+| prior_entropy | 0.987 | 0.989 | 0.998 |
+| ply | 68.659 | 71.419 | 0.961 |
+| r_k | 0.167 | 0.188 | 0.885 |
+
+`top1_in_sf6` — the variable that most directly drives the free fraction — differs by
+**1.1%**, and prior confidence is identical to three decimals. ⇒ **the 59.7% headline is
+much less fragile than 75% attrition suggests.** ⚑ State this as *no material selection
+bias was DETECTED on the measured pre-recovery observables* — NOT as "missingness is
+random". Six observables agreeing bounds the bias we looked for; it cannot establish
+ignorability against an unmeasured cause of a ply not being stored. `r_k` is the only visible gap (11.5%),
+consistent with the small ply difference.
+
+⇒ **NET: the headline survives the selection test; the confidence gate does not survive the
+population fix.**
+
+#### DESIGN FIX — the population is now an object
+
+The bug survived because two datasets existed and downstream code could consume either.
+`PairObservation` (frozen dataclass) is now THE ΔQ population; the headline split, all
+three curves, and every later diagnostic derive from that one collection, and each curve
+prints its denominator in its own title. The prior-vs-SF-best analysis still exists under a
+deliberately different name and return type (`coverage_of_prior_move`) with its confidence
+fields **deleted**, so it cannot be binned by accident. Verified: the refactor reproduces
+`pairs`, `confidence_curves` and `attrition_bias` **byte-identically**.
+
+**Limitations, stated not buried.** (1) 3567 of 4744 rows had **no stored child**, so the
+usable subset is conditioned on both plies being stored — 75% attrition, representativeness
+unverified. (2) MultiPV-**40**-era data with simulated truncation; the rate transfers
+structurally, the era is not production's. (3) One checkpoint (iter 218), and
+[[knob_effects_reverse_sign_between_checkpoints]] applies — run a second before concluding.
+
+⇒ the SF spend is a small fraction of "one targeted comparison per disagreement", and the split
+across those four cases is itself the first readout.
+
+**MEASURE (phase 1, no training change):** disagreement rate `a_P ≠ a_M`; the four-way case
+split; SF verdict flip rate; **rescue** (search materially better than prior) vs **corruption**
+(prior materially better) rates and magnitudes; the margin distribution and what noise threshold
+it must clear; and **SF CPU per useful verdict**.
+
+**H3 GETS ITS REAL TARGET FROM THIS, and it is not "is this position hard":**
+
+    P(buying the missing candidate evaluation CHANGES the training decision | pre-query diagnostics)
+
+That is a value-of-information question, answerable from the phase-1 dataset by holding out the
+purchased verdict and predicting it from what was observable before the query.
+
+**PRE-COMMITTED KILL RULE.** If, on ≥300 disagreement rows, the verdict flips the
+prior-vs-search ordering with a margin clearing the noise threshold on **<10%** of rows, ΔQ is
+not worth wiring into training and phase 2 is dropped. Recorded now so a thin positive cannot
+be re-read as encouraging later.
+
+⚑ **PREREQUISITE, AND IT IS NOT DONE.** `searchmoves` now exists on `StockfishUCI` (built
+2026-08-16, legality-validated, 7/7 mutations) but **`StockfishPool` does not forward it** —
+`pool.py::_search`/`submit` have a fixed `(fen, nodes, syzygy_path, fresh)` signature. A caller
+reaching for it through the pool finds it silently unavailable, which is this repo's signature
+defect shape. Close that, with an independent review, before phase 1 runs.
+
+⚑ **This does NOT explain the current run.** `w_sf_own_regret` is **0.0** live (audit A7), so
+none of the tail work — and none of this — is acting on the network today. It is about how not to
+turn that channel back on, and what to buy instead.
+
+### PRE-REGISTERED FOLLOW-UP — targeted prior-vs-search adjudication (`ΔQ`), NOT a dense SF target
+
+The rank curve above is the empirical case for it: **relevant tail mass is concentrated in the
+first few omitted moves** (rank 7 carries 2.8%, rank 40 carries 0.006%), so paying SF to
+characterise dozens of moves is waste. Ask SF only about the moves the student actually cares
+about.
+
+At a root where the raw prior and the search disagree, with `a_prior = argmax(raw prior)` and
+`a_search` = the actual Gumbel choice, measure
+
+```
+ΔQ = Q_SF(a_search) − Q_SF(a_prior)
+```
+
+`ΔQ > 0` search improved the prior ⇒ raise imitation weight; `ΔQ < 0` search damaged a better
+prior ⇒ lower it. **Separate the two questions and buy only the one you need:**
+**(A) did search improve the net?** needs only the two candidates. **(B) is either move
+actually good?** additionally needs SF's global best. **A is the cheaper and the more novel
+one, and SF's global best is not required for it.**
+
+⚑ **MEASURE BOTH CANDIDATES IN ONE RESTRICTED ROOT SEARCH** (MultiPV 2 over exactly those two
+moves), never as two separate full-budget `searchmoves` searches: giving each candidate an
+entire budget in isolation makes part of the difference a budget artifact rather than a move
+difference.
+
+⚑ **PREREQUISITE, MEASURED: `searchmoves` IS NOT WIRED.** `stockfish/uci.py:585` sends a bare
+`go nodes {n}`; there is no root-move restriction anywhere in `chess_anti_engine/stockfish/`.
+This needs a new, tested surface on `StockfishUCI.search` before any of the above can run.
+Budget it as real work, not a flag.
+
+**Confounds to pre-register now, before the data exists.**
+- **Sharpness, not search error.** Rows where prior and search disagree are systematically
+  sharper. `ΔQ` is signed, which helps, but the gate must still be shown to add predictive
+  power for `ΔR_search` OVER volatility, `|q|`, phase, KL and q-delta — nested models
+  M0/M1/M2, scored on held-out **GAMES**, never rows (adjacent plies are near-duplicates).
+- **Argmax is not the target.** `ΔQ` compares two single moves while the imitation loss trains
+  a whole distribution. The leap is small here — realized `max(policy_target)` has median
+  ~0.99 — but it is a leap, and the fraction of the target's expected regret carried by its
+  argmax should be reported alongside.
+- **Same-root comparison is the design's real advantage** over literal CAST: no parent/child
+  adjacency, no action recovery, no fabricated tail, and cp instead of a saturating WDL.
+- Benchmark at **equal SF nodes** against current MPV6 and against the tail treatment above.
+  Pairs naturally with H3: pay for the comparison only where pre-query diagnostics say it is
+  informative.
+
+## READOUT (2026-08-14) — CAST is a coverage NULL; the MultiPV-6 tail is proven INVENTED, its magnitude is NOT (issue #425)
+
+**⚑⚑ RETRACTION, same session, before merge.** An earlier revision of this entry priced
+the imputed tail at a **~5x overstatement [4.1–5.5]**. **That number is WITHDRAWN.** Codex
+review on PR #428 (P1) established that the probe's calibration population is contaminated:
+in production Gumbel at final temperature 0 the played action is the **sequential-halving
+survivor**, explicitly NOT `argmax(policy_target)` (`network_turn.py:188`), and audit C9
+(`rl_loop_audit.md:418`) measured those agreeing only **0.7455** on moves 1–11 and **0.9122**
+at moves 15+. So `A_CAST` graded the real move while `regret_played`/`in_multipv` graded a
+different one, and the `pmax` stratification does not observe that equality — it cannot
+expose or correct it. Two further defects compound it: `monotone_prefix` did not stop at the
+first saturation fold (it skipped the folded bucket and resumed, splicing both branches), and
+the quoted CI varied only the outside-set mean while treating every calibration knot as exact.
+**What is established is INVENTED PRECISION, not overstatement.** The direction is unknown
+until the withheld-ground-truth screen runs; the hidden tail could genuinely deserve 570 cp.
+
+**Verdict: CAST-style solver credit = NULL on COVERAGE (its headline claim) and MIXED on
+label economics. The by-product — the MultiPV-6 imputed tail — is REAL and is the
+finding.** Instrument: `scripts/cast_probe.py`, read-only, 24 live shards (47,356 rows)
+off `train_trial_1d175`. Banked JSON + exact command in the PR.
+
+⚑ The economics half survives but does NOT mean what the issue assumes. SF really is the
+dominant CPU consumer (18.3 of 32 cores), so a cheaper label really would free real
+capacity — but **`sf_wdl` is already on 99.8% of rows, so that capacity cannot buy
+coverage.** It buys *throughput* (more games per iteration), which is a different and much
+smaller claim than "supervise 3–5× as many states". Any Phase-1 allocator work must be
+justified on label QUALITY at fixed volume, or on games/s, and never on supervision
+density.
+
+`A_CAST(t) = q_t + q_(t-1)` where `q = W − L` off the record-POV `sf_wdl`. The terms ADD
+because each label is already in its own record's mover POV, so `V_T(s_t) = −q_(t−1)`.
+
+**The three claims that motivated it, measured:**
+
+| claim | measured | verdict |
+|---|---|---|
+| "SF CPU is the bottleneck, cheap scalar labels buy more supervision" | **stockfish = 18.3 of 32 cores (57%)** by direct per-PID accounting over 240s; whole machine 29.3/32 (92%) over a clean 480s window | **TRUE, and it UPDATES [[loop_is_gpu_bound_cpu_two_thirds_idle]]** — that note's "SF 11.1 of 32 cores, CPU 2/3 idle" was measured at sims 256 and is now stale |
+| "scalar labels reach states MultiPV cannot" | CAST pairs **18.4%** of rows vs `sf_p0_regret` **21.0%** | **FALSE** — both are gated by "is the previous ply also a stored row", not MultiPV width |
+| "CAST grades the move the learner actually made" | the played move is **not in the shard** (`sf_move_index`/`sf_played_move_index` are STOCKFISH's moves) | **~~BLOCKED~~ SUPERSEDED 2026-08-14** — recoverable offline after all: `cast_probe.recover_played_move` reconstructs it from consecutive positions via `decode_board_from_planes`, **1380/1380, 0 ambiguous**. Only a TRAINING-TIME CAST loss still needs a format change. ⚑ The argmax-proxy statements in the rest of THIS subsection describe the probe as it was BEFORE that commit and are historical |
+
+**Signal quality.** `A_CAST` is real but noisy: corr with the exactly-known covered-move
+regret **+0.168** (+0.442 on unsaturated roots), collapsing to **0.007** under an
+across-row shuffle (control PASSES). But `P(A > 0) = 0.219` where a consistent teacher
+owes zero, mean |A| is **0.034 on the impossible-sign half vs 0.079 on the rest**, and on
+saturated roots (25.8% of rows, `|q_parent| > 0.8`) the signal drops to −0.014 against a
+0.065 sd — near pure noise. Parent/child search drift is NOT the problem: on the tightest
+proxy stratum it bounds to **−0.0029 ± 0.0022**, and it shrinks monotonically as the proxy
+sharpens, which identifies it as proxy error rather than drift.
+
+**⚑⚑ THE ACTUAL FINDING — `finalize._build_sf_p0_regret_vector`'s imputed tail.** Every
+legal move SF did not surface gets `(worst_surfaced + 1) / 2`. At MultiPV 40 that was
+marginal. At the live MultiPV 6:
+
+- **68.3% of legal moves** carry a fabricated regret (27.5 legal, 5.8 covered).
+- The fabricated value is **586 cp** against a worst move SF *actually surfaced* of
+  **191 cp mean / 92 cp median**.
+- It supplies **74.5% of `E_pi[regret]`**, and dominates (>50%) on **49.6% of rows**.
+- The CAST-based *pricing* of that fabricated value is **WITHDRAWN** (see the retraction
+  above). No number is currently claimed for what the censored moves are truly worth, in
+  either direction.
+- Control: a WITHIN-POSITION permutation collapses the tail share to **0.169** (the
+  regret-weighted permutation expectation, `sum(mass_imp_i * mean_r_i) / sum(mean_r_i)`)
+  against an observed **0.757**. ⚑ The probe originally compared against the UNWEIGHTED
+  mean imputed mass (0.162) — Codex P2, correct; recomputed properly the control still
+  PASSES and the gap is far too large to be a mass effect. This control uses NO played-move
+  proxy, so it survives the retraction: **the objective is dominated by the VALUES assigned
+  to censored moves, not by how much probability sits on them.**
+
+**⚑ AND THE TWO SITES IMPUTE IN OPPOSITE DIRECTIONS.** `finalize._build_sf_p0_regret_vector`
+gives unlisted moves `(worst + 1) / 2` — PESSIMISTIC, over-penalising a broad policy. But
+`eval/audit.py::move_regrets:252-271` gives them `worst` as an explicit optimistic FLOOR —
+under-penalising a broad policy. So the training target and the E[regret] RULER disagree by
+construction on ~68% of moves, and the audit's expected-regret number is not on the same
+scale as the training-time one. ⚑ Say this precisely: the issue's "censored r6" arm is
+already **IMPLEMENTED, and used by the evaluation ruler**. It has **never been trained on**.
+Do not let this be read as "we already tested r6 censoring as a training objective" — we
+have only ever used it to SCORE.
+
+⇒ **Consequence for the tail screen:** the audit E[regret] ruler cannot be treated as
+unbiased ground truth for a tail-treatment bake-off. It assigns every rank >10 the
+optimistic `r_10` floor, so it has a structural preference for BROAD targets whenever their
+extra mass lands on moves the audit never valued. That is an argument for the wide-MultiPV
+screen carrying the magnitude question.
+
+**Why this matters even though `w_sf_own_regret` is 0.0 today.** The vector is still
+RECORDED (`record_sf_p0_regret: true`), so the defect is banked into every shard and is
+latent, not absent. Re-enabling the weight unchanged would train `policy_own` to push mass
+off ~68% of legal moves toward SF's top 6 on the strength of values that were never
+measured — a sharpening pressure, on a net already measured **3.7× narrower than BT4 and
+14.1pp less accurate**. This also **re-opens the old `w_sf_own_regret` 0.7 verdict**: that experiment
+ran at MultiPV 40 where the tail was marginal, so its result does not transfer to 6.
+
+**Pre-committed next step (NOT a live change).** Screen the tail treatments offline
+before any weight moves, on HISTORICAL WIDE labels (`train_trial_d2003` 569 shards at
+median 37 PVs, `cdb96` 353 at 35, `0f888` 812 at 28) truncated to top-6, with the hidden
+ranks as ground truth: (1) current midpoint = control, (2) censored `r_6` bound,
+(3) covered-only, (4) residual tilt `p_base · exp(−β r)` with one shared censored tail
+value. Report POLICY-WEIGHTED tail regret `E_pos[ sum_{a not in top6} p(a) r_wide(a) ]`
+under the CURRENT prior re-run on those positions — not the historical net's — plus
+`P_current(rank > 40)` as the coverage limit. The two existing conventions bracket the
+answer, so fit the interpolation and report where α actually lands rather than staging a
+two-way bake-off:
+
+```
+r_tail(α) = r_6 + α·(r_midpoint − r_6) = r_6 + (α/2)·(1 − r_6)
+```
+
+⚑⚑ **PRE-REGISTERED RANGE: 0 ≤ α ≤ 2, NOT [0,1].** Regret is normalized to best=0 and
+>=1000cp=1.0, and `r_midpoint = (r_6 + 1)/2`, so α=0 is the audit ruler's optimistic `r_6`,
+**α=1 is the current midpoint, and α=2 is a maximally bad tail at regret 1.0.** Capping α
+at 1 would bake "the midpoint is too pessimistic" into the very experiment designed to test
+whether it is — the hypothesis this entry just RETRACTED. The truth may land at α>1.
+- On the wide-MultiPV screen (ranks 7+ ordered below rank 6 by the SAME search), α ≥ 0 is
+  justified and [0,2] is the range.
+- On the later real-MPV6-vs-independent-deep-truth panel, do NOT force α ≥ 0: finite-search
+  error means an omitted move can genuinely be BETTER than the surfaced sixth.
+- ⚑ Fit the policy-weighted regret GLOBALLY. Do not average per-position α: the implied
+  denominator `(1 − r_6)/2` goes to zero as `r_6 → 1`, so positions where the two endpoints
+  nearly coincide must be flagged or suppressed rather than allowed to dominate a mean. Kill rule: nothing goes live unless it beats the midpoint control on broad
+`value_regret` + raw-policy top-1 at matched budget, per rule 6 above. **Do not read a
+CAST loss as the deliverable** — its unique contribution is the ~12% of P0 rows where the
+played move fell outside the MultiPV set, i.e. ~2.5% of all rows.
+
+**⚑ METHOD NOTE, recorded because it nearly produced the opposite verdict.** A first
+**5-second** `/proc/stat` sample read 45.4% busy and would have shipped "the CPU is idle,
+the cheap-label rationale is dead". The loop alternates a selfplay-heavy and a
+training-heavy phase; **anything shorter than a full iteration is a phase reading, not a
+utilisation reading.** The clean 480s window reads 29.3/32. Two further traps in the same
+measurement: agent-side work (lint, pytest, the probe itself) and OTHER sessions' pytest
+runs land on the same 32 cores — a concurrent suite from another worktree was measured at
+~3.2 cores — so machine-wide utilisation is an upper bound on the run's own. Per-PID
+attribution is the instrument that survives all three, and it is what the 18.3-core
+stockfish figure comes from. [[check_the_resource_is_binding]]
+
+**Confounds.** No training change was made; the run was live and untouched throughout.
+The played-move proxy is the one real limitation and is why every played-move number is
+reported stratified rather than as a single figure — and, per the retraction, why the
+pricing built on it is withdrawn. The probe also reads the trailing shard window, which
+MOVES while the run writes, so any re-run lands on a different population; the shard set
+must be pinned in the output before a number off it is quoted.
+
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-17) — the SF-approved-move probability floor (`w_sf_policy_floor`), PR #448, and the ruler defect it exposed
+
+**Status: code written, PR open, NOT merged and NOT deployed. No yaml edit, no weight
+raised.** The mechanism ships at `w_sf_policy_floor: 0.0` and is inert there by
+execution, not by argument (`test_total_is_bit_identical_at_the_default_weight` asserts
+`float.hex()` equality of `total` against a call with the term's parameter absent). This
+entry exists for the two things that ARE consequences of merging: a ruler-id move that
+forces a best-model handover, and an always-on cost paid at weight zero.
+
+### What the mechanism is (one paragraph; the PR carries the derivation)
+
+A one-sided probability FLOOR on a small membership set inside the `policy_own` loss:
+`F = {SF's top-1} u {m : regret_m <= delta_cp/CAP AND regret_m < regret_ours}`, plus a
+COLLAR on the move search actually played, one `relu` per move at the MAX of its
+thresholds. It reuses `sf_p0_regret_t`, which is already written, already ingested and
+currently multiplied by zero — **no new shard field and no new Stockfish call**. Its
+purpose is SEARCH ROUTING, not policy correction: a move at ~0 prior is never expanded,
+so the net never learns why SF's move beats its own. It is NOT the magnitude arm —
+`sf_own_regret` is that arm, it scored at chance on all three populations tested, and
+`w_sf_own_regret` keeps its 0.0 default here.
+
+### CONSEQUENCE 1 — the holdout ruler id MOVES, so an operator sees ONE best-model handover
+
+`compute_loss` and `Trainer._loss_kwargs` are both covered frames of
+`eval_ruler_id_for`'s derived closure, and the N1 fix below adds a descriptor field, so
+the id moves twice on this branch:
+
+```
+full_pass  73ff47d368fbe10e -> 30cfec0c574e03da   (the floor term)
+                            -> ba74408d1e9e98fa   (the N1 fix's `active_terms` field)
+sampled    f41625e40b98e987 -> 733b900bc45f524f
+                            -> cceec01bb2efc6d9
+```
+
+Both pins are at the test file's `NO_TERMS` weight map (every weight 0.0) — deliberately,
+so a live yaml weight edit cannot turn CI red. Under the production weights in
+`configs/pbt2_small.yaml` the deployed full-pass id is **`v1:full_pass:455a85f6ca8d6f23`**.
+
+⇒ at the next restart onto this code, `_maybe_bump_generation_on_ruler_change` bumps
+`holdout_generation` and `_update_best_model` takes its ADOPT branch once: the best-model
+record is HANDED OVER, not compared. **That is the mechanism working, not a fault.** The
+move is source-hash-only in the measurement sense — `test_loss` and every per-head loss
+are numerically unchanged at the shipped default, which is what the bit-identity test
+proves — so records stay comparable across the handover.
+
+### CONSEQUENCE 2 — ~0.9 ms/step, paid at `w = 0` ⚑ SUPERSEDED, see below: ~0.126%/iter
+
+RTX 5090, batch 512 x 1858, 200 iters after 50 warmup, `cuda.synchronize`, GPU verified
+idle. `sf_policy_floor` **fwd+bwd 0.93 ms**; forward-only median 0.68 ms over 5 repeats.
+At ~88 microbatches on a ~300 s iteration that is ~80 ms, **~0.03% of wall time**. It is
+paid even at weight zero, and that is the deliberate trade: the diagnostic columns are
+live at `w = 0`, so the term's reach is measurable BEFORE anyone proposes raising it.
+⚑ The sub-0.1 ms comparison terms in the PR's table swing **3.4x between repeats on an
+idle card** — launch-overhead-bound, below the instrument's resolution. Do not read
+those ratios; the 0.93 ms figure is well above the noise floor and is the one that
+carries the conclusion.
+
+**⚑⚑ SUPERSEDED (2026-08-19) — THIS PRE-REGISTERED FIGURE IS NOW ~4x LOW, AND SO IS THE
+"single operator-visible effect" LINE BELOW.** Five review rounds added a FEASIBILITY CAP to
+this term (`ec0fa43dc..HEAD`), which runs a full-width `argsort(stable=True)` plus a gather,
+a float64 cumsum and a scatter **on every microbatch, also at `w = 0`**, because the
+diagnostics are deliberately live before the weight is raised. Re-measured, paired and
+same-process, B=512 W=1858 on a CONTENDED card (the pre-registered 0.93 ms was on an idle
+one, so these are not directly comparable in absolute terms — the ratio is what carries):
+
+| | ms/call |
+|---|---|
+| whole cap, vs a pre-cap baseline | **~+2.2** |
+| the float64 exactness + the autocast guard alone | **+0.075** (4.311 vs 4.236) |
+
+At `accum_steps: 1` and ~88 optimizer steps/iter that is **~0.38 s on a ~300 s iteration =
+0.126%**, not 0.03%. The holdout eval does not move it (`holdout_capacity: 2000` at batch 512
+is ~4 extra calls). **The trade is unchanged and still deliberate** — 0.126% to make the
+term's reach and its hidden `|F| * tau` strength readable before anyone raises the weight —
+but the pre-committed number was wrong by 4x and a pre-registration that is wrong by 4x is
+not a pre-registration.
+
+⚑ A `topk(k=9)` fast path (0.118 ms vs 1.02 ms for the sort) was **considered and DECLINED**:
+its correctness rests on `admitted <= 2 + floor(1/tau)`, and a wrong K silently DROPS floor
+members — this repo's signature defect class — to buy back a tenth of a percent.
+
+### ⚑⚑ N1 — THE DEFECT THIS PR EXPOSED, AND IT IS PRE-EXISTING
+
+**Flipping a loss weight live silently FROZE the best-model record.** Two facts, both
+verified in the tree:
+
+1. `Trainer._eval_loss_kwargs` returns `{**self._loss_kwargs, "policy_target_temp": 1.0}`
+   — only the target SHAPE knob is pinned. Loss WEIGHTS ride into the holdout eval as
+   configured, which is correct (`total` must match the trained objective).
+2. `eval_ruler_id` hashed `mode`, `batch_size`, `steps`, `mirror_prob` and a source
+   digest — **and no weights**.
+
+⇒ push a weight live (`_apply_lr_gamma_weights`, every iteration, over
+`TRAINER_WEIGHT_KEYS`) → eval `total` changes → the ruler id does NOT → no
+`holdout_generation` bump → `_update_best_model` takes its "same ruler, ordinary
+improvement test" branch → **the new objective's `test_loss` is compared against a record
+made under the old one.** For a term that is non-negative and was OFF —
+`sf_policy_floor` is a sum of `relu`, `sf_own_regret` is `sum p*r` — `test_loss` steps
+strictly UP and there is no route back down, so the best model freezes at the pre-flip
+checkpoint for the rest of the run.
+
+**Root cause is a sentence, and the sentence was half true.** `_eval_loss_kwargs`'
+docstring justified letting weights through with *"they scale a term without redefining
+it"*. True of 0.3 → 0.6. Silently FALSE of 0.0 → anything: `compute_loss` adds these
+terms under an `if`, not by multiplying, so at zero the term is not in `total` at all.
+Nothing re-checked the sentence when such a weight was added.
+
+**⚑ NOT a #448 bug.** `w_sf_own_regret` has been in `TRAINER_WEIGHT_KEYS` throughout and
+carries the identical hazard. #448 only makes it two keys instead of one.
+
+**THE FIX: `eval_ruler_id` now hashes the SET of non-zero loss weights** — `active_terms`
+in the descriptor, computed by `eval_ruler.active_loss_terms`, from the map
+`Trainer._ruler_loss_weights()` builds by reading `TRAINER_WEIGHT_KEYS` off the instance
+at EVALUATION time. So a membership flip moves the id, bumps the generation, and hands
+the record over cleanly instead of freezing it.
+
+**Two design decisions, and the second is the one to argue with:**
+
+* **The key set is DERIVED from `TRAINER_WEIGHT_KEYS`, not hand-copied.** That tuple IS
+  the every-iteration live-push list (`_apply_lr_gamma_weights` does
+  `setattr(trainer, key, float(...))` over it), so it is exactly the hazard surface, and
+  a weight added there is covered on the day it is added. This module has lost its
+  boundary to a hand-written list TWICE already (`call_closure` exists because of it).
+  ⚑ It reads the trainer's ATTRIBUTES, not `_eval_loss_kwargs`' keys: `w_sf_policy_floor`
+  — the key the defect was found on — does not appear in that dict under its own name at
+  all (it is folded into the `sf_policy_floor` params object), so a key-intersection
+  would have omitted the motivating key while looking derived.
+  Pinned by `test_every_live_pushable_weight_reaches_the_ruler_id`, parametrized over
+  `TRAINER_WEIGHT_KEYS` itself, so a hand-copied subset fails on the key it omitted.
+* **MEMBERSHIP is hashed; MAGNITUDE deliberately is not.** Hashing the VALUES would be a
+  REGRESSION, not extra safety. `sf_wdl_frac` is in `TRAINER_WEIGHT_KEYS` and the
+  difficulty controller recomputes it every iteration from the realized `wdl_regret`
+  (`_dynamic_sf_wdl_weight`). Audit L15 measured the bump rate a value hash would
+  produce: **>= 15.3% of iterations**. That does not merely over-fire the handover —
+  `_update_best_model` would ADOPT rather than compare on one iteration in seven, and the
+  best-model comparison would stop existing. A defect that freezes the record is bad; a
+  fix that abolishes the comparison is worse.
+  The membership boundary sits at exactly 0.0, which the production band
+  (`sf_wdl_frac: 0.50`, `sf_wdl_frac_floor: 0.45`) never reaches, so the PID leg moves
+  the new field **0%** of the time — executed, not argued, by
+  `test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band`, which drives
+  `_dynamic_sf_wdl_weight` across the production band and requires ONE id.
+
+**⚑ WHAT THIS DOES NOT CLOSE.** A weight MAGNITUDE change in the yaml (the 2026-07-02
+`sf_wdl_frac_floor` 0.35 -> 0.45 step, 131 rows of history) still does not move the id.
+That is **G16's band-hashing instrument** — hash the CONFIGURED band rather than the
+controller's position in it — and it is still unbuilt. #448 must not be read as closing
+it. The "what this does NOT cover" list of the 2026-07-27 ruler-identity entry is
+amended in place with the same split.
+
+### THE ONE DECIDING YARDSTICK (exact commands — EXECUTED)
+
+The failure to exclude is this repo's signature defect, so the yardstick asserts on the
+id a REAL `Trainer` produces across a push through the REAL per-iteration path, never on
+a re-derivation of the expected id in the test body (which would agree with an
+implementation that had the rule wrong in both places).
+
+```
+PYTHONPATH=. python3 -m pytest \
+  "tests/test_holdout_ruler_identity.py::test_switching_a_loss_term_on_live_moves_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_switching_a_loss_term_off_live_also_moves_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_a_no_op_weight_push_leaves_the_ruler_id_alone" \
+  "tests/test_holdout_ruler_identity.py::test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band" \
+  "tests/test_holdout_ruler_identity.py::test_a_magnitude_change_on_an_active_term_does_not_move_the_ruler_id" \
+  "tests/test_holdout_ruler_identity.py::test_every_live_pushable_weight_reaches_the_ruler_id" -q
+```
+
+**PASS — 26 passed** (21 of them the parametrized per-weight case). Pre-committed rule:
+
+* **KILL** if a live flip of `w_sf_policy_floor` leaves the id unchanged ⇒ the fix is
+  inert and the record still freezes.
+* **KILL** if the PID's own `sf_wdl_frac` band produces more than ONE id ⇒ the rule bumps
+  on controller motion and abolishes the comparison. This is the failure mode that would
+  be worse than the defect, so it is a kill and not a caveat.
+* **KILL** if a no-op re-push moves the id ⇒ same, one level down.
+
+### OBSERVATION THAT PROVES IT TOOK EFFECT ON THE RUN (after the first restart onto this code)
+
+The deploy check in the 2026-07-27 ruler entry, amended there to pass the live weights.
+Two additional rows to read once, on the first post-restart iteration:
+
+* `trial_meta.json` `holdout_ruler` equals the id recomputed from the DEPLOYED tree with
+  the DEPLOYED yaml's weights (expected `v1:full_pass:455a85f6ca8d6f23` at the weights in
+  `configs/pbt2_small.yaml` as of 2026-08-17);
+* `holdout_generation` bumps by **exactly one** and then holds. **Climbing every
+  iteration is a KILL** — it would mean something in the new descriptor field is not
+  stable across calls, and the revert is to drop `active_terms` from the descriptor,
+  which restores the previous id exactly.
+
+### CONFOUNDS
+
+* Merges alongside nothing else data-affecting; the term is off and the ruler move is
+  source/descriptor-only. ⚑ **"The handover is the single operator-visible effect" is
+  SUPERSEDED**: the feasibility cap added FIVE report keys
+  (`sf_policy_floor_member_count_raw`, `..._requested_mass`, `..._truncated_frac`,
+  `..._member_count_applied`, `..._applied_mass`), which ROTATE `progress.csv` via
+  `_rotate_progress_csv_if_schema_changed`. That is a second operator-visible effect, and
+  any script pinning column POSITIONS across the deploy boundary needs re-checking.
+* The four `sf_policy_floor_*` SHAPE keys are startup-only (`_STARTUP_ONLY_TRIAL_KEYS`)
+  and are NOT in the ruler. A shape edit needs a restart, and a restart re-reads the
+  code, so it cannot silently redefine `total` mid-window the way a weight flip could —
+  but it also will not announce itself. Noted, not fixed.
+* **⚑⚑ AND "startup-only" NO LONGER MEANS THE SHAPE IS INERT MID-RUN.** The cap added a
+  resolve-time FEASIBILITY check on that frozen shape, and the shape's feasibility is
+  coupled to **two LIVE keys**:
+  - `gumbel_topk` — re-derives `tau_played` as `1/gumbel_topk` through `sync_search_width`.
+    `gumbel_topk: 1` makes it 1.0, and the shipped 0.15/0.15 defaults then sum to 1.15.
+  - `w_sf_policy_floor` — flips the check from WARN to RAISE.
+
+  ⇒ **a live edit to either can turn a shape that booted cleanly into a fatal mid-run
+  error**, which is a CLAUDE.md category (b) death: the yaml reload succeeds,
+  `TrialConfig.from_dict` raises inside `train_trial`'s iteration loop, and that loop has a
+  `finally:` and zero `except:`. The `w != 0.0` gate is what keeps the INERT case
+  non-fatal. Re-validation on activation is at `Trainer._loss_kwargs`
+  (`dataclasses.replace` re-runs `__post_init__` on every read), **not** at the live-push
+  site, which does a bare `setattr` and validates nothing.
+* `sf_policy_floor_binds_frac` is the SELECTION column, not the take-effect column: it is
+  invariant to `w` within a step, as this branch's own
+  `test_a_positive_weight_moves_total_and_the_columns_report_it` asserts. The column
+  `total` multiplies by `w` is `m_sf_policy_floor`. Two comments claiming otherwise are
+  corrected in this PR.
+
+### REVERT POINT
+
+The mechanism is default-off, so reverting is a code revert, not a config one. If the
+N1 fix alone needs backing out, removing the `active_terms` field from
+`eval_ruler_id`'s descriptor restores `v1:full_pass:30cfec0c574e03da` byte-for-byte and
+costs one further handover. No salvage snapshot is owed: no weight moves and no data is
+affected by merging.
+
+## PRE-REGISTERED, NOT LAUNCHED (2026-08-16) — persist `prior_top1_index` / `prior_top1_prob` at selfplay time (issue #425, ΔQ dataset)
+
+**Status: code written, PR open, NOT merged and NOT deployed. No yaml edit.** This is a
+DATA-AFFECTING change (it adds two persisted per-row fields), so it needs this entry
+before it can go live. It is a PLUMBING experiment: the yardstick below judges whether
+the value reaches storage correctly, not whether it buys Elo. Nothing here claims an
+Elo effect and no Elo readout is owed.
+
+### The constraint that forces the design
+
+The ΔQ experiment needs, for ONE model θ, the pair `a_P = argmax π_θ(s)` (the raw
+prior's top move) against `a_M = MCTS_θ(s)` (the move search chose). Offline we can
+only pair a CURRENT checkpoint's prior against a HISTORICAL net's played move — a
+different-model pair, which is not the question being asked.
+
+⚑ **This is not fixable with better historical data.** The replay schema never
+persisted the generating prior: `_NetRecord.policy_probs` is the SEARCH-IMPROVED
+target and exists only in selfplay memory, and it is the only policy that reaches a
+shard. No amount of re-reading old shards recovers a prior that was never written.
+
+⇒ Persist the prior's top-1 at selfplay time. There the prior and the MCTS move come
+from the same θ **by construction**, so every future shard yields same-model pairs on
+every future checkpoint, with no dedicated GPU run and no re-generation.
+
+### HYPOTHESIS
+
+Capturing the root prior's argmax + its probability at the ply that produced the row
+costs **8 bytes/row** (int32 index + float16 prob + two uint8 presence flags; ~12 MB
+over a 1.5M-row window) and makes the (prior top-1, MCTS choice) pair available on
+every subsequently generated row, for any checkpoint, forever.
+
+⚑ **`prior_top1_prob` is at T = 1.0 and is NOT the mass the search used.** Search
+divides root logits by `gumbel_policy_temp` (live **1.5**), so the tree was seeded with
+a FLATTER prior than this number reports; at T > 1 the stored value is systematically
+the higher of the two. The **index is unaffected** — argmax is invariant under division
+by a positive scalar — so `a_P`, the half the ΔQ pair actually needs, is identical
+either way. T = 1.0 is chosen deliberately: `π_θ` is a property of θ, whereas
+`gumbel_policy_temp` is a search knob, and a stored column defined against it would
+silently change meaning the day the knob moves while old and new rows sit in the same
+replay window under the same name. The schema already takes this side —
+`gumbel_target_untempered_prior` (production **true**) exists to undo the same
+temperature on the stored target's log-prior term. ⇒ read this field as "the net's
+confidence in its own top move", never as "the mass search gave that move"; a consumer
+wanting the latter must apply the era's `gumbel_policy_temp` itself, and must first
+establish what it was for those rows. Rationale in
+`selfplay/network_turn._prior_top1`.
+
+### WHAT IT DOES NOT CLAIM
+
+- No claim of any training effect. The fields are NOT trained on, are not in the
+  dataset tensor path, and no loss reads them.
+- No claim about EXISTING shards. The replay window carries nothing for ~a day+ after
+  deploy; the dataset accumulates only forward.
+- No claim that ΔQ itself will work. This entry buys the dataset, not the finding.
+- ⚑ **No claim that `a_M = argmax(policy_target)` is search's judgment on a
+  TB-rescored row.** The decision NOT to persist the MCTS-selected action separately
+  rests on `a_M` being recoverable as `argmax(policy_target)`, and that holds because
+  `policy_target` is `eff_probs`, the raw visit distribution (`finalize.py:1074`;
+  `soft_policy_temp` goes to the separate `soft` target at `:955`). But `eff_probs` is
+  `tb_policy_overrides.get(t, ...)` (`finalize.py:945`), and with
+  **`syzygy_rescore_policy: true`** the tablebase policy REPLACES the visit
+  distribution on TB rows — `argmax` there is the TABLEBASE's judgment, not search's.
+  It reads `false` in `configs/pbt2_small.yaml` (repo copy `:548`) AND in the live yaml
+  the run actually re-reads (`:335` there — the two files differ by 55 keys, so both were
+  checked), so this is a caveat, not a defect. ⇒ if that flag is ever turned on, `a_M` is
+  unusable on TB-rescored rows and the decision to skip persisting the selected action
+  must be re-opened.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, output below)
+
+The failure this must exclude is this repo's signature defect: a value accepted and
+then silently ignored. So the yardstick asserts on what a shard WRITTEN TO DISK AND
+READ BACK contains — not on an in-memory object — and it judges the gating flag by the
+DIFFERENCE it makes to those bytes.
+
+```
+PYTHONPATH=. python3 -m pytest \
+  "tests/test_prior_top1_capture.py::test_prior_top1_reaches_a_written_shard_and_decodes_to_a_legal_move" \
+  "tests/test_prior_top1_capture.py::test_the_flag_changes_what_lands_in_a_written_shard" -q
+```
+
+Real output, run 2026-08-16 on the PR branch:
+
+```
+..                                                                       [100%]
+torch threads: capped at 2 (realized 2) to leave CPU for live training
+EXIT CODE: 0
+```
+
+Those two tests drive the REAL C ply path → REAL `_build_replay_samples` → REAL
+production zarr writer (`save_local_shard_arrays`) → `load_shard_arrays` (which runs
+`validate_arrays`, range-checking every `POLICY_INDEX_FIELDS` entry against the shard's
+policy width). The coverage they assert, measured on the same chain:
+
+```
+record_prior_top1=True  rows= 22 covered= 22 (100.00%)  decode-to-legal=22/22 (100.00%)
+record_prior_top1=False rows= 22 covered=  0 (  0.00%)  decode-to-legal=0/0 (nan%)
+PASS
+```
+
+### PRE-COMMITTED THRESHOLD
+
+- **PASS** requires ALL of: with the flag ON, **100%** of rows written to the shard
+  carry `has_prior_top1`, and **100%** of those decode to a move that is set in that
+  same row's `legal_mask`; with the flag OFF, **0** rows carry it.
+- **KILL** on any breach of the above, or on a measured selfplay throughput
+  regression > 2% attributable to the capture (it is one masked argmax over ~35 legal
+  moves per net ply, in Python, on a path that already does a full masked softmax).
+- Anything less than 100% coverage with the flag ON is a KILL, not a MIXED: partial
+  coverage on a field whose entire purpose is pairing means the pair population is
+  silently selected, and a selected population is exactly what the ΔQ measurement
+  cannot tolerate.
+
+#### ⚑ AMENDMENT 1 (2026-08-16) — one named exemption to the 100%-ON clause
+
+**This is an AMENDMENT to a pre-committed threshold, not a reading of it.** The bullet
+above stands exactly as written and is not deleted; what follows narrows it, and it is
+recorded here rather than left to be discovered at readout time, because a kill line
+that is quietly relaxed after the fact is a protocol violation.
+
+**What is exempted.** Rows from games that were **in flight across an OFF→ON flip of
+`record_prior_top1`** (i.e. across the selfplay-session restart that flip forces). Those
+records were captured by a session that had capture OFF, so their prior is unrecoverable
+by construction — it needs the ply's logits, which are gone by finalize. `finalize.py`
+writes them with `has_prior_top1 = 0` rather than inventing a value.
+
+**Why it is accepted.** The clause was written to ban a *silently selected* pair
+population. This exemption is not silent and not a selection on anything the ΔQ
+measurement reads: it is a **one-shot boundary effect of a single flip**, bounded by the
+in-flight games alive at that instant (≤ one session's slots, once), it is
+**row-identifiable** rather than inferred, and the alternative — dropping those games'
+records entirely, or making the key resume-incompatible — costs real training data to buy
+nothing the `has_prior_top1` column does not already give. The other direction (ON→OFF)
+is NOT exempted: it is repairable at finalize and is repaired, so the kill switch remains
+absolute at 0% (`finalize.py:1059`).
+
+**How a reader tells the two apart, mechanically.** The exemption applies only to rows
+with `has_prior_top1 == 0` whose game **spans the restart** that carried the flip. Any
+uncovered row in a shard produced wholly inside one ON session is NOT exempt and reads
+KILL. Operationally: coverage measured over shards uploaded from the second full session
+after the flip onward must be 100%; only the flip-boundary session may read below it.
+
+**Falsifier for the exemption itself.** If a post-flip session ever reads below 100% with
+no game spanning the flip, the exemption is wrong and the original bullet applies
+unamended.
+
+### THE TRAP THIS CHANGE IS MOST LIKELY TO DIE ON (and the proof it did not)
+
+`prior_top1_index` is a **MOVE INDEX**. Under board mirroring
+(`replay/augment.py`) it MUST be remapped through the mirror permutation, not
+copied. A copied index raises nothing, changes no shape, and leaves a plausible
+in-range value — it is simply the wrong move on every mirrored row.
+
+Handled by registering it in `replay/shard.POLICY_INDEX_FIELDS` and driving BOTH
+mirror paths (`mirror_sample` and `maybe_mirror_batch_arrays`) off that one registry
+instead of two hand-written tuples. Mutation-verified: reverting either path to a copy
+fails `tests/test_mirror_augmentation.py` (mutant M1 killed 7 tests, M2 killed 2).
+
+⚑ **The completeness guard did not guard completeness.** The registry-walking test
+claimed "add a new index field to the schema and forget the mirror, and this fails",
+but it iterates `POLICY_INDEX_FIELDS` — so it structurally cannot see the forgettable
+step, which is REGISTERING. Proven: a `foo_move_index` added to `_OPTIONAL_FIELD_SPECS`
++ `_SCALAR_FIELDS` + `ReplaySample` and omitted from the registry left **seven suites
+green** (135 tests). Replaced by a partition guard that walks
+`_OPTIONAL_FIELD_SPECS` — the place a field is actually added — and requires every
+scalar integer spec to be classified exactly once, either registered as a move index or
+listed in the test's `_NOT_A_MOVE_INDEX` with a reason. The exemption list is
+TEST-SIDE on purpose: `POLICY_INDEX_FIELDS` is unchanged, so no production consumer of
+that registry (`validate_arrays`' range check, the two mirror paths) sees a widened
+set. Both branches demonstrated by execution — the `foo_move_index` case RED, the
+current tree GREEN.
+
+### NEGATIVE CONTROL
+
+`test_prior_disagrees_with_search_in_the_fixture` asserts the test fixture actually
+separates the prior's argmax from both the improved policy's argmax and the played
+action. Without it every other assertion would pass while the code read the SEARCH
+policy — the one substitution that would make the whole field meaningless. Confirmed by
+mutant M3 (capture reads `c_probs` instead of the prior): killed, 5 tests.
+
+### CONFOUNDS / OPS
+
+- **None on training.** No loss, no head, no sampling weight reads these fields.
+- **Deploy ordering is load-bearing.** The code must be merged and deployed BEFORE any
+  yaml key naming `record_prior_top1` exists. An unknown yaml key is survivable mid-run
+  (the reload is rejected, trial survives) but **FATAL at launch** — `run.py` calls
+  `flatten_run_config_defaults` before the arg parser is built and outside any `try`.
+  ⇒ no yaml edit in this change; the key becomes usable only as a kill switch after
+  the deploy that defines it.
+- **Flag defaults ON** (`record_prior_top1: bool = True`) at every hop. Deliberate: the
+  field only pays off if it accumulates passively from the deploy, and a default-off
+  knob would need a yaml key to do anything — which is the "wired but never enabled"
+  failure this field exists to route around.
+- **Resume format bumped 1 → 2.** Four new per-record columns. ⚑ CORRECTED: the bump
+  is NOT load-bearing against a crash — forcing the gate to accept a v1 file yields a
+  graceful `reasons={'unreadable': N}`, not an uncaught `KeyError` (measured by the
+  independent review). The bump is still right, for a weaker and honest reason:
+  `version_mismatch` names the actual cause where `unreadable` would misattribute it.
+  Costs at most one session's suspended in-flight games, once.
+- **The round-trip the bump pays for is now asserted.** It was not: deleting both
+  `_rebuild_record` restore lines left every suite green (review mutant M9). The fields
+  are captured from the ply's logits and — unlike `x` / `relations` — cannot be
+  recomputed from the replayed board, so `tests/test_selfplay_resume.py` now carries
+  `test_prior_top1_survives_suspend_and_resume` (distinct dyadic values per record plus
+  one deliberately-absent row) and the two fields are in `_assert_record_identical`,
+  behind a non-vacuity assertion that the session captured any at all.
+- `record_prior_top1` is a RESTART key (baked into the frozen `GameConfig` at session
+  start) and is `_RESUME_COMPAT_EXEMPT` (a game spanning a flip yields fewer covered
+  rows, never a wrong one).
+
+### REVERT POINT
+
+Code-only revert: revert the PR. No yaml key exists to unset, no salvage snapshot is
+required — the change adds columns and reads none of them, so a revert leaves earlier
+shards readable (every consumer is presence-flag gated) and simply stops new coverage.
+
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-08-12) — authenticated seed claim, side-effect-free manifest (finding [6], DoS half)
 
 **Status: NOT WRITTEN YET. This entry gates the work, not the merge.** Training is
@@ -3363,7 +4646,7 @@ change and would teach the operator to ignore the handover line.
 **OBSERVATION THAT PROVES IT TOOK EFFECT (run after the first restart onto
 this code; no GPU, no arena):**
 ```
-cd /home/josh/projects/chess && PYTHONPATH=. python3 - <<'PY'
+cd ~/projects/chess && PYTHONPATH=. python3 - <<'PY'
 import json, glob, os
 from chess_anti_engine.train.trainer import Trainer
 newest = lambda pat: max(glob.glob(pat), key=os.path.getmtime)
@@ -3375,8 +4658,22 @@ best = json.load(open(newest('runs/pbt2_small/tune/train_trial_*/best.json')))
 # covered set. An earlier draft of this command assembled a stand-in object
 # from a hand-written name list, which is the same hazard the mechanism exists
 # to remove: the list can go stale while the command still prints MATCH.
+# ⚑ AMENDED 2026-08-17 (PR #448 N1): the id now also keys on the SET of
+# non-zero loss weights, so the recompute has to be handed the weights the
+# trial is running. They come from the live yaml through the same
+# `trainer_kwargs_from_config` the Trainer is built with -- NOT from a
+# hand-typed dict, which would agree with a trial that ignored the yaml.
+import yaml
+from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.train.trainer import trainer_kwargs_from_config
+from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+_kw = trainer_kwargs_from_config(
+    flatten_run_config_defaults(
+        yaml.safe_load(open('configs/pbt2_small.yaml', encoding='utf-8'))),
+    log_dir='/tmp')
 expect = Trainer.eval_ruler_id_for(
-    batch_size=512, steps=0, mirror_prob=0.0, full_pass=True)
+    batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
+    loss_weights={k: float(_kw[k]) for k in TRAINER_WEIGHT_KEYS})
 got = meta.get('holdout_ruler', '')   # .get, so an absent field reports MISMATCH
 print('checkpoint', os.path.basename(d), repr(got), 'gen', meta.get('holdout_generation'))
 print('best.json ', best.get('holdout_ruler'), 'gen', best.get('holdout_generation'))
@@ -3488,6 +4785,30 @@ move `test_loss` on a frozen holdout without moving the id:
    iteration". Measured: false — see L15. The corrected argument is the one
    above, and it turns on the bump RATE rather than on an effect size nobody
    has converted into nats.)*
+   **⚑ AMENDED 2026-08-17 (PR #448, N1) — HALF OF THIS IS NOW CLOSED, AND THE
+   HALF THAT IS NOT IS STILL G16.** The gap above conflates two events that
+   behave nothing alike, and only the first was ever the unbounded one:
+   * **MEMBERSHIP — now covered.** `compute_loss` adds these terms under an
+     `if`, so weight 0.0 means the term is not in `total` at all. Flipping one
+     live (`w_sf_policy_floor`, `w_sf_own_regret`) makes `total` gain a whole
+     non-negative term, `test_loss` steps strictly UP with no route back, and
+     the best model FREEZES at the pre-flip checkpoint. `eval_ruler_id` now
+     hashes the SET of non-zero weights, derived from `TRAINER_WEIGHT_KEYS`
+     (`eval_ruler.active_loss_terms`), so a flip moves the id and hands the
+     record over.
+   * **MAGNITUDE — still uncovered, still G16.** `sf_wdl_frac_floor`
+     0.35 → 0.45 does not change which terms exist, so it does not move the
+     id, exactly as before. The band-hashing instrument this entry proposes is
+     still the right answer for it and is still unbuilt. Nothing in #448
+     changes that, and it must not be read as closed.
+     The membership rule was chosen over a value hash precisely because of the
+     bump-rate argument above: a value hash bumps on ≥15.3% of iterations,
+     which does not merely over-fire the handover — `_update_best_model` would
+     take its ADOPT branch that often and the comparison would stop existing.
+     The membership boundary sits at exactly 0.0, which production's
+     `sf_wdl_frac: 0.50` / `sf_wdl_frac_floor: 0.45` band never touches, so
+     the PID leg moves it 0% of the time (executed, not argued:
+     `test_the_pid_driven_weight_cannot_move_the_ruler_across_its_whole_band`).
 3. **module-level CONSTANTS referenced by covered frames.** `_RAW_SUM_LOSS_KEYS`
    (`trainer.py:941`) decides which loss keys are row-summed rather than
    row-meaned; adding `'loss'` to it took `test_loss` 10.196 → 0.0205 with the
@@ -9951,7 +11272,7 @@ result`. Cause: **PR #277's ragged tail batch.** `_iter_full_pass_batches`
 2000/512 gives shapes **512 and 464**, so a fresh process must compile BOTH before
 its first result. That exceeds the 120s budget. The extra graph was anticipated;
 its collision with the timeout on a cold process was not. Ruled out: cold inductor
-cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_josh` persists).
+cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_$USER` persists).
 **Self-healing** — Python cannot kill the thread, so the abandoned eval keeps
 compiling and warms the cache. **Standing cost: exactly 2 holdout readings per
 restart.** Fix ranked in the task list; pre-warming both shapes at init is the
@@ -11381,7 +12702,7 @@ UCI, preserves thread affinity while forwarding pinned buffers and async
 launches, removing an input copy and the irrelevant batch merge/slice path.
 ONE deciding yardstick: three alternating legacy/owner process rounds, each
 running `PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --device cuda --nodes 8192 --repeats 3 --chunk-sims 512 --topk 32
 --max-batch 1024 --compile-mode max-autotune --compile-cache-dir
 /tmp/cae-uci-bf16-cache --timeout-s 300`, with
@@ -11790,7 +13111,7 @@ Hypothesis: rebuilding the identical source release with Stockfish's supported
 without changing deterministic search results. Build in an isolated `/tmp`
 copy; do not replace the live binary during this experiment. ONE deciding
 yardstick: `PYTHONPATH=. python3 scripts/bench_stockfish_build.py --baseline
-/home/josh/local_stockfish/extract/usr/games/stockfish --candidate
+~/local_stockfish/extract/usr/games/stockfish --candidate
 /tmp/stockfish-native/src/stockfish --rounds 5 --cpu 15 --hash-mb 16 --threads
 1 --depth 13`. The harness warms both binaries, alternates order, and uses
 Stockfish's 51-position bench. Pre-committed SUCCESS: candidate median nodes/s
@@ -12293,9 +13614,9 @@ the RTX 5090 is available after the driver reset, so close the queued GPU
 re-profile before changing kernels, streams, or batching. Hypothesis: the
 production 512x16 v2 checkpoint still exposes actionable batch-size or launch
 headroom in the compiled forward path. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/profile_worker_inference.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --batches 16,32,64,96,128,256,384,512,768,1024 --warmup 6 --iters 40
 --mode reduce-overhead --amp-dtype bf16 --out
 /tmp/cae_gpu_inference_20260718.json`. REOPEN the GPU/batching surface if median
@@ -12321,10 +13642,10 @@ before requesting a nominally non-blocking H2D transfer. Hypothesis: make the
 NumPy staging view alias a persistent pinned float32 tensor, removing the dead
 bf16 allocation and enabling real asynchronous DMA without changing the GPU
 conversion or model inputs. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_input_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
 <=0.99x, identical policy/WDL checksum, focused AOT tests and lint pass. KILL:
 ratio >1.01 or any output/lifetime failure; otherwise MIXED and retain only if
@@ -12347,12 +13668,12 @@ main thread before yielding the batch. Hypothesis: have the existing single
 prefetch worker complete collation/H2D as well, so CPU pinning and transfer
 setup for batch N+1 overlap GPU compute for batch N without adding another
 queue or thread. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_training_batch_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-package /home/josh/projects/chess/data/aot_models_512/chess_b512.pt2
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-package ~/projects/chess/data/aot_models_512/chess_b512.pt2
 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 512 --steps 30 --rounds 7`. SUCCESS: prefetched/reference median wall
 <=0.95x with exact final-output checksum, deterministic tests cover ordering,
 retry extension, CUDA-error cleanup, focused trainer/collation tests and lint
@@ -12379,10 +13700,10 @@ defeating the C-walk/GPU overlap that consumes its event. Hypothesis: add
 persistent pinned float32 policy/WDL output buffers and enqueue `copy_` into
 them before recording the event, matching `DirectGPUEvaluator` semantics. ONE
 deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_output_staging.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
 <=0.98x, pinned median submission latency <=0.50x pageable, identical output
 checksum, async lifetime tests and lint pass. KILL: end-to-end ratio >1.01,
@@ -12408,10 +13729,10 @@ then converts to bf16 on GPU even though its packages are statically bf16.
 Hypothesis: give AOT a persistent pinned bf16 buffer, accept the existing
 uint16 bit representation, and transfer it directly while retaining the
 float32 compatibility path. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_bf16_input.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: bf16/f32 median end-to-end wall <=0.97x,
 exact policy/WDL checksum, tests prove uint16 bits take the bf16 buffer while
 float32 callers retain their path, focused Gumbel/AOT tests and lint pass.
@@ -12437,11 +13758,11 @@ evaluators already expose a tested legal-BF16 contract consumed natively by
 head ids, gather only those logits on GPU, and return pinned bf16 bits plus WDL
 without materializing/transferring the dense 4,672 policy. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_legal_policy.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 384 --iterations 40 --rounds 7`. SUCCESS: compact/dense median
 end-to-end wall <=0.75x, exact gathered-policy-bit and WDL checksum parity,
 randomized full-to-compact/legal-count tests, focused Gumbel/AOT tests and lint
@@ -12467,10 +13788,10 @@ the native compact tensor from AOT, transfer 60% fewer policy bytes, and let
 the existing CPU mapper expand once, deleting the redundant GPU allocation
 and scatter without changing an API or search semantics. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_compact_policy.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 384
 --iterations 40 --rounds 7`. SUCCESS: native/dense median end-to-end wall
 <=0.98x after including the CPU compact-to-full expansion, exact full-policy
 and WDL checksum, focused AOT/Gumbel tests and lint pass. KILL: ratio >1.00 or
@@ -12495,11 +13816,11 @@ on GPU and immediately gathers legal logits back out. Hypothesis: remap the
 already-present legal columns to compact ids and gather directly from the AOT
 head, deleting the dense allocation/scatter with no transport or MCTS change.
 ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_broker_compact_gather.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batches 32,96,384 --iterations 80 --rounds 7`. SUCCESS: compact/dense
 geometric-mean ratio <=0.98 and no individual bucket regresses, with exact
 legal-policy-bit/WDL checksums, randomized remap tests, focused broker tests,
@@ -12522,11 +13843,11 @@ training thread immediately before its H2D copies. Hypothesis: pin the next
 numeric array dict in the existing one-item host prefetch thread, let
 `_to_tensor` reuse already-pinned storage, and keep all CUDA submission/dtype
 conversion on the training thread. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_training_pin_prefetch.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
-/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --shard
+~/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
 --batch 512 --iterations 40 --rounds 7`. SUCCESS: prefetched/reference median
 wall <=0.97x, exact collated-tensor and AOT output checksums, tests prove
 already-pinned arrays are not copied/re-pinned, focused trainer/replay tests,
@@ -12551,10 +13872,10 @@ copy/H2D payload. Hypothesis: allocate the pipeline's existing NumPy buffers
 as uint16 whenever `supports_input_bf16_bits` is true; the C tree already
 supports this representation and AOT already consumes it. ONE deciding
 yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_gumbel_bf16.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --games 96
 --simulations 32 --iterations 5 --rounds 7`. SUCCESS: bf16/f32 median complete
 search wall <=0.97x, exact actions/policies/values/root-Q checksum, tests prove
 pipeline buffer dtype routing, focused Gumbel/AOT tests, and lint pass. KILL:
@@ -12578,10 +13899,10 @@ evaluator already exposes two pinned in-place slots that C can encode into
 directly. Hypothesis: give AOT the same two-slot input interface, retaining
 its existing output allocations, to remove one full host copy per root/leaf
 batch while preserving group lifetime isolation. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_gumbel_inplace.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --games 96
 --simulations 32 --iterations 5 --rounds 7`. SUCCESS: inplace/staged median
 complete-search wall <=0.97x, exact actions/policies/values/root-Q checksum,
 slot-isolation tests, focused Gumbel/AOT tests, and lint pass. KILL: ratio
@@ -14178,7 +15499,7 @@ without changing the current value. Hypothesis: 32/64/128 MB reduces TT
 collisions enough to improve fixed-node label wall time despite the larger CPU
 cache footprint. ONE deciding yardstick: `PYTHONPATH=. nice -n 19 taskset -c 15
 python3 scripts/bench_stockfish_hash.py --stockfish
-/home/josh/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
+~/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
 40 --positions 16 --rounds 7`. Arms rotate order and each starts a fresh engine;
 all searches within an arm retain the TT like production. SUCCESS: one larger
 hash has median wall <=0.97x the 16 MB baseline and first-round best-move
@@ -14482,7 +15803,7 @@ already queued whenever a broker lane becomes available, without a timed
 coalescing sleep.  Four independent submission lanes preserve concurrency;
 CUDA and cudagraph ownership remain exclusively in the broker process.
 YARDSTICK (deciding, exact command):
-`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir ~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir ~/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
 SUCCESS: hierarchical median Gumbel positions/s is at least 5% above direct
 and p95 request latency regresses by no more than 10%.  KILL: throughput gain
 below 5%, latency guard fails, any output mismatch, deadlock, CUDA graph
@@ -14526,8 +15847,8 @@ YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
 repeats, unlimited baseline versus targets 512/680/1020, using
 `for target in 0 512 680 1020; do PYTHONPATH=. python3
 scripts/bench_production_sf_workers.py --publish-dir
-/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
---aot-dir /home/josh/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
+~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir ~/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
 --workers 4 --threads 32 --games-per-thread 1 --slots 4 --max-plies 10
 --target-batch "$target"; done`, judged on actual positions/s and p95 request
 latency.  SUCCESS: >=5% positions/s with no p95
@@ -14551,8 +15872,8 @@ broker/GPU-sensitive while retaining 4 worker processes x 32 concurrent
 Gumbel producers x 4 shared slots. ONE deciding yardstick:
 `for target in 0 512 680 1020; do PYTHONPATH=. python3
 scripts/bench_broker_gumbel_target.py --publish-dir
-/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
---aot-dir /home/josh/projects/chess/data/aot_models_512 --target-batch
+~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir ~/projects/chess/data/aot_models_512 --target-batch
 "$target" --workers 4 --threads 32 --slots 4 --boards-per-thread 4
 --simulations 50 --iterations 3 --repeats 5; done`. SUCCESS: any target gives
 at least 5% median inference positions/s with no p95 request-latency regression,
@@ -14583,7 +15904,7 @@ protocol should remove most root policy D2H and shared-memory output traffic
 without changing model inputs, logits, WDL, batching, or search semantics.
 YARDSTICK (deciding): production-shaped broker-backed Gumbel A/B at 4 workers x
 32 threads x 4 slots, five repeats per mode, using
-`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir ~/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir ~/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
 SUCCESS: compact-root median positions/s is at least 3% above dense-root with
 no more than 5% p95 request-latency regression. KILL: throughput gain below
 3%, numerical policy/WDL mismatch outside existing BF16 tolerances, illegal
@@ -14613,10 +15934,10 @@ asynchronous after submission. Hypothesis: while one production-sized compact
 forward completes on CUDA, copying the next BF16 input group into the second
 pinned slot can hide a meaningful part of host packing and justify a two-stage
 broker pipeline. ONE deciding yardstick:
-`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+`PYTHONPATH=. taskset -c 15 ~/projects/chess/.venv/bin/python
 scripts/bench_aot_pack_overlap.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
---aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 340
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir ~/projects/chess/data/aot_models_512 --batch 340
 --iterations 40 --rounds 7`. SUCCESS: overlap/reference median wall <=0.95,
 at least 25% of the separately measured second-pack time is hidden, exact
 compact-policy/WDL checksums, and no CUDA/event/lifetime error. KILL: either
@@ -14647,7 +15968,7 @@ GPU result becomes ready, or the deadline expires. This should form fuller next
 batches without inserting idle GPU time. ONE deciding yardstick: three
 counterbalanced legacy/target process pairs on the production checkpoint using
 `PYTHONPATH=. python3 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 3 --warmup-iters 2 --compile-mode reduce-overhead
 --dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
@@ -14685,7 +16006,7 @@ unnecessary. Hypothesis: `batch_wait_ms=0` preserves useful throughput while
 removing the last fixed gather delay from the local threaded path. ONE deciding
 yardstick: two counterbalanced 5/0 ms process pairs using `PYTHONPATH=. python3
 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
 --dispatcher-target-batch 680 --dispatcher-batch-wait-ms {5|0}`, alternating
@@ -14717,7 +16038,7 @@ rows without changing queue draining, wait policy, request ordering, search, or
 outputs. ONE deciding yardstick: two counterbalanced clean process pairs using
 `CAE_DISPATCH_FINE_BUCKETS=0/1 PYTHONPATH=. python3
 scripts/bench_dispatcher_gumbel.py --checkpoint
-/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+~/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
 --paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
 50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
 --dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
@@ -14977,7 +16298,7 @@ deciding yardstick: `PYTHONPATH=. python3 scripts/arena_standard.py --candidate
 scratchpad/live_read/monitor/ck_176_manual.pt --reference
 scratchpad/live_read/monitor/ck_163_manual.pt --mode matched_sims --sims 32
 --games 512 --max-concurrent-games 16 --syzygy
-/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+~/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
 --syzygy-max-pieces 6 --seed 0 --label ck176_vs_ck163_s32_20260724`. SUCCESS:
 candidate pentanomial Elo 95% CI is wholly above 0. FAIL: wholly below 0. NULL:
 CI includes 0. Mechanism secondary: pentanomial counts, score, decisive-game
@@ -22470,8 +23791,9 @@ job holds 13.8 GB (5.1 s/step vs 0.75 s/step) — the deviation is identical in 
 ### THE ONE DECIDING MEASUREMENT (exact command)
 
 ```
-SC=/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/capsize
-PYTHONPATH=. nice -n 19 .venv/bin/python -u $SC/slope.py \
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+SC="$SCRATCH/capsize"
+PYTHONPATH=. nice -n 19 .venv/bin/python -u "$SC/slope.py" \
   --corpus $SC/corpus --arm {L,M,S} --seed {0,1} \
   --batch-size 256 --chunk-steps 176 --chunks 48 --eval-every 2 \
   --out $SC/run_{arm}_s{seed}
@@ -23061,7 +24383,8 @@ excluded from the wide train corpus by construction.
 ### ONE deciding yardstick (exact command)
 
 ```
-PYTHONPATH=. nice -n 19 .venv/bin/python /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/analyze_rp.py
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+PYTHONPATH=. nice -n 19 .venv/bin/python "$SCRATCH/rowsparam/analyze_rp.py"
 ```
 
 Deciding statistic **B** = mean over seeds {0,1} of
@@ -24433,7 +25756,7 @@ Confounds: as pre-registered (6.11x more optimizer steps at fixed chunk_steps=17
 the LR sawtooth is preserved; level comparability rests on the byte-identical held set;
 exposure recency identical across arms by construction — all arms train only on the
 same-era wide/sibling corpora and the held set is game-disjoint by the mix64 split).
-Artifacts: /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/
+Artifacts: <session-scratch>/rowsparam/
 (runs run_LW_s0, run_LW_s1, run_LWSHUF_s0; analyzer analyze_rp.py; corpus_wide).
 
 
@@ -26581,8 +27904,9 @@ SHOWN not to reach the loss — otherwise F measures a field artefact, not rehea
 **Instrument** (banked, CPU-only, no GPU, ~40 s at `nice -n 19`, recomputes from scratch):
 
 ```
-PYTHONPATH=/home/josh/projects/chess nice -n 19 python3 \
-  /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/absorb_20260802/f_unblock/f_diff.py
+# SCRATCH = this agent session's scratchpad bank; set it to wherever yours is.
+PYTHONPATH=~/projects/chess nice -n 19 python3 \
+  "$SCRATCH/absorb_20260802/f_unblock/f_diff.py"
 ```
 Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
 
@@ -27050,7 +28374,7 @@ the position actually had when generated, which is what training saw, but it is
 not "iter477-era history". (iii) Repetition-plane reconstruction for children
 is exact to 99.986%, not 100%.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`, `matched_rows.npz`,
 `match_report.json`, `child_transform_verify.json`).
 
@@ -27165,7 +28489,7 @@ capability was lost, and whether that onset tracks the forgetting-hinge
 window-exit story. ~4 min/checkpoint on the banked rig at
 `--gpu-mem-fraction 0.15`. Not run: the offline rig owns the card.
 
-**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+**Bank:** `<session-scratch>/audit_historyfill_20260802/`
 (`README.md`, `match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`,
 `analyze.py`, `matched_rows.npz`, `score_{boot512,iter477}_vb256.json`,
 `analysis.json`, `match_report.json`, `child_transform_verify.json`).
@@ -29132,7 +30456,7 @@ renames the output directory rather than silently mislabelling a cell.
 
 Full write-ups + repros: `scratchpad/code_audit_20260803/{ENCODING,C_WALKER,INFERENCE}_AUDIT.md` (`enc_*`/`cwalk_*`/`inf_*` repros banked alongside). Fix PRs in flight for W1/W2, E1-E4, I1-I4+I6; all deploy-gated items marked below.
 
-- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
+- **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate (now `_classify_expanded_root_support` — see the W2b addendum for the rename and the SUPERSET→EQUALITY change) is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
 - **ENCODING: the C and Python encoders are BIT-IDENTICAL in the production regime** (175/v2_threats + lc0_root_legacy_meta + history_rep_fix, 1,654 positions with real history × 3 modes × both versions) — first time measured. 722,888 lc0_1858↔4672 round-trips clean incl. promotions/castling/EP; PR #314's 93-dead-planes accounting confirmed exactly. Defects are COVERAGE: E1 the only C-vs-Py plane oracle is off in every gate (stale docstring; passes today when enabled — fix PR turns it into CI); E2 AOT package verification encodes its distribution in the LEGACY history layout (98/175 planes differ; one keyword); E3 rep_fix flag-ordering has no guard (latent); E4 C encoders infer plane count from the buffer, config never compared (latent). ⚠ our `lc0_1858` is NOT Leela's kMoveStrs promotion ordering — `onnx/load.py` handles it; live trap for BT4 distillation.
 - **INFERENCE: I1 (CONFIRMED, both transports): the slot protocol has NO request identity** — a client that times out (hardcoded 30s) and re-submits is served the PREVIOUS request's policy/WDL; on compact-legal the row is partially reinterpreted metadata bytes = plausible-looking policy from a different position, recordable as training data. Precondition (client reset) documented in-source as observed 2026-07-24; RATE UNMEASURED (log grep in flight). Fix PR in flight (request id/epoch in header; wire-format change, workers+broker restart together). I2: connect never validates layout vs shm size → all-zero policy on plane skew (latent; guard in PR). I3: hang watchdog inert until first successful forward AND excludes _ensure_model — cannot fire on the documented boot-into-wedged-dxg scenario. I4: AOT constants rebound check_full_update=False, nothing binds package↔model. I6: broker busy-spins ~83% of a core at idle. I5 (deferred, separate decision): EncodedEvalCache transparently BYPASSED on the compact UCI path (0 hits/0 misses reads as clean); both cache keys otherwise sound. Gather policy clean; ThreadedDispatcher not on the production selfplay path.
 
@@ -30168,7 +31492,7 @@ reproduced and adopted verbatim below.
 #### Code provenance — the rig runs DIFFERENT code from every prior wave
 
 Every earlier wave imported `chess_anti_engine` from the live tree
-(`/home/josh/projects/chess`, currently `ba0656728`), which predates PR #327 and has
+(`~/projects/chess`, currently `ba0656728`), which predates PR #327 and has
 no polar instrument. This wave runs a dedicated worktree at
 `.../scratchpad/wt-a8v2`, **SHA `0333932cf`** — the #327 merge itself. The live tree
 was never checked out or modified; `git worktree add --detach` only creates a new
@@ -30178,7 +31502,7 @@ directory. C extensions were rebuilt in the worktree
 
 **⚑ A defect found while wiring this, worth its own note.** `PYTHONPATH` pointing at
 the worktree was **silently ignored**: `sys.path[0]` is the process CWD, and every
-driver in this rig does `cd /home/josh/projects/chess`, so the live tree won every
+driver in this rig does `cd ~/projects/chess`, so the live tree won every
 import. The first import test I ran "passed" while resolving to the WRONG tree — the
 signature defect exactly (a value accepted, then discarded). The fix is an explicit
 `ABSORB_REPO` env var consumed before the imports, and the run header now banks
@@ -32106,8 +33430,10 @@ an empty square**. The board stays self-consistent, nothing raises, and the
 entire subtree below is a position that cannot arise in chess — encoded, sent to
 the net, and backpropped into the real tree's statistics.
 
-**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`), the check that would
-catch a stale root child set, was short-circuited by
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`; now
+`_classify_expanded_root_support`, after its semantic went from SUPERSET to exact
+support EQUALITY — see the W2b addendum at the end of this section), the check
+that would catch a stale root child set, was short-circuited by
 `allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
 argument, so **the one path that carries a tree across plies (selfplay) was the
 one path the check never ran on** — the by-now familiar shape of a gate that
@@ -32230,6 +33556,75 @@ this project ships, also untouched. Third, the review of this PR found a
 realloc-dangle in the children pool that is **shared with `main` and predates
 this work**; it is recorded here as a known pre-existing defect and deliberately
 not bundled into a correctness fix that is trying to stay reviewable.
+
+### W2b addendum 2026-08-23 — the W2 gate was a SUPERSET check, and the superset is not harmless
+
+**Not an experiment; no verdict, no yardstick, nothing launched.** Recorded here
+because it changes the semantic of an instrument this section defines.
+
+`_expanded_root_covers_actions` accepted a carried root whose child set was any
+SUPERSET of the current search support (`np.isin(actions, child_actions).all()`),
+on the reading that spare children can only help. They cannot. Two production
+paths NARROW the root support below the previous ply's expansion — winning-root
+terminal-draw pruning (`gumbel_c.py`, `root_qs[i] > 0` + immediate draws) and
+`allowed_root_indices_batch` (UCI `searchmoves`) — and the C halving scorer
+`gss_score_and_halve` derives `max_visit`, `total_visits`, the prior-weighted
+`weighted_q`/`mixed_value` and the `min_q`/`max_q` normalisation from ALL of the
+root's children. So an excluded child still moves the Q transform that every
+INCLUDED candidate is scored through. Meanwhile the improved policy is built over
+the current support only, so the eliminator and the returned target disagreed
+about which moves exist. The Python reference (`gumbel.py`) never reuses a tree,
+so its semantic for a narrowed root is a fresh root over the current support.
+
+Fix: the gate is now exact support EQUALITY (`_classify_expanded_root_support`);
+a narrowed support rejects the carried root and rebuilds it over `legal_idx`,
+which the existing fallback already did.
+
+**The rejection counter is SPLIT, because the two rejections mean opposite
+things.** Folding them together would have buried the W1/W2-family corruption
+signal under routine traffic — the narrowed case fires on ordinary winning-root
+selfplay plies, so a shared counter would have been permanently nonzero and the
+alarm unreadable.
+- `root_coverage_miss_count()` / `root_coverage_miss=` keep their names AND their
+  original meaning: the carried root was MISSING an action the search needed, i.e.
+  the tree disagrees with the rules. Still an alarm; still re-triggers the
+  operator line.
+- `root_support_narrowed_count()` / `root_support_narrowed=` is new: every action
+  was present and the root also carried excluded ones. Routine. Announced ONCE
+  per process (one-shot WARNING plus the first operator line) and thereafter only
+  carried along when an alarm prints — a counter that re-triggered every 60 s
+  would train operators to ignore the line the alarms share.
+
+Measured (`tests/test_mcts_transposition_key.py`, all four cases red on the
+parent commit on the PLAYED-MOVE assertion): a carried root holding an extra,
+heavily-visited child changes the *played move* of a search over the narrowed
+support versus the same search on a root built over that support alone. Both
+narrowing paths, both search shapes: `searchmoves` (157↔155) and the winning-root
+draw prune in selfplay's own call shape — `allowed_root_indices_batch=None`, root
+carried with its full legal expansion — at 21 legal/8 support (657 vs 584) and 15
+legal/2 support (804 vs 803).
+
+⚑ Instrument note for whoever reproduces this: the draw prune needs `root_q > 0`,
+but pinning the WDL to a decisive win for EVERY node makes the test vacuous —
+identical `q_hat` across candidates collapses the Q transform to a constant and
+the halving becomes a pure log-prior ranking that no root pollution can move. The
+root batch must be winning while the leaves stay varied.
+
+**⚠ DEPLOY GATED, and this addendum is NOT that gate.** Two reasons, and the
+second is the bigger one:
+1. **Search-shape.** The reuse rate on narrowed-support roots changes, which
+   voids the frozen-search regret baseline (frozen 2026-08-09 20:58).
+2. **DATA-AFFECTING.** On every narrowed ply the stored policy row and
+   `values_out` are now built from a REBUILT, cold root — different survivor,
+   different visit distribution, different value. Winning positions with
+   claimable-draw replies are exactly where the anti-engine curriculum spends
+   time, so this is a change to training rows, not only to played moves. It
+   belongs under the one-data-affecting-change-per-readout-window rule and needs
+   its own entry with a pre-committed yardstick plus an arena readout; if it
+   restarts alongside anything else, that overlap goes in both Confounds lines.
+
+Pure Python: no extension rebuild, but merge ≠ deploy, and a restart is what
+deploys it.
 
 ---
 
@@ -35229,7 +36624,7 @@ separate reviewer follows.
   all.
 - DECIDING YARDSTICK (pre-committed): bank the iter-21 checkpoint
   (`data/ratchet/snapshots/ck_<date>_iter21.pt`), then
-  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
+  `PYTHONPATH=. python3 scripts/arena_standard.py --candidate data/ratchet/snapshots/ck_<date>_iter21.pt --reference ~/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt --mode matched_sims --sims 32 --search-shape training --games 200 --seed 42 --label rerun_iter21_vs_boot512`
   — identical shape to the 08-04 retro arenas (their JSONL rows in
   runs/arena_results.jsonl are the authoritative flag record). Baseline to beat:
   Elo(iter21_0f888 − boot512) = −96.2 [−141.5, −53.9].
@@ -35537,7 +36932,7 @@ separate reviewer follows.
   iter-21 checkpoint (checkpoint_000020/trainer.pt per label lag) and run
   the SAME arena as the baselines:
   PYTHONPATH=. python3 scripts/arena_standard.py --candidate <iter21 bank>
-  --reference /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+  --reference ~/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
   --mode matched_sims --sims 32 --search-shape training --games 200
   --seed 42 --label cp_target_iter21_vs_boot512
   SUCCESS: CI excludes −96.2 on the favorable side (upper bound > −56.7 is
@@ -38933,7 +40328,7 @@ becomes a one-sided CONFIRMATION check for the follow-up `policy_temp` arm, read
 
 ### AMENDMENT 7 (2026-08-09) — REVERSING AMENDMENT 6: deploy BOTH knobs after all
 
-**Amendment 6's unbundling decision is WITHDRAWN.** Josh's objection is correct and it defeats
+**Amendment 6's unbundling decision is WITHDRAWN.** The maintainer's objection is correct and it defeats
 the reasoning I used:
 
 > *"if it hurts us or does not much we won't learn much since it doesn't have softening yet"*
@@ -39255,7 +40650,7 @@ the production path".
 
 ## TRAINING STOPPED 2026-08-09 20:03 — iteration 735, trial 379f6 (user decision)
 
-Stopped at Josh's instruction ("I think training isn't helping"), to price a rollback before
+Stopped at the maintainer's instruction ("I think training isn't helping"), to price a rollback before
 resuming. Clean teardown: `train.sh stop` exit 0, watchdog stopped FIRST (it auto-recovers on
 STALLED and would have relaunched training mid-teardown), **2304 in-flight games SUSPENDED**
 across 4 workers rather than discarded — so no resume point pays the drain-transient bias.
@@ -44026,7 +45421,7 @@ but not for the *arm-size* or *score-sd* statistics measured; the two trials agr
 
 ## 2026-08-12 — PREREG Tier-13: the shared policy adapter, A/B/C (`policy_embedding_mode`) — **NOT LAUNCHED**
 
-**Status: PRE-REGISTERED, awaiting Josh's go-ahead + a GPU pause. Do not launch from this
+**Status: PRE-REGISTERED, awaiting the maintainer's go-ahead + a GPU pause. Do not launch from this
 entry alone.** Code is PR #398 (`feat/shared-policy-embedding`).
 
 ### Hypothesis
@@ -49842,6 +51237,7 @@ required; nothing launched. Probe:
 `scratchpad/c16_probe_20260815.py` (session scratchpad).
 
 ### FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
+## 2026-08-16 — FOLLOW-ON (PR #427, `fix/optremap-review-residuals`) — the guard against re-keying by position had, as its failure mode, re-keying by position
 
 Merged-pending. Not a training-target change; it changes what `Trainer.load` does on a
 checkpoint whose recovered name mapping is UNTRUSTWORTHY. Entered here because it converts
@@ -49887,6 +51283,18 @@ this entry twice above. [[server_info_logs_are_discarded_by_uvicorn]]
 
 **Revert point:** `4adafe91a` is the last commit before the review-residual fixes;
 `ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself.
+`ed3a8737c` is the last before the `UntrustedOptimizerStateError` behaviour change itself;
+`449879b6d` is the should-fix pass that reworded the mass-turnover WARNING.
+
+⚑⚑ **ALL THREE OF THOSE SHAs ARE UNREACHABLE FROM BOTH `main` AND `ops/live-20260725`.**
+Verified 2026-08-16 (`git branch -r --contains`): they exist only on the unmerged
+`origin/fix/optremap-review-residuals` (and its sibling `origin/fix/optremap-n1-positional-fallback`),
+because PR #427 was SQUASH-merged into the live branch as `45da6ba79` and forward-ported to
+`main` as a cherry-pick with a different SHA again (PR #439). ⇒ **`git show <sha>` on either
+long-lived branch fails, and deleting those remote branches destroys these revert points
+outright.** To revert this change use the squash/cherry-pick commit on the branch you are
+actually on, not the SHAs above. Recorded here rather than in the PR description because a
+PR body does not survive into the file a future operator reads.
 
 **Coverage note.** The mass-turnover WARNING was, until `449879b6d`, the one change in this
 area that **nothing could detect** — the reviewer mutated it to `if False:` and the whole file
@@ -54193,6 +55601,483 @@ unchanged number read as stability rather than as a wedge. Detection delayed ~50
 count across two checks as a wedge hypothesis to exclude, not a plateau.**
 
 ## 2026-08-17 — #440 DECISION (Josh): option (c), with (a) as a PRE-COMMITTED follow-up
+
+---
+
+## 2026-08-16 — PREREG — **STOCKFISH TEACHER UPGRADE, dev-20260420-ed651aab → dev-20260810-5062aee5 (STAGED, NOT DEPLOYED)**
+
+Task #213. Binary is built and verified; **nothing production reads has been touched**, the live
+yaml is unedited, and no training was restarted. This entry is the launch record required by
+protocol rule 1 and must be read before anyone points `stockfish_path` at the new build.
+
+### Provenance of the CURRENT teacher — established by resolution, not by filename
+
+`configs/pbt2_small.yaml:91` sets `stockfish_path` to `<repo>/e2e_server/publish/stockfish`.
+That is a **two-hop symlink**, and the intermediate name is misleading, so the chain is recorded
+in full rather than the final answer alone:
+
+```
+<repo>/e2e_server/publish/stockfish
+  -> ~/local_stockfish/extract/usr/games/stockfish
+  -> ~/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
+```
+
+Version read off the binary's own `uci` / `compiler` response, not off any path component:
+
+| | value |
+|---|---|
+| id name | `Stockfish dev-20260420-ed651aab` |
+| upstream commit | `ed651aab544a330a9c8ae0dc2d8d51d5d48a8112` (2026-04-20, "Replacing std::clamp with std::min") |
+| build | g++ 11.4.0, `x86-64-bmi2`, 64bit BMI2 AVX2 SSE41 SSSE3 SSE2 POPCNT |
+| nets | `EvalFile nn-f68ec79f0fe3.nnue` + `EvalFileSmall nn-47fc8b7fff06.nnue` (dual net) |
+
+⚑ **`e2e_server/publish/` is the SERVER'S PUBLISH DIRECTORY, and it contains exactly this one
+symlink.** So the two ways a selfplay worker can obtain Stockfish converge on the same file:
+`--stockfish-path` reads it directly, and `--stockfish-from-server` (`worker.py:3617`) downloads
+the sha256-pinned copy the server serves *from that same path*. Repointing the symlink therefore
+changes the teacher for **both** paths at once, including for remote workers, and it does so
+without any yaml edit. That is a deployment hazard, not a convenience — see Deployment below.
+
+### Target
+
+`5062aee519a1ba262d472d8ab139851ced56573e` (2026-08-10, "Place continuation history on large
+pages"), upstream `HEAD` at time of writing. `git rev-list --count ed651aab..HEAD` = **175**
+commits, confirming the "~175 commits / ~4 months" framing exactly.
+
+### Compatibility — MEASURED, source diff AND binary diff AND our own parser
+
+This is the part that matters, because our signature defect is a value that is accepted and then
+silently ignored, and a renamed UCI option is precisely that shape.
+
+**Every option we set, checked against the running binaries** (`uci` output of both, sorted,
+diffed). The complete diff of the option surface is **two lines**:
+
+```
+< option name EvalFile      type string default nn-f68ec79f0fe3.nnue
+< option name EvalFileSmall type string default nn-47fc8b7fff06.nnue
+---
+> option name EvalFile      type string default nn-ab28990d4ea3.nnue
+```
+
+| option | we set it at | old | new | verdict |
+|---|---|---|---|---|
+| `UCI_ShowWDL` | `stockfish/uci.py:404` | check, default false | identical | **unchanged** |
+| `Threads` | `uci.py:405` | spin 1..MaxThreads | identical | **unchanged** |
+| `Hash` | `uci.py:407` | spin 1..MaxHashMB | identical | **unchanged** |
+| `SyzygyPath` | `uci.py:409`, `:510` | string | identical | **unchanged** |
+| `MultiPV` | `uci.py:411` | spin 1..MAX_MOVES | identical | **unchanged** |
+| `UCI_Elo` | `match_vs_uci.py --option-*` | spin 1320..3190 | identical (`Skill::LowestElo/HighestElo` unchanged) | **unchanged** |
+| `EvalFileSmall` | **never set by us** | present | **REMOVED** | **no impact on us** |
+
+**Every field we parse** (`stockfish/uci.py:_parse_info_fields`, and the second parser in
+`scripts/blunder_check_cp.py:93`): `multipv`, `nodes`, `depth`, `score cp`, `score mate`, `wdl`,
+`pv`. `UCIEngine::on_update_full` and `UCIEngine::format_score` are **byte-identical** between the
+two commits — same fields, same order, same `cp`/`mate`/TB_CP=20000 encoding.
+
+⚑ **The cp ruler did NOT silently rescale.** `win_rate_model`, `win_rate_params` (the `as[]`/`bs[]`
+polynomials) and the internal→cp map `round(100 * v / a)` are byte-identical. This was the single
+highest-risk silent failure available — a retuned normalisation would have kept the field name
+`score cp` while changing what a centipawn means, invalidating `sf_eval`, the cp-logistic blend and
+every banked cp number at once. It did not happen. **Same ruler.**
+
+⚑ **`SyzygyPath` parsing was REFACTORED** (`std::string Paths` split on `SepChar` →
+`std::vector<std::filesystem::path> Paths`) — and this one deserved the check, because production
+Syzygy is the **colon-separated pair** and a separator regression would have silently dropped the
+6-man DTZ half with no error. It still splits on `':'` on Linux (`tbprobe.cpp:1406`), and this is
+confirmed empirically, not just by reading: driving the new binary through our own `StockfishUCI`
+with the full production pair returns `cp 19997` (= TB_CP − plies) on a 5-man position, i.e. the
+probe fires. **No impact.**
+
+**End-to-end parse check** — the new binary driven through our own `StockfishUCI` at production
+label settings (MultiPV 6, 75k nodes, production Syzygy pair), 4 positions covering the cp, mate
+and tablebase score paths: every retained field present, MultiPV rank count 6/6, WDL vectors
+normalise. Script banked at `scratchpad/sf213_parse_check.py`.
+
+⇒ **No UCI option and no parse field changed. The integration is compatible.** What changed is the
+EVAL, and that is the whole point of the upgrade — and the whole risk.
+
+### ⚑ The NNUE architecture changed, so the LABELS MOVE even though the ENCODING does not
+
+The dual big+small net collapsed to a **single net** `nn-ab28990d4ea3.nnue`, with a new feature set
+(`nnue/features/pp_3wide.cpp`) alongside `half_ka_v2_hm` and `full_threats`. Measured on the same
+positions, same 75k nodes, same MultiPV 6:
+
+| position | old cp | new cp | old wdl (W,D,L) | new wdl |
+|---|---|---|---|---|
+| startpos | 34 | **22** | 0.074 / 0.920 / 0.006 | 0.049 / **0.942** / 0.009 |
+| middlegame | 195 | **179** | 0.975 / 0.025 / 0.000 | 0.953 / **0.047** / 0.000 |
+
+The new teacher is **systematically less extreme and more drawish**, and the MultiPV spread
+compresses (old PV cps `34…−15`, new `22…−3`). `sf_eval` and the SF half of the WDL blend consume
+these numbers directly, so **the value target's distribution shifts on day one** while every
+field name, range and unit stays put. This is a distribution shift, not a bug, and it is exactly
+why no cross-era comparison of an SF-derived metric survives the upgrade.
+
+### Cost — measured, and it is NOT free
+
+| | old | new | delta |
+|---|---|---|---|
+| `bench` (MultiPV 1, 1 thread) | 1,217,135 nps | 1,124,739 nps | **−7.6%** |
+| production label (MultiPV 6, 75k nodes, n=40) | 116.1 ms/label | 134.8 ms/label | **+16.1% wallclock** |
+
+Labels are node-budgeted (`go nodes N`), so a slower engine buys nothing at fixed `sf_nodes` — it
+is a pure cost. And SF is already **18.3 of 32 cores** [[loop_is_gpu_bound_cpu_two_thirds_idle]],
+so +16% on the label path is a curriculum-throughput hit, not spare capacity. ⚑ The MultiPV-1
+bench number **understates it by half**; quote the +16.1%, not the −7.6%. (Caveat: old is the
+official g++ 11.4 release build, new is our g++ 15.3 PGO build, so a few points of this are
+toolchain, not engine.)
+
+### Hypothesis
+
+Our net matches its policy target's bad tail at 91.5% — it learns the target faithfully, so **our
+ceiling is the target's ceiling** [[the_policy_target_is_sharp_and_wrong]]. A teacher 175 commits
+stronger should produce a label set with a **smaller bad tail** at the same node budget. If it does
+not, the upgrade is a pure cost (+16.1%) plus a curriculum perturbation, and must not ship.
+
+### ⚑⚑ WHY THE OBVIOUS INSTRUMENTS ARE ALL VOID HERE — read this before proposing a yardstick
+
+- **`wdl_regret` is VOID.** It measures the AGENT (net + search) against the curriculum, and the PID
+  drives it to hold winrate at setpoint [[wdl_regret_measures_agent_not_net]]. An SF upgrade makes
+  the curriculum opponent stronger at fixed settings, which injects a STEP into the regret series
+  arithmetically indistinguishable from the net changing — the identical failure that made the
+  `gumbel_c_scale` change read as +239.5 Elo of progress while the net measurably degraded 51.6
+  Elo. The series is frozen-search-only, and this change unfreezes the curriculum. **A regret move
+  after this deploy is not evidence of anything.** A fresh baseline is required and the old series
+  does not continue across the boundary.
+- **Arena Elo of our net is void as a TEACHER readout.** Swapping SF changes no weights, so a
+  same-day arena reads ~0 by construction. It measures nothing about label quality.
+- **Training loss is void** — losses are decoupled from strength here
+  [[losses_are_decoupled_from_strength]].
+
+### ⚑⚑ DOES THE UPGRADE INVALIDATE THE FROZEN AUDIT SET? — answered, not left implicit
+
+**Partly, and the two halves must be separated.**
+
+- Its **POSITIONS** (`data/audit_set_v1.jsonl.manifest.jsonl`) are just positions. They are
+  **fully valid** and are reused unchanged.
+- Its **LABELS** are `Stockfish dev-20260420-ed651aab` at ≥1M nodes / MultiPV ≥10. They are that
+  engine's opinion. So the frozen set **cannot be a neutral judge of its own successor**: scoring a
+  new-SF label set against an old-SF referee is biased toward the old arm by construction. Using it
+  alone would reproduce [[audit_first_cannot_judge_a_non_sf_teacher]] one level up.
+
+⇒ The set is **not discarded and not treated as neutral. It is repurposed as the ADVERSARIAL
+referee**, and a second, home-biased referee is built over the *same manifest* so the two biases
+bracket the answer. A referee does not need to be unbiased in absolute terms — it needs to be
+unbiased **between the arms**, and since no single SF can be, two opposed ones are used and the
+verdict is only read where they agree.
+
+⚑ The audit set does NOT need regenerating for any other purpose: it is the model-scoring ruler,
+and re-labelling it would invalidate every banked model score at once
+[[a_ruler_change_must_invalidate_its_records]]. The second referee below is a NEW FILE at a NEW
+path. `data/audit_set_v1.jsonl` is not touched, appended to, or re-labelled.
+
+### ⚑⚑ THE FIRST VERSION OF THIS YARDSTICK COULD NOT FIRE — TWO INDEPENDENT REASONS, BOTH MEASURED
+
+Recorded here because both are the house defect (a value accepted and then silently ignored)
+sitting **in the instrument**, and because the entry originally shipped commands that had never
+been executed. Fixed 2026-08-16, and every command below has now been RUN — output pasted.
+
+**(1) The readout addressed the wrong candidate.** The gate is on candidate **(c) `sf_soft`**,
+but the command read `tail_stats.py --raw-top1`, and `tail_stats.py:28` was
+`r.get("cand", {}).get("raw", {}).get("top1")` — candidate **(a)**, the net's own policy, read off
+the checkpoint (`audit_targets.py` `"raw": raw_probs[i]`) with **zero dependence on
+`--stockfish`**. The script's whole argument surface was `(dump_a, dump_b, --raw-top1, --tail-cp)`;
+`cand.sf_soft` was not addressable at all. Two arms differing only in the SF binary give
+byte-identical (a), so the statistic is identically 0, `|net| = 0 < 40`, and **INCONCLUSIVE was
+pre-committed for any teacher** — after four 4000-position `audit_targets` runs plus a
+4000-position 1M-node `build_audit_set`. FIX: `tail_stats.py` takes `--field <dotted.path>`;
+`--raw-top1` is kept as a documented alias for `--field cand.raw.top1`. It also now REFUSES a
+field that resolves on zero rows, because returning `{}` reads as "no difference".
+
+**(2) ⚑⚑ THE SHALLOW-SF LABEL CACHE HAD NO ENGINE IDENTITY, SO ARM NEW READ ARM OLD'S LABELS.**
+`<audit-set>.shallow_sf.jsonl` matched on `(nodes_requested, multipv)` **alone**. Candidate (c) is
+built from that cache, and `data/audit_set_v1.jsonl.shallow_sf.jsonl` **already holds 4000 rows at
+exactly `(500000, 40)`** — the settings below — none of which record which engine wrote them
+(measured: `Counter({(50000, 40, None): 4000, (500000, 40, None): 4000, (100000, 40, None): 2000})`).
+⇒ Referee A's 2×2 would have reused those rows for BOTH arms and **never launched Stockfish**.
+
+MEASURED, not argued (4 positions, both binaries, `--sf-effort low --sf-soft-multipv 40`):
+
+```
+$ python3 scripts/tail_stats.py mini_old.jsonl mini_new.jsonl --field cand.sf_soft.top1
+>300cp tail, paired (n=4): both 0, new-in-B 0, fixed-in-B 0  (net +0 blowups)
+cand.sf_soft identical on 4/4 positions        # and no `[sf-soft] labeling` line in either arm
+```
+
+FIX: rows carry `sf_id` (the engine's own `id name`, read from the ENGINE — the path is a
+misleading two-hop symlink); a run naming `--stockfish` reuses only that engine's rows; a
+cache-only run holding two engines' rows at one setting is REFUSED as a mixed ruler. After the fix,
+the same two arms:
+
+```
+$ ... --stockfish <OLD>   ->  [sf-soft] engine `Stockfish dev-20260420-ed651aab`
+                              [sf-soft] ⚑ ignoring 4 cached rows ... ({'<unrecorded>': 4})
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ ... --stockfish <NEW>   ->  [sf-soft] engine `Stockfish dev-20260810-5062aee5`
+                              [sf-soft] ⚑ ignoring 8 cached rows ...
+                              [sf-soft] labeling 4 positions at 500000 nodes, multipv 40
+$ python3 scripts/tail_stats.py fix_old.jsonl fix_new.jsonl --field cand.sf_soft.top1
+fix_old.jsonl  all  n=4 mean=  28.5 med= 7.0 P90= 74.2
+fix_new.jsonl  all  n=4 mean=  37.2 med=24.5 P90= 78.7
+cand.sf_soft identical on 2/4 positions (was 4/4)
+```
+
+⚑ **COST CONSEQUENCE FOR THE REAL RUN: the banked 4000 rows at (500k, 40) are `<unrecorded>` and
+will be RE-LABELLED by whichever binary an arm names.** That is the honest price of a cache that
+never recorded its own provenance; budget arm OLD as a full labeling run, not a cache hit.
+
+### THE ONE DECIDING YARDSTICK (exact command — EXECUTED, see below)
+
+Expected **deep-SF regret (cp) of the SF MultiPV soft target** — candidate (c) of
+`scripts/audit_targets.py`, which is the actual policy label the pipeline stores — with the SF
+binary as the ONLY thing that differs between arms:
+
+```
+# arm OLD (baseline) and arm NEW — identical but for --stockfish.
+# ⚑ The checkpoint is pinned by PATH AND STEP and must be the SAME in all four cells:
+#   data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt  (step 93744)
+# It does not enter candidate (c) at all, but audit_targets requires exactly one of
+# --checkpoint/--onnx, and an unpinned net makes rows (a)/(b)/(d)/(e) uninterpretable.
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set <REFEREE> --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <BINARY> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --dump-per-position runs/sf213/<referee>_<arm>.jsonl
+
+# the readout, paired by position key. ⚑ --field, NOT --raw-top1: the gate is on
+# candidate (c), and --raw-top1 reads candidate (a), which cannot move with --stockfish.
+PYTHONPATH=. python3 scripts/tail_stats.py \
+  runs/sf213/<referee>_old.jsonl runs/sf213/<referee>_new.jsonl \
+  --field cand.sf_soft.top1
+```
+
+run over the **2×2** of {referee A, referee B} × {arm OLD, arm NEW}:
+
+- **Referee A (adversarial, biased toward OLD)** = `data/audit_set_v1.jsonl`, unchanged.
+- **Referee B (home, biased toward NEW)** = same positions, new-SF deep labels:
+  ```
+  mkdir -p runs/sf213 && cp data/audit_set_v1.jsonl.manifest.jsonl \
+      runs/sf213/audit_set_sf5062aee5.jsonl.manifest.jsonl
+  PYTHONPATH=. nice -n 15 python3 scripts/build_audit_set.py \
+      --out runs/sf213/audit_set_sf5062aee5.jsonl \
+      --stockfish <NEW> --nodes 1000000 --multipv 10 --sf-workers 8
+  ```
+  ⚑ The `cp` of the manifest is load-bearing and is why this is cheap and valid:
+  `build_audit_set.py` **reuses an existing manifest instead of re-sampling**, so referee B is
+  the identical position set with a different labeller — not a new sample. A new sample would make
+  the two referees incomparable [[same_name_different_population]]. ⚑ It writes to `runs/`, never
+  to `data/`.
+  ⚑ `--replay-dir` is deliberately ABSENT and the command above is the executed one. It used to be
+  `required=True` and this command exited 2 (`error: the following arguments are required:
+  --replay-dir`) even though the manifest-reuse path never reads it. It is now **conditionally
+  required** — demanded only when a manifest has to be SAMPLED — rather than satisfied with a
+  decorative value the run ignores, which is the defect class this whole entry keeps tripping over.
+  The README it writes records `replay dirs: [] (manifest reused; not re-sampled)`.
+
+### Pre-committed thresholds — the verdict is only read WHERE THE TWO REFEREES AGREE
+
+Primary quantity: **paired `>300cp` tail flip count** (`new-in-B` minus `fixed-in-B` from
+`tail_stats.py`), which is the readout that tracks the Cheese single-collapse failure mode
+[[cheese_loss_blunder_profile]]. Secondary, reported but not deciding: P90 and mean.
+
+| referee A (adversarial) | referee B (home) | verdict |
+|---|---|---|
+| NEW has fewer tail blowups, net ≤ −40 | NEW fewer, net ≤ −40 | **PASS — deploy.** Won on a referee biased against it. |
+| NEW has more, net ≥ +40 | NEW more, net ≥ +40 | **KILL — do not deploy.** Lost on its OWN home referee; unambiguous. |
+| any split, or either \|net\| < 40 | " | **INCONCLUSIVE — do not deploy for label quality.** Not a pass. |
+
+**±40 IS PROVISIONAL AND UNMEASURED — stated plainly rather than dressed up.** An earlier revision
+of this line said it was "chosen as ~2× the paired flip noise this readout has shown on repeat runs
+of an unchanged pipeline". That cited no run and no number, and it **cannot have been measured on
+this readout**: until 2026-08-16 the readout could not address candidate (c) at all (see above), so
+no repeat-run flip count for this quantity exists. The claim is WITHDRAWN. ±40 of 4000 paired
+positions = 1.0pp and is a judgement call, not a calibration — it is stated as a FALSIFIER, not as
+a number to quote. [[compute_instrument_resolution_before_the_threshold]]
+
+⚑ **What would measure it, and it must be done BEFORE the verdict is read** (it is cheap relative
+to the 2×2 — one extra arm, no new referee): run arm OLD **twice** against referee A with the same
+binary and the same pinned checkpoint, into two different dump paths, and read the paired flip
+count between them with `--field cand.sf_soft.top1`. That is the null distribution of this exact
+statistic. Note `go nodes N` is deterministic per binary at fixed threads, so the honest prior is
+that the repeat reads **exactly 0** and the threshold is bounded by the RE-LABELLING variance
+between two `--sf-workers 8` runs rather than by search noise. If the repeat reads 0, ±40 is
+strictly conservative and should be revised DOWN, in a ledger edit made before the arms are read.
+
+⚑ Pre-committing INCONCLUSIVE as a distinct, non-shipping
+outcome is deliberate: a split is the EXPECTED reading if the two teachers simply differ without
+either being better, and "we could not tell" must not be laundered into "no reason not to ship"
+when shipping costs a measured +16.1%.
+
+### ⚑ THE COMMANDS ABOVE WERE EXECUTED (2026-08-16) — exit codes, not careful writing
+
+The lesson of this entry is that "an exact command" means one that was RUN. Each was executed on a
+4-position mini referee (`--max-positions 4`, reduced `--sims`, `--device cpu` to leave the GPU
+alone); the reduction changes rows (b)/(d)/(e) and **not** candidate (c), which is the deciding row.
+
+| command | exit | note |
+|---|---|---|
+| `audit_targets ... --dump-jsonl ...` (as originally written) | **2** | `error: unrecognized arguments: --dump-jsonl` — the flag is `--dump-per-position` |
+| same, corrected flag, no net pinned | **1** | `pass exactly one of --checkpoint (one of ours) or --onnx; neither was given` |
+| `build_audit_set ... ` (as originally written, no `--replay-dir`) | **2** | `error: the following arguments are required: --replay-dir` |
+| `audit_targets` corrected, arm OLD, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260420-ed651aab\`` |
+| `audit_targets` corrected, arm NEW, referee A | **0** | `[sf-soft] engine \`Stockfish dev-20260810-5062aee5\`` |
+| `build_audit_set` corrected (referee B, manifest reuse) | **0** | `[manifest] reusing ... (4 positions)`, `[label] finished 4 positions` |
+| `audit_targets` corrected, arms OLD/NEW, referee B | **0**/**0** | full 2×2 completed |
+| `tail_stats --field cand.sf_soft.top1` on each pair | **0** | referee A: mean 28.5 → 37.2; referee B: 269.0 → 259.2 |
+
+⇒ the 2×2 now runs end to end and the deciding statistic MOVES between arms. Before the two fixes
+it was 0 on all four cells by construction. Nothing about the teacher's quality is claimed here —
+this establishes only that the instrument can fire.
+
+### What a PASS does NOT establish — stated now, not discovered later
+
+- **Not an Elo claim, and not a ceiling claim.** It says the new teacher's stored policy label has a
+  smaller bad tail on 4000 audit positions. Whether the net converts that into strength is a
+  day-plus paired-CI question and is NOT this readout [[most_experiments_here_are_unfalsifiable]].
+- **Not a value-target verdict.** The yardstick is the POLICY label. `sf_eval` and the WDL blend
+  shift too (measured above) and are not scored here; `scripts/value_regret.py` is the value ruler
+  and would need its own referee-pair treatment.
+- **Nothing about the exploit surface.** We train to exploit SF's weaknesses. A stronger SF has
+  *different* weaknesses, so a better label set may still make the anti-engine objective harder.
+  This readout cannot see that, and a PASS must not be quoted as if it could.
+
+### Confounds — named before launch
+
+1. **Toolchain differs** (g++ 11.4 official release vs our g++ 15.3 PGO static build). Affects the
+   cost numbers; does not affect move choice, which is deterministic per binary at fixed nodes.
+2. **One data-affecting change per readout window** (protocol rule 4). This upgrade must NOT share
+   a window with any target-knob, search or loss change. The search config has been frozen since
+   2026-08-09 20:58 and must stay frozen across this readout.
+3. **Node budget is not a strength budget.** The new engine reaches different depth at the same
+   `go nodes` (measured: 9→10, 11→11, 12→13 on three positions, and 17→**12** on the TB position).
+   "Matched nodes" is matched COST, not matched strength, in both directions.
+4. **TB-saturated positions have arbitrary MultiPV order.** On the 5-man probe both engines scored
+   all six PVs at exactly 19997 and picked different moves (`h1f1` vs `e1g1`). That is a tie-break
+   difference, not a strength difference [[wdl_regret_filter_leaks_huge_cp]] — the readout must not
+   count it as a tail flip. Positions where the referee's top-1 is TB-saturated are excluded.
+5. **`_set_options` silently drops unknown options** (see below). Any arm that configures SF via
+   `scripts/match_vs_uci.py` is exposed to it.
+
+### ⚑ Defect found while checking, NOT introduced by this task
+
+`scripts/match_vs_uci.py:343` `_set_options`:
+
+```python
+for k, v in opts.items():
+    if k in eng.options:      # <- no else. unknown option: dropped, SILENTLY
+```
+
+The `try/except` below it warns only for options that DO exist and fail to set. An option the
+engine does not recognise produces **no warning and no error** — it is accepted from the caller and
+never reaches the engine. That is this codebase's signature defect in its purest form, and this
+upgrade is exactly the event that arms it: `EvalFileSmall` is now an unknown option, so
+`--option-b EvalFileSmall=...` would have configured the old engine and silently no-op the new one,
+with the run reporting success either way. Not fixed here (this branch is prereg-only, and a code
+change would violate one-change-per-window); **filed as follow-up, and the fix is an `else:` that
+raises rather than warns.**
+
+### Deployment (NOT PERFORMED — the user's decision)
+
+Staged binary: `~/sf213_build/staged/stockfish-dev-20260810-5062aee5-bmi2`, statically linked
+against libstdc++/libgcc **deliberately** — the system libstdc++ is GCC 11 and lacks
+`GLIBCXX_3.4.32`, so a dynamically linked g++ 15 build does not run here at all, and workers
+fetch this binary over the network via `--stockfish-from-server` onto hosts we do not control.
+Verified: `uci`, `compiler`, `bench`, and the full production label path.
+
+⚑ **Deploy is NOT a yaml edit.** `stockfish_path` points at a symlink chain; repointing it swaps
+the teacher for direct-path AND from-server workers simultaneously, with no config-diff to review
+and no ledger trace. Whatever is done, do it by **replacing the symlink target**, record the old
+target in the Revert points table first, and remember that a symlink swap is invisible to
+`params_json`/config auditing [[uncommitted_live_yaml_edits_lose_proven_wins]]. Do NOT delete the
+existing binary — revert must be a one-line symlink restore.
+
+**Revert point owed before deploy**: a salvage snapshot per protocol rule 2, because the replay
+window will hold ~a day of labels made by the OLD teacher and a symlink revert does not undo them.
+
+---
+
+## OWED: re-dump the three banked monitor baselines so the provenance gate can FIRE (#442)
+
+**Status: OPEN, blocking nothing, owed at the next maintenance window.** Recorded here
+rather than in PR #442's description because a PR body does not survive into the file a
+future operator reads. [[uncommitted_live_yaml_edits_lose_proven_wins]]
+
+**What #442 shipped.** `scripts/paired_compare.py` now VALIDATES the provenance stamp it
+had been recognising and discarding, and `value_regret.py` / `blindspot_panel.py` now
+stamp their `--dump-per-position` output — previously only `audit_targets.py` did, so the
+gate was inert on every automated comparison.
+
+**Why it still cannot REFUSE on the production path.** `require_same_stamp` opens with
+`if not a.stamp or not b.stamp: warn; return`. Every automated comparison in
+`scripts/monitor_fen.sh` puts an UNSTAMPED legacy baseline on side A:
+
+```
+scratchpad/canary_512_iter20/vdump_boot_swaptime.jsonl   # value_regret, boot512
+scratchpad/canary_512_iter20/panel_v1_live.jsonl         # blindspot_panel v1
+scratchpad/canary_512_iter20/panel_v2_live.jsonl         # blindspot_panel v2
+```
+
+Verified 2026-08-16 by reading line 1 of each: all three begin with a bare data row.
+⇒ **on the live monitor the gate warns and can never refuse.** "Warn forever" is the state
+this repo's rules class as a gate that cannot fail, so this entry is the bounded exit.
+
+**Why it WAITS rather than shipping in the PR.** The re-dump is a GPU read of a 61.44M net
+over 2000 audit positions plus two blindspot panels, and training is live; the standing
+rule is no concurrent GPU work outside a pause window. [[batch_gpu_work_into_pause_windows]]
+The boot512 checkpoint is banked (`scratchpad/canary_512_iter20/live_ckpt19_trainer.pt`,
+685 MB), so nothing expires and nothing is lost by waiting.
+
+**⚑ A RE-STAMP UTILITY WAS CONSIDERED AND REJECTED.** Stamping a legacy dump in place would
+write `policy_map_version` / `audit_ruler_version` values that were never recorded when the
+numbers were produced — asserting a provenance nobody measured. That converts *unverified*
+into *verified false*, which is strictly worse than the warning, and it is the exact defect
+class (a value accepted and then trusted) the stamp exists to stop. **Re-dump or warn; do
+not re-stamp.**
+
+**The exact commands, in a pause window** (one per baseline; `--force` is deliberate — these
+are replacements, and the numbers must be IDENTICAL because the checkpoint and ruler are
+unchanged):
+
+```bash
+BASE=scratchpad/canary_512_iter20
+CK=$BASE/live_ckpt19_trainer.pt
+PYTHONPATH=. python3 scripts/value_regret.py --checkpoint "$CK" \
+    --max-positions 2000 --gpu-mem-fraction 0.15 \
+    --dump-per-position "$BASE/vdump_boot_swaptime.jsonl"
+for P in v1 v2; do
+  PYTHONPATH=. python3 scripts/blindspot_panel.py --checkpoint "$CK" \
+      --panel "data/blindspot_panel_$P.jsonl" \
+      --dump-per-position "$BASE/panel_${P}_live.jsonl"
+done
+```
+
+**⚑ PRE-COMMITTED READOUT — the value the re-dump has to move, and the value it must NOT.**
+
+```bash
+# 1. MUST move: the monitor's provenance token, on the next deep cycle.
+grep -o "prov:[^|]*" scratchpad/live_read/monitor/monitor.log | tail -3
+#    before: "vs_boot:UNVERIFIED(RULER)"  (the batch_size row-field warning)
+#    after : "prov:ok"                    (stamped both sides, batch_size on both)
+# 2. MUST NOT move: the yardstick itself. Same checkpoint, same ruler.
+grep "paired delta" scratchpad/live_read/monitor/paired_*_vs_boot.log | tail -2
+```
+
+**Kill rule, decided now.** If the re-dumped `vdump_boot_swaptime.jsonl` moves the banked
+`paired delta` by more than the CI half-width of the cycle it is read against, the re-dump
+did NOT reproduce the baseline — restore the old file from backup and treat the difference
+as a RULER CHANGE to be diagnosed, not as a new baseline. A baseline that silently moved is
+worse than one that cannot be provenance-checked. [[a_ruler_change_must_invalidate_its_records]]
+
+**⚑ Do not read `prov:ok` as "the gate fired".** It means both sides are stamped and the
+stamps agree — the passing branch. The refusing branch is exercised by
+`tests/test_paired_compare_gate_is_wired.py::test_prov_names_each_outcome_of_a_real_paired_compare[refused]`,
+which drives the real script; on the production path it stays unexercised until two genuinely
+different rulers are compared, which is the point. [[a_gate_that_cannot_fail]]
+
+---
+
+## 2026-08-17 — #440 DECISION (the maintainer): option (c), with (a) as a PRE-COMMITTED follow-up
 
 Answering the open decision from the 2026-08-16 amendment. **Chosen: (c) now — gate on the
 full paired distribution at n=4000 — with (a) (buy ~3.2x the audit set) held as a follow-up
@@ -67712,3 +69597,356 @@ substitute for a paired arena.
 
 **Reproduce:** `python3 scratchpad/external_teacher_gate_paired.py data/lc0/ours_g1586_audit_cache_topk256_20260826.jsonl`
 (prints the reproduction check, both gate rows, the churn decomposition and the paired tests).
+---
+
+## 2026-08-17 — #440 AMENDMENT — **THE MANDATED REPEAT CONTROL READS 0 BY CACHE CONSTRUCTION, AND THE >300cp GATE CANNOT PASS**
+
+Two findings from the independent review of PR #440
+(https://github.com/jjoshua2/DeepFin/pull/440#issuecomment-5312139897), both demonstrated by
+execution, both of which change what this experiment may conclude. Recorded here because the
+prereg above still mandates the step they invalidate.
+
+### ⚑⚑ B5 — the repeat-arm control is guaranteed to read 0, for the WRONG reason
+
+The decision section above makes "run arm OLD **twice** and read the paired flip count between
+the two dumps" a MANDATORY first step, and pre-commits `d_obs = 0` as a stop. The entry
+attributes an expected 0 to `go nodes N` being deterministic per binary at fixed threads.
+
+**That attribution is wrong, and the control is inert.** The reviewer drove `audit_targets.py`
+with a stub engine returning a DIFFERENT cp on every single call: run 2 **never launched the
+engine at all** and returned run 1's rows verbatim, flip count 0. The shallow-SF cache serves
+the second run from the first run's rows. So the control reads 0 whether or not the pipeline is
+deterministic, whether or not the teacher changed, and whether or not the engine is even
+functional.
+
+⇒ **A control that returns the same constant under an engine engineered to disagree with itself
+on every call is measuring the cache, not the variance.** It is the same shape as
+[[a_gate_that_cannot_fail]] and [[never_condition_a_control_on_its_own_outcome]]: the number is
+clean, plausible, and produced by construction. And because `d_obs = 0` is pre-committed as a
+STOP, **the amended prereg's mandatory step 1 is structurally guaranteed to halt the
+experiment** — a false stop rather than a false pass, but still a verdict the instrument could
+not have failed to produce.
+
+**Before this control can run, the repeat MUST bypass the cache** (distinct cache path per
+repeat, or a cache key that includes a run nonce). Until then, `d_obs = 0` establishes NOTHING
+and must not be read as "the readout is noise-free". [[an_exact_command_means_it_was_run]]
+
+### ⚑ B4 — the ±40 gate can KILL but cannot PASS
+
+Independently reproduced off a banked dump
+(`data/ruler_ckpt119_20260807/audit_targets_ckpt119_dump.jsonl`, n=2000): the `>300cp` rate is
+**19/2000 = 0.95%**. Scaled to the prereg's n=4000 that is **~38 positions in the tail on each
+side**. A PASS requires a net movement of **≥40**, which exceeds the entire tail.
+
+⇒ **The gate is one-sided by arithmetic.** KILL (net ≥ +40 blowups) is reachable because the NEW
+arm can add tail positions without bound; PASS (net ≤ −40) requires removing more blowups than
+exist. Any run of this gate as written can only return KILL or INCONCLUSIVE.
+
+This is the third time on this entry that a threshold was set without first measuring the
+instrument's resolution — see the withdrawn "±40 ≈ 2× the repeat noise" claim and the withdrawn
+"±1.7pp paired half-width" above. **The rule is not "be careful with thresholds", it is: compute
+the instrument's resolution and its ATTAINABLE RANGE before writing the number.**
+[[compute_instrument_resolution_before_the_threshold]]
+
+⚑⚑ **THE FIRST VERSION OF THIS PARAGRAPH CITED THE WRONG FILE — inside the amendment written to
+police exactly that.** It reported `18/2000 = 0.90%` against
+`data/ruler_ckpt119_20260807/…`. Re-measured, that file reads **19/2000 = 0.95%**; the 0.90% is
+`scratchpad/canary_512_iter20/adump_ckpt751.jsonl`, a DIFFERENT checkpoint's dump. The two got
+crossed while writing. The conclusion is unchanged (~38 < 40, still one-sided) and the decision
+section's 0.6455 base rate genuinely is ckpt119 — but a number that survives its own correction
+is not thereby verified, and this is the third citation defect on this entry.
+[[diff_the_file_you_measured_against_production]] [[same_name_different_population]]
+
+⇒ The `>300cp` gate is **RETIRED** as this experiment's deciding yardstick.
+
+### ⚑⚑ BUT ITS REPLACEMENT IS NOT YET A YARDSTICK — TWO REASONS, BOTH BLOCKING LAUNCH
+
+The decision section supersedes `>300cp` with McNemar on `top1_match`. **Do not read that as
+resolving B5, and do not read it as runnable.**
+
+1. **McNemar INHERITS the cache defect exactly.** B5 is a defect in the INPUTS, not in the
+   statistic: run 2 is served verbatim from run 1's rows, so McNemar's discordant cells `b` and
+   `c` are both 0 for precisely the reason the paired flip count is 0. The cache bypass mandated
+   in B5 is the ONLY thing that fixes either. (The OLD-vs-NEW arm comparison is unaffected — a
+   different `sf_id` forces re-labelling.)
+2. **It has no implementation.** `grep -rniE "mcnemar"` over `scripts/`, `chess_anti_engine/` and
+   `tests/` returns **zero hits**. ⇒ **Retiring a gate that cannot PASS in favour of a gate that
+   has no command is not progress — it moves "cannot fire" from arithmetic to absence.**
+   [[an_exact_command_means_it_was_run]] [[a_gate_that_cannot_fail]]
+
+   It is close, not far: `--tail-cp 0` already yields exactly McNemar's discordant cells
+   (verified by hand, b=2 / c=1, against the tool's `new-in-B 2, fixed-in-B 1`). What is missing
+   is the statistic itself and a ledger line naming it as an exact command. ⚑ That also RAISES
+   the stakes on `--tail-cp`, which is currently **the one flag in this script with no test** —
+   it would become the deciding flag.
+
+The `>300cp` line survives only as a reported secondary.
+
+### ⚑ N7 — a unit error in my own amendment, corrected
+
+The decision section calls `cand.sf_soft.top1` a RANK. **It is not.** It is deep-SF regret **in
+centipawns**, clipped at `AUDIT_REGRET_CAP_CP = 1000.0`. The correction that motivated that
+sentence (it is not a boolean, so a "match rate" over it is meaningless) still stands; the unit
+named in it does not. Quote **cp, clipped at 1000**, never "rank".
+
+### Status
+
+**#440 remains BLOCKED, now on three counts**: the cache-bypass fix for the repeat control (B5),
+the retirement of the `>300cp` gate in favour of McNemar on `top1_match` (B4), and the two
+`tail_stats.py` / engine-resolution defects filed 2026-08-16. No arm has run; no config changed.
+
+---
+
+## 2026-08-17 — #440 UNBLOCKED: all three launch blockers CLOSED, with exact commands
+
+The three counts in the Status line above are now closed by code, not by argument. Each one is
+stated here as the command a run will actually type, because the standing failure on this entry
+has been thresholds and gates written as prose that turned out to have no implementation behind
+them. [[an_exact_command_means_it_was_run]]
+
+### B5 — the repeat control's cache bypass: `--sf-cache`
+
+`scripts/audit_targets.py` gained `--sf-cache PATH`, resolved by `resolve_sf_cache_path()` and
+printed BEFORE the checkpoint loads. Engine identity was never going to fix this: a repeat runs
+the SAME binary twice on purpose, so both runs share an `sf_id`, run 2 matches every cached row,
+and Stockfish is never launched.
+
+Pinned by execution, not by prose — `tests/test_audit_shallow_sf_cache_provenance.py`:
+
+- `test_a_repeat_on_the_SHARED_cache_never_relabels` drives a stub engine that returns a
+  DIFFERENT cp on every call and asserts the engine ran **once**. The two runs agree because the
+  cache was served; there is no determinism story left that can explain it away.
+- `test_a_repeat_on_a_FRESH_cache_does_relabel` asserts 2 calls and cp 100 vs 200.
+- `test_the_cli_resolves_the_override_before_anything_expensive_loads` drives the real `main()`
+  with an unloadable checkpoint and asserts the override was announced. ⚑ It is the wiring
+  check, and it is the one that matters: a resolver nothing calls is this codebase's signature
+  defect.
+
+⚑ **A mutant SURVIVED the first version of that suite, and then survived my first FIX for it.**
+Making `main` print the override and then hand `resolve_sf_cache_path(args.audit_set, None)` to
+the labelling pass passes every executing test here. My first close was
+`test_main_resolves_the_cache_path_exactly_once`, a source-level check that `main` derives the
+path once — and the independent reviewer of PR #446 defeated it with ONE token
+(`SHALLOW_SF_CACHE_SUFFIX` spelled out at the second call site) and, worse, showed that my stated
+reason for reaching for a source check at all was FALSE: reaching the labelling call does NOT
+need a real checkpoint, because `net_source_from_args` only records `--checkpoint`.
+[[announce_from_the_consumers_own_parameter]]
+
+What closes it is EXECUTION, in two places. `_shallow_sf_records` announces `cache_path` — the
+same parameter it opens and appends to, so that line is structurally incapable of disagreeing
+with the work (`test_the_labeling_pass_announces_the_path_it_actually_uses`). And
+`test_main_hands_the_RESOLVED_path_to_the_labelling_pass` drives the real `main()` in-process
+against a one-row audit set and a bogus checkpoint, captures the `cache_path` the labelling pass
+actually received, and asserts it is the override — ~15 s, no Stockfish, no torch, no GPU. The
+source-level once-only check is kept as a cheap second net, but it is no longer load-bearing and
+must not be cited as the closure: **a source grep that is the only thing standing between a
+mutant and the run is theatre, and this one was measured to be.**
+
+### ⚑⚑ THE REPEAT ARM'S TWO COMMANDS, WRITTEN OUT — the flag is not the fix
+
+Codex review of PR #446 (P1) caught the shape this whole entry keeps repeating: the section above
+introduces `--sf-cache` and then gives only the `paired_compare` command. The only complete
+`audit_targets.py` invocation recorded anywhere in this ledger omits `--sf-cache`, so an operator
+following the canonical command twice reuses the DEFAULT cache, reads the known zero-discordance
+`VOID`, and stops the experiment this entry just declared unblocked — the exact false stop B5
+describes, re-armed by a documentation gap rather than by code.
+[[an_exact_command_means_it_was_run]]
+
+**Repeat control (OLD vs OLD, referee A). Two runs, two DISTINCT cache paths, same binary:**
+
+⚑⚑ **EVERY FLAG BELOW THAT IS NOT `--sf-cache` / `--dump-per-position` / `--out-dir` IS COPIED
+VERBATIM FROM THE REGISTERED ARMS ABOVE, AND THAT IS THE POINT OF A REPEAT.** The first draft of
+this block carried only the flags the fix was about and inherited CLI DEFAULTS for the rest —
+most consequentially `--sf-workers`, which defaults to **4** while the registered OLD/NEW arms
+run **8**. `_shallow_sf_records` runs one stateful Stockfish process per worker and distributes
+positions among them dynamically, so the worker count changes each process's TT and search
+history and therefore the very relabelling noise this control exists to measure. A null
+calibrated at 4 workers does not bound a comparison run at 8. Same for `--max-positions 4000`,
+`--seed 0`, `--config` and the pinned checkpoint: a repeat control differs from the arms it
+calibrates in NOTHING except the cache it may read. (Codex review of PR #446, P1.)
+
+```bash
+# run 1
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --sf-cache scratchpad/sf440/repeat_A1.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A1.jsonl \
+  --out-dir scratchpad/sf440/report_A1
+
+# run 2 — ONLY --sf-cache, the dump and the report dir differ
+PYTHONPATH=. nice -n 15 python3 scripts/audit_targets.py \
+  --audit-set data/audit_set_v1.jsonl --config configs/pbt2_small.yaml \
+  --checkpoint data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt \
+  --stockfish <SF_OLD> --sf-effort low --sf-soft-multipv 40 \
+  --sf-workers 8 --max-positions 4000 --seed 0 \
+  --sf-cache scratchpad/sf440/repeat_A2.shallow_sf.jsonl \
+  --dump-per-position scratchpad/sf440/repeat_A2.jsonl \
+  --out-dir scratchpad/sf440/report_A2
+```
+
+⚑ `--out-dir` is not cosmetic either: the report is named `target_audit_<git-sha>.md` from the
+SHA alone, and a repeat control runs the same commit BY DEFINITION — so with the default
+`--out-dir runs` run 2 silently overwrites run 1's report and only one arm's readout survives
+alongside two caches and two dumps. (Codex review of PR #446, P2.)
+
+**Positive control that the repeat actually re-labelled — check BEFORE reading `d_obs`:** each run
+must print `[sf-soft] labeling 4000 positions` (`data/audit_set_v1.jsonl` is exactly 4000 lines,
+measured 2026-08-17) and `[sf-soft] cache in use <the path you passed>`. A run that prints no
+`labeling` line was served from cache and its `d_obs` means nothing. Both cache files must exist
+and be non-empty afterwards.
+
+⚑ This is not hypothetical: `data/audit_set_v1.jsonl.shallow_sf.jsonl` already holds 22 MB of
+rows on this machine (10,000 rows over 4,000 distinct keys), so a default-cache repeat produces
+the B5 false stop. **The failure is armed right now, on disk.**
+
+⚑⚑ **BUT THE MECHANISM IS THE OPPOSITE OF THE ONE THIS ENTRY FIRST RECORDED, AND THE REAL SHAPE
+IS STEALTHIER.** I wrote "both runs are served in full and neither launches Stockfish"; the
+independent review of PR #446 measured it and I re-measured it: **0 of those 10,000 rows carry an
+`sf_id` field.** The repeat command above passes `--stockfish`, so `_shallow_sf_records` computes
+`sf_id = engine_identity(...)`, every cached row reads as `UNRECORDED_SF_ID`, all 4,000 are
+counted `foreign`, and **run 1 relabels all of them** — measured `(served 0, foreign 4000,
+todo 4000)` with `--stockfish` versus `(4000, 0, 0)` without it. Run 1 then APPENDS rows carrying
+the real `sf_id`, and **run 2** matches those and is served in full.
+
+⇒ the false stop still happens, but **run 1 looks perfectly healthy**: it prints
+`labeling 4000 positions`, takes its hour, and grows the cache. Only run 2 betrays it. An
+operator who reads "neither launches Stockfish" as the tell would be reassured by exactly the run
+that proves nothing. The positive control above still fires — but on RUN 2, and for a reason the
+sentence it replaces misdescribed. [[a_counter_is_not_the_mechanism_behind_it]]
+
+⚑ Consequence worth knowing before it surprises someone: after such a run 1 the default cache
+holds two engine identities at (500k, 40), so any LATER audit run **without** `--stockfish` hits
+the `len(accepted_ids) > 1` mixed-provenance `SystemExit`. Pre-existing behaviour, not a new
+hazard — but it is downstream of the scenario this section describes.
+
+**Then the statistic:**
+
+```bash
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  scratchpad/sf440/repeat_A1.jsonl scratchpad/sf440/repeat_A2.jsonl \
+  --join-key key --field cand.sf_soft.top1 --mcnemar-at 0 --require-n 4000
+```
+
+Publish `d_obs` and the printed half-width from THIS run before choosing the effect size for
+arm NEW. ⚑ `d_obs = 0` is still a stop — but now it is a statement about the pipeline rather than
+about the cache, which is the entire point of the fix.
+
+⚑ `--sf-cache` REFUSES a path that resolves to the audit set itself (`Path.resolve()`, so a
+symlink cannot route around it): the cache is opened in APPEND mode, and writing label rows into
+the frozen scoring set would permanently change what every later audit scores. Codex review of
+PR #446 (P2).
+
+### B4 — McNemar now EXISTS, in the validating paired reader
+
+`grep -rniE mcnemar` returned zero hits when the decision section named it as the primary gate.
+It now lives in `scripts/paired_compare.py` — deliberately there and not in `tail_stats.py`,
+because `paired_compare` is the reader that already refuses a ruler mismatch, enforces each
+dump's row count against its stamp, and accounts for unmatched rows per side. The deciding
+yardstick belongs on the validating instrument, not the descriptive one.
+
+```bash
+# the #440 primary, once both arms' dumps exist:
+PYTHONPATH=. python3 scripts/paired_compare.py \
+  <ARM_OLD>.jsonl <ARM_NEW>.jsonl \
+  --join-key key --field cand.sf_soft.top1 \
+  --mcnemar-at 0 --require-n 4000
+```
+
+`--mcnemar-at 0` IS `top1_match := (cand.sf_soft.top1 == 0)` for a non-negative regret field —
+the binarisation the decision section pre-committed, spelled as a threshold the tool reads.
+It prints the 2x2, the exact two-sided binomial p (exact, not chi-square: the discordant
+population here is expected to be ~tens, the regime where the approximation manufactures
+significance), the paired rate difference with a CI, and:
+
+- **`d_obs`, MEASURED** — the input the amendment ASSUMED at 0.30, an assumption worth a 3.2x
+  spread in the half-width. `test_half_width_tracks_the_measured_discordance` fails any
+  implementation that quotes a constant.
+- **the half-width `1.96*sqrt(d_obs/n)`**, which is step 2 of the mandated sequencing. Publish it
+  before choosing the effect size, per that step.
+
+⚑⚑ **Zero discordant pairs prints `VOID`, never "NOT significant".** That is the served-cache
+shape, and a gate that returns a clean null there certifies an experiment whose second arm was
+never measured. `test_zero_discordance_is_reported_VOID_and_never_as_agreement` asserts the word
+`significant` does not appear.
+
+### The join guard — `--require-n`
+
+Every threshold on this entry is written at n=4000, and the join silently delivers whatever the
+two files happen to share: a dump truncated to 500 rows still loads, still joins, and still
+prints a quotable verdict at 2.8x the registered half-width. `--require-n N` refuses, with a
+non-zero exit, BEFORE any statistic is printed. It is opt-in — exploratory runs have no
+pre-committed n — and it is mandatory on every arm of this experiment.
+
+### Status
+
+**#440's three launch blockers are CLOSED. The experiment is still NOT launched** and nothing
+about its cost has changed: the upgrade remains a measured +16.1% wallclock per label with SF
+already holding 18.3/32 cores, so a PASS is necessary and not sufficient. The mandated order is
+unchanged and is now runnable: repeat arm with `--sf-cache` first, publish `d_obs` and the
+half-width, choose the effect size against the MEASURED resolution, demonstrate that PASS and
+KILL both land inside the statistic's observed range, and only then run arm NEW.
+
+## 2026-08-21 — PR #450: `sf_p0_blend_alpha` productionized (default 0.0 = OFF) — **SUPERSEDES the 2026-08-09 "duplication" retirement of the target-blend arm**
+
+**What ships.** `sf_p0_blend_alpha` (schema `tune:` section, `TrialConfig`-validated to
+[0, 1], default **0.0 = OFF**): at the `train_steps` call boundary the replay buffer is
+wrapped per iteration so sampled batches carry
+`policy_target ← (1−α)·t0 + α·sf_p0_policy_target` on `has_sf_p0` rows, no
+renormalization, every row staying ONE row of weight 1. α=0 runs the unwrapped buffer
+object, bitwise. Live-reloadable in both directions (the wrapper is rebuilt from the
+freshly reloaded config every iteration). At the shipped default this PR is not a
+training-affecting change; activation is governed by the dose-ladder prereg below.
+
+**(a) SUPERSEDED: the 2026-08-09 #373-era ruling** (this ledger: "Soft cross-entropy is
+LINEAR in the target… The new knob was therefore duplication whose only distinguishing
+feature was the defect"). The per-row identity
+`CE((1−α)·t0 + α·s, p) = (1−α)·CE(t0, p) + α·CE(s, p)` is true and was never the
+question. The two routes differ in ROW-WEIGHT normalization, and the ruling's own dose
+table contains the refutation: the additive term is a **masked mean over `has_sf_p0`
+rows**, so on an eligible row its weight relative to the main term is
+`(w_sf_own/w_policy)/f`. Matching teacher SHARE α on eligible rows via `w_sf_own`
+therefore requires `w_sf_own = f·w_policy·α/(1−α)`, which puts the eligible row's TOTAL
+policy-gradient weight at `w_policy/(1−α)` — **1/(1−α)× an ineligible row's (3.33× at
+α=0.7)** — while the target blend holds every row at exactly 1. Equivalence would need
+`w_policy` scaled down on eligible rows only, which a global weight cannot do. The two
+knobs are NOT re-parameterisations of each other: the blend delivers dose α without
+handing a non-random 15–23% subpopulation extra gradient share. The 2026-08-09 defect
+finding against #373's implementation stands; the retirement of the ARM as "duplication"
+is withdrawn.
+
+**(b) Prereg (live branch, banked before this PR):** `d2e07b96d` (dose-ladder
+operational pins: iter-595 ckpt, salvage replay window of 797 shards, 5 arms × 6,000
+steps at batch 512, `a100` adequacy guard), `c72966877` (repair-portfolio routing table
+banked before the ladder read), `a12239709` (ladder aborted by the dead-knob guard: the
+blend key was unreachable on the variant path — the wiring gap whose production-path
+half this PR closes; audit flag fixed, resequenced A → fixed ladder → B → C).
+
+**Hypothesis.** Blending the same-position SF soft teacher into the policy target at
+dose α improves policy target quality on the frozen audit set, without the additive
+route's gradient-share confound.
+
+**Deciding yardstick (exact command, per ladder arm, unchanged from the prereg):**
+`PYTHONPATH=. python3 scripts/audit_targets.py --net <arm_ckpt> --audit data/audit_set_v1.jsonl`
+— each arm judged against `a000`, never against live. **Kill pre-committed: `a070` must
+beat `a000` by ≥ 3.0 cp, else the arm family dies.** Arms: a000/a025/a050/a070/a100.
+
+**Refusals shipped with the knob** (all raise; none degrade silently): α>0 with
+`w_sf_own>0` (double-dose — NOTE live production runs `w_sf_own: 0.0`; `main`'s yaml
+still says 0.1, the stale-yaml trap); α>0 with `rebuild_sf_targets` (the rebuild clears
+`has_sf_p0` after the blend but cannot restore the already-blended target); an iteration
+that trains rows and blends ZERO of them (sf_p0 outage — the shard codec always
+materializes zero flags, so column presence proves nothing); eligible-row sums off 1
+beyond 1e-2 in either source array (downstream `soft_cross_entropy` renormalizes and
+would silently repair the corruption).
+
+**Realized dose is α×f, and f is a property of the corpus, not the config.** Production
+eligibility `has_sf_p0_frac` ≈ 0.15–0.23 (0.2304 banked, trial 379f6 iter 516); the
+ladder's salvage window reads 0.444. Deployment prereg MUST read realized f off the
+wrapper's wiring-proof log line (`blended_rows/total_rows`) before choosing α — a dose
+chosen from the yaml alone is a guess.
+
+**Confounds:** none at the shipped default (α=0 is the identity path, pinned bitwise by
+test).

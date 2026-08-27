@@ -27,7 +27,7 @@ import torch
 from chess_anti_engine.encoding import encode_position_for_model
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.moves.encode import index_to_move, move_to_index_for_encoding
+from chess_anti_engine.moves.encode import index_to_move_strict, move_to_index_for_encoding
 from chess_anti_engine.utils.bitboards import unsearchable_king_reason
 
 _log = logging.getLogger(__name__)
@@ -457,8 +457,11 @@ def run_puzzle_eval(
         actions = _search(boards)
 
         for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
-            # Search action ids are always full 4672 space.
-            chosen = index_to_move(int(action_idx), puzzle.board)
+            # Search action ids are always full 4672 space. STRICT: this is a
+            # yardstick. Substituting the first legal move for an id that
+            # decoded to nothing would score that substitute against
+            # `best_moves` and report the miss as a puzzle the net got wrong.
+            chosen = index_to_move_strict(int(action_idx), puzzle.board)
             if chosen in puzzle.best_moves:
                 correct_flags[start + offset] = True
 

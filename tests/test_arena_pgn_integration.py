@@ -36,7 +36,11 @@ def scripted_moves(monkeypatch: pytest.MonkeyPatch) -> None:
         return [0] * len(sub_boards)
 
     def fake_apply(boards: list[chess.Board], idxs: list[int],
-                   _actions: list[int]) -> None:
+                   _actions: list[int], *, strict: bool) -> None:
+        # Mirroring the real signature keeps this stub honest about the arena's
+        # decode mode: an eval call site that dropped `strict=True` would land
+        # here as a failure instead of passing quietly.
+        assert strict, "the arena must decode actions strictly"
         for i in idxs:
             b = boards[i]
             mv = None
@@ -263,7 +267,8 @@ def test_max_plies_game_is_written_as_a_draw_not_a_star(
         return [0] * len(sub_boards)
 
     def shuffle_knights(boards: list[chess.Board], idxs: list[int],
-                        _actions: list[int]) -> None:
+                        _actions: list[int], *, strict: bool) -> None:
+        assert strict, "the arena must decode actions strictly"
         for i in idxs:
             b = boards[i]
             b.push(next(iter(b.legal_moves)))

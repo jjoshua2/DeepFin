@@ -286,13 +286,13 @@ def test_replay_override_under_wsl_remaps_to_linux_run_sidecar(tmp_path: Path) -
 
     replay_dir = _trial_replay_shard_dir(
         config={
-            "work_dir": "/home/josh/projects/chess/runs/pbt2_fresh_run9/tune",
+            "work_dir": "/srv/chess/runs/pbt2_fresh_run9/tune",
             "tune_replay_root_override": "/mnt/c/chess_active/pbt2_fresh_run9_replay",
         },
         trial_dir=trial_dir,
     )
 
-    assert replay_dir == Path("/home/josh/projects/chess/runs/pbt2_fresh_run9_replay") / trial_dir.name / "replay_shards"
+    assert replay_dir == Path("/srv/chess/runs/pbt2_fresh_run9_replay") / trial_dir.name / "replay_shards"
 
 
 def test_server_override_under_wsl_remaps_to_linux_run_sidecar() -> None:
@@ -300,11 +300,11 @@ def test_server_override_under_wsl_remaps_to_linux_run_sidecar() -> None:
   # (the helper expects the *tune* subdir and derives run_root = .parent).
     server_root = _resolve_harness_override_root(
         raw_root="/mnt/c/chess_active/pbt2_fresh_run9_server",
-        tune_work_dir=Path("/home/josh/projects/chess/runs/pbt2_fresh_run9/tune"),
+        tune_work_dir=Path("/srv/chess/runs/pbt2_fresh_run9/tune"),
         suffix="server",
     )
 
-    assert server_root == Path("/home/josh/projects/chess/runs/pbt2_fresh_run9_server")
+    assert server_root == Path("/srv/chess/runs/pbt2_fresh_run9_server")
 
 
 def test_build_distributed_worker_cmd_remaps_wsl_server_auth_paths(tmp_path: Path) -> None:

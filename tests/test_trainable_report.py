@@ -101,6 +101,26 @@ def test_train_metrics_dict_promotes_grad_norm_clip_rate_and_operating_lr() -> N
     assert got["opt_lr_max"] == 6e-4
 
 
+def test_the_value_blend_fallback_coverage_reaches_the_result_row() -> None:
+    """⚑ REVIEW F9. The two columns were TensorBoard-only, and TB is not the
+    path `scripts/loop_health.py` reads — so the state their field comment
+    names ("the 2026-05 realized sf_wdl_frac 0.45 episode") could still not be
+    alerted on.
+
+    ⚑ Polarity: healthy is 1.0 here and 0.0 is a FULL leak, the opposite of
+    every other detector in this block. The default must therefore NOT read as
+    healthy, which is what the second assertion pins.
+    """
+    got = _train_metrics_dict(
+        _metrics(sf_wdl_effective_frac=0.25, search_wdl_effective_frac=0.5),
+    )
+    assert got["sf_wdl_effective_frac"] == 0.25
+    assert got["search_wdl_effective_frac"] == 0.5
+    absent = _train_metrics_dict(None)
+    assert absent["sf_wdl_effective_frac"] == 0.0
+    assert absent["search_wdl_effective_frac"] == 0.0
+
+
 def test_the_draw_provenance_counters_reach_the_result_row_not_just_tensorboard() -> None:
     """PR #373 added `batches_drawn` / `transient_cuda_retry_batches` to
     `TrainMetrics` and called them "worth having live" -- but
@@ -220,3 +240,139 @@ def test_status_csv_lr_column_is_named_for_the_mean_not_the_trough() -> None:
     trough (~9x below the LR the trunk trains at) — rl_loop_audit I19."""
     assert "lr" not in _STATUS_COLS
     assert "lr_mean" in _STATUS_COLS
+
+
+def test_the_realized_gate_keys_are_reported_from_the_trainer() -> None:
+    """MUTATION: point either column at the config instead of `trainer.*`, or
+    delete the pair from `_build_report_dict`.
+
+    ⚑⚑ THE COLUMN IS THE ONLY DURABLE RECORD OF A SUBSTITUTION. The two
+    fabricated-tail gate keys are sanitized at `Trainer` construction --
+    non-finite falls back to OFF, finite out-of-range clamps into [0, 1] -- and
+    `params.json` is NOT fixed up on the way, because it persists the Ray
+    `config`, i.e. what the operator typed. So a run configured
+    `sf_own_regret_listed_mass_min: 10` trains at `1.0` with its saved config
+    still reading `10`, and `sf_own_regret_gated_frac` cannot separate the two
+    cases -- it reads `0.0` for "deliberately off" and for "disabled by a
+    non-finite value" alike. Without this row the one-time construction warning
+    is the only evidence, and a warning that scrolled past three days ago is not
+    evidence.
+
+    ⚑ ASSERTED WITH A REALIZED VALUE THAT DIFFERS FROM ANY PLAUSIBLE TYPED ONE
+    (0.75 / 0.25, neither a default nor an endpoint), so a column silently wired
+    to a constant, to the identity defaults, or to a clamp of the typed value
+    cannot pass by coincidence.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.tune.trainable_report import _build_report_dict
+    from chess_anti_engine.tune.trial_config import (
+        DriftMetrics,
+        PidResult,
+        RestoreResult,
+        SelfplayResult,
+        TrainingResult,
+        TrialConfig,
+    )
+
+    trainer = SimpleNamespace(
+        opt=SimpleNamespace(param_groups=[{"lr": 3e-4}]),
+        w_wdl=1.0, w_soft=1.0, w_sf_move=1.0, w_categorical=1.0,
+        sf_wdl_frac=0.5, sf_wdl_temperature=1.0, sf_wdl_draw_scale=1.0,
+        sf_wdl_conf_power=1.0,
+        mirror_prob=0.5,
+      # The REALIZED pair, as `Trainer.__init__` would have stored it.
+        sf_own_regret_listed_mass_min=0.75,
+        sf_own_regret_unlisted_scale=0.25,
+        _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
+    )
+    row = _build_report_dict(
+        tc=TrialConfig(), trainer=trainer, pr=PidResult(), sp=SelfplayResult(),
+        tr=TrainingResult(), drift=DriftMetrics(), eval_dict={}, puzzle_dict={},
+        probe_dict=None,
+        wdl_regret_used=0.07, sf_nodes_used=5000,
+        pause_metrics={
+            "paused_seconds": 0.0, "paused_fraction": 0.0, "paused_percent": 0.0,
+        },
+        restore=RestoreResult(), best_loss=1.0, iter_t0=0.0, iteration_idx=1,
+        buf_size=10, holdout_buf_size=1, holdout_frozen=False,
+        holdout_generation=0,
+    )
+
+    assert row["sf_own_regret_listed_mass_min"] == pytest.approx(0.75), (
+        "the realized listed_mass_min did not reach the result row -- an operator "
+        "reading params.json has no way to learn the value was substituted"
+    )
+    assert row["sf_own_regret_unlisted_scale"] == pytest.approx(0.25)
+
+
+def test_the_gate_columns_are_a_HARD_attribute_read_not_getattr_with_a_default() -> None:
+    """MUTATION: `float(getattr(trainer, "sf_own_regret_listed_mass_min", 0.0))`.
+
+    ⚑⚑ THAT MUTANT SURVIVES EVERY OTHER TEST IN THE SUITE, and the reason is the
+    point of writing this one. Once the fixtures carry the attribute, a
+    `getattr`-with-default and a hard read are indistinguishable -- equivalence
+    is with respect to the REACHABLE INPUT SET, not in itself. So the guard has
+    to construct the unreachable case on purpose.
+
+    ⚑ WHY THE HARD READ IS THE RIGHT CHOICE, not merely the current one. The
+    default a `getattr` would supply is `0.0`, which is the gate's OFF value --
+    so a trainer-like object that never got the attribute would report a
+    confident "gate off" for a run whose gate might be fully armed. That is this
+    repo's signature defect with the alarm wired to the wrong terminal: the
+    column exists precisely because `params.json` keeps the typed value, and a
+    column that invents a plausible number when it cannot find the real one is
+    worse than no column. `mirror_prob` two lines above is a hard read for the
+    same reason.
+
+    The cost is honest and bounded: a fake trainer in a test must carry both
+    attributes or the row build raises. Three fixtures had to gain them when this
+    column landed, and CI caught all three -- which is the failure mode working.
+    """
+    from types import SimpleNamespace
+
+    from chess_anti_engine.tune.trainable_report import _build_report_dict
+    from chess_anti_engine.tune.trial_config import (
+        DriftMetrics,
+        PidResult,
+        RestoreResult,
+        SelfplayResult,
+        TrainingResult,
+        TrialConfig,
+    )
+
+    def _row(**gate: float) -> dict:
+        trainer = SimpleNamespace(
+            opt=SimpleNamespace(param_groups=[{"lr": 3e-4}]),
+            w_wdl=1.0, w_soft=1.0, w_sf_move=1.0, w_categorical=1.0,
+            sf_wdl_frac=0.5, sf_wdl_temperature=1.0, sf_wdl_draw_scale=1.0,
+            sf_wdl_conf_power=1.0, mirror_prob=0.5,
+            _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
+            **gate,
+        )
+        return _build_report_dict(
+            tc=TrialConfig(), trainer=trainer, pr=PidResult(), sp=SelfplayResult(),
+            tr=TrainingResult(), drift=DriftMetrics(), eval_dict={}, puzzle_dict={},
+            probe_dict=None, wdl_regret_used=0.07, sf_nodes_used=5000,
+            pause_metrics={
+                "paused_seconds": 0.0, "paused_fraction": 0.0, "paused_percent": 0.0,
+            },
+            restore=RestoreResult(), best_loss=1.0, iter_t0=0.0, iteration_idx=1,
+            buf_size=10, holdout_buf_size=1, holdout_frozen=False,
+            holdout_generation=0,
+        )
+
+  # Non-degeneracy first: with both attributes present the row builds fine, so a
+  # raise below is about the MISSING attribute and not about the fixture.
+    ok = _row(sf_own_regret_listed_mass_min=0.75, sf_own_regret_unlisted_scale=0.25)
+    assert ok["sf_own_regret_listed_mass_min"] == pytest.approx(0.75)
+    assert ok["sf_own_regret_unlisted_scale"] == pytest.approx(0.25)
+
+  # ⚑ EACH COLUMN IS PINNED ON ITS OWN, and the first version of this test was
+  # VACUOUS for exactly that reason: it dropped BOTH attributes at once, so a
+  # `getattr` default on one column was still masked by the other one raising.
+  # The mutant survived a green test. Withhold one at a time.
+    with pytest.raises(AttributeError):
+        _row(sf_own_regret_unlisted_scale=0.25)     # listed_mass_min withheld
+    with pytest.raises(AttributeError):
+        _row(sf_own_regret_listed_mass_min=0.75)    # unlisted_scale withheld

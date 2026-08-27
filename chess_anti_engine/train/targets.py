@@ -56,6 +56,42 @@ def _wdl_expected_score(row: np.ndarray | None) -> float | None:
     return (float(arr[0]) - float(arr[2])) / total
 
 
+def normalize_categorical_blend_fracs(
+    blend_frac: float,
+    search_blend_frac: float,
+    *,
+    sf_available: bool,
+    search_available: bool,
+) -> tuple[float, float, float]:
+    """``(sf_frac, search_frac, game_frac)`` the categorical target REALIZES.
+
+    ⚑ Extracted from ``categorical_target_value`` so a guard can ask "what
+    share of this target is the raw game outcome" through the SAME code the
+    target is built by, rather than a second copy that drifts. The sibling
+    ``losses.normalize_value_blend_fracs`` exists for the WDL head for exactly
+    this reason; this is the same rule with the per-row availability folded in.
+
+    ⚑⚑ ``*_available=False`` DROPS that component's weight WITHOUT
+    REDISTRIBUTING IT — the dropped share falls to ``game_frac``, i.e. to the
+    raw one-hot game outcome. That is the categorical head's version of the
+    ``losses.py`` fallback ``value_blend_guard`` was written for: on a corpus
+    with no ``sf_wdl`` (every converted lc0 row), live's ``blend_frac 0.69``
+    lands on the outcome silently.
+    """
+    sf_frac = max(0.0, float(blend_frac))
+    search_frac = max(0.0, float(search_blend_frac))
+    if not sf_available:
+        sf_frac = 0.0
+    if not search_available:
+        search_frac = 0.0
+    blend_sum = sf_frac + search_frac
+    if blend_sum <= 0.0:
+        return 0.0, 0.0, 1.0
+    if blend_sum > 1.0:
+        return sf_frac / blend_sum, search_frac / blend_sum, 0.0
+    return sf_frac, search_frac, 1.0 - blend_sum
+
+
 def categorical_target_value(
     scalar_v: float,
     sf_wdl: np.ndarray | None,
@@ -84,23 +120,14 @@ def categorical_target_value(
     Shared by the live finalize path (``selfplay/finalize.py``) and the offline
     rebuild (``train/target_builder.py``) so the two produce identical targets.
     """
-    sf_frac = max(0.0, float(blend_frac))
-    search_frac = max(0.0, float(search_blend_frac))
-    sf_e = _wdl_expected_score(sf_wdl) if sf_frac > 0.0 else None
-    search_e = _wdl_expected_score(search_wdl) if search_frac > 0.0 else None
-    if sf_e is None:
-        sf_frac = 0.0
-    if search_e is None:
-        search_frac = 0.0
-    blend_sum = sf_frac + search_frac
-    if blend_sum <= 0.0:
+    sf_e = _wdl_expected_score(sf_wdl) if float(blend_frac) > 0.0 else None
+    search_e = _wdl_expected_score(search_wdl) if float(search_blend_frac) > 0.0 else None
+    sf_frac, search_frac, game_frac = normalize_categorical_blend_fracs(
+        blend_frac, search_blend_frac,
+        sf_available=sf_e is not None, search_available=search_e is not None,
+    )
+    if sf_frac <= 0.0 and search_frac <= 0.0:
         return float(scalar_v)
-    if blend_sum > 1.0:
-        sf_frac /= blend_sum
-        search_frac /= blend_sum
-        game_frac = 0.0
-    else:
-        game_frac = 1.0 - blend_sum
     return (
         game_frac * float(scalar_v)
         + sf_frac * float(sf_e or 0.0)

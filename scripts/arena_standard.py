@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import math
 import shlex
@@ -43,16 +42,20 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import chess
 import numpy as np
+
+if TYPE_CHECKING:
+    from chess_anti_engine.eval.production_shape import LiveConfig
 
 from chess_anti_engine.eval.arena_pgn import (
     ArenaGame,
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.moves import ActionDecodeError
 from chess_anti_engine.utils.game_log import (
     GameLogWriter,
     default_game_log_path,
@@ -73,7 +76,68 @@ from chess_anti_engine.utils.game_log import (
 PgnSink = Callable[..., None]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PRODUCTION_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+
+
+# The FALLBACK file, not the answer. `production_config()` below is the single
+# resolution; this is only what it lands on when the live config cannot be
+# resolved. Named for what it is so no caller mistakes it for "the production
+# config" and reads it directly — that mistake is the whole finding.
+IN_TREE_CONFIG = REPO_ROOT / "configs" / "pbt2_small.yaml"
+
+# GumbelConfig fields on which an ARENA legitimately differs from production
+# selfplay. Reasons, not just names — an undocumented deviation has nowhere to
+# go. The two target_* knobs are the interesting entries: they shape the
+# STORED TRAINING TARGET only and have no effect on which move is played, so
+# an arena that omits them is still measuring production's PLAY behaviour.
+# (`scripts/audit_targets.py` scores the target itself, and there they are
+# mandatory — same knobs, opposite verdicts, because the instruments measure
+# different objects.)
+ARENA_SHAPE_DEVIATIONS: dict[str, str] = {
+    "simulations": "the arena's own budget (--sims / matched_time), not the yaml's",
+    "temperature": "arena move selection, not selfplay's stored-target temperature",
+  # ⚑ THE REASON THAT USED TO SIT HERE WAS FALSE, and the falsehood was the
+  # load-bearing part: it read "no root Gumbel noise: an arena must be
+  # deterministic per seed" while the CLI passes
+  # `gumbel_add_noise=not args.no_gumbel_noise`, i.e. noise is ON by default.
+  # Worse, the arena's scale is the `GumbelConfig` default 1.0, while
+  # production runs 0.75 selfplay / 0.25 curriculum and DECAYS both to 0 after
+  # move 12 — a per-ply schedule (`network_turn._scheduled_gumbel_scale`)
+  # applied outside `build_selfplay_gumbel_config`, so no field comparison can
+  # express it and this guard cannot see it. An exemption whose reason is
+  # wrong is worse than no exemption: it answers the question a reader would
+  # otherwise ask.
+  #
+  # Kept as an exemption rather than a refusal because the arena genuinely
+  # cannot reproduce a per-ply schedule through a flat override dict, and
+  # refusing would take `--search-shape training` away entirely. What changed
+  # is that `_warn_noise_schedule_deviation` now PRINTS the divergence with
+  # production's actual numbers on every noisy training arena. The JSONL record
+  # already banks `gumbel_add_noise` (`_result_record`), so the artifact carries
+  # which of the two regimes a row was measured in.
+    "add_noise": (
+        "arena-level flag (--no-gumbel-noise), not the yaml's. Production "
+        "selfplay always enables noise and modulates it through the per-ply "
+        "gumbel_scale schedule instead"
+    ),
+    "gumbel_scale": (
+        "production's scale is a per-PLY schedule (0.75 selfplay / 0.25 "
+        "curriculum, decaying to 0 after move 12) that a flat override dict "
+        "cannot express; the arena runs the flat GumbelConfig default. "
+        "Reported by _warn_noise_schedule_deviation rather than hidden here"
+    ),
+    "target_max_visit_cap": (
+        "TARGET-only knob — shapes the stored policy target, never the played "
+        "move, and an arena stores no targets"
+    ),
+    "target_untempered_prior": (
+        "TARGET-only knob — undoes policy_temp on the stored target's prior "
+        "term only, so it cannot change which move the arena plays"
+    ),
+    "input_history_encoding": "read off the loaded checkpoint, not the yaml",
+    "input_extra_features": "read off the loaded checkpoint, not the yaml",
+    "policy_encoding": "read off the loaded checkpoint, not the yaml",
+    "compute_relations": "read off the loaded checkpoint, not the yaml",
+}
 DEFAULT_RESULTS_PATH = REPO_ROOT / "runs" / "arena_results.jsonl"
 # Per-run game logs. NOT derived from --out: that is a shared, append-only
 # aggregate (every arena ever run appends to runs/arena_results.jsonl, and the
@@ -106,7 +170,7 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 #             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3. These are
 #             constants in mcts/gumbel.py, so they are safe to quote here.
 #   training  what production selfplay actually runs. NOT quoted here on
-#             purpose: every value is READ FROM `PRODUCTION_CONFIG` at call
+#             purpose: every value is READ FROM `production_config()` at call
 #             time (see `resolve_search_shape`), so it tracks the yaml. Fixed
 #             is the LINEAR root — the training shape leaves the root-transform
 #             sentinels at their GumbelConfig defaults and never takes play's
@@ -228,6 +292,54 @@ class SideSearch:
   # keys` failure mode, and it would keep answering after tree carry lands.
     tree_reuse: str = "cold"
 
+    def __post_init__(self) -> None:
+        """Refuse a side carrying a knob value the search will not run.
+
+        Here rather than in ``apply_search_overrides`` because EVERY side is
+        built through this constructor -- the resolved shape, the CLI overrides
+        layered on top of it, and any programmatic caller (``elo_vs_sims.py``)
+        -- so "a SideSearch that exists is one the search will actually run" is
+        structural instead of being true of the two call sites someone
+        remembered. It still fires minutes early: ``main()`` resolves both sides
+        before any checkpoint is loaded or compiled.
+
+        The check itself is ``mcts.gumbel.validate_gumbel_config``, the ONE
+        home of the bands, applied to the config exactly as ``match.py`` will
+        (``dataclasses.replace`` onto a ``GumbelConfig``) so the guard shares
+        the criterion's instrument.
+
+        The hole it closes: ``--cand-gumbel policy_temp=1e300`` reached
+        ``dataclasses.replace`` without passing the yaml loader's validator, so
+        the search ran UNTEMPERED (``policy_temp_active(1e300)`` is False) while
+        ``realized_gumbel`` banked 1e300 into the JSONL as this side's realized
+        setting. A sweep over out-of-band temperatures is then a set of
+        IDENTICAL arms recorded as different ones -- the c_puct Swiss (audit
+        2026-08-03 F2) with a live knob instead of a dead one.
+
+        ⚑ ``frozen=True`` freezes the ATTRIBUTES, not the ``gumbel`` dict they
+        point at: ``side.gumbel["policy_temp"] = 1e300`` after construction
+        mutates in place and never re-enters this check. Nothing in this script
+        does that (every layer builds a new ``SideSearch``), and copying the
+        dict would only move the hole one alias further out, so this is recorded
+        rather than defended against -- but a future in-place edit is the way
+        past the guard, and it should build a new side instead.
+        """
+        import dataclasses as _dc
+
+        from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+        try:
+            validate_gumbel_config(
+                _dc.replace(GumbelConfig(), **self.gumbel), where=f"[shape] {self.source}",
+            )
+        except ValueError as exc:
+            raise SystemExit(
+                f"{exc}. Refusing rather than dropping it is deliberate: the "
+                "value does reach GumbelConfig, so nothing downstream would "
+                "notice, and realized_gumbel() would bank it as this side's "
+                "realized search."
+            ) from exc
+
     def realized_gumbel(self) -> dict[str, float | int]:
         """Every shape-defining knob's REALIZED value, overrides or not.
 
@@ -283,7 +395,60 @@ class SideSearch:
         )
 
 
-def production_selfplay_configs() -> dict:
+def production_config() -> LiveConfig:
+    """THE resolution. Every consumer in this file goes through it.
+
+    ⚑ There used to be two: a module constant ``PRODUCTION_CONFIG`` resolved at
+    IMPORT time, which backed the openings default, the banked config digest
+    and every provenance string, and a separate call-time
+    ``load_live_config()`` that backed the search shape. The commit that
+    introduced the second one claimed it had removed the first. It had not, and
+    a divergence between them is not cosmetic: the arena would have banked a
+    digest of file A into a result record describing a search built from file
+    B, and the record is the artifact every later reading is joined against.
+
+    So the constant is gone. What remains is this function, resolved at CALL
+    time from ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` with the in-tree copy as a
+    reported, NON-authoritative fallback. Call time rather than import time
+    because the env var is the mechanism production actually uses (see
+    ``scripts/train.sh``) and an import-time read is decided by whichever
+    module happened to import first. It is deliberately NOT memoized either:
+    a cache is a second source of truth with extra steps, and the resolution
+    is a `stat` plus a yaml parse.
+    """
+    from chess_anti_engine.eval.production_shape import (
+        load_config_file,
+        load_live_config_or_reason,
+    )
+
+    live, reason = load_live_config_or_reason()
+    if live is not None:
+        return live
+    fallback, fallback_reason = load_config_file(
+        IN_TREE_CONFIG,
+        provenance=f"in-tree fallback; the live config is unavailable ({reason})",
+        authoritative=False,
+    )
+    if fallback is None:
+        raise SystemExit(
+            f"[shape] no production config could be read: {reason}; "
+            f"{fallback_reason}"
+        )
+    return fallback
+
+
+def production_config_path() -> Path:
+    """The file ``production_config()`` resolved. Same resolution, path only."""
+    return production_config().path
+
+
+def production_config_flat() -> tuple[dict, Path, bool]:
+    """``(flat config, path it came from, is it the LIVE file)``."""
+    cfg = production_config()
+    return cfg.flat, cfg.path, cfg.authoritative
+
+
+def production_selfplay_configs(flat: dict | None = None) -> dict:
     """The selfplay config bundle a distributed worker actually builds.
 
     Runs the whole real channel — yaml -> live-yaml validator ->
@@ -305,13 +470,10 @@ def production_selfplay_configs() -> dict:
 
     from chess_anti_engine.model import ModelConfig
     from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
-    from chess_anti_engine.utils.config_yaml import (
-        flatten_run_config_defaults,
-        load_yaml_file,
-    )
     from chess_anti_engine.worker import WorkerSession
 
-    flat = flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG)))
+    if flat is None:
+        flat, _path, _live = production_config_flat()
     # sf_nodes / mcts_simulations are supplied by the publisher (PID budget and
     # sim ramp), not read from the config; mirror the config's own values so
     # nothing here depends on the live controller state.
@@ -335,9 +497,15 @@ def production_selfplay_configs() -> dict:
     return cfgs
 
 
-def production_selfplay_search_config():
-    """The selfplay ``SearchConfig`` half of :func:`production_selfplay_configs`."""
-    return production_selfplay_configs()["search"]
+def production_selfplay_search_config(flat: dict | None = None):
+    """The selfplay ``SearchConfig`` half of :func:`production_selfplay_configs`.
+
+    ⚑ Takes ``flat`` so a caller that already resolved the config does not
+    resolve it a second time -- ``production_config()`` is deliberately not
+    memoized, so calling the no-arg form twice is two stats and two yaml parses
+    of a file that can change between them.
+    """
+    return production_selfplay_configs(flat)["search"]
 
 
 def production_selfplay_gumbel_config(cfgs: dict | None = None):
@@ -362,6 +530,144 @@ def production_selfplay_gumbel_config(cfgs: dict | None = None):
     )
 
 
+def _assert_training_shape_is_production(
+    gumbel: dict[str, float],
+    flat: dict,
+    cfg: LiveConfig | None = None,
+    *,
+    vloss_weight: int,
+    target_batch: int,
+) -> None:
+    """Prove `--search-shape training` reproduces production selfplay's search.
+
+    ``flat`` is the config the arena ITSELF read — passed in rather than
+    re-resolved, so the guard cannot end up checking against a different file
+    than the shape was built from.
+
+    Note the guard deliberately crosses production paths: the arena builds its
+    shape through the DISTRIBUTED worker channel (``build_recommended_worker``
+    -> ``WorkerSession._build_selfplay_configs``), while the reference comes
+    from the in-process channel (``TrialConfig`` -> ``_play_batch_kwargs`` ->
+    ``build_selfplay_gumbel_config``). Both are production; a knob published by
+    one and dropped by the other shows up here as a diff, which is a defect
+    worth stopping on rather than a false alarm to suppress.
+
+    The instrument being shared with the criterion is the point: ``gumbel`` is
+    the dict ``match.py`` will ``dataclasses.replace`` onto a ``GumbelConfig``,
+    so this applies it to a ``GumbelConfig`` exactly as the arena will and
+    compares the RESULT against the config production's own builder produces.
+    It never asks "is this key present" — presence proved nothing when the
+    value was a stale literal.
+
+    ``vloss_weight`` / ``target_batch`` are required keyword arguments rather
+    than optional extras: they reach the C runner as function arguments, they
+    have no ``GumbelConfig`` field, and a guard that compared only the dict
+    would be blind to exactly the pair this arena has always carried and the
+    audit did not. Making them mandatory means a caller cannot half-check.
+
+    The failing input is easy to name: set any move-affecting search key in the
+    live yaml that this dict does not carry (or leave one stale), and the diff
+    is non-empty. ``tests/test_production_shape_guard.py`` produces exactly
+    that.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.eval.production_shape import (
+        assert_matches_production,
+        format_shape_table,
+        production_search_shape,
+    )
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
+
+  # `cfg` is the resolution the CALLER already made, so the header names the
+  # file `flat` came out of. Falling back to `production_config()` when a test
+  # drives the guard directly is safe for the same reason the constant was not:
+  # it is the same resolver, so it cannot land on a different file.
+    resolved = cfg if cfg is not None else production_config()
+    print(resolved.header(), flush=True)
+    if not resolved.authoritative:
+        print(
+            "[shape] WARNING: the config above is NOT the live one "
+            f"({resolved.provenance}); it is stale by construction outside the "
+            "live working tree, so the comparison below proves only that this "
+            "arena agrees with THAT file.",
+            flush=True,
+        )
+    prod = production_search_shape(
+        flat, simulations=int(GumbelConfig().simulations),
+    )
+    realized = SelfplaySearchShape(
+        cfg=_dc.replace(GumbelConfig(), **gumbel),
+        vloss_weight=int(vloss_weight),
+        target_batch=int(target_batch),
+    )
+    print(
+        "[shape] --search-shape training: realized vs production selfplay\n"
+        + format_shape_table(realized, prod, exempt=ARENA_SHAPE_DEVIATIONS),
+        flush=True,
+    )
+    assert_matches_production(
+        realized, prod, exempt=ARENA_SHAPE_DEVIATIONS,
+        where="--search-shape training",
+    )
+
+
+def _warn_noise_schedule_deviation(base: SideSearch, *, add_noise: bool) -> None:
+    """Say what a training arena does about production's per-ply noise schedule.
+
+    ⚑ THE ONE THING THE FIELD DIFF STRUCTURALLY CANNOT CHECK. Production's root
+    noise is ``_scheduled_gumbel_scale``: 0.75 for selfplay, 0.25 for
+    curriculum, decaying to ``gumbel_scale_after`` over
+    ``gumbel_scale_decay_moves`` from ``gumbel_scale_decay_start_move``. It is
+    applied as a per-GAME, per-PLY ``per_game_gumbel_scale`` list OUTSIDE
+    ``build_selfplay_gumbel_config``, so ``GumbelConfig.gumbel_scale`` — the
+    only thing a shape diff can see — is the flat literal 1.0 on both sides
+    and the comparison passes while the arena perturbs roots on nearly every
+    move at a scale production only uses before move 12.
+
+    This does not refuse. A flat override dict cannot express a schedule, so
+    refusing would remove ``--search-shape training`` rather than fix it, and
+    ``value_regret.py`` sets the precedent for reporting an unrepresentable
+    divergence instead of pretending it is absent. What it must not do is stay
+    silent, which is what an exemption reason reading "an arena must be
+    deterministic per seed" achieved while noise was on by default.
+    """
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    if base.shape != "training":
+        return
+    flat, _path, _live = production_config_flat()
+    search = production_selfplay_search_config(flat)
+    if not add_noise:
+        print(
+            "[shape] --search-shape training with --no-gumbel-noise: root "
+            "noise OFF, production runs it ON (selfplay scale "
+            f"{float(search.gumbel_scale)}, curriculum "
+            f"{float(search.curriculum_gumbel_scale)}). DELIBERATE deviation "
+            "— a deterministic-per-seed arena. Not production play behaviour.",
+            flush=True,
+        )
+        return
+    print(
+        "[shape] ⚑ --search-shape training with root noise ON: the arena uses "
+        f"the FLAT GumbelConfig scale {float(GumbelConfig().gumbel_scale)} on "
+        "every ply, while production uses a per-ply SCHEDULE it cannot "
+        f"express — selfplay {float(search.gumbel_scale)} -> "
+        f"{float(search.gumbel_scale_after)} over "
+        f"{int(search.gumbel_scale_decay_moves)} moves from move "
+        f"{int(search.gumbel_scale_decay_start_move)}, curriculum "
+        f"{float(search.curriculum_gumbel_scale)} -> "
+        f"{float(search.curriculum_gumbel_scale_after)}. The shape table above "
+        "CANNOT check this: the schedule is applied outside "
+        "build_selfplay_gumbel_config, so no GumbelConfig field carries it. "
+        "This run's root perturbations differ from production's on nearly "
+        "every move. Pass --no-gumbel-noise for a deterministic arena, or read "
+        "the result as 'the training shape with unscheduled root noise'.",
+        flush=True,
+    )
+
+
 def resolve_search_shape(shape: str) -> SideSearch:
     """Turn ``play``/``training`` into the concrete knobs each one means."""
     from chess_anti_engine.mcts.gumbel import (
@@ -382,80 +688,46 @@ def resolve_search_shape(shape: str) -> SideSearch:
             target_batch=int(PLAY_SEARCH_TARGET_BATCH),
         )
     if shape == "training":
-        # ONE trip through yaml -> reco -> worker, shared by both views of it.
-        cfgs = production_selfplay_configs()
-        search = cfgs["search"]
-        prod = production_selfplay_gumbel_config(cfgs)
+      # ONE resolution, shared by the shape and by the guard that checks it.
+        cfg = production_config()
+        flat, config_path = cfg.flat, cfg.path
+        search = production_selfplay_search_config(flat)
         # DERIVED, never restated. Every GumbelConfig field that is neither
         # arena-owned nor checkpoint-owned is copied from the config production
         # itself builds, so a knob promoted into the yaml reaches the arena with
-        # no edit here. Restating three knobs by hand is exactly what let
-        # `target_max_visit_cap` / `target_untempered_prior` drift for five days.
-        side = SideSearch(
-            shape="training",
-            source=f"{PRODUCTION_CONFIG.name} -> reco -> worker -> GumbelConfig",
-            gumbel={
-                name: getattr(prod, name) for name in training_shape_carried_fields()
-            },
+        # no edit here.
+        #
+        # ⚑⚑ A HAND-WRITTEN LIST HERE IS CONFIG-DEPENDENT, AND THAT IS WHY IT
+        # CANNOT SHIP ON THIS BRANCH. The six-key literal this replaces is
+        # correct only while every OTHER carried field already equals production
+        # at its `GumbelConfig` default. That holds on main's yaml and is FALSE
+        # on the live one: production here sets `target_max_visit_cap` 5 (default
+        # 0) and `target_untempered_prior` True (default False), so the literal
+        # would run `--search-shape training` at 0/False and measure a search
+        # production does not run. Restating knobs by hand is exactly what let
+        # those two drift for five days already.
+        prod = production_selfplay_gumbel_config()
+        gumbel = {
+            name: getattr(prod, name) for name in training_shape_carried_fields()
+        }
+        _assert_training_shape_is_production(
+            gumbel, flat, cfg,
             vloss_weight=int(search.gumbel_vloss_weight),
             target_batch=int(search.gumbel_target_batch),
         )
-        _assert_training_shape_matches_production(side, prod)
-        return side
+        return SideSearch(
+            shape="training",
+            source=f"{config_path.name} -> reco -> worker SearchConfig",
+          # The SAME object the guard above checked. It was briefly a second
+          # copy of the literal, which meant the guard verified a dict the
+          # arena did not use — this repo's signature defect, reintroduced by
+          # the commit that was fixing it.
+            gumbel=gumbel,
+            vloss_weight=int(search.gumbel_vloss_weight),
+            target_batch=int(search.gumbel_target_batch),
+        )
     raise SystemExit(f"--search-shape must be one of {SEARCH_SHAPES}, got {shape!r}")
 
-
-def _assert_training_shape_matches_production(side: SideSearch, prod) -> None:
-    """Refuse to run a `training` arena that is not production's search.
-
-    ⚑ WHAT IT CATCHES, stated narrowly on purpose: a reintroduced hand-written
-    knob list, failing loudly at the top of an arena rather than in a CI log
-    nobody reads — the shape of the original defect (the guard existed, the
-    failure went unread for five days).
-
-    ⚑⚑ WHAT IT CANNOT CATCH. It is YAML-SYMMETRIC: both `prod` and `side.gumbel`
-    are derived from ONE snapshot of the same file, so any yaml VALUE change
-    moves them together and this stays silent. An earlier version of this
-    docstring claimed the gate closed the "CI reads the committed yaml while the
-    arena reads the live one" gap; it structurally cannot, and the PR's own
-    `test_a_newly_promoted_knob_is_carried_without_editing_the_arena` proves it
-    (patch the yaml to 11, the derivation returns 11, no `SystemExit`). It is
-    equally blind to a knob MISCLASSIFIED into one of the two ownership sets.
-    The partition pin in `tests/test_arena_search_shape_plumbing.py` is what
-    covers both of those.
-
-    Shipping a comment that claims more than the code does is the very defect
-    this PR exists to remove, so the scope above is deliberately smaller than
-    the guard's reach feels.
-
-    ⚑ The field list is recomputed HERE from ``dataclasses.fields`` and the two
-    ownership sets rather than taken from ``training_shape_carried_fields()``.
-    Sharing that helper with the builder is what would make this vacuous: a knob
-    dropped from the helper would vanish from the constructed dict AND from the
-    comparison, and the check would pass on a shape that lost it. A guard whose
-    field list comes from the thing it is guarding cannot see that thing narrow.
-    """
-    import dataclasses as _dc
-
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
-
-    excluded = ARENA_OWNED_GUMBEL_FIELDS | CHECKPOINT_OWNED_GUMBEL_FIELDS
-    # Exactly how `selfplay/match.pick_moves_for_boards` applies the dict.
-    applied = _dc.replace(GumbelConfig(), **side.gumbel)
-    drift = {
-        f.name: (getattr(prod, f.name), getattr(applied, f.name))
-        for f in _dc.fields(GumbelConfig)
-        if f.name not in excluded
-        and getattr(prod, f.name) != getattr(applied, f.name)
-    }
-    if drift:
-        raise SystemExit(
-            "--search-shape training does not reproduce production selfplay's "
-            f"GumbelConfig. Drifted (production, arena): {drift}. Running this "
-            "arena would measure a search production does not run and would "
-            "label the result 'training'. Fix the shape derivation in "
-            f"{Path(__file__).name}; do NOT relax this check."
-        )
 
 
 def overrides_with_volatility(
@@ -523,7 +795,17 @@ def apply_search_overrides(
                 "scratchpad/code_audit_20260803/repro_inert_knobs.py). A Swiss "
                 "over it would return a flat null and read as a measurement."
             )
-        gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        try:
+            gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        except ValueError:
+            # `int("2.5")` and `float("abc")` both land here. Refused in this
+            # function's own style rather than as a raw traceback: an int knob
+            # given 2.5 would otherwise have been truncated to 2 by the
+            # consumer if it parsed, which is the same silent-value defect.
+            raise SystemExit(
+                f"--*-gumbel: {k}={v!r} is not "
+                f"{'an integer' if k in _GUMBEL_INT_KEYS else 'a number'}"
+            ) from None
         extra.append(part)
     if vloss_weight is not None:
         extra.append(f"vloss_weight={int(vloss_weight)}")
@@ -1181,12 +1463,13 @@ def default_openings_path() -> Path:
     """The 8-move UHO book from the production config (opening_book_path_2)."""
     import yaml
 
-    cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+    path = production_config_path()
+    cfg = yaml.safe_load(path.read_text())
     selfplay = cfg.get("selfplay", {}) if isinstance(cfg, dict) else {}
     book = selfplay.get("opening_book_path_2") or selfplay.get("opening_book_path")
     if not book:
         raise SystemExit(
-            f"no opening_book_path(_2) in {PRODUCTION_CONFIG}; pass --openings"
+            f"no opening_book_path(_2) in {path}; pass --openings"
         )
     return Path(str(book))
 
@@ -1221,7 +1504,7 @@ def default_compile_cache_dir() -> Path:
     try:
         import yaml
 
-        cfg = yaml.safe_load(PRODUCTION_CONFIG.read_text())
+        cfg = yaml.safe_load(production_config_path().read_text())
     except (OSError, ValueError):
         return fallback
     explicit = _find_nested(cfg, "distributed_worker_shared_cache_dir")
@@ -1533,7 +1816,10 @@ def play_paired_games_matched_sims(
                 gumbel_target_batch=side.target_batch,
                 evaluator=ev,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: this is the deciding Elo instrument. Substituting a legal
+            # move for an id that decoded to nothing would keep the arena
+            # scoring games under a broken action space.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
 
     def _game_score(i: int) -> float:
         res = adjudicated[i] or boards[i].result(claim_draw=True)
@@ -1809,7 +2095,8 @@ def play_paired_games_matched_sims_rolling(
                 gumbel_target_batch=side.target_batch,
                 evaluator=ev,
             )
-            apply_actions_to_boards(boards, idxs, actions)
+            # strict: same instrument as the chunked path above.
+            apply_actions_to_boards(boards, idxs, actions, strict=True)
         for i in active:
             gplies[i] += 1
 
@@ -1941,11 +2228,30 @@ def git_sha() -> str:
         return "unknown"
 
 
-def production_config_hash() -> str:
+def production_config_record() -> dict:
+    """The banked IDENTITY of the config this run's search shape came from.
+
+    One resolution, three fields, written together. A bare digest was enough
+    while the config was a fixed in-tree path; it is not now that the file can
+    be either the live yaml or the in-tree fallback, because a reader joining
+    two rows cannot tell an unrecognised digest ("a config I have not seen")
+    from a non-authoritative one ("a config that was never production's").
+    ``config_authoritative`` is the field that answers the second question, and
+    it is the one that decides whether the row belongs in a table at all.
+    """
     try:
-        return hashlib.sha256(PRODUCTION_CONFIG.read_bytes()).hexdigest()[:12]
-    except OSError:
-        return "unknown"
+        cfg = production_config()
+    except (OSError, SystemExit):
+        return {
+            "config_hash": "unknown",
+            "config_name": "unknown",
+            "config_authoritative": False,
+        }
+    return {
+        "config_hash": cfg.sha256[:12],
+        "config_name": cfg.path.name,
+        "config_authoritative": bool(cfg.authoritative),
+    }
 
 
 def build_result_record(
@@ -1995,7 +2301,7 @@ def build_result_record(
         "search_reference": None if search_reference is None else search_reference.as_record(),
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "git_sha": git_sha(),
-        "config_hash": production_config_hash(),
+        **production_config_record(),
         "mode": mode,
         "label": label,
         "volatility_candidate": volatility_candidate,
@@ -2074,6 +2380,30 @@ def append_result(record: dict, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("a") as fh:
         fh.write(json.dumps(record) + "\n")
+
+
+def _abort_void(exc: ActionDecodeError, *, completed_pairs: int) -> NoReturn:
+    """End the run VOID: named line on stderr, non-zero exit, no result row.
+
+    A corrupted instrument must not bank a reading — `append_result` is never
+    reached, so the JSONL keeps no row for this arena and no downstream fit can
+    pick one up. The pairs that DID complete are named rather than left as a
+    bare traceback: the operator needs to know how much of the budget burned.
+    ``completed_pairs`` is what the driver had banked, so the rolling path
+    reports 0 (it returns only on success) while the chunked path reports the
+    chunks that finished.
+    """
+    print(
+        f"[arena] VOID — action id {exc.index} decoded to no legal move "
+        f"({exc.detail}); side to move {'white' if exc.turn else 'black'}, "
+        f"fen {exc.fen!r}. {completed_pairs} complete pair(s) had been banked "
+        "by the driver; NO result row was written. The action space and the "
+        "checkpoints disagree, so every game in this run is unscorable — "
+        "rerun after fixing the encoding, do not salvage the partial score.",
+        file=sys.stderr,
+        flush=True,
+    )
+    raise SystemExit(2)
 
 
 def print_summary(summary: PentanomialSummary) -> None:
@@ -2166,7 +2496,7 @@ def run_arena(
         raise SystemExit(
             "matched_sims needs an explicit search shape: pass --search-shape "
             f"{{{'|'.join(SEARCH_SHAPES)}}}. 'training' is what production selfplay "
-            f"runs, read from {PRODUCTION_CONFIG.name} at run time (linear root; "
+            f"runs, read from {production_config_path().name} at run time (linear root; "
             "c_scale/topk/vloss_weight/target_batch all come from that yaml, so "
             "they are not quoted here); 'play' is the tuned UCI/match shape "
             "(c_scale 0.025, topk 32, log root, vloss_weight 3). There is no "
@@ -2437,7 +2767,7 @@ def run_arena(
         cand_search = no_shape if search_candidate is None else search_candidate.describe()
         ref_search = no_shape if search_reference is None else search_reference.describe()
         base_tags = {
-            "ConfigHash": production_config_hash(),
+            "ConfigHash": production_config_record()["config_hash"],
             "GitSha": git_sha(),
             "ArenaMode": mode,
         }
@@ -2740,86 +3070,97 @@ def run_arena(
                 f"(<={tb_max_pieces}-man, {syzygy_path})",
                 flush=True,
             )
-        if rolling:
-            # Rolling pool: fixed active-game count => fixed batch shape => compile
-            # reuses one graph (no per-shape thrash), and the GPU never drains until
-            # the very end (no per-chunk tail).
-            print(
-                f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
-                f"start a fresh one as each finishes",
-                flush=True,
-            )
-            pair_scores = play_paired_games_matched_sims_rolling(
-                model_candidate, model_reference, openings_to_play,
-                device=device, rng=rng,
-                sims_candidate=sims_candidate, sims_reference=sims_reference,
-                max_plies=max_plies, temperature=temperature,
-                gumbel_add_noise=gumbel_add_noise,
-                volatility_candidate=volatility_candidate,
-                syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                pool_size=int(max_concurrent_games),
-                search_candidate=search_candidate, search_reference=search_reference,
-                report_every=int(report_every),
-                deadline=deadline,
-                pgn_sink=pgn_sink,
-                pair_ids=remaining_ids,
-                prior_pair_scores=loaded_pair_scores,
-                evaluator_candidate=evaluator_candidate,
-                evaluator_reference=evaluator_reference,
-                free_cached_vram=bool(eval_max_batch),
-            )
-        else:
-            # Chunked: plays each chunk of `max_concurrent_games` to completion
-            # (drains per chunk). Numerically identical (pair scores concatenate).
-            chunk_pairs = max(1, int(max_concurrent_games) // 2)
-            n_chunks = (len(openings_to_play) + chunk_pairs - 1) // chunk_pairs
-            pair_scores = []
-            for ci in range(0, len(openings_to_play), chunk_pairs):
-                # Chunk granularity: a chunk plays to completion, so this stops
-                # BEFORE starting one that would run past the budget rather
-                # than mid-chunk. Rolling (the default, and what the ratchet
-                # runs) stops per ply.
-                if deadline is not None and time.time() >= deadline:
-                    print(
-                        f"[arena] max-seconds reached: stopping before chunk "
-                        f"{ci // chunk_pairs + 1}/{n_chunks} with "
-                        f"{len(pair_scores)} pairs complete",
-                        flush=True,
-                    )
-                    break
-                sub = openings_to_play[ci:ci + chunk_pairs]
-                sub_ids = remaining_ids[ci:ci + chunk_pairs]
+        pair_scores = []
+        try:
+            if rolling:
+                # Rolling pool: fixed active-game count => fixed batch shape => compile
+                # reuses one graph (no per-shape thrash), and the GPU never drains until
+                # the very end (no per-chunk tail).
                 print(
-                    f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
-                    f"{len(sub)} pairs ({2 * len(sub)} games)",
+                    f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                    f"start a fresh one as each finishes",
                     flush=True,
                 )
-                pair_scores.extend(play_paired_games_matched_sims(
-                    model_candidate, model_reference, sub,
+                pair_scores = play_paired_games_matched_sims_rolling(
+                    model_candidate, model_reference, openings_to_play,
                     device=device, rng=rng,
                     sims_candidate=sims_candidate, sims_reference=sims_reference,
                     max_plies=max_plies, temperature=temperature,
                     gumbel_add_noise=gumbel_add_noise,
                     volatility_candidate=volatility_candidate,
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                    search_candidate=search_candidate,
-                    search_reference=search_reference,
+                    pool_size=int(max_concurrent_games),
+                    search_candidate=search_candidate, search_reference=search_reference,
+                    report_every=int(report_every),
+                    deadline=deadline,
                     pgn_sink=pgn_sink,
-                    pair_ids=sub_ids,
-                    chunk=ci // chunk_pairs,
+                    pair_ids=remaining_ids,
+                    prior_pair_scores=loaded_pair_scores,
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
-                ))
-                # The chunk has drained; its widest batch shapes are gone for
-                # good until the next chunk rebuilds them. Skipped under
-                # --eval-max-batch 0, which restores the pre-hoist arena whole.
-                if eval_max_batch:
-                    _free_cached_vram(device)
-                _so_far = loaded_pair_scores + pair_scores
-                print(f"[arena] RUNNING Elo after {2 * len(_so_far)} games:", flush=True)
-                print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
-        if syzygy_tb is not None:
-            syzygy_tb.close()
+                    free_cached_vram=bool(eval_max_batch),
+                )
+            else:
+                # Chunked: plays each chunk of `max_concurrent_games` to completion
+                # (drains per chunk). Numerically identical (pair scores concatenate).
+                chunk_pairs = max(1, int(max_concurrent_games) // 2)
+                n_chunks = (len(openings_to_play) + chunk_pairs - 1) // chunk_pairs
+                for ci in range(0, len(openings_to_play), chunk_pairs):
+                    # Chunk granularity: a chunk plays to completion, so this stops
+                    # BEFORE starting one that would run past the budget rather
+                    # than mid-chunk. Rolling (the default, and what the ratchet
+                    # runs) stops per ply.
+                    if deadline is not None and time.time() >= deadline:
+                        print(
+                            f"[arena] max-seconds reached: stopping before chunk "
+                            f"{ci // chunk_pairs + 1}/{n_chunks} with "
+                            f"{len(pair_scores)} pairs complete",
+                            flush=True,
+                        )
+                        break
+                    sub = openings_to_play[ci:ci + chunk_pairs]
+                    print(
+                        f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
+                        f"{len(sub)} pairs ({2 * len(sub)} games)",
+                        flush=True,
+                    )
+                    pair_scores.extend(play_paired_games_matched_sims(
+                        model_candidate, model_reference, sub,
+                        device=device, rng=rng,
+                        sims_candidate=sims_candidate, sims_reference=sims_reference,
+                        max_plies=max_plies, temperature=temperature,
+                        gumbel_add_noise=gumbel_add_noise,
+                        volatility_candidate=volatility_candidate,
+                        syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
+                        search_candidate=search_candidate,
+                        search_reference=search_reference,
+                        pgn_sink=pgn_sink,
+                        pair_ids=remaining_ids[ci:ci + chunk_pairs],
+                        chunk=ci // chunk_pairs,
+                        evaluator_candidate=evaluator_candidate,
+                        evaluator_reference=evaluator_reference,
+                    ))
+                    # The chunk has drained; its widest batch shapes are gone for
+                    # good until the next chunk rebuilds them. Skipped under
+                    # --eval-max-batch 0, which restores the pre-hoist arena whole.
+                    if eval_max_batch:
+                        _free_cached_vram(device)
+                  # ⚑ loaded + played, not played alone. On a resumed run the
+                  # running line is the only Elo an operator sees until the end,
+                  # and printing just this invocation's pairs reports a number
+                  # for a fraction of the match under a header that does not say
+                  # so. The final fold at the bottom already works this way.
+                    _so_far = loaded_pair_scores + pair_scores
+                    print(
+                        f"[arena] RUNNING Elo after {2 * len(_so_far)} games:",
+                        flush=True,
+                    )
+                    print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
+        except ActionDecodeError as exc:
+            _abort_void(exc, completed_pairs=len(pair_scores))
+        finally:
+            if syzygy_tb is not None:
+                syzygy_tb.close()
     elif mode == "matched_time":
         print(f"[arena] matched_time: {ms_per_move}ms/move per side")
         pair_scores = play_paired_games_matched_time(
@@ -2975,7 +3316,7 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                    help="REQUIRED for matched_sims: which search to measure. "
                         "'training' = what production selfplay runs: linear root, "
                         "with c_scale/topk/vloss_weight/target_batch read from "
-                        f"{PRODUCTION_CONFIG.name} at run time (deliberately not "
+                        f"{production_config_path().name} at run time (deliberately not "
                         "quoted here — they change with the config; the realized "
                         "values are printed at startup and stored in the result "
                         "record). 'play' = the tuned UCI/match shape (c_scale "
@@ -3020,8 +3361,94 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
                         "is undetectable here, so don't.")
 
 
+def resolve_sides_from_args(args) -> tuple[SideSearch, SideSearch]:
+    """The complete ``matched_sims`` search resolution, exactly as ``main()`` does it.
+
+    Module-level rather than a block inside ``main()`` so the ORDER below is
+    drivable by a test: shape -> per-side overrides -> refuse the flags the run
+    would discard -> print. A guard whose invocation only ``main()`` performs is
+    a guard nothing can prove runs, which is the defect this whole change is
+    about; ``main()`` needs two checkpoints, so nothing was ever going to drive
+    it there.
+
+    Resolves BEFORE any model load, so a bad shape or an unrunnable knob costs a
+    second rather than a four-minute compile.
+    """
+    if args.search_shape is None:
+        raise SystemExit(
+            "--search-shape is required for matched_sims "
+            f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
+            "for anything judging the training loop."
+        )
+    base = resolve_search_shape(args.search_shape)
+    side_candidate = apply_search_overrides(
+        base, spec=args.cand_gumbel,
+        vloss_weight=args.cand_vloss_weight,
+        target_batch=args.cand_target_batch,
+    )
+    side_reference = apply_search_overrides(
+        base, spec=args.ref_gumbel,
+        vloss_weight=args.ref_vloss_weight,
+        target_batch=args.ref_target_batch,
+    )
+    refuse_flags_the_arena_would_discard(base, args)
+  # AFTER the overrides, and after the shape is final: the sides are what will
+  # actually be searched with. `describe()` therefore reports the realized
+  # values including every CLI override, which is what makes the printed record
+  # downstream of every override application site.
+    for label, side in (("candidate", side_candidate), ("reference", side_reference)):
+        print(f"[shape] {label}: {side.describe()}", flush=True)
+    _warn_noise_schedule_deviation(base, add_noise=not args.no_gumbel_noise)
+    return side_candidate, side_reference
+
+
+def refuse_flags_the_arena_would_discard(base: SideSearch, args) -> None:
+    """Refuse flags this run would accept, print, bank -- and then not use.
+
+    Both cases below are the PR's own defect one level out: the value is not
+    out of band, it is perfectly legal, and the arena simply never applies it.
+
+    1. ``--volatility-*`` under ``--search-shape training``. ``match.py`` builds
+       the config with the volatility kwargs and THEN applies ``side.gumbel``
+       over it (``dataclasses.replace``, match.py:140-152). The training shape's
+       ``gumbel`` dict carries ``volatility_q_scale`` / ``volatility_fpu`` /
+       ``volatility_anchor`` read from production (0.0 / 0.0), so the replace
+       overwrites the CLI value with production's zero and the Python volatility
+       path never switches on -- while ``volatility_candidate`` is banked into
+       the result record naming the operator's number. The PLAY shape carries no
+       volatility keys, so there the flags survive; that combination stays legal.
+    2. A non-finite ``--temperature``. ``sample_action_with_temperature`` gates
+       on ``temperature > 0``, which is False for ``nan``, so the arena plays
+       pure argmax while the JSONL records ``temperature: nan``.
+    """
+    if base.shape == "training" and _volatility_kwargs_from_args(args) is not None:
+        raise SystemExit(
+            "--volatility-* with --search-shape training: the training shape's "
+            "gumbel dict carries volatility_q_scale/volatility_fpu from "
+            "production (both 0.0) and match.py applies it AFTER the volatility "
+            "kwargs, so your value is overwritten before the search sees it -- "
+            "while the result record banks it as volatility_candidate. Use "
+            "--search-shape play for a volatility A/B, or drop the flags."
+        )
+    temperature = float(args.temperature)
+    if not math.isfinite(temperature):
+        raise SystemExit(
+            f"--temperature {temperature!r}: sample_action_with_temperature "
+            "gates on `temperature > 0`, which is False for a non-finite value, "
+            "so the arena would play pure argmax and record your value as the "
+            "temperature it played at."
+        )
+
+
 def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
-    """CANDIDATE-side volatility search kwargs, or None when all flags are off."""
+    """CANDIDATE-side volatility search kwargs, or None when all flags are off.
+
+    ⚑ The all-off early return happens BEFORE validation, deliberately: with
+    both scales at 0.0 there is no volatility search to configure, and
+    ``volatility_anchor`` alone cannot switch one on (this same predicate is
+    what ``volatility_search_enabled`` asks). Validating a dict that is never
+    built would refuse a run over a knob nothing reads.
+    """
     if float(args.volatility_q_scale) == 0.0 and float(args.volatility_fpu) == 0.0:
         return None
     if args.mode != "matched_sims":
@@ -3035,6 +3462,21 @@ def _volatility_kwargs_from_args(args) -> dict[str, float] | None:
     }
     if args.volatility_anchor is not None:
         out["volatility_anchor"] = float(args.volatility_anchor)
+  # These are GumbelConfig fields that ride as kwargs instead of through
+  # `SideSearch.gumbel`, so `SideSearch.__post_init__` never sees them -- and
+  # they are banked into the result record (`volatility_candidate`) exactly as
+  # given. `--volatility-q-scale nan` reads as ENABLED (nan != 0.0), forces the
+  # Python path, and makes every sigma nan.
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig, validate_gumbel_config
+
+    try:
+        validate_gumbel_config(
+            _dc.replace(GumbelConfig(), **out), where="--volatility-*",
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     return out
 
 
@@ -3253,23 +3695,7 @@ def main() -> None:
     # run_arena reject the combination.
     side_candidate = side_reference = None
     if args.mode == "matched_sims":
-        if args.search_shape is None:
-            raise SystemExit(
-                "--search-shape is required for matched_sims "
-                f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
-                "for anything judging the training loop."
-            )
-        base = resolve_search_shape(args.search_shape)
-        side_candidate = apply_search_overrides(
-            base, spec=args.cand_gumbel,
-            vloss_weight=args.cand_vloss_weight,
-            target_batch=args.cand_target_batch,
-        )
-        side_reference = apply_search_overrides(
-            base, spec=args.ref_gumbel,
-            vloss_weight=args.ref_vloss_weight,
-            target_batch=args.ref_target_batch,
-        )
+        side_candidate, side_reference = resolve_sides_from_args(args)
     else:
         # matched_time launches UCI subprocesses, which carry their own search.
         # EVERY in-process search flag is inert here, not just --search-shape:

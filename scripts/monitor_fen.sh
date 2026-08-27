@@ -18,7 +18,8 @@
 # trainer is actually running — seed logic must not burn GPU/CPU while training
 # is stopped for a match or maintenance.
 set -u
-cd /home/josh/projects/chess
+cd "$(dirname "$0")/.." || exit 2
+REPO_ROOT="$PWD"
 PIDFILE=/tmp/chess_training.pid
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 MON=scratchpad/live_read/monitor
@@ -41,12 +42,30 @@ BASE=scratchpad/canary_512_iter20
 # Harvest-gate vetting (PR #182): CPU Stockfish + syzygy for deep-SF vetting of
 # harvested severe seeds. Same binary/TB the miner uses; skipped if absent. Vetted
 # survivors are promoted after each gate pass through the safe versioned feed step.
-SF_BIN="${HARVEST_SF_BIN:-/home/josh/projects/chess/e2e_server/publish/stockfish}"
+#
+# ⚑⚑ NEITHER OF THESE IS IN THE CHECKOUT, so neither may be derived from
+# $REPO_ROOT. `e2e_server/publish/` is untracked runtime output and
+# `data/syzygy_*` is 151G of tablebases; both exist only in the checkout that
+# published them, so a $REPO_ROOT-relative value is correct in the live tree and
+# empty in every worktree and fresh clone. PR #441 made both of them
+# $REPO_ROOT-relative. The binary at least fails visibly (the `-x` test below
+# skips the gate); the TABLEBASES DO NOT — Stockfish accepts a nonexistent
+# SyzygyPath, prints one `info string Found 0 WDL and 0 DTZ` into a redirected
+# log, and answers `readyok`. Both now come from the shared discovery, which
+# falls back to the MAIN checkout via `git rev-parse --git-common-dir`.
+SF_BIN="${HARVEST_SF_BIN:-$(PYTHONPATH=. python3 -m chess_anti_engine.utils.engine_discovery 2>/dev/null)}"
+SF_BIN="${SF_BIN:-$REPO_ROOT/e2e_server/publish/stockfish}"
 # Match the in-loop label's TB coverage (games search 3-4-5 + 6-man, see
 # pbt2_small.yaml syzygy_path) so the gate is never TB-blind where the ~700k
 # label has exact truth — the gate must dominate the label on every axis (depth
 # 2M>700k, MultiPV-1 concentrated, TB equal) to legitimately overrule it.
-SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6}"
+#
+# ⚑ That claim is now ENFORCED rather than asserted: harvest_gate_step.py exits
+# non-zero when any component of this path holds no .rtbw/.rtbz, so a TB-blind
+# cycle produces `harvest_gate: FAILED (...)` in the monitor line instead of a
+# quietly worse number. `--allow-missing-tablebases` is the deliberate opt-out.
+SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-$(PYTHONPATH=. python3 -m chess_anti_engine.utils.syzygy 2>/dev/null)}"
+SYZYGY_PATH="${SYZYGY_PATH:-$REPO_ROOT/data/syzygy_3-4-5:$REPO_ROOT/data/syzygy_6}"
 STAGED_SEEDS="${HARVEST_STAGED_SEEDS:-data/harvest/staged_candidates.txt}"
 AUTO_FEED_DISABLED="$MON/auto_feed_disabled"
 mkdir -p "$MON"
@@ -94,7 +113,42 @@ while true; do
     # they lag the flywheel. Piggyback the same checkpoint copy.
     DO_DEEP=0
     [ $((N - LAST_DEEP_N)) -ge "$READ_EVERY" ] && DO_DEEP=1
-    B1=""; B2=""; VAL=""; DELTA=""
+    B1=""; B2=""; VAL=""; DELTA=""; PROV=""
+    # ⚑ The provenance gate's verdict has to LAND SOMEWHERE A HUMAN LOOKS.
+    # `paired_compare` refuses a cross-ruler join by exiting non-zero and warns
+    # about an unverifiable one on stdout -- and every invocation below
+    # redirects both into a per-cycle log that only ever gets grepped for
+    # "paired delta". So a refusal read as an empty DELTA and a warning read as
+    # nothing at all: the gate fired into a void. `_prov` collects both onto the
+    # monitor line, where the rest of the yardstick already goes.
+    #
+    # ⚑⚑ AND IT HAS TO GREP THE *STAMP* CHECK, NOT THE WORD "WARNING". The
+    # first version matched any WARNING in the log, which also catches
+    # `require_same_ruler`'s ROW-level warnings -- a different gate answering a
+    # different question. MEASURED on the real production log
+    # (scratchpad/live_read/monitor/paired_*_vs_boot.log): every deep cycle
+    # carries "'batch_size' not declared by boot512", so `_prov` returned
+    # UNVERIFIED on every cycle and `prov:ok` was UNREACHABLE -- for a reason
+    # that has nothing to do with the provenance stamp. A token that reports
+    # the same thing whatever happened reports nothing. Each cause now gets its
+    # own name, and `tests/test_paired_compare_gate_is_wired.py` drives the
+    # REAL paired_compare to produce each log, so the strings cannot drift out
+    # from under these greps.
+    _prov() {   # $1 = label, $2 = paired_compare exit status, $3 = its log
+        if [ "$2" != 0 ]; then
+            PROV="$PROV ${1}:REFUSED($2)"
+            return
+        fi
+        local _why=""
+        # require_same_stamp: one side carries no provenance header at all.
+        grep -q "carries no provenance stamp" "$3" 2>/dev/null && _why="$_why+UNSTAMPED"
+        # require_same_stamp: an identity key only one side declares.
+        grep -q "declared by only one side" "$3" 2>/dev/null && _why="$_why+PARTIAL"
+        # require_same_ruler: a per-ROW ruler field one side never recorded.
+        grep -q "cannot verify both sides used the same ruler" "$3" 2>/dev/null && _why="$_why+RULER"
+        [ -n "$_why" ] && PROV="$PROV ${1}:UNVERIFIED(${_why#+})"
+        return 0
+    }
     if [ "$DO_DEEP" = 1 ]; then
         for P in v1 v2; do
             PYTHONPATH=. nice -n 15 python3 scripts/blindspot_panel.py --checkpoint "$MON/ck_$N.pt" \
@@ -103,6 +157,7 @@ while true; do
             PYTHONPATH=. python3 scripts/paired_compare.py \
                 "$BASE/panel_${P}_live.jsonl" "$MON/paneldump_${P}_$N.jsonl" \
                 --label-a swap_iter20 --label-b "ck_$N" > "$MON/pairpanel_${P}_${N}.log" 2>&1
+            _prov "panel_$P" "$?" "$MON/pairpanel_${P}_${N}.log"
         done
         PYTHONPATH=. nice -n 15 python3 scripts/value_regret.py --checkpoint "$MON/ck_$N.pt" \
             --max-positions 2000 --gpu-mem-fraction 0.15 \
@@ -110,6 +165,7 @@ while true; do
         PYTHONPATH=. python3 scripts/paired_compare.py "$BASE/vdump_boot_swaptime.jsonl" \
             "$MON/vdump_$N.jsonl" --label-a boot512 --label-b "ck_$N" \
             > "$MON/paired_${N}_vs_boot.log" 2>&1
+        _prov "vs_boot" "$?" "$MON/paired_${N}_vs_boot.log"
         B1=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/35" "$MON/panel_v1_$N.log" | tail -1)
         B2=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/113" "$MON/panel_v2_$N.log" | tail -1)
         VAL=$(grep OVERALL "$MON/vregret_$N.log" | tail -1 | xargs)
@@ -153,7 +209,7 @@ while true; do
 
     # Full yardstick line on deep cycles; compact flywheel line otherwise.
     if [ "$DO_DEEP" = 1 ]; then
-        echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE | $FEED" >> "$MON/monitor.log"
+        echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA |${PROV:- prov:ok} | $RET | $GATE | $FEED" >> "$MON/monitor.log"
     else
         echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | flywheel | $RET | $GATE | $FEED" >> "$MON/monitor.log"
     fi

@@ -351,7 +351,7 @@ Current notes:
   `bash -n scripts/train.sh` and a direct resolver smoke check for
   `configs/pbt2_small.yaml`.
 - Finding F035 opened/fixed in this cycle: `scripts/monitor_pbt.sh` hardcoded
-  `/home/josh/projects/chess`, required GNU `grep -P` prefix extraction, and
+  `/home/<user>/projects/chess`, required GNU `grep -P` prefix extraction, and
   scanned only trial names matching the inferred prefix from the newest trial.
   It now derives the repo root from the script path, allows env overrides for
   tune/log paths, scans all `train_trial_*` dirs, handles missing `pgrep`
@@ -359,7 +359,7 @@ Current notes:
 - Focused monitor script validation after F035 passed:
   `bash -n scripts/monitor_pbt.sh`.
 - Finding F036 opened/fixed in this cycle: the remaining PBT polling/watchdog
-  shell scripts had a mix of hardcoded `/home/josh/projects/chess` paths,
+  shell scripts had a mix of hardcoded `/home/<user>/projects/chess` paths,
   a CRLF-damaged `watchdog_pbt.sh` that failed `bash -n`, and
   `bench_batch_wait.sh` edited `configs/pbt2_small.yaml` in place while testing
   batch-wait values. The scripts now derive the repo root from their path,
@@ -372,7 +372,7 @@ Current notes:
   and `--help` for both Python poll/audit helpers.
 - Finding F037 opened/fixed in this cycle: several benchmark/analysis scripts
   defaulted to machine-specific Stockfish, AOT, replay, or result paths under
-  `/home/josh/...`. Those defaults made the scripts fail or silently analyze a
+  `/home/<user>/...`. Those defaults made the scripts fail or silently analyze a
   stale historical run on any different checkout. Defaults now use `stockfish`,
   repo-relative paths, `STOCKFISH_PATH`, or latest-run discovery with explicit
   `--trial-result`/`--root` overrides.

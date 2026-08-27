@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -427,18 +428,41 @@ def test_batch_size_is_never_inferred() -> None:
     assert INFERRED_WHEN_ABSENT["input_encoding"] == json.dumps("fen_only")
 
 
-def test_value_regret_dump_carries_its_ruler() -> None:
-    """The stamp the gate reads is the one the scorer actually writes.
+def test_every_ruler_field_is_written_by_some_scorer() -> None:
+    """The stamp the gate reads is one a scorer actually writes.
 
-    A gate reading a field no scorer emits would pass everything forever, so
-    the field NAMES are pinned against the producer rather than assumed.
+    A gate reading a field NO scorer emits would pass everything forever, so
+    the field NAMES are pinned against the producers rather than assumed.
+
+    ⚑ At least one producer, not every producer. This asserted "every field
+    appears in value_regret.py" until `search_shape` was added, and that is a
+    stronger claim than the anti-vacuity property it was after — `value_regret`
+    runs NO search, so it has no search shape to declare. Stamping one there
+    anyway would have been worse than useless: an old value_regret dump
+    (`search_shape` absent, hence INFERRED to the pre-fix shape) against a fresh
+    one (declaring `null`) would be REFUSED, breaking the standing VALUE
+    yardstick's own paired comparison. Cross-producer joins are not a real
+    workflow to begin with — `value_regret` dumps carry `value` and
+    `audit_targets` dumps carry `cand`, so no `--field` names both.
     """
+    import scripts.audit_targets as at
     import scripts.paired_compare as pc
     import scripts.value_regret as vr
 
-    src = (Path(vr.__file__).read_text(encoding="utf-8"))
+    producers = {
+        "value_regret.py": Path(vr.__file__).read_text(encoding="utf-8"),
+        "audit_targets.py": Path(at.__file__).read_text(encoding="utf-8"),
+    }
     for field in pc.RULER_FIELDS:
-        assert f'"{field}": ' in src, field
+        writers = [n for n, src in producers.items() if f'"{field}": ' in src]
+        assert writers, f"{field} is read by the gate and written by nobody"
+    # And the split is the one documented above, pinned so a field silently
+    # migrating between producers is visible.
+    vr_src = producers["value_regret.py"]
+    assert '"input_encoding": ' in vr_src
+    assert '"batch_size": ' in vr_src
+    assert '"search_shape": ' not in vr_src
+    assert '"search_shape": ' in producers["audit_targets.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -580,3 +604,737 @@ def test_match_stamp_shape_preserves_null_candidates() -> None:
     assert got["sf_soft"] is None
     assert got["raw"] == "fen_only"
     assert got == _audit_targets_stamp("fen_only")
+
+
+# ---------------------------------------------------------------------------
+# `search_shape`: rows (d)/(e) MOVED on 2026-08-16
+# ---------------------------------------------------------------------------
+#
+# Until then `audit_targets.py` built its "production training target" without
+# `gumbel_policy_temp` / `gumbel_target_max_visit_cap` /
+# `gumbel_target_untempered_prior`, and with the last two at their defaults
+# `mcts/gumbel.py` takes the `imp_store = imp_all` branch — so those rows were
+# the PLAY distribution. A pre-fix dump and a post-fix one join cleanly on key
+# and report a tight-CI delta that is entirely the ruler change. The eval
+# protocol note that records this cannot stop a tool; these can.
+
+_POST_FIX_SHAPE = {
+    "policy_temp": 1.5, "target_max_visit_cap": 5, "target_untempered_prior": True,
+}
+_PRE_FIX_SHAPE = {
+    "policy_temp": 1.0, "target_max_visit_cap": 0, "target_untempered_prior": False,
+}
+
+
+def test_pre_fix_dump_against_post_fix_dump_is_refused(tmp_path) -> None:
+    """The join this entry exists to stop: unstamped vs stamped."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(legacy, fresh, label_a="LEGACY", label_b="NEW")
+
+
+def test_two_pre_fix_dumps_still_compare(tmp_path) -> None:
+    """Legacy-vs-legacy is the same ruler and must NOT be refused.
+
+    103 banked unstamped dumps exist under `scratchpad/`; an inference that
+    refused them against each other would break every historical readout to
+    stop a join that is not happening.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 11.0, input_encoding="fen_only", batch_size=256),
+    ]))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_an_absent_stamp_is_UNKNOWN_not_a_guessed_shape(tmp_path) -> None:
+    """MUTANT (F5 / Codex P1): re-infer a concrete legacy shape from absence.
+
+    An earlier revision inferred ``{policy_temp: 1.0, target_max_visit_cap: 0,
+    target_untempered_prior: False}`` and called all three a DEDUCTION. Two are;
+    ``policy_temp`` is not — pre-fix, the operator-settable ``--policy-temp``
+    fed every profile including the training rows, so a legacy dump made at 2.2
+    was inferred as 1.0. That accepts a legacy-2.2 vs current-1.0 join (the
+    exact failure this gate exists to stop) and refuses a legitimate 2.2-vs-2.2
+    one.
+
+    So absence is its own value. It cannot equal ANY concrete stamp — including
+    one that happens to hold the GumbelConfig defaults, because such a dump was
+    written by a build that DID stamp and therefore is not the legacy case.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    absent = load_dump(_write_jsonl(tmp_path / "absent.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    explicit = load_dump(_write_jsonl(tmp_path / "explicit.jsonl", [
+        _stamped("p", 11.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_PRE_FIX_SHAPE),
+    ]))
+
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(absent, explicit, label_a="ABSENT", label_b="EXPLICIT")
+
+
+def test_search_shape_is_skipped_for_a_metric_it_cannot_govern(tmp_path) -> None:
+    """MUTANT (Codex P2): check the training-row ruler on a non-training metric.
+
+    `search_shape` describes rows (d)/(e) only — the change that introduced it
+    says "rows (b) and (c) are unaffected" — so refusing a `cand.raw.exp` or
+    `cand.sf_soft.exp` comparison over it refuses a join it does not govern.
+    BOTH branches: skipped for `cand.raw.exp`, still enforced for
+    `cand.train.exp`, and still enforced when no metric is named.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler, ruler_fields_for
+
+    assert "search_shape" not in ruler_fields_for("cand.raw.exp")
+    assert "search_shape" not in ruler_fields_for("cand.sf_soft.exp")
+  # ⚑ The PLAY row RAN A SEARCH and its shape IS banked (`_net_candidates`
+  # returns one per profile), so skipping it here would bank a ruler and then
+  # ignore it — and row (b)'s `policy_temp` is the operator-settable
+  # `--policy-temp`, the one field `UNSTAMPED_LEGACY` exists because we cannot
+  # infer.
+    assert "search_shape" in ruler_fields_for("cand.search.exp")
+    assert "search_shape" in ruler_fields_for("cand.train.exp")
+    assert "search_shape" in ruler_fields_for("cand.train_fast.exp")
+    assert "search_shape" in ruler_fields_for(None)
+    # ...and `input_encoding` is never skipped: it governs every row.
+    assert "input_encoding" in ruler_fields_for("cand.raw.exp")
+
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+    require_same_ruler(
+        legacy, fresh, label_a="LEGACY", label_b="NEW", metric="cand.raw.exp",
+    )
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(
+            legacy, fresh, label_a="LEGACY", label_b="NEW",
+            metric="cand.train.exp",
+        )
+
+
+def test_two_post_fix_dumps_compare(tmp_path) -> None:
+    """And the gate must be capable of PASSING on the current ruler."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    rows_a = [_stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                       search_shape=_POST_FIX_SHAPE)]
+    rows_b = [_stamped("p", 2.0, input_encoding="fen_only", batch_size=256,
+                       search_shape=_POST_FIX_SHAPE)]
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", rows_a))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", rows_b))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_a_dump_that_mixes_two_search_shapes_is_refused(tmp_path) -> None:
+    """Within-dump disagreement means the file is not one reading."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    mixed = load_dump(_write_jsonl(tmp_path / "mixed.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+        _stamped("q", 2.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_PRE_FIX_SHAPE),
+    ]))
+    ok = load_dump(_write_jsonl(tmp_path / "ok.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256,
+                 search_shape=_POST_FIX_SHAPE),
+    ]))
+
+    with pytest.raises(SystemExit, match="mixes two rulers"):
+        require_same_ruler(mixed, ok, label_a="MIXED", label_b="OK")
+
+# ---------------------------------------------------------------------------
+# `target_config`: the ruler `config_authority` structurally cannot be
+# ---------------------------------------------------------------------------
+
+
+def test_two_dumps_built_from_different_target_configs_are_refused(tmp_path) -> None:
+    """MUTANT (Codex P1): temporal config drift between two authoritative runs.
+
+    `config_authority.authoritative` is a SAME-RUN verdict — it says this run's
+    `--config` agreed with the live yaml AT THE TIME IT RAN. The live yaml is
+    edited between audits by design, so two dumps made a week apart under
+    different `sf_policy_temp` BOTH stamp `authoritative: true` and their
+    `cand.sf_soft.exp` rows are nonetheless built from different targets.
+    Banking the key NAMES (which is all the stamp used to do) cannot see it:
+    the names are identical in both dumps by construction.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    authority = {"authoritative": True, "reference": "/live.yaml", "reason": ""}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 config_authority=authority,
+                 target_config={"sf_policy_temp": 2.0, "temperature": 1.0}),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 config_authority=authority,
+                 target_config={"sf_policy_temp": 3.0, "temperature": 1.0}),
+    ]))
+
+    with pytest.raises(SystemExit, match="target_config"):
+        require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_two_dumps_with_the_same_target_config_still_compare(tmp_path, capsys) -> None:
+    """The other branch: equal values must JOIN, or the field refuses everything."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    values = {"sf_policy_temp": 2.0, "temperature": 1.0}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 target_config=values),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config=dict(values)),
+    ]))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+    assert "target_config" in capsys.readouterr().out
+
+
+def test_an_unstamped_target_config_warns_rather_than_refusing(tmp_path, capsys) -> None:
+    """Absence is UNKNOWN here, like `batch_size` and unlike `input_encoding`.
+
+    `target_config` is new, so every banked dump lacks it. Inferring a value
+    would be a guess (there is no configuration absence implies), and refusing
+    would break every historical comparison to stop a join that predates the
+    field. So it warns — the same call `batch_size` already makes.
+    """
+    from scripts.paired_compare import (
+        INFERRED_WHEN_ABSENT,
+        load_dump,
+        require_same_ruler,
+    )
+
+    assert "target_config" not in INFERRED_WHEN_ABSENT
+    legacy = load_dump(_write_jsonl(tmp_path / "legacy.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    fresh = load_dump(_write_jsonl(tmp_path / "fresh.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config={"sf_policy_temp": 2.0}),
+    ]))
+
+    require_same_ruler(legacy, fresh, label_a="LEGACY", label_b="NEW")
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "target_config" in out
+
+
+def test_the_per_row_search_shape_stamp_is_refused_on_the_fast_row(tmp_path) -> None:
+    """MUTANT (Codex P1): a `fast_simulations` change with `train` identical.
+
+    The stamp is keyed by TRAINING ROW precisely so this is visible. With only
+    the full-sims row banked the two dicts below are byte-identical and the
+    join is allowed, charging `cand.train_fast.*`'s budget change to the
+    checkpoints.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    full = {"policy_temp": 1.5, "simulations": 256}
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256,
+                 search_shape={"train": full,
+                               "train_fast": {"policy_temp": 1.5, "simulations": 32}}),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 search_shape={"train": full,
+                               "train_fast": {"policy_temp": 1.5, "simulations": 13}}),
+    ]))
+
+    with pytest.raises(SystemExit, match="search_shape"):
+        require_same_ruler(a, b, label_a="A", label_b="B", metric="cand.train_fast.exp")
+
+def _stamped_header(path: Path, *, ruler: str, n: int = 6, off: float = 0.0,
+             extra: dict | None = None) -> str:
+    """A dump with a provenance HEADER on line 1, like `audit_cache` writes.
+
+    ⚑ It must emit EVERY field `audit_cache_stamp` emits, `policy_map_version`
+    included. While that key was missing here, adding it to
+    `STAMP_NON_IDENTITY_KEYS` — i.e. silently retiring a real identity check —
+    broke no test: `audit_ruler_version` and `audit_set_digest` each have a
+    refuse-test, and this one had none. A fixture that under-declares turns the
+    exclude set into an unpinned constant.
+    """
+    head = {"audit_cache_format": 1, "rows": n,
+            "audit_set": "data/audit_set_v1.jsonl",
+            "audit_set_digest": "deadbeef", "audit_ruler_version": ruler,
+            "policy_map_version": "PMV-000",
+            **(extra or {})}
+    lines = [json.dumps(head)]
+    lines += [json.dumps({"fen": f"p{i}", "value": 10.0 + off + i, "phase": 1})
+              for i in range(n)]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_the_stamp_is_captured_not_merely_skipped(tmp_path) -> None:
+    """⚑ The header is not a data row, but "not a data row" is not "not evidence".
+
+    Before PR #423's review `load_dump` recognised the stamp by its sentinel and
+    DROPPED it, so nothing downstream could check what the dump declared.
+    """
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    assert d.stamp["audit_ruler_version"] == "RULER-AAA"
+    # And it still is not counted as a row, which is what the skip was for.
+    assert len(d.rows) == 6
+    assert d.unusable == 0
+
+
+def test_two_dumps_from_different_rulers_are_refused(tmp_path) -> None:
+    """The reviewer's scenario, reproduced: two dumps declaring different
+    `audit_ruler_version` used to join to exit 0 and print a verdict under a
+    banner that reads as a provenance certificate."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-BBB", off=-5.0))
+    with pytest.raises(SystemExit, match="audit_ruler_version"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_matching_pair_is_not_refused(tmp_path) -> None:
+    """⚑ The control that stops this being a gate that cannot pass. Two dumps
+    from ONE ruler must join even though every other stamp field is identical
+    too — a guard that refuses everything is not a guard."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_differing_non_identity_key_is_not_refused(tmp_path) -> None:
+    """`rows` and the human-readable `audit_set` PATH legitimately differ; the
+    DIGEST is the provenance value and is deliberately not excluded."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA", n=6))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", n=4, off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_differing_audit_set_digest_is_refused(tmp_path) -> None:
+    """Two checkpoints scored against DIFFERENT position sets cannot be paired,
+    and the digest is what says so — a path string cannot."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                           extra={"audit_set_digest": "cafebabe"}))
+    with pytest.raises(SystemExit, match="audit_set_digest"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_stamp_key_added_later_is_guarded_without_editing_this_file(
+    tmp_path,
+) -> None:
+    """⚑ Why the rule is an EXCLUDE set. A version field added to the stamp
+    later must be compared the day it appears; an include list would have to be
+    edited in lockstep with the writer and would fail SILENTLY when it was not."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                           extra={"future_field_nobody_has_written_yet": "v1"}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                           extra={"future_field_nobody_has_written_yet": "v2"}))
+    with pytest.raises(SystemExit, match="future_field_nobody_has_written_yet"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_unstamped_dumps_warn_rather_than_refuse(tmp_path, capsys) -> None:
+    """Dumps predating stamping are legitimately unstamped, and
+    `require_same_ruler` already refuses the encoding mismatch that actually
+    invalidates a join."""
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl",
+                               [{"fen": "p0", "value": 1.0, "phase": 1}]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl",
+                               [{"fen": "p0", "value": 2.0, "phase": 1}]))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+    assert "no provenance stamp" in capsys.readouterr().out
+
+
+def test_the_stamp_gate_is_WIRED_into_the_command_line_path(
+    tmp_path, monkeypatch,
+) -> None:
+    """⚑ THE MUTANT THAT SURVIVED THE FIRST BATTERY. Every other test in this
+    group calls `require_same_stamp` DIRECTLY, so deleting its call from `main`
+    left them all green — a guard that is correct and never invoked, which is
+    this codebase's signature defect wearing the fix's own clothes.
+
+    This one goes through the real entry point.
+    """
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA")
+    b = _stamped_header(tmp_path / "b.jsonl", ruler="RULER-BBB", off=-5.0)
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, b])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "audit_ruler_version" in str(exc.value)
+
+
+def test_the_command_line_path_still_joins_a_matching_pair(
+    tmp_path, capsys, monkeypatch,
+) -> None:
+    """The wiring test's control: `main` must still produce a verdict when the
+    stamps agree, or the gate above would be indistinguishable from a crash."""
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="RULER-AAA")
+    b = _stamped_header(tmp_path / "b.jsonl", ruler="RULER-AAA", off=-5.0)
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, b])
+    main()
+    assert "paired delta" in capsys.readouterr().out
+
+
+def test_a_stamp_key_only_one_side_declares_is_reported(tmp_path, capsys) -> None:
+    """⚑ Killed mutant M5 (union -> intersection over the two key sets).
+
+    A key present on only one side means the two dumps came from different
+    scorer BUILDS. It is a warning rather than a refusal — the older build
+    simply did not write the field, and refusing would make every stamp
+    addition retroactively unjoinable — but it must be SAID. With an
+    intersection the key is never examined and the operator hears nothing,
+    which is silence standing in for a finding.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"only_on_a": "v1"}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0))
+    require_same_stamp(a, b, label_a="A", label_b="B")
+    out = capsys.readouterr().out
+    assert "only_on_a" in out
+    assert "only one side" in out
+
+
+# ---------------------------------------------------------------------------
+# #442 review — the stamp is now READ, not merely present
+# ---------------------------------------------------------------------------
+
+
+def test_a_differing_policy_map_version_is_refused(tmp_path) -> None:
+    """⚑ F5: this check existed but was not BEHAVIOURALLY PINNED.
+
+    `audit_cache_stamp` emits three identity fields. Two of them
+    (`audit_ruler_version`, `audit_set_digest`) had a refuse-test; the third
+    did not, and the test fixture did not even emit it — so moving
+    `policy_map_version` into `STAMP_NON_IDENTITY_KEYS` and thereby retiring a
+    real guard would have passed the whole suite. A guard with no test that
+    fails when it is removed is a guard nobody is holding.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"policy_map_version": "PMV-999"}))
+    with pytest.raises(SystemExit, match="policy_map_version"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_stamp_format_this_tool_does_not_understand_is_refused(tmp_path) -> None:
+    """⚑ F2: `if STAMP_FORMAT_KEY in r` is a PRESENCE test.
+
+    `STAMP_FORMAT_KEY` was excluded from the identity comparison on the grounds
+    that it is "equal by construction on any pair a reader accepts" — true of
+    `read_audit_cache_stamp`, which RAISES on a mismatch, and FALSE of
+    `load_dump`, which never read the value. MEASURED before the fix: format 1
+    vs format 99, everything else identical, exit 0 with a verdict printed.
+    """
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "b.jsonl", ruler="R",
+                           extra={"audit_cache_format": 99})
+    with pytest.raises(SystemExit, match="audit_cache_format"):
+        load_dump(path)
+
+
+def test_the_format_key_is_not_excluded_from_identity() -> None:
+    """Belt and braces: the exclude set must no longer carry the format key.
+
+    `load_dump`'s range check and `require_same_stamp`'s comparison are
+    independent — the first catches a format neither side understands, the
+    second catches a disagreeing pair — and a rationale that was false for one
+    reader must not be left standing for the next one.
+    """
+    from chess_anti_engine.utils.audit_cache_format import (
+        STAMP_FORMAT_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+
+    assert STAMP_FORMAT_KEY not in STAMP_NON_IDENTITY_KEYS
+
+
+def test_a_stamp_declaring_the_wrong_row_count_is_refused(tmp_path) -> None:
+    """⚑ F4: the stamp binds to line 1 only.
+
+    `audit_cache_format.ROW_COUNT_KEY`'s own docstring says it exists to stop
+    "a truncated file, or two caches concatenated", and `read_audit_cache`
+    enforces it. `paired_compare` did not: MEASURED, a stamp declaring 9999
+    rows over an 8-row body exited 0 with a verdict.
+    """
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    Path(path).write_text(
+        Path(path).read_text(encoding="utf-8").replace('"rows": 6', '"rows": 9999', 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="9999 rows but the file holds 6"):
+        load_dump(path)
+
+
+def test_a_truncated_body_is_refused(tmp_path) -> None:
+    """The same guard from the other direction: rows removed, stamp untouched."""
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    Path(path).write_text("\n".join(lines[:4]) + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="6 rows but the file holds 3"):
+        load_dump(path)
+
+
+def test_a_stamp_with_no_row_count_is_refused(tmp_path) -> None:
+    """A header that cannot vouch for its body is not provenance."""
+    from scripts.paired_compare import load_dump
+
+    path = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    Path(path).write_text(
+        Path(path).read_text(encoding="utf-8").replace('"rows": 6, ', "", 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="no integer 'rows' count"):
+        load_dump(path)
+
+
+def test_a_correct_row_count_still_loads(tmp_path) -> None:
+    """The control. A guard that refuses every file is not a guard."""
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R", n=6))
+    assert len(d.rows) == 6
+
+
+def test_a_second_provenance_header_is_refused(tmp_path) -> None:
+    """⚑ F4: `stamp = dict(r)` was LAST-WINS.
+
+    Two dumps concatenated kept only the final header and silently discarded
+    the first — including a disagreeing `audit_ruler_version`. MEASURED before
+    the fix: a file whose FIRST header declared `audit_ruler_version: R_EVIL`
+    exited 0, the evil header having been overwritten by the second.
+    `read_audit_cache` already refuses this exact shape.
+    """
+    from scripts.paired_compare import load_dump
+
+    a = Path(_stamped_header(tmp_path / "a.jsonl", ruler="R_EVIL", n=3))
+    b = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", n=3, off=1.0))
+    merged = tmp_path / "merged.jsonl"
+    merged.write_text(
+        a.read_text(encoding="utf-8") + b.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="SECOND provenance header"):
+        load_dump(str(merged))
+
+
+def test_the_row_count_guard_is_wired_into_the_command_line_path(
+    tmp_path, monkeypatch,
+) -> None:
+    """The lesson of this file's own surviving mutant: reach it through `main`.
+
+    Every assertion above calls `load_dump` directly, so a guard that is
+    correct and unreachable from the entry point would leave them all green.
+    """
+    from scripts.paired_compare import main
+
+    a = _stamped_header(tmp_path / "a.jsonl", ruler="R", n=6)
+    b = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", n=6, off=-5.0))
+    b.write_text(
+        b.read_text(encoding="utf-8").replace('"rows": 6', '"rows": 9999', 1),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["paired_compare.py", a, str(b)])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert "9999 rows" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# #442 independent review — B3, and the Codex inline findings on this file
+# ---------------------------------------------------------------------------
+
+
+def test_a_provenance_header_that_follows_data_rows_is_refused(tmp_path) -> None:
+    """A stamp certifies the body BELOW it, so a late header certifies nothing.
+
+    Codex inline finding on `load_dump`: an unstamped dump with a stamped one
+    appended presents a single header, which the reader accepted as line-1
+    provenance. MEASURED before the fix — the pre-header rows were counted into
+    `n_data_lines`, so a declared `rows` covering the whole file satisfied the
+    count guard too, and the verdict printed under a banner certifying rows
+    written before the stamp existed.
+    """
+    from scripts.paired_compare import load_dump
+
+    stamped = Path(_stamped_header(tmp_path / "s.jsonl", ruler="R", n=3))
+    late = tmp_path / "late.jsonl"
+    legacy = "\n".join(
+        json.dumps({"fen": f"q{i}", "value": 1.0 + i, "phase": 1}) for i in range(3)
+    )
+    body = stamped.read_text(encoding="utf-8")
+    late.write_text(
+        legacy + "\n" + body.replace('"rows": 3', '"rows": 6', 1), encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="after 3 data rows"):
+        load_dump(str(late))
+
+
+def test_a_core_stamp_key_missing_from_one_side_is_refused(tmp_path) -> None:
+    """⚑ B3: half the one-sided-key hole, closed with a criterion that checks out.
+
+    `audit_cache_stamp` writes `policy_map_version` and `audit_ruler_version`
+    into EVERY stamped cache any writer has produced, so one side lacking one
+    cannot be explained by writer skew — the warn path's whole justification.
+    It is a stamp that did not come from the writer.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b_path = Path(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0))
+    kept = []
+    for line in b_path.read_text(encoding="utf-8").splitlines():
+        rec = json.loads(line)
+        rec.pop("policy_map_version", None)
+        kept.append(json.dumps(rec))
+    b_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    b = load_dump(str(b_path))
+    assert "policy_map_version" not in b.stamp, "fixture did not remove the key"
+    with pytest.raises(SystemExit, match="declares no 'policy_map_version'"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_a_one_sided_EXTRA_key_still_only_warns(tmp_path, capsys) -> None:
+    """The other half stays a warning, and B3's replacement rationale needs it.
+
+    `scripts/monitor_fen.sh` joins a BANKED baseline against a fresh dump every
+    deep cycle. A banked dump is written by an older build by definition, so the
+    day a stamp field is added every baseline goes one-sided on it. Refusing
+    there invalidates every baseline to catch a case the warning names.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R"))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"history_fill": "repeat"}))
+    require_same_stamp(a, b, label_a="A", label_b="B")   # must NOT raise
+    assert "history_fill" in capsys.readouterr().out
+
+
+def test_the_compared_NET_is_not_treated_as_ruler_identity(tmp_path, capsys) -> None:
+    """Codex inline finding on `foreign_net_audit`: `net` names the SUBJECT.
+
+    `foreign_net_audit.py` stamps the net it scored. Two such caches are exactly
+    what `paired_compare --join-key key --field exp_regret` is for, and their
+    `net` values necessarily differ — so treating it as ruler identity refuses
+    the comparison on the one field guaranteed to disagree. The subject of a
+    measurement is not its ruler.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"net": "bt4.onnx", "topk": 5}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"net": "ours_ckpt443.pt", "topk": 5}))
+    require_same_stamp(a, b, label_a="A", label_b="B")   # must NOT raise
+    assert "net" not in capsys.readouterr().out.replace("net a", "")
+
+
+def test_topk_beside_net_is_still_ruler_identity(tmp_path) -> None:
+    """The negative control for the exclusion above: only `net` was excluded.
+
+    `topk` is a foreign-net SCORING parameter — how many policy moves were
+    cached — so two caches that disagree on it are not comparable. If the fix
+    for "the gate cannot pass" had been to exclude foreign-net keys wholesale,
+    this test is what would have caught it.
+    """
+    from scripts.paired_compare import load_dump, require_same_stamp
+
+    a = load_dump(_stamped_header(tmp_path / "a.jsonl", ruler="R",
+                                  extra={"net": "bt4.onnx", "topk": 5}))
+    b = load_dump(_stamped_header(tmp_path / "b.jsonl", ruler="R", off=-5.0,
+                                  extra={"net": "ours.pt", "topk": 20}))
+    with pytest.raises(SystemExit, match="disagree on stamp key 'topk'"):
+        require_same_stamp(a, b, label_a="A", label_b="B")
+
+
+def test_target_config_is_scoped_to_the_producer_that_stamps_it(tmp_path, capsys) -> None:
+    """MUTANT (#442 review B2, re-introduced by a fresh ruler field).
+
+    `value_regret.py` neither builds its rows from `AUDIT_DIRECT_CONFIG_KEYS`
+    nor stamps `target_config`, so checking the field on its `--field value`
+    comparison can only ever emit "not declared by either side". That warning
+    is not a finding — and `monitor_fen.sh` classifies any ruler warning as
+    UNVERIFIED, so an unscoped new field makes `prov:ok` UNREACHABLE for a
+    reason unrelated to what is being verified. That is the exact defect #442
+    fixed for `batch_size`; adding a ruler field is how it comes back.
+
+    ⚑ BOTH BRANCHES: skipped for `value`, ENFORCED for `cand.sf_soft.exp`.
+    """
+    from scripts.paired_compare import (
+        load_dump,
+        require_same_ruler,
+        ruler_fields_for,
+    )
+
+    assert "target_config" not in ruler_fields_for("value")
+    assert "target_config" in ruler_fields_for("cand.sf_soft.exp")
+    assert "target_config" in ruler_fields_for(None), (
+        "an unknown metric must still check everything, or a typo'd --field "
+        "silently skips the gate"
+    )
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256,
+                 target_config={"sf_policy_temp": 2.0}),
+    ]))
+    require_same_ruler(a, b, label_a="A", label_b="B", metric="value")
+    assert "target_config" not in capsys.readouterr().out, (
+        "a value_regret comparison warned about a field only audit_targets "
+        "stamps — prov:ok is now unreachable on the monitor line"
+    )
+    require_same_ruler(a, b, label_a="A", label_b="B", metric="cand.sf_soft.exp")
+    assert "target_config" in capsys.readouterr().out

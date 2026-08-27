@@ -28,10 +28,43 @@ model/book artifacts are runtime output — they stay uncommitted.
 ```bash
 pip install -e ".[dev]"     # full env; the test suite hard-requires every extra (no skips)
 pip install -e ".[worker]"  # lite selfplay-client install
-python -m pytest
+python -m pytest                             # torch capped at 2 threads — see below
+CAE_TEST_THREADS=auto python -m pytest       # UNCAPPED: only when training is paused
 
 PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune [--resume]
 ```
+
+**⚑ `tests/conftest.py` caps torch at 2 threads on EVERY pytest invocation, and that is
+deliberate — do not "fix" it by raising the default.** torch sizes its intra-op pool to
+the machine, so one plain `python -m pytest` on tiny unit-test tensors was measured at
+**848% CPU** next to a live training arm on 2026-08-14, taking 8.5 cores from selfplay
+workers that deliberately run at `nice 15`. The visible cost was arm B iteration 2 at
+**1125 s against the control's 714 s (+57%)** — no corruption, no invalid experiment
+(arms are compared at equal `training_iteration`), purely wall clock, billed silently to
+whoever's run was live. The cap lives in `conftest.py` rather than in a flag because a
+flag is a thing to remember, and the failure mode is that nobody does.
+
+- **Lift it with `CAE_TEST_THREADS=auto`** (or `off`/`none`/`0`), or set an explicit number
+  (`CAE_TEST_THREADS=8`). Do this when **training is stopped** — a full-suite run is much
+  faster uncapped and there is nothing to protect.
+- Every run prints which regime it is in as its first line, so a capped session is never
+  mistaken for a slow one. **Read that line before concluding the suite got slower.** ⚑ It
+  is written through the terminal reporter, NOT `pytest_report_header`, because this repo's
+  `addopts = "-q"` suppresses the header — the first cut documented an escape hatch in a
+  line the documented invocation never printed.
+- CI passes `auto` (`.github/workflows/ci.yml`): a runner never shares a box with training,
+  and that job has a 30-minute timeout to protect. ⚑ In YAML write it **quoted** (`"auto"`):
+  a bare `off` parses as the boolean `False` and arrives as `"false"`. That spelling is
+  accepted for exactly this reason, but quoting removes the question.
+- An unparseable value falls back to the CAP, never to uncapped — the safe direction, since
+  failing open steals cores from someone else's live run while failing closed only slows
+  your own tests. It is **announced** in the regime line rather than absorbed silently.
+- The cap is NOT auto-detected from whether training is running. A detector that guesses
+  wrong in the permissive direction starves training exactly when it matters, and a check
+  that silently fails to fire is this repo's signature defect. Deterministic default plus a
+  visible switch, on purpose.
+- ⚑ The same courtesy applies to anything else CPU-heavy run beside a live arm (lint,
+  arenas, audits): prefer a pause window — see `docs/operations.md`.
 
 Scripts need `PYTHONPATH=.`. CLI modes are `train`, `tune`, `salvage` — there is no
 `single` mode. `--mode train` is a single distributed trial (no PBT), not a local one:
@@ -164,6 +197,25 @@ that FAILS its invariant is not a verdict.
 4. **One data-affecting change per readout window.** Unavoidable overlaps go in each
    entry's Confounds line.
 5. **Before running any yardstick**, read the ledger's "Protocol gotchas".
+6. **⚑ FREEZE THE OBSERVATIONS, ITERATE THE ESTIMATOR.** Any expensive run against a
+   DETERMINISTIC teacher or search — Stockfish panels, audit scoring, arena PV dumps,
+   distillation targets — must bank the LOWEST-LEVEL observations it collected, not just
+   the summary statistic. Bank the raw per-move scores/PVs keyed by position and game id,
+   with the arm settings, in a `.json`/`.jsonl` beside the log.
+   - **Why this is a rule and not a nicety:** every later correction — a clustered
+     bootstrap, a new stratification, a different loss metric, a rebased baseline, a
+     re-fit α — then costs seconds instead of a rerun. A rerun is not just expensive, it
+     is *dangerous*: re-running to "reproduce" an analysis silently re-rolls the
+     intervention, and any drift in engine build, node budget, TT state or sampling is
+     then confounded with the method change you were trying to isolate.
+   - **MEASURED 2026-08-16.** The MPV6 tail panel banked its three-arm PVs, so switching a
+     row bootstrap to a game-cluster bootstrap was a re-analysis of the SAME 500 positions:
+     every point estimate came back byte-identical and only the intervals moved — which is
+     itself the proof the fix did what it claimed and nothing else. Without the dump that
+     would have been a fresh 4M-node run and an uninterpretable comparison.
+   - ⚑ A banked dump also has to record the RESAMPLING UNIT's key (here `game_id`). An
+     analysis cannot cluster on something the dump did not keep. See
+     [[bank_the_dump_not_just_the_number]].
 
 ## Evaluation
 

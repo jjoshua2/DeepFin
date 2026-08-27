@@ -54,7 +54,6 @@ def _cfg_for(shape: SearchShape) -> GumbelConfig:
         c_visit=shape.c_visit,
         c_visit_root=shape.c_visit_root,
         c_scale_root=shape.c_scale_root,
-        q_visit_exp=shape.q_visit_exp,
         q_visit_exp_root=shape.q_visit_exp_root,
         halving_div=shape.halving_div,
         policy_temp=shape.policy_temp,
@@ -78,12 +77,19 @@ def test_root_q_scale_matches_the_real_transform(name: str, max_visit: int) -> N
 def test_root_q_scale_covers_every_field_the_real_transform_reads() -> None:
     """The differential test above is blind to a knob `SearchShape` lacks.
 
-    `_root_sigma_scale` reads `q_visit_floor` too, and `SearchShape` has no such
-    field -- so `_cfg_for` hands the reference implementation the DEFAULT for it
-    and the two agree no matter what the branch does. A differential test built
-    from the same restricted field set cannot detect a field it does not know
-    about, which is how a reimplemented formula drifts while its own guard stays
-    green. Parsed from the reference's source so a new input fails here.
+    A differential test built from the same restricted field set cannot detect a
+    field it does not know about: `_cfg_for` would hand the reference the
+    DEFAULT for the missing knob and the two would agree no matter what the
+    branch does. That is how a reimplemented formula drifts while its own guard
+    stays green. Parsed from the reference's source so a new input fails here.
+
+    ⚑ This used to carry a carve-out for `q_visit_floor` -- read by
+    `_root_sigma_scale`, absent from `SearchShape`, tolerated only while it was
+    inert by default, with the inertness asserted alongside. That knob has been
+    DELETED (with `q_visit_exp` and `q_global_scale`), so the exemption is gone
+    and the requirement is now total: every `cfg.` attribute the reference reads
+    must be a `SearchShape` field. Do not reintroduce an allowance here -- model
+    the field instead.
     """
     src = inspect.getsource(_root_sigma_scale)
     reads = {
@@ -94,25 +100,21 @@ def test_root_q_scale_covers_every_field_the_real_transform_reads() -> None:
         and node.value.id == "cfg"
     }
     known = set(SearchShape.__dataclass_fields__)
-    # `q_visit_floor` is read by the real transform and is NOT a SearchShape
-    # field. That is tolerable ONLY while it is inert; assert the inertness
-    # rather than the absence, so enabling it anywhere fails here.
     unmodelled = reads - known
-    assert unmodelled <= {"q_visit_floor"}, (
+    assert unmodelled == set(), (
         f"_root_sigma_scale now reads {sorted(unmodelled)}, which SearchShape "
         "does not model: the probe's q_scale column would silently describe a "
         "different transform than the search runs"
     )
-    assert GumbelConfig().q_visit_floor < 0.0, (
-        "q_visit_floor is no longer inert by default; SearchShape.root_q_scale "
-        "does not implement its branch and must be extended"
-    )
+    # And the deleted trio must not come back through a config either: a yaml
+    # key nothing reads is this repo's signature defect.
     root = Path(__file__).resolve().parents[1] / "configs"
-    hits = [
-        p.name for p in sorted(root.glob("*.yaml"))
-        if "q_visit_floor" in p.read_text(encoding="utf-8")
-    ]
-    assert hits == [], f"configs now set q_visit_floor: {hits}"
+    for gone in ("q_visit_floor", "q_visit_exp:", "q_global_scale"):
+        hits = [
+            p.name for p in sorted(root.glob("*.yaml"))
+            if gone in p.read_text(encoding="utf-8")
+        ]
+        assert hits == [], f"configs set the deleted knob {gone!r}: {hits}"
 
 
 def test_live_selfplay_shape_is_a_linear_root_and_play_is_log() -> None:

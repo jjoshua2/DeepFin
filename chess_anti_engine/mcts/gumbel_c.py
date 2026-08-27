@@ -180,6 +180,89 @@ def reset_duplicate_stats() -> None:
     global _dup_rows, _dup_dupes, _dup_calls, _dup_seen, _dup_pad
     _dup_rows = _dup_dupes = _dup_calls = _dup_seen = _dup_pad = 0
 
+
+# The former GumbelConfig.q_visit_exp / q_global_scale / q_visit_floor defaults.
+#
+# Those three DESCENT value-transform knobs were deleted (never promoted, absent
+# from every config and from PLAY_SEARCH_DEFAULTS). The .c was deliberately NOT
+# touched -- editing it would make the next `build_production_extensions.py` a
+# silent deploy -- so `start_gumbel_sims` still takes all three as optional
+# positional arguments, and the arguments AFTER them (halving_div, c_visit_root,
+# c_scale_root, q_visit_exp_root, vloss_mode) are live. They therefore have to be
+# passed positionally, and these are the values that make the C search identical
+# to the pre-deletion default search:
+#
+#   q_visit_exp   1.0   linear max_visit term  (`_mcts_tree.c` mv_term arm)
+#   q_global_scale  0   descent scales by the LOCAL node's max_visit
+#   q_visit_floor -1.0  legacy coupled floor c_scale*(c_visit + mv_term)
+#
+# They are also exactly the C's OWN declared defaults for those parameters
+# (`_mcts_tree.c` MCTSTree_start_gumbel_sims), so the two sides cannot drift
+# apart silently: if the C defaults ever move, the literals here still pin the
+# search this repo measured.
+_DELETED_Q_VISIT_EXP = 1.0
+_DELETED_Q_GLOBAL_SCALE = 0
+_DELETED_Q_VISIT_FLOOR = -1.0
+
+# The trailing positional block of `start_gumbel_sims`, after `enc_buf`:
+#   vloss_weight, target_batch, input_history_mode, rel_buf,
+#   q_visit_exp, q_global_scale, q_visit_floor,
+#   halving_div, c_visit_root, c_scale_root, q_visit_exp_root, vloss_mode
+_StartGumbelTrailingArgs = tuple[
+    int, int, int, NDArray[np.uint8] | None,
+    float, int, float,
+    int, float, float, float, int,
+]
+
+
+def _start_gumbel_trailing_args(
+    *,
+    cfg: GumbelConfig,
+    vloss_weight: int,
+    target_batch: int,
+    vloss_mode: int,
+    rel_buf: NDArray[np.uint8] | None,
+) -> _StartGumbelTrailingArgs:
+    """The twelve trailing positional args both `start_gumbel_sims` sites pass.
+
+    ⚑ ONE definition on purpose, and the duplication it replaces is why.
+    `run_gumbel_root_many_c` starts the C state machine from TWO places -- the
+    pipelined 2-group path (`_trees[g].start_gumbel_sims`) and the sequential
+    path (`tree.start_gumbel_sims`) -- and the block is twelve positional
+    arguments, three of which are the deleted descent q-knobs pinned at their
+    former defaults (see the `_DELETED_Q_*` note above) while the rest are live.
+    A dropped or reordered argument silently shifts every one that follows.
+
+    The two sites cannot be covered by one spy when they are written out twice:
+    a spy is installed by passing `tree=`, and passing `tree=` is exactly what
+    turns the pipeline OFF (see the F5 tree-carry guard above), so a spy tree
+    can only ever reach the sequential site. The group site is NOT dead code in
+    that regime -- `selfplay/match.py` and `scripts/search_gain_probe.py` both
+    call with no `tree=`, so an async evaluator plus >= 64 boards takes the
+    pipeline. Building the tuple in one place makes a single observation of the
+    sequential site cover both by construction.
+    """
+    return (
+        int(vloss_weight),
+        int(target_batch),
+        c_input_history_mode(cfg.input_history_encoding),
+        rel_buf,
+      # The three deleted descent q-knobs, pinned at the exact values their
+      # GumbelConfig defaults carried (q_visit_exp 1.0 = linear, q_global_scale
+      # 0 = local max_visit, q_visit_floor -1.0 = the legacy coupled floor).
+      # The C still accepts them as optional positional args, and the args
+      # AFTER them are live, so they must be passed rather than omitted.
+        _DELETED_Q_VISIT_EXP,
+        _DELETED_Q_GLOBAL_SCALE,
+        _DELETED_Q_VISIT_FLOOR,
+        int(cfg.halving_div),
+        float(cfg.c_visit_root),
+        float(cfg.c_scale_root),
+        float(cfg.q_visit_exp_root),
+        int(vloss_mode),
+    )
+
+
 # Minimum compiled-extension ABI the C search path requires. ABI 2 added the
 # start_gumbel_sims c_scale_root/q_visit_exp_root args; calling an older compiled
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
@@ -243,12 +326,35 @@ def _mark_legal_bf16_temp_warned() -> None:
     _LEGAL_BF16_TEMP_WARNED = True
 
 
-# Audit W2. Counts reused-root candidates rejected because their child set did
-# not cover the actions we were about to search. Process-cumulative so a run can
-# be asked "did this ever fire?" — a guard nobody can observe is a guard nobody
-# knows is dead. Read with root_coverage_miss_count().
+# The reuse gate rejects for two reasons that must NOT share a counter, because
+# one is an alarm and the other is routine bookkeeping:
+#
+#   * MISSING ACTION (audit W2, the original event) — the carried root's child
+#     set does not contain something this search is about to look at. That means
+#     the tree disagrees with the rules about the position it is sitting on;
+#     something upstream changed and it needs a human. Counted in
+#     `_ROOT_COVERAGE_MISSES`, read with `root_coverage_miss_count()`.
+#   * NARROWED SUPPORT — every action IS present, but the carried root ALSO
+#     holds children this search has deliberately excluded (winning-root
+#     terminal-draw prune, or `allowed_root_indices_batch`/`searchmoves`). The
+#     tree is fine; the search simply asked a narrower question than the ply that
+#     built the root. This fires as a matter of course in normal selfplay, so
+#     folding it into the alarm would bury a corruption signal under routine
+#     traffic. Counted in `_ROOT_NARROWED_REBUILDS`, read with
+#     `root_support_narrowed_count()`.
+#
+# Both are process-cumulative so a run can be asked "did this ever fire?" — a
+# guard nobody can observe is a guard nobody knows is dead.
+#
+# `_ROOT_COVERAGE_MISSES`, its accessor and the `root_coverage_miss=` token in
+# the operator line below keep their names AND their original meaning: they are
+# the greppable identity of the W2 alarm in shipped selfplay/UCI logs and in the
+# ledger's W2 entry. The narrowed case is what is NEW, so it gets the new name
+# rather than diluting the old one.
 _ROOT_COVERAGE_MISSES = 0
 _ROOT_COVERAGE_WARNED = False
+_ROOT_NARROWED_REBUILDS = 0
+_ROOT_NARROWED_WARNED = False
 
 
 def _warn_root_coverage_miss() -> None:
@@ -257,21 +363,51 @@ def _warn_root_coverage_miss() -> None:
     if not _ROOT_COVERAGE_WARNED:
         _ROOT_COVERAGE_WARNED = True
         _log.warning(
-            "gumbel: discarded a reused root whose child set did not cover the "
-            "search actions (audit W2); rebuilding the root. Further "
-            "occurrences are counted, not logged."
+            "gumbel: discarded a reused root whose child set was MISSING an "
+            "action this search needs (audit W2); rebuilding the root. The tree "
+            "disagrees with the position's legal moves — something upstream "
+            "changed. Further occurrences are counted, not logged."
+        )
+
+
+def _warn_root_support_narrowed() -> None:
+    global _ROOT_NARROWED_REBUILDS, _ROOT_NARROWED_WARNED
+    _ROOT_NARROWED_REBUILDS += 1
+    if not _ROOT_NARROWED_WARNED:
+        _ROOT_NARROWED_WARNED = True
+        _log.warning(
+            "gumbel: rebuilt a carried root because this search NARROWED its "
+            "root support below the carried expansion (winning-root draw prune, "
+            "or searchmoves). Routine, not a fault: reusing the wider root would "
+            "let an excluded child skew the halving transform of the included "
+            "ones. Cost is one ply of tree carry. Further occurrences are "
+            "counted, not logged."
         )
 
 
 def root_coverage_miss_count() -> int:
-    """Reused roots rejected by the coverage check since process start."""
+    """Reused roots rejected for MISSING an action, since process start (W2 alarm)."""
     return _ROOT_COVERAGE_MISSES
 
 
-# Operator surface for the two audit-W1/W2 guards. A counter no production path
+def root_support_narrowed_count() -> int:
+    """Carried roots rebuilt because this search narrowed its support (routine)."""
+    return _ROOT_NARROWED_REBUILDS
+
+
+# Operator surface for the audit-W1/W2 guards. A counter no production path
 # reads is the same defect the guards exist to fix — a value accepted and then
-# silently ignored — so the shared C-path entry point emits a line whenever
-# either guard has fired since the last report.
+# silently ignored — so the shared C-path entry point emits a line when a guard
+# has fired since the last report.
+#
+# ⚑ Only the two ALARMS re-trigger the line: `tt_donor_reject` and
+# `root_coverage_miss`. `root_support_narrowed` is routine and, on a winning-root
+# selfplay position, monotonically increasing — re-printing on it would emit a
+# line every 60 s forever and train every operator to ignore this message, which
+# is how the alarms would get lost. It is announced ONCE (the first time it
+# leaves zero) and thereafter only rides along in whatever an alarm prints, plus
+# the one-shot WARNING from `_warn_root_support_narrowed` and
+# `root_support_narrowed_count()` for anyone who asks.
 #
 # stderr, NOT stdout: this path is also the UCI engine's search, whose stdout is
 # the protocol channel; an unsolicited line there desynchronises the GUI. Both
@@ -284,7 +420,7 @@ def root_coverage_miss_count() -> int:
 # compare, and the counters are not even read until it elapses.
 _TT_HEALTH_INTERVAL_S = 60.0
 _tt_health_next_check = 0.0
-_tt_health_reported = (0, 0)
+_tt_health_reported = (0, 0, 0)
 
 
 def _report_guard_health() -> None:
@@ -298,17 +434,62 @@ def _report_guard_health() -> None:
         reject = int(_mcts_tree_ext.tt_stats()["reject"])
     except (AttributeError, KeyError, TypeError):
         return  # pre-fix .so; the ABI guard above already covers that case
-    current = (reject, _ROOT_COVERAGE_MISSES)
-    if current == (0, 0) or current == _tt_health_reported:
+    current = (reject, _ROOT_COVERAGE_MISSES, _ROOT_NARROWED_REBUILDS)
+    alarms_moved = current[:2] != (0, 0) and current[:2] != _tt_health_reported[:2]
+    narrowed_first_seen = current[2] > 0 and _tt_health_reported[2] == 0
+    if not (alarms_moved or narrowed_first_seen):
         return
     _tt_health_reported = current
     print(
         f"[mcts] search guards FIRED since process start: "
-        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]}. "
-        "tt_donor_reject>0 means the transposition key no longer implies the "
-        "legal move set (audit W1); root_coverage_miss>0 means a carried tree "
-        "root was discarded (audit W2). Neither corrupts the search — both mean "
-        "something upstream changed.",
+        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]} "
+        f"root_support_narrowed={current[2]}. "
+        "ALARMS — tt_donor_reject>0 means the transposition key no longer "
+        "implies the legal move set (audit W1); root_coverage_miss>0 means a "
+        "carried tree root was MISSING an action the search needed (audit W2). "
+        "Neither corrupts the search, but both mean something upstream changed. "
+        "ROUTINE — root_support_narrowed>0 only means searches narrowed their "
+        "own root support (winning-root draw prune, or searchmoves) and the "
+        "carried root was rebuilt over it; that is correct behaviour and its "
+        "only cost is a ply of tree carry. It is reported once, not per "
+        "occurrence.",
+        file=_sys.stderr,
+        flush=True,
+    )
+
+
+# The root sequential-halving SEMANTIC is a compiled constant, and nothing else
+# makes it observable. Merging the repo does not deploy it; rebuilding the .so
+# for ANY unrelated .c change does. `ABI_VERSION` deliberately does not move
+# (see the GSS_HALVING_REV comment in _mcts_tree.c), so without this line a
+# regret-series step or an arena delta caused by the elimination rule changing
+# under a routine rebuild has nothing to attribute it to — the exact
+# "MERGED != DEPLOYED" trap, one level below the source.
+#
+# Announced from the CONSUMER's own parameter: the value comes off the loaded
+# extension module, so the line reports which .so this process is running, not
+# what the checkout says it should be. An .so predating the constant IS the old
+# semantic, hence the default of 1 rather than "unknown".
+#
+# stderr and once per process, for the same reasons as _report_guard_health.
+_GSS_HALVING_REV_LEGACY = 1
+_halving_rev_reported = False
+
+
+def _report_halving_rev() -> None:
+    global _halving_rev_reported
+    if _halving_rev_reported:
+        return
+    _halving_rev_reported = True
+    rev = int(getattr(_mcts_tree_ext, "GSS_HALVING_REV", _GSS_HALVING_REV_LEGACY))
+    rule = (
+        "fresh root_qs (mctx / gumbel.py reference)" if rev >= 2
+        else "running W[root]/N[root] (pre-fix; rebuild the C extension)"
+    )
+    print(
+        f"[mcts] gss_halving_rev={rev} loaded from {_mcts_tree_ext.__file__}: "
+        f"root sequential-halving eliminates against the {rule}. "
+        "Not gating — a stale .so runs, it just searches by the old rule.",
         file=_sys.stderr,
         flush=True,
     )
@@ -323,13 +504,66 @@ def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]
     )
 
 
-def _expanded_root_covers_actions(tree: MCTSTree, root_id: int, actions: np.ndarray) -> bool:
-    if actions.size == 0:
-        return True
+# Verdicts from _classify_expanded_root_support. Ints rather than an Enum: this
+# runs once per board per ply on the search's hot path.
+_ROOT_SUPPORT_EQUAL = 0
+_ROOT_SUPPORT_MISSING_ACTION = 1
+_ROOT_SUPPORT_NARROWED = 2
+
+
+def _classify_expanded_root_support(
+    tree: MCTSTree, root_id: int, actions: np.ndarray,
+) -> int:
+    """How ``root_id``'s child ACTION SET relates to ``actions``, the support this
+    search is about to look at. Reuse requires ``_ROOT_SUPPORT_EQUAL``.
+
+    EQUALITY, not coverage. The predicate this replaced accepted any SUPERSET
+    (``np.isin(actions, child_actions).all()``), on the reading that a carried
+    root with spare children can only help. It cannot: the C halving scorer
+    (``gss_score_and_halve``) derives ``max_visit``, ``total_visits``, the
+    prior-weighted ``weighted_q``/``mixed_value`` and the ``min_q``/``max_q``
+    normalisation from ALL of the root's children, so a child the CURRENT search
+    has deliberately excluded still moves the Q transform every INCLUDED
+    candidate is scored through, and can flip which of them survives sequential
+    halving. Two production paths narrow the root support below the previous
+    ply's expansion — winning-root terminal-draw pruning, and
+    ``allowed_root_indices_batch`` (UCI ``searchmoves``) — and a carried root is
+    exactly the wide expansion those narrowings just walked away from. The
+    improved policy on top is built over the current support only, so accepting
+    the superset leaves the eliminator and the returned target disagreeing about
+    which moves exist.
+
+    The two rejection verdicts are kept apart because they mean opposite things
+    to an operator: ``MISSING_ACTION`` is the W2 alarm (the tree disagrees with
+    the rules), ``NARROWED`` is routine (the search asked a narrower question).
+    A root that is BOTH missing an action and carrying extras reports
+    ``MISSING_ACTION`` — the alarm outranks the bookkeeping.
+
+    ⚑ Scope, so this is not read as more than it is: equality makes the C path
+    agree with the Python reference (``gumbel.py``, which never reuses a tree)
+    about WHICH MOVES EXIST at the root. It does NOT deliver full parity with a
+    fresh root. A reused root still carries the PREVIOUS ply's ``t->prior``
+    values, which ``gss_score_and_halve`` reads for ``weighted_q``, while the
+    Python side rebuilds ``root_priors`` from this ply's evaluation. That
+    divergence is pre-existing, unchanged here, and out of scope.
+
+    Order and visits are irrelevant — only membership. Sorted comparison rather
+    than a two-way ``isin`` so a duplicated child action cannot read as a match
+    on a set basis; both sides are duplicate-free by construction, and n <= 218.
+    """
     child_actions, _visits = tree.get_children_visits(root_id)
-    if child_actions.size < actions.size:
-        return False
-    return bool(np.isin(actions, child_actions).all())
+    if child_actions.size == actions.size and (
+        actions.size == 0
+        or bool(np.array_equal(np.sort(child_actions), np.sort(actions)))
+    ):
+        return _ROOT_SUPPORT_EQUAL
+    if actions.size and not bool(np.isin(actions, child_actions).all()):
+        return _ROOT_SUPPORT_MISSING_ACTION
+    # Every requested action is present and the sets are not equal, so the root
+    # carries extras: this search narrowed its support. (An empty `actions`
+    # against a root with children lands here too, and is narrowing taken to its
+    # limit.)
+    return _ROOT_SUPPORT_NARROWED
 
 
 def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
@@ -500,6 +734,9 @@ def run_gumbel_root_many_c(
   # because this is the choke point EVERY C-path consumer goes through —
   # selfplay, training-time eval and UCI all land on this function.
     _report_guard_health()
+  # Same choke point, for the semantic that has no guard at all: which root
+  # halving rule the LOADED .so implements (see _report_halving_rev).
+    _report_halving_rev()
   # Same reasoning, for the OTHER silent-null shape: a GumbelConfig field this
   # path does not implement. Guarding the dispatch boundary rather than each
   # caller's CLI is the point — the CLI is not what chooses the C path, and a
@@ -834,7 +1071,7 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                # The coverage check runs on EVERY reuse, including selfplay
+                # The support check runs on EVERY reuse, including selfplay
                 # (audit W2). It used to be short-circuited by
                 # `allowed_root_indices_batch is None`, which selfplay always
                 # is — so the only path that carries a tree across plies was
@@ -842,13 +1079,29 @@ def run_gumbel_root_many_c(
                 # child set is missing an action we are about to search makes
                 # tree_gumbel_collect_leaf bail at depth 1 (`child_id < 0`),
                 # silently spending the whole simulation on the root.
-                if tree.is_expanded(rid) and _expanded_root_covers_actions(
-                    tree, rid, legal_idx
-                ):
-                    root_ids[i] = rid
-                    _reused = True
-                elif tree.is_expanded(rid):
-                    _warn_root_coverage_miss()
+                #
+                # It demands EQUALITY, not coverage: `legal_idx` above may have
+                # been NARROWED below the previous ply's expansion, by the
+                # winning-root terminal-draw prune a few lines up or by
+                # `allowed_root_indices_batch`. A carried root still holding the
+                # excluded children feeds their visits and Q into the C halving
+                # scorer's max_visit / mixed_value / min-max normalisation, so a
+                # move this search says does not exist still decides which of the
+                # moves that DO exist survives. See
+                # _classify_expanded_root_support. Either rejection falls through
+                # to the fresh-root build below, which expands exactly
+                # `legal_idx` — the Python reference's semantic for a narrowed
+                # root — but they are counted apart: MISSING is the alarm, and
+                # NARROWED is routine and fires on ordinary winning-root plies.
+                if tree.is_expanded(rid):
+                    _support = _classify_expanded_root_support(tree, rid, legal_idx)
+                    if _support == _ROOT_SUPPORT_EQUAL:
+                        root_ids[i] = rid
+                        _reused = True
+                    elif _support == _ROOT_SUPPORT_MISSING_ACTION:
+                        _warn_root_coverage_miss()
+                    else:
+                        _warn_root_support_narrowed()
 
             if not _reused:
                 rid = tree.add_root(1, float(root_qs[i]))
@@ -987,16 +1240,15 @@ def run_gumbel_root_many_c(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
                 cast(_EncodeBuffer, _enc_bufs[g]),
-                int(vloss_weight), int(target_batch),
-                c_input_history_mode(cfg.input_history_encoding),
-                None, float(cfg.q_visit_exp),
-                1 if cfg.q_global_scale else 0,
-                float(cfg.q_visit_floor),
-                int(cfg.halving_div),
-                float(cfg.c_visit_root),
-                float(cfg.c_scale_root),
-                float(cfg.q_visit_exp_root),
-                int(vloss_mode),
+              # Shared with the sequential site below; see the helper's note --
+              # a spy tree cannot reach THIS call (passing `tree` disables the
+              # pipeline), so the twelve trailing args are built once.
+              # `rel_buf=None`: the pipeline is gated off when
+              # `cfg.compute_relations` is set.
+                *_start_gumbel_trailing_args(
+                    cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
+                    vloss_mode=vloss_mode, rel_buf=None,
+                ),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -1270,17 +1522,13 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), int(vloss_weight), int(target_batch),
-            c_input_history_mode(cfg.input_history_encoding),
-            _rel_buf,
-            float(cfg.q_visit_exp),
-            1 if cfg.q_global_scale else 0,
-            float(cfg.q_visit_floor),
-            int(cfg.halving_div),
-            float(cfg.c_visit_root),
-            float(cfg.c_scale_root),
-            float(cfg.q_visit_exp_root),
-            int(vloss_mode),
+            cast(np.ndarray, _enc_buf),
+          # Same twelve trailing args as the group site above, from the same
+          # helper: this is the only one of the two an argument spy can observe.
+            *_start_gumbel_trailing_args(
+                cfg=cfg, vloss_weight=vloss_weight, target_batch=target_batch,
+                vloss_mode=vloss_mode, rel_buf=_rel_buf,
+            ),
         )
         _t_prepare += _time.perf_counter() - _tp0
 

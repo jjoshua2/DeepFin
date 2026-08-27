@@ -62,7 +62,20 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay.resume")
 
 # Bump whenever the on-disk layout or the meaning of a stored field changes.
 # A mismatch is a discard-with-reason, never a best-effort partial decode.
-RESUME_FORMAT_VERSION = 1
+# v3: ply_index is absolute game ply on BOTH C and Python play paths. v2 Python
+# fallback files stored move-stack-relative plies, so accepting one after this
+# rollout could mix relative old records with absolute newly-recorded ones.
+# Rejecting v2 costs at most one session's suspended games once at deploy and
+# makes the semantic boundary explicit rather than trying to infer provenance.
+#
+# v2 (prior_top1_index / prior_top1_prob): four new per-record columns. ⚑ The
+# bump is NOT load-bearing against a crash: forcing the gate to accept a v1 file
+# yields a graceful `unreadable` discard, because `decode_game` is called under
+# the broad `except Exception` below (see the `report.note("unreadable")` arm)
+# and `opt_scalar`'s KeyError lands there. The bump is still right, for the
+# weaker and honest reason that `version_mismatch` names the actual cause where
+# `unreadable` would misattribute it.
+RESUME_FORMAT_VERSION = 3
 
 # Suffix for a durable per-game state file. One file per game keeps a partial
 # write (worker killed mid-suspend) contained to that single game: the npz
@@ -377,9 +390,9 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
         # covers the tail after the last record, so a move list truncated or
         # extended at the end cannot pass.
         "final_pos_hash": int(state.cboards[i].zobrist_hash),
-        # On the C play path a record's ply_index IS the CBoard ply, so the
-        # replay can check it. The Python fallback counts move_stack entries
-        # instead, which starts from the opening's own stack — not comparable.
+        # Keep the producing execution path in the header as a conservative
+        # compatibility gate. As of v3 ply_index itself is absolute on BOTH
+        # paths; the flag no longer changes the meaning of that field.
         "has_c_ply": bool(state.has_c_ply),
     }
 
@@ -412,6 +425,10 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
     arrays["sf_played_move_index_present"], arrays["sf_played_move_index"] = pres, vals
     pres, vals = _opt_int([r.sf_played_rank for r in records])
     arrays["sf_played_rank_present"], arrays["sf_played_rank"] = pres, vals
+    pres, vals = _opt_int([r.prior_top1_index for r in records])
+    arrays["prior_top1_index_present"], arrays["prior_top1_index"] = pres, vals
+    pres, vals = _opt_float([r.prior_top1_prob for r in records])
+    arrays["prior_top1_prob_present"], arrays["prior_top1_prob"] = pres, vals
 
     f32 = np.dtype(np.float32)
     for name, rows in (
@@ -590,13 +607,10 @@ def should_resume_game(
         return "version_mismatch"
     if str(meta.get("compat_fingerprint") or "") != str(compat_fingerprint):
         return "config_mismatch"
-    # `ply_index` means CBoard.ply on the C play path but len(move_stack) on
-    # the Python fallback — different origins for a seeded opening. A session
-    # on the OTHER convention cannot validate the stored values (the replay's
-    # ply check is keyed off the file's own flag), and finalize keys its sf_p0
-    # one-ply shift off ply_index, so reinterpreting the index would silently
-    # shift a teacher. Refuse instead. ``None`` skips the check (header-only
-    # callers that have no session).
+    # The v3 ply convention is absolute on both paths, but keep execution-path
+    # identity pinned conservatively: C and Python paths still differ in how
+    # their live board/history objects are maintained. ``None`` skips the check
+    # for header-only callers that have no session.
     if has_c_ply is not None and bool(meta.get("has_c_ply", False)) != bool(has_c_ply):
         return "ply_convention_mismatch"
     # An EMPTY id must refuse, not match. `"" == ""` would make the trial guard
@@ -733,6 +747,10 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
     sf_move_index = opt_scalar("sf_move_index", np.dtype(np.int64))
     sf_played_move_index = opt_scalar("sf_played_move_index", np.dtype(np.int64))
     sf_played_rank = opt_scalar("sf_played_rank", np.dtype(np.int64))
+    # Captured from the ply's logits, so unlike x / relations it cannot be
+    # recomputed from the replayed board -- it must round-trip or it is lost.
+    prior_top1_index = opt_scalar("prior_top1_index", np.dtype(np.int64))
+    prior_top1_prob = opt_scalar("prior_top1_prob", np.dtype(np.float64))
 
     out: list[dict[str, Any]] = []
     for r in range(n):
@@ -763,6 +781,8 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
             "sf_move_index": sf_move_index[r],
             "sf_played_move_index": sf_played_move_index[r],
             "sf_played_rank": sf_played_rank[r],
+            "prior_top1_index": prior_top1_index[r],
+            "prior_top1_prob": prior_top1_prob[r],
         })
     return out
 
@@ -850,7 +870,6 @@ def _replay_and_reencode(
     game = state.game
     want_lc0_root_alt = bool(game.record_lc0_root_input) and not _uses_lc0_root(game)
     want_relations = bool(game.record_relations)
-    check_ply = bool(meta.get("has_c_ply"))
 
     board = opening_board.copy()
     cb = _CBoard.from_board(opening_board)
@@ -870,10 +889,13 @@ def _replay_and_reencode(
                     f"record {r} at offset {k}: the replayed position is not the "
                     "one this record was taken at",
                 )
-            if check_ply and int(cb.ply) != int(f["ply_index"]):
-                # ply_index is not derivable from the moves — finalize keys its
-                # sf_p0 one-ply shift off it, so a wrong value silently shifts
-                # a teacher rather than failing.
+            # v3 defines ply_index as absolute game ply on every play path, so
+            # every resumed file must agree with the replayed CBoard. Old v2
+            # Python-relative files are rejected by the version gate above.
+            if int(cb.ply) != int(f["ply_index"]):
+                # ply_index is not derivable from the moves alone — finalize
+                # keys teacher shifts and horizon joins off it, so a wrong value
+                # silently shifts supervision rather than failing.
                 raise ResumeStateError(
                     "ply_index_mismatch",
                     f"record {r}: stored ply {f['ply_index']} != replayed {cb.ply}",
@@ -984,6 +1006,8 @@ def _rebuild_record(
     rec.sf_played_move_index = f["sf_played_move_index"]
     rec.sf_played_rank = f["sf_played_rank"]
     rec.sf_played_regret = f["sf_played_regret"]
+    rec.prior_top1_index = f["prior_top1_index"]
+    rec.prior_top1_prob = f["prior_top1_prob"]
     rec.sf_legal_mask = f["sf_legal_mask"]
     rec.is_sf_refute_opp = bool(f["is_sf_refute_opp"])
     return rec
@@ -1090,15 +1114,93 @@ def _resumable_slots(state: SelfplayState) -> list[int]:
 # session's games on exactly the leased workers it was built for, so these
 # files are put back instead. Expiry stays bounded: `stale` (counted) and the
 # sweep's 4x backstop remain the deleting paths.
+#
+# `ply_convention_mismatch` belongs here for the same reason and was missing
+# it: `should_resume_game` raises it when the FILE's `has_c_ply` differs from
+# THIS process's, and `has_c_ply` is a property of whether the local build
+# imported `_mcts_tree.batch_process_ply` — a fact about this session, not a
+# defect of the game. A worker whose extension failed to import (or a fleet
+# mid-rebuild) would otherwise DELETE every game a C-path worker suspended.
 _PRESERVE_FILE_REASONS = frozenset(
-    {"no_trial_id", "trial_mismatch", "config_mismatch"},
+    {"no_trial_id", "trial_mismatch", "config_mismatch",
+     "ply_convention_mismatch"},
 )
+
+
+def initial_resume_counts() -> dict[str, int]:
+    """The worker's cross-session resume tally, zeroed.
+
+    One definition instead of three literals. The worker built this dict inline
+    and two tests built their own copies of it, so adding ``preserved`` broke
+    both doubles with a ``KeyError`` -- a drift the type checker cannot see,
+    because they are plain ``dict[str, int]``. A test double that silently
+    lacks a key the production code writes is the same class of defect this
+    module's counters exist to catch.
+    """
+    return {
+        "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+        "preserved": 0,
+    }
 
 # A state file this far past ``max_age_s`` is garbage-collected without being
 # read. The multiple matters: an expired GAME is meant to be discarded through
 # should_resume_game (so it is counted with a reason), and only a directory
 # nobody is draining should reach the backstop.
 _SWEEP_AGE_MULTIPLE = 4.0
+
+
+def count_unclaimed_resume_files(in_dir: Path) -> int:
+    """How many suspended games are still sitting in ``in_dir``, unclaimed.
+
+    ⚑ THE LOSS NO COUNTER IN THIS MODULE CAN SEE. ``resume_inflight_games``
+    walks ``sorted(glob(...))`` and breaks at ``report.resumed >= len(slots)``:
+    it is DEMAND-driven, bounded by the slots the restarting threads present.
+    When suspend wrote more games than the new session ever asks for, the
+    surplus is never claimed, never decoded, and therefore never reaches
+    ``ResumeReport.note`` or ``note_preserved``. ``discarded`` counts files the
+    resume EXAMINED and rejected; ``suspend_skipped`` counts games suspend
+    failed to write. A file that nothing looked at is outside both, so both
+    report a truthful zero.
+
+    The stranded files are NOT picked up later. ``resume_inflight_games`` runs
+    from ``on_state_ready``, which fires once per selfplay SESSION -- and a
+    session is the worker's whole continuous run, not one shard. (Verified on
+    the live arm-B worker: one ``_dispatch_selfplay_one_shard`` session, 32
+    resume calls, all inside three seconds of worker start, then nothing for the
+    next four hours while ~50 iterations of shards went out.) So the next resume
+    attempt is the next worker START. By then the files are past
+    ``DEFAULT_MAX_AGE_S`` (6h) and ``should_resume_game`` rejects them as stale;
+    ``sweep_orphan_state_files`` deletes them at
+    ``DEFAULT_MAX_AGE_S * _SWEEP_AGE_MULTIPLE`` (24h). Between 6h and 24h they
+    are examined and counted ``stale`` rather than silently dropped.
+
+    MEASURED (2026-08-14 arm-B pause/resume): suspend 3046 games across four
+    workers, resume restored 3017, and worker_02's directory held exactly 29
+    ``*.game.npz`` afterwards -- the whole gap, in one worker, with
+    ``suspend_skipped=0`` and ``discarded=0`` everywhere. Still all 29 there
+    3h50m later.
+
+    ``.claimed`` and ``.tmp`` are excluded by the glob suffix: those belong to
+    a resume or suspend that was interrupted, which is
+    ``sweep_orphan_state_files``' business, not this counter's.
+
+    ⚑ TWO THINGS THIS NUMBER IS NOT.
+
+    It is not stranded-only: files rejected for a reason in
+    ``_PRESERVE_FILE_REASONS`` are deliberately renamed BACK into ``in_dir`` and
+    match this glob. A worker that preserved 3 and stranded 0 counts 3 here.
+    Callers must report ``ResumeReport.preserved`` alongside it -- the count is
+    only interpretable as a pair.
+
+    It is not a settled reading. Callers run it per selfplay thread against a
+    shared directory, and the sample is separated from its emission by a
+    contended lock, so ANY single reading -- including the last one logged --
+    can be stale in either direction. Treat a nonzero value as "go look at the
+    directory", not as a measurement.
+    """
+    if not in_dir.is_dir():
+        return 0
+    return sum(1 for _ in in_dir.glob(f"*{RESUME_FILE_SUFFIX}"))
 
 
 def sweep_orphan_state_files(
@@ -1269,7 +1371,9 @@ __all__ = [
     "ResumeReport",
     "ResumeStateError",
     "SuspendReport",
+    "count_unclaimed_resume_files",
     "decode_game",
+    "initial_resume_counts",
     "resume_inflight_games",
     "should_resume_game",
     "suspend_inflight_games",

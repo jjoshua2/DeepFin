@@ -76,7 +76,7 @@ def floor_loss(
     )
     deficit, binds = sf_policy_floor_deficit(
         probs, regret, legal, played_target, params=params,
-    )
+    )[:2]
     mask = torch.ones(regret.shape[0]) if have is None else have.to(torch.float32)
     denom = mask.sum().clamp_min(1.0)
     loss = (deficit * mask).sum() / denom
@@ -233,7 +233,12 @@ def test_illegal_moves_are_excluded_even_at_an_absurd_delta() -> None:
     regret = torch.tensor([[R(300), R(0), R(10), R(20), R(30), R(40)]])
     legal = torch.tensor([[True, False, False, True, True, True]])
     logits = torch.zeros(1, 6)
-    loss, _, _ = floor_loss(regret, logits, delta_cp=CAP, legal=legal, tau=0.5)
+    # ⚑ tau is 0.3, NOT 0.5. This fixture admits THREE members, and at 0.5 the
+    # requested mass would be 1.5 -- an infeasible constraint set that the
+    # feasibility cap now truncates (see `sf_policy_floor_deficit`). The cap has
+    # its own tests; letting it fire here would mean this one silently measured
+    # truncation instead of legality. 3 * 0.3 = 0.9 <= 1, so it does not fire.
+    loss, _, _ = floor_loss(regret, logits, delta_cp=CAP, legal=legal, tau=0.3)
     # Moves 1 and 2 carry the two LOWEST regrets in the row (0cp and 10cp) and
     # are illegal, so they are the ones an unguarded argmin or an unguarded
     # window would seize on -- and they sit at p == 0, so admitting either shows
@@ -243,8 +248,8 @@ def test_illegal_moves_are_excluded_even_at_an_absurd_delta() -> None:
     assert float(p[2]) == 0.0
     # legal = {0, 3, 4, 5} at p = 0.25 each; ours = 0 (300cp); top1 = 3 (20cp);
     # the window is wide open, so F = {3, 4, 5} -- all three better than ours.
-    assert loss == pytest.approx(3 * float(torch.relu(0.5 - p[3])), abs=1e-6)
-    assert loss == pytest.approx(0.75, abs=1e-6)
+    assert loss == pytest.approx(3 * float(torch.relu(0.3 - p[3])), abs=1e-6)
+    assert loss == pytest.approx(0.15, abs=1e-6)
 
 
 def test_top1_can_carry_its_own_floor() -> None:
@@ -459,11 +464,19 @@ def test_the_guard_warns_when_tau_falls_below_the_inclusion_guarantee() -> None:
     silently revoking the guarantee is the whole failure this warns about.
     topk 4 -> guarantee 0.25, above the default tau of 0.15.
     """
-    with pytest.warns(RuntimeWarning, match="BELOW the root-search inclusion guarantee"):
+    with pytest.warns(RuntimeWarning, match="BELOW the deterministic prior-rank threshold") as rec:
         SfPolicyFloorParams.resolve(gumbel_topk=4)
-    # And the direct route: an explicit sub-guarantee tau at the production width.
+    # And the direct route: an explicit sub-threshold tau at the production width.
     with pytest.warns(RuntimeWarning, match="gumbel_topk=16"):
         SfPolicyFloorParams.resolve(tau=0.02, gumbel_topk=16)
+
+    # ⚑ The WORDING is the contract, not incidental prose. `40c937f24` rewrote this
+    # message precisely because "inclusion guarantee" claimed something the sampler
+    # does not provide (F2). Matching only "BELOW the ..." would let the guarantee
+    # language creep back in the next sentence, so pin the disclaimer too.
+    msg = str(rec[0].message)
+    assert "No tau guarantees admission under Gumbel" in msg, msg
+    assert "inclusion guarantee" not in msg, msg
 
 
 def test_the_guard_fires_on_tau_played_the_parameter_it_exists_for() -> None:
@@ -1139,7 +1152,7 @@ def test_the_reported_inclusion_claim_covers_tau_top1(tmp_path, capsys) -> None:
     ]
     assert len(line) == 1
     assert "tau_top1=0.001" in line[0]
-    assert "guarantees_inclusion=False" in line[0]
+    assert "at_or_above_deterministic_rank_tau=False" in line[0]
 
 
 def test_the_reported_inclusion_claim_is_true_at_the_shipped_defaults(
@@ -1152,7 +1165,7 @@ def test_the_reported_inclusion_claim_is_true_at_the_shipped_defaults(
         if ln.startswith("[trainer] sf_policy_floor w=")
     ]
     assert len(line) == 1
-    assert "guarantees_inclusion=True" in line[0]
+    assert "at_or_above_deterministic_rank_tau=True" in line[0]
 
 
 def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> None:
@@ -1213,3 +1226,668 @@ def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> No
             # either the whole legal set is kept (n_legal <= m) or m == topk.
             assert len(cands) == min(topk, n_legal), (sims, n_legal, len(cands))
     assert search_inclusion_guarantee_tau(topk) == pytest.approx(1.0 / topk)
+
+
+def test_inclusion_under_production_noise_is_not_a_guarantee() -> None:
+    """`1/topk` is a RANK threshold, not a probability of 1 under real noise.
+
+    Codex review of PR #448, F2: the neighbouring inclusion test pins the
+    candidate-set CARDINALITY with `add_noise=False, gumbel_scale=0.0`, which is
+    true but cannot see the claim that matters. Production ranks
+    `gumbel_scale * Gumbel + log(prior)` with `gumbel_scale: 1.0`, and Gumbel
+    noise has unbounded support, so a move at exactly `p = 1/topk` can always be
+    displaced.
+
+    This test exists to FALSIFY the word "guarantee", so it asserts the drop is
+    real rather than asserting it away. The peaked-tail column is included as
+    the control: it is why the original 3000-row production measurement read
+    1.0000 and why that reading was about the prior distribution, not the
+    sampler.
+    """
+    import numpy as np
+
+    from chess_anti_engine.mcts.gumbel import _select_top_m_with_gumbel
+
+    import yaml as _yaml
+
+    topk = DEFAULT_GUMBEL_TOPK
+    tau = search_inclusion_guarantee_tau(topk)
+    # ⚑ READ THE NOISE SCHEDULE FROM THE CONFIG, never hardcode it. The first
+    # version of this test asserted at 1.0 -> 0.5 because that is what the LIVE
+    # branch runs; this branch's own yaml says 0.75 -> 0.0, so the numbers it
+    # called "production" were another tree's. A hardcoded schedule also goes
+    # stale the next time the config moves.
+    _cfg = _yaml.safe_load(Path("configs/pbt2_small.yaml").read_text(encoding="utf-8"))
+    scale_hi = float(_cfg["selfplay"]["gumbel_scale"])
+    scale_lo = float(_cfg["selfplay"]["gumbel_scale_after"])
+
+    def inclusion(n_legal: int, scale: float, *, peaked: bool) -> float:
+        rng = np.random.default_rng(12345)
+        hits = 0
+        trials = 2000
+        for _ in range(trials):
+            pri = np.empty(n_legal, dtype=np.float64)
+            pri[0] = tau
+            if peaked:
+                k = min(topk - 1, n_legal - 1)
+                pri[1:1 + k] = tau - 1e-6
+                rest = n_legal - 1 - k
+                if rest > 0:
+                    pri[1 + k:] = max(1e-9, 1.0 - tau - k * (tau - 1e-6)) / rest
+            else:
+                pri[1:] = (1.0 - tau) / (n_legal - 1)
+            pri = pri / pri.sum()
+            cands, _ = _select_top_m_with_gumbel(
+                legal=np.arange(n_legal), pri=pri, sim_budget=256, topk=topk,
+                add_noise=True, gumbel_scale=scale, rng=rng,
+            )
+            hits += int(0 in cands)
+        return hits / trials
+
+    # THE CLAIM UNDER TEST: with the tail spread evenly, the "guaranteed" move
+    # is dropped a large fraction of the time at the production noise scale.
+    # THE CLAIM UNDER TEST: at the config's OWN pre-decay noise scale, a move at
+    # exactly 1/topk with a broad tail is dropped a large fraction of the time.
+    flat_40 = inclusion(40, scale_hi, peaked=False)
+    assert flat_40 < 0.95, (scale_hi, flat_40)
+
+    # RIG CHECK: inclusion must be monotone in the noise scale -- a
+    # non-monotone result would mean the harness, not the sampler, is producing
+    # the number.
+    #
+    # ⚑⚑ IT MUST BE MEASURED BETWEEN TWO NONZERO SCALES. The first version of
+    # this check compared against `gumbel_scale_after`, which is 0.0 on this
+    # branch, so it reduced to `1.0 >= 0.819` -- true for ANY sampler, including
+    # one that ignores the scale entirely, because at zero noise the answer is 1
+    # by construction rather than by measurement. A rig check that its own rig
+    # cannot fail is not a rig check. So the monotone step below runs between
+    # `scale_hi` and HALF of it: both carry real Gumbel noise, and a sampler
+    # that ignored `gumbel_scale` would return the same number twice and fail.
+    assert scale_hi > 0.0, (
+        "the config's pre-decay noise scale is 0.0, so this whole test measures "
+        "a noiseless sampler and cannot falsify the word 'guarantee'"
+    )
+    scale_mid = scale_hi / 2.0
+    flat_mid = inclusion(40, scale_mid, peaked=False)
+    assert flat_mid > flat_40, (scale_hi, flat_40, scale_mid, flat_mid)
+    assert flat_mid < 1.0, (
+        "halving the noise already reaches certain admission, so the step above "
+        f"is measuring saturation rather than the scale: {scale_mid}, {flat_mid}"
+    )
+    # ENDPOINT, not the monotone claim: the post-decay scale must lose no more
+    # than the pre-decay one. At `gumbel_scale_after: 0.0` this is exactly 1.0.
+    assert inclusion(40, scale_lo, peaked=False) >= flat_40
+
+    # CONTROL: a peaked tail -- what real production priors look like -- keeps
+    # every draw, which is why the 3000-row production reading was 1.0.
+    assert inclusion(40, scale_hi, peaked=True) == 1.0
+
+
+# --------------------------------------------------------------------------
+# Feasibility. The floors are simultaneous lower bounds on ONE distribution.
+# --------------------------------------------------------------------------
+
+
+def _seven_member_row() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """A row whose UNCAPPED floor set asks for more probability than exists.
+
+    Ten actions. 0..6 are legal and inside the 20cp window, ordered by regret;
+    7 is our own (bad) pick at 300cp; 8 and 9 are unsurfaced. Our argmax is 7,
+    so the strict `regret < our_r` clause admits all seven of 0..6 -- and at
+    `tau = 0.15` that is a requested mass of 1.05, which no distribution can
+    satisfy.
+
+    The COLLAR is deliberately pointed at move 6, the WORST-regret member and
+    therefore the first one the cap drops. That is the case that separates
+    "shrink the set" from "shrink the set correctly": the collar is structural
+    and must survive at `tau_played` even when its upgrade to `tau` does not.
+    """
+    regret = torch.tensor(
+        [[R(0), R(2), R(4), R(6), R(8), R(10), R(12), R(300), 0.55, 0.55]],
+    )
+    legal = torch.ones(1, 10, dtype=torch.bool)
+    # Our argmax is 7 by a wide margin; the rest are uniform and far below any
+    # tau, so every member of F binds and the deficit cannot be cleared by luck.
+    probs = torch.softmax(torch.tensor([[0.0] * 7 + [8.0, 0.0, 0.0]]), dim=-1)
+    played = torch.zeros(1, 10)
+    played[0, 6] = 1.0
+    return regret, legal, probs.detach(), played
+
+
+def _bound_members(
+    probs: torch.Tensor,
+    regret: torch.Tensor,
+    legal: torch.Tensor,
+    played: torch.Tensor | None,
+    params: SfPolicyFloorParams,
+) -> list[int]:
+    """Which moves the loss actually floored, read off its own gradient.
+
+    d(deficit)/dp is exactly -1 on a move whose floor bound and 0 elsewhere, so
+    this identifies the APPLIED set through the production code path. It is
+    deliberately not a second implementation of the admission rule: a
+    re-derivation here would agree with a wrong loss and pass.
+    """
+    p = probs.clone().requires_grad_(True)
+    out = sf_policy_floor_deficit(p, regret, legal, played, params=params)
+    (grad,) = torch.autograd.grad(out.deficit.sum(), [p])
+    return [int(i) for i in (grad[0] != 0).nonzero().flatten()]
+
+
+def test_the_floor_set_is_capped_to_a_feasible_probability_budget() -> None:
+    """⚑⚑ Seven members at tau 0.15 request 1.05. The cap makes the set feasible.
+
+    Without a cap this row carries a residual deficit at EVERY step for the
+    whole run -- not merely a strong penalty, an EMPTY constraint set -- so the
+    gradient can never resolve and is permanently uninformative.
+    """
+    regret, legal, probs, played = _seven_member_row()
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=1.0 / 16)
+    out = sf_policy_floor_deficit(probs, regret, legal, played, params=params)
+
+    # What the UNCAPPED rule asked for: seven members, 7 * 0.15.
+    assert float(out.member_count_raw) == 7.0
+    assert float(out.requested_mass) == pytest.approx(1.05, abs=1e-6)
+    assert float(out.requested_mass) > 1.0, "setup: the fixture must be infeasible"
+    assert float(out.truncated) == 1.0
+
+    # What a distribution can actually carry. Six full-tau members plus the
+    # collar; the seventh member's UPGRADE to tau is what the cap withdrew.
+    assert float(out.applied_mass) <= 1.0
+    assert float(out.applied_mass) == pytest.approx(6 * 0.15 + 1.0 / 16, abs=1e-6)
+    assert float(out.member_count_applied) == 7.0
+    assert float(out.binds) == 1.0
+
+    # WHICH members, which is the design decision itself. Every member of the
+    # window is still floored -- move 6 only because the collar protects it --
+    # and nothing outside the window ever is.
+    assert _bound_members(probs, regret, legal, played, params) == [0, 1, 2, 3, 4, 5, 6]
+
+    # The proof that move 6 is in on the COLLAR and not on tau: switch the
+    # collar off and it is the one member that disappears, and the mass falls by
+    # exactly `tau_played`. So retention among the adaptive members runs in
+    # ascending SF regret -- the six best keep tau, the seventh is demoted.
+    no_collar = SfPolicyFloorParams.resolve(tau=0.15, tau_played=0.0)
+    bare = sf_policy_floor_deficit(probs, regret, legal, played, params=no_collar)
+    assert _bound_members(probs, regret, legal, played, no_collar) == [0, 1, 2, 3, 4, 5]
+    assert float(bare.member_count_applied) == 6.0
+  # ⚑ AND raw MUST STILL READ 7. The whole justification for shipping the pair
+  # is that they can disagree; without this, `member_count_raw = (floors > 0)`
+  # -- i.e. raw silently aliased to applied -- passes every other assertion here
+  # (reviewer mutant M8, PR #448).
+    assert float(bare.member_count_raw) == 7.0
+    assert float(bare.applied_mass) == pytest.approx(6 * 0.15, abs=1e-6)
+    assert float(out.applied_mass) - float(bare.applied_mass) == pytest.approx(
+        1.0 / 16, abs=1e-6,
+    )
+    # top1 is never a candidate for truncation: it sorts first by construction.
+    assert 0 in _bound_members(probs, regret, legal, played, no_collar)
+
+
+def test_a_feasible_row_is_untouched_by_the_cap() -> None:
+    """The cap must be INERT below the budget, or it is a silent global rescale.
+
+    Same fixture, tau low enough that all seven members fit. Requested and
+    applied must agree exactly, and `truncated` must read 0.
+    """
+    regret, legal, probs, played = _seven_member_row()
+    params = SfPolicyFloorParams.resolve(tau=0.12, tau_played=1.0 / 16)
+    out = sf_policy_floor_deficit(probs, regret, legal, played, params=params)
+    assert float(out.requested_mass) == pytest.approx(6 * 0.12 + 0.12, abs=1e-6)
+    assert float(out.requested_mass) <= 1.0
+    assert float(out.truncated) == 0.0
+    assert float(out.member_count_applied) == float(out.member_count_raw) == 7.0
+    assert float(out.applied_mass) == pytest.approx(float(out.requested_mass), abs=1e-6)
+    assert _bound_members(probs, regret, legal, played, params) == [0, 1, 2, 3, 4, 5, 6]
+
+
+def _k_member_row(k: int, width: int = 16) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """`k` legal moves inside the 20cp window, our argmax elsewhere and wrong."""
+    regret = torch.full((1, width), 0.55)
+    for i in range(k):
+        regret[0, i] = R(2.0 * i)
+    regret[0, k] = R(300)
+    probs = torch.softmax(
+        torch.tensor([[0.0] * k + [8.0] + [0.0] * (width - k - 1)]), dim=-1,
+    )
+    return regret, torch.ones(1, width, dtype=torch.bool), probs
+
+
+def test_the_budget_has_no_positive_slack_at_the_float32_boundary() -> None:
+    """⚑⚑ A SLACK OF 1e-6 IS THE SAME BUG WITH A SMALLER RADIUS.
+
+    The first version of the cap compared against `budget + 1e-6`, so that a
+    set fitting EXACTLY would not be rejected by float32 rounding. That admitted
+    genuinely infeasible sets whose mass lands in `(1, 1 + 1e-6]` -- the cap
+    reported `truncated = 0` and an `applied_mass` above 1 while its own
+    docstring promised that could not happen. Reviewer finding, PR #448; the
+    seven-member fixture at `tau = 0.15` sits far too far from 1 to see it.
+
+    `0.3333334` is the counterexample: three of them is 1.000000238 in float32,
+    infeasible by 2.4e-7 -- inside the old slack, outside the real constraint.
+
+    The two directions are asserted together because a fix that simply removed
+    the epsilon would be over-conservative in the other one, dropping members
+    from sets that genuinely fit. `tau = 0.25` with four members is exactly 1.0
+    and must survive intact.
+    """
+    over = SfPolicyFloorParams.resolve(tau=0.3333334, tau_played=0.0)
+    regret, legal, probs = _k_member_row(3)
+    out = sf_policy_floor_deficit(probs, regret, legal, None, params=over)
+    assert float(out.member_count_raw) == 3.0
+    assert float(out.requested_mass) > 1.0, (
+        "setup: float32 must make three of these infeasible, "
+        f"got {float(out.requested_mass)!r}"
+    )
+    assert float(out.requested_mass) < 1.0 + 1e-6, (
+        "setup: the overflow must land INSIDE the old 1e-6 slack, or this "
+        f"fixture does not test the loophole: {float(out.requested_mass)!r}"
+    )
+    assert float(out.truncated) == 1.0
+    assert float(out.member_count_applied) == 2.0
+    assert float(out.applied_mass) <= 1.0, (
+        "the admission budget carries a positive slack: an infeasible set was "
+        f"admitted whole, applied_mass={float(out.applied_mass)!r}"
+    )
+
+    # ...and the opposite direction: an EXACT fit is not collateral damage.
+    exact = SfPolicyFloorParams.resolve(tau=0.25, tau_played=0.0)
+    regret, legal, probs = _k_member_row(4)
+    fit = sf_policy_floor_deficit(probs, regret, legal, None, params=exact)
+    assert float(fit.requested_mass) == 1.0
+    assert float(fit.truncated) == 0.0
+    assert float(fit.member_count_applied) == 4.0
+    assert float(fit.applied_mass) == 1.0
+
+    # ⚑⚑ AND THE CASE WITH A MANDATORY OVERLAP, which the fixture above cannot
+    # reach: `tau = 0.5, tau_top1 = 0.1` makes SF's top-1 cost only its
+    # INCREMENT. Doing that subtraction in float32 before widening rounds it UP
+    # by 7.5e-9, and this exactly-feasible pair (0.5 + 0.5 = 1.0) then loses a
+    # member. Reviewer finding P3-3: without this leg the mutants "float64 ->
+    # float32" and "subtract outside the float64 block" both survive the new
+    # tests and are caught only by a test named for something else entirely.
+    overlap = SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.1, tau_played=0.0)
+    regret, legal, probs = _k_member_row(2)
+    pair = sf_policy_floor_deficit(probs, regret, legal, None, params=overlap)
+    assert float(pair.requested_mass) == 1.0
+    assert float(pair.truncated) == 0.0, (
+        "the exactly-feasible pair lost a member: the tau - mandatory "
+        "subtraction is being rounded in float32 before it is widened"
+    )
+    assert float(pair.member_count_applied) == 2.0
+    assert float(pair.applied_mass) == 1.0
+
+
+def test_the_applied_mass_contract_holds_across_a_random_sweep() -> None:
+    """`applied_mass <= 1` for every reachable config, not just the fixtures.
+
+    The boundary test above pins ONE counterexample, which is exactly the shape
+    of guard that a future edit can walk around. This sweeps tau values,
+    member counts and the collar together and asserts the invariant itself.
+    """
+    rng = torch.Generator().manual_seed(20260819)
+    taus = [0.05, 0.1, 0.15, 0.2, 0.25, 1.0 / 3.0, 0.3333334, 0.4, 0.5, 0.9, 1.0]
+    checked = 0
+    for tau in taus:
+        for k in range(1, 13):
+            for collar in (0.0, 1.0 / 16):
+  # ⚑ `w=1.0`, NOT the default 0.0. The mandatory-feasibility check RAISES
+  # only when the term is in the objective; at `w=0.0` it warns and lets the
+  # config through (see
+  # `test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar`), so a
+  # sweep at the default weight would be quietly asserting the invariant over
+  # a population that includes configs the invariant is not claimed for.
+  # An earlier version of this loop skipped those configs with the comment
+  # "rejected at resolve time" -- which was FALSE at its own `w=0.0`.
+                try:
+                    params = SfPolicyFloorParams.resolve(
+                        tau=tau, tau_played=collar, w=1.0,
+                    )
+                except ValueError:
+                    continue  # genuinely refused at this weight; its own test covers it
+                regret, legal, probs = _k_member_row(k)
+                played = None
+                if collar > 0.0:
+                    played = torch.zeros(1, 16)
+                    played[0, int(torch.randint(0, 16, (1,), generator=rng))] = 1.0
+                out = sf_policy_floor_deficit(
+                    probs, regret, legal, played, params=params,
+                )
+                checked += 1
+                assert float(out.applied_mass) <= 1.0, (
+                    f"tau={tau} k={k} collar={collar} -> "
+                    f"applied_mass={float(out.applied_mass)!r}"
+                )
+                # ...and truncation is reported exactly when it happened.
+                assert (float(out.truncated) == 1.0) == (
+                    float(out.member_count_applied) != float(out.member_count_raw)
+                    or float(out.applied_mass) != float(out.requested_mass)
+                ), f"tau={tau} k={k} collar={collar}: truncated flag disagrees"
+    assert checked > 200, checked
+
+
+def test_at_weight_zero_an_infeasible_mandatory_pair_IS_reported_not_capped() -> None:
+    """⚑⚑ THE COMPLEMENT OF THE SWEEP, AND THE HONEST LIMIT OF `applied_mass <= 1`.
+
+    Closing P2-1 made that invariant CONDITIONAL: at `w == 0.0` an infeasible
+    mandatory pair is permitted with a warning rather than refused, precisely so
+    an inert term cannot kill a live trial. The cap cannot repair it either --
+    it only ever drops OPTIONAL members, and both mandatory roles are applied
+    unconditionally.
+
+    So on this population `applied_mass` EXCEEDS 1, and that is correct
+    behaviour, not a defect: the columns are doing their job by describing the
+    impossible floor the operator configured. Asserted here so the guarantee is
+    stated where it holds and the exception is stated where it does not --
+    rather than being an unqualified claim with a silent counterexample.
+
+    ⚑ AND `truncated_frac` IS NOT THE SIGNAL HERE. The cap never truncates a
+    mandatory role, so a mandatory-only infeasibility can leave it at 0. The
+    RESOLVE-TIME WARNING is the authoritative signal while the term is off.
+    """
+    with pytest.warns(RuntimeWarning, match="gumbel_topk"):
+        params = SfPolicyFloorParams.resolve(gumbel_topk=1)
+    assert params.w == 0.0
+    assert params.tau_played == 1.0
+
+    # top1 and played on different moves, our argmax already SF's best, so the
+    # adaptive set is empty and every bit of the infeasibility is mandatory.
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    probs = torch.softmax(torch.tensor([[8.0, 0.0, 0.0, 0.0]]), dim=-1)
+    played = torch.zeros(1, 4)
+    played[0, 1] = 1.0
+    out = sf_policy_floor_deficit(
+        probs, regret, torch.ones(1, 4, dtype=torch.bool), played, params=params,
+    )
+    assert float(out.applied_mass) > 1.0, (
+        "setup: this fixture must be the documented exception to applied_mass <= 1"
+    )
+    assert float(out.applied_mass) == pytest.approx(0.15 + 1.0, abs=1e-6)
+    assert float(out.member_count_applied) == 2.0
+
+
+def test_members_are_retained_by_SF_REGRET_and_not_by_index_or_probability() -> None:
+    """⚑⚑ THE CENTRAL DESIGN DECISION, ON A FIXTURE THAT CAN SEE IT.
+
+    "the moves SF likes best are the ones that survive" was previously pinned
+    only against a full REVERSAL of the order, because the seven-member fixture
+    has regret order == index order == probability order. Reviewer mutants:
+    sorting by INDEX (ignoring regret entirely) and sorting by PROBABILITY both
+    SURVIVED (M10, M5, PR #448).
+
+    So here all three orders are mutually different, and the assertion is on
+    WHICH member gets demoted rather than on how many do.
+    """
+    # regret order  : 2, 4, 0, 1, 6, 3, 5   (index 2 is SF's best)
+    # index order   : 0, 1, 2, 3, 4, 5, 6
+    # ascending prob: 6, 1, 3, 5, 2, 0, 4
+    cps = [4.0, 6.0, 0.0, 10.0, 2.0, 12.0, 8.0]
+    regret = torch.tensor([[*[R(c) for c in cps], R(300), 0.55, 0.55]])
+    legal = torch.ones(1, 10, dtype=torch.bool)
+    probs = torch.softmax(
+        torch.tensor([[0.5, 0.1, 0.4, 0.2, 0.6, 0.3, 0.0, 8.0, 0.0, 0.0]]), dim=-1,
+    )
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=0.0)
+    out = sf_policy_floor_deficit(probs, regret, legal, None, params=params)
+
+    # Seven members at 0.15 request 1.05; top1 (index 2) is free, so six of the
+    # remaining increments fit in the 0.85 budget and exactly one is demoted.
+    assert float(out.member_count_raw) == 7.0
+    assert float(out.truncated) == 1.0
+    assert float(out.member_count_applied) == 6.0
+
+    # ⚑ THE ONE DEMOTED MEMBER IS INDEX 5 -- the WORST SF regret (12cp). Sorting
+    # by index would drop 6; sorting by probability would drop 4; sorting by
+    # DESCENDING regret would drop 4. Only ascending SF regret drops 5.
+    assert _bound_members(probs, regret, legal, None, params) == [0, 1, 2, 3, 4, 6]
+
+
+def test_the_admission_order_is_pinned_to_a_STABLE_sort() -> None:
+    """Tied regrets must break the same way on every backend.
+
+    SF regret is integer-cp quantised and this module's own docstring says ties
+    are common, so an unstable sort makes WHICH tied member is demoted depend on
+    the sort backend -- CPU and CUDA disagree, and the loss stops being
+    reproducible across devices. Nothing observable distinguishes the two on
+    CPU, where torch's sort happens to be stable anyway, so this asserts the
+    source: dropping `stable=True` survived every behavioural test (reviewer
+    mutant M3, PR #448).
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.train import losses as losses_mod
+
+    fn = next(
+        node for node in ast.walk(ast.parse(inspect.getsource(losses_mod)))
+        if isinstance(node, ast.FunctionDef) and node.name == "sf_policy_floor_deficit"
+    )
+    sorts = [
+        call for call in ast.walk(fn)
+        if isinstance(call, ast.Call)
+        and ast.unparse(call.func) in {"torch.argsort", "torch.sort"}
+    ]
+    assert len(sorts) == 1, f"expected exactly one sort in the floor: {len(sorts)}"
+    stable = [ast.unparse(kw.value) for kw in sorts[0].keywords if kw.arg == "stable"]
+    assert stable == ["True"], (
+        "the admission sort must be stable=True: regret is integer-cp "
+        f"quantised, so an unstable tie-break is backend-dependent: {stable}"
+    )
+
+
+def test_a_mandatory_pair_that_is_infeasible_ONLY_AFTER_QUANTIZATION_is_rejected() -> None:
+    """⚑⚑ THE VALIDATOR MUST ASK THE QUESTION THE LOSS WILL ASK.
+
+    `tau = tau_top1 = 0.6, tau_played = 0.4` sums to EXACTLY 1.0 as Python
+    doubles and to 1.0000000298 once materialized in float32. A double-precision
+    validator accepts it, and nothing downstream can catch it:
+
+    * the cap only ever drops OPTIONAL members, and both roles here are
+      MANDATORY, so there is nothing to truncate;
+    * `applied_mass` sums correctly in float64 and is then narrowed back to
+      float32, where 1.0000000298 rounds to a clean `1.0`.
+
+    So every counter reads healthy over a false invariant -- this repo's
+    signature defect. Reviewer finding, PR #448. The fix is that
+    `SfPolicyFloorParams` validates in `_FLOOR_THRESHOLD_DTYPE`, the same
+    representation `sf_policy_floor_deficit` materializes.
+    """
+    from chess_anti_engine.train.losses import _as_floor_threshold
+
+    # The premise, stated as an executable fact rather than as a comment.
+    assert 0.6 + 0.4 == 1.0
+    assert _as_floor_threshold(0.6) + _as_floor_threshold(0.4) > 1.0
+
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_top1=0.6, tau_played=0.4, w=0.5)
+
+    # ...and the pair that is exact in BOTH representations still resolves.
+    assert _as_floor_threshold(0.5) + _as_floor_threshold(0.5) == 1.0
+    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5, w=0.5)
+
+    # ⚑ AND THE SOURCE, because the values alone cannot pin it. A validator that
+    # rounds only SOME of the three legs is behaviourally IDENTICAL to one that
+    # rounds all three: searched 110k triples over a dense grid and found ZERO
+    # where reverting one leg to a double flips the verdict, because a
+    # double-sum at the boundary forces the legs to be dyadic together or
+    # inexact together. So the whole-revert mutant dies on the assertions above
+    # and a partial revert cannot be caught by any value. This closes that.
+    import ast
+    import inspect
+
+    from chess_anti_engine.train import losses as losses_mod
+
+    post_init = next(
+        node for node in ast.walk(ast.parse(inspect.getsource(losses_mod)))
+        if isinstance(node, ast.FunctionDef) and node.name == "__post_init__"
+    )
+    rounded = {
+        ast.unparse(node.args[0])
+        for node in ast.walk(post_init)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "_as_floor_threshold"
+    }
+    assert rounded == {"self.tau", "self.tau_top1", "self.tau_played"}, (
+        "every threshold in the feasibility check must be rounded to the dtype "
+        f"the loss materializes; these were: {rounded}"
+    )
+
+
+def test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar() -> None:
+    """⚑⚑ `gumbel_topk: 1` reached the new validator with NO floor key set.
+
+    `tau_played` DEFAULTS to `1/gumbel_topk`, and `normalize_gumbel_topk` allows
+    1, so `gumbel_topk: 1` makes the shipped 0.15/0.15 defaults sum to 1.15.
+    `gumbel_topk` is a LIVE selfplay key, so before this gate the raise landed as
+    a CLAUDE.md category (b) death -- the yaml reload SUCCEEDS, `from_dict`
+    raises inside `train_trial`'s iteration loop, and that loop has a `finally:`
+    and zero `except:`. A term contributing NOTHING to `total` would have taken
+    the run down. Reviewer finding P2-1, PR #448.
+
+    At `w == 0.0` it warns; at any non-zero weight it still raises, because then
+    the infeasible floor really is in the objective.
+    """
+    with pytest.warns(RuntimeWarning, match="gumbel_topk"):
+        params = SfPolicyFloorParams.resolve(gumbel_topk=1)
+    assert params.tau_played == 1.0
+    assert params.w == 0.0
+
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(gumbel_topk=1, w=0.8)
+
+    # The message has to name the key the operator can actually change. The
+    # three it names by value are all at their defaults here.
+    with pytest.raises(ValueError, match="gumbel_topk"):
+        SfPolicyFloorParams.resolve(gumbel_topk=1, w=0.8)
+
+
+def test_the_thresholds_are_materialized_in_the_PINNED_dtype_not_the_probs_dtype() -> None:
+    """⚑⚑ THE CONSUMER HALF OF THE PIN. Reverting it survived every other test.
+
+    The validator rounds to `_FLOOR_THRESHOLD_DTYPE` and the loss must
+    materialize in the SAME representation -- that is the whole point of pinning
+    it: "by construction rather than by coincidence". But every other fixture in
+    this file uses float32 `probs`, where the pinned dtype and `probs.dtype`
+    COINCIDE. So `torch.zeros(..., dtype=_FLOOR_THRESHOLD_DTYPE)` reverting to
+    the shorter, simpler-reading `torch.zeros_like(probs)` was invisible
+    (reviewer mutant, PR #448) -- and it reads as a tidy-up, which is how it
+    would come back.
+
+    ⚑⚑ AND THE OBVIOUS TEST FOR IT CANNOT SEE IT. A first version compared
+    `applied_mass` across float32/bfloat16/float16 and asserted the three agree.
+    They do -- even under the mutant -- because every field of
+    `SfPolicyFloorOutputs` is deliberately narrowed BACK to the caller's dtype,
+    and that narrowing rounds the overflow away: bf16 materializes
+    `0.51 -> 0.51171875` and `0.49 -> 0.490234375`, an internal mandatory mass of
+    **1.001953125 > 1**, which then narrows to bf16 as exactly **1.0**. The
+    invariant is violated internally and the returned column is clean. (The
+    mutant appeared to die only because a PARTIAL revert crashed on a
+    `scatter_reduce` dtype mismatch; the coherent revert -- allocation and both
+    scatter sources together -- passed all 78 tests.)
+
+    So the probe below uses **float64** `probs`, where the narrowing is a no-op
+    and the internal value is observable exactly, against an expected value
+    derived from `_as_floor_threshold` rather than written as a literal:
+
+    * pinned (correct): fp32(0.2) + fp32(0.1) = 0.30000000447034836
+    * `zeros_like(probs)` (mutant): float64 0.2 + 0.1 = 0.30000000000000004
+
+    Two distinct doubles, so the assertion is exact and needs no tolerance.
+    """
+    from chess_anti_engine.train.losses import _FLOOR_THRESHOLD_DTYPE, _as_floor_threshold
+
+    assert _as_floor_threshold(0.51) + _as_floor_threshold(0.49) == 1.0
+    params = SfPolicyFloorParams.resolve(tau_top1=0.51, tau_played=0.49, w=1.0)
+
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    played = torch.zeros(1, 4)
+    played[0, 1] = 1.0
+    logits = torch.tensor([[8.0, 0.0, 0.0, 0.0]])
+    legal = torch.ones(1, 4, dtype=torch.bool)
+
+    masses = {}
+    for dtype in (torch.float32, torch.bfloat16, torch.float16):
+        out = sf_policy_floor_deficit(
+            torch.softmax(logits.to(dtype), dim=-1), regret, legal,
+            played.to(dtype), params=params,
+        )
+        masses[dtype] = float(out.applied_mass)
+        assert float(out.applied_mass) <= 1.0, (
+            f"probs dtype {dtype} leaked into the thresholds: "
+            f"applied_mass={float(out.applied_mass)!r}"
+        )
+  # A reasonable invariant in its own right -- the floors must not be a function
+  # of the probs dtype -- but ⚑ IT IS NOT WHAT PINS THE ALLOCATION. All three
+  # read 1.0 under the mutant too, for the narrowing reason in the docstring.
+  # Kept because it is cheap and true, NOT relied on.
+    assert len(set(masses.values())) == 1, masses
+    assert masses[torch.float32] == pytest.approx(1.0, abs=1e-6)
+
+  # ⚑⚑ THE ASSERTION THAT ACTUALLY KILLS THE REVERT. float64 `probs` makes the
+  # return narrowing a no-op, so `applied_mass` reports the materialized
+  # thresholds exactly. The expected value is DERIVED through
+  # `_as_floor_threshold`, never written as a literal -- a literal would agree
+  # with a helper that had itself been changed.
+    m_pinned = _as_floor_threshold(0.2) + _as_floor_threshold(0.1)
+    assert m_pinned != 0.2 + 0.1, (
+        "setup: the fp32-rounded pair must differ from the float64 pair, or "
+        "this probe cannot distinguish the two implementations"
+    )
+    params64 = SfPolicyFloorParams.resolve(tau_top1=0.2, tau_played=0.1, w=1.0)
+    out64 = sf_policy_floor_deficit(
+        torch.softmax(logits.to(torch.float64), dim=-1), regret, legal,
+        played.to(torch.float64), params=params64,
+    )
+  # Our argmax IS SF's top-1, so the strict `regret < our_r` clause leaves the
+  # adaptive set EMPTY and the whole mass is the two mandatory roles.
+    assert float(out64.member_count_applied) == 2.0
+    assert float(out64.applied_mass) == m_pinned, (
+        "the mandatory thresholds were materialized in probs.dtype, not in "
+        f"_FLOOR_THRESHOLD_DTYPE: got {float(out64.applied_mass)!r}, pinned "
+        f"would be {m_pinned!r}, probs-dtype would be {0.2 + 0.1!r}"
+    )
+    assert _FLOOR_THRESHOLD_DTYPE is torch.float32
+
+
+def test_every_returned_field_is_in_the_callers_dtype() -> None:
+    """The tuple's stated contract, which the `deficit` narrowing exists for.
+
+    Reverting `deficit.sum(-1).to(probs.dtype)` to a bare `deficit.sum(-1)` is a
+    no-op in production (`po_probs` is fp32) and survived every other test
+    (reviewer mutant, PR #448) -- but it makes the tuple's dtypes disagree with
+    each other the moment `probs` is not float32, which is exactly when someone
+    would be debugging something else.
+    """
+    regret = torch.tensor([[0.0, 0.30, 0.55, 0.55]])
+    legal = torch.ones(1, 4, dtype=torch.bool)
+    params = SfPolicyFloorParams.resolve(tau=0.15, tau_played=1.0 / 16)
+    for dtype in (torch.float32, torch.bfloat16, torch.float16):
+        probs = torch.softmax(torch.tensor([[0.0, 0.0, 0.0, 8.0]], dtype=dtype), dim=-1)
+        out = sf_policy_floor_deficit(probs, regret, legal, None, params=params)
+        assert [f.dtype for f in out] == [dtype] * len(out), (
+            f"{dtype}: {[(n, f.dtype) for n, f in zip(out._fields, out)]}"
+        )
+
+
+def test_a_config_whose_mandatory_floors_cannot_coexist_is_rejected() -> None:
+    """SF top-1 and the collar are never truncated, so they must fit by config.
+
+    Every other member is optional -- the cap drops it. These two are
+    structural, so a config where `max(tau, tau_top1) + tau_played > 1` is
+    unsatisfiable on any row where they land on different moves, and resolve
+    time is the only honest place to catch that.
+    """
+    # ⚑ `w` IS NON-ZERO ON PURPOSE. The raise is gated on the term actually
+    # being in the objective, so that an INERT floor cannot kill a live trial
+    # (see `test_an_INERT_floor_cannot_kill_the_trial_over_a_derived_collar`).
+    # Omitting `w` here would silently test the warning path instead.
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5, w=0.8)
+    with pytest.raises(ValueError, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.1, tau_top1=0.7, tau_played=0.4, w=0.8)
+    # The same configuration with the term OFF warns rather than raising.
+    with pytest.warns(RuntimeWarning, match=r"exceeds 1\.0"):
+        SfPolicyFloorParams.resolve(tau=0.6, tau_played=0.5, w=0.0)
+    # Exactly 1.0 is satisfiable (two moves, nothing left over) and is therefore
+    # allowed: the boundary belongs to the feasible side.
+    SfPolicyFloorParams.resolve(tau=0.5, tau_top1=0.5, tau_played=0.5, w=0.8)

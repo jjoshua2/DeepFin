@@ -35,6 +35,25 @@
 #include "../encoding/_cboard_impl.h"
 /* Feature planes for fused encode_146 */
 #include "../encoding/_features_impl.h"
+/* Eval-plugin seam: the tree holds a POINTER to a value provider, never a
+ * hard-wired evaluator call. The NNUE provider is the first one; a leaf qsearch
+ * composes by holding an inner {provider, ctx} pair and recursing through
+ * cae_value_eval(). See _value_provider.h for the in-check contract.
+ *
+ * ⚑ This includes the seam's CONTRACT only — types, the dispatch helpers, and
+ * the capsule shape. It deliberately does NOT include any provider's
+ * implementation header: those are header-only statics, so including one here
+ * would compile a SECOND copy of that evaluator into this extension, with its
+ * own kernel-selection flag and its own weight cache. The tree would then run
+ * an evaluator that nobody had configured and map the same weights twice, and
+ * both symptoms are invisible from the outside — the numbers still look like
+ * evaluations. Providers arrive at run time through their published capsule. */
+#include "_value_provider.h"
+
+/* The solved lattice and the search-time terminal test. Extracted from this
+ * file so the check resolver decides "terminal, and worth what" with the SAME
+ * code the tree does, rather than a second copy that can drift. */
+#include "_search_terminal.h"
 
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
@@ -196,11 +215,8 @@ static int extract_cboards(PyObject *list, int32_t n,
  *   DRAW:    STM provably draws (no winning child; at least one drawing child;
  *            no losing child — or terminal stalemate / 50-move / repetition /
  *            insufficient material).
- * Backup is min/max-style and respects the side-flip across plies. */
-#define SOLVED_UNKNOWN  0
-#define SOLVED_WIN      1
-#define SOLVED_LOSS    -1
-#define SOLVED_DRAW     2
+ * Backup is min/max-style and respects the side-flip across plies.
+ * SOLVED_UNKNOWN/WIN/LOSS/DRAW are defined in _search_terminal.h. */
 
 #define VLOSS_MODE_LEGACY        0
 #define VLOSS_MODE_VIRTUAL_MEAN  1
@@ -832,50 +848,9 @@ static int32_t tree_select_leaf(const TreeData *t, int32_t root_id,
 }
 
 
-/* Flip a solved status across one ply (parent <-> child STM swap).
- *   parent sees a child WIN  → parent considers it LOSS-for-self
- *   parent sees a child LOSS → parent considers it WIN-for-self
- *   DRAW and UNKNOWN are unchanged. */
-static inline int8_t solved_flip(int8_t s) {
-    if (s == SOLVED_WIN) return SOLVED_LOSS;
-    if (s == SOLVED_LOSS) return SOLVED_WIN;
-    return s;  /* DRAW or UNKNOWN */
-}
-
-
-/* Solved status for a known-terminal CBoard. Caller must have already
- * confirmed cboard_is_game_over(b). Companion to cboard_terminal_value:
- * checkmate ⇒ STM lost; everything else terminal (stalemate / 50-move /
- * repetition / insufficient material) ⇒ DRAW. */
-static inline int8_t cboard_terminal_solved_status(const CBoard *b) {
-    return cboard_is_checkmate(b) ? SOLVED_LOSS : SOLVED_DRAW;
-}
-
-
-/* Search-time terminal detection. Returns 1 and writes terminal Q + solved
- * status if the position should be treated as terminal during MCTS search:
- *   - true game-over (checkmate / stalemate / 3-fold / 50-move / insufficient)
- *   - LC0-style 2-fold-as-draw: any prior occurrence inside the search tree
- *     means the side-to-move can force the third repetition, so the position
- *     is draw-or-better for whichever side prefers it. Treating 2-fold as a
- *     hard draw lets the search prune perpetual-check / shuffling lines
- *     immediately instead of waiting for the third visit.
- * Q for 2-fold is 0.0 (draw); cboard_terminal_value already returns 0.0 for
- * any non-game-over position, but we set it explicitly here for clarity. */
-static inline int cboard_search_terminal(const CBoard *b,
-                                          double *out_q, int8_t *out_solved) {
-    if (cboard_is_game_over(b)) {
-        *out_q = (double)cboard_terminal_value(b);
-        *out_solved = cboard_terminal_solved_status(b);
-        return 1;
-    }
-    if (cboard_is_repetition(b)) {
-        *out_q = 0.0;
-        *out_solved = SOLVED_DRAW;
-        return 1;
-    }
-    return 0;
-}
+/* solved_flip, cboard_terminal_solved_status and cboard_search_terminal moved
+ * to _search_terminal.h — the resolver needs them and one definition beats two.
+ */
 
 
 /* Resolve `node`'s solved status from its expanded children, returning the
@@ -1460,8 +1435,20 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         if (n_cands > GSS_MAX_CANDS) n_cands = GSS_MAX_CANDS;
 
         int32_t rid = g->root_ids[bi];
-        int32_t root_n = atomic_load_i32(&t->N[rid]);
-        double root_Q = (root_n > 0) ? (atomic_load_double(&t->W[rid]) / (double)root_n) : 0.0;
+        /* mctx `qtransform_completed_by_mix_value` takes the FRESH network root
+         * value as its `value` argument, NOT the running tree average — and so
+         * does every other consumer of this transform in this repo: the Python
+         * reference passes `root_qs[i]` (gumbel.py `_halve_remaining_for_board`
+         * -> `_completed_q_transform(raw_value=...)`), and the C path's OWN
+         * final-policy reconstruction passes `root_q_i` (gumbel_c.py
+         * `_build_improved_policy_for_board`'s C twin). This site used to read
+         * `W[rid]/N[rid]`, the average this search keeps mutating, so the
+         * baseline the eliminations were scored against moved every round while
+         * the returned policy's baseline stayed put — the same tree scored two
+         * different ways. `root_qs[bi]` is fixed for the whole search, which is
+         * what "the value at the root before any of this search happened"
+         * means. */
+        double root_Q = g->root_qs[bi];
 
         /* Single pass over children: max_visit + mctx mixed-value stats +
          * populate action_to_slot map. */
@@ -2000,6 +1987,15 @@ typedef struct {
     TreeData tree;
     StoredPrepState stored;
     GumbelSimState gsim;
+    /* The eval seam. NULL until set_value_provider() succeeds; every read of
+     * "which provider is live" goes through THESE fields, so the answer comes
+     * from the consumer's own state rather than from the argument a caller
+     * passed in and might not have had applied. */
+    const CaeValueProvider *value_provider;
+    void *value_provider_ctx;
+    /* The capsule the provider came from, kept for the typed exception it
+     * carries. Module-lifetime storage in the publishing extension. */
+    const CaeValueProviderExport *value_provider_export;
 } MCTSTreeObject;
 
 
@@ -2105,7 +2101,15 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
     return li;
 }
 
+static void MCTSTree_drop_value_provider(MCTSTreeObject *self) {
+    cae_value_destroy(self->value_provider, self->value_provider_ctx);
+    self->value_provider = NULL;
+    self->value_provider_ctx = NULL;
+    self->value_provider_export = NULL;
+}
+
 static void MCTSTree_dealloc(MCTSTreeObject *self) {
+    MCTSTree_drop_value_provider(self);
     gss_free(&self->gsim);
     stored_free(&self->stored);
     tree_free(&self->tree);
@@ -2117,6 +2121,11 @@ static int MCTSTree_init(MCTSTreeObject *self, PyObject *args, PyObject *kwds) {
     (void)args;
     (void)kwds;
     memset(&self->stored, 0, sizeof(self->stored));
+    /* ⚑ __init__ can legally be called a second time on a live object, so the
+     * provider is RELEASED here rather than simply overwritten — assigning NULL
+     * over a live ctx drops the last reference to a 62 MB mapping without
+     * unmapping it. */
+    MCTSTree_drop_value_provider(self);
     if (tree_init(&self->tree) < 0) {
         PyErr_SetString(PyExc_MemoryError, "Failed to allocate MCTS tree");
         return -1;
@@ -4391,6 +4400,55 @@ static PyObject *MCTSTree_get_pending_legal_indices(MCTSTreeObject *self, PyObje
 
 
 /*
+ * pending_leaf_cboards() -> list[CBoard]
+ *
+ * The WHOLE pending batch, in encoded-planes row order: element i is the board
+ * whose planes were written to row i of the buffer start/continue_gumbel_sims
+ * filled, and continue_gumbel_sims consumes row i of pol/wdl for it.
+ *
+ * ⚑ This exists because a CPU value function that is not a neural network --
+ * the native NNUE arms -- cannot read the encoded planes: they need the real
+ * position (castling rights, en passant, the halfmove clock and the repetition
+ * history all change what the check resolver and the quiescence search see, and
+ * none of them survive the plane encoding). Reconstructing a board from planes
+ * would hand such an evaluator a position that merely looks right.
+ *
+ * ⚑ NOT get_pending_tb_leaves(32). That one filters to the SYZYGY-eligible
+ * subset -- castling == 0 AND popcount <= max_pieces -- so it silently drops
+ * every leaf that still has a castling right, which is most of the opening and
+ * middlegame. Reusing it here would evaluate a biased subset of the batch and
+ * leave the rest at whatever the caller padded with. Two different questions,
+ * two methods.
+ */
+static PyObject *MCTSTree_pending_leaf_cboards(MCTSTreeObject *self,
+                                               PyObject *Py_UNUSED(ignored)) {
+    StoredPrepState *s = &self->stored;
+    GumbelSimState *g = &self->gsim;
+    if (g->phase != 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "pending_leaf_cboards: no batch pending (phase != 1)");
+        return NULL;
+    }
+    PyTypeObject *cb_type = _cached_cboard_type;
+    if (!cb_type) {
+        PyErr_SetString(PyExc_RuntimeError,
+            "CBoard type not cached; call start_gumbel_sims first");
+        return NULL;
+    }
+    int32_t n = s->n_leaves;
+    PyObject *lst = PyList_New(n);
+    if (!lst) return NULL;
+    for (int32_t i = 0; i < n; i++) {
+        PyCBoard *cp = (PyCBoard *)cb_type->tp_alloc(cb_type, 0);
+        if (!cp) { Py_DECREF(lst); return NULL; }
+        cp->board = s->leaf_cboards[i];
+        PyList_SET_ITEM(lst, i, (PyObject *)cp);
+    }
+    return lst;
+}
+
+
+/*
  * get_pending_tb_leaves(max_pieces) -> (indices: np.int32, list[CBoard])
  *
  * Between start/continue_gumbel_sims returning n_leaves > 0 and the caller
@@ -4556,7 +4614,268 @@ static PyObject *MCTSTree_find_child(MCTSTreeObject *self, PyObject *args) {
     return PyLong_FromLong(-1);
 }
 
+/* ================================================================
+ * Eval-plugin seam
+ * ================================================================ */
+
+/* Names a caller may pass instead of a capsule, and the module that publishes
+ * each. A provider outside this table is still installable — pass its capsule
+ * directly — so adding one needs no edit here; the table only exists so the
+ * common case reads as set_value_provider("nnue", path). */
+/* Providers this build knows by name. ⚑ The ATTRIBUTE is part of the entry, not
+ * a constant: one module publishes several capsules (the raw evaluator and the
+ * two resolver-backed arms), so a hard-wired "value_provider_capsule" would
+ * accept every arm's name and install the same provider for all of them —
+ * exactly a value accepted and then ignored. Any provider not listed here is
+ * still installable by passing its capsule directly. */
+static const struct {
+    const char *name;
+    const char *module;
+    const char *attribute;
+} CAE_VALUE_PROVIDER_MODULES[] = {
+    {"nnue",         "chess_anti_engine.nnue._nnue_ext", "value_provider_capsule"},
+    {"nnue-static",  "chess_anti_engine.nnue._nnue_ext", "static_arm_capsule"},
+    {"nnue-qsearch", "chess_anti_engine.nnue._nnue_ext", "qsearch_arm_capsule"},
+    {NULL, NULL, NULL}
+};
+
+/* Resolve a str-or-capsule argument to the export its publishing module owns.
+ * Returns NULL with an exception set. */
+static const CaeValueProviderExport *resolve_provider_export(PyObject *spec) {
+    PyObject *capsule = NULL;      /* owned only when we imported it ourselves */
+
+    if (PyUnicode_Check(spec)) {
+        const char *name = PyUnicode_AsUTF8(spec);
+        if (!name) return NULL;
+        const char *module = NULL, *attribute = NULL;
+        for (int i = 0; CAE_VALUE_PROVIDER_MODULES[i].name; i++)
+            if (strcmp(CAE_VALUE_PROVIDER_MODULES[i].name, name) == 0) {
+                module = CAE_VALUE_PROVIDER_MODULES[i].module;
+                attribute = CAE_VALUE_PROVIDER_MODULES[i].attribute;
+            }
+        if (!module) {
+            PyErr_Format(PyExc_ValueError,
+                         "no value provider named '%s'; pass its capsule to install "
+                         "a provider this build does not know by name", name);
+            return NULL;
+        }
+        PyObject *mod = PyImport_ImportModule(module);
+        if (!mod) return NULL;
+        capsule = PyObject_GetAttrString(mod, attribute);
+        Py_DECREF(mod);
+        if (!capsule) return NULL;
+    } else {
+        capsule = spec;
+        Py_INCREF(capsule);
+    }
+
+    void *raw = PyCapsule_GetPointer(capsule, CAE_VALUE_PROVIDER_CAPSULE_NAME);
+    Py_DECREF(capsule);
+    if (!raw) {
+        /* CPython's own message is "called with incorrect name", which says
+         * neither what was passed nor what was wanted. */
+        PyErr_Clear();
+        PyErr_Format(PyExc_ValueError,
+                     "not a value-provider capsule: expected one named \"%s\", as "
+                     "published by a provider module's value_provider_capsule",
+                     CAE_VALUE_PROVIDER_CAPSULE_NAME);
+        return NULL;
+    }
+
+    const CaeValueProviderExport *ex = (const CaeValueProviderExport *)raw;
+    /* ⚑ The ABI is checked because the capsule crosses a .so boundary: the two
+     * extensions are built together here, but nothing in the mechanism forces
+     * that, and a stale one would be reinterpreted field-by-field rather than
+     * rejected. */
+    if (ex->abi_version != CAE_VALUE_PROVIDER_ABI
+        || ex->struct_size != (uint32_t)sizeof(CaeValueProviderExport)) {
+        PyErr_Format(PyExc_ImportError,
+                     "value-provider ABI mismatch (capsule abi=%u size=%u, "
+                     "this build abi=%u size=%u); rebuild C extensions",
+                     ex->abi_version, ex->struct_size,
+                     (unsigned)CAE_VALUE_PROVIDER_ABI,
+                     (unsigned)sizeof(CaeValueProviderExport));
+        return NULL;
+    }
+    if (!ex->provider || !ex->provider->init || !ex->provider->eval
+        || !ex->provider->retain || !ex->provider->destroy) {
+        PyErr_SetString(PyExc_ImportError,
+                        "value provider is missing a required vtable entry "
+                        "(init/eval/retain/destroy are all mandatory)");
+        return NULL;
+    }
+    /* ⚑⚑ REFUSED AT THE DOOR, NOT BY BEING UNREACHABLE. The tree evaluates from
+     * several search threads with the GIL released, so a provider that declares
+     * eval() non-reentrant cannot be driven here at all — see requires_gil in
+     * _value_provider.h.
+     *
+     * This check is deliberately HERE, after the capsule has been resolved and
+     * before anything is installed, because that is the only point BOTH routes
+     * pass through: the name table above, and a capsule handed in directly.
+     * Filtering by name would leave the direct-capsule route open, which is the
+     * route the table's own comment invites callers to use — and the guard
+     * would then be a rule the code states and does not apply. */
+    if (cae_value_requires_gil(ex->provider)) {
+        PyErr_Format(PyExc_ValueError,
+                     "value provider '%s' declares eval() non-reentrant "
+                     "(requires_gil) and cannot be installed in MCTSTree, which "
+                     "evaluates from several threads with the GIL released; drive "
+                     "it through a single-threaded surface such as "
+                     "_nnue_ext.arm_open()/arm_eval()",
+                     ex->provider->name ? ex->provider->name : "?");
+        return NULL;
+    }
+    return ex;
+}
+
+static PyObject *MCTSTree_set_value_provider(MCTSTreeObject *self, PyObject *args) {
+    PyObject *spec;
+    const char *weights_path;
+    if (!PyArg_ParseTuple(args, "Os", &spec, &weights_path))
+        return NULL;
+
+    const CaeValueProviderExport *ex = resolve_provider_export(spec);
+    if (!ex) return NULL;
+    const CaeValueProvider *vp = ex->provider;
+
+    char err[512] = {0};
+    void *ctx;
+    Py_BEGIN_ALLOW_THREADS
+    ctx = vp->init(weights_path, err, sizeof(err));
+    Py_END_ALLOW_THREADS
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError, "value provider '%s' failed to load weights: %s",
+                     vp->name, err[0] ? err : "unknown error");
+        return NULL;
+    }
+    MCTSTree_drop_value_provider(self);
+    self->value_provider = vp;
+    self->value_provider_ctx = ctx;
+    self->value_provider_export = ex;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_clear_value_provider(MCTSTreeObject *self,
+                                               PyObject *Py_UNUSED(ignored)) {
+    MCTSTree_drop_value_provider(self);
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_value_provider_name(MCTSTreeObject *self,
+                                              PyObject *Py_UNUSED(ignored)) {
+    if (!self->value_provider) Py_RETURN_NONE;
+    return PyUnicode_FromString(self->value_provider->name);
+}
+
+static PyObject *MCTSTree_value_provider_kernel(MCTSTreeObject *self,
+                                                PyObject *Py_UNUSED(ignored)) {
+    if (!self->value_provider || !self->value_provider->kernel_name) Py_RETURN_NONE;
+    return PyUnicode_FromString(self->value_provider->kernel_name());
+}
+
+/* Raise for a refusal, using the provider's OWN exception class for the
+ * in-check case. The resolver that has to catch this lives in a third module
+ * and will catch by type; a ValueError carrying an explanatory string would
+ * make it match on message text, which is not a contract anyone can keep. */
+static void raise_provider_status(const CaeValueProviderExport *ex,
+                                  const CaeValueProvider *vp, int status) {
+    if (status == CAE_VALUE_ERR_IN_CHECK && ex && ex->in_check_error) {
+        PyErr_Format((PyObject *)ex->in_check_error,
+                     "value provider '%s' refuses a position in check: resolve check "
+                     "nodes recursively (search the evasions, which may themselves "
+                     "give check) instead of evaluating", vp->name);
+        return;
+    }
+    PyErr_Format(PyExc_ValueError, "value provider '%s' refused: %s",
+                 vp->name, cae_value_status_name(status));
+}
+
+static PyObject *MCTSTree_value_provider_eval(MCTSTreeObject *self, PyObject *args) {
+    PyObject *board_obj;
+    if (!PyArg_ParseTuple(args, "O", &board_obj))
+        return NULL;
+    if (!self->value_provider) {
+        PyErr_SetString(PyExc_ValueError,
+                        "no value provider set; call set_value_provider(name, path) first");
+        return NULL;
+    }
+    if (ensure_cboard_type() != 0) return NULL;
+    if (Py_TYPE(board_obj) != _cached_cboard_type) {
+        PyErr_Format(PyExc_TypeError, "expected a CBoard, got %s",
+                     Py_TYPE(board_obj)->tp_name ? Py_TYPE(board_obj)->tp_name : "?");
+        return NULL;
+    }
+    const CBoard *board = &((PyCBoard *)board_obj)->board;
+
+    /* ⚑ SNAPSHOT AND RETAIN BEFORE DROPPING THE GIL. Another thread may call
+     * clear_value_provider() or install a different one while this evaluation
+     * is in flight; without holding a reference, its destroy() unmaps the
+     * weights under us and the read that follows is a use-after-free — which on
+     * a 62 MB read-only mapping most often returns data rather than crashing,
+     * i.e. a wrong evaluation rather than a visible failure. */
+    const CaeValueProviderExport *ex = self->value_provider_export;
+    const CaeValueProvider *vp = self->value_provider;
+    void *ctx = cae_value_retain(vp, self->value_provider_ctx);
+    if (!ctx) {
+        PyErr_Format(PyExc_ValueError,
+                     "value provider '%s' cannot be retained for evaluation", vp->name);
+        return NULL;
+    }
+
+    int32_t value = 0;
+    int status;
+    Py_BEGIN_ALLOW_THREADS
+    status = cae_value_eval(vp, ctx, board, &value);
+    Py_END_ALLOW_THREADS
+    cae_value_destroy(vp, ctx);
+
+    if (status != CAE_VALUE_OK) {
+        raise_provider_status(ex, vp, status);
+        return NULL;
+    }
+    return PyLong_FromLong((long)value);
+}
+
 static PyMethodDef MCTSTree_methods[] = {
+    {"set_value_provider", (PyCFunction)MCTSTree_set_value_provider, METH_VARARGS,
+     "set_value_provider(provider, weights_path) -> None\n\n"
+     "Install a CPU value provider on the tree's eval seam. `provider` is either\n"
+     "a known name ('nnue') or the value_provider_capsule published by the\n"
+     "extension that implements it — the tree IMPORTS the provider rather than\n"
+     "compiling it in, so the code it calls is the same copy, with the same\n"
+     "kernel selection and the same weight cache, that the provider's own module\n"
+     "exposes. A later provider (a leaf qsearch, a mate-search extension, a\n"
+     "composition of both) publishes the same capsule shape and needs no change\n"
+     "here. Replacing a provider releases the previous context."},
+    {"clear_value_provider", (PyCFunction)MCTSTree_clear_value_provider, METH_NOARGS,
+     "clear_value_provider() -> None — drop the provider and release its context.\n\n"
+     "Safe against a concurrent value_provider_eval: an evaluation in flight\n"
+     "holds its own reference, so this drops the tree's, not the last one."},
+    {"value_provider_name", (PyCFunction)MCTSTree_value_provider_name, METH_NOARGS,
+     "value_provider_name() -> str or None\n\n"
+     "The name read off the POINTER THE TREE IS HOLDING, not off the argument\n"
+     "that was passed to set_value_provider — so it reports what would actually\n"
+     "be called."},
+    {"value_provider_kernel", (PyCFunction)MCTSTree_value_provider_kernel, METH_NOARGS,
+     "value_provider_kernel() -> str or None\n\n"
+     "Which compute kernel the installed provider will really use ('avx2' /\n"
+     "'scalar'), asked of the vtable the tree holds. It therefore reports the\n"
+     "state of the provider's own module — the thing that does the work — and\n"
+     "changes when that module's set_simd() is called. None if the provider has\n"
+     "no kernel choice to report."},
+    {"value_provider_eval", (PyCFunction)MCTSTree_value_provider_eval, METH_VARARGS,
+     "value_provider_eval(cboard) -> int\n\n"
+     "Evaluate a position through the installed provider, from inside the tree\n"
+     "extension.\n\n"
+     "⚑ WHETHER A POSITION IN CHECK RAISES DEPENDS ON THE PROVIDER, and that is\n"
+     "the seam working as designed rather than an inconsistency. The RAW 'nnue'\n"
+     "provider refuses one — as its OWN InCheckError, so a caller catches by type\n"
+     "rather than by message text — because the NNUE evaluation is undefined\n"
+     "there. The resolver-backed arms ('nnue-static', 'nnue-qsearch') answer it,\n"
+     "because resolving the check recursively is exactly what they add.\n\n"
+     "The raw provider's refusal is the enforcement backstop for that invariant,\n"
+     "not a substitute for it: a caller that leans on it has a hole in its\n"
+     "search."},
     {"find_child", (PyCFunction)MCTSTree_find_child, METH_VARARGS,
      "find_child(node_id, action) -> child_node_id or -1"},
     {"add_root", (PyCFunction)MCTSTree_add_root, METH_VARARGS,
@@ -4581,6 +4900,16 @@ static PyMethodDef MCTSTree_methods[] = {
      "continue_gumbel_sims_legal_bf16(compact_policy_bf16_bits, wdl_float32) -> n_leaves or None."},
     {"get_pending_legal_indices", (PyCFunction)MCTSTree_get_pending_legal_indices, METH_NOARGS,
      "get_pending_legal_indices() -> (legal_flat_int32, legal_counts_int32) for the current pending batch."},
+    {"pending_leaf_cboards", (PyCFunction)MCTSTree_pending_leaf_cboards, METH_NOARGS,
+     "pending_leaf_cboards() -> list[CBoard]\n\n"
+     "The WHOLE pending leaf batch, in encoded-planes ROW ORDER: element i is\n"
+     "the board whose planes went to row i, and continue_gumbel_sims reads row\n"
+     "i of pol/wdl for it. For a CPU value function that cannot read planes --\n"
+     "the native NNUE arms need castling, en passant, the halfmove clock and\n"
+     "the repetition history, none of which the encoding carries.\n\n"
+     "⚑ Not get_pending_tb_leaves(32): that one returns only the SYZYGY-eligible\n"
+     "subset (castling == 0 and few enough pieces), which drops most of the\n"
+     "opening and middlegame."},
     {"get_pending_tb_leaves", (PyCFunction)MCTSTree_get_pending_tb_leaves, METH_VARARGS,
      "get_pending_tb_leaves(max_pieces) -> (np.int32 indices, list[CBoard]). Syzygy-eligible subset of the current pending batch."},
     {"mark_tb_solved", (PyCFunction)MCTSTree_mark_tb_solved, METH_VARARGS,
@@ -5789,6 +6118,7 @@ static PyMethodDef module_methods[] = {
     {"temperature_resample", py_temperature_resample, METH_VARARGS,
      "temperature_resample(probs, temps, actions, rand_vals) -> None. "
      "Apply per-game temperature and resample actions in-place. GIL released."},
+    DEEPFIN_SLIDER_PY_METHODS
     {NULL}
 };
 
@@ -5834,11 +6164,67 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
         return NULL;
     }
 
+    /* Which root sequential-halving SEMANTIC this .so was built with. NOT an
+     * ABI marker and deliberately non-gating: no signature changed, so a stale
+     * .so runs fine — it just eliminates candidates by the old rule, and every
+     * yardstick that reads a search (regret, arena Elo) would show the step
+     * with nothing to attribute it to. ABI_VERSION cannot carry this: bumping
+     * it hard-fails every process that has not rebuilt, and this change does
+     * not warrant that.
+     *
+     * 1 = the baseline was `W[root]/N[root]`, the running tree average this
+     *     search keeps mutating (absent from the module: an .so predating this
+     *     constant IS rev 1, which is why the Python reader defaults to 1
+     *     rather than to "unknown").
+     * 2 = the baseline is the fresh network root value `root_qs[bi]`, matching
+     *     mctx's qtransform_completed_by_mix_value, gumbel.py's reference
+     *     `_halve_remaining_for_board`, and this path's own returned policy.
+     *
+     * Read and announced once per process by mcts/gumbel_c.py so a running
+     * process's elimination rule is observable in its log. */
+    if (PyModule_AddIntConstant(m, "GSS_HALVING_REV", 2) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
     /* The search_wdl draw-mode encoding, exported so the Python side reads the
      * ints off the extension rather than keeping a second copy that can drift
      * (network_turn.py::_SWDL_DRAW_MODE_TO_C). */
     if (PyModule_AddIntConstant(m, "SWDL_DRAW_NET_RAW", SWDL_DRAW_NET_RAW) < 0 ||
         PyModule_AddIntConstant(m, "SWDL_DRAW_PARAMETRIC_Q", SWDL_DRAW_PARAMETRIC_Q) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    /* ⚑ THE RANKING CEILING, exported because a caller can promise more than it
+     * gets. gss_score_and_halve writes into a double scores_buf[GSS_MAX_CANDS]
+     * and clamps the candidate count to fit, so on a root with more legal moves
+     * than this, only the first GSS_MAX_CANDS are SCORED and the halving keeps
+     * the top half of those. Raising the caller-side candidate cap to the
+     * 218-move maximum does not change it; the ceiling is this buffer.
+     *
+     * ⚑ MEASURED, because the obvious reading is wrong. Budget is deducted for
+     * every candidate BEFORE the clamp: on a 218-legal-move root every child is
+     * still expanded, visited, and carries target mass. What the surplus loses
+     * is a place in the halving -- it is never deepened. The cap costs ranking
+     * resolution on wide roots, not coverage.
+     *
+     * A Python-side copy of the number would be a second home for it; this is
+     * the first. (Deliberately does not name the caller-side knob: a tripwire in
+     * tests/test_gumbel_config_validation.py greps this file for it, to keep the
+     * Python MIN_TOPK refusal the single authority on where that knob is
+     * clamped. The tripwire is coarse on purpose -- do not weaken it.) */
+    if (PyModule_AddIntConstant(m, "GSS_MAX_CANDS", GSS_MAX_CANDS) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+
+    /* Which slider backend THIS binary compiled: "pext", "magic", or "rays".
+     * The tree carries its own copy of CBoard's movegen — a provider reaches it
+     * through a capsule, never an #include — so this answers only for
+     * _mcts_tree.so and must be read per module. */
+    if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
+                                   DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
         Py_DECREF(m);
         return NULL;
     }

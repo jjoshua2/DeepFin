@@ -49,6 +49,40 @@ cd "$(dirname "$0")/.."
 # the case where they are launched directly rather than through this script.
 export PYTORCH_NVML_BASED_CUDA_CHECK="${PYTORCH_NVML_BASED_CUDA_CHECK:-1}"
 
+# ⚑ THE LIVE CONFIG, BY ABSOLUTE PATH, for the offline instruments.
+# `scripts/audit_targets.py`, `scripts/arena_standard.py --search-shape
+# training`, `scripts/value_regret.py` and `scripts/probe_policy_targets.py`
+# all have to know which file the running trial re-reads, and it is NOT the
+# in-tree `configs/pbt2_small.yaml` of whatever worktree they were started
+# from: CLAUDE.md mandates a worktree for branch work, and the live tree is the
+# only writer of the live yaml with edits routinely uncommitted.
+#
+# Exported HERE because a guard that has to be armed by hand is disarmed by
+# default, and the default is the case that produced the #227 finding: run from
+# a worktree with this unset, `audit_targets.py` scored the wrong shape and
+# printed a line saying the config matched "live". It now REFUSES instead.
+#
+# ⚑ ITS REACH IS TRAINING AND ITS DESCENDANTS, AND NOTHING ELSE. The documented
+# invocation is `./scripts/train.sh start`, i.e. this script runs in a
+# SUBPROCESS and cannot modify the shell that launched it. So an operator who
+# starts training and then runs `audit_targets.py` from that SAME terminal
+# still has the variable unset and hits the refusal — which is fail-closed and
+# therefore safe, but it means this export does NOT make the authoritative case
+# the ordinary one for offline instruments. Only a `source`d line in the
+# operator's shell profile does; docs/operations.md says so.
+#
+# `${VAR:-}` so an operator pointing it at another file (a historical config,
+# a second trial) still wins. Set after the `cd` above, so `$PWD` is the repo
+# root and the exported path is absolute — an instrument run from any CWD
+# resolves the same file. `$TRAIN_CONFIG` may itself be absolute, hence the
+# case rather than an unconditional `$PWD/`.
+case "$CONFIG" in
+    /*) _live_config_path="$CONFIG" ;;
+    *)  _live_config_path="$PWD/$CONFIG" ;;
+esac
+export CHESS_ANTI_ENGINE_LIVE_CONFIG="${CHESS_ANTI_ENGINE_LIVE_CONFIG:-$_live_config_path}"
+unset _live_config_path
+
 clear_pause_markers() {
     if [ "${TRAIN_KEEP_PAUSE_MARKERS:-0}" = "1" ]; then
         return 0
