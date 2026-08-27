@@ -101,9 +101,25 @@ a knob that never reaches the production path, a metric that does not mean its n
 gate that cannot fail. So the question is not "is this code correct" but "does this take
 effect on the production path, and what observation would prove it did".
 
-Report concrete findings as a numbered list, each with file:line, what is wrong, and the
-concrete failure scenario. If you find nothing, say so plainly -- a clean pass is a real
-result. Do not fix anything; this is a read-only review.
+Do not fix anything; this is a read-only review.
+
+## Required output format
+Write whatever analysis you want first. Then end your response with a findings block in
+EXACTLY this form, so it can be parsed and tracked item by item:
+
+BEGIN_FINDINGS
+1 | <file>:<line> | <severity: BLOCKER|MAJOR|MINOR|NIT> | <one-line claim> | <the concrete failure: inputs or state -> wrong behaviour> | <the single observation that would prove or disprove this>
+2 | ...
+END_FINDINGS
+
+One finding per line, pipe-separated, no wrapping. If a finding spans several sites, list
+the primary one and say so in the claim. If you found NOTHING, emit the block with the
+single line `NONE` between the markers -- a clean pass is a real result and must be
+stated, not implied by silence.
+
+The last field is required and is the point: name the check that settles it. A finding
+nobody can test is a guess, and this repo has been burned by confident guesses that read
+like measurements.
 PROMPT_TAIL
 
 [ -n "$FOCUS" ] && { echo; echo "## Caller's review focus"; echo "$FOCUS"; } >> "$PROMPT"
@@ -134,6 +150,26 @@ echo "mode: $MODE  target: ${TARGET:-$WORKTREE}"
 echo "================================================="
 printf '%s\n' "$OUTPUT"
 echo "===== END GROK REVIEW ====="
+
+# The parsed findings are a CONVENIENCE INDEX, printed after the raw text and never
+# instead of it. If grok ignored the format, say so rather than reporting zero findings --
+# an unparseable review is not a clean review, and the two must never look alike.
+FINDINGS="$(printf '%s\n' "$OUTPUT" | sed -n '/^BEGIN_FINDINGS/,/^END_FINDINGS/p' \
+            | sed '1d;$d' | sed '/^[[:space:]]*$/d')"
+echo
+if [ -z "$FINDINGS" ]; then
+    echo "PARSED FINDINGS: NONE FOUND IN THE OUTPUT — grok did not emit the block."
+    echo "⚑ This is UNPARSEABLE, not CLEAN. Read the raw text above before concluding"
+    echo "  anything; do not record this run as a zero-finding pass."
+elif [ "$(printf '%s' "$FINDINGS" | tr -d '[:space:]')" = "NONE" ]; then
+    echo "PARSED FINDINGS: 0 (grok explicitly reported a clean pass)"
+else
+    echo "PARSED FINDINGS: $(printf '%s\n' "$FINDINGS" | wc -l)"
+    printf '%s\n' "$FINDINGS"
+fi
+echo
+echo "⚑ These are LEADS, not verdicts. Verify each before acting; record the ones that"
+echo "  turn out wrong AS false positives rather than fixing them defensively."
 
 # ⚑ Verify the REAL tree was untouched. Report, never repair -- a script that quietly
 # reverts grok's stray writes would hide the very behaviour this check exists to catch.
