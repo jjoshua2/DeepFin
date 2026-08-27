@@ -322,8 +322,14 @@ def parse_sf_arm(arm: str) -> SfArmSpec | None:
     per_child = _SF_ARM_RE.match(arm)
     if per_child is not None:
         nodes, depth = _parse_sf_limit(arm, per_child.group(1), per_child.group(2))
+        # Rebuilt from the parsed limit for the same reason the rooted name is:
+        # `sf-d09` and `sf-d9` (or `sf-0512` and `sf-512`) are ONE search, and
+        # a name copied from the input would open two engines and publish two
+        # identical columns as if they were a comparison.
+        token = f"{SF_DEPTH_MARKER}{depth}" if nodes is None else str(nodes)
         return SfArmSpec(
-            rooted=False, nodes=nodes, depth=depth, width=None, name=arm,
+            rooted=False, nodes=nodes, depth=depth, width=None,
+            name=f"{SF_ARM_PREFIX}{token}",
         )
     rooted = _SFROOT_ARM_RE.match(arm)
     if rooted is None:

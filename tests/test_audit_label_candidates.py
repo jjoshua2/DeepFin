@@ -1364,6 +1364,20 @@ def test_a_per_child_depth_arm_parses_to_a_depth_limit() -> None:
     assert spec.name == "sf-d9"
 
 
+def test_a_per_child_name_canonicalises_its_limit_token() -> None:
+    """Review F1: ``sf-d09`` and ``sf-d9`` are ONE search, so both spellings
+    must parse to ONE canonical arm -- otherwise a run naming both opens two
+    engines with identical limits and publishes two identical columns as if
+    they were a comparison. Same rule for node arms (``sf-0512`` == ``sf-512``),
+    which had the identical pre-existing hole."""
+    names, specs = gate.parse_arms("sf-d09,sf-d9")
+    assert names == ("sf-d9",)
+    assert (specs["sf-d9"].depth, specs["sf-d9"].nodes) == (9, None)
+    node_names, node_specs = gate.parse_arms("sf-0512,sf-512")
+    assert node_names == ("sf-512",)
+    assert (node_specs["sf-512"].depth, node_specs["sf-512"].nodes) == (None, 512)
+
+
 def test_a_depth_arm_and_a_node_arm_of_the_same_number_never_alias() -> None:
     """``sf-d9`` and ``sf-9`` both parse, to two different arms.
 
