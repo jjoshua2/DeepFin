@@ -62,9 +62,10 @@ THE ARMS
     (``--fastq-max-qply`` and friends) so a FastQ quality ladder runs through
     this gate rather than beside it.
 
-``sf-<nodes>`` (e.g. ``sf-512``) -- PER-CHILD
-    The SAME 1-ply construction with Stockfish ``go nodes <N>`` on each CHILD
-    as the evaluator. The score is read off the final info line, mates go
+``sf-<nodes>`` / ``sf-d<depth>`` (e.g. ``sf-512``, ``sf-d9``) -- PER-CHILD
+    The SAME 1-ply construction with Stockfish ``go nodes <N>`` -- or
+    ``go depth <D>`` for the ``-d`` spelling -- on each CHILD as the
+    evaluator. The score is read off the final info line, mates go
     through ``stockfish.wdl.mate_to_effective_cp`` (THE single mate home, the
     one ``parse_audit_record`` used to build the frozen set's own labels), and
     the effective cp then goes through the SAME ``cp_to_wdl_array`` the native
@@ -73,9 +74,11 @@ THE ARMS
     ``test_the_sf_arm_and_the_nnue_arm_share_one_cp_mapping_object`` proves the
     two share one function object by execution rather than by inspection.
 
-``sfroot-<nodes>[-mpv<W>]`` (e.g. ``sfroot-2048-mpv20``) -- ROOTED
-    ONE ``go nodes <N>`` on the POSITION at MultiPV ``W``, and the arm's
-    ranking is the MultiPV list. It shares one tree across the PVs, so it is
+``sfroot-<nodes>[-mpv<W>]`` / ``sfroot-d<depth>[-mpv<W>]`` -- ROOTED
+    (e.g. ``sfroot-2048-mpv20``, ``sfroot-d9-mpv20``.)
+    ONE ``go nodes <N>`` -- or ``go depth <D>`` -- on the POSITION at MultiPV
+    ``W``, and the arm's ranking is the MultiPV list. It shares one tree
+    across the PVs, so it is
     cheaper and stronger per node than the per-child arm -- and it is a
     DIFFERENT construction, which is why both are in the table: the delta
     between them is the thing being measured, not an implementation detail.
@@ -100,6 +103,16 @@ THE ARMS
     correctly, for its own single-PV purpose -- would build a ranking out of two
     different searches. ``rooted_ranking_from_info_lines`` takes the DEEPEST
     depth whose MultiPV set is complete, and says so in the stats.
+
+    ⚑ AND THAT RULE IS NOT RELAXED FOR THE ``-d`` ARMS. A depth-limited search
+    emits the SAME per-depth MultiPV blocks -- it simply stops after the one it
+    was asked for -- so the final complete set at the requested depth is what
+    the same rule selects, and the incomplete fallback still covers the search
+    that ends early (a proven mate, a tablebase hit, an engine that ran out of
+    root moves at the requested width). Reading "the last lines seen" would be
+    the identical bug here, and reading "the requested depth" would be worse:
+    it would report the ASK as the realized depth of a search that never got
+    there.
 
 ⚑ TT HYGIENE IS DISCLOSED, NOT ASSUMED. One persistent engine per Stockfish
 arm, ``Threads=1``, and a ``ucinewgame`` + ``Clear Hash`` at run start, so the
@@ -164,6 +177,13 @@ _LOG = logging.getLogger("audit_label_candidates")
 #: than a trained net's policy head) against the frozen deep-SF set; a consumer
 #: that reads an ``audit_targets`` report's keys off this file gets a KeyError
 #: rather than a plausible wrong number.
+#:
+#: ⚑ THE DEPTH ARMS DID NOT BUMP IT, deliberately. They ADD keys
+#: (``limit_kind``, ``depth_requested``, and the per-child arm's realized
+#: ``depth_*``) and change no existing one: every ``sf-<nodes>`` /
+#: ``sfroot-<nodes>`` column a schema-1 consumer already reads is byte-for-byte
+#: what it was. ``nodes`` is null only on an arm spelling that did not exist at
+#: schema 1, so no reader can be holding a number for it.
 REPORT_SCHEMA = 1
 
 #: The native arms this gate can open. ``nnue-static`` comes from the generator
@@ -203,6 +223,15 @@ SF_ARM_PREFIX = "sf-"
 #: instead of one search per child. Same reason for the same spelling.
 SFROOT_ARM_PREFIX = "sfroot-"
 
+#: The ``d`` that turns a node budget into a DEPTH budget: ``sf-d9``,
+#: ``sfroot-d9-mpv20``. It is a separate character rather than a separate flag
+#: for the reason the budget itself is in the name -- a depth ladder is several
+#: arms in one run -- and it is a PREFIX of the number rather than a suffix so
+#: that ``sf-d9`` and ``sf-9`` cannot be confused by a reader OR by the regex:
+#: the two parse to different limits, publish different arm names, and open
+#: different engines.
+SF_DEPTH_MARKER = "d"
+
 #: Default rooted MultiPV width. The banked label-width finding is that MultiPV
 #: 20 reaches 95.3% of the bad-tail mass against MultiPV 6's 60.9%, and the cost
 #: is sublinear (~7x at MultiPV 40) -- so the default buys the tail rather than
@@ -213,8 +242,8 @@ DEFAULT_ROOTED_MULTIPV = 20
 #: resolved PER POSITION and recorded as realized.
 MULTIPV_ALL = "all"
 
-_SF_ARM_RE = re.compile(r"^sf-(\d+)$")
-_SFROOT_ARM_RE = re.compile(r"^sfroot-(\d+)(?:-mpv(\d+|all))?$")
+_SF_ARM_RE = re.compile(r"^sf-(d?)(\d+)$")
+_SFROOT_ARM_RE = re.compile(r"^sfroot-(d?)(\d+)(?:-mpv(\d+|all))?$")
 
 #: The one position "cluster" every probe belongs to. The shadow harness keys a
 #: probe by (game, ply); audit positions are independent draws, so the game is
@@ -230,29 +259,77 @@ class SfArmSpec:
     ``sfroot-2048-mpv20`` are the SAME arm, so both parse to the canonical
     spelling -- otherwise a run naming both would open two engines, pay twice,
     and publish two identical columns as if they were a comparison.
+
+    ⚑ EXACTLY ONE OF ``nodes`` / ``depth`` IS SET, enforced in ``__post_init__``
+    rather than left to the parser. The two are not interchangeable budgets:
+    ``go nodes N`` stops mid-iteration at a depth nobody chose, ``go depth D``
+    runs the iteration out at a node count nobody chose, and a spec carrying
+    both would let one silently become the other on any path that reads the
+    field it happens to prefer. ``sf-d9`` and ``sf-9`` are therefore two
+    different arms with two different names, never aliases.
     """
 
     rooted: bool
-    nodes: int
+    nodes: int | None
+    depth: int | None
     width: int | None
     name: str
 
+    def __post_init__(self) -> None:
+        if (self.nodes is None) == (self.depth is None):
+            raise ValueError(
+                f"{self.name!r}: a Stockfish arm carries exactly one search "
+                f"limit, got nodes={self.nodes!r} depth={self.depth!r}",
+            )
+
+    @property
+    def limit_kind(self) -> str:
+        """``"nodes"`` or ``"depth"`` -- what the ``go`` line limits on."""
+        return "nodes" if self.nodes is not None else "depth"
+
+    @property
+    def go_limit(self) -> str:
+        """The ``go`` line's limit clause: ``nodes <N>`` or ``depth <D>``."""
+        return (
+            f"nodes {self.nodes}" if self.nodes is not None
+            else f"depth {self.depth}"
+        )
+
+
+def _parse_sf_limit(
+    arm: str, marker: str, digits: str,
+) -> tuple[int | None, int | None]:
+    """``("d", "9")`` -> ``(None, 9)``; ``("", "512")`` -> ``(512, None)``.
+
+    The ``(nodes, depth)`` pair ``SfArmSpec`` then refuses if it is not exactly
+    one. A non-positive budget is refused HERE and in the arm's own words,
+    because ``sf-d0`` is a typo a reader of the report could never recover
+    from: a zero depth is a limit Stockfish quietly replaces with a real
+    iteration.
+    """
+    value = int(digits)
+    if marker == SF_DEPTH_MARKER:
+        if value <= 0:
+            raise ValueError(f"{arm!r}: the depth budget must be positive")
+        return None, value
+    if value <= 0:
+        raise ValueError(f"{arm!r}: the node budget must be positive")
+    return value, None
+
 
 def parse_sf_arm(arm: str) -> SfArmSpec | None:
-    """``"sf-512"`` / ``"sfroot-2048-mpv20"`` -> a spec; anything else -> None."""
+    """``"sf-512"`` / ``"sfroot-d9-mpv20"`` -> a spec; anything else -> None."""
     per_child = _SF_ARM_RE.match(arm)
     if per_child is not None:
-        nodes = int(per_child.group(1))
-        if nodes <= 0:
-            raise ValueError(f"{arm!r}: the node budget must be positive")
-        return SfArmSpec(rooted=False, nodes=nodes, width=None, name=arm)
+        nodes, depth = _parse_sf_limit(arm, per_child.group(1), per_child.group(2))
+        return SfArmSpec(
+            rooted=False, nodes=nodes, depth=depth, width=None, name=arm,
+        )
     rooted = _SFROOT_ARM_RE.match(arm)
     if rooted is None:
         return None
-    nodes = int(rooted.group(1))
-    if nodes <= 0:
-        raise ValueError(f"{arm!r}: the node budget must be positive")
-    raw_width = rooted.group(2)
+    nodes, depth = _parse_sf_limit(arm, rooted.group(1), rooted.group(2))
+    raw_width = rooted.group(3)
     if raw_width is None:
         width: int | None = DEFAULT_ROOTED_MULTIPV
     elif raw_width == MULTIPV_ALL:
@@ -262,9 +339,15 @@ def parse_sf_arm(arm: str) -> SfArmSpec | None:
         if width <= 0:
             raise ValueError(f"{arm!r}: the MultiPV width must be positive")
     label = MULTIPV_ALL if width is None else str(width)
+    # ⚑ THE LIMIT TOKEN IS REBUILT FROM THE PARSED LIMIT, not copied out of the
+    # input, so the canonical name of a depth arm keeps its `d`. Dropping it
+    # here would canonicalise `sfroot-d9` onto `sfroot-9-mpv20` -- two different
+    # searches publishing one column, which is the collision the whole
+    # canonicalisation exists to prevent rather than to cause.
+    limit_token = f"{SF_DEPTH_MARKER}{depth}" if nodes is None else str(nodes)
     return SfArmSpec(
-        rooted=True, nodes=nodes, width=width,
-        name=f"{SFROOT_ARM_PREFIX}{nodes}-mpv{label}",
+        rooted=True, nodes=nodes, depth=depth, width=width,
+        name=f"{SFROOT_ARM_PREFIX}{limit_token}-mpv{label}",
     )
 
 
@@ -432,7 +515,9 @@ class SearchEngine(Protocol):
 
     hash_mb: int | None
 
-    def search(self, fen: str, *, nodes: int | None = ...) -> StockfishResult: ...
+    def search(
+        self, fen: str, *, nodes: int | None = ..., depth: int | None = ...,
+    ) -> StockfishResult: ...
 
     def new_game(self) -> None: ...
 
@@ -526,12 +611,17 @@ class NnueCandidateArm:
 
 
 class StockfishCandidateArm:
-    """``go nodes <N>`` on every child, as a ``ChildArm``.
+    """``go nodes <N>`` -- or ``go depth <D>`` -- on every child, as a ``ChildArm``.
 
     ⚑ THE ONLY THING THAT DIFFERS FROM A NATIVE ARM IS THE EVALUATOR. The seat
     (the child's own side to move), the mate mapping and the cp -> q logistic
     are the native arms', reached through the same objects; ``probe_root``
     supplies the negation to the root mover's seat for both.
+
+    ⚑ AND THE LIMIT IS NAMED ON EVERY SEARCH, never left to the engine's own
+    ``nodes`` default. ``StockfishUCI.search`` falls back to ``self.nodes`` when
+    a call names no limit, so an arm that forgot to pass one would run a
+    2000-node search and report it under whatever budget its NAME advertises.
     """
 
     def __init__(
@@ -544,7 +634,9 @@ class StockfishCandidateArm:
         fresh_per_position: bool,
     ) -> None:
         self.arm = spec.name
-        self.nodes = int(spec.nodes)
+        self.nodes = None if spec.nodes is None else int(spec.nodes)
+        self.depth = None if spec.depth is None else int(spec.depth)
+        self.limit_kind = spec.limit_kind
         self.engine = engine
         self.cp_slope = float(cp_slope)
         self.cp_draw_width = float(cp_draw_width)
@@ -552,6 +644,12 @@ class StockfishCandidateArm:
         self._cost = ArmCost()
         self._searches = 0
         self._terminals = 0
+        #: The depth the ENGINE reported, one entry per search it ran. The
+        #: requested budget is `self.nodes` / `self.depth` and is not a
+        #: measurement of anything: a node arm's realized depth is whatever the
+        #: budget bought, and a depth arm's can still fall SHORT of the ask when
+        #: the search ends early on a proven mate or a tablebase hit.
+        self._depths: list[int] = []
 
     def effective_cp(self, board: CBoard) -> float:
         """One child's effective cp from ITS OWN seat -- terminal, mate or cp."""
@@ -559,8 +657,13 @@ class StockfishCandidateArm:
         if terminal is not None:
             self._terminals += 1
             return terminal
-        result = self.engine.search(board.fen(), nodes=self.nodes)
+        result = (
+            self.engine.search(board.fen(), nodes=self.nodes) if self.nodes is not None
+            else self.engine.search(board.fen(), depth=self.depth)
+        )
         self._searches += 1
+        if result.depth is not None:
+            self._depths.append(int(result.depth))
         eff = effective_cp_from_score(result.cp, result.mate)
         if eff is None:
             # Refusing beats imputing: a silent 0.0 here is a draw claim about a
@@ -598,12 +701,13 @@ class StockfishCandidateArm:
         return {
             "kind": "stockfish",
             "construction": "oneply_child",
-            "nodes": self.nodes,
+            **_limit_stamp(self),
             "multipv": 1,
             "threads": 1,
             "hash_mb": self.engine.hash_mb,
             "searches": self._searches,
             "terminal_children_resolved_without_search": self._terminals,
+            **_depth_stamp(self._depths),
             "tt_hygiene": _tt_hygiene(self.fresh_per_position),
         }
 
@@ -618,6 +722,43 @@ def _tt_hygiene(fresh_per_position: bool) -> str:
         "cold at run start (ucinewgame + Clear Hash); SHARED across searches "
         "thereafter"
     )
+
+
+def _limit_stamp(arm: StockfishCandidateArm | RootedStockfishArm) -> dict[str, Any]:
+    """The arm's REQUESTED search limit, with the unused half left NULL.
+
+    ⚑ A DEPTH ARM PUBLISHES ``nodes: null``, NOT A NUMBER. There is no node
+    budget to report -- ``go depth 9`` spends whatever the iteration costs --
+    and printing the engine constructor's default there would put a value on the
+    face of the report that reads as the budget the arm ran under and was never
+    a limit on anything. The same holds mirrored for ``depth_requested`` on a
+    node arm, whose depth is an OUTCOME (see ``_depth_stamp``) rather than an
+    ask. ``limit_kind`` is what a reader keys on to tell the two apart without
+    inferring it from which field is null.
+    """
+    return {
+        "limit_kind": arm.limit_kind,
+        "nodes": arm.nodes,
+        "depth_requested": arm.depth,
+    }
+
+
+def _depth_stamp(depths: Sequence[int]) -> dict[str, Any]:
+    """REALIZED search depth, read off the engine's own replies.
+
+    ⚑ NOT ``depth_requested``, and the gap between the two is the point. A node
+    arm has no requested depth at all and these are the only depth numbers it
+    can report; a depth arm's realized depth normally equals its ask, and where
+    it does NOT -- a search that ended early on a proven mate or a tablebase hit
+    -- the difference is exactly what a reader needs to see. An arm that echoed
+    its own request here would report a depth the engine never reached and
+    nothing would raise.
+    """
+    return {
+        "depth_mean": statistics.fmean(depths) if depths else math.nan,
+        "depth_min": min(depths) if depths else 0,
+        "depth_max": max(depths) if depths else 0,
+    }
 
 
 # ── the rooted MultiPV arm ───────────────────────────────────────────────────
@@ -703,7 +844,7 @@ def rooted_ranking_from_info_lines(
 
 
 class RootedStockfishArm:
-    """ONE ``go nodes <N>`` per POSITION at MultiPV ``W``.
+    """ONE ``go nodes <N>`` -- or ``go depth <D>`` -- per POSITION at MultiPV ``W``.
 
     ⚑ THIS IS NOT A ``ChildArm``, and the difference is the seat. The MultiPV
     list scores each ROOT MOVE from the root mover's own POV, so there is
@@ -730,7 +871,10 @@ class RootedStockfishArm:
         fresh_per_position: bool,
     ) -> None:
         self.arm = spec.name
-        self.nodes = int(spec.nodes)
+        self.nodes = None if spec.nodes is None else int(spec.nodes)
+        self.depth = None if spec.depth is None else int(spec.depth)
+        self.limit_kind = spec.limit_kind
+        self.go_limit = spec.go_limit
         self.width = spec.width
         self.engine = engine
         self.cp_slope = float(cp_slope)
@@ -770,7 +914,11 @@ class RootedStockfishArm:
                 self.engine._wait_for("readyok")
                 self._engine_multipv = multipv
             self.engine._send(f"position fen {fen}")
-            self.engine._send(f"go nodes {self.nodes}")
+            # ⚑ ONE limit clause, taken from the SPEC rather than assembled
+            # here, so this hand-built `go` line and the per-child arm's
+            # `search` keyword cannot come to differ about which budget the
+            # `-d` arms run under.
+            self.engine._send(f"go {self.go_limit}")
             deadline = time.monotonic() + self.engine.read_timeout_s
             lines: list[str] = []
             while True:
@@ -840,7 +988,7 @@ class RootedStockfishArm:
         return {
             "kind": "stockfish",
             "construction": "rooted_multipv",
-            "nodes": self.nodes,
+            **_limit_stamp(self),
             "multipv_requested": MULTIPV_ALL if self.width is None else self.width,
             "multipv_realized_mean": (
                 statistics.fmean(self._realized_widths) if self._realized_widths
@@ -852,9 +1000,7 @@ class RootedStockfishArm:
             "multipv_realized_max": (
                 max(self._realized_widths) if self._realized_widths else 0
             ),
-            "depth_mean": statistics.fmean(self._depths) if self._depths else math.nan,
-            "depth_min": min(self._depths) if self._depths else 0,
-            "depth_max": max(self._depths) if self._depths else 0,
+            **_depth_stamp(self._depths),
             # Positions where NO depth carried the full requested width, so the
             # ranking is the deepest single depth that had a best move. Not an
             # error and not a mix; a narrower ranking than asked for.
@@ -867,6 +1013,27 @@ class RootedStockfishArm:
 
     def close(self) -> None:
         self.engine.close()
+
+
+def depth_requested_of(arm: ReportableArm) -> int | None:
+    """The arm's REQUESTED search depth, or ``None`` for an arm with no depth limit.
+
+    Carried into every per-position dump row, because a dump outlives the report
+    it was written beside and gets joined to other dumps: without it a
+    ``sf-d9`` row and a ``sf-512`` row are two identical shapes whose only
+    difference lives in an arm NAME a joiner is free to rename. ``None`` is the
+    honest answer for a node arm and for every native arm -- they have no depth
+    ASK, only the realized depth in ``_depth_stamp``.
+
+    ⚑ ``isinstance``, not ``getattr(arm, "depth", None)``. A name looked up as a
+    string returns ``None`` for a typo exactly as it does for an arm with no
+    depth, so the silent-failure mode of that spelling is the one this repo is
+    built to refuse: every row would publish ``null`` and every test asserting
+    ``null`` for the native arms would still pass.
+    """
+    if isinstance(arm, StockfishCandidateArm | RootedStockfishArm):
+        return arm.depth
+    return None
 
 
 def clear_transposition_table(engine: StockfishUCI) -> None:
@@ -999,13 +1166,32 @@ def open_arms(
                         f"{name} needs a Stockfish binary; none was given and "
                         "none was discovered",
                     )
-                engine = StockfishUCI(
-                    str(cfg.sf_binary), nodes=spec.nodes,
-                    multipv=(
-                        1 if not spec.rooted
-                        else (spec.width or DEFAULT_ROOTED_MULTIPV)
-                    ),
-                    hash_mb=cfg.sf_hash_mb, nice=max(0, cfg.nice),
+                # ⚑ ``nodes`` IS OMITTED FOR A DEPTH ARM RATHER THAN INVENTED.
+                # The constructor argument is only the fallback for a
+                # ``search()`` that names no limit, and both arms below name
+                # theirs on every call -- so a depth arm has no node budget to
+                # give, and handing one over would put a number on an object a
+                # later reader could mistake for the arm's configuration.
+                #
+                # Two calls rather than a ``**kwargs`` dict: an unpacked
+                # ``dict[str, int]`` type-checks as if it could fill ANY
+                # constructor parameter, and the one it landed on was
+                # ``syzygy_path``.
+                multipv = (
+                    1 if not spec.rooted
+                    else (spec.width or DEFAULT_ROOTED_MULTIPV)
+                )
+                engine = (
+                    StockfishUCI(
+                        str(cfg.sf_binary), multipv=multipv,
+                        hash_mb=cfg.sf_hash_mb, nice=max(0, cfg.nice),
+                    )
+                    if spec.nodes is None else
+                    StockfishUCI(
+                        str(cfg.sf_binary), nodes=int(spec.nodes),
+                        multipv=multipv, hash_mb=cfg.sf_hash_mb,
+                        nice=max(0, cfg.nice),
+                    )
                 )
                 if spec.rooted:
                     rooted.append(RootedStockfishArm(
@@ -1208,10 +1394,20 @@ METRIC_DEFINITIONS: dict[str, Any] = {
         "nnue_shadow_label_readout.probe_root + oneply_policy_vector"
     ),
     "label_rule_rooted_multipv": (
-        "one `go nodes N` at MultiPV W on the position itself; the chosen move is "
-        "PV1 of the DEEPEST COMPLETE MultiPV depth and the ranking is that depth's "
-        "list, scored from the ROOT MOVER's seat (no negation) through the same "
-        "cp-logistic and the same oneply_policy_vector softmax"
+        "one `go nodes N` (or `go depth D` for a -d arm) at MultiPV W on the "
+        "position itself; the chosen move is PV1 of the DEEPEST COMPLETE MultiPV "
+        "depth and the ranking is that depth's list, scored from the ROOT MOVER's "
+        "seat (no negation) through the same cp-logistic and the same "
+        "oneply_policy_vector softmax"
+    ),
+    "search_limit_kind": (
+        "a Stockfish arm limits on NODES (`sf-512`, `sfroot-2048-mpv20`) or on "
+        "DEPTH (`sf-d9`, `sfroot-d9-mpv20`), never both. limit_kind names which; "
+        "`nodes` and `depth_requested` are the ASK and exactly one of them is "
+        "non-null; depth_mean/min/max are the depth the ENGINE reported and are a "
+        "measurement on both kinds -- for a node arm the only depth number there "
+        "is, and for a depth arm the place a search that ended early (proven mate, "
+        "tablebase hit) shows up as a realized depth below the ask"
     ),
     "top1_agree_rate": (
         "share of positions whose chosen move is in the deep-SF co-best set, "
@@ -1270,6 +1466,7 @@ def run(cfg: GateConfig) -> dict[str, Any]:
     )
     all_arms: list[ReportableArm] = [*child_arms, *rooted_arms]
     scores: dict[str, ArmScore] = {a.arm: ArmScore() for a in all_arms}
+    depth_requested = {a.arm: depth_requested_of(a) for a in all_arms}
     dump: list[dict[str, Any]] = []
     skipped_no_legal = 0
     started = time.perf_counter()
@@ -1344,6 +1541,10 @@ def run(cfg: GateConfig) -> dict[str, Any]:
                     # without rerunning a single evaluation.
                     "top1_move_listed_by_deep_sf": bool(listed),
                     "chosen_is_probs_argmax": bool(argmax_agrees),
+                    # ⚑ THE ARM'S ASK, so a joined dump can tell a depth arm
+                    # from a node arm without the arm's name. `null` for every
+                    # arm that has no depth limit -- see `depth_requested_of`.
+                    "depth_requested": depth_requested[arm.arm],
                 }
                 if cfg.dump_move_values:
                     cell["values_kind"] = label.values_kind
@@ -1489,11 +1690,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--arms", default=",".join(NATIVE_ARMS),
         help="comma-separated candidate arms. Native: "
              f"{', '.join(NATIVE_ARMS)}. Stockfish per-child: sf-<nodes> (e.g. "
-             "sf-512). Stockfish rooted MultiPV: sfroot-<nodes>[-mpv<W|all>] "
-             f"(e.g. sfroot-2048-mpv20); W defaults to {DEFAULT_ROOTED_MULTIPV} "
-             "and 'all' means one PV per legal move. Rooted names are "
-             "canonicalised to their -mpv form, so sfroot-2048 and "
-             f"sfroot-2048-mpv{DEFAULT_ROOTED_MULTIPV} are one arm.",
+             "sf-512) or sf-d<depth> (e.g. sf-d9). Stockfish rooted MultiPV: "
+             "sfroot-<nodes>[-mpv<W|all>] or sfroot-d<depth>[-mpv<W|all>] "
+             f"(e.g. sfroot-2048-mpv20, sfroot-d9); W defaults to "
+             f"{DEFAULT_ROOTED_MULTIPV} and 'all' means one PV per legal move. "
+             "A 'd' before the number makes the arm DEPTH-limited (go depth D) "
+             "instead of node-limited (go nodes N); sf-d9 and sf-9 are two "
+             "different arms. Rooted names are canonicalised to their -mpv form, "
+             f"so sfroot-2048 and sfroot-2048-mpv{DEFAULT_ROOTED_MULTIPV} are one "
+             "arm.",
     )
     p.add_argument(
         "--limit", type=int, default=0,
@@ -1582,8 +1787,10 @@ def parse_arms(spec: str) -> tuple[tuple[str, ...], dict[str, SfArmSpec]]:
             if parsed is None:
                 raise ValueError(
                     f"unknown arm {raw!r}: expected one of {NATIVE_ARMS}, "
-                    f"{SF_ARM_PREFIX}<nodes>, or "
-                    f"{SFROOT_ARM_PREFIX}<nodes>[-mpv<W|all>]",
+                    f"{SF_ARM_PREFIX}<nodes>, "
+                    f"{SF_ARM_PREFIX}{SF_DEPTH_MARKER}<depth>, "
+                    f"{SFROOT_ARM_PREFIX}<nodes>[-mpv<W|all>], or "
+                    f"{SFROOT_ARM_PREFIX}{SF_DEPTH_MARKER}<depth>[-mpv<W|all>]",
                 )
             canonical = parsed.name
             sf_specs[canonical] = parsed

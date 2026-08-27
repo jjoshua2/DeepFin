@@ -656,14 +656,26 @@ class StockfishUCI:
 
     def search(
         self, fen: str, *, nodes: int | None = None,
+        depth: int | None = None,
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
     ) -> StockfishResult:
-        """Node-limited search from FEN.
+        """Node-limited search from FEN, or DEPTH-limited when ``depth`` is given.
 
         If MultiPV>1 is enabled, we attempt to collect (move, wdl) pairs for the
         top lines so the caller can build a soft "SF policy" target distribution.
+
+        ⚑ ``depth`` DEFAULTS TO ``None`` AND THE DEFAULT PATH IS BYTE-IDENTICAL.
+        Every production caller (selfplay labels, the arena, the deep-SF tools)
+        names ``nodes`` or nothing at all, and those calls still emit exactly
+        ``go nodes N`` — the same trade ``threads=`` made at the constructor.
+        ``depth`` emits ``go depth D`` INSTEAD, never as well: the two limits
+        both terminate a search, so ``go nodes 512 depth 9`` stops at whichever
+        comes first and the caller cannot tell which arm it measured. Passing
+        both is therefore refused rather than silently ordered, and so is a
+        non-positive depth — Stockfish clamps ``go depth 0`` up to a real
+        iteration, which is a limit accepted and then quietly replaced.
 
         ``fresh`` clears the transposition table (``ucinewgame``) first so this
         is a COLD, independent search. Required when re-querying a position the
@@ -694,6 +706,20 @@ class StockfishUCI:
         # written, and `StockfishPool` then throws the process away. A caller's
         # typo must not cost a Stockfish restart, and nothing has been sent yet
         # at this point, so there is nothing to desync.
+        if depth is not None:
+            if nodes is not None:
+                raise ValueError(
+                    f"search() was given both nodes={nodes!r} and "
+                    f"depth={depth!r}; a search has ONE limit, and sending both "
+                    "would stop at whichever fired first with no way to tell "
+                    "which one the result was measured under",
+                )
+            if int(depth) <= 0:
+                raise ValueError(
+                    f"search() was given depth={depth!r}; a depth limit must be "
+                    "positive, and Stockfish silently searches a real iteration "
+                    "for a non-positive one",
+                )
         move_tokens = (
             _validated_searchmoves(fen, searchmoves) if searchmoves else []
         )
@@ -703,8 +729,15 @@ class StockfishUCI:
             if syzygy_path is not None:
                 self._set_syzygy_path_locked(str(syzygy_path))
             self._send(f"position fen {fen}")
-            n = int(self.nodes) if nodes is None else int(nodes)
-            go_cmd = f"go nodes {n}"
+            if depth is None:
+                n = int(self.nodes) if nodes is None else int(nodes)
+                go_cmd = f"go nodes {n}"
+            else:
+                # ⚑ `self.nodes` is NOT consulted here. It is the default for a
+                # node-limited search, and folding it in as a second `go`
+                # parameter would silently cap a depth-limited caller at a
+                # budget it never asked for.
+                go_cmd = f"go depth {int(depth)}"
             if move_tokens:
                 # ⚑⚑ `searchmoves` MUST BE THE LAST PARAMETER ON THIS LINE.
                 # Per the UCI spec it consumes every remaining token, so
