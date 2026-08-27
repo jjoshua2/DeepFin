@@ -70002,6 +70002,29 @@ PYTHONPATH=. python3 scripts/audit_label_candidates.py \
 same censoring-floor caveats as the node ladder; `sfroot-d9-mpv20` bridges to the
 node ladder's mpv20 column.
 
+**2026-08-27 VERDICT (depth addendum, ADMISSIBLE — `data/audit_label_depth_20260827/`,
+worktree `0b697a790`). ALL PRE-COMMITTED RULES PASS; the corpus labeler is
+CONFIRMED.** Paired row bootstrap on top1 (n=4000, 95% CI):
+- **CORPUS PREMISE PASS:** `sfroot-d9-mpvall` − `nnue-qsearch` = **+13.9pp
+  [+12.1, +15.7]** (60.7% vs 46.8%). The generator's exact search beats the
+  31x-throughput NNUE lane by the full measured SF margin.
+- **WIDTH IS FREE:** vs per-child `sf-d9`: **−0.7pp [−2.2, +0.8]** (CI contains
+  0, gap ≤2.0pp) — full-width rooted HOLDS per-child quality; and vs
+  `sfroot-d9-mpv20`: +0.4pp [−1.1, +1.9]. Labeling EVERY legal move costs no
+  top-line quality. (Contrast the node-ladder verdict: rooted at fixed NODES
+  lost 13.2pp — the failure was budget-splitting, and fixed DEPTH removes it,
+  exactly as predicted.)
+- **DEPTH SLOPE monotone and still steep at d9:** d5 47.5 → d7 53.4 (+5.9pp
+  [+4.3, +7.5]) → d9 60.7 (+7.2pp [+5.6, +9.0]). The staircase's top-k
+  d11/d13 phases have measured justification; the envelope above d9 is not
+  decoration.
+- **Cost:** 0.107 s/pos (ORDER only — ran beside the readout generation).
+  Ladder context: 2.8pp below `sf-8192` at <1/2 its s/pos, with the full
+  distribution banked. Corpus math at 24 workers: ~19M positions/day base
+  before staircase overhead and dedup savings ⇒ 100M in roughly 5-7 days.
+⇒ The generation-run prereg proceeds on `sfroot-d9-mpvall` + the registered
+staircase envelope.
+
 
 ---
 
