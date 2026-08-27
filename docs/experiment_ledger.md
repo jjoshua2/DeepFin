@@ -70483,3 +70483,12 @@ temps; disk projection > 400 GB ⇒ pause.
 **Confounds:** shares CPU with the 2× control until it finishes (~tonight) and any
 gate runs; s/pos under load is ORDER; the temp schedule shapes the distribution —
 stamped per row.
+
+**2026-08-27 EXECUTION NOTE (corpus run 1) — LAUNCHED, full staircase (Josh's pick).**
+`045225f21` from the dedicated detached worktree, `--games 500000 --workers 24
+--seed 20260827`, out `data/nnue_bootstrap/run01`, setsid (survives sessions),
+nice 15, ~19:50. Book deviation, disclosed: the generator takes ONE book, so the
+run uses the 8moves_v3+policybeam+uho2024 dedup book at 16 plies — production's
+mix is 95% that book / 5% the 2moves book, so the 5% shallow-book share is absent
+here. Extensions copied (not rebuilt) from the live tree into the worktree.
+Shares CPU with the 2× control until it finishes; s/pos reads are ORDER until then.
