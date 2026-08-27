@@ -69933,6 +69933,22 @@ burst; the frozen set's MultiPV=10 censoring floors unlisted choices optimistica
 (disclosed per-arm as unlisted%, per-row in the dump); s/pos numbers are
 contention-dependent and read as ORDER only, not calibration.
 
+**2026-08-27 EXECUTION NOTE (ladder) — first run VOIDED by its own provenance
+guard, operator fault, SAME failure as the readout's run 1.** The run completed
+all 9 arms on all 4000 rows, then returned INADMISSIBLE: "tracked source
+provenance changed while the run was in flight" — the operator merged three
+reviewed branches (audit gate `c35940418`, SPRT `e00a014aa`, build-id fix
+`a41cd9d18`) into the live tree WHILE the ladder executed from that tree.
+Relaunched identically from a DETACHED WORKTREE at `e00a014aa`
+(`.../scratchpad/ladderwt`, log `scratchpad/ladder_rerun_20260827b.log`, out
+`data/audit_label_ladder_20260827b/`); instrument runs now execute from detached
+worktrees as standing practice, because this session merges continuously.
+UNCONFIRMED indications from the voided run, deliberately not banked as the
+verdict: rooted-at-NODES far below per-child (sfroot-2048-mpv20 43.1% top1 vs
+sf-2048 56.2% — the n=50 smoke's tie was noise); the up-ladder still climbing
+(sf-8192 63.5% vs sf-2048 56.2%, +7.3pp > the 1.5pp flatness bound); mpvall ==
+mpv20 at equal nodes; nnue-qsearch 46.8% / fastq 44.0% / static 27.0%.
+
 
 ---
 
