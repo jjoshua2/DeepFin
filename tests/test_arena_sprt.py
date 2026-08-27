@@ -39,6 +39,7 @@ from chess_anti_engine.eval.sprt import (
     pentanomial_ascending,
     regularize,
 )
+from chess_anti_engine.utils.game_log import read_game_log
 from scripts.arena_standard import (
     SideSearch,
     play_paired_games_matched_sims_rolling,
@@ -103,7 +104,7 @@ def llr_normal_approximation(counts: Sequence[int], s0: float, s1: float) -> flo
 
 
 @pytest.mark.parametrize(
-    "counts,tolerance",
+    ("counts", "tolerance"),
     [
         # The approximation is an expansion in (mu - s), so its accuracy is a
         # property of how far the SAMPLE sits from the hypotheses, not of the
@@ -117,7 +118,7 @@ def llr_normal_approximation(counts: Sequence[int], s0: float, s1: float) -> flo
         ((25, 35, 30, 8, 2), 0.10),      # candidate far behind both hypotheses
     ],
 )
-@pytest.mark.parametrize("elo0,elo1", [(0.0, 5.0), (0.0, 20.0), (-3.0, 3.0)])
+@pytest.mark.parametrize(("elo0", "elo1"), [(0.0, 5.0), (0.0, 20.0), (-3.0, 3.0)])
 def test_llr_agrees_with_the_published_normal_approximation(
     counts: tuple[int, ...], tolerance: float, elo0: float, elo1: float,
 ) -> None:
@@ -200,9 +201,7 @@ def test_the_ascending_binning_is_the_exact_reverse_of_the_arena_binning() -> No
     inverts the test silently — a winning candidate would accept H0 — and no
     amount of arithmetic checking catches it, so it is pinned by name here.
     """
-    assert PAIR_OUTCOME_VALUES == tuple(
-        s / 2.0 for s in reversed(arena.PAIR_SCORES)
-    )
+    assert tuple(s / 2.0 for s in reversed(arena.PAIR_SCORES)) == PAIR_OUTCOME_VALUES
     scores = [2.0, 1.5, 1.5, 1.0, 0.5, 0.0, 0.0]
     assert pentanomial_ascending(scores) == tuple(
         reversed(arena.pentanomial_counts(scores))
@@ -234,7 +233,7 @@ def test_spec_round_trips_from_the_cli_string() -> None:
 
 
 @pytest.mark.parametrize(
-    "spec,match",
+    ("spec", "match"),
     [
         ("elo0=0,elo1=5,alpha=0.05", "missing beta"),
         ("elo1=5,alpha=0.05,beta=0.05", "missing elo0"),
@@ -384,7 +383,7 @@ def test_the_trajectory_banks_one_point_per_distinct_pair_count() -> None:
             monitor.update(scores)
         assert monitor.pairs == i + 1
     assert monitor.looks == 51   # 1 at construction + 10 * 5
-    assert [p for p, _ in monitor.trajectory] == list(range(0, 11))
+    assert [p for p, _ in monitor.trajectory] == list(range(11))
     # 51 consultations of the boundary, but only 11 different samples: the
     # repeats carry no extra multiplicity and the record must not imply they do.
     assert monitor.as_record()["distinct_samples"] == 11
@@ -525,6 +524,212 @@ def test_the_rolling_loop_announces_the_boundary_it_received(
     assert "SPRT ARMED in the rolling loop" in out
     assert f"{SPEC_TIGHT.bound_h0:+.4f}" in out
     assert "SPRT boundary CROSSED in the rolling loop" in out
+
+
+# ---- the half-pair guard, on a stream that can tell the difference ---------
+#
+# ⚑ THE TESTS ABOVE CANNOT SEE THE GUARD. They play a lockstep ALL-DRAW stream,
+# where a pair with one coloring finished scores 0.5 and imputing its missing
+# partner as a draw scores 0.5 + 0.5 = 1.0 — exactly what the pair scores once
+# it completes. So `complete_pair_scores` and an imputing substitute produce the
+# SAME sample on the SAME games, and a mutant that swaps one for the other
+# survives all of them. Measured, not argued: that mutant survived the 71 tests
+# this file shipped with.
+#
+# What kills it is a HALF-PLAYED PAIR WHOSE FINISHED COLORING IS DECISIVE. Here
+# every game is decided in one ply — the candidate WINS its White half and LOSES
+# its Black half — except pair 0's Black half, which never finishes at all. So a
+# complete pair scores 1.0 (win + loss) and pair 0 sits at a finished 1.0 with
+# nothing beside it: imputed as a draw it would enter the sample as 1.5, a bin no
+# complete pair in this stream can occupy, and it would drag the LLR toward H1
+# and past the stopping point.
+_HALF_TAG = "arena_sprt_test_coloring"   # (opening fen, candidate plays White)
+
+# Identity is load-bearing: the loop hands each side's boards to that side's
+# model, which is how a board learns which coloring it is.
+_CANDIDATE_MODEL = "candidate-model"
+_REFERENCE_MODEL = "reference-model"
+
+# Complete pairs all land in the middle bin, so this is the all-draw LLR path at
+# a tighter boundary — but on the schedule this stagger produces. One slot of the
+# pool of 4 is occupied forever by the hung game, so the other three retire pairs
+# at 1, 2, 4, 5, 7, ... and the look that would have landed on 15 lands on 16.
+STAGGERED_CROSS_AT_PAIRS = 16
+
+
+@pytest.fixture
+def staggered_decisive_games(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[chess.Board], None]:
+    """One-ply decisive games, and a registrable opening whose Black half hangs.
+
+    Both halves are production paths, not stubs of the thing under test:
+
+    * the ply-0 pick tags each board with its coloring. At ply 0 White is to
+      move, so the model the loop asks IS the side the candidate plays there —
+      that partition (``split_active_by_side_to_move``) is the loop's own.
+    * results come from the syzygy adjudication hook, consulted on every reap,
+      so a game ends exactly when this fixture says it does. Every finished game
+      is ``1-0``: a WIN for the candidate's White half, a LOSS for its Black
+      half, hence 1.0 for the pair and a DECISIVE 1.0 for a lone half.
+
+    Returns the registration function: ``hang(opening)`` makes that opening's
+    Black half never finish, which is the half-played pair the guard has to drop.
+    """
+    hung: set[str] = set()
+
+    def fake_pick(model: object, sub_boards: list[chess.Board],
+                  **_kwargs: object) -> list[int]:
+        for board in sub_boards:
+            if board.move_stack:
+                continue
+            assert board.turn == chess.WHITE, (
+                "the tagging rests on White being to move at ply 0"
+            )
+            setattr(board, _HALF_TAG, (board.fen(), model is _CANDIDATE_MODEL))
+        return [0] * len(sub_boards)
+
+    def fake_apply(boards: list[chess.Board], idxs: list[int],
+                   _actions: list[int], *, strict: bool) -> None:
+        assert strict, "the arena must decode actions strictly"
+        for i in idxs:
+            boards[i].push(next(iter(boards[i].legal_moves)))
+
+    def fake_adjudicate(board: chess.Board, _tablebase: object, *,
+                        max_pieces: int) -> str | None:
+        assert max_pieces > 0
+        tag: tuple[str, bool] | None = getattr(board, _HALF_TAG, None)
+        if tag is None or not board.move_stack:
+            return None                      # nothing played yet
+        opening_fen, cand_is_white = tag
+        if opening_fen in hung and not cand_is_white:
+            return None                      # the coloring that never finishes
+        return "1-0"                         # White wins, always, after one ply
+
+    import scripts.match_vs_uci as uci_mod
+
+    monkeypatch.setattr(match_mod, "pick_moves_for_boards", fake_pick)
+    monkeypatch.setattr(match_mod, "apply_actions_to_boards", fake_apply)
+    monkeypatch.setattr(uci_mod, "_tb_adjudicate_result", fake_adjudicate)
+
+    def hang(opening: chess.Board) -> None:
+        hung.add(opening.fen())
+
+    return hang
+
+
+class RecordingMonitor(SprtMonitor):
+    """Banks the EXACT sample each look was handed, and what had finished by then.
+
+    The stop point is one observation of the guard; the sample is the other, and
+    it is the direct one — it says what the boundary was TESTED AGAINST rather
+    than what the loop did afterwards. The finished-game count is banked with it
+    so each sample can be checked against the truth AT THAT LOOK, which is the
+    only way the claim survives a mutant that changes when the loop stops.
+    """
+
+    def __init__(
+        self, *args: Any, finished: list[dict[str, Any]], **kwargs: Any,
+    ) -> None:
+        # Both before super(): SprtMonitor.__init__ takes the first look itself.
+        self.samples: list[list[float]] = []
+        self.finished_at_look: list[int] = []
+        self._finished = finished
+        super().__init__(*args, **kwargs)
+
+    def update(self, new_pair_scores: Sequence[float]) -> str | None:
+        self.samples.append([float(s) for s in new_pair_scores])
+        self.finished_at_look.append(len(self._finished))
+        return super().update(new_pair_scores)
+
+
+def _pairs_from_finished(
+    rows: Sequence[dict[str, Any]],
+) -> tuple[list[float], dict[int, float]]:
+    """``(complete pair scores, {pair_id: the lone coloring's score})``.
+
+    Rebuilt from the production game sink rather than from the test's intent, so
+    "one coloring finished, and it was decisive" is an OBSERVATION of the run.
+    """
+    by_pair: dict[int, dict[int, float]] = {}
+    for row in rows:
+        by_pair.setdefault(int(row["pair_id"]), {})[int(row["half"])] = (
+            arena.score_from_result(
+                str(row["result"]), a_is_white=bool(row["a_is_white"]),
+            )
+        )
+    complete = [sum(h.values()) for _, h in sorted(by_pair.items()) if len(h) == 2]
+    lone = {p: next(iter(h.values())) for p, h in by_pair.items() if len(h) == 1}
+    return complete, lone
+
+
+def _play_rolling_staggered(
+    openings: list[chess.Board], *, sprt: SprtMonitor | None,
+    finished: list[dict[str, Any]],
+) -> list[float]:
+    def _sink(**row: Any) -> None:
+        finished.append(row)
+
+    return play_paired_games_matched_sims_rolling(
+        _CANDIDATE_MODEL, _REFERENCE_MODEL, openings,
+        device="cpu", rng=np.random.default_rng(7),
+        sims_candidate=1, sims_reference=1,
+        # High enough that the hung game is never adjudicated at the cap before
+        # the boundary stops the loop: max_plies would score it 0.5 and complete
+        # the very pair this test needs to stay half played.
+        max_plies=200,
+        temperature=0.1, gumbel_add_noise=False,
+        search_candidate=_search(), search_reference=_search(),
+        syzygy_tablebase=object(), tb_max_pieces=6,
+        pool_size=4, report_every=10_000, sprt=sprt, pgn_sink=_sink,
+    )
+
+
+def test_the_rolling_look_never_sees_a_half_played_pair(
+    staggered_decisive_games: Callable[[chess.Board], None],
+) -> None:
+    """The guard, on a stream where imputing the missing coloring changes it.
+
+    MUTANT, run: replace the look's input with a version that imputes a
+    half-played pair's missing coloring as a 0.5 draw. Pair 0 then enters every
+    sample as 1.5, the LLR is dragged toward H1, and the H0 crossing moves.
+    Measured across this file plus test_arena_standard.py and test_arena.py:
+    **1 failed, 101 passed** — this test is the only one that can see it.
+    """
+    openings = [chess.Board(fen) for fen in _distinct_openings(40)]
+    staggered_decisive_games(openings[0])
+    finished: list[dict[str, Any]] = []
+    monitor = RecordingMonitor(
+        SPEC_TIGHT, pairs_cap=40, granularity="pair", finished=finished,
+    )
+    scores = _play_rolling_staggered(openings, sprt=monitor, finished=finished)
+
+    # (1) THE GUARD, look by look and against the truth AT THAT LOOK: the sample
+    # IS the complete pairs. A lone coloring is absent from it, not folded in at
+    # 0.5 — and this is checked at every look, so it does not depend on where the
+    # loop happened to stop.
+    decisive_lone_looks = 0
+    for sample, n_finished in zip(monitor.samples, monitor.finished_at_look):
+        complete, lone = _pairs_from_finished(finished[:n_finished])
+        assert sample == complete
+        if any(score in (0.0, 1.0) for score in lone.values()):
+            decisive_lone_looks += 1
+
+    # (2) ... and the case that makes (1) non-vacuous actually occurred: a look
+    # landed while a pair had exactly ONE coloring finished and that coloring
+    # was DECISIVE. Imputing its partner as a draw would have entered it as 1.5,
+    # a bin no complete pair in this stream can occupy.
+    assert decisive_lone_looks, (
+        "no look landed on a half-played pair with a DECISIVE lone coloring, so "
+        "imputing that partner as a draw would change nothing and this test "
+        "cannot see the guard"
+    )
+
+    # (3) And the stop point, which is what the imputed sample would move.
+    assert monitor.verdict == "H0"
+    assert monitor.pairs == STAGGERED_CROSS_AT_PAIRS
+    assert len(scores) == STAGGERED_CROSS_AT_PAIRS
+    assert set(scores) == {1.0}
 
 
 # ---- matched_time ---------------------------------------------------------
@@ -911,6 +1116,152 @@ def test_a_resumed_arena_continues_toward_a_boundary_it_has_not_reached(
     assert seg2["sprt"]["pairs"] == ALL_DRAW_CROSS_AT_PAIRS
     assert seg2["sprt"]["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
     assert sum(second) == ALL_DRAW_CROSS_AT_PAIRS - ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
+
+
+# ---------------------------------------------------------------------------
+# The spec in the game-log header: recorded, not fingerprinted
+# ---------------------------------------------------------------------------
+#
+# A verdict is unreadable a month later without the hypothesis it was decided
+# against, and the JSONL result row is not always what survives (a crashed run
+# leaves only the game log). So the spec is banked in the log header — and
+# banked BESIDE the fingerprinted settings, never in them: the fingerprint is a
+# hash of the whole settings dict, so a spec inside it would refuse to resume
+# every pre-branch log and would refuse the deliberate "resume a crashed fixed-N
+# arena as a sequential test".
+
+def _log_header(path: Path) -> dict[str, Any]:
+    return read_game_log(path).header
+
+
+def test_the_log_header_records_the_spec_beside_the_fingerprinted_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """MUTANT, run: pass ``info=None`` to ``GameLogWriter`` unconditionally, so
+    the spec is accepted and then never written. 3 failed, 99 passed.
+    """
+    calls: list[int] = []
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC_WIDE, n_pairs=6, calls=calls,
+        log_path=tmp_path / "withspec.games.jsonl",
+    )
+    header = _log_header(tmp_path / "withspec.games.jsonl")
+    assert header["info"]["sprt"]["elo0"] == SPEC_WIDE.elo0
+    assert header["info"]["sprt"]["elo1"] == SPEC_WIDE.elo1
+    assert header["info"]["sprt"]["alpha"] == SPEC_WIDE.alpha
+    assert header["info"]["sprt"]["beta"] == SPEC_WIDE.beta
+    assert "sprt" not in header["settings"], (
+        "everything under settings is hashed into the resume fingerprint"
+    )
+
+    # The same run without --sprt: no info block at all (the pre-branch header
+    # shape), and — the load-bearing half — the SAME fingerprint, so the two
+    # logs are resumable from each other.
+    plain_path = tmp_path / "nospec.games.jsonl"
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=None, n_pairs=6, calls=[], log_path=plain_path,
+    )
+    plain = _log_header(plain_path)
+    assert "info" not in plain
+    assert header["fingerprint"] == plain["fingerprint"]
+
+
+def test_a_resume_under_a_different_spec_warns_and_still_carries_the_pairs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Warned about, never refused — and the warning names BOTH hypotheses.
+
+    MUTANT, run: make ``sprt_spec_carryover_warning`` return None
+    unconditionally. 6 failed, 96 passed — this test, its present-vs-absent
+    twin, and four of the parametrized cases below.
+    """
+    log_path = tmp_path / "respec.games.jsonl"
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=[],
+        log_path=log_path,
+    )
+    capsys.readouterr()
+    seg2 = _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC, n_pairs=60, calls=[],
+        log_path=log_path, resume=True,
+    )
+    err = capsys.readouterr().err
+    assert "DIFFERENT SPRT hypothesis" in err
+    assert f"alpha={SPEC_TIGHT.alpha}" in err, "the RECORDED spec must be named"
+    assert f"alpha={SPEC.alpha}" in err, "this invocation's spec must be named too"
+    # A warning, not a refusal: the resumed pairs still carry over.
+    assert seg2["sprt"]["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
+
+
+def test_a_resume_that_drops_the_flag_is_warned_about_as_present_vs_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other direction: the log has a spec, this invocation has none."""
+    log_path = tmp_path / "dropped.games.jsonl"
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=[],
+        log_path=log_path,
+    )
+    capsys.readouterr()
+    seg2 = _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=None, n_pairs=60, calls=[],
+        log_path=log_path, resume=True,
+    )
+    err = capsys.readouterr().err
+    assert "DIFFERENT SPRT hypothesis" in err
+    assert f"alpha={SPEC_TIGHT.alpha}" in err
+    assert "fixed-N" in err
+    assert "sprt" not in seg2
+
+
+def test_resuming_a_log_that_records_no_spec_neither_warns_nor_crashes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The pre-branch log shape, and the fixed-N -> sequential resume.
+
+    A fixed-N run writes a header with no info block — byte-identical to every
+    log written before this feature existed. Resuming one under a boundary is
+    deliberate and there is no earlier hypothesis to contradict, so it must be
+    silent: a warning on every legitimate first sequential resume is a warning
+    nobody reads by the third time they see it.
+    """
+    log_path = tmp_path / "prebranch.games.jsonl"
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=None, n_pairs=60, calls=[], log_path=log_path,
+    )
+    assert "info" not in _log_header(log_path)
+    capsys.readouterr()
+    seg2 = _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC, n_pairs=60, calls=[],
+        log_path=log_path, resume=True,
+    )
+    err = capsys.readouterr().err
+    assert "SPRT" not in err
+    assert seg2["sprt"]["resumed_pairs"] == 60
+    assert seg2["sprt"]["verdict"] == "H0"
+
+
+@pytest.mark.parametrize(
+    ("recorded", "current", "expected"),
+    [
+        (None, None, False),
+        (None, SPEC, False),                       # fixed-N log resumed as SPRT
+        (SPEC.as_record(), SPEC, False),           # the same hypothesis
+        (SPEC.as_record(), None, True),
+        (SPEC.as_record(), SPEC_TIGHT, True),
+        ({}, SPEC, True),                          # an info block with no numbers
+        ({**SPEC.as_record(), "alpha": "0.05"}, SPEC, True),   # a string, not 0.05
+    ],
+)
+def test_the_carryover_warning_fires_on_exactly_the_differences(
+    recorded: dict[str, Any] | None, current: SprtSpec | None, expected: bool,
+) -> None:
+    """Including the one that is not a number: a header can be hand-edited."""
+    fired = arena.sprt_spec_carryover_warning(recorded, current) is not None
+    assert fired is expected
 
 
 # ---------------------------------------------------------------------------

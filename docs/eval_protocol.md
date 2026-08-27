@@ -241,10 +241,11 @@ default. The principled alternative is not to peek more carefully but to
 declare the boundary first: `scripts/arena_standard.py --sprt
 'elo0=E,elo1=E,alpha=A,beta=B'` runs a pentanomial GSPRT (Van den Bergh's
 formulation, i.e. what fishtest computes; implementation in
-`chess_anti_engine/eval/sprt.py`) whose error rates are exactly the alpha and
-beta you named, no matter how often it looks. All four numbers are REQUIRED —
-there is no default anywhere in that path, because a boundary the operator did
-not state is not a preregistration.
+`chess_anti_engine/eval/sprt.py`) whose error rates are approximately bounded by
+the alpha and beta you named — conservative Wald bounds (type-I ≤ α/(1−β),
+type-II ≤ β/(1−α)), not exact equalities — no matter how often it looks. All
+four numbers are REQUIRED — there is no default anywhere in that path, because a
+boundary the operator did not state is not a preregistration.
 
 - The unit is the PAIR, so the LLR is only ever recomputed on pairs whose two
   colorings both finished. Rolling and matched_time look after every pair;
@@ -261,7 +262,11 @@ not state is not a preregistration.
   Elo on its own. The row banks all of it under `sprt`, including the LLR
   trajectory, so a later re-analysis has the whole path and not just its end.
 - A resumed SPRT arena recomputes the LLR over loaded + new pairs, and a run
-  that had already crossed plays zero further games.
+  that had already crossed plays zero further games. The spec is recorded in the
+  game log's header (`info.sprt`) but deliberately NOT in the resume
+  fingerprint, so resuming across specs is allowed rather than refused — it
+  prints a stderr warning naming both, because alpha and beta belong to ONE
+  preregistered boundary.
 - Absent `--sprt` nothing changes, down to the JSONL record, which grows no key.
 
 **⚑ A bootstrap cannot fix informative missingness.** If pairs complete faster

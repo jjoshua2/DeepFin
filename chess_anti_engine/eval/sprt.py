@@ -7,8 +7,10 @@ looked good manufactured **+112 Elo out of a true null** (see the ledger's
 fallacy, and the remedy the repo adopted was "never look early".
 
 A GSPRT is the OTHER remedy: look as often as you like, but at a boundary
-declared BEFORE the first game, whose crossing probabilities are what alpha and
-beta name. The four numbers (``elo0``, ``elo1``, ``alpha``, ``beta``) are the
+declared BEFORE the first game, whose crossing probabilities are approximately
+BOUNDED by alpha and beta — Wald's bounds are conservative (type-I <=
+alpha/(1 - beta), type-II <= beta/(1 - alpha)), not exact equalities.
+The four numbers (``elo0``, ``elo1``, ``alpha``, ``beta``) are the
 hypothesis, and this module deliberately supplies none of them by default — an
 unstated hypothesis is not a hypothesis, it is a post-hoc reading with a test
 statistic stapled to it.

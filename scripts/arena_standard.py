@@ -1021,6 +1021,85 @@ def announce_sprt_armed(sprt: SprtMonitor | None, *, where: str) -> None:
     )
 
 
+# The header key the spec is recorded under, inside the game log's
+# NON-fingerprinted `info` block. ⚑ It must stay out of `arena_game_log_settings`:
+# everything there is hashed into the resume fingerprint, and putting the
+# hypothesis in it would (a) refuse the legitimate "resume a crashed fixed-N
+# arena as a sequential test" and (b) make every pre-branch log unresumable,
+# since their fingerprint was computed without the key.
+SPRT_LOG_INFO_KEY = "sprt"
+SPRT_SPEC_FIELDS = ("elo0", "elo1", "alpha", "beta")
+
+
+def describe_recorded_sprt_spec(recorded: Mapping[str, Any] | None) -> str:
+    """The four DECLARED numbers of a spec read back out of a log header.
+
+    Only the four: ``s0``/``s1``/``bound_h0``/``bound_h1`` are banked beside them
+    but are functions of them, and a message that repeats a derived value invites
+    the reader to compare the wrong pair of numbers.
+    """
+    if recorded is None:
+        return "<none: that run was fixed-N>"
+    return ", ".join(f"{k}={recorded.get(k, '<absent>')}" for k in SPRT_SPEC_FIELDS)
+
+
+def _is_the_number(recorded: object, want: float) -> bool:
+    """``recorded`` IS the number ``want``.
+
+    A missing key, a null, or a string that happens to spell the number are all
+    DIFFERENCES: a header can be hand-edited, and coercing whatever it holds into
+    a float here would let a malformed spec read as a match. Bools are excluded
+    because ``True == 1.0`` in Python and a boolean elo is not a match either.
+    """
+    if isinstance(recorded, bool) or not isinstance(recorded, (int, float)):
+        return False
+    return float(recorded) == float(want)
+
+
+def sprt_spec_carryover_warning(
+    recorded: Mapping[str, Any] | None, current: SprtSpec | None,
+) -> str | None:
+    """Warn when a resume decides a log's pairs against a DIFFERENT hypothesis.
+
+    A warning and never a refusal: the spec does not change how a game is
+    played, so the pairs are one population however they are judged, and
+    carrying them across specs is deliberate — a crashed fixed-N arena resumed
+    as a sequential test is a supported thing to do, and so is tightening a
+    boundary that the first segment did not reach. What it is NOT is free:
+    alpha and beta are defined for ONE preregistered boundary, so a sample
+    collected under one and decided against another realizes neither.
+
+    Returns None when the log records no spec at all. That is the fixed-N ->
+    sequential case, where there is no earlier hypothesis to contradict; warning
+    there would put a line on every legitimate first sequential resume and teach
+    the operator to skip reading it.
+    """
+    if recorded is None:
+        return None
+    if current is not None:
+        want = current.as_record()
+        if all(_is_the_number(recorded.get(k), want[k]) for k in SPRT_SPEC_FIELDS):
+            return None
+    now = (
+        "<none: --sprt not given, this run is fixed-N>" if current is None
+        else describe_recorded_sprt_spec(current.as_record())
+    )
+    return (
+        "[arena] WARNING: this resume is judging the log's pairs against a "
+        "DIFFERENT SPRT hypothesis than the one they were collected under.\n"
+        f"  recorded in the log: {describe_recorded_sprt_spec(recorded)}\n"
+        f"  this invocation:     {now}\n"
+        "  The spec is deliberately OUTSIDE the resume fingerprint (it does not "
+        "change how a game is played, so it cannot mix two populations), which "
+        "is what makes this allowed rather than refused. But alpha and beta are "
+        "the crossing probabilities of ONE preregistered boundary: pairs "
+        "collected under the recorded spec and decided against another realize "
+        "neither run's error rates. The log header keeps the ORIGINAL spec — a "
+        "resume does not rewrite it — so the record of what was preregistered "
+        "survives this."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Crash-resilient game log + resume
 # ---------------------------------------------------------------------------
@@ -1192,6 +1271,10 @@ class ArenaResume:
     compile_tags: list[str] = field(default_factory=list)
     # Same contract as compile_tags, for the evaluator hoist.
     hoist_tags: list[str] = field(default_factory=list)
+    # The SPRT spec the log's header records, or None when it records none —
+    # a fixed-N run, or any log written before the field existed. NOT part of
+    # the fingerprint, so it never refuses a resume; the caller warns.
+    sprt_spec: dict[str, Any] | None = None
 
 
 def load_arena_resume(
@@ -1213,6 +1296,7 @@ def load_arena_resume(
     games) rather than assuming it.
     """
     log = read_game_log(path)
+    recorded_sprt = log.info.get(SPRT_LOG_INFO_KEY)
     diffs = fingerprint_differences(log.settings, settings)
     if diffs:
         raise SystemExit(refuse_settings_mismatch_message(
@@ -1275,6 +1359,7 @@ def load_arena_resume(
         truncated_tail=log.truncated_tail,
         compile_tags=sorted(kept_tags),
         hoist_tags=sorted(kept_htags),
+        sprt_spec=dict(recorded_sprt) if isinstance(recorded_sprt, dict) else None,
     )
 
 
@@ -2146,7 +2231,13 @@ def play_paired_games_matched_sims_rolling(
         # than an INCONCLUSIVE-at-the-clock. The set it sees is
         # `complete_pair_scores`, i.e. pairs with both colorings on file, which
         # is what makes this a pair-granularity look and not a mid-pair one.
-        if sprt_should_stop(
+        #
+        # ⚑ `sprt is not None` is checked HERE and not only inside
+        # `sprt_should_stop`: Python evaluates arguments eagerly, so the bare
+        # call rescans all `n_games` scores every ply of every FIXED-N run —
+        # the default path, which must pay nothing for a feature it did not
+        # ask for. The helper keeps its own None guard for its other callers.
+        if sprt is not None and sprt_should_stop(
             sprt, complete_pair_scores(game_scores), where="rolling",
         ):
             break
@@ -2866,6 +2957,13 @@ def run_arena(
             f"it did: a run that scores no new pair mixes nothing.",
             file=sys.stderr, flush=True,
         )
+    if resumed is not None:
+        # Same shape as the two warnings above: the hypothesis is outside the
+        # fingerprint on purpose, so the mix it permits is surfaced rather than
+        # refused. Silence here means the log recorded no spec at all.
+        spec_warning = sprt_spec_carryover_warning(resumed.sprt_spec, sprt)
+        if spec_warning is not None:
+            print(spec_warning, file=sys.stderr, flush=True)
     if (
         resumed is not None
         and resumed.games_loaded > 0
@@ -2923,6 +3021,15 @@ def run_arena(
     game_log = GameLogWriter(
         log_path, driver="arena_standard", settings=log_settings,
         resuming=had_log,
+        # Recorded, NOT fingerprinted: a log has to say which hypothesis its
+        # games were collected under — a verdict is unreadable a month later
+        # without it — while a resume must never be refused over a spec, which
+        # is what putting it in `log_settings` would do. None on a fixed-N run,
+        # and then the header keeps its pre-branch shape exactly.
+        info=(
+            None if sprt is None
+            else {SPRT_LOG_INFO_KEY: sprt.as_record()}
+        ),
     )
     print(f"[arena] game log -> {log_path} (fingerprint {fingerprint})", flush=True)
 
