@@ -472,7 +472,8 @@ def parse_depth_blocks(
     violations = 0
     flushes = 0
     for d in sorted(first):
-        ranked = tuple(first[d][r] for r in sorted(first[d]))
+        rank_ids = sorted(first[d])
+        ranked = tuple(first[d][r] for r in rank_ids)
         seen = int(emissions[d])
         if seen != int(expected_lines):
             violations += 1
@@ -485,7 +486,11 @@ def parse_depth_blocks(
             depth=d,
             lines=ranked,
             emissions=seen,
-            complete=len(ranked) == int(expected_lines),
+            # Ranks 1..W exactly, not cardinality: a stream that emitted ranks
+            # {1, 2, 4} has the right COUNT for W=3 while missing a line the
+            # width promised -- and the emissions counter cannot see it either,
+            # because three lines arrived.
+            complete=rank_ids == list(range(1, int(expected_lines) + 1)),
             # Cumulative and monotone within an iteration, so this is the
             # largest count among the lines that WON their rank -- the
             # iteration's count as of its first emission.  ⚑ Not necessarily
@@ -537,6 +542,10 @@ class PhaseResult:
     index: int
     width_requested: str
     width_realized: int
+    #: Lines in the block the NEXT rung actually consumed -- observed off the
+    #: stream, where ``width_realized`` is the MultiPV the request resolved to.
+    #: A stream that under-delivers shows up as the two disagreeing.
+    width_streamed: int
     depth_requested: int
     searchmoves: tuple[str, ...] | None
     parse: StreamParse
@@ -546,6 +555,7 @@ class PhaseResult:
             "index": self.index,
             "width_requested": self.width_requested,
             "width_realized": self.width_realized,
+            "width_streamed": self.width_streamed,
             "depth_requested": self.depth_requested,
             "searchmoves": (
                 None if self.searchmoves is None else list(self.searchmoves)
@@ -814,6 +824,15 @@ class StaircaseSearcher:
         # What the engine's MultiPV option currently is.  Resending an unchanged
         # value would cost a round trip per phase for nothing.
         self._engine_multipv = int(engine.multipv)
+        #: ``ucinewgame``s actually delivered, counted AFTER the engine call
+        #: returns -- the worker compares this against games started, which is
+        #: what lets ``tt_cleared_per_game`` in the realized stamp FAIL instead
+        #: of echoing a constant.
+        self.new_game_calls = 0
+        #: Clears observed INSIDE a position's staircase, which would void the
+        #: carried-TT premise the module docstring states.  Structurally zero
+        #: today; the counter exists so the stamp is an observation.
+        self.tt_cleared_mid_position = 0
 
     # -- protocol ---------------------------------------------------------
 
@@ -853,6 +872,7 @@ class StaircaseSearcher:
     def new_game(self) -> None:
         """``ucinewgame`` -- the per-GAME table clear.  See the module docstring."""
         self.engine.new_game()
+        self.new_game_calls += 1
 
     # -- the staircase ----------------------------------------------------
 
@@ -866,6 +886,7 @@ class StaircaseSearcher:
                 "game-over board emits no PV lines and is never searched",
             )
         started = time.perf_counter()
+        clears_at_entry = self.new_game_calls
         results: list[PhaseResult] = []
         candidates: list[str] = legal
         for index, phase in enumerate(self.staircase):
@@ -878,22 +899,25 @@ class StaircaseSearcher:
                 fen, depth=phase.depth, multipv=width, searchmoves=restrict,
             )
             parse = parse_depth_blocks(lines, expected_lines=width)
+            block, full = deepest_block_with_width(parse.blocks, want=width)
+            if not full:
+                self.stats.incomplete_final_blocks += 1
             result = PhaseResult(
                 index=index,
                 width_requested=phase.width_label,
                 width_realized=width,
+                width_streamed=len(block.lines),
                 depth_requested=phase.depth,
                 searchmoves=restrict,
                 parse=parse,
             )
             results.append(result)
             self.stats.add_phase(result)
-            block, full = deepest_block_with_width(parse.blocks, want=width)
-            if not full:
-                self.stats.incomplete_final_blocks += 1
             candidates = [pv.move for pv in block.lines]
         self.stats.search_s += time.perf_counter() - started
         self.stats.positions += 1
+        if self.new_game_calls != clears_at_entry:
+            self.tt_cleared_mid_position += 1
 
         # ⚑ SELECTION READS PHASE 1, not the deepest phase.  It is the deepest
         # depth at which EVERY legal move has a value; a narrowed phase has
@@ -938,8 +962,12 @@ class StaircaseSearcher:
             "staircase": format_staircase(self.staircase),
             "cp_slope": self.cp_slope,
             "cp_draw_width": self.cp_draw_width,
-            KEY_TT_CARRIED: True,
-            "tt_cleared_per_game": True,
+            # Observed, not asserted: the first hardcoded `True` here survived
+            # to review, and a stamp that cannot fail is the repo's signature
+            # defect.  `tt_cleared_per_game` needs the games count and is
+            # stamped by the worker, from `new_game_calls`.
+            KEY_TT_CARRIED: self.tt_cleared_mid_position == 0,
+            "ucinewgame_calls": self.new_game_calls,
         }
 
 
@@ -1454,7 +1482,8 @@ def play_game(
                 "run": {
                     "run_id": spec.run_id,
                     "config_sha256": spec.config_sha256,
-                    KEY_TT_CARRIED: True,
+                    # Observed at write time, same counter as the worker stamp.
+                    KEY_TT_CARRIED: searcher.tt_cleared_mid_position == 0,
                 },
                 "fen": board.fen(),
                 "dedup_key": key,
@@ -1628,11 +1657,13 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     plies: list[int] = []
     rows_written = 0
     games = 0
+    games_started = 0
     unavailable = 0
     failure: dict[str, Any] | None = None
     started = time.perf_counter()
     try:
         for game_id in spec.game_ids:
+            games_started += 1
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
                 game_id=game_id, cache=cache, dedup=dedup, progress=progress,
@@ -1682,6 +1713,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "codec": writer.codec,
         "realized": {
             **searcher.realized(),
+            # `play_game` clears the table as its first act, so every STARTED
+            # game must have delivered exactly one `ucinewgame` -- compared
+            # against games started, not completed, or a worker that died
+            # mid-game would read as a TT-hygiene failure it did not commit.
+            "tt_cleared_per_game": searcher.new_game_calls == games_started,
             "nice": nice_realized,
             # Read off the cache object, not off the spec: a bound that never
             # reached the cache is exactly the failure the stamp exists for.
@@ -1769,7 +1805,11 @@ def split_games(total: int, workers: int) -> list[list[int]]:
             f"--games must be positive, got {total!r}; state how large the "
             "corpus run is rather than letting it default to unbounded",
         )
-    n = max(1, int(workers))
+    if int(workers) < 1:
+        # Refused rather than clamped: a clamp runs one worker while the
+        # requested stamp says 0, which is an accepted-then-ignored knob.
+        raise ValueError(f"--workers must be >= 1, got {workers!r}")
+    n = int(workers)
     buckets: list[list[int]] = [[] for _ in range(n)]
     for game_id in range(int(total)):
         buckets[game_id % n].append(game_id)

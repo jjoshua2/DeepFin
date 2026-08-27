@@ -84,7 +84,10 @@ STRONG_CROSS_AT_PAIRS = 53
 # ---------------------------------------------------------------------------
 
 def llr_normal_approximation(counts: Sequence[int], s0: float, s1: float) -> float:
-    """fishtest ``LLRcalc.LLR_alt2`` — an INDEPENDENT check on the exact GSPRT.
+    """fishtest ``LLRcalc.LLR_alt`` × N — an INDEPENDENT check on the exact
+    GSPRT. (NOT ``LLR_alt2``, which is the coarser quadratic
+    ``(s1-s0)(2s-s0-s1)/(2 var)`` — an earlier revision of this docstring
+    named that one while implementing this one.)
 
         (N/2) * log( (var + (mu - s0)^2) / (var + (mu - s1)^2) )
 
@@ -875,6 +878,7 @@ def _run_chunked_arena(
     calls: list[int],
     log_path: Path | None = None,
     resume: bool = False,
+    out_path: Path | None = None,
 ) -> dict:
     import chess_anti_engine.uci.model_loader as loader
 
@@ -889,7 +893,7 @@ def _run_chunked_arena(
         opening_plies=16, mode="matched_sims",
         sims_candidate=1, sims_reference=1, ms_per_move=100, max_plies=20,
         temperature=0.1, gumbel_add_noise=False, device="cpu", seed=11,
-        out_path=None,
+        out_path=out_path,
         game_log_path=log_path or (tmp_path / "chunked.games.jsonl"),
         resume=resume,
         max_concurrent_games=4, eval_max_batch=0, compile_models=False,
@@ -1090,6 +1094,39 @@ def test_a_resumed_arena_recomputes_the_llr_over_loaded_and_new_pairs(
     assert sum(third) == 60 - ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
     assert seg3["pairs"] == 60
     assert "sprt" not in seg3
+
+
+def test_a_completed_sprt_resume_appends_no_second_result_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """grok review MAJOR: the crossed-boundary resume and the JSONL append.
+
+    A sequential run that stops early is truncated (pairs < openings), so a
+    later --resume still holds unplayed openings. The append skip used to gate
+    on ``not openings_to_play`` and therefore did not fire — a second row for
+    the same arena landed in the shared aggregate that other tools average
+    over. The gate is now ``no pairs PLAYED``. Mutation caught: reverting the
+    gate to ``not openings_to_play``.
+    """
+    log_path = tmp_path / "closed.games.jsonl"
+    out_path = tmp_path / "results.jsonl"
+    first: list[int] = []
+    seg1 = _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=first,
+        log_path=log_path, out_path=out_path,
+    )
+    assert seg1["truncated"] is True, "the premise: openings remain unplayed"
+    assert len(out_path.read_text(encoding="utf-8").splitlines()) == 1
+
+    second: list[int] = []
+    _run_chunked_arena(
+        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=second,
+        log_path=log_path, resume=True, out_path=out_path,
+    )
+    assert second == [], "the boundary was already crossed; play nothing"
+    assert len(out_path.read_text(encoding="utf-8").splitlines()) == 1, (
+        "a resume that played zero pairs must not append a second row"
+    )
 
 
 def test_a_resumed_arena_continues_toward_a_boundary_it_has_not_reached(

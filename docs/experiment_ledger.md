@@ -70379,3 +70379,50 @@ chosen from the yaml alone is a guess.
 
 **Confounds:** none at the shipped default (α=0 is the identity path, pinned bitwise by
 test).
+
+#### 2026-08-27 — VERDICT: SHADOW-ARM READOUT — THE FASTQ KILL RULE FIRED. KEEP QSEARCH.
+
+Run 2 (`data/shadow_readout_20260827b/`, worktree frozen at `db5cac729` for the whole
+run) returned **ADMISSIBLE**: `paired_evaluator_quality: true`,
+`population: frozen_driver_shadow` — the selection effect that voided every earlier
+FastQ quality claim is gone. Generation matched the voided run's fingerprint: 400
+games, 90,483 rows/cell, driver–observer agreement 4,170,523/0, and the voided run's
+UNCONFIRMED ~10.9% argmax disagreement is now CONFIRMED at **10.90%**
+(9,859/90,483) — not the 1.67% smoke figure the dilution note was priced on.
+
+**Deep-SF scoring per the prereg's exact command** (5,000 sampled, 4,974 decoded,
+1M nodes MultiPV 10, fresh TT per position, ruler sha `db5cac729`, banked to
+`label_quality.json` + `rows.jsonl` with `game_id` — the resampling unit's key).
+
+**REGISTERED DECIDING METRIC — expected corpus penalty (fastq − q), paired rows,
+forced-move rows excluded, game-clustered bootstrap (393 games, 4,000 draws):**
+
+| quantity | value |
+|---|---|
+| paired rows | 4,974 |
+| Δ≠0 rows | 364 (**7.32%**) |
+| mean Δ on Δ≠0 rows | **+80.40 cp** |
+| **expected corpus penalty** | **+5.88 cp [+3.32, +8.37]** |
+
+**KEEP QSEARCH fires: penalty > 2.0 cp with the 95% CI excluding 2.0.** No extension
+(the extension was preregistered only for a CI overlapping 2.0). A note on identity:
+the whole-sample paired mean IS the registered statistic (concordant rows contribute
+exactly 0), so the scorer's own `q − fastq: −5.88` agrees with the discordant-rows
+computation; only the CI needed the registered clustering.
+
+**Registered expectations, both confirmed:** `q − dag` = +0.0000 cp on ALL 4,974 rows
+(bit-identity, #472 — validates the join, contributes no decision). The search cell
+reads **worse than every 1-ply cell** (q − search = −26.4 cp [−37.9, −14.8] unpaired):
+the 32-sim Gumbel visit-count target on a uniform prior loses to its own leaf
+evaluator's 1-ply argmax on this ruler — consistent with the banked
+G2-fails-all-cells native readout, and NOT an Elo claim.
+
+**⇒ FastQ's 31.2× throughput does not survive its quality gate at these settings:
+qsearch stays the 1-ply evaluator for any NNUE-bootstrap arm.** The corpus lane is
+unaffected (its labeler is `sfroot-d9-mpvall`, decided by the depth addendum). If
+FastQ is ever revisited, the lever is its miss pattern: 7.3% of rows carry an +80 cp
+mean penalty — a screen on those rows, not a global adoption, is the shape to test.
+
+**Confounds:** scoring ran beside the healthy 2× lc0 control (GPU) and the backup
+rsync (nice 19) — CPU-only scoring at nice 15, ORDER-only for timings; the verdict
+statistic is load-independent.

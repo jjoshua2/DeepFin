@@ -1365,8 +1365,9 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     assert len(row["phases"]) == 3
     phase = row["phases"][0]
     assert set(phase) == {
-        "index", "width_requested", "width_realized", "depth_requested",
-        "searchmoves", "per_depth", "nodes_at_depth", "anomalies",
+        "index", "width_requested", "width_realized", "width_streamed",
+        "depth_requested", "searchmoves", "per_depth", "nodes_at_depth",
+        "anomalies",
     }
     assert set(phase["per_depth"][0]) == {
         "depth", "complete", "emissions", "nodes_at_depth", "lines",
@@ -1384,6 +1385,14 @@ def test_games_are_dealt_so_no_two_workers_share_a_game_id() -> None:
     buckets = corpus.split_games(7, 3)
     assert buckets == [[0, 3, 6], [1, 4], [2, 5]]
     assert corpus.split_games(2, 5) == [[0], [1]], "no empty workers"
+
+
+def test_a_nonpositive_worker_count_is_refused_not_clamped() -> None:
+    """A silent ``max(1, workers)`` runs one worker while the requested stamp
+    says 0 -- the accepted-then-ignored shape, caught by grok review."""
+    for workers in (0, -1):
+        with pytest.raises(ValueError, match="--workers must be >= 1"):
+            corpus.split_games(3, workers)
 
 
 def test_a_run_with_no_stated_game_count_is_refused() -> None:
@@ -1408,8 +1417,80 @@ def test_the_realized_stamp_is_read_off_the_live_engine_not_the_flags() -> None:
     assert realized["sf_threads"] == 1
     assert realized["staircase"] == corpus.DEFAULT_STAIRCASE
     assert realized[corpus.KEY_TT_CARRIED] is True
-    assert realized["tt_cleared_per_game"] is True
+    assert realized["ucinewgame_calls"] == 0
+    # `tt_cleared_per_game` is deliberately NOT here: it needs the games count,
+    # so the worker stamps it -- see the skipped-clear test below.
+    assert "tt_cleared_per_game" not in realized
     assert realized["cp_slope"] == gen.NNUE_CP_SLOPE
+
+
+def test_a_mid_position_clear_voids_the_carried_tt_stamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``tt_carried_across_phases`` is an observation that can FAIL.
+
+    Mutation caught: hardcoding the stamp back to ``True`` -- the wrapped
+    stream below clears the table mid-staircase, which the counter must see.
+    """
+    engine = ScriptedEngine()
+    searcher = searcher_for(engine)
+    real_stream = searcher.stream
+
+    def clearing_stream(fen: str, **kw: Any) -> list[str]:
+        searcher.new_game()
+        return real_stream(fen, **kw)
+
+    monkeypatch.setattr(searcher, "stream", clearing_stream)
+    searcher.search_position(chess.Board())
+    assert searcher.tt_cleared_mid_position == 1
+    assert searcher.realized()[corpus.KEY_TT_CARRIED] is False
+
+
+def test_width_streamed_reports_the_stream_not_the_ask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An under-delivering engine shows up as streamed < realized.
+
+    Mutation caught: stamping the requested width as the streamed one.  Rank 3
+    is filtered out of every iteration, so no depth ever carries the asked-for
+    3 ranks and the consumed block is 2 wide.
+    """
+    engine = ScriptedEngine()
+    searcher = searcher_for(engine, staircase="3:5")
+    real_stream = searcher.stream
+
+    def dropping_stream(fen: str, **kw: Any) -> list[str]:
+        return [
+            line for line in real_stream(fen, **kw)
+            if " multipv 3 " not in f" {line} "
+        ]
+
+    monkeypatch.setattr(searcher, "stream", dropping_stream)
+    search = searcher.search_position(chess.Board())
+    phase = search.phases[0]
+    assert phase.width_realized == 3
+    assert phase.width_streamed == 2
+    assert phase.as_row()["width_streamed"] == 2
+    assert all(not b.complete for b in phase.parse.blocks)
+
+
+def test_a_gapped_rank_set_is_not_complete() -> None:
+    """Ranks {1, 2, 4} against W=3: right COUNT, missing line.
+
+    The emissions counter cannot see this either (three lines arrived), so
+    cardinality-as-completeness would pass it -- grok review's repro.
+    """
+    parse = corpus.parse_depth_blocks(
+        [
+            info(3, 1, 30, "e2e4", 100),
+            info(3, 2, 20, "d2d4", 100),
+            info(3, 4, 10, "g1f3", 100),
+        ],
+        expected_lines=3,
+    )
+    (block,) = parse.blocks
+    assert len(block.lines) == 3
+    assert block.complete is False
 
 
 def test_the_default_syzygy_path_is_the_production_pair() -> None:
@@ -1638,6 +1719,9 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     assert result["dedup"]["dedup_cache_bytes_per_entry_est"] > 0.0
     assert result["terminations"] == {"natural": 2}
     assert result["realized"]["sf_hash_mb"] == 64
+    # Observed off the counter, not echoed: two games started, two clears.
+    assert result["realized"]["tt_cleared_per_game"] is True
+    assert result["realized"]["ucinewgame_calls"] == 2
     assert result["realized"]["dedup_cache_max"] == corpus.DEFAULT_DEDUP_CACHE_MAX
     assert result["realized"]["max_plies"] == 50
     assert result["realized"]["seed"] == 7
@@ -1648,6 +1732,36 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     ]
     assert len(rows) == 2
     assert [row["result"] for row in rows] == [-1.0, 1.0]
+
+
+def test_a_skipped_per_game_clear_fails_the_realized_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting ``new_game`` from the game loop must show in the summary.
+
+    Mutation caught: stamping ``tt_cleared_per_game: True`` as a constant --
+    grok review found exactly that, a stamp that could not fail.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *args, **kwargs: uci_double(engine),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(
+        corpus.StaircaseSearcher, "new_game", lambda self: None,
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+
+    assert result["failed"] is None
+    assert result["realized"]["tt_cleared_per_game"] is False
+    assert result["realized"]["ucinewgame_calls"] == 0
+    assert "ucinewgame" not in engine.commands
 
 
 @pytest.mark.skipif(
