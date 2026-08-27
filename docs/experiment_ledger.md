@@ -69800,6 +69800,42 @@ registered HERE, in advance — not adopted post-hoc.
 the banked G2 series distributionally, not row-for-row.
 
 **Confounds:** runs concurrent with the 2x lc0 control (GPU) — this readout is
+
+#### 2026-08-27 — REGISTERED CANDIDATES for the NNUE-bootstrap labeler (none launched; each needs its own prereg before compute)
+
+Recorded from design discussion with Josh so they survive the session. All three are
+gated by the standing audit-first rule when launched.
+
+1. **SF-at-nodes UP-LADDER (the prior-free brute force done with the right search).**
+   Alpha-beta pruning is exact and needs no learned prior; NNUE+alpha-beta at high
+   nodes IS the "strong from uniform priors" endpoint. If sf-2048 beats the banked
+   production-target rows on the audit set, extend the ladder (8k/32k) until
+   quality-per-plies/h stops paying. Contrast: uniform-prior GUMBEL reaches only
+   ~log_b(sims) depth (10k sims at b=30 ≈ depth 2.7), which is the mechanism behind
+   G2's inversion — deep-uniform-Gumbel is the wrong brute force, deep alpha-beta is
+   the right one.
+
+2. **ROOT-PRIOR HYBRID: current-net prior at the ROOT only + NNUE leaf values.**
+   The gen-1 cost objection (net priors = net-speed generation) only holds if the net
+   prices every leaf. One net call per PLY, batched across parallel games, is ~2.1k
+   evals/s at FastQ's full rate — trivial for the 5090 while CPUs run the leaves. The
+   root is where uniform hurts most; interior nodes use classical ordering. The
+   iter-1586 net's prior is far above uniform despite the Elo plateau, so this needs
+   no bootstrap net to exist. Candidate generator: net-root-prior + NNUE-qsearch
+   leaves + Gumbel, generation still CPU-dominant.
+
+3. **BOUNDARY-TARGETED LEAF DEPTH (Josh's halving-cutoff idea).** At each sequential-
+   halving elimination, escalate LEAF-search depth only for candidates whose
+   completed-Q sits within epsilon of the cutoff — clear wins/losses stay shallow, the
+   ambiguous middle band gets the budget. Implementable in the C runner; test on the
+   audit set before touching training.
+
+4. **BEND-MECHANISM PROBE (does a different target rule un-invert G2?).** G2's
+   more-sims-WORSE at uniform prior is suspicious of the TARGET TRANSFORM (completed-Q
+   mixing / sigma at low visits), not the search: re-measure the sims bend with (a)
+   visits-only targets, (b) root argmax-of-Q labels. If either un-inverts, deep
+   uniform Gumbel revives and candidate 1's contrast needs re-pricing.
+
 CPU-only; the deep-SF scoring is CPU and throttled below the trainer's loaders.
 
 are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
