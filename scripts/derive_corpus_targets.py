@@ -663,8 +663,18 @@ def check_shard_inventory(on_disk: Sequence[Path], summary: dict[str, Any]) -> N
     training set that nothing named.
     """
     named = {Path(str(entry["path"])).name for entry in summary.get("shards", [])}
+    if not named:
+        # Refused, not skipped (review finding 2): the generator always writes
+        # a real inventory, so an empty or missing `shards` list means a
+        # damaged or foreign summary — and a lenient pass here is a gate that
+        # silently does not fire, this codebase's signature defect.
+        raise CorpusIntegrityError(
+            "summary.json names no shards at all; the generator always records "
+            "its inventory, so there is nothing to check the disk against and "
+            "proceeding would train on whatever happens to be in the directory",
+        )
     found = {path.name for path in on_disk}
-    if named and named != found:
+    if named != found:
         missing = sorted(named - found)
         extra = sorted(found - named)
         raise CorpusIntegrityError(
@@ -1037,7 +1047,8 @@ def cp_map_params(summary: dict[str, Any]) -> tuple[float, float]:
     """
     requested = summary.get("config_requested") or {}
     try:
-        return float(requested["cp_slope"]), float(requested["cp_draw_width"])
+        slope = float(requested["cp_slope"])
+        draw_width = float(requested["cp_draw_width"])
     except (KeyError, TypeError, ValueError) as exc:
         raise CorpusIntegrityError(
             "summary.json's config_requested carries no usable cp_slope / "
@@ -1045,6 +1056,29 @@ def cp_map_params(summary: dict[str, Any]) -> tuple[float, float]:
             "defaulting it would derive targets under a mapping the corpus was "
             "not generated with",
         ) from exc
+    # ⚑ Cross-checked against every worker's REALIZED stamp (review finding 1):
+    # `config_requested` is what the CLI said, the realized stamp is what the
+    # searcher actually converted with. A generator defect that dropped the
+    # knob on the way to the searcher would select moves under one map while
+    # the request stamps another — and deriving under the requested map would
+    # then disagree with the play that generated the positions. A dead
+    # worker's placeholder carries no cp keys and is skipped.
+    for worker_id, stamp in (summary.get("config_realized_by_worker") or {}).items():
+        if not isinstance(stamp, dict) or "cp_slope" not in stamp:
+            continue
+        realized = (
+            float(stamp["cp_slope"]),
+            float(stamp.get("cp_draw_width", draw_width)),
+        )
+        if realized != (slope, draw_width):
+            raise CorpusIntegrityError(
+                f"worker {worker_id}'s realized cp map {realized} disagrees "
+                f"with config_requested ({slope}, {draw_width}); the corpus "
+                "was selected under a mapping the request does not describe, "
+                "and targets derived under either one would be wrong about "
+                "the other",
+            )
+    return slope, draw_width
 
 
 def derive(

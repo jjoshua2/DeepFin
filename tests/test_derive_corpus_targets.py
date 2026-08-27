@@ -112,6 +112,7 @@ def phase_row(
         index=index,
         width_requested=width_requested,
         width_realized=width_realized,
+        width_streamed=width_realized,
         depth_requested=depth_requested,
         searchmoves=searchmoves,
         parse=parse,
@@ -907,6 +908,66 @@ def test_a_shard_missing_from_the_summary_inventory_is_refused(tmp_path: Path) -
     (corpus_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     with pytest.raises(derive.CorpusIntegrityError, match="are not the ones"):
         run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+
+def test_an_empty_shard_inventory_is_refused(tmp_path: Path) -> None:
+    """review finding 2: ``shards: []`` used to skip the inventory check.
+
+    Mutation caught: restoring the lenient ``if named and`` guard — an empty
+    inventory then trains on whatever is in the directory with no gate fired.
+    Uses the fixture flag that existed for exactly this and was never exercised
+    (review finding 3).
+    """
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0",
+    )
+    corpus_dir = write_corpus(tmp_path, [row], drop_shard_from_summary=True)
+    with pytest.raises(derive.CorpusIntegrityError, match="names no shards"):
+        run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+
+def test_a_realized_cp_map_disagreeing_with_the_request_is_refused(
+    tmp_path: Path,
+) -> None:
+    """review finding 1: the requested map was trusted without a cross-check.
+
+    Mutation caught: deleting the realized-stamp loop from ``cp_map_params`` —
+    a generator that selected under one map while stamping another then
+    derives targets nothing played under, silently.
+    """
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0",
+    )
+    corpus_dir = write_corpus(tmp_path, [row])
+    summary = json.loads((corpus_dir / "summary.json").read_text(encoding="utf-8"))
+    summary["config_realized_by_worker"] = {
+        "0": {"cp_slope": SLOPE * 2.0, "cp_draw_width": DRAW_WIDTH},
+        # A dead worker's placeholder must be SKIPPED, not tripped over.
+        "1": {"unavailable_worker_process_died": True},
+    }
+    (corpus_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    with pytest.raises(derive.CorpusIntegrityError, match="realized cp map"):
+        run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+
+def test_an_agreeing_realized_cp_map_passes(tmp_path: Path) -> None:
+    """The cross-check must not refuse a healthy corpus (and must skip dead
+    workers' placeholders on the passing path too)."""
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0",
+    )
+    corpus_dir = write_corpus(tmp_path, [row])
+    summary = json.loads((corpus_dir / "summary.json").read_text(encoding="utf-8"))
+    summary["config_realized_by_worker"] = {
+        "0": {"cp_slope": SLOPE, "cp_draw_width": DRAW_WIDTH},
+        "1": {"unavailable_worker_process_died": True},
+    }
+    (corpus_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    summary = run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+    assert summary["realized"]["rows_written"] == 1
 
 
 def test_a_corpus_without_cp_map_parameters_is_refused(tmp_path: Path) -> None:
