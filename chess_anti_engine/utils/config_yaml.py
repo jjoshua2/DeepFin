@@ -307,6 +307,12 @@ _TRAIN_KEYS = (
     # `unlisted_scale: 1.0` is OFF and is the code default, and it is a bit-exact
     # identity rather than merely a small one.
     "sf_own_regret_listed_mass_min", "sf_own_regret_unlisted_scale",
+    # Teacher temperature of the SF-shape conditional-KL term (train/losses.py),
+    # in CENTIPAWNS. The WEIGHT `w_sf_shape` rides in `TRAINER_WEIGHT_KEYS`
+    # above; this one is folded into a resolved object at Trainer construction,
+    # so it is startup-only by construction and classified as such. It is a
+    # DIVISOR: 0.0 is not "off" and is rejected by name.
+    "sf_shape_temp_cp",
 )
 
 # tune section: all 1:1 passthrough.

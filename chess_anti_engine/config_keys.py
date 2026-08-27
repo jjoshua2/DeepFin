@@ -28,6 +28,14 @@ TRAINER_WEIGHT_KEYS: tuple[str, ...] = (
   # half-finished readout window, and the arm's readout is a day-plus paired
   # arena. They live in the startup-only group in `utils/config_yaml.py`, which
   # warns on a mid-run edit instead.
+  # SF-shape conditional KL. The WEIGHT only, same split as the floor above:
+  # `sf_shape_temp_cp` is folded into a resolved, validated object at Trainer
+  # construction and is classified restart-required instead. Being HERE is what
+  # puts the term under the holdout ruler -- `eval_ruler.active_loss_terms`
+  # hashes the set of non-zero weights read off this tuple, so flipping
+  # `w_sf_shape` off 0.0 moves the ruler id and hands the best-model record over
+  # instead of freezing it against an objective that gained a term.
+    "w_sf_shape",
     "w_wdl",
     "w_sf_move",
     "w_sf_eval",

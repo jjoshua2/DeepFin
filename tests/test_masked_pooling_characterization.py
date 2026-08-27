@@ -138,15 +138,18 @@ def test_only_the_sf_p0_heads_are_pooled_as_ratios_of_sums() -> None:
     characterization is about. Extending them is exactly the B1 fix, so this
     assertion is the tripwire: it fails the moment another head is corrected.
 
-    ⚑ WENT 2 -> 3 with `m_sf_policy_floor` (the SF-approved-move floor). That is
-    the tripwire doing its job, not a regression: the new head is masked by the
-    SAME `sf_p0_regret_base` tensor as `m_sf_own_regret` and divides by the SAME
-    `sf_own_regret_rows` count, so it is row-weighted by construction and was
+    ⚑ WENT 2 -> 3 with `m_sf_policy_floor` (the SF-approved-move floor), then
+    3 -> 4 with `m_sf_shape` (the SF-shape conditional KL). Each is the tripwire
+    doing its job, not a regression: both new heads are masked by the SAME
+    `sf_p0_regret_base` tensor as `m_sf_own_regret` and divide by the SAME
+    `sf_own_regret_rows` count, so they are row-weighted by construction and were
     never on the per-batch-mean path this file characterizes. Nothing that
-    existed before moved: the two names below are still here.
+    existed before moved: the two original names below are still here.
     """
     loss_heads = {k for k in _RATIO_METRIC_FIELDS if k.startswith("m_")}
-    assert loss_heads == {"m_sf_own", "m_sf_own_regret", "m_sf_policy_floor"}
+    assert loss_heads == {
+        "m_sf_own", "m_sf_own_regret", "m_sf_policy_floor", "m_sf_shape",
+    }
     # The heads this file says are STILL wrong (per-batch means) must stay wrong
     # here, or the characterization has silently stopped characterizing.
     assert "m_sf_volatility" not in _RATIO_METRIC_FIELDS
