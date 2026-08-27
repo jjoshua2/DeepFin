@@ -1458,12 +1458,28 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
             f"{pack_sha} the parent hashed before the run: the cells did not read "
             "one set of weights",
         )
+  # ⚑⚑ NO PROOF, NO QUALITY CLAIM. `--prove-games 0` used to skip the
+  # inertness proof and still publish `paired_evaluator_quality: true` and
+  # `admissible: true` — the one field that authorises spending hours of deep
+  # Stockfish asserted the one property this file exists to establish, without
+  # it ever being checked. That is this repo's signature defect (a gate that
+  # cannot fail), caught by the independent review of af15fc8e8. A skipped
+  # proof is a legitimate thing to RUN (a quick look at throughput), but the
+  # artifact it leaves must say what it is: unproven, inadmissible as a paired
+  # ruler input.
+    if bool(proof.get("skipped")):
+        report["inadmissible_reasons"].append(
+            "the shadow-inertness proof was skipped (--prove-games 0): "
+            "paired_evaluator_quality is UNPROVEN for these cells — rerun with "
+            "--prove-games >= 1 before spending any Stockfish on them",
+        )
     report["admissible"] = not report["inadmissible_reasons"]
     report["schema"] = REPORT_SCHEMA
+    proof_proven = bool(proof.get("digests_agree")) and not bool(proof.get("skipped"))
     report["quality_scope"] = {
         "population": "frozen_driver_shadow",
-        "paired_evaluator_quality": True,
-        "deep_sf_paired_input_admissible": bool(report["admissible"]),
+        "paired_evaluator_quality": proof_proven,
+        "deep_sf_paired_input_admissible": bool(report["admissible"]) and proof_proven,
         "primary_ruler": "scratchpad/az_purity/score_shard_labels.py (top1_regret_cp)",
         "note": (
             "one driver chose every position; every arm labelled the same rows in "
@@ -1510,7 +1526,24 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
             readout._atomic_write_text(
                 cell_dir(cfg.out_dir, cell) / "cell_meta.json",
                 json.dumps(
-                    {**_cell_meta(cfg, cell, arm=arm), "report_schema": REPORT_SCHEMA},
+                    {
+                        **_cell_meta(cfg, cell, arm=arm),
+                        "report_schema": REPORT_SCHEMA,
+                      # ⚑ The proof verdict TRAVELS WITH THE SHARDS. cell_meta
+                      # is the only artifact a reader holding a bare cell
+                      # directory has, and before this stamp it could not tell
+                      # a proven-inert corpus from a --prove-games 0 one — the
+                      # distinction that decides whether the rows are a valid
+                      # paired-quality input at all (review of af15fc8e8, F1).
+                        "shadow_inertness_proof": {
+                            "games": int(proof.get("games", 0)),
+                            "digests_agree": proof.get("digests_agree"),
+                            "skipped": bool(proof.get("skipped", False)),
+                        },
+                        "paired_evaluator_quality": (
+                            report["quality_scope"]["paired_evaluator_quality"]
+                        ),
+                    },
                     indent=2, sort_keys=True,
                 ) + "\n",
             )

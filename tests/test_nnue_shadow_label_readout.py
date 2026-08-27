@@ -792,6 +792,11 @@ def test_the_whole_harness_runs_and_every_gate_reports(
         directory = shadow.cell_dir(tmp_path, cell)
         meta = json.loads((directory / "cell_meta.json").read_text())
         assert meta["cell"] == cell
+        # The proof verdict travels with the shards (review F1): a reader
+        # holding only this directory can tell a proven corpus from a skipped one.
+        assert meta["shadow_inertness_proof"]["digests_agree"] is True
+        assert meta["shadow_inertness_proof"]["skipped"] is False
+        assert meta["paired_evaluator_quality"] is True
         arrays, _ = load_shard_arrays(directory / "shard_000000.zarr")
         targets[cell] = np.asarray(arrays["policy_target"])
         assert targets[cell].shape[0] == report["rows_per_cell"]
@@ -836,3 +841,45 @@ def test_the_whole_harness_runs_and_every_gate_reports(
         assert value["rows"] == float(report["rows_per_cell"])
 
     assert report["peak_rss_bytes_max"] > 0
+
+
+@pytest.mark.slow
+def test_a_skipped_proof_is_inadmissible_and_stamped_into_every_cell(
+    live_pack: Path, tmp_path: Path,
+) -> None:
+    """REGRESSION (review of af15fc8e8, F1 — the repo's signature defect).
+
+    ``--prove-games 0`` used to skip the inertness proof and still publish
+    ``paired_evaluator_quality: true`` and ``admissible: true`` — the single
+    field that authorises spending hours of deep Stockfish asserted the one
+    property this harness exists to establish, without it ever being checked.
+    ``test_zero_prove_games_cannot_stand_in_for_a_proof`` pins only the
+    low-level function; this drives the RUN, where the bypass lived.
+
+    Three properties, none redundant: the report refuses (the operator is
+    told), the quality scope is false (a JSON consumer cannot mistake it), and
+    the cell_meta stamp is false (a reader holding only a bare cell directory
+    — the artifact that actually travels — can tell a proven corpus from a
+    skipped one).
+    """
+    cfg = shadow.config_from_args(
+        _cli_args(
+            nnue_pack=live_pack, out_dir=tmp_path, games=2, workers=1,
+            sims=8, max_plies=6, seed=99,
+        ),
+    )
+    report = shadow.run(cfg, prove_games=0)
+
+    assert report["admissible"] is False
+    assert any("--prove-games" in r for r in report["inadmissible_reasons"])
+    assert report["quality_scope"]["paired_evaluator_quality"] is False
+    assert report["quality_scope"]["deep_sf_paired_input_admissible"] is False
+    assert report["shadow_inertness_proof"]["skipped"] is True
+
+    for cell in cfg.cells:
+        meta = json.loads(
+            (shadow.cell_dir(tmp_path, cell) / "cell_meta.json").read_text(),
+        )
+        assert meta["shadow_inertness_proof"]["skipped"] is True
+        assert meta["shadow_inertness_proof"]["digests_agree"] is None
+        assert meta["paired_evaluator_quality"] is False
