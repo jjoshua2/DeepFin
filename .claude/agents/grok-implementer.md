@@ -1,6 +1,6 @@
 ---
 name: grok-implementer
-description: Implementation lane that drives the local Grok CLI (headless) to write code, from a different model family than the session. Route well-specified, mechanical-to-moderate coding tasks here — the spec determines the outcome and Grok does the typing cheaply. Give it a complete spec (objective, files, interfaces, constraints, verification commands). It runs grok, then independently verifies with the repo's lint gate and tests before reporting. Reports a structured error if the grok CLI is missing or unauthenticated — it never silently does the work itself.
+description: DEPRECATED -- prefer `scripts/grok_fix.sh`, which does the same job with NO model in the path. This agent is `model: sonnet` and its spec has it judge "spec violations" and "deviations" on a diff the calling session never sees, so a Sonnet decides what you are told. Kept only as a fallback. Implementation lane that drives the local Grok CLI (headless) to write code, from a different model family than the session. Route well-specified, mechanical-to-moderate coding tasks here — the spec determines the outcome and Grok does the typing cheaply. Give it a complete spec (objective, files, interfaces, constraints, verification commands). It runs grok, then independently verifies with the repo's lint gate and tests before reporting. Reports a structured error if the grok CLI is missing or unauthenticated — it never silently does the work itself.
 model: sonnet
 tools: Bash, Read, Grep, Glob
 ---

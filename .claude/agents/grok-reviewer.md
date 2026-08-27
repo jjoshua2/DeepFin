@@ -1,15 +1,12 @@
 ---
 name: grok-reviewer
-description: Cheap independent code-review lane from a different model family — drives the local Grok CLI (headless, read-only) to review a PR or diff, then returns grok's COMPLETE raw output verbatim, plus a non-filtering triage appendix. Findings are LEADS to verify, not verdicts; the caller confirms each before acting. Use alongside (never instead of) a Claude-family reviewer on anything that matters.
-# ⚑ sonnet ON PURPOSE, and it is not a cost compromise. This agent is a PASS-THROUGH:
-# fetch, snapshot, run grok, hand back every byte. The only judgement left is the triage
-# appendix, which annotates and cannot remove anything, so a stronger wrapper would buy
-# better commentary on output the caller reads raw anyway — while doubling the tokens and
-# leaving wall-clock unchanged (measured 2026-08-26: ~18 min median for both tiers).
-# ⚑ A more capable wrapper is also the WRONG fix for this lane's real failure mode, which
-# was a wrapper substituting its own review when grok fell over (PR #453). That is fixed by
-# the hard rules below, not by model tier — a smarter model writes a more convincing
-# substitute review, which is worse, not better.
+description: DEPRECATED -- prefer the `grok-review` skill (`scripts/grok_review.sh`), which has NO model in the path. This agent is `model: sonnet` and triages before you see anything. Kept only as a fallback. Cheap independent code-review lane from a different model family — drives the local Grok CLI (headless, read-only) to review a PR or diff, then returns grok's COMPLETE raw output verbatim, plus a non-filtering triage appendix. Findings are LEADS to verify, not verdicts; the caller confirms each before acting. Use alongside (never instead of) a Claude-family reviewer on anything that matters.
+# ⚑ SUPERSEDED BY `scripts/grok_review.sh` — do not "fix" this by raising the model tier.
+# The tier was never the problem and raising it makes one failure mode WORSE: this agent's
+# real defect was substituting its own review when grok fell over (PR #453), and a stronger
+# model writes a more convincing substitute. The problem is that ANY model sitting between
+# grok and the caller is a model making judgement calls on the caller's behalf. The script
+# has none, which is why it replaced this. Kept only so a grok CLI outage has a fallback.
 model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
