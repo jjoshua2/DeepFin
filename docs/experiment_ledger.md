@@ -69708,6 +69708,7 @@ experiment; no yardstick owed. If shard size or selfplay throughput regresses af
 next restart, this is the first suspect to check before anything else.
 
 **Confounds:** rides the same restart as every other main-merge change; see the merge
+commit for the full delta.
 
 #### 2026-08-27 — PREREG: #438 lc0 CONTROL — THE FROZEN SINGLE 2× EXTENSION FIRES (77,088 steps, from-scratch, same code/config/corpus/seed)
 
@@ -69754,6 +69755,9 @@ says LAST(2×) vs LAST(1×) ≈ +150–200; we EXPECT sublinear (+60–150). Sec
 −404.6 plus the primary's gain.
 
 **Confounds:** LR-schedule length differs from 1× by construction (single-run schedules
+are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
+0.2513×. Concurrent CPU load (two review agents, the shadow readout when it runs) —
+GPU-side the box is otherwise idle.
 
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
@@ -69800,10 +69804,26 @@ registered HERE, in advance — not adopted post-hoc.
 the banked G2 series distributionally, not row-for-row.
 
 **Confounds:** runs concurrent with the 2x lc0 control (GPU) — this readout is
+CPU-only; the deep-SF scoring is CPU and throttled below the trainer's loaders.
+
+**2026-08-27 EXECUTION NOTE (readout) — first generation run VOIDED by its own
+provenance guard, operator fault.** The 400-game run completed (90,483 rows/cell,
+inertness proof PASS, driver/observer agreement 4,170,523/0, qsearch|dag
+zero-resolution as registered) but returned INADMISSIBLE: "tracked source provenance
+changed while the run was in flight" — the operator committed the review's lint fix
+(`db5cac729`) into the SAME worktree the readout was running from. The delta is
+provably a type annotation, but the prereg's kill rule is not conditioned on the
+operator's opinion of the delta. No Stockfish was spent. Relaunched identically
+(same seed/code ⇒ same games) into `data/shadow_readout_20260827b/` with the
+worktree frozen for the duration. One number from the voided run is noted as
+UNCONFIRMED and deliberately not banked: full-scale fastq-vs-qsearch argmax
+disagreement read ~10.9% (9,859/90,483), not the 1.67% smoke figure the dilution
+note was priced on — if confirmed, the discordant-rows analysis is far better
+powered than registered.
 
 #### 2026-08-27 — REGISTERED CANDIDATES for the NNUE-bootstrap labeler (none launched; each needs its own prereg before compute)
 
-Recorded from design discussion with Josh so they survive the session. All three are
+Recorded from design discussion with Josh so they survive the session. All six are
 gated by the standing audit-first rule when launched.
 
 1. **SF-at-nodes UP-LADDER (the prior-free brute force done with the right search).**
@@ -69860,14 +69880,6 @@ gated by the standing audit-first rule when launched.
    above uniform at zero extra cost. G2's inversion was measured at UNIFORM prior
    specifically — re-measure the sims bend under this prior before concluding search
    depth cannot pay pre-net.
-
-CPU-only; the deep-SF scoring is CPU and throttled below the trainer's loaders.
-
-are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
-0.2513×. Concurrent CPU load (two review agents, the shadow readout when it runs) —
-GPU-side the box is otherwise idle.
-
-commit for the full delta.
 
 ---
 
