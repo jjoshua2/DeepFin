@@ -67605,3 +67605,47 @@ kills do not directly predict it, and it is consistent with the standing design 
 ≤6-man is solved territory. But it is now the third bet in a lane that is 0-for-2 with the
 damage compounding, and it deserves an explicit go/no-go rather than inheriting the prereg's
 "next".
+
+#### 2026-08-26 — EXTERNAL-TEACHER GATE PASSES AT 2x THE BAR; AND THE AUDIT SET CANNOT JUDGE LEVER 3
+
+Run on IDLE GPU time with **zero training compute** and, as it turned out, zero GPU: the
+caches were already banked. `data/audit_set_v1.jsonl` (4000 frozen deep-SF positions) x
+`data/lc0/bt4_audit_cache_topk256_20260817.jsonl` x
+`data/lc0/ours_iter190_audit_cache_topk256_20260817.jsonl`, aligned 4000/4000/4000 by key.
+
+**⚑ THE NAIVE TEST WAS INVALID AND WAS NOT RUN.** The first plan was to score a
+≤6-piece-filtered corpus on the audit set per the audit-first rule. That rule REWARDS
+AGREEMENT WITH DEEP SF, so on a non-SF teacher it returns "killed" as a fact about the
+RULER — [[audit_first_cannot_judge_a_non_sf_teacher]]. Used that memory's re-pointed screen
+instead. Predicted 50-70% on the gate BEFORE running; realized 52.5%.
+
+| statistic | value |
+|---|---|
+| BT4 top-move disagreement with SF | **42.7%** (1707/4000) |
+| ours (iter190) top-move disagreement with SF | 57.4% |
+| BT4 mean deep-SF top1 regret on its own disagreements | **46.5 cp** |
+| **GATE — where ours errs >50cp, BT4 picks SF's exact best** | **52.5%** (n=906) |
+| **GATE — same, BT4 picks any ZERO-regret move** | **53.8%** |
+
+Pre-committed bar was **<25% ⇒ don't train**. Realized **52.5%, more than 2x the bar.**
+
+**⇒ THE EXTERNAL-TEACHER LANE IS ALIVE, AND THE MIXED-CORPUS FAILURES ARE A TRANSFER
+PROBLEM, NOT AN INFORMATION PROBLEM.** A strong external teacher demonstrably knows the
+answer on more than half the positions we get badly wrong. Combined with #438 (the stack
+learns from lc0 rows) and the conversion audit (the rows are clean), the three harmonization
+verdicts — ratio ladder NULL, lever 1 KILL, lever 2 KILL — are all about how the signal is
+APPLIED, not whether it exists. Do not read them as "external teachers do not help here".
+
+**⚑⚑ LEVER 3 IS NOT DECIDED, AND THIS INSTRUMENT CANNOT DECIDE IT. The frozen audit set
+contains ZERO ≤6-piece positions — 0 of 4000.** The ≤6-piece / >6-piece split returns the
+identical row for ">6" and an empty cell for "≤6", so any lever-3 verdict read off this
+screen would be a statement about an empty population. A gate that cannot fire on its own
+target [[a_property_test_can_be_vacuous_for_its_own_regression]]. Deciding lever 3 needs the
+LC0 SHARD population (where ~11.6% of rows are ≤6-piece), not the audit set.
+
+**CONFOUND, stated:** "ours" is the banked **iter-190** cache, which is stale — production is
+far past it. A stronger current net would have fewer >50cp errors, and BT4's fix rate on the
+remaining harder set is not established to be the same 52.5%. The gate is directionally
+sound (the bar is 25% and the margin is 2x) but the exact figure is an iter-190 figure.
+Regenerating `ours` with the current checkpoint via `scripts/foreign_net_audit.py
+--checkpoint` is the cheap follow-up, and is real GPU work.
