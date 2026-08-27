@@ -24,6 +24,16 @@ LOOKS present and does not act:
   ``--bank-observations`` and the DAG store bounds were accepted on runs whose
   selected arms read none of them, and the first was stamped into the report.
 
+And one the DEPTH arms add, which is the same shape one level down:
+
+* the LIMIT KIND -- ``sf-d9`` asks for ``go depth 9`` and ``sf-9`` for
+  ``go nodes 9``. A driver that accepted the depth and emitted a node line
+  would produce a complete, well-formed, reproducible column under the wrong
+  ruler, and the arm's own name would be the only thing claiming otherwise. So
+  the depth arms are pinned on the BYTES written to the engine, and their
+  realized depth is read back off the engine's replies rather than echoed from
+  the request.
+
 The mutants that pin them are recorded in the PR description; each was made,
 watched to fail these tests, and reverted.
 """
@@ -34,6 +44,8 @@ import builtins
 import hashlib
 import json
 import os
+import threading
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -197,7 +209,12 @@ class ScriptedChildArm:
 
 
 class FakeEngine:
-    """A ``SearchEngine`` returning a scripted result, keyed by FEN placement."""
+    """A ``SearchEngine`` returning a scripted result, keyed by FEN placement.
+
+    ``limits`` records the ``(nodes, depth)`` pair of every call, because an arm
+    whose name says one limit and whose search asks for the other is the failure
+    the depth arms introduce and nothing else here would notice.
+    """
 
     hash_mb: int | None = 16
     multipv = 1
@@ -206,12 +223,15 @@ class FakeEngine:
     def __init__(self, results: dict[str, StockfishResult] | None = None) -> None:
         self._results = dict(results or {})
         self.searched: list[str] = []
+        self.limits: list[tuple[int | None, int | None]] = []
         self.new_games = 0
         self.closed = False
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:
-        del nodes
+    def search(
+        self, fen: str, *, nodes: int | None = None, depth: int | None = None,
+    ) -> StockfishResult:
         self.searched.append(fen)
+        self.limits.append((nodes, depth))
         key = fen.split()[0]
         if key not in self._results:
             raise AssertionError(f"unscripted search for {fen!r}")
@@ -227,8 +247,10 @@ class FakeEngine:
 class RefusingEngine(FakeEngine):
     """Any search at all is a failure -- for the terminal-child parity test."""
 
-    def search(self, fen: str, *, nodes: int | None = None) -> StockfishResult:
-        del nodes
+    def search(
+        self, fen: str, *, nodes: int | None = None, depth: int | None = None,
+    ) -> StockfishResult:
+        del nodes, depth
         raise AssertionError(
             f"the arm searched {fen!r}; a terminal child must be resolved from "
             "the board, because Stockfish reports a checkmated position as "
@@ -237,15 +259,121 @@ class RefusingEngine(FakeEngine):
         )
 
 
-def sf_result(*, cp: int | None = None, mate: int | None = None) -> StockfishResult:
+class ConstantEngine(FakeEngine):
+    """Scores EVERY position the same, and still records each search's limit.
+
+    ``FakeEngine`` refuses an unscripted position deliberately, which is what a
+    single-child test wants. A whole-``run`` test drives every legal child of
+    the root, so this one answers any FEN and keeps its attention on the limit.
+    """
+
+    def __init__(self, *, cp: int = 25, depth: int = 8) -> None:
+        super().__init__()
+        self._answer = sf_result(cp=cp, depth=depth)
+
+    def search(
+        self, fen: str, *, nodes: int | None = None, depth: int | None = None,
+    ) -> StockfishResult:
+        self.searched.append(fen)
+        self.limits.append((nodes, depth))
+        return self._answer
+
+
+class ScriptedUci:
+    """A Stockfish stand-in that records the exact command lines it was sent.
+
+    ⚑ THE ``go`` LINE IS THE OBSERVATION, NOT THE ``search`` KEYWORD. UCI has no
+    readback for a search limit -- the same reason
+    ``tests/test_stockfish_threads_option.py`` holds ``Threads`` to the bytes
+    written -- so a double that recorded ``search(depth=9)`` would pass on a
+    driver that took the keyword and emitted ``go nodes``. Everything between
+    the arm and this object is the REAL code: ``StockfishUCI.search`` for the
+    per-child arm, ``RootedStockfishArm.search_lines`` for the rooted one, with
+    only ``_send`` and ``_readline_with_deadline`` replaced.
+
+    The reply is a full per-depth MultiPV block for every depth up to
+    ``final_depth``, which is what Stockfish emits and what
+    ``rooted_ranking_from_info_lines`` has to pick one depth out of.
+    ``final_depth`` below the requested depth is the search that ended early --
+    a proven mate or a tablebase hit -- and is how a realized depth is told
+    apart from an echoed request.
+    """
+
+    def __init__(
+        self,
+        *,
+        moves: Sequence[str],
+        multipv: int = 1,
+        final_depth: int = 8,
+        top_cp: int = 40,
+    ) -> None:
+        self.commands: list[str] = []
+        self.multipv = int(multipv)
+        self.final_depth = int(final_depth)
+        self._moves = list(moves)
+        self._top_cp = int(top_cp)
+        self._pending: list[str] = []
+
+    def send(self, cmd: str) -> None:
+        self.commands.append(cmd)
+        if cmd == "isready":
+            self._pending.append("readyok\n")
+        elif cmd.startswith("setoption name MultiPV value "):
+            self.multipv = int(cmd.split()[-1])
+        elif cmd.startswith("go "):
+            self._pending.extend(self._reply_to())
+
+    def readline(self, _deadline: float) -> str:
+        return self._pending.pop(0)
+
+    def _reply_to(self) -> list[str]:
+        ranks = self._moves[: max(1, self.multipv)]
+        lines = [
+            f"info depth {d} seldepth {d + 2} multipv {rank} "
+            f"score cp {self._top_cp - 10 * rank} nodes {100 * d} pv {mv}\n"
+            for d in range(1, self.final_depth + 1)
+            for rank, mv in enumerate(ranks, start=1)
+        ]
+        lines.append(f"bestmove {ranks[0]}\n")
+        return lines
+
+    @property
+    def go_lines(self) -> list[str]:
+        return [c for c in self.commands if c.startswith("go ")]
+
+
+def uci_double(engine: ScriptedUci, *, nodes: int = 2000) -> StockfishUCI:
+    """The REAL ``StockfishUCI`` with only its two I/O methods replaced.
+
+    ``nodes`` is the CLASS's own fallback budget, not any arm's: a depth arm
+    that forgot to name its limit would fall through to it, so leaving it at a
+    recognisable number is what makes that failure visible in the ``go`` line
+    rather than plausible.
+    """
+    sf = cast(Any, object.__new__(StockfishUCI))
+    sf.nodes = nodes
+    sf.multipv = engine.multipv
+    sf.hash_mb = 16
+    sf.read_timeout_s = 1.0
+    sf._lock = threading.Lock()
+    sf._send = engine.send
+    sf._readline_with_deadline = engine.readline
+    return cast(StockfishUCI, sf)
+
+
+def sf_result(
+    *, cp: int | None = None, mate: int | None = None, depth: int = 8,
+) -> StockfishResult:
     return StockfishResult(
         bestmove_uci="0000", wdl=None, pvs=[], cp=cp, mate=mate,
-        nodes=512, depth=8,
+        nodes=512, depth=depth,
     )
 
 
-def sf_child_arm(engine: FakeEngine, *, nodes: int = 512) -> gate.StockfishCandidateArm:
-    spec = gate.parse_sf_arm(f"sf-{nodes}")
+def sf_child_arm(
+    engine: Any, *, name: str = "sf-512",
+) -> gate.StockfishCandidateArm:
+    spec = gate.parse_sf_arm(name)
     assert spec is not None
     return gate.StockfishCandidateArm(
         spec=spec, engine=cast(gate.SearchEngine, engine),
@@ -255,7 +383,7 @@ def sf_child_arm(engine: FakeEngine, *, nodes: int = 512) -> gate.StockfishCandi
 
 
 def rooted_arm(
-    name: str = "sfroot-2048-mpv20", *, engine: FakeEngine | None = None,
+    name: str = "sfroot-2048-mpv20", *, engine: Any = None,
 ) -> gate.RootedStockfishArm:
     spec = gate.parse_sf_arm(name)
     assert spec is not None
@@ -963,6 +1091,18 @@ def refusal_args(arms: str, *extra: str) -> argparse.Namespace:
         ("sf-512", "--dag-max-nodes", "1000", "--dag-max-nodes"),
         ("sf-512", "--dag-reset-every", "4", "--dag-reset-every"),
         ("sfroot-2048-mpv20", "--nnue-cp-per-unit", "300", "--nnue-cp-per-unit"),
+        # ⚑ A DEPTH ARM IS A STOCKFISH ARM, so it inherits every row above
+        # rather than opening a hole in the gating. The refusals key on "no
+        # NATIVE / no DAG-backed arm is selected", and the way a new arm
+        # spelling gets that wrong is by being recognised somewhere it is not
+        # recognised everywhere -- accepted by `parse_arms`, invisible to
+        # `validate_knobs`, and handed a knob nothing reads.
+        ("sf-d9", "--nnue-cp-per-unit", "300", "--nnue-cp-per-unit"),
+        ("sf-d9", "--nnue-resolver-max-depth", "8", "--nnue-resolver-max-depth"),
+        ("sf-d9", "--bank-observations", "bank.jsonl", "--bank-observations"),
+        ("sf-d9", "--dag-max-nodes", "1000", "--dag-max-nodes"),
+        ("sfroot-d9", "--dag-reset-every", "4", "--dag-reset-every"),
+        ("sfroot-d9-mpvall", "--fastq-max-qply", "2", "--fastq-"),
         # ⚑ NATIVE IS NOT THE SAME SET AS DAG-BACKED. `nnue-static` and
         # `nnue-qsearch` intern no canonical store, so the store knobs have no
         # consumer on those runs either.
@@ -1200,3 +1340,444 @@ def test_the_realized_limit_is_the_slice_and_not_the_request(
     )
     assert whole["provenance"]["limit"] == 0
     assert whole["provenance"]["limit_realized"] == 3
+
+
+# ── 20-22. the depth-limited Stockfish arms: parsing ─────────────────────────
+
+
+def test_a_per_child_depth_arm_parses_to_a_depth_limit() -> None:
+    """``sf-d9`` is ``go depth 9``, and it carries NO node budget.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is a spec that keeps both halves -- reading the
+    depth into ``nodes`` "so the existing paths keep working". A depth arm with
+    a node budget is a search with two limits: it stops at whichever fires
+    first, every number it produces is real, and nothing tells the reader which
+    ruler was used.
+    """
+    spec = gate.parse_sf_arm("sf-d9")
+    assert spec is not None
+    assert spec.rooted is False
+    assert spec.nodes is None
+    assert spec.depth == 9
+    assert spec.limit_kind == "depth"
+    assert spec.go_limit == "depth 9"
+    assert spec.name == "sf-d9"
+
+
+def test_a_per_child_name_canonicalises_its_limit_token() -> None:
+    """Review F1: ``sf-d09`` and ``sf-d9`` are ONE search, so both spellings
+    must parse to ONE canonical arm -- otherwise a run naming both opens two
+    engines with identical limits and publishes two identical columns as if
+    they were a comparison. Same rule for node arms (``sf-0512`` == ``sf-512``),
+    which had the identical pre-existing hole."""
+    names, specs = gate.parse_arms("sf-d09,sf-d9")
+    assert names == ("sf-d9",)
+    assert (specs["sf-d9"].depth, specs["sf-d9"].nodes) == (9, None)
+    node_names, node_specs = gate.parse_arms("sf-0512,sf-512")
+    assert node_names == ("sf-512",)
+    assert (node_specs["sf-512"].depth, node_specs["sf-512"].nodes) == (None, 512)
+
+
+def test_a_depth_arm_and_a_node_arm_of_the_same_number_never_alias() -> None:
+    """``sf-d9`` and ``sf-9`` both parse, to two different arms.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is a regex or a canonical name that drops the
+    ``d``. Both arms then key the report on one name, the second engine
+    overwrites the first's column, and the run publishes ONE number for a
+    comparison it charged for twice.
+    """
+    names, specs = gate.parse_arms("sf-d9,sf-9")
+    assert names == ("sf-d9", "sf-9")
+    assert (specs["sf-d9"].depth, specs["sf-d9"].nodes) == (9, None)
+    assert (specs["sf-9"].depth, specs["sf-9"].nodes) == (None, 9)
+    assert specs["sf-d9"] != specs["sf-9"]
+
+    rooted_names, rooted_specs = gate.parse_arms("sfroot-d9,sfroot-9")
+    assert rooted_names == ("sfroot-d9-mpv20", "sfroot-9-mpv20")
+    assert rooted_specs["sfroot-d9-mpv20"].go_limit == "depth 9"
+    assert rooted_specs["sfroot-9-mpv20"].go_limit == "nodes 9"
+
+
+def test_a_rooted_depth_arm_canonicalises_to_its_default_width() -> None:
+    """``sfroot-d9`` IS ``sfroot-d9-mpv20``, exactly as the node arms are."""
+    names, specs = gate.parse_arms("sfroot-d9,sfroot-d9-mpv20")
+    assert names == (f"sfroot-d9-mpv{gate.DEFAULT_ROOTED_MULTIPV}",)
+    assert specs[names[0]].width == gate.DEFAULT_ROOTED_MULTIPV
+    assert specs[names[0]].depth == 9
+    assert specs[names[0]].nodes is None
+
+    all_names, all_specs = gate.parse_arms("sfroot-d12-mpvall")
+    assert all_names == ("sfroot-d12-mpvall",)
+    assert all_specs[all_names[0]].width is None
+    assert all_specs[all_names[0]].depth == 12
+    assert all_specs[all_names[0]].rooted is True
+
+
+@pytest.mark.parametrize(
+    ("arm", "message"),
+    [
+        ("sf-d0", "depth budget must be positive"),
+        ("sfroot-d0", "depth budget must be positive"),
+        ("sfroot-d0-mpv4", "depth budget must be positive"),
+        # A negative budget cannot reach the positivity check: the minus sign
+        # is not in the grammar, so it is refused as an unknown arm -- the same
+        # answer `sf--1` and `sfroot-abc` already get. Asserted so the two
+        # refusal routes are a decision rather than an accident.
+        ("sf-d-1", "unknown arm"),
+        ("sfroot-d-1", "unknown arm"),
+        ("sf-d", "unknown arm"),
+        ("sfroot-d-mpv20", "unknown arm"),
+    ],
+)
+def test_a_non_positive_or_malformed_depth_arm_is_refused(
+    arm: str, message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        gate.parse_arms(arm)
+
+
+def test_a_spec_with_both_limits_or_neither_is_refused() -> None:
+    """``SfArmSpec`` itself enforces the exclusivity, not just the parser.
+
+    The parser is one constructor of these; a later one (a test, a sibling
+    script, a resume path) would otherwise be free to build a spec with both
+    fields set, and every consumer would silently prefer whichever it reads
+    first.
+    """
+    for nodes, depth in ((512, 9), (None, None)):
+        with pytest.raises(ValueError, match="exactly one search limit"):
+            gate.SfArmSpec(
+                rooted=False, nodes=nodes, depth=depth, width=None, name="sf-x",
+            )
+
+
+# ── 23-27. the depth-limited arms take effect ────────────────────────────────
+
+
+def test_a_per_child_depth_arm_writes_go_depth_and_no_node_limit() -> None:
+    """The bytes the engine receives are ``go depth 9``.
+
+    ⚑ THIS REPO'S SIGNATURE DEFECT IS A VALUE ACCEPTED AND THEN IGNORED, and a
+    search limit is unusually good at it: a ``go nodes 2000`` issued for an arm
+    named ``sf-d9`` returns a complete, correctly parsed, entirely reproducible
+    label. So the proof is the command line, taken off a double that sits
+    UNDER the real ``StockfishUCI.search`` rather than in place of it.
+    """
+    board = chess.Board(_ROOT_FEN)
+    uci = legal_ucis_of(_ROOT_FEN)[0]
+    child = board.copy()
+    child.push(chess.Move.from_uci(uci))
+
+    engine = ScriptedUci(moves=("e2e4",))
+    arm = sf_child_arm(uci_double(engine), name="sf-d9")
+    arm.evaluate([CBoard.from_board(child)], role="leaf", cluster=None)
+
+    assert engine.go_lines == ["go depth 9"]
+    assert "nodes" not in engine.go_lines[0], (
+        "the depth arm's search carried a node limit as well; the search then "
+        "stops at whichever fired first and the arm's ruler is unknown"
+    )
+
+
+def test_a_per_child_node_arm_still_writes_go_nodes() -> None:
+    """THE CONTROL. Without it, a driver that emitted no limit at all would
+    pass the test above by accident on the ``nodes`` absence assertion."""
+    board = chess.Board(_ROOT_FEN)
+    uci = legal_ucis_of(_ROOT_FEN)[0]
+    child = board.copy()
+    child.push(chess.Move.from_uci(uci))
+
+    engine = ScriptedUci(moves=("e2e4",))
+    arm = sf_child_arm(uci_double(engine), name="sf-512")
+    arm.evaluate([CBoard.from_board(child)], role="leaf", cluster=None)
+
+    assert engine.go_lines == ["go nodes 512"]
+    # ...and NOT the class's own fallback budget, which `uci_double` sets to
+    # 2000 precisely so an arm that named no limit is visible here.
+    assert "2000" not in engine.go_lines[0]
+
+
+def test_a_rooted_depth_arm_writes_go_depth_at_its_multipv_width() -> None:
+    """The rooted arm builds its own ``go`` line, so it needs its own proof.
+
+    ⚑ IT IS A SECOND CALL SITE. ``search_lines`` does not go through
+    ``StockfishUCI.search`` at all -- it drives the protocol itself to keep the
+    per-depth info lines -- so a depth arm can be wired at one site and not the
+    other, and the report would look identical either way.
+    """
+    board = chess.Board(_ROOT_FEN)
+    ucis, idxs = legal_full_indices(board)
+    engine = ScriptedUci(moves=ucis[:2], final_depth=9)
+    arm = rooted_arm("sfroot-d9-mpv2", engine=uci_double(engine))
+    label = arm.label(
+        board=board, legal_ucis=ucis, legal_idxs=idxs,
+        sigma=shadow.oneply_sigma_default(),
+    )
+
+    assert engine.go_lines == ["go depth 9"]
+    assert "setoption name MultiPV value 2" in engine.commands
+    assert label.chosen == ucis[0]
+    # The deepest COMPLETE MultiPV set is still what the ranking comes from --
+    # a depth-limited search emits the same per-depth blocks, it just stops.
+    stamp = arm.stamp()
+    assert stamp["depth_max"] == 9
+    assert stamp["positions_without_a_complete_multipv_depth"] == 0
+    assert stamp["multipv_realized_mean"] == pytest.approx(2.0)
+
+
+def test_a_rooted_node_arm_still_writes_go_nodes() -> None:
+    """THE CONTROL for the rooted call site."""
+    board = chess.Board(_ROOT_FEN)
+    ucis, idxs = legal_full_indices(board)
+    engine = ScriptedUci(moves=ucis[:2], final_depth=9)
+    arm = rooted_arm("sfroot-2048-mpv2", engine=uci_double(engine))
+    arm.label(
+        board=board, legal_ucis=ucis, legal_idxs=idxs,
+        sigma=shadow.oneply_sigma_default(),
+    )
+    assert engine.go_lines == ["go nodes 2048"]
+
+
+def test_a_depth_arm_publishes_the_ask_and_the_engines_own_realized_depth(
+) -> None:
+    """``depth_requested`` is the ask; ``depth_*`` is what the ENGINE reported.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is a realized stamp that echoes the request.
+    The two agree on almost every search, which is exactly what makes the echo
+    survive: it is wrong only on the searches that ended early. So both doubles
+    below stop at depth 7 for a ``go depth 9``, which is what a proven mate or a
+    tablebase hit does to a depth-limited search, and the stamp has to say 7.
+
+    ⚑ AND A DEPTH ARM PUBLISHES ``nodes: null``. Printing the engine
+    constructor's default there would put a number on the face of the report
+    that reads as the budget the arm ran under and bounded nothing.
+    """
+    board = chess.Board(_ROOT_FEN)
+    ucis, idxs = legal_full_indices(board)
+    child = board.copy()
+    child.push(chess.Move.from_uci(ucis[0]))
+
+    per_child = sf_child_arm(ConstantEngine(depth=7), name="sf-d9")
+    per_child.evaluate([CBoard.from_board(child)], role="leaf", cluster=None)
+    child_stamp = per_child.stamp()
+    assert child_stamp["limit_kind"] == "depth"
+    assert child_stamp["depth_requested"] == 9
+    assert child_stamp["nodes"] is None
+    assert child_stamp["depth_max"] == 7
+    assert child_stamp["depth_mean"] == pytest.approx(7.0)
+
+    engine = ScriptedUci(moves=ucis[:2], final_depth=7)
+    rooted = rooted_arm("sfroot-d9-mpv2", engine=uci_double(engine))
+    rooted.label(
+        board=board, legal_ucis=ucis, legal_idxs=idxs,
+        sigma=shadow.oneply_sigma_default(),
+    )
+    rooted_stamp = rooted.stamp()
+    assert rooted_stamp["limit_kind"] == "depth"
+    assert rooted_stamp["depth_requested"] == 9
+    assert rooted_stamp["nodes"] is None
+    assert rooted_stamp["depth_max"] == 7
+
+
+def test_a_node_arms_stamp_keeps_its_budget_and_claims_no_depth() -> None:
+    """THE CONTROL for the stamp: the node arms are unchanged.
+
+    A `_limit_stamp` that nulled the wrong half, or a `depth_requested` that
+    fell back to the realized depth, would pass every depth assertion above
+    and quietly rewrite every existing sf-/sfroot- column.
+    """
+    board = chess.Board(_ROOT_FEN)
+    ucis, idxs = legal_full_indices(board)
+    child = board.copy()
+    child.push(chess.Move.from_uci(ucis[0]))
+
+    per_child = sf_child_arm(ConstantEngine(depth=11), name="sf-512")
+    per_child.evaluate([CBoard.from_board(child)], role="leaf", cluster=None)
+    child_stamp = per_child.stamp()
+    assert child_stamp["limit_kind"] == "nodes"
+    assert child_stamp["nodes"] == 512
+    assert child_stamp["depth_requested"] is None
+    # A node arm has no requested depth, and its realized one is the only depth
+    # number it can report -- so it is a measurement here, not an ask.
+    assert child_stamp["depth_max"] == 11
+
+    engine = ScriptedUci(moves=ucis[:2], final_depth=6)
+    rooted = rooted_arm("sfroot-2048-mpv2", engine=uci_double(engine))
+    rooted.label(
+        board=board, legal_ucis=ucis, legal_idxs=idxs,
+        sigma=shadow.oneply_sigma_default(),
+    )
+    rooted_stamp = rooted.stamp()
+    assert rooted_stamp["limit_kind"] == "nodes"
+    assert rooted_stamp["nodes"] == 2048
+    assert rooted_stamp["depth_requested"] is None
+    assert rooted_stamp["depth_max"] == 6
+
+
+def test_a_whole_run_labels_through_the_depth_limit_and_dumps_the_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: every search is depth-limited and the dump says so.
+
+    The per-arm assertions above are on ONE call; this one drives ``run`` over
+    a real audit row, so a depth that reached the arm and not the loop -- or a
+    ``depth_requested`` computed off an arm the run never asked -- fails here.
+    """
+    ucis = legal_ucis_of(_ROOT_FEN)
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(_ROOT_FEN, listed=[(u, 100 - 10 * i)
+                                     for i, u in enumerate(ucis[:10])]),
+    ])
+    engine = ConstantEngine(depth=9)
+    arm = sf_child_arm(engine, name="sf-d9")
+    dump = tmp_path / "rows.jsonl"
+    monkeypatch.setattr(
+        gate, "open_arms",
+        lambda _cfg, *, pack_sha: ([cast(gate.ChildArm, arm)], []),
+    )
+    report = gate.run(gate_config(audit, (arm.arm,), dump_per_position=dump))
+
+    assert engine.limits, "the arm ran no search at all"
+    assert all(limit == (None, 9) for limit in engine.limits), (
+        f"a search in the run was not depth-limited: {set(engine.limits)}"
+    )
+    cell = report["arms"]["sf-d9"]
+    assert cell["limit_kind"] == "depth"
+    assert cell["nodes"] is None
+    assert cell["depth_requested"] == 9
+    assert cell["searches"] == len(ucis) + 1  # every child, plus the probe root
+    row = json.loads(dump.read_text(encoding="utf-8").splitlines()[0])
+    assert row["arm"]["sf-d9"]["depth_requested"] == 9
+    assert "search_limit_kind" in report["metric_definitions"]
+
+
+def test_a_dump_row_claims_no_depth_for_an_arm_that_has_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE CONTROL for the dump key: null is a claim, not a placeholder.
+
+    ⚑ ``depth_requested_of`` is deliberately NOT ``getattr(arm, "depth", None)``
+    -- a misspelled attribute name would return None for every arm, and this
+    row would pass while the row above failed for a reason nobody would read as
+    "the lookup is blind". Pinned in both directions instead.
+    """
+    ucis = legal_ucis_of(_ROOT_FEN)
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(_ROOT_FEN, listed=[(u, 100 - 10 * i)
+                                     for i, u in enumerate(ucis[:10])]),
+    ])
+    node_arm = sf_child_arm(ConstantEngine(), name="sf-512")
+    native_like = ScriptedChildArm("scripted", {})
+    dump = tmp_path / "rows.jsonl"
+    monkeypatch.setattr(
+        gate, "open_arms",
+        lambda _cfg, *, pack_sha: (
+            [cast(gate.ChildArm, node_arm), cast(gate.ChildArm, native_like)], [],
+        ),
+    )
+    gate.run(gate_config(
+        audit, (node_arm.arm, native_like.arm), dump_per_position=dump,
+    ))
+    row = json.loads(dump.read_text(encoding="utf-8").splitlines()[0])
+    assert row["arm"]["sf-512"]["depth_requested"] is None
+    assert row["arm"]["scripted"]["depth_requested"] is None
+    assert gate.depth_requested_of(cast(gate.ReportableArm, node_arm)) is None
+    depth_arm = sf_child_arm(ConstantEngine(), name="sf-d9")
+    assert gate.depth_requested_of(cast(gate.ReportableArm, depth_arm)) == 9
+
+
+def test_a_depth_arm_is_gated_as_a_stockfish_arm_by_the_config() -> None:
+    """It needs a Stockfish binary and lands in ``sf_specs``, like a node arm.
+
+    The knob-refusal rows in the parametrize table above cover the other half:
+    a depth arm makes a run Stockfish-ONLY, so every native and DAG knob is
+    refused on it exactly as it is on ``sf-512``.
+    """
+    cfg = gate.config_from_args(gate.build_parser().parse_args([
+        "--arms", "sf-d9,sfroot-d12-mpvall", "--stockfish", "unused-binary",
+    ]))
+    assert cfg.sf_binary == Path("unused-binary")
+    assert set(cfg.sf_specs) == {"sf-d9", "sfroot-d12-mpvall"}
+    assert cfg.sf_specs["sf-d9"].depth == 9
+    assert cfg.native_arms == ()
+
+
+def test_a_stockfish_only_depth_run_refuses_the_native_pack() -> None:
+    args = gate.build_parser().parse_args([
+        "--arms", "sf-d9", "--nnue-pack", "unused.pack",
+    ])
+    with pytest.raises(ValueError, match="--nnue-pack"):
+        gate.config_from_args(args)
+
+
+# ── 28-30. StockfishUCI.search(depth=...) itself ─────────────────────────────
+
+
+def test_the_default_search_is_byte_identical_to_the_line_it_always_sent() -> None:
+    """``depth`` is keyword-only and defaults to None, so nothing else moved.
+
+    Every production caller (selfplay labels, the arena, the deep-SF tools)
+    names ``nodes`` or nothing, and this is the assertion that those calls still
+    write the exact bytes they wrote before the parameter existed -- the same
+    standard ``tests/test_stockfish_threads_option.py`` holds the ``threads``
+    default to.
+    """
+    engine = ScriptedUci(moves=("e2e4",))
+    StockfishUCI.search(uci_double(engine), chess.STARTING_FEN)
+    assert engine.commands == [
+        f"position fen {chess.STARTING_FEN}",
+        "go nodes 2000",
+    ]
+
+    explicit = ScriptedUci(moves=("e2e4",))
+    StockfishUCI.search(uci_double(explicit), chess.STARTING_FEN, nodes=777)
+    assert explicit.go_lines == ["go nodes 777"]
+
+
+def test_a_depth_limited_search_replaces_the_node_line_rather_than_joining_it(
+) -> None:
+    """``go depth 9``, and the engine's own ``nodes`` fallback is NOT folded in.
+
+    ⚑ THE MUTANT THIS EXISTS FOR is ``go nodes 2000 depth 9``. Both limits are
+    legal UCI and the search stops at whichever fires first, so a depth arm on a
+    cheap position would silently be a node arm -- and the result parses, scores
+    and reports identically either way.
+    """
+    engine = ScriptedUci(moves=("e2e4",))
+    result = StockfishUCI.search(uci_double(engine), chess.STARTING_FEN, depth=9)
+    assert engine.go_lines == ["go depth 9"]
+    assert "nodes" not in engine.go_lines[0]
+    assert result.depth == 8  # the double's own final depth, read off its lines
+
+
+def test_a_search_given_both_limits_is_refused_before_a_byte_is_written() -> None:
+    """Two limits is a question with no answer, so it raises rather than orders.
+
+    Refused BEFORE the protocol section, exactly as a malformed ``searchmoves``
+    token is: ``_protocol_section`` poisons the engine on any raise, and a
+    caller's mistake must not cost a Stockfish restart.
+    """
+    engine = ScriptedUci(moves=("e2e4",))
+    driver = uci_double(engine)
+    with pytest.raises(ValueError, match="both nodes"):
+        StockfishUCI.search(driver, chess.STARTING_FEN, nodes=512, depth=9)
+    assert engine.commands == []
+    assert driver.desynced is False
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_a_non_positive_depth_is_refused_rather_than_silently_replaced(
+    bad: int,
+) -> None:
+    """Stockfish clamps ``go depth 0`` up to a real iteration.
+
+    That is a limit accepted and then quietly replaced -- the caller believes it
+    measured depth 0 and measured something else -- so the driver refuses it
+    instead of letting the engine decide.
+    """
+    engine = ScriptedUci(moves=("e2e4",))
+    driver = uci_double(engine)
+    with pytest.raises(ValueError, match="depth limit must be positive"):
+        StockfishUCI.search(driver, chess.STARTING_FEN, depth=bad)
+    assert engine.commands == []
+    assert driver.desynced is False
