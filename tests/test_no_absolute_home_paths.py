@@ -99,6 +99,22 @@ Only `/home/` is covered -- not `/Users/` (macOS) or `C:\\Users\\` (Windows).
 Neither has ever appeared here, and a pattern with no possible trigger is a
 gate that cannot fail; add one when there is something for it to catch.
 
+THREE EXEMPTION LISTS, DELIBERATELY NOT ONE
+-------------------------------------------
+They answer different questions and merging them would exempt each file from
+the other's check:
+
+* `_ALLOWED` — a per-file, per-shape, EXACT-COUNT budget for paths that cannot
+  be rewritten (a config's `syzygy_path` points outside the checkout). Hit N+1
+  is a finding; hit N-1 is a stale pin.
+* `_HISTORICAL_PREFIXES` — `scratchpad/`, whose tracked contents are frozen
+  one-shot drivers for finished experiments. Their recorded paths ARE the
+  record of which checkout and which export a ledger number came from, so the
+  two PATH shapes are skipped there; `worker_username` and `hostname` are not.
+* `_IDENTITY_EXEMPT` — `docs/experiment_ledger.md`, for the derived-token sweep
+  ONLY. What remains there after its paths were scrubbed is the maintainer's
+  first name in prose, attributing decisions; all four patterns still cover it.
+
 ⚑ KNOWN, UNCLOSED, AND WRITTEN DOWN RATHER THAN IMPLIED
 -------------------------------------------------------
 MEASURED by running 26 spellings against these patterns, not reasoned about: 19
@@ -426,8 +442,24 @@ _LIVE_CONFIG_REASON = (
 _RESEARCH_REASON = _YAML_HAS_NO_SELF_LOCATION
 
 # (path, number of `abs_home` hits present when the exemption was written)
+#
+# ⚑ THESE COUNTS ARE BRANCH-SENSITIVE for `configs/pbt2_small.yaml`, which is the
+# ONE config edited on the live branch between merges. The 12 pinned by #441 was
+# `main`'s count; the live file carries 17, and the five extra occurrences are
+# named where the entry is written below. Re-measure — do not "correct" — this
+# number when the live yaml and `main` diverge again: over-budget fails
+# `test_no_tracked_file_leaks`, under-budget fails
+# `test_every_allowlist_entry_is_still_needed`, and both are telling the truth.
 _CONFIGS = (
-    ("configs/pbt2_small.yaml", 12),
+    # 12 (the #441 pin, still `main`'s count) + 5 acquired on the live branch:
+    #   `salvage_seed_pool_dir` — its value AND the commented example above it;
+    #   `stockfish_syzygy_path` — it became the same colon-separated PAIR as
+    #     `syzygy_path`, so one line now carries two occurrences;
+    #   `era_probe_path`, `era_probe_inwindow_path` — the era-probe re-point.
+    # Every one is functional and points outside the checkout or at runtime
+    # output, so `_YAML_HAS_NO_SELF_LOCATION` covers them exactly as it covers
+    # the original 12.
+    ("configs/pbt2_small.yaml", 17),
     ("configs/scratch_pc.yaml", 11),
     ("configs/bt4_aurora_asha.yaml", 9),
     ("configs/exp_cat_search.yaml", 9),
@@ -496,6 +528,44 @@ _ALLOWED: dict[str, dict[str, tuple[int, str]]] = {
     "CLAUDE.md": {
         "abs_home": (2, "must quote the production syzygy_path verbatim (test_param_count)"),
     },
+}
+
+# Tracked directories whose contents are FROZEN ARTEFACTS of finished
+# experiments rather than code anybody runs again.
+#
+# ⚑ THE EXEMPTION IS THE DIRECTORY'S PURPOSE, NOT ITS SIZE. `scratchpad/` holds
+# the one-shot drivers and probe scripts that produced the numbers in
+# `docs/experiment_ledger.md`. Their paths ARE part of the record — which
+# checkout, which salvage export, which engine binary a readout was taken
+# against — so rewriting them to a derived form would make the script no longer
+# describe the run it documents, while the script itself is never re-executed.
+# ("45 files is a lot of edits" would NOT be a reason; see the note above
+# `_YAML_HAS_NO_SELF_LOCATION` on exemptions that argue unimportance.)
+#
+# ⚑ TWO SHAPES ONLY, and the split is the point: the PATH shapes are the ones
+# that carry the record. `worker_username` and `hostname` stay fully live here —
+# a fleet login or a machine name in a scratchpad script is a leak with no
+# historical value, and those are the shapes a NEW file is most likely to add.
+_HISTORICAL_PREFIXES: tuple[str, ...] = ("scratchpad/",)
+_HISTORICAL_SHAPES: frozenset[str] = frozenset({"abs_home", "session_scratch"})
+
+#: Files exempt from the LOCAL-IDENTITY sweep only, each for a stated reason.
+#:
+#: ⚑ NOT `_ALLOWED`. A file here is still swept by all four patterns; only the
+#: derived-token sweep skips it. The two lists exist for opposite reasons —
+#: `_ALLOWED` is a path that cannot be rewritten, this is a token that is not a
+#: path at all — and merging them would exempt each file from the other's check.
+_IDENTITY_EXEMPT: dict[str, str] = {
+    "docs/experiment_ledger.md": (
+        "a historical record of WHO DECIDED WHAT. After the path/login shapes "
+        "were scrubbed out of it, every remaining hit is the maintainer's FIRST "
+        "NAME in prose (\"Josh's call\", \"awaiting Josh — agents do not start "
+        "training\") — an attribution, not a login, a path or a machine. "
+        "Rewording ~200 of those would rewrite the record this file exists to "
+        "be, and the ledger is quoted verbatim by later entries. It is NOT in "
+        "`_ALLOWED`, so all four patterns still cover it and a NEW `/home/` "
+        "path or fleet login landing here is still a finding"
+    ),
 }
 
 #: Tokens that are somebody's identity on one machine and an ordinary English
@@ -645,13 +715,21 @@ def _offenders(paths: list[Path], *, root: Path = REPO_ROOT) -> list[str]:
     detector beforehand as an off switch — see `_ALLOWED`. Factored out of the
     sweep so the budget arithmetic itself can be tested on a fixture rather than
     only on a tree that is (correctly) clean.
+
+    The ONE exception is `_HISTORICAL_PREFIXES`, where the two PATH shapes are
+    skipped outright rather than budgeted: a budget's job is to notice the next
+    hit, and in a directory of finished experiments the next hit is another
+    frozen artefact. The two identity shapes are still budgeted there.
     """
     offenders: list[str] = []
     for path in paths:
         rel = str(path.relative_to(root))
         allowed = _ALLOWED.get(rel, {})
+        historical = rel.startswith(_HISTORICAL_PREFIXES)
         hits = _hits(path)
         for shape in sorted(_PATTERNS):
+            if historical and shape in _HISTORICAL_SHAPES:
+                continue
             of_shape = [(lineno, line) for sh, lineno, line in hits if sh == shape]
             budget = allowed.get(shape, (0, ""))[0]
             if len(of_shape) <= budget:
@@ -812,16 +890,22 @@ def test_no_tracked_file_carries_this_machines_identity() -> None:
     files, and passes vacuously on a CI runner. The mechanism is proved
     separately, above.
 
-    The `_ALLOWED` files are skipped WHOLE here: their 162 remaining
+    The `_ALLOWED` files are skipped WHOLE here: their 167 remaining
     `/home/<user>` occurrences are deferred with a stated reason, and re-reporting
     them under a second name would just teach people to skip this test.
+    `_HISTORICAL_PREFIXES` and `_IDENTITY_EXEMPT` are skipped for the reasons
+    stated where each is defined — the first because the paths ARE the record of
+    a finished experiment, the second because what remains there is a person's
+    name in prose rather than a login.
     """
     tokens = _local_identity_tokens()
-    deferred = set(_ALLOWED)
+    deferred = set(_ALLOWED) | set(_IDENTITY_EXEMPT)
     offenders: list[str] = []
     for path in _tracked_files():
         rel = str(path.relative_to(REPO_ROOT))
         if rel in deferred or rel == str(Path(__file__).relative_to(REPO_ROOT)):
+            continue
+        if rel.startswith(_HISTORICAL_PREFIXES):
             continue
         for token, lineno, line in _identity_hits(_read(path), tokens):
             offenders.append(f"{rel}:{lineno} [{token}] {line}")
@@ -857,8 +941,11 @@ def test_every_allowlist_entry_is_still_needed() -> None:
         "(or delete the entry) so the file is covered by the sweep again"
     )
 
-    missing = [rel for rel in sorted(_ALLOWED) if not (REPO_ROOT / rel).is_file()]
-    assert not missing, f"_ALLOWED names files that do not exist: {missing}"
+    missing = [
+        rel for rel in sorted(set(_ALLOWED) | set(_IDENTITY_EXEMPT))
+        if not (REPO_ROOT / rel).is_file()
+    ]
+    assert not missing, f"the exemption lists name files that do not exist: {missing}"
 
 
 def test_an_allowlisted_file_is_still_swept_for_other_shapes(tmp_path: Path) -> None:
@@ -912,6 +999,61 @@ def test_one_more_hit_in_an_allowlisted_file_is_still_a_finding(tmp_path: Path) 
         "finding — the exemption is an off switch again"
     )
     assert f"{budget + 1} hits, {budget} allowed" in found[0], found
+
+
+def test_the_historical_exemption_is_scoped_to_two_shapes_and_one_directory(
+    tmp_path: Path,
+) -> None:
+    """⚑ The hole this exemption could have been, pinned shut.
+
+    A whole-directory skip is the coarsest thing in this file, so both of its
+    edges are asserted rather than described: it must not reach outside
+    `scratchpad/`, and inside `scratchpad/` it must still report a fleet login
+    or a machine name. The first edge is what keeps the guard meaningful for
+    `chess_anti_engine/`, `scripts/`, `tests/`, `configs/` and `docs/`; the
+    second is what keeps it meaningful for a NEW scratchpad file, whose likely
+    leak is a credential rather than a path to a 2026 salvage export.
+    """
+    root = tmp_path / "root"
+    (root / "scratchpad" / "old_probe").mkdir(parents=True)
+    (root / "scripts").mkdir()
+
+    frozen = root / "scratchpad" / "old_probe" / "driver.sh"
+    frozen.write_bytes(
+        _CONTROLS["abs_home"].encode() + b"\n" + _CONTROLS["session_scratch"].encode()
+    )
+    assert not _offenders([frozen], root=root), (
+        "a frozen scratchpad artefact's recorded paths are the experiment record"
+    )
+
+    # ...but the identity shapes are NOT part of any record.
+    #
+    # ⚑ NAMED, not derived as `_PATTERNS - _HISTORICAL_SHAPES`. Deriving the
+    # loop's subject from the constant under test makes the loop EMPTY exactly
+    # when the constant is widened to everything — i.e. the check evaporates in
+    # the one case it exists to catch. Measured: the derived form passed that
+    # mutant.
+    for shape in ("hostname", "worker_username"):
+        assert shape not in _HISTORICAL_SHAPES, (
+            f"{shape!r} is a credential or a machine name, never an experiment "
+            "record; it must stay live inside scratchpad/"
+        )
+        leaky = root / "scratchpad" / "old_probe" / f"{shape}.yaml"
+        leaky.write_bytes(_CONTROLS[shape].encode())
+        found = _offenders([leaky], root=root)
+        why = (
+            f"a {shape!r} leak in scratchpad/ swept green — the exemption is a "
+            f"directory-wide off switch, not two shapes: {found}"
+        )
+        assert found, why
+        assert f"[{shape}]" in found[0], why
+
+    # And one directory over, every shape is still live.
+    outside = root / "scripts" / "new_tool.py"
+    outside.write_bytes(_CONTROLS["abs_home"].encode())
+    assert _offenders([outside], root=root), (
+        "the historical exemption leaked outside scratchpad/"
+    )
 
 
 def test_a_tracked_symlink_is_scanned_as_its_TARGET_STRING(tmp_path: Path) -> None:

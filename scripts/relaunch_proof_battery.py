@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +56,36 @@ def _num(key: str) -> float:
 OLD_WORKER_PASSWORD = "chess_worker_2026"  # must be DEAD after #161 rotation
 
 _results: list[tuple[str, bool, str]] = []
+
+
+def _fleet_username() -> str:
+    """The fleet's basic-auth login, READ from the config rather than written here.
+
+    A literal login in a tracked file is a disclosure in a public repo
+    (`tests/test_no_absolute_home_paths.py`) and it is also the wrong home for
+    the value: the one of record is `distributed_worker_username` in the
+    production config, and this script already derives everything else it
+    checks from an observable rather than a copy.
+
+    ⚑ It has to be the REAL login, not a stand-in: the server answers 401 to an
+    unknown user too, so a placeholder would make the "old credential is dead"
+    check pass without the burned password ever being tested. `$CAE_WORKER_USERNAME`
+    overrides for a fleet that is not the one this config describes.
+    """
+    override = os.environ.get("CAE_WORKER_USERNAME")
+    if override:
+        return override
+    config = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
+    found = re.search(
+        r"^\s*distributed_worker_username\s*:\s*[\"']?([A-Za-z0-9._-]+)",
+        config.read_text(),
+        re.MULTILINE,
+    )
+    if found is None:
+        raise SystemExit(
+            f"no distributed_worker_username in {config.name}; set $CAE_WORKER_USERNAME"
+        )
+    return found.group(1)
 
 
 def check(name: str, ok: bool, detail: str) -> None:
@@ -186,7 +217,9 @@ def credential_check(server_url: str) -> None:
     # HTTP Basic against a real authenticated route (POST /v1/lease_trial,
     # app.py:2406). Anything but 401/403 fails the check: 2xx = burned password
     # still accepted; 404/422 = wrong route/shape, i.e. no auth verdict at all.
-    token = base64.b64encode(f"josh:{OLD_WORKER_PASSWORD}".encode()).decode()
+    token = base64.b64encode(
+        f"{_fleet_username()}:{OLD_WORKER_PASSWORD}".encode()
+    ).decode()
     req = urllib.request.Request(
         f"{server_url.rstrip('/')}/v1/lease_trial",
         method="POST",
