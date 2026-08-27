@@ -14,6 +14,13 @@ Shape of a log::
     {"kind": "game", "pair_id": 0, "half": 0, ...}
     {"kind": "game", "pair_id": 0, "half": 1, ...}
 
+A header MAY also carry ``"info"``: a driver-defined block that is recorded but
+NOT fingerprinted, for things a later reader wants to know and a resume must not
+be refused over (the arena's ``--sprt`` spec is the first). ⚑ Everything under
+``settings`` is fingerprinted — the fingerprint is a hash of that whole dict —
+so a setting that must not gate a resume cannot live there, and the writer omits
+``info`` entirely when a driver passes none, keeping the old header byte-shape.
+
 Two properties do the work:
 
 * **Flush per game.** ``write_game`` flushes, so a SIGKILL/OOM loses at most
@@ -103,6 +110,18 @@ class GameLog:
     @property
     def fingerprint(self) -> str:
         return str(self.header.get("fingerprint", ""))
+
+    @property
+    def info(self) -> dict[str, Any]:
+        """The header's NON-fingerprinted block; ``{}`` on a log written without one.
+
+        Empty and absent are deliberately the same reading here: a log from
+        before a driver started recording something has no opinion about it, and
+        a caller comparing against its own value has to treat "the log does not
+        say" as its own case rather than as a difference.
+        """
+        info = self.header.get("info")
+        return dict(info) if isinstance(info, dict) else {}
 
 
 def read_game_log(path: str | Path) -> GameLog:
@@ -217,10 +236,20 @@ class GameLogWriter:
         driver: str,
         settings: Mapping[str, Any],
         resuming: bool = False,
+        info: Mapping[str, Any] | None = None,
     ) -> None:
+        """``info`` is recorded in the header and NOT fingerprinted.
+
+        For a setting a later reader should see but a resume must not be refused
+        over. It is written only when non-empty, so a driver that passes none
+        produces the same header bytes as before this parameter existed — and a
+        RESUME does not rewrite the header at all, so the log keeps the ORIGINAL
+        run's info and the caller is the one that has to notice a difference.
+        """
         self.path = Path(path)
         self.driver = driver
         self.settings = dict(settings)
+        self.info = dict(info or {})
         self.fingerprint = settings_fingerprint(self.settings)
         self.games_written = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +264,7 @@ class GameLogWriter:
                 "created": datetime.datetime.now().isoformat(timespec="seconds"),
                 "fingerprint": self.fingerprint,
                 "settings": self.settings,
+                **({"info": self.info} if self.info else {}),
             })
 
     def __enter__(self) -> GameLogWriter:
