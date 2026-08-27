@@ -69836,6 +69836,27 @@ gated by the standing audit-first rule when launched.
    visits-only targets, (b) root argmax-of-Q labels. If either un-inverts, deep
    uniform Gumbel revives and candidate 1's contrast needs re-pricing.
 
+5. **ROOTED SF MULTIPV-16 + GUMBEL PLAY-SELECTION (Josh, 2026-08-27 — the lead
+   candidate).** One SF search per position, MultiPV 16 at nodes N: the multipv cp
+   list IS the soft policy target (through the production cp-logistic) and PV1's cp
+   the value target; the PLAYED move is drawn Gumbel/temperature-style from the cp
+   distribution for game diversity — the STORED target stays the SF distribution,
+   never one-hot of the sampled move. Cheaper and stronger per node than the
+   per-child sf-<nodes> construction (one shared tree vs ~30 child calls); both are
+   in the audit gate so the delta is measured, not assumed. Support: MPV20 covers
+   95.3% of bad-tail mass vs MPV6's 60.9% (16 is in the strong regime); the
+   teacher-graft kills (SFPT dose ladder, R/V/G) were about grafting into the
+   PLATEAUED run and do not bear on from-scratch supervised, which is the #438 shape
+   that passed and converted to Elo. Watch: SF unconverged on 2.92% of labels at low
+   budgets (node floor), fresh TT per game (dirty-TT hazard is banked). Economics at
+   MPV16@2-8k nodes: ~1.5-5M plies/h — under FastQ's 7.7M, still ~10-30x the loop.
+
+6. **NNUE-1-PLY ROOT PRIOR (free fix to try before any net prior).** The qsearch
+   arms already compute every root child's value; softmaxed, that is a root prior far
+   above uniform at zero extra cost. G2's inversion was measured at UNIFORM prior
+   specifically — re-measure the sims bend under this prior before concluding search
+   depth cannot pay pre-net.
+
 CPU-only; the deep-SF scoring is CPU and throttled below the trainer's loaders.
 
 are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.50× vs
