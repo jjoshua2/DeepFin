@@ -79,10 +79,12 @@ class StockfishPool:
             raise
 
     def _new_engine(self) -> StockfishUCI:
-        kwargs = (
-            {} if self.read_timeout_s is None
-            else {"read_timeout_s": float(self.read_timeout_s)}
-        )
+        # ⚑ NAMED, NOT `**kwargs`. This used to unpack a `dict[str, float]`
+        # holding at most `read_timeout_s`, which type-checks only while every
+        # unfilled keyword parameter of `StockfishUCI` happens to be a float --
+        # so adding an `int` one (`threads`) turned a correct call into an
+        # error at a call site that had not changed. `read_timeout_s=None` now
+        # means "the class default", which is exactly what the empty dict meant.
         return StockfishUCI(
             self.path,
             nodes=self.nodes,
@@ -90,7 +92,9 @@ class StockfishPool:
             hash_mb=self.hash_mb,
             syzygy_path=self.syzygy_path,
             nice=self.nice,
-            **kwargs,
+            read_timeout_s=(
+                None if self.read_timeout_s is None else float(self.read_timeout_s)
+            ),
         )
 
     def _initialize_worker(self) -> None:

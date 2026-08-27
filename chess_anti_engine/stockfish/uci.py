@@ -400,15 +400,37 @@ class StockfishUCI:
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
         nice: int = 0,
-        read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
+        threads: int = 1,
+        # ⚑ `None` MEANS "the default", so a caller holding an OPTIONAL timeout
+        # can pass it straight through instead of assembling a `**kwargs` dict.
+        # That dict was `dict[str, float]` unpacked into a constructor whose
+        # other keyword parameters are `int`, which type-checks only for as long
+        # as no `int` parameter is left unfilled -- and `threads` is one. The
+        # value is unchanged either way; what changes is that the call site can
+        # be written with named arguments.
+        read_timeout_s: float | None = None,
     ):
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
+        # ⚑ THE DEFAULT REPRODUCES THE PREVIOUS LITERAL EXACTLY. This class
+        # always sent `setoption name Threads value 1`; the parameter only makes
+        # that number nameable, and at the default the byte sequence written to
+        # the engine is unchanged. Every production caller (selfplay labels, the
+        # arena, the deep-SF tools) therefore keeps the engine it had.
+        #
+        # ⚑ AND `Threads` IS NOT A FREE KNOB ON A NODE-LIMITED SEARCH: above 1
+        # the search becomes non-deterministic at a fixed `go nodes N`, because
+        # the helper threads' work is not reproducible. A caller that raises it
+        # is trading label reproducibility for wall time and must say so in its
+        # own artifact.
+        self.threads = max(1, int(threads))
         self.syzygy_path = syzygy_path or None
         self.nice = min(19, max(0, int(nice)))
-        self.read_timeout_s = float(read_timeout_s)
+        self.read_timeout_s = (
+            _DEFAULT_READ_TIMEOUT_S if read_timeout_s is None else float(read_timeout_s)
+        )
         self._lock = threading.Lock()
         # Set by _protocol_section when a command was sent but its terminating
         # token was never consumed. Read without the lock (a single bool store)
@@ -476,7 +498,7 @@ class StockfishUCI:
             self._send("uci")
             self._wait_for("uciok")
             self._send("setoption name UCI_ShowWDL value true")
-            self._send("setoption name Threads value 1")
+            self._send(f"setoption name Threads value {self.threads}")
             if self.hash_mb is not None:
                 self._send(f"setoption name Hash value {self.hash_mb}")
             if self.syzygy_path:
