@@ -107,10 +107,25 @@ def breakdown(
         "surfaced": out.surfaced_count[keep],
         "p_sf_best": out.p_sf_best[keep],
     }
-    legal_count = (
-        torch.ones_like(out.surfaced_count) * float(logits.shape[-1])
-        if legal is None else legal.to(torch.float32).sum(-1)
-    )
+  # ⚑⚑ REFUSE, do not fabricate. This used to substitute the FULL action width
+  # (1858 or 4672) as the legal-move count when the batch carried no legal mask.
+  # `_refuse_if_coverage_is_vacuous` refuses when `legal - surfaced` is too
+  # SMALL, so a fabricated width made that difference enormous and the row
+  # sailed THROUGH the guard -- the guard accepted precisely the population it
+  # exists to reject, and the wide-era rows it was written to catch are exactly
+  # the ones most likely to arrive without a usable mask. A gate that cannot
+  # fire on its own target, which is this repo's signature defect.
+  # Reported by the Codex lane on PR #479; neither other review lane read this
+  # file. [[a_counter_is_not_the_mechanism_behind_it]]
+    if legal is None:
+        raise ValueError(
+            "sfshape_population_breakdown: this batch carries NO legal mask, so "
+            "legality cannot be established. Refusing rather than substituting "
+            "the full action width -- that substitution would pass the vacuity "
+            "guard by construction and report surfaced-mass over impossible "
+            "actions. Re-extract these rows with `legal_mask`/`has_legal_mask`."
+        )
+    legal_count = legal.to(torch.float32).sum(-1)
     _refuse_if_coverage_is_vacuous(
         axes["surfaced"], legal_count[keep], minimum=min_legal_minus_surfaced,
     )
