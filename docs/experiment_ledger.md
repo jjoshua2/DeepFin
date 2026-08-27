@@ -70426,3 +70426,60 @@ mean penalty — a screen on those rows, not a global adoption, is the shape to 
 **Confounds:** scoring ran beside the healthy 2× lc0 control (GPU) and the backup
 rsync (nice 19) — CPU-only scoring at nice 15, ORDER-only for timings; the verdict
 statistic is load-independent.
+
+#### 2026-08-27 — PREREG: NNUE-BOOTSTRAP CORPUS GENERATION RUN 1 (launch PENDING Josh's staircase-vs-calendar pick)
+
+**Gate results feeding this (all banked):** depth addendum
+(`data/audit_label_depth_20260827/`): `sfroot-d9-mpvall` top1 60.7%, vs nnue-qsearch
+**+13.9pp [+12.1, +15.7]**, vs per-child sf-d9 −0.7pp (width is free); depth slope d5
+47.5 → d7 53.4 → d9 60.7. CORPUS PREMISE passed there; the shadow readout
+independently killed the NNUE-arm alternative (FastQ) the same day.
+
+**Design (settled with Josh 2026-08-27):**
+- Generator `scripts/gen_sf_rooted_corpus.py` @ `045225f21` (grok review closed:
+  observed TT stamps, exact rank completeness, `width_streamed`), run from a DETACHED
+  WORKTREE per the standing instrument rule.
+- Staircase `all:9,16:11,4:13`, every depth banked (slicing verified: depth blocks
+  exact 40/40, node slices 111/112 in-envelope, FIRST-emission parsing).
+- Selection: Gumbel over phase-0 full-width d9 values, temp 1.0 for 20 plies then
+  0.3; dedup-BEFORE-label (FEN-minus-fullmove), cache-served replays.
+- Rows ≥7 pieces only; ≤6-man adjudicated exact via the production Syzygy pair
+  (smoke: realized on every worker); 7-man staircase-labeled now, exact TB re-label
+  is far-future.
+- 1-VIEW-FIRST regime on ≥100M rows (Josh); any second pass needs its own paired
+  5M-new-vs-5M-second-view prereg.
+- Derivation to rig shards: `scripts/derive_corpus_targets.py` @ `045225f21`
+  (independently reviewed APPROVE-WITH-CHANGES, findings closed same day).
+
+**Measured (smoke `--games 8 --workers 2 --seed 1` at `045225f21`, loaded box, ORDER):**
+0.286 s/pos serial full staircase; 206 rows/game; dup 0.36% (all opening, NO book —
+production adds the book pair); anomalies: 2 benign duplicate flushes, 0 disagreeing
+re-emissions, 0 incomplete finals; 3.2 KB/row zstd. Take-effect proofs in the smoke:
+`ucinewgame_calls` = games per worker, `width_streamed` = 20/20 at full width.
+
+**Budget, 24 workers:**
+| arm | s/pos | rate | 100M ETA | disk |
+|---|---|---|---|---|
+| full staircase (subcombinations trainable offline) | 0.286 | ~7.3M/day | **~14 days** | ~320 GB |
+| d9-only (`all:9` — no top-deep/halving ladders later) | 0.107 | ~19M/day | **~5 days** | smaller |
+
+⚑ 940G free on the local drive — 320 GB fits but budget a mid-run rsync to /mnt/e.
+**THE PICK IS JOSH'S:** the staircase's extra ~9 days buys every depth/width
+subcombination as an offline re-read (the FREEZE-THE-OBSERVATIONS rule made
+concrete); d9-only forecloses them permanently (the envelope wall). No launch
+before the pick — [[feedback_do_not_autostart_training]] applies in spirit.
+
+**Run verdict criteria (generation has no Elo yardstick of its own):**
+(a) first 1M rows: dup rate (non-opening) < 2%, `emission_count_violations` −
+`duplicate_iteration_flushes` = 0 at the 0.1% pause bar, adjudication share and
+nodes histograms consistent with the smoke; (b) the Stage-2 control-rig rung
+(separate prereg): NNUE-corpus curve vs the banked lc0-corpus curve, same
+arch/recipe/steps, frozen holdout + final arena vs the iter-595 anchor.
+
+**Kill/pause rules for generation:** anomaly (violations net of benign flushes)
+> 0.1% of positions ⇒ pause, diagnose; non-opening dup rate > 2% ⇒ pause, revisit
+temps; disk projection > 400 GB ⇒ pause.
+
+**Confounds:** shares CPU with the 2× control until it finishes (~tonight) and any
+gate runs; s/pos under load is ORDER; the temp schedule shapes the distribution —
+stamped per row.
