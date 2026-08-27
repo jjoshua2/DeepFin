@@ -2667,18 +2667,21 @@ def main() -> None:
   # kept -- `profiles_for_audit` re-derives it from `args` below, so there is no
   # variable in `main()` that a later edit can forget to forward.
     parse_gumbel_overrides(args.gumbel)
-  # ⚑ THE DEDICATED FLAG GETS THE SAME BAND AS THE OVERRIDE, or this PR creates
-  # the false record it exists to remove. `--gumbel policy_temp=X` has been
-  # refused outside [POLICY_TEMP_MIN, POLICY_TEMP_MAX] since the override guard
-  # landed, for exactly the reason quoted there: `apply_policy_temp` silently
-  # swallows an out-of-band value, so the audit scores the DEFAULT prior. The
-  # dedicated `--policy-temp` reaches the same `GumbelConfig.policy_temp` and
-  # had no such check, which was survivable only while nothing recorded it:
-  # `--policy-temp 42.5` and `--policy-temp 1.0` produce dumps identical on
-  # every field. Now that the value is STAMPED, accepting it would print 42.5
-  # in the header of a report that scored 1.0 — provenance that is false, which
+  # ⚑ THE DEDICATED FLAG GETS THE SAME BAND AS THE OVERRIDE — but NOT HERE, and
+  # this comment is placed to stop the next reader concluding it is unguarded.
+  # `--policy-temp` is checked by `_refuse_dead_search_cfg` inside
+  # `build_profile_search_shape`, on the ASSEMBLED GumbelConfig, which is the
+  # object `_net_candidates` will actually search with. That is later than this
+  # parse-time block: after `load_audit_set` and after the checkpoint load. It
+  # is the right place anyway — the band is validated once, on the config the
+  # search receives, sharing `validate_gumbel_config` with every other caller
+  # rather than keeping a second copy of the band in this file.
+  #
+  # The reason the check must exist at all, kept because it is the thing that
+  # would otherwise be rediscovered the hard way: `apply_policy_temp` silently
+  # swallows an out-of-band value, so the audit scores the DEFAULT prior while
+  # the stamp prints the operator's number — provenance that is false, which
   # this file's own thesis says is worse than provenance that is missing.
-  # Same guard, same instrument, so the two cannot drift apart.
     if args.dump_distributions and args.dump_per_position is None:
         raise SystemExit(
             "--dump-distributions needs --dump-per-position (it adds a field "

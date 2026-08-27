@@ -688,10 +688,19 @@ def resolve_search_shape(shape: str) -> SideSearch:
             target_batch=int(PLAY_SEARCH_TARGET_BATCH),
         )
     if shape == "training":
-      # ONE resolution, shared by the shape and by the guard that checks it.
+      # ⚑ ONE resolution and ONE bundle build, shared by the shape, by the
+      # `search` half and by the guard that checks them. Both halves used to be
+      # taken through their no-arg forms, which re-`stat`ed and re-parsed the
+      # yaml and re-ran the (not cheap) yaml -> reco -> worker channel a second
+      # time -- so the dict the arena SEARCHES with came from a different read
+      # of the file than the digest, header and `search` it is reported under.
+      # A yaml edited between the two reads makes the guard refuse a shape that
+      # was never inconsistent. `production_selfplay_search_config`'s own
+      # docstring states the rule; this is the call site that broke it.
         cfg = production_config()
         flat, config_path = cfg.flat, cfg.path
-        search = production_selfplay_search_config(flat)
+        cfgs = production_selfplay_configs(flat)
+        search = cfgs["search"]
         # DERIVED, never restated. Every GumbelConfig field that is neither
         # arena-owned nor checkpoint-owned is copied from the config production
         # itself builds, so a knob promoted into the yaml reaches the arena with
@@ -706,7 +715,7 @@ def resolve_search_shape(shape: str) -> SideSearch:
         # would run `--search-shape training` at 0/False and measure a search
         # production does not run. Restating knobs by hand is exactly what let
         # those two drift for five days already.
-        prod = production_selfplay_gumbel_config()
+        prod = production_selfplay_gumbel_config(cfgs)
         gumbel = {
             name: getattr(prod, name) for name in training_shape_carried_fields()
         }

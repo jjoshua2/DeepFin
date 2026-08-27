@@ -580,28 +580,35 @@ def test_the_untempered_prior_and_an_in_band_value_are_both_allowed() -> None:
     _refuse_policy_temp(2.2)
 
 
-def test_main_refuses_a_negative_vloss_weight() -> None:
-    """Reachability: the guard must be CALLED, not merely defined.
+def test_main_forwards_the_policy_temp_flag_and_refuses_a_negative_vloss() -> None:
+    """Reachability: the guards must be CALLED with `main()`'s OWN arguments.
 
     A grep by name cannot show that, so this reads `main()`'s AST — a guard that
     exists and is never invoked is this repo's signature defect.
 
-    ⚑ THE `--policy-temp` HALF OF THIS TEST DELIBERATELY LIVES ELSEWHERE, and it
-    is not a coverage loss: `tests/test_gumbel_config_validation.py` drives the
-    refusal BY EXECUTION through the real builder, with a positive control and
-    on BOTH of its exits (`..._policy_temp_flag_is_refused_like_its_sibling` and
-    `..._training_row_guard_is_wired_not_just_present`). That is strictly the
-    stronger instrument: `--policy-temp` reaches a `GumbelConfig` only inside
-    `build_profile_search_shape`, which was made module-level and public for
-    exactly this reason — per its own docstring, "an AST test cannot tell a
-    called guard from a dead one". An AST assertion here would restate a weaker
-    version of that and would go red on any refactor that moved the call without
-    breaking it.
+    ⚑ THE `--policy-temp` ASSERTION WAS ONCE DELETED FROM HERE ON THE GROUND
+    THAT `tests/test_gumbel_config_validation.py` COVERS IT BY EXECUTION. That
+    was WRONG, and the mutant proves it: those tests call
+    `build_profile_search_shape(..., play_policy_temp=<their own literal>)`
+    directly, so they pin the BUILDER's behaviour and pin nothing at all about
+    what `main()` hands it. Replacing `policy_temp=float(args.policy_temp)` with
+    the constant `1.0` left 254 tests across eight files green — while
+    `search_param_stamp` went on stamping `play_policy_temp` from
+    `args.policy_temp`, i.e. a `--policy-temp 2.2` run would bank 2.2 in the
+    header of a report whose search ran 1.0. That is precisely the false
+    provenance this module exists to prevent, and only an assertion about
+    `main()`'s own call expression can see it.
 
-    The `--vloss-weight` half stays AST because that guard sits directly in
-    `main()`'s body and refuses before any machinery a test could drive.
+    So: the flag must reach `_net_candidates` as `args.policy_temp` and not as
+    any literal. `float(...)` is asserted with it, because a bare pass-through
+    of the argparse value would be the same defect one type-coercion later.
     """
     body = ast.unparse(_main_body())
+    assert "policy_temp=float(args.policy_temp)" in body, (
+        "main() no longer forwards --policy-temp into the candidate search. A "
+        "constant here searches the default prior while the stamp records the "
+        "operator's value -- see this test's docstring for the surviving mutant"
+    )
     assert "args.vloss_weight) < 0" in body, (
         "main() never refuses a negative --vloss-weight, which the C runner drops"
     )
