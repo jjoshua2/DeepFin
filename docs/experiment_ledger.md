@@ -67649,3 +67649,66 @@ remaining harder set is not established to be the same 52.5%. The gate is direct
 sound (the bar is 25% and the margin is 2x) but the exact figure is an iter-190 figure.
 Regenerating `ours` with the current checkpoint via `scripts/foreign_net_audit.py
 --checkpoint` is the cheap follow-up, and is real GPU work.
+
+#### 2026-08-26 — THE CONFOUND RESOLVED: THE GATE HOLDS AT g1586, AND 405 ITERATIONS ARE A RANDOM WALK
+
+The entry directly above ends by naming its own confound — `ours` was the stale iter-190
+cache — and calls regenerating it "the cheap follow-up, and is real GPU work". Done, on the
+same idle GPU. `data/lc0/ours_g1586_audit_cache_topk256_20260826.jsonl`, scored from
+`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt` over the identical frozen
+4000, aligned 4000/4000/4000/4000 by key.
+
+**⚑ THE CHECKPOINT IS NOT WHAT I NAMED IT.** The working label for this run was "iter595",
+a trial-LOCAL number that was never read off anything. `trial_meta.json` says
+`global_iter = 1586` and `trainer.pt` says `step = 171327`. The 190-cache's own meta says
+`global_iter = 1181`. Both are `owner_trial_id dea5e_00000` off the same
+`bt4heads_iter100_20260815` origin, both at the 1.5M window, so the defensible interval is
+**405 global iterations (g1181 → g1586)** — which happens to make 595 arithmetically right as
+a local count, and that coincidence is exactly why it should not have been trusted
+[[pin_the_start_checkpoint_by_path_and_step]]. Named by `global_iter` from here.
+
+**REPRODUCTION CHECK FIRST.** The re-implementation reproduces the banked iter190 row
+exactly — 57.4% disagreement, n = 906, **52.5%** — before it is allowed to report the new
+arm. Had it not, the g1586 figure would not have been comparable to the number it is meant
+to update.
+
+| arm | top-1 disagrees with SF | ours errs >50cp | BT4 = SF's exact best | BT4 zero-regret |
+|---|---|---|---|---|
+| g1181 ("iter190", banked) | 57.4% | 906 | **52.5%** [49.3, 55.8] | 53.8% |
+| **g1586 (current)** | 57.5% | 905 | **51.9%** [48.7, 55.2] | 53.0% |
+
+**⇒ THE GATE SURVIVES DE-STALING.** 51.9% against a 25% bar, CIs almost entirely overlapping.
+And the paired form answers what the marginals cannot: on the **746 rows BOTH nets still get
+wrong**, BT4 picks SF's exact best **51.3%** [47.8, 54.9]. So the external teacher's advantage
+is *not* concentrated on rows we have since fixed — it is sitting on our standing errors. The
+previous entry's conclusion needs no discount.
+
+**⇒⇒ AND THE SAME NUMBERS SAY 405 ITERATIONS BOUGHT NOTHING — WHILE MOVING A LOT.**
+
+| paired statistic, n = 4000 identical positions | value |
+|---|---|
+| Δ mean top-1 deep-SF regret (g1586 − g1181) | **−0.73 cp**, 95% CI **[−3.39, +1.93]** |
+| Δ mean expected regret | −0.12 cp, 95% CI [−1.55, +1.30] |
+| McNemar on the >50cp blunder indicator | b = 160, c = 159, **χ² = 0.0000** (crit 3.841) |
+| **positions where the top move CHANGED AT ALL** | **819 / 4000 = 20.5%** |
+| blunder-set churn | 160 fixed, 159 broken, **Jaccard 0.700** |
+
+**This is a sharper statement than "the plateau".** A frozen net would show χ² = 0 *and* zero
+churn. This net rewrote its top move on **one position in five** and reshuffled **30% of its
+blunder set**, and landed on 160-fixed / 159-broken — a wash so exact that McNemar's corrected
+χ² is 0.0000. Training is not stalled; it is a **random walk on the error set**. That
+distinction matters for what to try next: the failure is not "gradients stopped arriving", so
+LR/optimizer/capacity interventions aim at the wrong thing. Positions are being traded, not
+won, which is what a target that is [[the_policy_target_is_sharp_and_wrong]] would produce.
+
+⚑ **This does NOT re-open the closed lanes** — it is the same instrument and population that
+closed them, read paired. It does raise the prior on the standing diagnosis that the fight is
+target QUALITY, and it is the third instrument to land there after #438 and the gate above.
+
+**Confound, stated:** the 4000 audit positions have no history or castling
+[[audit_set_has_no_history_or_castling]], so this measures the policy on a FEN-only slice.
+It is a policy-quality readout on a fixed population, not an Elo claim; nothing here is a
+substitute for a paired arena.
+
+**Reproduce:** `python3 scratchpad/external_teacher_gate_paired.py data/lc0/ours_g1586_audit_cache_topk256_20260826.jsonl`
+(prints the reproduction check, both gate rows, the churn decomposition and the paired tests).
