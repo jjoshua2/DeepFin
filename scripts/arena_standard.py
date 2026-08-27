@@ -28,6 +28,16 @@ Usage::
 
     PYTHONPATH=. python3 scripts/arena_standard.py \\
         --candidate ... --reference ... --mode matched_time --ms-per-move 100
+
+Fixed-N and final-only is the DEFAULT and stays that way: reading a rolling
+arena and stopping when it looked good manufactured +112 Elo out of a true null.
+``--sprt`` is the opt-in alternative — a pentanomial GSPRT against a boundary
+declared before the first game, where ``--games`` becomes a hard cap and the
+deliverable is an H1/H0/INCONCLUSIVE verdict::
+
+    PYTHONPATH=. python3 scripts/arena_standard.py \\
+        --candidate ... --reference ... --games 1000 \\
+        --sprt 'elo0=0,elo1=5,alpha=0.05,beta=0.05'
 """
 from __future__ import annotations
 
@@ -55,6 +65,7 @@ from chess_anti_engine.eval.arena_pgn import (
     ArenaPgnWriter,
     engine_name_from_checkpoint,
 )
+from chess_anti_engine.eval.sprt import SprtMonitor, SprtSpec
 from chess_anti_engine.moves import ActionDecodeError
 from chess_anti_engine.utils.game_log import (
     GameLogWriter,
@@ -927,6 +938,86 @@ def summarize_pentanomial(
         score_se=se,
         elo=_elo_from_score(mu),
         elo_ci95=(_elo_from_score(lo), _elo_from_score(hi)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Optional GSPRT early stop
+# ---------------------------------------------------------------------------
+#
+# OFF unless --sprt is given, and off means OFF: no monitor is built, no play
+# loop takes a different branch, and the JSONL record grows no key. This is a
+# standing instrument with banked readings, so the fixed-N default has to stay
+# byte-comparable with every row already in runs/arena_results.jsonl.
+#
+# The math lives in chess_anti_engine/eval/sprt.py (Van den Bergh's pentanomial
+# GSPRT, the formulation fishtest uses); what lives HERE is only the wiring —
+# WHERE the boundary is checked, and what is printed and banked when it fires.
+#
+# ⚑ The check granularity differs by loop and is recorded rather than smoothed
+# over, because it is a property of the reading:
+#
+#   rolling      after every reap, i.e. as soon as a pair's SECOND coloring
+#                finishes. Never mid-pair: the loop scores only pairs whose two
+#                colorings are both on file (`complete_pair_scores`), so a
+#                half-played pair contributes nothing to the statistic. Looking
+#                at a half-pair would leak the opening's colour bias straight
+#                into the stopping decision, which is the one thing the paired
+#                design exists to remove.
+#   chunked      between chunks. `play_paired_games_matched_sims` plays a whole
+#                chunk lockstep and can only score it once every game in it is
+#                over, so a mid-chunk stop would have to impute the unfinished
+#                games as draws — fabricating pairs to decide a test with. A
+#                chunk boundary is a set of COMPLETE pairs, so it is a legal
+#                (merely coarser) stopping time: Wald's inequality bounds the
+#                error rates for any stopping rule measurable at the look, and
+#                looking less often only costs power. `--no-rolling --sprt` is
+#                therefore allowed and prints its granularity, not refused.
+#   matched_time after every pair. That loop already appends one score per
+#                completed pair, so pair granularity is its natural unit.
+SPRT_GRANULARITY_PAIR = "pair"
+SPRT_GRANULARITY_CHUNK = "chunk"
+
+
+def sprt_should_stop(
+    sprt: SprtMonitor | None, new_pair_scores: Sequence[float], *, where: str,
+) -> bool:
+    """Fold ``new_pair_scores`` into the running GSPRT; True means stop now.
+
+    ``new_pair_scores`` is what THIS invocation has completed; the monitor holds
+    the resumed pairs and re-fits the statistic over the union, so a resumed run
+    decides on the whole match rather than on its own tail.
+    """
+    if sprt is None:
+        return False
+    if sprt.update(new_pair_scores) is None:
+        return False
+    print(
+        f"[arena] SPRT boundary CROSSED in the {where} loop after "
+        f"{sprt.pairs} complete pair(s): LLR {sprt.llr:+.4f} "
+        f"(H0 <= {sprt.spec.bound_h0:+.4f}, H1 >= {sprt.spec.bound_h1:+.4f}) "
+        f"-> {sprt.verdict}. Stopping; remaining pairs are NOT played.",
+        flush=True,
+    )
+    return True
+
+
+def announce_sprt_armed(sprt: SprtMonitor | None, *, where: str) -> None:
+    """Print the boundary the LOOP received, from the loop's own object.
+
+    Read off the monitor the play loop was handed rather than off the CLI
+    string, so a --sprt that never reached the consumer cannot print as though
+    it had. That distinction is this repo's signature defect, and a flag that is
+    accepted, echoed at startup and then never consulted would look identical
+    from the console without this line.
+    """
+    if sprt is None:
+        return
+    print(
+        f"[arena] SPRT ARMED in the {where} loop "
+        f"(checked at {sprt.granularity} granularity, "
+        f"{sprt.pairs} pair(s) already banked): {sprt.spec.describe()}",
+        flush=True,
     )
 
 
@@ -1895,6 +1986,7 @@ def play_paired_games_matched_sims_rolling(
     pgn_sink: PgnSink | None = None,
     pair_ids: Sequence[int] | None = None,
     prior_pair_scores: Sequence[float] | None = None,
+    sprt: SprtMonitor | None = None,
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
     free_cached_vram: bool = True,
@@ -1917,6 +2009,11 @@ def play_paired_games_matched_sims_rolling(
     and returns whatever COMPLETE pairs exist. Only complete pairs are ever
     returned: a half-played game contributes nothing, because filling it in as
     a draw would let a truncated run report pairs it never finished.
+
+    ``sprt`` (default None = today's fixed-N behaviour) adds a GSPRT boundary
+    check after every reap, on the same COMPLETE-pairs-only set the summary
+    scores. It stops the loop exactly the way ``deadline`` does; what it returns
+    is unchanged.
 
     ``evaluator_candidate`` / ``evaluator_reference`` are the per-side
     long-lived evaluators (``build_arena_evaluator``). ``None`` on both is
@@ -2002,6 +2099,7 @@ def play_paired_games_matched_sims_rolling(
     done = 0
     last_report = 0
     drain_freed = False
+    announce_sprt_armed(sprt, where="rolling")
     while queue or boards:
         # Stop on our OWN clock rather than waiting to be SIGKILLed by the
         # caller's `timeout`. A killed process returns nothing at all; stopping
@@ -2042,6 +2140,16 @@ def play_paired_games_matched_sims_rolling(
                 kt.append(gt0[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
         gfens[:], goffs[:], gt0[:] = kf, ko, kt
+        # The SPRT look sits HERE — after the reap, so the pairs this ply
+        # completed are in the sample, and BEFORE the deadline check, so a run
+        # that crosses on its last affordable ply reports the VERDICT rather
+        # than an INCONCLUSIVE-at-the-clock. The set it sees is
+        # `complete_pair_scores`, i.e. pairs with both colorings on file, which
+        # is what makes this a pair-granularity look and not a mid-pair one.
+        if sprt_should_stop(
+            sprt, complete_pair_scores(game_scores), where="rolling",
+        ):
+            break
         # Deadline check goes AFTER the reap, not before it. Checking first
         # discarded every game that had finished on the ply we just played —
         # up to pool_size of them, and measurably: the 2026-07-31 proof run
@@ -2130,6 +2238,7 @@ def play_paired_games_matched_time(
     deadline: float | None = None,
     pgn_sink: PgnSink | None = None,
     pair_ids: Sequence[int] | None = None,
+    sprt: SprtMonitor | None = None,
 ) -> list[float]:
     """Pair-by-pair UCI match using the production engine inference path.
 
@@ -2139,6 +2248,9 @@ def play_paired_games_matched_time(
     granularity is the natural unit: this loop only ever appends a score once
     both colorings of an opening are played, so a truncated run drops the
     in-progress pair by construction.
+
+    ``sprt`` (default None = today's fixed-N behaviour) looks at that same pair
+    boundary, immediately after each pair's score is appended.
     """
     import chess.engine
 
@@ -2165,6 +2277,7 @@ def play_paired_games_matched_time(
 
     eng_a = eng_b = None
     pair_scores: list[float] = []
+    announce_sprt_armed(sprt, where="matched_time")
     try:
         print(f"[arena] starting candidate engine: {engine_cmd(candidate_ckpt)}")
         eng_a = _open_engine(engine_cmd(candidate_ckpt), cwd=str(REPO_ROOT))
@@ -2213,6 +2326,8 @@ def play_paired_games_matched_time(
                 f"running_score={sum(pair_scores) / (2 * len(pair_scores)):.3f}",
                 flush=True,
             )
+            if sprt_should_stop(sprt, pair_scores, where="matched_time"):
+                break
     finally:
         for eng in (eng_a, eng_b):
             if eng is not None:
@@ -2300,6 +2415,7 @@ def build_result_record(
     eval_max_batch: int | None = None,
     eval_leaf_cap_uncapped: int | None = None,
     eval_leaf_cap_bound: bool = False,
+    sprt: dict[str, Any] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -2380,6 +2496,14 @@ def build_result_record(
             None if elo_lo is None else round(elo_lo, 2),
             None if elo_hi is None else round(elo_hi, 2),
         ],
+        # ⚑ ABSENT, not null, on a run without --sprt. runs/arena_results.jsonl
+        # is a shared append-only aggregate with years of rows in it, and the
+        # fixed-N default has to keep producing byte-identical records; a
+        # `"sprt": null` on every row would be a schema change bought for
+        # nothing. Present means the run was sequential, and then `elo`/`elo_ci95`
+        # ABOVE are conditioned on a stopping rule (see the record's `caveat`)
+        # rather than being fixed-N estimates.
+        **({"sprt": sprt} if sprt is not None else {}),
         "duration_s": round(duration_s, 1),
         "argv": sys.argv,
     }
@@ -2486,6 +2610,7 @@ def run_arena(
     resume: bool = False,
     game_log_path: Path | None = None,
     eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
+    sprt: SprtSpec | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -2496,6 +2621,11 @@ def run_arena(
     unanswerable-by-omission impossible. ``matched_time`` runs real UCI
     subprocesses, which carry their own play shape; pass search knobs there via
     ``--uci-args`` instead.
+
+    ``sprt`` (default None) turns the run into a sequential test against a
+    PREREGISTERED boundary: ``--games`` becomes a hard CAP rather than the sample
+    size, and the deliverable is the H1/H0/INCONCLUSIVE verdict. None leaves
+    every byte of the fixed-N path, and of its JSONL record, unchanged.
     """
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
@@ -2879,6 +3009,31 @@ def run_arena(
 
     pgn_sink = _on_game
 
+    # ---- optional GSPRT early stop --------------------------------------
+    # Built AFTER the resume load, and seeded with the resumed pairs: the
+    # statistic is a function of the whole match, so an SPRT arena that crashed
+    # and was resumed must decide on loaded + new, never on its own tail alone.
+    # Built BEFORE play so its `pairs` count and boundary are printed by every
+    # play loop that receives it.
+    sprt_monitor: SprtMonitor | None = None
+    if sprt is not None:
+        sprt_monitor = SprtMonitor(
+            sprt,
+            prior_pair_scores=loaded_pair_scores,
+            pairs_cap=len(openings),
+            granularity=(
+                SPRT_GRANULARITY_CHUNK
+                if mode == "matched_sims" and not rolling
+                else SPRT_GRANULARITY_PAIR
+            ),
+        )
+        print(
+            f"[arena] SPRT ON — --games {games} is now a HARD CAP "
+            f"({len(openings)} pairs), not the sample size. "
+            f"{sprt_monitor.spec.describe()}",
+            flush=True,
+        )
+
     t0 = time.time()
     if not openings_to_play:
         print(
@@ -2887,6 +3042,20 @@ def run_arena(
             flush=True,
         )
         pair_scores: list[float] = []
+    elif sprt_monitor is not None and sprt_monitor.crossed():
+        # The resumed pairs alone already decide it. Playing the remainder
+        # would spend GPU hours to answer a question that is closed, and would
+        # push the sample past the stopping time the error rates are defined
+        # at — a sequential test that keeps going after it crosses is not the
+        # test whose alpha was preregistered.
+        print(
+            f"[arena] SPRT: the boundary was ALREADY crossed by the "
+            f"{len(loaded_pair_scores)} resumed pair(s) (LLR "
+            f"{sprt_monitor.llr:+.4f} -> {sprt_monitor.verdict}); this "
+            f"invocation plays ZERO games and scores the log",
+            flush=True,
+        )
+        pair_scores = []
     elif mode == "matched_sims":
         from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -3105,6 +3274,7 @@ def run_arena(
                     pgn_sink=pgn_sink,
                     pair_ids=remaining_ids,
                     prior_pair_scores=loaded_pair_scores,
+                    sprt=sprt_monitor,
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
                     free_cached_vram=bool(eval_max_batch),
@@ -3114,6 +3284,12 @@ def run_arena(
                 # (drains per chunk). Numerically identical (pair scores concatenate).
                 chunk_pairs = max(1, int(max_concurrent_games) // 2)
                 n_chunks = (len(openings_to_play) + chunk_pairs - 1) // chunk_pairs
+                # The chunked SPRT look lives HERE rather than inside
+                # `play_paired_games_matched_sims`: that function scores a chunk
+                # only once every game in it is over, so stopping inside it would
+                # mean imputing the unfinished games as draws. A chunk boundary
+                # is a set of complete pairs; see SPRT_GRANULARITY_CHUNK.
+                announce_sprt_armed(sprt_monitor, where="chunked")
                 for ci in range(0, len(openings_to_play), chunk_pairs):
                     # Chunk granularity: a chunk plays to completion, so this stops
                     # BEFORE starting one that would run past the budget rather
@@ -3165,6 +3341,8 @@ def run_arena(
                         flush=True,
                     )
                     print_summary(summarize_pentanomial(pentanomial_counts(_so_far)))
+                    if sprt_should_stop(sprt_monitor, pair_scores, where="chunked"):
+                        break
         except ActionDecodeError as exc:
             _abort_void(exc, completed_pairs=len(pair_scores))
         finally:
@@ -3176,7 +3354,7 @@ def run_arena(
             candidate, reference, openings_to_play,
             device=device, ms_per_move=ms_per_move, max_plies=max_plies,
             uci_args=uci_args, deadline=deadline, pgn_sink=pgn_sink,
-            pair_ids=remaining_ids,
+            pair_ids=remaining_ids, sprt=sprt_monitor,
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
@@ -3244,12 +3422,35 @@ def run_arena(
         print(
             f"[arena] TRUNCATED: {len(pair_scores)}/{len(openings)} opening pairs "
             f"completed in {duration_s:.0f}s — "
-            f"`--resume` with the same settings plays only the remainder "
-            f"({log_path})",
+            + (
+                "the SPRT boundary was crossed, so this is a COMPLETED "
+                "sequential test, not a short run; `--resume` would replay "
+                "nothing and stop again on the same verdict"
+                if sprt_monitor is not None and sprt_monitor.crossed()
+                else "`--resume` with the same settings plays only the remainder"
+            )
+            + f" ({log_path})",
             flush=True,
         )
     summary = summarize_pentanomial(pentanomial_counts(pair_scores))
     print_summary(summary)
+    sprt_record: dict[str, Any] | None = None
+    if sprt_monitor is not None:
+        # Settle the verdict against the pre-committed rule. `finalize` only
+        # writes when no boundary was crossed, so an uncrossed run lands on
+        # INCONCLUSIVE and is REPORTED as such — never quietly re-read as a
+        # fixed-N result, which is the optional-stopping fallacy running in
+        # reverse.
+        sprt_monitor.finalize(
+            stop_reason=(
+                "max_seconds"
+                if deadline is not None and time.time() >= deadline
+                else "cap" if len(pair_scores) >= len(openings)
+                else "incomplete"
+            ),
+        )
+        sprt_record = sprt_monitor.as_record()
+        print(f"[arena] {sprt_monitor.verdict_line()}", flush=True)
 
     record = build_result_record(
         summary,
@@ -3291,6 +3492,7 @@ def run_arena(
         eval_max_batch=int(eval_max_batch),
         eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
         eval_leaf_cap_bound=leaf_cap_bound,
+        sprt=sprt_record,
     )
     if out_path is not None:
         if resumed is not None and not openings_to_play:
@@ -3628,8 +3830,42 @@ def main() -> None:
                         "defaults to the --search-shape value")
     p.add_argument("--ref-target-batch", type=int, default=None,
                    help="reference leaf-accumulation target override (see --cand-target-batch)")
+    # ⚑ Declared HERE and not in add_common_args, which scripts/elo_vs_sims.py
+    # also calls: that script builds its own run_arena calls and would not pass
+    # the flag on, so sharing it would produce a --sprt that parses, prints and
+    # then decides nothing. A knob offered on a path that ignores it is this
+    # repo's signature defect; the fix is to not offer it there.
+    p.add_argument("--sprt", default=None, metavar="elo0=E,elo1=E,alpha=A,beta=B",
+                   help="OPT-IN sequential test (pentanomial GSPRT, fishtest's "
+                        "stop rule). Default OFF, and off changes nothing: no "
+                        "stop check runs and the JSONL record is byte-identical "
+                        "to today's. When given, ALL FOUR of elo0, elo1, alpha, "
+                        "beta are REQUIRED (no defaults — an unstated hypothesis "
+                        "is not a hypothesis), e.g. "
+                        "--sprt 'elo0=0,elo1=5,alpha=0.05,beta=0.05'. The LLR is "
+                        "recomputed from every COMPLETE pair (resumed ones "
+                        "included) and checked at pair boundaries — rolling and "
+                        "matched_time after each pair, --no-rolling between "
+                        "chunks; never mid-pair, which would leak opening bias "
+                        "into the stop. --games becomes a HARD CAP: reaching it "
+                        "without crossing is INCONCLUSIVE and is reported as "
+                        "that, never as a fixed-N verdict. ⚑ The VERDICT is the "
+                        "deliverable — a sequentially stopped Elo point estimate "
+                        "is biased away from zero and its CI has no nominal "
+                        "coverage; both are printed and banked as descriptive "
+                        "only. This exists because ad-hoc peeking at a rolling "
+                        "arena manufactured +112 Elo from a true null; a "
+                        "preregistered boundary is the principled alternative to "
+                        "'never look'.")
     add_common_args(p)
     args = p.parse_args()
+
+    sprt_spec: SprtSpec | None = None
+    if args.sprt is not None:
+        try:
+            sprt_spec = SprtSpec.from_cli(args.sprt)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
 
     if args.openings_fen is not None and args.openings is not None:
         raise SystemExit("--openings-fen and --openings are mutually exclusive")
@@ -3765,6 +4001,7 @@ def main() -> None:
         volatility_candidate=_volatility_kwargs_from_args(args),
         search_candidate=side_candidate,
         search_reference=side_reference,
+        sprt=sprt_spec,
     )
 
 
