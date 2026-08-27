@@ -69949,6 +69949,59 @@ sf-2048 56.2% — the n=50 smoke's tie was noise); the up-ladder still climbing
 (sf-8192 63.5% vs sf-2048 56.2%, +7.3pp > the 1.5pp flatness bound); mpvall ==
 mpv20 at equal nodes; nnue-qsearch 46.8% / fastq 44.0% / static 27.0%.
 
+**2026-08-27 VERDICT (ladder rerun, ADMISSIBLE — `data/audit_label_ladder_20260827b/`,
+worktree `e00a014aa`).** Point estimates byte-match the voided run (frozen positions,
+deterministic arms), now bankable. Judged by the pre-committed rules, paired row
+bootstrap on top1 (n=4000, 95% CI):
+- **ADVANCE fails / FALL BACK fires:** `sfroot-2048-mpv20` − `sf-2048` = **−13.2pp
+  [−14.9, −11.3]** — rooted-at-fixed-NODES is DEAD as a labeler (budget split across
+  20 PVs starves depth; realized depth ~8.8). The n=50 smoke's "rooted ties per-child"
+  was noise, exactly what the prereg's ±14pp warning said.
+- **Lead labeler: `sf-8192`** (63.5% top1, 17.2cp regret) — the cheapest rung within
+  2.0pp of sf-8192 is itself: `sf-8192` − `sf-2048` = **+7.3pp [+5.7, +8.9]**, so the
+  up-ladder is NOT flat at 8192 (candidate 1's node lever still pays; no rung above
+  was registered, so the ceiling is unmeasured).
+- **mpvall ≡ mpv20 at equal nodes:** +0.0pp [−1.5, +1.5] — exact null, as expected.
+- **NNUE lane price:** `sf-8192` − `nnue-qsearch` = **+16.8pp [+14.9, +18.7]** — the
+  measured cost of the 31x-throughput lane; informational per prereg (the shadow
+  readout owns the fastq-vs-qsearch call).
+Registered expectations: ordering held; mpvall-no-better held; sf-8192's +7.3pp
+landed above the expected 2-5pp band. ⇒ rooted-at-fixed-DEPTH (every PV iterates to
+the target depth — per-child-like, no budget splitting) is the live corpus
+candidate; measured next.
+
+#### 2026-08-27 — PREREG: DEPTH-ARM ADDENDUM — the corpus labeler candidate meets the frozen ruler (`sfroot-d*` arms, merged reviewed `1bdc50391`)
+
+The corpus generator (registered design: full-width `go depth 9`, all depths
+banked, slicing verified 40/40 exact) labels with EXACTLY `sfroot-d9-mpvall`'s
+searches. This run prices that labeler on the frozen set before the multi-day
+generation burn, plus the depth ladder the halving-simulator will slice.
+
+**DECIDING YARDSTICK (fresh detached worktree at the merged HEAD, per the
+standing instrument-run rule):**
+```
+PYTHONPATH=. python3 scripts/audit_label_candidates.py \
+  --audit-set data/audit_set_v1.jsonl --nnue-pack data/nnue/nn-f68ec79f0fe3.pack \
+  --arms nnue-qsearch,sfroot-d5-mpvall,sfroot-d7-mpvall,sfroot-d9-mpvall,sfroot-d9-mpv20,sf-d9 \
+  --json data/audit_label_depth_20260827/report.json \
+  --dump-per-position data/audit_label_depth_20260827/rows.jsonl --dump-move-values
+```
+**Pre-committed rules (paired row bootstrap on top1, 95% CI):**
+- **CORPUS PREMISE:** `sfroot-d9-mpvall` must beat `nnue-qsearch` top1 with CI
+  excluding 0. FAIL ⇒ the SF-corpus premise is dead at d9 width-all and the
+  generator prereg does NOT launch on it.
+- **WIDTH PRICE AT DEPTH:** `sfroot-d9-mpvall` vs `sf-d9` (per-child d9, the
+  uniform upper reference) — a gap ≤2.0pp says full-width rooted holds per-child
+  quality; larger, the gap is banked as the width discount.
+- **DEPTH SLOPE:** d5 < d7 < d9 monotone expected; the d5→d9 slope calibrates the
+  halving-simulator's envelope value.
+- **COST:** s/pos per arm banked (ORDER only under load) ⇒ the corpus-rate math
+  (positions/day at 24 cores) recorded beside quality.
+
+**Confounds:** runs beside the shadow readout's generation (CPU) — burst-scale;
+same censoring-floor caveats as the node ladder; `sfroot-d9-mpv20` bridges to the
+node ladder's mpv20 column.
+
 
 ---
 
