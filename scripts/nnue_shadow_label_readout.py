@@ -67,6 +67,49 @@ WHAT EACH CELL'S ``policy_target`` MEANS -- read this before quoting a number:
   ONE RUN (one sigma) and are NOT comparable with the ``search_gumbel__`` cell
   or with the banked G2 series, which were produced by a different label rule.
 
+SHALLOW-STOCKFISH OBSERVER ARMS -- ``sf-<nodes>``:
+
+``--sf-observer 512`` adds an arm named ``sf-512`` that answers with a real
+Stockfish search at ``go nodes 512`` instead of an NNUE evaluation.  It is an
+OBSERVER ONLY (``--driver sf-*`` is refused): it never returns a value into the
+tree, it labels the same rows as every other arm, and it emits
+``oneply__sf-512`` beside the native cells.  A ladder of them
+(``--sf-observer 512 --sf-observer 2048 --sf-observer 8192``) makes LABEL
+QUALITY a measured function of LABEL SEARCH EFFORT on positions that are
+identical by construction, which is the one comparison the per-arm banks could
+never support.
+
+Four things about these arms that a reader must not have to infer:
+
+* **They see ROOTS and ROOT CHILDREN, and NOT search leaves.**  The 1-ply label
+  is built from the root's children alone, and the leaf population is
+  ``sims``-many positions per ply against the children's ~30 -- so fanning an
+  8192-node engine out over it would multiply the run's cost by the simulation
+  count to produce a column nothing reads.  ``leaf_positions`` is therefore 0
+  for every ``sf-`` arm and the report says which populations the arm observed
+  rather than leaving a zero to be read as a failure.
+* **The engine answers from the EVALUATED position's seat**, exactly as the
+  native arms do: UCI ``score cp`` is from the side to move.  ``probe_root``
+  applies the root-mover negation for every arm alike -- measured, not assumed
+  (4k3/8/8/8/8/8/8/3QK3 reads +566 with White to move and -537 with Black).
+* **``score cp`` goes through the generator's own cp-logistic**, the same
+  ``cp_to_wdl_array`` object ``NnueArmValueSource.q_from_values`` calls, at the
+  same ``--nnue-cp-slope`` / ``--nnue-cp-draw-width``.  ``--nnue-cp-per-unit``
+  is NOT applied: it converts internal NNUE units to centipawns and Stockfish
+  already reports centipawns.  Mates fold through ``mate_to_effective_cp``, THE
+  single mate-to-score home -- with ``score mate 0`` (a side to move that is
+  already checkmated) mapped to a LOSS, because that function reads the sign off
+  its argument and ``0`` is non-negative.
+* **The transposition table is cleared once per GAME** (``ucinewgame``), never
+  per position: per position it would cost a protocol round trip on every one of
+  the ~30 children, and the banked hazard this repo already carries is a DIRTY
+  TT across a whole label run, not warmth inside one game.  The policy is
+  stamped into every ``sf-`` cell's ``cell_meta.json`` rather than left to the
+  reader.  ⚑ An engine that DIES and is restarted mid-run gets a cold table in
+  the middle of a game -- a different instrument for the rows after it -- so a
+  restart is counted and makes the run INADMISSIBLE rather than being retried
+  quietly.
+
 Everything here is UNIFORM PRIOR.  ``gen_random_selfplay_shards`` uses no net at
 all: the policy logits handed to the search are zeros, so the root candidate set
 is chosen by the Gumbel draw alone and ``--all-root-moves`` (on by default) is
@@ -113,6 +156,9 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import load_shard_arrays
+from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
+from chess_anti_engine.stockfish.wdl import cp_to_wdl_array, mate_to_effective_cp
+from chess_anti_engine.utils import engine_discovery
 from chess_anti_engine.utils.numpy_helpers import softmax_1d
 from scripts import gen_random_selfplay_shards as gen
 from scripts import nnue_gumbel_readout as readout
@@ -122,10 +168,62 @@ _LOG = logging.getLogger("nnue_shadow_label_readout")
 #: Report schema. 1 is the first shape that reports paired label quality at all;
 #: `nnue_gumbel_readout`'s schema counter is independent of this one and the two
 #: files' reports are not interchangeable.
-REPORT_SCHEMA = 1
+#: 2 adds the ``sf-<nodes>`` shallow-Stockfish observer family: ``observers``
+#: entries now carry a ``family`` discriminator, an ``sf-`` entry has no
+#: ``provider_stats`` at all (there is no C counter surface behind it), and
+#: every entry carries a ``cost`` block. A schema-1 reader that subscripts
+#: ``provider_stats`` on an ``sf-`` arm must fail rather than silently read a
+#: native arm's shape into a Stockfish one.
+REPORT_SCHEMA = 2
 
 SEARCH_CELL_PREFIX = "search_gumbel__"
 ONEPLY_CELL_PREFIX = "oneply__"
+
+#: Arm-name prefix of the shallow-Stockfish observer family. An arm called
+#: ``sf-2048`` is a real engine at ``go nodes 2048``; the node budget is IN THE
+#: NAME because the cell directory, the shard rows and the pairwise agreement
+#: table are all keyed by arm, and a ladder whose rungs were called ``sf-a`` /
+#: ``sf-b`` would need the report beside it to be readable at all.
+SF_ARM_PREFIX = "sf-"
+
+#: One engine, one thread. Above 1 a node-limited Stockfish search stops being
+#: reproducible at a fixed ``go nodes N``, which would make a label a function
+#: of thread scheduling; the flag exists so a run that trades that away has to
+#: say so, not so the default is a choice.
+DEFAULT_SF_THREADS = 1
+
+#: Transposition-table size, PINNED rather than inherited from whatever the
+#: engine's own default happens to be on this build. It is part of the label
+#: instrument: the same node budget with a different table is a different
+#: search, and an artifact that does not name it cannot be compared with the
+#: next one. 16 MB is Stockfish's own default, so pinning it changes nothing
+#: today and freezes it against a future build that changes its mind.
+DEFAULT_SF_HASH_MB = 16
+
+#: Schema of the ``sf-`` observer's banked JSONL rows. Independent of the
+#: generator's ``LEAF_BANK_SCHEMA``: the columns are an engine's, not an arm
+#: context's, and a reader must not be able to mistake one file for the other.
+SF_BANK_SCHEMA = 1
+
+#: ⚑ ONE MESSAGE, TWO GATES. The parser refuses an ``sf-`` ``--driver`` and so
+#: does ``run``; a caller that reaches either must be told the same thing, and a
+#: shared literal is what keeps the two from drifting into "invalid choice".
+_SF_DRIVER_REFUSAL = (
+    "{arm} is an OBSERVER-ONLY arm and cannot be the --driver. The driver steers "
+    "the production C Gumbel search through gen_random_selfplay_shards.play_game, "
+    "which consumes a native NNUE value source; a Stockfish arm has no such seam, "
+    "and a run whose positions were chosen by an engine would not be measuring "
+    "that engine's labels on the native arms' positions -- which is the entire "
+    "point of the frozen driver. Pass it as --sf-observer <nodes> instead."
+)
+
+#: Engine failures that justify a RESTART rather than a crash. Both
+#: `StockfishTimeoutError` and `StockfishDesyncError` derive from `RuntimeError`,
+#: and a dead child surfaces as `RuntimeError("Stockfish process exited")` or as
+#: an `OSError` from the write side. ⚑ `ValueError` is deliberately absent: a
+#: newline in a FEN is our bug, not the engine's, and restarting around it would
+#: turn a defect into a statistic.
+_SF_ENGINE_FAILURES: tuple[type[BaseException], ...] = (RuntimeError, OSError)
 
 #: Store watchdog default, in canonical DAG nodes. At the measured ~5.68 kB per
 #: node (see the module docstring) and the store's power-of-two payload table
@@ -279,11 +377,23 @@ class ObserverArm:
     that turns out to be wrong.
     """
 
+    #: Native arms are cheap enough per position to be fanned out over the
+    #: search-leaf population as well as the root's children, and that fan-out
+    #: is what makes ``driver_observer_disagreements`` -- the wiring proof --
+    #: possible at all. The ``sf-`` family sets this False; see
+    #: ``StockfishObserverArm``.
+    observes_leaves: bool = True
+
     def __init__(self, *, source: readout.ReadoutArmSource, dag_max_nodes: int) -> None:
         self.source = source
         self.arm = source.arm
         self.stats = ObserverStats()
         self.dag_watch = DagStoreWatch(max_nodes=int(dag_max_nodes))
+
+    def begin_game(self) -> None:
+        """Per-GAME hook. A no-op here: the native arms' canonical-store reset
+        cadence is ``--dag-reset``'s to choose, and firing a reset from here too
+        would take that choice away from the flag that owns it."""
 
     def evaluate(
         self, boards: list[CBoard], *, role: str, cluster: tuple[int, int] | None,
@@ -308,6 +418,437 @@ class ObserverArm:
 
     def close(self) -> None:
         self.source.close()
+
+
+# ── the shallow-Stockfish observer family ────────────────────────────────────
+
+
+def is_sf_arm(arm: str) -> bool:
+    return str(arm).startswith(SF_ARM_PREFIX)
+
+
+def sf_arm_name(nodes: int) -> str:
+    return f"{SF_ARM_PREFIX}{int(nodes)}"
+
+
+def sf_effective_cp(*, cp: int | None, mate: int | None) -> float:
+    """One UCI score -> effective centipawns, on the pipeline's own scale.
+
+    ⚑⚑ ``score mate 0`` IS A LOSS AND ``mate_to_effective_cp`` CALLS IT A WIN.
+    Stockfish emits ``info depth 0 score mate 0`` + ``bestmove (none)`` for a
+    side to move that is ALREADY checkmated (measured on this build's engine),
+    and ``mate_to_effective_cp`` reads the sign off its argument -- ``0`` is
+    non-negative, so it returns ``+100000``.  Handed through unchanged that
+    turns every mate delivered by a root move into a value of ``+1`` for the
+    side that just got mated, and after ``probe_root``'s negation the root
+    mover's own mating move becomes the WORST-ranked move in the label.  It
+    fails no shape check, sums to one, and is dense over the right move set.
+    The generator's native path carries the same trap in the same shape --
+    ``NnueArmValueSource.q_from_values`` documents it -- and the native arm
+    answers ``-1.0`` on a mated position, which is the number this branch
+    reproduces.
+
+    Mate precedence over cp is the UCI convention and matches ``cp_to_wdl``:
+    an engine emits at most one of the two per info line.
+    """
+    if mate is not None:
+        if int(mate) == 0:
+            return -abs(mate_to_effective_cp(0))
+        return mate_to_effective_cp(int(mate))
+    if cp is not None:
+        return float(cp)
+    raise RuntimeError(
+        "Stockfish returned neither a cp nor a mate score for a position; a "
+        "search with no score at all cannot be turned into a value, and "
+        "substituting a draw here would put a fabricated label in a cell whose "
+        "whole purpose is label quality",
+    )
+
+
+def sf_q_from_effective_cp(
+    eff_cp: np.ndarray, *, cp_slope: float, cp_draw_width: float,
+) -> np.ndarray:
+    """Effective cp -> q in [-1, 1], through THE generator's cp-logistic.
+
+    ⚑ ``cp_to_wdl_array`` IS THE SAME FUNCTION OBJECT
+    ``NnueArmValueSource.q_from_values`` calls -- both import it from
+    ``chess_anti_engine.stockfish.wdl`` -- and ``W - L`` is that method's own
+    final line.  A second implementation with the same formula would be a
+    second thing to keep in step; ``test_the_sf_arm_reuses_the_generators_cp_logistic``
+    asserts the identity rather than the arithmetic.
+
+    ⚑ ``--nnue-cp-per-unit`` IS DELIBERATELY NOT APPLIED.  It is the slope of
+    internal NNUE units to centipawns, and Stockfish already reports
+    centipawns; multiplying by 0.28 here would shrink every Stockfish score by
+    ~3.6x, land the whole ladder inside the draw zone, and look exactly like
+    "shallow Stockfish is a flat evaluator".
+    """
+    wdl = cp_to_wdl_array(
+        np.asarray(eff_cp, dtype=np.float64),
+        slope=float(cp_slope), draw_width_cp=float(cp_draw_width),
+    )
+    return (
+        wdl[..., 0].astype(np.float64) - wdl[..., 2].astype(np.float64)
+    )
+
+
+@dataclass(frozen=True)
+class SfArmConfig:
+    """One rung of the node ladder, fully self-describing.
+
+    The binary digest is resolved ONCE in the parent and carried down, for the
+    same reason ``NnueArmValueSource`` takes ``pack_file_sha256``: hashing a
+    ~60 MB engine inside every worker's measured window prices the instrument
+    into the measurement.  The workers re-hash anyway, once, at setup, and the
+    aggregation refuses a run whose workers did not all map these bytes.
+    """
+
+    arm: str
+    nodes: int
+    threads: int
+    hash_mb: int
+    binary: Path
+    binary_sha256: str
+    binary_source: str
+
+    def consumed(self) -> dict[str, int]:
+        """Every number this arm's engine was configured with, as the plan.
+
+        The same shape ``ResolvedArmConfig.consumed`` returns for a native arm,
+        so ``arm_config`` / ``arm_config_realized`` mean the same thing in both
+        families' report blocks.
+        """
+        return {
+            "nodes": int(self.nodes),
+            "threads": int(self.threads),
+            "hash_mb": int(self.hash_mb),
+        }
+
+
+@dataclass
+class SfArmStats:
+    """What the engine behind one ``sf-`` arm actually did.
+
+    ⚑ ``restarts`` IS AN ADMISSIBILITY COUNTER, NOT A HEALTH GAUGE.  A restarted
+    engine resumes with a COLD transposition table in the middle of a game, so
+    every row after it was labelled by a measurably different instrument from
+    the rows before it.  The alternative -- catch, log, continue -- is this
+    repository's signature defect exactly: a value accepted and then silently
+    ignored.
+    """
+
+    searches: int = 0
+    cp_scores: int = 0
+    mate_scores: int = 0
+    mate_zero_scores: int = 0
+    #: Positions whose FEN does NOT reconstruct the full search state, i.e. the
+    #: board carried repetition history the UCI ``position fen`` line cannot
+    #: transmit. The native arms see the `CBoard` and its hash stack; the engine
+    #: sees a FEN. Counted rather than argued about — the 50-move clock DOES
+    #: travel (it is a FEN field), only repetition does not.
+    positions_without_repetition_history: int = 0
+    engine_new_games: int = 0
+    restarts: int = 0
+    first_restart_error: str = ""
+    #: ⚑⚑ THE TAKE-EFFECT PROOF FOR ``--sf-observer <nodes>``, read off the
+    #: CONSUMER. ``go nodes N`` is a request; these are the ``info ... nodes``
+    #: counts Stockfish itself reported back, so a budget that never reached the
+    #: engine shows up here as the wrong number rather than as nothing at all.
+    #: A terminal position reports no node count (depth 0, ``bestmove (none)``),
+    #: which is why ``engine_nodes_reported`` is a separate denominator from
+    #: ``searches``. ``engine_nodes_min`` starts at -1 = "never set".
+    engine_nodes_reported: int = 0
+    engine_nodes_sum: int = 0
+    engine_nodes_min: int = -1
+    engine_nodes_max: int = 0
+
+    def observe_nodes(self, nodes: int | None) -> None:
+        if nodes is None:
+            return
+        value = int(nodes)
+        self.engine_nodes_reported += 1
+        self.engine_nodes_sum += value
+        self.engine_nodes_max = max(self.engine_nodes_max, value)
+        self.engine_nodes_min = (
+            value if self.engine_nodes_min < 0 else min(self.engine_nodes_min, value)
+        )
+
+    def merge(self, other: SfArmStats) -> None:
+        self.searches += other.searches
+        self.cp_scores += other.cp_scores
+        self.mate_scores += other.mate_scores
+        self.mate_zero_scores += other.mate_zero_scores
+        self.positions_without_repetition_history += (
+            other.positions_without_repetition_history
+        )
+        self.engine_new_games += other.engine_new_games
+        self.restarts += other.restarts
+        if not self.first_restart_error:
+            self.first_restart_error = other.first_restart_error
+        self.engine_nodes_reported += other.engine_nodes_reported
+        self.engine_nodes_sum += other.engine_nodes_sum
+        self.engine_nodes_max = max(self.engine_nodes_max, other.engine_nodes_max)
+        if other.engine_nodes_min >= 0:
+            self.engine_nodes_min = (
+                other.engine_nodes_min if self.engine_nodes_min < 0
+                else min(self.engine_nodes_min, other.engine_nodes_min)
+            )
+
+
+class StockfishObserverArm:
+    """A real Stockfish search, as a shadow arm on the driver's positions.
+
+    ⚑ IT CANNOT REACH THE TREE, AND THE PROOF COVERS IT ANYWAY.  This object
+    holds a subprocess and a FEN; it is handed COPIES of the driver's boards and
+    its answer goes to this file's recorder and nowhere else.  That is
+    structural -- and ``--prove-shadow-inertness`` replays the same games with
+    the whole observer set detached and requires bit-identical digests, because
+    "structural" is what everyone says about the wiring that turns out to be
+    wrong.
+
+    ⚑ ROOTS AND ROOT CHILDREN ONLY (``observes_leaves = False``).  The 1-ply
+    label is a function of the root's children; the leaf population is
+    ``sims``-many positions per ply, so fanning an engine over it would multiply
+    the run's cost by the simulation count for a column nothing reads.  The
+    report publishes which populations the arm observed, so the zero is a stated
+    scope rather than a number to be read as a failure.
+    """
+
+    observes_leaves: bool = False
+
+    def __init__(
+        self,
+        *,
+        config: SfArmConfig,
+        cp_slope: float,
+        cp_draw_width: float,
+        nice: int = 0,
+        bank: Path | None = None,
+        bank_identity: dict[str, Any] | None = None,
+    ) -> None:
+        self.config = config
+        self.arm = str(config.arm)
+        self.cp_slope = float(cp_slope)
+        self.cp_draw_width = float(cp_draw_width)
+        self.nice = int(nice)
+        self.stats = ObserverStats()
+        self.sf_stats = SfArmStats()
+        self.bank_identity = dict(bank_identity or {})
+        self.bank_rows = 0
+        if bank is not None:
+            bank.parent.mkdir(parents=True, exist_ok=True)
+        self.leaf_bank_path = bank
+        # "x" for the same reason the generator's bank uses it: a rerun that
+        # appended would produce one file whose rows came from two runs.
+        self._bank = None if bank is None else bank.open("x")
+        self._engine = self._open_engine()
+
+    # ── engine lifecycle ────────────────────────────────────────────────
+    def _open_engine(self) -> StockfishUCI:
+        return StockfishUCI(
+            str(self.config.binary),
+            nodes=int(self.config.nodes),
+            hash_mb=int(self.config.hash_mb),
+            nice=int(self.nice),
+            threads=int(self.config.threads),
+        )
+
+    def realized(self) -> dict[str, int]:
+        """What the LIVE engine object was configured with, not what was planned.
+
+        ⚑ THIS IS WEAKER THAN THE NATIVE ARMS' REQUESTED-VS-REALIZED CHECK AND
+        THE REPORT SAYS SO.  UCI has no readback: an engine cannot be asked what
+        ``Threads`` or ``Hash`` it ended up with, so the strongest available
+        statement about those two is the value written to its stdin.  The one
+        knob that IS observed at the consumer is the node budget --
+        ``SfArmStats.engine_nodes_*`` are the counts Stockfish reported back
+        about its own searches.
+        """
+        return {
+            "nodes": int(self._engine.nodes),
+            "threads": int(self._engine.threads),
+            "hash_mb": int(self._engine.hash_mb or 0),
+        }
+
+    def begin_game(self) -> None:
+        """Clear the transposition table between GAMES, never between positions.
+
+        ⚑ THE CADENCE IS THE POINT AND IT IS STAMPED INTO ``cell_meta.json``.
+        Per position it costs a ``ucinewgame`` + ``isready`` round trip on every
+        one of the root's ~30 children and buys independence nothing in this
+        harness compares across; per RUN it reproduces the banked hazard this
+        repository already carries (production SF labels run on a dirty TT).
+        Per game is the cadence the driver's own games have.
+        """
+        self._engine.new_game()
+        self.sf_stats.engine_new_games += 1
+
+    def close(self) -> None:
+        try:
+            self._engine.close()
+        finally:
+            if self._bank is not None:
+                self._bank.close()
+                self._bank = None
+
+    def _restart(self, exc: BaseException) -> None:
+        self.sf_stats.restarts += 1
+        if not self.sf_stats.first_restart_error:
+            self.sf_stats.first_restart_error = f"{type(exc).__name__}: {exc}"
+        _LOG.error(
+            "INADMISSIBLE: %s engine failed mid-run (%s: %s) and is being "
+            "restarted; the rows after this point were labelled with a COLD "
+            "transposition table, which is a different instrument from the rows "
+            "before it",
+            self.arm, type(exc).__name__, exc,
+        )
+        try:
+            self._engine.close()
+        except _SF_ENGINE_FAILURES:  # pragma: no cover - close() swallows most
+            pass
+        self._engine = self._open_engine()
+
+    def _search(self, fen: str) -> StockfishResult:
+        """One node-limited search, with EXACTLY ONE restart of tolerance.
+
+        ⚑ A SECOND CONSECUTIVE FAILURE RAISES.  One dead engine is a fact to
+        record and press on from with the run marked inadmissible; two in a row
+        on the same position is a broken binary or a broken board, and a harness
+        that kept retrying would turn that into a hang with a plausible report
+        at the end of it.
+        """
+        try:
+            return self._engine.search(fen, nodes=int(self.config.nodes))
+        except _SF_ENGINE_FAILURES as exc:
+            self._restart(exc)
+        return self._engine.search(fen, nodes=int(self.config.nodes))
+
+    # ── the observer surface ────────────────────────────────────────────
+    def evaluate(
+        self, boards: list[CBoard], *, role: str, cluster: tuple[int, int] | None,
+    ) -> np.ndarray:
+        """Every board in the batch, one engine search each, from ITS OWN seat.
+
+        The return is the same units and the same convention every other arm
+        returns: q in [-1, 1] from the EVALUATED position's side to move.
+        ``probe_root`` owns the root-mover negation and applies it to all arms
+        alike.
+        """
+        started = time.perf_counter()
+        eff_cp = np.empty((len(boards),), dtype=np.float64)
+        results: list[StockfishResult] = []
+        for i, board in enumerate(boards):
+            if int(board.hash_stack_len) != 0:
+                self.sf_stats.positions_without_repetition_history += 1
+            result = self._search(board.fen())
+            self.sf_stats.searches += 1
+            self.sf_stats.observe_nodes(result.nodes)
+            if result.mate is not None:
+                self.sf_stats.mate_scores += 1
+                if int(result.mate) == 0:
+                    self.sf_stats.mate_zero_scores += 1
+            elif result.cp is not None:
+                self.sf_stats.cp_scores += 1
+            eff_cp[i] = sf_effective_cp(cp=result.cp, mate=result.mate)
+            results.append(result)
+        q = sf_q_from_effective_cp(
+            eff_cp, cp_slope=self.cp_slope, cp_draw_width=self.cp_draw_width,
+        )
+        if self._bank is not None:
+            self._bank_batch(boards, results, eff_cp, q, role=role, cluster=cluster)
+        # ⚑ The wall clock is stopped AFTER the bank write, deliberately: the
+        # cost axis this arm exists to supply is what the operator pays for the
+        # column, and the banking is part of producing it.
+        self.stats.eval_s += time.perf_counter() - started
+        self.stats.add_batch(role, len(boards))
+        return q
+
+    def _bank_batch(
+        self,
+        boards: list[CBoard],
+        results: list[StockfishResult],
+        eff_cp: np.ndarray,
+        q: np.ndarray,
+        *,
+        role: str,
+        cluster: tuple[int, int] | None,
+    ) -> None:
+        """One JSONL row per evaluated position: the RAW UCI score, and its key.
+
+        The raw ``cp``/``mate`` pair is the only thing that cannot be recovered
+        later: the effective cp, the logistic and q are all pure functions of it
+        and the three constants banked beside it. Without the raw score a slope
+        correction or a different value map is a rerun of the engine, and a
+        rerun against a node-limited search is not a reanalysis -- it re-rolls
+        the intervention.
+        """
+        assert self._bank is not None
+        game, ply = (-1, -1) if cluster is None else cluster
+        for board, result, eff, value in zip(
+            boards, results, eff_cp.tolist(), q.tolist(), strict=True,
+        ):
+            self._bank.write(
+                json.dumps(
+                    {
+                        "schema": SF_BANK_SCHEMA,
+                        "arm_family": "stockfish",
+                        "arm": self.arm,
+                        "role": role,
+                        "fen": board.fen(),
+                        "halfmove_clock": int(board.halfmove_clock),
+                        "hash_stack_len": int(board.hash_stack_len),
+                        "fen_reconstructs_full_search_state": bool(
+                            board.hash_stack_len == 0,
+                        ),
+                        "cp": None if result.cp is None else int(result.cp),
+                        "mate": None if result.mate is None else int(result.mate),
+                        "effective_cp": float(eff),
+                        "q_from_evaluated_seat": float(value),
+                        "engine_nodes_reported": (
+                            None if result.nodes is None else int(result.nodes)
+                        ),
+                        "engine_depth": (
+                            None if result.depth is None else int(result.depth)
+                        ),
+                        "bestmove": str(result.bestmove_uci),
+                        "game": int(game),
+                        "ply": int(ply),
+                        "cp_slope": self.cp_slope,
+                        "cp_draw_width": self.cp_draw_width,
+                        **self.bank_identity,
+                        **self.config.consumed(),
+                        "sf_binary_sha256": self.config.binary_sha256,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+            )
+            self.bank_rows += 1
+
+
+class ShadowObserver(Protocol):
+    """What the worker loop and the fan-out need of an observer, either family.
+
+    Two implementations -- the native ``ObserverArm`` and
+    ``StockfishObserverArm`` -- and they differ in exactly one thing the caller
+    can see, ``observes_leaves``. The protocol exists so that difference is read
+    off the object rather than re-decided at each call site, which is how the
+    leaf fan-out would eventually acquire a Stockfish engine by accident.
+    """
+
+    arm: str
+    stats: ObserverStats
+
+    @property
+    def observes_leaves(self) -> bool: ...
+
+    def evaluate(
+        self, boards: list[CBoard], *, role: str, cluster: tuple[int, int] | None,
+    ) -> np.ndarray: ...
+
+    def begin_game(self) -> None: ...
+
+    def close(self) -> None: ...
 
 
 class ArmObserver(Protocol):
@@ -449,13 +990,18 @@ class ShadowFanoutSource(readout.ReadoutArmSource):
     def __init__(
         self,
         *,
-        observers: tuple[ObserverArm, ...],
+        observers: tuple[ShadowObserver, ...],
         recorder: ProbeRecorder,
         agreement: AgreementStats,
         dag_watch: DagStoreWatch,
         **kwargs: Any,
     ) -> None:
         self._observers = tuple(observers)
+        # ⚑ DERIVED FROM THE OBSERVERS, NOT PASSED IN BESIDE THEM. Which arms
+        # can afford the search-leaf population is a property of the arm (an
+        # `sf-` engine cannot), and a second argument saying so would be a
+        # second place for the answer to live.
+        self._leaf_observers = tuple(o for o in observers if o.observes_leaves)
         self._recorder = recorder
         self._agreement = agreement
         self.dag_watch = dag_watch
@@ -499,7 +1045,7 @@ class ShadowFanoutSource(readout.ReadoutArmSource):
     def _observe_leaves(
         self, boards: list[CBoard], driver_q: np.ndarray, cluster: tuple[int, int] | None,
     ) -> None:
-        for observer in self._observers:
+        for observer in self._leaf_observers:
             observed = observer.evaluate(boards, role=_ROLE_LEAF, cluster=cluster)
             if observer.arm != self.arm:
                 continue
@@ -660,10 +1206,31 @@ class RunConfig:
     nice: int
     emit_shards: bool = True
     attach_observers: bool = True
+    #: The shallow-Stockfish ladder. A SEPARATE tuple rather than a wider
+    #: ``observers``, because ``ResolvedArmConfig`` is the NNUE extension's plan
+    #: -- it fills its defaults out of ``_nnue_ext`` and its ``consumed()`` looks
+    #: the arm up in ``ARM_SPECS``. An ``sf-`` rung has neither, and forcing it
+    #: through that type is exactly how it would acquire a plausible NNUE knob
+    #: dict that nothing reads. Defaulted to empty so every existing caller and
+    #: every native-only run means what it did before.
+    sf_observers: tuple[SfArmConfig, ...] = ()
+
+    @property
+    def nnue_arms(self) -> tuple[str, ...]:
+        return tuple(c.arm for c in self.observers)
+
+    @property
+    def sf_arms(self) -> tuple[str, ...]:
+        return tuple(c.arm for c in self.sf_observers)
 
     @property
     def arms(self) -> tuple[str, ...]:
-        return tuple(c.arm for c in self.observers)
+        """Every LABELLING arm, native first, in cell order.
+
+        ⚑ The order is part of the artifact: ``cells``, the pairwise argmax
+        table's keys and the shard directories are all derived from it.
+        """
+        return (*self.nnue_arms, *self.sf_arms)
 
     @property
     def cells(self) -> tuple[str, ...]:
@@ -709,6 +1276,16 @@ class WorkerResult:
     lc0_ext_sha256: str = ""
     lc0_ext_loaded_build_id: str = ""
     arm_config_realized: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: ``sf-`` arms are kept in their own maps rather than folded into
+    #: ``observer_*``: the aggregation reads a native arm's ``provider_stats``
+    #: by SUBSCRIPT off its own C surface, and an ``sf-`` arm has no such
+    #: surface at all. Merging the two would force a ``.get(..., 0)`` there,
+    #: which is the exact shape the file already refuses one comment above it.
+    sf_observer_stats: dict[str, ObserverStats] = field(default_factory=dict)
+    sf_arm_stats: dict[str, SfArmStats] = field(default_factory=dict)
+    #: This worker's OWN hash of the engine binary. The parent hashed it before
+    #: the run; a disagreement means the workers did not all run one engine.
+    sf_binary_sha256: str = ""
 
 
 def _base_gen_config(cfg: RunConfig) -> gen.GenConfig:
@@ -767,7 +1344,7 @@ def _build_source(
     bank: Path | None,
     identity: dict[str, Any],
     pack_sha: str,
-    observers: tuple[ObserverArm, ...] | None = None,
+    observers: tuple[ShadowObserver, ...] | None = None,
     recorder: ProbeRecorder | None = None,
     agreement: AgreementStats | None = None,
     dag_watch: DagStoreWatch | None = None,
@@ -842,6 +1419,28 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         )
         for observer_config in (cfg.observers if cfg.attach_observers else ())
     ]
+    # ⚑ ONE ENGINE PER (WORKER, ARM), OPENED HERE AND REUSED FOR EVERY POSITION.
+    # A process spawn plus a UCI handshake costs far more than a 512-node search,
+    # so an engine per position would price the harness's own plumbing into the
+    # cost axis the ladder exists to measure.
+    sf_observers: list[StockfishObserverArm] = [
+        StockfishObserverArm(
+            config=sf_config,
+            cp_slope=cfg.cp_slope,
+            cp_draw_width=cfg.cp_draw_width,
+            nice=nice_realized,
+            bank=_worker_bank_path(
+                cfg.bank_path, role="observer",
+                arm=sf_config.arm, worker_id=spec.worker_id,
+            ),
+            bank_identity={**identity, "observer_arm": sf_config.arm},
+        )
+        for sf_config in (cfg.sf_observers if cfg.attach_observers else ())
+    ]
+    sf_binary_sha256 = (
+        readout._sha256_file(cfg.sf_observers[0].binary) if cfg.sf_observers else ""
+    )
+    all_observers: tuple[ShadowObserver, ...] = (*observers, *sf_observers)
     driver = _build_source(
         config=cfg.driver,
         cfg=cfg,
@@ -850,7 +1449,7 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         ),
         identity={**identity, "observer_arm": ""},
         pack_sha=pack_sha,
-        observers=tuple(observers),
+        observers=all_observers,
         recorder=recorder,
         agreement=agreement,
         dag_watch=driver_dag_watch,
@@ -917,6 +1516,13 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
                 driver.reset_game()
                 for observer in observers:
                     observer.reset_dag()
+            # ⚑ UNCONDITIONAL, AND SEPARATE FROM `--dag-reset` ON PURPOSE. The
+            # DAG cadence is a memo-retention knob whose answers cannot change
+            # (#472); a Stockfish transposition table CAN change an answer, so
+            # its clearing cadence is a property of the instrument and is not
+            # available for an operator flag to turn off by accident.
+            for observer in all_observers:
+                observer.begin_game()
             recorder.begin_game(int(game_index))
             rng = np.random.default_rng(int(cfg.seed) + int(game_index))
             outcome = gen.play_game(
@@ -980,8 +1586,11 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
             flush()
     finally:
         evaluator.close()
-        for observer in observers:
-            observer.close()
+        # ⚑ EVERY observer, including the engines: a `sf-` arm holds a
+        # subprocess, and one that outlives the worker is a ~2.6 GB orphan the
+        # audit-R2 note in `stockfish/uci.py` exists about.
+        for closing in all_observers:
+            closing.close()
     elapsed = time.perf_counter() - started
     readout._assert_file_unchanged("NNUE pack", cfg.pack, pack_stamp)
     return WorkerResult(
@@ -1003,7 +1612,11 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         argmax_pairs=argmax_pairs,
         shards=shards,
         rows=sum(int(s["rows"]) for s in shards[search_cell]),
-        bank_rows=int(driver.bank_rows) + sum(int(o.source.bank_rows) for o in observers),
+        bank_rows=(
+            int(driver.bank_rows)
+            + sum(int(o.source.bank_rows) for o in observers)
+            + sum(int(o.bank_rows) for o in sf_observers)
+        ),
         kernel=driver.kernel,
         pack_file_sha256=driver.pack_file_sha256,
         pack_source_sha256=driver.pack_source_sha256,
@@ -1017,7 +1630,11 @@ def _run_worker(spec: WorkerSpec) -> WorkerResult:
         arm_config_realized={
             cfg.driver.arm: dict(driver.realized),
             **{o.arm: dict(o.source.realized) for o in observers},
+            **{o.arm: o.realized() for o in sf_observers},
         },
+        sf_observer_stats={o.arm: o.stats for o in sf_observers},
+        sf_arm_stats={o.arm: o.sf_stats for o in sf_observers},
+        sf_binary_sha256=sf_binary_sha256,
     )
 
 
@@ -1084,8 +1701,14 @@ def prove_shadow_inertness(cfg: RunConfig, *, games: int) -> dict[str, Any]:
         attach_observers=True,
     )
     with_observers = driver_digests(_run_workers(probe))
+    # ⚑ BOTH FAMILIES ARE DETACHED. `attach_observers=False` already builds
+    # neither, and emptying both tuples as well is what makes the second pass a
+    # config a reader can see is observer-free rather than one that depends on
+    # a flag being honoured in two places.
     without = driver_digests(
-        _run_workers(replace(probe, attach_observers=False, observers=())),
+        _run_workers(
+            replace(probe, attach_observers=False, observers=(), sf_observers=()),
+        ),
     )
     if with_observers != without:
         raise RuntimeError(
@@ -1167,6 +1790,61 @@ def _merge_provider(
     return readout.merge_provider_stats(dicts, readout.key_classes_for(arm))
 
 
+def _observer_cost(stats: ObserverStats) -> dict[str, float | str]:
+    """The COST AXIS of the quality-vs-cost curve, MEASURED rather than assumed.
+
+    ⚑⚑ THE POINT OF A NODE LADDER IS A CURVE WITH TWO AXES, AND THE SECOND ONE
+    IS ONLY EVER GUESSED AT.  "512 nodes is sub-millisecond, 8192 may dominate"
+    is a plausible sentence that no artifact in this repository has ever
+    contained a number for.  ``eval_s`` is wall time inside the observer's own
+    ``evaluate``, summed over the arm's whole population, so the ratio between
+    two rungs of one run is a like-for-like read on identical positions.
+
+    ⚑ IT IS CPU-SECONDS, NOT WALL SECONDS, WHENEVER ``--workers > 1``: the
+    per-worker figures are SUMMED, exactly as the populations are.  Divide by
+    ``workers_active`` for a wall-clock reading, and do not compare it against
+    ``search_wall_s`` without doing so.
+    """
+    positions = (
+        int(stats.root_positions) + int(stats.child_positions)
+        + int(stats.leaf_positions)
+    )
+    return {
+        "eval_s": float(stats.eval_s),
+        "positions": float(positions),
+        "s_per_position": (
+            float(stats.eval_s) / positions if positions else float("nan")
+        ),
+        "positions_per_s": (
+            positions / float(stats.eval_s) if stats.eval_s > 0.0 else float("nan")
+        ),
+        "seconds_are": "cpu (summed over workers), not wall",
+    }
+
+
+def _sf_cp_mapping(cfg: RunConfig) -> dict[str, Any]:
+    """The exact score-to-value map an ``sf-`` cell's labels went through."""
+    return {
+        "function": "chess_anti_engine.stockfish.wdl.cp_to_wdl_array",
+        "shared_with": "NnueArmValueSource.q_from_values (the same function object)",
+        "cp_slope": float(cfg.cp_slope),
+        "cp_draw_width": float(cfg.cp_draw_width),
+        "q": "W - L",
+        # ⚑ Named so a reader cannot wonder whether it was applied. It converts
+        # internal NNUE units to centipawns; Stockfish already reports
+        # centipawns, so applying it would shrink every score by ~3.6x and put
+        # the whole ladder inside the draw zone.
+        "cp_per_internal_unit_applied": False,
+        "cp_per_internal_unit": float(cfg.cp_per_internal_unit),
+        "mate": "chess_anti_engine.stockfish.wdl.mate_to_effective_cp",
+        "mate_zero": (
+            "score mate 0 = the side to move is ALREADY checkmated, mapped to a "
+            "LOSS; mate_to_effective_cp reads the sign off its argument and 0 is "
+            "non-negative, so the unguarded call returns a WIN"
+        ),
+    }
+
+
 def _aggregate(
     cfg: RunConfig,
     results: list[WorkerResult],
@@ -1206,7 +1884,7 @@ def _aggregate(
         driver_watch.merge(r.driver_dag_watch)
 
     observers: dict[str, Any] = {}
-    for arm in cfg.arms:
+    for arm in cfg.nnue_arms:
         provider, conflicts = _merge_provider(
             [r.observer_provider_stats[arm] for r in results], arm,
         )
@@ -1236,6 +1914,11 @@ def _aggregate(
             else "dag_budget_trips"
         )
         observers[arm] = {
+            # ⚑ A DISCRIMINATOR, NOT DECORATION. The two families' blocks do not
+            # have the same keys -- an `sf-` arm has no `provider_stats` at all
+            # -- so a consumer must be able to branch on something other than
+            # the arm's name spelling.
+            "family": "nnue",
             "arm_config": next(
                 c.consumed() for c in cfg.observers if c.arm == arm
             ),
@@ -1243,6 +1926,8 @@ def _aggregate(
                 [r.arm_config_realized[arm] for r in results], f"{arm} realized",
             ),
             "populations": asdict(stats),
+            "observed_populations": [_ROLE_ROOT, _ROLE_CHILD, _ROLE_LEAF],
+            "cost": _observer_cost(stats),
             "provider_stats": provider,
             "provider_stats_conflicts": conflicts,
             "node_budget_trip_counter": trip_key,
@@ -1255,6 +1940,83 @@ def _aggregate(
             # measurement would put a guess next to the thing it guessed at.
             "dag_store_watch": asdict(watch),
         }
+
+    for sf_config in cfg.sf_observers:
+        arm = sf_config.arm
+        stats = ObserverStats()
+        sf_stats = SfArmStats()
+        for r in results:
+            stats.merge(r.sf_observer_stats[arm])
+            sf_stats.merge(r.sf_arm_stats[arm])
+        if sf_stats.restarts:
+            # ⚑⚑ AN INADMISSIBLE REASON, NOT A WARNING. A restarted engine
+            # resumes with a COLD transposition table part-way through a game,
+            # so the rows after it were produced by a measurably different
+            # instrument from the rows before it -- and nothing in the shards
+            # marks where the boundary was. The harness could not have skipped
+            # the affected rows either: the cells must stay row-aligned, so
+            # dropping a row from one cell would unpair every cell.
+            reasons.append(
+                f"observer {arm} restarted its Stockfish engine "
+                f"{sf_stats.restarts} time(s) mid-run (first: "
+                f"{sf_stats.first_restart_error}); the rows after a restart "
+                "were labelled with a cold transposition table and are not the "
+                "same instrument as the rows before it",
+            )
+        observers[arm] = {
+            "family": "stockfish",
+            "arm_config": sf_config.consumed(),
+            "arm_config_realized": readout._agree(
+                [r.arm_config_realized[arm] for r in results], f"{arm} realized",
+            ),
+            # ⚑ THE REALIZED BLOCK IS WEAKER HERE THAN FOR A NATIVE ARM, AND
+            # SAYING SO IS THE POINT. UCI has no option readback, so `threads`
+            # and `hash_mb` are the values written to the engine's stdin, not
+            # values read out of it. The node budget IS observed at the
+            # consumer, under `engine_stats.engine_nodes_*`.
+            "arm_config_realized_is_a_readback": False,
+            "node_budget_observed_at_the_engine": {
+                "requested": int(sf_config.nodes),
+                "reported_min": int(sf_stats.engine_nodes_min),
+                "reported_max": int(sf_stats.engine_nodes_max),
+                "reported_mean": (
+                    sf_stats.engine_nodes_sum / sf_stats.engine_nodes_reported
+                    if sf_stats.engine_nodes_reported else float("nan")
+                ),
+                "searches_reporting_nodes": int(sf_stats.engine_nodes_reported),
+                "searches": int(sf_stats.searches),
+            },
+            "populations": asdict(stats),
+            # ⚑ `leaf_positions` is 0 BY DESIGN, and this is what says so. The
+            # 1-ply label is a function of the root's children; the leaf
+            # population is `sims`-many positions per ply, so fanning an engine
+            # over it would multiply the run's cost by the simulation count for
+            # a column nothing reads.
+            "observed_populations": [_ROLE_ROOT, _ROLE_CHILD],
+            "cost": _observer_cost(stats),
+            "engine": {
+                "binary": str(sf_config.binary),
+                "binary_sha256": sf_config.binary_sha256,
+                "binary_source": sf_config.binary_source,
+                "nodes": int(sf_config.nodes),
+                "threads": int(sf_config.threads),
+                "hash_mb": int(sf_config.hash_mb),
+                "tt_cleared": "per_game",
+                "one_engine_per": "(worker, arm)",
+            },
+            "engine_stats": asdict(sf_stats),
+            "cp_mapping": _sf_cp_mapping(cfg),
+        }
+
+    if cfg.sf_observers:
+        expected_sha = cfg.sf_observers[0].binary_sha256
+        observed = sorted({r.sf_binary_sha256 for r in results})
+        if observed != [expected_sha]:
+            reasons.append(
+                f"workers hashed a Stockfish binary {observed} that is not the "
+                f"{expected_sha!r} the parent resolved before the run: the "
+                "sf- cells were not labelled by one engine",
+            )
 
     argmax_pairs: dict[str, ArgmaxAgreement] = {}
     for r in results:
@@ -1383,13 +2145,14 @@ def _cell_meta(cfg: RunConfig, cell: str, *, arm: str | None) -> dict[str, Any]:
             "all_root_moves": bool(cfg.all_root_moves),
             "prior": "uniform (no network; gen_random_selfplay_shards)",
         }
-    return {
+    meta: dict[str, Any] = {
         "cell": cell,
         "label_rule": (
             "softmax(oneply_sigma * -q(child)) over the root's legal moves, where "
             "q is this arm's value through the generator's cp-logistic"
         ),
         "arm": arm,
+        "arm_family": "stockfish" if is_sf_arm(arm) else "nnue",
         "driver_arm": cfg.driver.arm,
         "oneply_sigma": float(cfg.oneply_sigma),
         "sigma_is_inert_for": "top1_regret_cp (a softmax cannot move an argmax)",
@@ -1401,6 +2164,48 @@ def _cell_meta(cfg: RunConfig, cell: str, *, arm: str | None) -> dict[str, Any]:
         "seed": int(cfg.seed),
         "prior": "uniform (no network; gen_random_selfplay_shards)",
     }
+    sf_config = next((c for c in cfg.sf_observers if c.arm == arm), None)
+    if sf_config is None:
+        return meta
+    # ⚑ A BARE CELL DIRECTORY IS WHAT TRAVELS, so everything that makes these
+    # labels a DIFFERENT instrument from the native cells' has to be in it: the
+    # engine's identity, its node budget, and -- the one this repository has a
+    # banked burn about -- what happened to the transposition table.
+    meta.update({
+        "label_source": "stockfish search (observer only; never steered the tree)",
+        "sf_binary": str(sf_config.binary),
+        "sf_binary_sha256": sf_config.binary_sha256,
+        "sf_binary_source": sf_config.binary_source,
+        "sf_nodes": int(sf_config.nodes),
+        "sf_threads": int(sf_config.threads),
+        "sf_hash_mb": int(sf_config.hash_mb),
+        "sf_tt_policy": {
+            "cleared": "per_game",
+            "command": "ucinewgame + isready at the start of every game",
+            "not_cleared_between_positions": True,
+            "why": (
+                "per position costs a protocol round trip on each of the root's "
+                "~30 children; per RUN reproduces the banked dirty-TT hazard "
+                "(production SF labels run on a dirty TT). Per game is the "
+                "cadence the driver's own games have."
+            ),
+            "a_restart_resets_it_mid_game": (
+                "and is counted as an INADMISSIBLE reason, not absorbed"
+            ),
+        },
+        "sf_position_state": (
+            "UCI 'position fen' only: the 50-move clock travels (a FEN field), "
+            "repetition history does NOT. See engine_stats."
+            "positions_without_repetition_history in the run report."
+        ),
+        "sf_seat": (
+            "UCI score is from the EVALUATED position's side to move, the same "
+            "seat the native arms answer from; probe_root applies the root-mover "
+            "negation for every arm alike"
+        ),
+        "cp_mapping": _sf_cp_mapping(cfg),
+    })
+    return meta
 
 
 def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
@@ -1408,6 +2213,22 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
         raise ValueError("games, workers and max_plies must be positive")
     if not cfg.pack.is_file():
         raise FileNotFoundError(cfg.pack)
+    # ⚑ THE REFUSAL LIVES HERE AS WELL AS IN THE PARSER. The CLI's `--driver`
+    # rejects an `sf-` name with its own message, but `run` is the entry point a
+    # test or a sibling script calls, and a gate that only exists in argparse is
+    # a gate the programmatic path does not have.
+    if is_sf_arm(cfg.driver.arm):
+        raise ValueError(_SF_DRIVER_REFUSAL.format(arm=cfg.driver.arm))
+    if cfg.sf_observers:
+        binaries = sorted({
+            (str(c.binary), c.binary_sha256) for c in cfg.sf_observers
+        })
+        if len(binaries) != 1:
+            raise ValueError(
+                f"the sf- ladder names more than one engine binary: {binaries}. "
+                "A ladder whose rungs are different engines measures the engine, "
+                "not the node budget.",
+            )
     if cfg.driver.arm not in cfg.arms:
         raise ValueError(
             f"the driver arm {cfg.driver.arm!r} must also be an observer arm: its "
@@ -1502,6 +2323,20 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
         "cells": list(cfg.cells),
         "driver_arm": cfg.driver.arm,
         "observer_arms": list(cfg.arms),
+        "nnue_observer_arms": list(cfg.nnue_arms),
+        "sf_observer_arms": list(cfg.sf_arms),
+        "sf_engine": (
+            {
+                "binary": str(cfg.sf_observers[0].binary),
+                "binary_sha256": cfg.sf_observers[0].binary_sha256,
+                "binary_source": cfg.sf_observers[0].binary_source,
+                "threads": int(cfg.sf_observers[0].threads),
+                "hash_mb": int(cfg.sf_observers[0].hash_mb),
+                "node_ladder": [int(c.nodes) for c in cfg.sf_observers],
+                "tt_cleared": "per_game",
+            }
+            if cfg.sf_observers else None
+        ),
         "games": int(cfg.games),
         "workers_requested": int(cfg.workers),
         "seed": int(cfg.seed),
@@ -1558,16 +2393,59 @@ def run(cfg: RunConfig, *, prove_games: int) -> dict[str, Any]:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
+def _driver_arm_argument(text: str) -> str:
+    """``--driver``'s ``type``, so an ``sf-`` name gets the REAL reason.
+
+    argparse checks ``type`` before ``choices``, so this fires first and the
+    operator is told that the arm is observer-only rather than that it is an
+    "invalid choice" alongside three names that look nothing like it.
+    """
+    if is_sf_arm(text):
+        raise argparse.ArgumentTypeError(_SF_DRIVER_REFUSAL.format(arm=text))
+    return text
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     p.add_argument(
-        "--driver", choices=readout.READOUT_ARMS, default=readout.ARM_QSEARCH,
-        help="the ONE arm that steers the search and chooses every position",
+        "--driver", type=_driver_arm_argument, choices=readout.READOUT_ARMS,
+        default=readout.ARM_QSEARCH,
+        help="the ONE arm that steers the search and chooses every position. "
+             "An sf- arm is refused here: it is observer-only.",
     )
     p.add_argument(
         "--arm", choices=readout.READOUT_ARMS, action="append", default=None,
         help="an arm to LABEL with; repeatable. Defaults to all three. The "
              "driver arm is always included, as the control.",
+    )
+    p.add_argument(
+        "--sf-observer", type=int, action="append", default=None, metavar="NODES",
+        help="add a shallow-Stockfish OBSERVER arm at `go nodes NODES`, named "
+             "sf-<NODES>; repeatable, once per rung of the ladder. It labels the "
+             "same rows as every native arm and never steers the search, so a "
+             "ladder makes label quality a function of label search effort on "
+             "positions that are identical by construction. It sees ROOTS and "
+             "ROOT CHILDREN only -- never the search leaves, which are "
+             "sims-many per ply.",
+    )
+    p.add_argument(
+        "--sf-binary", type=Path, default=None,
+        help="the engine every sf- arm runs. Defaults to this repo's shared "
+             "discovery (CAE_STOCKFISH, then the checkout's published engine, "
+             "then the main checkout's, then PATH/distro).",
+    )
+    p.add_argument(
+        "--sf-threads", type=int, default=DEFAULT_SF_THREADS,
+        help=f"Threads per sf- engine (default {DEFAULT_SF_THREADS}). Above 1 a "
+             "node-limited search stops being reproducible at a fixed budget, "
+             "which makes the label a function of thread scheduling.",
+    )
+    p.add_argument(
+        "--sf-hash-mb", type=int, default=DEFAULT_SF_HASH_MB,
+        help=f"Hash per sf- engine (default {DEFAULT_SF_HASH_MB} MB, which is "
+             "Stockfish's own default). Pinned rather than inherited so the "
+             "table size is part of the artifact: the same node budget with a "
+             "different table is a different search.",
     )
     p.add_argument("--nnue-pack", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
@@ -1639,8 +2517,82 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def resolve_sf_observers(args: argparse.Namespace) -> tuple[SfArmConfig, ...]:
+    """The ``sf-`` ladder, with the engine resolved and hashed ONCE.
+
+    ⚑ A DUPLICATE RUNG IS REFUSED, NOT DEDUPLICATED.  ``--sf-observer 512
+    --sf-observer 512`` names one cell twice; silently collapsing it would leave
+    the operator with a ladder that has fewer rungs than they asked for and a
+    report that never says so.
+
+    ⚑ A MISSING ENGINE IS REFUSED, NOT DEGRADED.  ``engine_discovery`` has a
+    ``default_stockfish`` that returns a path whether or not anything is there,
+    which is right for ``--help`` stability and wrong here: an sf- run with no
+    engine must not reach the first ``StockfishUCI`` and die inside a pty
+    handshake.
+    """
+    # ⚑ ATTRIBUTE ACCESS, NEVER `getattr(args, ..., None)`. A default here would
+    # turn "this caller's Namespace predates the flag" into "no Stockfish arms
+    # were requested", which is the same shape as reading `lr` with `.get`: the
+    # single most consequential value in the call reported as absent. A
+    # Namespace that has not got these keys must raise.
+    requested = [int(n) for n in (args.sf_observer or ())]
+    if not requested:
+        return ()
+    seen: set[int] = set()
+    duplicates = sorted({n for n in requested if n in seen or seen.add(n)})
+    if duplicates:
+        raise ValueError(
+            f"--sf-observer was given the same node budget twice: {duplicates}. "
+            "Each rung is one cell, so a repeat would name one directory twice.",
+        )
+    bad = sorted(n for n in requested if n <= 0)
+    if bad:
+        raise ValueError(f"--sf-observer needs a positive node budget, got {bad}")
+    threads = int(args.sf_threads)
+    hash_mb = int(args.sf_hash_mb)
+    if threads < 1:
+        raise ValueError(f"--sf-threads must be >= 1, got {threads}")
+    if hash_mb < 1:
+        raise ValueError(f"--sf-hash-mb must be >= 1, got {hash_mb}")
+    supplied = args.sf_binary
+    if supplied is not None:
+        binary_path: str | None = str(supplied)
+        source = "explicit"
+    else:
+        binary_path, source = engine_discovery.resolve_stockfish()
+    if not binary_path or not Path(binary_path).is_file():
+        raise ValueError(
+            "--sf-observer was requested but no Stockfish binary resolved "
+            f"(tried {binary_path!r}, source {source!r}). Pass --sf-binary or "
+            f"set ${engine_discovery.ENV_VAR}.",
+        )
+    identity = engine_discovery.engine_identity(binary_path)
+    digest = identity["sha256"]
+    if not digest:
+        raise ValueError(
+            f"could not hash the Stockfish binary at {binary_path}: an sf- cell "
+            "whose engine has no content digest cannot be compared with the next "
+            "run's, and the path alone is not an identity",
+        )
+    return tuple(
+        SfArmConfig(
+            arm=sf_arm_name(nodes),
+            nodes=int(nodes),
+            threads=threads,
+            hash_mb=hash_mb,
+            binary=Path(binary_path),
+            binary_sha256=str(digest),
+            binary_source=str(identity["source"]),
+        )
+        for nodes in requested
+    )
+
+
 def config_from_args(args: argparse.Namespace) -> RunConfig:
     driver = str(args.driver)
+    if is_sf_arm(driver):
+        raise ValueError(_SF_DRIVER_REFUSAL.format(arm=driver))
     arms = list(dict.fromkeys(args.arm or list(readout.READOUT_ARMS)))
     if driver not in arms:
         arms.insert(0, driver)
@@ -1718,6 +2670,7 @@ def config_from_args(args: argparse.Namespace) -> RunConfig:
         ),
         run_id=str(args.run_id),
         nice=int(args.nice),
+        sf_observers=resolve_sf_observers(args),
     )
 
 
