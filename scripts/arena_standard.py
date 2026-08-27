@@ -3602,16 +3602,19 @@ def run_arena(
         sprt=sprt_record,
     )
     if out_path is not None:
-        if resumed is not None and not openings_to_play:
-            # A no-op resume (every pair already on file) recomputes and prints
-            # the same summary the finished run already appended. Appending it
-            # again would put TWO rows for one arena in a shared aggregate that
-            # other tools average over — and the ratchet passes --resume
-            # unconditionally, so re-running a completed series does exactly
-            # this.
+        if resumed is not None and not played_pair_scores:
+            # A no-op resume recomputes and prints the same summary the
+            # finished run already appended. Appending it again would put TWO
+            # rows for one arena in a shared aggregate that other tools
+            # average over — and the ratchet passes --resume unconditionally,
+            # so re-running a completed series does exactly this. Gated on
+            # pairs PLAYED, not on openings scheduled: an SPRT log whose
+            # resumed pairs already crossed the boundary plays zero games
+            # while openings_to_play still holds the unplayed remainder, and
+            # that resume must not append a second row either.
             print(
-                f"[arena] all {len(openings)} pairs already complete in "
-                f"{log_path}; this invocation played ZERO new games, so "
+                f"[arena] resume played ZERO new pairs "
+                f"({len(loaded_pair_scores)} already in {log_path}), so "
                 f"nothing is appended to {out_path} — a second row for one "
                 f"arena would double-count it in a shared aggregate. This "
                 f"process did NOT read {out_path}: confirm it holds the "
