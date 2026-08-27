@@ -1125,6 +1125,44 @@ def test_a_dead_engine_is_restarted_counted_and_never_silently_skipped(
     assert float(q[0]) == float(q[1])
 
 
+def test_banked_sf_rows_carry_the_restart_counter_at_bank_time(
+    fake_engines, tmp_path: Path,
+) -> None:
+    """⚑ Review F3: the run-level inadmissible verdict stays, but the bank
+    marks WHERE the cold-TT boundary was.  Granularity is the BATCH: a restart
+    mid-batch stamps the whole batch >= 1, so ``== 0`` keeps only rows provably
+    labelled by a warm engine.  Without the marker one restart discards the
+    whole ladder run's bank; with it a re-analysis keeps the warm prefix."""
+    del fake_engines
+
+    def answer(i: int, fen: str) -> StockfishResult:
+        del fen
+        if i == 3 and len(_FakeEngine.built) == 1:
+            raise RuntimeError("Stockfish process exited")
+        return _result(cp=77)
+
+    _FakeEngine.answer = answer
+    arm = shadow.StockfishObserverArm(
+        config=_sf_config(), cp_slope=gen.NNUE_CP_SLOPE,
+        cp_draw_width=gen.NNUE_CP_DRAW_WIDTH, bank=tmp_path / "bank.jsonl",
+    )
+    board = CBoard.from_board(chess.Board())
+    # Batch 1 (calls 1-2): warm engine throughout.  Batch 2: call 3 dies, the
+    # engine is replaced, the batch completes on the cold replacement.
+    arm.evaluate([board, board.copy()], role="root-child", cluster=(0, 0))
+    arm.evaluate([board.copy(), board.copy()], role="root-child", cluster=(0, 1))
+    arm.close()
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "bank.jsonl").read_text().splitlines()
+    ]
+    assert [r["engine_restarts_at_bank_time"] for r in rows] == [0, 0, 1, 1]
+    # Bump-discipline (review F1): the field arrived with a version bump, and
+    # the number is pinned here rather than decorative.
+    assert rows[0]["schema"] == shadow.SF_BANK_SCHEMA
+    assert shadow.SF_BANK_SCHEMA >= 2
+
+
 def test_two_consecutive_engine_failures_raise_rather_than_loop(fake_engines) -> None:
     del fake_engines
 
@@ -1174,6 +1212,10 @@ def test_an_engine_restart_makes_the_run_inadmissible(tmp_path: Path) -> None:
     assert block["observed_populations"] == ["root", "root-child"]
     assert block["engine"]["tt_cleared"] == "per_game"
     assert "provider_stats" not in block
+    # Review F1: the version must move WITH the structural change it announces.
+    # A schema-1 reader subscripting provider_stats on an sf- arm must fail,
+    # and the number that says so has to be pinned, not decorative.
+    assert shadow.REPORT_SCHEMA >= 2
 
 
 def test_a_clean_sf_arm_reports_its_cost_and_stays_admissible(tmp_path: Path) -> None:

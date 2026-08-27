@@ -203,7 +203,7 @@ DEFAULT_SF_HASH_MB = 16
 #: Schema of the ``sf-`` observer's banked JSONL rows. Independent of the
 #: generator's ``LEAF_BANK_SCHEMA``: the columns are an engine's, not an arm
 #: context's, and a reader must not be able to mistake one file for the other.
-SF_BANK_SCHEMA = 1
+SF_BANK_SCHEMA = 2
 
 #: ⚑ ONE MESSAGE, TWO GATES. The parser refuses an ``sf-`` ``--driver`` and so
 #: does ``run``; a caller that reaches either must be told the same thing, and a
@@ -809,6 +809,15 @@ class StockfishObserverArm:
                         ),
                         "engine_depth": (
                             None if result.depth is None else int(result.depth)
+                        ),
+                        # Batch granularity, not row: a restart mid-batch stamps
+                        # the WHOLE batch >= 1, so filtering == 0 keeps only
+                        # rows provably labelled by a warm engine. The run-level
+                        # inadmissible verdict is unchanged; this marks where
+                        # the cold-TT boundary was so a re-analysis can keep
+                        # the warm prefix instead of discarding the run.
+                        "engine_restarts_at_bank_time": int(
+                            self.sf_stats.restarts,
                         ),
                         "bestmove": str(result.bestmove_uci),
                         "game": int(game),

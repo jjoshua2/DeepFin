@@ -11,8 +11,10 @@ is what this file captures.
 production caller (selfplay labels, the arena, the deep-SF tools) constructs
 `StockfishUCI` without `threads`, and the class previously sent
 `setoption name Threads value 1` unconditionally. If the default emitted
-anything else -- a different spelling, a different position in the handshake --
-this parameter would have silently re-tuned every engine in the project.
+anything else -- a different spelling or a different value -- this parameter
+would have silently re-tuned every engine in the project. (Handshake ORDER is
+deliberately not asserted: `setoption` lines before `isready` are order-free
+in UCI, and the filter below discards ordering by construction.)
 """
 from __future__ import annotations
 
