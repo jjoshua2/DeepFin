@@ -805,7 +805,7 @@ def play_chunk(
                 gumbel_target_batch=side.target_batch,
                 evaluator=evaluator,
             )
-            apply_actions_to_boards(boards, [i], actions)
+            apply_actions_to_boards(boards, [i], actions, strict=True)
 
         for i, res in _resolve_sf_futures(futures).items():
             # The RNG key is the board's OWN ply count, so it identifies the

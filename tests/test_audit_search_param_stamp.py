@@ -70,19 +70,26 @@ MOVED_VALUES: dict[str, float] = {
 
 # Distinct from every CLI value above, so a profile column and a flag can never
 # be confused for one another.
+FLAT_SIMS = 100
 FLAT: dict[str, object] = {
     "gumbel_c_scale": 0.1,
     "gumbel_topk": 16,
-    "mcts_simulations": 100,
+    "mcts_simulations": FLAT_SIMS,
     "fast_simulations": 24,
 }
 
 # What `_stamp(_args())` must produce. Spelled out rather than derived, so a
 # change to the stamp has to be restated here deliberately.
 DEFAULT_STAMP: dict[str, float | bool] = {
-    "vloss_weight": 1,
+  # Both profiles carry the EXPLICIT flag value here, because `CLI_VALUES` sets
+  # one. They diverge only on the None ("inherit production") path, which
+  # `test_the_stamp_resolves_the_inherit_production_default` covers — and which
+  # this fixture, by always passing a number, structurally cannot reach.
+    "play_vloss_weight": 1,
+    "rl_vloss_weight": 1,
     "vloss_mode": 0,
-    "target_batch": 1024,
+    "play_target_batch": 1024,
+    "rl_target_batch": 1024,
     "batch_size": 7,
     "sims": 33,                  # --sims
     "rl_sims": 100,              # FLAT mcts_simulations, via the --rl-sims sentinel
@@ -96,7 +103,10 @@ DEFAULT_STAMP: dict[str, float | bool] = {
 
 
 def _args(
-    overrides: dict[str, float] | None = None,
+  # `float | None`: None is the SHIPPED default of --vloss-weight /
+  # --target-batch ("inherit production"), so a fixture that cannot express it
+  # cannot reach the ordinary invocation.
+    overrides: dict[str, float | None] | None = None,
     *,
     gumbel: list[str] | None = None,
     gumbel_topk: int | None = None,
@@ -104,7 +114,7 @@ def _args(
     rl_sims: int = 0,
 ) -> argparse.Namespace:
     """A stub `args` carrying what the stamp and the profile builder read."""
-    values = dict(CLI_VALUES)
+    values: dict[str, float | None] = dict(CLI_VALUES)
     values.update(overrides or {})
     return argparse.Namespace(
         **values,
@@ -132,13 +142,62 @@ def test_stamp_records_every_declared_field() -> None:
     assert stamp == DEFAULT_STAMP
 
 
+def test_the_stamp_resolves_the_inherit_production_default() -> None:
+    """REGRESSION: `--vloss-weight` / `--target-batch` unset is the NORMAL case.
+
+    ⚑ Every other fixture in this module passes an explicit number for both,
+    so none of them can reach the shipped default — which is `None`, meaning
+    "inherit whatever the resolved production config sets". A stamp built with
+    `int(args.vloss_weight)` therefore raised `TypeError` on every ordinary
+    invocation while the whole suite stayed green: the fixture, not the
+    assertion, was what failed to discriminate.
+
+    And it is not enough for the stamp to merely BUILD. `build_search_profiles`
+    resolves the None asymmetrically on purpose — RL rows inherit production,
+    the PLAY row stays at 0 because row (b) is a standing ruler — so this pins
+    the two columns to DIFFERENT values. Coercing the None to 0 would build
+    fine, satisfy a key-presence check, and stamp 0 onto RL rows that searched
+    production's value.
+    """
+  # ⚑ Its OWN flat, not the shared `FLAT`. That stub declares no
+  # `gumbel_vloss_weight` / `gumbel_target_batch`, so production resolves both
+  # to 0 -- and against a 0 production value a per-profile stamp is
+  # indistinguishable from a single shared one. Values chosen distinct from 0
+  # AND from each other so a column that read the wrong one is a wrong VALUE.
+    flat = dict(FLAT) | {"gumbel_vloss_weight": 1, "gumbel_target_batch": 96}
+    args = _args({"vloss_weight": None, "target_batch": None})
+    profiles, _ = at.profiles_for_audit(args, flat)
+    stamp = at.search_param_stamp(args, profiles=profiles)
+
+    assert tuple(stamp) == at.SEARCH_PARAM_FIELDS
+
+  # Production's own builder, called the way `build_search_profiles`'s `_rl`
+  # calls it -- `production_search_shape`, not the profile the stamp was made
+  # from, or the assertion would be checking the stamp against itself.
+    from chess_anti_engine.eval.production_shape import production_search_shape
+
+    prod = production_search_shape(flat, simulations=FLAT_SIMS)
+    assert stamp["rl_vloss_weight"] == int(prod.vloss_weight) == 1
+    assert stamp["rl_target_batch"] == int(prod.target_batch) == 96
+    assert stamp["play_vloss_weight"] == 0
+    assert stamp["play_target_batch"] == 0
+
+    # Non-vacuity: the split is only a real check while the two disagree.
+    assert stamp["rl_vloss_weight"] != stamp["play_vloss_weight"], (
+        "production's gumbel_vloss_weight is 0, so this test cannot tell a "
+        "per-profile stamp from a single shared one -- do not read it as a pass"
+    )
+
+
 # Which stamp field(s) each CLI flag is allowed to move. `--policy-temp` feeds
 # BOTH profiles, because it is applied to every built GumbelConfig; a
 # `--gumbel policy_temp=` override is the PLAY-only one.
 MOVES: dict[str, tuple[str, ...]] = {
-    "vloss_weight": ("vloss_weight",),
+  # An EXPLICIT --vloss-weight / --target-batch feeds both profiles, so both
+  # columns follow it. Only the unset (None) default splits them.
+    "vloss_weight": ("play_vloss_weight", "rl_vloss_weight"),
     "vloss_mode": ("vloss_mode",),
-    "target_batch": ("target_batch",),
+    "target_batch": ("play_target_batch", "rl_target_batch"),
     "batch_size": ("batch_size",),
     "sims": ("sims",),
     "policy_temp": ("play_policy_temp", "rl_policy_temp"),
@@ -479,6 +538,26 @@ def test_search_params_are_not_ruler_fields_so_two_arms_still_join(
 # --------------------------------------------------------------------------
 
 
+def _refuse_policy_temp(temp: float) -> None:
+    """Drive the band guard the way `main()`'s `--policy-temp` path drives it.
+
+    The per-key `_refuse_dead_override(name, value, where=...)` this test used
+    to call is gone: the guard now validates the ASSEMBLED `GumbelConfig`
+    (`_refuse_dead_search_cfg`), which is the object `_net_candidates` will
+    `dataclasses.replace` the override onto, and which shares
+    `validate_gumbel_config`'s bands with every other caller instead of keeping
+    a second copy of `0.05 <= T <= 20.0` in the script. Same criterion, same
+    band, same `where=` label — only the call shape moved.
+    """
+    import dataclasses as _dc
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    at._refuse_dead_search_cfg(
+        _dc.replace(GumbelConfig(), policy_temp=temp), where="--policy-temp"
+    )
+
+
 @pytest.mark.parametrize("temp", [0.0, 0.01, 42.5, 1e300])
 def test_an_out_of_band_policy_temp_is_refused_rather_than_stamped(
     temp: float,
@@ -490,29 +569,56 @@ def test_an_out_of_band_policy_temp_is_refused_rather_than_stamped(
     must name `--policy-temp`, not the `--gumbel` override that shares the band,
     or a test could pass on the wrong guard.
     """
-    with pytest.raises(SystemExit, match=r"--policy-temp=") as excinfo:
-        at._refuse_dead_override("policy_temp", temp, where="--policy-temp")
+    with pytest.raises(SystemExit, match=r"--policy-temp: policy_temp=") as excinfo:
+        _refuse_policy_temp(temp)
     assert "--gumbel" not in str(excinfo.value)
 
 
 def test_the_untempered_prior_and_an_in_band_value_are_both_allowed() -> None:
     """1.0 is an explicit "run the untempered prior", not a dead value."""
-    at._refuse_dead_override("policy_temp", 1.0, where="--policy-temp")
-    at._refuse_dead_override("policy_temp", 2.2, where="--policy-temp")
+    _refuse_policy_temp(1.0)
+    _refuse_policy_temp(2.2)
 
 
-def test_main_refuses_an_out_of_band_policy_temp_and_a_negative_vloss_weight() -> None:
-    """Reachability: the two guards must be CALLED, not merely defined.
+def test_main_forwards_the_policy_temp_flag_and_refuses_a_negative_vloss() -> None:
+    """Reachability: the guards must be CALLED with `main()`'s OWN arguments.
 
-    Greps by name cannot show that, so this reads `main()`'s AST — a guard that
+    A grep by name cannot show that, so this reads `main()`'s AST — a guard that
     exists and is never invoked is this repo's signature defect.
+
+    ⚑ THE `--policy-temp` ASSERTION WAS ONCE DELETED FROM HERE ON THE GROUND
+    THAT `tests/test_gumbel_config_validation.py` COVERS IT BY EXECUTION. That
+    was WRONG, and the mutant proves it: those tests call
+    `build_profile_search_shape(..., play_policy_temp=<their own literal>)`
+    directly, so they pin the BUILDER's behaviour and pin nothing at all about
+    what `main()` hands it. Replacing `policy_temp=float(args.policy_temp)` with
+    the constant `1.0` left 254 tests across eight files green — while
+    `search_param_stamp` went on stamping `play_policy_temp` from
+    `args.policy_temp`, i.e. a `--policy-temp 2.2` run would bank 2.2 in the
+    header of a report whose search ran 1.0. That is precisely the false
+    provenance this module exists to prevent, and only an assertion about
+    `main()`'s own call expression can see it.
+
+    So: the flag must reach `_net_candidates` as `args.policy_temp` and not as
+    any literal. `float(...)` is asserted with it, because a bare pass-through
+    of the argparse value would be the same defect one type-coercion later.
     """
     body = ast.unparse(_main_body())
-    assert 'where=\'--policy-temp\'' in body or 'where="--policy-temp"' in body, (
-        "main() never applies the band guard to the dedicated --policy-temp flag"
+    assert "policy_temp=float(args.policy_temp)" in body, (
+        "main() no longer forwards --policy-temp into the candidate search. A "
+        "constant here searches the default prior while the stamp records the "
+        "operator's value -- see this test's docstring for the surviving mutant"
     )
     assert "args.vloss_weight) < 0" in body, (
         "main() never refuses a negative --vloss-weight, which the C runner drops"
+    )
+  # ⚑ And it must be None-SAFE. `--vloss-weight` defaults to None ("inherit the
+  # resolved production config's `gumbel_vloss_weight`"), so a bare
+  # `int(args.vloss_weight)` raises TypeError on every ordinary invocation --
+  # a guard that crashes the script it protects, which is how this landed.
+    assert "args.vloss_weight is not None" in body, (
+        "main()'s vloss guard is not None-safe; --vloss-weight defaults to None "
+        "and int(None) raises before the refusal can be reached"
     )
 
 
@@ -553,7 +659,7 @@ def test_tail_stats_still_parses_a_dump_carrying_the_new_keys(
     """
     path = tmp_path / "dump_tail_stats.jsonl"
     path.write_text(json.dumps(_dump_row(**_stamp(_args()))) + "\n", encoding="utf-8")
-    rows = tail_stats.load(str(path), True)
+    rows = tail_stats.load(str(path), "cand.raw.top1")
     assert rows == {"pos1": (30.0, "endgame")}
 
 

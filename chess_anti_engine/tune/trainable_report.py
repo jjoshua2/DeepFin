@@ -890,6 +890,43 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # `total` multiplies by `w`, so it is what to read against the weight once the
   # term is on. Neither moves with `w` within a single step; see TrainMetrics.
     "m_sf_policy_floor": 0.0, "sf_policy_floor_binds_frac": 0.0,
+  # Feasibility cap. The floors are simultaneous lower bounds on ONE
+  # distribution, so a per-row mass above 1.0 would be an EMPTY constraint set
+  # and a residual no net can clear; the loss caps the SET (see
+  # losses.sf_policy_floor_deficit). ⚑⚑ READ `..._truncated_frac` FOR WHETHER
+  # THE CAP FIRED -- it is the only column that answers that. These are ROW
+  # MEANS, so `..._requested_mass` above 1.0 is nearly unreachable even when a
+  # large minority of rows are infeasible (0.552 measured against a
+  # `truncated_frac` of 0.333), and the float32 narrowing costs it another ULP.
+  # Read raw against applied for the MAGNITUDE -- that pair is what separates a
+  # term whose strength came from the configured tau from one whose strength
+  # came from a `|F| * tau` nobody set.
+    "sf_policy_floor_member_count_raw": 0.0,
+    "sf_policy_floor_requested_mass": 0.0,
+    "sf_policy_floor_truncated_frac": 0.0,
+    "sf_policy_floor_member_count_applied": 0.0,
+    "sf_policy_floor_applied_mass": 0.0,
+    "sf_own_regret_gated_frac": 0.0,
+  # SF-shape conditional KL + its permanent entropy instrument (see
+  # TrainMetrics for the reading order). Every one of these is live at
+  # `w_sf_shape: 0.0` -- the entropy pair is a MONITOR that exists because our
+  # policy went sharper than its own SF teacher with no column reporting it.
+  # Read `sf_shape_surfaced_moves` before any of the rest: it is the health of
+  # the recovered SF-surfaced mask the whole family stands on.
+    "m_sf_shape": 0.0, "sf_shape_active_frac": 0.0,
+    "sf_shape_h_sf_given_s": 0.0, "sf_shape_h_ours_given_s": 0.0,
+    "sf_shape_entropy_gap": 0.0, "sf_shape_sharper_frac": 0.0,
+    "sf_shape_regret_cp_given_s": 0.0, "sf_shape_h_ours_full_legal": 0.0,
+    "sf_shape_surfaced_moves": 0.0,
+    "sf_shape_surfaced_mass": 0.0, "sf_shape_p_sf_best": 0.0,
+  # MATCHED-SUPPORT instrument for the ORDINARY policy target: is the search
+  # target itself a sharpening teacher? Every name carries its support, because
+  # the unmatched version of this comparison is a large, plausible, wrong number
+  # (see TrainMetrics). `policy_support_gap` is H(target) - H(ours), so NEGATIVE
+  # means the target is the sharper one.
+    "policy_support_h_ours": 0.0, "policy_support_h_target": 0.0,
+    "policy_support_gap": 0.0, "policy_support_size": 0.0,
+    "policy_tail_mass_ours": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
   # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
@@ -909,6 +946,16 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # and must never be summed with it.
     "sf_wdl_degenerate_frac": 0.0, "sf_wdl_orphaned_frac": 0.0,
     "sf_eval_pv_orphan_frac": 0.0, "sf_eval_pv_checked_frac": 0.0,
+  # ⚑ VALUE-BLEND FALLBACK COVERAGE. Healthy is EXACTLY 1.000000 on both:
+  # every row's SF and search component came from its own label rather than
+  # from the raw one-hot game outcome. `1 - x` here is multiplied by the
+  # corresponding frac to get the share of the value target that silently
+  # became the outcome, so 0.0 is a FULL leak — the opposite polarity to every
+  # other column in this block, which is why the default is 0.0 and not 1.0:
+  # an absent column must not read as healthy. TB-only was the shipped state
+  # (review F9), and the alerting path is where the 2026-05 realized
+  # `sf_wdl_frac 0.45` episode would actually have been caught.
+    "sf_wdl_effective_frac": 0.0, "search_wdl_effective_frac": 0.0,
   # Terminal-proximal outcome share of the value target. Exactly 0.0 while
   # `wdl_terminal_outcome_plies` is 0 (the default), so a non-zero value is the
   # proof the knob reached the trained target -- the echoed config value is
@@ -938,6 +985,7 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "policy_loss_phase_n_end": 0.0,
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
+    "grad_adaptive_bound_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
     "grad_norm_aurora": 0.0, "grad_norm_adamw": 0.0,
     "grad_nonfinite_skip_rate": 0.0,
@@ -1013,6 +1061,58 @@ def _train_metrics_dict(metrics) -> dict:
         # that is the column to read against the weight.
         "m_sf_policy_floor": float(metrics.m_sf_policy_floor),
         "sf_policy_floor_binds_frac": float(metrics.sf_policy_floor_binds_frac),
+        # Feasibility cap; see the defaults block above for how to read the pair.
+        "sf_policy_floor_member_count_raw": float(
+            metrics.sf_policy_floor_member_count_raw,
+        ),
+        "sf_policy_floor_requested_mass": float(metrics.sf_policy_floor_requested_mass),
+        "sf_policy_floor_truncated_frac": float(metrics.sf_policy_floor_truncated_frac),
+        "sf_policy_floor_member_count_applied": float(
+            metrics.sf_policy_floor_member_count_applied,
+        ),
+        "sf_policy_floor_applied_mass": float(metrics.sf_policy_floor_applied_mass),
+        # ⚑ Share of the rows `sf_own_regret` acted on that the fabricated-tail
+        # gate scaled DOWN. This column is the ONLY observation that proves the
+        # gate reached the production path, so it has to land in the Ray result
+        # row -- TensorBoard event files rotate per Ray session and are a
+        # non-sink (see the TrainMetrics comment above `batches_drawn`). Reads
+        # exactly 0.0 at the identity defaults.
+        "sf_own_regret_gated_frac": float(metrics.sf_own_regret_gated_frac),
+        # SF-shape term and its instrument, over the same eligible rows.
+        # `sf_shape_entropy_gap` is H(teacher) - H(ours) on the SAME conditional
+        # support, so POSITIVE means we are sharper than the teacher -- the
+        # drift this whole family was added to make visible. `total` gains
+        # `w_sf_shape * m_sf_shape`, so that is the column to read against the
+        # weight; `sf_shape_active_frac` is the selection column, invariant to
+        # `w` within a step.
+        "m_sf_shape": float(metrics.m_sf_shape),
+        "sf_shape_active_frac": float(metrics.sf_shape_active_frac),
+        "sf_shape_h_sf_given_s": float(metrics.sf_shape_h_sf_given_s),
+        "sf_shape_h_ours_given_s": float(metrics.sf_shape_h_ours_given_s),
+        "sf_shape_entropy_gap": float(metrics.sf_shape_entropy_gap),
+        "sf_shape_sharper_frac": float(metrics.sf_shape_sharper_frac),
+        # Entropy alone must not gate the term: an entropy-matched pair can still
+        # rank the surfaced moves backwards, and `m_sf_shape` (= KL(q_S||p_S))
+        # plus this expected-regret column are what see that.
+        "sf_shape_regret_cp_given_s": float(metrics.sf_shape_regret_cp_given_s),
+        "sf_shape_h_ours_full_legal": float(metrics.sf_shape_h_ours_full_legal),
+        "sf_shape_surfaced_moves": float(metrics.sf_shape_surfaced_moves),
+        # ⚑ M_S GATES ACTIVATION. The conditional KL is invariant to it by
+        # construction, so a low M_S beside a matched entropy gap means the
+        # dominant pathology is MASS ALLOCATION and this term is the wrong tool
+        # -- a wider labelling set, not a weight. `1 - M_S` is the share of our
+        # policy sitting on moves SF never scored.
+        "sf_shape_surfaced_mass": float(metrics.sf_shape_surfaced_mass),
+        "sf_shape_p_sf_best": float(metrics.sf_shape_p_sf_best),
+        # The matched-support pair for the ORDINARY policy target, over its own
+        # `policy_target_rows` population. `policy_tail_mass_ours` is what the
+        # restriction drops -- our mass on moves the search never made a
+        # candidate -- published rather than left to leak into the gap.
+        "policy_support_h_ours": float(metrics.policy_support_h_ours),
+        "policy_support_h_target": float(metrics.policy_support_h_target),
+        "policy_support_gap": float(metrics.policy_support_gap),
+        "policy_support_size": float(metrics.policy_support_size),
+        "policy_tail_mass_ours": float(metrics.policy_tail_mass_ours),
         # Desync alarm over the rows training actually consumed. Unlike the
         # sf_rebuild_* pair below it is computed unconditionally, from the
         # batch's own presence flags, so it is readable on every iteration
@@ -1026,6 +1126,10 @@ def _train_metrics_dict(metrics) -> dict:
         # the blind spot's own count. See TrainMetrics for what each floor is.
         "sf_wdl_degenerate_frac": float(metrics.sf_wdl_degenerate_frac),
         "sf_wdl_orphaned_frac": float(metrics.sf_wdl_orphaned_frac),
+        # How much of each value-blend component came from its LABEL rather
+        # than from the raw one-hot fallback -- see the defaults table.
+        "sf_wdl_effective_frac": float(metrics.sf_wdl_effective_frac),
+        "search_wdl_effective_frac": float(metrics.search_wdl_effective_frac),
         "sf_eval_pv_orphan_frac": float(metrics.sf_eval_pv_orphan_frac),
         "sf_eval_pv_checked_frac": float(metrics.sf_eval_pv_checked_frac),
         # Terminal-proximal outcome transfer -- see the defaults table above.
@@ -1081,7 +1185,13 @@ def _train_metrics_dict(metrics) -> dict:
         "grad_norm_p95": float(metrics.grad_norm_p95),
         "grad_norm_max": float(metrics.grad_norm_max),
         "grad_clip_rate": float(metrics.grad_clip_rate),
+        # `_adaptive_clip_rate` is how often the adaptive threshold FIRED;
+        # `_adaptive_bound_rate` and `_hard_clip_rate` are how often each clip
+        # BOUND, and those two partition `grad_clip_rate`. Reading the firing
+        # rate as "the adaptive clip was in charge" is wrong whenever the hard
+        # cap sat below the adaptive threshold.
         "grad_adaptive_clip_rate": float(metrics.grad_adaptive_clip_rate),
+        "grad_adaptive_bound_rate": float(metrics.grad_adaptive_bound_rate),
         "grad_hard_clip_rate": float(metrics.grad_hard_clip_rate),
         "grad_norm_samples": int(metrics.grad_norm_samples),
         # Per-optimizer-group split. The clip acts on the AdamW group alone —
@@ -1593,6 +1703,21 @@ def _build_report_dict(
         # adding the yaml key is restart-gated, since the live-yaml validator
         # rejects a key the running code does not define.
         "mirror_prob": float(trainer.mirror_prob),
+        # ⚑ THE FABRICATED-TAIL GATE, REPORTED FROM THE TRAINER'S OWN ATTRIBUTE --
+        # which is the REALIZED pair, not the typed one. Same reason as
+        # `mirror_prob` above and then one more: these two keys are sanitized at
+        # construction (non-finite -> off, finite out-of-range -> clamped to
+        # [0, 1]), so `params.json` and the Ray `config` keep whatever the
+        # operator typed while the trainer runs on something else. A run
+        # configured `listed_mass_min: 10` trains at 1.0 with its persisted
+        # config still saying 10, and `sf_own_regret_gated_frac` cannot tell them
+        # apart -- it reads 0.0 for "off" and for "disabled by fallback" alike.
+        # Without this row the ONE-TIME construction warning is the only evidence
+        # the substitution ever happened, and a warning that scrolled past three
+        # days ago is not evidence. Read this column against the yaml, not the
+        # yaml alone.
+        "sf_own_regret_listed_mass_min": float(trainer.sf_own_regret_listed_mass_min),
+        "sf_own_regret_unlisted_scale": float(trainer.sf_own_regret_unlisted_scale),
         # BOTH of these shape only the AUXILIARY `sf_eval` head's row mask.
         # Neither touches the WDL value target (docs/model_heads.md).
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),

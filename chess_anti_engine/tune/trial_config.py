@@ -12,7 +12,7 @@ from chess_anti_engine.mcts.gumbel import (
 )
 from chess_anti_engine.stockfish.wdl import SEARCH_WDL_DRAW_MODES, SEARCH_WDL_DRAW_NET_RAW
 from chess_anti_engine.train.constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
-from chess_anti_engine.train.losses import SfPolicyFloorParams
+from chess_anti_engine.train.losses import SfPolicyFloorParams, SfShapeParams
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
@@ -39,6 +39,13 @@ StartupSource = Literal[
     "exploit_restore",
     "exploit_restore_model_only",
 ]
+
+
+def _unit_fraction(value: Any, *, name: str) -> float:
+    frac = _optional_unit_fraction(value, name=name)
+    if frac is None:
+        raise ValueError(f"{name} must be in [0, 1], got {value!r}")
+    return frac
 
 
 def _optional_unit_fraction(value: Any, *, name: str) -> float | None:
@@ -339,6 +346,7 @@ class TrialConfig:
     record_lc0_root_input: bool = False
     history_rep_fix: bool = False
     record_dense_sf_policy: bool = True
+    record_prior_top1: bool = True
     record_sf_p0_policy: bool = False
     record_sf_p0_regret: bool = False
     record_fast_ply_value: bool = False
@@ -424,6 +432,12 @@ class TrialConfig:
     replay_sf_gap_priority_weight: float = 0.0
     replay_sf_gap_priority_signed: bool = False
     replay_fast_low_surprise_priority: float = 1.0
+  # Target blend: on rows with has_sf_p0, policy_target <- (1-a)*t0 + a*q where
+  # q is the stored same-position SF soft teacher (sf_p0_policy_target). 0.0 =
+  # OFF (the buffer runs unwrapped, bitwise). Applied at the train_steps call
+  # boundary each iteration, so it is live-reloadable in both directions.
+  # Dose-ladder prereg 2026-08-19; wired live 2026-08-21.
+    sf_p0_blend_alpha: float = 0.0
     shared_shards_dir: str | None = None
 
   # --- Holdout / evaluation ---
@@ -589,6 +603,16 @@ class TrialConfig:
             gumbel_topk=normalize_gumbel_topk(
                 config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
             ),
+        )
+  # Same contract for the SF-shape term, and NOT STORED for the same reason:
+  # `sf_shape_temp_cp` is startup-only, so a `tc.sf_shape` field would track the
+  # LIVE yaml while the loss kept the LAUNCH value. Called for its exception
+  # alone -- a decimal typo on the temperature (or a `0`, which is a divisor
+  # here) then kills the trial once, loudly, naming the key, instead of arriving
+  # raw at the consumer.
+        SfShapeParams.resolve(
+            w=config.get("w_sf_shape"),
+            temp_cp=config.get("sf_shape_temp_cp"),
         )
         return cls(
   # --- Global ---
@@ -846,6 +870,7 @@ class TrialConfig:
             record_lc0_root_input=bool(config.get("record_lc0_root_input", False)),
             history_rep_fix=bool(config.get("history_rep_fix", False)),
             record_dense_sf_policy=bool(config.get("record_dense_sf_policy", True)),
+            record_prior_top1=bool(config.get("record_prior_top1", True)),
             record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
             record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
             record_fast_ply_value=bool(config.get("record_fast_ply_value", False)),
@@ -919,6 +944,8 @@ class TrialConfig:
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             replay_sf_gap_priority_weight=float(
                 config.get("replay_sf_gap_priority_weight", 0.0)),
+            sf_p0_blend_alpha=_unit_fraction(
+                config.get("sf_p0_blend_alpha", 0.0), name="sf_p0_blend_alpha"),
             # str().lower() coercion so a stringy "off"/"no"/"false" (which
             # bool() would read as True) disables signed mode, while a native
             # YAML bool still works.

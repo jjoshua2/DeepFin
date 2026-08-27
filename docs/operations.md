@@ -19,6 +19,30 @@ Without that, restarting after a stop silently drops the running trial and spawn
 random-init one. To abandon the current trial's state, pass `--fresh` or use
 `salvage-restart` from a good pool; never `rm` the tune dir while a run is live.
 
+**`$CHESS_ANTI_ENGINE_LIVE_CONFIG` — which yaml the offline instruments treat as
+production.** `train.sh` exports it (absolute path to `$TRAIN_CONFIG`, default
+`configs/pbt2_small.yaml`), and ⚑ **that export reaches training and its observer
+descendants ONLY.** `./scripts/train.sh start` runs the script in a SUBPROCESS, and a
+subprocess cannot modify its parent, so the shell you launched training from still has
+the variable unset. Read that as the normal case, not the exception: set it by hand in
+**every** shell — including the one that started the run — that runs
+`scripts/audit_targets.py`, `scripts/arena_standard.py --search-shape training`,
+`scripts/value_regret.py` or `scripts/probe_policy_targets.py`:
+
+```bash
+export CHESS_ANTI_ENGINE_LIVE_CONFIG=/abs/path/to/live/tree/configs/pbt2_small.yaml
+```
+
+⚑ This is not optional hygiene. CLAUDE.md mandates a `git worktree` for branch work,
+and a worktree's in-tree `configs/pbt2_small.yaml` is stale by construction — the live
+tree is the only writer and its edits are routinely uncommitted (`origin/main` carries
+none of `gumbel_policy_temp` / `gumbel_target_max_visit_cap` /
+`gumbel_target_untempered_prior`, which the live yaml sets). With the variable unset,
+`audit_targets.py` now **refuses** to emit rows (d)/(e) rather than score the wrong
+search under the heading "production training target"; pass `--allow-stale-config`
+only when you deliberately mean a non-production config, and note that it stamps the
+per-position dump `config_authority.authoritative = false`.
+
 **Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py` creates
 `pause.txt` in the tune dir; active trials finish the current iteration, hold, then the
 script restarts cleanly. Use it before a restart that would otherwise orphan a
@@ -30,6 +54,100 @@ mid-iteration trial.
 cadenced FEN-panel reads + the seed retire/probation step (log
 `scratchpad/live_read/monitor/`); `scripts/ratchet_loop.sh` — the daily strength
 ratchet (log `scratchpad/ratchet_loop.log`).
+
+### ⚑ Nothing restarts training over a deliberate stop
+
+`train.sh stop` touches `/tmp/chess_training.intentional_stop` **before** it kills, and
+every path that can (re)start training now consults it **for itself** — the check lives in
+`scripts/intentional_stop_guard.sh`, which `recover_stall.sh` and `watchdog_pbt.sh`
+source. It used to live only in the *callers*, which covered the watchdog route and left
+the two routes a human drives directly wide open:
+
+| route | before | now |
+|---|---|---|
+| `watchdog_loop.sh` → `recover_stall.sh` (confirmed stall) | caller tested the marker | caller **and** the script |
+| `./scripts/recover_stall.sh` **by hand** | **no check anywhere** | refuses, exit 7 |
+| `bash scripts/watchdog_pbt.sh` (tmux, launches `chess_anti_engine.run` directly) | **no check anywhere** | logs the refusal, does not restart, keeps polling |
+
+⚑ One marker class this guard does **not** see, said plainly rather than implied: a pause
+held *only* at the ephemeral Ray-session tune root
+(`/tmp/ray/session_*/artifacts/.../driver_artifacts/`), which is named by the actor and not
+reachable from a shell script. `train_watchdog.find_pause_txt` — the instrument that
+produces the STALLED verdict in the first place — cannot see it either.
+
+A refusal names **every** marker it saw and what that marker holds, so the operator knows
+which file to remove. An intentional-stop marker **or** a pause marker refuses.
+
+**⚑ The pause set is not one file.** The guard enumerates every marker the pause machinery
+itself honours: the tune dir scanned **recursively** — root *and* per-trial
+`train_trial_*/pause.txt`, the same set `train_watchdog.find_pause_txt` walks — plus a
+`pause_file` configured in the live yaml, wherever it points. Checking only
+`runs/pbt2_small/tune/pause.txt` let a per-trial pause through and recovery SIGKILLed a
+deliberately parked run. A marker that is a **dangling symlink** or a directory also
+refuses (`[ -e ]` alone follows the link and reads a dangling one as absent).
+
+To override, pass `--ignore-intentional-stop` (alias `--force`). It is deliberate and
+loud: one log line per marker being ignored, plus a line saying production is being
+restarted against a deliberate stop. It is never the default, and an argument that is
+neither of those two spellings is a usage error (exit 2) rather than a silently ignored
+value — a typo'd override must not read as "the guard did not fire".
+
+**The two scripts differ on purpose, and the difference is what each one can carry out:**
+
+- `recover_stall.sh` **can** override a pause: it restarts through `train.sh start`, whose
+  `clear_pause_markers` renames markers aside properly. An overridden run therefore clears
+  the **whole** enumerated set, not just the root marker. The ordinary path clears nothing
+  — it already proved no marker existed, so anything it found would belong to a window that
+  is just opening.
+- `watchdog_pbt.sh` **cannot**, so it refuses: `--ignore-intentional-stop` there overrides
+  the **stop** marker only. It routes through neither `recover_stall.sh`'s teardown nor
+  `train.sh start`, so a trial it launched over a pause would park at its own pause check
+  within seconds while the log said `Restarted with PID N` — a silent wedge, worse than the
+  refusal because the log asserts the opposite of what happened.
+- On `watchdog_pbt.sh` the flag authorizes **one** restart and is consumed there. That loop
+  runs for days in a tmux pane; a flag left set would turn one "bring it back up now" into
+  standing permission to override every later stop.
+
+**A refusal does not burn the recovery cooldown.** `watchdog_loop.sh` writes its
+`RECOVER_STAMP` *before* invoking `recover_stall.sh` (deliberately — if the loop dies
+mid-recovery the 2 h anti-flap bound must already be armed). On exit 7 it now rolls the
+stamp back to exactly its previous value, logs `cooldown stamp rolled back`, and raises a
+distinct `AUTO-RECOVER REFUSED` alert. Without the rollback a refusal suppressed recovery
+for two hours for a recovery that never happened, and every genuine stall in that window
+reported `SUPPRESSED (re-stall within cooldown of last recovery)` with no last recovery to
+speak of.
+
+⚑ `watchdog_pbt.sh` is guarded but still **bypasses `train.sh`**: its restart writes no
+`/tmp/chess_training.pid`, runs no C-extension freshness check, starts no observers, and
+exports neither `PYTORCH_NVML_BASED_CUDA_CHECK` nor `CHESS_ANTI_ENGINE_LIVE_CONFIG`. A run
+it starts is one `train.sh status` / `train.sh stop` cannot see. Prefer
+`./scripts/train.sh start`; `watchdog_loop.sh` covers the same ground properly.
+
+**⚑ Ops scripts now operate on THE TREE THEY LIVE IN.** `monitor_fen.sh`,
+`recover_stall.sh`, `run_bootstrap_512x16.sh` and **`bank_rolling_checkpoints.sh`** used
+to `cd` to (or hardcode) an absolute root, so they drove the main checkout no matter where
+they were launched from; they now derive it with `cd "$(dirname "$0")/.."`. Launched from
+`train.sh` / `watchdog_loop.sh` in the repo root this is identical behaviour — but running
+one **out of a `git worktree` now drives the worktree**, where `runs/` does not exist and
+the script will find no trial. Given the standing "use a worktree for all branch work"
+rule, run these from the main checkout, or `cd` there first. (`ratchet_common.sh` is
+*sourced*, so it uses `${BASH_SOURCE[0]}`, not `$0`; `RATCHET_ROOT` / `WATCHDOG_ROOT`
+still override.)
+
+⚑⚑ **`bank_rolling_checkpoints.sh` is the one where that silently cost you something**, so
+it now refuses instead: from a tree with no `runs/pbt2_small/tune` it prints `[bank] ERROR:
+no tune dir at <path>` and exits **2**, where before it printed nothing, created an empty
+`data/salvage/rolling`, and — with `ONCE` unset, i.e. in production — looped on that
+forever. It is the rolling half of the **revert points** the experiment protocol depends
+on, and Ray prunes the originals meanwhile, so a silently-empty bank is only discovered at
+the moment a rollback is needed. `TUNE_DIR=<path>` overrides the location.
+
+Engine-running tools
+(`blindspot_*`) do NOT have this problem — they discover the published Stockfish through
+`chess_anti_engine.utils.engine_discovery`, which falls back from the current checkout to
+the **main** checkout via `git rev-parse --git-common-dir`, because
+`e2e_server/publish/` is untracked runtime output that exists only where it was
+published. `CAE_STOCKFISH` overrides.
 
 ## The nightly pause window
 
@@ -548,7 +666,7 @@ info string searchconfig PolicyTemperature = 1.0 [LIVE]
 info string searchconfig CScale = 0.025 [LIVE]
 info string searchconfig CPuct = 1.75 [INERT] — CPuct does not reach the gumbel path (...)
 info string searchconfig QVisitExpRoot = -1.0 [BRANCH] — every value < 0 is the same search: ...
-info string searchconfig 14 live, 1 branch-pinned, 4 inert on path=gumbel
+info string searchconfig 11 live, 1 branch-pinned, 4 inert on path=gumbel
 ```
 
 The path is read off the **live worker**, not off the options: `UseVL true`
@@ -603,10 +721,7 @@ installed descent object. `searchconfig` remains the authority for what a
 | `CVisit` | string | 0 – 1e5 | 50.0 | gumbel; rpg only if `CVisitRoot < 0` | descent transform floor |
 | `CScaleRoot` | string | -1 – 1000 | 7.0 | gumbel, rpg | root-only c_scale; <0 = use `CScale` |
 | `CVisitRoot` | string | -1 – 1e5 | 900.0 | gumbel, rpg | root-only c_visit; <0 = use `CVisit` |
-| `QVisitExp` | string | 0 – 2 | 1.0 | gumbel; rpg only if `QVisitExpRoot >= 90` | descent exponent on max_visit |
-| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = use `QVisitExp` |
-| `QVisitFloor` | string | -1 – 1e4 | -1.0 | gumbel; rpg only if `QVisitExpRoot >= 0` | additive (decoupled) transform floor; <0 = legacy coupled |
-| `QGlobalScale` | check | — | false | gumbel | scale descent transform by the ROOT max child-visit |
+| `QVisitExpRoot` | string | -10 – 99 | -1.0 | gumbel, rpg — reported **`[BRANCH]`**, not INERT; see below | <0 = log root (sim-invariant); ≥90 = LINEAR root (exponent 1.0) |
 | `HalvingDiv` | spin | 2 – 8 | 2 | gumbel, rpg | sequential-halving divisor |
 | `Topk` | spin | 2 – 256 | 32 | gumbel, rpg | root candidates |
 | `GumbelScale` | string | 0 – 5 | 0.0 | gumbel, rpg | root Gumbel-noise strength; 0 = deterministic |
@@ -617,6 +732,16 @@ installed descent object. `searchconfig` remains the authority for what a
 | `CPuctFactor` | string | 0 – 100 | 3.89 | walker, pucv, pucv_pool, rpg | 0 = fixed CPuct |
 | `CPuctBase` | string | 1 – 1e9 | 38739.0 | walker, pucv, pucv_pool, rpg | log((N+base)/base) |
 | `FpuReduction` | string | -10 – 10 | 0.33 | walker, pucv, pucv_pool, rpg | first-play-urgency reduction |
+
+**Removed 2026-08-23: `QVisitExp`, `QVisitFloor`, `QGlobalScale`.** They drove
+three DESCENT value-transform knobs on `GumbelConfig` that were never promoted —
+absent from every config in this repo and from `PLAY_SEARCH_DEFAULTS`, sweep
+leftovers from the root/descent split work. The axis that DID pay off is the
+separate ROOT family (`CScaleRoot` / `CVisitRoot` / `QVisitExpRoot`), which is
+untouched and is what production PLAY runs as the log root. The descent
+transform is now fixed linear, which is the search every config here was already
+running. A GUI still sending one of the three gets the normal unknown-option
+handling instead of an option that pretended to tune something.
 
 Names match `scripts/arena_standard.py --cand-gumbel` / `--ref-gumbel` field
 names with the underscores removed and CamelCased (`c_scale` → `CScale`,
@@ -723,7 +848,7 @@ threshold, nothing fitted:
 | current value | what the C does | what is pinned |
 |---|---|---|
 | `< 0` (the shipped `-1.0`) | log root: `CScaleRoot·log1p(CVisitRoot + max_visit)` (`_mcts_tree.c:1498`) | the expression **does not contain the exponent**; only its sign chose the branch, so every negative value is one search |
-| `>= 90` | "use `QVisitExp` at the root too" sentinel (`:3947`) | every value in [90, 99] is one search |
+| `>= 90` | LINEAR root sentinel: the exponent resolves to `1.0` (`:3947`, reading the literal `gumbel_c` passes for the deleted `q_visit_exp`) | every value in [90, 99] is one search |
 | `0 … 90` | power root: `CScaleRoot·(CVisitRoot + max_visit^exp)` (`:1500-1504`) | the exponent is *added to* `CVisitRoot`, so at `CVisitRoot >> max_visit^exp` it moves `q_scale` very little |
 
 **Crossing a boundary changes the search, and the engine must never call that

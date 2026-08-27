@@ -1834,4 +1834,32 @@ static void cboard_init_all(void) {
     init_byte_to_float_lut();
 }
 
+/* ⚑ PROVE THE -D ACTUALLY REACHED THE INCLUDE.
+ *
+ * The whole fast-slider mechanism is a set of -D flags whose only consumer is a
+ * conditional #include at the BOTTOM of _bitboard_planes_impl.h, several
+ * headers away from any file that mentions them. Reorder the includes, or add
+ * an extension that pulls _cboard_impl.h through some path that skips the plane
+ * header, and DEEPFIN_FAST_SLIDERS becomes a define nothing reads: the renames
+ * still apply, the ray walkers answer under their *_reference names, movegen
+ * stays correct, and every test passes at the old speed. That is a value
+ * accepted and silently ignored, which is this repo's signature defect. Turn it
+ * into a compile error instead. */
+#if defined(DEEPFIN_FAST_SLIDERS) && !defined(DEEPFIN_SLIDER_ATTACKS_IMPL_H)
+#  error "DEEPFIN_FAST_SLIDERS is defined but _slider_attacks_impl.h was never \
+included — the fast sliders are NOT installed and this build would silently \
+run the ray walkers. Check the include order into _bitboard_planes_impl.h."
+#endif
+
+/* Every module publishes this as SLIDER_BACKEND so a test can ask the SHIPPED
+ * binary what it does, rather than asking the build system what it intended.
+ *
+ * ⚑ DEEPFIN_SLIDER_PY_METHODS is deliberately NOT given an empty fallback. An
+ * extension that lists it in its method table and then loses its fast-slider
+ * macros fails to compile, loudly, instead of quietly reverting to ray walkers
+ * — which is precisely the regression this PR had to be sent back for. */
+#ifndef DEEPFIN_SLIDER_BACKEND_NAME
+#  define DEEPFIN_SLIDER_BACKEND_NAME "rays"
+#endif
+
 #endif /* _CBOARD_IMPL_H */

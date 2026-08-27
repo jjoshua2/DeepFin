@@ -158,5 +158,16 @@ PyMODINIT_FUNC PyInit__features_ext(void) {
     if (!m) return NULL;
     import_array();
     init_tables_features();
+    /* Always "rays" here, and deliberately so: this extension never includes
+     * _cboard_impl.h, so it carries its own feat_rook_attacks/feat_bishop_attacks
+     * ray walkers under names the fast-slider macros do not rename. See the
+     * comment above features_ext in setup.py for why it is not converted. The
+     * constant is published anyway so a test can PIN that decision rather than
+     * leave "does this module have fast sliders?" unanswered. */
+    if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
+                                   DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
     return m;
 }

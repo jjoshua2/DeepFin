@@ -49,6 +49,7 @@ from chess_anti_engine.mcts.search_options import (
     OPTIONS_BY_NAME,
     SEARCH_OPTIONS,
     SEARCH_PATHS,
+    SearchOption,
     branch_note,
     inert_reason,
     realized_rows,
@@ -63,10 +64,14 @@ from chess_anti_engine.uci.walker_pool import WalkerPoolConfig
 # more candidates than `topk` and the halving schedule really runs.
 FEN = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
 
-# Enough sims that the DESCENT-site transforms (QVisitExp / QVisitFloor /
-# QGlobalScale) have a tree deep enough to act on. Measured: at 64 nodes three
-# of them are indistinguishable from baseline, which would have produced a
-# false "inert" reading for a knob that works. Resolution before threshold.
+# Calibrated when the DESCENT-site transforms (QVisitExp / QVisitFloor /
+# QGlobalScale) were still options: at 64 nodes three of them were
+# indistinguishable from baseline, which would have produced a false "inert"
+# reading for a knob that works. Resolution before threshold.
+#
+# Those three knobs have since been DELETED, but the node count stays: every
+# remaining row of `_MOVES_THE_SEARCH` was calibrated at it, so lowering it now
+# would be an unmeasured change to the instrument rather than a cleanup.
 NODES = 2048
 
 
@@ -148,13 +153,14 @@ def _signature(engine: Engine) -> tuple[int, int, tuple[int, ...]]:
     search the engine would run in a game, not of a helper called by hand.
 
     The tree size is in here because the ROOT visit distribution alone cannot
-    see the DESCENT-site transforms. Under the shipped play shape the root uses
-    the log transform (``QVisitExpRoot=-1``), which dominates the root's
-    sequential halving, so ``QVisitExp`` / ``QGlobalScale`` / ``QVisitFloor``
-    change which leaves get expanded deeper in the tree while leaving the root
-    counts identical at 2048 sims. Judged on root visits alone all three would
-    have read INERT — a wrong verdict produced by the instrument, not the code.
-    Node count sees them, and the null control still does not move it.
+    see DESCENT-site effects. Under the shipped play shape the root uses the log
+    transform (``QVisitExpRoot=-1``), which dominates the root's sequential
+    halving, so a descent-only change moves which leaves get expanded deeper in
+    the tree while leaving the root counts identical at 2048 sims. Measured on
+    ``QVisitExp`` / ``QGlobalScale`` / ``QVisitFloor`` (all since DELETED):
+    judged on root visits alone all three read INERT — a wrong verdict produced
+    by the instrument, not the code. Node count sees a descent-site change, and
+    the null control still does not move it.
 
     No node-count literals here on purpose: an earlier revision quoted four,
     and two reviewers on two boxes could reproduce none of them. Anything that
@@ -163,8 +169,8 @@ def _signature(engine: Engine) -> tuple[int, int, tuple[int, ...]]:
     the instrument. Re-derive instead, in one command:
 
         PYTHONPATH=. python3 -c "import tests.test_uci_search_options as T; \\
-          print(T._run()[1], [T._run((f'setoption name QVisitExp value {v}',))[1] \\
-                              for v in (0, 0.5, 2)])"
+          print(T._run()[1], [T._run((f'setoption name CVisit value {v}',))[1] \\
+                              for v in (5, 50, 500)])"
 
     The property that must hold — node count moves while the root visit vector
     does not — is enforced by the `_SETOPTION_EFFECT_CELLS` table below and by
@@ -248,10 +254,7 @@ _MOVES_THE_SEARCH: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("CVisit", "5.0", ()),
     ("CScaleRoot", "0.5", ()),
     ("CVisitRoot", "10.0", ()),
-    ("QVisitExp", "0.4", ()),
     ("QVisitExpRoot", "1.0", ("setoption name CScaleRoot value 0.05",)),
-    ("QVisitFloor", "20.0", ()),
-    ("QGlobalScale", "true", ()),
     ("HalvingDiv", "4", ()),
     ("Topk", "4", ()),
     ("ChunkSims", "64", ()),
@@ -447,7 +450,21 @@ def test_minibatch_size_marks_the_captured_cudagraph_stale(
 
   # NULL CONTROL: a shape knob the C reads per call needs no re-capture, so
   # the flag must not simply be set by every setoption.
-        _setoption(engine, "setoption name QVisitExp value 0.5")
+  #
+  # ⚑ The control names a REGISTERED option, asserted here rather than assumed.
+  # It used to be `QVisitExp`, and when that option was deleted this control
+  # silently went vacuous: an unknown option never reaches
+  # `_apply_search_option` at all, so `_warmup_dirty is False` started passing
+  # because nothing happened rather than because the right thing happened. A
+  # null control that cannot fail is the defect it was written to catch.
+        assert "cscale" in OPTIONS_BY_NAME, (
+            "the null control names an option the registry does not have, so it "
+            "would pass by doing nothing"
+        )
+        _setoption(engine, "setoption name CScale value 0.5")
+        assert engine._worker._cfg.c_scale == pytest.approx(0.5), (
+            "the null control's setoption did not reach the worker"
+        )
         assert engine._warmup_dirty is False
         engine.dispatch(parse_command("isready"))
         assert warmups == [1]
@@ -549,9 +566,15 @@ def test_searchconfig_reports_a_value_the_setoption_actually_applied(
         ("setoption name PolicyTemperature value 0.4", "out of range"),
         ("setoption name PolicyTemperature value 5.5", "out of range"),
         ("setoption name PolicyTemperature value abc", "not a number"),
+      # ⚑ `nan` parses as a float and every comparison against it is False, so
+      # the range pair alone waved it through: stored, reported LIVE by
+      # `searchconfig`, and searched UNTEMPERED because `policy_temp_active(nan)`
+      # is False. `inf` was already refused (it compares out of band); `nan` is
+      # the one value that was silently dropped rather than loudly wrong.
+        ("setoption name PolicyTemperature value nan", "out of range"),
+        ("setoption name CScale value nan", "out of range"),
         ("setoption name Topk value 1", "out of range"),
         ("setoption name HalvingDiv value 1.5", "not a integer"),
-        ("setoption name QGlobalScale value yes", "expected true/false"),
     ],
 )
 def test_a_rejected_value_says_so_and_keeps_the_old_one(
@@ -567,6 +590,46 @@ def test_a_rejected_value_says_so_and_keeps_the_old_one(
         _setoption(engine, line)
         assert expect in capsys.readouterr().out
         assert engine._worker.realized_search_values() == before
+    finally:
+        engine._worker.close()
+
+
+def test_the_check_kind_still_parses_and_declares_bools(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``kind="check"`` is live registry machinery with no shipped option.
+
+    ``QGlobalScale`` was the only ``check`` row, and it was deleted with the
+    ``q_global_scale`` GumbelConfig field. The BRANCHES it exercised did not go
+    with it -- ``SearchOption.declaration`` and ``Engine._parse_search_value``
+    both still dispatch on ``kind == "check"``, and ``__main__`` seeds bools
+    through the same arm -- so dropping the only test of them would leave the
+    next boolean option shipping untested. The capability is kept deliberately
+    (removing it is a separate refactor of the registry, not part of deleting a
+    knob), so it is covered directly here through a synthetic option instead of
+    through a registry row that no longer exists.
+
+    ``field`` borrows a real EngineOptions attribute because the rejection path
+    prints the current value; only the parse/declare arms are under test.
+    """
+    opt = SearchOption(
+        "SyntheticCheck", "check", "halving_div", False, frozenset({"gumbel"}),
+    )
+    assert opt.declaration(True) == (
+        "option name SyntheticCheck type check default true"
+    )
+    assert opt.declaration(False) == (
+        "option name SyntheticCheck type check default false"
+    )
+
+    engine = _make_engine()
+    try:
+        capsys.readouterr()
+        assert engine._parse_search_value(opt, "true") is True
+        assert engine._parse_search_value(opt, "FALSE") is False
+        assert capsys.readouterr().out == ""
+        assert engine._parse_search_value(opt, "yes") is None
+        assert "expected true/false" in capsys.readouterr().out
     finally:
         engine._worker.close()
 
@@ -672,7 +735,7 @@ def test_the_printed_handshake_advertises_the_live_worker() -> None:
     engine = _build_engine(
         evaluator=_DetEval(planes), primary_device="cpu",
         chunk_sims=777, topk=9, c_scale=0.077, policy_temp=1.5,
-        halving_div=4, root_noise_scale=0.25, q_global_scale=True,
+        halving_div=4, root_noise_scale=0.25, c_visit=13.0,
         n_walkers=1, vloss_weight=2, walker_gather=1, pucv_vloss_mode=0,
         max_batch=64, vl_gather=64, eval_cache_entries=0,
         use_multi_gpu_pucv=False, input_extra_features="v2_threats",
@@ -695,7 +758,7 @@ def test_the_printed_handshake_advertises_the_live_worker() -> None:
         assert printed["CScale"] == "0.077"
         assert printed["HalvingDiv"] == "4"
         assert printed["GumbelScale"] == "0.25"
-        assert printed["QGlobalScale"] == "true"
+        assert printed["CVisit"] == "13.0"
     finally:
         engine._worker.close()
 
@@ -737,7 +800,7 @@ def test_the_first_uci_advertises_the_engine_that_is_about_to_be_built() -> None
         "--checkpoint", "unused-by-this-test",
         "--c-scale", "0.077", "--topk", "9", "--policy-temp", "1.5",
         "--chunk-sims", "777", "--halving-div", "4", "--gumbel-scale", "0.25",
-        "--q-global-scale", "--vloss-weight", "5", "--c-puct", "3.25",
+        "--c-visit", "13.0", "--vloss-weight", "5", "--c-puct", "3.25",
         "--fpu-reduction", "0.9", "--c-visit-root", "123.0",
         "--cpuct-factor", "7.0", "--cpuct-base", "12345.0",
         "--walkers", "2",
@@ -1737,7 +1800,10 @@ def test_audit_targets_override_coercion_keeps_int_fields_int() -> None:
 
     assert isinstance(_coerce_override(GumbelConfig().topk, 8.0), int)
     assert isinstance(_coerce_override(GumbelConfig().c_scale, 8), float)
-    assert _coerce_override(GumbelConfig().q_global_scale, 1.0) is True
+  # `full_tree` stands in for the deleted `q_global_scale` here: the arm under
+  # test is `_coerce_override`'s BOOL branch, and it needs any bool-typed
+  # GumbelConfig default to exercise it.
+    assert _coerce_override(GumbelConfig().full_tree, 1.0) is True
 
 
 def test_realized_search_path_mirrors_the_dispatch_branch_order() -> None:
@@ -2028,7 +2094,7 @@ def test_main_builds_the_engine_from_the_args_it_advertised(
         ["uci", "--checkpoint", "unused", "--device", "cpu",
          "--c-scale", "0.077", "--topk", "9", "--policy-temp", "1.5",
          "--chunk-sims", "777", "--halving-div", "4", "--gumbel-scale", "0.25",
-         "--q-global-scale", "--vloss-weight", "5", "--c-puct", "3.25",
+         "--c-visit", "13.0", "--vloss-weight", "5", "--c-puct", "3.25",
          "--cpuct-factor", "7.0", "--cpuct-base", "12345.0",
          "--fpu-reduction", "0.9", "--c-visit-root", "123.0", "--walkers", "1"],
     )

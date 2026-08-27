@@ -57,6 +57,7 @@ from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     POLICY_ENCODING_LC0_1858,
     POLICY_SIZE,
+    ActionDecodeError,
     normalize_policy_encoding,
 )
 from chess_anti_engine.model import (
@@ -86,6 +87,8 @@ from chess_anti_engine.selfplay.state import build_diff_focus_normalizer
 from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
+    count_unclaimed_resume_files,
+    initial_resume_counts,
     resume_inflight_games,
     suspend_inflight_games,
     sweep_orphan_state_files,
@@ -1137,9 +1140,13 @@ class WorkerSession:
   # In-flight resume counters (the flag + fingerprint are class-level defaults;
   # see _resume_inflight_enabled).
         self._resume_counts_lock = threading.Lock()
-        self._resume_counts: dict[str, int] = {
-            "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
-        }
+        self._resume_counts: dict[str, int] = initial_resume_counts()
+  # Barrier for the once-per-session leftover count (_settle_resume_leftovers).
+  # `expected` is set at session start from the same state count the session
+  # is built with; `done` counts hooks that have FINISHED, including ones that
+  # raised -- a hook that never increments would hang the settle forever.
+        self._resume_hooks_expected: int = 1
+        self._resume_hooks_done: int = 0
         self._resume_skip_reasons: dict[str, int] = {}
         self._completion_telemetry_lock = threading.Lock()
         self._completion_games = 0
@@ -1367,7 +1374,25 @@ class WorkerSession:
                 task = manifest.get("task") or {"type": "selfplay"}
                 task_type = str(task.get("type", "selfplay")).lower()
                 if task_type == "arena":
-                    self._run_arena(manifest, task)
+                    try:
+                        self._run_arena(manifest, task)
+                    except ActionDecodeError as exc:
+                        # Contain at the process boundary, exactly as the
+                        # selfplay branch below does. `run()` has no other
+                        # `except` and `finally: self._cleanup()` exits, so an
+                        # uncaught raise here would take the whole WORKER down
+                        # over one corrupt measurement. The arena batch is VOID:
+                        # `_run_arena` writes its result JSON only after the
+                        # match returns, so nothing was banked and there is no
+                        # partial row to retract.
+                        self.log.error(
+                            "arena batch VOID: %s. No arena result was written. "
+                            "An action id from the search decoded to no legal "
+                            "move, so this match cannot be scored; re-polling.",
+                            exc,
+                        )
+                        time.sleep(float(self.args.poll_seconds))
+                        continue
                 else:
                     try:
                         self._run_selfplay(manifest)
@@ -3869,6 +3894,7 @@ class WorkerSession:
         "search_wdl_draw_mode",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
+        "record_prior_top1",
         "record_fast_ply_value", "blindspot_harvest_out_path",
         "categorical_blend_frac",
         "categorical_search_blend_frac",
@@ -4001,6 +4027,12 @@ class WorkerSession:
         "blindspot_harvest_out_path",
   # Recomputed from the board at resume, so consistent under either value.
         "record_relations", "use_dynamic_relations", "record_lc0_root_input",
+  # Not recomputable at resume (it needs the ply's logits), but exempt anyway:
+  # every row carries its own has_prior_top1 flag, so a game whose plies span a
+  # flip is self-describing -- it yields FEWER covered rows, never a wrong one.
+  # This is an analysis-only field, never a training target, so discarding
+  # in-flight games over it would cost real selfplay for no correctness gain.
+        "record_prior_top1",
   # Opening selection — decided when a game STARTS; a resumed game already has
   # its opening and a fresh one uses the new setting.
         "random_start_plies",
@@ -4038,6 +4070,9 @@ class WorkerSession:
   # A SNAPSHOT, not a live read — see _resume_trial_id for why reading it at
   # suspend time stamps the wrong trial on the games it is guarding.
         self._resume_trial_id_active = self._current_trial_id()
+  # Reset the settle barrier for THIS session. Sized in _dispatch_selfplay_one_shard,
+  # which is the site that knows whether one state or N threads will register.
+        self._resume_hooks_done = 0
         if self._resume_inflight_enabled and not self._resume_trial_id_active:
   # A leased worker between model swaps has no trial id yet
   # (_check_model_update clears leased_trial_id on a sha change). Nothing can
@@ -4114,6 +4149,7 @@ class WorkerSession:
 
     def _resume_inflight_games(self, state: Any) -> None:
         """on_state_ready hook: refill fresh slots with persisted games."""
+        report = None
         try:
             report = resume_inflight_games(
                 state,
@@ -4125,26 +4161,105 @@ class WorkerSession:
             )
         except Exception:
             self.log.exception("selfplay resume: restore failed; starting fresh games")
-            return
-        with self._resume_counts_lock:
-            self._resume_counts["resumed"] += int(report.resumed)
-            self._resume_counts["discarded"] += int(report.discarded)
-        if report.resumed or report.discarded:
+        if report is not None:
             with self._resume_counts_lock:
-                skipped = int(self._resume_counts["suspend_skipped"])
-                skip_reasons = ",".join(
-                    f"{k}={v}" for k, v in sorted(self._resume_skip_reasons.items())
-                ) or "-"
-            # suspend_skipped is a LOSS count (games we meant to persist and
-            # could not); printing it next to the successes is the only place
-            # it is ever read.
+                self._resume_counts["resumed"] += int(report.resumed)
+                self._resume_counts["discarded"] += int(report.discarded)
+                self._resume_counts["preserved"] += int(report.preserved)
+            if report.resumed or report.discarded:
+                with self._resume_counts_lock:
+                    skipped = int(self._resume_counts["suspend_skipped"])
+                    preserved = int(self._resume_counts["preserved"])
+                    skip_reasons = ",".join(
+                        f"{k}={v}" for k, v in sorted(self._resume_skip_reasons.items())
+                    ) or "-"
+                # suspend_skipped is a LOSS count (games we meant to persist and
+                # could not); printing it next to the successes is the only place
+                # it is ever read. Deliberately NO leftover count on this line --
+                # see _settle_resume_leftovers for why it cannot be trusted here.
+                self.log.info(
+                    "selfplay resume totals: suspended=%d resumed=%d discarded=%d "
+                    "preserved=%d suspend_skipped=%d [%s]",
+                    self._resume_counts["suspended"],
+                    self._resume_counts["resumed"],
+                    self._resume_counts["discarded"],
+                    preserved, skipped, skip_reasons,
+                )
+        # Unconditional, and after the except: a hook that raised still consumed
+        # one of the registrations the barrier below is waiting for, and a failed
+        # restore is exactly when files pile up. Skipping it here would make the
+        # worst case the one case that never settles.
+        self._settle_resume_leftovers(state)
+
+    def _settle_resume_leftovers(self, state: Any) -> None:
+        """Once per session, after every resume hook has run: what is LEFT.
+
+        ⚑ THE LOSS NO PRE-EXISTING COUNTER CAN SEE. `resume_inflight_games`
+        breaks at `report.resumed >= len(slots)` -- it is DEMAND-driven, so when
+        the previous session suspended more games than the restarting threads
+        ask for, the surplus is never claimed, never decoded, and never reaches
+        `note()` or `note_preserved()`. `discarded` counts files the resume
+        EXAMINED and rejected; `suspend_skipped` counts games suspend FAILED TO
+        WRITE. Both read a truthful 0 on a real loss.
+        MEASURED at the 2026-08-14 arm-B pause: suspend 3046, resume 3017, and
+        exactly 29 *.game.npz left in worker_02's directory -- the whole gap, in
+        one worker, still there 3h50m later.
+
+        Nothing collects them afterwards: this hook fires once per selfplay
+        SESSION, and a session is the worker's whole continuous run (measured on
+        that same worker -- 32 resume calls inside three seconds of start, then
+        none for four hours across ~50 iterations of shards). The next attempt is
+        the next worker START, by which time they are stale (6h) and swept (24h).
+
+        WHY A BARRIER RATHER THAN A COUNT PER HOOK. The hooks run one per
+        selfplay thread against a SHARED directory, so a mid-flight reading
+        includes files another thread is about to claim -- and because the sample
+        and its emission are separated by a contended lock, even the LAST line
+        emitted can carry a stale, too-high number. Counting once, after the last
+        hook has finished, is the only reading that describes the directory
+        rather than a race. `_resume_hooks_expected` is set at session start from
+        the same state count the session is built with.
+
+        ⚑ `preserved` is reported beside it because the number is only
+        interpretable as a pair: a file refused for a `_PRESERVE_FILE_REASONS`
+        reason (`no_trial_id`, `trial_mismatch`, `config_mismatch`) is renamed
+        BACK into the directory on purpose and still matches the glob. A worker
+        that preserved 3 and stranded 0 has `left_on_disk=3` and has lost
+        nothing. `left_on_disk > preserved` is the condition worth chasing, and
+        `no_trial_id` is routine, so that false alarm would otherwise land in the
+        most ordinary state there is.
+
+        It is also published to `pending_outcome_stats`, not just logged: a
+        worker-local log line is not part of the experiment metric stream, so an
+        automated suspend-vs-resume reconciliation -- the exact check that FOUND
+        this defect by hand -- would still see an unexplained gap.
+        """
+        with self._resume_counts_lock:
+            self._resume_hooks_done += 1
+            if self._resume_hooks_done < self._resume_hooks_expected:
+                return
+            preserved = int(self._resume_counts["preserved"])
+            resumed = int(self._resume_counts["resumed"])
+            discarded = int(self._resume_counts["discarded"])
+        left = count_unclaimed_resume_files(self.resume_dir)
+        pending = getattr(state, "pending_outcome_stats", None)
+        if pending is not None:
+            pending["resume_left_on_disk"] = int(left)
+            pending["resume_preserved_games"] = int(preserved)
+        if left or preserved or resumed or discarded:
             self.log.info(
-                "selfplay resume totals: suspended=%d resumed=%d discarded=%d "
-                "suspend_skipped=%d [%s]",
-                self._resume_counts["suspended"],
-                self._resume_counts["resumed"],
-                self._resume_counts["discarded"],
-                skipped, skip_reasons,
+                "selfplay resume settled: resumed=%d discarded=%d preserved=%d "
+                "left_on_disk=%d hooks=%d dir=%s",
+                resumed, discarded, preserved, left,
+                self._resume_hooks_expected, self.resume_dir,
+            )
+        if left > preserved:
+            self.log.warning(
+                "selfplay resume: %d suspended game(s) were never claimed "
+                "(left_on_disk=%d preserved=%d). The resume is demand-driven, so "
+                "a previous session suspended more games than this one had slots "
+                "for; they expire unresumed. Their SF labels are already paid for.",
+                left - preserved, left, preserved,
             )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -4379,6 +4494,7 @@ class WorkerSession:
                     reco.get("record_relations", reco.get("use_dynamic_relations", False))
                 ),
                 record_dense_sf_policy=bool(reco.get("record_dense_sf_policy", True)),
+                record_prior_top1=bool(reco.get("record_prior_top1", True)),
                 record_sf_p0_policy=bool(reco.get("record_sf_p0_policy", False)),
                 record_sf_p0_regret=bool(reco.get("record_sf_p0_regret", False)),
                 record_fast_ply_value=bool(reco.get("record_fast_ply_value", False)),
@@ -4538,6 +4654,20 @@ class WorkerSession:
             self._clear_live_states()
         return self._aggregate_thread_stats(all_stats)
 
+    def _resume_hooks_for_session(self, games_per_batch: int) -> int:
+        """How many on_state_ready hooks this session will fire.
+
+        One per selfplay thread on the threaded path; one total on the single
+        path, which builds one state per session. This is the settle barrier's
+        denominator (`_settle_resume_leftovers`): too high and the leftover
+        count never settles at all, too low and it settles early on a reading
+        that describes a race. Extracted from the dispatch so the arithmetic can
+        be READ by a test rather than presence-checked.
+        """
+        if not self.args.threaded_selfplay:
+            return 1
+        return max(1, int(self._selfplay_state_count(int(games_per_batch))))
+
     def _selfplay_state_count(self, games_per_batch: int) -> int:
         """How many ``SelfplayState``s this session will build.
 
@@ -4613,6 +4743,14 @@ class WorkerSession:
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
         _eval = self.inference_client or self._direct_evaluator
         shared_norm = self._build_shared_diff_focus_norm(cfgs, int(games_per_batch))
+  # How many on_state_ready hooks this session will fire: one per selfplay
+  # thread on the threaded path, one total on the single path. The leftover
+  # count is taken by whichever hook finishes LAST (see
+  # _settle_resume_leftovers) -- a count taken any earlier describes a race,
+  # not the directory. Set here rather than in _begin_resume_session because
+  # this is the site that chooses the path.
+        self._resume_hooks_expected = self._resume_hooks_for_session(int(games_per_batch))
+        self._resume_hooks_done = 0
         try:
             if self.args.threaded_selfplay:
                 return self._run_selfplay_threaded(

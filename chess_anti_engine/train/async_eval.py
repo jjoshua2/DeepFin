@@ -56,12 +56,14 @@ log = logging.getLogger(__name__)
 class _Work:
     """Per-iter work item handed to the eval thread."""
 
-    __slots__ = ("batch_size", "buf", "full_pass", "snap_state", "source_iter", "steps", "trainer")
+    __slots__ = ("batch_size", "buf", "full_pass", "objective", "snap_state",
+                 "source_iter", "steps", "trainer")
 
     def __init__(
         self,
         *,
         snap_state: dict[str, torch.Tensor],
+        objective: Any,
         trainer: Any,
         buf: Any,
         batch_size: int,
@@ -70,6 +72,11 @@ class _Work:
         full_pass: bool = False,
     ) -> None:
         self.snap_state = snap_state
+  # ⚑ Taken WITH `snap_state`, at the same instant, and carried together. The
+  # worker must not re-read the trainer's objective when it finally runs: a
+  # live weight flip in between would score this model under a different loss
+  # and stamp it with a different ruler.
+        self.objective = objective
         self.trainer = trainer
         self.buf = buf
         self.batch_size = batch_size
@@ -178,7 +185,8 @@ class AsyncTestEval:
             for k, v in trainer.model.state_dict().items()
         }
         work = _Work(
-            snap_state=snap_state, trainer=trainer, buf=holdout_buf,
+            snap_state=snap_state, objective=trainer.objective_snapshot(),
+            trainer=trainer, buf=holdout_buf,
             batch_size=batch_size, steps=steps, source_iter=int(source_iter),
             full_pass=bool(full_pass),
         )
@@ -436,6 +444,7 @@ class AsyncTestEval:
                     tag="eval",
                     model_override=snap,
                     full_pass=work.full_pass,
+                    objective=work.objective,
                 )
                 with self._lock:
                     self._result = metrics

@@ -92,10 +92,13 @@ from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
     SfPolicyFloorParams,
+    SfShapeParams,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    normalize_value_blend_fracs,
     policy_target_temp_active,
+    resolve_sf_regret_gate_keys,
     retemper_main_policy_target,
     search_inclusion_guarantee_tau,
     warn_if_below_search_inclusion,
@@ -106,6 +109,47 @@ from .muon import MuonWithAuxAdam
 from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
+
+
+class UnsupportedWarmStartError(Exception):
+    """This optimizer layout cannot be warm-started across a parameter change.
+
+    ⚑ NOT a subclass of ``ValueError``/``RuntimeError``, deliberately: the
+    generic handler in ``Trainer.load`` catches those and reports
+    *"Optimizer state incompatible with new model layout"*, which is a
+    MISATTRIBUTION here. The layout is fine; the warm-start machinery does not
+    cover it. A dedicated type gets a dedicated message naming the exact config
+    combination, so an operator is told the combination is unsupported instead
+    of hunting a layout bug that does not exist.
+
+    Two combinations raise it, both found by independent review of PR #439 and
+    both **unreachable from production**, which runs ``optimizer: aurora`` +
+    ``matrix_optimizer_scope: mlp_out`` with no ``weight_decay_mode`` key:
+
+    * ``weight_decay_mode: soda`` reaching the NAME-based re-key. The re-key
+      reconstructs ``{state, param_groups}`` and nothing else, so
+      ``SODAWeightDecayWrapper``'s top-level ``soda_anchors`` is dropped; its
+      ``load_state_dict`` then finds an anchor missing for every marked
+      parameter and raises, and the whole optimizer cold-starts.
+    * ``optimizer: soap`` with a non-default matrix scope, which builds a
+      ``_ChainedOptimizer`` whose state lives in its CHILDREN while the outer
+      ``state`` stays empty. ``reset_mismatched_optimizer_state`` sweeps the
+      outer view, finds nothing, and leaves donor-shaped moments under resized
+      tensors -- silent until the first child ``opt.step()``.
+
+    ⚑ PR #439 does not create either defect; the ``_ChainedOptimizer`` nesting
+    is documented at its construction site. What #439 changes is WHO CAN REACH
+    them: before it, ``aux_policy_head_dim`` did not exist on ``main``, so no
+    ``main``-based warm start could resize the auxiliary heads. Widening
+    reachability without widening the guard is this repo's signature defect, so
+    the combinations are refused here rather than filed. Refusing means the
+    donor state is discarded and the run cold-starts -- loud and bounded --
+    instead of training on moments that belong to other tensors.
+
+    The real fix (carry wrapper keys through the re-key; recurse the sweep into
+    child optimizers) is optimizer-state surgery on warm-start code and belongs
+    in its own reviewed PR, not in a forward-port bridge.
+    """
 
 
 class UntrustedOptimizerStateError(ValueError):
@@ -618,6 +662,25 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         ]
 
 
+def _unwrap_optimizer(opt: torch.optim.Optimizer) -> torch.optim.Optimizer:
+    """The innermost optimizer behind any ``.base`` wrapper chain.
+
+    ``SODAWeightDecayWrapper`` wraps whatever the optimizer branch built, so an
+    ``isinstance`` test on ``self.opt`` alone misses a ``_ChainedOptimizer``
+    sitting one layer down -- and SOAP + SODA is precisely the combination that
+    produces both. Bounded by identity so a wrapper that returns itself as its
+    own ``base`` cannot spin.
+    """
+    seen: set[int] = set()
+    while id(opt) not in seen:
+        seen.add(id(opt))
+        base = getattr(opt, "base", None)
+        if not isinstance(base, torch.optim.Optimizer):
+            break
+        opt = base
+    return opt
+
+
 @dataclass(frozen=True)
 class _DecayGroupLayout:
     """How the four decay buckets were laid out across the optimizer's groups.
@@ -949,6 +1012,16 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # Share of the rows `sf_own_regret` acted on that the fabricated-tail gate
+  # scaled DOWN. ⚑ A `_RATIO_METRIC_FIELDS` entry without a field here is not a
+  # missing metric, it is a CRASH: `_ratio_metric_kwargs` emits its keys
+  # UNFILTERED (unlike the loss-key loop, which filters on
+  # `_TRAIN_METRICS_FIELDS`), so `_build_metrics` splats an unknown name into
+  # `TrainMetrics(**...)` and raises `TypeError` on iteration 1 -- on both the
+  # train and EVAL paths, inside a `try:` that has a `finally:` and zero
+  # `except`. Measured: the trial dies mid-iteration. Every entry in that table
+  # needs a field here.
+    sf_own_regret_gated_frac: float = 0.0
   # SF-approved-move probability floor (`w_sf_policy_floor`). `m_sf_policy_floor`
   # is the masked mean deficit; `sf_policy_floor_binds_frac` is the share of the
   # SAME eligible rows on which the floor actually bound on at least one move.
@@ -974,6 +1047,137 @@ class TrainMetrics:
   # population.
     m_sf_policy_floor: float = 0.0
     sf_policy_floor_binds_frac: float = 0.0
+  # FEASIBILITY CAP (losses.SfPolicyFloorOutputs). The floors are simultaneous
+  # lower bounds on one distribution, so a requested mass above 1.0 describes an
+  # EMPTY constraint set -- a residual deficit that no net can ever clear. The
+  # loss admits members in ascending SF regret and stops at the budget; these
+  # five columns are what make that cap readable instead of silent.
+  #   * `..._member_count_raw` / `..._requested_mass` -- the UNCAPPED set and
+  #     its mass: how big a demand the cap had to cut down.
+  #   * `..._truncated_frac` -- share of eligible rows where the cap dropped a
+  #     member. Exactly 0.0 means the cap is currently inert on this data.
+  #     ⚑⚑ THIS IS THE ONLY COLUMN THAT ANSWERS "DID THE CAP FIRE", and the two
+  #     reasons are independent. (a) The admission test is exact (float64) while
+  #     the mass columns are narrowed to float32, so ten floors of 0.1 truncate
+  #     while `requested_mass` reads exactly 1.0 -- `> 1` is sufficient, not
+  #     necessary. (b) EVERY COLUMN HERE IS A ROW MEAN over
+  #     `sf_own_regret_rows`, so `requested_mass > 1.0` is nearly unreachable at
+  #     the column level even when a large minority of ROWS are infeasible
+  #     (measured: 0.552 on a batch whose `truncated_frac` was 0.333).
+  #   * `..._member_count_applied` / `..._applied_mass` -- after the cap.
+  #     `applied_mass <= 1.0` EXACTLY, not to within a slack -- ⚑ CONDITIONAL
+  #     on `w_sf_policy_floor != 0.0`. At weight 0 an infeasible MANDATORY pair
+  #     is permitted with a warning so an inert term cannot kill a live trial,
+  #     and the cap cannot repair that (it only drops OPTIONAL members), so
+  #     these columns then correctly describe an impossible floor. On that
+  #     population the resolve-time WARNING, not `truncated_frac`, is the
+  #     signal. ⚑ And separately: 
+  #     `member_count_applied == member_count_raw` does NOT mean "not
+  #     truncated": a demoted move that still carries a mandatory floor stays in
+  #     the count. Read the MASS pair, or `truncated_frac`.
+  # ⚑ Read raw AGAINST applied. The pair is the only way to tell whether the
+  # term's strength came from the configured tau or from a `|F| * tau` that
+  # nobody set. Same `sf_own_regret_rows` denominator as the two columns above.
+    sf_policy_floor_member_count_raw: float = 0.0
+    sf_policy_floor_requested_mass: float = 0.0
+    sf_policy_floor_truncated_frac: float = 0.0
+    sf_policy_floor_member_count_applied: float = 0.0
+    sf_policy_floor_applied_mass: float = 0.0
+  # SF-shape conditional KL (`w_sf_shape`) AND ITS PERMANENT ENTROPY INSTRUMENT.
+  # Every column here is computed BEFORE the weight is applied and is therefore
+  # live at `w_sf_shape: 0.0` -- that is not a convenience, it is the reason the
+  # instrument exists. Our selfplay policy drifted to being SHARPER than the SF
+  # target it learns from (0.6784 nats against SF's 1.0572, flatter on 63.8% of
+  # rows) and NO metric reported it, for months. ⚑ THAT HEADLINE COMPARISON IS
+  # CROSS-SUPPORT AND INVALID as a magnitude -- see `compute_loss` -- which is
+  # exactly why the pair published here is CONDITIONED ON THE SAME SET on both
+  # sides.
+  #
+  # Read them in this order:
+  #   * `sf_shape_surfaced_moves` -- mean |S|, the size of the set SF actually
+  #     scored, recovered from the regret vector (`sf_surfaced_move_mask`). It is
+  #     the health of the mask every other column here stands on; at
+  #     `sf_multipv: 6` it should sit near 5-6 against ~27 legal moves. A
+  #     collapse toward 0 or a jump toward the legal count means the recovery
+  #     broke, and every entropy below it becomes meaningless first.
+  #   * `sf_shape_active_frac` -- share of eligible rows with |S| >= 2. Below two
+  #     surfaced moves the KL is EXACTLY zero at every weight, so those rows are
+  #     structural zeros in the mean and only this rate can say so. Same role as
+  #     `sf_policy_floor_binds_frac`: it separates "reaches the loss and does
+  #     nothing" from "dead knob".
+  #   * `sf_shape_entropy_gap` = `sf_shape_h_sf_given_s` - `sf_shape_h_ours_given_s`,
+  #     both conditioned on the SAME set S, and `sf_shape_sharper_frac`, the row
+  #     rate of that gap being positive. POSITIVE GAP MEANS WE ARE THE SHARP ONE.
+  #     The rate is not redundant with the mean: a large gap on a few rows and a
+  #     small gap on all of them read alike in the mean.
+  #   * ⚑ `sf_shape_regret_cp_given_s` -- E over our CONDITIONAL policy of SF's
+  #     cp regret: "how bad are the moves we prefer among the ones SF scored".
+  #     ENTROPY ALONE MUST NOT GATE THIS TERM: two distributions with identical
+  #     entropy can rank the surfaced moves in opposite orders, and the KL
+  #     supplies SF's RANKING, not only its sharpness. `m_sf_shape` IS
+  #     KL(q_S || p_S) -- the ranking/shape disagreement itself, live at weight
+  #     zero -- so it is not published a second time under another name.
+  #   * `sf_shape_h_ours_full_legal` -- `policy_own`'s entropy over ALL legal
+  #     moves, the continuity column for the ledger's historical 0.6784. ⚑ It
+  #     carries its support in its NAME and is NEVER differenced against
+  #     `sf_shape_h_sf_given_s`, whose support is the ~5.6 surfaced moves.
+  #   * ⚑⚑ `sf_shape_surfaced_mass` (M_S) -- OUR probability mass on the set SF
+  #     scored, and THE COLUMN THAT DECIDES WHETHER `w_sf_shape` SHOULD EVER BE
+  #     RAISED. Two independent pathologies exist and this term reaches only the
+  #     first: (A) wrong SHAPE inside S, which the conditional KL fixes, and
+  #     (B) wrong MASS on S, which it is INVARIANT to by construction and cannot
+  #     fix at any weight -- that needs a WIDER LABELLING SET, not a loss. A low
+  #     M_S beside a matched `sf_shape_entropy_gap` means the loss addresses the
+  #     wrong pathology and must stay at 0.0. (The share of our mass on moves SF
+  #     never scored is exactly `1 - M_S`; one quantity, so the two cannot
+  #     drift.) It cannot be got offline from the banked wide-era shards, whose
+  #     labels cover 26.63 of 26.82 legal moves and therefore restrict nothing.
+  #   * `sf_shape_p_sf_best` -- p_own on SF's single best move, ABSOLUTE rather
+  #     than conditioned, so it moves with M_S. It is the quantity
+  #     `sf_policy_floor_tau` is a floor on, which is what makes the two families
+  #     readable against each other.
+  # Denominator is `has_sf_p0_regret_frac`'s numerator for all nine, the same
+  # eligible-row count the floor's columns use, so none of them can disagree
+  # about the population.
+    m_sf_shape: float = 0.0
+    sf_shape_active_frac: float = 0.0
+    sf_shape_h_sf_given_s: float = 0.0
+    sf_shape_h_ours_given_s: float = 0.0
+    sf_shape_entropy_gap: float = 0.0
+    sf_shape_sharper_frac: float = 0.0
+    sf_shape_regret_cp_given_s: float = 0.0
+    sf_shape_h_ours_full_legal: float = 0.0
+    sf_shape_surfaced_moves: float = 0.0
+    sf_shape_surfaced_mass: float = 0.0
+    sf_shape_p_sf_best: float = 0.0
+  # MATCHED-SUPPORT instrument for the ORDINARY policy target, and a DIFFERENT
+  # question from every column above: is the search target the main CE trains
+  # against ITSELF a sharpening teacher? `dL/dz = p - t`, so if the target is
+  # sharper than the net ON MATCHED SUPPORT then cross-entropy is directly
+  # rewarding concentration -- which would explain `policy_own`'s `log_temp`
+  # learning NEGATIVE (the head trying to flatten) while the net stayed
+  # over-sharp. If the gap vanishes on matched support, that story is an artifact
+  # and the search target is not the culprit.
+  #
+  # ⚑⚑ THE SUPPORT IS IN EVERY NAME BECAUSE THE UNMATCHED VERSION OF THIS
+  # COMPARISON IS A LARGE, PLAUSIBLE, WRONG NUMBER. `scripts/audit_targets.py`
+  # reads the raw policy at 0.8827 nats over ~27 legal moves against the training
+  # target's 0.6255 over the ~16-move candidate set (ZERO elsewhere); a ~5% tail
+  # over ~20 moves is worth ~0.30 nats by itself, MORE than the 0.26 gap. That
+  # comparison is UNVERIFIED and must not be cited. Here both entropies are taken
+  # over the TARGET'S support and renormalized there, and what the restriction
+  # drops is published on its own as `policy_tail_mass_ours` -- our probability
+  # on moves the search never made a candidate.
+  #
+  # Sign convention matches the SF family: `policy_support_gap` is
+  # H(target) - H(ours), so POSITIVE means WE are the sharper one and NEGATIVE
+  # means the TARGET is. Population is every row that has a policy target, NOT
+  # the SF-regret rows -- these divide by `policy_target_rows`.
+    policy_support_h_ours: float = 0.0
+    policy_support_h_target: float = 0.0
+    policy_support_gap: float = 0.0
+    policy_support_size: float = 0.0
+    policy_tail_mass_ours: float = 0.0
   # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
   # is the share of the iteration's SF-LABELLED rows that carry no
   # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
@@ -1044,6 +1248,36 @@ class TrainMetrics:
   # sum it with the policy rate; they count the same rows.
     sf_wdl_degenerate_frac: float = 0.0
     sf_wdl_orphaned_frac: float = 0.0
+  # ⚑ THE VALUE-BLEND FALLBACK, MADE VISIBLE — BOTH HALVES OF IT.
+  # `compute_loss` builds the SF component as
+  # `sf_effective * sf_wdl_probs + (1 - sf_effective) * game_oh` and the SEARCH
+  # component the same way, and `_get_mask` defaults an absent mask to 0.0, so
+  # an unlabelled row silently puts that component's whole share onto the raw
+  # one-hot game outcome — no error, no warning, and until now no column whose
+  # name said so. These are the denominators that make it computable:
+  #
+  #     outcome_borne = game_frac
+  #                   + sf_wdl_frac     * (1 - sf_wdl_effective_frac)
+  #                   + search_wdl_frac * (1 - search_wdl_effective_frac)
+  #
+  # ⚑ EFFECTIVE, not labelled. The numerators are `sf_available * keep` and
+  # `search_available` taken off the blend site itself, so they also carry the
+  # `sf_search_dampen_*` shortfall (which lands on the one-hot too) and read 0
+  # when the `sf_wdl`/`search_wdl` COLUMN is missing, where a mask sum would
+  # not. Shipping only the SF half was PR #438's review finding F1: the search
+  # half is 0.70 of the lc0 control's value target.
+  #
+  # Production reads ~1.0 on both (712/713 live shards carry the SF label),
+  # which is exactly why the condition needs a column rather than a raise — a
+  # fatal path in the iteration loop (which has `finally:` and zero `except`)
+  # for a state production cannot reach is a new way to lose a trial. It is
+  # LOG-ONLY by design: see `chess_anti_engine/train/value_blend_guard.py` for
+  # the asserting form, used by the offline lc0 driver where the state is
+  # normal. Had these columns existed in 2026-05 the realized `sf_wdl_frac
+  # 0.45` episode referenced above would have been visible in TB rather than
+  # reconstructed.
+    sf_wdl_effective_frac: float = 0.0
+    search_wdl_effective_frac: float = 0.0
     sf_eval_pv_orphan_frac: float = 0.0
     sf_eval_pv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
@@ -1142,7 +1376,26 @@ class TrainMetrics:
     grad_norm_p95: float = 0.0
     grad_norm_max: float = 0.0
     grad_clip_rate: float = 0.0
+  # ⚑ THREE RATES, TWO DIFFERENT QUESTIONS — do not read one for the other.
+  # `grad_adaptive_clip_rate` is how often the adaptive z-score threshold
+  # FIRED (zclip's `_compute_clip_val` returned a value below the step's own
+  # norm). `grad_hard_clip_rate` and `grad_adaptive_bound_rate` are how often
+  # each of the two clips BOUND — i.e. was the `min()` winner in
+  # `_apply_clipping`'s `effective_clip = min(adaptive_clip, max_grad_norm)`.
+  # Firing and binding are not the same event: a step where the adaptive
+  # threshold fires at 8.0 under a `zclip_max_norm` of 6.5 counts in
+  # `grad_adaptive_clip_rate` AND in `grad_hard_clip_rate`, because the hard
+  # cap is what the gradient was actually scaled to.
+  #
+  # The two BOUND rates partition `grad_clip_rate` exactly
+  # (`grad_hard_clip_rate + grad_adaptive_bound_rate == grad_clip_rate`), which
+  # is what makes "which clip bound?" answerable from the metric stream instead
+  # of by subtraction the reader has to know to perform. Before
+  # `grad_adaptive_bound_rate` existed the I11 warning had no honest way to name
+  # the binding clip, and it named `zclip_max_norm` unconditionally — on a run
+  # where that cap bound on 0.0% of steps.
     grad_adaptive_clip_rate: float = 0.0
+    grad_adaptive_bound_rate: float = 0.0
     grad_hard_clip_rate: float = 0.0
     grad_norm_samples: int = 0
   # Per-optimizer-group grad norms, iteration means. The clip acts on the
@@ -1262,6 +1515,10 @@ _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetric
 _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own": ("sf_own_ce_sum", "sf_own_rows"),
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
+  # Fabricated-tail gate share. Same denominator as `m_sf_own_regret` above, on
+  # purpose: it answers "of the rows this term acted on, what share did the gate
+  # scale down", and reads exactly 0.0 at the identity defaults.
+    "sf_own_regret_gated_frac": ("sf_own_regret_gated_rows", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
   # The floor's two columns, over the sf_p0-regret eligible rows -- literally
@@ -1270,6 +1527,46 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # could drift; one quantity cannot.
     "m_sf_policy_floor": ("sf_policy_floor_sum", "sf_own_regret_rows"),
     "sf_policy_floor_binds_frac": ("sf_policy_floor_binds_sum", "sf_own_regret_rows"),
+  # Feasibility-cap diagnostics, same denominator for the same reason.
+    "sf_policy_floor_member_count_raw": (
+        "sf_policy_floor_raw_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_requested_mass": (
+        "sf_policy_floor_requested_mass_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_truncated_frac": (
+        "sf_policy_floor_truncated_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_member_count_applied": (
+        "sf_policy_floor_applied_members_sum", "sf_own_regret_rows",
+    ),
+    "sf_policy_floor_applied_mass": (
+        "sf_policy_floor_applied_mass_sum", "sf_own_regret_rows",
+    ),
+  # The SF-shape family, over the SAME `sf_own_regret_rows` count and for the
+  # same reason: they are masked by the same tensor, so a separately-emitted
+  # denominator would be one quantity twice and could drift.
+    "m_sf_shape": ("sf_shape_ce_sum", "sf_own_regret_rows"),
+    "sf_shape_active_frac": ("sf_shape_active_sum", "sf_own_regret_rows"),
+    "sf_shape_h_sf_given_s": ("sf_shape_h_sf_given_s_sum", "sf_own_regret_rows"),
+    "sf_shape_h_ours_given_s": ("sf_shape_h_ours_given_s_sum", "sf_own_regret_rows"),
+    "sf_shape_entropy_gap": ("sf_shape_entropy_gap_sum", "sf_own_regret_rows"),
+    "sf_shape_sharper_frac": ("sf_shape_sharper_sum", "sf_own_regret_rows"),
+    "sf_shape_regret_cp_given_s": ("sf_shape_regret_cp_sum", "sf_own_regret_rows"),
+    "sf_shape_h_ours_full_legal": (
+        "sf_shape_h_ours_full_legal_sum", "sf_own_regret_rows",
+    ),
+    "sf_shape_surfaced_moves": ("sf_shape_surfaced_sum", "sf_own_regret_rows"),
+    "sf_shape_surfaced_mass": ("sf_shape_surfaced_mass_sum", "sf_own_regret_rows"),
+    "sf_shape_p_sf_best": ("sf_shape_p_sf_best_sum", "sf_own_regret_rows"),
+  # The matched-support family, over `policy_target_rows` -- its OWN denominator.
+  # Borrowing `sf_own_regret_rows` would silently restrict a whole-batch
+  # measurement to the ~21% of rows that carry SF regret.
+    "policy_support_h_ours": ("policy_support_h_ours_sum", "policy_target_rows"),
+    "policy_support_h_target": ("policy_support_h_target_sum", "policy_target_rows"),
+    "policy_support_gap": ("policy_support_gap_sum", "policy_target_rows"),
+    "policy_support_size": ("policy_support_size_sum", "policy_target_rows"),
+    "policy_tail_mass_ours": ("policy_tail_mass_sum", "policy_target_rows"),
   # Contamination detector. Row-weighted for the same reason: the SF-labelled
   # count varies batch to batch, so a mean of per-batch rates is the wrong
   # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
@@ -1285,6 +1582,14 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # zero checked rows is unmeasured rather than clean.
     "sf_wdl_degenerate_frac": ("sf_wdl_degenerate_rows", "sf_wdl_rows"),
     "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
+  # ⚑ Denominator is ALL batch rows, unlike the two above, because the question
+  # is "what share of the trained value target fell through the blend's
+  # fallback" — the numerators are the numerators of exactly that, so dividing
+  # by them would publish a constant 1.0. Numerators are the blend site's own
+  # EFFECTIVE mass (`sf_available * keep`, `search_available`), never
+  # `sf_wdl_rows`: see the field comments.
+    "sf_wdl_effective_frac": ("sf_wdl_effective_rows", "batch_rows"),
+    "search_wdl_effective_frac": ("search_wdl_effective_rows", "batch_rows"),
     "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
     "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
   # Terminal-proximal outcome transfer. Row-weighted like the pairs above: the
@@ -1364,6 +1669,44 @@ def _scalar_hparam_differs(old: Any, new: Any) -> bool:
 # deploy, which is the measurement narrowing onto the clip, not the run moving.
 GRAD_NORM_MEDIAN_WATCH = 4.75
 
+# The OTHER half of I11's condition, and until 2026-08-24 it was in the prose
+# and not in the code. I11 reads "median past GRAD_NORM_MEDIAN_WATCH (hard-clip
+# rate ~10%)": a CONJUNCTION, because the claim the warning makes — that
+# `zclip_max_norm` "has become an LR cap in disguise" — is a claim about the
+# HARD cap, and a cap that never binds cannot be capping anything. The median
+# alone was the whole gate, and it fired on EVERY iteration of the production
+# run (trial dea5e, 728 of 728) at a measured `grad_hard_clip_rate` of exactly
+# 0.000000 on 536 of 536 recorded rows: `zclip_max_norm` was not the binding
+# constraint on a single step, and the remediation the message named (re-set
+# zclip_max_norm) was a no-op on an inert knob.
+#
+# ⚑ AND `grad_clip_rate` CANNOT STAND IN FOR IT. That run reads clip rate
+# 1.000000 and adaptive-clip rate 1.000000 on all 536 rows, with a pre-clip
+# `grad_norm_median` of ~12.0 against a 6.5 cap. That is not the cap biting; it
+# is a degenerate fixed point of the installed zclip's EMA. `ZClip.step` folds
+# the CLIPPED value back into the EMA (`_update_ema(clip_val if clip_val is not
+# None else total_norm)`), so once the adaptive branch fires on every step the
+# EMA is being fed only its own output. Measured against the installed library
+# at the production settings (alpha 0.97, z_thresh 2.0, clip_factor 1.0, cap
+# 6.5): warm the EMA on norms with median 3.0, step the regime to median 12.0,
+# and within ~600 steps `mean` is pinned at 3.104, `var` has collapsed to 1e-8,
+# the z-score reads 1e5 and then 1e7, and the clip rate is 1.000 with the hard
+# rate 0.000 — for as long as the regime stays up. Warm the EMA ON the median-12
+# stream instead and the same gradients produce the opposite reading: EMA mean
+# 11.9, adaptive branch essentially silent, HARD cap binding 99.5% of steps. Same
+# gradients, different EMA history, opposite attribution. So a sustained clip
+# rate of 1.000 is a statement about run history, is pinned by the state it
+# reports, and carries no information about the cap at all.
+#
+# 10% is I11's own figure, and the two halves are calibrated to co-occur: on a
+# stationary lognormal stream with median 4.99 (a hair past the median watch)
+# the hard-clip rate measures 8.8%. Push that stream's median to ~9.0 and the
+# hard rate is 90.9% with the adaptive threshold binding on 0.0% of steps — the
+# genuine I11 state, an order of magnitude clear of this gate. So the gate does
+# not narrow the warning to a sliver of the pathology; it removes the regime
+# where the hard cap is provably not the thing doing the clipping.
+GRAD_HARD_CLIP_RATE_WATCH = 0.10
+
 
 def _nearest_rank_quantile(sorted_values: list[float], q: float) -> float:
     """Nearest-rank quantile of an already-sorted list (0.0 when empty)."""
@@ -1420,6 +1763,7 @@ def _grad_clip_metric_kwargs(
         "grad_norm_max": float(ordered[-1]) if ordered else 0.0,
         "grad_clip_rate": float(clip_counts.get("clipped", 0)) / n,
         "grad_adaptive_clip_rate": float(clip_counts.get("adaptive_clip", 0)) / n,
+        "grad_adaptive_bound_rate": float(clip_counts.get("adaptive_bound", 0)) / n,
         "grad_hard_clip_rate": float(clip_counts.get("hard_clip", 0)) / n,
         "grad_nonfinite_skip_rate": float(clip_counts.get("nonfinite_grad", 0)) / n,
   # Steps, not finite readings: the rates above are over this denominator.
@@ -1532,6 +1876,27 @@ def state_dict_digest(sd: Mapping[str, Any]) -> str:
     return digest.hexdigest()[:16]
 
 
+def strip_compile_prefix_from_name(name: str) -> str:
+    """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from ONE name.
+
+    ⚑⚑ THE PROJECT'S SINGLE DEFINITION OF THIS RULE. ``strip_compile_prefix``
+    (keys of a mapping) and ``Trainer._wrap_agnostic_name`` (a single
+    ``named_parameters()`` name) both delegate here, so the two cannot drift
+    apart. They previously carried the rule TWICE, and independent review of
+    PR #439 mutated the second copy to ``removeprefix`` and watched the whole
+    suite pass — the only survivor of 20 mutations.
+
+    ⚑ ``replace(..., 1)``, NEVER ``removeprefix``: the segment is not always
+    leading. ``AveragedModel`` (SWA) nests the compiled module, so its keys read
+    ``module._orig_mod.embed.weight`` and ``removeprefix`` leaves them untouched.
+    That is not hypothetical — it is PR #267's J9 defect verbatim, which shipped
+    because its own tests only inspected output where the prefix happened to be
+    leading. No real submodule is named ``_orig_mod``, so removing the first
+    occurrence anywhere is safe.
+    """
+    return name.replace("_orig_mod.", "", 1)
+
+
 def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from state_dict keys.
 
@@ -1543,14 +1908,11 @@ def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
     then reports every key as unexpected and leaves a fresh-init model behind
     with no error — the failure mode that destroyed the model on 2026-04-27.
 
-    ``replace(..., 1)`` rather than ``removeprefix`` because the segment is not
-    always leading: ``AveragedModel`` (SWA) nests the compiled module, so its
-    keys read ``module._orig_mod.embed.weight``. ``removeprefix`` left those
-    untouched, so ``save()``'s ``swa_model`` entry was never actually made
-    wrap-agnostic despite the comment claiming it was. No real submodule is
-    named ``_orig_mod``, so removing the first occurrence anywhere is safe.
+    The rule itself lives in ``strip_compile_prefix_from_name`` -- including why
+    it is ``replace(..., 1)`` and never ``removeprefix`` -- so that this and
+    ``Trainer._wrap_agnostic_name`` cannot disagree.
     """
-    return {k.replace("_orig_mod.", "", 1): v for k, v in sd.items()}
+    return {strip_compile_prefix_from_name(k): v for k, v in sd.items()}
 
 
 def align_compile_prefix(
@@ -1592,6 +1954,109 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     """
     raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
     return None if raw is None else float(raw)
+
+
+# Construction-site bounds for the per-group optimizer scalars that reach the
+# optimizer RAW. Wide enough that every config in `configs/` passes (all set
+# `matrix_lr_multiplier: 20`, `matrix_weight_decay` 0 or 1e-4, `aux_weight_decay`
+# 1e-4) and that a deliberate 5x re-tune needs no code change; tight enough that
+# the realistic accident — a misplaced decimal, 20 -> 200 — cannot reach the
+# optimizer. The downward typo 20 -> 2 is INSIDE the band on purpose: it is a
+# legitimate setting, not a runaway, and a validator that rejects legitimate
+# settings gets deleted.
+_MATRIX_LR_MULTIPLIER_MAX = 100.0
+_OPTIMIZER_WEIGHT_DECAY_MAX = 1.0
+
+
+def _validated_optimizer_scalar(
+    name: str,
+    raw: Any,
+    *,
+    minimum: float,
+    maximum: float,
+    minimum_inclusive: bool,
+    consequence: str,
+) -> float:
+    """Range-check one construction-only optimizer scalar, or raise ValueError.
+
+    ⚑ PLACEMENT — this is a CONSTRUCTION-SITE validator and deliberately NOT a
+    `TrialConfig.from_dict` one. A `from_dict` validator would be a category-(b)
+    live-edit kill hazard: `_reload_yaml_into_config` re-reads the live yaml
+    every iteration, `from_dict` runs inside `train_trial`'s iteration loop, and
+    that loop has a `finally:` and zero `except` — so an out-of-range value
+    typed into the live file does not get rejected, it takes the trial down
+    mid-iteration (CLAUDE.md, "Working on a live run"). These three keys are
+    construction-only by design: `tune/trainable_config_ops.py` documents them
+    as per-group VALUE knobs that are read once, by `trainer_kwargs_from_config`
+    on the way into `Trainer.__init__`, and are re-applied to the live optimizer
+    groups only from the snapshot taken there. So a mid-run edit to one of them
+    does nothing until the next restart, and the restart IS the construction —
+    which means construction-site validation covers the entire window in which
+    the value can take effect, at zero live-reload hazard. A `from_dict`
+    validator would cover the same window and add a way to kill a running trial.
+
+    ⚑ NOT A CLAMP. `min`/`max` PROPAGATE nan — `min(float("nan"), 100.0)` is
+    `nan` on CPython, and a silently-clamped value is this repo's signature
+    defect (accepted, then quietly something else). The finiteness test is
+    explicit and comes FIRST, because every ordering comparison against nan is
+    False and a bare range test would therefore reject it with a message about
+    bounds rather than about nan.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={raw!r} is not a number. {consequence}"
+        ) from exc
+    if not math.isfinite(value):
+        raise ValueError(
+            f"{name}={raw!r} is not finite. {consequence}"
+        )
+    low_ok = value >= minimum if minimum_inclusive else value > minimum
+    if not (low_ok and value <= maximum):
+        low = f"{minimum:g} <=" if minimum_inclusive else f"{minimum:g} <"
+  # ⚑ `!r`, NOT `:g`. `:g` truncates to 6 significant figures, so the value
+  # that fails a boundary by a hair prints AS the boundary and the message
+  # contradicts itself: `f"{100.0001:g}"` is "100", giving "100 is outside the
+  # accepted range (0 < ... <= 100)". A rejection an operator cannot believe is
+  # worse than no rejection, because the next move is to distrust the guard.
+  # The bounds keep `:g` — they are exact literals (0, 1, 100) and `!r` would
+  # print them as "100.0".
+        raise ValueError(
+            f"{name}={value!r} is outside the accepted range "
+            f"({low} {name} <= {maximum:g}). {consequence}"
+        )
+    return value
+
+
+# Quoted into every rejection message for `matrix_lr_multiplier`, because the
+# number an operator needs in order to pick a replacement is the one this repo
+# already paid for: `tune/trainable_init.py:guard_warm_start_lr` records the
+# 2026-07-11 warm start that put the matrix group at 6e-3 -- double the 0.003
+# recorded as model-destroying -- and cost -494 Elo in 74 iterations.
+#
+# ⚑ THE CURRENT PAIR AND THE FAILING PAIR ARE DIFFERENT, AND THE MESSAGE SAYS
+# WHICH IS WHICH. `configs/pbt2_small.yaml` runs `lr: 0.00003`, so production is
+# 3e-5 x 20 = 6e-4 for this group. The 3e-4 x 20 = 6e-3 figure is the HISTORICAL
+# FAILURE, not today's setting; quoting it as "the production lr" would overstate
+# the live matrix-group LR by 10x in the one piece of text an operator reads
+# while deciding what to replace a rejected value with.
+_MATRIX_LR_MULTIPLIER_CONSEQUENCE = (
+    "matrix_lr_multiplier is the ENTIRE step-size control for the Aurora "
+    "matrix group (28.6% of trainable params under "
+    "matrix_optimizer_scope: mlp_out): that update is scale-invariant and "
+    "carries no adaptive denominator, so nothing downstream absorbs a bad "
+    "value. Production is multiplier 20 at lr 3e-5, i.e. 6e-4 for that group. "
+    "The historical FAILING pair is lr 3e-4 x 20 = 6e-3 -- double the 0.003 "
+    "this project recorded as model-destroying (tune/trainable_init.py "
+    "guard_warm_start_lr, 2026-07-11: -494 Elo in 74 iterations). Production "
+    "multiplier is 20."
+)
+
+_WEIGHT_DECAY_CONSEQUENCE = (
+    "It is applied to its param group verbatim on every optimizer step. "
+    "Production is 1e-4; 0 disables decay for the group."
+)
 
 
 class _SfRebuildCoverageAccumulator:
@@ -1753,12 +2218,32 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "w_policy": _f("w_policy", 1.0),
         "w_soft": _f("w_soft", 0.5),
         "soft_policy_min_tv": _f("soft_policy_min_tv", 0.0),
-  # Spelled as a literal `config.get` rather than `_f(...)` DELIBERATELY:
-  # tests/test_startup_only_config_keys.py derives the startup-only set from
-  # literal config reads, and a key read through the `_f` helper is invisible
-  # to it. Declaring this one startup-only while the instrument cannot see it
-  # would be exactly the hand-override that file's docstring forbids.
+  # ⚑ EVERY STARTUP-ONLY KEY BELOW IS SPELLED AS A LITERAL `config.get` RATHER THAN
+  # `_f(...)`, DELIBERATELY: tests/test_startup_only_config_keys.py derives the
+  # startup-only set from literal config reads, and a key read through the `_f`
+  # helper is INVISIBLE to it. Declaring one startup-only while the instrument
+  # cannot see it would be exactly the hand-override that file's docstring forbids.
+  #
+  # ⚑⚑ THIS COMMENT WAS ALREADY HERE AND THE TWO GATE KEYS WERE ADDED THROUGH `_f`
+  # ANYWAY, two lines below it. Two independent consequences, both real:
+  #   * `test_the_hand_maintained_startup_only_set_is_derivable` went RED -- the keys
+  #     appear in neither the startup nor the loop read-set, so the deriver reported
+  #     them as "declared startup-only but the source shows a live consumer";
+  #   * `test_construction_only_keys_have_no_live_consumer` went GREEN **VACUOUSLY**.
+  #     Its `_config_read_pattern` matches only `.get("k"`, `["k"]`, `tc.k`, so with
+  #     an `_f` read it can see NO read anywhere -- it could neither confirm the
+  #     declared reader file nor find an undeclared one. A reviewer's mutant that
+  #     pointed the declaration at `worker.py`, a file which never reads the key,
+  #     still passed. **A green from that test carried zero information.**
+  # ⇒ keeping these three together, under one comment, so the next key added here
+  #   inherits the rule instead of the trap.
         "policy_target_temp": float(config.get("policy_target_temp", 1.0)),
+        "sf_own_regret_listed_mass_min": float(
+            config.get("sf_own_regret_listed_mass_min", 0.0),
+        ),
+        "sf_own_regret_unlisted_scale": float(
+            config.get("sf_own_regret_unlisted_scale", 1.0),
+        ),
         "w_future": _f("w_future", 0.15),
         "w_sf_own": _f("w_sf_own", 0.0),
         "w_sf_own_regret": _f("w_sf_own_regret", 0.0),
@@ -1779,6 +2264,10 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "sf_policy_floor_gumbel_topk": normalize_gumbel_topk(
             config.get("gumbel_topk", DEFAULT_GUMBEL_TOPK),
         ),
+        "w_sf_shape": _f("w_sf_shape", 0.0),
+  # Literal `config.get` for the same reason as the four above: startup-only,
+  # and the classification test derives that class from LITERAL config reads.
+        "sf_shape_temp_cp": config.get("sf_shape_temp_cp"),
         "w_wdl": _f("w_wdl", 1.0),
         "w_sf_move": _f("w_sf_move", 0.15),
         "w_sf_eval": _f("w_sf_eval", 0.15),
@@ -1809,6 +2298,20 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     if log_dir is not None:
         kw["log_dir"] = log_dir
     return kw
+
+
+@dataclasses.dataclass(frozen=True)
+class ObjectiveSnapshot:
+    """The loss + ruler inputs of ONE evaluation, frozen together.
+
+    Exists so an asynchronous evaluation cannot pair a snapshotted model with a
+    later iteration's objective. Frozen because the whole point is that nothing
+    can move between the moment it is taken and the moment the worker uses it.
+    """
+
+    loss_kwargs: Mapping[str, Any]
+    loss_weights: Mapping[str, float]
+    loss_shape: Mapping[str, float]
 
 
 class Trainer:
@@ -1880,12 +2383,16 @@ class Trainer:
         w_future: float = 0.15,
         w_sf_own: float = 0.0,
         w_sf_own_regret: float = 0.0,
+        sf_own_regret_listed_mass_min: float = 0.0,
+        sf_own_regret_unlisted_scale: float = 1.0,
         w_sf_policy_floor: float = 0.0,
         sf_policy_floor_delta_cp: float | None = None,
         sf_policy_floor_tau: float | None = None,
         sf_policy_floor_tau_top1: float | None = None,
         sf_policy_floor_tau_played: float | None = None,
         sf_policy_floor_gumbel_topk: int = DEFAULT_GUMBEL_TOPK,
+        w_sf_shape: float = 0.0,
+        sf_shape_temp_cp: float | None = None,
         w_wdl: float = 1.0,
         w_sf_move: float = 0.15,
         w_sf_eval: float = 0.15,
@@ -1926,6 +2433,32 @@ class Trainer:
         self._model_config = model_config
         self._input_history_encoding = normalize_lc0_history_encoding(
             model_config.input_history_encoding if model_config is not None else None
+        )
+
+  # Range-check the per-group optimizer scalars BEFORE any of them is folded
+  # into a param group. Unconditional, not gated on `optimizer in (muon,
+  # aurora)`: the same yaml key means the same thing whichever optimizer is
+  # configured, and a guard that only fires on the production branch is a guard
+  # that is not tested by the configs people actually experiment with. See
+  # `_validated_optimizer_scalar` for why this lives here and not in
+  # `TrialConfig.from_dict`.
+        matrix_lr_multiplier = _validated_optimizer_scalar(
+            "matrix_lr_multiplier", matrix_lr_multiplier,
+            minimum=0.0, maximum=_MATRIX_LR_MULTIPLIER_MAX,
+            minimum_inclusive=False,
+            consequence=_MATRIX_LR_MULTIPLIER_CONSEQUENCE,
+        )
+        matrix_weight_decay = _validated_optimizer_scalar(
+            "matrix_weight_decay", matrix_weight_decay,
+            minimum=0.0, maximum=_OPTIMIZER_WEIGHT_DECAY_MAX,
+            minimum_inclusive=True,
+            consequence=_WEIGHT_DECAY_CONSEQUENCE,
+        )
+        aux_weight_decay = _validated_optimizer_scalar(
+            "aux_weight_decay", aux_weight_decay,
+            minimum=0.0, maximum=_OPTIMIZER_WEIGHT_DECAY_MAX,
+            minimum_inclusive=True,
+            consequence=_WEIGHT_DECAY_CONSEQUENCE,
         )
 
         optimizer = str(optimizer).lower()
@@ -2304,6 +2837,22 @@ class Trainer:
         self.w_future = float(w_future)
         self.w_sf_own = float(w_sf_own)
         self.w_sf_own_regret = float(w_sf_own_regret)
+  # Fabricated-tail gate. RESOLVED ONCE, HERE, and the REALIZED pair is what this
+  # object stores -- so `_loss_kwargs`, the Ray RESULT ROW (`trainable_report.py`
+  # emits both from these attributes) and anything else reading them carry the
+  # value actually in force, not the one an operator typed. ⚑ `params.json` is the
+  # exception and it is not fixable here: it persists the Ray `config`, i.e. the
+  # typed value, which is exactly why the realized pair is emitted as a column.
+  # `sf_regret_gate_scale` re-applies the same rule (a no-op on an already
+  # resolved pair) so the offline rigs that call it directly are covered too.
+  # ⚑ This WARNS and does not raise, unlike the floor's shape keys immediately
+  # below; `resolve_sf_regret_gate_keys` records why the two differ.
+        (
+            self.sf_own_regret_listed_mass_min,
+            self.sf_own_regret_unlisted_scale,
+        ) = resolve_sf_regret_gate_keys(
+            sf_own_regret_listed_mass_min, sf_own_regret_unlisted_scale,
+        )
   # SF-approved-move floor. The WEIGHT is a plain live-pushable attribute like
   # every other `w_*` (`TRAINER_WEIGHT_KEYS`); the SHAPE is resolved ONCE, here,
   # and validated at construction so a bad tau kills startup rather than the
@@ -2323,6 +2872,15 @@ class Trainer:
             tau_top1=sf_policy_floor_tau_top1,
             tau_played=sf_policy_floor_tau_played,
             gumbel_topk=self.sf_policy_floor_gumbel_topk,
+        )
+  # SF-shape conditional KL, split exactly like the floor above: a live-pushable
+  # WEIGHT plus a SHAPE resolved and validated once here, so a bad temperature
+  # kills startup rather than the first step. `_loss_kwargs` re-stamps the live
+  # weight with `replace`, which re-runs `__post_init__`, so a live
+  # `w_sf_shape` edit is validated too instead of arriving raw at the consumer.
+        self.w_sf_shape = float(w_sf_shape)
+        self.sf_shape_params = SfShapeParams.resolve(
+            w=self.w_sf_shape, temp_cp=sf_shape_temp_cp,
         )
         self.w_wdl = float(w_wdl)
         self.w_sf_move = float(w_sf_move)
@@ -2484,8 +3042,30 @@ class Trainer:
             f"tau={floor.tau!r} tau_top1={floor.tau_top1!r} "
             f"tau_played={floor.tau_played!r} "
             f"gumbel_topk={self.sf_policy_floor_gumbel_topk!r} "
-            f"search_inclusion_tau={guarantee!r} "
-            f"guarantees_inclusion={floored >= guarantee}",
+            f"deterministic_rank_tau={guarantee!r} "
+  # ⚑ NOT "guarantees_inclusion". Under production Gumbel noise admission is a
+  # PROBABILITY, not a guarantee -- measured at 0.73 for a move at exactly
+  # 1/topk with a broad prior tail at gumbel_scale 1.0. The operator-facing
+  # string now says only what is true: tau is at or above the
+  # DETERMINISTIC-RANKING threshold. A correction note elsewhere is no defence
+  # for a line that literally prints the wrong word.
+            f"at_or_above_deterministic_rank_tau={floored >= guarantee}",
+            flush=True,
+        )
+      # ⚑ ANNOUNCED FROM THE CONSUMER'S OWN OBJECT, like the floor above: this
+      # reads `self._loss_kwargs["sf_shape"]`, the exact object `compute_loss`
+      # is handed, NOT `self.w_sf_shape` and NOT the yaml. A line rebuilt from
+      # `self` would agree with a trainer that dropped the config on the floor,
+      # which is the trap this repo has already paid for. It prints
+      # unconditionally, including at `w=0.0`, because "the term is present and
+      # inert" and "the term never got wired" are the two states an operator
+      # most needs to tell apart -- and the shipped weight is 0.0, so a
+      # print-only-when-active line would be invisible exactly when it matters.
+        sf_shape = self._loss_kwargs["sf_shape"]
+        print(
+            f"[trainer] sf_shape w={sf_shape.w!r} temp_cp={sf_shape.temp_cp!r} "
+            f"active={sf_shape.w != 0.0} "
+            f"in_ruler_shape={'sf_shape_temp_cp' in self._ruler_loss_shape()}",
             flush=True,
         )
 
@@ -2598,21 +3178,167 @@ class Trainer:
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
 
+  # ⚑ LOG-ONLY, deliberately. See `sf_wdl_effective_frac`'s field comment: a
+  # raise here would be a new fatal path in an iteration loop that has
+  # `finally:` and zero `except`, for a state production (712/713 labelled
+  # shards) cannot reach. The bar is not 0 for the same reason — a single
+  # partially-labelled shard would otherwise warn every iteration forever.
+    _VALUE_BLEND_LEAK_WARN = 0.01
+
+    def _warn_if_value_blend_leaks_to_outcome(self, metrics: TrainMetrics) -> None:
+        """Say so when a value-blend share lands on the raw game outcome.
+
+        ⚑ BOTH components, because both fall back to the same one-hot. Reading
+        only the SF half reports a clean 0.0000 on a batch training its ENTIRE
+        value target on the outcome through the search half — measured through
+        the real `compute_loss` in `tests/test_value_blend_guard.py`.
+
+        ⚑ AND ONLY ON AN ITERATION THAT TRAINED. When no microbatch ran, the
+        ratio keys never reach `sums`, `_ratio_metric_kwargs` skips the fields
+        entirely, and both columns sit at their 0.0 dataclass default — which
+        reads as "nothing was labelled" and would warn that the whole value
+        target became the game outcome on an ingest-drought iteration where
+        nothing was trained at all. An absent measurement is not a measurement
+        of zero.
+
+        ⚑⚑ AND THE WEIGHTS ARE THE NORMALIZED ONES, NOT THE RAW ATTRIBUTES.
+        `compute_loss` puts both fracs through `normalize_value_blend_fracs`, so
+        when they sum above 1 the APPLIED weights are smaller than the
+        attributes — and this warning multiplied the shortfall by the raw ones.
+        Measured: `sf_wdl_frac 0.8` + `search_wdl_frac 0.8` with 50% effective SF
+        coverage realizes a 0.25 leak and this reported 0.40, i.e. 1.6x, so the
+        0.01 incident bar could fire on a leak the objective never had. The same
+        helper the loss uses, per its own docstring: one implementation, two
+        callers.
+
+        ⚑⚑ THAT CORRECTION IS **LATENT ON TODAY'S PRODUCTION CONFIG** — STATE THAT
+        BEFORE ANYONE HUNTS A 1.6x ERROR IN A LIVE TB SERIES. `blend_sum > 1.0` is
+        the only branch `normalize_value_blend_fracs` renormalises on, and the
+        live `configs/pbt2_small.yaml` cannot reach it: `sf_wdl_frac: 0.69` +
+        `search_wdl_frac: 0.31` is EXACTLY 1.0 (measured in IEEE754, not assumed —
+        `0.69 + 0.31 == 1.0` is True, so not even a float epsilon crosses it), and
+        `sf_wdl_frac_floor: 0.69` equals the start, so `_dynamic_sf_wdl_weight`
+        interpolates between 0.69 and 0.69 and the PID ramp cannot lift it. On
+        production this function is therefore bit-identical before and after the
+        fix. The states that DO reach it, all real:
+
+          * a live-yaml edit raising either frac. Both keys are in
+            `TRAINER_WEIGHT_KEYS`, so `_sync_trainer_weights` pushes them onto the
+            running trainer every iteration, and neither has a `TrialConfig`
+            validator (CLAUDE.md category (c)) — `search_wdl_frac: 0.8` lands
+            silently;
+          * a PB2 mutation of either key, same path;
+          * the lc0 positive control's own oversubscribed arms, which is where the
+            regression test lives.
+
+        ⇒ this is a correct fix to a REACHABLE-BUT-UNVISITED path, i.e. a latent
+        guard, not a live 1.6x mis-report. Do not "fix" the reach by changing the
+        blend: the 0.69/0.31 split is load-bearing (CLAUDE.md, "the WDL blend's SF
+        component is load-bearing — do not zero it").
+        """
+        if metrics.train_steps_done <= 0:
+            return
+        sf_frac, search_frac, _game_frac = normalize_value_blend_fracs(
+            float(getattr(self, "sf_wdl_frac", 0.0) or 0.0),
+            float(getattr(self, "search_wdl_frac", 0.0) or 0.0),
+        )
+        leaks = [
+            (name, frac * (1.0 - effective))
+            for name, frac, effective in (
+                ("sf_wdl_frac", sf_frac, float(metrics.sf_wdl_effective_frac)),
+                ("search_wdl_frac", search_frac,
+                 float(metrics.search_wdl_effective_frac)),
+            )
+            if frac > 0.0
+        ]
+        leaked = sum(leak for _name, leak in leaks)
+        if leaked <= self._VALUE_BLEND_LEAK_WARN:
+            return
+        logging.getLogger(__name__).warning(
+            "value blend: %.4f of the WDL target fell onto the RAW GAME OUTCOME "
+            "this iteration (%s; effective label mass sf=%.4f search=%.4f). "
+            "losses.py does this silently; see train/value_blend_guard.py.",
+            leaked,
+            ", ".join(f"{name} leaked {leak:.4f}" for name, leak in leaks),
+            float(metrics.sf_wdl_effective_frac),
+            float(metrics.search_wdl_effective_frac),
+        )
+
     def _warn_if_grad_norm_median_past_watch(self, metrics: TrainMetrics) -> None:
-        """Fire the pre-committed I11 watch when the hard cap stops being a tail guard."""
+        """Fire the pre-committed I11 watch when the hard cap stops being a tail guard.
+
+        BOTH halves of I11's condition are gates: the windowed median past
+        `GRAD_NORM_MEDIAN_WATCH` *and* the hard-clip rate past
+        `GRAD_HARD_CLIP_RATE_WATCH`. The median alone was the whole gate until
+        2026-08-24, which made this a broken instrument rather than a noisy one:
+        it emitted on EVERY iteration of the production run — 728 of 728 on
+        trial dea5e, and 124 of 124 windows on the earlier run the ledger
+        quotes — at a measured hard-clip rate of 0.0%, telling operators to
+        re-set a `zclip_max_norm` that had not bound on a single step. The
+        median is a property of the gradients; only the hard-clip rate is a
+        property of the CAP, and the cap is what the message is about.
+
+        ⚑ THE MESSAGE NAMES THE CLIP THAT BOUND, not the one the reader might
+        assume. `effective_clip = min(adaptive_threshold, zclip_max_norm)`, so
+        two different knobs can be the one scaling the gradient, and only
+        `zclip_max_norm` is re-settable as a "cap". Naming the wrong one sends
+        the operator to a knob that cannot move the number they are looking at
+        — the defect this method exists to stop repeating.
+        """
         max_grad_norm = getattr(self.zclip, "max_grad_norm", None)
         if max_grad_norm is None or metrics.grad_norm_samples <= 0:
             return
         if metrics.grad_norm_median <= GRAD_NORM_MEDIAN_WATCH:
             return
+        if metrics.grad_hard_clip_rate < GRAD_HARD_CLIP_RATE_WATCH:
+            return
+  # Both rates are BOUND rates (see the TrainMetrics comment): they partition
+  # `grad_clip_rate`, so ">=" here is "the hard cap won the min() at least as
+  # often as the adaptive threshold did".
+        hard_binds = metrics.grad_hard_clip_rate >= metrics.grad_adaptive_bound_rate
+        if hard_binds:
+            binding = (
+                f"the HARD cap zclip_max_norm={float(max_grad_norm):.2f} is the "
+                f"binding clip ({100.0 * metrics.grad_hard_clip_rate:.1f}% of "
+                f"steps, vs {100.0 * metrics.grad_adaptive_bound_rate:.1f}% for "
+                "the adaptive threshold): it is acting as an LR cap, not a tail "
+                "guard — re-set zclip_max_norm"
+            )
+        else:
+  # ⚑ NAMING A KNOB IS NOT ENOUGH — SAY WHETHER IT CAN BE REACHED. The
+  # adaptive threshold's knobs are `zclip_z_thresh` and `zclip_alpha`, and
+  # `ZClip.__init__` reads BOTH once: nothing in `tune/` pushes either at a
+  # running trial, so a live yaml edit to them is overlaid into the config,
+  # never re-read, and silently ignored until the next restart. Only
+  # `zclip_max_norm` has a live path (`set_grad_clip_max_norm`, pushed every
+  # iteration from `tune/trainable.py`) — and that setter exists precisely
+  # because editing it live USED to be a silent no-op. Telling an operator to
+  # "re-set zclip_z_thresh" without saying it needs a restart reproduces this
+  # repo's signature defect inside the very message that exists to stop it.
+            binding = (
+                "the ADAPTIVE z-score threshold is the binding clip "
+                f"({100.0 * metrics.grad_adaptive_bound_rate:.1f}% of steps, vs "
+                f"{100.0 * metrics.grad_hard_clip_rate:.1f}% for the hard cap "
+                f"zclip_max_norm={float(max_grad_norm):.2f}). Its knobs are "
+                "zclip_z_thresh / zclip_alpha and BOTH ARE RESTART-GATED: zclip "
+                "reads them once at construction and nothing pushes them at a "
+                "running trial, so a live yaml edit to either is silently "
+                "ignored until the next restart. zclip_max_norm is the only "
+                "clip knob that takes effect mid-run, and it is binding the "
+                "smaller share here"
+            )
         logging.getLogger(__name__).warning(
             "grad-norm median %.3f over %d step(s) is past the pre-committed "
-            "watch threshold %.2f with zclip_max_norm=%.2f (clip rate %.1f%%, "
-            "hard-clip rate %.1f%%): the hard cap is acting as an LR cap, not a "
-            "tail guard — re-set it (docs/rl_loop_audit.md I11)",
+            "watch threshold %.2f and the hard-clip rate %.1f%% is past %.1f%%: "
+            "%s (adaptive threshold fired on %.1f%% of steps; any clip bound on "
+            "%.1f%%) (docs/rl_loop_audit.md I11)",
             metrics.grad_norm_median, metrics.grad_norm_samples,
-            GRAD_NORM_MEDIAN_WATCH, float(max_grad_norm),
-            100.0 * metrics.grad_clip_rate, 100.0 * metrics.grad_hard_clip_rate,
+            GRAD_NORM_MEDIAN_WATCH,
+            100.0 * metrics.grad_hard_clip_rate,
+            100.0 * GRAD_HARD_CLIP_RATE_WATCH,
+            binding,
+            100.0 * metrics.grad_adaptive_clip_rate,
+            100.0 * metrics.grad_clip_rate,
         )
 
     @property
@@ -2802,11 +3528,25 @@ class Trainer:
             effective_clip = min(effective_clip, float(max_grad_norm))
 
         clipped = effective_clip < total_norm
+  # WHICH clip bound, not which fired. `effective_clip` is the `min()` of the
+  # two candidates, so the hard cap bound exactly when it IS that min and the
+  # min is below the step's own norm. Everything else that clipped was bound by
+  # the adaptive threshold, which makes the two flags a partition of `clipped`
+  # — asserted in tests, and relied on by `_warn_if_grad_norm_median_past_watch`
+  # to name the binding clip. A tie (adaptive threshold exactly equal to the
+  # cap) is credited to the hard cap: the gradient is scaled to `max_grad_norm`
+  # either way, and the operator's re-settable knob is the one worth naming.
+        hard_bound = (
+            max_grad_norm is not None
+            and clipped
+            and effective_clip == float(max_grad_norm)
+        )
         stats = {
             "total_norm": total_norm,
             "effective_clip": float(effective_clip),
             "adaptive_clip": 1.0 if clip_val is not None and adaptive_clip < total_norm else 0.0,
-            "hard_clip": 1.0 if max_grad_norm is not None and clipped and effective_clip == float(max_grad_norm) else 0.0,
+            "adaptive_bound": 1.0 if clipped and not hard_bound else 0.0,
+            "hard_clip": 1.0 if hard_bound else 0.0,
             "clipped": 1.0 if clipped else 0.0,
         }
         return total_norm, stats
@@ -2816,6 +3556,8 @@ class Trainer:
         return {
             "w_policy": self.w_policy, "w_soft": self.w_soft, "w_future": self.w_future,
             "w_sf_own": self.w_sf_own, "w_sf_own_regret": self.w_sf_own_regret,
+            "sf_own_regret_listed_mass_min": self.sf_own_regret_listed_mass_min,
+            "sf_own_regret_unlisted_scale": self.sf_own_regret_unlisted_scale,
             "soft_policy_min_tv": self.soft_policy_min_tv,
             "policy_target_temp": self.policy_target_temp,
             "w_wdl": self.w_wdl, "w_sf_move": self.w_sf_move, "w_sf_eval": self.w_sf_eval,
@@ -2845,6 +3587,10 @@ class Trainer:
             "sf_policy_floor": replace(
                 self.sf_policy_floor_params, w=float(self.w_sf_policy_floor),
             ),
+  # `replace` for the same reason: `w_sf_shape` is in `TRAINER_WEIGHT_KEYS` and
+  # is pushed by `setattr` every iteration, so a frozen object captured at
+  # construction would swallow the edit.
+            "sf_shape": replace(self.sf_shape_params, w=float(self.w_sf_shape)),
         }
 
     @property
@@ -2885,8 +3631,96 @@ class Trainer:
         RECORD OVER instead of freezing it. Weight MAGNITUDES are still
         excluded, deliberately -- see `active_loss_terms` for why hashing them
         would abolish the comparison rather than tighten it.
+
+        ⚑⚑ THE FABRICATED-TAIL GATE IS PINNED OFF, and it is pinned by the
+        redefines-vs-scales criterion above rather than by category. It LOOKS
+        like a weight —
+        `sf_own_regret * scale` — but it is applied PER ROW on a data-dependent
+        predicate, so it changes WHICH rows the term is measured over. That
+        REDEFINES the column instead of scaling it: an unchanged model reads a
+        different `sf_own_regret`, measured 0.4174 -> 0.2112 on one identical
+        model/batch, a 2x move from a training knob. Left unpinned, arming the arm
+        would look like the eval loss improving with zero model change — the
+        false-positive class this project is repeatedly burned by — and every
+        arm-vs-baseline comparison of that column would compare two rulers.
+
+        ⚑ This also closes the ID's blind spot at the root rather than by widening
+        a digest closure. ⚑⚑ AND THE BLIND SPOT IS WIDER THAN AN EARLIER REVISION
+        OF THIS PARAGRAPH CLAIMED. It said the id "moves when `compute_loss` is
+        edited but is blind to `sf_regret_gate_scale`" -- an asymmetry that does
+        not exist. `eval_ruler_id_for`'s own docstring below says recursion stops
+        at this module's edge, so the closure is blind to `compute_loss`'s BODY
+        too; VERIFIED BY EXECUTION (a dead statement inserted into `compute_loss`
+        leaves the pins in `tests/test_holdout_ruler_identity.py` passing, one
+        inserted into this property fails them). ⇒ the pin is MORE necessary than
+        the false version argued, not less: nothing downstream of `_loss_kwargs`
+        is watched at all, so the gate could otherwise move the eval number with
+        the id sitting perfectly still. With it pinned off, no code below this
+        line can affect the eval measurement, and there is nothing for the
+        closure to have to see.
         """
-        return {**self._loss_kwargs, "policy_target_temp": 1.0}
+        return {
+            **self._loss_kwargs,
+            "policy_target_temp": 1.0,
+            "sf_own_regret_listed_mass_min": 0.0,
+            "sf_own_regret_unlisted_scale": 1.0,
+        }
+
+
+    def objective_snapshot(self) -> ObjectiveSnapshot:
+        """The whole objective as ONE immutable value, taken at a single instant.
+
+        Everything the holdout measurement depends on that a live yaml edit can
+        move: the kwargs the batches are scored with, and the two inputs the
+        ruler identity is derived from. Taken together so a flip landing
+        mid-iteration cannot split them across the three fields.
+        """
+        return ObjectiveSnapshot(
+            loss_kwargs=dict(self._eval_loss_kwargs),
+            loss_weights=self._ruler_loss_weights(),
+            loss_shape=self._ruler_loss_shape(),
+        )
+
+    def _ruler_loss_shape(self) -> dict[str, float]:
+        """Non-weight parameters that change WHAT AN ACTIVE TERM MEASURES.
+
+        ⚑ READ OFF THE CONSUMER'S OWN OBJECT, not off `self` and not off the
+        yaml. `sf_policy_floor` is resolved and validated once into a single
+        `SfPolicyFloorParams`, and that object is what `compute_loss` uses; a
+        re-derivation here would be a second source of truth for the same
+        number, which is the "announce from the consumer's own parameter" trap
+        this repo has already paid for.
+
+        ⚑ ONLY FOR TERMS THAT ARE IN THE OBJECTIVE. At `w == 0.0` the floor
+        contributes nothing to `total` (`compute_loss` adds it under an `if`),
+        so its shape cannot move `test_loss` and hashing it would fire a
+        best-model handover every time a DISABLED knob was retuned -- a false
+        positive with no hazard behind it.
+
+        `w` itself is deliberately absent: membership already covers it, and
+        including the value here would reintroduce the magnitude hash that
+        `active_loss_terms` argues against.
+
+        ⚑ EVERY restart-required shape parameter of an ACTIVE term belongs here,
+        and the set is not "the floor's". `sf_shape_temp_cp` is the SF-shape
+        term's teacher temperature: it sets the entropy of `q_S`, so retuning it
+        changes what `m_sf_shape` measures exactly as `tau` does for the floor.
+        It ships as an uncalibrated placeholder that is expected to be tuned
+        before the term is taken seriously, so "it will never change" is the
+        opposite of true. Omitting it would let a re-tuned objective inherit the
+        previous ruler id across a same-trial restart and compare its new
+        `test_loss` against the old record -- the PR #277 failure this whole
+        mechanism exists to prevent.
+        """
+        shape: dict[str, float] = {}
+        floor = self._eval_loss_kwargs.get("sf_policy_floor")
+        if floor is not None and float(getattr(floor, "w", 0.0)) != 0.0:
+            for field in ("delta_cp", "tau", "tau_top1", "tau_played"):
+                shape[f"sf_policy_floor_{field}"] = float(getattr(floor, field))
+        sf_shape = self._eval_loss_kwargs.get("sf_shape")
+        if sf_shape is not None and float(getattr(sf_shape, "w", 0.0)) != 0.0:
+            shape["sf_shape_temp_cp"] = float(getattr(sf_shape, "temp_cp"))
+        return shape
 
     def _ruler_loss_weights(self) -> dict[str, float]:
         """The loss weights the holdout ruler's identity is keyed on.
@@ -3282,6 +4116,7 @@ class Trainer:
     def eval_ruler_id_for(
         cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
         loss_weights: Mapping[str, float],
+        loss_shape: Mapping[str, float] | None = None,
     ) -> str:
         """Identity of the measurement `_compute_metrics` performs.
 
@@ -3348,12 +4183,12 @@ class Trainer:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
                 mirror_prob=0.0, measured_by=measured_by,
-                loss_weights=loss_weights,
+                loss_weights=loss_weights, loss_shape=loss_shape,
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_prob), measured_by=measured_by,
-            loss_weights=loss_weights,
+            loss_weights=loss_weights, loss_shape=loss_shape,
         )
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -3712,8 +4547,20 @@ class Trainer:
         self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
         model_override: torch.nn.Module | None = None,
         full_pass: bool = False,
+        objective: ObjectiveSnapshot | None = None,
     ) -> TrainMetrics:
         """Score ``buf`` and pool the per-batch results into one TrainMetrics.
+
+        ⚑ ``objective`` PINS THE LOSS AND THE RULER TO ONE LOGICAL TIME. The
+        async path snapshots the MODEL at ``start()`` and evaluates it on a
+        worker thread, but this method used to re-read ``self._eval_loss_kwargs``
+        and re-derive the ruler when the worker finally ran -- which can be a
+        whole iteration later, AFTER a live weight flip. The model, the loss it
+        was scored under, and the identity stamped on the result would then come
+        from three different times, and the recorded ``test_loss`` would belong
+        to no objective that ever existed. ``None`` keeps the synchronous
+        behaviour of reading current state, which is correct because there is no
+        gap to race.
 
         ``full_pass`` walks every row of ``buf`` exactly once in a fixed order
         and ignores ``steps``; otherwise ``steps`` batches are SAMPLED from it.
@@ -3756,13 +4603,27 @@ class Trainer:
                 coverage=eval_coverage,
             )
         )
+  # ⚑ ONE logical time for the whole objective. Read HERE, per evaluation,
+  # never captured at trainer construction: the weights are live-pushed every
+  # iteration, and a build-time snapshot would make the ruler blind to exactly
+  # the edit it exists to catch. The `objective` argument is NOT that mistake --
+  # it is taken per evaluation too, at `AsyncTestEval.start()`, alongside the
+  # model weights it belongs to, so the async path pairs a model with the loss
+  # it was actually scored under instead of with whatever is current when the
+  # worker gets around to it.
+        if objective is None:
+            eval_loss_kwargs = self._eval_loss_kwargs
+            ruler_weights = self._ruler_loss_weights()
+            ruler_shape = self._ruler_loss_shape()
+        else:
+            eval_loss_kwargs = objective.loss_kwargs
+            ruler_weights = objective.loss_weights
+            ruler_shape = objective.loss_shape
         ruler = type(self).eval_ruler_id_for(
             batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_p), full_pass=bool(full_pass),
-  # Read HERE, per evaluation, not captured at construction: the weights are
-  # live-pushed every iteration, and a snapshot taken at build time would make
-  # the ruler blind to exactly the edit it exists to catch.
-            loss_weights=self._ruler_loss_weights(),
+            loss_weights=ruler_weights,
+            loss_shape=ruler_shape,
         )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])
@@ -3771,11 +4632,26 @@ class Trainer:
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
-                losses = compute_loss(out, batch, **self._eval_loss_kwargs)
+                losses = compute_loss(out, batch, **eval_loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():
   # `_RAW_SUM_LOSS_KEYS` are already row sums; the rest are row means.
+  #
+  # ⚑ UNITS TRAP, NAMED SO IT CANNOT BE INHERITED BY ACCIDENT. This branch
+  # decides units by MEMBERSHIP, so a key that is a per-batch COUNT and is not
+  # in `_RAW_SUM_LOSS_KEYS` is multiplied by `n_rows` here and stops being a
+  # count. `disarmed_nonfinite_terms` and `blend_unclaimed_nonfinite_rows` are
+  # exactly that shape. They are inert TODAY only because
+  # `_loss_sums_to_metric_kwargs` drops every key that is not a `TrainMetrics`
+  # field, so the scaled value is computed and thrown away -- and the day one of
+  # them is given a field, this line silently starts publishing rows-times-count.
+  # The fix then is to add it to `_RAW_COUNT_METRIC_FIELDS` (which puts it in
+  # `_RAW_SUM_LOSS_KEYS`) in the SAME change, never to add the field alone.
+  # ⚑ This comment is deliberate: `_compute_metrics` is on the holdout ruler's
+  # hashed call graph, and `digest_source` is blind to comments and docstrings
+  # (measured, and `test_the_production_ruler_id_is_pinned` re-measures it) -- so
+  # a note is free here and a line of code is not.
                 sums[k] = sums.get(k, 0.0) + (v if k in _RAW_SUM_LOSS_KEYS else v * n_rows)
             total_rows += n_rows
 
@@ -3910,6 +4786,7 @@ class Trainer:
                 self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
                 self.writer.add_scalar("zclip/effective_clip", zclip_stats["effective_clip"], self.step)
                 self.writer.add_scalar("zclip/adaptive_clipped", zclip_stats["adaptive_clip"], self.step)
+                self.writer.add_scalar("zclip/adaptive_bound", zclip_stats["adaptive_bound"], self.step)
                 self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
                 self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
   # The LR in force for THIS step, sampled before opt.step() and before
@@ -3963,7 +4840,8 @@ class Trainer:
         aurora_grad_norms: list[float] = []
         lr_samples: list[float] = []
         clip_counts: dict[str, int] = {
-            "clipped": 0, "adaptive_clip": 0, "hard_clip": 0, "nonfinite_grad": 0,
+            "clipped": 0, "adaptive_clip": 0, "adaptive_bound": 0, "hard_clip": 0,
+            "nonfinite_grad": 0,
         }
         transient_cuda_retry_batches = 0
 
@@ -4054,6 +4932,41 @@ class Trainer:
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
+  # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
+  # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
+  # and never trips the non-finite-GRADIENT guard in `_run_optimizer_step`: it
+  # survives only as a TB column nobody reads. Read off THIS loop's own
+  # accumulated `sums`, not off a value handed down from the producer, and
+  # emitted at most once per iteration -- `train_steps` is called once per
+  # training iteration and this line is outside the step loop.
+  #
+  # Deliberately not a `TrainMetrics` field: F6's finding is that a silent
+  # column is what failed here, so the fix is an active announcement. The
+  # per-term columns already say WHICH head, and they are unchanged.
+        disarmed_nonfinite = float(sums.get("disarmed_nonfinite_terms", 0.0))
+        if disarmed_nonfinite > 0.0:
+            _log.warning(
+                "%.0f zero-weighted loss component reading(s) were non-finite "
+                "this iteration (summed over %d microbatch(es)). The zero "
+                "weight keeps them out of `total`, so no gradient guard can "
+                "see them -- read the per-term loss columns to find which head "
+                "and treat it as a label/data defect, not a benign disarm.",
+                disarmed_nonfinite, n_micro,
+            )
+  # The blend's own substitutions, on the same once-per-iteration rule. An
+  # unclaimed non-finite label row is TOLERATED (it takes the game outcome) and
+  # must still be visible: +-inf and NaN both land here, so a shard writing
+  # -inf -- which `_normalize_sf_wdl_probs`'s clamp would otherwise launder into
+  # a valid-looking distribution -- is reported rather than trained on.
+        blend_unclaimed = float(sums.get("blend_unclaimed_nonfinite_rows", 0.0))
+        if blend_unclaimed > 0.0:
+            _log.warning(
+                "%.0f value-label row reading(s) were non-finite with a zero "
+                "blend mask this iteration (summed over %d microbatch(es)). "
+                "They were replaced with the game outcome, which is correct and "
+                "is still a shard defect -- +-inf and NaN both count here.",
+                blend_unclaimed, n_micro,
+            )
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, n_micro)),
             train_time_s=float(train_time_s),
@@ -4073,6 +4986,7 @@ class Trainer:
             **getattr(self.opt, "last_polar_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
+        self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")
 
   # Compile probe: report once after the first batch of train steps that
@@ -4197,12 +5111,20 @@ class Trainer:
     def _wrap_agnostic_name(name: str) -> str:
         """The parameter's name with ``torch.compile``'s wrapper segment removed.
 
-        Same normalisation ``strip_compile_prefix`` applies to state_dict KEYS,
-        applied to a single name: checkpoints are written wrap-agnostic while a
-        compiled trainer's ``named_parameters()`` reports ``_orig_mod.``-prefixed
-        names for the very same parameter objects the optimizer holds.
+        Checkpoints are written wrap-agnostic, while a compiled trainer's
+        ``named_parameters()`` reports ``_orig_mod.``-prefixed names for the very
+        same parameter objects the optimizer holds — so every name-based path
+        here has to normalise before it compares.
+
+        ⚑ DELEGATES to ``strip_compile_prefix_from_name`` rather than restating
+        the rule. It used to carry its own ``replace(..., 1)``, which made this
+        the project's SECOND copy: independent review of PR #439 mutated it to
+        ``removeprefix`` and the entire suite still passed, the only survivor of
+        20 mutations. Equivalent in this function's actual domain today (these
+        names are never nested), but that is a fact about today's inputs, and the
+        divergence of exactly these two spellings is PR #267's J9 defect.
         """
-        return name.replace("_orig_mod.", "", 1)
+        return strip_compile_prefix_from_name(name)
 
     def _optimizer_param_names(self) -> list[str] | None:
         """Wrap-agnostic parameter names in the optimizer's flattened order.
@@ -4386,8 +5308,27 @@ class Trainer:
         live_names = self._optimizer_param_names()
         if live_names is None or len(live_names) != sum(len(g["params"]) for g in groups_new):
             return None
-        if len(set(live_names)) != len(live_names) or len(set(donor_names)) != len(donor_names):
+  # ⚑ TWO DIFFERENT FAILURES, and they are deliberately NOT merged. Reviewed and
+  # decided 2026-08-16 (independent review of PR #439, F5).
+  #
+  # LIVE names duplicated -> `return None`, and that is right: the LIVE model is
+  # this process's own `named_parameters()`, so a repeat means two parameters
+  # genuinely share a name and no name-keyed mapping can address them. The donor
+  # file is not implicated, its index order is as good as it ever was, and the
+  # positional load the caller falls back to is the correct behaviour.
+  #
+  # DONOR names duplicated -> a CORRUPT MANIFEST, the same category the duplicate
+  # slot-id check below RAISES on. By this method's own argument a corrupt donor
+  # cannot establish that its index order is trustworthy.
+        if len(set(live_names)) != len(live_names):
             return None
+        if len(set(donor_names)) != len(donor_names):
+            raise UntrustedOptimizerStateError(
+                f"donor optimizer manifest repeats a parameter name "
+                f"({len(donor_names)} names, {len(set(donor_names))} distinct); "
+                "the name -> slot mapping is not one-to-one and the donor's own "
+                "index order cannot be trusted either"
+            )
         donor_slot_ids: list[Any] = []
         for group in groups_ckpt:
             donor_slot_ids.extend(group.get("params", ()))
@@ -4445,10 +5386,16 @@ class Trainer:
   # The trigger is therefore ONE shape and only one: a checkpoint whose manifest
   # and payload were written by DIFFERENT code -- an external tool that rewrites
   # one side and leaves the other. `Trainer.save` is the sole in-tree writer of
-  # `opt_param_names`, and `scripts/reinit_value_heads.py` was the last tool
-  # that desynchronised them until it was fixed in this same PR. ⇒ **this guard
-  # is defence in depth against a FUTURE such tool. Do not delete it on finding
-  # that nothing produces its input today.**
+  # `opt_param_names`, and TWO scripts rewrote the payload while leaving the
+  # manifest: `scripts/reinit_value_heads.py` (fixed in PR #427) and
+  # `scripts/shrink_ffn_checkpoint.py` (fixed here -- independent review of
+  # #439 found this comment claimed the first was "the last tool", which was
+  # false the moment it was written). ⇒ **this guard is defence in depth against
+  # a FUTURE such tool. Do not delete it on finding that nothing produces its
+  # input today** -- the class has now produced two instances, and both were
+  # harmless only because a separate caller-side accident (no `opt` in the file
+  # ⇒ the manifest is never read) stopped them short. That is a property of the
+  # caller, not of the producers.
   #
   # Not the reason a self-consistent save is safe, though it reads like one:
   # `save` putting both sides through the identical `.replace("_orig_mod.",
@@ -4486,6 +5433,30 @@ class Trainer:
                             "off and the mapping cannot be trusted"
                         )
 
+  # ⚑ THE RECONSTRUCTION BELOW EMITS EXACTLY {state, param_groups}. Any other
+  # top-level key the donor carries is therefore DROPPED, silently, and the only
+  # signal is whatever the consumer does when it finds it missing. Today that is
+  # `SODAWeightDecayWrapper`'s `soda_anchors`: losing it makes its
+  # `load_state_dict` raise for every marked parameter, and the generic handler
+  # then cold-starts the WHOLE optimizer and skips the donor scheduler/ZClip
+  # while blaming the model layout.
+  #
+  # Checked STRUCTURALLY rather than by testing `weight_decay_mode == "soda"`:
+  # the hazard is "this re-key cannot carry that key", which is true of the next
+  # wrapper too, and a mode-name test would not see it. Reached only after the
+  # identical-names early return above, so an ORDINARY resume -- SODA included --
+  # never comes here and keeps carrying its anchors through the positional load.
+        unsupported = sorted(set(ckpt_opt) - {"state", "param_groups"})
+        if unsupported:
+            raise UnsupportedWarmStartError(
+                f"the donor optimizer state carries top-level key(s) {unsupported} "
+                "that the name-based re-key cannot reconstruct, and this warm "
+                "start changes parameter names so the re-key is required. Most "
+                "likely `weight_decay_mode: soda` (SODAWeightDecayWrapper adds "
+                "`soda_anchors`). That combination is NOT supported by the "
+                "warm-start path -- see UnsupportedWarmStartError. Production "
+                "(`aurora` + `mlp_out`, no `weight_decay_mode`) never reaches this"
+            )
         new_index_of_name = {name: index for index, name in enumerate(live_names)}
         state_remap = {
             slot_id: new_index_of_name[name]
@@ -4665,7 +5636,14 @@ class Trainer:
                 )
             if by_name is not None:
                 opt_state, remap_report, kept, changed = by_name
-  # print, not logging.info: see the splice message below.
+  # print, not logging.info: the Ray actor has no logging handler, so INFO is
+  # dropped (measured 2026-08-12: zero INFO records in arm A's 2,494-line log)
+  # and a successful re-key would be silent while only the WARNINGs below are
+  # loud. Same channel as the tolerant-load report. ⚑ Rationale inlined rather
+  # than cross-referenced: it used to say "see the splice message below", and
+  # that message is a `logging.info` on this branch, so the pointer contradicted
+  # itself. Don't reintroduce the cross-reference — the two call sites are free
+  # to disagree, and this note has to stand on its own.
                 print(
                     "[resume] Re-keyed the donor optimizer state onto this "
                     f"model's parameters by name ({remap_report})"
@@ -4741,6 +5719,59 @@ class Trainer:
   # changing the count -- e.g. aux_policy_head_dim re-widening
   # policy_soft/policy_sf q/k -- so load_state_dict "succeeds" and the first
   # opt.step() crashes OUTSIDE this try. Drop what no longer fits, loudly.
+  # ⚑ ...but the sweep reads the FLAT `{state, param_groups}` view, and
+  # `_ChainedOptimizer` does not have one: its state lives in its children while
+  # the outer `state` stays empty (documented at its construction site, which is
+  # also why `_decay_group_layout` is None there). The sweep would report zero
+  # drops and leave donor-shaped moments under the resized q/k -- exactly the
+  # `aux_policy_head_dim` case above -- until the first CHILD step crashes.
+  # Refuse instead of sweeping a view that cannot see the state.
+  #
+  # ⚑⚑ GATED ON AN ACTUAL SHAPE CHANGE, NOT ON THE OPTIMIZER TYPE. An earlier
+  # revision tested only `isinstance(..., _ChainedOptimizer)`, which turned every
+  # ORDINARY chained resume -- identical config, nothing resized, 172/172 donor
+  # moments restored correctly -- into a full cold start that also skipped the
+  # donor scheduler and ZClip. That is a regression against working behaviour,
+  # and the message was FALSE in the case it fired on: it asserted moments sat
+  # "under tensors this warm start resized" when nothing had been. Found by
+  # delta review of `051210c08`.
+  #
+  # ⚑ The reason it survived my own tests is worth keeping: the production
+  # negative control ran `aurora`/`mlp_out`, which is the right control FOR
+  # PRODUCTION and structurally blind to this guard, whose entire domain is
+  # `soap`. A negative control has to run in the GUARD's domain or it cannot
+  # reach the guard at all and passes for the wrong reason. The tell was already
+  # in the suite: the SODA test had an ordinary-resume control and this one did
+  # not. That asymmetry WAS the defect.
+  #
+  # Compared donor-side, because it is the donor's stored shapes the child
+  # optimizers' moments were built against; an ADDED parameter is absent from
+  # the payload, is not a resize, and is the splice path's business, not this
+  # sweep's.
+            donor_model = ckpt.get("model") or {}
+            resized = [
+                name
+                for name, param in self.model.named_parameters()
+                if torch.is_tensor(
+                    donor := donor_model.get(self._wrap_agnostic_name(name))
+                )
+                and tuple(donor.shape) != tuple(param.shape)
+            ]
+            if resized and isinstance(_unwrap_optimizer(self.opt), _ChainedOptimizer):
+                raise UnsupportedWarmStartError(
+                    "this run's optimizer is a _ChainedOptimizer (`optimizer: "
+                    "soap` with a non-default `matrix_optimizer_scope`), whose "
+                    "state lives in its child optimizers, and this warm start "
+                    f"resizes {len(resized)} parameter(s) ({', '.join(resized[:4])}"
+                    f"{', ...' if len(resized) > 4 else ''}). "
+                    "reset_mismatched_optimizer_state sweeps the outer flat view "
+                    "and would report NOTHING while leaving donor-shaped moments "
+                    "under those tensors, crashing at the first CHILD step. That "
+                    "combination is NOT supported by the warm-start path -- see "
+                    "UnsupportedWarmStartError. An ordinary chained resume, which "
+                    "resizes nothing, is unaffected. Production (`aurora` + "
+                    "`mlp_out`) never reaches this"
+                )
             reset = reset_mismatched_optimizer_state(
                 self.opt,
                 param_names={id(p): n for n, p in self.model.named_parameters()},
@@ -4751,6 +5782,25 @@ class Trainer:
                     "shape changed in this warm start; they restart at zero "
                     "moments / step 0: %s", len(reset), "; ".join(reset),
                 )
+        except UnsupportedWarmStartError as exc:
+  # ⚑ Its own handler, above the generic one, so the message names the CONFIG
+  # COMBINATION instead of the generic "incompatible with new model layout",
+  # which is a misattribution: the layout is fine, the warm-start path does not
+  # cover this optimizer. End state is the same cold start -- the point is that
+  # the operator is told which knob to change, and that removing the guard is a
+  # visible change rather than a silent return to wrong moments.
+            optimizer_state_loaded = False
+            logging.getLogger(__name__).warning(
+                "REFUSING to warm-start this optimizer: %s. The optimizer "
+                "cold-starts at zero moments and the donor scheduler/ZClip state "
+                "is NOT restored. This is deliberate: the alternative is an "
+                "optimizer holding moments that belong to other tensors, which "
+                "no downstream instrument can detect.",
+                exc,
+            )
+            self.opt.load_state_dict(fresh_opt_state)
+            self._scheduler.load_state_dict(fresh_scheduler_state)
+            self.reset_optimizer_reference_weights()
         except UntrustedOptimizerStateError as exc:
   # ⚑ REFUSE the positional fallback rather than take it. Reaching the generic
   # handler below would be enough to cold-start, but this branch exists so the

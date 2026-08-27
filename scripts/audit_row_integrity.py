@@ -37,7 +37,7 @@ def main() -> int:
         print(f"no replay_shards dirs under {args.replay_root}\n"
               "  (a git worktree has no runs/; pass --replay-root pointing at the "
               "live checkout, e.g.\n"
-              "   --replay-root /home/josh/projects/chess/runs/pbt2_small/replay)")
+              "   --replay-root ~/projects/chess/runs/pbt2_small/replay)")
         return 1
     shard_dir = trials[-1]
     paths = iter_shard_paths(shard_dir)[-args.shards:]

@@ -13,6 +13,7 @@ import concurrent.futures
 import io
 from collections.abc import Mapping
 import logging
+import math
 import os
 import sys
 import threading
@@ -518,10 +519,8 @@ def _build_engine(
     fpu_reduction: float = 1.2,
   # Gumbel root/descent split (legacy defaults; see main()'s --c-visit-root etc.)
     c_visit_root: float = -1.0,
-    q_visit_floor: float = -1.0,
-    q_visit_exp: float = 1.0,
-    q_global_scale: bool = False,
-  # Root-ONLY LOG value-transform (UCI default; descent keeps linear q_visit_exp).
+  # Root-ONLY LOG value-transform (UCI default; the descent transform is fixed
+  # linear -- its three knobs were deleted, see GumbelConfig).
   # Linear root q_scale=c_scale*(c_visit_root+max_visit) EXPLODES with max_visit
   # (~25000 at 1M nodes) -> the root saturates sigma(q) and blindly trusts the
   # overconfident value head, so deeper search REVERSES (audit: +3.8cp at 32k).
@@ -573,9 +572,6 @@ def _build_engine(
             cpuct_base=float(cpuct_base),
             fpu_reduction=fpu_reduction,
             c_visit_root=c_visit_root,
-            q_visit_floor=q_visit_floor,
-            q_visit_exp=q_visit_exp,
-            q_global_scale=q_global_scale,
             c_scale_root=c_scale_root,
             q_visit_exp_root=q_visit_exp_root,
             policy_temp=policy_temp,
@@ -800,31 +796,16 @@ def _build_parser() -> argparse.ArgumentParser:
                         "q_scale — the root/descent SPLIT that fixes search scaling (avoidable "
                         "regret +33%% vs legacy on the audit set; value scales coherently with "
                         "depth). <0 = use --c-visit at both sites (legacy, no split).")
-    p.add_argument("--q-visit-floor", type=float, default=-1.0,
-                   help="Gumbel decoupled (additive) value-transform floor: when >=0, "
-                        "q_scale=q_visit_floor+c_scale*max_visit^exp instead of the legacy "
-                        "c_scale*(c_visit+max_visit^exp) whose floor scales WITH c_scale. "
-                        "Lets c_scale rise (for sublinear --q-visit-exp) without inflating the "
-                        "early-round floor. <0 (default) = legacy coupled floor.")
-    p.add_argument("--q-visit-exp", type=float, default=1.0,
-                   help="Gumbel exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
-                        "1.0 = standard linear Gumbel (default). <1 makes search-Q trust grow "
-                        "sublinearly with depth so the optimal c_scale is less sim-count-dependent.")
     p.add_argument("--c-scale-root", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale_root"],
                    help="ROOT-ONLY c_scale (descent keeps --c-scale). Pairs with "
                         "--q-visit-exp-root<0 for a LOG root q_scale=c_scale_root*log1p(c_visit_root"
                         "+max_visit), which needs a large c_scale (~7) vs the tiny descent (~0.025). "
                         "<0 = use --c-scale at the root too (legacy linear).")
     p.add_argument("--q-visit-exp-root", type=float, default=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
-                   help="ROOT-ONLY value-transform exponent (descent keeps --q-visit-exp). DEFAULT "
+                   help="ROOT-ONLY value-transform exponent (the descent is fixed linear). DEFAULT "
                         "-1 = LOG slow-growth: linear root q_scale explodes ~25000 at 1M nodes and "
                         "saturates sigma(q) (deeper search reverses, +3.8cp@32k audit); log stays "
-                        "~100 from 256 to millions of nodes (sim-invariant). >=90 = use --q-visit-exp.")
-    p.add_argument("--q-global-scale", action="store_true",
-                   help="Gumbel descent scales the value-transform by the ROOT max child-visit "
-                        "(global/search-size) instead of the local node's max_visit, so q_scale is "
-                        "uniform across the tree. Pairs with --q-visit-exp<1 for sim-invariance. "
-                        "Default off = legacy local behavior.")
+                        "~100 from 256 to millions of nodes (sim-invariant). >=90 = LINEAR root.")
     p.add_argument("--max-batch", type=int, default=1024,
                    help="DirectGPUEvaluator max batch (default: 1024). Must be >= expected leaf count per wavefront.")
     p.add_argument("--eval-cache-entries", type=int, default=0,
@@ -940,10 +921,7 @@ _SEARCH_OPTION_ARG: Mapping[str, str | None] = {
     "c_visit": "c_visit",
     "c_scale_root": "c_scale_root",
     "c_visit_root": "c_visit_root",
-    "q_visit_exp": "q_visit_exp",
     "q_visit_exp_root": "q_visit_exp_root",
-    "q_visit_floor": "q_visit_floor",
-    "q_global_scale": "q_global_scale",
     "halving_div": "halving_div",
     "topk": "topk",
     "root_noise_scale": "gumbel_scale",
@@ -977,9 +955,6 @@ class _EngineSearchKwargs(TypedDict):
     cpuct_base: float
     fpu_reduction: float
     c_visit_root: float
-    q_visit_floor: float
-    q_visit_exp: float
-    q_global_scale: bool
     c_scale_root: float
     q_visit_exp_root: float
     policy_temp: float
@@ -1014,9 +989,6 @@ def _engine_search_kwargs(args: argparse.Namespace) -> _EngineSearchKwargs:
         "cpuct_base": float(args.cpuct_base),
         "fpu_reduction": float(args.fpu_reduction),
         "c_visit_root": float(args.c_visit_root),
-        "q_visit_floor": float(args.q_visit_floor),
-        "q_visit_exp": float(args.q_visit_exp),
-        "q_global_scale": bool(args.q_global_scale),
         "c_scale_root": float(args.c_scale_root),
         "q_visit_exp_root": float(args.q_visit_exp_root),
         "policy_temp": float(args.policy_temp),
@@ -1094,7 +1066,21 @@ def _refuse_out_of_range_startup_value(
     in the docs rather than on the handshake line, but the handler enforces it,
     so startup does too.
     """
-    if isinstance(value, bool) or opt.lo is None or opt.hi is None:
+    if isinstance(value, bool):
+        return
+  # ⚑ Finiteness FIRST, before the "no bounds" early return. Every registered
+  # float option has bounds today, so the chained comparison below already
+  # refuses `nan`; the day one is added without them, this early return would
+  # reopen exactly the hole the `setoption` half had -- `nan` stored, reported
+  # LIVE, and searched as if the knob were off.
+    if not math.isfinite(float(value)):
+        raise SystemExit(
+            f"--{dest.replace('_', '-')} {value!r}: {opt.name} must be finite. "
+            "Every gate that reads it is a comparison, and a comparison against "
+            "a non-finite value is False, so the engine would run as if the "
+            "knob were unset while reporting your value as realized."
+        )
+    if opt.lo is None or opt.hi is None:
         return
     if opt.lo <= float(value) <= opt.hi:
         return

@@ -37,7 +37,13 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.train.trainer import Trainer, UntrustedOptimizerStateError
+from chess_anti_engine.train.trainer import (
+    Trainer,
+    UnsupportedWarmStartError,
+    UntrustedOptimizerStateError,
+    _ChainedOptimizer,
+    _unwrap_optimizer,
+)
 
 # (optimizer, matrix_optimizer_scope). The second is PRODUCTION's layout.
 _LAYOUTS = [("adamw", "default"), ("aurora", "mlp_out")]
@@ -676,6 +682,73 @@ def test_duplicate_donor_slot_ids_decline(
 
 
 @pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_duplicate_LIVE_names_decline_but_duplicate_DONOR_names_RAISE(
+    optimizer: str, scope: str, tmp_path: Path,
+) -> None:
+    """⚑ Two duplicate checks that look alike and mean opposite things.
+
+    Independent review of PR #439 (F5) found both folded into one
+    ``return None``. They are different categories:
+
+    * duplicate LIVE names — this process's own ``named_parameters()`` repeats a
+      name, so no name-keyed mapping can address those parameters. The DONOR is
+      not implicated, its index order is untouched, and the positional load the
+      caller falls back to is CORRECT. Still ``None``.
+    * duplicate DONOR names — a CORRUPT MANIFEST, the same category as the
+      duplicate slot ids one test above, which already raises. A corrupt donor
+      cannot establish that its own index order is trustworthy, so falling
+      through to a positional load hands every parameter another's moments.
+
+    ⚑ Reachability, measured before the behaviour was tightened: BOTH producers
+    of ``donor_names`` yield distinct names by construction — the manifest from
+    an ``id(param) -> name`` map over ``named_parameters()`` (which deduplicates
+    tied parameters), the reconstruction from ``state_dict`` KEYS. 86/86 distinct
+    on both layouts. So this raise cannot fire on a healthy resume; it fires only
+    on a file that has been rewritten by something else.
+    """
+    trainer = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    trainer.save(tmp_path / "t.pt")
+    payload = torch.load(str(tmp_path / "t.pt"), map_location="cpu", weights_only=False)
+    names = list(payload["opt_param_names"])
+    assert len(names) >= 2, "fixture needs at least two slots to collide"
+    assert len(set(names)) == len(names), (
+        "fixture premise: a healthy manifest has DISTINCT names"
+    )
+
+    arm = _trainer(_cfg(), tmp_path / "arm", optimizer, scope)
+
+    # CONTROL — untouched, this donor is ACCEPTED or declines for no reason of
+    # ours. Without it the arms below could pass by failing for anything.
+    control = arm._remap_optimizer_state_by_param_name(
+        payload["opt"], names, payload["model"],
+    )
+    assert control is None or control[2] >= 0
+
+    # ARM — a donor manifest that repeats a name. Corrupt: must RAISE.
+    duped = list(names)
+    duped[1] = duped[0]
+    with pytest.raises(UntrustedOptimizerStateError):
+        arm._remap_optimizer_state_by_param_name(
+            payload["opt"], duped, payload["model"],
+        )
+
+    # NEGATIVE CONTROL — duplicate LIVE names must still merely DECLINE, because
+    # positional really is correct there. Patched on the live side only.
+    original = arm._optimizer_param_names
+    live = original()
+    assert live is not None
+    collided = list(live)
+    collided[1] = collided[0]
+    arm._optimizer_param_names = lambda: collided
+    try:
+        assert arm._remap_optimizer_state_by_param_name(
+            payload["opt"], names, payload["model"],
+        ) is None, "duplicate LIVE names must decline, not raise"
+    finally:
+        arm._optimizer_param_names = original
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
 def test_an_ndim_mismatch_declines(
     optimizer: str, scope: str, tmp_path: Path,
 ) -> None:
@@ -943,3 +1016,305 @@ def test_the_mass_turnover_WARNING_actually_reaches_a_log_record(
     # donor-side, fresh is live-side), so `changed` may exceed `n_live`. The
     # message must therefore never render it as a fraction of the live count.
     assert f"of {n_live} parameters" not in message
+
+
+def _leaf_optimizers(trainer: Trainer) -> list[torch.optim.Optimizer]:
+    """Every optimizer that actually HOLDS state, chained children included.
+
+    ⚑ `_bank_fingerprints` / `_read_state` read `trainer.opt.state`, which is
+    EMPTY for a `_ChainedOptimizer` — its state lives in its children. That is
+    the very nesting guard (b) exists for, so a chained control written with the
+    flat helpers measures nothing and passes vacuously. Same trap one level up
+    from the one the guard covers.
+    """
+    inner = _unwrap_optimizer(trainer.opt)
+    if isinstance(inner, _ChainedOptimizer):
+        return list(inner.optimizers)
+    return [trainer.opt]
+
+
+def _bank_chained(trainer: Trainer) -> dict[tuple[str, str], float]:
+    by_id = {id(p): n for n, p in trainer.model.named_parameters()}
+    banked: dict[tuple[str, str], float] = {}
+    stamp = 0
+    for opt in _leaf_optimizers(trainer):
+        for group in opt.param_groups:
+            for param in group["params"]:
+                if param.grad is None:
+                    param.grad = torch.randn_like(param)
+        opt.step()
+        for group in opt.param_groups:
+            for param in group["params"]:
+                for key, value in (opt.state.get(param) or {}).items():
+                    if not torch.is_tensor(value) or not value.is_floating_point():
+                        continue
+                    stamp += 1
+                    value.copy_(torch.full_like(value, float(stamp) + 0.5))
+                    banked[by_id[id(param)], key] = float(stamp) + 0.5
+    assert banked, "donor carries no optimizer moments — the control would be vacuous"
+    return banked
+
+
+def _read_chained(trainer: Trainer) -> dict[tuple[str, str], float]:
+    by_id = {id(p): n for n, p in trainer.model.named_parameters()}
+    seen: dict[tuple[str, str], float] = {}
+    for opt in _leaf_optimizers(trainer):
+        for group in opt.param_groups:
+            for param in group["params"]:
+                for key, value in (opt.state.get(param) or {}).items():
+                    if torch.is_tensor(value) and value.is_floating_point() and value.numel():
+                        seen[by_id[id(param)], key] = float(value.flatten()[0])
+    return seen
+
+
+def _trainer_kw(cfg: ModelConfig, log_dir: Path, **kwargs: object) -> Trainer:
+    """``_trainer`` with arbitrary optimizer kwargs, for the unsupported combos."""
+    return Trainer(
+        build_model(cfg), device="cpu", lr=1e-3, warmup_steps=10,
+        warmup_lr_start=1e-5, use_amp=False, log_dir=log_dir,
+        tb_log_interval=1000, prefetch_batches=False, model_config=cfg,
+        w_sf_move=0.0, **kwargs,  # pyright: ignore[reportArgumentType]
+    )
+
+
+def test_soda_plus_a_name_changing_warm_start_REFUSES(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `weight_decay_mode: soda` cannot survive the NAME-based re-key.
+
+    Codex review of PR #439 (P2). The re-key reconstructs `{state,
+    param_groups}` and nothing else, so `SODAWeightDecayWrapper`'s top-level
+    `soda_anchors` is dropped; its `load_state_dict` then finds an anchor
+    missing for every marked parameter and raises, and the generic handler
+    cold-starts the WHOLE optimizer while blaming the model layout.
+
+    #439 does not create this. It widens WHO REACHES it: before #439
+    `aux_policy_head_dim` did not exist on `main`, so no `main`-based warm start
+    could resize the auxiliary heads. The full fix (carry wrapper keys through
+    the re-key) is optimizer-state surgery and belongs in its own PR; refusing
+    loudly is what this PR owes.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="aurora",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+    payload = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+    assert "soda_anchors" in payload["opt"], (
+        "fixture premise: the SODA wrapper must actually add its top-level key"
+    )
+
+    # CONTROL — an ORDINARY resume (identical names) must NOT fire. It never
+    # reaches the re-key, so the positional load carries the anchors intact.
+    twin = _trainer_kw(
+        _cfg(), tmp_path / "twin", optimizer="aurora",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    with caplog.at_level(logging.WARNING):
+        twin.load(ckpt)
+    assert not [r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()], (
+        "control: an ordinary SODA resume must not be refused"
+    )
+    caplog.clear()
+
+    # ARM — a warm start that CHANGES names, so the re-key is required.
+    arm = _trainer_kw(
+        _cfg(coupled=True, policy_embedding_mode="linear"), tmp_path / "arm",
+        optimizer="aurora", matrix_optimizer_scope="mlp_out",
+        weight_decay_mode="soda",
+    )
+    # The TYPE, read at the source. `UnsupportedWarmStartError` is deliberately
+    # not a ValueError/RuntimeError, so the generic handler cannot swallow it and
+    # misreport it as "incompatible with new model layout".
+    donor_names = arm._donor_optimizer_param_names(payload)
+    assert donor_names is not None
+    with pytest.raises(UnsupportedWarmStartError):
+        arm._remap_optimizer_state_by_param_name(
+            payload["opt"], donor_names, payload["model"],
+        )
+    assert not isinstance(UnsupportedWarmStartError("x"), ValueError | RuntimeError), (
+        "must not inherit from the types the generic handler catches, or the "
+        "operator gets a misattributed message instead of the combination name"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    refusals = [
+        r.getMessage() for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ]
+    assert refusals, (
+        "SODA + a name-changing warm start was absorbed silently; the operator "
+        f"has no signal. records={[r.getMessage() for r in caplog.records]}"
+    )
+    assert "soda_anchors" in refusals[0], "the message must name the offending key"
+
+    # ⚑ THE PREDICATE IS STRUCTURAL, AND ONLY THIS ARM SAYS SO. Every assertion
+    # above is satisfied by a SODA-specific test (`{"soda_anchors"} & set(...)`),
+    # so without an UNKNOWN key nothing distinguishes the structural predicate
+    # from a name check — and structural is the property that was chosen
+    # deliberately, because the hazard is "the re-key emits only {state,
+    # param_groups}", which is true of the NEXT wrapper too. Delta review
+    # confirmed the name-only variant survives the suite without this.
+    future = dict(payload)
+    future["opt"] = dict(payload["opt"]) | {"some_future_wrapper_key": {}}
+    future_names = arm._donor_optimizer_param_names(future)
+    assert future_names is not None
+    with pytest.raises(UnsupportedWarmStartError, match="some_future_wrapper_key"):
+        arm._remap_optimizer_state_by_param_name(
+            future["opt"], future_names, future["model"],
+        )
+
+
+def test_soap_plus_soda_unwraps_to_the_chained_optimizer_through_load(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `_unwrap_optimizer` must actually unwrap — pinned through `load()`.
+
+    Delta review neutered its loop to ``while False:`` and the suite still
+    passed. Its own docstring justifies its existence with "SOAP + SODA is
+    precisely the combination that produces both", and nothing drove that
+    combination through `load()`: with the loop dead, `self.opt` is the
+    `SODAWeightDecayWrapper`, the `isinstance` test misses the
+    `_ChainedOptimizer` one layer down, and guard (b) silently stops existing
+    for the exact configuration it was written for.
+
+    So this drives a soap+soda WIDTH migration through the real `load()` and
+    requires the refusal. It fails if the unwrap stops working, which no
+    assertion on `_unwrap_optimizer` in isolation would do as convincingly.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="soap",
+        matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    inner = _unwrap_optimizer(donor.opt)
+    assert not isinstance(donor.opt, _ChainedOptimizer), (
+        "fixture premise: the SODA wrapper must sit OUTSIDE, so an isinstance "
+        "test on self.opt alone cannot see the chained optimizer"
+    )
+    assert isinstance(inner, _ChainedOptimizer), (
+        "fixture premise: soap + a non-default scope must build a "
+        "_ChainedOptimizer underneath the SODA wrapper"
+    )
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    arm = _trainer_kw(
+        dataclasses.replace(_cfg(), aux_policy_head_dim=8), tmp_path / "arm",
+        optimizer="soap", matrix_optimizer_scope="mlp_out", weight_decay_mode="soda",
+    )
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    assert [
+        r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ], (
+        "soap+soda resized the aux heads and nothing refused -- the unwrap did "
+        f"not reach the chained optimizer. records={[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_a_chained_optimizer_REFUSES_rather_than_sweeping_a_view_it_cannot_see(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑ `_ChainedOptimizer`'s state lives in its CHILDREN.
+
+    Codex review of PR #439 (P2). `reset_mismatched_optimizer_state` reads the
+    flat `{state, param_groups}` view; `_ChainedOptimizer.state_dict` returns
+    `{"optimizers": [...]}` and its outer `state` stays empty, so the sweep
+    reports NOTHING and leaves donor-shaped moments under tensors this warm
+    start resized — silent until the first CHILD `opt.step()`. The nesting is
+    pre-existing and documented at the construction site; what #439 adds is a
+    width migration (`aux_policy_head_dim`) that makes it reachable from `main`.
+    """
+    donor = _trainer_kw(
+        _cfg(), tmp_path / "t", optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    assert isinstance(_unwrap_optimizer(donor.opt), _ChainedOptimizer), (
+        "fixture premise: soap + a non-default scope must build a _ChainedOptimizer"
+    )
+    assert "state" not in donor.opt.state_dict(), (
+        "fixture premise: the chained state_dict must NOT expose the flat view -- "
+        "if it grows one, this guard can be replaced by a real sweep"
+    )
+    banked = _bank_chained(donor)
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    # ⚑⚑ CONTROL — AN ORDINARY CHAINED RESUME MUST STILL LOAD.
+    #
+    # The absence of this control WAS the defect. An earlier revision gated the
+    # guard on the optimizer TYPE alone, so every ordinary `soap` resume became a
+    # full cold start (172/172 donor moments -> 0/172) with the scheduler and
+    # ZClip skipped as well, and nothing here noticed — because the only
+    # negative control ran `aurora`/`mlp_out`, which cannot reach a guard whose
+    # entire domain is `soap`. Its SODA sibling above had exactly this control;
+    # this test did not, and that asymmetry is what shipped the regression.
+    #
+    # Asserted on VALUES: a fired guard cold-starts, so surviving donor moments
+    # are the proof it did not.
+    same = _trainer_kw(
+        _cfg(), tmp_path / "same", optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    with caplog.at_level(logging.WARNING):
+        same.load(ckpt)
+    assert not [
+        r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ], "control: an ordinary chained resume resizes nothing and must NOT be refused"
+    assert set(_read_chained(same).values()) & set(banked.values()), (
+        "control: an ordinary chained resume lost every donor moment -- the "
+        "optimizer cold-started, which is what a fired guard would do"
+    )
+    caplog.clear()
+
+    arm = _trainer_kw(
+        dataclasses.replace(_cfg(), aux_policy_head_dim=8), tmp_path / "arm",
+        optimizer="soap", matrix_optimizer_scope="mlp_out",
+    )
+    with caplog.at_level(logging.WARNING):
+        arm.load(ckpt)
+    refusals = [
+        r.getMessage() for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+    ]
+    assert refusals, (
+        "a _ChainedOptimizer warm start swept a view that cannot see its state "
+        f"and said nothing. records={[r.getMessage() for r in caplog.records]}"
+    )
+    assert "_ChainedOptimizer" in refusals[0], "the message must name the combination"
+
+
+@pytest.mark.parametrize(("optimizer", "scope"), _LAYOUTS)
+def test_NEITHER_unsupported_combination_guard_fires_on_a_supported_layout(
+    optimizer: str, scope: str, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """⚑⚑ THE CHECK THAT MATTERS MORE THAN THE GUARDS THEMSELVES.
+
+    A refusal on a healthy resume is an outage. Production is `aurora` +
+    `matrix_optimizer_scope: mlp_out` with `weight_decay_mode` ABSENT from
+    `configs/pbt2_small.yaml`, so neither guard may fire — not on an ordinary
+    resume, and not on the width migration this PR exists to enable.
+
+    Asserted on VALUES, not just on the absence of a log line: a guard that
+    fired would cold-start the optimizer, so surviving donor moments prove it
+    did not.
+    """
+    donor = _trainer(_cfg(), tmp_path / "t", optimizer, scope)
+    banked = _bank_fingerprints(donor)
+    ckpt = tmp_path / "t.pt"
+    donor.save(ckpt)
+
+    for label, cfg in (
+        ("ordinary resume", _cfg()),
+        ("aux_policy_head_dim width migration", dataclasses.replace(_cfg(), aux_policy_head_dim=8)),
+    ):
+        caplog.clear()
+        twin = _trainer(cfg, tmp_path / f"twin-{label.split()[0]}", optimizer, scope)
+        with caplog.at_level(logging.WARNING):
+            twin.load(ckpt)
+        assert not [
+            r for r in caplog.records if "REFUSING to warm-start" in r.getMessage()
+        ], f"{label}: a guard fired on a SUPPORTED layout ({optimizer}/{scope})"
+        survived = set(_read_state(twin).values()) & set(banked.values())
+        assert survived, (
+            f"{label}: no donor moment survived on {optimizer}/{scope} -- the "
+            "optimizer cold-started, which is what a fired guard would do"
+        )

@@ -37,7 +37,7 @@ import scripts.arena_standard as arena
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay import match as match_mod
 from scripts.arena_standard import (
     DEFAULT_EVAL_MAX_BATCH,
@@ -119,10 +119,28 @@ def _side(**kwargs: Any) -> SideSearch:
     return SideSearch(**base)
 
 
-def _fake_search_result(n: int) -> tuple:
+def _fake_search_result(boards: Sequence[chess.Board]) -> tuple:
+    """A stub search result whose chosen action is LEGAL on each board.
+
+    ⚑ The action ids used to be a flat ``[0] * n``, which worked only while the
+    arena applied them non-strictly and substituted the first legal move for an
+    id that decoded to nothing. Both arena loops now pass ``strict=True`` --
+    deliberately, because they are the deciding Elo instrument and silently
+    playing an unrelated legal move turns an action-space regression into
+    unattributable Elo loss -- so a stub returning id 0 raises
+    ``ActionDecodeError`` before the assertion under test is ever reached.
+
+    Encoded from each board's own first legal move rather than pinned to a
+    constant, since the ids are position-dependent and this helper is called on
+    boards several plies deep.
+    """
+    actions = [
+        int(move_to_index(next(iter(b.legal_moves)), b)) for b in boards
+    ]
+    n = len(boards)
     return (
         [np.zeros(POLICY_SIZE, dtype=np.float32)] * n,
-        [0] * n,
+        actions,
         [0.0] * n,
         [np.ones(POLICY_SIZE, dtype=bool)] * n,
     )
@@ -138,7 +156,7 @@ def _capture(monkeypatch: Any, attr: str) -> list[tuple[Any, dict[str, Any]]]:
 
     def fake(model: Any, boards: list[chess.Board], **kwargs: Any):
         seen.append((model, kwargs))
-        return _fake_search_result(len(boards))
+        return _fake_search_result(boards)
 
     monkeypatch.setattr(match_mod, "_HAS_GUMBEL_C", True)
     monkeypatch.setattr(match_mod, attr, fake)
@@ -214,7 +232,7 @@ def test_the_python_gumbel_fallback_is_handed_it_too(
 
     def fake(_model: Any, boards: list[chess.Board], **kwargs: Any):
         seen.append(kwargs)
-        return _fake_search_result(len(boards))
+        return _fake_search_result(boards)
 
     monkeypatch.setattr(match_mod, "run_gumbel_root_many", fake)
     stub = _StubEvaluator("py")
@@ -236,7 +254,7 @@ def test_the_puct_path_is_handed_it_too(monkeypatch: pytest.MonkeyPatch) -> None
 
     def fake(_model: Any, boards: list[chess.Board], **kwargs: Any):
         seen.append(kwargs)
-        return _fake_search_result(len(boards))
+        return _fake_search_result(boards)
 
     monkeypatch.setattr(match_mod, "_HAS_C_TREE", False)
     monkeypatch.setattr(match_mod, "run_mcts_many", fake)

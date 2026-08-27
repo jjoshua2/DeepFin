@@ -16,13 +16,16 @@ from __future__ import annotations
 import ast
 import dataclasses
 import inspect
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
 from chess_anti_engine.selfplay import network_turn
-from chess_anti_engine.selfplay.config import SearchConfig
+from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
+from chess_anti_engine.selfplay.network_turn import SelfplaySearchShape
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils.config_yaml import (
@@ -44,32 +47,94 @@ def test_the_knobs_default_to_todays_production_behaviour() -> None:
     assert cfg.gumbel_vloss_weight == 0
 
 
+def _built_search_shape(**search_overrides: Any) -> SelfplaySearchShape:
+    """The real ``SelfplaySearchShape`` production's builder produces.
+
+    Built from real ``SearchConfig``/``GameConfig`` objects rather than a stub,
+    because the question these tests ask is what the CONSUMER receives, and a
+    stub answers a question about the stub.
+    """
+    search = dataclasses.replace(SearchConfig(), **search_overrides)
+    return network_turn.build_selfplay_search_shape(
+        search=search, game=GameConfig(), simulations=8,
+    )
+
+
+# How to resolve a `**splat` at the C-runner call site into the keyword names
+# it contributes. Keyed by the unparsed expression, so a NEW splat -- a second
+# object, or a rename -- is an unresolved entry and a hard failure rather than a
+# silent hole: a splat this table cannot resolve is precisely how the two knobs
+# would disappear from the guard's view again.
+_SPLAT_RESOLVERS: dict[str, Callable[[], set[str]]] = {
+    "search_shape.runner_kwargs()": lambda: set(_built_search_shape().runner_kwargs()),
+}
+
+
 def _gumbel_c_call_kwargs() -> set[str]:
-    """Keyword names passed to the C gumbel runner in run_network_turn."""
+    """Every keyword name the C gumbel runner is ACTUALLY handed.
+
+    ⚑ RE-POINTED 2026-08-16, not weakened, and the reason is this file's own
+    subject matter. It used to collect the explicit ``kw.arg`` names at the
+    ``gumbel_c_fn(...)`` call and nothing else. When production moved every
+    config-derived argument behind ``**search_shape.runner_kwargs()`` -- so
+    that ONE object is the certifiable boundary for the shape instruments --
+    an explicit-keyword scan could never see ``target_batch``/``vloss_weight``
+    again. The guard did not merely go stale: it became UNPASSABLE while the
+    knobs were still arriving, which is "a fix for a cannot-fail gate ships a
+    cannot-PASS gate", the same defect class one turn of the screw further on.
+
+    So the splat is RESOLVED rather than skipped. The argument set is the
+    explicit keywords plus the keys of the object production unpacks, obtained
+    by BUILDING that object -- not by reading its source. Deleting a key from
+    ``runner_kwargs()`` therefore still fails
+    ``test_both_knobs_are_passed_to_the_c_gumbel_runner``, which is the
+    property the original test had and the property that had to survive.
+    """
     # `run_network_turn` is module-level, so its source is already at column 0.
     # Do NOT cleandoc it -- that strips the body's indentation and the parse
     # fails on the docstring.
     src = inspect.getsource(network_turn.run_network_turn)
     tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        fn = node.func
-        if isinstance(fn, ast.Name) and fn.id == "gumbel_c_fn":
-            return {kw.arg for kw in node.keywords if kw.arg is not None}
-    raise AssertionError(
-        "no gumbel_c_fn(...) call found in run_network_turn -- the selfplay "
-        "search call site moved; this test must be re-pointed, not deleted",
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "gumbel_c_fn"
+    ]
+    if not calls:
+        raise AssertionError(
+            "no gumbel_c_fn(...) call found in run_network_turn -- the selfplay "
+            "search call site moved; this test must be re-pointed, not deleted",
+        )
+    assert len(calls) == 1, (
+        f"{len(calls)} gumbel_c_fn(...) call sites in run_network_turn; a second "
+        "one is a second place for a knob to go dead. Re-point this helper at "
+        "both, do not pick one."
     )
+    names: set[str] = set()
+    for kw in calls[0].keywords:
+        if kw.arg is not None:
+            names.add(kw.arg)
+            continue
+        expr = ast.unparse(kw.value)
+        resolver = _SPLAT_RESOLVERS.get(expr)
+        assert resolver is not None, (
+            f"the call site unpacks **{expr}, which this test cannot resolve, so "
+            f"it can no longer see which keywords the runner is handed. Add a "
+            f"resolver to _SPLAT_RESOLVERS -- re-point it, do not delete it."
+        )
+        names |= resolver()
+    return names
 
 
 def test_both_knobs_are_passed_to_the_c_gumbel_runner() -> None:
-    """The plumbing test proper: the kwargs are present at the call site.
+    """The plumbing test proper: the kwargs reach the runner.
 
-    Asserted on the AST rather than by running a search, because reaching this
-    call needs a model, a broker and a live game state. An AST check cannot
-    prove the VALUE is right, so `test_the_call_reads_them_from_search_config`
-    below pins where the value comes from.
+    Half AST (which call site) and half execution (what that site's unpacked
+    object actually contains), because reaching the real call needs a model, a
+    broker and a live game state. An AST-only check cannot prove the VALUE is
+    right, so `test_the_call_reads_them_from_search_config` below pins where
+    the value comes from.
     """
     kwargs = _gumbel_c_call_kwargs()
     missing = {"target_batch", "vloss_weight"} - kwargs
@@ -82,12 +147,48 @@ def test_the_call_reads_them_from_search_config() -> None:
     Passing `target_batch=0` literally would satisfy the test above while making
     the config field dead -- which is exactly how `matrix_weight_decay` became
     decorative.
+
+    ⚑ RE-POINTED 2026-08-16, and STRENGTHENED. This used to grep
+    `run_network_turn`'s source for the literal `search.gumbel_target_batch`.
+    A source-grep assertion is theatre in this repo: it went RED for a refactor
+    that kept both knobs arriving, and it would stay GREEN for a genuinely dead
+    knob (leave the read in an unused local and wire the runner argument to 0).
+    It also asserted about the wrong function once the read moved into
+    `build_selfplay_search_shape`.
+
+    So drive production's own builder with a `SearchConfig` whose two knobs
+    hold values distinct from every default, and read the result off the
+    object the call site unpacks. A literal ANYWHERE between the config field
+    and `runner_kwargs()` fails here, and it fails with the value it found.
     """
-    src = inspect.getsource(network_turn.run_network_turn)
-    for name in ("gumbel_target_batch", "gumbel_vloss_weight"):
-        assert f"search.{name}" in src, (
-            f"{name} is not read from the search config at the call site"
-        )
+    # field -> (runner kwarg name, sentinel distinct from the dataclass default)
+    wiring = {
+        "gumbel_target_batch": ("target_batch", 7),
+        "gumbel_vloss_weight": ("vloss_weight", 3),
+    }
+    defaults = SearchConfig()
+    degenerate = [
+        field for field, (_arg, sentinel) in wiring.items()
+        if getattr(defaults, field) == sentinel
+    ]
+    assert not degenerate, (
+        f"sentinels equal to the SearchConfig default: {degenerate}. A field "
+        f"hard-wired to its own default would pass this test."
+    )
+
+    shape = _built_search_shape(**{f: s for f, (_a, s) in wiring.items()})
+    handed = shape.runner_kwargs()
+    wrong = {
+        arg: (handed.get(arg), sentinel)
+        for _field, (arg, sentinel) in sorted(wiring.items())
+        if handed.get(arg) != sentinel
+    }
+    assert not wrong, (
+        f"the object production unpacks at the C-runner call site does not "
+        f"carry the configured value (got vs want: {wrong}). The keyword is "
+        f"present -- the by-name test above is green -- so the value is wired "
+        f"to a constant and the config field is decorative."
+    )
 
 
 def test_virtual_mean_is_not_reachable_from_selfplay_config() -> None:

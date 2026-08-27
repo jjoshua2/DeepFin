@@ -48,7 +48,7 @@ from chess_anti_engine.mcts.gumbel import (
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
 )
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay import match as match_mod
 from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
 from scripts.arena_standard import (
@@ -237,7 +237,10 @@ def _capture_c_search(monkeypatch: Any) -> list[dict[str, Any]]:
         n = len(boards)
         return (
             [np.zeros(POLICY_SIZE, dtype=np.float32)] * n,
-            [0] * n,
+            # A real action id per board: the arena decodes strictly, so a
+            # constant that names no legal move now raises instead of being
+            # quietly replaced with the first legal move.
+            [int(move_to_index(next(iter(b.legal_moves)), b)) for b in boards],
             [0.0] * n,
             [np.ones(POLICY_SIZE, dtype=bool)] * n,
         )
@@ -523,17 +526,26 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     """
     import yaml as _yaml
 
+    from chess_anti_engine.eval.production_shape import LIVE_CONFIG_ENV
     from chess_anti_engine.utils.config_yaml import load_yaml_file
     from scripts import arena_standard as arena_mod
 
-    raw = load_yaml_file(str(arena_mod.PRODUCTION_CONFIG))
+    raw = load_yaml_file(str(arena_mod.production_config_path()))
     raw["selfplay"]["gumbel_vloss_weight"] = 2
     raw["selfplay"]["gumbel_topk"] = 24
     raw["selfplay"]["gumbel_c_scale"] = 0.077
     raw["selfplay"]["gumbel_policy_temp"] = 1.7
     patched = tmp_path / "patched.yaml"
     patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
-    monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
+  # ⚑ The env var, NOT a module attribute. This test used to
+  # `monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)`, and when
+  # the search shape moved onto `$CHESS_ANTI_ENGINE_LIVE_CONFIG` the patch
+  # stopped reaching it: the arena read the unpatched in-tree file and the
+  # assertions below went red. That was a real plumbing break, and the fix was
+  # to delete the second resolution rather than to re-point this patch at it.
+  # Pointing the ENV VAR is also what production does (scripts/train.sh), so
+  # the channel this exercises is now the channel operators use.
+    monkeypatch.setenv(LIVE_CONFIG_ENV, str(patched))
 
     side = arena_mod.resolve_search_shape("training")
 
@@ -681,9 +693,11 @@ _EXPECTED_CARRIED_FIELDS = {
     "cpuct_factor",
     "cpuct_base",
     "fpu_reduction",
-    "q_visit_exp",
-    "q_global_scale",
-    "q_visit_floor",
+  # `q_visit_exp` / `q_global_scale` / `q_visit_floor` were pinned here until
+  # the descent-qknob deletion removed them from `GumbelConfig` entirely (the
+  # root-side `q_visit_exp_root` below survives and is a different field). They
+  # are dropped rather than exempted: the pin is the COMPLEMENT of the two
+  # ownership sets, so a field that no longer exists cannot be carried.
     "target_max_visit_cap",
     "target_untempered_prior",
     # target-construction property like the two above: a TRAINING-shape fact
@@ -842,9 +856,19 @@ def test_a_newly_promoted_knob_is_carried_without_editing_the_arena(
 ) -> None:
     """The structural claim, exercised: promote a knob, the arena follows.
 
-    Uses a knob the production yaml leaves at its default today, so the value
-    that arrives cannot be the one that was already there. This is the property
-    the old hand-written three-knob list did not have and could not have.
+    Moves the knob to a value that is neither production's current one nor the
+    dataclass default, so the value that arrives cannot be the one that was
+    already there. This is the property the old hand-written three-knob list did
+    not have and could not have.
+
+    ⚑ Redirected through ``$CHESS_ANTI_ENGINE_LIVE_CONFIG`` rather than by
+    patching a module constant, because there is no longer a constant to patch
+    and that is deliberate: ``production_config()``'s docstring records that the
+    import-time ``PRODUCTION_CONFIG`` and a call-time loader coexisted, diverged,
+    and let the arena bank a digest of one file into a record describing a search
+    built from the other. The env var is the mechanism production itself uses
+    (``scripts/train.sh``), so patching it exercises the real resolver instead of
+    a test-only seam.
     """
     import yaml as _yaml
 
@@ -855,11 +879,11 @@ def test_a_newly_promoted_knob_is_carried_without_editing_the_arena(
     before = resolve_search_shape("training").gumbel["target_max_visit_cap"]
     assert before == 5
 
-    raw = load_yaml_file(str(arena_mod.PRODUCTION_CONFIG))
+    raw = load_yaml_file(str(arena_mod.production_config_path()))
     raw["selfplay"]["gumbel_target_max_visit_cap"] = 11
     patched = tmp_path / "promoted.yaml"
     patched.write_text(_yaml.safe_dump(raw), encoding="utf-8")
-    monkeypatch.setattr(arena_mod, "PRODUCTION_CONFIG", patched)
+    monkeypatch.setenv("CHESS_ANTI_ENGINE_LIVE_CONFIG", str(patched))
 
     side = arena_mod.resolve_search_shape("training")
     assert side.gumbel["target_max_visit_cap"] == 11
@@ -881,14 +905,38 @@ def test_the_runtime_check_refuses_a_training_shape_that_drifted(
     from scripts import arena_standard as arena_mod
 
     full = tuple(arena_mod.training_shape_carried_fields())
-    assert "target_max_visit_cap" in full
+
+  # ⚑⚑ THE MUTATED FIELD MUST BE ONE THIS GUARD CAN SEE, AND
+  # `target_max_visit_cap` IS NOT. `ARENA_SHAPE_DEVIATIONS` exempts it and
+  # `target_untempered_prior`, and that exemption is CORRECT: both reach only
+  # `imp_store` / `log_prior_store` (the STORED target row) and never `q_play` /
+  # `imp_all` (the played move), so they cannot change what an arena plays and
+  # an arena stores no targets. Mutating an exempt field yields a mutation that
+  # is inert BY DESIGN — the test then reports "the runtime guard does not
+  # fire", which is true and says nothing about the guard.
+  #
+  # So derive the victim: a carried field that discriminates against the
+  # dataclass default AND that the guard is not exempt from. Asserting the list
+  # is non-empty is the non-vacuity check — with every discriminating field
+  # exempt there would be no mutation this guard could catch at all.
+    candidates = sorted(
+        f
+        for f in _fields_where_production_differs_from_the_dataclass_default()
+        if f not in arena_mod.ARENA_SHAPE_DEVIATIONS
+    )
+    assert candidates, (
+        "every carried field that differs from the GumbelConfig default is "
+        "exempt from ARENA_SHAPE_DEVIATIONS, so no dropped knob can make this "
+        "guard fire. That is a gate that cannot fail -- do not read it as a pass."
+    )
+    victim = candidates[0]
     monkeypatch.setattr(
         arena_mod,
         "training_shape_carried_fields",
-        lambda: tuple(f for f in full if f != "target_max_visit_cap"),
+        lambda: tuple(f for f in full if f != victim),
     )
 
-    with pytest.raises(SystemExit, match="target_max_visit_cap"):
+    with pytest.raises(SystemExit, match=victim):
         arena_mod.resolve_search_shape("training")
 
 
@@ -1062,8 +1110,17 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
     """A sparse override dict is what made the old runs unreadable."""
     side = resolve_search_shape("training")
 
+    # ⚑ The dict carries SIX keys, not the twenty `training_shape_carried_fields()`
+    # derives, and that is deliberate rather than an omission. The shape is proved
+    # by `_assert_training_shape_is_production`, which `dataclasses.replace`s this
     # The training shape carries the DERIVED complement, so this is the full
-    # carried set rather than the three knobs it used to restate by hand.
+    # carried set rather than a hand-written subset.
+    #
+    # ⚑ A LITERAL SUBSET HERE WOULD PASS ON main's YAML AND BE WRONG ON THIS ONE.
+    # It is only sound while every unlisted field already equals production at
+    # its `GumbelConfig` default; live sets `target_max_visit_cap` 5 (default 0)
+    # and `target_untempered_prior` True (default False), so a six-key pin would
+    # certify an arena searching 0/False against a production that does not.
     assert set(side.gumbel) == set(training_shape_carried_fields())
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
     # A knob the shape never overrode still resolves to its realized value (the

@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ModelConfig, build_model
-from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858
+from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858, move_to_index
 from scripts.arena_standard import (
     append_result,
     build_result_record,
@@ -22,6 +22,16 @@ from scripts.arena_standard import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _first_legal_actions(boards: list[chess.Board]) -> list[int]:
+    """Stand-in for a search: the first legal move of each board, as an action id.
+
+    A constant such as 0 used to work here because the arena laundered an
+    undecodable id into the first legal move anyway. The arena is strict now, so
+    a stub must hand back ids that really decode.
+    """
+    return [int(move_to_index(next(iter(b.legal_moves)), b)) for b in boards]
 
 
 def test_game_scores_collapse_to_pair_scores():
@@ -196,9 +206,7 @@ def test_both_arena_paths_pass_each_side_its_own_vloss_and_target_batch(
             int(kw["gumbel_target_batch"]),
             float((kw.get("gumbel_overrides") or {})["topk"]),
         ))
-        # apply_actions_to_boards falls back to the first legal move when the
-        # action is illegal, so a constant is a valid stand-in for a search.
-        return [0] * len(boards)
+        return _first_legal_actions(boards)
 
     monkeypatch.setattr(
         "chess_anti_engine.selfplay.match.pick_moves_for_boards", _recording_pick,
@@ -349,7 +357,7 @@ def test_rolling_loop_stops_at_the_deadline_with_no_imputed_pairs(monkeypatch):
 
     def _never_should_run(_model, boards, **_kw):
         calls.append(len(boards))
-        return [0] * len(boards)
+        return _first_legal_actions(boards)
 
     monkeypatch.setattr(
         "chess_anti_engine.selfplay.match.pick_moves_for_boards", _never_should_run,
@@ -429,7 +437,7 @@ def test_deadline_is_checked_after_the_reap_not_before(monkeypatch):
     import scripts.arena_standard as arena
 
     def _pick(_model, boards, **_kw):
-        return [0] * len(boards)
+        return _first_legal_actions(boards)
 
     monkeypatch.setattr(
         "chess_anti_engine.selfplay.match.pick_moves_for_boards", _pick,

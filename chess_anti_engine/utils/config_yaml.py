@@ -196,6 +196,7 @@ _SELFPLAY_KEYS = (
     "history_rep_fix",
     "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     "record_relations",
+    "record_prior_top1",
     "record_dense_sf_policy",
     "record_sf_p0_policy",
     "record_sf_p0_regret",
@@ -298,6 +299,20 @@ _TRAIN_KEYS = (
     "sf_policy_floor_tau",
     "sf_policy_floor_tau_top1",
     "sf_policy_floor_tau_played",
+    # Fabricated-tail gate on `sf_own_regret` (train/losses.py). Same reasoning as
+    # `policy_target_temp` directly above: these are NOT loss weights, they select
+    # WHICH ROWS the term applies to, so a mid-run edit re-interprets rows already
+    # in the window. Startup-only keeps them out of the every-iteration live-push
+    # set AND out of the salvage-donor overlay. `listed_mass_min: 0.0` +
+    # `unlisted_scale: 1.0` is OFF and is the code default, and it is a bit-exact
+    # identity rather than merely a small one.
+    "sf_own_regret_listed_mass_min", "sf_own_regret_unlisted_scale",
+    # Teacher temperature of the SF-shape conditional-KL term (train/losses.py),
+    # in CENTIPAWNS. The WEIGHT `w_sf_shape` rides in `TRAINER_WEIGHT_KEYS`
+    # above; this one is folded into a resolved object at Trainer construction,
+    # so it is startup-only by construction and classified as such. It is a
+    # DIVISOR: 0.0 is not "off" and is rejected by name.
+    "sf_shape_temp_cp",
 )
 
 # tune section: all 1:1 passthrough.
@@ -370,6 +385,13 @@ _TUNE_KEYS = (
     "shuffle_draw_cap_frac", "shuffle_wl_max_ratio",
     "replay_sf_gap_priority_weight", "replay_sf_gap_priority_signed",
     "replay_fast_low_surprise_priority",
+    # ⚑ tune:, NOT train:. Filed here by consumer location (the replay-sampling
+    # family above; the blend applies at buffer sample time). An operator will
+    # mentally file it beside policy_target_temp/w_sf_own in train:, and a live
+    # edit under train: makes _check_unknown reject the WHOLE reload (all
+    # concurrent edits included) mid-run, and is fatal at launch. Deactivate by
+    # setting 0.0, never by deleting the line.
+    "sf_p0_blend_alpha",
     "shard_size",
     "exploit_replay_refresh_enabled", "exploit_replay_keep_fraction",
     "exploit_replay_donor_shards", "exploit_replay_skip_newest",

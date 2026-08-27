@@ -12,6 +12,8 @@ same 32k-node sample) and pass after it.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import chess
 import numpy as np
 import pytest
@@ -22,6 +24,7 @@ from chess_anti_engine.mcts import gumbel_c as gumbel_c_mod
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import (
     root_coverage_miss_count,
+    root_support_narrowed_count,
     run_gumbel_root_many_c,
 )
 from chess_anti_engine.moves.encode import move_to_index
@@ -181,9 +184,13 @@ def test_transposition_guard_runs_and_passes(monkeypatch) -> None:
 
 
 def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) -> None:
-    """Audit W2: the coverage check used to be short-circuited whenever
+    """Audit W2: the support check used to be short-circuited whenever
     ``allowed_root_indices_batch is None``, which selfplay — the only caller
-    that carries a tree across plies — always passes."""
+    that carries a tree across plies — always passes.
+
+    Also the ALARM half of the counter split: a root MISSING an action means the
+    tree disagrees with the rules, and that must stay on
+    ``root_coverage_miss_count()`` — never on the routine narrowed counter."""
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
     board = chess.Board(_EP_FEN)
     legal = np.array(sorted(_legal_set(board)), dtype=np.int32)
@@ -201,6 +208,7 @@ def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) ->
     )
 
     before = root_coverage_miss_count()
+    narrowed_before = root_support_narrowed_count()
     cfg = GumbelConfig(
         simulations=8, topk=4, c_scale=0.1, temperature=0.0, add_noise=False
     )
@@ -220,18 +228,363 @@ def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) ->
     new_root = int(res[5][0])
     assert new_root != stale_root, "deficient root was reused"
     assert root_coverage_miss_count() == before + 1
+    assert root_support_narrowed_count() == narrowed_before, (
+        "a missing action is the W2 alarm — it must not be filed as routine "
+        "support narrowing"
+    )
     actions, _ = tree.get_children_visits(new_root)
     assert {int(a) for a in actions} == set(legal.tolist())
 
 
+# --- W2b: the gate is support EQUALITY, not coverage ---------------------
+#
+# A carried root may be a strict SUPERSET of the support the CURRENT search is
+# allowed to touch: `allowed_root_indices_batch` (UCI `searchmoves`) and the
+# winning-root terminal-draw prune both narrow `legal_idx` below the previous
+# ply's expansion. `gss_score_and_halve` reads max_visit / total_visits /
+# weighted_q / mixed_value / min_q / max_q off ALL of the root's children, so an
+# excluded child still moves the Q transform every INCLUDED candidate is scored
+# through — while the improved policy on top is built over the current support
+# only. The superset gate accepted exactly that.
+
+# Position with 37 legal moves; the first 10 policy indices are the support and
+# the 11th is the carried-but-excluded child. Search shapes pinned per case
+# (the house rule: a parametrisation that cannot fail is decoration) — the
+# selfplay shape is the live yaml's `c_scale=0.1` linear root, the play shape is
+# `gumbel.PLAY_SEARCH_DEFAULTS`' root-log split, which is what the UCI path that
+# actually carries trees across moves runs.
+_NARROW_FEN = "r1bqkb1r/pp1ppppp/2n2n2/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4"
+_NARROW_SHAPES = ("selfplay_linear_root", "play_log_root")
+
+
+def _narrow_cfg(shape: str) -> GumbelConfig:
+    """Written as ``dataclasses.replace`` on one base rather than ``**dict``:
+    a ``dict[str, float]`` splat widens every keyword to ``float`` and
+    basedpyright rejects the ``int``/``bool``/``str`` fields it lands on."""
+    base = GumbelConfig(
+        simulations=128, topk=16, c_scale=0.1, temperature=0.0, add_noise=False
+    )
+    if shape == "selfplay_linear_root":
+        return base
+    return dataclasses.replace(
+        base, c_scale=0.025, c_visit=50.0, c_visit_root=900.0,
+        c_scale_root=7.0, q_visit_exp_root=-1.0,
+    )
+
+
+def _narrowed_support_tree(carried: list[int], excluded: int, visits: int):
+    """A carried root over ``carried`` whose ``excluded`` child holds ``visits``
+    visits at an extreme Q — a heavily-searched move the current ply then drops.
+
+    ⚑ Sign, stated exactly because it is easy to get backwards. ``backprop``
+    negates on the way up, so ``visits`` × ``backprop(path, +1.0)`` leaves
+    ``W[child] = +visits`` and ``W[root] = -visits``. ``gss_score_and_halve``
+    reads the child PARENT-POV as ``q = -W/N``, so the excluded child presents as
+    ``q = -1.0`` (a proven LOSS from the root's side) and the carried root's own
+    ``root_Q`` as ``≈ -1.0``. That is the pollution this test injects: an extreme
+    ``min_q`` plus ``max_visit = visits``. The opposite sign (``-1.0``, giving a
+    proven WIN child) was swept and is red pre-fix on the same configurations;
+    the magnitude, not the direction, is what makes the transform move.
+
+    Built by tree surgery rather than a first search so the two arms differ ONLY
+    in whether the root is reused: the tree handed to both is byte-for-byte the
+    same shape, and no transposition-table entry exists to make node ids matter.
+    """
+    tree = _mcts_tree.MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    acts = np.array(sorted(carried), dtype=np.int32)
+    tree.expand(rid, acts, np.full(acts.size, 1.0 / acts.size, dtype=np.float64))
+    cid = tree.find_child(rid, excluded)
+    assert cid >= 0
+    path = np.array([rid, cid], dtype=np.int32)
+    for _ in range(visits):
+        tree.backprop(path, 1.0)
+    return tree, rid
+
+
+@pytest.mark.parametrize("shape", _NARROW_SHAPES)
+def test_a_narrowed_root_does_not_inherit_the_excluded_child(
+    monkeypatch, shape: str
+) -> None:
+    """RED on the pre-fix (superset) gate, in both search shapes.
+
+    Arm: carried root over support+{excluded}, reused. Control: the SAME tree,
+    same seed, same evaluator, same narrowed support — but ``root_node_ids=None``
+    so the root is built over the current support alone, which is the Python
+    reference's (``gumbel.py``, no tree reuse) semantic. The two must agree
+    exactly. Pre-fix they do not: the played move flips between two INCLUDED
+    moves, and the root's visit split across the included moves shifts with it —
+    both decided by a child the current search says does not exist.
+
+    Control chosen as the same populated tree rather than an empty one so the
+    single manipulated variable is the reuse decision itself — post-fix the arm
+    rebuilds into the identical node slot, so equality is exact, not approximate.
+
+    ⚑ Two classes of assertion here, and they are not equally durable. The
+    behavioural block (played move, visit split, policy, value) states the
+    REQUIREMENT: a narrowed search must not be steered by an excluded child. The
+    counter and ``arm_root != stale_root`` asserts pin THIS FIX'S MECHANISM —
+    reject and rebuild. A future implementation that instead taught
+    ``gss_score_and_halve`` to restrict its statistics to the current support
+    would satisfy the requirement while legitimately failing those two; treat
+    them as a signal to re-read the mechanism, not as a regression.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    board = chess.Board(_NARROW_FEN)
+    legal = sorted(_legal_set(board))
+    assert len(legal) > 11, "position must be wide enough to narrow"
+    support = legal[:10]
+    excluded = legal[10]
+    carried = [*support, excluded]
+
+    cfg = _narrow_cfg(shape)
+
+    def _search(tree, root_ids):
+        return run_gumbel_root_many_c(
+            None, [chess.Board(_NARROW_FEN)], device="cpu",
+            rng=np.random.default_rng(0), cfg=cfg, evaluator=_Ev(1),
+            tree=tree, root_node_ids=root_ids,
+            allowed_root_indices_batch=[set(support)],
+            target_batch=0, vloss_weight=1,
+        )
+
+    arm_tree, stale_root = _narrowed_support_tree(carried, excluded, visits=4000)
+    misses_before = root_coverage_miss_count()
+    narrowed_before = root_support_narrowed_count()
+    arm = _search(arm_tree, [stale_root])
+    arm_root = int(arm[5][0])
+
+    assert root_support_narrowed_count() == narrowed_before + 1, (
+        "the wider carried root was reused instead of rebuilt"
+    )
+    assert root_coverage_miss_count() == misses_before, (
+        "a narrowed support is routine — it must not raise the W2 alarm counter"
+    )
+    assert arm_root != stale_root
+    arm_actions, arm_visits = arm_tree.get_children_visits(arm_root)
+    assert {int(a) for a in arm_actions} == set(support), (
+        "the rebuilt root must hold exactly the current support"
+    )
+
+    ctl_tree, _ = _narrowed_support_tree(carried, excluded, visits=4000)
+    ctl = _search(ctl_tree, None)
+    ctl_actions, ctl_visits = ctl_tree.get_children_visits(int(ctl[5][0]))
+
+    # Played move first: it is the assertion with a chess meaning, and the one
+    # the superset gate flips.
+    assert int(arm[1][0]) == int(ctl[1][0]), (
+        f"reused wide root played {int(arm[1][0])}, support-only root played "
+        f"{int(ctl[1][0])} — the excluded child decided the halving"
+    )
+    assert dict(
+        zip((int(a) for a in arm_actions), (int(v) for v in arm_visits), strict=True)
+    ) == dict(
+        zip((int(a) for a in ctl_actions), (int(v) for v in ctl_visits), strict=True)
+    ), "the excluded child moved the visit split over the included moves"
+    assert np.array_equal(arm[0][0], ctl[0][0]), "improved policy diverged"
+    assert float(arm[2][0]) == float(ctl[2][0]), "root value diverged"
+
+
+# The PRODUCTION narrowing path. `searchmoves` above is the directly-drivable
+# one, but nothing in this repo emits it — selfplay always passes
+# `allowed_root_indices_batch=None`. What selfplay DOES hit is the winning-root
+# terminal-draw prune, and that is the shape that decides whether this fix
+# touches training data at all.
+#
+# White is winning and the halfmove clock is at 99, so every move that is not a
+# pawn push leaves a position at 100 that is a claimable 50-move draw and gets
+# pruned. Two cases, so the production path is pinned in BOTH search shapes and
+# at two prune ratios; each was chosen because the played move FLIPS on the
+# pre-fix gate at that exact shape:
+#   (fen, search shape, evaluator seed, heavy visits, legal, support)
+_DRAW_PRUNE_CASES = (
+    ("selfplay_linear_root", "4k3/8/8/8/8/8/PPP1P3/3QK3 w - - 99 60", 3, 200, 21, 8),
+    ("play_log_root", "4k3/8/8/8/8/8/3P4/3QK3 w - - 99 60", 1, 4000, 15, 2),
+)
+
+
+class _WinningRootEv(_Ev):
+    """``_Ev`` with the WDL of its FIRST batch pinned to a decisive win.
+
+    Two things have to be true at once and they pull in opposite directions.
+    The ROOT must evaluate as winning or `want_draws` is False, the prune never
+    runs, and the test passes vacuously against a root that was never narrowed.
+    The LEAVES must keep varied values, or every candidate carries the same
+    ``q_hat``, the Q transform becomes a constant across candidates, and the
+    halving degenerates to a pure log-prior ranking that no amount of root
+    pollution can move — measured: with a uniform winning WDL the played move
+    does not flip at any (position, shape, sign, visit-count) combination tried.
+
+    The root batch is the first ``evaluate_encoded`` call on this path
+    (``pre_pol_logits`` is None, so the root is evaluated before any leaf), and
+    each arm builds its own evaluator, so the flag is per-search and
+    deterministic.
+    """
+
+    def __init__(self, seed: int = 20260803) -> None:
+        super().__init__(seed)
+        self._root_batch_done = False
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        pol, wdl = super().evaluate_encoded(x, relations)
+        if not self._root_batch_done:
+            self._root_batch_done = True
+            wdl = np.tile(
+                np.array([8.0, 0.0, -8.0], dtype=np.float32), (pol.shape[0], 1)
+            )
+        return pol, wdl
+
+
+@pytest.mark.parametrize(
+    ("shape", "fen", "ev_seed", "heavy_visits", "n_legal", "n_support"),
+    _DRAW_PRUNE_CASES,
+    ids=[c[0] for c in _DRAW_PRUNE_CASES],
+)
+def test_the_winning_root_draw_prune_rebuilds_a_selfplay_carried_root(
+    monkeypatch, shape: str, fen: str, ev_seed: int,
+    heavy_visits: int, n_legal: int, n_support: int,
+) -> None:
+    """The narrowing path production actually reaches, in selfplay's call shape:
+    persistent tree, root carried from the previous ply with its FULL legal
+    expansion, ``allowed_root_indices_batch=None``.
+
+    RED on the pre-fix gate, which reused the wide root for a search over the
+    post-prune support and let the pruned draw children skew its halving
+    transform — the played move differs from the support-only control in both
+    cases.
+
+    This is the case that makes the fix DATA-AFFECTING rather than merely
+    search-shaped: on a narrowed ply the stored policy row and ``values_out``
+    are now built from a rebuilt root, so training rows written on winning
+    positions change.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    board = chess.Board(fen)
+    legal = sorted(_legal_set(board))
+    assert len(legal) == n_legal, "the position's legal count is part of the fixture"
+    cfg = _narrow_cfg(shape)
+
+    def _search(tree, root_ids):
+        return run_gumbel_root_many_c(
+            None, [chess.Board(fen)], device="cpu",
+            rng=np.random.default_rng(0), cfg=cfg,
+            evaluator=_WinningRootEv(ev_seed),
+            tree=tree, root_node_ids=root_ids,
+            allowed_root_indices_batch=None,  # selfplay never sets this
+            target_batch=0, vloss_weight=1,
+        )
+
+    # Read the post-prune support off a search rather than hardcoding it, so a
+    # rules or terminal-detection change makes this fail loudly instead of
+    # quietly testing an un-narrowed root.
+    probe_tree = _mcts_tree.MCTSTree()
+    probe = _search(probe_tree, None)
+    support = {int(a) for a in probe_tree.get_children_visits(int(probe[5][0]))[0]}
+    assert len(support) == n_support, (
+        f"draw prune did not narrow the root as expected: {sorted(support)}"
+    )
+    assert support < set(legal)
+
+    def _carried_tree():
+        """The previous ply's root — every legal move — with one of the moves
+        this ply will prune carrying a heavy, extreme-Q subtree. See
+        _narrowed_support_tree for the backprop sign: parent-POV q = -1.0."""
+        tree = _mcts_tree.MCTSTree()
+        rid = tree.add_root(1, 0.0)
+        acts = np.array(legal, dtype=np.int32)
+        tree.expand(rid, acts, np.full(acts.size, 1.0 / acts.size, dtype=np.float64))
+        cid = tree.find_child(rid, next(a for a in legal if a not in support))
+        assert cid >= 0
+        path = np.array([rid, cid], dtype=np.int32)
+        for _ in range(heavy_visits):
+            tree.backprop(path, 1.0)
+        return tree, rid
+
+    arm_tree, stale_root = _carried_tree()
+    misses_before = root_coverage_miss_count()
+    narrowed_before = root_support_narrowed_count()
+    arm = _search(arm_tree, [stale_root])
+    arm_root = int(arm[5][0])
+
+    assert root_support_narrowed_count() == narrowed_before + 1, (
+        f"the {n_legal}-child carried root was reused for a "
+        f"{n_support}-move search"
+    )
+    assert root_coverage_miss_count() == misses_before, (
+        "the draw prune is routine — it must not raise the W2 alarm counter"
+    )
+    assert arm_root != stale_root
+    arm_actions = {int(a) for a in arm_tree.get_children_visits(arm_root)[0]}
+    assert arm_actions == support, (
+        "the rebuilt root must hold exactly the post-prune support"
+    )
+
+    # Same tree contents, no reuse: the semantic a fresh root gives.
+    ctl_tree, _ = _carried_tree()
+    ctl = _search(ctl_tree, None)
+    assert int(arm[1][0]) == int(ctl[1][0]), (
+        f"reused wide root played {int(arm[1][0])}, support-only root played "
+        f"{int(ctl[1][0])} — pruned draw children decided the halving"
+    )
+    assert np.array_equal(arm[0][0], ctl[0][0]), "stored policy row diverged"
+    assert float(arm[2][0]) == float(ctl[2][0]), "stored root value diverged"
+    assert set(np.nonzero(arm[0][0])[0].tolist()) <= support
+
+
+def test_the_root_support_gate_is_equality_not_coverage() -> None:
+    """The classifier itself, in every direction, asserted on the VERDICT rather
+    than on a bool — because which verdict comes back decides which counter
+    moves, and conflating the alarm with the routine case is the thing this
+    split exists to prevent.
+
+    The old superset reading (``isin(actions, child_actions).all()`` behind a
+    ``child_actions.size < actions.size`` early-out) agrees on the equal,
+    reordered, wider and same-size-but-different rows — and disagrees on the two
+    that matter: a NARROWED support, and the empty support its
+    ``actions.size == 0`` early-out waved through.
+    """
+    tree = _mcts_tree.MCTSTree()
+    rid = tree.add_root(1, 0.0)
+    acts = np.array([7, 11, 23], dtype=np.int32)
+    tree.expand(rid, acts, np.full(3, 1.0 / 3.0, dtype=np.float64))
+    classify = gumbel_c_mod._classify_expanded_root_support
+    equal = gumbel_c_mod._ROOT_SUPPORT_EQUAL
+    missing = gumbel_c_mod._ROOT_SUPPORT_MISSING_ACTION
+    narrowed = gumbel_c_mod._ROOT_SUPPORT_NARROWED
+
+    assert classify(tree, rid, np.array([7, 11, 23], dtype=np.int32)) == equal
+    assert classify(tree, rid, np.array([23, 7, 11], dtype=np.int64)) == equal, (
+        "order-blind"
+    )
+    assert classify(tree, rid, np.array([7, 11], dtype=np.int32)) == narrowed, (
+        "narrowed support: the ROOT is a superset — this is the bug, and it is "
+        "ROUTINE, so it must not read as the W2 alarm"
+    )
+    assert classify(tree, rid, np.array([7, 11, 23, 40], dtype=np.int32)) == missing, (
+        "the root is missing an action we are about to search — the W2 alarm"
+    )
+    assert classify(tree, rid, np.array([7, 11, 40], dtype=np.int32)) == missing, (
+        "same size, different members — the size early-out must not decide it, "
+        "and a missing action outranks the extra one"
+    )
+    assert classify(tree, rid, np.empty(0, dtype=np.int32)) == narrowed, (
+        "an empty support is narrowing taken to its limit, not a missing action"
+    )
+
+
 def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:
-    """Positive direction of W2. Making the coverage check unconditional must not
-    quietly disable tree carry: if reuse stopped happening altogether every other
-    test here would still pass, and the only symptom would be a slower search
-    that throws away its tree every ply.
+    """Positive direction of W2. Making the support check unconditional — and,
+    later, tightening it from coverage to equality — must not quietly disable
+    tree carry: if reuse stopped happening altogether every other test here would
+    still pass, and the only symptom would be a slower search that throws away
+    its tree every ply.
 
     This walks a selfplay-shaped carry — persistent tree, root advanced with
     ``find_child`` on the played action, ``allowed_root_indices_batch=None``.
+    None of these plies narrows its support, so BOTH rejection counters must stay
+    flat: equality is not an excuse to rebuild an equal root.
     """
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
     board = chess.Board(
@@ -244,6 +597,7 @@ def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:
 
     root_ids: list[int] | None = None
     misses_before = root_coverage_miss_count()
+    narrowed_before = root_support_narrowed_count()
     reused_plies = 0
     for ply in range(5):
         res = run_gumbel_root_many_c(
@@ -274,15 +628,21 @@ def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:
         "reused their root"
     )
     assert root_coverage_miss_count() == misses_before, (
-        "the coverage check rejected a legitimately carried root"
+        "the support check raised the W2 alarm on a legitimately carried root"
+    )
+    assert root_support_narrowed_count() == narrowed_before, (
+        "the equality gate rebuilt a root whose support did not narrow"
     )
 
 
-def _reset_guard_reporter(monkeypatch, *, misses: int = 0) -> None:
-    """Clear the reporter's rate limiter and both counters."""
+def _reset_guard_reporter(
+    monkeypatch, *, misses: int = 0, narrowed: int = 0,
+) -> None:
+    """Clear the reporter's rate limiter and all three counters."""
     monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
-    monkeypatch.setattr(gumbel_c_mod, "_tt_health_reported", (0, 0))
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_reported", (0, 0, 0))
     monkeypatch.setattr(gumbel_c_mod, "_ROOT_COVERAGE_MISSES", misses)
+    monkeypatch.setattr(gumbel_c_mod, "_ROOT_NARROWED_REBUILDS", narrowed)
     _mcts_tree.tt_stats(reset=True)
 
 
@@ -345,6 +705,42 @@ def test_root_coverage_miss_is_reported_on_the_production_path(
     err = capsys.readouterr().err
     assert "[mcts] search guards FIRED" in err, err
     assert "root_coverage_miss=1" in err, err
+    # The routine counter rides along on the same line, so an operator reading an
+    # alarm can see whether narrowing was also happening.
+    assert "root_support_narrowed=0" in err, err
+
+
+def test_routine_support_narrowing_is_announced_once_not_every_minute(
+    monkeypatch, capsys
+) -> None:
+    """The narrowed counter is ROUTINE and monotonically increasing on winning
+    selfplay positions. If it re-triggered the operator line the way the alarms
+    do, a worker would emit this message every 60 s forever and the alarms it
+    shares a line with would be trained into invisibility. So: announced on the
+    first occurrence, silent after — while a real alarm still prints, carrying
+    the updated narrowed count with it."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch, narrowed=7)
+
+    _tiny_search()
+    first = capsys.readouterr().err
+    assert "root_support_narrowed=7" in first, first
+    assert "ROUTINE" in first, first
+
+    monkeypatch.setattr(gumbel_c_mod, "_ROOT_NARROWED_REBUILDS", 4321)
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    _tiny_search()
+    assert "[mcts]" not in capsys.readouterr().err, (
+        "routine narrowing re-triggered the operator line"
+    )
+
+    # An actual alarm must still get through, and carry the current count.
+    monkeypatch.setattr(gumbel_c_mod, "_ROOT_COVERAGE_MISSES", 1)
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    _tiny_search()
+    err = capsys.readouterr().err
+    assert "root_coverage_miss=1" in err, err
+    assert "root_support_narrowed=4321" in err, err
 
 
 def test_tt_reject_is_reported_on_the_production_path(monkeypatch, capsys) -> None:

@@ -10,16 +10,45 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 # C ABI capability marker (see PyInit__mcts_tree); bumped on detect-worthy ABI changes.
 ABI_VERSION: int
 
+# Which root sequential-halving semantic this .so was built with (see the
+# GSS_HALVING_REV comment in _mcts_tree.c). NOT an ABI gate: absent on an .so
+# built before the constant existed, which IS revision 1.
+GSS_HALVING_REV: int
+
 # `batch_process_ply`'s swdl_draw_mode encoding (SWDL_DRAW_* in _mcts_tree.c).
 # Exported by the extension so the Python side never keeps a second copy of the
 # int mapping — see selfplay/network_turn.py::_SWDL_DRAW_MODE_TO_C.
 SWDL_DRAW_NET_RAW: int
 SWDL_DRAW_PARAMETRIC_Q: int
 
+# ⚑ Most candidates the Gumbel sampler SCORES per root per halving round.
+# `gss_score_and_halve` clamps above this, so on a root with more legal moves
+# than this the surplus is dropped from the RANKING unscored. ⚑ Not from the
+# search: budget is deducted before the clamp, so every legal move is still
+# expanded, visited and carries target mass (measured on a 218-legal-move root).
+# The cap costs ranking resolution on wide roots, not coverage. Exported so
+# callers read the ceiling instead of assuming their own; absent on an .so built
+# before the constant existed.
+GSS_MAX_CANDS: int
+
 def set_history_rep_fix(enabled: bool, /) -> None: ...
 def tt_stats(reset: bool = False) -> dict[str, int]: ...
 
 class MCTSTree:
+    # --- eval-plugin seam -------------------------------------------------
+    # The tree holds a POINTER to a value provider; NNUE is the first one. See
+    # chess_anti_engine/mcts/_value_provider.h for the status contract and the
+    # in-check rule (callers resolve check nodes recursively; the provider's
+    # refusal is the enforcement backstop, not a substitute).
+    # `provider` is a known name ("nnue") or the value_provider_capsule the
+    # implementing extension publishes — the provider is imported, never
+    # compiled into this extension, so its kernel selection and weight cache are
+    # the ones its own module exposes.
+    def set_value_provider(self, provider: str | object, weights_path: str) -> None: ...
+    def clear_value_provider(self) -> None: ...
+    def value_provider_name(self) -> str | None: ...
+    def value_provider_kernel(self) -> str | None: ...
+    def value_provider_eval(self, board: CBoard) -> int: ...
     def find_child(self, node_id: int, action: int) -> int: ...
     def add_root(self, N: int, W: float) -> int: ...
     def expand(self, node_id: int, actions: NDArray[np.int32], priors: NDArray[np.float64]) -> None: ...
@@ -61,6 +90,10 @@ class MCTSTree:
     def continue_gumbel_sims(self, pol: NDArray[np.float32], wdl: NDArray[np.float32]) -> int | None: ...
     def continue_gumbel_sims_legal_bf16(self, pol_bf16_bits: NDArray[np.uint16], wdl: NDArray[np.float32]) -> int | None: ...
     def get_pending_legal_indices(self) -> tuple[NDArray[np.int32], NDArray[np.int32]]: ...
+    # The WHOLE pending batch in encoded-planes row order. `get_pending_tb_leaves`
+    # returns only the Syzygy-eligible subset; this one drops nothing, which is
+    # what a CPU value function that reads the POSITION (not the planes) needs.
+    def pending_leaf_cboards(self) -> list[CBoard]: ...
     def get_pending_tb_leaves(self, max_pieces: int) -> tuple[NDArray[np.int32], list[CBoard]]: ...
     def mark_tb_solved(self, indices: NDArray[np.int32], statuses: NDArray[np.int8]) -> int: ...
     def get_solved_status(self, node_id: int) -> int: ...
@@ -209,3 +242,15 @@ def temperature_resample(
     actions: NDArray[np.int32],
     rand_vals: NDArray[np.float64],
 ) -> None: ...
+
+# Which sliding-attack implementation THIS extension was compiled with:
+# "pext", "magic", or "rays". Published by every extension so a test can ask the
+# shipped binary rather than the build system — see encoding/_slider_attacks_impl.h.
+SLIDER_BACKEND: str
+
+def slider_selftest(seed: int = ..., samples: int = ..., /) -> int:
+    """Mismatches between this module's slider tables and its own ray walker.
+
+    Uses full-board occupancies, so unlike the import-time check it can see a
+    wrong relevant-occupancy mask. Zero is the only acceptable result.
+    """

@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 
+from chess_anti_engine.inference import _COMPILED_BATCH_BUCKETS
 from chess_anti_engine.moves import POLICY_SIZE
 from scripts.build_aot_packages import (
     _compare_bucket,
@@ -18,6 +19,7 @@ from scripts.build_aot_packages import (
     package_path,
     parse_buckets_arg,
     plan_build_buckets,
+    required_broker_buckets,
     select_buckets,
 )
 
@@ -38,16 +40,69 @@ def test_parse_buckets_arg_rejects(bad: str) -> None:
 
 
 def test_select_buckets_filters_by_max_batch() -> None:
-    sel = select_buckets(max_batch=64, buckets=[1, 6, 24, 64, 128, 4096])
+    # allow_incomplete: this asserts the max_batch FILTER, not coverage, and the
+    # hand-picked ladder deliberately omits broker sizes (16, 32) below the cap.
+    sel = select_buckets(
+        max_batch=64, buckets=[1, 6, 24, 64, 128, 4096], allow_incomplete=True
+    )
     assert sel == (1, 6, 24, 64)
 
 
 def test_select_buckets_default_source_nonempty() -> None:
-    # Uses _BATCH_BUCKETS; every element must be <= a large cap.
     sel = select_buckets(max_batch=4096)
     assert sel
     assert all(b <= 4096 for b in sel)
     assert len(set(sel)) == len(sel)
+
+
+def test_select_buckets_default_covers_every_bucket_the_broker_loads() -> None:
+    """The default ladder must be the one SlotBroker actually loads.
+
+    This is the regression that shipped on 2026-08-15: the default was
+    ``_BATCH_BUCKETS``, which omitted six ``_COMPILED_BATCH_BUCKETS`` sizes
+    (680, 1020, 1190, 1792, 2336, 2720). ``load_aot_packages`` skips missing
+    files silently and ``should_use_aot_forward`` is an exact-key match, so the
+    build produced a directory that ran EAGER for ~71% of forwards with no
+    warning anywhere. A non-emptiness check cannot see that; a coverage check
+    can.
+    """
+    sel = set(select_buckets(max_batch=4096))
+    required = {int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 4096}
+    assert required <= sel, f"default ladder omits broker buckets: {sorted(required - sel)}"
+
+
+def test_required_broker_buckets_respects_max_batch() -> None:
+    assert set(required_broker_buckets(512)) == {
+        int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 512
+    }
+    assert all(b <= 512 for b in required_broker_buckets(512))
+
+
+def test_select_buckets_rejects_a_ladder_missing_a_broker_bucket() -> None:
+    """An explicit --buckets that drops a broker size must fail loud."""
+    partial = [b for b in _COMPILED_BATCH_BUCKETS if int(b) != 1190]
+    with pytest.raises(ValueError, match=r"1190"):
+        select_buckets(max_batch=4096, buckets=partial)
+
+
+def test_allow_incomplete_permits_a_partial_ladder() -> None:
+    """The escape hatch works, and returns exactly what was asked for."""
+    partial = [b for b in _COMPILED_BATCH_BUCKETS if int(b) != 1190]
+    sel = select_buckets(max_batch=4096, buckets=partial, allow_incomplete=True)
+    assert 1190 not in sel
+    assert set(sel) == {int(b) for b in partial}
+
+
+def test_coverage_check_is_scoped_by_max_batch() -> None:
+    """A small-max_batch build is not asked for buckets above the cap.
+
+    Otherwise the guard would make every capped build impossible.
+    """
+    sel = select_buckets(
+        max_batch=128,
+        buckets=[int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 128],
+    )
+    assert set(sel) == {int(b) for b in _COMPILED_BATCH_BUCKETS if int(b) <= 128}
 
 
 def test_select_buckets_rejects_bad_max_batch() -> None:
@@ -88,8 +143,7 @@ def test_arg_parser_defaults() -> None:
     assert args.config == Path("configs/pbt2_small.yaml")
     assert args.out_dir == Path("data/aot_models_512")
     assert args.max_batch == 4096
-    assert args.tol == pytest.approx(2e-2)
-    assert args.wdl_tol == pytest.approx(8e-2)
+    assert args.tv_ratio_max == pytest.approx(2.0)
     assert args.argmax_min == pytest.approx(0.90)
     assert not args.verify
     assert not args.resume
@@ -115,36 +169,96 @@ def _wdl(*rows: list[float]) -> np.ndarray:
 
 
 def test_compare_bucket_pass_on_near_identical() -> None:
+    # ⚑ The control is the reference EXACTLY, which is the documented CPU
+    # regime (`eager_batch_shape_control` is bitwise identical from n=2 to
+    # n=128) and the case `_floor`'s `lo > 0.0` degeneracy escape covers. It
+    # used to be `pol + 1e-3` — a uniform shift, so the softmax is unchanged and
+    # the empirical floor is ~1.9e-8 rather than exactly 0. That is NOT covered
+    # by the escape, and `_FLOOR_DIVERGENCE_MAX` then reads x60159 and FAILS
+    # this healthy package. See the session report: the escape is exact-equality
+    # only, so a near-degenerate control is a false-FAIL path.
     pol = np.array([[2.0, 1.0, 0.0], [0.0, 3.0, 1.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, -1.0], [0.0, 1.0, 0.0])
-    ok, detail = _compare_bucket(
+    ok, detail, matches, rows = _compare_bucket(
         aot_pol=pol + 1e-3, aot_wdl=wdl + 1e-3, ref_pol=pol, ref_wdl=wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        ctl_pol=pol.copy(), ctl_wdl=wdl.copy(),
+        tv_ratio_max=1.5,
     )
     assert ok, detail
+    assert (matches, rows) == (2, 2)
 
 
-def test_compare_bucket_fails_on_garbage_policy() -> None:
-    # A broken package (wrong/unfilled constants) -> argmax collapses.
+def test_compare_bucket_reports_a_collapsed_argmax_for_the_caller_to_gate() -> None:
+    """A broken package (wrong/unfilled constants) -> argmax collapses.
+
+    ⚑ ``_compare_bucket`` no longer gates on argmax — ``verify_packages`` does,
+    on rows POOLED across trials, because per-trial the criterion is a coin flip
+    at small buckets. So this asserts the COUNTS it hands back, which is the
+    thing the caller's verdict is computed from.
+
+    ⚑ `tv_ratio_max=1e9` NO LONGER DISARMS THE WHOLE COMPARISON, and the old
+    version of this test asserted that it did. The row-exceedance arm is a count
+    gated at zero in units of the package's own floor and is deliberately
+    independent of that knob, so a package this wrong still fails — on
+    `pol_rows_over=2`, not on argmax. Proving "argmax is not gated" therefore
+    needs the other direction as well: a package whose argmax moves on EVERY row
+    while its probabilities stay inside the floor must PASS.
+    """
     ref_pol = np.array([[5.0, 0.0, 0.0], [0.0, 5.0, 0.0]], dtype=np.float32)
     aot_pol = np.array([[0.0, 0.0, 5.0], [5.0, 0.0, 0.0]], dtype=np.float32)
     wdl = _wdl([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
-    ok, _ = _compare_bucket(
+    ok, detail, matches, rows = _compare_bucket(
         aot_pol=aot_pol, aot_wdl=wdl, ref_pol=ref_pol, ref_wdl=wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        ctl_pol=ref_pol, ctl_wdl=wdl,
+        tv_ratio_max=1e9,  # ratio arms disarmed; the count arm is not
     )
-    assert not ok
+    assert (matches, rows) == (0, 2), "every row's argmax moved"
+    assert not ok, detail
+    assert "pol_rows_over=2" in detail, (
+        f"the verdict must come from the row-exceedance count, not from argmax: {detail}"
+    )
+
+    # ⚑ THE DIRECTION THAT PROVES THE ABSENCE OF AN ARGMAX GATE. Two rows whose
+    # top two logits are exactly tied; the package breaks the tie the other way,
+    # so argmax moves on 2/2 rows while the probability difference is ~1e-5 —
+    # far under the bf16 floor. A gate with any argmax term would fail this.
+    rng = np.random.default_rng(5)
+    tied_ref = rng.normal(0, 4.0, size=(2, 64)).astype(np.float32)
+    tied_ref[:, 0] = tied_ref[:, 1] = tied_ref.max(axis=1) + 1.0
+    tied_aot = tied_ref.copy()
+    tied_aot[:, 1] += np.float32(1e-4)
+    tied_wdl = rng.normal(0, 1.0, size=(2, 3)).astype(np.float32)
+    ok_tied, detail_tied, m_tied, n_tied = _compare_bucket(
+        aot_pol=tied_aot, aot_wdl=tied_wdl.copy(), ref_pol=tied_ref,
+        ref_wdl=tied_wdl, ctl_pol=tied_ref.copy(), ctl_wdl=tied_wdl.copy(),
+        tv_ratio_max=1.5,
+    )
+    assert (m_tied, n_tied) == (0, 2), "premise: the argmax moved on every row"
+    assert ok_tied, (
+        f"_compare_bucket failed a package whose only defect is a broken tie, "
+        f"so it is gating on argmax after all: {detail_tied}"
+    )
 
 
 def test_compare_bucket_fails_on_wdl_drift() -> None:
+    """⚑ wdl is the ONLY value head MCTS consumes, so it needs its own arm."""
     pol = np.array([[2.0, 1.0, 0.0]], dtype=np.float32)
     ref_wdl = _wdl([4.0, 0.0, 0.0])
     aot_wdl = _wdl([0.0, 4.0, 0.0])  # flipped -> large prob delta
-    ok, _ = _compare_bucket(
+    ok, detail, _, _ = _compare_bucket(
         aot_pol=pol, aot_wdl=aot_wdl, ref_pol=pol, ref_wdl=ref_wdl,
-        pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
+        # Exact, not `ref_wdl + 1e-3`: a uniform shift leaves the softmax alone,
+        # so the empirical WDL floor is ~1e-9 and the bucket then fails on
+        # FLOOR-DIVERGENCE — which would make this test pass with the wdl arm
+        # deleted.
+        ctl_pol=pol.copy(), ctl_wdl=ref_wdl.copy(),
+        tv_ratio_max=1.5,
     )
-    assert not ok
+    assert not ok, detail
+    assert "FLOOR-DIVERGENCE" not in detail, detail
+    assert "wdl_mean=x0.00" not in detail, (
+        f"the wdl ratio arm did not move, so this says nothing about it: {detail}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +366,7 @@ def test_verify_packages_encodes_in_the_models_own_encoding(
 
     n_pass, n_fail, rows = MOD.verify_packages(
         out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
-        input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+        input_planes=175, tv_ratio_max=1.5, verify_n=1, seed=3,
     )
     assert (n_pass, n_fail) == (1, 0), rows
     assert calls == [{
@@ -260,9 +374,15 @@ def test_verify_packages_encodes_in_the_models_own_encoding(
         "input_history_encoding": _PROD_HISTORY,
         "seed": 3,
     }]
-    # And the model really saw production-encoded planes.
-    fed = model.seen[-1].float().numpy()
+    # And the model really saw production-encoded planes. seen[0] is the
+    # REFERENCE forward; the later calls are the batch-shape control, which by
+    # construction re-runs the same rows at a different batch size.
+    fed = model.seen[0].float().numpy()
     assert fed.shape == (2, 175, 8, 8)
+    assert [int(t.shape[0]) for t in model.seen[1:]] == [1, 1], (
+        "the eager control must re-run the batch at a DIFFERENT shape, got "
+        f"{[int(t.shape[0]) for t in model.seen[1:]]}"
+    )
     legacy = _real_position_batch(
         2, input_extra_features=_PROD_EXTRA,
         input_history_encoding="legacy", seed=3,
@@ -283,5 +403,5 @@ def test_verify_packages_refuses_a_model_that_does_not_declare_its_encoding(
     with pytest.raises(ValueError, match="input_history_encoding"):
         MOD.verify_packages(
             out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
-            input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+            input_planes=175, tv_ratio_max=1.5, verify_n=1, seed=3,
         )

@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import importlib.machinery
 import os
+import re
 from pathlib import Path
 
 import pytest
 
-from scripts.check_c_extensions_fresh import check_extensions
+from scripts.check_c_extensions_fresh import EXTENSION_SPECS, check_extensions
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# ⚑ Derived from EXTENSION_SPECS, never restated. These lists used to be written
+# out by hand in eight places, so adding a fourth extension meant the guard's own
+# tests kept passing while saying nothing about it — a test suite that is green
+# because it does not know the new thing exists. Deriving them means a module
+# registered in the spec is exercised by every test below on the same commit.
+ALL_MODULES: tuple[str, ...] = tuple(spec.module for spec in EXTENSION_SPECS)
+ALL_SOURCES: tuple[str, ...] = tuple(
+    dict.fromkeys(dep for spec in EXTENSION_SPECS for dep in spec.dependencies)
+)
 
 
 def _write(path: Path, *, mtime_ns: int) -> None:
@@ -21,24 +34,42 @@ def _extension_output(root: Path, module: str, suffix: str | None = None) -> Pat
 
 
 def _write_all_sources(root: Path, *, mtime_ns: int = 10) -> None:
-    for rel in (
-        "chess_anti_engine/encoding/_features_ext.c",
-        "chess_anti_engine/encoding/_lc0_ext.c",
-        "chess_anti_engine/encoding/_cboard_impl.h",
-        "chess_anti_engine/encoding/_features_impl.h",
-        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
-        "chess_anti_engine/mcts/_mcts_tree.c",
-    ):
+    for rel in ALL_SOURCES:
         _write(root / rel, mtime_ns=mtime_ns)
 
 
 def _write_all_extensions(root: Path, *, mtime_ns: int = 20) -> None:
-    for module in (
-        "chess_anti_engine.encoding._features_ext",
-        "chess_anti_engine.encoding._lc0_ext",
-        "chess_anti_engine.mcts._mcts_tree",
-    ):
+    for module in ALL_MODULES:
         _write(_extension_output(root, module), mtime_ns=mtime_ns)
+
+
+def _module_source(module: str) -> Path:
+    """The .c a module is built from, e.g. .../mcts/_mcts_tree.c."""
+    return REPO_ROOT.joinpath(*module.split(".")).with_suffix(".c")
+
+
+def _transitive_local_includes(entry: Path) -> set[str]:
+    """Every in-repo header reachable from ``entry`` by following #include "...".
+
+    Resolves each include relative to the including file, the way the compiler
+    does, and returns repo-relative POSIX paths.
+    """
+    seen: set[str] = set()
+    stack = [entry]
+    visited: set[Path] = set()
+    while stack:
+        current = stack.pop()
+        resolved = current.resolve()
+        if resolved in visited or not resolved.exists():
+            continue
+        visited.add(resolved)
+        for raw in re.findall(r'^\s*#\s*include\s+"([^"]+)"', current.read_text(), re.M):
+            target = (current.parent / raw).resolve()
+            if not target.exists() or REPO_ROOT not in target.parents:
+                continue
+            seen.add(target.relative_to(REPO_ROOT).as_posix())
+            stack.append(target)
+    return seen
 
 
 def test_check_extensions_accepts_fresh_outputs(tmp_path: Path):
@@ -98,11 +129,9 @@ def test_check_extensions_treats_bitboard_header_as_dependency(tmp_path: Path):
 
     issues = check_extensions(tmp_path)
 
-    for module in (
-        "chess_anti_engine.encoding._features_ext",
-        "chess_anti_engine.encoding._lc0_ext",
-        "chess_anti_engine.mcts._mcts_tree",
-    ):
+    dependents = [s.module for s in EXTENSION_SPECS if header in s.dependencies]
+    assert len(dependents) >= 3
+    for module in dependents:
         assert f"{module} is older than {header}" in issues
 
 
@@ -125,28 +154,20 @@ def test_check_extensions_uses_python_import_suffix_order(tmp_path: Path):
 def test_check_extensions_can_require_production_gcc_major(tmp_path: Path) -> None:
     _write_all_sources(tmp_path, mtime_ns=10)
     _write_all_extensions(tmp_path, mtime_ns=20)
-    for module in (
-        "chess_anti_engine.encoding._features_ext",
-        "chess_anti_engine.encoding._lc0_ext",
-        "chess_anti_engine.mcts._mcts_tree",
-    ):
+    for module in ALL_MODULES:
         output = _extension_output(tmp_path, module)
         output.write_bytes(b"binary\x00GCC: (Ubuntu 11.4.0) 11.4.0\x00")
         os.utime(output, ns=(20, 20))
 
     issues = check_extensions(tmp_path, min_gcc_major=15)
 
-    assert len([issue for issue in issues if "production requires GCC >= 15" in issue]) == 3
+    assert len([i for i in issues if "production requires GCC >= 15" in i]) == len(ALL_MODULES)
 
 
 def test_check_extensions_accepts_production_gcc_major(tmp_path: Path) -> None:
     _write_all_sources(tmp_path, mtime_ns=10)
     _write_all_extensions(tmp_path, mtime_ns=20)
-    for module in (
-        "chess_anti_engine.encoding._features_ext",
-        "chess_anti_engine.encoding._lc0_ext",
-        "chess_anti_engine.mcts._mcts_tree",
-    ):
+    for module in ALL_MODULES:
         output = _extension_output(tmp_path, module)
         output.write_bytes(b"binary\x00GCC: (GNU) 15.3.0\x00")
         os.utime(output, ns=(20, 20))
@@ -160,19 +181,106 @@ def test_check_extensions_rejects_unrecorded_production_recipe(tmp_path: Path) -
 
     issues = check_extensions(tmp_path, require_production_recipe=True)
 
-    assert len([issue for issue in issues if "native+LTO production recipe" in issue]) == 3
+    assert len([i for i in issues if "native+LTO production recipe" in i]) == len(ALL_MODULES)
 
 
 def test_check_extensions_accepts_recorded_production_recipe(tmp_path: Path) -> None:
     _write_all_sources(tmp_path, mtime_ns=10)
     _write_all_extensions(tmp_path, mtime_ns=20)
-    for module in (
-        "chess_anti_engine.encoding._features_ext",
-        "chess_anti_engine.encoding._lc0_ext",
-        "chess_anti_engine.mcts._mcts_tree",
-    ):
+    for module in ALL_MODULES:
         output = _extension_output(tmp_path, module)
         output.write_bytes(b"ELF\x00-march=znver3\x00-fltrans\x00")
         os.utime(output, ns=(20, 20))
 
     assert check_extensions(tmp_path, require_production_recipe=True) == []
+
+
+# ======================================================================
+# Every COMPILED extension is registered, and every header it really
+# includes is a declared dependency
+# ======================================================================
+
+
+def test_every_built_extension_is_registered_with_the_guard() -> None:
+    """setup.py's Extension list and EXTENSION_SPECS must name the same modules.
+
+    ⚑ This is the gap that shipped: a fourth extension was added to setup.py and
+    the freshness guard still knew only three, so `scripts/train.sh` and
+    `graceful_restart.py` reported "extensions up to date" for a tree whose NNUE
+    evaluator was stale or absent. A guard that does not know a module exists
+    cannot report it out of date — it reports success, which is the worse of the
+    two failures. Deriving the expectation from setup.py means registering the
+    next extension is not something anyone has to remember.
+    """
+    setup_src = (REPO_ROOT / "setup.py").read_text()
+    built = set(re.findall(r'Extension\(\s*"([\w.]+)"', setup_src))
+
+    assert built, "could not read any Extension() names out of setup.py"
+    assert built == set(ALL_MODULES), (
+        "setup.py builds "
+        f"{sorted(built)} but the freshness guard tracks {sorted(ALL_MODULES)}; "
+        "an untracked extension is reported as up to date when it is stale"
+    )
+
+
+@pytest.mark.parametrize("spec", EXTENSION_SPECS, ids=lambda s: s.module)
+def test_declared_dependencies_cover_every_header_actually_included(spec) -> None:
+    """The spec must list every in-repo header the module transitively includes.
+
+    Walking the real #include graph rather than trusting the hand-written list is
+    what keeps this honest: the failure mode is not a wrong entry, it is a
+    MISSING one, and a missing entry is invisible until someone edits that header
+    and the binary silently keeps running the old code.
+    """
+    source = _module_source(spec.module)
+    assert source.exists(), f"{source} does not exist"
+
+    actual = _transitive_local_includes(source)
+    declared = set(spec.dependencies)
+    missing = actual - declared
+
+    assert not missing, (
+        f"{spec.module} includes {sorted(missing)} but does not declare "
+        "them as freshness dependencies; editing one of those headers would "
+        "leave the guard saying the extension is up to date"
+    )
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "chess_anti_engine/nnue/_nnue_impl.h",
+        "chess_anti_engine/nnue/_nnue_provider.h",
+        "chess_anti_engine/mcts/_value_provider.h",
+    ],
+)
+def test_nnue_extension_is_rebuilt_when_an_evaluator_header_changes(
+    tmp_path: Path, header: str
+) -> None:
+    """Touching any evaluator header must make the NNUE extension read as stale."""
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    _write(tmp_path / header, mtime_ns=30)
+
+    issues = check_extensions(tmp_path)
+
+    assert f"chess_anti_engine.nnue._nnue_ext is older than {header}" in issues
+
+
+def test_tree_extension_is_rebuilt_when_the_seam_contract_changes(tmp_path: Path) -> None:
+    """The tree compiles the seam's contract in, so it depends on that header.
+
+    It does NOT depend on any provider's implementation header — providers reach
+    it through a runtime capsule — so _nnue_impl.h is deliberately absent from
+    the tree's dependency list rather than forgotten.
+    """
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    _write(tmp_path / "chess_anti_engine/mcts/_value_provider.h", mtime_ns=30)
+
+    issues = check_extensions(tmp_path)
+
+    assert (
+        "chess_anti_engine.mcts._mcts_tree is older than "
+        "chess_anti_engine/mcts/_value_provider.h"
+    ) in issues

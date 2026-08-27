@@ -10,14 +10,23 @@ Base: `origin/main` at `af6c0ae` (post-#138/#139). Audit started against `64b44b
 
 ## Scope
 
-The repository currently has no C++ translation units. The complete tracked C
-surface is 9,627 lines:
+The repository currently has no C++ translation units.
+
+⚑ THIS TABLE IS THE 2026-07-09 AUDIT'S SCOPE, NOT A CURRENT INVENTORY. It was
+written before the `nnue/` subsystem existed and has not tracked it: measured
+2026-08-26, `git ls-files '*.c' '*.h'` totals **18,043** lines, of which
+`chess_anti_engine/nnue/` alone is 5,654 in files this table does not list. The
+"9,627 lines" this line used to claim was true when written and is now off by
+nearly half. Read the rows below as "what that audit covered", and re-measure
+before quoting a total. The slider row was added when the header landed, so that
+one unit at least does not start out stale.
 
 | Review unit | Files | Lines | Status |
 |---|---|---:|---|
 | Board core and binding | `encoding/_cboard_impl.h`, `encoding/_lc0_ext.c` | 2,455 | finding |
 | Feature/relation core and binding | `encoding/_features_impl.h`, `encoding/_features_ext.c` | 1,546 | finding |
-| Shared bitboard-plane encoder | `encoding/_bitboard_planes_impl.h` | 110 | finding |
+| Shared bitboard-plane encoder | `encoding/_bitboard_planes_impl.h` | 118 | finding |
+| Table-backed sliding attacks | `encoding/_slider_attacks_impl.h` | 480 | pending |
 | MCTS extension | `mcts/_mcts_tree.c` | 5,384 | finding |
 | CBoard fuzz harness | `scripts/fuzz/cboard_libfuzzer.c` | 132 | deep-reviewed |
 | Cross-extension contracts | all of the above | - | finding |
