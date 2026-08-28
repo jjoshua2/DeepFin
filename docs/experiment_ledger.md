@@ -70519,3 +70519,26 @@ the fresh dir carries the new stamp), and the backup rsync is SIGSTOPped until t
 control + its arenas finish (its 118G of reads through the page cache feed exactly the
 reclaim pressure that evicts the tables). Partial wiped again; same seed 20260827;
 manifest verified on disk at relaunch. Same-pin code `00b3de3f6`.
+
+**2026-08-27 AMENDMENT 3 (corpus run 1) — ROOT CAUSE FOUND; RESTARTED ~23:15 on
+`096e8f108` (EngineLease).** The 1800s deaths were not I/O: **Stockfish
+dev-20260420 wedges at 100% CPU on a narrowed `go depth` with a hot TT** —
+reproduced offline from the seed (worker 8's game 488 ply 152: replaying the
+game's 457 commands wedges it; from cmd 435 alone it does not, so the trigger is
+accumulated TT state), `stop` is ignored (no UCI escape; movetime/node caps sit
+behind the same never-reached check), and the same command on a COLD table
+finishes in ~2s. The dev-20260810 build wedges too, at a different command —
+engine upgrade is not the fix. Three workers died this way in 90 min; a bleed
+that guts a 14-day run.
+
+Fix (`096e8f108`, 100 tests, retry mutation-verified): `EngineLease` — on
+timeout the worker closes the engine's process group, spawns a fresh engine and
+retries the position ONCE on the cold table (row stamped `cold_tt_retry`;
+`engine_respawns` counted). A double wedge abandons the GAME (termination
+`engine_wedge`, result null, pre-wedge rows keep labels) never the worker, and
+the lease replaces the desynced engine again before re-raising. Timeout back to
+600s — with the retry, a false-positive timeout costs one cold search, not 30
+min of a wedged worker. Partial wiped; same seed 20260827; rsync stays paused.
+⚑ Residual worth an upstream report later: the wedge is a reproducible SF dev
+bug (hot TT + MultiPV + searchmoves `go depth`); the offline repro lives at the
+session scratchpad's `repro_game488.py` / `replay_crash.py`.
