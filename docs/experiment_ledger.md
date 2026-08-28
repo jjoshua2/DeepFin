@@ -70712,3 +70712,20 @@ kill the mush end (it did) but CANNOT find the interior training optimum;
 qtemp_0.02's badTail 0.075 is the known ~7% d9-argmax miss pattern surfacing
 as target mass. The rig ladder is what decides; consider adding a one-hot
 (argmax) arm as the sharp endpoint control at approval time.
+
+**2026-08-28 RULER REVISED (Josh):** "comparing to deep SF is probably not
+great — we probably want to compare to bt4 or maybe its training data even
+better; we have some t80 data so we can see how close bt4 is to its data as
+well." Adopted: the deep-SF screen above is DEMOTED to banked context (its
+structural sharpness bias is noted above); the primary Phase-1 ruler becomes
+the T80/BT4 one — on ONE shared sample of ~4000 lc0-T80 rows, bank (a) the T80
+policy target, (b) BT4 raw-prior policy from TRUE-history planes (board-aware
+remap, merged c49b89937; zeroed history is the known 71.7%-flip trap and is
+not used), (c) full-width d9 SF labels (cold TT, engine 2edd935b). Candidate
+mappings are then scored by distance to the T80 targets (KL, top-1 agreement,
+entropy/decay shape), with BT4-vs-T80 on the SAME rows as the calibration bar
+for "how close a proven-strong net sits to its own data" (prior point
+estimate: top-1 agreement 0.7044 vs our own targets' 0.5217, n=1600).
+Cross-family caveat recorded: SF-derived candidates cannot be expected to reach
+an lc0-family net's agreement with lc0-family targets — the bar contextualizes,
+it does not pass/fail. Banking in flight → `scratchpad/t80_ruler/`.
