@@ -26,6 +26,7 @@ import json
 import math
 import os
 import threading
+import time
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, cast
@@ -285,6 +286,9 @@ def worker_spec(tmp_path: Path, **overrides: Any) -> corpus.WorkerSpec:
         # Matches `uci_double`'s, so a test that does not care about the
         # timeout sees the double it built rather than a disagreement.
         "sf_read_timeout_s": 5.0,
+        # Under the read timeout, as `run` validates; the scripted engine
+        # never blocks, so tests that do not care never feel either bound.
+        "sf_search_timeout_s": 4.0,
         "syzygy_path": "/nonexistent/syzygy",
         "staircase": corpus.DEFAULT_STAIRCASE,
         "seed": 7,
@@ -1963,6 +1967,93 @@ def test_the_read_timeout_default_is_stated_and_a_bad_one_is_refused() -> None:
             corpus.run(corpus.build_parser().parse_args(
                 ["--out-dir", "/tmp/x", "--games", "1", "--sf-read-timeout", bad],
             ))
+
+
+def test_the_search_timeout_flag_reaches_the_searcher_and_the_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Take-effect, not acceptance: read BACK off the searcher that used it.
+
+    Mutation caught: accepting ``--sf-search-timeout`` into the spec and never
+    passing it to ``StaircaseSearcher`` -- the flag then parses, stamps itself
+    into ``config_requested``, and every search quietly keeps the 8 s default.
+    ``realized`` reads ``searcher.search_timeout_s``, the very attribute
+    ``stream`` computes its deadline from, so the stamp cannot echo the args.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(engine),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, sf_search_timeout_s=3.25))
+
+    assert result["realized"]["sf_search_timeout_s"] == 3.25
+
+
+def test_the_search_timeout_default_is_stated_and_a_bad_one_is_refused() -> None:
+    args = corpus.build_parser().parse_args(["--out-dir", "/tmp/x", "--games", "1"])
+    assert args.sf_search_timeout == corpus.DEFAULT_SF_SEARCH_TIMEOUT_S
+    assert corpus.config_stamp(args, sf_binary="/bin/sf")["sf_search_timeout_s"] == (
+        corpus.DEFAULT_SF_SEARCH_TIMEOUT_S
+    )
+    for bad in ("0", "-1", "nan"):
+        with pytest.raises(ValueError, match="finite and positive"):
+            corpus.run(corpus.build_parser().parse_args(
+                ["--out-dir", "/tmp/x", "--games", "1", "--sf-search-timeout", bad],
+            ))
+    # A tripwire looser than the outer deadline is a stamp naming a bound the
+    # engine never enforces -- refused, not silently reordered.
+    with pytest.raises(ValueError, match="exceeds"):
+        corpus.run(corpus.build_parser().parse_args(
+            ["--out-dir", "/tmp/x", "--games", "1",
+             "--sf-search-timeout", "20", "--sf-read-timeout", "10"],
+        ))
+
+
+def test_the_search_deadline_bounds_the_go_and_the_handshake_keeps_its_own() -> None:
+    """⚑ Take-effect on the wire: the deadline handed to the reader during a
+    search is the tripwire, while an option handshake keeps the engine-wide
+    ``read_timeout_s``.
+
+    Mutation caught: ``stream`` computing its deadline from
+    ``engine.read_timeout_s`` -- the tripwire then silently reverts to the
+    handshake bound, and an exploded search wedges the worker for the outer
+    deadline, exactly the wait the tripwire exists to cut short (ledger
+    AMENDMENT 4).
+    """
+    engine = ScriptedEngine(multipv=1)
+    searcher = corpus.StaircaseSearcher(
+        engine=uci_double(engine, read_timeout_s=500.0),
+        staircase=corpus.parse_staircase("all:2"),
+        cp_slope=gen.NNUE_CP_SLOPE,
+        cp_draw_width=gen.NNUE_CP_DRAW_WIDTH,
+        search_timeout_s=2.0,
+    )
+    remaining: list[float] = []
+
+    def recording_readline(deadline: float) -> str:
+        remaining.append(deadline - time.monotonic())
+        return engine.readline(deadline)
+
+    searcher.engine._readline_with_deadline = recording_readline
+
+    # multipv=4 differs from the engine's current 1, so the stream opens with
+    # a setoption/isready handshake before the go.
+    searcher.stream(chess.STARTING_FEN, depth=2, multipv=4)
+
+    handshake, search_reads = remaining[0], remaining[1:]
+    assert handshake > 100.0, "the readyok wait must run on read_timeout_s"
+    assert search_reads, "the go must stream through the recorded reader"
+    assert all(0.0 < d <= 2.0 for d in search_reads), (
+        f"every search read must be bounded by the 2 s tripwire, got "
+        f"{search_reads!r}"
+    )
 
 
 def test_a_worker_that_dies_mid_game_records_its_slot_instead_of_raising(

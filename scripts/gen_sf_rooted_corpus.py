@@ -208,6 +208,21 @@ DEFAULT_DEDUP_CACHE_MAX = 2_000_000
 #: setting; it is a flag because the right value follows the staircase.
 DEFAULT_SF_READ_TIMEOUT_S = 300.0
 
+#: Whole-search deadline for ONE staircase ``go`` -- the wedge tripwire.  The
+#: hot-TT search explosion (ledger AMENDMENT 4, 2026-08-27) turns a sub-second
+#: command into minutes-to-hours at 100% CPU, and detection costs the whole
+#: wait: EngineLease's respawn + cold retry (~2 s measured) is the escape
+#: either way, so the only question is how long we sit before pulling it.  8 s
+#: is ~4x the measured legitimate cold deep rung (~2 s) and ~80x the hot
+#: median, so a trip is almost certainly an explosion; a false trip costs one
+#: respawned cold search and stamps the row ``cold_tt_retry``, never a worker.
+#: Deliberately NOT 1 s: that sits BELOW the legitimate cold-search time, so
+#: the post-respawn retry itself would trip it and a double timeout abandons a
+#: healthy game.  ``--sf-read-timeout`` stays the OUTER deadline for
+#: handshakes (NNUE load, SyzygyPath init after a WSL2 drop_caches evicts the
+#: tables), which can legitimately stall far past 8 s.
+DEFAULT_SF_SEARCH_TIMEOUT_S = 8.0
+
 #: ``--staircase`` phase-1 width spelling for "one PV per legal move".
 WIDTH_ALL = "all"
 
@@ -814,9 +829,10 @@ class StaircaseSearcher:
     ⚑ THE INFO LINES ARE READ RAW rather than through ``StockfishUCI.search``.
     That method folds the stream into one result per RANK as it goes, and the
     depth each rank came from -- the whole point of this corpus -- is not in
-    that result.  The lock, the protocol section and the deadline are taken
-    exactly as ``search`` takes them, so a failure here poisons the engine
-    rather than desyncing it.  ``searchmoves`` goes through the driver's own
+    that result.  The lock and the protocol section are taken exactly as
+    ``search`` takes them, so a failure here poisons the engine rather than
+    desyncing it; the deadline is the searcher's own ``search_timeout_s``
+    (the explosion tripwire), not the engine-wide handshake deadline.  ``searchmoves`` goes through the driver's own
     ``_validated_searchmoves`` for the reason the module docstring gives.
     """
 
@@ -828,11 +844,15 @@ class StaircaseSearcher:
         cp_slope: float,
         cp_draw_width: float,
         stats: SearchStats | None = None,
+        search_timeout_s: float = DEFAULT_SF_SEARCH_TIMEOUT_S,
     ) -> None:
         self.engine = engine
         self.staircase = tuple(staircase)
         self.cp_slope = float(cp_slope)
         self.cp_draw_width = float(cp_draw_width)
+        # The per-``go`` explosion tripwire; the engine's own read_timeout_s
+        # stays on handshakes.  See DEFAULT_SF_SEARCH_TIMEOUT_S.
+        self.search_timeout_s = float(search_timeout_s)
         # Shared by EngineLease across respawns: the counters below are
         # observations about the WORKER's whole run, not about one engine.
         self.stats = stats if stats is not None else SearchStats()
@@ -885,7 +905,12 @@ class StaircaseSearcher:
                 # appended after it is swallowed as a move.
                 go_cmd = f"{go_cmd} searchmoves {' '.join(tokens)}"
             self.engine._send(go_cmd)
-            deadline = time.monotonic() + self.engine.read_timeout_s
+            # The explosion tripwire, NOT the engine-wide read deadline: a
+            # staircase ``go`` is sub-second hot and ~2 s cold, while the
+            # hot-TT explosion runs unbounded.  Expiry poisons the engine and
+            # surfaces as StockfishTimeoutError, which EngineLease answers
+            # with a respawn and one cold retry.
+            deadline = time.monotonic() + self.search_timeout_s
             lines: list[str] = []
             while True:
                 line = self.engine._readline_with_deadline(deadline).strip()
@@ -984,6 +1009,7 @@ class StaircaseSearcher:
             "sf_nice": self.engine.nice,
             "sf_binary": self.engine.path,
             "sf_read_timeout_s": self.engine.read_timeout_s,
+            "sf_search_timeout_s": self.search_timeout_s,
             "sf_multipv_current": self._engine_multipv,
             "staircase": format_staircase(self.staircase),
             "cp_slope": self.cp_slope,
@@ -1414,6 +1440,7 @@ class WorkerSpec:
     sf_binary: str
     sf_hash_mb: int
     sf_read_timeout_s: float
+    sf_search_timeout_s: float
     syzygy_path: str
     staircase: str
     seed: int
@@ -1772,6 +1799,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             cp_slope=spec.cp_slope,
             cp_draw_width=spec.cp_draw_width,
             stats=stats,
+            search_timeout_s=float(spec.sf_search_timeout_s),
         )
 
     searcher = EngineLease(spawn_searcher)
@@ -1962,6 +1990,7 @@ def config_stamp(args: argparse.Namespace, *, sf_binary: str) -> dict[str, Any]:
         "shard_rows": int(args.shard_rows),
         "sf_hash_mb": int(args.sf_hash_mb),
         "sf_read_timeout_s": float(args.sf_read_timeout),
+        "sf_search_timeout_s": float(args.sf_search_timeout),
         "dedup_cache_max": int(args.dedup_cache_max),
         "syzygy_path": str(args.syzygy_path),
         "nice": int(args.nice),
@@ -2248,6 +2277,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"{args.sf_read_timeout!r}: a non-positive deadline expires on the "
             "first read and poisons the engine before it has said anything",
         )
+    if not float(args.sf_search_timeout) > 0.0 or not math.isfinite(
+        float(args.sf_search_timeout),
+    ):
+        raise ValueError(
+            f"--sf-search-timeout must be finite and positive, got "
+            f"{args.sf_search_timeout!r}: a non-positive deadline expires on "
+            "the first read of every search and poisons the engine",
+        )
+    if float(args.sf_search_timeout) > float(args.sf_read_timeout):
+        raise ValueError(
+            f"--sf-search-timeout {args.sf_search_timeout!r} exceeds "
+            f"--sf-read-timeout {args.sf_read_timeout!r}: the search tripwire "
+            "must sit INSIDE the outer read deadline, or the stamp would name "
+            "a bound the engine never enforces",
+        )
     buckets = split_games(int(args.games), int(args.workers))
     out_dir = Path(args.out_dir)
     refuse_populated_dir(out_dir)
@@ -2277,6 +2321,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             sf_binary=sf_binary,
             sf_hash_mb=int(args.sf_hash_mb),
             sf_read_timeout_s=float(args.sf_read_timeout),
+            sf_search_timeout_s=float(args.sf_search_timeout),
             syzygy_path=syzygy_path,
             staircase=format_staircase(staircase),
             seed=int(args.seed),
@@ -2398,9 +2443,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sf-hash-mb", type=int, default=DEFAULT_SF_HASH_MB)
     p.add_argument(
         "--sf-read-timeout", type=float, default=DEFAULT_SF_READ_TIMEOUT_S,
-        help=f"deadline in seconds on one WHOLE search (the full go exchange; default "
-             f"{DEFAULT_SF_READ_TIMEOUT_S}). Expiry POISONS the engine rather "
-             "than retrying, so size it above the deepest rung's worst case.",
+        help=f"OUTER deadline in seconds on engine handshakes (boot, ucinewgame, "
+             f"SyzygyPath init; default {DEFAULT_SF_READ_TIMEOUT_S}). Searches "
+             "are bounded by the tighter --sf-search-timeout. Expiry POISONS "
+             "the engine rather than retrying, so size it above a cold "
+             "tablebase init's worst case.",
+    )
+    p.add_argument(
+        "--sf-search-timeout", type=float, default=DEFAULT_SF_SEARCH_TIMEOUT_S,
+        help=f"deadline in seconds on one WHOLE staircase search (the full go "
+             f"exchange; default {DEFAULT_SF_SEARCH_TIMEOUT_S}). The hot-TT "
+             "explosion tripwire: expiry poisons the engine and EngineLease "
+             "respawns it and retries the position once, cold. Must not "
+             "exceed --sf-read-timeout.",
     )
     p.add_argument(
         "--syzygy-path", default=default_syzygy_path(),
