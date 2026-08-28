@@ -70627,3 +70627,28 @@ manifest: PASS (and a wrong first dry-run proved the gate fires — it caught a
 binary-path difference). Durable pinned worktree for the resume:
 `/home/josh/projects/chess-corpuswt2` at `e6d403d23` (the /tmp worktree dies
 with a reboot). Full stop/resume protocol: `data/nnue_bootstrap/run02/RESUME.md`.
+
+**2026-08-28 AMENDMENT 7 (corpus run) — FIRST-1M CHECKS DONE; anomaly pause bar
+FIRED and was CLEARED by diagnosis.** Banked in
+`data/nnue_bootstrap/run02/first_1m_checks.json` (observations + verdicts), read
+off 115-140 listed shards (0.94-1.15M rows; the run kept banking between
+passes). Dup rate **PASS**: 0.0072% all rows, **0.0%** at ply>=20 (bar <2%
+non-opening). Disk **PASS**: ~120-130G projected at 100M rows (bar 400G). d9
+nodes: p50 47.8k / p90 131k / p99 301k / max 2.07M; phase mix 10.9/65.8/23.3
+opening/middle/end; 0 rows at <=6 pieces (adjudication working). Anomaly bar:
+`emission_count_violations` net of `duplicate_iteration_flushes` = **0.134% >
+0.1% ⇒ the prereg pause-diagnose rule fired.** Diagnosis (row-level,
+exhaustive): all **1964/1964** violation rows carry ONE signature — the FINAL
+depth (9) emits every line exactly twice (`emissions = 2x lines`,
+`re_emissions = legal_moves`), every depth complete, every width exact,
+sub-9 `emissions == lines`; **0 structural violations in 1,146,880 rows**. This
+is the NEW engine build's (2edd935b) benign final-PV re-dump — timing-gated,
+hence only ~0.13% of positions — absent from the run01 smoke because that ran
+the old build. Labels are untouched by construction: the parser's verified
+first-emission-per-(depth,rank) slicing already discards the duplicate, and the
+banked `lines` arrays are exact-width everywhere. Run NOT stopped: the
+diagnose obligation was discharged in-flight and the bar's substance (stream
+corruption) is affirmatively excluded. Standing note for later engine bumps:
+the violation counter counts this benign signature, so the 0.1% bar needs the
+signature split out (or the counter taught about final re-dumps) before it can
+gate a future run.
