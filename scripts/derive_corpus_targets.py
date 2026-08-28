@@ -112,6 +112,45 @@ whose 8 frames are all real.  The summary stamps
 ``history_slots_nonzero_max``, measured off the planes this run actually wrote,
 so the claim is a reading and not a comment.
 
+⚑⚑ TWO CORPUS RECORDS, AND A PARTIAL ONE IS NEVER SILENT
+---------------------------------------------------------
+``summary.json`` is written ONCE, at run END.  A corpus that is still running,
+was killed, or is between ``--resume`` sessions has none -- possibly for days --
+and every fact this tool needs was nonetheless banked at launch and as the run
+went along.  So there are two records, and which one was read is stamped:
+
+``summary``
+    ``summary.json`` exists.  It is the complete, authoritative record: the
+    shard inventory is checked against the disk BOTH ways (nothing missing,
+    nothing unnamed), and ``config_realized_by_worker`` lets the cp map be
+    cross-checked against what each worker's searcher actually converted with.
+
+``manifest+progress``
+    No ``summary.json``.  ``manifest.json`` (banked before the first game) gives
+    ``config_sha256``, ``config_requested`` -- and with it the cp map -- and
+    ``staircase_parsed``; the per-worker ``w<id>.progress.jsonl`` files give the
+    shard inventory, one line per CLOSED shard.  ⚑ This record is genuinely
+    WEAKER and the output says so rather than reading like a whole corpus:
+    ``corpus.corpus_record`` names the mode, ``corpus_record_detail`` counts the
+    shards and rows adopted, and it NAMES the facts a manifest cannot carry --
+    ``config_realized_by_worker`` above all, so the cp cross-check that a summary
+    run performs is reported as having covered ZERO workers here rather than
+    quietly not happening.  A fact that lives only in a summary is reported
+    missing, never guessed.
+
+⚑ A LIVE CORPUS IS A MOVING TARGET, SO THE INVENTORY IS A SNAPSHOT.  The
+progress files are read ONCE, before the first row, and the derivation runs
+against exactly that list.  Shards that close while it runs are neither picked
+up nor an error -- a run whose input grew halfway through would have a row count
+that no later reading of the corpus could reproduce.  Shards on disk that the
+snapshot does not name (the in-flight shard every live worker is holding open)
+are COUNTED in the output and never read: a shard is listed only once it is
+closed, and reading a file still being appended to is reading a truncated JSONL.
+⚑ The reader is ``gen_sf_rooted_corpus.read_worker_progress``, imported rather
+than reimplemented, so its torn-tail tolerance (a ``kill -9`` can cut the LAST
+line short of its newline, and nothing else) is the same tolerance the resume
+path applies -- a second decoder is how a format drifts from its writer.
+
 WHAT IS SHARED RATHER THAN RESTATED
 -----------------------------------
 The corpus schema, the populated-directory refusal and the codec probe are
@@ -133,7 +172,7 @@ import json
 import math
 import re
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -189,6 +228,55 @@ DEFAULT_SEED = 20260827
 SHARD_RUN_ID = "sf_rooted_corpus_targets"
 
 SUMMARY_NAME = "derive_targets_summary.json"
+
+#: Which of the corpus's two own records supplied its facts.  Stamped into every
+#: derived manifest; see the module docstring.
+CORPUS_RECORD_SUMMARY = "summary"
+CORPUS_RECORD_PARTIAL = "manifest+progress"
+
+#: The per-worker incremental inventory files, as a glob.  ⚑ Shaped to match
+#: ``gen_sf_rooted_corpus.progress_name`` and nothing else: the shard files sit
+#: in the same directory and a looser pattern would read one as an inventory.
+PROGRESS_GLOB = "w*.progress.jsonl"
+
+#: Below this q spread a row says NOTHING about the temperature, and the tau
+#: ``recover_temp`` computes from it is float64 rounding rather than a reading.
+#:
+#: ⚑ MEASURED, not guessed at.  A totally won (or lost) position saturates EVERY
+#: legal move's q at ±1.0, and the SMALLEST NONZERO spread the cp map can then
+#: produce is **1.11e-16 -- exactly one float64 ULP below 1.0** (swept over
+#: cp 1000..8000 at the production slope 0.006 / draw width 120).  ``recover_temp``
+#: divides that gap by a log-probability difference computed at the same
+#: precision, so the answer is quantisation: the same 1.11e-16 row reads tau
+#: 1.0 at 2 legal moves, 0.5 at 5, ``None`` at 9 and 0.25 at 20 -- a function of
+#: the MOVE COUNT, not of the temperature.  That is the mechanism behind the
+#: dry-run REPORT this fix answers -- 7 saturated rows in 240k stamping
+#: ``min=0.625 max=1.007`` on an otherwise healthy ``--temp 1.0`` run.  The
+#: 1.11e-16 sweep and the per-move-count taus above are measurements taken here;
+#: the 7-in-240k is that earlier report, quoted as its origin.
+#:
+#: 1e-9 is where tau stops being quantisation and starts being a reading: the
+#: absolute error in ``log p_hi - log p_lo`` is ~4.4e-16, so the relative error
+#: in ``tau = gap / log_gap`` is ~4.4e-16 / gap -- about 4e-7 at a spread of
+#: 1e-9, and >100% at 1e-16.  It is ~4.5 million ULPs clear of the saturation
+#: floor and orders of magnitude below the spread of any row whose moves differ
+#: by even one centipawn, so it separates the two populations without touching a
+#: real reading.  ⚑ A row whose moves are EXACTLY equal never reaches this test:
+#: ``recover_temp`` already returns ``None`` on a zero gap, and such a row is
+#: counted in neither the reading nor the skip.
+#:
+#: ⚑ DELIBERATELY CONSERVATIVE, and the cost is measured rather than assumed:
+#: over the first 250,000 rows of the live ``run02`` corpus this holds out
+#: **2 rows** (211,755 kept, 14,811 flat), whose spreads were 1.6e-12 and
+#: 1.1e-11 -- rows whose tau was in fact still good to ~4 decimals.  Holding out
+#: a handful of harmless rows costs a slightly smaller ``n``; admitting one
+#: pathological row visibly corrupts a min/max that a reader uses to decide
+#: whether ``--temp`` was applied at all.  The asymmetry is why the threshold
+#: sits well above the failure rather than tight against it.
+#: ⚑ It gates the STAMP only.  The row's targets are derived from its q exactly
+#: as before -- a saturated position is a real position and its policy is a real
+#: (flat) policy; what is refused is quoting a temperature read off it.
+TEMP_RECOVERY_MIN_Q_SPREAD = 1e-9
 
 #: Which phases a scheme is allowed to read a move's value from.
 VALUE_SOURCE_DEEPEST = "deepest_phase_covering"
@@ -607,6 +695,21 @@ def recover_temp(q: np.ndarray, probs: np.ndarray) -> float | None:
     return gap / log_gap
 
 
+def q_spread(q: np.ndarray) -> float:
+    """``max(q) - min(q)``: how much a row can say about the temperature at all.
+
+    The companion to :func:`recover_temp`.  ``recover_temp`` answers "what tau
+    produced this policy"; this answers "could this row have told anyone", and
+    the two are separate because a saturated row still gets a real (flat) target
+    -- only the tau read off it is meaningless.  See
+    ``TEMP_RECOVERY_MIN_Q_SPREAD``.
+    """
+    values = np.asarray(q, dtype=np.float64)
+    if values.size < 2:
+        return 0.0
+    return float(np.max(values) - np.min(values))
+
+
 #: ``result_from_pov``'s ``+1 / 0 / -1`` (the ROW's own side-to-move seat) as the
 #: shard's ``wdl_target``.  ⚑ Both halves of this mapping are POV claims and
 #: neither is checkable from the number alone, which is why the corpus stores the
@@ -740,6 +843,14 @@ class DeriveStats:
     temp_recovered_min: float = math.inf
     temp_recovered_max: float = -math.inf
     temp_recovered_sum: float = 0.0
+    #: Rows whose q was SATURATED -- every legal move at ±1.0 to within a
+    #: couple of ULPs, so the tau read back off them is rounding noise. Held
+    #: out of the min/max/mean above and counted here instead; see
+    #: ``TEMP_RECOVERY_MIN_Q_SPREAD``. ⚑ A count, not a suppression: saturated
+    #: rows are a real feature of a corpus with won positions in it (2 in
+    #: run02's first 250k), and a reader has to be able to see that the stamp
+    #: above was computed WITHOUT them.
+    temp_recovery_skipped_saturated: int = 0
     x_planes: int = 0
     policy_width: int = 0
     #: -1 until the first row is measured; a 0 sentinel would be a legal support.
@@ -794,6 +905,12 @@ class DeriveStats:
                 ),
                 "mean": mean,
             },
+            # ⚑ Reported SEPARATELY, at the same level as the reading it was
+            # held out of: `n` above counts rows that could say something about
+            # tau, this counts rows that could not, and the two together are
+            # every row whose policy had two or more surviving moves.
+            "temp_recovery_skipped_saturated": self.temp_recovery_skipped_saturated,
+            "temp_recovery_saturation_q_spread_epsilon": TEMP_RECOVERY_MIN_Q_SPREAD,
             "x_planes": self.x_planes,
             "policy_width": self.policy_width,
             "policy_support_min": self.policy_support_min,
@@ -868,7 +985,16 @@ class TargetDeriver:
         probs = softmax_at_temp(q, temp=self.options.temp)
         recovered = recover_temp(q, probs)
         if recovered is not None:
-            self.stats.note_temp(recovered)
+            # ⚑ THE STAMP ONLY. `probs` above is already built and already this
+            # row's target; what is decided here is whether the tau read back
+            # off it is a measurement. A position won (or lost) outright pins
+            # every legal move's q at ±1.0 to within ULPs, and `gap / log_gap`
+            # is then one rounding artefact over another. See
+            # TEMP_RECOVERY_MIN_Q_SPREAD for the sweep and the threshold.
+            if q_spread(q) < TEMP_RECOVERY_MIN_Q_SPREAD:
+                self.stats.temp_recovery_skipped_saturated += 1
+            else:
+                self.stats.note_temp(recovered)
 
         policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float64)
         legal_mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.uint8)
@@ -1018,7 +1144,7 @@ def _row_label(row: dict[str, Any]) -> str:
 
 
 def read_corpus_summary(corpus_dir: Path) -> dict[str, Any]:
-    path = corpus_dir / "summary.json"
+    path = corpus_dir / corpus.SUMMARY_NAME
     if not path.exists():
         raise CorpusIntegrityError(
             f"{path} does not exist; a corpus without its summary carries no "
@@ -1026,17 +1152,271 @@ def read_corpus_summary(corpus_dir: Path) -> dict[str, Any]:
             "stamp this tool passes through would have to be invented",
         )
     summary: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    row_schema = int(summary.get("row_schema", -1))
-    if row_schema != corpus.ROW_SCHEMA:
-        raise CorpusIntegrityError(
-            f"corpus row schema {row_schema} != this build's "
-            f"{corpus.ROW_SCHEMA}; the block keys this tool reads are not "
-            "promised to mean the same thing across a schema bump",
-        )
+    _check_row_schema(summary, source=path)
     return summary
 
 
-def cp_map_params(summary: dict[str, Any]) -> tuple[float, float]:
+def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
+    """Both records stamp ``row_schema``, and both are checked the same way."""
+    row_schema = int(facts.get("row_schema", -1))
+    if row_schema != corpus.ROW_SCHEMA:
+        raise CorpusIntegrityError(
+            f"corpus row schema {row_schema} != this build's "
+            f"{corpus.ROW_SCHEMA} (read from {source.name}); the block keys "
+            "this tool reads are not promised to mean the same thing across a "
+            "schema bump",
+        )
+
+
+#: What ``manifest.json`` cannot carry, and what each absence costs.  ⚑ NAMED
+#: rather than shrugged at: a partial derivation that reads like a complete one
+#: is this repo's signature defect wearing a new hat, so the missing facts go
+#: into the derived manifest by name instead of being quietly worked around.
+FACTS_ONLY_IN_SUMMARY: dict[str, str] = {
+    "config_realized_by_worker": (
+        "the per-worker REALIZED cp map. summary mode cross-checks it against "
+        "config_requested (cp_map.realized_workers_cross_checked says how many "
+        "workers); a manifest is written before the first worker starts, so "
+        "here that cross-check covers ZERO workers and the requested map is "
+        "taken on trust"
+    ),
+    "search / dedup / terminations / opening_sources": (
+        "per-run counters accumulated in memory and written once at the end. "
+        "Not read by this tool, and not reconstructible from the shards"
+    ),
+    "rows / games": (
+        "the corpus totals. The progress inventory's own per-shard row counts "
+        "stand in (corpus_record_detail.rows_claimed_by_inventory), and they "
+        "count CLOSED shards only"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CorpusRecord:
+    """The corpus's own facts, and WHICH of its two records supplied them.
+
+    ⚑ ``shards`` is a SNAPSHOT, resolved once.  In ``manifest+progress`` mode
+    the corpus may be live, so the list is fixed here and never re-globbed; see
+    the module docstring.
+    """
+
+    #: ``CORPUS_RECORD_SUMMARY`` or ``CORPUS_RECORD_PARTIAL``.
+    mode: str
+    #: The summary or the manifest.  Every stamp this tool passes through is
+    #: read out of THIS dict, so a manifest that lacks one is a refusal or a
+    #: named absence rather than a silently different value.
+    facts: dict[str, Any]
+    #: The shards to read, in name order.
+    shards: tuple[Path, ...]
+    #: Rows the inventory CLAIMS across those shards.  ⚑ Not the rows this run
+    #: will emit: it is the inventory's own number, and comparing the two is
+    #: how a reader sees what the schemes and the result filter dropped.
+    rows_claimed: int
+    #: The ``w*.progress.jsonl`` files read (partial mode only).
+    progress_files: tuple[str, ...]
+    #: Progress files whose torn final line was dropped -- the ONE damage
+    #: ``read_worker_progress`` tolerates, and never silently.
+    torn_tail_files: tuple[str, ...]
+    #: Shard files on disk that the snapshot does not name: every live worker's
+    #: in-flight shard, plus anything a kill left unlisted.  Counted, not read.
+    unlisted_on_disk: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Whether the record itself claims the run FINISHED."""
+        return self.mode == CORPUS_RECORD_SUMMARY
+
+    def detail(self) -> dict[str, Any]:
+        """The stamp that makes a partial derivation visibly partial."""
+        return {
+            "mode": self.mode,
+            "document": (
+                corpus.SUMMARY_NAME if self.complete
+                else f"{corpus.MANIFEST_NAME} + {len(self.progress_files)} "
+                     f"{PROGRESS_GLOB}"
+            ),
+            "run_finished": self.complete,
+            "shards_adopted": len(self.shards),
+            "rows_claimed_by_inventory": self.rows_claimed,
+            "progress_files_read": list(self.progress_files),
+            "progress_torn_tail_files": list(self.torn_tail_files),
+            "shards_on_disk_not_in_inventory": list(self.unlisted_on_disk),
+            "facts_only_in_summary": (
+                {} if self.complete else dict(FACTS_ONLY_IN_SUMMARY)
+            ),
+        }
+
+
+def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
+    """The corpus's facts and inventory, from whichever record it has.
+
+    ``summary.json`` wins whenever it exists -- it is the complete record, and
+    its inventory is checked against the disk in BOTH directions.  Without it,
+    ``manifest.json`` plus the per-worker progress files carry every fact this
+    tool reads except the ones :data:`FACTS_ONLY_IN_SUMMARY` names.
+    """
+    if (corpus_dir / corpus.SUMMARY_NAME).exists():
+        summary = read_corpus_summary(corpus_dir)
+        on_disk = corpus_shard_paths(corpus_dir)
+        # ⚑ BEFORE the inventory check, which is where it was when this lived
+        # in ``derive``. An empty directory and a directory missing one shard
+        # are different problems and they kept different messages; moving the
+        # inventory check earlier must not quietly re-route the first into the
+        # second's wording.
+        if not on_disk:
+            raise CorpusIntegrityError(
+                f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards",
+            )
+        check_shard_inventory(on_disk, summary)
+        return CorpusRecord(
+            mode=CORPUS_RECORD_SUMMARY,
+            facts=summary,
+            shards=tuple(on_disk),
+            rows_claimed=sum(
+                int(entry.get("rows", 0)) for entry in summary.get("shards", [])
+            ),
+            progress_files=(),
+            torn_tail_files=(),
+            unlisted_on_disk=(),
+        )
+    return read_partial_corpus_record(corpus_dir)
+
+
+def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
+    """``manifest.json`` + ``w*.progress.jsonl``: a corpus that has not ended.
+
+    ⚑ THE INTEGRITY CHECK IS THE GENERATOR'S OWN.  ``load_resume_manifest``
+    already refuses a manifest whose ``config_sha256`` does not hash its own
+    ``config_requested``, and that refusal is exactly the one this path needs:
+    the cp map, the staircase and the row-identity join key all come out of that
+    dict, so an edited manifest would have every derived target agreeing with a
+    configuration nothing ran under.  Reimplementing the hash here would be a
+    second copy free to drift from the writer's.
+
+    ⚑ The progress files are read ONCE, here, and the returned list is the whole
+    input.  A shard that closes while the derivation runs is not picked up, and
+    the in-flight shard every live worker holds open is counted as unlisted
+    rather than read -- it is being appended to, so its last line has no
+    newline yet and reading it would either raise or silently truncate a row.
+    """
+    manifest_path = corpus_dir / corpus.MANIFEST_NAME
+    if not manifest_path.exists():
+        raise CorpusIntegrityError(
+            f"{corpus_dir} holds neither {corpus.SUMMARY_NAME} nor "
+            f"{corpus.MANIFEST_NAME}. The summary is written once at run END, "
+            f"so a live or killed corpus legitimately has none -- but the "
+            f"manifest is written BEFORE the first game, so a corpus with "
+            f"neither carries no config_sha256, no cp map, no staircase and no "
+            f"inventory, and every stamp this tool passes through would have to "
+            f"be invented. If this directory was produced before "
+            f"{corpus.MANIFEST_NAME} existed, it can only be derived from once "
+            f"its run has written {corpus.SUMMARY_NAME}.",
+        )
+    try:
+        # ⚑ IMPORTED, not mirrored: this is the generator's own refusal.
+        manifest: dict[str, Any] = corpus.load_resume_manifest(corpus_dir)
+    except ValueError as exc:
+        raise CorpusIntegrityError(
+            f"{manifest_path} cannot be trusted as this corpus's record: {exc}",
+        ) from exc
+    _check_row_schema(manifest, source=manifest_path)
+
+    progress_paths = sorted(corpus_dir.glob(PROGRESS_GLOB))
+    if not progress_paths:
+        raise CorpusIntegrityError(
+            f"{corpus_dir} has a {corpus.MANIFEST_NAME} but no "
+            f"{PROGRESS_GLOB} files, so no shard inventory exists. A worker "
+            "appends its first progress line when it closes its first shard; "
+            "until then the corpus holds no CLOSED shard and there is nothing "
+            "to derive from.",
+        )
+
+    listed: dict[str, Path] = {}
+    rows_claimed = 0
+    torn: list[str] = []
+    for progress_path in progress_paths:
+        try:
+            records, was_torn = corpus.read_worker_progress(progress_path)
+        except ValueError as exc:
+            raise CorpusIntegrityError(
+                f"{progress_path.name} is damaged somewhere other than its "
+                f"torn final line, so the inventory it carries cannot be "
+                f"trusted: {exc}",
+            ) from exc
+        if was_torn:
+            torn.append(progress_path.name)
+        for record in records:
+            raw_path = record["path"]
+            if raw_path is None:
+                # ⚑ A GAME-COMPLETION RECORD, NOT A SHARD. `ShardWriter.close`
+                # writes one when a worker ends on games that banked no rows;
+                # it indexes games, and there is no file behind it. Treating it
+                # as a shard would look for `None` on disk and refuse a corpus
+                # whose only fault is that a dedup-served game ended a worker.
+                continue
+            # BY NAME, exactly as `resume_worker_state` resolves it: the stored
+            # string is the absolute path of the machine that wrote the line,
+            # and the file it means is the one beside the progress file.
+            name = Path(str(raw_path)).name
+            if name in listed:
+                raise CorpusIntegrityError(
+                    f"{name} is listed twice across {PROGRESS_GLOB}; shard "
+                    "names are unique per worker and a resume continues the "
+                    "index rather than reusing it, so a repeat means two runs' "
+                    "inventories are mixed in this directory",
+                )
+            path = corpus_dir / name
+            if not path.exists():
+                raise CorpusIntegrityError(
+                    f"{progress_path.name} lists {name} and it is not in "
+                    f"{corpus_dir}; the inventory claims "
+                    f"{int(record['rows'])} rows that are gone, and deriving "
+                    "from what is left would train on a subset nothing recorded",
+                )
+            listed[name] = path
+            rows_claimed += int(record["rows"])
+
+    if not listed:
+        raise CorpusIntegrityError(
+            f"{corpus_dir}'s progress files name no shards at all (only "
+            "game-completion records). No CLOSED shard exists yet, so there is "
+            "nothing to derive from.",
+        )
+    unlisted = tuple(
+        path.name for path in corpus_shard_paths(corpus_dir)
+        if path.name not in listed
+    )
+    return CorpusRecord(
+        mode=CORPUS_RECORD_PARTIAL,
+        facts=manifest,
+        shards=tuple(listed[name] for name in sorted(listed)),
+        rows_claimed=rows_claimed,
+        progress_files=tuple(path.name for path in progress_paths),
+        torn_tail_files=tuple(torn),
+        unlisted_on_disk=unlisted,
+    )
+
+
+def realized_cp_stamps(facts: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The per-worker REALIZED cp stamps that can be cross-checked, if any.
+
+    ONE predicate, used by both the check and the stamp that reports how far it
+    reached -- a second copy of "which stamps count" would let the manifest say
+    a cross-check happened that the checker had skipped.  A dead worker's
+    placeholder carries no cp keys and is not a claim anyone made.
+    """
+    by_worker = facts.get("config_realized_by_worker") or {}
+    if not isinstance(by_worker, Mapping):
+        return []
+    return [
+        (str(worker_id), dict(stamp))
+        for worker_id, stamp in by_worker.items()
+        if isinstance(stamp, Mapping) and "cp_slope" in stamp
+    ]
+
+
+def cp_map_params(facts: Mapping[str, Any]) -> tuple[float, float]:
     """The corpus's OWN cp->value parameters, not this tool's.
 
     ⚑ Deliberately not a flag.  The generator SELECTED its moves with these two
@@ -1044,14 +1424,20 @@ def cp_map_params(summary: dict[str, Any]) -> tuple[float, float]:
     whose ranking disagrees with the play that generated the positions, silently
     and only in the tail.  A corpus that does not record them is refused rather
     than defaulted.
+
+    ``facts`` is the corpus's own record -- ``summary.json`` or, on a corpus
+    that has not ended, ``manifest.json``.  BOTH carry ``config_requested``, so
+    the map itself is read identically; only the realized cross-check below
+    differs, and how far it reached is reported rather than assumed (see
+    :data:`FACTS_ONLY_IN_SUMMARY`).
     """
-    requested = summary.get("config_requested") or {}
+    requested = facts.get("config_requested") or {}
     try:
         slope = float(requested["cp_slope"])
         draw_width = float(requested["cp_draw_width"])
     except (KeyError, TypeError, ValueError) as exc:
         raise CorpusIntegrityError(
-            "summary.json's config_requested carries no usable cp_slope / "
+            "the corpus record's config_requested carries no usable cp_slope / "
             "cp_draw_width; the cp->value mapping cannot be reconstructed and "
             "defaulting it would derive targets under a mapping the corpus was "
             "not generated with",
@@ -1063,9 +1449,11 @@ def cp_map_params(summary: dict[str, Any]) -> tuple[float, float]:
     # the request stamps another — and deriving under the requested map would
     # then disagree with the play that generated the positions. A dead
     # worker's placeholder carries no cp keys and is skipped.
-    for worker_id, stamp in (summary.get("config_realized_by_worker") or {}).items():
-        if not isinstance(stamp, dict) or "cp_slope" not in stamp:
-            continue
+    # ⚑ A MANIFEST CARRIES NO REALIZED STAMPS AT ALL, so on a partial corpus
+    # this loop runs zero times and the requested map is taken on trust. That
+    # is a real weakening, and it is REPORTED (`realized_workers_cross_checked`
+    # in the derived manifest) rather than left to be inferred from silence.
+    for worker_id, stamp in realized_cp_stamps(facts):
         realized = (
             float(stamp["cp_slope"]),
             float(stamp.get("cp_draw_width", draw_width)),
@@ -1086,13 +1474,26 @@ def derive(
     corpus_dir: Path,
     out_dir: Path,
     options: DeriveOptions,
-    corpus_summary: dict[str, Any] | None = None,
+    corpus_record: CorpusRecord | None = None,
 ) -> dict[str, Any]:
     """Read the corpus, write the shards, return the summary that describes them.
 
-    ``corpus_summary`` is threaded in by ``main`` (which already read it to
-    resolve the cp mapping) so the file is validated ONCE per run; omitting it
-    reads and validates it here, which is what a direct caller wants.
+    ``corpus_record`` is threaded in by ``main`` (which already read it to
+    resolve the cp mapping) so the corpus's record is read and validated ONCE
+    per run; omitting it reads and validates it here, which is what a direct
+    caller wants.
+
+    ⚑⚑ THE SHARD LIST IS THE RECORD'S SNAPSHOT AND IS NEVER RE-READ.  On a live
+    corpus (``manifest+progress`` mode) workers are closing shards and appending
+    progress lines the whole time this function runs.  ``corpus_record.shards``
+    was resolved once, before the first row, and that fixed list is the whole
+    input: a shard that closes mid-derivation is neither picked up nor an error,
+    and the in-flight shard a worker is holding open is counted in the output's
+    ``shards_on_disk_not_in_inventory`` rather than read.  A derivation whose
+    input grew while it ran would report a row count that no later reading of
+    the same corpus could reproduce, which is a worse failure than deriving from
+    slightly less than the corpus holds -- and the output says exactly how much
+    it took.
 
     ⚑ ``derive_targets_summary.json`` is written LAST, so a directory holding
     shards and no summary is a run that DIED, not a corpus.  Nothing downstream
@@ -1107,10 +1508,11 @@ def derive(
     # which is the same rule -- and the same reused function -- the generator
     # applies to its own out-dir.
     corpus.refuse_populated_dir(out_dir)
-    summary = (
-        corpus_summary if corpus_summary is not None
-        else read_corpus_summary(corpus_dir)
+    record = (
+        corpus_record if corpus_record is not None
+        else read_corpus_record(corpus_dir)
     )
+    summary = record.facts
     problems = scheme_vs_staircase_problems(
         options.scheme, summary.get("staircase_parsed", []),
     )
@@ -1119,10 +1521,9 @@ def derive(
             f"--scheme {options.scheme.canonical} cannot be answered by this "
             "corpus: " + "; ".join(problems),
         )
-    shards = corpus_shard_paths(corpus_dir)
+    shards = list(record.shards)
     if not shards:
         raise CorpusIntegrityError(f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards")
-    check_shard_inventory(shards, summary)
 
     corpus_sha = str(summary.get("config_sha256", ""))
     deriver = TargetDeriver(options)
@@ -1185,7 +1586,7 @@ def derive(
         options=options,
         stats=deriver.stats,
         corpus_dir=corpus_dir,
-        corpus_summary=summary,
+        corpus_record=record,
         shards=written,
         started_utc=started,
         tt_carried=tt_carried,
@@ -1291,26 +1692,39 @@ def build_summary(
     options: DeriveOptions,
     stats: DeriveStats,
     corpus_dir: Path,
-    corpus_summary: dict[str, Any],
+    corpus_record: CorpusRecord,
     shards: Sequence[dict[str, Any]],
     started_utc: str,
     tt_carried: set[bool],
 ) -> dict[str, Any]:
     """The output manifest.  Every knob appears as a REALIZED reading."""
+    facts = corpus_record.facts
     return {
         "schema": DERIVE_SCHEMA,
         "started_utc": started_utc,
         "tool": "scripts/derive_corpus_targets.py",
         "corpus": {
             "dir": corpus_dir.name,
-            "config_sha256": corpus_summary.get("config_sha256"),
-            "run_id": corpus_summary.get("run_id"),
+            # ⚑ WHICH RECORD THESE FACTS CAME FROM. "summary" is the complete
+            # run; "manifest+progress" is a corpus that has not written its
+            # summary yet (live, killed, or between --resume sessions) and is
+            # therefore a PARTIAL read of it. A derived corpus that could not
+            # say which one it was would be indistinguishable from a whole one.
+            "corpus_record": corpus_record.mode,
+            "corpus_record_detail": corpus_record.detail(),
+            "config_sha256": facts.get("config_sha256"),
+            # ⚑ A manifest has no top-level run_id; both records carry it inside
+            # config_requested, and the summary's own top-level copy is read
+            # FROM there, so the fallback is the same value and not a guess.
+            "run_id": facts.get(
+                "run_id", (facts.get("config_requested") or {}).get("run_id"),
+            ),
             "row_schema": corpus.ROW_SCHEMA,
-            "staircase_parsed": corpus_summary.get("staircase_parsed"),
+            "staircase_parsed": facts.get("staircase_parsed"),
             # Passed THROUGH, from the rows themselves rather than the summary:
             # a consumer must not mistake these for independent searches.
             corpus.KEY_TT_CARRIED: sorted(tt_carried),
-            "banked_rows_min_piece_count": corpus_summary.get(
+            "banked_rows_min_piece_count": facts.get(
                 "banked_rows_min_piece_count",
             ),
         },
@@ -1332,6 +1746,14 @@ def build_summary(
             "cp_slope": options.cp_slope,
             "cp_draw_width": options.cp_draw_width,
             "source": "the corpus's own config_requested",
+            # ⚑ HOW FAR THE CROSS-CHECK REACHED, as a count rather than a
+            # claim. `config_requested` is what the CLI asked for; the realized
+            # stamps are what each worker's searcher actually converted with,
+            # and only summary.json carries them. On a partial corpus this
+            # reads 0 -- the check did not fire, and the number says so instead
+            # of the manifest looking exactly like a cross-checked one.
+            "realized_workers_cross_checked": len(realized_cp_stamps(facts)),
+            "realized_cross_check_available": corpus_record.complete,
         },
         "input": {
             "input_history_encoding": INPUT_HISTORY_ENCODING,
@@ -1422,9 +1844,17 @@ def _json_default(value: Any) -> Any:
 def format_summary(out: dict[str, Any]) -> str:
     realized = out["realized"]
     recovered = realized["temp_recovered_from_emitted_policy"]
+    record = out["corpus"]["corpus_record_detail"]
     lines = [
         f"scheme={out['scheme']['canonical']} temp={out['temp_requested']} "
         f"value_source={out['scheme']['value_source']}",
+        # ⚑ FIRST-CLASS, not buried in the json: a partial derivation printed
+        # exactly like a whole one is how it gets quoted as a whole one.
+        f"corpus_record={out['corpus']['corpus_record']} "
+        f"(run_finished={record['run_finished']}) "
+        f"shards adopted={record['shards_adopted']} "
+        f"rows claimed by inventory={record['rows_claimed_by_inventory']} "
+        f"unlisted on disk={len(record['shards_on_disk_not_in_inventory'])}",
         f"rows read={realized['rows_read']} written={realized['rows_written']} "
         f"dropped(no result)={realized['rows_dropped_no_result']} "
         f"dropped(envelope)={realized['rows_dropped_envelope']}",
@@ -1432,7 +1862,8 @@ def format_summary(out: dict[str, Any]) -> str:
         f"base depths={realized['realized_base_depth_histogram']} "
         f"values by phase={realized['values_by_phase']}",
         f"temp recovered from the emitted policy: n={recovered['n']} "
-        f"min={recovered['min']:.6f} max={recovered['max']:.6f}",
+        f"min={recovered['min']:.6f} max={recovered['max']:.6f} "
+        f"skipped(saturated)={realized['temp_recovery_skipped_saturated']}",
         f"x planes={realized['x_planes']} policy width={realized['policy_width']} "
         f"support {realized['policy_support_min']}..{realized['policy_support_max']} "
         f"history slots filled<={realized['history_slots_nonzero_max']}",
@@ -1475,12 +1906,13 @@ def main(argv: list[str] | None = None) -> int:
             f"--max-envelope-misses must be >= 0, got {args.max_envelope_misses!r}",
         )
     corpus_dir = Path(args.corpus)
-    corpus_summary = read_corpus_summary(corpus_dir)
-    slope, draw_width = cp_map_params(corpus_summary)
+    # ⚑ ONCE, and the SNAPSHOT of a live corpus's inventory is taken here.
+    corpus_record = read_corpus_record(corpus_dir)
+    slope, draw_width = cp_map_params(corpus_record.facts)
     out = derive(
         corpus_dir=corpus_dir,
         out_dir=Path(args.out),
-        corpus_summary=corpus_summary,
+        corpus_record=corpus_record,
         options=DeriveOptions(
             scheme=scheme,
             temp=temp,

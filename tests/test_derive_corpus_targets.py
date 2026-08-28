@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +52,21 @@ FEN_B = "7k/6pp/8/8/8/8/6PP/5NK1 b - - 0 1"
 SLOPE = float(gen.NNUE_CP_SLOPE)
 DRAW_WIDTH = float(gen.NNUE_CP_DRAW_WIDTH)
 
-CONFIG_SHA = "0" * 64
+#: The generation config both of the corpus's own records stamp.
+CONFIG_REQUESTED: dict[str, Any] = {
+    "cp_slope": SLOPE,
+    "cp_draw_width": DRAW_WIDTH,
+    "run_id": "test_corpus",
+}
+
+#: ⚑ HASHED BY THE GENERATOR'S OWN STAMPER, not invented.  It used to be
+#: ``"0" * 64``, which is fine for a summary (nothing hashes it) and fatal for a
+#: manifest: ``load_resume_manifest`` refuses a manifest whose ``config_sha256``
+#: does not hash its own ``config_requested``, and a corpus that must be
+#: readable through BOTH records therefore has to carry the real stamp.  Every
+#: assertion below compares against this name rather than against the literal,
+#: so the value moving is not a behaviour change.
+CONFIG_SHA = corpus.stamp_sha256(CONFIG_REQUESTED)
 
 #: The staircase the synthetic summary declares: a full-width depth-9 scout and
 #: one narrowed depth-11 rung, i.e. the production shape with one rung removed.
@@ -212,26 +227,109 @@ def write_corpus(
     config_sha: str = CONFIG_SHA,
     name: str = "corpus",
     drop_shard_from_summary: bool = False,
+    complete: bool = True,
 ) -> Path:
-    """A corpus directory: the generator's own shard writer plus a summary."""
+    """A corpus directory, written by the GENERATOR'S OWN writer.
+
+    ``complete=True`` is a run that finished: ``manifest.json`` (banked at
+    launch), the per-worker ``w00.progress.jsonl`` ``ShardWriter`` appends to as
+    it closes shards, and ``summary.json``.  ``complete=False`` is the same
+    corpus without the summary -- a run that is live, was killed, or sits
+    between ``--resume`` sessions, which is the state ``manifest+progress`` mode
+    exists for.
+
+    ⚑ ``end_game`` IS CALLED, and it is not decoration.  ``ShardWriter.close``
+    ABANDONS a shard holding rows of a game that never ended -- it is left
+    unlisted, no progress line is written and it never enters ``writer.shards``
+    -- so a fixture that only ``write``\\ s produces a corpus whose inventory is
+    empty and whose progress file does not exist.  That is what the generator's
+    ``--resume`` work (``48ac57471``) changed under this file, and it is why
+    every inventory-checking test here was failing before this call was added.
+    """
     out = tmp_path / name
     out.mkdir()
     writer = corpus.ShardWriter(out_dir=out, worker_id=0, shard_rows=1000)
+    open_game: int | None = None
     for row in rows:
+        game_id = int(row["game_id"])
+        if open_game is not None and game_id != open_game:
+            writer.end_game(open_game)
         writer.write(row)
+        open_game = game_id
+    if open_game is not None:
+        writer.end_game(open_game)
     writer.close()
+    write_manifest(out, staircase=staircase, config_sha=config_sha)
+    if not complete:
+        return out
     summary = {
         "schema": corpus.SUMMARY_SCHEMA,
         "row_schema": corpus.ROW_SCHEMA,
         "run_id": "test_corpus",
         "config_sha256": config_sha,
-        "config_requested": {"cp_slope": SLOPE, "cp_draw_width": DRAW_WIDTH},
+        "config_requested": dict(CONFIG_REQUESTED),
         "staircase_parsed": staircase if staircase is not None else STAIRCASE,
         "shards": [] if drop_shard_from_summary else list(writer.shards),
         "banked_rows_min_piece_count": corpus.MIN_BANKED_PIECES,
     }
-    (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out / corpus.SUMMARY_NAME).write_text(
+        json.dumps(summary, indent=2), encoding="utf-8",
+    )
     return out
+
+
+def write_manifest(
+    out: Path,
+    *,
+    staircase: list[dict[str, Any]] | None = None,
+    config_sha: str = CONFIG_SHA,
+    config_requested: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The launch record, in the shape ``write_launch_manifest`` writes it."""
+    requested = (
+        dict(CONFIG_REQUESTED) if config_requested is None else dict(config_requested)
+    )
+    manifest = {
+        "schema": corpus.MANIFEST_SCHEMA,
+        "row_schema": corpus.ROW_SCHEMA,
+        "complete": False,
+        "config_requested": requested,
+        "config_sha256": config_sha,
+        "staircase_parsed": staircase if staircase is not None else STAIRCASE,
+        "banked_rows_min_piece_count": corpus.MIN_BANKED_PIECES,
+        "started_utc": "2026-08-28T00:00:00+00:00",
+    }
+    (out / corpus.MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8",
+    )
+    return manifest
+
+
+def strip_summary(corpus_dir: Path, tmp_path: Path, *, name: str = "partial") -> Path:
+    """THE SAME CORPUS, minus its ``summary.json``.
+
+    A copy rather than a delete, so one test can derive from both records and
+    compare -- the rows on either side are then the same bytes, not merely two
+    fixtures built from the same list.
+    """
+    partial = tmp_path / name
+    shutil.copytree(corpus_dir, partial)
+    (partial / corpus.SUMMARY_NAME).unlink()
+    return partial
+
+
+def read_manifest(corpus_dir: Path) -> dict[str, Any]:
+    return json.loads(
+        (corpus_dir / corpus.MANIFEST_NAME).read_text(encoding="utf-8"),
+    )
+
+
+def progress_lines(corpus_dir: Path, worker_id: int = 0) -> list[dict[str, Any]]:
+    """One worker's progress records, read with the GENERATOR'S own reader."""
+    records, _ = corpus.read_worker_progress(
+        corpus_dir / corpus.progress_name(worker_id),
+    )
+    return records
 
 
 def run_derive(
@@ -948,7 +1046,12 @@ def test_a_realized_cp_map_disagreeing_with_the_request_is_refused(
         "1": {"unavailable_worker_process_died": True},
     }
     (corpus_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
-    with pytest.raises(derive.CorpusIntegrityError, match="realized cp map"):
+    # ⚑ Not "realized cp map": ``tmp_path`` is named after the test, so that
+    # phrase is inside every path the message quotes and the pattern would
+    # match a refusal from an entirely different gate.
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="disagrees with config_requested",
+    ):
         run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
 
 
@@ -1102,3 +1205,623 @@ def test_summary_passes_through_the_corpus_identity(tmp_path: Path) -> None:
     assert summary["corpus"]["staircase_parsed"] == STAIRCASE
     assert summary["schema"] == derive.DERIVE_SCHEMA
     assert not math.isnan(summary["realized"]["temp_recovered_from_emitted_policy"]["mean"])
+
+
+# ── the corpus's two records: summary vs manifest+progress ───────────────────
+#
+# ``summary.json`` is written ONCE, at run END.  A live, killed or resumed
+# corpus has none -- for days -- while carrying every fact this tool needs in
+# ``manifest.json`` (banked at launch) and the per-worker progress files
+# (appended as each shard CLOSES).  These tests pin that the fallback reads the
+# same corpus to the same rows, refuses the same damage, and never lets a
+# partial read pass for a whole one.
+
+
+def one_row_corpus(tmp_path: Path, *, complete: bool = True, name: str = "corpus") -> Path:
+    """The smallest corpus every test below shares: one White row, one shard."""
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0",
+    )
+    return write_corpus(tmp_path, [row], complete=complete, name=name)
+
+
+def test_summary_mode_is_used_and_stamped_when_the_summary_exists(
+    tmp_path: Path,
+) -> None:
+    """(a) A COMPLETE corpus is read exactly as before, and says so.
+
+    The manifest sits beside the summary here -- the generator writes one on
+    every run -- so this also pins the precedence: the summary wins, and the
+    progress files are not consulted at all.
+
+    Mutation caught: inverting ``read_corpus_record``'s branch (falling back to
+    manifest+progress whenever a manifest exists) drops the summary's
+    both-directions inventory check and its realized cp cross-check on a corpus
+    that has both.
+    """
+    corpus_dir = one_row_corpus(tmp_path)
+    assert (corpus_dir / corpus.MANIFEST_NAME).exists()
+    assert (corpus_dir / corpus.progress_name(0)).exists()
+
+    summary = run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+    assert summary["corpus"]["corpus_record"] == derive.CORPUS_RECORD_SUMMARY
+    detail = summary["corpus"]["corpus_record_detail"]
+    assert detail["run_finished"] is True
+    assert detail["document"] == corpus.SUMMARY_NAME
+    # ⚑ Not merely "summary mode": the progress files were not read at all.
+    assert detail["progress_files_read"] == []
+    assert detail["facts_only_in_summary"] == {}
+    assert summary["cp_map"]["realized_cross_check_available"] is True
+
+
+def test_derive_reads_the_record_itself_when_none_is_threaded_in(
+    tmp_path: Path,
+) -> None:
+    """The direct-caller path: ``derive()`` with no ``corpus_record``.
+
+    ⚑ Tested because ``main`` ALWAYS passes one, so a broken default here would
+    be invisible from the CLI -- an argument accepted and then not used is this
+    codebase's signature defect, and a default nothing exercises is the same
+    shape. Both records go through it, so the fallback is covered too.
+    """
+    for name, complete, expected in (
+        ("whole", True, derive.CORPUS_RECORD_SUMMARY),
+        ("partial", False, derive.CORPUS_RECORD_PARTIAL),
+    ):
+        corpus_dir = one_row_corpus(tmp_path, complete=complete, name=name)
+        out = derive.derive(
+            corpus_dir=corpus_dir,
+            out_dir=tmp_path / f"out-{name}",
+            options=derive.DeriveOptions(
+                scheme=derive.parse_scheme("uniform-d9"),
+                temp=1.0,
+                cp_slope=SLOPE,
+                cp_draw_width=DRAW_WIDTH,
+                limit=0,
+                seed=derive.DEFAULT_SEED,
+                rows_per_shard=derive.DEFAULT_ROWS_PER_SHARD,
+                max_envelope_misses=0,
+            ),
+        )
+        assert out["corpus"]["corpus_record"] == expected
+        assert out["realized"]["rows_written"] == 1
+
+
+def test_a_summary_corpus_with_no_shards_on_disk_keeps_its_own_message(
+    tmp_path: Path,
+) -> None:
+    """(a) An EMPTY corpus directory and a corpus MISSING one shard differ.
+
+    Both are refusals and both were before this change; the point is that they
+    kept different messages, and moving the inventory check earlier must not
+    re-route the first into the second's wording. An operator reading "the
+    shards on disk are not the ones summary.json names: missing [everything]"
+    goes looking for a partial copy; "holds no shards" says the directory is
+    empty.
+    """
+    corpus_dir = one_row_corpus(tmp_path)
+    for shard in derive.corpus_shard_paths(corpus_dir):
+        shard.unlink()
+
+    with pytest.raises(derive.CorpusIntegrityError, match="holds no"):
+        run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+
+def test_manifest_and_progress_derive_what_the_summary_derives(
+    tmp_path: Path,
+) -> None:
+    """(b) THE SAME CORPUS, both records, byte-identical rows.
+
+    ``strip_summary`` copies the directory and deletes only ``summary.json``,
+    so the two derivations read the SAME shard bytes -- any difference is the
+    record, not the fixture.  The rows are compared array by array through the
+    rig's own shard reader, which is what makes "byte-identical" a claim about
+    what the trainer would load rather than about a json blob.
+
+    Mutation caught: making partial mode read ``corpus_shard_paths`` (the
+    directory glob) instead of the progress inventory still passes on a corpus
+    with nothing in flight -- so the real proof is the pair of assertions here
+    PLUS ``test_a_shard_outside_the_snapshot_is_counted_and_never_read``, which
+    is the case where the two lists differ.
+    """
+    rows = [
+        corpus_row(
+            fen=fen, phases=[full_width_phase(fen, {9: ramp(fen, best)})],
+            result=result, result_pgn=pgn, game_id=index, ply=index,
+        )
+        for index, (fen, best, result, pgn) in enumerate([
+            (FEN_W, "f1e3", 1.0, "1-0"),
+            (FEN_B, "h8g8", -1.0, "1-0"),
+            (FEN_W, "g2g4", 0.0, "1/2-1/2"),
+        ])
+    ]
+    whole = write_corpus(tmp_path, rows)
+    partial = strip_summary(whole, tmp_path)
+
+    from_summary = run_derive(whole, tmp_path / "a", "uniform-d9")
+    from_partial = run_derive(partial, tmp_path / "b", "uniform-d9")
+
+    assert from_summary["corpus"]["corpus_record"] == derive.CORPUS_RECORD_SUMMARY
+    assert from_partial["corpus"]["corpus_record"] == derive.CORPUS_RECORD_PARTIAL
+
+    a, meta_a = read_rows(tmp_path / "a")
+    b, meta_b = read_rows(tmp_path / "b")
+    assert len(a) == len(b) == len(rows)
+    assert meta_a == meta_b
+    by_a = {int(s.game_id): s for s in a}
+    by_b = {int(s.game_id): s for s in b}
+    assert sorted(by_a) == sorted(by_b) == [0, 1, 2]
+    for game_id, left in by_a.items():
+        right = by_b[game_id]
+        assert np.array_equal(left.x, right.x)
+        assert np.array_equal(left.policy_target, right.policy_target)
+        assert np.array_equal(left.legal_mask, right.legal_mask)
+        assert np.array_equal(left.search_wdl, right.search_wdl)
+        assert int(left.wdl_target) == int(right.wdl_target)
+        assert int(left.ply_index) == int(right.ply_index)
+
+    # The corpus identity the two records supply must agree too, or the rows
+    # would be identical while their provenance stamps disagreed.
+    for key in ("config_sha256", "run_id", "staircase_parsed", "row_schema"):
+        assert from_summary["corpus"][key] == from_partial["corpus"][key]
+    assert from_summary["cp_map"]["cp_slope"] == from_partial["cp_map"]["cp_slope"]
+    assert (
+        from_summary["cp_map"]["cp_draw_width"]
+        == from_partial["cp_map"]["cp_draw_width"]
+    )
+    assert from_summary["realized"]["rows_written"] == (
+        from_partial["realized"]["rows_written"]
+    )
+
+
+def test_a_listed_shard_missing_from_disk_is_refused(tmp_path: Path) -> None:
+    """(c) The inventory claims rows that are gone -- a hard refusal.
+
+    The same rule ``resume_worker_state`` applies for the same reason: deriving
+    from what is left would train on a subset nothing recorded, and the row
+    count would look like a smaller corpus rather than a damaged one.
+
+    Mutation caught: replacing the ``path.exists()`` refusal with a ``continue``
+    -- the derivation then silently succeeds on the shards that happen to
+    remain.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    listed = [record for record in progress_lines(partial) if record["path"] is not None]
+    assert len(listed) == 1
+    (partial / Path(str(listed[0]["path"])).name).unlink()
+
+    with pytest.raises(derive.CorpusIntegrityError, match="it is not in"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_a_null_path_progress_line_is_a_game_record_not_a_shard(
+    tmp_path: Path,
+) -> None:
+    """(d) ``path: null`` indexes GAMES, not a file, and must be skipped.
+
+    ``ShardWriter.close`` writes one when a worker ends on games that banked no
+    rows (every position dedup-served, or adjudicated before it banked). There
+    is no file behind it.
+
+    Mutation caught: dropping the ``if raw_path is None: continue`` -- the
+    reader then resolves ``Path("None").name`` and refuses the corpus with
+    "lists None and it is not in", i.e. a healthy corpus becomes underivable
+    because one of its games was cheap.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    baseline = run_derive(partial, tmp_path / "before", "uniform-d9")
+
+    with open(partial / corpus.progress_name(0), "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "path": None, "rows": 0, "codec": "zstd", "games": [41, 42],
+        }, sort_keys=True) + "\n")
+    # The generator's own reader accepts it as a record; it is this tool that
+    # must decline to treat it as a shard.
+    assert progress_lines(partial)[-1]["path"] is None
+
+    after = run_derive(partial, tmp_path / "after", "uniform-d9")
+
+    before_detail = baseline["corpus"]["corpus_record_detail"]
+    after_detail = after["corpus"]["corpus_record_detail"]
+    assert after_detail["shards_adopted"] == before_detail["shards_adopted"] == 1
+    assert after_detail["rows_claimed_by_inventory"] == (
+        before_detail["rows_claimed_by_inventory"]
+    )
+    assert after["realized"]["rows_written"] == baseline["realized"]["rows_written"]
+
+
+def test_a_tampered_manifest_is_refused_by_its_own_sha(tmp_path: Path) -> None:
+    """(e) ``config_sha256`` must hash ``config_requested`` -- the generator's check.
+
+    The tamper is the one that matters: a cp map edited AFTER the fact. Every
+    target in the corpus was selected under the original map, so a derivation
+    that accepted the edit would produce a policy whose ranking disagrees with
+    the play that produced the positions -- silently, and only in the tail.
+
+    Mutation caught: replacing the ``load_resume_manifest`` call with a plain
+    ``json.loads`` of the manifest -- the run then succeeds and derives under
+    the tampered slope.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    manifest = read_manifest(partial)
+    assert manifest["config_requested"]["cp_slope"] == pytest.approx(SLOPE)
+    manifest["config_requested"]["cp_slope"] = SLOPE * 2.0  # sha left untouched
+    (partial / corpus.MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8",
+    )
+
+    with pytest.raises(derive.CorpusIntegrityError, match="inconsistent with itself"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_the_sha_check_refuses_disagreement_not_rewriting(tmp_path: Path) -> None:
+    """The companion to the test above: the gate must not fire on everything.
+
+    A manifest rewritten CONSISTENTLY (config and sha both) clears the sha
+    check -- and is then caught one gate later by the row-identity join, because
+    the rows still carry the sha they were banked under. Two gates, two
+    different messages; a check that refused both would be indistinguishable
+    from one that refused nothing useful.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    requested = dict(CONFIG_REQUESTED)
+    requested["cp_slope"] = SLOPE * 2.0
+    write_manifest(
+        partial,
+        config_requested=requested,
+        config_sha=corpus.stamp_sha256(requested),
+    )
+    # The rows still carry the ORIGINAL sha, so the row-identity join is what
+    # refuses now -- a different gate, and the one that should fire here.
+    with pytest.raises(derive.CorpusIntegrityError, match="does not match the corpus"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_the_partial_mode_stamp_is_in_the_output_manifest(tmp_path: Path) -> None:
+    """(f) A derivation from a partial corpus is VISIBLY partial.
+
+    Not a comment: the mode, the shard count, the rows the inventory claims and
+    the facts a manifest cannot carry are all in the derived manifest, and the
+    cp cross-check reports the ZERO workers it actually covered rather than
+    looking exactly like a run that cross-checked every one.
+
+    Mutation caught: hard-coding ``CORPUS_RECORD_SUMMARY`` into
+    ``build_summary`` -- every row is still correct and the output claims to
+    come from a finished run.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    out = run_derive(partial, tmp_path / "out", "uniform-d9")
+
+    assert out["corpus"]["corpus_record"] == derive.CORPUS_RECORD_PARTIAL
+    assert out["corpus"]["corpus_record"] == "manifest+progress"
+    detail = out["corpus"]["corpus_record_detail"]
+    assert detail["run_finished"] is False
+    assert detail["shards_adopted"] == 1
+    assert detail["rows_claimed_by_inventory"] == 1
+    assert detail["progress_files_read"] == [corpus.progress_name(0)]
+    assert detail["progress_torn_tail_files"] == []
+    assert detail["shards_on_disk_not_in_inventory"] == []
+    assert corpus.MANIFEST_NAME in detail["document"]
+
+    # ⚑ The weakening is REPORTED, not inferred from silence.
+    assert "config_realized_by_worker" in detail["facts_only_in_summary"]
+    assert out["cp_map"]["realized_workers_cross_checked"] == 0
+    assert out["cp_map"]["realized_cross_check_available"] is False
+    # And on a whole corpus the same reading is nonzero, so the 0 above is a
+    # measurement rather than a field nothing ever fills.
+    whole = one_row_corpus(tmp_path, name="whole")
+    summary = json.loads((whole / corpus.SUMMARY_NAME).read_text(encoding="utf-8"))
+    summary["config_realized_by_worker"] = {
+        "0": {"cp_slope": SLOPE, "cp_draw_width": DRAW_WIDTH},
+    }
+    (whole / corpus.SUMMARY_NAME).write_text(json.dumps(summary), encoding="utf-8")
+    checked = run_derive(whole, tmp_path / "whole-out", "uniform-d9")
+    assert checked["cp_map"]["realized_workers_cross_checked"] == 1
+
+
+def test_a_corpus_with_neither_record_is_refused(tmp_path: Path) -> None:
+    """No summary AND no manifest: nothing to derive from, and it says which.
+
+    The pre-``manifest.json`` corpora are exactly this shape, and the refusal
+    has to name both documents -- a message that only mentions the summary sends
+    the operator looking for the wrong file.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    (partial / corpus.MANIFEST_NAME).unlink()
+
+    with pytest.raises(derive.CorpusIntegrityError) as excinfo:
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+    message = str(excinfo.value)
+    assert corpus.SUMMARY_NAME in message
+    assert corpus.MANIFEST_NAME in message
+
+
+def test_a_shard_outside_the_snapshot_is_counted_and_never_read(
+    tmp_path: Path,
+) -> None:
+    """⚑ A LIVE CORPUS IS A MOVING TARGET: only CLOSED shards are read.
+
+    The unlisted file is what every live worker is holding open right now --
+    opened ``"x"`` at its first write, listed only once it closes. Reading it
+    would read a JSONL that is still being appended to. So the derivation takes
+    the inventory's shards and COUNTS the rest.
+
+    Mutation caught: sourcing partial mode's shard list from
+    ``corpus_shard_paths(corpus_dir)`` (the directory glob) instead of the
+    progress inventory -- the in-flight shard's rows are then silently derived,
+    and the run's row count cannot be reproduced by any later read of the
+    corpus.
+    """
+    listed_row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0", game_id=0,
+    )
+    partial = write_corpus(tmp_path, [listed_row], complete=False)
+
+    # A second worker's shard, on disk and in NO progress file: the in-flight
+    # shard, written with the generator's own writer and left unlisted.
+    in_flight = corpus.ShardWriter(out_dir=partial, worker_id=9, shard_rows=1000)
+    in_flight.write(corpus_row(
+        fen=FEN_B, phases=[full_width_phase(FEN_B, {9: ramp(FEN_B, "h8g8")})],
+        result=-1.0, result_pgn="1-0", game_id=77,
+    ))
+    in_flight.close()  # abandons: the game never ended, so nothing lists it
+    assert in_flight.shards == []
+    assert not (partial / corpus.progress_name(9)).exists()
+    assert len(derive.corpus_shard_paths(partial)) == 2
+
+    out = run_derive(partial, tmp_path / "out", "uniform-d9")
+
+    detail = out["corpus"]["corpus_record_detail"]
+    assert detail["shards_adopted"] == 1
+    assert len(detail["shards_on_disk_not_in_inventory"]) == 1
+    assert detail["shards_on_disk_not_in_inventory"][0].startswith("w09-")
+    assert out["realized"]["rows_read"] == 1
+    assert out["realized"]["rows_written"] == 1
+    samples, _ = read_rows(tmp_path / "out")
+    assert [int(s.game_id) for s in samples] == [0]
+
+
+def test_the_inventory_resolves_shards_by_name_not_by_stored_path(
+    tmp_path: Path,
+) -> None:
+    """⚑ The stored path is the PRODUCING machine's; the file is the local one.
+
+    A progress line records an absolute path, and a corpus is routinely read
+    from somewhere else -- copied off the box, mounted at another root, or (as
+    here) worked on through a copy. ``resume_worker_state`` resolves by name for
+    exactly this reason and so does this.
+
+    Mutation caught: resolving ``record["path"]`` as written instead of taking
+    its ``.name`` -- the derivation then reads the ORIGINAL directory's shards
+    while claiming to have read this one, or refuses a corpus that is entirely
+    intact.
+    """
+    original = one_row_corpus(tmp_path, complete=False, name="original")
+    listed = [r for r in progress_lines(original) if r["path"] is not None]
+    stored = Path(str(listed[0]["path"]))
+    assert stored.is_absolute()
+    assert stored.parent == original
+
+    moved = tmp_path / "moved"
+    shutil.copytree(original, moved)
+    shutil.rmtree(original)  # the stored path now points at nothing
+    assert not stored.exists()
+
+    out = run_derive(moved, tmp_path / "out", "uniform-d9")
+    assert out["corpus"]["corpus_record"] == derive.CORPUS_RECORD_PARTIAL
+    assert out["corpus"]["corpus_record_detail"]["shards_adopted"] == 1
+    assert out["realized"]["rows_written"] == 1
+
+
+def test_a_progress_file_damaged_past_its_torn_tail_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The tolerance is the generator's, and it is as narrow as the failure.
+
+    ``read_worker_progress`` accepts a final line cut short of its newline -- the
+    only thing a ``kill -9`` during the single append can leave -- and refuses
+    damage anywhere else. Imported rather than reimplemented, so this test is
+    also the proof that the two readers cannot drift apart.
+
+    ⚑ The pattern is a PHRASE, not the word "damaged". ``tmp_path`` is named
+    after the test, so this test's own name is inside every path the error
+    message quotes -- ``match="damaged"`` passed against the refusal for an
+    entirely different reason, and the mutation that removes the check went
+    uncaught until the pattern stopped overlapping the directory name.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    progress = partial / corpus.progress_name(0)
+    intact = progress.read_text(encoding="utf-8")
+    progress.write_text("{not json at all\n" + intact, encoding="utf-8")
+
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="the inventory it carries cannot be trusted",
+    ):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_a_torn_final_progress_line_is_tolerated_and_reported(
+    tmp_path: Path,
+) -> None:
+    """The one tolerated damage, and it is never silent.
+
+    A ``kill -9`` mid-append leaves the LAST line short of its newline. The
+    shards listed above it are intact and are derived from; the torn line names
+    a shard whose closure was never recorded, and the file it was in is NAMED in
+    the output rather than dropped quietly.
+    """
+    rows = [
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+            result=1.0, result_pgn="1-0", game_id=index, ply=index,
+        )
+        for index in range(2)
+    ]
+    partial = write_corpus(tmp_path, rows, complete=False)
+    progress = partial / corpus.progress_name(0)
+    with open(progress, "a", encoding="utf-8") as handle:
+        handle.write('{"codec": "zstd", "path": "w00-0000')  # no newline
+
+    out = run_derive(partial, tmp_path / "out", "uniform-d9")
+
+    detail = out["corpus"]["corpus_record_detail"]
+    assert detail["progress_torn_tail_files"] == [corpus.progress_name(0)]
+    assert detail["shards_adopted"] == 1
+    assert out["realized"]["rows_written"] == 2
+
+
+def test_a_manifest_with_no_progress_file_is_refused(tmp_path: Path) -> None:
+    """A launched run that has closed no shard yet has nothing to derive from."""
+    partial = one_row_corpus(tmp_path, complete=False)
+    (partial / corpus.progress_name(0)).unlink()
+
+    with pytest.raises(derive.CorpusIntegrityError, match="no shard inventory"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_a_shard_listed_by_two_workers_is_refused(tmp_path: Path) -> None:
+    """One name, two inventories: two runs' progress files in one directory.
+
+    Shard names are unique per worker and a resume continues the index rather
+    than reusing it, so a repeat cannot happen inside one run.
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    listed = [r for r in progress_lines(partial) if r["path"] is not None]
+    shutil.copyfile(
+        partial / corpus.progress_name(0), partial / corpus.progress_name(1),
+    )
+    assert len(listed) == 1
+
+    with pytest.raises(derive.CorpusIntegrityError, match="listed twice"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+def test_a_partial_corpus_still_refuses_a_scheme_its_staircase_cannot_answer(
+    tmp_path: Path,
+) -> None:
+    """The manifest's staircase is load-bearing, not decoration.
+
+    Every run-level refusal a summary powers must still fire off a manifest, or
+    "partial mode" would quietly be "fewer checks mode".
+    """
+    partial = one_row_corpus(tmp_path, complete=False)
+    with pytest.raises(derive.CorpusIntegrityError, match="exceeds the corpus envelope"):
+        run_derive(partial, tmp_path / "out", "uniform-d20")
+
+
+def test_a_partial_corpus_with_a_bumped_row_schema_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The manifest's ``row_schema`` is checked exactly as the summary's is."""
+    partial = one_row_corpus(tmp_path, complete=False)
+    manifest = read_manifest(partial)
+    manifest["row_schema"] = corpus.ROW_SCHEMA + 1
+    manifest["config_sha256"] = corpus.stamp_sha256(manifest["config_requested"])
+    (partial / corpus.MANIFEST_NAME).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8",
+    )
+
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema"):
+        run_derive(partial, tmp_path / "out", "uniform-d9")
+
+
+# ── the realized --temp stamp, and what saturation does to it ────────────────
+
+
+#: Two effective-cp values deep in the win-saturated tail whose q values differ
+#: by ONE float64 ULP.  Swept off the production cp map, not invented; the test
+#: below asserts the property rather than trusting the sweep.
+SATURATED_BEST_CP = 6119.0
+SATURATED_REST_CP = 5936.0
+
+
+def test_a_saturated_row_is_held_out_of_the_temp_stamp_and_counted(
+    tmp_path: Path,
+) -> None:
+    """⚑ F4: a won position's tau is quantisation, not a reading.
+
+    In a position won outright every legal move's q is ±1.0, and the smallest
+    nonzero spread the cp map can produce there is one float64 ULP. ``tau =
+    gap / log_gap`` then returns a function of the MOVE COUNT -- this 5-move row
+    reads **0.5** under ``--temp 1.0`` -- which is how 7 rows in 240k made a
+    healthy run stamp ``min=0.625 max=1.007``.
+
+    ⚑ THE TARGETS ARE UNTOUCHED: the row is still written, its policy is still
+    ``softmax(q / temp)``, and only the temperature READ BACK off it is held
+    out. The count is reported so the hold-out is visible.
+
+    Mutation caught: deleting the ``q_spread`` guard from ``sample_from_row`` --
+    the run then stamps ``min=0.5`` for a ``--temp 1.0`` derivation and counts
+    zero skips.
+    """
+    saturated = {
+        move: (SATURATED_BEST_CP if index == 0 else SATURATED_REST_CP)
+        for index, move in enumerate(legal_ucis(FEN_B))
+    }
+    q = gate.q_from_effective_cp(
+        np.array(list(saturated.values()), dtype=np.float64),
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH,
+    )
+    # The fixture's own premise, asserted rather than assumed: saturated at
+    # +1.0, with a spread that is nonzero and far below the epsilon.
+    assert np.allclose(q, 1.0, atol=1e-12)
+    spread = derive.q_spread(q)
+    assert 0.0 < spread < derive.TEMP_RECOVERY_MIN_Q_SPREAD
+    # And the tau it would have contributed is nothing like the requested one.
+    bogus = derive.recover_temp(q, derive.softmax_at_temp(q, temp=1.0))
+    assert bogus is not None
+    assert not math.isclose(bogus, 1.0, rel_tol=0.1)
+
+    rows = [
+        corpus_row(
+            fen=FEN_B, phases=[full_width_phase(FEN_B, {9: saturated})],
+            result=1.0, result_pgn="1-0", game_id=0, ply=0,
+        ),
+        # One healthy row, so the stamp has something real to report and the
+        # test distinguishes "held out" from "recorded nothing at all".
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+            result=1.0, result_pgn="1-0", game_id=1, ply=1,
+        ),
+    ]
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(corpus_dir, tmp_path / "out", "uniform-d9", temp=1.0)
+
+    realized = out["realized"]
+    assert realized["rows_written"] == 2  # ⚑ the row is DERIVED, not dropped
+    assert realized["temp_recovery_skipped_saturated"] == 1
+    assert realized["temp_recovery_saturation_q_spread_epsilon"] == (
+        derive.TEMP_RECOVERY_MIN_Q_SPREAD
+    )
+    recovered = realized["temp_recovered_from_emitted_policy"]
+    assert recovered["n"] == 1
+    assert recovered["min"] == pytest.approx(1.0, rel=1e-6)
+    assert recovered["max"] == pytest.approx(1.0, rel=1e-6)
+    assert recovered["mean"] == pytest.approx(1.0, rel=1e-6)
+    assert "skipped(saturated)=1" in derive.format_summary(out)
+
+
+def test_an_unsaturated_row_is_never_held_out(tmp_path: Path) -> None:
+    """The hold-out must not fire on a healthy corpus.
+
+    A guard that quietly swallowed ordinary rows would shrink ``n`` -- the very
+    reading that proves ``--temp`` was applied -- and nothing would say so.
+    """
+    rows = [
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+            result=1.0, result_pgn="1-0", game_id=index, ply=index,
+        )
+        for index in range(3)
+    ]
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(corpus_dir, tmp_path / "out", "uniform-d9", temp=0.5)
+
+    realized = out["realized"]
+    assert realized["temp_recovery_skipped_saturated"] == 0
+    assert realized["temp_recovered_from_emitted_policy"]["n"] == 3
+    assert realized["temp_recovered_from_emitted_policy"]["min"] == pytest.approx(0.5)
+    assert realized["temp_recovered_from_emitted_policy"]["max"] == pytest.approx(0.5)
