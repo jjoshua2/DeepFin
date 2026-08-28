@@ -168,6 +168,10 @@ ROW_SCHEMA = 1
 #: histogram would invalidate every banked row for nothing.
 SUMMARY_SCHEMA = 1
 
+#: Launch manifest, written BEFORE the first game (see write_launch_manifest).
+MANIFEST_SCHEMA = 1
+MANIFEST_NAME = "manifest.json"
+
 DEFAULT_STAIRCASE = "all:9,16:11,4:13"
 DEFAULT_TEMP_PLIES = 20
 DEFAULT_TEMP_HIGH = 1.0
@@ -1281,6 +1285,16 @@ class ShardWriter:
             "rows": self._rows,
             "codec": self.codec,
         })
+        # One line per CLOSED shard, appended as the shard closes, so a run
+        # that dies on day 13 still names every complete shard it wrote --
+        # summary.json is written once at run END and a crash takes it with
+        # it. Each worker owns its own progress file, so "a" cannot interleave
+        # across processes. Deliberately NOT suppressed: a metadata write that
+        # fails (disk full) should kill the worker loudly, not leave a corpus
+        # whose inventory quietly stopped growing.
+        progress = self.out_dir / f"w{self.worker_id:02d}.progress.jsonl"
+        with open(progress, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(self.shards[-1], sort_keys=True) + "\n")
         self._text = None
         self._raw = None
         self._binary = None
@@ -2052,6 +2066,46 @@ def format_summary(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def write_launch_manifest(
+    out_dir: Path,
+    *,
+    requested: dict[str, Any],
+    config_sha: str,
+    staircase: Sequence[StaircasePhase],
+    engine_record: dict[str, Any],
+    engine_id_name: str | None,
+) -> None:
+    """Bank the launch facts BEFORE the first game, ``"x"`` like everything here.
+
+    ``summary.json`` is written once, at run END -- so on a multi-day run a
+    crash near the end would leave millions of banked rows that
+    ``derive_corpus_targets`` refuses: no cp map, no staircase, no inventory.
+    The manifest banks the launch-time facts immediately and the per-worker
+    ``w<id>.progress.jsonl`` files (see ``ShardWriter.close``) bank the shard
+    inventory incrementally.  ``complete: false`` is stamped so no reader can
+    mistake this for the completion record: ``summary.json`` remains the only
+    document that says the run FINISHED, and a partial read has to say it is
+    one.
+    """
+    manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "row_schema": ROW_SCHEMA,
+        "complete": False,
+        "config_requested": requested,
+        "config_sha256": config_sha,
+        "staircase_parsed": [
+            {"width": p.width_label, "depth": p.depth} for p in staircase
+        ],
+        "engine": {**engine_record, "id_name": engine_id_name},
+        "banked_rows_min_piece_count": MIN_BANKED_PIECES,
+        "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
+        "started_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(out_dir / MANIFEST_NAME, "x", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True, default=_json_default)
+        fh.write("\n")
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, fan out, merge and write ``summary.json``."""
     staircase = parse_staircase(str(args.staircase))
@@ -2093,6 +2147,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     requested = config_stamp(args, sf_binary=sf_binary)
     config_sha = stamp_sha256(requested)
     out_dir.mkdir(parents=True, exist_ok=True)
+    write_launch_manifest(
+        out_dir, requested=requested, config_sha=config_sha,
+        staircase=staircase, engine_record=engine_record,
+        engine_id_name=engine_id_name,
+    )
     specs = [
         WorkerSpec(
             worker_id=index,

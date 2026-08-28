@@ -1723,6 +1723,16 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     assert result["realized"]["tt_cleared_per_game"] is True
     assert result["realized"]["ucinewgame_calls"] == 2
     assert result["realized"]["dedup_cache_max"] == corpus.DEFAULT_DEDUP_CACHE_MAX
+    # The incremental inventory: one progress line per CLOSED shard, appended
+    # as it closed, byte-agreeing with what the summary will aggregate — the
+    # record a crashed run still has. Mutation caught: deleting the append.
+    progress = [
+        json.loads(line)
+        for line in (out_dir / "w00.progress.jsonl").read_text(
+            encoding="utf-8",
+        ).splitlines()
+    ]
+    assert progress == result["shards"]
     assert result["realized"]["max_plies"] == 50
     assert result["realized"]["seed"] == 7
     assert result["realized"]["opening_book_path"] is None
@@ -1796,6 +1806,16 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
     assert summary["config_requested"]["games"] == 1
     assert summary["config_realized_by_worker"]["0"][corpus.KEY_TT_CARRIED] is True
     assert summary["banked_rows_min_piece_count"] == corpus.MIN_BANKED_PIECES
+    # The launch manifest: written BEFORE the first game so a crashed run's
+    # rows keep their cp map, staircase and config sha. `complete: false`
+    # forever — summary.json is the only completion record.
+    manifest = json.loads(
+        (out_dir / corpus.MANIFEST_NAME).read_text(encoding="utf-8"),
+    )
+    assert manifest["complete"] is False
+    assert manifest["config_sha256"] == summary["config_sha256"]
+    assert manifest["config_requested"] == summary["config_requested"]
+    assert manifest["staircase_parsed"] == summary["staircase_parsed"]
     on_disk = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert on_disk["config_sha256"] == summary["config_sha256"]
     rows = [
