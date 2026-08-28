@@ -70542,3 +70542,35 @@ min of a wedged worker. Partial wiped; same seed 20260827; rsync stays paused.
 ⚑ Residual worth an upstream report later: the wedge is a reproducible SF dev
 bug (hot TT + MultiPV + searchmoves `go depth`); the offline repro lives at the
 session scratchpad's `repro_game488.py` / `replay_crash.py`.
+**2026-08-27 AMENDMENT 4 (corpus run 1) — WEDGE MECHANISM CORRECTED: it is a
+SEARCH EXPLOSION, and `stop` WORKS. Amendment 3's "stop is ignored (no UCI
+escape)" is RETRACTED — it was an instrument artifact.** The probe that
+reported it (`replay_probe457.py`) spawned a NEW stdout-reader thread per
+wait; after the first 10s timeout the stale thread kept draining the pipe and
+swallowed the `bestmove`, so the post-`stop` wait read nothing and reported
+`bestmove=False`. A rebuilt harness with ONE persistent reader
+(`bt_wedge.py`, gdb-wrapped, thread-apply-all backtraces) measured, on all
+three engines from the same game-488 replay:
+
+- dev-20260420 (production label engine): wedges at cmd 457 → `stop` →
+  bestmove < 8s. **stop works.**
+- dev-20260810 / 5062aee5 (our debug build): wedges at cmd 337 → backtrace
+  shows ~40 frames of ordinary `search()` recursion (NNUE eval under
+  qsearch at the leaf), NOT a TB/PV-extension loop; depth 8 completed at
+  14k nodes, then >10M nodes with no depth-9 output. `stop` → bestmove < 8s,
+  search thread back in `idle_loop`. **A fixed-depth search explosion on a
+  hot TT, with a working stop check.**
+- dev-20260825 / 2edd935b (latest master, built tonight, static-libstdc++
+  bmi2): wedges EARLIER (cmd 278) → `stop` works. **Engine upgrade does not
+  fix the explosion class** (upstream #5926 / PR #3943 family; our exact
+  narrowed-searchmoves + hot-TT trigger looks unreported — upstream report
+  still owed, now correctly framed as an explosion, not a hang).
+
+Consequences: (1) EngineLease stays — it is correct and proven (25-min-clean
+monitor, zero deaths, zero respawns so far on run 1). (2) The 600s dead wait
+is now avoidable: a `stop`-on-deadline or a `go ... nodes <airbag>` bound
+escapes in seconds — candidate improvement, NOT applied to the running pin
+(would change config_sha ⇒ restart #5; decision deferred to Josh alongside
+the optional engine swap to dev-20260825, whose 31 commits include an NNUE
+net update, f21610e5). (3) `bt_wedge.py` (session scratchpad) supersedes
+`replay_probe457.py` as the wedge instrument.
