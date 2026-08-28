@@ -69802,6 +69802,17 @@ train loss 2.478 (2×) vs 2.576 (1×), policy 1.926 vs 2.009; heldout scans
 MID2x/LAST2x running on CPU, compares land separately. Secondary (vs iter-595)
 and tertiary (MID2x vs LAST1x schedule read) arenas queued and running.
 
+**SECONDARY (calibration, non-deciding), final banked 400-game read:**
+LAST(2×) vs production iter-595 = **Elo −151.3 [−184.1, −120.9]**, score
+0.2950 ± 0.0192, pentanomial 9/11/52/63/65, exit 0. **Registered prediction
+settled — the additive model was WRONG by ~+109 Elo:** predicted −404.6 +
+144.1 ≈ −260; realized −151.3. Same lesson as [[arena_elo_is_anchor_dependent]]
+— pairwise Elo does not add across anchors; the control closed −404.6 → −151.3
+(+253) against production while gaining +144.1 head-to-head against its own 1×.
+Color, not a verdict: a from-scratch net trained ONLY on 39.5M lc0-target
+samples now sits within ~150 Elo of the full production lineage. Both arena
+results banked at `runs/lc0_control_2x_20260827/arena_results_all.jsonl`.
+
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
 The frozen-driver/shadow-arm harness (`feat/nnue-shadow-label-readout`, `91e74aadd`;
