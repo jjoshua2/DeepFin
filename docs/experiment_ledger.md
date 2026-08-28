@@ -70807,3 +70807,63 @@ fixture predated game-boundary rotation); repaired in the same branch.
 Cross-family caveat recorded: SF-derived candidates cannot be expected to reach
 an lc0-family net's agreement with lc0-family targets — the bar contextualizes,
 it does not pass/fail. Banking in flight → `scratchpad/t80_ruler/`.
+
+**2026-08-28 T80-RULER READOUT (primary Phase-1 ruler, per the revision
+above).** Bank COMPLETE and durable at `scratchpad/t80_ruler/`
+(`merged_t80_bt4_d9.jsonl` + `meta.json`): 4000 distinct positions from 824
+games across 8 lc0-T80 corpus dirs, each carrying the stored T80 target, BT4's
+raw prior from TRUE-history planes, and a full-width d9 SF label (engine
+2edd935b, cold TT, 0 timeouts, every depth 1–9 at exact legal-count width).
+Crosscheck BT4-vs-T80 top-1 agreement **0.6795** (n=4000) — inside the
+pre-committed [0.60, 0.80] band, consistent with the earlier n=1600 point
+(0.7044). Analysis is a pure re-read of the bank (`ruler_v1.json`,
+`grid_v1.json`); CIs are game-cluster bootstraps (2000 resamples).
+
+Mean KL(T80‖π), candidate π from the d9 block through the PRODUCTION cp→q map
+(slope 0.006 / draw 120, shared object, not a copy):
+
+| arm | KL | 95% CI | mean H (nats) |
+|---|---|---|---|
+| qtemp_1.0 (shipped) | 1.325 | [1.287, 1.370] | 3.14 |
+| qtemp_0.067 (≈Gumbel σ) | 0.489 | [0.472, 0.506] | 1.96 |
+| **qtemp_0.08 (grid min)** | **0.487** | — | 2.06 |
+| qtemp_0.02 (screen survivor) | 0.908 | [0.851, 0.966] | 1.25 |
+| dcp_50 (screen survivor) | 0.726 | [0.686, 0.768] | 2.18 |
+| dcp_37 (family grid min) | 0.723 | — | 2.04 |
+| rank_half | 1.211 | [1.161, 1.262] | 1.36 |
+| onehot_d9 | 10.51 (floor-bound) | — | 0.00 |
+| uniform | 1.649 | [1.602, 1.700] | 3.19 |
+| **BT4 (calibration bar)** | **0.185** | [0.175, 0.195] | 1.63 |
+
+T80 targets themselves: mean entropy 1.537 nats (norm 0.491). Findings:
+
+1. **The T80 ruler finds an INTERIOR optimum where the deep-SF screen could
+   not**: KL is U-shaped in τ with the minimum at **τ ≈ 0.07–0.08**
+   (0.4874 at 0.08 vs 0.4885 at 0.067 — statistically indistinguishable), and
+   BOTH failure ends lose big: the shipped τ=1.0 mush (1.325) and the screen's
+   sharp survivor τ=0.02 (0.908). ⇒ the two rulers INVERT at the sharp end,
+   exactly as the screen's structural-bias caveat predicted.
+2. **The production Gumbel σ (τ≈0.067) is essentially AT the T80 optimum.**
+   The search default, never tuned as a target, lands where SF-derived targets
+   best resemble lc0's own training targets. Entropy agrees: τ=0.067 gives
+   1.96 nats vs T80's 1.54 — closest of the family.
+3. **The Δcp family loses to q-temp at every scale** (best 0.723 at s=37 vs
+   0.487) — mapping through the production q (WDL-aware, draw-width-shaped)
+   beats raw cp differences.
+4. **Top-1 agreement CANNOT discriminate SF-derived mappings** (all share the
+   d9 argmax): it reads 0.550 for every arm — that number is the d9 ranking's
+   own agreement with T80 top-1, vs BT4's 0.6805. Cross-family caveat holds:
+   even the optimal-τ SF arm sits 2.6× further from T80 (KL 0.487) than BT4
+   (0.185); the mapping choice moves ~1.16 nats of that scale within the SF
+   family, so it is a large, real lever — but not the whole distance.
+
+**Verdict (per the revised ruler, kills still PENDING Josh's Stage-2
+approval):** the T80 primary ruler picks **qtemp_0.067** as the lead arm
+(coincides with Gumbel σ — no new constant); recommended rig ladder =
+qtemp_0.067 (lead) + qtemp_0.02 (deep-SF screen's pick, sharp control) +
+dcp_50 (family control) + shipped qtemp_1.0 (status-quo control). onehot is
+dead on this ruler (floor-bound KL) and stays out unless Josh wants the
+endpoint anyway. Confound recorded: T80 targets are ~800-node lc0 visit
+distributions with temperature — "closest to T80" is a proxy for "shaped like
+a proven pipeline's targets", not a theorem about OUR net; the rig ladder
+remains the decider.
