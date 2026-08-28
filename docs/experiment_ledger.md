@@ -70574,3 +70574,36 @@ escapes in seconds — candidate improvement, NOT applied to the running pin
 the optional engine swap to dev-20260825, whose 31 commits include an NNUE
 net update, f21610e5). (3) `bt_wedge.py` (session scratchpad) supersedes
 `replay_probe457.py` as the wedge instrument.
+**2026-08-28 AMENDMENT 5 (corpus run) — REDESIGN TO `all:9` + engine swap +
+resume; run01 ABANDONED (~0.1% generated), run02 PREREGISTERED.** Josh's
+directives: 100M rows within a few days; "stop at 8" clarified to DEPTH (not
+seconds); depth-9-only accepted with a short kill; kill-and-resume required.
+Mixing engines/settings inside run01 REJECTED (two vintages under one
+config_sha; seed-replay dies) — restart is ~2-3h of data.
+
+Measured tonight (6-game probes, 1 worker, seed 777, SAME load as the live
+run — the ratios are the finding; full staircase re-measured 0.473 s/pos
+against its 0.286 idle baseline, deflator 0.605):
+- `all:8` 0.083 s/pos · `all:9` **0.104 s/pos** · `all:8,4:12` 0.174 ·
+  full `all:9,16:11,4:13` 0.473. Node split of full: phase0 27%, phase1 41%,
+  phase2 32%.
+- Cold full-width d9 on the NEW binary, 24 positions under load: p50 91ms,
+  p90 262ms, max 781ms, ZERO over 1s ⇒ a short per-search kill is safe;
+  set at 2s (= 2.5x observed max; vs 1s it costs nothing — explosions run
+  ~2/hour fleet-wide — and doubles tail margin, and the value is FROZEN into
+  config_sha by resume).
+
+run02 pin (launch after the resume PR merges): engine
+`/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2`
+(sha256 e5f3b866a5..., upstream 2edd935b incl. NNUE net update f21610e5;
+wedge-explosion NOT fixed upstream — tripwire + EngineLease carry it),
+`--staircase all:9 --sf-search-timeout 2 --games 500000 --workers 28
+--seed 20260827 --out-dir data/nnue_bootstrap/run02 --run-id
+nnue_bootstrap_run02`, same book. ETA 3-4 days for ~103M rows; rows shrink
+to roughly half full-staircase size. Derive compatibility checked:
+`scheme_vs_staircase_problems` correctly refuses >d9 schemes against a
+1-phase staircase; d9 schemes read normally. Labels are FULL-WIDTH d9
+per-move values — deeper 16:11/4:13 rungs are given up, declared here as
+the run02 label envelope. First-1M-row checks from the run01 prereg carry
+over (dup <2% non-opening, anomalies at the 0.1% bar, nodes + phase-mix +
+piece-count histograms vs the probes).
