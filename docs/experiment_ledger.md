@@ -70690,3 +70690,25 @@ against the shipped-default arm; otherwise the Phase-1-preferred mapping,
 recorded as weakly held. Gate: F1 deriver fix merged first (partial-corpus
 derivation). Confounds: one data-affecting change per readout; corpus engine
 fixed (2edd935b); Phase-2 budget/steps to be fixed at approval time.
+
+**Phase-1 screen EXECUTED 2026-08-28** (metrics exactly as drafted; kills are
+PENDING approval since the prereg is a draft). n=4000, banked
+`scratchpad/audit_d9_labels/screen_v1.json`; d9 labels + deep labels frozen, so
+any re-analysis is free. massBest / E[regret|covered] / badTail(>80cp):
+qtemp_1.0 (shipped) .0805/1862/.189 — statistically UNIFORM (.0619/2063/.182);
+qtemp_0.3 .1415/1500/.187; qtemp_0.067 (≈Gumbel σ) .3394/1081/.110;
+qtemp_0.02 .4743/792/.075; dcp_50 .3200/465/.124; dcp_100 .2305/551/.170;
+rank_half .3469/971/.167. Under the drafted strict-domination rule the
+SURVIVORS are **qtemp_0.02 and dcp_50** (neither dominates the other:
+qtemp_0.02 wins mass-on-best and bad-tail, dcp_50 wins expected regret);
+everything else, including the shipped default and the Gumbel-σ point, is
+dominated. Two caveats recorded with the numbers: (1) E[regret] means are
+inflated by mate-band effective-cp (±1e5) positions — comparable across
+mappings (same positions) but heavy-tailed; a capped/median re-analysis is a
+free re-read of the banked dump. (2) ⚑ STRUCTURAL: all three screen metrics
+improve monotonically with sharpness whenever d9's ranking correlates with the
+deep ruler, so the screen's implicit endpoint is one-hot d9-argmax — it can
+kill the mush end (it did) but CANNOT find the interior training optimum;
+qtemp_0.02's badTail 0.075 is the known ~7% d9-argmax miss pattern surfacing
+as target mass. The rig ladder is what decides; consider adding a one-hot
+(argmax) arm as the sharp endpoint control at approval time.
