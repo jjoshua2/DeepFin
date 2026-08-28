@@ -27,6 +27,7 @@ import math
 import os
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, cast
@@ -307,6 +308,7 @@ def worker_spec(tmp_path: Path, **overrides: Any) -> corpus.WorkerSpec:
         "book_max_games": 10,
         "run_id": "test",
         "config_sha256": "0" * 64,
+        "resume": False,
     }
     values.update(overrides)
     return corpus.WorkerSpec(**values)
@@ -1292,35 +1294,113 @@ def test_the_engine_table_is_cleared_once_per_game(tmp_path: Path) -> None:
 
 
 def read_shard(path: Path) -> list[dict[str, Any]]:
-    if path.suffix == ".zst":
-        module = corpus.zstandard_module()
-        assert module is not None
-        with open(path, "rb") as raw, module.ZstdDecompressor().stream_reader(
-            raw,
-        ) as stream:
-            text = stream.read().decode("utf-8")
-    else:
-        with gzip.open(path, "rt", encoding="utf-8") as fh:
-            text = fh.read()
-    return [json.loads(line) for line in text.splitlines() if line]
+    """The generator's OWN reader -- a second decoder here is how a codec
+    choice comes to disagree with itself between the writer and the resume."""
+    return list(corpus.iter_shard_rows(path))
 
 
-def test_a_shard_roundtrips_and_rotates_at_shard_rows(tmp_path: Path) -> None:
+def read_progress(out_dir: Path, worker_id: int) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in (out_dir / corpus.progress_name(worker_id)).read_text(
+            encoding="utf-8",
+        ).splitlines()
+        if line.strip()
+    ]
+
+
+def test_a_shard_roundtrips_and_rotates_at_the_next_game_boundary(
+    tmp_path: Path,
+) -> None:
+    """The row bound is a FLOOR crossed at a game boundary, not a hard cap.
+
+    Mutation caught: rotating inside ``write`` on the row count (what this did
+    before ``--resume``).  Game 1 below would then be split across two shards
+    and the second shard would name no games at all -- and a resume, whose only
+    unit is "a game a progress line claims", would have no honest answer for a
+    game that is half in a kept shard and half in a deleted one.
+    """
     writer = corpus.ShardWriter(out_dir=tmp_path, worker_id=3, shard_rows=2)
     rows = [{"schema": corpus.ROW_SCHEMA, "ply": i} for i in range(5)]
-    for row in rows:
+    for row in rows[:1]:
         writer.write(row)
+    writer.end_game(7)                     # 1 row: under the bound, no rotation
+    for row in rows[1:4]:
+        writer.write(row)
+    writer.end_game(8)                     # 4 rows: over the bound, rotates
+    for row in rows[4:]:
+        writer.write(row)
+    writer.end_game(9)
     writer.close()
 
-    assert [shard["rows"] for shard in writer.shards] == [2, 2, 1]
+    assert [shard["rows"] for shard in writer.shards] == [4, 1]
+    assert [shard["games"] for shard in writer.shards] == [[7, 8], [9]]
     assert [Path(shard["path"]).name for shard in writer.shards] == [
-        f"w03-{i:05d}{writer.suffix}" for i in range(3)
+        f"w03-{i:05d}{writer.suffix}" for i in range(2)
     ]
     read_back = [
         row for shard in writer.shards for row in read_shard(Path(shard["path"]))
     ]
     assert read_back == rows
     assert all(row["schema"] == corpus.ROW_SCHEMA for row in read_back)
+    assert read_progress(tmp_path, 3) == writer.shards
+
+
+def test_a_shard_holding_a_game_that_never_ended_is_left_unlisted(
+    tmp_path: Path,
+) -> None:
+    """The worker died between banking a game's rows and ending it.
+
+    Mutation caught: listing it anyway.  The inventory then names a shard whose
+    ``games`` list does not mention the half game inside it, so the next resume
+    replays that game and banks its head A SECOND TIME -- the one thing the
+    protocol promises cannot happen.  Leaving the file unlisted costs the
+    replay of every game it held and cannot duplicate a row.
+    """
+    writer = corpus.ShardWriter(out_dir=tmp_path, worker_id=0, shard_rows=100)
+    writer.write({"schema": corpus.ROW_SCHEMA, "ply": 0})
+    writer.end_game(0)
+    writer.write({"schema": corpus.ROW_SCHEMA, "ply": 1})  # game 1 -- never ends
+    writer.close()
+
+    assert writer.shards == [], "nothing half-owned reaches the inventory"
+    assert [Path(s["path"]).name for s in writer.abandoned] == [
+        writer.path_for(0).name,
+    ]
+    assert writer.abandoned[0]["uncommitted_rows"] == 1
+    assert not (tmp_path / corpus.progress_name(0)).exists()
+    assert writer.path_for(0).exists(), "the file is there for the resume to eat"
+
+    state = corpus.resume_worker_state(
+        out_dir=tmp_path, worker_id=0, cache=corpus.DedupCache(max_entries=4),
+    )
+
+    assert state.completed_games == frozenset()
+    assert state.deleted_partials == (writer.path_for(0).name,)
+    assert not writer.path_for(0).exists()
+
+
+def test_a_shard_index_continues_from_where_a_resume_says_it_should(
+    tmp_path: Path,
+) -> None:
+    """``first_index`` is a resume's promise not to overwrite a banked shard.
+
+    Mutation caught: ignoring it and restarting the counter at 0 -- the first
+    shard the resumed worker writes then collides with the killed session's
+    ``w00-00000`` on ``open("x")``, which is a crash on day 14 rather than a
+    corruption, but only because the leaf banks refuse to overwrite.
+    """
+    writer = corpus.ShardWriter(
+        out_dir=tmp_path, worker_id=0, shard_rows=1, first_index=4,
+    )
+    assert writer.first_index == 4
+    writer.write({"schema": corpus.ROW_SCHEMA})
+    writer.end_game(0)
+    assert Path(writer.shards[0]["path"]).name == f"w00-00004{writer.suffix}"
+    with pytest.raises(ValueError, match="first_index must be >= 0"):
+        corpus.ShardWriter(
+            out_dir=tmp_path, worker_id=0, shard_rows=1, first_index=-1,
+        )
 
 
 def test_the_writer_falls_back_to_gzip_without_zstandard(
@@ -1329,6 +1409,7 @@ def test_the_writer_falls_back_to_gzip_without_zstandard(
     monkeypatch.setattr(corpus, "zstandard_module", lambda: None)
     writer = corpus.ShardWriter(out_dir=tmp_path, worker_id=0, shard_rows=10)
     writer.write({"schema": corpus.ROW_SCHEMA})
+    writer.end_game(0)
     writer.close()
 
     assert writer.codec == "gzip"
@@ -1614,7 +1695,12 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                           "log2_buckets": {"3": 8}},
                 },
             },
-            "shards": [{"path": "a", "rows": 5, "codec": "zstd"}],
+            "shards": [{"path": "a", "rows": 5, "codec": "zstd", "games": [0, 2]}],
+            "shards_prior": [], "shards_abandoned": [], "games_completed_prior": 0,
+            "dedup_rewarmed": 0, "dedup_rewarmed_resident": 0, "resumed": False,
+            "resume_partials_deleted": [], "resume_progress_torn_tail": False,
+            "resume_progress_repair": corpus.PROGRESS_ABSENT,
+            "resume_legacy_progress_lines": 0,
             "realized": {"sf_hash_mb": 64},
         },
         {
@@ -1642,7 +1728,23 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                           "log2_buckets": {"3": 3, "4": 1}},
                 },
             },
-            "shards": [{"path": "b", "rows": 3, "codec": "zstd"}],
+            "shards": [{"path": "b", "rows": 3, "codec": "zstd", "games": [1]}],
+            # ⚑ A RESUMED worker: its prior shard's rows and games are part of
+            # the corpus and must reach the merged totals, or `summary.json`
+            # would be a complete-looking document indexing half a corpus.
+            "shards_prior": [
+                {"path": "b-prior", "rows": 4, "codec": "zstd", "games": [3, 5]},
+            ],
+            "shards_abandoned": [
+                {"path": "b-lost", "rows": 2, "codec": "zstd", "games": [],
+                 "uncommitted_rows": 2},
+            ],
+            "games_completed_prior": 2,
+            "dedup_rewarmed": 4, "dedup_rewarmed_resident": 4, "resumed": True,
+            "resume_partials_deleted": ["w01-00001.jsonl.zst"],
+            "resume_progress_torn_tail": True,
+            "resume_progress_repair": corpus.PROGRESS_TRUNCATED,
+            "resume_legacy_progress_lines": 1,
             "realized": {"sf_hash_mb": 64},
         },
     ]
@@ -1657,8 +1759,29 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
         wall_s=6.0,
     )
 
-    assert summary["rows"] == 8
-    assert summary["games"] == 3
+    # ⚑ CORPUS totals: this session's 8 rows / 3 games PLUS worker 1's adopted
+    # 4 rows / 2 games. The session-scoped numbers keep their own names.
+    assert summary["rows"] == 12
+    assert summary["games"] == 5
+    assert summary["rows_this_session"] == 8
+    assert summary["games_this_session"] == 3
+    assert summary["rows_prior"] == 4
+    assert summary["games_completed_prior"] == 2
+    assert summary["games_completed_prior_by_worker"] == {"0": 0, "1": 2}
+    assert summary["resumed"] is True
+    assert summary["dedup_rewarmed"] == 4
+    assert summary["dedup_rewarmed_resident_by_worker"] == {"0": 0, "1": 4}
+    assert summary["resume_partials_deleted"] == {"1": ["w01-00001.jsonl.zst"]}
+    assert summary["resume_progress_torn_tail_workers"] == [1]
+    assert summary["resume_progress_repaired"] == {"1": corpus.PROGRESS_TRUNCATED}
+    assert summary["resume_legacy_progress_lines"] == 1
+    # ⚑ Rows this run wrote and then dropped, because their shard also held a
+    # game that never ended. Reported, never absorbed into the row count.
+    assert list(summary["shards_abandoned"]) == ["1"]
+    # Wall clock is this session's, so the rate it divides must be too.
+    assert summary["s_per_row"] == pytest.approx(6.0 / 8)
+    # Prior first, then this session's: the order they were banked in.
+    assert [shard["path"] for shard in summary["shards"]] == ["a", "b-prior", "b"]
     assert summary["terminations"] == {"natural": 2, "syzygy": 1}
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
@@ -2175,6 +2298,830 @@ def test_a_worker_whose_process_dies_still_gets_a_mergeable_slot(
         "unavailable_worker_process_died": True,
     }
     assert json.loads(json.dumps(summary, default=corpus._json_default))
+
+
+# ── kill and resume ──────────────────────────────────────────────────────────
+
+
+def opening_fens() -> tuple[str, ...]:
+    """Eight distinct 32-man openings, one per scripted first move.
+
+    Built by PUSHING the move rather than by spelling the FEN out, so the
+    en-passant and clock fields are whatever ``python-chess`` writes and the
+    seed list cannot be rejected for a hand-typed field.  Distinct starts are
+    what make a multi-game resume test mean anything: replaying one opening
+    every game would have every game after the first dedup-served, and "the
+    resumed run banked the same rows" would then be true of a run that banked
+    nothing at all.
+    """
+    fens: list[str] = []
+    for uci in (
+        "e2e4", "d2d4", "c2c4", "g1f3", "b1c3", "g2g3", "b2b3", "f2f4",
+    ):
+        board = chess.Board()
+        board.push(chess.Move.from_uci(uci))
+        fens.append(board.fen())
+    return tuple(fens)
+
+
+#: A two-rung staircase: these tests are about the shard/progress protocol, and
+#: the production three-rung scout would spend their whole runtime in the fake.
+RESUME_STAIRCASE = "all:2,4:3"
+
+
+def fen_list_opening(fens: Sequence[str], path: Path) -> OpeningConfig:
+    """A multi-position seed list, through the PRODUCTION sampler.
+
+    ⚑ ``_load_fen_list`` is ``lru_cache``d BY PATH, so every distinct list needs
+    a distinct file name; a test that reused one would silently draw from
+    another test's openings.
+    """
+    path.write_text("\n".join(fens) + "\n", encoding="utf-8")
+    return OpeningConfig(
+        opening_fen_list_path=str(path), opening_fen_prob=1.0,
+    )
+
+
+def scripted_worker(
+    out_dir: Path, *, monkeypatch: pytest.MonkeyPatch, opening: OpeningConfig,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """``run_worker`` end to end against a fresh scripted engine per spawn."""
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(ScriptedEngine()),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+    values: dict[str, Any] = {
+        "staircase": RESUME_STAIRCASE, "max_plies": 8, "shard_rows": 12,
+    }
+    values.update(overrides)
+    return corpus.run_worker(worker_spec(out_dir, **values))
+
+
+def next_shard_index(result: dict[str, Any]) -> int:
+    """Where the killed session's in-flight shard would have been.
+
+    ⚑ Read off the shard names the session actually closed, through the
+    module's own parser -- NOT by counting progress lines.  A path-less
+    completion record is a line that is not a shard, so the two counts differ,
+    and a fixture that simulates a kill has to name the file the kill would
+    really have caught.
+    """
+    return max(
+        corpus.shard_index_of(Path(shard["path"]).name) or 0
+        for shard in result["shards"]
+    ) + 1
+
+
+def rows_by_game(shards: Sequence[dict[str, Any]]) -> dict[int, list[Any]]:
+    out: dict[int, list[Any]] = {}
+    for shard in shards:
+        for row in read_shard(Path(shard["path"])):
+            out.setdefault(int(row["game_id"]), []).append(row)
+    return out
+
+
+def test_every_closed_shard_holds_only_whole_games(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rotation invariant the whole resume protocol rests on.
+
+    Mutation caught: putting the rotation back in ``ShardWriter.write`` (the
+    row-count rotation this file shipped before ``--resume``).  A game's rows
+    then straddle a shard boundary, so ``a game appears in exactly one shard``
+    below fails -- and with it the resume's only unit of work.  The mutant also
+    closes shards with an EMPTY games list, which the first assert catches.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_list_opening(opening_fens(), tmp_path / "t1.txt")
+
+    result = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2, 3), shard_rows=12,
+    )
+
+    assert result["failed"] is None
+    assert len(result["shards"]) >= 2, "the row bound must have rotated"
+    assert read_progress(out_dir, 0) == result["shards"]
+    owner: dict[int, str] = {}
+    for shard in result["shards"]:
+        rows = read_shard(Path(shard["path"]))
+        assert shard["games"], "a closed shard names the games it holds"
+        assert shard["games"] == sorted(shard["games"])
+        assert shard["rows"] == len(rows)
+        for game_id in {int(row["game_id"]) for row in rows}:
+            assert game_id not in owner, (
+                f"game {game_id} is split across {owner.get(game_id)} and "
+                f"{shard['path']}: a shard rotated mid-game"
+            )
+            owner[game_id] = shard["path"]
+            assert game_id in shard["games"]
+    # Every shard but the last crossed the bound; the last one is the tail.
+    assert all(shard["rows"] >= 12 for shard in result["shards"][:-1])
+    assert sum(shard["rows"] for shard in result["shards"]) == result["rows"]
+    # The four openings really are four different games -- see `opening_fens`.
+    banked = rows_by_game(result["shards"])
+    assert set(banked) == {0, 1, 2, 3}
+    keys = [row["dedup_key"] for rows in banked.values() for row in rows]
+    assert len(set(keys)) == len(keys), "the games visited disjoint positions"
+
+
+def test_a_killed_run_resumes_without_replaying_or_losing_a_game(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``kill -9``, then ``--resume``: the corpus a single run would have made.
+
+    The kill is simulated exactly as ``SIGKILL`` leaves a worker: a shard file
+    the progress file does not list (the one being written when the signal
+    landed) and a torn final progress line (the append that was in flight).
+
+    Mutation caught (a): NOT deleting the unlisted partial.  Its rows are then
+    a half-game nothing indexes, the resumed worker's ``open("x")`` collides
+    with it, and the run dies on its first shard.
+    Mutation caught (b): keying completion off banked rows instead of the
+    progress line -- games get replayed and the corpus gains duplicates.
+    """
+    opening = fen_list_opening(opening_fens(), tmp_path / "t2.txt")
+    every_game = (0, 1, 2, 3)
+
+    # The corpus an UNINTERRUPTED run produces, for the determinism compare.
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    reference = scripted_worker(
+        reference_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game,
+    )
+
+    # Session 1 dies after games 0 and 1.
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    first = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
+    )
+    assert first["shards"], "session 1 must have closed at least one shard"
+    killed_index = next_shard_index(first)
+    partial = out_dir / f"w00-{killed_index:05d}.jsonl.zst"
+    partial.write_bytes(b'{"schema": 1, "game_id": 2, "ply": 0')
+    with open(out_dir / corpus.progress_name(0), "a", encoding="utf-8") as fh:
+        fh.write('{"path": "w00-00009.jsonl.zst", "rows": 3, "co')
+
+    second = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game, resume=True,
+    )
+
+    assert second["failed"] is None
+    assert second["resume_progress_torn_tail"] is True
+    assert second["resume_partials_deleted"] == [partial.name]
+    # The resumed worker continues INTO that index, so "the junk is gone" is
+    # proved by the file now reading as rows (the row compare below) rather
+    # than by its absence -- and if the delete were skipped, `open("x")` would
+    # refuse it and `failed` above would not be None.
+    assert Path(second["shards"][0]["path"]).name == partial.name
+    assert second["games_completed_prior"] == 2
+    assert second["games"] == 2, "only the two unplayed games were played"
+    assert second["realized"]["shard_index_start"] == killed_index
+    assert second["resumed"] is True
+
+    banked = rows_by_game([*second["shards_prior"], *second["shards"]])
+    expected = rows_by_game(reference["shards"])
+    assert set(banked) == set(expected) == set(every_game)
+    for game_id in every_game:
+        assert banked[game_id] == expected[game_id], (
+            f"game {game_id} differs from the uninterrupted run"
+        )
+    plied = [(row["game_id"], row["ply"]) for rows in banked.values() for row in rows]
+    assert len(set(plied)) == len(plied), "a row was banked twice"
+    assert second["rows"] + first["rows"] == reference["rows"]
+
+
+def tear_progress_tail(out_dir: Path, worker_id: int, fragment: str) -> None:
+    """What ``kill -9`` leaves mid-append: a line with no newline after it."""
+    with open(out_dir / corpus.progress_name(worker_id), "a",
+              encoding="utf-8") as fh:
+        fh.write(fragment)
+
+
+def test_two_kills_in_a_row_still_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ REPEATED ``kill -9`` IS THIS FEATURE'S CONTRACT, not a corner.
+
+    Tolerating a torn tail on READ while leaving the bytes on DISK is not a
+    resume: ``_append_progress`` opens ``"a"``, so session 2's first record
+    lands on the end of session 1's fragment and the two become one line that
+    is neither.  That line is then MID-FILE, so session 3 hits the "damaged
+    some other way" refusal -- and the record swallowed inside it was a closed
+    shard, so session 2's games are unknown as well.  One kill worked; two
+    bricked the worker.
+
+    Mutation caught: disabling ``repair_worker_progress`` (returning
+    ``PROGRESS_INTACT`` without touching the file).  Session 3 then raises
+    instead of adopting session 2's shard.
+    """
+    opening = fen_list_opening(opening_fens(), tmp_path / "t5.txt")
+    every_game = (0, 1, 2, 3)
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    reference = scripted_worker(
+        reference_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game,
+    )
+
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    first = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
+    )
+    assert first["shards"], "session 1 closed a shard before the first kill"
+    partial_one = out_dir / f"w00-{next_shard_index(first):05d}.jsonl.zst"
+    partial_one.write_bytes(b'{"schema": 1, "game_id": 2, "ply": 0')
+    tear_progress_tail(out_dir, 0, '{"path": "w00-00009.jsonl.zst", "rows": 3, "co')
+
+    second = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2), resume=True,
+    )
+
+    assert second["failed"] is None
+    assert second["games"] == 1, "session 2 played only game 2"
+    assert second["shards"], "session 2 closed a shard the third must adopt"
+
+    # ... and the SECOND kill, in the same place.
+    partial_two = out_dir / f"w00-{next_shard_index(second):05d}.jsonl.zst"
+    partial_two.write_bytes(b'{"schema": 1, "game_id": 3')
+    tear_progress_tail(out_dir, 0, '{"path": "w00-00009.jsonl.zst", "rows"')
+
+    third = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game, resume=True,
+    )
+
+    assert third["failed"] is None
+    # ⚑ THE CLAIM: session 2's shard survived session 3's read. Without the
+    # repair, session 3 does not get this far -- its pre-flight refuses the
+    # corrupt mid-file line that session 2's append created.
+    assert third["games_completed_prior"] == 3
+    assert third["games"] == 1, "only game 3 was left"
+    assert third["resume_partials_deleted"] == [partial_two.name]
+
+    banked = rows_by_game([*third["shards_prior"], *third["shards"]])
+    expected = rows_by_game(reference["shards"])
+    assert set(banked) == set(expected) == set(every_game)
+    for game_id in every_game:
+        assert banked[game_id] == expected[game_id], (
+            f"game {game_id} differs from the uninterrupted run after two kills"
+        )
+    plied = [(row["game_id"], row["ply"]) for rows in banked.values() for row in rows]
+    assert len(set(plied)) == len(plied), "a row was banked twice"
+    # The file the three sessions shared is still a clean append-only log.
+    assert all(
+        set(line) >= {"path", "rows", "codec", "games"}
+        for line in read_progress(out_dir, 0)
+    )
+    # ... and both resumes said what they repaired.
+    assert second["resume_progress_repair"] == corpus.PROGRESS_TRUNCATED
+    assert second["resume_progress_torn_tail"] is True
+    assert third["resume_progress_repair"] == corpus.PROGRESS_TRUNCATED
+
+
+def test_a_kill_that_steals_only_the_newline_keeps_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The variant with no torn record at all -- and it is the worse one.
+
+    A kill can land after a whole progress line and before its newline.  The
+    reader ACCEPTS that record, correctly: it is complete.  Then the next
+    append concatenates onto it and destroys it, so a record that was accepted
+    -- naming a closed shard and its games -- is gone, and the games it owned
+    would be replayed on top of rows the corpus already holds.
+
+    Mutation caught: repairing only the unparseable case (truncate-only, no
+    newline restore).  ``games_completed_prior`` below then drops to 0 in
+    session 2 -- the whole first shard is forgotten and both its games replay.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_list_opening(opening_fens(), tmp_path / "t6.txt")
+    first = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
+    )
+    assert len(first["shards"]) == 1
+
+    path = out_dir / corpus.progress_name(0)
+    text = path.read_text(encoding="utf-8")
+    assert text.endswith("\n")
+    path.write_text(text[:-1], encoding="utf-8")  # the kill stole the newline
+
+    second = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2), resume=True,
+    )
+
+    assert second["games_completed_prior"] == 2, "the accepted record survived"
+    assert second["games"] == 1
+
+    # ⚑ The proof that it survived the APPEND, not just the read: a third
+    # session reads the same file after session 2 wrote to it.
+    third = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2, 3), resume=True,
+    )
+
+    assert third["games_completed_prior"] == 3
+    assert third["games"] == 1
+    assert second["resume_progress_repair"] == corpus.PROGRESS_NEWLINE_RESTORED
+    # Nothing was LOST -- the record was whole, only its terminator was gone.
+    assert second["resume_progress_torn_tail"] is False
+    assert third["resume_progress_repair"] == corpus.PROGRESS_INTACT
+
+
+def test_the_tail_repair_is_idempotent_and_leaves_whole_lines_alone(
+    tmp_path: Path,
+) -> None:
+    """The repair's own contract, on each of its four inputs.
+
+    Idempotence is what makes it safe to be killed inside: a second call must
+    be a no-op, so a kill mid-repair leaves either the old state (repaired next
+    time) or the repaired one, never a third thing.
+    """
+    path = tmp_path / corpus.progress_name(0)
+    whole = json.dumps(
+        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+        sort_keys=True,
+    )
+
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_ABSENT
+
+    path.write_text(whole + "\n", encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+
+    path.write_text(whole, encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_NEWLINE_RESTORED
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+
+    path.write_text(whole + "\n" + '{"path": "w00-000', encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_TRUNCATED
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+
+    # A fragment that is valid JSON but not a whole RECORD is still a fragment:
+    # a truncated line can parse and still be missing the keys that make it
+    # mean something.
+    path.write_text('{"path": "w00-00000.jsonl.zst", "rows": 3}', encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_TRUNCATED
+    assert path.read_text(encoding="utf-8") == ""
+
+
+def test_a_resumed_worker_re_warms_its_dedup_cache_from_its_own_shards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Take-effect, not a counter: the re-warmed positions are OBSERVED to
+    suppress the searches they would have suppressed in one long run.
+
+    Every game here opens on the SAME position, so game 1 replays game 0 move
+    for move.  In an uninterrupted run every one of its plies is cache-served
+    and it banks nothing.  A resume that started cold would re-search and
+    RE-BANK all of them -- so ``rows == 0`` and ``positions_searched == 0``
+    are the observation, and ``dedup_rewarmed`` is only its label.
+
+    Mutation caught: dropping the re-warm (or handing it a cache the game loop
+    never sees -- then ``dedup_rewarmed`` still reads 2 while
+    ``dedup_rewarmed_resident`` reads 0).
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+
+    first = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    assert first["rows"] == 2
+
+    second = corpus.run_worker(
+        worker_spec(out_dir, game_ids=(0, 1), resume=True),
+    )
+
+    assert second["dedup_rewarmed"] == first["rows"]
+    assert second["dedup_rewarmed_resident"] == first["rows"]
+    assert second["games"] == 1, "game 0 was already banked"
+    assert second["rows"] == 0, "every position came back from the re-warm"
+    assert second["dedup"]["dup_hits"] == 2
+    assert second["search"]["positions_searched"] == 0
+
+
+def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
+    tmp_path: Path,
+) -> None:
+    """The re-warm has to rebuild the CACHED object, not something like it.
+
+    Selection is ``argmax(q/tau + gumbel)`` over ``effective_cp``, so a value
+    vector that differs in one float -- a rank order, a float64 round trip, the
+    wrong depth's block -- moves the played move, and the resumed corpus stops
+    being the corpus an uninterrupted run would have written.  Nothing else
+    would report that: the rows would still be well formed.
+
+    Mutation caught: reading the DEEPEST phase's block instead of phase 0's at
+    ``selection.value_depth`` (the narrowed rung has 4 of the 20 moves).
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    spec = worker_spec(tmp_path)
+    searcher = searcher_for(engine)
+    cache = corpus.DedupCache(max_entries=spec.dedup_cache_max)
+    outcome = corpus.play_game(
+        spec=spec, searcher=searcher, opening_cfg=fen_opening(MATE_GAME_FEN, tmp_path),
+        game_id=0, cache=cache, dedup=corpus.DedupStats(),
+        progress=corpus.WorkerProgress(),
+    )
+
+    assert outcome.rows
+    for row in outcome.rows:
+        live = cache.get(row["dedup_key"])
+        assert live is not None
+        rebuilt = corpus.selection_values_from_row(row)
+        assert rebuilt.moves == live.moves
+        assert np.array_equal(rebuilt.effective_cp, live.effective_cp)
+        assert rebuilt.effective_cp.dtype == live.effective_cp.dtype
+        # The number selection actually reads, not just the bytes behind it.
+        assert np.array_equal(searcher.q_of(rebuilt), searcher.q_of(live))
+
+
+def test_a_game_that_banked_no_rows_is_still_never_replayed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed game with zero rows survives the kill as a path-less record.
+
+    Mutation caught: dropping ``close()``'s null-path flush (or only recording
+    games on a shard that has rows).  Game 1 banks nothing because every one of
+    its positions is dedup-served, so a resume with no completion record for it
+    replays it -- forever, every session, and each replay re-runs the searches.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+
+    corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    second = corpus.run_worker(worker_spec(out_dir, game_ids=(0, 1), resume=True))
+    assert second["rows"] == 0, "the fixture's point: game 1 banks nothing"
+
+    third = corpus.run_worker(
+        worker_spec(out_dir, game_ids=(0, 1, 2), resume=True),
+    )
+
+    assert third["games_completed_prior"] == 2
+    assert third["games"] == 1, "the row-less game 1 was not replayed"
+    assert third["search"]["positions_searched"] == 0
+    # ... and the records that carried it: one per row-less game, path-less
+    # because there is no file to index.
+    assert [
+        line for line in read_progress(out_dir, 0) if line["path"] is None
+    ] == [
+        {"path": None, "rows": 0, "codec": second["codec"], "games": [1]},
+        {"path": None, "rows": 0, "codec": third["codec"], "games": [2]},
+    ]
+
+
+def test_a_progress_file_written_before_end_game_is_adopted_by_reading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LEGACY ADOPTION: lines with no ``games`` list, and a mid-game shard cut.
+
+    The production burn opened before game-boundary rotation existed, so its
+    progress lines are ``{path, rows, codec}`` and its shards rotate on the row
+    bound -- the last game in a closed shard may hold only part of its plies.
+    Those game ids are DERIVED by reading the shard, truncation included: a
+    shard is immutable, and replaying the game to heal its tail would duplicate
+    every row already banked.
+
+    Mutation caught: treating a line with no ``games`` as claiming no games.
+    Every game in the adopted shard is then replayed and the corpus doubles.
+    """
+    opening = fen_list_opening(opening_fens(), tmp_path / "t3.txt")
+    every_game = (0, 1, 2, 3)
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    reference = scripted_worker(
+        reference_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game, shard_rows=10**6,
+    )
+    banked = rows_by_game(reference["shards"])
+    assert {0, 1, 2, 3} <= set(banked)
+    # ... a shard that ends HALF WAY THROUGH game 2, which is what a row-bound
+    # rotation does and what game-boundary rotation exists to stop.
+    head = len(banked[2]) // 2
+    assert head >= 1
+    kept = [*banked[0], *banked[1], *banked[2][:head]]
+
+    out_dir = tmp_path / "legacy"
+    out_dir.mkdir()
+    writer = corpus.ShardWriter(out_dir=out_dir, worker_id=0, shard_rows=10**6)
+    for row in kept:
+        writer.write(row)
+    # The pre-`end_game` writer had no notion of a game boundary; ending them
+    # here only keeps the FILE from being abandoned, and the progress line it
+    # produces is thrown away for the legacy one below.
+    for game_id in (0, 1, 2):
+        writer.end_game(game_id)
+    writer.close()
+    legacy = {k: v for k, v in writer.shards[0].items() if k != "games"}
+    (out_dir / corpus.progress_name(0)).write_text(
+        json.dumps(legacy, sort_keys=True) + "\n", encoding="utf-8",
+    )
+    partial = out_dir / f"w00-00001{writer.suffix}"
+    partial.write_bytes(b'{"schema": 1, "game_id": 3')
+
+    result = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game, resume=True, shard_rows=10**6,
+    )
+
+    # The substantive claims first, so a mutant fails on the CORPUS rather
+    # than on the bookkeeping key that happens to be declared above it.
+    assert result["failed"] is None
+    assert result["games_completed_prior"] == 3, "0, 1 and the truncated 2"
+    assert result["games"] == 1, "only game 3 was left to play"
+    assert result["shards_prior"][0]["games"] == [0, 1, 2]
+    assert result["shards_prior"][0]["games_derived"] is True
+    assert result["resume_legacy_progress_lines"] == 1
+    assert result["resume_partials_deleted"] == [partial.name]
+
+    adopted = rows_by_game([*result["shards_prior"], *result["shards"]])
+    assert adopted[0] == banked[0]
+    assert adopted[1] == banked[1]
+    # The truncation is ACCEPTED, not healed and not replayed.
+    assert adopted[2] == banked[2][:head]
+    assert adopted[3], "the unplayed game really did generate"
+    plied = [(row["game_id"], row["ply"]) for rows in adopted.values() for row in rows]
+    assert len(set(plied)) == len(plied), "a row was banked twice"
+
+
+def test_a_torn_progress_line_anywhere_but_the_tail_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A kill can only tear the LAST line, and only short of its newline.
+
+    Mutation caught: skipping every unparseable line.  Damage in the middle
+    then silently drops every shard listed BELOW it, so their games are
+    replayed and the corpus gains duplicates -- the failure mode the tolerance
+    exists to avoid, reintroduced by widening the tolerance.  The second case
+    is the same widening one notch smaller: a garbled LAST line that ends in a
+    newline was written whole and is not a torn tail.
+    """
+    path = tmp_path / corpus.progress_name(0)
+    good = json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1]})
+    path.write_text(
+        '{"path": "w00-000' + "\n" + good + "\n", encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="not the torn tail"):
+        corpus.read_worker_progress(path)
+
+    path.write_text(good + "\n" + '{"path": "w00-000' + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="this file ends in one"):
+        corpus.read_worker_progress(path)
+
+    path.write_text(good + "\n" + '{"path": "w00-000', encoding="utf-8")
+    records, torn = corpus.read_worker_progress(path)
+    assert torn is True
+    assert [record["games"] for record in records] == [[1]]
+
+    path.write_text(json.dumps({"path": "a", "rows": 1}) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"missing \['codec'\]"):
+        corpus.read_worker_progress(path)
+
+
+def test_a_listed_shard_that_is_gone_refuses_the_resume(tmp_path: Path) -> None:
+    """Its games would be marked complete against rows that no longer exist."""
+    (tmp_path / corpus.progress_name(0)).write_text(
+        json.dumps({
+            "path": str(tmp_path / "w00-00000.jsonl.zst"), "rows": 3,
+            "codec": "zstd", "games": [0],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="is not in"):
+        corpus.resume_worker_state(
+            out_dir=tmp_path, worker_id=0,
+            cache=corpus.DedupCache(max_entries=10),
+        )
+
+
+def test_a_listed_shard_that_is_truncated_is_refused_by_name(
+    tmp_path: Path,
+) -> None:
+    """A shard a progress line LISTS is claimed complete.
+
+    MEASURED on a copy of a live production shard: a truncated one
+    decompresses cleanly up to a partial final line, and the bare
+    ``JSONDecodeError`` that follows names neither the file nor the corpus.
+    Mutation caught: letting that exception out unwrapped -- a day-13 operator
+    then reads ``Expecting property name ... char 4347``.
+    """
+    whole = {
+        "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "dedup_key": "k",
+        "selection": {"value_depth": 1, "value_width": 1},
+        "phases": [{"per_depth": [{"depth": 1, "lines": [[1, "e2e4", 0.0, 9]]}]}],
+    }
+    shard = tmp_path / "w00-00000.jsonl.gz"
+    with gzip.open(shard, "wt", encoding="utf-8") as fh:
+        fh.write(json.dumps(whole, sort_keys=True) + "\n")
+        fh.write('{"schema": 1, "game_id": 0, "dedup')
+    (tmp_path / corpus.progress_name(0)).write_text(
+        json.dumps({
+            "path": str(shard), "rows": 2, "codec": "gzip", "games": [0],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"w00-00000\.jsonl\.gz line 2"):
+        corpus.resume_worker_state(
+            out_dir=tmp_path, worker_id=0,
+            cache=corpus.DedupCache(max_entries=10),
+        )
+
+
+def test_a_resume_whose_game_deal_disagrees_with_the_progress_file_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A worker cannot adopt games this run never dealt it.
+
+    ``--workers`` is compared against the manifest, so re-dealing is refused
+    one level up -- this is the belt: a progress file that claims game 7 while
+    this worker owns {0, 1} would leave game 7 unplayed by ANY worker, and the
+    run would report a complete corpus that is missing a game.
+    """
+    (tmp_path / corpus.progress_name(0)).write_text(
+        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7]}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="did not deal it"):
+        corpus.run_worker(worker_spec(tmp_path, game_ids=(0, 1), resume=True))
+
+
+def test_a_resume_that_changes_a_generation_setting_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate that makes ``--resume`` safe, end to end through ``run``.
+
+    Mutation caught: dropping the field-by-field comparison against the
+    manifest.  A resume with a different ``--temp-high`` then appends rows
+    sampled at another temperature to a corpus whose stamp says otherwise --
+    two configurations under one ``config_sha256``, and nothing downstream can
+    tell which rows are which.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "run"
+    argv = [
+        "--out-dir", str(out_dir), "--games", "1", "--workers", "1",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+    ]
+    corpus.run(corpus.build_parser().parse_args(argv))
+
+    # A run that WROTE ITS SUMMARY finished; there is nothing to resume.
+    with pytest.raises(ValueError, match="Nothing to resume"):
+        corpus.run(corpus.build_parser().parse_args([*argv, "--resume"]))
+    (out_dir / corpus.SUMMARY_NAME).unlink()  # ... now it looks killed.
+
+    with pytest.raises(ValueError, match=r"temp_high: 0\.01 -> 0\.5"):
+        corpus.run(corpus.build_parser().parse_args(
+            [*argv[:argv.index("--temp-high") + 1], "0.5",
+             *argv[argv.index("--temp-high") + 2:], "--resume"],
+        ))
+    # ... and a plain rerun is still refused, --resume or not.
+    with pytest.raises(FileExistsError, match="already holds files"):
+        corpus.run(corpus.build_parser().parse_args(argv))
+
+    (out_dir / corpus.MANIFEST_NAME).unlink()
+    with pytest.raises(ValueError, match="no run in this directory"):
+        corpus.run(corpus.build_parser().parse_args([*argv, "--resume"]))
+
+
+def test_a_manifest_that_does_not_hash_its_own_config_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The integrity half: every later comparison trusts this dict."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / corpus.MANIFEST_NAME).write_text(
+        json.dumps({
+            "config_requested": {"games": 4}, "config_sha256": "0" * 64,
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="inconsistent with itself"):
+        corpus.load_resume_manifest(out_dir)
+
+
+def test_the_resume_gate_compares_the_manifests_own_keys_not_a_fresh_sha(
+    tmp_path: Path,
+) -> None:
+    """⚑ Why this is a field compare and not ``sha == sha``.
+
+    A stamp recomputed by TODAY's code and hashed against a manifest written
+    by a build that predates a stamp key refuses every legacy resume -- a run
+    that has burned for days becomes unresumable for a reason that has nothing
+    to do with its configuration.  So a key the manifest does not carry is not
+    a claim anyone made, a key it does carry is compared exactly, and
+    ``out_dir`` is compared RESOLVED because a corpus is its files.
+
+    Mutation caught: comparing ``stamp_sha256(requested)`` to
+    ``manifest["config_sha256"]`` -- the first assert below then raises.
+    """
+    manifest = {
+        "config_requested": {"games": 4, "seed": 7, "out_dir": str(tmp_path)},
+        "config_sha256": "unused-by-this-function",
+    }
+    requested = {
+        "games": 4, "seed": 7, "out_dir": f"{tmp_path}/../{tmp_path.name}",
+        # A key the manifest predates: not a claim it ever made.
+        "sf_search_timeout_s": 8.0,
+    }
+    corpus.refuse_resume_config_drift(manifest, requested=requested)
+
+    with pytest.raises(ValueError, match="seed: 7 -> 9"):
+        corpus.refuse_resume_config_drift(
+            manifest, requested={**requested, "seed": 9},
+        )
+    with pytest.raises(ValueError, match="out_dir"):
+        corpus.refuse_resume_config_drift(
+            manifest, requested={**requested, "out_dir": str(tmp_path / "other")},
+        )
+    with pytest.raises(ValueError, match="does not stamp it"):
+        corpus.refuse_resume_config_drift(
+            manifest, requested={"games": 4, "out_dir": str(tmp_path)},
+        )
+
+
+def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``summary.json`` after a resume must inventory BOTH sessions.
+
+    Mutation caught: leaving ``shards``/``rows``/``games`` session-scoped.  The
+    summary then reads like a complete record of a corpus twice its size, and
+    a consumer that iterates ``summary["shards"]`` silently trains on half of
+    it.  The rows carry the ORIGINAL stamp too -- one corpus, one
+    ``config_sha256``.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=CAPTURE_CHAIN_SCRIPT)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(CAPTURE_CHAIN_FEN, tmp_path),
+    )
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", InlineExecutor)
+    out_dir = tmp_path / "run"
+    argv = [
+        "--out-dir", str(out_dir), "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+        "--max-plies", "1", "--staircase", RESUME_STAIRCASE,
+    ]
+    first = corpus.run(corpus.build_parser().parse_args([*argv, "--games", "2"]))
+    assert first["resumed"] is False
+    assert first["games"] == 2
+    (out_dir / corpus.SUMMARY_NAME).unlink()  # the kill
+
+    second = corpus.run(
+        corpus.build_parser().parse_args([*argv, "--games", "2", "--resume"]),
+    )
+
+    assert second["resumed"] is True
+    assert second["games_this_session"] == 0, "both games were already banked"
+    assert second["games"] == 2, "the corpus still holds two games"
+    assert second["rows"] == first["rows"]
+    assert second["games_completed_prior_by_worker"] == {"0": 1, "1": 1}
+    assert [shard["path"] for shard in second["shards"]] == [
+        shard["path"] for shard in first["shards"]
+    ]
+    assert second["config_sha256"] == first["config_sha256"]
+    rows = [
+        row for shard in second["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+    assert rows
+    assert all(
+        row["run"]["config_sha256"] == first["config_sha256"] for row in rows
+    )
+    assert "RESUMED:" in corpus.format_summary(second)
 
 
 # ── the real engine ──────────────────────────────────────────────────────────
