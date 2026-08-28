@@ -70726,6 +70726,12 @@ mappings are then scored by distance to the T80 targets (KL, top-1 agreement,
 entropy/decay shape), with BT4-vs-T80 on the SAME rows as the calibration bar
 for "how close a proven-strong net sits to its own data" (prior point
 estimate: top-1 agreement 0.7044 vs our own targets' 0.5217, n=1600).
+**GATE CLEARED 2026-08-28:** the F1 deriver fix is MERGED (`ee1d1e710`,
+reviewed, 21/21 mutants) — a live/killed corpus now derives from
+manifest+progress (validated read-only against live run02: 650 shards / 5.3M
+rows adopted, in-flight shards counted not read). Side discovery recorded: the
+resume merge had silently broken `test_derive_corpus_targets.py` (27 red —
+fixture predated game-boundary rotation); repaired in the same branch.
 Cross-family caveat recorded: SF-derived candidates cannot be expected to reach
 an lc0-family net's agreement with lc0-family targets — the bar contextualizes,
 it does not pass/fail. Banking in flight → `scratchpad/t80_ruler/`.
