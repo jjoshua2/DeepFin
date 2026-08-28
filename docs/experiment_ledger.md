@@ -70505,3 +70505,17 @@ with the SAME seed (20260827) into a clean dir — same games, ~50 min of wall l
 14 days of crash exposure removed. Manifest verified on disk at relaunch. The
 generation-code delta is metadata-only (no search/selection/banking path touched), so
 the prereg's design and criteria carry unchanged; the pin moves 045225f21 → 00b3de3f6.
+
+**2026-08-27 AMENDMENT 2 (corpus run 1) — RESTARTED ~21:20 with `--sf-read-timeout 1800`;
+rsync PAUSED.** ~55 min into the 00b3de3f6 run, worker 8 died at game 488 ply 152:
+`StockfishTimeoutError: stdout silent for 300.0s` — genuine silence, not an engine
+exit (the read path distinguishes them), and no OOM. Cause: WSL2 `mini_init` is firing
+`drop_caches` every 1–4 min (Windows-side memory reclaim), evicting the Syzygy tables;
+a deep-endgame worker re-faulting 6-man probes against a disk also serving 24 workers,
+the 2× trainer, and the 118G salvage rsync can genuinely sit silent past 300 s. One
+worker/hour of bleed would gut a 14-day run, so: deadline raised 300→1800 s (an ops
+robustness knob — search semantics, staircase, seed unchanged; it enters config_sha so
+the fresh dir carries the new stamp), and the backup rsync is SIGSTOPped until the 2×
+control + its arenas finish (its 118G of reads through the page cache feed exactly the
+reclaim pressure that evicts the tables). Partial wiped again; same seed 20260827;
+manifest verified on disk at relaunch. Same-pin code `00b3de3f6`.
