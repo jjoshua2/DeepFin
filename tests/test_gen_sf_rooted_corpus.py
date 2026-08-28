@@ -1699,6 +1699,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "shards_prior": [], "shards_abandoned": [], "games_completed_prior": 0,
             "dedup_rewarmed": 0, "dedup_rewarmed_resident": 0, "resumed": False,
             "resume_partials_deleted": [], "resume_progress_torn_tail": False,
+            "resume_progress_repair": corpus.PROGRESS_ABSENT,
             "resume_legacy_progress_lines": 0,
             "realized": {"sf_hash_mb": 64},
         },
@@ -1742,6 +1743,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "dedup_rewarmed": 4, "dedup_rewarmed_resident": 4, "resumed": True,
             "resume_partials_deleted": ["w01-00001.jsonl.zst"],
             "resume_progress_torn_tail": True,
+            "resume_progress_repair": corpus.PROGRESS_TRUNCATED,
             "resume_legacy_progress_lines": 1,
             "realized": {"sf_hash_mb": 64},
         },
@@ -1771,6 +1773,7 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["dedup_rewarmed_resident_by_worker"] == {"0": 0, "1": 4}
     assert summary["resume_partials_deleted"] == {"1": ["w01-00001.jsonl.zst"]}
     assert summary["resume_progress_torn_tail_workers"] == [1]
+    assert summary["resume_progress_repaired"] == {"1": corpus.PROGRESS_TRUNCATED}
     assert summary["resume_legacy_progress_lines"] == 1
     # ⚑ Rows this run wrote and then dropped, because their shard also held a
     # game that never ended. Reported, never absorbed into the row count.
@@ -2355,6 +2358,21 @@ def scripted_worker(
     return corpus.run_worker(worker_spec(out_dir, **values))
 
 
+def next_shard_index(result: dict[str, Any]) -> int:
+    """Where the killed session's in-flight shard would have been.
+
+    ⚑ Read off the shard names the session actually closed, through the
+    module's own parser -- NOT by counting progress lines.  A path-less
+    completion record is a line that is not a shard, so the two counts differ,
+    and a fixture that simulates a kill has to name the file the kill would
+    really have caught.
+    """
+    return max(
+        corpus.shard_index_of(Path(shard["path"]).name) or 0
+        for shard in result["shards"]
+    ) + 1
+
+
 def rows_by_game(shards: Sequence[dict[str, Any]]) -> dict[int, list[Any]]:
     out: dict[int, list[Any]] = {}
     for shard in shards:
@@ -2442,7 +2460,7 @@ def test_a_killed_run_resumes_without_replaying_or_losing_a_game(
         out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
     )
     assert first["shards"], "session 1 must have closed at least one shard"
-    killed_index = len(read_progress(out_dir, 0))
+    killed_index = next_shard_index(first)
     partial = out_dir / f"w00-{killed_index:05d}.jsonl.zst"
     partial.write_bytes(b'{"schema": 1, "game_id": 2, "ply": 0')
     with open(out_dir / corpus.progress_name(0), "a", encoding="utf-8") as fh:
@@ -2476,6 +2494,186 @@ def test_a_killed_run_resumes_without_replaying_or_losing_a_game(
     plied = [(row["game_id"], row["ply"]) for rows in banked.values() for row in rows]
     assert len(set(plied)) == len(plied), "a row was banked twice"
     assert second["rows"] + first["rows"] == reference["rows"]
+
+
+def tear_progress_tail(out_dir: Path, worker_id: int, fragment: str) -> None:
+    """What ``kill -9`` leaves mid-append: a line with no newline after it."""
+    with open(out_dir / corpus.progress_name(worker_id), "a",
+              encoding="utf-8") as fh:
+        fh.write(fragment)
+
+
+def test_two_kills_in_a_row_still_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ REPEATED ``kill -9`` IS THIS FEATURE'S CONTRACT, not a corner.
+
+    Tolerating a torn tail on READ while leaving the bytes on DISK is not a
+    resume: ``_append_progress`` opens ``"a"``, so session 2's first record
+    lands on the end of session 1's fragment and the two become one line that
+    is neither.  That line is then MID-FILE, so session 3 hits the "damaged
+    some other way" refusal -- and the record swallowed inside it was a closed
+    shard, so session 2's games are unknown as well.  One kill worked; two
+    bricked the worker.
+
+    Mutation caught: disabling ``repair_worker_progress`` (returning
+    ``PROGRESS_INTACT`` without touching the file).  Session 3 then raises
+    instead of adopting session 2's shard.
+    """
+    opening = fen_list_opening(opening_fens(), tmp_path / "t5.txt")
+    every_game = (0, 1, 2, 3)
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    reference = scripted_worker(
+        reference_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game,
+    )
+
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    first = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
+    )
+    assert first["shards"], "session 1 closed a shard before the first kill"
+    partial_one = out_dir / f"w00-{next_shard_index(first):05d}.jsonl.zst"
+    partial_one.write_bytes(b'{"schema": 1, "game_id": 2, "ply": 0')
+    tear_progress_tail(out_dir, 0, '{"path": "w00-00009.jsonl.zst", "rows": 3, "co')
+
+    second = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2), resume=True,
+    )
+
+    assert second["failed"] is None
+    assert second["games"] == 1, "session 2 played only game 2"
+    assert second["shards"], "session 2 closed a shard the third must adopt"
+
+    # ... and the SECOND kill, in the same place.
+    partial_two = out_dir / f"w00-{next_shard_index(second):05d}.jsonl.zst"
+    partial_two.write_bytes(b'{"schema": 1, "game_id": 3')
+    tear_progress_tail(out_dir, 0, '{"path": "w00-00009.jsonl.zst", "rows"')
+
+    third = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=every_game, resume=True,
+    )
+
+    assert third["failed"] is None
+    # ⚑ THE CLAIM: session 2's shard survived session 3's read. Without the
+    # repair, session 3 does not get this far -- its pre-flight refuses the
+    # corrupt mid-file line that session 2's append created.
+    assert third["games_completed_prior"] == 3
+    assert third["games"] == 1, "only game 3 was left"
+    assert third["resume_partials_deleted"] == [partial_two.name]
+
+    banked = rows_by_game([*third["shards_prior"], *third["shards"]])
+    expected = rows_by_game(reference["shards"])
+    assert set(banked) == set(expected) == set(every_game)
+    for game_id in every_game:
+        assert banked[game_id] == expected[game_id], (
+            f"game {game_id} differs from the uninterrupted run after two kills"
+        )
+    plied = [(row["game_id"], row["ply"]) for rows in banked.values() for row in rows]
+    assert len(set(plied)) == len(plied), "a row was banked twice"
+    # The file the three sessions shared is still a clean append-only log.
+    assert all(
+        set(line) >= {"path", "rows", "codec", "games"}
+        for line in read_progress(out_dir, 0)
+    )
+    # ... and both resumes said what they repaired.
+    assert second["resume_progress_repair"] == corpus.PROGRESS_TRUNCATED
+    assert second["resume_progress_torn_tail"] is True
+    assert third["resume_progress_repair"] == corpus.PROGRESS_TRUNCATED
+
+
+def test_a_kill_that_steals_only_the_newline_keeps_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The variant with no torn record at all -- and it is the worse one.
+
+    A kill can land after a whole progress line and before its newline.  The
+    reader ACCEPTS that record, correctly: it is complete.  Then the next
+    append concatenates onto it and destroys it, so a record that was accepted
+    -- naming a closed shard and its games -- is gone, and the games it owned
+    would be replayed on top of rows the corpus already holds.
+
+    Mutation caught: repairing only the unparseable case (truncate-only, no
+    newline restore).  ``games_completed_prior`` below then drops to 0 in
+    session 2 -- the whole first shard is forgotten and both its games replay.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_list_opening(opening_fens(), tmp_path / "t6.txt")
+    first = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening, game_ids=(0, 1),
+    )
+    assert len(first["shards"]) == 1
+
+    path = out_dir / corpus.progress_name(0)
+    text = path.read_text(encoding="utf-8")
+    assert text.endswith("\n")
+    path.write_text(text[:-1], encoding="utf-8")  # the kill stole the newline
+
+    second = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2), resume=True,
+    )
+
+    assert second["games_completed_prior"] == 2, "the accepted record survived"
+    assert second["games"] == 1
+
+    # ⚑ The proof that it survived the APPEND, not just the read: a third
+    # session reads the same file after session 2 wrote to it.
+    third = scripted_worker(
+        out_dir, monkeypatch=monkeypatch, opening=opening,
+        game_ids=(0, 1, 2, 3), resume=True,
+    )
+
+    assert third["games_completed_prior"] == 3
+    assert third["games"] == 1
+    assert second["resume_progress_repair"] == corpus.PROGRESS_NEWLINE_RESTORED
+    # Nothing was LOST -- the record was whole, only its terminator was gone.
+    assert second["resume_progress_torn_tail"] is False
+    assert third["resume_progress_repair"] == corpus.PROGRESS_INTACT
+
+
+def test_the_tail_repair_is_idempotent_and_leaves_whole_lines_alone(
+    tmp_path: Path,
+) -> None:
+    """The repair's own contract, on each of its four inputs.
+
+    Idempotence is what makes it safe to be killed inside: a second call must
+    be a no-op, so a kill mid-repair leaves either the old state (repaired next
+    time) or the repaired one, never a third thing.
+    """
+    path = tmp_path / corpus.progress_name(0)
+    whole = json.dumps(
+        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+        sort_keys=True,
+    )
+
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_ABSENT
+
+    path.write_text(whole + "\n", encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+
+    path.write_text(whole, encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_NEWLINE_RESTORED
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+
+    path.write_text(whole + "\n" + '{"path": "w00-000', encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_TRUNCATED
+    assert path.read_text(encoding="utf-8") == whole + "\n"
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_INTACT
+
+    # A fragment that is valid JSON but not a whole RECORD is still a fragment:
+    # a truncated line can parse and still be missing the keys that make it
+    # mean something.
+    path.write_text('{"path": "w00-00000.jsonl.zst", "rows": 3}', encoding="utf-8")
+    assert corpus.repair_worker_progress(path) == corpus.PROGRESS_TRUNCATED
+    assert path.read_text(encoding="utf-8") == ""
 
 
 def test_a_resumed_worker_re_warms_its_dedup_cache_from_its_own_shards(

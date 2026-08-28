@@ -101,6 +101,13 @@ protocol that only works on a polite exit is a protocol that does not work.
 * One progress line is appended per closed shard, ``fsync``-free but
   single-line and append-only, so a ``kill -9`` can only ever tear the LAST
   line.  The reader drops a torn tail and refuses anything worse.
+* ⚑ AND THE RESUME REPAIRS THAT TAIL ON DISK BEFORE IT APPENDS.  Tolerating it
+  on read is not enough: the next append opens ``"a"`` and lands on the end of
+  the fragment, so the record and the fragment become one line that is neither.
+  A second kill would then hit the "damaged some other way" refusal and that
+  worker would be unresumable by hand-editing only.  ``repair_worker_progress``
+  either restores the single newline a kill stole from a WHOLE final record or
+  truncates a partial one away, both idempotent and safe to be killed inside.
 * A game that banked NO rows (every position dedup-served, or an immediate
   adjudication) is still a completed game.  Its id rides in the current
   shard's pending list, and a trailing run of row-less games is flushed as a
@@ -1688,6 +1695,69 @@ def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
 #: be thrown away to gain a resume.
 _PROGRESS_KEYS = ("path", "rows", "codec")
 
+#: What ``repair_worker_progress`` found, and did about it.
+PROGRESS_ABSENT = "absent"
+PROGRESS_INTACT = "intact"
+PROGRESS_NEWLINE_RESTORED = "newline_restored"
+PROGRESS_TRUNCATED = "truncated"
+
+
+def _is_progress_record(line: str) -> bool:
+    """Whether ``line`` is a whole progress record, not a prefix of one."""
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(record, dict) and all(k in record for k in _PROGRESS_KEYS)
+
+
+def repair_worker_progress(path: Path) -> str:
+    """Heal what a kill left, BEFORE anything appends to this file again.
+
+    ⚑⚑ TOLERATING A TORN TAIL IS NOT ENOUGH -- THE BYTES HAVE TO GO.
+    ``_append_progress`` opens ``"a"``, so a resumed session's first record
+    lands ON THE END of whatever fragment the kill left, producing a line that
+    is neither the fragment nor the record.  Two ways that ends badly, and
+    repeated ``kill -9`` is this feature's entire contract:
+
+    * A PARTIAL final line.  The reader drops it, the resume proceeds, and the
+      next record is glued to it.  That glued line is now mid-file, so the
+      SECOND resume hits the "not the torn tail" refusal and the worker is
+      unresumable without hand-editing.  Worse than the refusal: the record
+      swallowed inside it is a closed shard whose games are then unknown.
+    * A COMPLETE final line whose NEWLINE alone was lost.  The reader accepts
+      it -- correctly, it is a whole record -- and the next append destroys it
+      by concatenation.  A record that was accepted is then gone.
+
+    So the tail is repaired in place, and both repairs are single operations
+    that are safe to be killed in the middle of, because a kill leaves either
+    the old state (repaired on the next resume) or the new one:
+
+    * the final line is a whole record  -> append the ONE byte the kill stole.
+    * anything else                     -> truncate to just past the last
+      newline (to zero if there is none), dropping only the fragment.
+
+    Bytes, not text: a torn write can in principle cut a multi-byte character
+    in half, and ``read_text`` would then raise for the WHOLE file instead of
+    for the fragment.
+    """
+    if not path.exists():
+        return PROGRESS_ABSENT
+    raw = path.read_bytes()
+    if not raw or raw.endswith(b"\n"):
+        return PROGRESS_INTACT
+    cut = raw.rfind(b"\n") + 1  # 0 when the file holds no newline at all
+    try:
+        tail = raw[cut:].decode("utf-8")
+    except UnicodeDecodeError:
+        tail = ""
+    if _is_progress_record(tail):
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n")
+        return PROGRESS_NEWLINE_RESTORED
+    os.truncate(path, cut)
+    return PROGRESS_TRUNCATED
+
 
 def read_worker_progress(path: Path) -> tuple[list[dict[str, Any]], bool]:
     """One worker's progress lines, plus whether a TORN TAIL was dropped.
@@ -1757,8 +1827,14 @@ class ResumeState:
     next_shard_index: int
     #: Killed-mid-write shard files, deleted; their games are replayed.
     deleted_partials: tuple[str, ...]
-    #: A partial final progress line was dropped.
+    #: A partial final progress line was dropped.  ⚑ Sourced from the REPAIR,
+    #: which is the thing that observed the damage -- by the time the reader
+    #: runs, the file is terminated and its own tolerance cannot fire.
     torn_tail: bool
+    #: What the tail repair found: absent / intact / newline_restored /
+    #: truncated.  ``newline_restored`` is the case that USED to be invisible
+    #: and destructive -- an accepted record with its newline stolen.
+    progress_repair: str
     #: Positions put back into the dedup cache from the listed shards.
     dedup_rewarmed: int
     #: Progress lines that carried no ``games`` list and whose game ids were
@@ -1774,6 +1850,7 @@ class ResumeState:
             next_shard_index=0,
             deleted_partials=(),
             torn_tail=False,
+            progress_repair=PROGRESS_ABSENT,
             dedup_rewarmed=0,
             legacy_lines=0,
         )
@@ -1808,8 +1885,19 @@ def resume_worker_state(
     A listed shard that is missing from disk is REFUSED rather than skipped: it
     means rows the progress file claims are gone, and continuing would mark
     their games complete while the corpus no longer holds them.
+
+    ⚑ THE TAIL IS REPAIRED FIRST, before this run can append a byte to that
+    file -- see ``repair_worker_progress``.  Dropping a torn tail on READ and
+    leaving it on DISK is what turns a second kill into a permanently
+    unresumable worker.
     """
-    records, torn = read_worker_progress(out_dir / progress_name(worker_id))
+    progress_path = out_dir / progress_name(worker_id)
+    repair = repair_worker_progress(progress_path)
+    # The repair guarantees a newline-terminated (or empty) file, so the
+    # reader's own torn-tail tolerance cannot fire here; it stays live for a
+    # caller that reads the file without owning it. `torn_tail` below comes
+    # from the repair, which is the half that actually saw the damage.
+    records, _ = read_worker_progress(progress_path)
     completed: set[int] = set()
     shards: list[dict[str, Any]] = []
     listed_names: set[str] = set()
@@ -1882,7 +1970,8 @@ def resume_worker_state(
         shards=tuple(shards),
         next_shard_index=highest + 1,
         deleted_partials=tuple(deleted),
-        torn_tail=torn,
+        torn_tail=repair == PROGRESS_TRUNCATED,
+        progress_repair=repair,
         dedup_rewarmed=rewarmed,
         legacy_lines=legacy,
     )
@@ -2246,6 +2335,7 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "resumed": bool(spec.resume),
         "resume_partials_deleted": [],
         "resume_progress_torn_tail": False,
+        "resume_progress_repair": PROGRESS_ABSENT,
         "resume_legacy_progress_lines": 0,
         "codec": "none",
         "realized": {"unavailable_worker_process_died": True},
@@ -2404,6 +2494,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "resumed": bool(spec.resume),
         "resume_partials_deleted": list(resume.deleted_partials),
         "resume_progress_torn_tail": resume.torn_tail,
+        "resume_progress_repair": resume.progress_repair,
         "resume_legacy_progress_lines": resume.legacy_lines,
         "codec": writer.codec,
         "realized": {
@@ -2725,6 +2816,18 @@ def build_summary(
         "resume_progress_torn_tail_workers": [
             int(r["worker_id"]) for r in results if r["resume_progress_torn_tail"]
         ],
+        # ⚑ Only the workers whose progress file the kill actually damaged.
+        # `newline_restored` is here because it is otherwise invisible: the
+        # record was whole, only its terminator was lost, and the repair is
+        # the difference between keeping that record and concatenating the
+        # next one onto it.
+        "resume_progress_repaired": {
+            str(r["worker_id"]): str(r["resume_progress_repair"])
+            for r in results
+            if r["resume_progress_repair"] in (
+                PROGRESS_NEWLINE_RESTORED, PROGRESS_TRUNCATED,
+            )
+        },
         "resume_legacy_progress_lines": sum(
             int(r["resume_legacy_progress_lines"]) for r in results
         ),
