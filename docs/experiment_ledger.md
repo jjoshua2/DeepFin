@@ -70607,3 +70607,23 @@ per-move values — deeper 16:11/4:13 rungs are given up, declared here as
 the run02 label envelope. First-1M-row checks from the run01 prereg carry
 over (dup <2% non-opening, anomalies at the 0.1% bar, nodes + phase-mix +
 piece-count histograms vs the probes).
+
+**2026-08-28 AMENDMENT 6 (corpus run) — `--resume` MERGED (`e6d403d23`); run02
+is kill-safe.** Launched run02 ~23:45 before the resume PR landed (Josh:
+"I think we will be able to resume it properly without another restart") —
+correct: the merge's legacy-adoption path derives game ids from banked rows for
+progress lines that predate the `games` list, so the running session's shards
+adopt cleanly (each legacy shard's boundary game is kept completed-truncated;
+verified read-only against a live shard, 6034/6034 rows rebuild their cached
+value vectors). Review (reviewer ≠ author) found one blocking defect, F1: the
+torn-tail tolerance left the torn bytes on disk and the resumed session's
+`"a"`-mode append glued its first record onto the fragment — a SECOND kill then
+hit the mid-file-damage refusal, permanently. Fixed (`15147d8fc`): the tail is
+REPAIRED on disk before anything appends (whole record missing its newline →
+restore the byte; fragment → truncate to the last newline; both idempotent,
+kill-safe). 8 mutants all caught; 131 tests; bare-lint delta zero. The exact
+resume command was dry-run through the drift gate against run02's live
+manifest: PASS (and a wrong first dry-run proved the gate fires — it caught a
+binary-path difference). Durable pinned worktree for the resume:
+`/home/josh/projects/chess-corpuswt2` at `e6d403d23` (the /tmp worktree dies
+with a reboot). Full stop/resume protocol: `data/nnue_bootstrap/run02/RESUME.md`.
