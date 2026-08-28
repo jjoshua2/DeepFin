@@ -69759,6 +69759,16 @@ are the clean cells; the tertiary read prices exactly this). Corpus exposure 0.5
 0.2513×. Concurrent CPU load (two review agents, the shadow readout when it runs) —
 GPU-side the box is otherwise idle.
 
+**2026-08-28 EXECUTION DEVIATION (recorded before any result):** the first
+launch of the primary died in warmup — CUDA OOM at 32.1/32.6 GB on an
+otherwise-idle GPU, inside the inductor compile cache — the 08-05 OOM class
+(compiled arenas outgrow eager-calibrated footprints) recurring with no
+training to kill this time. All three arenas relaunched with `--compile off`
+appended to the prereg command; every other flag identical, seed 42, and the
+compile mode is MATCHED on both sides, so it is an execution detail, not a
+search-semantics change. GPU freed to 840 MiB the instant the crashed arena
+died, ruling out a wedge or a foreign holder.
+
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
 The frozen-driver/shadow-arm harness (`feat/nnue-shadow-label-readout`, `91e74aadd`;
