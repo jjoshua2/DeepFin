@@ -580,6 +580,37 @@ def _tb_override(tree: MCTSTree | None, probe, wdl: np.ndarray) -> None:
         tree.mark_tb_solved(indices.astype(np.int32, copy=False), solved_out)
 
 
+def leaf_buffer_rows(n_boards: int, *, topk: int, pipelined: bool) -> int:
+    """Rows the C leaf encode buffer is sized to, BEFORE any evaluator cap.
+
+    ⚑ THIS IS A SEARCH-SHAPE QUANTITY, not a memory knob. When the buffer
+    fills, ``_mcts_tree.c`` does NOT flush and retry: it appends the leaf as a
+    ``SOLVED_UNKNOWN`` pseudo-terminal carrying the ROOT's Q
+    (``stored_append_terminal(..., g->root_qs[bi], SOLVED_UNKNOWN)``), so leaves
+    beyond the buffer are ABSORBED rather than evaluated. Shrinking this below
+    what the search asked for silently changes which move is played.
+
+    An evaluator's ``_max_batch`` is min'd against the value returned here, so a
+    caller that sets ``max_batch`` below it is choosing a smaller search. This
+    function exists so that a caller can compute, BEFORE playing anything, the
+    value its cap will be compared against -- read from the search's own code
+    rather than from a formula re-derived at the call site, which is exactly the
+    kind of duplicate that drifts.
+
+    ``pipelined`` selects the 2-group overlap path (used when the evaluator is
+    async, ``n_boards >= 64``, and relations are off) or the single-buffer path.
+    The two are not ordered: at topk 32 the single path at 63 boards wants 4032
+    rows while the pipelined path at 64 boards wants 2048, so a caller bounding
+    a RANGE of board counts must take the max over both regimes rather than
+    evaluating either one at its largest n.
+    """
+    if pipelined:
+        mid = n_boards // 2
+        max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
+        return max(512, max_grp * max(2, int(topk)) * 2)
+    return max(256, n_boards * max(2, int(topk))) * 2
+
+
 @torch.no_grad()
 @overload
 def run_gumbel_root_many_c(
@@ -1128,10 +1159,10 @@ def run_gumbel_root_many_c(
   # -- 3. Sequential halving with C tree ---------------------------------
 
   # Floor at 256 so single-game UCI (n_boards=1) gets a usefully-sized GPU
-  # batch. _enc_buf is _max_leaves_per_rep*2, so this gives a 512-slot buffer
-  # minimum (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots
-  # and gss_step flushes the halving round across 4-5 tiny GPU calls.
-    _max_leaves_per_rep = max(256, n_boards * max(2, int(cfg.topk)))
+  # batch. _enc_buf is this doubled, so it gives a 512-slot buffer minimum
+  # (~19 MB). Without the floor, 1 board × topk=32 caps at 64 slots and
+  # gss_step flushes the halving round across 4-5 tiny GPU calls.
+    _single_leaf_rows = leaf_buffer_rows(n_boards, topk=cfg.topk, pipelined=False)
     _BUCKETS = _COMPILED_BATCH_BUCKETS
 
   # ---- Pipelined simulation: split games into 2 groups ----------------
@@ -1148,8 +1179,7 @@ def run_gumbel_root_many_c(
         mid = n_boards // 2
         _grp = [list(range(mid)), list(range(mid, n_boards))]
         _trees = [MCTSTree(), MCTSTree()]
-        _max_grp = max(mid, n_boards - mid)  # ceil half for odd splits
-        _leaf_cap = max(512, _max_grp * max(2, int(cfg.topk)) * 2)
+        _leaf_cap = leaf_buffer_rows(n_boards, topk=cfg.topk, pipelined=True)
         if _inplace:
   # Pinned-host views: C writes encodes directly here, eval reads from the
   # same memory (no memcpy on submit). Two slots so g=0 / g=1 outputs don't
@@ -1456,8 +1486,8 @@ def run_gumbel_root_many_c(
             _mark_legal_bf16_temp_warned()
         _use_input_bf16 = _has_input_bf16 and _use_legal_bf16
         if _inplace:
-            _max_batch = getattr(eval_impl, "_max_batch", _max_leaves_per_rep * 2)
-            _cap = min(_max_leaves_per_rep * 2, _max_batch)
+            _max_batch = getattr(eval_impl, "_max_batch", _single_leaf_rows)
+            _cap = min(_single_leaf_rows, _max_batch)
             if _use_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
                 _enc_buf = eval_impl.get_input_buffer_bf16_bits(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             else:
@@ -1471,7 +1501,7 @@ def run_gumbel_root_many_c(
         else:
             _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
             _enc_buf = np.empty(
-                (_max_leaves_per_rep * 2, input_plane_count(cfg.input_extra_features), 8, 8),
+                (_single_leaf_rows, input_plane_count(cfg.input_extra_features), 8, 8),
                 dtype=_enc_dtype,
             )
         _root_ids_arr = np.array(root_ids, dtype=np.int32)
