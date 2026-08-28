@@ -70652,3 +70652,41 @@ corruption) is affirmatively excluded. Standing note for later engine bumps:
 the violation counter counts this benign signature, so the 0.1% bar needs the
 signature split out (or the counter taught about final re-dumps) before it can
 gate a future run.
+
+**2026-08-28 DRAFT PREREG (NOT APPROVED — Josh to edit/approve before any
+launch) — Stage-2 policy-target mapping ladder ("F2").** Finding it answers
+(derivation dry-run, banked in scratchpad `derive_dryrun/observations.json`):
+the shipped value→policy mapping `softmax(q/1.0)` with `q = W−L ∈ [−1,1]` is
+NEAR-UNIFORM on real rows — median normalized entropy 0.9998, 61.5% of 239,887
+rows within 0.1% of uniform, mean top-1 mass 0.077; even τ=0.05 only reaches
+entropy 0.804. Rank survives, magnitude does not. Josh's framing (2026-08-28):
+not decidable analytically; the Gumbel defaults are one point, not an answer —
+and indeed Gumbel's σ·q IS a temperature: production σ = c_scale·(c_visit+N) ≈
+15 ⇒ τ ≈ 0.067, tuned for SEARCH, never for a training target.
+
+Candidates (ALL derived offline from the SAME banked d9 full-width lines; b/c
+need small new schemes in `derive_corpus_targets.py`, reviewed like any code):
+  a. q-temp: τ ∈ {1.0 shipped, 0.067 ≈Gumbel-default, 0.02}
+  b. Δcp: `softmax(−Δcp/s)` vs best, effective_cp (mate-banded), s ∈ {50,100}
+  c. rank: mass ∝ 2^−rank (pure rank, magnitude-free control arm)
+  d. per-row realized τ (`selection.temp`; the reproduce-play mode — F3)
+
+Phase 1 — AUDIT SCREEN, zero training compute (audit-first rule): using the
+frozen audit set's deep labels + the d9 full-width labels banked on those same
+positions with the run02 engine (`scratchpad/audit_d9_labels/`), compute per
+mapping: (i) mass on the deep-best move, (ii) expected deep regret
+Σ π(m)·regret_deep(m), (iii) bad-tail mass (π on moves with deep regret >80cp
+— the tail the net demonstrably learns). KILL rule: a mapping strictly
+dominated on all three by another candidate is killed without training. No
+other Phase-1 kills — the screen filters, the rig decides.
+Phase 2 — RIG LADDER: survivors (cap 4) at equal short budget on the SAME
+pinned shard snapshot (pin the exact listed-shard set before arm 1; corpus
+keeps growing), same arch/recipe/seeds as the lc0 positive control. Judged ONLY
+on common rulers — frozen-holdout deep-SF best-move agreement and expected
+regret, plus a 200-game matched_sims mini-arena of the top-2 vs one shared
+baseline. ⚑ NEVER own-target CE: an arm that is the gradient of its own metric
+always wins. Pre-committed adoption: the arena winner if its CI excludes 0
+against the shipped-default arm; otherwise the Phase-1-preferred mapping,
+recorded as weakly held. Gate: F1 deriver fix merged first (partial-corpus
+derivation). Confounds: one data-affecting change per readout; corpus engine
+fixed (2edd935b); Phase-2 budget/steps to be fixed at approval time.
