@@ -69768,6 +69768,20 @@ appended to the prereg command; every other flag identical, seed 42, and the
 compile mode is MATCHED on both sides, so it is an execution detail, not a
 search-semantics change. GPU freed to 840 MiB the instant the crashed arena
 died, ruling out a wedge or a foreign holder.
+**CORRECTED same session (Josh: "we do 300 concurrent games in selfplay …
+i think issue was long tail or not clearing trees … i thought we patched the
+match and arena, but maybe you're not using it") — he was right on all three
+counts.** Eager also OOM'd; the real cause is that the arenas were launched
+from the TRAINER's pinned worktree (`e6ad55cb9`, 08-19), which predates the
+evaluator-hoist fix `c00682a99` (08-21: per-ply throwaway evaluators cycled
+the CUDA stream pool — unbounded growth). The compile mode and concurrency
+stories were symptoms. Arenas rerun with the EXACT prereg command (defaults
+restored, no compile/concurrency overrides) from a fresh detached worktree
+`~/projects/chess-arena2x` at `a11c85488`, which contains the fix — the same
+post-fix instrument Match A used. Two aborted launches produced zero games, so
+nothing is discarded. ⚑ Lesson: a worktree pinned FOR THE TRAINER is not
+thereby the right pin for the ARENA — pin each instrument to a tree containing
+its own fixes.
 
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
