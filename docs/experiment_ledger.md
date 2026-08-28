@@ -69813,6 +69813,24 @@ Color, not a verdict: a from-scratch net trained ONLY on 39.5M lc0-target
 samples now sits within ~150 Elo of the full production lineage. Both arena
 results banked at `runs/lc0_control_2x_20260827/arena_results_all.jsonl`.
 
+**TERTIARY (schedule-length read), final banked 400-game read:** MID(2×) vs
+LAST(1×), same 38,544 steps, schedules of 77,088 vs 38,544 = **Elo +7.8
+[−23.5, +39.3]** — NULL at ±40-Elo resolution, score 0.5112 ± 0.0230,
+pentanomial 39/15/103/2/41, exit 0. All three results in
+`arena_results_all.jsonl`. ⇒ the primary's +144.1 is attributable to the
+second half of training (steps/data), NOT to schedule length; and the
+mid-schedule checkpoint (LR not yet fully decayed) is as strong as a dedicated
+short run. **Operational rule this licenses (Josh, 2026-08-28: "we can just
+extend until it stops helping and we don't have to know size at start"):
+OVERPLAN → SNAPSHOT AT WINDOW BOUNDARIES → EARLY-STOP WHEN FLAT.** Pick a
+deliberately generous budget, bank boundary checkpoints, stop when the gains
+flatten — the last checkpoint is ~as good as a run sized right from the start.
+What it does NOT license: extend-by-resume from a decayed endpoint (different
+LR trajectory; the rig forbids it, and the −494 Elo warm-start scar stands).
+Caveats: the two runs' staging plans slice the corpus differently, so a small
+data-slice term rides along with the schedule read; and NULL here is
+[−23.5, +39.3], not zero. Adopt as the Stage-2 budget policy at prereg time.
+
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
 The frozen-driver/shadow-arm harness (`feat/nnue-shadow-label-readout`, `91e74aadd`;
