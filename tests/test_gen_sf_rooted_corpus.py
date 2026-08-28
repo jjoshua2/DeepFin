@@ -141,6 +141,9 @@ class ScriptedEngine:
         #: 1-based index of the ``go`` command to die on, to script an engine
         #: that fails PART WAY THROUGH a worker rather than at startup.
         self.raise_on_go = raise_on_go
+        #: Like ``raise_on_go`` but a WEDGE (StockfishTimeoutError), the
+        #: recoverable failure ``EngineLease`` replaces the engine over.
+        self.wedge_on_go: int | None = None
         self.go_count = 0
         self.fen = chess.STARTING_FEN
         self._pending: list[str] = []
@@ -158,6 +161,8 @@ class ScriptedEngine:
             self.go_count += 1
             if self.raise_on_go is not None and self.go_count == self.raise_on_go:
                 raise RuntimeError(SCRIPTED_ENGINE_DEATH)
+            if self.wedge_on_go is not None and self.go_count == self.wedge_on_go:
+                raise corpus.StockfishTimeoutError("scripted wedge")
             self._pending.extend(self._reply_to(cmd))
 
     def readline(self, _deadline: float) -> str:
@@ -1744,6 +1749,89 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     assert [row["result"] for row in rows] == [-1.0, 1.0]
 
 
+def test_a_wedged_engine_is_replaced_and_the_position_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MEASURED failure mode: dev Stockfish wedges at 100% CPU with a hot TT
+    (`stop` ignored), and the same command finishes in seconds on a cold one.
+    One wedge ⇒ fresh engine, cold-TT retry of the SAME position, the game and
+    the worker live on, and the retried row discloses its cold table.
+
+    Mutation caught: deleting the retry from ``EngineLease.search_position``
+    — the game is then abandoned as engine_wedge and every assert here moves.
+    """
+    first = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    first.wedge_on_go = 4  # ply 0's three rungs pass; ply 1's first go wedges
+    second = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    engines = [first, second]
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *args, **kwargs: uci_double(engines.pop(0)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+
+    assert result["failed"] is None
+    assert result["games"] == 1
+    assert result["terminations"] == {"natural": 1}
+    assert result["search"]["engine_respawns"] == 1
+    assert result["realized"]["tt_cleared_per_game"] is True
+    assert not engines, "the lease actually spawned the replacement"
+    rows = [
+        row for shard in result["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+    assert sum(1 for r in rows if r.get("cold_tt_retry")) == 1
+
+
+def test_a_double_wedge_abandons_the_game_and_the_worker_plays_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry wedging TOO ends the GAME (engine_wedge, no result), never
+    the worker: rows banked before the wedge keep their labels, and the next
+    game plays on the surviving replacement engine."""
+    first = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    first.wedge_on_go = 4
+    second = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    second.wedge_on_go = 1  # the retry's own first go wedges as well
+    # A double-wedged lease replaces the engine AGAIN before re-raising (a
+    # desynced process would be refused on its next use), so game 1 plays on
+    # a third, clean engine.
+    third = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    engines = [first, second, third]
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *args, **kwargs: uci_double(engines.pop(0)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0, 1)))
+
+    assert result["failed"] is None
+    assert result["games"] == 2
+    assert result["terminations"] == {"engine_wedge": 1, "natural": 1}
+    assert result["search"]["engine_respawns"] == 2
+    assert not engines, "the post-double-wedge replacement was actually spawned"
+    rows = [
+        row for shard in result["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+    # Game 0's pre-wedge row is banked RESULTLESS (same shape as a ply cap);
+    # game 1 finished on the surviving engine and its row carries the result.
+    by_game: dict[int, list[Any]] = {}
+    for r in rows:
+        by_game.setdefault(r["game_id"], []).append(r)
+    assert all(r["result"] is None for r in by_game[0])
+    assert all(r["result"] is not None for r in by_game[1])
+
+
 def test_a_skipped_per_game_clear_fails_the_realized_stamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1911,7 +1999,10 @@ def test_a_worker_that_dies_mid_game_records_its_slot_instead_of_raising(
     # ... and the slot is still a slot: every counter the merge reads is there.
     assert result["games"] == 0
     assert result["search"]["positions_searched"] == 1, "ply 0 finished"
-    assert result["dedup"]["positions_first_seen"] == 2
+    # 1, not 2: first_seen counts AFTER the search since the wedge-recovery
+    # change — ply 1's search died before producing values, so that position
+    # was never actually seen into the cache.
+    assert result["dedup"]["positions_first_seen"] == 1
     assert result["shards"] == []
 
 

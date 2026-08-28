@@ -128,7 +128,7 @@ import statistics
 import sys
 import time
 from collections import Counter, OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -140,6 +140,7 @@ import numpy as np
 
 from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
 from chess_anti_engine.stockfish.uci import (
+    StockfishTimeoutError,
     StockfishUCI,
     _parse_info_fields,
     _validated_searchmoves,
@@ -755,6 +756,12 @@ class SearchStats:
     duplicate_iteration_flushes: int = 0
     incomplete_final_blocks: int = 0
     selection_not_full_width: int = 0
+    #: TT-hygiene counters live HERE, not on the searcher, because a wedged
+    #: engine is replaced mid-run (see EngineLease) and a fresh searcher must
+    #: not zero the observations the realized stamp is built from.
+    new_game_calls: int = 0
+    tt_cleared_mid_position: int = 0
+    engine_respawns: int = 0
     nodes_by_phase: dict[int, NodeSamples] = field(default_factory=dict)
 
     def add_phase(self, phase: PhaseResult) -> None:
@@ -793,6 +800,7 @@ class SearchStats:
                 "incomplete_final_blocks": self.incomplete_final_blocks,
                 "selection_not_full_width": self.selection_not_full_width,
             },
+            "engine_respawns": self.engine_respawns,
             "nodes_by_phase": {
                 str(idx): samples.summary()
                 for idx, samples in sorted(self.nodes_by_phase.items())
@@ -819,24 +827,37 @@ class StaircaseSearcher:
         staircase: Sequence[StaircasePhase],
         cp_slope: float,
         cp_draw_width: float,
+        stats: SearchStats | None = None,
     ) -> None:
         self.engine = engine
         self.staircase = tuple(staircase)
         self.cp_slope = float(cp_slope)
         self.cp_draw_width = float(cp_draw_width)
-        self.stats = SearchStats()
+        # Shared by EngineLease across respawns: the counters below are
+        # observations about the WORKER's whole run, not about one engine.
+        self.stats = stats if stats is not None else SearchStats()
         # What the engine's MultiPV option currently is.  Resending an unchanged
         # value would cost a round trip per phase for nothing.
         self._engine_multipv = int(engine.multipv)
-        #: ``ucinewgame``s actually delivered, counted AFTER the engine call
-        #: returns -- the worker compares this against games started, which is
-        #: what lets ``tt_cleared_per_game`` in the realized stamp FAIL instead
-        #: of echoing a constant.
-        self.new_game_calls = 0
-        #: Clears observed INSIDE a position's staircase, which would void the
-        #: carried-TT premise the module docstring states.  Structurally zero
-        #: today; the counter exists so the stamp is an observation.
-        self.tt_cleared_mid_position = 0
+        #: True only on a search that EngineLease re-ran on a fresh engine
+        #: after a wedge -- that search saw a COLD table, and the row it
+        #: produced says so.  A bare searcher never retries, so it stays False.
+        self.cold_tt_retry_last = False
+
+    @property
+    def new_game_calls(self) -> int:
+        """``ucinewgame``s actually delivered, counted AFTER the engine call
+        returns -- the worker compares this against games started, which is
+        what lets ``tt_cleared_per_game`` in the realized stamp FAIL instead
+        of echoing a constant."""
+        return self.stats.new_game_calls
+
+    @property
+    def tt_cleared_mid_position(self) -> int:
+        """Clears observed INSIDE a position's staircase, which would void the
+        carried-TT premise the module docstring states.  Structurally zero
+        today; the counter exists so the stamp is an observation."""
+        return self.stats.tt_cleared_mid_position
 
     # -- protocol ---------------------------------------------------------
 
@@ -876,7 +897,7 @@ class StaircaseSearcher:
     def new_game(self) -> None:
         """``ucinewgame`` -- the per-GAME table clear.  See the module docstring."""
         self.engine.new_game()
-        self.new_game_calls += 1
+        self.stats.new_game_calls += 1
 
     # -- the staircase ----------------------------------------------------
 
@@ -890,6 +911,7 @@ class StaircaseSearcher:
                 "game-over board emits no PV lines and is never searched",
             )
         started = time.perf_counter()
+        self.cold_tt_retry_last = False
         clears_at_entry = self.new_game_calls
         results: list[PhaseResult] = []
         candidates: list[str] = legal
@@ -921,7 +943,7 @@ class StaircaseSearcher:
         self.stats.search_s += time.perf_counter() - started
         self.stats.positions += 1
         if self.new_game_calls != clears_at_entry:
-            self.tt_cleared_mid_position += 1
+            self.stats.tt_cleared_mid_position += 1
 
         # ⚑ SELECTION READS PHASE 1, not the deepest phase.  It is the deepest
         # depth at which EVERY legal move has a value; a narrowed phase has
@@ -973,6 +995,84 @@ class StaircaseSearcher:
             KEY_TT_CARRIED: self.tt_cleared_mid_position == 0,
             "ucinewgame_calls": self.new_game_calls,
         }
+
+
+class EngineLease:
+    """A searcher that survives its engine.
+
+    MEASURED 2026-08-27 (worker 8 game 488 ply 152, then two more workers
+    within the hour): Stockfish dev-20260420 can wedge at 100% CPU on a
+    narrowed ``go depth`` with a hot transposition table -- no info lines,
+    ``stop`` ignored -- so no UCI-level escape exists, and ``movetime``/node
+    caps sit behind the same never-reached check.  The dev-20260810 build
+    wedges too, on a different position.  A wedge is ENGINE state: the same
+    command on a cold table finishes in seconds.  So the recovery is a new
+    engine -- close the old process group, spawn a fresh one, re-run the
+    position ONCE.  The retried search saw a COLD table and its row says so
+    (``cold_tt_retry``); ``engine_respawns`` in the shared stats counts every
+    replacement.  A retry that wedges AGAIN propagates, and ``play_game``
+    abandons the GAME rather than the worker.
+
+    The stats object is created HERE and threaded into every searcher this
+    lease spawns, so a replacement cannot zero the observations the realized
+    stamp is built from.
+    """
+
+    def __init__(
+        self, factory: Callable[[SearchStats], StaircaseSearcher],
+    ) -> None:
+        self._factory = factory
+        self.stats = SearchStats()
+        self.searcher = factory(self.stats)
+
+    # -- the searcher surface ``play_game`` uses --------------------------
+
+    def new_game(self) -> None:
+        self.searcher.new_game()
+
+    def q_of(self, values: SelectionValues) -> np.ndarray:
+        return self.searcher.q_of(values)
+
+    @property
+    def tt_cleared_mid_position(self) -> int:
+        return self.searcher.tt_cleared_mid_position
+
+    @property
+    def cold_tt_retry_last(self) -> bool:
+        return self.searcher.cold_tt_retry_last
+
+    def realized(self) -> dict[str, Any]:
+        return self.searcher.realized()
+
+    def close(self) -> None:
+        # Suppressed on purpose, here only: close() runs on the way OUT of a
+        # recorded failure, and an engine that is already gone must not turn
+        # that into an unrecorded one.
+        with contextlib.suppress(Exception):
+            self.searcher.engine.close()
+
+    def respawn(self) -> None:
+        self.close()
+        self.stats.engine_respawns += 1
+        self.searcher = self._factory(self.stats)
+
+    def search_position(self, board: chess.Board) -> PositionSearch:
+        try:
+            return self.searcher.search_position(board)
+        except StockfishTimeoutError:
+            self.respawn()
+            try:
+                search = self.searcher.search_position(board)
+            except StockfishTimeoutError:
+                # The fresh engine wedged on the same position. It abandoned a
+                # protocol exchange mid-search, so the driver would refuse it
+                # with StockfishDesyncError on its NEXT use -- replace it
+                # again before re-raising, so the caller abandons the game
+                # onto a lease that is already clean for the next one.
+                self.respawn()
+                raise
+            self.searcher.cold_tt_retry_last = True
+            return search
 
 
 # -- move selection -----------------------------------------------------------
@@ -1413,7 +1513,7 @@ def _adjudicate(board: chess.Board, syzygy_path: str) -> dict[str, Any] | None:
 def play_game(
     *,
     spec: WorkerSpec,
-    searcher: StaircaseSearcher,
+    searcher: StaircaseSearcher | EngineLease,
     opening_cfg: OpeningConfig,
     game_id: int,
     cache: DedupCache,
@@ -1468,8 +1568,17 @@ def play_game(
             values = cached
             search: PositionSearch | None = None
         else:
+            try:
+                search = searcher.search_position(board)
+            except StockfishTimeoutError:
+                # An EngineLease has already spent its one fresh-engine retry
+                # by the time this raises (a bare searcher has none): the ply
+                # is unlabelable, so the GAME ends here -- banked rows keep
+                # their labels, the game gets no result (same shape as a ply
+                # cap), and the WORKER plays on instead of dying with it.
+                termination = "engine_wedge"
+                break
             dedup.first_seen[phase] += 1
-            search = searcher.search_position(board)
             # ⚑ Selection reads the COMPACT object on the first visit too, so a
             # cache-served ply and a first-seen ply cannot disagree about q.
             values = SelectionValues.from_lines(search.values)
@@ -1493,6 +1602,10 @@ def play_game(
         if search is not None and piece_count >= MIN_BANKED_PIECES:
             rows.append({
                 "schema": ROW_SCHEMA,
+                # Present ONLY on a row whose search re-ran on a fresh engine
+                # after a wedge: that search saw a COLD table, not the game's
+                # carried one, and the row has to say so.
+                **({"cold_tt_retry": True} if searcher.cold_tt_retry_last else {}),
                 "run": {
                     "run_id": spec.run_id,
                     "config_sha256": spec.config_sha256,
@@ -1643,21 +1756,25 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     """
     nice_realized = apply_nice(spec.nice)
     staircase = parse_staircase(spec.staircase)
-    engine = StockfishUCI(
-        spec.sf_binary,
-        multipv=1,
-        hash_mb=int(spec.sf_hash_mb),
-        syzygy_path=spec.syzygy_path,
-        nice=int(spec.nice),
-        threads=1,
-        read_timeout_s=float(spec.sf_read_timeout_s),
-    )
-    searcher = StaircaseSearcher(
-        engine=engine,
-        staircase=staircase,
-        cp_slope=spec.cp_slope,
-        cp_draw_width=spec.cp_draw_width,
-    )
+
+    def spawn_searcher(stats: SearchStats) -> StaircaseSearcher:
+        return StaircaseSearcher(
+            engine=StockfishUCI(
+                spec.sf_binary,
+                multipv=1,
+                hash_mb=int(spec.sf_hash_mb),
+                syzygy_path=spec.syzygy_path,
+                nice=int(spec.nice),
+                threads=1,
+                read_timeout_s=float(spec.sf_read_timeout_s),
+            ),
+            staircase=staircase,
+            cp_slope=spec.cp_slope,
+            cp_draw_width=spec.cp_draw_width,
+            stats=stats,
+        )
+
+    searcher = EngineLease(spawn_searcher)
     opening_cfg = build_opening_config(spec)
     writer = ShardWriter(
         out_dir=spec.out_dir, worker_id=spec.worker_id, shard_rows=spec.shard_rows,
@@ -1702,11 +1819,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         )
     finally:
         writer.close()
-        # ⚑ The engine is the thing that most plausibly just died, and a close()
-        # that raises on the way out of a RECORDED failure would turn it back
-        # into an unrecorded one.
-        with contextlib.suppress(Exception):
-            engine.close()
+        # ⚑ The engine is the thing that most plausibly just died, and the
+        # lease's close() suppresses for exactly that reason: a close() that
+        # raises on the way out of a RECORDED failure would turn it back into
+        # an unrecorded one.
+        searcher.close()
     wall_s = time.perf_counter() - started
     return {
         "worker_id": spec.worker_id,
@@ -1731,7 +1848,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             # game must have delivered exactly one `ucinewgame` -- compared
             # against games started, not completed, or a worker that died
             # mid-game would read as a TT-hygiene failure it did not commit.
-            "tt_cleared_per_game": searcher.new_game_calls == games_started,
+            "tt_cleared_per_game": searcher.stats.new_game_calls == games_started,
             "nice": nice_realized,
             # Read off the cache object, not off the spec: a bound that never
             # reached the cache is exactly the failure the stamp exists for.
