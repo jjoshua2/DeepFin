@@ -70492,3 +70492,16 @@ run uses the 8moves_v3+policybeam+uho2024 dedup book at 16 plies — production'
 mix is 95% that book / 5% the 2moves book, so the 5% shallow-book share is absent
 here. Extensions copied (not rebuilt) from the live tree into the worktree.
 Shares CPU with the 2× control until it finishes; s/pos reads are ORDER until then.
+
+**2026-08-27 AMENDMENT (corpus run 1) — RESTARTED ~20:55 on `00b3de3f6`, ~50 min in.**
+Reason: `summary.json` was the corpus's ONLY metadata and is written once at run END —
+on a 14-day run, a crash near the end would leave every banked row underivable (no cp
+map, no staircase, no inventory), and partial-corpus training was blocked the same
+way. `00b3de3f6` adds a launch-time `manifest.json` (config stamp + sha + staircase,
+`complete: false` forever) and per-worker incremental `w<id>.progress.jsonl` shard
+inventories; both invisible to derive's shard discovery; progress append
+mutation-verified. The 238M partial from `045225f21` was WIPED and the run restarted
+with the SAME seed (20260827) into a clean dir — same games, ~50 min of wall lost,
+14 days of crash exposure removed. Manifest verified on disk at relaunch. The
+generation-code delta is metadata-only (no search/selection/banking path touched), so
+the prereg's design and criteria carry unchanged; the pin moves 045225f21 → 00b3de3f6.
