@@ -69783,6 +69783,25 @@ nothing is discarded. ⚑ Lesson: a worktree pinned FOR THE TRAINER is not
 thereby the right pin for the ARENA — pin each instrument to a tree containing
 its own fixes.
 
+### 2026-08-28 — VERDICT (2× control, PRIMARY): **SUCCESS — the slope is ALIVE at 2×.**
+
+**LAST(2×) vs LAST(1×), final banked 400-game read (the prereg's deciding
+yardstick, seed 42, judged off the FINAL block only — rolling lines printed en
+route were telemetry, not reads): Elo +144.1 [+107.8, +183.7]**, score 0.6963
+± 0.0234, pentanomial (candidate POV) WW 94 / WD_DW 12 / DD_WL 72 / LD_DL 1 /
+LL 21. Exit 0, result banked at
+`runs/lc0_control_2x_20260827/arena_primary_result.jsonl`. CI strictly above
+0 ⇒ the pre-committed SUCCESS rule fires: the lc0-recipe Elo curve is NOT flat
+at 77k steps — doubling the step budget on clean external targets bought
+~144 Elo. **Registered predictions settled:** realized sits at the very top of
+the expected sublinear band (+60–150) and just under the linear extrapolation
+(+150–200) — scaling is near-linear over this doubling. Per the prereg, a
+further extension needs a NEW prereg; none is authorised by this entry.
+Training-side color (non-deciding, same frozen instruments): final-window
+train loss 2.478 (2×) vs 2.576 (1×), policy 1.926 vs 2.009; heldout scans
+MID2x/LAST2x running on CPU, compares land separately. Secondary (vs iter-595)
+and tertiary (MID2x vs LAST1x schedule read) arenas queued and running.
+
 #### 2026-08-27 — PREREG: SHADOW-ARM LABEL-QUALITY READOUT — FastQ vs qsearch on IDENTICAL positions (the instrument that did not exist)
 
 The frozen-driver/shadow-arm harness (`feat/nnue-shadow-label-readout`, `91e74aadd`;
