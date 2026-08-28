@@ -88,6 +88,43 @@ WHAT A WORKER HOLDS, AND WHAT IT DOES WHEN IT DIES
   exit code is still nonzero -- a partial corpus is a fact to record, not a
   success to report.
 
+KILL AND RESUME (``--resume``)
+-----------------------------
+A multi-day burn has to survive ``kill -9`` of the whole process tree, and the
+crash-safety comes ENTIRELY from an append-only protocol -- no signal handler,
+no clean-shutdown path, because a handler cannot run for ``SIGKILL`` and a
+protocol that only works on a polite exit is a protocol that does not work.
+
+* SHARDS ROTATE ON GAME BOUNDARIES, NEVER MID-GAME (``ShardWriter.end_game``).
+  A closed shard therefore holds WHOLE games, and the progress line that
+  records it names them (``"games": [...]``).
+* One progress line is appended per closed shard, ``fsync``-free but
+  single-line and append-only, so a ``kill -9`` can only ever tear the LAST
+  line.  The reader drops a torn tail and refuses anything worse.
+* A game that banked NO rows (every position dedup-served, or an immediate
+  adjudication) is still a completed game.  Its id rides in the current
+  shard's pending list, and a trailing run of row-less games is flushed as a
+  path-less COMPLETION RECORD ``{"path": null, "rows": 0, "games": [...]}``.
+  ⚑ A null-path line is a completion record, NOT a shard: it indexes no file.
+* On ``--resume`` each worker reads its own progress file, replays only the
+  games no line claims, DELETES every ``w<id>-*`` file no line lists (that is
+  the shard the kill caught mid-write; its games are simply replayed), and
+  starts its shard index one above the highest listed.  Games are
+  order-independent -- every RNG stream is seeded from
+  ``(seed, worker_id, game_id, tag, ply)`` -- so a replayed set produces the
+  same rows it would have in one uninterrupted run.
+* THE DEDUP CACHE IS RE-WARMED from this worker's own listed shards before the
+  first game, because a cold cache would re-search (and re-bank) positions the
+  killed session had already banked.  ⚑ It re-warms from BANKED ROWS, so the
+  one thing it cannot restore is a position that was searched and deliberately
+  not banked (below ``MIN_BANKED_PIECES``, on the rare unadjudicable path).
+  Those recur as a fresh search, which is disclosed here rather than papered
+  over; ``dedup_rewarmed`` in the summary is the count that DID come back.
+* A resume must not change any generation-affecting setting: the requested
+  config is re-stamped and its sha256 compared against the manifest's, and a
+  mismatch is refused before a single game is played.  ``--workers`` is in the
+  stamp, so a resume cannot re-deal the game ids either.
+
 WHAT IS SHARED RATHER THAN RESTATED
 -----------------------------------
 The mate band and the cp->wdl mapping are ``scripts/audit_label_candidates``'s,
@@ -128,7 +165,7 @@ import statistics
 import sys
 import time
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -172,6 +209,11 @@ SUMMARY_SCHEMA = 1
 #: Launch manifest, written BEFORE the first game (see write_launch_manifest).
 MANIFEST_SCHEMA = 1
 MANIFEST_NAME = "manifest.json"
+
+#: The completion record, written once at run END.  Named rather than spelled
+#: inline because ``--resume`` has to REFUSE a directory that already holds one:
+#: a run with a summary finished, and there is nothing to resume.
+SUMMARY_NAME = "summary.json"
 
 DEFAULT_STAIRCASE = "all:9,16:11,4:13"
 DEFAULT_TEMP_PLIES = 20
@@ -1332,41 +1374,97 @@ def refuse_populated_dir(out_dir: Path) -> None:
     The same rule the leaf banks apply with ``open("x")`` and for the same
     reason: two runs' rows in one directory is a corpus whose configuration
     stamp describes only half of it, and nothing downstream can tell which half.
+
+    ⚑ ``--resume`` is the ONE sanctioned way into a populated directory, and it
+    buys its way in by proving the configuration is the SAME one (see
+    ``refuse_resume_config_drift``) rather than by relaxing this rule.
     """
     if out_dir.exists() and any(out_dir.iterdir()):
         raise FileExistsError(
             f"--out-dir {out_dir} already holds files; a corpus run refuses to "
             "merge into an existing directory (its rows would carry two "
-            "configuration stamps). Choose a new directory.",
+            "configuration stamps). Choose a new directory, or pass --resume to "
+            "continue the run that wrote it.",
         )
 
 
+def progress_name(worker_id: int) -> str:
+    """The per-worker incremental inventory's file name."""
+    return f"w{int(worker_id):02d}.progress.jsonl"
+
+
+def shard_glob(worker_id: int) -> str:
+    """Every shard file name one worker can ever write.
+
+    ⚑ The trailing ``-`` is load-bearing: ``w00.progress.jsonl`` must NOT match,
+    or the resume sweep would delete the very file it just read.  It also
+    matches EVERY codec suffix rather than only the one this session would
+    write, so a partial banked as ``.jsonl.zst`` by a session that had
+    ``zstandard`` cannot survive a resume that fell back to gzip -- an
+    unreferenced truncated shard beside a healthy corpus is a file the next
+    consumer's glob reads as data.
+    """
+    return f"w{int(worker_id):02d}-*"
+
+
+def shard_index_of(name: str) -> int | None:
+    """The rotation index in a shard file name, or ``None`` if it has none."""
+    stem = name.split(".")[0]
+    _, sep, digits = stem.partition("-")
+    if not sep or not digits.isdigit():
+        return None
+    return int(digits)
+
+
 class ShardWriter:
-    """Rotating per-worker JSONL shards, every file opened ``"x"``.
+    """Per-worker JSONL shards that rotate ON GAME BOUNDARIES, opened ``"x"``.
 
     zstd when ``zstandard`` imports, gzip otherwise; the codec that was actually
     used is READ BACK off the writer for the summary rather than assumed from
     the import.
+
+    ⚑⚑ ROTATION HAPPENS IN ``end_game``, NEVER IN ``write``.  A shard that
+    rotated on a row count would hold a PREFIX of one game, and the resume
+    protocol -- which replays every game its progress file does not claim as
+    complete -- would then have no honest answer for that game: keeping the
+    prefix duplicates its head, dropping the shard loses whole games banked
+    beside it.  Whole games per shard is what makes "replay what is not listed"
+    exactly right, so the row bound is a FLOOR the writer crosses at the next
+    game boundary rather than a hard cap.
     """
 
     def __init__(
         self, *, out_dir: Path, worker_id: int, shard_rows: int,
+        first_index: int = 0,
     ) -> None:
         if int(shard_rows) <= 0:
             raise ValueError(
                 f"--shard-rows must be positive, got {shard_rows!r}; a "
                 "non-positive rotation would open one file per row",
             )
+        if int(first_index) < 0:
+            raise ValueError(
+                f"first_index must be >= 0, got {first_index!r}",
+            )
         self.out_dir = out_dir
         self.worker_id = int(worker_id)
         self.shard_rows = int(shard_rows)
+        #: Where the rotation counter STARTED.  Kept as an attribute so the
+        #: realized stamp can read a resume's shard numbering off the writer
+        #: that will do the numbering, not off the flag that asked for it.
+        self.first_index = int(first_index)
         module = zstandard_module()
         self._zstd = module
         self.codec = "zstd" if module is not None else "gzip"
         self.suffix = ".jsonl.zst" if module is not None else ".jsonl.gz"
         self.shards: list[dict[str, Any]] = []
-        self._index = 0
+        #: Shards abandoned UNLISTED because the worker died between banking a
+        #: game's rows and ending it.  Named so the slot can report them.
+        self.abandoned: list[dict[str, Any]] = []
+        self._index = int(first_index)
         self._rows = 0
+        self._uncommitted = 0
+        self._pending_games: list[int] = []
         self._text: Any = None
         self._raw: Any = None
         self._binary: Any = None
@@ -1392,25 +1490,28 @@ class ShardWriter:
         return self._text
 
     def write(self, row: dict[str, Any]) -> None:
+        """Bank one row.  ⚑ NEVER rotates -- see the class docstring."""
         handle = self._text if self._text is not None else self._open()
         handle.write(json.dumps(row, sort_keys=True) + "\n")
         self._rows += 1
+        self._uncommitted += 1
+
+    def end_game(self, game_id: int) -> None:
+        """Record ``game_id`` as banked in full, and rotate if the shard is due.
+
+        ⚑ CALLED FOR EVERY COMPLETED GAME, INCLUDING ONE THAT BANKED NO ROWS.
+        A game whose every position was dedup-served (or that was adjudicated
+        before it could bank anything) produced no bytes, and a resume that
+        inferred completion from banked rows would replay it forever.  Its id
+        joins the CURRENT shard's pending list, and ``close`` flushes a
+        path-less completion record if the worker ends on a run of them.
+        """
+        self._pending_games.append(int(game_id))
+        self._uncommitted = 0
         if self._rows >= self.shard_rows:
             self.close()
 
-    def close(self) -> None:
-        if self._text is None:
-            return
-        self._text.close()
-        if self._raw is not None:
-            self._raw.close()
-        if self._binary is not None:
-            self._binary.close()
-        self.shards.append({
-            "path": str(self.path_for(self._index)),
-            "rows": self._rows,
-            "codec": self.codec,
-        })
+    def _append_progress(self, record: dict[str, Any]) -> None:
         # One line per CLOSED shard, appended as the shard closes, so a run
         # that dies on day 13 still names every complete shard it wrote --
         # summary.json is written once at run END and a crash takes it with
@@ -1418,13 +1519,373 @@ class ShardWriter:
         # across processes. Deliberately NOT suppressed: a metadata write that
         # fails (disk full) should kill the worker loudly, not leave a corpus
         # whose inventory quietly stopped growing.
-        progress = self.out_dir / f"w{self.worker_id:02d}.progress.jsonl"
-        with open(progress, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(self.shards[-1], sort_keys=True) + "\n")
+        #
+        # ⚑ ONE line, ONE `write`, append mode: that is the whole crash-safety
+        # story, and it is why `kill -9` can only ever tear the LAST line of
+        # this file (which `read_worker_progress` drops).
+        with open(self.out_dir / progress_name(self.worker_id), "a",
+                  encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+
+    def close(self) -> None:
+        games = sorted(self._pending_games)
+        self._pending_games = []
+        if self._text is None:
+            if games:
+                # ⚑ A COMPLETION RECORD, NOT A SHARD: `path` is null because
+                # these games banked no rows, so there is no file to index.
+                # It never enters `self.shards` -- the summary's inventory
+                # must name files that exist.
+                self._append_progress({
+                    "path": None, "rows": 0, "codec": self.codec, "games": games,
+                })
+            return
+        self._text.close()
+        if self._raw is not None:
+            self._raw.close()
+        if self._binary is not None:
+            self._binary.close()
+        record = {
+            "path": str(self.path_for(self._index)),
+            "rows": self._rows,
+            "codec": self.codec,
+            "games": games,
+        }
+        if self._uncommitted:
+            # ⚑⚑ A GAME'S ROWS ARE IN THIS FILE AND THE GAME NEVER ENDED --
+            # the worker died between `write` and `end_game` (a disk error, an
+            # OOM in the row loop). Listing it would put a HALF game in the
+            # inventory under a `games` list that does not name it, and the
+            # next resume would replay that game and bank its head TWICE. So
+            # the file is left UNLISTED: a resume deletes it and replays every
+            # game it held, which costs work and cannot duplicate a row. This
+            # is what makes "a listed shard holds only whole games" structural
+            # rather than a property of the happy path.
+            _LOG.error(
+                "worker %d abandoning %s unlisted: %d row(s) of a game that "
+                "never ended; a resume will delete it and replay its games",
+                self.worker_id, record["path"], self._uncommitted,
+            )
+            # ⚑ `games` is DROPPED with the file rather than carried into the
+            # next record: their rows are in the file a resume is about to
+            # delete, so recording them complete would lose them silently --
+            # the one failure worse than replaying them.
+            self.abandoned.append({**record, "uncommitted_rows": self._uncommitted})
+        else:
+            self.shards.append(record)
+            self._append_progress(record)
         self._text = None
         self._raw = None
         self._binary = None
+        self._rows = 0
+        self._uncommitted = 0
         self._index += 1
+
+
+# -- resume -------------------------------------------------------------------
+
+
+def _decode_shard_line(path: Path, number: int, line: str) -> dict[str, Any]:
+    """One shard line, or a refusal that NAMES THE FILE.
+
+    ⚑ MEASURED on a copy of a live production shard: a shard truncated
+    mid-write decompresses cleanly right up to a partial final line, and the
+    bare ``json.JSONDecodeError`` that follows says
+    ``Expecting property name ... char 4347`` and nothing else -- no path, no
+    hint that the corpus is what is damaged.  A resume is read on day 13 by
+    someone who did not write this file.
+    """
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{path} line {number} is not a complete JSON row ({exc}). A shard "
+            "a progress line LISTS is claimed complete, so a truncated one "
+            "means the corpus is damaged: its games would be marked done "
+            "against rows that are only half there.",
+        ) from exc
+
+
+def iter_shard_rows(path: Path) -> Iterator[dict[str, Any]]:
+    """Every banked row of one shard, in the order it was written.
+
+    The reader half of ``ShardWriter``, and the only one -- a second decoder
+    somewhere else is how a codec choice comes to disagree with itself.
+    """
+    if path.suffix == ".zst":
+        module = zstandard_module()
+        if module is None:
+            raise RuntimeError(
+                f"{path} is a zstd shard and this process cannot import "
+                "zstandard; a resume that skipped it would replay games the "
+                "corpus already holds",
+            )
+        with open(path, "rb") as raw, module.ZstdDecompressor().stream_reader(
+            raw,
+        ) as stream:
+            for number, line in enumerate(
+                io.TextIOWrapper(stream, encoding="utf-8"), start=1,
+            ):
+                if line.strip():
+                    yield _decode_shard_line(path, number, line)
+        return
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        for number, line in enumerate(fh, start=1):
+            if line.strip():
+                yield _decode_shard_line(path, number, line)
+
+
+def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
+    """Rebuild the CACHED value vector from the row that position banked.
+
+    ⚑ It has to be the same object the live visit cached, not merely a similar
+    one: ``q_of`` runs on ``effective_cp`` and the Gumbel draw is seeded from
+    ``(seed, worker, game, ply)``, so a value vector that differs in one float
+    moves the played move and the resumed corpus stops being the corpus an
+    uninterrupted run would have written.  The row banks exactly the block
+    selection read -- phase 0, at ``selection.value_depth`` -- and the floats
+    round-trip through JSON exactly, so this is a reconstruction rather than an
+    approximation.  ``value_width`` is checked rather than trusted: a row shape
+    that drifted must fail here, not serve a quietly wrong value vector.
+    """
+    if int(row["schema"]) != ROW_SCHEMA:
+        raise ValueError(
+            f"row schema {row['schema']!r} is not {ROW_SCHEMA}; a resume that "
+            "re-warmed its dedup cache from a foreign row shape would serve "
+            "values it cannot read",
+        )
+    selection = row["selection"]
+    depth = int(selection["value_depth"])
+    blocks = [
+        block for block in row["phases"][0]["per_depth"]
+        if int(block["depth"]) == depth
+    ]
+    if len(blocks) != 1:
+        raise ValueError(
+            f"row for game {row.get('game_id')!r} ply {row.get('ply')!r} names "
+            f"selection depth {depth} and its phase-0 stream holds "
+            f"{len(blocks)} block(s) at that depth; exactly one is required to "
+            "rebuild the cached value vector",
+        )
+    lines = blocks[0]["lines"]
+    if len(lines) != int(selection["value_width"]):
+        raise ValueError(
+            f"row for game {row.get('game_id')!r} ply {row.get('ply')!r} banks "
+            f"{len(lines)} lines at depth {depth} but claims value_width "
+            f"{selection['value_width']!r}",
+        )
+    return SelectionValues(
+        moves=tuple(sys.intern(str(line[1])) for line in lines),
+        effective_cp=np.asarray(
+            [float(line[2]) for line in lines], dtype=np.float32,
+        ),
+    )
+
+
+#: Keys every progress line must carry.  ``games`` is deliberately NOT here:
+#: lines written before game-boundary rotation existed do not have it, and the
+#: whole point of the legacy path is that a run already burning does not have to
+#: be thrown away to gain a resume.
+_PROGRESS_KEYS = ("path", "rows", "codec")
+
+
+def read_worker_progress(path: Path) -> tuple[list[dict[str, Any]], bool]:
+    """One worker's progress lines, plus whether a TORN TAIL was dropped.
+
+    ⚑ THE TORN TAIL IS THE ONLY TOLERATED DAMAGE, and the tolerance is as
+    narrow as the failure it models.  ``kill -9`` during the single append that
+    writes a line can leave a final line cut short OF ITS NEWLINE; it cannot
+    leave a partial line with intact lines after it, and it cannot leave a
+    partial line that ends in a newline.  So exactly that signature is dropped
+    and reported, and anything else is refused -- a reader that shrugged at
+    damage in the middle would silently forget every shard listed below it and
+    replay games the corpus already holds.
+    """
+    if not path.exists():
+        return [], False
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    # A file that ends in a newline has no line in flight: every line it holds
+    # was written whole.
+    all_terminated = text.endswith("\n") or not text
+    records: list[dict[str, Any]] = []
+    torn = False
+    for number, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            if number != len(lines) or all_terminated:
+                raise ValueError(
+                    f"{path} line {number} of {len(lines)} is not JSON, and it "
+                    "is not the torn tail a kill leaves (that is the LAST line "
+                    "and it is cut short of its newline"
+                    f"{'; this file ends in one' if all_terminated else ''}). "
+                    "Resuming from a file damaged some other way would lose "
+                    "the shards it lists.",
+                ) from exc
+            torn = True
+            continue
+        if not isinstance(record, dict):
+            raise ValueError(f"{path} line {number} is not a JSON object")
+        missing = [key for key in _PROGRESS_KEYS if key not in record]
+        if missing:
+            raise ValueError(
+                f"{path} line {number} is missing {missing}; it is not a "
+                "progress record this generator wrote",
+            )
+        records.append(record)
+    return records, torn
+
+
+@dataclass(frozen=True)
+class ResumeState:
+    """What one worker's own bookkeeping says it has already done.
+
+    Everything here is READ OFF THE DISK the killed session left behind -- the
+    progress file it appended to and the shards it closed -- never off the
+    flags of the session doing the resuming.
+    """
+
+    #: Game ids no later session may replay.
+    completed_games: frozenset[int]
+    #: The listed shards, path-normalised into THIS invocation's out-dir.
+    shards: tuple[dict[str, Any], ...]
+    #: Where the shard counter continues.  ``highest listed + 1``, never a
+    #: renumbering: a resume must not rewrite a byte of what is already banked.
+    next_shard_index: int
+    #: Killed-mid-write shard files, deleted; their games are replayed.
+    deleted_partials: tuple[str, ...]
+    #: A partial final progress line was dropped.
+    torn_tail: bool
+    #: Positions put back into the dedup cache from the listed shards.
+    dedup_rewarmed: int
+    #: Progress lines that carried no ``games`` list and whose game ids were
+    #: therefore DERIVED by reading the shard (the pre-``end_game`` format).
+    legacy_lines: int
+
+    @classmethod
+    def fresh(cls) -> ResumeState:
+        """The state of a worker with nothing to resume."""
+        return cls(
+            completed_games=frozenset(),
+            shards=(),
+            next_shard_index=0,
+            deleted_partials=(),
+            torn_tail=False,
+            dedup_rewarmed=0,
+            legacy_lines=0,
+        )
+
+
+def resume_worker_state(
+    *, out_dir: Path, worker_id: int, cache: DedupCache,
+) -> ResumeState:
+    """Adopt one worker's killed session: its games, its shards, its cache.
+
+    Three things happen here and they are one operation because they read the
+    same bytes:
+
+    1. THE PROGRESS FILE decides what is complete.  A line with a ``games``
+       list says so outright.  A line without one predates game-boundary
+       rotation, so its games are DERIVED by reading the shard: every
+       ``game_id`` in it counts as complete, **including the last game, which
+       that format may have cut in half at the row bound**.  Accepting the
+       truncation is the deliberate call -- a shard is immutable, rewriting one
+       to heal a game is a worse trade than losing the tail of at most one game
+       per worker, and REPLAYING it would duplicate every row already banked.
+    2. EVERY UNLISTED ``w<id>-*`` FILE IS DELETED.  That is the shard the kill
+       caught mid-write: no progress line names it, nothing downstream can tell
+       how far it got, and its games are simply replayed.  ⚑ Deleting is what
+       makes ``open("x")`` still meaningful on the resumed run -- a leftover
+       partial at the next index would otherwise refuse the first shard the
+       resumed worker tries to write.
+    3. THE DEDUP CACHE IS RE-WARMED from the listed shards, in the order they
+       were banked, so FIFO eviction sees the same order the killed session
+       gave it.
+
+    A listed shard that is missing from disk is REFUSED rather than skipped: it
+    means rows the progress file claims are gone, and continuing would mark
+    their games complete while the corpus no longer holds them.
+    """
+    records, torn = read_worker_progress(out_dir / progress_name(worker_id))
+    completed: set[int] = set()
+    shards: list[dict[str, Any]] = []
+    listed_names: set[str] = set()
+    highest = -1
+    legacy = 0
+    rewarmed = 0
+    for record in records:
+        raw_path = record["path"]
+        if raw_path is None:
+            # A completion record: games, no file.  It must carry them -- a
+            # null path with no games names nothing at all.
+            if "games" not in record:
+                raise ValueError(
+                    f"{progress_name(worker_id)} holds a null-path record with "
+                    "no games list; it indexes neither a shard nor a game",
+                )
+            completed.update(int(game) for game in record["games"])
+            continue
+        # By NAME, not by the stored string: the corpus directory may have been
+        # moved or spelled differently between sessions, and the file the
+        # progress line means is the one beside the progress line.
+        name = Path(str(raw_path)).name
+        path = out_dir / name
+        if not path.exists():
+            raise ValueError(
+                f"{progress_name(worker_id)} lists {name} and it is not in "
+                f"{out_dir}; a resume cannot mark its games complete against "
+                "rows that are gone",
+            )
+        listed_names.add(name)
+        index = shard_index_of(name)
+        if index is not None:
+            highest = max(highest, index)
+        adopted: dict[str, Any] = {
+            "path": str(path),
+            "rows": int(record["rows"]),
+            "codec": str(record["codec"]),
+        }
+        derived: set[int] = set()
+        # ONE pass over the shard: it re-warms the cache, and it is also where
+        # a legacy line's game ids come from.
+        for row in iter_shard_rows(path):
+            derived.add(int(row["game_id"]))
+            key = str(row["dedup_key"])
+            if cache.get(key) is None:
+                cache.put(key, selection_values_from_row(row))
+                rewarmed += 1
+        if "games" in record:
+            adopted["games"] = [int(game) for game in record["games"]]
+        else:
+            legacy += 1
+            # ⚑ Flagged, because a derived list is a weaker claim than a
+            # recorded one: the last game in a mid-game-rotated shard may hold
+            # only part of its plies.
+            adopted["games"] = sorted(derived)
+            adopted["games_derived"] = True
+        completed.update(int(game) for game in adopted["games"])
+        shards.append(adopted)
+    deleted: list[str] = []
+    for stale in sorted(out_dir.glob(shard_glob(worker_id))):
+        # Only files this writer could have written: a directory that happens
+        # to match the glob is not a shard, and deleting it is not this
+        # function's business.
+        if stale.name in listed_names or not stale.is_file():
+            continue
+        stale.unlink()
+        deleted.append(stale.name)
+    return ResumeState(
+        completed_games=frozenset(completed),
+        shards=tuple(shards),
+        next_shard_index=highest + 1,
+        deleted_partials=tuple(deleted),
+        torn_tail=torn,
+        dedup_rewarmed=rewarmed,
+        legacy_lines=legacy,
+    )
 
 
 # -- the game loop ------------------------------------------------------------
@@ -1458,6 +1919,11 @@ class WorkerSpec:
     book_max_games: int
     run_id: str
     config_sha256: str
+    #: Continue the killed session already banked in ``out_dir`` instead of
+    #: starting one.  A plain ``bool`` so the spec stays picklable across a
+    #: spawn; every fact the resume needs is on the DISK the worker owns
+    #: (``w<id>.progress.jsonl`` and the shards it lists), not in this object.
+    resume: bool = False
 
 
 @dataclass
@@ -1765,6 +2231,22 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         },
         "search": SearchStats().summary(),
         "shards": [],
+        # ⚑ EMPTY, not read back off the progress file, and that is a known
+        # under-count rather than an oversight: a process that died before
+        # `run_worker` ran has no adopted state to report, and inventing one
+        # here from the disk would make a FAILED slot claim shards this run
+        # never verified. The residual is the one the module docstring already
+        # names for a hard-killed worker, and `failed_workers` is what tells a
+        # reader the numbers beside it are incomplete.
+        "shards_prior": [],
+        "shards_abandoned": [],
+        "games_completed_prior": 0,
+        "dedup_rewarmed": 0,
+        "dedup_rewarmed_resident": 0,
+        "resumed": bool(spec.resume),
+        "resume_partials_deleted": [],
+        "resume_progress_torn_tail": False,
+        "resume_legacy_progress_lines": 0,
         "codec": "none",
         "realized": {"unavailable_worker_process_died": True},
     }
@@ -1802,26 +2284,49 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             search_timeout_s=float(spec.sf_search_timeout_s),
         )
 
-    searcher = EngineLease(spawn_searcher)
-    opening_cfg = build_opening_config(spec)
+    cache = DedupCache(max_entries=int(spec.dedup_cache_max))
+    # ⚑ BEFORE THE ENGINE EXISTS, and outside the try: like `parse_staircase`
+    # above, this is a pre-flight over the spec, and a resume that cannot be
+    # trusted must not reach the point where it appends games to a corpus. It
+    # sits above the lease because the `finally` that closes an engine is
+    # further down still -- a refusal up here cannot leak a Stockfish process.
+    resume = (
+        resume_worker_state(
+            out_dir=spec.out_dir, worker_id=spec.worker_id, cache=cache,
+        )
+        if spec.resume else ResumeState.fresh()
+    )
+    rewarmed_resident = len(cache)
+    foreign = sorted(resume.completed_games - set(spec.game_ids))
+    if foreign:
+        raise ValueError(
+            f"worker {spec.worker_id}'s progress file claims games {foreign} "
+            "that this run did not deal it; the game ids were dealt "
+            "differently, so resuming would leave the difference unplayed",
+        )
     writer = ShardWriter(
         out_dir=spec.out_dir, worker_id=spec.worker_id, shard_rows=spec.shard_rows,
+        first_index=resume.next_shard_index,
     )
-    cache = DedupCache(max_entries=int(spec.dedup_cache_max))
+    game_ids = tuple(
+        game_id for game_id in spec.game_ids
+        if game_id not in resume.completed_games
+    )
+    searcher = EngineLease(spawn_searcher)
+    opening_cfg = build_opening_config(spec)
     dedup = DedupStats()
     progress = WorkerProgress()
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
     opening_sources: Counter[str] = Counter()
     plies: list[int] = []
-    rows_written = 0
     games = 0
     games_started = 0
     unavailable = 0
     failure: dict[str, Any] | None = None
     started = time.perf_counter()
     try:
-        for game_id in spec.game_ids:
+        for game_id in game_ids:
             games_started += 1
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
@@ -1829,7 +2334,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             )
             for row in outcome.rows:
                 writer.write(row)
-            rows_written += len(outcome.rows)
+            # ⚑ AFTER the last row and BEFORE the next game: this is the
+            # commit point of the whole resume protocol. A kill between the
+            # last `write` and here leaves the shard unlisted, so the game is
+            # replayed whole; a kill after here has the game recorded.
+            writer.end_game(game_id)
             games += 1
             unavailable += outcome.adjudication_unavailable
             plies.append(outcome.plies)
@@ -1853,6 +2362,12 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         # an unrecorded one.
         searcher.close()
     wall_s = time.perf_counter() - started
+    # ⚑ READ OFF THE INVENTORY, not off a counter kept beside it. A row this
+    # worker wrote into a shard that was then ABANDONED unlisted (see
+    # `ShardWriter.close`) is not in the corpus, and a parallel counter would
+    # keep claiming it -- `summary["rows"]` must equal the rows a consumer
+    # reaches by iterating `summary["shards"]`, on the failure path too.
+    rows_written = sum(int(shard["rows"]) for shard in writer.shards)
     return {
         "worker_id": spec.worker_id,
         "failed": failure,
@@ -1869,6 +2384,27 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
         "shards": writer.shards,
+        # ⚑ THE KILLED SESSION'S SHARDS, so `summary.json`'s inventory names
+        # the WHOLE corpus rather than the tail this process happened to add.
+        # A summary that listed only this session's files would be a complete-
+        # looking document indexing half a corpus.
+        "shards_prior": list(resume.shards),
+        # Empty unless the worker died between banking a game's rows and
+        # ending it; the file is on disk, unlisted, and the next resume
+        # deletes it. Reported so a failed slot says so out loud.
+        "shards_abandoned": list(writer.abandoned),
+        "games_completed_prior": len(resume.completed_games),
+        "dedup_rewarmed": resume.dedup_rewarmed,
+        # ⚑ The same claim READ OFF THE CACHE the worker then played through,
+        # measured the instant the re-warm finished. A re-warm that counted its
+        # puts and handed them to a cache the game loop never sees would report
+        # a healthy `dedup_rewarmed` beside a zero here -- the accepted-then-
+        # ignored shape, made visible instead of assumed away.
+        "dedup_rewarmed_resident": rewarmed_resident,
+        "resumed": bool(spec.resume),
+        "resume_partials_deleted": list(resume.deleted_partials),
+        "resume_progress_torn_tail": resume.torn_tail,
+        "resume_legacy_progress_lines": resume.legacy_lines,
         "codec": writer.codec,
         "realized": {
             **searcher.realized(),
@@ -1882,6 +2418,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             # reached the cache is exactly the failure the stamp exists for.
             "dedup_cache_max": cache.max_entries,
             "shard_rows": writer.shard_rows,
+            # Read off the WRITER that will do the numbering. A resume that
+            # accepted the flag and then restarted its shard counter at 0 would
+            # collide with the killed session's first shard on `open("x")`, and
+            # this is the number that says which it did.
+            "shard_index_start": writer.first_index,
             "codec": writer.codec,
             "opening_book_path": opening_cfg.opening_book_path,
             "opening_book_prob": float(opening_cfg.opening_book_prob),
@@ -2136,8 +2677,21 @@ def build_summary(
     started_utc: str,
     wall_s: float,
 ) -> dict[str, Any]:
-    rows = sum(int(r["rows"]) for r in results)
-    games = sum(int(r["games"]) for r in results)
+    rows_session = sum(int(r["rows"]) for r in results)
+    games_session = sum(int(r["games"]) for r in results)
+    rows_prior = sum(
+        int(shard["rows"]) for r in results for shard in r["shards_prior"]
+    )
+    games_prior = sum(int(r["games_completed_prior"]) for r in results)
+    # ⚑ CORPUS TOTALS, not session totals, and deliberately under the names a
+    # consumer already reads. On a fresh run the prior halves are 0 and every
+    # number below is what it always was; on a RESUMED run a reader who ignores
+    # every key added for the resume still gets the size of the corpus in front
+    # of them rather than the size of the last shift. The session-scoped
+    # numbers keep the `_this_session` suffix, which is the safe direction to
+    # be wrong in: an unread key understates nothing.
+    rows = rows_session + rows_prior
+    games = games_session + games_prior
     search = merge_search(results)
     return {
         "schema": SUMMARY_SCHEMA,
@@ -2147,9 +2701,45 @@ def build_summary(
         "wall_s": wall_s,
         "rows": rows,
         "games": games,
+        # ⚑ `plies_total`, `dedup`, `search`, `terminations`, `adjudications`
+        # and `opening_sources` are THIS SESSION's and cannot be otherwise: a
+        # killed run's summary.json was never written, so its counters died
+        # with it. The progress file preserves rows, shards and games, which is
+        # exactly why those three -- and only those three -- carry prior state.
+        "resumed": any(bool(r["resumed"]) for r in results),
+        "rows_this_session": rows_session,
+        "games_this_session": games_session,
+        "rows_prior": rows_prior,
+        "games_completed_prior": games_prior,
+        "games_completed_prior_by_worker": {
+            str(r["worker_id"]): int(r["games_completed_prior"]) for r in results
+        },
+        "dedup_rewarmed": sum(int(r["dedup_rewarmed"]) for r in results),
+        "dedup_rewarmed_resident_by_worker": {
+            str(r["worker_id"]): int(r["dedup_rewarmed_resident"]) for r in results
+        },
+        "resume_partials_deleted": {
+            str(r["worker_id"]): list(r["resume_partials_deleted"])
+            for r in results if r["resume_partials_deleted"]
+        },
+        "resume_progress_torn_tail_workers": [
+            int(r["worker_id"]) for r in results if r["resume_progress_torn_tail"]
+        ],
+        "resume_legacy_progress_lines": sum(
+            int(r["resume_legacy_progress_lines"]) for r in results
+        ),
+        # ⚑ Rows this run WROTE and then dropped from the inventory, because
+        # the shard holding them also held a game that never ended. Empty on
+        # every healthy run; never silent, because the alternative reading of
+        # a shrunken row count is that the generator lost rows for no reason.
+        "shards_abandoned": {
+            str(r["worker_id"]): list(r["shards_abandoned"])
+            for r in results if r["shards_abandoned"]
+        },
         "plies_total": sum(int(r["plies_total"]) for r in results),
         "rows_per_game": (rows / games) if games else math.nan,
-        "s_per_row": (wall_s / rows) if rows else math.nan,
+        # Wall clock is this session's, so the rate it divides has to be too.
+        "s_per_row": (wall_s / rows_session) if rows_session else math.nan,
         # ⚑ TOP LEVEL, and empty on a healthy run.  A partial corpus that reads
         # like a complete one is the whole hazard here: every other number in
         # this file is a sum over the workers that reported, and a reader has no
@@ -2166,7 +2756,12 @@ def build_summary(
             int(r["adjudication_unavailable_plies"]) for r in results
         ),
         "opening_sources": merge_counters(results, "opening_sources"),
-        "shards": [shard for r in results for shard in r["shards"]],
+        # Prior first, then this session's, per worker: the order they were
+        # banked in, which is also the order their rows must be re-warmed in.
+        "shards": [
+            shard for r in results
+            for shard in [*r["shards_prior"], *r["shards"]]
+        ],
         "config_requested": requested,
         "config_sha256": config_sha,
         "staircase_parsed": [
@@ -2203,6 +2798,17 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"anomalies={search['anomalies']}",
         f"terminations={summary['terminations']}",
     ]
+    if summary["resumed"]:
+        # Said out loud, because every line above it is a CORPUS total on a
+        # resumed run and the operator's mental model is "what did this shift
+        # do".  Both numbers, named.
+        lines.insert(0, (
+            f"RESUMED: {summary['games_completed_prior']} games and "
+            f"{summary['rows_prior']} rows adopted from the killed session, "
+            f"{summary['dedup_rewarmed']} dedup entries re-warmed; this "
+            f"session played {summary['games_this_session']} games / "
+            f"{summary['rows_this_session']} rows"
+        ))
     lines.extend(
         f"FAILED worker {failed['worker_id']}: {failed['exception_type']}: "
         f"{failed['exception']} (game {failed['last_game_id']} "
@@ -2247,9 +2853,98 @@ def write_launch_manifest(
         "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
         "started_utc": datetime.now(timezone.utc).isoformat(),
     }
+    # ⚑ "x": a manifest is written ONCE, by the session that opened the corpus.
+    # A resume never reaches this function -- it VALIDATES against the manifest
+    # instead (see `load_resume_manifest`), because a second manifest, or an
+    # overwritten one, is the corpus losing the record of what produced its
+    # first half.
     with open(out_dir / MANIFEST_NAME, "x", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2, sort_keys=True, default=_json_default)
         fh.write("\n")
+
+
+def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
+    """The manifest a ``--resume`` continues, or a refusal.
+
+    Three refusals, all before a single game is played:
+
+    * NO MANIFEST -- there is no run here to continue.  Told to drop the flag
+      rather than quietly turned into a fresh run, because a fresh run into a
+      populated directory is the thing `refuse_populated_dir` exists to stop.
+    * A ``summary.json`` -- that run FINISHED.  Resuming would append games to a
+      completed corpus and then fail at the very end on the summary's own
+      ``open("x")``, after however many days of searching.
+    * A manifest whose ``config_sha256`` does not hash its own
+      ``config_requested`` -- the record of what produced the banked half has
+      been edited or truncated, and every later comparison against it would be
+      comparing against fiction.
+    """
+    manifest_path = out_dir / MANIFEST_NAME
+    if not manifest_path.exists():
+        raise ValueError(
+            f"--resume was given but {manifest_path} does not exist, so there "
+            "is no run in this directory to continue. Drop --resume to start "
+            "one (into an EMPTY directory).",
+        )
+    if (out_dir / SUMMARY_NAME).exists():
+        raise ValueError(
+            f"--resume was given but {out_dir / SUMMARY_NAME} exists: that run "
+            "completed and wrote its summary. Nothing to resume; use a new "
+            "--out-dir.",
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stored = str(manifest.get("config_sha256", ""))
+    recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
+    if recomputed != stored:
+        raise ValueError(
+            f"{manifest_path} is inconsistent with itself: config_sha256 is "
+            f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
+            "The record of what produced the banked rows has been altered, and "
+            "a resume validated against it would prove nothing.",
+        )
+    return manifest
+
+
+def refuse_resume_config_drift(
+    manifest: Mapping[str, Any], *, requested: Mapping[str, Any],
+) -> None:
+    """Refuse a resume that would change a generation-affecting setting.
+
+    ⚑⚑ FIELD BY FIELD AGAINST THE MANIFEST'S OWN DICT, NOT SHA AGAINST SHA.
+    A stamp comparison looks stricter and is in fact *weaker where it matters*:
+    the moment this file gains or renames a stamp key, every recomputed sha
+    stops matching every manifest ever written, and a run that has been burning
+    for days becomes unresumable for a reason that has nothing to do with its
+    configuration.  So the manifest's dict is the authority -- each key IT
+    carries is compared against what this invocation asks for, and a key it
+    does not carry (because the session that wrote it predates the key) is
+    simply not a claim anyone made.
+
+    ``out_dir`` is compared RESOLVED: the same directory reached by a different
+    spelling is the same directory, and the corpus is the files, not the path.
+    """
+    stamped = dict(manifest.get("config_requested", {}))
+    drifted: list[str] = []
+    for key, banked in sorted(stamped.items()):
+        if key not in requested:
+            drifted.append(f"{key}: manifest {banked!r}, this run does not stamp it")
+            continue
+        current = requested[key]
+        if key == "out_dir":
+            if Path(str(banked)).resolve() != Path(str(current)).resolve():
+                drifted.append(f"{key}: {banked!r} -> {current!r}")
+            continue
+        if banked != current:
+            drifted.append(f"{key}: {banked!r} -> {current!r}")
+    if drifted:
+        raise ValueError(
+            "--resume must continue the SAME run, and these settings differ "
+            "from the manifest this corpus was opened with:\n  "
+            + "\n  ".join(drifted)
+            + "\nA corpus whose rows were produced under two configurations "
+            "has a stamp that describes only half of it. Re-run with the "
+            "original settings, or start a new --out-dir.",
+        )
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -2294,7 +2989,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
     buckets = split_games(int(args.games), int(args.workers))
     out_dir = Path(args.out_dir)
-    refuse_populated_dir(out_dir)
+    resume = bool(args.resume)
+    # Both refusals happen HERE, before the engine handshake and before a
+    # single byte is written: a run that cannot legally touch this directory
+    # should find out in the first second, not after the tablebase probe.
+    manifest = load_resume_manifest(out_dir) if resume else None
+    if not resume:
+        refuse_populated_dir(out_dir)
 
     syzygy_path = str(args.syzygy_path)
     refuse_unopenable_syzygy(syzygy_path)
@@ -2307,12 +3008,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     requested = config_stamp(args, sf_binary=sf_binary)
     config_sha = stamp_sha256(requested)
+    if manifest is not None:
+        refuse_resume_config_drift(manifest, requested=requested)
+        # ⚑ THE CORPUS'S STAMP, NOT THIS SESSION'S. Every row banked before the
+        # kill carries the manifest's sha, so the rows this session adds carry
+        # it too -- a corpus with two stamps on rows made under one
+        # configuration is a join nobody can trust, and the equality was just
+        # proved field by field.
+        requested = dict(manifest["config_requested"])
+        config_sha = str(manifest["config_sha256"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_launch_manifest(
-        out_dir, requested=requested, config_sha=config_sha,
-        staircase=staircase, engine_record=engine_record,
-        engine_id_name=engine_id_name,
-    )
+    if manifest is None:
+        write_launch_manifest(
+            out_dir, requested=requested, config_sha=config_sha,
+            staircase=staircase, engine_record=engine_record,
+            engine_id_name=engine_id_name,
+        )
     specs = [
         WorkerSpec(
             worker_id=index,
@@ -2339,6 +3050,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             book_max_games=int(args.book_max_games),
             run_id=str(args.run_id),
             config_sha256=config_sha,
+            resume=resume,
         )
         for index, ids in enumerate(buckets)
     ]
@@ -2382,7 +3094,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         engine_record=engine_record, engine_id_name=engine_id_name,
         staircase=staircase, started_utc=started_utc, wall_s=wall_s,
     )
-    with open(out_dir / "summary.json", "x", encoding="utf-8") as fh:
+    with open(out_dir / SUMMARY_NAME, "x", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, sort_keys=True, default=_json_default)
         fh.write("\n")
     return summary
@@ -2404,7 +3116,19 @@ def _json_default(value: Any) -> Any:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     p.add_argument("--out-dir", type=Path, required=True,
-                   help="corpus directory; refused if it already holds files")
+                   help="corpus directory; refused if it already holds files "
+                        "unless --resume")
+    p.add_argument(
+        "--resume", action="store_true",
+        help="continue the run already banked in --out-dir after a kill -9 "
+             "instead of starting a new one. Every worker replays exactly the "
+             "games its own w<id>.progress.jsonl does not claim, deletes the "
+             "shard the kill caught mid-write, re-warms its dedup cache from "
+             "the shards it kept, and continues its shard numbering. REFUSED "
+             "unless the directory holds a manifest.json (nothing to resume) "
+             "and every generation-affecting setting matches the one it "
+             "records -- a corpus may only ever have one configuration.",
+    )
     p.add_argument(
         "--games", type=int, default=0,
         help="TOTAL games across all workers. Refused at 0: an unbounded "
