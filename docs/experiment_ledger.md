@@ -70867,3 +70867,40 @@ endpoint anyway. Confound recorded: T80 targets are ~800-node lc0 visit
 distributions with temperature — "closest to T80" is a proxy for "shaped like
 a proven pipeline's targets", not a theorem about OUR net; the rig ladder
 remains the decider.
+
+**2026-08-29 lc0 2× CONTROL — HELDOUT READOUT + LANE CLOSE.** Frozen-v2
+heldout (91,842 rows), pinned #438 rig, CPU scans banked
+`scratchpad/lc0_readout/{mid2x,last2x}_heldout.json.npz`; compares in
+`scratchpad/lc0_2x_heldout_compares.txt`. Top-1 agreement:
+
+| checkpoint | samples seen | top-1 |
+|---|---|---|
+| 1× MID | 9.87M | 43.180% |
+| 1× LAST | 19.73M | 46.797% |
+| 2× MID | 19.73M | 46.738% |
+| 2× LAST | 39.47M | 49.882% |
+
+- **Within-trajectory slope (the prereg's paired statistic), 2× second half:**
+  +3.1445 pp [+2.8829, +3.4062], exact McNemar p=1.3e-122 (row-level CI,
+  optimistic by the ~3.2 rows/game design effect). vs the 1× run's +3.62 pp —
+  mild top-1 deceleration while the arena read near-linear Elo (+144.1).
+- **MID2x vs LAST1x = −0.06 pp (descriptive; equal samples, different
+  init/order):** sample-count equivalence lands within noise of zero, the
+  heldout twin of the TERTIARY arena null (+7.8 [−23.5, +39.3]) ⇒ schedule
+  really is null; only rows seen matter. LAST2x vs LAST1x = +3.09 pp
+  descriptive for the doubling.
+- Rig notes: the driver's compare step had named the score files without the
+  `.npz` numpy appends — scans were fine, compares re-run against the real
+  paths. The n floor (resolution point 100k) was waived per the tool's own
+  rule by passing the MATERIAL bar 0.392 pp (stricter than the 0.409 in
+  force), a re-derivation at n=91,842. Cross-trajectory pairs are REFUSED by
+  the rig (run_id mismatch is a measurement, unwaivable) — those two deltas
+  above are labelled descriptive for exactly that reason.
+
+**LANE CLOSED.** The lc0 positive-control lane delivered its three findings:
+(1) the stack LEARNS (#438: +3.62 pp heldout, arena-confirmed); (2) our
+plateau is the TARGETS, not the optimizer/capacity; (3) scaling CLEAN targets
+is near-linear in Elo (+144.1 [+107.8, +183.7] per doubling at 2×) with
+schedule null ⇒ budget policy = overplan → snapshot at window boundaries →
+early-stop when flat (never extend-by-resume; −494 Elo warm-start scar).
+Further extension (4×) needs a NEW prereg — none authorized.
