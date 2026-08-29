@@ -70904,3 +70904,42 @@ is near-linear in Elo (+144.1 [+107.8, +183.7] per doubling at 2×) with
 schedule null ⇒ budget policy = overplan → snapshot at window boundaries →
 early-stop when flat (never extend-by-resume; −494 Elo warm-start scar).
 Further extension (4×) needs a NEW prereg — none authorized.
+
+**2026-08-29 STAGE-2 PREREG APPROVED (Josh: "run as many arms as you want…
+just make sure we have queued up at least 12 hours") — NNUE target-mapping
+ladder LAUNCHED.** Final arms fixed at approval time, per the T80-ruler
+readout above: **qtemp {1.0 shipped-control, 0.15 flat bracket, 0.067
+T80-optimum lead, 0.02 sharp/deep-SF-screen control}**, all `--scheme
+uniform-d9` through the production cp→q map. dcp_50 DROPPED: it lost to the
+q-temp family at every scale on the primary (T80) ruler and was the only arm
+needing new deriver code. Design:
+- **Data:** hardlink snapshot of run02 at ~9.82M claimed rows
+  (`data/nnue_bootstrap/run02_snap_20260829/`, manifest+progress plain-copied
+  so the inventory is frozen); every arm derives the SAME first 5.5M rows
+  (`--limit 5500000 --seed 0`, deterministic ⇒ identical row sets, only the
+  softmax temp differs). ~5.1M written expected (~7% no-result drop) ≈ 1.03
+  views at the training budget — honouring the 1-view-first rule.
+- **Training:** pinned #438 rig (`lc0_control_train.py`, worktree
+  `~/chess-438-merge-review`), production arch/recipe (preflight-matched to
+  the LIVE yaml), seed 0, **9,680 steps** (= 110×88-step windows; MID at
+  4,840 = window boundary; > warmup 1000) ≈ 4.96M samples/arm. No purity
+  receipt (the lc0 purity tool covers lc0 corpora; `valid_control: false`
+  accepted — the lc0 compare rig is NOT this ladder's yardstick), so
+  `--allow-invalid-control` documented here in advance. Sequential on GPU;
+  derivations run in parallel on CPU beside the (still running) run02
+  generator.
+- **Yardsticks (pre-committed, per the draft):** frozen audit set v1 deep-SF
+  best-move agreement + expected regret via `scripts/audit_targets.py
+  --checkpoint <arm>/checkpoint.pt --audit-set data/audit_set_v1.jsonl`
+  (raw-policy mode, matched settings all arms); then 200-game matched_sims
+  mini-arena of the top-2 audit arms vs the qtemp_1.0 arm
+  (`arena_standard.py`, fixed-code worktree). **Adoption rule unchanged:**
+  arena winner if its CI excludes 0 against the shipped-default arm; else the
+  Phase-1-preferred mapping (qtemp_0.067), recorded as weakly held. NEVER
+  own-target CE.
+- **Take-effect proof:** deriver banks recovered temp per arm (must read
+  exactly the arm's τ); smokes passed 2026-08-29 (20k derive + 20-step train,
+  all preflight/leak guards green).
+- Confounds: single-view/no-history corpus rows (inherent to SF-rooted
+  substrate); corpus engine 2edd935b fixed; one data-affecting change per
+  readout holds (nothing else trains).
