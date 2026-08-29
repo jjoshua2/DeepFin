@@ -70666,7 +70666,7 @@ against its 0.286 idle baseline, deflator 0.605):
   config_sha by resume).
 
 run02 pin (launch after the resume PR merges): engine
-`/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2`
+`~/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2`
 (sha256 e5f3b866a5..., upstream 2edd935b incl. NNUE net update f21610e5;
 wedge-explosion NOT fixed upstream — tripwire + EngineLease carry it),
 `--staircase all:9 --sf-search-timeout 2 --games 500000 --workers 28
@@ -70697,7 +70697,7 @@ kill-safe). 8 mutants all caught; 131 tests; bare-lint delta zero. The exact
 resume command was dry-run through the drift gate against run02's live
 manifest: PASS (and a wrong first dry-run proved the gate fires — it caught a
 binary-path difference). Durable pinned worktree for the resume:
-`/home/josh/projects/chess-corpuswt2` at `e6d403d23` (the /tmp worktree dies
+`~/projects/chess-corpuswt2` at `e6d403d23` (the /tmp worktree dies
 with a reboot). Full stop/resume protocol: `data/nnue_bootstrap/run02/RESUME.md`.
 
 **2026-08-28 AMENDMENT 7 (corpus run) — FIRST-1M CHECKS DONE; anomaly pause bar
