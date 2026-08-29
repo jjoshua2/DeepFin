@@ -1429,6 +1429,54 @@ class SearchWorker:
         move = self._root_policy_move(board, allowed)
         return move.uci() if move is not None else None
 
+    def _drop_pool_root_if_support_differs(self, board: chess.Board) -> None:
+        """Drop an expanded root a PUCT pool cannot safely widen in place.
+
+        A searchmoves search is routed through classic Gumbel because the PUCV
+        and walker paths have no root filter. That Gumbel search can leave the
+        persistent root expanded over only the requested actions. A later
+        unrestricted pool search used to see an already-expanded root and adopt
+        it verbatim, permanently hiding every excluded legal move.
+
+        Pool roots are supposed to contain the board's full legal support. If
+        an already-expanded root does not match it exactly, discard the tree
+        and root and let ordinary pool prep rebuild from the cached root eval.
+        The position is unchanged, so repeating the NN root call is unnecessary.
+        """
+        if self._rpg_pool is not None:
+            return
+        if (
+            self._pucv_pool is None
+            and self._walker_pool is None
+            and self._pucv is None
+        ):
+            return
+        if self._tree is None or self._root_id is None or self._root_id < 0:
+            return
+        if not self._tree.is_expanded(self._root_id):
+            return
+
+        child_actions, _ = self._tree.get_children_visits(self._root_id)
+        legal_actions = CBoard.from_board(board).legal_move_indices().astype(
+            np.int32, copy=False,
+        )
+        support_matches = (
+            child_actions.size == legal_actions.size
+            and np.array_equal(
+                np.sort(child_actions.astype(np.int32, copy=False)),
+                np.sort(legal_actions),
+            )
+        )
+        if support_matches:
+            return
+
+        self._tree = None
+        self._root_id = None
+        self._last_gumbel_action_idx = None
+        self._walker_cboard = None
+        self._pucv_cboard = None
+        self._pucv_pool_cboard = None
+
     def _pre_expand_root_for_pool(
         self,
         board: chess.Board,
@@ -1440,6 +1488,7 @@ class SearchWorker:
         upfront. The classic gumbel path does this internally."""
         if allowed_root_indices is not None:
             return
+        self._drop_pool_root_if_support_differs(board)
         if self._rpg_pool is not None:
             self._ensure_rpg_root_prepared(
                 board, allow_terminal_shortcuts=allow_terminal_shortcuts,
