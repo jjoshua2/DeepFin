@@ -189,6 +189,7 @@ def test_gumbel_c_refuses_a_realized_candidate_set_wider_than_compiled_cap(
         )
     assert result[1][0] >= 0
 
+
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
 def test_gumbel_c_compact_root_policy_matches_dense_root_mapping() -> None:
     run_c = _require_run_gumbel_root_many_c()
