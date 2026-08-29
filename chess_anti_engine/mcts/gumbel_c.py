@@ -720,6 +720,7 @@ def run_gumbel_root_many_c(
         wider ``topk`` while silently ranking only the first compiled-cap
         candidates. True is reserved for callers that explicitly measure and
         report that truncation (the generation-zero ``--all-root-moves`` lane).
+
     ``target_batch``
         Leaves to accumulate before handing a batch to the evaluator. 0 (the
         production default) means ``GSS_GPU_BATCH`` = 1024, which spans several
