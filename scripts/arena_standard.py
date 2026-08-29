@@ -1511,6 +1511,34 @@ def realized_topk(side: SideSearch) -> int:
     return int(side.gumbel.get("topk", GumbelConfig().topk))
 
 
+def arena_pool_size(*, max_concurrent_games: int, n_pairs: int) -> int:
+    """Concurrent games this arena can ACTUALLY have in flight.
+
+    ``--max-concurrent-games`` is a CEILING, not the pool. Both matched_sims
+    loops feed from a queue of ``2 * n_pairs`` games — the rolling loop refills
+    to ``pool_size`` only while the queue lasts, and the chunked loop plays
+    ``2 * len(chunk)`` — so a 2-game smoke arena at the default concurrency 128
+    never has more than 2 boards alive, and neither does a 400-game run whose
+    ``--openings-fen`` file yielded 2 usable rows.
+
+    ⚑ This is the number the leaf-buffer bound and the root-submit refusal have
+    to be computed from, and taking the ceiling instead is not merely
+    conservative. At mcg 128 / topk 32 the ceiling claims 4096 leaf rows for a
+    2-game arena whose search asks for 512: ``--eval-max-batch 512`` then draws
+    the "NOT COMPARABLE" warning, is recorded as ``eval_leaf_cap_bound=true``,
+    and smaller caps are refused against a root submit that carries two boards.
+    A provenance field that is wrong in the safe direction is still wrong.
+
+    ⚑ Derived from the LOADED openings, not from ``--games``: the two differ
+    exactly when a FEN list is short, which is the case the ``--games`` figure
+    cannot see. A resumed run plays a subset of those pairs and is therefore
+    still bounded from above by this — the recorded fields then describe the
+    match's schedule rather than one process's tail, which is the same scope the
+    pentanomial summary is computed over.
+    """
+    return max(1, min(int(max_concurrent_games), 2 * max(0, int(n_pairs))))
+
+
 def arena_uncapped_leaf_rows(
     *, max_concurrent_games: int, sides: Sequence[SideSearch | None],
     relations: Sequence[bool] | None = None,
@@ -1546,6 +1574,22 @@ def arena_uncapped_leaf_rows(
     and cannot read the flag. The caller must re-derive with the real flags once
     the models exist -- otherwise a relations-on model with a cap in
     [4096, 8192) is bound in fact while every recorded field says it is not.
+
+    ⚑ ``max_concurrent_games`` is the top of the board-count RANGE ONE SEARCH
+    CALL CAN BE HANDED, which is not the same quantity for every caller and is
+    deliberately not renamed:
+
+    * an ARENA hands one call a whole side of its pool, so it passes the pool
+      the schedule can actually fill (``arena_pool_size``) — NOT the raw
+      ``--max-concurrent-games`` ceiling, since bounding a range the search can
+      never enter reports an inert cap as binding;
+    * a SEQUENTIAL match hands one call a single board, so it passes 1 —
+      ``scripts/match_vs_handicapped_sf.py``'s ``resolve_eval_leaf_cap`` does
+      exactly that, and takes no concurrency argument at all, because nothing
+      about its cap depends on how many games are in flight.
+
+    Either way the rule is the same: pass what ONE call can carry, never a
+    ceiling that no call reaches.
     """
     from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
 
@@ -2506,6 +2550,8 @@ def build_result_record(
     eval_max_batch: int | None = None,
     eval_leaf_cap_uncapped: int | None = None,
     eval_leaf_cap_bound: bool = False,
+    max_concurrent_games: int | None = None,
+    arena_pool: int | None = None,
     sprt: dict[str, Any] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
@@ -2568,6 +2614,22 @@ def build_result_record(
         "eval_max_batch": eval_max_batch,
         "eval_leaf_cap_uncapped": eval_leaf_cap_uncapped,
         "eval_leaf_cap_bound": bool(eval_leaf_cap_bound),
+        # ⚑ THE INPUTS the two fields above are a FUNCTION OF, banked so a row
+        # can be re-derived instead of only read. `eval_leaf_cap_uncapped` is
+        # computed from the POOL — the concurrency ceiling capped by the loaded
+        # opening pairs (`arena_pool_size`) — and at mcg 128 / topk 32 that is
+        # 4096 rows over a full schedule, 2560 over 40 games and 512 over 2. A
+        # row that banked only the answer would be unreproducible from its own
+        # fields, and `games` cannot substitute: a short --openings-fen list
+        # shrinks the pool below what --games asked for.
+        #
+        # `arena_pool` is what the bound was ACTUALLY taken over;
+        # `max_concurrent_games` is the ceiling the operator asked for, kept
+        # separately because the gap between them is the thing worth seeing.
+        # Both null on rows written before this field existed — never 0, which
+        # would be a claim about a run the field never covered.
+        "max_concurrent_games": max_concurrent_games,
+        "arena_pool_size": arena_pool,
         "openings": openings_path,
         "openings_kind": openings_kind,
         "opening_plies": opening_plies,
@@ -2738,52 +2800,6 @@ def run_arena(
             "matched_time plays through UCI engine subprocesses, which use their "
             "own play shape; --search-shape cannot apply. Use --uci-args."
         )
-    # Cap checks live HERE: after the shape refusals (so both sides' topk are
-    # resolved) and before any checkpoint load or compile, and ONLY on a path
-    # that will actually build an evaluator. matched_time plays through UCI
-    # subprocesses and a CPU arena is excluded by design, so a cap that can
-    # never bind must not refuse either of them.
-    _no_hoist = no_hoist_reason(
-        mode=mode, device=device, eval_max_batch=eval_max_batch,
-        volatility_candidate=volatility_candidate,
-    )
-    uncapped_leaf_rows = (
-        arena_uncapped_leaf_rows(
-            max_concurrent_games=max_concurrent_games,
-            sides=(search_candidate, search_reference),
-        )
-        if _no_hoist is None else 0
-    )
-    leaf_cap_bound = _no_hoist is None and eval_max_batch < uncapped_leaf_rows
-    if _no_hoist is None and eval_max_batch < max_concurrent_games:
-        # Refused HERE, not on the ply that trips it. The C gumbel ROOT submit
-        # is handed every board on one side at once and is NOT bucketed against
-        # the evaluator's cap, so `get_input_buffer` would raise `batch N > max
-        # M` mid-arena -- after the checkpoint load and a multi-minute compile,
-        # and after the PGN/game log already exist.
-        #
-        # ⚑ The remedy deliberately does NOT say "raise it to
-        # --max-concurrent-games". That is the value at which the ROOT submit
-        # stops raising and the LEAF cap binds HARDEST: at mcg 128 the search
-        # asks for 4096 leaf rows, so a cap of 128 would run and absorb most of
-        # the leaves. Naming the bare minimum would trade a loud crash for a
-        # quiet search change.
-        raise SystemExit(
-            f"--eval-max-batch {eval_max_batch} is below --max-concurrent-games "
-            f"{max_concurrent_games}: the search's root batch is up to one whole "
-            f"side of the pool and the hoisted evaluator would refuse it.\n"
-            f"  Use --eval-max-batch {uncapped_leaf_rows} — this arena's uncapped "
-            f"leaf-buffer size, at which the search runs unchanged — or "
-            f"--eval-max-batch 0 to keep the per-call evaluators.\n"
-            f"  Anything between {max_concurrent_games} and {uncapped_leaf_rows} "
-            f"runs, but SHRINKS THE SEARCH rather than just the memory."
-        )
-    if leaf_cap_bound:
-        # Allowed, warned, and recorded — the way compile is. It changes the
-        # arithmetic, there are legitimate reasons to want it (a smaller card),
-        # and refusing would take the option away. What is not allowed is it
-        # being quiet.
-        _warn_leaf_cap_binds(eval_max_batch, uncapped_leaf_rows, late=False)
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
     # Anchored HERE, not at the play loop, so opening sampling and the two
@@ -2804,6 +2820,66 @@ def run_arena(
         openings = load_paired_openings(
             openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
         )
+
+    # ---- evaluator cap checks --------------------------------------------
+    # These live HERE: after the shape refusals (so both sides' topk are
+    # resolved), after the openings are loaded (so the POOL the schedule can
+    # fill is known, which `--games` alone cannot say for a short FEN list),
+    # and still before any checkpoint load or compile — a refusal must beat a
+    # multi-minute compile, and opening sampling creates no files, so nothing
+    # is left behind. ONLY on a path that will actually build an evaluator:
+    # matched_time plays through UCI subprocesses and a CPU arena is excluded
+    # by design, so a cap that can never bind must not refuse either of them.
+    _no_hoist = no_hoist_reason(
+        mode=mode, device=device, eval_max_batch=eval_max_batch,
+        volatility_candidate=volatility_candidate,
+    )
+    pool_size = arena_pool_size(
+        max_concurrent_games=max_concurrent_games, n_pairs=len(openings),
+    )
+    uncapped_leaf_rows = (
+        arena_uncapped_leaf_rows(
+            max_concurrent_games=pool_size,
+            sides=(search_candidate, search_reference),
+        )
+        if _no_hoist is None else 0
+    )
+    leaf_cap_bound = _no_hoist is None and eval_max_batch < uncapped_leaf_rows
+    if _no_hoist is None and eval_max_batch < pool_size:
+        # Refused HERE, not on the ply that trips it. The C gumbel ROOT submit
+        # is handed every board on one side at once and is NOT bucketed against
+        # the evaluator's cap, so `get_input_buffer` would raise `batch N > max
+        # M` mid-arena -- after the checkpoint load and a multi-minute compile,
+        # and after the PGN/game log already exist.
+        #
+        # ⚑ Compared against the POOL, not --max-concurrent-games: the root
+        # submit carries one side of the games actually in flight, so a 2-game
+        # arena at mcg 128 can only ever hand it two boards and refusing a cap
+        # of 32 there would reject a configuration the search can serve.
+        #
+        # ⚑ The remedy deliberately does NOT say "raise it to the pool size".
+        # That is the value at which the ROOT submit stops raising and the LEAF
+        # cap binds HARDEST: at a pool of 128 the search asks for 4096 leaf
+        # rows, so a cap of 128 would run and absorb most of the leaves. Naming
+        # the bare minimum would trade a loud crash for a quiet search change.
+        raise SystemExit(
+            f"--eval-max-batch {eval_max_batch} is below this arena's pool of "
+            f"{pool_size} concurrent game(s) (--max-concurrent-games "
+            f"{max_concurrent_games} against {len(openings)} loaded opening "
+            f"pair(s)): the search's root batch is up to one whole side of the "
+            f"pool and the hoisted evaluator would refuse it.\n"
+            f"  Use --eval-max-batch {uncapped_leaf_rows} — this arena's uncapped "
+            f"leaf-buffer size, at which the search runs unchanged — or "
+            f"--eval-max-batch 0 to keep the per-call evaluators.\n"
+            f"  Anything between {pool_size} and {uncapped_leaf_rows} "
+            f"runs, but SHRINKS THE SEARCH rather than just the memory."
+        )
+    if leaf_cap_bound:
+        # Allowed, warned, and recorded — the way compile is. It changes the
+        # arithmetic, there are legitimate reasons to want it (a smaller card),
+        # and refusing would take the option away. What is not allowed is it
+        # being quiet.
+        _warn_leaf_cap_binds(eval_max_batch, uncapped_leaf_rows, late=False)
 
     # ---- crash-resilient game log + resume -------------------------------
     # Decided before any file is created and before either checkpoint is
@@ -3071,6 +3147,23 @@ def run_arena(
                 # the evidence to detect it has to be IN the file.
                 "Plies": str(int(plies)),
                 "GameDurationSec": f"{float(duration_s):.2f}",
+                # Provenance for a POOLED fit. Two runs with the same engine
+                # names, ConfigHash, GitSha and SideSearch but different
+                # evaluator caps played DIFFERENT searches -- a binding cap
+                # makes the C tree absorb leaves instead of evaluating them --
+                # and Ordo would fit them as ONE player. The value is the
+                # effective hoist state ("4096", "512<4032", "off", "n/a"),
+                # the same string the game-log row carries, and its ABSENCE
+                # identifies a PGN written by pre-hoist code: that is what makes
+                # a banked file attributable without git archaeology.
+                #
+                # ⚑ Read from `this_hoist` HERE rather than declared in
+                # `base_tags`: the writer is built before the checkpoints load,
+                # so a base tag would freeze the pre-load FLOOR and a
+                # relations-on side would stamp every game "4096" for a search
+                # that was bound against 8192. Same by-reference closure the
+                # game-log row's `eval_hoist` relies on.
+                "EvaluatorHoist": this_hoist,
             }
             if int(pair_id) in orphan_pair_ids:
                 # This pair is being REPLAYED because the crash left it half
@@ -3210,7 +3303,10 @@ def run_arena(
         if _no_hoist is None:
             _pre_load_leaf_rows = uncapped_leaf_rows
             uncapped_leaf_rows = arena_uncapped_leaf_rows(
-                max_concurrent_games=max_concurrent_games,
+                # The same pool the launch check used: only `relations` is new
+                # here, so a difference between the two figures can only ever
+                # be the flag this re-derivation exists to read.
+                max_concurrent_games=pool_size,
                 sides=(search_candidate, search_reference),
                 relations=(
                     bool(getattr(model_candidate, "use_dynamic_relations", False)),
@@ -3361,8 +3457,32 @@ def run_arena(
                 # Rolling pool: fixed active-game count => fixed batch shape => compile
                 # reuses one graph (no per-shape thrash), and the GPU never drains until
                 # the very end (no per-chunk tail).
+                #
+                # ⚑ The POOL, not --max-concurrent-games. `_refill` tops the
+                # board list up to its `pool_size` argument only WHILE THE
+                # QUEUE LASTS, so what the loop can actually keep active is
+                # bounded by the pairs still to play. Announcing the ceiling is
+                # the same falsehood the leaf-row bound used to be built on:
+                # "keep 128 games active" over a 2-game arena.
+                #
+                # ⚑ THREE different quantities are called some form of "pool"
+                # in this neighbourhood and they are not interchangeable:
+                #   * `rolling_pool` here — bounded by the REMAINDER this
+                #     invocation plays, which is what this banner describes;
+                #   * the `pool_size` local from the cap checks — bounded by
+                #     the whole loaded SCHEDULE, because it scopes the recorded
+                #     leaf-cap fields and those describe the MATCH, resumed
+                #     pairs included. The two coincide except on a resume;
+                #   * the callee's `pool_size=` parameter below, left as the
+                #     raw ceiling on purpose — the loop's own refill is already
+                #     capped by the queue length, so lowering it would change
+                #     nothing except when the drain-time cache free fires.
+                rolling_pool = arena_pool_size(
+                    max_concurrent_games=max_concurrent_games,
+                    n_pairs=len(openings_to_play),
+                )
                 print(
-                    f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                    f"[arena] ROLLING pool: keep {rolling_pool} games active, "
                     f"start a fresh one as each finishes",
                     flush=True,
                 )
@@ -3599,6 +3719,13 @@ def run_arena(
         eval_max_batch=int(eval_max_batch),
         eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
         eval_leaf_cap_bound=leaf_cap_bound,
+        # Banked UNCONDITIONALLY, unlike the leaf-cap fields above: those are
+        # meaningless off the hoisted path and go null there, but the pool is a
+        # property of the schedule and is just as true for a matched_time or
+        # CPU row. Making it conditional would mean a null that says "not
+        # applicable" on some rows and "written before the field" on others.
+        max_concurrent_games=int(max_concurrent_games),
+        arena_pool=int(pool_size),
         sprt=sprt_record,
     )
     if out_path is not None:
@@ -3630,6 +3757,40 @@ def run_arena(
 
 def add_common_args(p: argparse.ArgumentParser) -> None:
     """Arena knobs shared with scripts/elo_vs_sims.py."""
+    # ⚑ In the SHARED set, unlike --sprt (declared in main(), for the reason
+    # stated there): scripts/elo_vs_sims.py FORWARDS this one into every
+    # run_arena call it makes, so the flag it advertises takes effect. Without
+    # it a sims ladder was pinned to the default cap — no way to pick a smaller
+    # one on a constrained card, and no way to use the documented 0 escape
+    # hatch to reproduce a pre-hoist rung.
+    #
+    # ⚑ THE RULE FOR THIS FUNCTION IS "FORWARDED OR REFUSED", NEVER SILENTLY
+    # DROPPED — and it is a rule about BOTH callers, not just this file. A knob
+    # that only one of them can honour either stays out of the shared set
+    # (--sprt) or is rejected by the script that cannot honour it: `--games` is
+    # declared below and elo_vs_sims sizes its rungs from --games-per-rung, so
+    # it refuses an explicit --games rather than accept a number it will not
+    # read. Before adding anything here, check what the OTHER script does with
+    # it.
+    p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
+                   help="matched_sims: forward-batch cap for the ONE long-lived "
+                        f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
+                        "which is what production selfplay runs, and at the "
+                        "default --max-concurrent-games is at or above every "
+                        "batch the search asks for). ⚑ BELOW that it is a "
+                        "SEARCH-SHAPE knob, not a memory knob: gumbel_c mins its "
+                        "leaf buffer against this, and a full buffer makes the C "
+                        "tree ABSORB surplus leaves as root-Q pseudo-terminals "
+                        "instead of evaluating them, so the moves change. Values "
+                        "below the arena's POOL SIZE (--max-concurrent-games "
+                        "capped by the loaded opening pairs; elo_vs_sims runs "
+                        "the 128 default) are refused — the root submit would "
+                        "raise; values between that and the "
+                        "uncapped leaf-buffer size run but print a loud warning "
+                        "and are recorded in the result record and every game "
+                        "row. 0 disables the hoist and restores the pre-hoist "
+                        "arena exactly — per-call evaluators, 10-head forward, "
+                        "no cache frees — for reproduction, not normal use.")
     # No default, on purpose. The silent default (`play`) is what made every
     # arena Elo in the ledger a measurement of a search selfplay never runs;
     # run_arena refuses matched_sims without it.
@@ -3813,7 +3974,8 @@ def main() -> None:
                         "OFF; when unset nothing about the run changes. Games are "
                         "flushed as they finish, so a killed run still leaves a "
                         "valid PGN. Tags carry the engine names, ConfigHash, "
-                        "GitSha and BOTH sides' realized search shape, plus "
+                        "GitSha, BOTH sides' realized search shape and the "
+                        "effective EvaluatorHoist state, plus "
                         "PairId/PairHalf so a pair-level block bootstrap can "
                         "recover the pairing Ordo itself ignores.")
     p.add_argument("--pgn-candidate-name", default=None,
@@ -3835,23 +3997,6 @@ def main() -> None:
                    help="matched_sims: cap simultaneous games per batch to bound "
                         "GPU memory; total --games still played in chunks "
                         "(default: 128). Lower if you OOM on a small card.")
-    p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
-                   help="matched_sims: forward-batch cap for the ONE long-lived "
-                        f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
-                        "which is what production selfplay runs, and at the "
-                        "default --max-concurrent-games is at or above every "
-                        "batch the search asks for). ⚑ BELOW that it is a "
-                        "SEARCH-SHAPE knob, not a memory knob: gumbel_c mins its "
-                        "leaf buffer against this, and a full buffer makes the C "
-                        "tree ABSORB surplus leaves as root-Q pseudo-terminals "
-                        "instead of evaluating them, so the moves change. Values "
-                        "below --max-concurrent-games are refused (the root "
-                        "submit would raise); values between that and the "
-                        "uncapped leaf-buffer size run but print a loud warning "
-                        "and are recorded in the result record and every game "
-                        "row. 0 disables the hoist and restores the pre-hoist "
-                        "arena exactly — per-call evaluators, 10-head forward, "
-                        "no cache frees — for reproduction, not normal use.")
     p.add_argument("--report-every", type=int, default=64,
                    help="rolling mode: print a RUNNING Elo block every N finished "
                         "games (default: 64). Lower it when the run is under a "
