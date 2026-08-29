@@ -1911,6 +1911,11 @@ def realized_config(
         # ⚑ The all-root-moves ceiling the C sampler imposes, announced next to
         # the flag that promises coverage -- see GSS_MAX_CANDS.
         "root_candidate_cap": int(GSS_MAX_CANDS),
+        # Explicit exception to run_gumbel_root_many_c's default refusal. The
+        # all-root-moves lane already counts/warns every overflow, so retaining
+        # the measured 64-candidate ranking ceiling is an experiment choice,
+        # not an accepted-and-silently-ignored search request.
+        "allow_candidate_cap_truncation": bool(cfg.all_root_moves),
         # ⚑ Terminal root shortcuts are DISABLED under all-root-moves: the
         # shortcut prunes an immediately-drawing legal move from a winning root
         # before candidate selection, which is a coverage hole the flag exists
@@ -2089,8 +2094,9 @@ def play_game(
                 # silent: the target is dense over the legal set either way.
                 # Left ON otherwise, where production's topk-capped candidate set
                 # makes the shortcut a real saving and no coverage is promised.
+                allow_candidate_cap_truncation=bool(cfg.all_root_moves),
                 allow_terminal_root_shortcuts=not bool(cfg.all_root_moves),
-                # Explicit, never defaulted: these two are not GumbelConfig
+                # Explicit, never defaulted: these controls are not GumbelConfig
                 # fields, so no override surface can reach them and
                 # mcts/gumbel.py's standing comment requires every call site to
                 # pass them by hand.
