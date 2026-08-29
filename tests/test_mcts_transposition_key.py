@@ -986,3 +986,56 @@ def test_guard_health_reports_once_per_change(monkeypatch, capsys) -> None:
     monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
     _tiny_search()
     assert "[mcts]" not in capsys.readouterr().err
+
+def test_tt_reuse_across_unusable_ep_twin_roots_is_correct(monkeypatch) -> None:
+    """The raw-EP clause of `tt_donor_context_match`, MEASURED end to end.
+
+    Review of #485 flagged the clause as unfalsifiable (the two history tests
+    share `ep_square == -1`) and proposed driving the unusable-EP FEN pair
+    through `_prime_tt_then_search`, expecting a context reject.  Running that
+    is this test's origin, and it showed the OPPOSITE, correctly: the TT is
+    probed at the CHILD leaf, where the EP right has expired in both lines,
+    and the two children are byte-identical network inputs — same pieces,
+    `ep_square == -1` on both, and identical history planes, because history
+    slots carry no EP plane and the repetition key masks UNUSABLE EP (the
+    python-chess predicate, `1a2f47e72`).  So reuse across the twins is the
+    ruler-correct outcome, and this pins it as a POSITIVE control.
+
+    Why no reachable input exercises the clause: a position's raw EP is set
+    iff its parent just double-pushed, so two probes that differ in raw EP
+    always differ in the parent one ply back — inside the 7-slot window the
+    context compare already rejects on.  The clause stays as belt and braces
+    for contexts no legal line can build (hand-built FEN donors), priced at a
+    register compare.
+
+    MUTANT: this test does NOT kill an EP-clause mutant — nothing end-to-end
+    can, per the argument above, which is the finding's resolution (recorded
+    as a measured false positive, not fixed defensively).  What it DOES kill:
+    any change that makes the encoder or repetition key see unusable EP again
+    (the child inputs then differ and reuse flips to a reject).
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    ep = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    )
+    no_ep = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    )
+    assert (
+        CBoard.from_board(ep).transposition_key
+        == CBoard.from_board(no_ep).transposition_key
+    )
+
+    # Exact-context control: the same unusable-EP position reuses.
+    stats, rows = _prime_tt_then_search(ep, ep.copy(stack=True))
+    assert stats["reuse"] > 0 and stats["context_reject"] == 0, stats
+    assert rows == 0, stats
+
+    # The twins: the probed CHILDREN are identical evaluator inputs, so this
+    # is a REUSE by the ruler, not a reject — see the docstring.
+    stats, rows = _prime_tt_then_search(ep, no_ep)
+    assert stats["probe_hits"] > 0, stats
+    assert stats["reject"] == 0, stats
+    assert stats["context_reject"] == 0, stats
+    assert stats["reuse"] > 0, stats
+    assert rows == 0, stats
