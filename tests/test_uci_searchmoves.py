@@ -47,6 +47,125 @@ def test_best_move_is_restricted_to_searchmoves() -> None:
     assert pv == [e2e4]
 
 
+@pytest.mark.parametrize("pool_path", ("walker", "pucv", "pucv_pool"))
+def test_unrestricted_pool_rebuilds_a_root_left_narrowed_by_searchmoves(
+    pool_path: str,
+) -> None:
+    """A searchmoves Gumbel root must not hide moves from the next pool search.
+
+    The first call is the real SearchWorker Gumbel path and leaves a persistent
+    root containing only e2e4. We then activate each pool-prep route and ask for
+    an unrestricted root. Prep must replace that tree with one expanded over
+    every legal root move while reusing the already-cached NN root evaluation.
+    """
+
+    class NeutralEvaluator:
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations
+            batch = int(x.shape[0])
+            return (
+                np.zeros((batch, POLICY_SIZE), dtype=np.float32),
+                np.zeros((batch, 3), dtype=np.float32),
+            )
+
+    board = chess.Board()
+    e2e4_move = chess.Move.from_uci("e2e4")
+    e2e4 = int(move_to_index(e2e4_move, board))
+    worker = SearchWorker(
+        NeutralEvaluator(),
+        device="cpu",
+        chunk_sims=1,
+        gumbel_cfg=GumbelConfig(
+            simulations=1,
+            topk=2,
+            temperature=0.0,
+            add_noise=False,
+        ),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+        root_moves=("e2e4",),
+    )
+    assert first.bestmove_uci == "e2e4"
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    narrowed_tree = worker._tree
+    narrowed_actions, _ = narrowed_tree.get_children_visits(worker._root_id)
+    assert set(map(int, narrowed_actions)) == {e2e4}
+
+    cached_policy = worker._root_pol_logits
+    cached_wdl = worker._root_wdl_logits
+    assert cached_policy is not None
+    assert cached_wdl is not None
+
+    worker._walker_pool = None
+    worker._pucv = None
+    worker._pucv_pool = None
+    if pool_path == "walker":
+        worker._walker_pool = MagicMock()
+    elif pool_path == "pucv":
+        worker._pucv = MagicMock()
+    else:
+        worker._pucv_pool = MagicMock()
+
+    worker._pre_expand_root_for_pool(board, allowed_root_indices=None)
+
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    assert worker._tree is not narrowed_tree
+    actions, _ = worker._tree.get_children_visits(worker._root_id)
+    expected = {
+        int(move_to_index(move, board))
+        for move in board.legal_moves
+    }
+    assert set(map(int, actions)) == expected
+    assert worker._root_pol_logits is cached_policy
+    assert worker._root_wdl_logits is cached_wdl
+
+
+@pytest.mark.parametrize("pool_path", ("walker", "pucv", "pucv_pool"))
+def test_pool_prep_keeps_an_already_full_root(pool_path: str) -> None:
+    """The support guard must not turn normal same-position reuse into rebuilds."""
+    board = chess.Board()
+    legal = np.array(
+        [int(move_to_index(move, board)) for move in board.legal_moves],
+        dtype=np.int32,
+    )
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(
+        root,
+        legal,
+        np.full(legal.size, 1.0 / legal.size, dtype=np.float64),
+    )
+
+    worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
+    worker._tree = tree
+    worker._root_id = root
+    worker._tree_fen = board.fen()
+    worker._root_pol_logits = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    worker._root_wdl_logits = np.zeros((1, 3), dtype=np.float32)
+    worker._walker_pool = None
+    worker._pucv = None
+    worker._pucv_pool = None
+    if pool_path == "walker":
+        worker._walker_pool = MagicMock()
+    elif pool_path == "pucv":
+        worker._pucv = MagicMock()
+    else:
+        worker._pucv_pool = MagicMock()
+
+    worker._pre_expand_root_for_pool(board, allowed_root_indices=None)
+
+    assert worker._tree is tree
+    assert worker._root_id == root
+
 def test_reused_root_info_is_restricted_to_searchmoves() -> None:
     board = chess.Board()
     e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
