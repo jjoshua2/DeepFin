@@ -1825,3 +1825,591 @@ def test_an_unsaturated_row_is_never_held_out(tmp_path: Path) -> None:
     assert realized["temp_recovered_from_emitted_policy"]["n"] == 3
     assert realized["temp_recovered_from_emitted_policy"]["min"] == pytest.approx(0.5)
     assert realized["temp_recovered_from_emitted_policy"]["max"] == pytest.approx(0.5)
+
+
+# ── the exploration floor ────────────────────────────────────────────────────
+#
+# ⚑ The arm this exists for is the ledger's floor arm -- `qtemp_0.04 + floor
+# 0.002` as the shape re-analysis measured it (`3e655b762`), scheduled as arm 5
+# `qtemp_0.067 + floor 0.002` after the reorder (`66f29b703`), which keeps the
+# head at Gumbel sigma and makes the floor the single treatment.  T80's shape is
+# a search-sharpened head plus an exploration floor, and a single temperature
+# misses at both ends.  Every assertion below is about the EMITTED rows -- the
+# flag is never read back out of the summary and called a measurement.
+
+#: The ladder's floor, which is 0.002 in every version of the arm -- the
+#: temperature is NOT: the reorder (``66f29b703``) runs arm 5 at the unchanged
+#: Gumbel-sigma head 0.067 with the floor as the single treatment.
+ARM_FLOOR = 0.002
+
+#: The temperature these fixtures derive at, and it is a fixture choice rather
+#: than an arm: 0.04 is sharp enough that the ninth move's unfloored mass
+#: (1.6e-09) is stored as EXACTLY ZERO by the shard's float16, which is the
+#: effect the floor exists to undo. A test at the arm's own 0.067 would assert
+#: the same formula against a tail float16 can still represent.
+SHARP_TEMP = 0.04
+
+
+def hand_floored_policy(
+    cps: dict[str, float], *, temp: float, floor: float,
+) -> dict[str, float]:
+    """``(1 - floor * n) * softmax(q / temp) + floor``, recomputed by hand."""
+    plain = hand_policy(cps, temp=temp)
+    n_legal = len(cps)
+    return {
+        move: (1.0 - floor * n_legal) * prob + floor for move, prob in plain.items()
+    }
+
+
+def ramp_corpus(tmp_path: Path, *, name: str = "corpus") -> tuple[Path, dict[str, float]]:
+    """One nine-move row with a distinct cp per move -- the floor's test bed.
+
+    ⚑ The 50cp step is chosen, not incidental: at ``--temp 0.04`` it puts the
+    ninth move's unfloored mass at 1.6e-09, which the shard's float16 stores as
+    EXACTLY ZERO. That is the tail the floor exists to keep alive, so the
+    fixture has to contain one.
+    """
+    at9 = ramp(FEN_W, "f1e3", best_cp=400.0, step=50.0)
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: at9})],
+        result=1.0, result_pgn="1-0",
+    )
+    return write_corpus(tmp_path, [row], name=name), at9
+
+
+def test_floor_zero_emits_exactly_what_the_unfloored_tool_emitted(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE REGRESSION. ``--floor 0`` must not perturb one bit.
+
+    Three ways, because "the identity is arithmetically exact" is an argument
+    and this is a corpus: the array is not touched at all (object identity), a
+    ``--floor 0`` run and a run with no flag at all agree bit for bit, and both
+    agree with the softmax recomputed independently from the shared cp map.
+
+    Mutation caught: dropping ``apply_floor``'s ``value == 0.0`` short circuit
+    so the zero path computes ``1.0 * p + 0.0`` -- which is exact here, so the
+    array-equality assertions still pass and the ``is`` assertion fails; and
+    making the floor ``max(floor, 1e-12)`` -- which the ``is`` assertion and
+    both equalities catch.
+    """
+    corpus_dir, at9 = ramp_corpus(tmp_path)
+    plain = derive.softmax_at_temp(
+        np.array([at9[m] for m in at9], dtype=np.float64), temp=SHARP_TEMP,
+    )
+    assert derive.apply_floor(plain, floor=0.0, n_legal=len(at9)) is plain
+
+    unflagged = run_derive(corpus_dir, tmp_path / "none", "uniform-d9", temp=SHARP_TEMP)
+    zero = run_derive(
+        corpus_dir, tmp_path / "zero", "uniform-d9", "--floor", "0", temp=SHARP_TEMP,
+    )
+    got_none, _ = read_rows(tmp_path / "none")
+    got_zero, _ = read_rows(tmp_path / "zero")
+    assert np.array_equal(
+        np.asarray(got_none[0].policy_target), np.asarray(got_zero[0].policy_target),
+    )
+    # And against the map, not against the other run: two identical bugs would
+    # agree with each other.
+    emitted = emitted_policy(got_zero[0], FEN_W)
+    for move, expected in hand_policy(at9, temp=SHARP_TEMP).items():
+        assert emitted[move] == float(np.float16(np.float32(expected)))
+    # Every pre-existing reading is untouched; the new keys are additions.
+    for key, value in unflagged["realized"].items():
+        assert zero["realized"][key] == value or (
+            isinstance(value, float) and math.isnan(value)
+        )
+    assert unflagged["realized"]["temp_recovered_from_emitted_policy"]["n"] == 1
+    assert zero["floor_requested"] == 0.0
+    assert zero["policy"]["temp_recovery_estimator"] == "closed_form_two_move"
+
+
+def test_the_floor_reaches_every_legal_move_and_keeps_the_scheme_argmax(
+    tmp_path: Path,
+) -> None:
+    """The floor's whole shape: a sharp head at 0.04 and 0.002 under every move.
+
+    ⚑ The point of the floor is the TAIL: at temp 0.04 this row's ninth move
+    carries 1.6e-09 unfloored and the shard's float16 stores it as EXACTLY
+    ZERO -- the move is unrecoverable for the net, and the legal mask still
+    names it. Floored it stores 0.00200. The argmax is the same move either
+    way, because the floor is affine with a positive coefficient.
+
+    Mutation caught: making ``apply_floor`` return ``probs + floor``
+    (unnormalised) -- the row then sums to 1.018 and the mass assertion fails;
+    and ``(1 - floor) * probs + floor`` (the n_legal dropped) -- the row sums
+    to 1.016 and the same assertion fails.
+    """
+    corpus_dir, at9 = ramp_corpus(tmp_path)
+    run_derive(corpus_dir, tmp_path / "flat", "uniform-d9", temp=SHARP_TEMP)
+    run_derive(
+        corpus_dir, tmp_path / "floored", "uniform-d9",
+        "--floor", str(ARM_FLOOR), temp=SHARP_TEMP,
+    )
+    flat, _ = read_rows(tmp_path / "flat")
+    floored, _ = read_rows(tmp_path / "floored")
+    p_flat = emitted_policy(flat[0], FEN_W)
+    p_floored = emitted_policy(floored[0], FEN_W)
+
+    # ⚑ The bar is the floor AS FLOAT16 STORES IT (0.002 happens to round UP,
+    # to 0.00200081; roughly half of all floors round down instead) -- the
+    # cast is the only thing allowed to move it, in either direction.
+    stored_floor = float(np.float16(ARM_FLOOR))
+    assert min(p_floored.values()) >= stored_floor
+    assert min(p_flat.values()) == 0.0  # the tail the float16 cast kills
+    assert sorted(p_flat.values())[1] < ARM_FLOOR / 10.0
+    assert max(p_floored, key=lambda m: p_floored[m]) == "f1e3"
+    assert max(p_flat, key=lambda m: p_flat[m]) == "f1e3"
+    assert sum(p_floored.values()) == pytest.approx(1.0, abs=2e-3)
+    for move, expected in hand_floored_policy(
+        at9, temp=SHARP_TEMP, floor=ARM_FLOOR,
+    ).items():
+        assert p_floored[move] == pytest.approx(expected, rel=1e-3)
+    # The head paid for the tail: the best move gave up exactly what the eight
+    # others gained.
+    assert p_floored["f1e3"] < p_flat["f1e3"]
+
+
+@pytest.mark.parametrize(
+    "bad", [-1e-9, -1.0, float("nan"), float("inf"), 1.0 / 218.0, 0.005, 0.5],
+)
+def test_a_floor_that_could_starve_the_head_is_refused(bad: float) -> None:
+    """The startup bound, at and above ``1 / MAX_LEGAL_MOVES``.
+
+    ⚑ The refusal is against the CHESS-THEORETIC maximum, not against the
+    corpus in hand: a nine-move row could carry ``--floor 0.05`` happily, and
+    accepting it would mean a floor that is legal for one corpus and fatal for
+    the next. See ``validate_floor``.
+
+    Mutation caught: deleting the ``value * MAX_LEGAL_MOVES >= 1.0`` branch --
+    every value from ``1/218`` up is then accepted and a 218-move row would
+    emit a policy with a non-positive head coefficient.
+    """
+    with pytest.raises(ValueError, match="--floor"):
+        derive.validate_floor(bad)
+
+
+@pytest.mark.parametrize("good", [0.0, 1e-6, 0.002, 0.004])
+def test_a_floor_inside_the_bound_is_accepted_unchanged(good: float) -> None:
+    """The other side of the same gate -- and the arm's 0.002 is inside it."""
+    assert derive.validate_floor(good) == good
+    assert good * derive.MAX_LEGAL_MOVES < 1.0
+
+
+def test_a_bad_floor_is_refused_before_the_corpus_is_touched(
+    tmp_path: Path,
+) -> None:
+    """Startup, not first row: nothing is written and nothing is read.
+
+    Mutation caught: moving ``validate_floor`` out of ``main`` and leaving it
+    only in ``apply_floor`` -- the refusal then happens after the corpus record
+    has been read and the out-dir created, which is the failure mode the temp
+    validator has its own test for.
+    """
+    with pytest.raises(ValueError, match="--floor"):
+        derive.main([
+            "--corpus", str(tmp_path / "does_not_exist"),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--floor", "0.9",
+        ])
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_row_beyond_the_theoretic_bound_is_fatal_and_never_a_dropped_row() -> None:
+    """``apply_floor``'s per-row check is the BOUND's falsifier.
+
+    It cannot fire while ``MAX_LEGAL_MOVES`` really bounds chess, which is why
+    it is written as a hard failure rather than as an envelope-style drop: a
+    dropped row would make the emitted row set a function of ``--floor``, and
+    two arms of a floor ladder would then differ in which positions they hold.
+
+    Mutation caught: turning the raise into ``return probs`` -- the call below
+    returns a policy whose head coefficient is -0.2 (mass on the best move goes
+    NEGATIVE) instead of refusing.
+    """
+    probs = derive.softmax_at_temp(np.linspace(1.0, 0.0, 300), temp=0.5)
+    with pytest.raises(derive.CorpusIntegrityError, match="falsifies that bound"):
+        derive.apply_floor(probs, floor=0.004, n_legal=300)
+
+
+@pytest.mark.parametrize("temp", [0.04, 0.3, 1.0])
+@pytest.mark.parametrize("floor", [0.0, 0.0005, 0.002, 0.004])
+def test_recover_floor_and_temp_inverts_the_floored_policy(
+    temp: float, floor: float,
+) -> None:
+    """Both knobs, read back out of the emitted row with neither echoed in.
+
+    ⚑ ``floor=0.0`` is in the grid on purpose: the estimator run against an
+    UNFLOORED policy must read the floor as 0, which is precisely what makes it
+    able to notice a floor that was parsed and never applied.
+
+    Mutation caught: replacing the recovered scale with ``1.0`` (so the floor
+    is reported as 0 always) -- every nonzero row of this grid fails.
+    """
+    q = np.linspace(0.9, -0.6, 12)
+    probs = derive.apply_floor(
+        derive.softmax_at_temp(q, temp=temp), floor=floor, n_legal=12,
+    )
+    reading = derive.recover_floor_and_temp(q, probs, n_legal=12)
+    assert reading is not None
+    got_temp, got_floor = reading
+    assert got_temp == pytest.approx(temp, rel=1e-6)
+    assert got_floor == pytest.approx(floor, abs=1e-9)
+
+
+def test_the_floored_estimator_refuses_a_row_it_cannot_read() -> None:
+    """Fewer than three distinct values, and a difference that is pure rounding.
+
+    Both return None rather than a number: an estimator that answered anyway
+    would put rounding noise into the stamp a reader uses to decide whether the
+    floor applied at all.
+
+    Mutation caught: dropping the ``FLOOR_RECOVERY_MIN_REL_GAP`` conditioning
+    check (leaving only ``> 0``) -- the pinned row below then reads a
+    temperature of **0.0141938 for a 0.014 derivation, 1.4% high**, off a
+    difference that is a single float64 ULP, and the run stamps it as a
+    measurement instead of counting the row as unreadable. ⚑ The FLOOR it
+    recovers there is still 0.002: the two readings are not equally
+    conditioned, and the gate is sized for the fragile one.
+    """
+    two_valued = np.array([0.9, 0.9, 0.1, 0.1, 0.1], dtype=np.float64)
+    assert derive.distinct_values(two_valued) == 2
+    assert derive.recover_floor_and_temp(
+        two_valued,
+        derive.apply_floor(
+            derive.softmax_at_temp(two_valued, temp=0.5), floor=0.002, n_legal=5,
+        ),
+        n_legal=5,
+    ) is None
+
+    # Four distinct values, but at temp 0.014 the second and fourth are 4.3e-19
+    # apart on top of a floor of 2e-3 -- ONE float64 ULP, strictly positive,
+    # and 2.2e-16 of the probability it came out of. The row is arithmetic
+    # noise wearing the shape of a reading.
+    pinned = np.array([1.0, 0.4, 0.4, 0.0, -0.5], dtype=np.float64)
+    probs = derive.apply_floor(
+        derive.softmax_at_temp(pinned, temp=0.014), floor=0.002, n_legal=5,
+    )
+    assert derive.distinct_values(pinned) == 4
+    gap = float(probs[1] - probs[3])
+    assert 0.0 < gap / float(probs[1]) < derive.FLOOR_RECOVERY_MIN_REL_GAP
+    assert derive.recover_floor_and_temp(pinned, probs, n_legal=5) is None
+
+
+def test_the_floor_take_effect_stamp_reads_the_rows_not_the_flag(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE TAKE-EFFECT PROOF, and it must distinguish two corpora.
+
+    The same corpus, the same temperature, derived twice: with the arm's floor
+    and without it. Both instruments have to separate them -- the algebraic
+    recovery (exact, on the rows that can carry it) and the stored minimum mass
+    (coarse, on every row) -- and the recovered floor has to be the floor that
+    was EMITTED, not the one that was asked for.
+
+    Mutation caught: making ``apply_floor`` a no-op (``return probs``) with the
+    flag still parsed, stamped in the summary and stamped on the shards -- the
+    run then looks floored in every echoed field, and this test fails on the
+    recovered floor (0 instead of 0.002) and on the stored min mass (0 instead
+    of 0.00199).
+    """
+    corpus_dir, _ = ramp_corpus(tmp_path)
+    floored = run_derive(
+        corpus_dir, tmp_path / "floored", "uniform-d9",
+        "--floor", str(ARM_FLOOR), temp=SHARP_TEMP,
+    )
+    flat = run_derive(
+        corpus_dir, tmp_path / "flat", "uniform-d9", temp=SHARP_TEMP,
+    )
+
+    read = floored["realized"]["floor_recovered_from_emitted_policy"]
+    assert read["n"] == 1
+    assert read["min"] == pytest.approx(ARM_FLOOR, abs=1e-9)
+    assert read["max"] == pytest.approx(ARM_FLOOR, abs=1e-9)
+    assert floored["realized"]["floor_recovery_skipped_few_values"] == 0
+    assert floored["realized"]["floor_recovery_skipped_ill_conditioned"] == 0
+    # The temperature survives the floor: the joint estimator recovers it too.
+    recovered = floored["realized"]["temp_recovered_from_emitted_policy"]
+    assert recovered["n"] == 1
+    assert recovered["min"] == pytest.approx(SHARP_TEMP, rel=1e-6)
+    assert floored["policy"]["temp_recovery_estimator"] == "floored_three_move_bisection"
+
+    # The unfloored run: the algebraic estimator does not run at all, and the
+    # coarse one reads the softmax's own tail instead of the floor.
+    assert flat["realized"]["floor_recovered_from_emitted_policy"]["n"] == 0
+    assert math.isnan(flat["realized"]["floor_recovered_from_emitted_policy"]["min"])
+    floored_mass = floored["realized"]["policy_min_legal_prob_stored"]
+    flat_mass = flat["realized"]["policy_min_legal_prob_stored"]
+    assert floored_mass["n"] == flat_mass["n"] == 1
+    assert floored_mass["min"] == pytest.approx(float(np.float16(ARM_FLOOR)))
+    assert flat_mass["min"] == 0.0
+    assert "floor recovered from the emitted policy: n=1" in derive.format_summary(
+        floored,
+    )
+
+
+def test_the_floor_is_banked_in_the_summary_and_on_every_shard(
+    tmp_path: Path,
+) -> None:
+    """Attribution: a derived corpus says which floor made it, shard by shard.
+
+    ⚑ Both places, because they answer different questions. The summary
+    attributes the RUN; the zarr attrs travel with a shard that gets copied
+    somewhere else, where a floored and an unfloored shard are otherwise
+    identical in every stamp they carry.
+
+    Mutation caught: dropping ``derive_floor`` from ``_stamp_shard_attrs`` --
+    the summary still reports the floor and the shards become unattributable;
+    dropping ``floor_requested`` from ``build_summary`` -- the reverse.
+    """
+    corpus_dir, _ = ramp_corpus(tmp_path)
+    out = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--floor", str(ARM_FLOOR), temp=SHARP_TEMP,
+    )
+    assert out["floor_requested"] == ARM_FLOOR
+    assert out["policy"]["floor"] == ARM_FLOOR
+    assert out["policy"]["floor_max_legal_moves_bound"] == derive.MAX_LEGAL_MOVES
+    assert "floor" in out["policy"]["construction"]
+    for path in iter_shard_paths(tmp_path / "out"):
+        attrs = dict(zarr.open_group(str(path), mode="r").attrs)
+        assert attrs["derive_floor"] == ARM_FLOOR
+        assert attrs["derive_temp"] == SHARP_TEMP
+    assert f"floor={ARM_FLOOR}" in derive.format_summary(out)
+
+
+def test_a_row_the_floored_estimator_cannot_read_is_counted_and_still_written(
+    tmp_path: Path,
+) -> None:
+    """Coverage is reported, never implied.
+
+    A two-valued row cannot determine (tau, floor) jointly, so it is held out
+    of the reading and counted -- and it is still DERIVED, with the floor on
+    every one of its legal moves. A corpus of such rows would stamp ``n=0``
+    beside a nonzero skip count, which is a different fact from a floor that
+    failed to apply, and the coarse stamp still covers it.
+
+    Mutation caught: counting the hold-out into ``floor_recovered_n`` with a
+    0.0 reading instead of skipping it -- the summary then reports a floor of
+    0.001 (the mean of a real 0.002 and a fabricated 0) on a corpus whose rows
+    all carry 0.002, and the skip counter reads zero.
+    """
+    two_valued = {
+        move: (400.0 if index == 0 else 100.0)
+        for index, move in enumerate(legal_ucis(FEN_W))
+    }
+    rows = [
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: two_valued})],
+            result=1.0, result_pgn="1-0", game_id=0, ply=0,
+        ),
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+            result=1.0, result_pgn="1-0", game_id=1, ply=1,
+        ),
+    ]
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--floor", str(ARM_FLOOR), temp=SHARP_TEMP,
+    )
+
+    realized = out["realized"]
+    assert realized["rows_written"] == 2  # ⚑ held out of the STAMP, not dropped
+    assert realized["floor_recovery_skipped_few_values"] == 1
+    assert realized["floor_recovered_from_emitted_policy"]["n"] == 1
+    assert realized["floor_recovered_from_emitted_policy"]["min"] == pytest.approx(
+        ARM_FLOOR, abs=1e-9,
+    )
+    # The coarse stamp covers BOTH rows, including the one held out above.
+    assert realized["policy_min_legal_prob_stored"]["n"] == 2
+    assert realized["policy_min_legal_prob_stored"]["min"] == pytest.approx(
+        float(np.float16(ARM_FLOOR)),
+    )
+
+
+# ── PR #486 review hardening: the estimator must refuse what it cannot read ──
+
+
+def test_tiny_spread_rows_are_skipped_not_stamped() -> None:
+    """⚑⚑ THE ILL-CONDITIONED BAND, found independently by two reviewers.
+
+    A q spread just above the saturation gate sits in the softmax's LINEAR
+    regime, where the emitted row carries two numbers (slope, offset) and can
+    never determine three (tau, floor, scale) -- the three-point ratio lies on
+    ``R(tau)``'s flat hot tail and the inverse returns rounding noise.  Before
+    the ``FLOOR_RECOVERY_MIN_SPREAD_PER_TAU`` gate these rows STAMPED the
+    noise: spread 1e-9 at true (0.067, 0.002) recovered (0.0398, 0.035), and
+    the cp-band row below recovered (0.087, -0.022) -- a negative floor no
+    emission can carry.
+
+    Mutation caught: deleting the spread-per-tau gate re-stamps every row in
+    the band and each ``is None`` below fails.
+    """
+    for spread in (1e-9, 3e-9, 1e-8, 1e-7):
+        q = np.linspace(0.0, spread, 12)
+        probs = derive.apply_floor(
+            derive.softmax_at_temp(q, temp=0.067), floor=ARM_FLOOR, n_legal=12,
+        )
+        assert derive.recover_floor_and_temp(q, probs, n_legal=12) is None
+
+    # The production shape, not a synthetic one: every move winning by a mile
+    # (cp 3000..3200) saturates the cp->q map to spread ~6.5e-8 -- distinct
+    # values, above the saturation gate, and unreadable.
+    cps = np.linspace(3000.0, 3200.0, 12)
+    q = np.asarray(
+        gate.q_from_effective_cp(cps, slope=SLOPE, draw_width_cp=DRAW_WIDTH),
+        dtype=np.float64,
+    )
+    assert derive.q_spread(q) > derive.TEMP_RECOVERY_MIN_Q_SPREAD
+    probs = derive.apply_floor(
+        derive.softmax_at_temp(q, temp=0.067), floor=ARM_FLOOR, n_legal=12,
+    )
+    assert derive.recover_floor_and_temp(q, probs, n_legal=12) is None
+
+    # And the gate does not eat honest rows: a real spread recovers exactly.
+    q = np.linspace(0.0, 1.5, 12)
+    probs = derive.apply_floor(
+        derive.softmax_at_temp(q, temp=0.067), floor=ARM_FLOOR, n_legal=12,
+    )
+    reading = derive.recover_floor_and_temp(q, probs, n_legal=12)
+    assert reading is not None
+    tau, floor = reading
+    assert tau == pytest.approx(0.067, rel=1e-6)
+    assert floor == pytest.approx(ARM_FLOOR, abs=1e-9)
+
+
+def test_an_impossible_recovered_floor_is_refused_not_stamped() -> None:
+    """Belt and braces under the spread gate: no emission can carry a negative
+    floor (``validate_floor`` refuses it at startup), so a reading that lands
+    below ``-FLOOR_RECOVERY_FLOOR_TOL`` is the arithmetic failing, not a fact
+    about the corpus.  The take-effect zero must SURVIVE the bound: an
+    unfloored row's honest reading is rounding residue of either sign.
+    """
+    q = np.linspace(0.0, 1.5, 12)
+    s = derive.softmax_at_temp(q, temp=0.067)
+    # Hand-build the emission apply_floor would refuse to make.
+    impossible = (1.0 - (-0.01) * 12) * s + (-0.01)
+    assert derive.recover_floor_and_temp(q, impossible, n_legal=12) is None
+    # The unapplied-floor reading (~0, either sign) still passes.
+    reading = derive.recover_floor_and_temp(q, s, n_legal=12)
+    assert reading is not None
+    assert reading[1] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_ill_conditioned_rows_reach_the_summary_counter(tmp_path: Path) -> None:
+    """⚑ End to end, because the increment was a surviving mutant: ``+= 1`` ->
+    ``+= 0`` passed the whole file before this test.  A row every move of
+    which wins by a mile is derived and WRITTEN, held out of the stamp, and
+    counted -- next to a readable row that keeps the run's take-effect proof
+    alive.
+    """
+    winning = {
+        move: 3000.0 + 25.0 * index
+        for index, move in enumerate(legal_ucis(FEN_W))
+    }
+    rows = [
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: winning})],
+            result=1.0, result_pgn="1-0", game_id=0, ply=0,
+        ),
+        corpus_row(
+            fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+            result=1.0, result_pgn="1-0", game_id=1, ply=1,
+        ),
+    ]
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--floor", str(ARM_FLOOR), temp=SHARP_TEMP,
+    )
+    realized = out["realized"]
+    assert realized["rows_written"] == 2
+    assert realized["floor_recovery_skipped_ill_conditioned"] == 1
+    assert realized["floor_recovered_from_emitted_policy"]["n"] == 1
+    assert realized["floor_recovered_from_emitted_policy"]["mean"] == pytest.approx(
+        ARM_FLOOR, abs=1e-9,
+    )
+    # The four buckets partition the written rows (the accounting the summary
+    # comment promises).
+    assert (
+        realized["temp_recovery_skipped_saturated"]
+        + realized["floor_recovery_skipped_few_values"]
+        + realized["floor_recovery_skipped_ill_conditioned"]
+        + realized["floor_recovered_from_emitted_policy"]["n"]
+    ) == realized["rows_written"]
+
+
+def test_a_floor_that_does_not_take_effect_kills_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ ENFORCED, not published: the exact failure the stamp exists for --
+    parsed, validated, echoed everywhere, never applied -- must now kill the
+    run before the summary is written, not hand a human two numbers to diff.
+
+    Mutation caught: deleting the ``enforce_take_effect`` call in ``derive``
+    turns this back into a run that exits 0 with a lying corpus on disk.
+    """
+    corpus_dir, _ = ramp_corpus(tmp_path)
+    monkeypatch.setattr(
+        derive, "apply_floor", lambda probs, *, floor, n_legal: probs,
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="did not take effect"):
+        derive.main([
+            "--corpus", str(corpus_dir),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--temp", str(SHARP_TEMP),
+            "--floor", str(ARM_FLOOR),
+        ])
+    # Died BEFORE the summary: the documented "this run DIED" state.
+    assert not (tmp_path / "out" / derive.SUMMARY_NAME).exists()
+
+
+def test_a_floored_run_no_row_can_vouch_for_is_refused(tmp_path: Path) -> None:
+    """A floored run whose every row is unreadable has NO exact take-effect
+    proof, and absent is not passed.  (A real corpus cannot trip this --
+    run02's first 20k rows leave 17k+ readable.)
+    """
+    winning = {
+        move: 3000.0 + 25.0 * index
+        for index, move in enumerate(legal_ucis(FEN_W))
+    }
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: winning})],
+        result=1.0, result_pgn="1-0",
+    )
+    corpus_dir = write_corpus(tmp_path, [row])
+    with pytest.raises(derive.CorpusIntegrityError, match="floor_recovered_n == 0"):
+        derive.main([
+            "--corpus", str(corpus_dir),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--temp", str(SHARP_TEMP),
+            "--floor", str(ARM_FLOOR),
+        ])
+
+
+@pytest.mark.parametrize("bad", [1e-9, 2.9e-8])
+def test_a_floor_that_vanishes_in_shard_storage_is_refused(bad: float) -> None:
+    """A positive floor below half of float16's smallest subnormal serializes
+    to exactly zero on the shard path, so the CLI would accept a flag the
+    trainer can never see.  Refused at startup, like every other bad floor.
+    """
+    with pytest.raises(ValueError, match="vanishes in shard storage"):
+        derive.validate_floor(bad)
+    # The smallest storable floor survives.
+    assert derive.validate_floor(6e-8) == 6e-8
+
+
+def test_the_stamps_use_the_shards_two_step_cast() -> None:
+    """⚑ Just above 2**-25 is the trap: the direct float64->float16 cast
+    rounds it UP to float16's smallest subnormal, but float32 first rounds it
+    DOWN onto the tie exactly, and the tie goes to even -- ZERO.  A one-step
+    stamp there claims a tail the trainer reads as nothing.  ``shard_stored``
+    is the one cast every stamp goes through, so it must take the shard's
+    two-step path.
+    """
+    tricky = np.asarray([2.0 ** -25 * (1.0 + 2.0 ** -30)], dtype=np.float64)
+    assert float(np.float16(tricky[0])) > 0.0  # the one-step cast says "alive"
+    assert float(derive.shard_stored(tricky)[0]) == 0.0  # the shard says "dead"

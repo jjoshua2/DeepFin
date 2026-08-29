@@ -17,7 +17,7 @@ Usage::
     PYTHONPATH=. python3 scripts/derive_corpus_targets.py \\
         --corpus data/nnue_bootstrap/run01 \\
         --out data/nnue_rows/run01-uniform-d9 \\
-        --scheme uniform-d9 --temp 1.0
+        --scheme uniform-d9 --temp 1.0 [--floor 0.002]
 
 THE SCHEMES
 -----------
@@ -53,15 +53,99 @@ THE SCHEMES
 
 THE TARGETS
 -----------
-POLICY -- ``softmax(q / temp)`` over the scheme's values, placed on the compact
-``lc0_1858`` slots ``compact_index_for_move`` assigns and zero everywhere else.
-``q`` comes from ``audit_label_candidates.q_from_effective_cp``, which reaches
+POLICY -- ``(1 - floor * n_legal) * softmax(q / temp) + floor`` over the
+scheme's values, placed on the compact ``lc0_1858`` slots
+``compact_index_for_move`` assigns and zero everywhere else.  ``n_legal`` is the
+ROW's own legal-move count, so every row's policy sums to 1 and every legal move
+carries at least ``--floor``.  At the default ``--floor 0`` the expression is
+``softmax(q / temp)`` and the emitted bytes are byte-for-byte what this tool
+wrote before the flag existed.  ``q`` comes from
+``audit_label_candidates.q_from_effective_cp``, which reaches
 ``gen_random_selfplay_shards.cp_to_wdl_array`` as a module attribute AT CALL
 TIME -- the same one function object the generator's own move selection and the
 label gate's arms use.  ``tests/test_derive_corpus_targets.py`` proves it by
 replacing that single object and watching this file's targets move.  Because the
 generator selects with ``argmax(q/tau + Gumbel)``, ``--temp tau`` reproduces
-exactly the distribution its own play was sampled from.
+exactly the distribution its own play was sampled from -- ``--floor`` is a
+DEPARTURE from that distribution and is off unless asked for.
+
+⚑ WHY A FLOOR AT ALL: T80's shape is a search-sharpened head PLUS an
+exploration floor, and one temperature cannot fit both ends.  The ledger's
+2026-08-29 re-analysis of the banked T80 ruler (``3e655b762``, bank
+``scratchpad/t80_ruler/``) measured the miss at BOTH ends of a single-tau fit --
+at tau 0.08 the T80 target puts 0.699 of its mass within 10cp of best against
+the mapping's 0.560, and 0.039 beyond 150cp against 0.030, with the middle
+over-weighted; the two ends carry 87% of the KL.  ``tau 0.04 + floor 0.002``
+reads KL 0.336, **-31% against the best single temperature**, interior on both
+axes of a 0.001-0.006 x 0.02-0.06 grid.  ⚑ THE LADDER ARM IS THE FLOOR ALONE:
+the reorder (``66f29b703``) runs arm 5 as ``qtemp_0.067 + floor 0.002``, the
+Gumbel-sigma head UNCHANGED and the floor as the single treatment -- sharpening
+the head to 0.04 was declined on lever 1's ground that eval-space sharpening
+amplifies label confidence on the ~7% of rows where d9 is wrong.  ``--floor`` is
+orthogonal to ``--temp`` and says nothing about which head an arm uses.  ⚑ The
+training-side consequence, and the reason this is a floor rather than a wider
+temperature: a move the eval ranks last still keeps ``floor`` of the mass, so a
+move MISCLASSIFIED by the eval is recoverable by the net instead of being zeroed
+forever -- and it survives the shard's float16 cast, which does NOT survive the
+alternative.  MEASURED on the test fixture's 9-move row at tau 0.04: the ninth
+move's unfloored mass is 1.6e-09, float16's smallest subnormal is 6e-08, so the
+shard stores that move as EXACTLY ZERO while the legal mask still names it
+(``policy_support_lost_to_float16`` counts exactly that).  Floored it stores
+0.00200.
+
+⚑ THE FLOOR IS REFUSED AT STARTUP, NEVER PER ROW.  ``floor * n_legal >= 1``
+would make the head's coefficient non-positive, and ``n_legal`` varies by row,
+so the natural-looking implementation drops or refuses individual ROWS.  This
+file already has a per-row drop idiom (``EnvelopeMiss`` /
+``--max-envelope-misses``) and the floor deliberately does NOT use it: an
+envelope miss is a property of the CORPUS -- the same rows for every reader --
+whereas a floor-driven drop would be a property of the FLAG, so ``--floor``
+would silently change WHICH POSITIONS the derived corpus contains.  Two arms of
+a floor ladder would then differ on two axes at once and the paired comparison
+the ladder exists for would be confounded.  So ``validate_floor`` refuses at
+startup against the chess-theoretic bound ``MAX_LEGAL_MOVES`` (218), before the
+first shard is opened, and every row of a run that starts is emitted.  The bound
+is deliberately conservative -- it refuses ``--floor 0.005`` even though no real
+position has 218 legal moves -- and the arm this was built for, ``floor 0.002``,
+sits 2.3x below it (0.002 x 218 = 0.436).  ``apply_floor`` re-checks the same
+inequality per row -- a COEFFICIENT check, ``floor * n_legal >= 1``, so at
+floor 0.002 it fires from n_legal 500 up, which under the startup refusal
+requires a position with more legal moves than the 218 bound admits: it makes
+the bound falsifiable rather than assumed, and it is fatal rather than a drop,
+so the emitted row set stays independent of the flag either way.
+
+⚑⚑ THE TAKE-EFFECT STAMPS, AND WHY THERE ARE TWO.  With a floor the emitted
+policy is NOT ``softmax(q / temp)``, so the closed-form ``recover_temp`` would
+read a temperature that was never requested -- a stamp that lies.  A floored run
+therefore switches estimator (the choice is stamped as
+``temp_recovery_estimator``) to ``recover_floor_and_temp``, which recovers BOTH
+knobs from the emitted row and NOTHING from the flags: floor cancels out of
+DIFFERENCES of emitted probabilities, so the ratio
+``(p_hi - p_mid) / (p_mid - p_lo)`` is a function of tau alone and inverts to
+tau; the scale ``(p_hi - p_lo) / (s_hi - s_lo)`` then gives ``1 - floor *
+n_legal`` and hence the floor.  A floor that was parsed and then not applied
+reads back 0.  That estimator is EXACT but needs three distinct values and
+enough numerical separation (see ``FLOOR_RECOVERY_MIN_SPREAD_PER_TAU`` for
+what "enough" is and why), so it is joined by a coarse one that covers every
+row: ``policy_min_legal_prob_stored``, the smallest mass any legal move
+carries AFTER the shard's float32-then-float16 cast, which lands within one
+float16 ULP of the floor on every floored row (the cast rounds to nearest in
+BOTH directions -- 0.002 stores as 0.00200081, 0.0035 as 0.00349998) and
+collapses to the softmax tail (1e-8 and below, or 0) without the floor.  One
+instrument is exact on a subset, the other is approximate on all of it, and the
+summary reports the coverage of the first rather than implying it is universal.
+⚑ Neither stamp is merely published: ``enforce_take_effect`` compares the mean
+recovered floor (and tau) against the flags before the summary is written and
+kills the run on a mismatch, so a floored directory that carries a summary is
+one whose rows were MEASURED to carry the floor.
+
+⚑ ONE TRAINING-SIDE KNOB CAN STRIP THE FLOOR AFTER THE FACT:
+``policy_target_temp`` (``retemper_main_policy_target`` in
+``chess_anti_engine/train/losses.py``) applies ``p ** (1/T)`` plus a
+renormalise, which compresses the floor's relative mass non-linearly.  It is
+1.0 (identity) in every config and unset by ``lc0_control_train.py``, so the
+floor ladder trains on what was derived -- but an arm that pairs a floor with
+``policy_target_temp != 1.0`` is not training on the floor it stamped.
 
 VALUE -- the construction is ``data/lc0_rows``'s, mirrored:
 
@@ -221,6 +305,21 @@ DEFAULT_ROWS_PER_SHARD = 8192
 
 DEFAULT_SEED = 20260827
 
+#: ``--floor`` off.  The identity: ``(1 - 0 * n) * softmax + 0`` is the softmax,
+#: and ``apply_floor`` short-circuits so a zero-floor run's bytes are the ones
+#: this tool wrote before the flag existed rather than bytes that happen to
+#: round the same way.
+DEFAULT_FLOOR = 0.0
+
+#: The most legal moves a chess position can have: 218, the constructed maximum
+#: (R6R/2pbpppp/pppppppp/... family), and the bound python-chess's own move
+#: generator cannot exceed on a legal position.  Used ONLY to turn the per-row
+#: constraint ``floor * n_legal < 1`` into a startup refusal that no corpus can
+#: sneak past -- see the module docstring on why the floor is never a per-row
+#: drop.  ⚑ A bound, not a measurement: ``apply_floor`` re-checks the real
+#: ``n_legal`` per row so the bound is falsifiable rather than assumed.
+MAX_LEGAL_MOVES = 218
+
 #: ``ShardMeta.run_id`` for every shard this tool writes.  The scheme is NOT
 #: folded into it: the scheme, its parameters and this file's schema go into
 #: their own zarr attrs (see ``_stamp_shard_attrs``) where a reader can parse
@@ -277,6 +376,64 @@ PROGRESS_GLOB = "w*.progress.jsonl"
 #: as before -- a saturated position is a real position and its policy is a real
 #: (flat) policy; what is refused is quoting a temperature read off it.
 TEMP_RECOVERY_MIN_Q_SPREAD = 1e-9
+
+#: The floored estimator needs THREE distinct values: two determine a ratio the
+#: floor cancels out of only if there is a third point to form the second
+#: difference with.  A row with fewer says nothing about (tau, floor) jointly --
+#: with two distinct values the model has two unknowns and one independent
+#: equation -- so it is skipped and COUNTED rather than fitted.
+FLOOR_RECOVERY_MIN_DISTINCT_VALUES = 3
+
+#: The conditioning gate on the floored estimator, and the reason it is a
+#: RELATIVE one.  Both differences it divides are catastrophic cancellations
+#: when the two probabilities are pinned at the floor: at ``--temp 0.0145`` a
+#: move 0.6 of q behind the best contributes ~1e-18 on top of a floor of 2e-3,
+#: and the float64 ULP of 2e-3 is 4.3e-19 -- so ``p_mid - p_lo`` comes out
+#: strictly positive and is nonetheless two ULPs of rounding noise.  ⚑ MEASURED: over 20,000 random (n, q, temp, floor) rows
+#: this gate holds out 77 and drops the worst recovered-tau error from
+#: **1.9e-3 relative to 2.1e-9**, with the worst recovered floor at 1.1e-12
+#: absolute; on 2,000 production-shaped rows (cp ramps, temp 0.04, floor 0.002)
+#: it holds out NONE and the worst errors are 5.5e-11 (tau) and 9.5e-13
+#: (floor).  1e-9 leaves ~7 significant digits in the smaller difference, and
+#: the tau error is damped from there rather than amplified (``dtau/tau =
+#: (tau/gap) * dR/R``).
+FLOOR_RECOVERY_MIN_REL_GAP = 1e-9
+
+#: The bracket the floored estimator bisects tau in, and its stopping width.
+#: ``R(tau)`` is strictly decreasing from +inf to ``gap_hi / gap_lo``, so a
+#: bracket check is a real test: a row whose observed ratio is not inside that
+#: range is NOT fitted to the nearest end, it is skipped and counted.  The
+#: bracket spans 12 decades around every temperature this tool will be asked
+#: for; bisection is in LOG tau, so the width is relative.
+FLOOR_RECOVERY_TEMP_BRACKET = (1e-8, 1e4)
+FLOOR_RECOVERY_TEMP_RTOL = 1e-13
+
+#: ⚑⚑ THE IDENTIFIABILITY GATE, in units of the RECOVERED temperature.  When
+#: ``q_spread / tau`` is small the softmax is in its linear regime and the
+#: emitted row carries only TWO numbers (a slope and an offset), so no
+#: arithmetic can read (tau, floor) jointly off it -- the three-point ratio
+#: sits on ``R(tau)``'s flat hot tail and the inverse returns whatever the
+#: rounding noise picks (found independently by two reviewers of PR #486;
+#: reproduced: spread 1e-9 at true (0.067, 0.002) recovered (0.0398, 0.035),
+#: and a cp-3000-to-3200 all-moves-winning row, spread 6.5e-8, recovered
+#: (0.087, -0.022)).  ⚑ The gate is on spread PER TAU, not raw spread, because
+#: the linear regime is set by their ratio: MEASURED on 12-move linspace rows,
+#: recovered-tau relative error scales as ``~1e-15 / (spread/tau)^2`` --
+#: 4.3e-2 at spread/tau 1.5e-7, 7.4e-4 at 1.5e-6, 2.3e-7 at 1.5e-4 -- so at
+#: this threshold the surviving readings are exact to ~1e-7 relative across
+#: tau 0.02..1.0.  Rows under it are counted ill-conditioned, and their
+#: targets are still derived and written exactly as before.
+FLOOR_RECOVERY_MIN_SPREAD_PER_TAU = 1e-4
+
+#: How far below zero a recovered floor may read before the reading is refused
+#: as ill-conditioned rather than stamped.  A real emission cannot carry a
+#: negative floor (``validate_floor`` refuses it at startup), so a
+#: substantially negative reading is always the arithmetic failing -- but the
+#: take-effect proof RELIES on an unapplied floor reading back ~0, and an
+#: honest zero comes back as rounding residue of either sign (measured
+#: |floor| <= 7e-13 over 20k unfloored rows).  The tolerance sits ~6 orders
+#: above that residue and ~3 below any floor anyone would request.
+FLOOR_RECOVERY_FLOOR_TOL = 1e-6
 
 #: Which phases a scheme is allowed to read a move's value from.
 VALUE_SOURCE_DEEPEST = "deepest_phase_covering"
@@ -657,12 +814,115 @@ def validate_temp(temp: float) -> float:
     return tau
 
 
+def validate_floor(floor: float) -> float:
+    """⚑ A floor is refused AT STARTUP or not at all -- never per row.
+
+    Two refusals, both before the first shard is opened (``main`` calls this
+    next to ``validate_temp``):
+
+    * negative or non-finite -- a floor is a probability MASS per legal move,
+      and a negative one would subtract mass from the tail it exists to
+      protect while still summing to 1, so nothing downstream could see it;
+    * ``floor * MAX_LEGAL_MOVES >= 1`` -- the head's coefficient
+      ``1 - floor * n_legal`` must stay positive for the emitted row to be a
+      distribution with the scheme's argmax on top, and 218 is the most legal
+      moves any position can have;
+    * a positive floor the SHARD CANNOT STORE -- the trainer reads float16
+      (through float32, see ``_note_shapes``), and a floor below half of
+      float16's smallest subnormal (2**-25 ~ 3e-8) serializes to exactly 0 on
+      every cold tail, so the CLI would accept a flag, every stamp would echo
+      it, and the trainer would see nothing.  Refused with the storage math in
+      the message rather than documented as a caveat.
+
+    ⚑ The second bound is CONSERVATIVE ON PURPOSE and the alternative was
+    considered and rejected: refusing (or dropping) per row would make the
+    emitted row set a function of ``--floor``, so two arms of a floor ladder
+    would differ in which positions they contain as well as in their targets.
+    See the module docstring.  The cost is that a floor between 1/218 and the
+    row-wise limit is refused even though most rows could carry it; the arm
+    this exists for is 0.002, which is 2.3x below the bound.
+    """
+    value = float(floor)
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(
+            f"--floor must be finite and >= 0, got {floor!r}: it is the mass "
+            "every legal move keeps, and 0 is the off position",
+        )
+    if value * MAX_LEGAL_MOVES >= 1.0:
+        raise ValueError(
+            f"--floor {value!r} leaves no head: a position may have up to "
+            f"{MAX_LEGAL_MOVES} legal moves, and {value!r} * {MAX_LEGAL_MOVES} "
+            f"= {value * MAX_LEGAL_MOVES:.6g} >= 1 would drive the softmax's "
+            f"coefficient (1 - floor * n_legal) to zero or below. The bound is "
+            f"the chess-theoretic maximum rather than this corpus's, so which "
+            f"floors are legal does not depend on which rows a corpus holds.",
+        )
+    stored = float(shard_stored(np.asarray([value], dtype=np.float64))[0])
+    if value > 0.0 and stored <= 0.0:
+        raise ValueError(
+            f"--floor {value!r} vanishes in shard storage: the trainer reads "
+            f"policy as float16 (via float32, see shard_stored), and this "
+            f"value serializes to {stored!r} there, so every cold tail the "
+            "floor exists to protect would reach the trainer as exactly zero "
+            "while the flag and the stamps say otherwise. The smallest "
+            "storable floor is float16's smallest subnormal, 2**-24 ~ 6e-8.",
+        )
+    return value
+
+
 def softmax_at_temp(q: np.ndarray, *, temp: float) -> np.ndarray:
     """``softmax(q / temp)`` in float64, max-shifted."""
     tau = validate_temp(temp)
     scaled = np.asarray(q, dtype=np.float64) / tau
     shifted = np.exp(scaled - float(np.max(scaled)))
     return shifted / float(shifted.sum())
+
+
+def shard_stored(values: np.ndarray) -> np.ndarray:
+    """The values AS THE TRAINER WILL READ THEM: float32, then float16.
+
+    ⚑ Two steps because the shard path is two steps -- ``sample_from_row``
+    stores float32 and ``samples_to_arrays`` casts float16 -- and double
+    rounding differs from a direct float64->float16 cast just above the
+    half-way values: ``2**-25 * (1 + 2**-30)`` is above the tie, so the direct
+    cast rounds UP to float16's smallest subnormal, but float32 first rounds
+    it DOWN onto the tie exactly, and the tie then goes to even -- ZERO.
+    Every stamp that claims to speak for the stored bytes goes through this
+    function, so the claim and the storage cannot use different arithmetic.
+    """
+    return np.asarray(values).astype(np.float32).astype(np.float16)
+
+
+def apply_floor(probs: np.ndarray, *, floor: float, n_legal: int) -> np.ndarray:
+    """``(1 - floor * n_legal) * probs + floor``: the uniform exploration floor.
+
+    Mass-preserving by construction -- the head is scaled by exactly what the
+    floor adds -- and order-preserving, since it is an affine map with a
+    positive coefficient, so the scheme's best move is still the argmax.  The
+    smallest emitted probability is ``floor`` itself (IEEE addition of a
+    non-negative to ``floor`` cannot round below it), which is what makes the
+    coarse take-effect stamp a real reading.
+
+    ⚑ ``floor == 0`` returns ``probs`` UNCHANGED rather than computing the
+    identity, so a zero-floor run is the old behaviour by construction and not
+    by a rounding argument.
+    """
+    value = validate_floor(floor)
+    if value == 0.0:
+        return probs
+    if value * int(n_legal) >= 1.0:
+        # Unreachable while `validate_floor`'s startup bound holds, and that is
+        # the point: it is the bound's FALSIFIER, not a second gate. A position
+        # with more than MAX_LEGAL_MOVES legal moves would make the emitted row
+        # silently non-monotone, so this is fatal rather than a dropped row --
+        # dropping would make the row set depend on the flag.
+        raise CorpusIntegrityError(
+            f"--floor {value!r} on a row with {int(n_legal)} legal moves leaves "
+            f"the head coefficient {1.0 - value * int(n_legal):.6g}; "
+            f"MAX_LEGAL_MOVES ({MAX_LEGAL_MOVES}) is supposed to bound this at "
+            "startup, so this row falsifies that bound",
+        )
+    return (1.0 - value * int(n_legal)) * np.asarray(probs, dtype=np.float64) + value
 
 
 def recover_temp(q: np.ndarray, probs: np.ndarray) -> float | None:
@@ -693,6 +953,129 @@ def recover_temp(q: np.ndarray, probs: np.ndarray) -> float | None:
     if log_gap <= 0.0:
         return None
     return gap / log_gap
+
+
+def distinct_values(q: np.ndarray) -> int:
+    """How many DISTINCT values a row's move set carries.
+
+    The floored estimator's own precondition, split out so the caller can count
+    the rows it holds out for this reason separately from the ones it holds out
+    for conditioning -- "the row could not say" and "the arithmetic could not
+    say" are different facts about a corpus.
+    """
+    return int(np.unique(np.asarray(q, dtype=np.float64)).size)
+
+
+def _log_emitted_ratio(gap_hi: float, gap_lo: float, temp: float) -> float:
+    """``log R(tau)`` for ``R = (e^(a/t) - e^(b/t)) / (e^(b/t) - e^(c/t))``.
+
+    Written in terms of the two GAPS ``a-b`` and ``b-c`` (the shared
+    ``e^(b/t)`` and the softmax's normaliser both cancel), and evaluated
+    through ``log1p``/``expm1`` so it neither overflows at a cold temperature
+    nor cancels at a hot one: ``log(e^x - 1)`` is ``x + log1p(-e^-x)`` once
+    ``x > 1``, which is exact for any x the bracket can reach.
+    """
+    x, y = gap_hi / temp, gap_lo / temp
+    high = x + math.log1p(-math.exp(-x)) if x > 1.0 else math.log(math.expm1(x))
+    return high - math.log(-math.expm1(-y))
+
+
+def _solve_emitted_ratio_for_temp(
+    gap_hi: float, gap_lo: float, ratio: float,
+) -> float | None:
+    """Invert :func:`_log_emitted_ratio` for tau, or None when out of bracket.
+
+    ``R(tau)`` falls strictly from +inf (as tau -> 0, where the best move takes
+    everything) to ``gap_hi / gap_lo`` (as tau -> inf, where the softmax is
+    uniform and the differences go linear), so the inverse is unique and plain
+    bisection in log tau is the whole solver.  ⚑ The bracket check is a
+    MEASUREMENT, not a formality: a ratio outside the range no temperature can
+    produce means the row's arithmetic has broken down, and returning None
+    there is the difference between a skipped row and a row fitted to the
+    nearest endpoint.
+    """
+    low, high = FLOOR_RECOVERY_TEMP_BRACKET
+    target = math.log(ratio)
+    if not _log_emitted_ratio(gap_hi, gap_lo, low) - target > 0.0:
+        return None
+    if not _log_emitted_ratio(gap_hi, gap_lo, high) - target < 0.0:
+        return None
+    for _ in range(200):
+        mid = math.sqrt(low * high)
+        if _log_emitted_ratio(gap_hi, gap_lo, mid) - target > 0.0:
+            low = mid
+        else:
+            high = mid
+        if high - low <= FLOOR_RECOVERY_TEMP_RTOL * high:
+            break
+    return math.sqrt(low * high)
+
+
+def recover_floor_and_temp(
+    q: np.ndarray, probs: np.ndarray, *, n_legal: int,
+) -> tuple[float, float] | None:
+    """(tau, floor) READ BACK off a floored policy row, or None.
+
+    The realized stamp for ``--temp`` AND ``--floor`` when both are active, and
+    like :func:`recover_temp` it echoes NEITHER flag -- it is a function of the
+    emitted probabilities and the values they were built from:
+
+    * a floor is an ADDITIVE constant, so it cancels out of differences:
+      ``p_i - p_j == (1 - floor * n) * (s_i - s_j)``.  The ratio of two such
+      differences drops the scale as well, leaving
+      ``(p_hi - p_mid) / (p_mid - p_lo)`` a function of tau alone, which
+      :func:`_solve_emitted_ratio_for_temp` inverts;
+    * with tau in hand ``s`` is known, ``(p_hi - p_lo) / (s_hi - s_lo)`` is the
+      scale ``1 - floor * n_legal``, and the floor follows.  A ``--floor`` that
+      was parsed and never applied reads back 0 (measured: -5.7e-16 on an
+      unfloored row), which is what makes this a take-effect proof rather than
+      a restatement of the flag.
+
+    The three points are the largest, second-largest and smallest DISTINCT
+    values; ties share a probability, so any representative index does.
+    Returns None when the row cannot support the reading -- fewer than
+    ``FLOOR_RECOVERY_MIN_DISTINCT_VALUES`` distinct values, a difference at or
+    below ``FLOOR_RECOVERY_MIN_REL_GAP`` of the probability it came out of, a
+    ratio outside the bracket, a q spread below
+    ``FLOOR_RECOVERY_MIN_SPREAD_PER_TAU`` of the recovered tau (the softmax's
+    linear regime, where the row carries two numbers and cannot determine
+    three -- fitting there stamps noise, see the constant), or a recovered
+    floor outside ``[-FLOOR_RECOVERY_FLOOR_TOL, 1/n_legal)`` (no real emission
+    can carry either, so such a reading is the arithmetic failing, not the
+    row).  ⚑ Like ``recover_temp`` it reads the derived
+    float64 distribution, so it certifies the computation; what the shard's
+    float16 cast leaves is stamped separately as ``policy_min_legal_prob_stored``.
+    """
+    values = np.asarray(q, dtype=np.float64)
+    p = np.asarray(probs, dtype=np.float64)
+    if values.size != p.size or values.size < FLOOR_RECOVERY_MIN_DISTINCT_VALUES:
+        return None
+    unique = np.unique(values)
+    if unique.size < FLOOR_RECOVERY_MIN_DISTINCT_VALUES:
+        return None
+    top, second, bottom = float(unique[-1]), float(unique[-2]), float(unique[0])
+    hi = int(np.argmax(values == top))
+    mid = int(np.argmax(values == second))
+    lo = int(np.argmax(values == bottom))
+    head, tail = float(p[hi] - p[mid]), float(p[mid] - p[lo])
+    if head <= FLOOR_RECOVERY_MIN_REL_GAP * float(p[hi]):
+        return None
+    if tail <= FLOOR_RECOVERY_MIN_REL_GAP * float(p[mid]):
+        return None
+    tau = _solve_emitted_ratio_for_temp(top - second, second - bottom, head / tail)
+    if tau is None:
+        return None
+    if float(top - bottom) < FLOOR_RECOVERY_MIN_SPREAD_PER_TAU * tau:
+        return None
+    reference = softmax_at_temp(values, temp=tau)
+    span = float(reference[hi] - reference[lo])
+    if span <= 0.0:
+        return None
+    scale = float(p[hi] - p[lo]) / span
+    floor = (1.0 - scale) / float(n_legal)
+    if floor < -FLOOR_RECOVERY_FLOOR_TOL or floor * float(n_legal) >= 1.0:
+        return None
+    return tau, floor
 
 
 def q_spread(q: np.ndarray) -> float:
@@ -851,6 +1234,35 @@ class DeriveStats:
     #: run02's first 250k), and a reader has to be able to see that the stamp
     #: above was computed WITHOUT them.
     temp_recovery_skipped_saturated: int = 0
+    #: The floored estimator's readings (``--floor > 0`` runs only). ``n`` is
+    #: its COVERAGE and is reported next to the two hold-out counters below, so
+    #: a floor read off 3% of the rows can never be mistaken for one read off
+    #: all of them.
+    floor_recovered_n: int = 0
+    floor_recovered_min: float = math.inf
+    floor_recovered_max: float = -math.inf
+    floor_recovered_sum: float = 0.0
+    #: Rows with fewer than FLOOR_RECOVERY_MIN_DISTINCT_VALUES distinct values:
+    #: the row itself cannot determine (tau, floor) jointly.
+    floor_recovery_skipped_few_values: int = 0
+    #: Rows whose emitted differences were below FLOOR_RECOVERY_MIN_REL_GAP,
+    #: whose ratio fell outside the bracket, whose q spread was under
+    #: FLOOR_RECOVERY_MIN_SPREAD_PER_TAU of the recovered tau (the softmax's
+    #: linear regime -- two observable numbers cannot determine three), or
+    #: whose recovered floor left [-FLOOR_RECOVERY_FLOOR_TOL, 1/n_legal): the
+    #: arithmetic, not the row.  ⚑ Together with the saturation and
+    #: few-values counters and `floor_recovered_n`, every written row is in
+    #: exactly one bucket -- their sum reconstructs rows_written.
+    floor_recovery_skipped_ill_conditioned: int = 0
+    #: The COARSE floor stamp, and the only one that covers every written row:
+    #: the smallest mass any legal move carries, measured AFTER the float16
+    #: cast the shard stores (the same side of the cast as the support
+    #: counters, and for the same reason -- a floor the trainer cannot read is
+    #: not a floor).
+    min_legal_prob_n: int = 0
+    min_legal_prob_min: float = math.inf
+    min_legal_prob_max: float = -math.inf
+    min_legal_prob_sum: float = 0.0
     x_planes: int = 0
     policy_width: int = 0
     #: -1 until the first row is measured; a 0 sentinel would be a legal support.
@@ -867,11 +1279,33 @@ class DeriveStats:
         self.temp_recovered_min = min(self.temp_recovered_min, value)
         self.temp_recovered_max = max(self.temp_recovered_max, value)
 
+    def note_floor(self, value: float) -> None:
+        self.floor_recovered_n += 1
+        self.floor_recovered_sum += value
+        self.floor_recovered_min = min(self.floor_recovered_min, value)
+        self.floor_recovered_max = max(self.floor_recovered_max, value)
+
+    def note_min_legal_prob(self, value: float) -> None:
+        self.min_legal_prob_n += 1
+        self.min_legal_prob_sum += value
+        self.min_legal_prob_min = min(self.min_legal_prob_min, value)
+        self.min_legal_prob_max = max(self.min_legal_prob_max, value)
+
+    def _reading(self, count: int, low: float, high: float, total: float) -> dict[str, Any]:
+        """One recovered quantity as ``{n, min, max, mean}``, NaN when n == 0.
+
+        ⚑ NaN rather than 0.0 for an empty reading: a floor stamped 0.0 by an
+        estimator that never ran and a floor MEASURED at 0.0 are opposite
+        facts, and 0.0 is a legal value of every quantity here.
+        """
+        return {
+            "n": count,
+            "min": low if count else math.nan,
+            "max": high if count else math.nan,
+            "mean": total / count if count else math.nan,
+        }
+
     def summary(self) -> dict[str, Any]:
-        mean = (
-            self.temp_recovered_sum / self.temp_recovered_n
-            if self.temp_recovered_n else math.nan
-        )
         return {
             "rows_read": self.rows_read,
             "rows_written": self.rows_written,
@@ -895,22 +1329,51 @@ class DeriveStats:
             },
             "history_slots_nonzero_max": self.history_slots_nonzero_max,
             "repetition_planes_nonzero_rows": self.repetition_planes_nonzero_rows,
-            "temp_recovered_from_emitted_policy": {
-                "n": self.temp_recovered_n,
-                "min": (
-                    self.temp_recovered_min if self.temp_recovered_n else math.nan
-                ),
-                "max": (
-                    self.temp_recovered_max if self.temp_recovered_n else math.nan
-                ),
-                "mean": mean,
-            },
+            "temp_recovered_from_emitted_policy": self._reading(
+                self.temp_recovered_n,
+                self.temp_recovered_min,
+                self.temp_recovered_max,
+                self.temp_recovered_sum,
+            ),
             # ⚑ Reported SEPARATELY, at the same level as the reading it was
             # held out of: `n` above counts rows that could say something about
             # tau, this counts rows that could not, and the two together are
             # every row whose policy had two or more surviving moves.
             "temp_recovery_skipped_saturated": self.temp_recovery_skipped_saturated,
             "temp_recovery_saturation_q_spread_epsilon": TEMP_RECOVERY_MIN_Q_SPREAD,
+            # ⚑ THE FLOOR, READ BACK OFF THE EMITTED ROWS. `n` here is the
+            # floored estimator's coverage: it runs only under --floor > 0, and
+            # only on rows that can carry it, so an unfloored run reads n=0 and
+            # a floored one reads the floor it actually emitted -- 0 if the
+            # flag was parsed and never applied.
+            "floor_recovered_from_emitted_policy": self._reading(
+                self.floor_recovered_n,
+                self.floor_recovered_min,
+                self.floor_recovered_max,
+                self.floor_recovered_sum,
+            ),
+            "floor_recovery_skipped_few_values": self.floor_recovery_skipped_few_values,
+            "floor_recovery_skipped_ill_conditioned": (
+                self.floor_recovery_skipped_ill_conditioned
+            ),
+            "floor_recovery_min_distinct_values": FLOOR_RECOVERY_MIN_DISTINCT_VALUES,
+            "floor_recovery_min_rel_gap": FLOOR_RECOVERY_MIN_REL_GAP,
+            "floor_recovery_min_spread_per_tau": FLOOR_RECOVERY_MIN_SPREAD_PER_TAU,
+            "floor_recovery_floor_tol": FLOOR_RECOVERY_FLOOR_TOL,
+            # ⚑ EVERY WRITTEN ROW, unlike the estimator above: the smallest
+            # mass any legal move carries after the shard's float32-then-
+            # float16 cast. Within one float16 ULP of the floor on a floored
+            # row -- the cast rounds to NEAREST, so roughly half of all floors
+            # store just below the requested value (0.002 stores as
+            # 0.00200081, but 0.0035 as 0.00349998) -- and the softmax's own
+            # tail without one, which is orders of magnitude smaller or
+            # exactly zero.
+            "policy_min_legal_prob_stored": self._reading(
+                self.min_legal_prob_n,
+                self.min_legal_prob_min,
+                self.min_legal_prob_max,
+                self.min_legal_prob_sum,
+            ),
             "x_planes": self.x_planes,
             "policy_width": self.policy_width,
             "policy_support_min": self.policy_support_min,
@@ -930,6 +1393,12 @@ class DeriveOptions:
     seed: int
     rows_per_shard: int
     max_envelope_misses: int
+    #: ⚑ Defaulted, and it is the ONLY field here that is: 0.0 is the identity
+    #: (``apply_floor`` short-circuits), so a caller that predates the flag
+    #: keeps writing exactly the corpus it wrote before rather than failing to
+    #: construct. Every OTHER field changes the targets when it changes, and
+    #: none of them may be forgotten.
+    floor: float = DEFAULT_FLOOR
 
 
 class TargetDeriver:
@@ -982,19 +1451,12 @@ class TargetDeriver:
         self._check_support(board, values, row)
 
         q = self.q_of(values.effective_cp)
-        probs = softmax_at_temp(q, temp=self.options.temp)
-        recovered = recover_temp(q, probs)
-        if recovered is not None:
-            # ⚑ THE STAMP ONLY. `probs` above is already built and already this
-            # row's target; what is decided here is whether the tau read back
-            # off it is a measurement. A position won (or lost) outright pins
-            # every legal move's q at ±1.0 to within ULPs, and `gap / log_gap`
-            # is then one rounding artefact over another. See
-            # TEMP_RECOVERY_MIN_Q_SPREAD for the sweep and the threshold.
-            if q_spread(q) < TEMP_RECOVERY_MIN_Q_SPREAD:
-                self.stats.temp_recovery_skipped_saturated += 1
-            else:
-                self.stats.note_temp(recovered)
+        probs = apply_floor(
+            softmax_at_temp(q, temp=self.options.temp),
+            floor=self.options.floor,
+            n_legal=len(values.moves),
+        )
+        self._note_recovery(q, probs, n_legal=len(values.moves))
 
         policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float64)
         legal_mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.uint8)
@@ -1020,7 +1482,7 @@ class TargetDeriver:
             legal_mask[index] = 1
 
         planes = self._encode(board)
-        self._note_shapes(planes, policy, values)
+        self._note_shapes(planes, policy, probs, values)
 
         return ReplaySample(
             x=planes,
@@ -1038,6 +1500,65 @@ class TargetDeriver:
             input_history_encoding=INPUT_HISTORY_ENCODING,
             history_rep_fix=HISTORY_REP_FIX,
         )
+
+    def _note_recovery(
+        self, q: np.ndarray, probs: np.ndarray, *, n_legal: int,
+    ) -> None:
+        """THE STAMPS ONLY -- ``probs`` is already this row's target either way.
+
+        Which estimator runs is decided by ``--floor``, because the emitted
+        policy is a different function under one: at floor 0 the closed-form
+        ``recover_temp`` inverts it exactly, and above 0 it would return a
+        temperature nobody asked for, so the joint
+        :func:`recover_floor_and_temp` takes over and stamps both knobs.  ⚑ The
+        saturation hold-out applies to BOTH: a position won outright pins every
+        legal move's q at ±1.0 to within ULPs and neither estimator can read
+        anything off it (see ``TEMP_RECOVERY_MIN_Q_SPREAD``).  The row is
+        derived and written regardless -- what is refused is quoting a
+        measurement taken off it.
+
+        ⚑ ``temp_recovery_skipped_saturated`` COUNTS MORE ROWS UNDER A FLOOR,
+        and that is an accounting difference rather than a corpus difference.
+        The zero-floor path asks ``recover_temp`` first, and a row whose values
+        are EXACTLY equal returns None there and is counted in neither the
+        reading nor the skip -- the documented pre-floor behaviour.  The
+        floored path tests the spread first, so those rows land in the skip.
+        MEASURED on 20k rows of ``run02_snap_20260829`` at ``--temp 0.04``:
+        1,333 skipped floored against 0 unfloored, and 1,333 is exactly the
+        gap between the unfloored reading's n (17,270) and the rows written
+        (18,603).  Under a floor every written row is in exactly one bucket;
+        without one, flat rows are in none.
+
+        ⚑ COST, since this runs per row: the joint estimator is ~113 us
+        (bisection ~49 us of it, numpy call overhead most of the rest), and a
+        floored 20k-row derivation of the production corpus measured 51.4 s
+        against the same run unfloored at 45.2 s -- **+13.6% wall for the
+        take-effect proof**. Stated rather than hidden; it is an offline
+        derivation that runs once per arm.
+        """
+        stats = self.stats
+        if self.options.floor <= 0.0:
+            recovered = recover_temp(q, probs)
+            if recovered is None:
+                return
+            if q_spread(q) < TEMP_RECOVERY_MIN_Q_SPREAD:
+                stats.temp_recovery_skipped_saturated += 1
+            else:
+                stats.note_temp(recovered)
+            return
+        if q_spread(q) < TEMP_RECOVERY_MIN_Q_SPREAD:
+            stats.temp_recovery_skipped_saturated += 1
+            return
+        if distinct_values(q) < FLOOR_RECOVERY_MIN_DISTINCT_VALUES:
+            stats.floor_recovery_skipped_few_values += 1
+            return
+        reading = recover_floor_and_temp(q, probs, n_legal=n_legal)
+        if reading is None:
+            stats.floor_recovery_skipped_ill_conditioned += 1
+            return
+        tau, floor = reading
+        stats.note_temp(tau)
+        stats.note_floor(floor)
 
     def _board_for(self, row: dict[str, Any]) -> chess.Board:
         """The row's board, with the row's OWN metadata re-derived from it.
@@ -1100,16 +1621,32 @@ class TargetDeriver:
         )
 
     def _note_shapes(
-        self, planes: np.ndarray, policy: np.ndarray, values: MoveValues,
+        self,
+        planes: np.ndarray,
+        policy: np.ndarray,
+        probs: np.ndarray,
+        values: MoveValues,
     ) -> None:
         stats = self.stats
         stats.x_planes = int(planes.shape[0])
         stats.policy_width = int(policy.shape[0])
-        # ⚑ AFTER the float16 cast the shard stores. A cold temperature over a
-        # wide move list pushes the tail below float16's smallest subnormal, and
-        # a support counted in float64 would report moves the trainer will read
-        # as zero while the legal mask still names them.
-        support = int((policy.astype(np.float16) > 0).sum())
+        # ⚑ THE COARSE FLOOR READING, and it covers every written row. `probs`
+        # is the row's legal moves and nothing else, so this is the smallest
+        # mass a legal move carries -- taken on the far side of the cast the
+        # shard stores, exactly like the support counters below, because a
+        # floor the trainer reads as zero did not happen.  ⚑ THROUGH float32
+        # FIRST: the shard path is float64 -> float32 (`sample_from_row`) ->
+        # float16 (`samples_to_arrays`), and double rounding differs from the
+        # direct cast exactly at the half-way values -- 2**-25 rounds directly
+        # to float16's smallest subnormal but through float32 to ZERO, so a
+        # one-step stamp could claim a tail the trainer reads as nothing.
+        stats.note_min_legal_prob(float(shard_stored(probs).min()))
+        # ⚑ AFTER the float16 cast the shard stores -- through float32 first,
+        # same as the stamp above and for the same reason. A cold temperature
+        # over a wide move list pushes the tail below float16's smallest
+        # subnormal, and a support counted in float64 would report moves the
+        # trainer will read as zero while the legal mask still names them.
+        support = int((shard_stored(policy) > 0).sum())
         stats.policy_support_lost_to_float16 += int((policy > 0.0).sum()) - support
         stats.policy_support_min = (
             support if stats.policy_support_min < 0
@@ -1469,6 +2006,69 @@ def cp_map_params(facts: Mapping[str, Any]) -> tuple[float, float]:
     return slope, draw_width
 
 
+#: How far the mean recovered knob may sit from the requested one before the
+#: run is refused: relative for both, with an absolute floor for tiny floors.
+#: The estimator is exact to ~1e-7 relative on the rows it accepts, and the
+#: failure this exists to catch is total (an unapplied floor reads ~0, i.e.
+#: 100% off), so 5% is a wide-open corridor for honest runs and a wall for the
+#: real failure.  Per-row scatter on real corpora stays inside it with margin
+#: (tau in [0.066919, 0.067] on run02's first 20k).
+TAKE_EFFECT_REL_TOL = 0.05
+TAKE_EFFECT_FLOOR_ABS_TOL = 1e-6
+
+
+def enforce_take_effect(options: DeriveOptions, stats: DeriveStats) -> None:
+    """⚑⚑ The take-effect proof, CHECKED -- not just published for a human to diff.
+
+    ``floor_requested`` and the recovered stamps land in the same summary, and
+    a proof nobody compares is this codebase's signature defect one level up
+    (a reviewer of PR #486 made exactly this point).  So the comparison runs
+    HERE, before the summary is written: a floored run whose emitted rows do
+    not carry the floor dies loudly, leaving shards and no summary -- the
+    documented "this run DIED" state that ``refuse_populated_dir`` already
+    fails closed on.
+
+    Two asymmetries, both deliberate:
+
+    * ``--floor > 0`` with ZERO estimator readings is refused outright.  The
+      coarse stamp still covers every row, but the exact proof would be absent
+      and silently absent is how gates rot.  A real corpus cannot trip this --
+      run02's first 20k rows leave 17k+ readable -- only a pathological
+      all-saturated input can, and such an input cannot prove a floor either.
+    * ``--temp`` is checked only when readings exist.  An unfloored saturated
+      corpus is a legal derivation whose rows genuinely cannot speak to tau,
+      and refusing it would make the row set's readability a launch gate for a
+      knob whose failure mode (`softmax_at_temp` ignoring ``temp``) has no
+      plausible mechanism that also fakes ``temp_recovered_n == 0``.
+    """
+    if options.floor > 0.0:
+        if stats.floor_recovered_n == 0:
+            raise CorpusIntegrityError(
+                f"--floor {options.floor} was requested but not one emitted row "
+                "could be read back (floor_recovered_n == 0): the take-effect "
+                "proof is absent, not passed. See the skip counters in the "
+                "stats for where the rows went.",
+            )
+        mean_floor = stats.floor_recovered_sum / stats.floor_recovered_n
+        tol = max(TAKE_EFFECT_REL_TOL * options.floor, TAKE_EFFECT_FLOOR_ABS_TOL)
+        if abs(mean_floor - options.floor) > tol:
+            raise CorpusIntegrityError(
+                f"--floor {options.floor} was requested but the emitted rows "
+                f"carry {mean_floor:.6g} (mean over {stats.floor_recovered_n} "
+                f"readable rows, tolerance {tol:.3g}): the flag did not take "
+                "effect as requested, and a corpus stamped with a floor it "
+                "does not carry is worse than no corpus.",
+            )
+    if stats.temp_recovered_n > 0:
+        mean_temp = stats.temp_recovered_sum / stats.temp_recovered_n
+        if abs(mean_temp - options.temp) > TAKE_EFFECT_REL_TOL * options.temp:
+            raise CorpusIntegrityError(
+                f"--temp {options.temp} was requested but the emitted rows "
+                f"carry {mean_temp:.6g} (mean over {stats.temp_recovered_n} "
+                f"readable rows): the flag did not take effect as requested.",
+            )
+
+
 def derive(
     *,
     corpus_dir: Path,
@@ -1582,6 +2182,7 @@ def derive(
             "was dropped are different problems.",
         )
 
+    enforce_take_effect(options, deriver.stats)
     out = build_summary(
         options=options,
         stats=deriver.stats,
@@ -1680,6 +2281,12 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
         "derive_scheme": options.scheme.canonical,
         "derive_scheme_params": options.scheme.params(),
         "derive_temp": float(options.temp),
+        # ⚑ ON THE SHARD, not only in the run's summary: a floored shard and an
+        # unfloored one carry the same scheme name and the same temperature,
+        # and a corpus is routinely read one shard at a time from somewhere
+        # else. Without this a floor ladder's arms are indistinguishable once
+        # their directories are apart.
+        "derive_floor": float(options.floor),
         "derive_cp_slope": float(options.cp_slope),
         "derive_cp_draw_width": float(options.cp_draw_width),
         "derive_corpus_config_sha256": corpus_sha,
@@ -1731,6 +2338,7 @@ def build_summary(
         # ⚑ Rebuilt from the PARSED scheme object, not echoed from the flag.
         "scheme": {"canonical": options.scheme.canonical, **options.scheme.params()},
         "temp_requested": options.temp,
+        "floor_requested": options.floor,
         "cp_map": {
             "q_function": (
                 f"{gate.q_from_effective_cp.__module__}."
@@ -1770,7 +2378,24 @@ def build_summary(
         "policy": {
             "encoding": "lc0_1858",
             "width": COMPACT_POLICY_SIZE,
-            "construction": "softmax(q / temp) over the scheme's values",
+            "construction": (
+                "softmax(q / temp) over the scheme's values" if options.floor <= 0.0
+                else (
+                    "(1 - floor * n_legal) * softmax(q / temp) + floor over the "
+                    "scheme's values, n_legal = the ROW's legal-move count"
+                )
+            ),
+            "floor": options.floor,
+            "floor_max_legal_moves_bound": MAX_LEGAL_MOVES,
+            # ⚑ WHICH ESTIMATOR PRODUCED `temp_recovered_from_emitted_policy`.
+            # A floored policy is not softmax(q/temp), so the closed form would
+            # report a temperature that was never requested; the joint
+            # estimator recovers tau and the floor together. Naming it is what
+            # keeps two runs' temp stamps comparable.
+            "temp_recovery_estimator": (
+                "closed_form_two_move" if options.floor <= 0.0
+                else "floored_three_move_bisection"
+            ),
         },
         # ⚑ Both flags are COMPATIBILITY stamps, and both are lies of the same
         # shape `lc0_data_to_rows` already tells: no network played these moves
@@ -1844,9 +2469,12 @@ def _json_default(value: Any) -> Any:
 def format_summary(out: dict[str, Any]) -> str:
     realized = out["realized"]
     recovered = realized["temp_recovered_from_emitted_policy"]
+    floor_read = realized["floor_recovered_from_emitted_policy"]
+    min_mass = realized["policy_min_legal_prob_stored"]
     record = out["corpus"]["corpus_record_detail"]
     lines = [
         f"scheme={out['scheme']['canonical']} temp={out['temp_requested']} "
+        f"floor={out['floor_requested']} "
         f"value_source={out['scheme']['value_source']}",
         # ⚑ FIRST-CLASS, not buried in the json: a partial derivation printed
         # exactly like a whole one is how it gets quoted as a whole one.
@@ -1863,7 +2491,20 @@ def format_summary(out: dict[str, Any]) -> str:
         f"values by phase={realized['values_by_phase']}",
         f"temp recovered from the emitted policy: n={recovered['n']} "
         f"min={recovered['min']:.6f} max={recovered['max']:.6f} "
-        f"skipped(saturated)={realized['temp_recovery_skipped_saturated']}",
+        f"skipped(saturated)={realized['temp_recovery_skipped_saturated']} "
+        f"estimator={out['policy']['temp_recovery_estimator']}",
+        # ⚑ The floor's two readings on one line: the algebraic one (exact, on
+        # the rows that can carry it) and the stored min mass (approximate, on
+        # every row). Printed even at --floor 0, where they read n=0 and the
+        # softmax's own tail -- which is what an unfloored run looks like.
+        f"floor recovered from the emitted policy: n={floor_read['n']} "
+        f"min={floor_read['min']:.6g} max={floor_read['max']:.6g} "
+        f"skipped(few values)={realized['floor_recovery_skipped_few_values']} "
+        f"skipped(ill-conditioned)="
+        f"{realized['floor_recovery_skipped_ill_conditioned']}",
+        f"min stored mass on a legal move: min={min_mass['min']:.6g} "
+        f"max={min_mass['max']:.6g} mean={min_mass['mean']:.6g} "
+        f"n={min_mass['n']}",
         f"x planes={realized['x_planes']} policy width={realized['policy_width']} "
         f"support {realized['policy_support_min']}..{realized['policy_support_max']} "
         f"history slots filled<={realized['history_slots_nonzero_max']}",
@@ -1878,6 +2519,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--scheme", required=True, help=" | ".join(_SCHEME_FORMS))
     parser.add_argument("--temp", type=float, default=1.0)
+    parser.add_argument(
+        "--floor", type=float, default=DEFAULT_FLOOR,
+        help="uniform exploration floor, as a probability PER LEGAL MOVE: the "
+             "emitted policy is (1 - floor * n_legal) * softmax(q / temp) + "
+             "floor. 0 (default) is off and emits the plain softmax. Refused "
+             f"at startup at or above 1 / {MAX_LEGAL_MOVES} (the most legal "
+             "moves a position can have), so which floors are legal never "
+             "depends on which rows a corpus holds.",
+    )
     parser.add_argument(
         "--limit", type=int, default=0,
         help="stop after this many CORPUS ROWS READ (0 = the whole corpus). "
@@ -1897,6 +2547,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     scheme = parse_scheme(str(args.scheme))
     temp = validate_temp(float(args.temp))
+    # ⚑ Next to --temp, and for the same reason: before the corpus is opened,
+    # so a bad floor is refused rather than discovered on the first row that
+    # happens to have enough legal moves to break the head coefficient.
+    floor = validate_floor(float(args.floor))
     if int(args.rows_per_shard) <= 0:
         raise ValueError(
             f"--rows-per-shard must be positive, got {args.rows_per_shard!r}",
@@ -1916,6 +2570,7 @@ def main(argv: list[str] | None = None) -> int:
         options=DeriveOptions(
             scheme=scheme,
             temp=temp,
+            floor=floor,
             cp_slope=slope,
             cp_draw_width=draw_width,
             limit=max(0, int(args.limit)),
