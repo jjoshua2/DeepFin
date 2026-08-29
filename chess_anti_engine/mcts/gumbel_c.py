@@ -276,7 +276,11 @@ def _start_gumbel_trailing_args(
 # them on EVERY ply, so a stale .so dies on the first ply of the first game with
 # a TypeError about argument counts. Loud, but not actionable — the marker makes
 # it say "rebuild" instead, at import, before any game starts.
-_REQUIRED_MCTS_ABI = 4
+# Raised to 5 for history-safe Gumbel TT reuse. ABI 4 can silently copy donor
+# policy/Q across two structural transpositions whose lc0_root_legacy_meta
+# history/search context differs, so this semantic correction gets the same
+# fail-fast treatment as W1 rather than waiting for a routine rebuild.
+_REQUIRED_MCTS_ABI = 5
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -401,13 +405,13 @@ def root_support_narrowed_count() -> int:
 # has fired since the last report.
 #
 # ⚑ Only the two ALARMS re-trigger the line: `tt_donor_reject` and
-# `root_coverage_miss`. `root_support_narrowed` is routine and, on a winning-root
-# selfplay position, monotonically increasing — re-printing on it would emit a
-# line every 60 s forever and train every operator to ignore this message, which
-# is how the alarms would get lost. It is announced ONCE (the first time it
-# leaves zero) and thereafter only rides along in whatever an alarm prints, plus
-# the one-shot WARNING from `_warn_root_support_narrowed` and
-# `root_support_narrowed_count()` for anyone who asks.
+# `root_coverage_miss`. `tt_context_reject` and `root_support_narrowed` are
+# routine. The former means a valid structural transposition carried different
+# network/search history and was deliberately re-evaluated; the latter is an
+# intentionally narrowed root. Re-printing on either monotonically increasing
+# routine counter would emit forever and train operators to ignore the alarms.
+# Each routine counter is therefore announced ONCE (the first time it leaves
+# zero) and thereafter only rides along in whatever an alarm prints.
 #
 # stderr, NOT stdout: this path is also the UCI engine's search, whose stdout is
 # the protocol channel; an unsolicited line there desynchronises the GUI. Both
@@ -420,7 +424,7 @@ def root_support_narrowed_count() -> int:
 # compare, and the counters are not even read until it elapses.
 _TT_HEALTH_INTERVAL_S = 60.0
 _tt_health_next_check = 0.0
-_tt_health_reported = (0, 0, 0)
+_tt_health_reported = (0, 0, 0, 0)
 
 
 def _report_guard_health() -> None:
@@ -431,28 +435,36 @@ def _report_guard_health() -> None:
     _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
 
     try:
-        reject = int(_mcts_tree_ext.tt_stats()["reject"])
+        tt = _mcts_tree_ext.tt_stats()
+        reject = int(tt["reject"])
+        context_reject = int(tt.get("context_reject", 0))
     except (AttributeError, KeyError, TypeError):
         return  # pre-fix .so; the ABI guard above already covers that case
-    current = (reject, _ROOT_COVERAGE_MISSES, _ROOT_NARROWED_REBUILDS)
+    current = (
+        reject,
+        _ROOT_COVERAGE_MISSES,
+        context_reject,
+        _ROOT_NARROWED_REBUILDS,
+    )
     alarms_moved = current[:2] != (0, 0) and current[:2] != _tt_health_reported[:2]
-    narrowed_first_seen = current[2] > 0 and _tt_health_reported[2] == 0
-    if not (alarms_moved or narrowed_first_seen):
+    context_first_seen = current[2] > 0 and _tt_health_reported[2] == 0
+    narrowed_first_seen = current[3] > 0 and _tt_health_reported[3] == 0
+    if not (alarms_moved or context_first_seen or narrowed_first_seen):
         return
     _tt_health_reported = current
     print(
         f"[mcts] search guards FIRED since process start: "
         f"tt_donor_reject={current[0]} root_coverage_miss={current[1]} "
-        f"root_support_narrowed={current[2]}. "
+        f"tt_context_reject={current[2]} root_support_narrowed={current[3]}. "
         "ALARMS — tt_donor_reject>0 means the transposition key no longer "
         "implies the legal move set (audit W1); root_coverage_miss>0 means a "
         "carried tree root was MISSING an action the search needed (audit W2). "
         "Neither corrupts the search, but both mean something upstream changed. "
-        "ROUTINE — root_support_narrowed>0 only means searches narrowed their "
-        "own root support (winning-root draw prune, or searchmoves) and the "
-        "carried root was rebuilt over it; that is correct behaviour and its "
-        "only cost is a ply of tree carry. It is reported once, not per "
-        "occurrence.",
+        "ROUTINE — tt_context_reject>0 means a structural transposition had a "
+        "different history-sensitive network/search context and was correctly "
+        "re-evaluated; root_support_narrowed>0 means the search intentionally "
+        "narrowed its root support and rebuilt it. Routine counters are "
+        "reported once, not per occurrence.",
         file=_sys.stderr,
         flush=True,
     )
@@ -726,8 +738,9 @@ def run_gumbel_root_many_c(
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
             "(missing the start_gumbel_sims root-scale args, the audit-W1 "
-            "transposition-key fix and/or batch_process_ply's search_wdl "
-            "draw-mode args); rebuild the C extension: "
+            "transposition-key fix, history-safe TT evaluation reuse and/or "
+            "batch_process_ply's search_wdl draw-mode args); rebuild the C "
+            "extension: "
             "python3 scripts/build_production_extensions.py"
         )
   # Operator surface for the audit-W1/W2 guards. Here rather than in a caller
