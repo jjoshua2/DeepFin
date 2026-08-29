@@ -147,6 +147,49 @@ _STALEMATE_ONLY_FEN = "7k/8/6KP/8/8/8/8/8 w - - 0 1"
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_refuses_a_realized_candidate_set_wider_than_compiled_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generic C path must never silently truncate sequential halving.
+
+    Patch only the EXPORTED cap down to 1, then ask the real search for two
+    candidates on the starting position. The guard sits after candidate
+    realization but before start_gumbel_sims, so the default call must refuse.
+    The explicit experiment opt-in is the negative control: with the same
+    realized shape it proceeds (the actual compiled buffer remains 64).
+    """
+    import chess_anti_engine.mcts._mcts_tree as mcts_ext
+
+    run_c = _require_run_gumbel_root_many_c()
+    board = chess.Board()
+    cfg = GumbelConfig(
+        input_extra_features="v1", simulations=4, topk=2,
+        temperature=0.0, add_noise=False,
+    )
+    pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    pre_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mcts_ext, "GSS_MAX_CANDS", 1, raising=True)
+        with pytest.raises(
+            ValueError,
+            match=r"realized 2 root candidates.*GSS_MAX_CANDS=1",
+        ):
+            run_c(
+                None, [board], device="cpu", rng=np.random.default_rng(0),
+                cfg=cfg, evaluator=_ZeroEvaluator(),
+                pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+            )
+
+        result = run_c(
+            None, [board], device="cpu", rng=np.random.default_rng(0),
+            cfg=cfg, evaluator=_ZeroEvaluator(),
+            pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+            allow_candidate_cap_truncation=True,
+        )
+    assert result[1][0] >= 0
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
 def test_gumbel_c_compact_root_policy_matches_dense_root_mapping() -> None:
     run_c = _require_run_gumbel_root_many_c()
     boards = [
