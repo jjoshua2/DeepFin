@@ -494,10 +494,12 @@ def _report_halving_rev() -> None:
         return
     _halving_rev_reported = True
     rev = int(getattr(_mcts_tree_ext, "GSS_HALVING_REV", _GSS_HALVING_REV_LEGACY))
-    rule = (
-        "fresh root_qs (mctx / gumbel.py reference)" if rev >= 2
-        else "running W[root]/N[root] (pre-fix; rebuild the C extension)"
-    )
+    if rev >= 3:
+        rule = "fresh root_qs + current-search root priors (mctx / gumbel.py reference)"
+    elif rev >= 2:
+        rule = "fresh root_qs + carried root priors (pre-prior-refresh)"
+    else:
+        rule = "running W[root]/N[root] + carried root priors (pre-fix)"
     print(
         f"[mcts] gss_halving_rev={rev} loaded from {_mcts_tree_ext.__file__}: "
         f"root sequential-halving eliminates against the {rule}. "
@@ -551,13 +553,11 @@ def _classify_expanded_root_support(
     A root that is BOTH missing an action and carrying extras reports
     ``MISSING_ACTION`` — the alarm outranks the bookkeeping.
 
-    ⚑ Scope, so this is not read as more than it is: equality makes the C path
-    agree with the Python reference (``gumbel.py``, which never reuses a tree)
-    about WHICH MOVES EXIST at the root. It does NOT deliver full parity with a
-    fresh root. A reused root still carries the PREVIOUS ply's ``t->prior``
-    values, which ``gss_score_and_halve`` reads for ``weighted_q``, while the
-    Python side rebuilds ``root_priors`` from this ply's evaluation. That
-    divergence is pre-existing, unchanged here, and out of scope.
+    Equality makes the reused root agree with the Python reference about WHICH
+    MOVES EXIST. ``start_gumbel_sims`` also refreshes those surviving root
+    edges' stored priors from the current search's dense root prior before
+    halving, so the scorer's prior-weighted mixed value no longer inherits the
+    previous ply's policy either.
 
     Order and visits are irrelevant — only membership. Sorted comparison rather
     than a two-way ``isin`` so a duplicated child action cannot read as a match

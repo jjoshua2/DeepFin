@@ -30,7 +30,13 @@ from chess_anti_engine.mcts.gumbel import (
     GumbelConfig,
     _policy_logits_to_full,
 )
-from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI, run_gumbel_root_many_c
+from chess_anti_engine.mcts.gumbel_c import (
+    _REQUIRED_MCTS_ABI,
+    _ROOT_SUPPORT_EQUAL,
+    _ROOT_SUPPORT_MISSING_ACTION,
+    _classify_expanded_root_support,
+    run_gumbel_root_many_c,
+)
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
@@ -54,11 +60,18 @@ from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 import contextlib
+import logging as _logging
 import time
+
+_log = _logging.getLogger(__name__)
 
 # _REQUIRED_MCTS_ABI is imported from gumbel_c (canonical owner of the C-path ABI
 # contract), so the SearchWorker construction guard and the run_gumbel_root_many_c
-# entry guard agree on one value.
+# entry guard agree on one value. `_classify_expanded_root_support` and its two
+# verdicts come from the same module for the same reason: the pool-side root
+# guard below must decide "does this expanded root's child set match the support
+# I am about to search?" by the SAME predicate the C Gumbel path uses, or the two
+# can disagree about a root they both look at.
 
 # Saturated cp for TB-decisive positions. Matches what the NN-backed path
 # naturally emits when Q is pinned to ±1 by the SyzygyProbe's wdl override,
@@ -269,6 +282,72 @@ def _single_pucv_cache_stats_string(
         f"pucv pending={mode} "
         f"cache={stats.hits}/{stats.requests}({stats.hit_rate:.1%})"
     )
+
+
+# Pool-side root-support guard, observable. `_drop_pool_root_if_support_differs`
+# rebuilds an expanded persistent root whose child set is not exactly the board's
+# legal support. Both counters are process-cumulative so a run can be asked "did
+# this ever fire?" — a guard nobody can observe is a guard nobody knows is dead
+# (the same reason gumbel_c keeps `root_coverage_miss_count()` /
+# `root_support_narrowed_count()`, whose naming these mirror).
+#
+# ⚑ The two verdicts mean the OPPOSITE things here that they mean in gumbel_c,
+# because the pool asks the WIDEST question there is — the board's full legal
+# support — while a Gumbel search can legitimately ask a narrower one:
+#
+#   * `_ROOT_SUPPORT_MISSING_ACTION` (the carried root lacks a legal move) is the
+#     ROUTINE case here: it is exactly what a preceding `searchmoves` Gumbel
+#     search leaves behind, and healing it is this guard's whole purpose. Counted
+#     only, plus a debug line — warning on it would fire on ordinary UCI traffic.
+#     In gumbel_c the same verdict is the W2 ALARM, because there the narrower
+#     search should never want a move its carried root does not have.
+#   * `_ROOT_SUPPORT_NARROWED` (every legal move is present and the root carries
+#     something ELSE) is the ALARM here: the tree holds a root child that is not
+#     a legal move of the position it claims to be, which no supported path
+#     produces. Warn once, then count. In gumbel_c that verdict is the routine
+#     one.
+#
+# `_POOL_ROOT_SUPPORT_CORRUPTIONS` counts a SUBSET of
+# `_POOL_ROOT_SUPPORT_REBUILDS`: every rebuild bumps the rebuild counter, and the
+# alarm-shaped ones bump both. Both verdicts still rebuild, so the counters are
+# pure observation and change no behaviour.
+_POOL_ROOT_SUPPORT_REBUILDS = 0
+_POOL_ROOT_SUPPORT_CORRUPTIONS = 0
+_POOL_ROOT_SUPPORT_CORRUPTION_WARNED = False
+
+
+def _note_pool_root_support_rebuild(*, corrupt: bool) -> None:
+    global _POOL_ROOT_SUPPORT_REBUILDS, _POOL_ROOT_SUPPORT_CORRUPTIONS
+    global _POOL_ROOT_SUPPORT_CORRUPTION_WARNED
+    _POOL_ROOT_SUPPORT_REBUILDS += 1
+    if not corrupt:
+        _log.debug(
+            "uci: rebuilt an expanded pool root that was MISSING a legal move "
+            "(routine searchmoves aftermath; the previous search narrowed the "
+            "root and this one asks the full legal question). Rebuild %d.",
+            _POOL_ROOT_SUPPORT_REBUILDS,
+        )
+        return
+    _POOL_ROOT_SUPPORT_CORRUPTIONS += 1
+    if not _POOL_ROOT_SUPPORT_CORRUPTION_WARNED:
+        _POOL_ROOT_SUPPORT_CORRUPTION_WARNED = True
+        _log.warning(
+            "uci: rebuilt an expanded pool root that carried a child action "
+            "which is NOT a legal move of this position. Every legal move was "
+            "present, so this is not searchmoves aftermath — the tree disagrees "
+            "with the rules and something upstream changed. Further occurrences "
+            "are counted, not logged."
+        )
+
+
+def pool_root_support_rebuild_count() -> int:
+    """Pool roots rebuilt for support mismatch since process start (all causes)."""
+    return _POOL_ROOT_SUPPORT_REBUILDS
+
+
+def pool_root_support_corruption_count() -> int:
+    """Subset of the above whose root carried a NON-legal action (alarm)."""
+    return _POOL_ROOT_SUPPORT_CORRUPTIONS
 
 
 class SearchWorker:
@@ -1430,6 +1509,77 @@ class SearchWorker:
         move = self._root_policy_move(board, allowed)
         return move.uci() if move is not None else None
 
+    def _drop_pool_root_if_support_differs(self, board: chess.Board) -> None:
+        """Drop an expanded root a PUCT pool cannot safely widen in place.
+
+        A searchmoves search is routed through classic Gumbel because the PUCV
+        and walker paths have no root filter. That Gumbel search can leave the
+        persistent root expanded over only the requested actions. A later
+        unrestricted pool search used to see an already-expanded root and adopt
+        it verbatim, permanently hiding every excluded legal move.
+
+        Pool roots are supposed to contain the board's full legal support. If
+        an already-expanded root does not match it exactly, discard the tree
+        and root and let ordinary pool prep rebuild from the cached root eval.
+        The position is unchanged, so repeating the NN root call is unnecessary.
+
+        The mismatch predicate is `gumbel_c._classify_expanded_root_support`, not
+        a local copy: the C Gumbel path applies it to the same persistent root on
+        alternating plies, and two hand-rolled comparisons drifting apart is how
+        one of them silently stops rejecting. Its verdicts are read in the POOL
+        direction — see the counter block above `SearchWorker` — and BOTH of them
+        rebuild, so reusing the classifier changes nothing but observability.
+        """
+  # Exactly the paths `_run_one_chunk` dispatches an UNRESTRICTED search to that
+  # adopt an already-expanded persistent root. `realized_search_path` is the
+  # single source of truth for that dispatch (it mirrors `_run_one_chunk`'s
+  # branch order); enumerating the pools by hand here is how this guard and the
+  # dispatch would come to disagree about which one runs. "rpg" is excluded
+  # because the RPG path never reuses a carried root — `_run_one_chunk` calls
+  # `reset_tree()` before an RPG searchmoves chunk, and `advance_root` refuses
+  # cross-move reuse outright — and "gumbel" because that path runs the
+  # classifier itself.
+        if self.realized_search_path() not in ("pucv_pool", "walker", "pucv"):
+            return
+        if self._tree is None or self._root_id is None or self._root_id < 0:
+            return
+        if not self._tree.is_expanded(self._root_id):
+            return
+
+  # ⚑ Chess960 would make this equality UNSATISFIABLE as the code stands:
+  # `CBoard.legal_move_indices()` omits 960 castling while `move_to_index()`
+  # emits it, so every 960 root would rebuild on every ply. MEASURED over all
+  # 960 back-rank layouts: of the 696 that can castle, 696 mismatch (the review
+  # that asked for this note measured 140/140 on its own sample). Unreachable
+  # today — the engine exposes no `UCI_Chess960` option, and 960 rook placement
+  # is not recoverable from the input planes at all
+  # (`moves/leela_index.py:125-128`) — but a future 960 effort must revisit this
+  # comparison before it revisits anything else here.
+        legal_actions = CBoard.from_board(board).legal_move_indices().astype(
+            np.int32, copy=False,
+        )
+        support = _classify_expanded_root_support(
+            self._tree, self._root_id, legal_actions,
+        )
+        if support == _ROOT_SUPPORT_EQUAL:
+            return
+  # MISSING_ACTION here = the root lacks a legal move = searchmoves aftermath,
+  # the routine case. Anything else = every legal move is present and the root
+  # carries an extra, which is the corruption signal. ⚑ A root that is BOTH
+  # missing a legal move AND carrying a non-legal one classifies as
+  # MISSING_ACTION (the classifier ranks that verdict first), so the corruption
+  # counter is a floor, not an exact census.
+        _note_pool_root_support_rebuild(
+            corrupt=support != _ROOT_SUPPORT_MISSING_ACTION,
+        )
+
+        self._tree = None
+        self._root_id = None
+        self._last_gumbel_action_idx = None
+        self._walker_cboard = None
+        self._pucv_cboard = None
+        self._pucv_pool_cboard = None
+
     def _pre_expand_root_for_pool(
         self,
         board: chess.Board,
@@ -1441,6 +1591,7 @@ class SearchWorker:
         upfront. The classic gumbel path does this internally."""
         if allowed_root_indices is not None:
             return
+        self._drop_pool_root_if_support_differs(board)
         if self._rpg_pool is not None:
             self._ensure_rpg_root_prepared(
                 board, allow_terminal_shortcuts=allow_terminal_shortcuts,

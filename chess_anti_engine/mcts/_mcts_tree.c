@@ -4155,9 +4155,17 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         }
     }
 
-    /* Gather only sequential-halving candidates. The prior API remains dense,
-     * but retaining all n_boards*4672 doubles doubled root-state memory and
-     * copied values that the search never reads. */
+    /* The prior API is dense for a reason: a persistent root can carry child
+     * nodes created on the previous ply, whose t->prior values therefore name
+     * the PREVIOUS evaluation of this position. gss_score_and_halve uses those
+     * edge priors to weight visited child Qs in mctx's mixed value, so leaving
+     * them stale makes tree carry score the same statistics differently from a
+     * fresh root.
+     *
+     * Refresh every current root edge from THIS search's dense prior before the
+     * state machine begins. This runs while the tree is quiescent (before the
+     * GIL is dropped for any descent). We still retain only the candidate priors
+     * in GumbelSimState, so there is no n_boards*4672 persistent-memory cost. */
     for (int32_t i = 0; i < n_boards; i++) {
         PyArrayObject *pri = FROMANY_1D(PyList_GET_ITEM(priors_list, i), NPY_FLOAT64);
         if (!pri) {
@@ -4175,6 +4183,18 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             return NULL;
         }
         const double *src = (const double *)PyArray_DATA(pri);
+
+        int32_t rid = g->root_ids[i];
+        if (rid >= 0 && __atomic_load_n(&self->tree.expanded[rid], __ATOMIC_ACQUIRE)) {
+            int32_t n_ch = self->tree.num_children[rid];
+            int32_t ch_off = self->tree.children_offset[rid];
+            for (int32_t j = 0; j < n_ch; j++) {
+                int32_t action = self->tree.child_action[ch_off + j];
+                int32_t cid = self->tree.child_node[ch_off + j];
+                self->tree.prior[cid] = src[action];
+            }
+        }
+
         int32_t off = g->cands_offset[i];
         for (int32_t j = 0; j < g->cands_count[i]; j++)
             g->root_priors[off + j] = src[g->cands_flat[off + j]];
@@ -6264,11 +6284,15 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      *     rather than to "unknown").
      * 2 = the baseline is the fresh network root value `root_qs[bi]`, matching
      *     mctx's qtransform_completed_by_mix_value, gumbel.py's reference
-     *     `_halve_remaining_for_board`, and this path's own returned policy.
+     *     `_halve_remaining_for_board`, and this path's own returned policy,
+     *     but reused roots can still weight carried Q with carried edge priors.
+     * 3 = reused roots refresh every root child's `t->prior` from the CURRENT
+     *     search's dense root prior before halving starts, so mixed-value
+     *     weighting agrees with the fresh-root reference too.
      *
      * Read and announced once per process by mcts/gumbel_c.py so a running
      * process's elimination rule is observable in its log. */
-    if (PyModule_AddIntConstant(m, "GSS_HALVING_REV", 2) < 0) {
+    if (PyModule_AddIntConstant(m, "GSS_HALVING_REV", 3) < 0) {
         Py_DECREF(m);
         return NULL;
     }

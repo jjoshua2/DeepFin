@@ -15,9 +15,25 @@ from chess_anti_engine.uci.search import (
     _allowed_root_indices,
     _board_after,
     _best_move_and_pv,
+    pool_root_support_corruption_count,
+    pool_root_support_rebuild_count,
     SearchWorker,
 )
 from chess_anti_engine.uci.time_manager import Deadline
+
+
+class _NeutralEvaluator:
+    """Zero policy logits and zero WDL logits for any batch."""
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
+        batch = int(x.shape[0])
+        return (
+            np.zeros((batch, POLICY_SIZE), dtype=np.float32),
+            np.zeros((batch, 3), dtype=np.float32),
+        )
 
 
 def test_allowed_root_indices_ignores_invalid_searchmoves() -> None:
@@ -45,6 +61,257 @@ def test_best_move_is_restricted_to_searchmoves() -> None:
 
     assert best == e2e4
     assert pv == [e2e4]
+
+
+@pytest.mark.parametrize("pool_path", ["walker", "pucv", "pucv_pool"])
+def test_unrestricted_pool_rebuilds_a_root_left_narrowed_by_searchmoves(
+    pool_path: str,
+) -> None:
+    """A searchmoves Gumbel root must not hide moves from the next pool search.
+
+    The first call is the real SearchWorker Gumbel path and leaves a persistent
+    root containing only e2e4. We then activate each pool-prep route and ask for
+    an unrestricted root. Prep must replace that tree with one expanded over
+    every legal root move while reusing the already-cached NN root evaluation.
+    """
+
+    board = chess.Board()
+    e2e4_move = chess.Move.from_uci("e2e4")
+    e2e4 = int(move_to_index(e2e4_move, board))
+    worker = SearchWorker(
+        _NeutralEvaluator(),
+        device="cpu",
+        chunk_sims=1,
+        gumbel_cfg=GumbelConfig(
+            simulations=1,
+            topk=2,
+            temperature=0.0,
+            add_noise=False,
+        ),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+        root_moves=("e2e4",),
+    )
+    assert first.bestmove_uci == "e2e4"
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    narrowed_tree = worker._tree
+    narrowed_actions, _ = narrowed_tree.get_children_visits(worker._root_id)
+    assert set(map(int, narrowed_actions)) == {e2e4}
+
+    cached_policy = worker._root_pol_logits
+    cached_wdl = worker._root_wdl_logits
+    assert cached_policy is not None
+    assert cached_wdl is not None
+
+    worker._walker_pool = None
+    worker._pucv = None
+    worker._pucv_pool = None
+    if pool_path == "walker":
+        worker._walker_pool = MagicMock()
+    elif pool_path == "pucv":
+        worker._pucv = MagicMock()
+    else:
+        worker._pucv_pool = MagicMock()
+
+    worker._pre_expand_root_for_pool(board, allowed_root_indices=None)
+
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    assert worker._tree is not narrowed_tree
+    actions, _ = worker._tree.get_children_visits(worker._root_id)
+    expected = {
+        int(move_to_index(move, board))
+        for move in board.legal_moves
+    }
+    assert set(map(int, actions)) == expected
+    assert worker._root_pol_logits is cached_policy
+    assert worker._root_wdl_logits is cached_wdl
+
+
+@pytest.mark.parametrize("pool_path", ["walker", "pucv", "pucv_pool"])
+def test_pool_prep_keeps_an_already_full_root(pool_path: str) -> None:
+    """The support guard must not turn normal same-position reuse into rebuilds."""
+    board = chess.Board()
+    legal = np.array(
+        [int(move_to_index(move, board)) for move in board.legal_moves],
+        dtype=np.int32,
+    )
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(
+        root,
+        legal,
+        np.full(legal.size, 1.0 / legal.size, dtype=np.float64),
+    )
+
+    worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
+    worker._tree = tree
+    worker._root_id = root
+    worker._tree_fen = board.fen()
+    worker._root_pol_logits = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    worker._root_wdl_logits = np.zeros((1, 3), dtype=np.float32)
+    worker._walker_pool = None
+    worker._pucv = None
+    worker._pucv_pool = None
+    if pool_path == "walker":
+        worker._walker_pool = MagicMock()
+    elif pool_path == "pucv":
+        worker._pucv = MagicMock()
+    else:
+        worker._pucv_pool = MagicMock()
+
+    worker._pre_expand_root_for_pool(board, allowed_root_indices=None)
+
+    assert worker._tree is tree
+    assert worker._root_id == root
+
+
+def test_run_reaches_the_pool_root_support_guard() -> None:
+    """Reachability through the REAL ``run()``, not the prep helper by hand.
+
+    Every other test of this guard calls ``_pre_expand_root_for_pool``
+    directly, so all of them would still pass if ``run()`` stopped calling it —
+    the guard would be dead on the production path and no test would notice.
+    This drives two real searches on ONE worker at ONE position: a
+    ``searchmoves`` search (routed to classic Gumbel, which leaves the
+    persistent root expanded over e2e4 alone), then an unrestricted search with
+    a walker pool installed. The second search must run on a root carrying the
+    board's full legal support, in a different tree.
+
+    It also pins the verdict MAPPING: a root missing legal moves is the routine
+    searchmoves aftermath, so the rebuild counter moves and the corruption
+    counter does not.
+    """
+    board = chess.Board()
+    e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
+    worker = SearchWorker(
+        _NeutralEvaluator(),
+        device="cpu",
+        chunk_sims=1,
+        gumbel_cfg=GumbelConfig(
+            simulations=1, topk=2, temperature=0.0, add_noise=False,
+        ),
+    )
+
+    first = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+        root_moves=("e2e4",),
+    )
+    assert first.bestmove_uci == "e2e4"
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    narrowed_tree = worker._tree
+    narrowed_actions, _ = narrowed_tree.get_children_visits(worker._root_id)
+    assert set(map(int, narrowed_actions)) == {e2e4}
+
+    pool = MagicMock()
+    pool.run.return_value = 1
+    worker._walker_pool = pool
+    rebuilds_before = pool_root_support_rebuild_count()
+    corruptions_before = pool_root_support_corruption_count()
+
+    worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+    )
+
+    assert pool.run.called, "the walker pool must actually have been searched"
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    assert worker._tree is not narrowed_tree
+    actions, _ = worker._tree.get_children_visits(worker._root_id)
+    assert set(map(int, actions)) == {
+        int(move_to_index(move, board)) for move in board.legal_moves
+    }
+    assert pool_root_support_rebuild_count() == rebuilds_before + 1
+    assert pool_root_support_corruption_count() == corruptions_before
+
+
+def test_pool_root_carrying_a_nonlegal_action_is_counted_as_corruption() -> None:
+    """The other half of the verdict mapping.
+
+    A root that holds every legal move AND something that is not a legal move
+    of this position is not searchmoves aftermath — no supported path produces
+    it. It must still rebuild (behaviour is identical for both verdicts) but it
+    is the alarm, so the corruption counter moves too.
+    """
+    board = chess.Board()
+    legal_list = [int(move_to_index(move, board)) for move in board.legal_moves]
+    legal_set = set(legal_list)
+    intruder = next(i for i in range(POLICY_SIZE) if i not in legal_set)
+    actions = np.array([*legal_list, intruder], dtype=np.int32)
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    tree.expand(
+        root, actions, np.full(actions.size, 1.0 / actions.size, dtype=np.float64),
+    )
+
+    worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
+    worker._tree = tree
+    worker._root_id = root
+    worker._tree_fen = board.fen()
+    worker._root_pol_logits = np.zeros((1, POLICY_SIZE), dtype=np.float32)
+    worker._root_wdl_logits = np.zeros((1, 3), dtype=np.float32)
+    worker._walker_pool = MagicMock()
+    worker._pucv = None
+    worker._pucv_pool = None
+    rebuilds_before = pool_root_support_rebuild_count()
+    corruptions_before = pool_root_support_corruption_count()
+
+    worker._pre_expand_root_for_pool(board, allowed_root_indices=None)
+
+    assert worker._tree is not tree
+    assert worker._tree is not None
+    assert worker._root_id is not None
+    rebuilt_actions, _ = worker._tree.get_children_visits(worker._root_id)
+    assert set(map(int, rebuilt_actions)) == legal_set
+    assert pool_root_support_rebuild_count() == rebuilds_before + 1
+    assert pool_root_support_corruption_count() == corruptions_before + 1
+
+
+def test_rpg_searchmoves_run_carries_no_tree_to_the_next_search() -> None:
+    """RPG is excluded from the pool-root support guard on purpose, so pin what
+    actually protects it: ``_run_one_chunk`` calls ``reset_tree()`` before an
+    RPG ``searchmoves`` chunk, leaving nothing for a later unrestricted RPG
+    search to inherit. ``_tree_fen`` is the witness — ``run()`` sets it at the
+    top of the search and only ``reset_tree()`` clears it, so ``None`` here
+    means the reset ran after the position was installed.
+
+    Delete that ``reset_tree()`` and this test fails; without it the guard's
+    "rpg" exclusion would be a real hole rather than a redundancy.
+    """
+    board = chess.Board()
+    worker = SearchWorker(
+        _NeutralEvaluator(),
+        device="cpu",
+        chunk_sims=1,
+        gumbel_cfg=GumbelConfig(
+            simulations=1, topk=2, temperature=0.0, add_noise=False,
+        ),
+    )
+    worker._rpg_pool = MagicMock()
+
+    result = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(None),
+        max_nodes=1,
+        root_moves=("e2e4",),
+    )
+
+    assert result.bestmove_uci == "e2e4"
+    assert worker._tree_fen is None
 
 
 def test_reused_root_info_is_restricted_to_searchmoves() -> None:
@@ -342,17 +609,6 @@ def test_searchmoves_filter_reaches_c_mate_shortcut() -> None:
     out-of-list mate value.
     """
 
-    class NeutralEvaluator:
-        def evaluate_encoded(
-            self, x: np.ndarray, relations: np.ndarray | None = None,
-        ) -> tuple[np.ndarray, np.ndarray]:
-            del relations  # interface conformance for BatchEvaluator
-            batch = int(x.shape[0])
-            return (
-                np.zeros((batch, POLICY_SIZE), dtype=np.float32),
-                np.zeros((batch, 3), dtype=np.float32),
-            )
-
     board = chess.Board("5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70")
     assert board.san(chess.Move.from_uci("b7b8")) == "Rb8#"
     after_allowed = board.copy(stack=False)
@@ -360,7 +616,7 @@ def test_searchmoves_filter_reaches_c_mate_shortcut() -> None:
     assert after_allowed.is_stalemate()
 
     worker = SearchWorker(
-        NeutralEvaluator(),
+        _NeutralEvaluator(),
         device="cpu",
         chunk_sims=1,
         gumbel_cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
