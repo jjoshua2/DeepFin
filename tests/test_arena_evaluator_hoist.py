@@ -59,13 +59,15 @@ _OPENING_FENS = (
 def _opening_fens(n: int) -> list[str]:
     """``n`` distinct legal opening FENs, deterministically.
 
-    The four curated strings first (so the small cases keep the exact files the
-    older tests were written against), then a depth-2 enumeration from the
-    start position — 400 available, every (white move, black move) pair giving
-    a different position, so no dedup can shrink the list below ``n``. Needed
-    because a test that names ``--max-concurrent-games 128`` has to be able to
-    SCHEDULE 128 pairs: the arena bounds its leaf figure by the pool the
-    schedule can fill, so four openings would silently make it a 8-game arena.
+    TWO disjoint sources, not one list with a prefix: ``n <= 4`` returns the
+    curated strings alone, so the small cases keep byte-identical files to the
+    ones the older tests were written against, and any larger ``n`` returns a
+    pure depth-2 enumeration from the start position. 400 of those are
+    available and every (white move, black move) pair gives a different
+    position, so no dedup can shrink the list below ``n``. Needed because a
+    test that names ``--max-concurrent-games 128`` has to be able to SCHEDULE
+    128 pairs: the arena bounds its leaf figure by the pool the schedule can
+    fill, so four openings would silently make it an 8-game arena.
     """
     if n <= len(_OPENING_FENS):
         return list(_OPENING_FENS[:n])
@@ -1703,3 +1705,203 @@ def test_the_ladder_can_reach_the_documented_zero_escape_hatch(
     a truthiness test somewhere on the path would silently restore the default."""
     seen = _ladder_run_arena_kwargs(monkeypatch, ["--eval-max-batch", "0"])
     assert [kw["eval_max_batch"] for kw in seen] == [0, 0]
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups on the pool change
+# ---------------------------------------------------------------------------
+
+
+def test_the_record_banks_the_inputs_the_leaf_bound_was_derived_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A banked row has to be RE-DERIVABLE, not merely readable.
+
+    `eval_leaf_cap_uncapped` and `eval_hoist` are now a function of the POOL,
+    and the pool is a function of two things the row did not carry: the
+    concurrency ceiling and the number of opening pairs actually loaded. At mcg
+    128 / topk 32 the same flags give 4096 rows over a full schedule, 2560 over
+    40 games and 512 over 2 — so without these fields a row states an answer
+    whose inputs are gone. `games` cannot stand in for the pool either: a short
+    --openings-fen list shrinks it below what --games asked for.
+    """
+    side = _side(gumbel={"topk": 32})
+    for n_pairs, want_pool, want_rows in ((1, 2, 512), (20, 40, 2560), (128, 128, 4096)):
+        with monkeypatch.context() as ctx:
+            _stub_model_loader(ctx)
+            _stub_play_loops(ctx)
+            ctx.setattr(
+                arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"),
+            )
+            record = _run(
+                tmp_path, device="cuda", max_concurrent_games=128,
+                eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+                search_candidate=side, search_reference=side,
+                games=2 * n_pairs, openings_fen=_openings_file(tmp_path, n_pairs),
+                game_log_path=tmp_path / f"rec_{n_pairs}.games.jsonl",
+            )
+        assert record["max_concurrent_games"] == 128
+        assert record["arena_pool_size"] == want_pool
+        assert record["eval_leaf_cap_uncapped"] == want_rows
+        # The point of banking them: the answer follows from the row's own
+        # fields, with no access to the invocation that wrote it.
+        assert record["eval_leaf_cap_uncapped"] == arena_uncapped_leaf_rows(
+            max_concurrent_games=record["arena_pool_size"], sides=(side, side),
+        )
+
+
+def test_the_pool_fields_are_banked_even_where_the_leaf_fields_are_null(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Unconditional, unlike the leaf-cap fields.
+
+    Those go null off the hoisted path because they mean nothing there. The
+    pool is a property of the SCHEDULE and is just as true for a CPU row, so
+    making it conditional would produce a null that means "not applicable" on
+    some rows and "written before the field existed" on others — a distinction
+    no later reader could recover.
+    """
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    record = _run(
+        tmp_path, device="cpu", max_concurrent_games=64,
+        games=8, openings_fen=_openings_file(tmp_path, 4),
+    )
+    assert record["eval_leaf_cap_uncapped"] is None, "no hoist on a CPU arena"
+    assert record["max_concurrent_games"] == 64
+    assert record["arena_pool_size"] == 8
+
+
+@pytest.mark.parametrize(
+    ("eval_max_batch", "refuses"),
+    [
+        (127, True),    # one below the pool: the root submit would raise
+        (128, False),   # EXACTLY the pool: servable, must run
+        (129, False),
+    ],
+)
+def test_the_refusal_boundary_sits_at_the_pool_size_exactly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    eval_max_batch: int, refuses: bool,
+) -> None:
+    """`<` and `<=` differ on exactly one value, and it is a legal one.
+
+    A cap equal to the pool serves the widest root submit the search can make,
+    so refusing it would reject a configuration that works. The three rows
+    bracket the boundary; the middle one is the whole test.
+    """
+    _stub_model_loader(monkeypatch)
+    seen = _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    call = lambda: _run(  # noqa: E731 - one expression, used twice below
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=eval_max_batch,
+        search_candidate=side, search_reference=side,
+        game_log_path=tmp_path / f"bound_{eval_max_batch}.games.jsonl",
+    )
+    if refuses:
+        with pytest.raises(SystemExit, match="pool of 128 concurrent game"):
+            call()
+        assert seen == [], "refused, so nothing may have played"
+        return
+    record = call()
+    assert seen, "a cap the pool can serve must run"
+    # Still below the 4096-row leaf buffer, so it is warned and recorded --
+    # allow-but-warn, which is a different thing from being refused.
+    assert record["eval_hoist"] == f"{eval_max_batch}<4096"
+
+
+def test_the_rolling_banner_announces_the_pool_not_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """"keep 128 games active" over a 2-game arena is the same falsehood.
+
+    Paired arms: one ceiling, two schedule lengths, and the banner must move
+    with the schedule.
+    """
+    side = _side(gumbel={"topk": 32})
+    banners: dict[int, str] = {}
+    for n_pairs in (1, 128):
+        with monkeypatch.context() as ctx:
+            _stub_model_loader(ctx)
+            _stub_play_loops(ctx)
+            ctx.setattr(
+                arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"),
+            )
+            _run(
+                tmp_path, device="cuda", max_concurrent_games=128, rolling=True,
+                eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+                search_candidate=side, search_reference=side,
+                games=2 * n_pairs, openings_fen=_openings_file(tmp_path, n_pairs),
+                game_log_path=tmp_path / f"banner_{n_pairs}.games.jsonl",
+            )
+        banners[n_pairs] = capsys.readouterr().out
+    assert "ROLLING pool: keep 2 games active" in banners[1]
+    assert "keep 128 games active" not in banners[1]
+    assert "ROLLING pool: keep 128 games active" in banners[128]
+
+
+def test_the_rolling_banner_tracks_the_remainder_a_resume_still_has_to_play(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The banner describes THIS invocation's loop, not the whole match.
+
+    Deliberately a different quantity from the `arena_pool_size` in the RECORD,
+    which is bounded by the full loaded schedule because it scopes fields that
+    describe the match (resumed pairs included). A resume that has 3 of 4 pairs
+    left can keep 6 games active, not 8 — and printing 8 would be a smaller
+    version of the falsehood this change removes.
+    """
+    log_path = tmp_path / "banner_resume.games.jsonl"
+    side = _side(gumbel={"topk": 32})
+    common: dict[str, Any] = {
+        "games": 8, "openings_fen": _openings_file(tmp_path, 4),
+        "max_concurrent_games": 128, "rolling": True, "device": "cuda",
+        "search_candidate": side, "search_reference": side,
+        "game_log_path": log_path,
+    }
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch, crash_after=2)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    with pytest.raises(_SimulatedCrash):
+        _run(tmp_path, **common)
+    assert "ROLLING pool: keep 8 games active" in capsys.readouterr().out
+
+    _emitting_play_loops(monkeypatch)
+    record = _run(tmp_path, resume=True, **common)
+    assert "ROLLING pool: keep 6 games active" in capsys.readouterr().out, (
+        "one pair was kept from the log; the loop can only fill 6 of the 8"
+    )
+    # And the RECORD keeps the match-scoped figure, which is the whole reason
+    # the two are computed separately.
+    assert record["arena_pool_size"] == 8
+
+
+def test_the_ladder_refuses_a_games_flag_it_cannot_honour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--games` rides in from the shared parser and elo_vs_sims never reads it.
+
+    Every rung is sized by --games-per-rung, so `--games 40` used to be
+    accepted and then ignored: 400 games a rung, silently. Forwarding it is not
+    the fix -- it would have to mean "per rung" to be meaningful, and a flag
+    meaning something different in each script is worse than one that is
+    absent. The error has to NAME the flag that does work.
+    """
+    for spelling in (["--games", "40"], ["--games=40"]):
+        with pytest.raises(SystemExit, match="--games-per-rung"):
+            _ladder_run_arena_kwargs(monkeypatch, spelling)
+
+
+def test_the_games_refusal_does_not_catch_games_per_rung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control, and the risky half of an argv scan.
+
+    `--games-per-rung` starts with `--games`; a prefix test would refuse the
+    one flag the script actually wants, and every test above passes it only by
+    omission.
+    """
+    seen = _ladder_run_arena_kwargs(monkeypatch, ["--games-per-rung", "6"])
+    assert [kw["games"] for kw in seen] == [6, 6]

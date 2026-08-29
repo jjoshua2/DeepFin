@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from scripts.arena_standard import (
@@ -66,6 +67,30 @@ def main() -> None:
                         "what they have always been.")
     add_common_args(p)
     args = p.parse_args()
+
+    # ⚑ `--games` comes in from the shared parser and this script CANNOT honour
+    # it: every rung's size is `--games-per-rung`, and `args.games` is never
+    # read. Accepting it silently is the defect this repo is named for, one
+    # level below the flag that motivated it — `elo_vs_sims --games 40` ran 400
+    # games a rung and said nothing. Refused rather than forwarded because
+    # forwarding is wrong here: `--games` would have to mean "per rung" to be
+    # meaningful, and a flag that means something different in each script is
+    # worse than one that is absent.
+    #
+    # Detected from argv, not by comparing to the default: `--games 1000` and an
+    # unset `--games` are indistinguishable in `args`, and refusing only the
+    # non-default values would let the one spelling most likely to be a
+    # copy-paste from an arena_standard command line through in silence.
+    # `--games-per-rung` is neither `--games` nor a `--games=` prefix, so it is
+    # not caught here; argparse resolves the exact spelling `--games` to this
+    # option before any abbreviation matching.
+    if any(a == "--games" or a.startswith("--games=") for a in sys.argv[1:]):
+        raise SystemExit(
+            "--games does not apply to a sims ladder: each rung is its own "
+            "arena and is sized by --games-per-rung (default 400). Use "
+            "--games-per-rung; it is per RUNG, so a 5-rung ladder plays 4 "
+            "arenas of that many games."
+        )
 
     sims = _parse_sims(args.sims)
     if args.search_shape is None:

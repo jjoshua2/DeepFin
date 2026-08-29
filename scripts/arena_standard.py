@@ -1575,10 +1575,21 @@ def arena_uncapped_leaf_rows(
     the models exist -- otherwise a relations-on model with a cap in
     [4096, 8192) is bound in fact while every recorded field says it is not.
 
-    ⚑ ``max_concurrent_games`` is the top of the board-count RANGE, so callers
-    pass the pool the schedule can actually fill (``arena_pool_size``), not the
-    raw ``--max-concurrent-games`` ceiling. Bounding a range the search can
-    never enter reports an inert cap as binding.
+    ⚑ ``max_concurrent_games`` is the top of the board-count RANGE ONE SEARCH
+    CALL CAN BE HANDED, which is not the same quantity for every caller and is
+    deliberately not renamed:
+
+    * an ARENA hands one call a whole side of its pool, so it passes the pool
+      the schedule can actually fill (``arena_pool_size``) — NOT the raw
+      ``--max-concurrent-games`` ceiling, since bounding a range the search can
+      never enter reports an inert cap as binding;
+    * a SEQUENTIAL match hands one call a single board, so it passes 1 —
+      ``scripts/match_vs_handicapped_sf.py``'s ``resolve_eval_leaf_cap`` does
+      exactly that, and takes no concurrency argument at all, because nothing
+      about its cap depends on how many games are in flight.
+
+    Either way the rule is the same: pass what ONE call can carry, never a
+    ceiling that no call reaches.
     """
     from chess_anti_engine.mcts.gumbel_c import leaf_buffer_rows
 
@@ -2539,6 +2550,8 @@ def build_result_record(
     eval_max_batch: int | None = None,
     eval_leaf_cap_uncapped: int | None = None,
     eval_leaf_cap_bound: bool = False,
+    max_concurrent_games: int | None = None,
+    arena_pool: int | None = None,
     sprt: dict[str, Any] | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
@@ -2601,6 +2614,22 @@ def build_result_record(
         "eval_max_batch": eval_max_batch,
         "eval_leaf_cap_uncapped": eval_leaf_cap_uncapped,
         "eval_leaf_cap_bound": bool(eval_leaf_cap_bound),
+        # ⚑ THE INPUTS the two fields above are a FUNCTION OF, banked so a row
+        # can be re-derived instead of only read. `eval_leaf_cap_uncapped` is
+        # computed from the POOL — the concurrency ceiling capped by the loaded
+        # opening pairs (`arena_pool_size`) — and at mcg 128 / topk 32 that is
+        # 4096 rows over a full schedule, 2560 over 40 games and 512 over 2. A
+        # row that banked only the answer would be unreproducible from its own
+        # fields, and `games` cannot substitute: a short --openings-fen list
+        # shrinks the pool below what --games asked for.
+        #
+        # `arena_pool` is what the bound was ACTUALLY taken over;
+        # `max_concurrent_games` is the ceiling the operator asked for, kept
+        # separately because the gap between them is the thing worth seeing.
+        # Both null on rows written before this field existed — never 0, which
+        # would be a claim about a run the field never covered.
+        "max_concurrent_games": max_concurrent_games,
+        "arena_pool_size": arena_pool,
         "openings": openings_path,
         "openings_kind": openings_kind,
         "opening_plies": opening_plies,
@@ -3428,8 +3457,32 @@ def run_arena(
                 # Rolling pool: fixed active-game count => fixed batch shape => compile
                 # reuses one graph (no per-shape thrash), and the GPU never drains until
                 # the very end (no per-chunk tail).
+                #
+                # ⚑ The POOL, not --max-concurrent-games. `_refill` tops the
+                # board list up to its `pool_size` argument only WHILE THE
+                # QUEUE LASTS, so what the loop can actually keep active is
+                # bounded by the pairs still to play. Announcing the ceiling is
+                # the same falsehood the leaf-row bound used to be built on:
+                # "keep 128 games active" over a 2-game arena.
+                #
+                # ⚑ THREE different quantities are called some form of "pool"
+                # in this neighbourhood and they are not interchangeable:
+                #   * `rolling_pool` here — bounded by the REMAINDER this
+                #     invocation plays, which is what this banner describes;
+                #   * the `pool_size` local from the cap checks — bounded by
+                #     the whole loaded SCHEDULE, because it scopes the recorded
+                #     leaf-cap fields and those describe the MATCH, resumed
+                #     pairs included. The two coincide except on a resume;
+                #   * the callee's `pool_size=` parameter below, left as the
+                #     raw ceiling on purpose — the loop's own refill is already
+                #     capped by the queue length, so lowering it would change
+                #     nothing except when the drain-time cache free fires.
+                rolling_pool = arena_pool_size(
+                    max_concurrent_games=max_concurrent_games,
+                    n_pairs=len(openings_to_play),
+                )
                 print(
-                    f"[arena] ROLLING pool: keep {max_concurrent_games} games active, "
+                    f"[arena] ROLLING pool: keep {rolling_pool} games active, "
                     f"start a fresh one as each finishes",
                     flush=True,
                 )
@@ -3666,6 +3719,13 @@ def run_arena(
         eval_max_batch=int(eval_max_batch),
         eval_leaf_cap_uncapped=(uncapped_leaf_rows or None),
         eval_leaf_cap_bound=leaf_cap_bound,
+        # Banked UNCONDITIONALLY, unlike the leaf-cap fields above: those are
+        # meaningless off the hoisted path and go null there, but the pool is a
+        # property of the schedule and is just as true for a matched_time or
+        # CPU row. Making it conditional would mean a null that says "not
+        # applicable" on some rows and "written before the field" on others.
+        max_concurrent_games=int(max_concurrent_games),
+        arena_pool=int(pool_size),
         sprt=sprt_record,
     )
     if out_path is not None:
@@ -3703,6 +3763,15 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     # it a sims ladder was pinned to the default cap — no way to pick a smaller
     # one on a constrained card, and no way to use the documented 0 escape
     # hatch to reproduce a pre-hoist rung.
+    #
+    # ⚑ THE RULE FOR THIS FUNCTION IS "FORWARDED OR REFUSED", NEVER SILENTLY
+    # DROPPED — and it is a rule about BOTH callers, not just this file. A knob
+    # that only one of them can honour either stays out of the shared set
+    # (--sprt) or is rejected by the script that cannot honour it: `--games` is
+    # declared below and elo_vs_sims sizes its rungs from --games-per-rung, so
+    # it refuses an explicit --games rather than accept a number it will not
+    # read. Before adding anything here, check what the OTHER script does with
+    # it.
     p.add_argument("--eval-max-batch", type=int, default=DEFAULT_EVAL_MAX_BATCH,
                    help="matched_sims: forward-batch cap for the ONE long-lived "
                         f"evaluator built per side (default: {DEFAULT_EVAL_MAX_BATCH}, "
