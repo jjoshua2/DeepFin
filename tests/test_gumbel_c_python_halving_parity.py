@@ -203,7 +203,11 @@ class _Round:
 
 
 def _run_one_halving_round(
-    shape: _Shape, scenario: _Scenario, *, root_w: float,
+    shape: _Shape,
+    scenario: _Scenario,
+    *,
+    root_w: float,
+    stored_cand_prior: tuple[float, float] | None = None,
 ) -> _Round:
     """Drive ONE sequential-halving round through the real C state machine."""
     cfg = shape.cfg()
@@ -214,9 +218,17 @@ def _run_one_halving_round(
     pri = _dense_priors(legal, scenario)
     cands = [int(legal[0]), int(legal[1])]
 
+    tree_pri = pri.copy()
+    if stored_cand_prior is not None:
+        tree_pri[legal] = (
+            1.0 - sum(stored_cand_prior)
+        ) / float(legal.size - 2)
+        tree_pri[int(legal[0])] = stored_cand_prior[0]
+        tree_pri[int(legal[1])] = stored_cand_prior[1]
+
     tree = MCTSTree()
     root_id = tree.add_root(1, float(root_w))
-    tree.expand(root_id, legal, pri[legal])
+    tree.expand(root_id, legal, tree_pri[legal])
 
     planes = input_plane_count(cfg.input_extra_features)
     enc = np.zeros((64, planes, 8, 8), dtype=np.float32)
@@ -285,13 +297,18 @@ def _mix_value(rnd: _Round, raw_value: float) -> float:
 
 
 def _reference_scores(
-    rnd: _Round, *, raw_value: float, include_unvisited: bool = True,
+    rnd: _Round,
+    *,
+    raw_value: float,
+    include_unvisited: bool = True,
+    mix_priors: np.ndarray | None = None,
 ) -> dict[int, float]:
     """``gumbel.py``'s halving score, recomputed from the C tree's own state."""
     legal, vis, qv = _root_children(rnd)
     if include_unvisited:
+        priors_for_mix = rnd.priors if mix_priors is None else mix_priors
         q_logits = _completed_q_transform(
-            actions=legal, priors=rnd.priors[legal], visits=vis, qvalues=qv,
+            actions=legal, priors=priors_for_mix[legal], visits=vis, qvalues=qv,
             raw_value=float(raw_value), cfg=rnd.cfg, root=True,
         )
         table = {int(a): float(v) for a, v in zip(legal, q_logits)}
@@ -457,6 +474,81 @@ def test_halving_is_independent_of_the_root_nodes_stored_value(
     assert list(hi_visits) == list(lo_visits)
 
 
+@pytest.mark.parametrize(
+    ("shape", "scenario", "stored_cand_prior"),
+    [
+        (
+            _SHAPES[0],
+            _Scenario(
+                root_q=-0.90,
+                child_q=(-0.20, 0.00),
+                cand_prior=(0.60, 0.05),
+            ),
+            (0.01, 0.90),
+        ),
+        (
+            _SHAPES[1],
+            _Scenario(
+                root_q=-0.40,
+                child_q=(0.18, 0.20),
+                cand_prior=(0.04, 0.0004),
+            ),
+            (0.001, 0.90),
+        ),
+    ],
+    ids=_SHAPE_IDS,
+)
+def test_halving_refreshes_carried_root_priors_from_the_current_search(
+    shape: _Shape,
+    scenario: _Scenario,
+    stored_cand_prior: tuple[float, float],
+) -> None:
+    """A reused root's old edge priors must not weight this search's mixed Q.
+
+    The tree is deliberately expanded with a prior distribution from an older
+    search, while start_gumbel_sims receives a different CURRENT dense prior.
+    Both production root transforms are hand-tuned so the two rules choose
+    opposite survivors; the fixture therefore fails if the stale edge priors
+    still reach gss_score_and_halve's weighted_q.
+    """
+    rnd = _run_one_halving_round(
+        shape,
+        scenario,
+        root_w=scenario.root_q,
+        stored_cand_prior=stored_cand_prior,
+    )
+    legal, _vis, _qv = _root_children(rnd)
+    stale_priors = rnd.priors.copy()
+    stale_priors[legal] = (
+        1.0 - sum(stored_cand_prior)
+    ) / float(legal.size - 2)
+    stale_priors[rnd.candidates[0]] = stored_cand_prior[0]
+    stale_priors[rnd.candidates[1]] = stored_cand_prior[1]
+
+    current = _argmax(
+        _reference_scores(
+            rnd,
+            raw_value=scenario.root_q,
+            mix_priors=rnd.priors,
+        ),
+    )
+    stale = _argmax(
+        _reference_scores(
+            rnd,
+            raw_value=scenario.root_q,
+            mix_priors=stale_priors,
+        ),
+    )
+    assert current != stale, (
+        f"[{shape.name}] fixture stopped discriminating current vs carried "
+        "root priors; the production assertion below would pass for free"
+    )
+    assert rnd.survivor == current, (
+        f"[{shape.name}] C halving kept {rnd.survivor}; current-search priors "
+        f"keep {current}, while the carried tree priors keep {stale}"
+    )
+
+
 def test_the_loaded_extension_announces_its_halving_revision(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -470,17 +562,26 @@ def test_the_loaded_extension_announces_its_halving_revision(
     """
     from chess_anti_engine.mcts import gumbel_c as gumbel_c_mod
 
-    assert _mcts_tree_ext.GSS_HALVING_REV == 2
+    assert _mcts_tree_ext.GSS_HALVING_REV == 3
 
     monkeypatch.setattr(gumbel_c_mod, "_halving_rev_reported", False)
     gumbel_c_mod._report_halving_rev()
     line = capsys.readouterr().err
-    assert "gss_halving_rev=2" in line
-    assert "fresh root_qs" in line
+    assert "gss_halving_rev=3" in line
+    assert "fresh root_qs + current-search root priors" in line
 
     # Once per process, not once per search.
     gumbel_c_mod._report_halving_rev()
     assert capsys.readouterr().err == ""
+
+    # Revision 2 fixed the root-value baseline but still weighted carried
+    # child Q with carried edge priors.
+    monkeypatch.setattr(_mcts_tree_ext, "GSS_HALVING_REV", 2)
+    monkeypatch.setattr(gumbel_c_mod, "_halving_rev_reported", False)
+    gumbel_c_mod._report_halving_rev()
+    rev2 = capsys.readouterr().err
+    assert "gss_halving_rev=2" in rev2
+    assert "carried root priors" in rev2
 
     # A pre-fix .so has no such constant, and that IS revision 1 — not unknown.
     monkeypatch.delattr(_mcts_tree_ext, "GSS_HALVING_REV", raising=False)
