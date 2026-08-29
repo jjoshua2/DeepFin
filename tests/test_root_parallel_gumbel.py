@@ -30,7 +30,7 @@ import pytest
 from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_dispatcher import ThreadSafeGPUDispatcher
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel import GumbelConfig, _root_sigma_scale
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.moves import move_to_index
 from chess_anti_engine.uci.engine import Engine, EngineOptions
@@ -194,6 +194,87 @@ def test_halving_helpers_edge_cases() -> None:
     assert halving_keep_count(2) == 1
     assert halving_keep_count(3) == 2
     assert halving_keep_count(2, halving_div=4) == 1
+
+
+def test_rpg_halving_uses_fresh_network_root_value() -> None:
+    """Regression for the root baseline shared with classic Gumbel.
+
+    The hand-built state is intentionally discriminating at the PLAY root-log
+    scale: the fresh network root value keeps action 10, while reconstructing
+    the old running W[root]/N[root] baseline keeps action 20. A broad search
+    parity check can miss this because the baseline perturbation is usually
+    divided down by many root visits before it can change a ranking.
+    """
+    actions = np.array([10, 20, 30, 40], dtype=np.int32)
+    visits = np.array([1, 1, 0, 0], dtype=np.int32)
+    qs = np.array([-0.575, -0.550, 0.0, 0.0], dtype=np.float64)
+    pri = np.zeros(64, dtype=np.float64)
+    pri[actions] = np.array([0.45, 0.001, 0.2745, 0.2745], dtype=np.float64)
+
+    class _Tree:
+        @staticmethod
+        def get_children_q(
+            root_id: int, default_q: float,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            assert root_id == 7
+            assert default_q == 0.0
+            return actions.copy(), visits.copy(), qs.copy()
+
+    class _State:
+        pass
+
+    st: Any = _State()
+    st.tree = _Tree()
+    st.root_id = 7
+    st.pri = pri
+    st.root_q_init = 0.575
+
+    # Construct without starting worker threads; _score_and_halve reads only
+    # these two configs plus the synthetic state above.
+    pool: Any = object.__new__(RootParallelGumbelPool)
+    pool._cfg = RootParallelGumbelConfig(n_groups=1)
+    pool._gcfg = GumbelConfig(
+        c_visit_root=900.0,
+        c_scale_root=7.0,
+        q_visit_exp_root=-1.0,
+        add_noise=False,
+        temperature=0.0,
+    )
+
+    visited = visits > 0
+    n_total = float(visits.sum())
+    stale_root_q = (
+        st.root_q_init + float((qs[visited] * visits[visited]).sum())
+    ) / (n_total + 1.0)
+
+    def _reference_winner(raw_value: float) -> int:
+        pri_children = np.maximum(pri[actions], np.finfo(np.float64).tiny)
+        sum_probs = float(pri_children[visited].sum())
+        weighted_q = float(
+            (pri_children[visited] * qs[visited]).sum()
+        ) / sum_probs
+        mixed = (float(raw_value) + n_total * weighted_q) / (n_total + 1.0)
+        completed = np.where(visited, qs, mixed)
+        lo = float(completed.min())
+        hi = float(completed.max())
+        scale = _root_sigma_scale(
+            max_visit=int(visits.max(initial=0)),
+            cfg=pool._gcfg,
+        )
+        q_logits = scale * (completed - lo) / max(hi - lo, 1e-8)
+        candidate_scores = (
+            np.log(np.maximum(pri[actions[:2]], 1e-12)) + q_logits[:2]
+        )
+        return int(actions[int(np.argmax(candidate_scores))])
+
+    fresh = _reference_winner(float(st.root_q_init))
+    stale = _reference_winner(stale_root_q)
+    assert fresh == 10
+    assert stale == 20
+    assert fresh != stale, "fixture stopped discriminating the two baselines"
+
+    survivor = pool._score_and_halve(st, [10, 20], {10: 0.0, 20: 0.0})
+    assert survivor == [fresh]
 
 
 # --- semantics under parallelism ----------------------------------------------
