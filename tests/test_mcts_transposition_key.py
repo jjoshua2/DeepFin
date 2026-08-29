@@ -369,6 +369,147 @@ def test_tt_re_evaluates_a_structural_twin_with_different_history(monkeypatch) -
     )
 
 
+class _CountingHistoryEv:
+    """Leaf evaluator that records the exact encoded rows the C search requested."""
+
+    def __init__(self) -> None:
+        self.rows = 0
+        self.seen: list[np.ndarray] = []
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        arr = np.asarray(x, dtype=np.float32)
+        self.rows += int(arr.shape[0])
+        self.seen.extend(np.array(row, copy=True) for row in arr)
+        n = int(arr.shape[0])
+        pol = np.zeros((n, POLICY_SIZE), dtype=np.float32)
+        wdl = np.tile(np.array([[0.8, 0.1, -0.3]], dtype=np.float32), (n, 1))
+        return pol, wdl
+
+
+def _board_after(*moves: str) -> chess.Board:
+    board = chess.Board()
+    for uci in moves:
+        board.push_uci(uci)
+    return board
+
+
+def _two_action_root_logits(
+    board: chess.Board, desired_uci: str,
+) -> tuple[np.ndarray, set[int]]:
+    """Make desired_uci the deterministic one-sim Gumbel candidate.
+
+    The support deliberately contains TWO legal actions: a singleton support is
+    an early-finished root and would never exercise a leaf / TT probe.
+    """
+    desired_move = chess.Move.from_uci(desired_uci)
+    desired = int(move_to_index(desired_move, board))
+    legal = [int(move_to_index(mv, board)) for mv in board.legal_moves]
+    other = next(action for action in legal if action != desired)
+
+    logits = np.full((1, POLICY_SIZE), -20.0, dtype=np.float32)
+    logits[0, other] = 0.0
+    logits[0, desired] = 20.0
+    return logits, {desired, other}
+
+
+def test_structural_transposition_with_different_history_is_re_evaluated(
+    monkeypatch,
+) -> None:
+    """A structural TT hit must not reuse another history's NN Q / priors.
+
+    These two move orders reach the same current chess position:
+
+        Nf3 Nf6 g3 g6
+        g3  g6  Nf3 Nf6
+
+    but the second history has a different seven-slot LC0 history and a
+    different rule-50 clock. cboard_transposition_key intentionally aliases
+    them because their current legal chess state is identical. That is valid for
+    structural storage, but NOT for the C Gumbel shortcut: the old code copied
+    the first leaf's priors and W/N into the second leaf and skipped its network
+    evaluation entirely.
+
+    One simulation is enough to make the test discriminating. Each root exposes
+    two legal actions (to avoid the single-support early finish), while the
+    supplied root logits force the action that completes the transposition.
+    Therefore the correct path performs exactly two leaf evaluations. Restoring
+    the old structural-only reuse performs one and fails this test.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _mcts_tree.tt_stats(reset=True)
+
+    board_a = _board_after("g1f3", "g8f6", "g2g3")
+    logits_a, support_a = _two_action_root_logits(board_a, "g7g6")
+    final_a = board_a.copy(stack=True)
+    final_a.push_uci("g7g6")
+
+    board_b = _board_after("g2g3", "g7g6", "g1f3")
+    logits_b, support_b = _two_action_root_logits(board_b, "g8f6")
+    final_b = board_b.copy(stack=True)
+    final_b.push_uci("g8f6")
+
+    cb_a = CBoard.from_board(final_a)
+    cb_b = CBoard.from_board(final_b)
+    assert cb_a.transposition_key == cb_b.transposition_key
+    assert _legal_set(final_a) == _legal_set(final_b)
+    assert final_a.halfmove_clock != final_b.halfmove_clock
+
+    enc_a = encode_cboard(
+        cb_a,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    enc_b = encode_cboard(
+        cb_b,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    assert not np.array_equal(enc_a, enc_b), (
+        "fixture histories encode identically; the TT-context test is vacuous"
+    )
+
+    tree = _mcts_tree.MCTSTree()
+    evaluator = _CountingHistoryEv()
+    cfg = GumbelConfig(
+        simulations=1, topk=2, c_scale=0.1, temperature=0.0, add_noise=False,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    root_wdl = np.zeros((1, 3), dtype=np.float32)
+
+    run_gumbel_root_many_c(
+        None, [board_a], device="cpu", rng=np.random.default_rng(1), cfg=cfg,
+        evaluator=evaluator, pre_pol_logits=logits_a, pre_wdl_logits=root_wdl,
+        tree=tree, allowed_root_indices_batch=[support_a],
+        target_batch=1, vloss_weight=1,
+    )
+    assert evaluator.rows == 1, "the donor leaf was not actually evaluated"
+    first_stats = _mcts_tree.tt_stats()
+    assert first_stats["probe_hits"] == 0
+
+    run_gumbel_root_many_c(
+        None, [board_b], device="cpu", rng=np.random.default_rng(2), cfg=cfg,
+        evaluator=evaluator, pre_pol_logits=logits_b, pre_wdl_logits=root_wdl,
+        tree=tree, allowed_root_indices_batch=[support_b],
+        target_batch=1, vloss_weight=1,
+    )
+    stats = _mcts_tree.tt_stats()
+    assert stats["probe_hits"] == 1, stats
+    assert stats.get("context_reject", 0) == 1, stats
+    assert stats["reuse"] == 0, stats
+    assert stats["reject"] == 0, stats
+    assert evaluator.rows == 2, (
+        "the second history was structurally aliased and skipped its NN eval"
+    )
+    assert len(evaluator.seen) == 2
+    assert not np.array_equal(evaluator.seen[0], evaluator.seen[1]), (
+        "the evaluator did not receive the two distinct history encodings"
+    )
+
+
 def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) -> None:
     """Audit W2: the support check used to be short-circuited whenever
     ``allowed_root_indices_batch is None``, which selfplay — the only caller
