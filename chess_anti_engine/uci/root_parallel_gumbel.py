@@ -39,11 +39,7 @@ Scouted classic-Gumbel decisions this orchestrator reproduces exactly
   ``gumbel + log(max(prior, 1e-12)) + q_scale * (q_hat - min_q) / max(max_q -
   min_q, 1e-8)`` where ``q_hat`` is the child's mean value from the root POV
   when visited, else the mctx mixed value; min/max run over ALL root children
-  (unvisited ones contribute the mixed value); the root value fed to the mix is
-  ``(root_q_init + sum(q_c * N_c)) / (1 + sum(N_c))`` — algebraically the
-  ``W[root]/N[root]`` the classic single-tree backprop maintains (here
-  descents are rooted at candidate nodes, so the root aggregate is
-  reconstructed from child stats).
+  (unvisited ones contribute the mixed value).
 
   The root value fed to the mix is the FRESH network root value
   (``root_q_init``), matching the C path's ``root_qs``, mctx's

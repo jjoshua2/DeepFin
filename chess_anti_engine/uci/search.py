@@ -679,7 +679,8 @@ class SearchWorker:
         single-evaluator gumbel/walker/pucv routing. Idempotent.
 
         Always resets the persistent tree: RPG updates only candidate-child
-        N/W and reconstructs the root value in its own scorer, so it hands
+        N/W and never backprops into the root node (its scorer takes the
+        FRESH root value), so it hands
         back a tree whose root ``W``/``N`` still sit at the initial eval while
         its children carry a full search. ``_run_*_chunk`` returns
         ``self._tree.node_q(self._root_id)`` as the REPORTED root value, so a
@@ -1475,8 +1476,8 @@ class SearchWorker:
             # Do NOT "optimize" this back onto the pools without first teaching them to
             # honor allowed_root_indices, or the restriction is silently ignored.
             #
-            # RPG leaves root N/W at the initial eval (it reconstructs root value
-            # in its own scorer), so an RPG-shaped tree's root Q does not describe
+            # RPG leaves root N/W at the initial eval (its scorer takes the
+            # fresh root value), so an RPG-shaped tree's root Q does not describe
             # its children -- and _run_gumbel_chunk's caller returns
             # self._tree.node_q(self._root_id) as the REPORTED root value. Drop it.
             # ⚑ Classic gss_score_and_halve no longer reads W[root]/N[root] (it
