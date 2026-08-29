@@ -12,6 +12,7 @@ also what lets the argv assertions be exact.
 from __future__ import annotations
 
 import math
+import re
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -23,10 +24,13 @@ from scripts.ordo_pooled_fit import (
     Game,
     Pair,
     block_bootstrap,
+    check_hoist_consistency,
     completion_bias_report,
     contrast_samples,
     group_pairs,
+    hoist_by_player,
     holm_reject,
+    main,
     matchup_key,
     parse_ordo,
     pct,
@@ -494,3 +498,288 @@ def test_group_pairs_treats_missing_pairid_as_singleton_blocks() -> None:
     by, unpaired = group_pairs(games)
     assert unpaired == 2
     assert len(by[matchup_key("a", "b")]) == 2  # NOT collapsed into one pair
+
+
+# --------------------------------------------------------------------------
+# EvaluatorHoist: Ordo identifies players by NAME ALONE
+#
+# arena_standard stamps every PGN game with the effective evaluator-hoist
+# setting, and this reader used to discard it — so two runs sharing engine
+# names but played under different BINDING caps were fitted as one player. A
+# binding cap is not a memory setting: gumbel_c mins its leaf buffer against
+# it and the C tree absorbs surplus leaves as root-Q pseudo-terminals instead
+# of evaluating them, so the moves change. A tag nobody enforces is decoration.
+# --------------------------------------------------------------------------
+
+_HDR = '[White "{w}"]\n[Black "{b}"]\n[Result "{r}"]\n[PairId "{p}"]\n'
+
+
+def _hoist_pgn(path: Path, rows: list[tuple[str, str, str, str, str | None]]) -> Path:
+    """rows: (white, black, result, pair_id, hoist-or-None)."""
+    out = []
+    for w, b, r, pid, hoist in rows:
+        tags = _HDR.format(w=w, b=b, r=r, p=pid)
+        if hoist is not None:
+            tags += f'[EvaluatorHoist "{hoist}"]\n'
+        out.append(f"{tags}\n{r}\n\n")
+    path.write_text("".join(out))
+    return path
+
+
+def test_read_games_keeps_the_hoist_tag_and_the_file_it_came_from(
+    tmp_path: Path,
+) -> None:
+    """The gap itself: the tag existed in the file and died at the reader."""
+    pgn = _hoist_pgn(tmp_path / "a.pgn", [
+        ("armA", "armB", "1-0", "0", "512<4032"),
+        ("armB", "armA", "0-1", "0", None),
+    ])
+    games = read_games([pgn])
+    assert [g.eval_hoist for g in games] == ["512<4032", None]
+    assert {g.source for g in games} == {str(pgn)}, (
+        "the refusal has to name WHICH file disagrees"
+    )
+
+
+def test_an_empty_hoist_tag_reads_as_unknown_not_as_a_value(tmp_path: Path) -> None:
+    """A present-but-blank header says no more than a missing one; treating
+    "" as a known value would manufacture a conflict out of nothing."""
+    pgn = _hoist_pgn(tmp_path / "blank.pgn", [("a", "b", "1-0", "0", "")])
+    assert read_games([pgn])[0].eval_hoist is None
+
+
+def test_hoist_is_attributed_to_both_players_in_the_game() -> None:
+    """The tag describes the ARENA, and both engines in it searched under the
+    same cap — so a one-sided attribution would miss half the conflicts."""
+    games = [Game("a", "b", "1-0", "0", None, None, 0, "4096", "f.pgn")]
+    assert hoist_by_player(games) == {
+        "a": {"4096": {"f.pgn": 1}},
+        "b": {"4096": {"f.pgn": 1}},
+    }
+
+
+def test_two_known_settings_under_one_name_are_refused() -> None:
+    """The defect in one assertion: same name, two searches, one rating."""
+    games = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, "4096", "clean.pgn"),
+        Game("armB", "armA", "0-1", "0", None, None, 1, "4096", "clean.pgn"),
+        Game("armA", "armC", "1-0", "0", None, None, 2, "128<4096", "capped.pgn"),
+        Game("armC", "armA", "0-1", "0", None, None, 3, "128<4096", "capped.pgn"),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        check_hoist_consistency(games)
+    message = str(excinfo.value)
+    assert "armA" in message, "the offending player must be named"
+    assert "'4096'" in message, "the first value must be named"
+    assert "'128<4096'" in message, "and the second"
+    # Per-file counts: an operator holding six PGNs cannot act on
+    # "they disagree".
+    assert "clean.pgn x2" in message
+    assert "capped.pgn x2" in message
+    assert "--allow-mixed-hoist" in message, "the override must be discoverable"
+    # armB and armC each appear under ONE setting and must not be blamed.
+    assert "armB" not in message
+    assert "armC" not in message
+
+
+def test_a_uniform_pool_passes_silently(capsys: pytest.CaptureFixture) -> None:
+    """The control. Every game tagged, all agreeing: no warning, no refusal."""
+    games = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, "4096", "a.pgn"),
+        Game("armB", "armA", "0-1", "0", None, None, 1, "4096", "b.pgn"),
+    ]
+    assert check_hoist_consistency(games) is False
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_unknown_beside_known_warns_and_proceeds(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The deliberate asymmetry.
+
+    Pre-tag PGNs have no EvaluatorHoist and never will; refusing on unknown
+    would reject every pooled fit that includes history, and unlike a
+    known-vs-known conflict there is nothing the operator could do to satisfy
+    it. So it warns, names the files, and runs.
+    """
+    games = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, "4096", "new.pgn"),
+        Game("armB", "armA", "0-1", "0", None, None, 1, None, "old.pgn"),
+    ]
+    assert check_hoist_consistency(games) is False, "not a conflict"
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    assert "old.pgn x1" in err, "the untagged file must be named"
+    assert "4096" in err
+    # Keyed on the REFUSAL's own opening phrase, not on the word "refus":
+    # this warning legitimately explains why it does not refuse.
+    assert "refusing to pool" not in err
+    assert err.lstrip().startswith("[ordo] WARNING:")
+    # Both sides of the game are affected, so both must be reported.
+    assert "armA" in err
+    assert "armB" in err
+
+
+def test_unknown_alone_is_not_even_a_warning(capsys: pytest.CaptureFixture) -> None:
+    """A wholly pre-tag pool has nothing to compare and nothing to say. A
+    warning on every historical fit is a warning nobody reads."""
+    games = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, None, "old.pgn"),
+        Game("armB", "armA", "0-1", "0", None, None, 1, None, "older.pgn"),
+    ]
+    assert check_hoist_consistency(games) is False
+    assert capsys.readouterr().err == ""
+
+
+def test_allow_mixed_hoist_pools_and_stamps_instead_of_refusing(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The override is explicit, and it is not silent: it returns True so the
+    caller stamps every output section, and it still prints what it merged."""
+    games = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, "4096", "clean.pgn"),
+        Game("armA", "armC", "1-0", "0", None, None, 1, "128<4096", "capped.pgn"),
+    ]
+    assert check_hoist_consistency(games, allow_mixed=True) is True
+    err = capsys.readouterr().err
+    assert "MIXED EVALUATOR HOIST" in err
+    assert "armA" in err
+    assert "'4096'" in err
+    assert "'128<4096'" in err
+
+
+def test_the_refusal_reads_the_tag_off_the_PGN_FILE(tmp_path: Path) -> None:
+    """End to end through read_games, because everything above could pass on a
+    reader that returned a constant.
+
+    Two files that differ ONLY in their EvaluatorHoist header: one pooling is
+    refused, the byte-identical-but-for-the-tag one is not.
+    """
+    conflicting = [
+        _hoist_pgn(tmp_path / "c1.pgn", [
+            ("armA", "armB", "1-0", "0", "4096"),
+            ("armB", "armA", "0-1", "0", "4096"),
+        ]),
+        _hoist_pgn(tmp_path / "c2.pgn", [
+            ("armA", "armB", "1-0", "1", "128<4096"),
+            ("armB", "armA", "0-1", "1", "128<4096"),
+        ]),
+    ]
+    with pytest.raises(SystemExit, match=re.escape("c2.pgn")):
+        check_hoist_consistency(read_games(conflicting))
+
+    agreeing = [
+        conflicting[0],
+        _hoist_pgn(tmp_path / "c3.pgn", [
+            ("armA", "armB", "1-0", "1", "4096"),
+            ("armB", "armA", "0-1", "1", "4096"),
+        ]),
+    ]
+    assert check_hoist_consistency(read_games(agreeing)) is False
+
+
+def test_distinct_names_are_the_documented_fix_and_actually_work() -> None:
+    """The refusal names --pgn-candidate-name as the remedy, so it has to BE one.
+
+    Same four games, twice. Under shared names the pool is refused; renaming
+    both arms per setting — which is what the remedy instructs — pools cleanly,
+    because then no NAME spans two searches and Ordo's name-only identity is
+    telling the truth again.
+    """
+    shared = [
+        Game("armA", "armB", "1-0", "0", None, None, 0, "4096", "clean.pgn"),
+        Game("armB", "armA", "0-1", "0", None, None, 1, "4096", "clean.pgn"),
+        Game("armA", "armB", "1-0", "1", None, None, 2, "128<4096", "cap.pgn"),
+        Game("armB", "armA", "0-1", "1", None, None, 3, "128<4096", "cap.pgn"),
+    ]
+    with pytest.raises(SystemExit):
+        check_hoist_consistency(shared)
+
+    renamed = [
+        Game("armA_4096", "armB_4096", "1-0", "0", None, None, 0, "4096", "clean.pgn"),
+        Game("armB_4096", "armA_4096", "0-1", "0", None, None, 1, "4096", "clean.pgn"),
+        Game("armA_cap", "armB_cap", "1-0", "1", None, None, 2, "128<4096", "cap.pgn"),
+        Game("armB_cap", "armA_cap", "0-1", "1", None, None, 3, "128<4096", "cap.pgn"),
+    ]
+    assert check_hoist_consistency(renamed) is False
+
+
+def _conflicting_pgns(tmp_path: Path) -> list[Path]:
+    return [
+        _hoist_pgn(tmp_path / "m1.pgn", [
+            ("armA", "armB", "1-0", "0", "4096"),
+            ("armB", "armA", "0-1", "0", "4096"),
+        ]),
+        _hoist_pgn(tmp_path / "m2.pgn", [
+            ("armA", "armB", "1-0", "1", "128<4096"),
+            ("armB", "armA", "0-1", "1", "128<4096"),
+        ]),
+    ]
+
+
+def test_main_refuses_before_spending_a_single_ordo_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The guard has to be WIRED, not merely importable.
+
+    Every unit test above would still pass if `main` never called the check —
+    which is the same accepted-and-ignored shape one level up. Driven through
+    `main`, and asserting on `seen` because a refusal that arrives after
+    several hundred Ordo replications is one the operator already paid for.
+    """
+    seen = _capture_argv(monkeypatch)
+    ordo = tmp_path / "ordo"
+    ordo.write_text("")
+    monkeypatch.setattr("sys.argv", [
+        "ordo_pooled_fit.py", *[str(p) for p in _conflicting_pgns(tmp_path)],
+        "--ordo", str(ordo),
+    ])
+    with pytest.raises(SystemExit, match="refusing to pool"):
+        main()
+    assert seen == [], "Ordo must not have been invoked at all"
+
+
+def test_main_stamps_every_section_under_allow_mixed_hoist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The override runs the fit — and says so where the numbers are read.
+
+    Stamped on the ratings, the bootstrap and the contrasts, then repeated at
+    the end: a long fit's opening banner is off the screen by the time the
+    numbers land, and this one says the numbers do not mean what they look like.
+    """
+    _capture_argv(monkeypatch)
+    ordo = tmp_path / "ordo"
+    ordo.write_text("")
+    monkeypatch.setattr("sys.argv", [
+        "ordo_pooled_fit.py", *[str(p) for p in _conflicting_pgns(tmp_path)],
+        "--ordo", str(ordo), "--allow-mixed-hoist",
+        "--bootstrap", "1", "--ordo-sims", "0",
+    ])
+    assert main() == 0
+    out = capsys.readouterr().out
+    assert out.count("[MIXED HOIST]") == 3, (
+        f"ratings, bootstrap and contrasts must each be stamped; got:\n{out}"
+    )
+    assert "MIXED HOIST: --allow-mixed-hoist was passed" in out, "and again at the end"
+
+
+def test_main_does_not_stamp_a_clean_pool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The control: the stamp must be evidence, not decoration."""
+    _capture_argv(monkeypatch)
+    ordo = tmp_path / "ordo"
+    ordo.write_text("")
+    clean = _hoist_pgn(tmp_path / "clean.pgn", [
+        ("armA", "armB", "1-0", "0", "4096"),
+        ("armB", "armA", "0-1", "0", "4096"),
+    ])
+    monkeypatch.setattr("sys.argv", [
+        "ordo_pooled_fit.py", str(clean), "--ordo", str(ordo),
+        "--allow-mixed-hoist", "--bootstrap", "1", "--ordo-sims", "0",
+    ])
+    assert main() == 0
+    assert "MIXED HOIST" not in capsys.readouterr().out
