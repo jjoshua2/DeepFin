@@ -476,7 +476,7 @@ def test_halving_is_independent_of_the_root_nodes_stored_value(
 
 @pytest.mark.parametrize(
     ("shape", "scenario", "stored_cand_prior"),
-    (
+    [
         (
             _SHAPES[0],
             _Scenario(
@@ -495,7 +495,7 @@ def test_halving_is_independent_of_the_root_nodes_stored_value(
             ),
             (0.001, 0.90),
         ),
-    ),
+    ],
     ids=_SHAPE_IDS,
 )
 def test_halving_refreshes_carried_root_priors_from_the_current_search(
