@@ -70994,3 +70994,18 @@ carrying the tail the optimal head SHARPENS 0.08→0.04 — reconciling the
 deep-SF screen's sharp verdict with the T80 interior optimum. Candidate arm
 for a ladder extension (needs a small deriver scheme + Josh's approval):
 `qtemp_0.04 + floor 0.002`.
+
+**2026-08-29 ladder REORDER (Josh):** "schedule the extreme ones back to back
+to see range and test floor early — if it helps, all need it." Arms 2/3
+(τ=1.0 mush extreme, τ=0.02 sharp extreme) already run consecutively; the
+τ=0.15 bracket arm is PARKED (marker renamed; driver skips it) and its slot
+goes to **arm 5 = qtemp_0.067 + floor 0.002** — the Gumbel-σ head unchanged,
+the exploration floor as the single new treatment (per the shape re-analysis:
+the floor carries ~85% of the KL gain at the default head; sharpening the
+head to 0.04 was declined on the lever-1 ground that eval-space sharpening
+amplifies label confidence on the ~7% of rows where d9 is wrong, unlike
+lc0's search-verified sharpness). Rationale for the floor recorded from
+Josh: misclassified moves must stay recoverable, and million-node search
+needs breadth seeds in the prior, not only depth. Arm 5 driver queued behind
+ladder.done + the floor deriver PR; same snapshot, same 5.5M rows, seed 0,
+9,680 steps.
