@@ -71020,3 +71020,18 @@ floor 0.002 the surface is FLAT at production values: 0.3355 vs global best
 parameterization of that degree of freedom. ⇒ **no cp→WDL arms**; slope/draw
 stay at production (also value-target-coupled in the deriver, and
 cp-logistic already beat native SF WDL on the value side).
+
+**2026-08-29 PR #486 — deriver `--floor` (uniform exploration floor on the
+policy target).** At the shipped default (`--floor 0`, byte-identity proven by
+test) this PR is not a training-affecting change; activation is governed by
+the arm-5 prereg above (qtemp_0.067 + floor 0.002 on the pinned run02
+snapshot). Review hardening added post-review: the joint take-effect
+estimator refuses the ill-conditioned band (q spread < 1e-4 x recovered tau,
+the softmax's linear regime — found independently by grok and codex, spread
+1e-9 rows stamped (0.0398, 0.035) for a true (0.067, 0.002)); recovered
+floors outside [-1e-6, 1/n_legal) are refused; `enforce_take_effect` kills a
+derivation whose mean recovered knobs miss the flags (5% rel tol) BEFORE the
+summary is written; positive floors that vanish in float16 shard storage
+(<= 2^-25) are refused at startup; every stored-bytes stamp goes through the
+shard's float32-then-float16 cast (`shard_stored` — double rounding differs
+just above 2^-25).
