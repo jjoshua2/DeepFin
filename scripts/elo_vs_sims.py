@@ -105,6 +105,14 @@ def main() -> None:
             label=f"elo_vs_sims:{hi}v{lo}{suffix}",
             search_candidate=side,
             search_reference=side,
+            # ⚑ FORWARDED, not merely parsed. The flag is declared in
+            # arena_standard.add_common_args on the condition that this call
+            # passes it on: a --eval-max-batch that argparse accepts and this
+            # loop drops would leave every rung on the default cap while the
+            # help text promised otherwise. Below the arena's pool size it is a
+            # SEARCH-SHAPE knob, so a dropped value would silently change what
+            # the ladder measured rather than only how much VRAM it used.
+            eval_max_batch=args.eval_max_batch,
             # Each rung has its own game log (the label and the sims are both
             # in the default path), so --resume replays only the rung that was
             # interrupted: a completed rung reloads its pairs and plays nothing.

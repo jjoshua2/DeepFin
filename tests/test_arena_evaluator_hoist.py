@@ -56,13 +56,40 @@ _OPENING_FENS = (
 )
 
 
+def _opening_fens(n: int) -> list[str]:
+    """``n`` distinct legal opening FENs, deterministically.
+
+    The four curated strings first (so the small cases keep the exact files the
+    older tests were written against), then a depth-2 enumeration from the
+    start position — 400 available, every (white move, black move) pair giving
+    a different position, so no dedup can shrink the list below ``n``. Needed
+    because a test that names ``--max-concurrent-games 128`` has to be able to
+    SCHEDULE 128 pairs: the arena bounds its leaf figure by the pool the
+    schedule can fill, so four openings would silently make it a 8-game arena.
+    """
+    if n <= len(_OPENING_FENS):
+        return list(_OPENING_FENS[:n])
+    out: list[str] = []
+    root = chess.Board()
+    for m1 in root.legal_moves:
+        after_white = root.copy(stack=False)
+        after_white.push(m1)
+        for m2 in after_white.legal_moves:
+            after_black = after_white.copy(stack=False)
+            after_black.push(m2)
+            out.append(after_black.fen())
+            if len(out) == n:
+                return out
+    raise AssertionError(f"only {len(out)} distinct openings available, need {n}")
+
+
 def _openings_file(tmp_path: Path, n: int = 2) -> Path:
     # Named by count. A single shared name is a trap here: `_run` builds its
     # defaults (which call this with n=1) BEFORE applying overrides, so a test
     # asking for 2 openings would have its file truncated back to 1 by the
     # default it was trying to override.
     path = tmp_path / f"openings_{n}.fen"
-    path.write_text("\n".join(_OPENING_FENS[:n]) + "\n")
+    path.write_text("\n".join(_opening_fens(n)) + "\n")
     return path
 
 
@@ -401,9 +428,17 @@ def _stub_play_loops(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 def _run(tmp_path: Path, **overrides: Any) -> dict:
     side = _side()
+    # ⚑ The default SCHEDULE is sized from the concurrency the caller named.
+    # run_arena bounds its leaf-buffer figure by `arena_pool_size` — the games
+    # that can actually be in flight — so `_run(max_concurrent_games=128)` over
+    # one opening is a 2-board arena asking for 512 rows, not a 128-board one
+    # asking for 4096, and every assertion about the bound for that concurrency
+    # would be measuring the wrong pool. A test that wants a SHORT schedule
+    # against a large ceiling overrides `games`/`openings_fen` explicitly.
+    mcg = int(overrides.get("max_concurrent_games", 2))
     kwargs: dict[str, Any] = {
-        "candidate": "cand.pt", "reference": "ref.pt", "games": 2,
-        "openings_path": None, "openings_fen": _openings_file(tmp_path, 1),
+        "candidate": "cand.pt", "reference": "ref.pt", "games": 2 * mcg,
+        "openings_path": None, "openings_fen": _openings_file(tmp_path, mcg),
         "opening_plies": 4, "mode": "matched_sims",
         "sims_candidate": 2, "sims_reference": 2, "ms_per_move": 0,
         "max_plies": 4, "temperature": 0.0, "gumbel_add_noise": False,
@@ -1322,3 +1357,349 @@ def test_a_relations_list_that_does_not_match_the_sides_is_refused() -> None:
         arena_uncapped_leaf_rows(
             max_concurrent_games=128, sides=(side, side), relations=(True,),
         )
+
+
+# ---------------------------------------------------------------------------
+# The bound is taken over the pool the SCHEDULE can fill, not the ceiling
+#
+# `--max-concurrent-games` is a ceiling. Both matched_sims loops feed from a
+# queue of `2 * n_pairs` games, so a 2-game smoke arena at the default 128 has
+# two boards alive and its search asks for 512 leaf rows, not 4096. Computing
+# the bound from the ceiling made `--eval-max-batch 512` there print the "NOT
+# COMPARABLE" warning and record `eval_leaf_cap_bound=true` about a search it
+# never touched -- and refused smaller caps against a root submit carrying two
+# boards. Wrong in the safe direction is still wrong.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mcg", "n_pairs", "expected"),
+    [
+        (128, 1, 2),      # the 2-game smoke arena: two boards, never 128
+        (128, 2, 4),
+        (128, 64, 128),   # exactly fills the ceiling
+        (128, 1000, 128), # a long schedule cannot exceed it
+        (1, 1000, 1),
+        (128, 0, 1),      # a fully-resumed schedule still asks for >= 1
+    ],
+)
+def test_the_pool_is_the_ceiling_capped_by_the_schedule(
+    mcg: int, n_pairs: int, expected: int,
+) -> None:
+    assert arena.arena_pool_size(max_concurrent_games=mcg, n_pairs=n_pairs) == expected
+
+
+def test_the_bound_follows_the_schedule_not_the_ceiling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """One cap, one ceiling, two schedule lengths — and they must READ apart.
+
+    This is the whole change in one assertion. Both arms pass
+    ``--max-concurrent-games 128`` and ``--eval-max-batch 512``; only the number
+    of loaded opening pairs differs. The short arm can only ever put 2 boards in
+    flight, so 512 is at the uncapped size and inert; the full arm reaches 128
+    boards, wants 4096 rows, and 512 genuinely shrinks its search.
+    """
+    side = _side(gumbel={"topk": 32})
+    records: dict[str, dict] = {}
+    for label, n_pairs in (("short", 1), ("full", 128)):
+        with monkeypatch.context() as ctx:
+            _stub_model_loader(ctx)
+            _stub_play_loops(ctx)
+            ctx.setattr(
+                arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"),
+            )
+            records[label] = _run(
+                tmp_path, device="cuda", max_concurrent_games=128,
+                eval_max_batch=512,
+                search_candidate=side, search_reference=side,
+                games=2 * n_pairs, openings_fen=_openings_file(tmp_path, n_pairs),
+                game_log_path=tmp_path / f"pool_{label}.games.jsonl",
+            )
+    assert records["short"]["eval_leaf_cap_uncapped"] == 512
+    assert records["short"]["eval_leaf_cap_bound"] is False
+    assert records["short"]["eval_hoist"] == "512"
+    assert records["full"]["eval_leaf_cap_uncapped"] == 4096
+    assert records["full"]["eval_leaf_cap_bound"] is True
+    assert records["full"]["eval_hoist"] == "512<4096"
+
+
+def test_a_cap_inert_for_the_real_pool_does_not_cry_wolf(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The warning is the operator-facing half of the same defect.
+
+    Keyed on this warning's own mechanism string: the stubbed play loop writes
+    no rows, so the unrelated game-log disagreement warning is on stderr too and
+    a bare "WARNING" check would pass for the wrong reason.
+    """
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=128, eval_max_batch=512,
+        search_candidate=side, search_reference=side,
+        games=2, openings_fen=_openings_file(tmp_path, 1),
+    )
+    assert "SOLVED_UNKNOWN" not in capsys.readouterr().err
+
+
+def test_the_root_submit_refusal_is_against_the_pool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A 2-board root submit cannot overflow a cap of 32, so nothing is refused.
+
+    It is still BELOW the 512-row leaf buffer those two boards ask for, so the
+    run is warned and recorded — allow-but-warn, not refuse.
+    """
+    _stub_model_loader(monkeypatch)
+    seen = _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128, eval_max_batch=32,
+        search_candidate=side, search_reference=side,
+        games=2, openings_fen=_openings_file(tmp_path, 1),
+    )
+    assert seen, "a cap the pool can serve must not refuse the run"
+    assert record["eval_hoist"] == "32<512"
+
+
+def test_the_refusal_still_fires_when_the_pool_is_really_that_wide(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The control for the test above: a schedule that FILLS 128 still refuses,
+    and the message quotes the pool it was measured against."""
+    built = _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    side = _side(gumbel={"topk": 32})
+    with pytest.raises(SystemExit) as excinfo:
+        _run(
+            tmp_path, device="cuda", max_concurrent_games=128, eval_max_batch=32,
+            search_candidate=side, search_reference=side,
+        )
+    message = str(excinfo.value)
+    assert "pool of 128 concurrent game(s)" in message
+    assert "128 loaded opening pair(s)" in message
+    assert "--eval-max-batch 4096" in message, "must name the uncapped size"
+    assert built == [], "refused after loading a checkpoint, not before"
+
+
+def test_a_short_fen_list_shrinks_the_pool_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    """The case ``--games`` alone cannot see.
+
+    ``load_fen_openings`` uses ALL rows when the file holds fewer than
+    ``--games / 2``, so a 256-game invocation over a 2-row list is a 4-game
+    arena. A bound derived from the requested game count would still say 4096.
+    """
+    _stub_model_loader(monkeypatch)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128, eval_max_batch=512,
+        search_candidate=side, search_reference=side,
+        games=256, openings_fen=_openings_file(tmp_path, 2),
+    )
+    assert "usable rows < 128 requested pairs" in capsys.readouterr().out
+    assert record["eval_leaf_cap_uncapped"] == 512, "4 boards, not 128"
+    assert record["eval_leaf_cap_bound"] is False
+    assert record["eval_hoist"] == "512"
+
+
+def test_the_pool_bound_survives_the_post_load_re_derive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The re-derive must add relations WITHOUT restoring the ceiling.
+
+    Re-deriving from ``max_concurrent_games`` there would quietly undo the
+    launch-time bound for every relations run, and the record — which is
+    written from the post-load figures — is where it would show.
+    """
+    _stub_model_loader_with_relations(monkeypatch, relations=True)
+    _stub_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    side = _side(gumbel={"topk": 32})
+    record = _run(
+        tmp_path, device="cuda", max_concurrent_games=128, eval_max_batch=512,
+        search_candidate=side, search_reference=side,
+        games=2, openings_fen=_openings_file(tmp_path, 1),
+    )
+    # Relations force the single-buffer path, which at 2 boards is the same 512
+    # rows the pipelined estimate gave -- the pool is what bounds it, not the flag.
+    assert record["eval_leaf_cap_uncapped"] == 512
+    assert record["eval_leaf_cap_bound"] is False
+    assert record["eval_hoist"] == "512"
+
+
+# ---------------------------------------------------------------------------
+# The PGN carries the hoist state
+#
+# A pooled Ordo/BayesElo fit merges games from many runs. Two runs with the same
+# engine names, ConfigHash, GitSha and SideSearch but different evaluator caps
+# played DIFFERENT searches, and without a tag they are fitted as ONE player.
+# ---------------------------------------------------------------------------
+
+
+def _pgn_headers(path: Path) -> list[dict[str, str]]:
+    import chess.pgn as pgn_mod
+
+    out: list[dict[str, str]] = []
+    with path.open(encoding="utf-8") as fh:
+        while True:
+            game = pgn_mod.read_game(fh)
+            if game is None:
+                return out
+            out.append(dict(game.headers))
+
+
+def test_every_pgn_game_carries_the_effective_hoist_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    pgn_out = tmp_path / "hoist.pgn"
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=512,
+        search_candidate=side, search_reference=side, pgn_out=pgn_out,
+        game_log_path=tmp_path / "pgnhoist.games.jsonl",
+    )
+    headers = _pgn_headers(pgn_out)
+    assert headers, "no games were written to the PGN"
+    assert {h.get("EvaluatorHoist") for h in headers} == {"512<4032"}
+
+
+def test_the_pgn_tag_is_the_post_load_value_not_the_launch_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Why the tag is per-game and not a base tag.
+
+    ``ArenaPgnWriter`` is constructed before the checkpoints are loaded, so a
+    base tag would freeze the relations-OFF floor: every game would be stamped
+    "4096" for a search that was in fact bound against 8192 — a provenance field
+    that exists, looks authoritative, and is wrong.
+    """
+    _stub_model_loader_with_relations(monkeypatch, relations=True)
+    _emitting_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    pgn_out = tmp_path / "relations.pgn"
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=128,
+        eval_max_batch=DEFAULT_EVAL_MAX_BATCH,
+        search_candidate=side, search_reference=side, pgn_out=pgn_out,
+        game_log_path=tmp_path / "relpgn.games.jsonl",
+    )
+    headers = _pgn_headers(pgn_out)
+    assert headers
+    assert {h.get("EvaluatorHoist") for h in headers} == {"4096<8192"}
+
+
+def test_the_pgn_tag_agrees_with_the_game_log_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The two records of the same fact must not be able to drift apart."""
+    from chess_anti_engine.utils.game_log import read_game_log
+
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch)
+    monkeypatch.setattr(arena, "build_arena_evaluator", lambda m, **_k: _StubEvaluator("x"))
+    pgn_out = tmp_path / "agree.pgn"
+    log_path = tmp_path / "agree.games.jsonl"
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=512,
+        search_candidate=side, search_reference=side, pgn_out=pgn_out,
+        game_log_path=log_path,
+    )
+    from_pgn = {h.get("EvaluatorHoist") for h in _pgn_headers(pgn_out)}
+    from_log = {arena.row_hoist_tag(r) for r in read_game_log(log_path).games}
+    assert from_pgn == from_log == {"512<4032"}
+
+
+def test_a_pgn_written_with_the_hoist_off_says_so_rather_than_omitting_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """ABSENCE has to keep meaning "pre-hoist code", so the opt-out still tags.
+
+    ``--eval-max-batch 0`` restores the pre-hoist ARENA, not a pre-hoist BUILD;
+    a file that dropped the tag there would be indistinguishable from one
+    written before the tag existed.
+    """
+    _stub_model_loader(monkeypatch)
+    _emitting_play_loops(monkeypatch)
+    pgn_out = tmp_path / "off.pgn"
+    side = _side(gumbel={"topk": 32})
+    _run(
+        tmp_path, device="cuda", max_concurrent_games=64, eval_max_batch=0,
+        search_candidate=side, search_reference=side, pgn_out=pgn_out,
+        game_log_path=tmp_path / "off.games.jsonl",
+    )
+    assert {h.get("EvaluatorHoist") for h in _pgn_headers(pgn_out)} == {"off"}
+
+
+# ---------------------------------------------------------------------------
+# The sims ladder can choose its own cap
+#
+# scripts/elo_vs_sims.py is a supported run_arena caller and had no
+# --eval-max-batch at all, so every ladder was pinned to the default: no smaller
+# cap on a constrained card, and no way to use the documented 0 escape hatch to
+# reproduce a pre-hoist rung.
+# ---------------------------------------------------------------------------
+
+
+def _ladder_run_arena_kwargs(
+    monkeypatch: pytest.MonkeyPatch, argv_extra: Sequence[str],
+) -> list[dict[str, Any]]:
+    import scripts.elo_vs_sims as ladder
+
+    seen: list[dict[str, Any]] = []
+
+    def _fake_run_arena(**kwargs: Any) -> dict:
+        seen.append(kwargs)
+        return {"elo": 0.0, "elo_ci95": [0.0, 0.0], "pairs": 0}
+
+    monkeypatch.setattr(ladder, "run_arena", _fake_run_arena)
+    monkeypatch.setattr("sys.argv", [
+        "elo_vs_sims.py", "--checkpoint", "a.pt", "--sims", "32,64,128",
+        "--games-per-rung", "2", "--search-shape", "play", *argv_extra,
+    ])
+    ladder.main()
+    assert seen, "the ladder ran no rung"
+    return seen
+
+
+def test_the_ladder_forwards_its_cap_to_every_rung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flag the parser advertises and the loop drops is the defect in miniature.
+
+    Asserted on EVERY rung, not just the first: a ladder that forwarded the flag
+    once and fell back to the default afterwards would compare rungs measured
+    under two different searches.
+    """
+    seen = _ladder_run_arena_kwargs(monkeypatch, ["--eval-max-batch", "777"])
+    assert len(seen) == 2, "three rungs make two adjacent-rung arenas"
+    assert [kw["eval_max_batch"] for kw in seen] == [777, 777]
+
+
+def test_the_ladder_default_is_the_arena_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding the flag must not move the ladder anyone is already running."""
+    seen = _ladder_run_arena_kwargs(monkeypatch, [])
+    assert [kw["eval_max_batch"] for kw in seen] == [DEFAULT_EVAL_MAX_BATCH] * 2
+
+
+def test_the_ladder_can_reach_the_documented_zero_escape_hatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """0 is what reproduces a pre-hoist rung, and it must survive the forward:
+    a truthiness test somewhere on the path would silently restore the default."""
+    seen = _ladder_run_arena_kwargs(monkeypatch, ["--eval-max-batch", "0"])
+    assert [kw["eval_max_batch"] for kw in seen] == [0, 0]
