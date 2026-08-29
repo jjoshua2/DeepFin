@@ -45,16 +45,12 @@ Scouted classic-Gumbel decisions this orchestrator reproduces exactly
   descents are rooted at candidate nodes, so the root aggregate is
   reconstructed from child stats).
 
-  ⚑ **This is the ONE place the mirror is no longer exact.** The C stopped
-  reading ``W[root]/N[root]`` there: ``gss_score_and_halve`` now takes the
-  FRESH network root value (``root_qs``), which is what mctx's
-  ``qtransform_completed_by_mix_value`` takes, what ``gumbel.py``'s reference
-  ``_halve_remaining_for_board`` passes as ``raw_value``, and what this path's
-  own ``_final_value`` / the C path's returned improved policy already used.
-  Aligning RPG is a one-line change (``root_q = float(st.root_q_init)`` in
-  ``_score_and_halve``) but it moves the root-parallel PLAY path, so it is left
-  for a change that can carry its own arena readout. Until then RPG eliminates
-  against a baseline the single-tree path no longer uses.
+  The root value fed to the mix is the FRESH network root value
+  (``root_q_init``), matching the C path's ``root_qs``, mctx's
+  ``qtransform_completed_by_mix_value``, and ``gumbel.py``'s reference
+  ``_halve_remaining_for_board``. It is fixed for the whole root search; child
+  visits change the prior-weighted ``weighted_q``, but they do not mutate the
+  raw-value baseline that completes unvisited actions.
 
   ``q_scale`` reuses
   ``gumbel._root_sigma_scale`` — the ROOT-site transform (c_scale_root /
@@ -898,12 +894,10 @@ class RootParallelGumbelPool:
         remaining: list[int],
         gumbels: dict[int, float],
     ) -> list[int]:
-        """Mirror of ``gss_score_and_halve`` — with ONE known divergence.
+        """Mirror of ``gss_score_and_halve``.
 
-        Everything below matches the C except the root value fed to the mix:
-        the C now uses the FRESH ``root_qs``, this still uses the running
-        ``W[root]/N[root]`` reconstruction. See the module docstring for why
-        that is not fixed here and what the one-line fix is.
+        The completed-Q transform uses the FRESH network root value as its
+        raw-value baseline, matching the classic C path and the Python reference.
         """
         if len(remaining) <= 1:
             return remaining
@@ -911,11 +905,10 @@ class RootParallelGumbelPool:
         visits_f = visits.astype(np.float64)
         visited = visits_f > 0.0
         n_total = float(visits_f.sum())
-        # Running root value: the W[root]/N[root] a classic single-tree
-        # backprop would hold (child q is already root-POV in get_children_q).
-        root_q = (
-            st.root_q_init + float((qs[visited] * visits_f[visited]).sum())
-        ) / (n_total + 1.0)
+        # mctx completed-by-mix-value takes the FRESH network root value as
+        # raw_value. Keep it fixed across halving rounds; child visits affect
+        # weighted_q below, not the baseline that completes unvisited actions.
+        root_q = float(st.root_q_init)
         pri_children = np.maximum(st.pri[actions], np.finfo(np.float64).tiny)
         sum_probs = float(pri_children[visited].sum())
         if sum_probs > 0.0 and np.isfinite(sum_probs):
