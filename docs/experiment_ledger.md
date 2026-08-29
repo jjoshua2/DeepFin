@@ -71009,3 +71009,14 @@ Josh: misclassified moves must stay recoverable, and million-node search
 needs breadth seeds in the prior, not only depth. Arm 5 driver queued behind
 ladder.done + the floor deriver PR; same snapshot, same 5.5M rows, seed 0,
 9,680 steps.
+
+**2026-08-29 cp→WDL map grid (free re-read; Josh's question — do we need
+slope/draw arms?).** Banked `scratchpad/t80_ruler/cpmap_grid_v1.json`
+(slope {0.003,0.006,0.012} × draw {60,120,240} × τ × floor vs T80). WITHOUT
+the floor, the map matters beyond τ: 0.012/60 reads 0.427 vs production
+0.006/120's 0.487 — early saturation imitates the missing tail floor. WITH
+floor 0.002 the surface is FLAT at production values: 0.3355 vs global best
+0.3328 (0.8% across 4× ranges on both axes) — the floor is the correct
+parameterization of that degree of freedom. ⇒ **no cp→WDL arms**; slope/draw
+stay at production (also value-target-coupled in the deriver, and
+cp-logistic already beat native SF WDL on the value side).
