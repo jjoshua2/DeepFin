@@ -498,9 +498,10 @@ static int tree_grow_nodes(TreeData *t) {
  * NOT tree state: `reset_compact` swaps the TreeData wholesale, and a counter
  * that vanished on every reset could not answer "did the guard ever fire?".
  * Read from Python via `tt_stats()`. */
-static uint64_t g_tt_probe_hits = 0;    /* probe returned an expanded donor */
-static uint64_t g_tt_reuse = 0;         /* donor child set verified, reused */
-static uint64_t g_tt_reject = 0;        /* donor child set REJECTED (audit W1) */
+static uint64_t g_tt_probe_hits = 0;     /* probe returned an expanded donor */
+static uint64_t g_tt_reuse = 0;          /* donor action + eval context verified, reused */
+static uint64_t g_tt_reject = 0;         /* donor child set REJECTED (audit W1 alarm) */
+static uint64_t g_tt_context_reject = 0; /* structural hit, different eval/search context */
 
 static inline void tt_stat_bump(uint64_t *counter) {
     __atomic_fetch_add(counter, 1, __ATOMIC_RELAXED);
@@ -538,6 +539,75 @@ static int tt_donor_actions_match(const TreeData *t, int32_t donor,
     qsort(a, (size_t)n_ch, sizeof(int32_t), cmp_int32_asc);
     qsort(b, (size_t)n_ch, sizeof(int32_t), cmp_int32_asc);
     return memcmp(a, b, (size_t)n_ch * sizeof(int32_t)) == 0;
+}
+
+
+/* Is an expanded donor safe to reuse as an EVALUATION, not merely as a
+ * structural chess position?
+ *
+ * cboard_transposition_key() deliberately identifies positions by the state
+ * that determines their legal move set. That is the right identity for a
+ * structural graph, but it is NOT enough for this Gumbel TT: a hit copies the
+ * donor's policy priors and backs up its W/N value without evaluating the
+ * recipient. Production's lc0_root_legacy_meta input also depends on the
+ * halfmove clock, raw EP metadata, the seven-position history window and
+ * repetition context. Search terminal semantics depend on the repetition stack
+ * too. Two move orders can therefore share a structural key and legal actions
+ * while being different network/search states.
+ *
+ * Evaluated leaves are already cached as full CBoards. Compare the semantic
+ * context the encoder/search reads, in logical history order, before allowing
+ * Q/prior reuse. A mismatch is a routine missed transposition: fall through to
+ * a real evaluation. Missing donor cache is rejected in the same safe
+ * direction. We intentionally do NOT compare CBoard.ply: it is bookkeeping,
+ * not an encoder or terminal-search input; requiring it would throw away valid
+ * reuse without buying correctness.
+ */
+static int tt_donor_context_match(const TreeData *t, int32_t donor,
+                                  const CBoard *own) {
+    if (donor < 0 || donor >= t->cb_cache_cap || !t->cb_valid[donor])
+        return 0;
+
+    const CBoard *d = &t->cb_cache[donor];
+    if (d->hash_stack_len < 0 || d->hash_stack_len > CBOARD_HASH_STACK_MAX ||
+        own->hash_stack_len < 0 || own->hash_stack_len > CBOARD_HASH_STACK_MAX ||
+        d->hist_len < 0 || d->hist_len > CBOARD_HISTORY_MAX ||
+        own->hist_len < 0 || own->hist_len > CBOARD_HISTORY_MAX ||
+        d->hist_head < 0 || d->hist_head >= CBOARD_HISTORY_MAX ||
+        own->hist_head < 0 || own->hist_head >= CBOARD_HISTORY_MAX)
+        return 0;
+
+    if (memcmp(d->bb, own->bb, sizeof(d->bb)) != 0 ||
+        memcmp(d->occ, own->occ, sizeof(d->occ)) != 0 ||
+        d->turn != own->turn ||
+        d->castling != own->castling ||
+        d->ep_square != own->ep_square ||
+        d->halfmove_clock != own->halfmove_clock ||
+        d->hash != own->hash ||
+        d->hash_stack_len != own->hash_stack_len ||
+        d->hist_len != own->hist_len)
+        return 0;
+
+    if (d->hash_stack_len > 0 &&
+        memcmp(d->hash_stack, own->hash_stack,
+               (size_t)d->hash_stack_len * sizeof(uint64_t)) != 0)
+        return 0;
+
+    /* Ring-buffer storage layout is not semantic. Compare the same recency
+     * slots each encoder would read, so equivalent histories may reuse even
+     * when their hist_head indices differ. */
+    for (int hi = 0; hi < d->hist_len; hi++) {
+        int di = (d->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+        int oi = (own->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+        if (memcmp(d->hist_bb[di], own->hist_bb[oi], sizeof(d->hist_bb[di])) != 0 ||
+            memcmp(d->hist_occ[di], own->hist_occ[oi], sizeof(d->hist_occ[di])) != 0 ||
+            d->hist_turn[di] != own->hist_turn[oi] ||
+            d->hist_castling[di] != own->hist_castling[oi] ||
+            d->hist_hash[di] != own->hist_hash[oi] ||
+            d->hist_was_rep[di] != own->hist_was_rep[oi])
+            return 0;
+    }
+    return 1;
 }
 
 /* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1.
@@ -1696,17 +1766,21 @@ static int32_t gss_prepare_batch(
 
         /* Transposition check.
          *
-         * A hit installs the donor's child ACTION LIST on this leaf permanently
-         * (the leaf is marked expanded and never re-expanded), so the donor must
-         * have exactly this position's legal moves. Two guards, in order:
-         *   1. the key includes ep capture rights (cboard_transposition_key) —
-         *      the hash alone does not, which is audit W1;
-         *   2. the donor's action list is verified against this leaf's own
-         *      generated legal set, so a key that is still incomplete for some
-         *      future reason costs a transposition, never a phantom move.
-         * The halfmove clock and repetition history remain outside the key: they
-         * cannot change the legal move set, only the VALUE, and the pre-existing
-         * Q-reuse across them is unchanged by this fix. */
+         * There are TWO identities here and both are load-bearing:
+         *   1. STRUCTURAL identity: cboard_transposition_key + an exact donor
+         *      child-action-set check. This proves the same legal chess moves
+         *      (audit W1) and prevents phantom/missing actions.
+         *   2. EVALUATION/SEARCH identity: tt_donor_context_match compares the
+         *      donor's cached CBoard history, repetition stack, halfmove clock
+         *      and raw EP metadata against this recipient. Production's
+         *      lc0_root_legacy_meta network reads that context, and repetition
+         *      terminal semantics do too.
+         *
+         * Only when BOTH match may we copy donor priors and back up donor W/N
+         * without evaluating this leaf. A structural hit with different
+         * context is routine: count it separately and fall through to a real
+         * evaluation rather than laundering one history's network output into
+         * another. */
         if (!__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
             const uint64_t tt_key = cboard_transposition_key(&cb);
             int32_t existing = tree_ht_probe(t, tt_key);
@@ -1715,7 +1789,14 @@ static int32_t gss_prepare_batch(
                 tt_stat_bump(&g_tt_probe_hits);
                 int own_legal[256];
                 int n_own = cboard_legal_move_indices(&cb, own_legal, /*sorted=*/0);
-                if (tt_donor_actions_match(t, existing, own_legal, n_own)) {
+                if (!tt_donor_actions_match(t, existing, own_legal, n_own)) {
+                    /* Structural-key failure: this is the W1 ALARM. */
+                    tt_stat_bump(&g_tt_reject);
+                } else if (!tt_donor_context_match(t, existing, &cb)) {
+                    /* Expected for true structural transpositions reached with
+                     * a different history/search context. Evaluate this leaf. */
+                    tt_stat_bump(&g_tt_context_reject);
+                } else {
                     tt_stat_bump(&g_tt_reuse);
                     int32_t n_ch = t->num_children[existing];
                     if (n_ch > 0) {
@@ -1739,9 +1820,6 @@ static int32_t gss_prepare_batch(
                     if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
                     continue;
                 }
-                /* Donor's child set is not this position's legal set — refuse
-                 * the transposition and fall through to a real evaluation. */
-                tt_stat_bump(&g_tt_reject);
             }
         }
 
@@ -6068,12 +6146,12 @@ static PyObject *py_set_history_rep_fix(PyObject *Py_UNUSED(self), PyObject *arg
     Py_RETURN_NONE;
 }
 
-/* tt_stats() -> dict. Process-cumulative transposition-table counters, so the
- * audit-W1 guard can be observed rather than assumed:
- *   probe_hits — probes that found an expanded donor
- *   reuse      — donors whose child set matched and was copied
- *   reject     — donors REFUSED because their child set was not this
- *                position's legal set (must be 0 on a sound key)
+/* tt_stats() -> dict. Process-cumulative transposition-table counters:
+ *   probe_hits     — probes that found an expanded structural donor
+ *   reuse          — donor legal set AND eval/search context matched; reused
+ *   reject         — donor legal set mismatch (audit W1 ALARM; must stay 0)
+ *   context_reject — structural hit whose cached network/search context
+ *                    differed; routine miss, recipient is really evaluated
  * `reset` clears them; without an argument the call is read-only. */
 static PyObject *py_tt_stats(PyObject *Py_UNUSED(self), PyObject *args, PyObject *kwargs) {
     static char *kwlist[] = {"reset", NULL};
@@ -6082,19 +6160,22 @@ static PyObject *py_tt_stats(PyObject *Py_UNUSED(self), PyObject *args, PyObject
     unsigned long long hits = __atomic_load_n(&g_tt_probe_hits, __ATOMIC_RELAXED);
     unsigned long long reuse = __atomic_load_n(&g_tt_reuse, __ATOMIC_RELAXED);
     unsigned long long rej = __atomic_load_n(&g_tt_reject, __ATOMIC_RELAXED);
+    unsigned long long ctx_rej = __atomic_load_n(&g_tt_context_reject, __ATOMIC_RELAXED);
     if (reset) {
         __atomic_store_n(&g_tt_probe_hits, 0, __ATOMIC_RELAXED);
         __atomic_store_n(&g_tt_reuse, 0, __ATOMIC_RELAXED);
         __atomic_store_n(&g_tt_reject, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_tt_context_reject, 0, __ATOMIC_RELAXED);
     }
-    return Py_BuildValue("{s:K,s:K,s:K}",
-                         "probe_hits", hits, "reuse", reuse, "reject", rej);
+    return Py_BuildValue("{s:K,s:K,s:K,s:K}",
+                         "probe_hits", hits, "reuse", reuse, "reject", rej,
+                         "context_reject", ctx_rej);
 }
 
 static PyMethodDef module_methods[] = {
     {"tt_stats", (PyCFunction)(void (*)(void))py_tt_stats, METH_VARARGS | METH_KEYWORDS,
-     "tt_stats(reset=False) -> dict with probe_hits/reuse/reject counts for the "
-     "Gumbel transposition table (audit W1 guard observability)."},
+     "tt_stats(reset=False) -> dict with probe_hits/reuse/reject/context_reject "
+     "counts for the Gumbel transposition table."},
     {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
      "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
      "repetition-plane fix in the batch encoders (gated candidate; default off)."},
@@ -6178,8 +6259,13 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * 4 = batch_process_ply's swdl_draw_mode/cp-curve args. Signature bump:
      * selfplay passes them on EVERY ply, so a stale .so raises "takes at most
      * 17 arguments" on the first ply of the first game; the marker turns that
-     * into the rebuild command at import instead. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 4) < 0) {
+     * into the rebuild command at import instead.
+     * 5 = history-safe Gumbel TT evaluation reuse. ABI 4 can still find a
+     * structural transposition and silently copy one history's network priors
+     * and W/N into another history-sensitive lc0_root_legacy_meta state. No
+     * signature changed, but the failure is silent/data-affecting, so stale
+     * binaries must fail fast rather than keep the old semantic. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 5) < 0) {
         Py_DECREF(m);
         return NULL;
     }

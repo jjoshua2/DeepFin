@@ -43055,3 +43055,24 @@ chosen from the yaml alone is a guess.
 
 **Confounds:** none at the shipped default (α=0 is the identity path, pinned bitwise by
 test).
+
+
+## 2026-08-29 — PR #485: history-safe Gumbel TT evaluation reuse — **UNREAD / DEPLOY-GATED**
+
+**Hypothesis.** A structural C-Gumbel transposition is safe for tree structure but is not necessarily safe for NN/search evaluation. Requiring the donor's cached CBoard history, rule-50/repetition context, raw EP metadata and logical history window to match before reusing donor priors/W/N prevents stale-history targets without disabling exact-context TT reuse.
+
+**Deciding yardstick (exact command; binary correctness gate):**
+
+```bash
+PYTHONPATH=. python3 -m pytest tests/test_mcts_transposition_key.py -k 'tt_still_reuses_an_exact_history_context or tt_re_evaluates_a_structural_twin_with_different_history'
+```
+
+**Pre-committed rule.** SUCCESS = exactly the two selected tests pass: the exact-history arm must record TT reuse with zero recipient evaluator rows, while the different-history structural twin must record a context reject and perform a real recipient evaluation. KILL / DO NOT DEPLOY = either selected test fails. This is a correctness fix, so no Elo tradeoff can override a failed gate.
+
+**Required selfplay wiring smoke (verification, not a second deciding yardstick):** `PYTHONPATH=. python3 -m pytest tests/test_e2e_smoke.py -k gumbel_selfplay_smoke`.
+
+**Deployment / revert.** Merge is not deployment: `_mcts_tree` ABI moves 4 -> 5 and production must rebuild with `python3 scripts/build_production_extensions.py`. Before the rebuild that makes this live, bank `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_tt_history_safe_20260829` and record the realized trial/iteration in this entry. After restart, the loaded extension must report ABI 5. `tt_context_reject` is a ROUTINE observability counter; `tt_donor_reject` remains the W1 alarm and must stay zero.
+
+**Confounds.** Current main also contains PR #483 (`GSS_HALVING_REV=3`, refresh current-search root priors on reused roots). If the live binary is still rev 1/2 when ABI 5 is deployed, that rebuild also activates #483; do not attribute a live search/target shift solely to #485. Either deploy/read #483 first or record the overlap explicitly. PR #482 is Python/UCI pool-root repair and is already part of the rebased source baseline.
+
+**Status.** UNREAD. CI/regression success permits merge; live activation remains gated by the snapshot, extension rebuild, ABI check, and the one-data-affecting-change rule above.

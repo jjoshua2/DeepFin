@@ -7,8 +7,16 @@ legal move set". ``CBoard.zobrist_hash`` does not — it is the repetition key a
 deliberately ignores en passant — which injected illegal pawn captures into
 production trees and dropped legal ones.
 
-These tests fail on the pre-fix build (67 illegal + 3 missing children over the
-same 32k-node sample) and pass after it.
+W1 fixes that structural identity. A second boundary is equally important:
+production evaluates `lc0_root_legacy_meta`, whose input includes the halfmove
+clock, raw EP metadata, seven historical positions and repetition context. A
+structural transposition may therefore share every legal move while requiring a
+different policy/value evaluation. The TT may copy donor priors and W/N only
+when that evaluation/search context matches too.
+
+The W1 tests fail on the pre-fix build (67 illegal + 3 missing children over the
+same 32k-node sample). The context tests are mutation-style: removing the new
+context check turns a required real evaluation back into a donor reuse.
 """
 from __future__ import annotations
 
@@ -19,6 +27,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.mcts import _mcts_tree
 from chess_anti_engine.mcts import gumbel_c as gumbel_c_mod
 from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -108,6 +117,83 @@ def test_transposition_key_is_stable_across_construction_paths() -> None:
     assert pushed.transposition_key == fresh.transposition_key
 
 
+_HISTORY_SEQ_A = ("g1f3", "g8f6", "g2g3", "g7g6")
+_HISTORY_SEQ_B = ("g2g3", "g7g6", "g1f3", "g8f6")
+
+
+def _board_after_sequence(moves: tuple[str, ...]) -> chess.Board:
+    board = chess.Board()
+    for uci in moves:
+        board.push(chess.Move.from_uci(uci))
+    return board
+
+
+def test_structural_key_does_not_imply_legacy_history_network_input() -> None:
+    """Same legal position, different move-order history => different net input.
+
+    This is the premise the old TT violated: its key/action guard proved only
+    structural chess identity, then reused a policy and Q as though it had
+    proved evaluator identity too.
+    """
+    a = _board_after_sequence(_HISTORY_SEQ_A)
+    b = _board_after_sequence(_HISTORY_SEQ_B)
+    assert a.board_fen() == b.board_fen()
+    assert a.turn == b.turn
+    assert a.castling_rights == b.castling_rights
+    # Same structural position, but move order leaves different rule-50
+    # metadata: A ends with g7g6 (zeroing), B ends with g8f6 (reversible).
+    assert a.halfmove_clock == 0
+    assert b.halfmove_clock == 2
+
+    ca, cb = CBoard.from_board(a), CBoard.from_board(b)
+    assert ca.transposition_key == cb.transposition_key
+    assert set(ca.legal_move_indices()) == set(cb.legal_move_indices())
+
+    xa = encode_cboard(
+        ca,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    xb = encode_cboard(
+        cb,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    # Current-position planes agree; the historical slots do not.
+    np.testing.assert_array_equal(xa[:13], xb[:13])
+    assert np.any(xa[13:104] != xb[13:104]), (
+        "fixture lost its history distinction, so it can no longer test TT "
+        "evaluation identity"
+    )
+    assert not np.array_equal(xa, xb)
+
+
+def test_unusable_ep_is_structurally_ignored_but_legacy_meta_still_encodes_it() -> None:
+    """A second proof that legal-set identity is weaker than evaluator identity."""
+    ep = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    )
+    no_ep = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    )
+    ce, cn = CBoard.from_board(ep), CBoard.from_board(no_ep)
+    assert ce.transposition_key == cn.transposition_key
+    assert set(ce.legal_move_indices()) == set(cn.legal_move_indices())
+
+    xe = encode_cboard(
+        ce,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    xn = encode_cboard(
+        cn,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    assert np.any(xe[110] != xn[110])
+    assert not np.array_equal(xe, xn)
+
+
 def _search_tree(fen: str, sims: int, seed: int):
     cfg = GumbelConfig(
         simulations=sims, topk=16, c_scale=0.1, temperature=0.0, add_noise=False
@@ -170,17 +256,120 @@ def test_expanded_nodes_carry_their_own_legal_moves(
 
 
 def test_transposition_guard_runs_and_passes(monkeypatch) -> None:
-    """The child-set verification is not decorative: it must actually execute
-    on a search that transposes, and must accept every donor once the key
-    carries ep rights."""
+    """Every structural probe is classified, and W1 legal-set rejects stay zero."""
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
     _mcts_tree.tt_stats(reset=True)
     fen, sims, seed = _EP_RICH_CASES[0]
     _search_tree(fen, sims=sims, seed=seed)
     stats = _mcts_tree.tt_stats()
     assert stats["probe_hits"] > 0, "no transposition hit — test is not exercising the guard"
-    assert stats["reuse"] == stats["probe_hits"]
     assert stats["reject"] == 0
+    assert stats["probe_hits"] == (
+        stats["reuse"] + stats["reject"] + stats["context_reject"]
+    ), stats
+
+
+class _CountingEv:
+    def __init__(self) -> None:
+        self.rows = 0
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        n = int(x.shape[0])
+        self.rows += n
+        return (
+            np.zeros((n, POLICY_SIZE), dtype=np.float32),
+            np.zeros((n, 3), dtype=np.float32),
+        )
+
+
+def _one_sim_on_existing_tree(
+    tree, board: chess.Board, evaluator: _CountingEv,
+) -> None:
+    """One deterministic root candidate; root eval is supplied, so any evaluator
+    row is a LEAF that TT reuse did not satisfy."""
+    legal = sorted(_legal_set(board))
+    assert legal
+    root_pol = np.full((1, POLICY_SIZE), -20.0, dtype=np.float32)
+    root_pol[0, legal[0]] = 20.0
+    root_wdl = np.zeros((1, 3), dtype=np.float32)
+    cfg = GumbelConfig(
+        simulations=1,
+        topk=2,
+        c_scale=0.1,
+        temperature=0.0,
+        add_noise=False,
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    )
+    run_gumbel_root_many_c(
+        None,
+        [board],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=cfg,
+        evaluator=evaluator,
+        pre_pol_logits=root_pol,
+        pre_wdl_logits=root_wdl,
+        tree=tree,
+        root_node_ids=None,
+        target_batch=1,
+        vloss_weight=1,
+    )
+
+
+def _prime_tt_then_search(
+    first: chess.Board, second: chess.Board,
+) -> tuple[dict[str, int], int]:
+    """Prime one deterministic leaf, reset COUNTERS only, then search a fresh
+    root in the same tree. The TT table itself deliberately survives."""
+    tree = _mcts_tree.MCTSTree()
+    _one_sim_on_existing_tree(tree, first, _CountingEv())
+    _mcts_tree.tt_stats(reset=True)
+    second_ev = _CountingEv()
+    _one_sim_on_existing_tree(tree, second, second_ev)
+    return _mcts_tree.tt_stats(), second_ev.rows
+
+
+def test_tt_still_reuses_an_exact_history_context(monkeypatch) -> None:
+    """Positive control: the safety fix must not simply disable the TT."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    board = _board_after_sequence(_HISTORY_SEQ_A)
+    stats, rows = _prime_tt_then_search(board, board.copy(stack=True))
+    assert stats["probe_hits"] > 0, stats
+    assert stats["reuse"] > 0, stats
+    assert stats["context_reject"] == 0, stats
+    assert stats["reject"] == 0, stats
+    assert rows == 0, (
+        "an exact-context donor was not sufficient; the second one-sim search "
+        "should need no leaf evaluation"
+    )
+
+
+def test_tt_re_evaluates_a_structural_twin_with_different_history(monkeypatch) -> None:
+    """The production-path regression: same key/actions, different net context.
+
+    MUTANT: removing `tt_donor_context_match` turns context_reject back to 0,
+    reuse back on, and rows to 0 — exactly the silent stale-Q/prior behavior.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    first = _board_after_sequence(_HISTORY_SEQ_A)
+    second = _board_after_sequence(_HISTORY_SEQ_B)
+    assert CBoard.from_board(first).transposition_key == CBoard.from_board(second).transposition_key
+
+    stats, rows = _prime_tt_then_search(first, second)
+    assert stats["probe_hits"] > 0, stats
+    assert stats["reject"] == 0, stats
+    assert stats["context_reject"] > 0, stats
+    assert stats["probe_hits"] == (
+        stats["reuse"] + stats["reject"] + stats["context_reject"]
+    ), stats
+    assert rows > 0, (
+        "different-history recipient skipped the evaluator and inherited the "
+        "donor's policy/Q"
+    )
 
 
 def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) -> None:
@@ -638,9 +827,9 @@ def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:
 def _reset_guard_reporter(
     monkeypatch, *, misses: int = 0, narrowed: int = 0,
 ) -> None:
-    """Clear the reporter's rate limiter and all three counters."""
+    """Clear the reporter's rate limiter and all four reported counters."""
     monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
-    monkeypatch.setattr(gumbel_c_mod, "_tt_health_reported", (0, 0, 0))
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_reported", (0, 0, 0, 0))
     monkeypatch.setattr(gumbel_c_mod, "_ROOT_COVERAGE_MISSES", misses)
     monkeypatch.setattr(gumbel_c_mod, "_ROOT_NARROWED_REBUILDS", narrowed)
     _mcts_tree.tt_stats(reset=True)
@@ -741,6 +930,33 @@ def test_routine_support_narrowing_is_announced_once_not_every_minute(
     err = capsys.readouterr().err
     assert "root_coverage_miss=1" in err, err
     assert "root_support_narrowed=4321" in err, err
+
+
+def test_tt_context_reject_is_routine_and_announced_once(monkeypatch, capsys) -> None:
+    """Expected history misses are observable without becoming a recurring alarm."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch)
+    monkeypatch.setattr(
+        gumbel_c_mod._mcts_tree_ext,
+        "tt_stats",
+        lambda *a, **k: {
+            "probe_hits": 9,
+            "reuse": 4,
+            "reject": 0,
+            "context_reject": 5,
+        },
+    )
+    _tiny_search()
+    first = capsys.readouterr().err
+    assert "tt_context_reject=5" in first, first
+    assert "ROUTINE" in first, first
+    assert "tt_donor_reject=0" in first, first
+
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    _tiny_search()
+    assert "[mcts]" not in capsys.readouterr().err, (
+        "routine TT history rejection re-triggered the operator line"
+    )
 
 
 def test_tt_reject_is_reported_on_the_production_path(monkeypatch, capsys) -> None:
