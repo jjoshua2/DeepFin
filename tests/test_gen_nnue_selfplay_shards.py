@@ -954,7 +954,12 @@ def test_the_shortcut_flag_reaching_the_search_is_the_one_the_config_implies(
         )
         with monkeypatch.context() as patch:
             patch.setattr(GEN, "run_gumbel_root_many_c", spy)
-            _play(cfg)
+            _outcome, evaluator = _play(cfg)
+        realized = GEN.realized_config(
+            gcfg=GEN.build_gumbel_config(cfg), evaluator=evaluator,
+            opening_cfg=OpeningConfig(), cfg=cfg, worker_id=0,
+        )
+        assert bool(realized["allow_candidate_cap_truncation"]) is all_root
     assert seen == [(False, True), (True, False)], (
         "all_root_moves=True must disable terminal shortcuts AND explicitly "
         "opt into the measured C candidate-cap truncation; the normal lane "
