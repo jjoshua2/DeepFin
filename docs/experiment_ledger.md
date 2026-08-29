@@ -70954,3 +70954,23 @@ BT4-teacher TRAINING ladder is deliberately deferred (Josh: "wait and see how
 much these existing ones matter") — the q-temp ladder's verdict decides
 whether entropy-matching is the operative trend before any teacher-policy
 arms are considered.
+
+**2026-08-29 MERGED, NOT DEPLOYED — #483 reused-root prior refresh is
+TRAINING-AFFECTING and deploy-gated.** `4d3db4615` merged
+`fix/gumbel-reused-root-current-priors` (C ingest refreshes every reused root
+child's stored prior from the current search's dense vector before halving —
+closes the last #452 residual; grok + codex reviews clean, full record on the
+PR). ⚑⚑ Production selfplay CARRIES TREES across plies (verified in review:
+one `MCTSTree` per `SelfplayState`, reroot via `find_child`, reuse gated on
+exact support by #452), so the next production training launch that rebuilds
+`_mcts_tree` (`scripts/build_production_extensions.py`) deploys a
+search/data-affecting change: sequential-halving survivors, visit targets and
+temp-0 played moves can change on genuine reuse. BEFORE that launch: (1) this
+entry's gate — add the hypothesis/yardstick/kill-threshold lines for the
+deployment itself; (2) the regret series is VOIDED at that boundary (frozen
+search config since 2026-08-09 20:58) — take a fresh regret baseline and do
+not read pre/post regret as one series. Take-effect observable:
+`GSS_HALVING_REV` 2→3 in the loaded .so banner (the live tree's current .so
+still prints rev 2). Cold roots are bit-identical; the change binds only on
+reuse. Related merges same day: #481 (RPG fresh-root baseline — UCI-only,
+unreachable on this box, no gate) `d17c7c2f6`.
