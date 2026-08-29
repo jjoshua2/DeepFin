@@ -11,21 +11,40 @@ gets "fixed" by copying the new number across, which is how the two silently
 diverge. A diff cannot be fixed that way: if production changes its
 architecture, this test fails until someone decides whether the arm follows.
 
-⚑⚑ "PRODUCTION" IS TWO DIFFERENT FILES HERE, AND THEY DISAGREE. The live run
-reads `configs/pbt2_small.yaml` in the LIVE working tree, on the live branch;
-this tree carries `main`'s copy, and `main` has committed nothing to that file
-since the live branch diverged. Measured 2026-08-16: the two `model:` sections
-differ by the whole bt4heads bundle (`aux_policy_head_dim: 128`,
+⚑⚑ "PRODUCTION" IS TWO DIFFERENT FILES HERE, AND WHICH ONE THIS TREE HOLDS
+DEPENDS ON THE BRANCH. The live run reads `configs/pbt2_small.yaml` in the LIVE
+working tree, on the live branch. A tree on `main` carries a copy that `main` has
+committed nothing to since the live branch diverged; a tree ON the live branch
+carries the live file itself. Measured 2026-08-16 from `main`: the two `model:`
+sections differ by the whole bt4heads bundle (`aux_policy_head_dim: 128`,
 `categorical_head_coupled: true`, `policy_embedding_mode: linear`) — 61,444,448
-trainable params live against 63,084,128 in tree.
+trainable params live against 63,084,128 in tree, and 17 `trainer_kwargs_from_config`
+entries apart (re-measured 2026-08-29).
+
+⚑⚑ SO THE REFERENCE DECISION IS A TWO-WORLD CONTRACT. Both of these are
+legitimate states of this tree, and the guards below accept exactly these two:
+
+* **STATE MAIN** — the in-tree config lacks every bt4heads `model:` key and its
+  trainer kwargs drift from `LIVE_TRAINER_PIN` on the whole bt4heads trainer
+  half. The pins are the reference BECAUSE the file next door is behind.
+* **STATE LIVE** — the in-tree config carries every key the pin describes, at
+  pin-equal values, and realizes an EMPTY trainer drift. The file next door IS
+  the live file; the pin is a faithful second copy, and the reference decision
+  is moot rather than wrong.
+
+Anything between them FAILS: a half-adopted bundle is the one state in which
+"the pin is the reference" reads as true and is not. ⚑ The pins stay the
+arbiter in both worlds — STATE LIVE is accepted only because the file EQUALS the
+pin's world, never because a mismatch was waved through as progress.
 
 ⇒ THE REFERENCE DECISION, per axis:
 
 * ARCHITECTURE — judged against `LIVE_ARCH_PIN`, the recorded LIVE `model:`
   section, overlaid on the in-tree production config so every model-affecting
   key OUTSIDE `model:` still comes from a real production yaml. NOT against the
-  in-tree `model:` section, which is known-stale — the staleness is itself
-  asserted, by
+  in-tree `model:` section, which is stale in STATE MAIN and equal to the pin in
+  STATE LIVE — either way the pin is the right reference, and WHICH world this
+  tree is in is itself asserted, by
   `test_lc0_control_arch.py::test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks`,
   so this file's reference cannot quietly become the wrong one. The pin is
   regenerable from the live file and its freshness has its own gate; the
@@ -73,6 +92,10 @@ from chess_anti_engine.eval.lc0_control_trainer import (
 from chess_anti_engine.model import model_config_from_flat_config
 from chess_anti_engine.train.trainer import trainer_kwargs_from_config
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+# ⚑ IMPORTED, NOT RESTATED. Both modules ask the same question of the same drift,
+# and two copies of "what counts as stale" is exactly the divergence this file's
+# `ALLOWED_TRAINER_DIFFS` comment argues against one paragraph up.
+from tests.test_lc0_control_trainer import two_world_trainer_reference_problems
 
 REPO = Path(__file__).resolve().parent.parent
 PRODUCTION = REPO / "configs" / "pbt2_small.yaml"
@@ -206,25 +229,35 @@ def test_only_the_value_blend_differs_from_the_live_trainer(
 def test_the_in_tree_production_config_is_still_the_wrong_trainer_reference(
     configs: tuple[dict, dict],
 ) -> None:
-    """⚑ The staleness this file's reference decision rests on, ASSERTED.
+    """⚑ WHICH WORLD this file's reference decision is being made in, ASSERTED.
 
     `test_only_the_value_blend_differs_from_the_live_trainer` judges against
     `LIVE_TRAINER_PIN` instead of the production yaml sitting next to it. That
-    choice is only justified while the two disagree — the day `main` catches
-    up, the pin becomes a redundant second copy and someone should say so
-    deliberately rather than discover it. Same construction as
-    `test_lc0_control_arch.py::test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks`:
-    the situation IMPROVING breaks the test.
+    choice is right in both of the header's two worlds — because the file is
+    behind (STATE MAIN), or because the file and the pin are the same recipe
+    (STATE LIVE) — and it is WRONG in between, which is the state this asserts
+    the absence of. Same construction, and the same shared predicate, as
+    `test_lc0_control_trainer.py::test_the_pin_records_a_recipe_the_in_tree_config_does_not`.
+
+    ⚑ The obvious relaxation is refused on purpose. `assert drift` said "the
+    situation improving breaks the test", which was the right guard while only
+    STATE MAIN existed; simply deleting it once STATE LIVE arrived would leave
+    the reference decision unasserted, and widening it to "empty or non-empty"
+    is a tautology. So the accepted states are named, and a half-adopted recipe
+    still fails with the kwarg that moved.
     """
     production, _control = configs
     drift = trainer_kwargs_drift(
         trainer_kwargs_signature(production), LIVE_TRAINER_PIN["kwargs"],
     )
-    assert drift, (
-        "the in-tree configs/pbt2_small.yaml now realizes the SAME trainer "
-        "kwargs as LIVE_TRAINER_PIN. That is good news and it invalidates this "
-        "module's reference decision: re-read the header, and either drop the "
-        "trainer pin in favour of the in-tree file or re-record why it stays."
+    problems = two_world_trainer_reference_problems(drift)
+    assert not problems, (
+        "the in-tree configs/pbt2_small.yaml is in NEITHER known world:\n  "
+        + "\n  ".join(problems)
+        + "\nIt has adopted part of LIVE's trainer recipe and not the rest, so "
+        "this module's reference decision describes a file that no longer "
+        "exists: re-read the header, and either finish the sync (drift goes "
+        "empty, STATE LIVE) or re-record why the pin stays."
     )
 
 

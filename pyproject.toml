@@ -61,6 +61,12 @@ dev = [
   # tests/test_harness_sync_exclude.py drives pyarrow.fs directly (also a
   # transitive ray dep, pinned here because the test imports it itself).
   "pyarrow>=14.0",
+  # gen_sf_rooted_corpus's shard codec: .zst when importable, .gz fallback.
+  # Undeclared, this was ambient locally and ABSENT on CI runners, so CI wrote
+  # .gz shards and the resume test failed on the codec suffix — the suite
+  # hard-requires its deps precisely so a fallback path cannot masquerade as
+  # the production one.
+  "zstandard>=0.21",
   "pytest>=7.0",
   "pytest-cov>=5.0",
   "diff-cover>=8.0",

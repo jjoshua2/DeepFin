@@ -159,6 +159,7 @@ from chess_anti_engine.eval.audit import (
     load_audit_set,
     move_regrets,
 )
+from chess_anti_engine.eval.audit_cache import write_audit_cache
 from chess_anti_engine.stockfish.uci import (
     StockfishResult,
     StockfishUCI,
@@ -1652,9 +1653,20 @@ def run(cfg: GateConfig) -> dict[str, Any]:
         "admissible": not reasons,
     }
     if cfg.dump_per_position is not None:
-        readout._atomic_write_text(
+        # ⚑ STAMPED, via the same writer as audit_targets.py's dump: an
+        # unstamped side makes paired_compare.require_same_stamp return early,
+        # so every later comparison of this file would silently skip the
+        # ruler-version check. force=True for the same reason as there — the
+        # flag has no default path, so the operator always names the target
+        # and there is no silent-default clobber to guard against.
+        write_audit_cache(
             cfg.dump_per_position,
-            "".join(json.dumps(r, sort_keys=True) + "\n" for r in dump),
+            dump,
+            force=True,
+            extra={
+                "producer": "audit_label_candidates.py --dump-per-position",
+                **report["provenance"],
+            },
         )
     for reason in reasons:
         _LOG.error("INADMISSIBLE: %s", reason)

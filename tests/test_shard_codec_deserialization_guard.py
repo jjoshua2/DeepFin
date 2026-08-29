@@ -110,7 +110,11 @@ def _poison(
     """Replace ``field`` with an array whose codec runs a malicious pickle, then
     overwrite its single chunk with the weaponized payload."""
     g = zarr.open_group(str(zp), mode="a")
-    shape = tuple(int(d) for d in g[field].shape)
+    victim = g[field]
+    # isinstance narrows zarr's Array|Group union; a Group here would mean
+    # the fixture shard is not shaped like a shard at all.
+    assert isinstance(victim, zarr.Array)
+    shape = tuple(int(d) for d in victim.shape)
     del g[field]
     if channel == "object_dtype":
         g.create_dataset(field, shape=shape, chunks=shape, dtype=object,
@@ -254,7 +258,9 @@ def test_guard_rejects_non_numeric_dtype_carrying_no_codec(tmp_path, bad_dtype) 
 
     zp = _build_valid_zarr(tmp_path / f"dt{abs(hash(bad_dtype))}")
     g = zarr.open_group(str(zp), mode="a")
-    shape = tuple(int(d) for d in g["wdl_target"].shape)
+    victim = g["wdl_target"]
+    assert isinstance(victim, zarr.Array)
+    shape = tuple(int(d) for d in victim.shape)
     del g["wdl_target"]
     g.create_dataset(
         "wdl_target", shape=shape, chunks=shape, dtype=bad_dtype,

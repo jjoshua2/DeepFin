@@ -560,7 +560,37 @@ train:
     assert config["lr_schedule"] == "sqrt_release"
 
 
-def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
+#: Keys this instrument CANNOT observe, because perturbing them one at a time
+#: makes the whole document invalid rather than exercising the reloader's
+#: per-key branch.
+#:
+#: ⚑ These are NOT restart-required, and must never be added to
+#: ``restart_required_config_keys()`` to make the test green: all five are
+#: live-reloadable. ``c5d1b4882`` (2026-08-10, PR #390) added a CROSS-KEY
+#: coherence rule to ``utils/config_yaml.py``
+#: (``_check_target_only_knobs_require_zero_temperature``): the target-only
+#: knobs ``gumbel_target_max_visit_cap`` / ``gumbel_target_untempered_prior``
+#: are only isolated from PLAY while every move temperature is 0.0, so setting
+#: one of them together with a positive temperature is a hard ``ValueError``.
+#: The live ``configs/pbt2_small.yaml`` arms both knobs and pins all five
+#: temperatures at 0.0 explicitly, so this loop's ``0.0 -> 1.0`` perturbation
+#: builds exactly the combination the validator refuses, and
+#: ``_reload_yaml_into_config`` rejects the ENTIRE reload -- leaving the old
+#: value in place for the reason the docstring below already warns about.
+#: (``main``'s copy of the yaml sets neither knob, so the guard is inert there
+#: and this set is empty on that branch -- hence the branch-local red.)
+_PERTURBATION_MAKES_THE_DOCUMENT_INVALID = frozenset({
+    "selfplay_temperature",
+    "selfplay_temperature_endgame",
+    "temperature",
+    "temperature_after",
+    "temperature_endgame",
+})
+
+
+def test_restart_required_keys_match_the_reloader(
+    tmp_path, caplog: pytest.LogCaptureFixture,
+) -> None:
     """Re-derive the provenance answer by RUNNING the reloader, not by restating it.
 
     ``restart_required_config_keys`` is composed from the same frozensets
@@ -578,6 +608,18 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     rejects unknown root-level keys, and a rejected reload leaves every value
     untouched -- which would make every key look restart-required and the
     assertion below pass for the wrong reason.
+
+    ⚑ THAT HAZARD HAS A SECOND SOURCE, AND NESTING DOES NOT COVER IT. A
+    CROSS-KEY validator can be tripped by a perturbation that is individually
+    legal, so the document the loop writes is invalid for a reason the key
+    itself is innocent of. The old value then survives and reads as
+    "restart-required" -- a FALSE POSITIVE of exactly the kind this file
+    exists to catch, pointed at the instrument instead of the code. So the
+    loop now asks the reloader WHICH thing it did: a per-key decline is an
+    observation, a whole-reload rejection is a void reading and is excluded and
+    pinned by name (``_PERTURBATION_MAKES_THE_DOCUMENT_INVALID``). Answering it
+    the other way -- declaring the keys restart-required -- would make the
+    suite green by writing down something false about production.
     """
     import copy
 
@@ -619,6 +661,7 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     edited = tmp_path / "cfg.yaml"
     observed_restart_required: set[str] = set()
     exercised: set[str] = set()
+    rejected_whole_reload: set[str] = set()
     for key in sorted(section_of):
         if key.startswith("pb2_bounds_") or key in searched or key not in flat:
             continue
@@ -634,7 +677,17 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
             doc[section][key] = changed
         edited.write_text(_yaml.safe_dump(doc), encoding="utf-8")
         config = dict(flat)
-        _reload_yaml_into_config(config, str(edited), live_reload=True)
+        caplog.clear()
+        with caplog.at_level(
+            logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops",
+        ):
+            _reload_yaml_into_config(config, str(edited), live_reload=True)
+        # The reloader reports a whole-document rejection separately from a
+        # per-key decline. Only the latter is an observation about `key`.
+        if any(r.getMessage().startswith("YAML reload failed")
+               for r in caplog.records):
+            rejected_whole_reload.add(key)
+            continue
         exercised.add(key)
         if config[key] == value:
             observed_restart_required.add(key)
@@ -648,6 +701,23 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     # rather than applying them, so reporting them in this set would send an
     # operator into the one action that turns a silent no-op into a crash.
     observed_restart_required -= dead_config_keys()
+
+    # The void readings, pinned by name so the exclusion cannot quietly widen
+    # into a way of hiding a real disagreement. A key joining this set means a
+    # new cross-key validator landed; a key leaving it means one was relaxed.
+    # Either way it is a deliberate edit, not a green run.
+    assert rejected_whole_reload == _PERTURBATION_MAKES_THE_DOCUMENT_INVALID, (
+        "the set of keys whose one-at-a-time perturbation invalidates the whole "
+        f"document moved: now-void={sorted(rejected_whole_reload - _PERTURBATION_MAKES_THE_DOCUMENT_INVALID)} "
+        f"now-observable={sorted(_PERTURBATION_MAKES_THE_DOCUMENT_INVALID - rejected_whole_reload)}"
+    )
+    # ...and they are excluded because the reading is void, NOT because they
+    # need a restart. If one ever genuinely becomes restart-required, this
+    # fails and the exclusion has to be re-argued rather than inherited.
+    assert not (restart_required_config_keys() & rejected_whole_reload), sorted(
+        restart_required_config_keys() & rejected_whole_reload
+    )
+
     declared = restart_required_config_keys() & exercised
     assert observed_restart_required == declared, (
         "restart_required_config_keys() disagrees with what the reloader does; "

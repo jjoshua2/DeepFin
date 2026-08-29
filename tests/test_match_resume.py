@@ -1017,7 +1017,10 @@ def test_a_fully_complete_resume_does_not_re_append_the_aggregate(
     assert len(aggregate.read_text().splitlines()) == 1, (
         "a resume that played zero games appended a second row for one arena"
     )
-    assert "played ZERO new games" in out, out
+    # fa41c3523 reworded the operator line from "games" to "pairs" (the resume
+    # unit really is opening PAIRS); the guarded behaviour is unchanged and is
+    # asserted above by the aggregate staying one row.
+    assert "played ZERO new pairs" in out, out
     assert "did NOT read" in out, (
         "the note must not assert the earlier row IS in the aggregate — "
         f"nothing here read it:\n{out}"

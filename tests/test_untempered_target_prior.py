@@ -54,6 +54,7 @@ from chess_anti_engine.mcts.gumbel import (
     _softmax,
     target_log_prior,
 )
+from tests.live_yaml_arming import PRODUCTION_CONFIG, production_bindings
 
 _T = 1.5  # production's gumbel_policy_temp
 
@@ -485,18 +486,73 @@ def test_the_shared_guard_uses_each_knobs_own_coercion() -> None:
         )
 
 
-def test_production_leaves_the_knob_off() -> None:
-    """Merging this must not change the live run. The ledger entry decides when
-    it goes on, and CLAUDE.md rule 1 says no entry, no launch."""
-    from pathlib import Path
+# ⚑ THE ARMED VALUE AND THE COMMIT THAT ARMED IT.
+#
+# ``c62eb8ff2`` — "live yaml: the search/target decoupling restart (prereg
+# 023098b1c, amended a88074189)" — set ``gumbel_target_untempered_prior: true``
+# in the LIVE yaml, at the restart, with the pre-registration named in the
+# subject line and every value dry-run through both config fuses on a copy
+# first. Its body prices the arm honestly: "#390/#391 priced NEUTRAL on the
+# target-quality axis (a88074189). They ship as hygiene, not as the fix." That
+# is the ledger entry CLAUDE.md rule 1 demands.
+#
+# ⚑ The knob is BOOLEAN and the loader realizes it as ``bool(v)``, so there is
+# no third VALUE to license: the run is off, or it is running the ``true`` that
+# commit armed. The OFF world admits two SPELLINGS -- the key absent (``main``'s)
+# and an explicit ``false`` -- because pinning a knob at its realized default
+# rather than omitting it is this file's own convention, stated in c62eb8ff2's
+# body: "an absent key is not 'off', it is the realized default, and this file is
+# the only place the realized value is readable."
+_KNOB = "gumbel_target_untempered_prior"
 
+
+def test_production_leaves_the_knob_off() -> None:
+    """Merging this must not change the live run -- checked in BOTH worlds.
+
+    The ledger entry decides when it goes on, and CLAUDE.md rule 1 says no
+    entry, no launch.
+
+    ⚑⚑ TWO WORLDS, BECAUSE ``configs/pbt2_small.yaml`` IS TWO FILES. On ``main``
+    it is a committed copy that has not moved since the live branch diverged; on
+    ``ops/live-20260725`` it IS the file the running trial re-reads.
+
+    * ``main``: OFF -- the key is absent and the loader realizes ``False``, the
+      state the original single-world assertion pinned, unchanged.
+    * ``ops/live-20260725``: ON since ``c62eb8ff2``, the prereg'd search/target
+      decoupling restart. The entry exists, so the launch was licensed.
+
+    ⚑ BOTH INSTRUMENTS, because for this knob neither alone decides the world.
+    The REALIZED value is what the run sees, so it is what "off" and "on" mean;
+    but ``TrialConfig.from_dict`` coerces with ``bool(v)``, so a yaml ``0.5`` or
+    a quoted ``"no"`` realizes ON while reading as anything but. So ON is
+    accepted only from a literal ``true``, bound exactly once -- c62eb8ff2's
+    edit and nothing that merely resembles it. That is the third state this
+    refuses, and it is the realistic one: a hand-edit of a live yaml.
+    """
     from chess_anti_engine.utils.config_yaml import (
         flatten_run_config_defaults,
         load_yaml_file,
     )
 
-    repo = Path(__file__).resolve().parents[1]
-    flat = flatten_run_config_defaults(
-        load_yaml_file(str(repo / "configs" / "pbt2_small.yaml")),
+    flat = flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG)))
+    realized = bool(flat.get(_KNOB, False))
+    bound = production_bindings(_KNOB, config=PRODUCTION_CONFIG)
+
+    assert len(bound) <= 1, (
+        f"configs/pbt2_small.yaml binds {_KNOB} {len(bound)} times ({bound!r}); "
+        "which one the run gets depends on parse order"
     )
-    assert not flat.get("gumbel_target_untempered_prior", False)
+    if realized:
+        assert bound == [True], (
+            f"the run has {_KNOB} ON, from the yaml value {bound!r}. ON is "
+            "licensed only as c62eb8ff2's literal `true` (prereg 023098b1c, "
+            "amended a88074189) -- `bool(v)` turns 0.5 and \"no\" on too, and a "
+            "knob that reads as off while running on is this repo's signature "
+            "defect wearing a passing test."
+        )
+    else:
+        assert bound in ([], [False]), (
+            f"the run has {_KNOB} OFF but the yaml says {bound!r} -- accepted "
+            "and then silently ignored. OFF is the key absent (`main`'s world) "
+            "or an explicit `false`."
+        )

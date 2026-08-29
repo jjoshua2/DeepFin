@@ -34,6 +34,7 @@ from chess_anti_engine.mcts.gumbel import (
     _completed_q_transform,
     _sigma_scale,
 )
+from tests.live_yaml_arming import PRODUCTION_CONFIG, production_bindings
 
 
 def _entropy(p: np.ndarray) -> float:
@@ -390,27 +391,80 @@ def test_the_guards_absent_key_defaults_are_the_loaders_defaults() -> None:
             )
 
 
+# ⚑ THE ARMED VALUE AND THE COMMIT THAT ARMED IT.
+#
+# ``c62eb8ff2`` — "live yaml: the search/target decoupling restart (prereg
+# 023098b1c, amended a88074189)" — set ``gumbel_target_max_visit_cap: 5`` in the
+# LIVE yaml, at the restart, with the pre-registration named in the subject line
+# and every value dry-run through both config fuses on a copy first. Its body
+# records the price honestly: "#390/#391 priced NEUTRAL on the target-quality
+# axis (a88074189). They ship as hygiene, not as the fix." That is the ledger
+# entry CLAUDE.md rule 1 demands, so the knob is ARMED BY DECISION, not by drift.
+_CAP_KEY = "gumbel_target_max_visit_cap"
+_ARMED_TARGET_MAX_VISIT_CAP = 5
+
+
 def test_production_leaves_the_cap_off() -> None:
-    """Merging this must not change the live run.
+    """Merging this must not change the live run -- checked in BOTH worlds.
 
     #390 pins its own knob this way; without the same test here, merging THIS
-    branch on its own leaves nothing asserting that the committed production
-    config still runs the cap at 0. The ledger entry decides when it goes on,
-    and CLAUDE.md rule 1 says no entry, no launch -- and the entry records that
-    the one screen taken so far is NEGATIVE.
-    """
-    from pathlib import Path
+    branch on its own leaves nothing asserting what the production config does
+    with the cap. The ledger entry decides when it goes on, and CLAUDE.md rule 1
+    says no entry, no launch.
 
+    ⚑⚑ TWO WORLDS, BECAUSE ``configs/pbt2_small.yaml`` IS TWO FILES. On ``main``
+    it is a committed copy that has not moved since the live branch diverged; on
+    ``ops/live-20260725`` it IS the file the running trial re-reads.
+
+    * ``main``: OFF (the key is absent, and the loader realizes 0) -- the state
+      the original single-world assertion pinned, unchanged.
+    * ``ops/live-20260725``: ON at ``5`` since ``c62eb8ff2``, the prereg'd
+      search/target decoupling restart. The entry exists, so the launch was
+      licensed; what it recorded is that the screen priced this NEUTRAL on
+      target quality and it shipped as hygiene.
+
+    Any third value fails. That is the whole point: the ledger licensed ``5``
+    and nothing else, so a decimal-typo'd ``50`` or a quiet re-tune to ``12``
+    lands here rather than in a readout three days later.
+
+    ⚑ BOTH INSTRUMENTS, because for this knob neither alone decides the world.
+    The REALIZED value is what the run sees, and ``TrialConfig.from_dict``
+    realizes the cap as ``max(0, int(v))`` -- so absent, ``0`` and ``0.5`` are
+    all the same OFF run and must all be the same verdict. The same coercion
+    means ``5.9`` and ``"5"`` realize the armed 5 while being edits nobody
+    pre-registered, so the ON world additionally requires the literal the
+    restart wrote. ``test_the_shared_guard_uses_each_knobs_own_coercion`` pins
+    the coercion itself; this pins the value it is applied to.
+    """
     from chess_anti_engine.utils.config_yaml import (
         flatten_run_config_defaults,
         load_yaml_file,
     )
 
-    repo = Path(__file__).resolve().parents[1]
-    flat = flatten_run_config_defaults(
-        load_yaml_file(str(repo / "configs" / "pbt2_small.yaml")),
+    flat = flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG)))
+    realized = int(flat.get(_CAP_KEY, 0) or 0)
+    assert realized in (0, _ARMED_TARGET_MAX_VISIT_CAP), (
+        f"configs/pbt2_small.yaml realizes {_CAP_KEY}={realized}, which is "
+        f"neither OFF (main's world) nor the {_ARMED_TARGET_MAX_VISIT_CAP} "
+        "armed by c62eb8ff2 (prereg 023098b1c, amended a88074189). Moving the "
+        "cap changes the STORED target for every row the run writes and is "
+        "invisible to an arena by construction -- it needs its own ledger entry "
+        "with a deep-SF target-quality yardstick, then this pin updated to cite "
+        "that commit."
     )
-    assert int(flat.get("gumbel_target_max_visit_cap", 0) or 0) == 0
+
+    bound = production_bindings(_CAP_KEY, config=PRODUCTION_CONFIG)
+    assert len(bound) <= 1, (
+        f"configs/pbt2_small.yaml binds {_CAP_KEY} {len(bound)} times "
+        f"({bound!r}); which one the run gets depends on parse order"
+    )
+    if realized:
+        assert bound == [_ARMED_TARGET_MAX_VISIT_CAP], (
+            f"the run has {_CAP_KEY} ON at {realized} from the yaml value "
+            f"{bound!r}. ON is licensed only as c62eb8ff2's literal "
+            f"{_ARMED_TARGET_MAX_VISIT_CAP}; `max(0, int(v))` reaches the same "
+            "run from values nothing pre-registered."
+        )
 
 # ---------------------------------------------------------------------------
 # target_q_rescale: sigma's UNITS (mctx rescale_values), store-arm only

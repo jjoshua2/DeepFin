@@ -44,9 +44,32 @@ from chess_anti_engine.tune.trainable_config_ops import (
 )
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from tests.live_yaml_arming import (
+    ABSENT,
+    ARMED,
+    PRODUCTION_CONFIG,
+    classify_production_arming,
+    other_configs_mentioning,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 _KEY = "replay_shard_recency_exponent"
+
+# ⚑ THE ARMED VALUE AND THE COMMIT THAT ARMED IT.
+#
+# ``67191f995`` — "restart: deploy the 08-04 minimal-core bundle -- boot512
+# --fresh, views 4.3, gate shadow, era probes; ledger pre-registration" — put
+# this key into the LIVE yaml at 1.0, in the same commit that carries the ledger
+# pre-registration for that restart.
+#
+# ⚑ 1.0 IS THE LEGACY DEFAULT, which is why arming it needed no yardstick of its
+# own: at 1.0 the production draw is byte-identical to the code this knob
+# replaced, RNG consumption included — the load-bearing property this module
+# exists to pin. The live file says so in its own comment ("pinned at the
+# byte-identical default"). Recording the realized default in the file rather
+# than omitting the key is the house convention: an absent key is not "off", it
+# is the default, and the yaml is the only place the realized value is legible.
+_ARMED_EXPONENT = 1.0
 
 
 def _sample() -> ReplaySample:
@@ -834,19 +857,50 @@ def test_the_key_is_classified_construction_only(
 
 
 def test_no_live_config_ships_the_key_yet() -> None:
-    """The gating story, asserted rather than promised.
+    """The gating story, asserted rather than promised, in BOTH worlds.
 
-    This PR is preparation: the deciding instrument (the offline rig's arm G,
-    on whether recency weighting accelerates forgetting) has not read out, so
-    no config carries the key and every run keeps drawing linearly. Flipping it
-    is a separate, ledger-pre-registered change at a restart -- and this test
-    is what makes "the default preserves behaviour" a statement about the
-    repository rather than about one file.
+    This knob shipped as preparation: the deciding instrument (the offline
+    rig's arm G, on whether recency weighting accelerates forgetting) has not
+    read out, so nothing may FLIP the draw. Flipping it is a separate,
+    ledger-pre-registered change at a restart -- and this test is what makes
+    "the default preserves behaviour" a statement about the repository rather
+    than about one file.
+
+    ⚑⚑ TWO WORLDS, BECAUSE ``configs/pbt2_small.yaml`` IS TWO FILES.
+
+    * ``main``: ABSENT. The committed copy names the key nowhere -- the state
+      the original single-world assertion pinned, and it still passes here.
+    * ``ops/live-20260725``: ARMED at ``1.0`` since ``67191f995``, the ledger'd
+      08-04 restart. ⚑ That is not a flip: 1.0 is the legacy exponent, so the
+      claim this module defends -- the production draw is byte-identical to the
+      code it replaced -- is exactly as true with the key present as without
+      it. The gate below therefore asserts the value AND asserts it equals
+      ``DEFAULT_SHARD_RECENCY_EXPONENT``, so "the live file did not flip the
+      draw" is measured rather than restated.
+
+    Any third state fails, and the interesting third state is the real hazard:
+    ``replay_shard_recency_exponent: 0.0`` in the live file would reshape the
+    window's composition while arm G is still unread, and it would arrive with
+    no ledger entry, no yardstick and no kill rule.
     """
-    offenders = sorted(
-        p.name for p in (_REPO / "configs").glob("*.yaml")
-        if _KEY in p.read_text(encoding="utf-8")
+    state = classify_production_arming(
+        {_KEY: _ARMED_EXPONENT}, config=PRODUCTION_CONFIG,
     )
+    assert not state.problems, (
+        "configs/pbt2_small.yaml is in NEITHER known world:\n  "
+        + "\n  ".join(state.problems)
+        + f"\nflipping the shard-recency draw off {_ARMED_EXPONENT} needs its own "
+        "ledger entry with a pre-committed yardstick and kill rule, and arm G "
+        "has not read out. Pinning the legacy value is the only arming this "
+        "test accepts."
+    )
+    assert state.world in (ABSENT, ARMED), state.world
+    # The claim, not a restatement of it: the armed value IS the no-op default,
+    # so a future edit to either one alone goes red here rather than silently
+    # making "the live file preserves the legacy draw" false.
+    assert _ARMED_EXPONENT == DEFAULT_SHARD_RECENCY_EXPONENT
+
+    offenders = other_configs_mentioning((_KEY,))
     assert not offenders, (
         f"{_KEY} appears in {offenders}; flipping the shard-recency draw needs "
         "its own ledger entry with a pre-committed yardstick and kill rule, not "
