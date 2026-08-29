@@ -223,7 +223,7 @@ def test_rpg_halving_uses_fresh_network_root_value() -> None:
     class _State:
         pass
 
-    st = _State()
+    st: Any = _State()
     st.tree = _Tree()
     st.root_id = 7
     st.pri = pri
@@ -231,7 +231,7 @@ def test_rpg_halving_uses_fresh_network_root_value() -> None:
 
     # Construct without starting worker threads; _score_and_halve reads only
     # these two configs plus the synthetic state above.
-    pool = object.__new__(RootParallelGumbelPool)
+    pool: Any = object.__new__(RootParallelGumbelPool)
     pool._cfg = RootParallelGumbelConfig(n_groups=1)
     pool._gcfg = GumbelConfig(
         c_visit_root=900.0,
