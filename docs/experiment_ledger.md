@@ -70974,3 +70974,23 @@ not read pre/post regret as one series. Take-effect observable:
 still prints rev 2). Cold roots are bit-identical; the change binds only on
 reuse. Related merges same day: #481 (RPG fresh-root baseline — UCI-only,
 unreachable on this box, no gate) `d17c7c2f6`.
+
+**2026-08-29 shape re-analysis (free re-reads of the T80 bank; Josh's two
+questions).** Banked `scratchpad/t80_ruler/{shape_v1,floor_refine_v1}.json`.
+(1) **Net vs data as the imitation target:** KL(BT4-prior‖softmax(q/τ))
+bottoms at τ≈0.12 (0.632) vs the T80-target optimum τ≈0.08 (0.487) — the net
+is flatter than its own training data, and eval-derived mappings imitate the
+DATA ~25% better than the NET (visit distributions are eval-driven; a raw
+prior encodes structure no eval ranking reproduces). (2) **One temperature
+cannot fit T80's shape — the miss is at BOTH ends:** at τ=0.08, T80 vs
+mapping mass is 0.699 vs 0.560 inside 10cp-of-best and 0.039 vs 0.030 beyond
+150cp, with the middle over-weighted; the two ends carry 87% of the KL.
+**Sharp head + uniform floor fixes it: τ=0.04 + floor 0.002/move → KL 0.336
+(−31% vs single-τ best)**, interior on both axes (floor grid 0.001–0.006 ×
+τ 0.02–0.06). A tail CUTOFF buys zero (the tail needs MORE mass, not less);
+head/tail two-temp is worse (feeds the middle). Reading: T80 targets are
+structurally search-sharpened head + exploration floor, and with the floor
+carrying the tail the optimal head SHARPENS 0.08→0.04 — reconciling the
+deep-SF screen's sharp verdict with the T80 interior optimum. Candidate arm
+for a ladder extension (needs a small deriver scheme + Josh's approval):
+`qtemp_0.04 + floor 0.002`.
