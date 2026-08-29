@@ -121,7 +121,7 @@ _HISTORY_SEQ_A = ("g1f3", "g8f6", "g2g3", "g7g6")
 _HISTORY_SEQ_B = ("g2g3", "g7g6", "g1f3", "g8f6")
 
 
-def _board_after(moves: tuple[str, ...]) -> chess.Board:
+def _board_after_sequence(moves: tuple[str, ...]) -> chess.Board:
     board = chess.Board()
     for uci in moves:
         board.push(chess.Move.from_uci(uci))
@@ -135,12 +135,15 @@ def test_structural_key_does_not_imply_legacy_history_network_input() -> None:
     structural chess identity, then reused a policy and Q as though it had
     proved evaluator identity too.
     """
-    a = _board_after(_HISTORY_SEQ_A)
-    b = _board_after(_HISTORY_SEQ_B)
+    a = _board_after_sequence(_HISTORY_SEQ_A)
+    b = _board_after_sequence(_HISTORY_SEQ_B)
     assert a.board_fen() == b.board_fen()
     assert a.turn == b.turn
     assert a.castling_rights == b.castling_rights
-    assert a.halfmove_clock == b.halfmove_clock
+    # Same structural position, but move order leaves different rule-50
+    # metadata: A ends with g7g6 (zeroing), B ends with g8f6 (reversible).
+    assert a.halfmove_clock == 0
+    assert b.halfmove_clock == 2
 
     ca, cb = CBoard.from_board(a), CBoard.from_board(b)
     assert ca.transposition_key == cb.transposition_key
@@ -333,7 +336,7 @@ def _prime_tt_then_search(
 def test_tt_still_reuses_an_exact_history_context(monkeypatch) -> None:
     """Positive control: the safety fix must not simply disable the TT."""
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
-    board = _board_after(_HISTORY_SEQ_A)
+    board = _board_after_sequence(_HISTORY_SEQ_A)
     stats, rows = _prime_tt_then_search(board, board.copy(stack=True))
     assert stats["probe_hits"] > 0, stats
     assert stats["reuse"] > 0, stats
@@ -352,8 +355,8 @@ def test_tt_re_evaluates_a_structural_twin_with_different_history(monkeypatch) -
     reuse back on, and rows to 0 — exactly the silent stale-Q/prior behavior.
     """
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
-    first = _board_after(_HISTORY_SEQ_A)
-    second = _board_after(_HISTORY_SEQ_B)
+    first = _board_after_sequence(_HISTORY_SEQ_A)
+    second = _board_after_sequence(_HISTORY_SEQ_B)
     assert CBoard.from_board(first).transposition_key == CBoard.from_board(second).transposition_key
 
     stats, rows = _prime_tt_then_search(first, second)
