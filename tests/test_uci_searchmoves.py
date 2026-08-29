@@ -47,7 +47,7 @@ def test_best_move_is_restricted_to_searchmoves() -> None:
     assert pv == [e2e4]
 
 
-@pytest.mark.parametrize("pool_path", ("walker", "pucv", "pucv_pool"))
+@pytest.mark.parametrize("pool_path", ["walker", "pucv", "pucv_pool"])
 def test_unrestricted_pool_rebuilds_a_root_left_narrowed_by_searchmoves(
     pool_path: str,
 ) -> None:
@@ -129,7 +129,7 @@ def test_unrestricted_pool_rebuilds_a_root_left_narrowed_by_searchmoves(
     assert worker._root_wdl_logits is cached_wdl
 
 
-@pytest.mark.parametrize("pool_path", ("walker", "pucv", "pucv_pool"))
+@pytest.mark.parametrize("pool_path", ["walker", "pucv", "pucv_pool"])
 def test_pool_prep_keeps_an_already_full_root(pool_path: str) -> None:
     """The support guard must not turn normal same-position reuse into rebuilds."""
     board = chess.Board()
