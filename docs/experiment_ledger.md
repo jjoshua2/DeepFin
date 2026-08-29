@@ -70943,3 +70943,14 @@ needing new deriver code. Design:
 - Confounds: single-view/no-history corpus rows (inherent to SF-rooted
   substrate); corpus engine 2edd935b fixed; one data-affecting change per
   readout holds (nothing else trains).
+
+**2026-08-29 addendum (free re-read, Josh's question):** temperature-scaling
+BT4's own prior against T80 on the same bank
+(`scratchpad/t80_ruler/bt4_temp_grid_v1.json`): KL bottoms at τ≈1.1 (0.1839)
+vs raw τ=1.0 (0.1848) — statistically flat — and sharpening degrades fast
+(τ=0.7→0.324, τ=0.4→0.989). ⇒ BT4 ships ~optimally calibrated to its own
+training-data entropy regime; the 0.185 calibration bar is fair as quoted. A
+BT4-teacher TRAINING ladder is deliberately deferred (Josh: "wait and see how
+much these existing ones matter") — the q-temp ladder's verdict decides
+whether entropy-matching is the operative trend before any teacher-policy
+arms are considered.
