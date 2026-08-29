@@ -642,6 +642,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_candidate_cap_truncation: bool = False,
     allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
@@ -670,6 +671,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_candidate_cap_truncation: bool = False,
     allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
@@ -697,6 +699,7 @@ def run_gumbel_root_many_c(
     tree: MCTSTree | None = None,
     root_node_ids: list[int] | None = None,
     allowed_root_indices_batch: Sequence[set[int] | None] | None = None,
+    allow_candidate_cap_truncation: bool = False,
     allow_terminal_root_shortcuts: bool = True,
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
@@ -707,9 +710,16 @@ def run_gumbel_root_many_c(
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
-    Same API as ``run_gumbel_root_many`` -- drop-in replacement, plus two
-    batching controls the Python reference has no equivalent for:
+    Same API as ``run_gumbel_root_many`` -- drop-in replacement, plus C-path
+    controls the Python reference has no equivalent for:
 
+    ``allow_candidate_cap_truncation``
+        False by default. The compiled sequential-halving scorer owns a fixed
+        ``GSS_MAX_CANDS`` score buffer. If this search realizes more candidates
+        than that, refusing is the only generic behavior that does not bank a
+        wider ``topk`` while silently ranking only the first compiled-cap
+        candidates. True is reserved for callers that explicitly measure and
+        report that truncation (the generation-zero ``--all-root-moves`` lane).
     ``target_batch``
         Leaves to accumulate before handing a batch to the evaluator. 0 (the
         production default) means ``GSS_GPU_BATCH`` = 1024, which spans several
@@ -743,6 +753,8 @@ def run_gumbel_root_many_c(
             "extension: "
             "python3 scripts/build_production_extensions.py"
         )
+    _c_candidate_cap = int(_mcts_tree_ext.GSS_MAX_CANDS)
+
   # Operator surface for the audit-W1/W2 guards. Here rather than in a caller
   # because this is the choke point EVERY C-path consumer goes through —
   # selfplay, training-time eval and UCI all land on this function.
@@ -1156,6 +1168,19 @@ def run_gumbel_root_many_c(
             m_cap = max(2, (_game_budget + 1) // 2)
             m = int(min(int(cfg.topk), int(legal_idx.size), int(m_cap)))
             m = max(2, m)
+
+        if m > _c_candidate_cap and not allow_candidate_cap_truncation:
+            raise ValueError(
+                f"run_gumbel_root_many_c: board[{i}] realized {m} root "
+                f"candidates, but the loaded _mcts_tree has "
+                f"GSS_MAX_CANDS={_c_candidate_cap}. The C halving scorer "
+                "would rank only the first compiled-cap candidates while the "
+                "requested/recorded search stays wider. Lower topk or the "
+                "per-position simulation budget, route this search through "
+                "run_gumbel_root_many, or set "
+                "allow_candidate_cap_truncation=True only for an explicitly "
+                "measured experiment."
+            )
 
         kth = min(m - 1, int(score.size) - 1)
         top_idx = np.argpartition(-score, kth)[:m]
