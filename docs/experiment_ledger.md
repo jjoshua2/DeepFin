@@ -71035,3 +71035,36 @@ summary is written; positive floors that vanish in float16 shard storage
 (<= 2^-25) are refused at startup; every stored-bytes stamp goes through the
 shard's float32-then-float16 cast (`shard_stored` — double rounding differs
 just above 2^-25).
+
+**2026-08-29 Stage-2 ladder readout — instrument set EXTENDED (prereg, before
+any game is played).** Josh's directive: do not adopt off the deep-SF fit
+ruler alone (three fit→Elo transfer failures on record, one on this exact
+ruler — v020). Four instruments, roles pre-committed:
+1. **Deep-SF audit set v1** (done per arm) — the SCREEN, as originally
+   prereg'd. First read: qtemp_0.067 beats qtemp_1.0 118.6/67.9cp vs
+   171.8/81.6cp (E[regret]/top-1).
+2. **Matched-sims arena** (ADOPTION GATE, unchanged from the original
+   prereg): each trained arm vs the qtemp_1.0 control, 200 games, sims 100,
+   `--no-rolling`, hard `--max-seconds 5400` declared here in advance (read
+   ONCE at the end; a time-capped final read is a fixed stopping rule, not a
+   rolling peek); plus 0.067-vs-0.02 head-to-head. Pinned worktree
+   `~/projects/chess-ladderarena` (rev-2 extensions). Adoption: CI excluding
+   0 vs control wins; else qtemp_0.067 weakly held.
+3. **BT4 anchor matches** (RULER VALIDATION, non-gating): each arm vs
+   lc0/BT4-it332 (CPU) at a FIXED node setting chosen by a 3×20-game
+   calibration probe on the control arm (nodes ∈ {1,4,16}, pick the setting
+   with control score nearest 50%). Purpose: an external non-SF ordering; a
+   uniform collapse against the anchor that the internal arena cannot see.
+4. **Puzzle suite** (SECONDARY, direction-only, non-gating):
+   `scripts/eval_puzzles.py` on the frozen `lichess_2200_2800_n3000.csv`,
+   modes policy,value, all 3,000, identical sample every arm. Prior finding
+   stands: tuning FOR tactics mis-rewards sharpness — so puzzles are read
+   only as convergent/divergent evidence, never as a target. Josh's framing
+   adopted verbatim: if the sharper net wins puzzles TOO, that strengthens
+   the real-game case; if it loses them while winning the arena, the arena
+   governs.
+**Pre-committed conflict rule:** if audit ranking and arena ranking disagree
+on the winner, the ARENA governs adoption and the audit set is flagged for
+recalibration in this ledger; anchor + puzzles are diagnostic evidence in
+that note, not gates. No instrument added after this entry counts for this
+readout.
