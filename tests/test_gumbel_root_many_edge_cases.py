@@ -169,6 +169,9 @@ def test_gumbel_c_refuses_a_realized_candidate_set_wider_than_compiled_cap(
     pre_pol = np.zeros((1, POLICY_SIZE), dtype=np.float32)
     pre_wdl = np.zeros((1, 3), dtype=np.float32)
 
+    refused_tree = MCTSTree()
+    assert refused_tree.node_count() == 0
+
     with monkeypatch.context() as patch:
         patch.setattr(mcts_ext, "GSS_MAX_CANDS", 1, raising=True)
         with pytest.raises(
@@ -177,9 +180,12 @@ def test_gumbel_c_refuses_a_realized_candidate_set_wider_than_compiled_cap(
         ):
             run_c(
                 None, [board], device="cpu", rng=np.random.default_rng(0),
-                cfg=cfg, evaluator=_ZeroEvaluator(),
+                cfg=cfg, evaluator=_ZeroEvaluator(), tree=refused_tree,
                 pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
             )
+        assert refused_tree.node_count() == 0, (
+            "candidate-cap refusal mutated the caller-owned tree before failing"
+        )
 
         result = run_c(
             None, [board], device="cpu", rng=np.random.default_rng(0),
