@@ -92,8 +92,10 @@ def candidate_set(
     ceil(sims/2) inert.
     """
     g = scale * gumbel if scale > 0.0 else np.zeros_like(gumbel)
-    # float64 explicitly: `zeros_like` of a bool input would make `-score`
-    # a bool negation, which modern numpy refuses at runtime.
+    # float64 explicitly, matching the production path's pinned float64
+    # (`mcts/gumbel.py`). `log_pri` is float on every current call site, so
+    # this is dtype ALIGNMENT with the thing being probed, not a live
+    # runtime trap (review of PR #488 checked the call sites).
     score = np.asarray(g + log_pri, dtype=np.float64)
     n = log_pri.size
     if sim_budget <= 1:

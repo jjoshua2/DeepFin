@@ -3463,12 +3463,31 @@ def test_the_step_leg_shape_is_quoted_from_the_current_lineage() -> None:
     assert prev_cap.lstrip().startswith(
         "`` IS NOT COMPARABLE TO THE GATE'S SPLIT"), prev_cap[:120]
     for phrase in (
-        "is ALSO pinned in the LIVE (uncommitted) ``configs/pbt2_small.yaml``",
-        "Do not look for that second copy in the COMMITTED yaml -- it ships no "
-        "``gate_*`` keys at all",
-        "the committed tree has exactly ONE copy",
+        "is ALSO pinned in the LIVE ``configs/pbt2_small.yaml``",
+        "WHERE that second copy sits is BRANCH-DEPENDENT",
+        "that tree has exactly ONE copy",
+        "the committed tree has BOTH copies and they must agree",
     ):
         assert phrase in flat(floor_comment), phrase
+
+    # ⚑ The comment's claim CHECKED, not merely quoted (review of PR #488,
+    # P2-4: the old wording asserted `main`'s world unconditionally and a
+    # text-match kept it green on the live branch, where it was false). Two
+    # worlds: `main` binds no gate_min_games_per_side and the dataclass
+    # default is the ONE copy; the live branch binds it exactly once and it
+    # must EQUAL the default, or the "two must move together" sentence is
+    # already broken.
+    from tests.live_yaml_arming import PRODUCTION_CONFIG, production_bindings
+
+    bound = production_bindings(
+        "gate_min_games_per_side", config=PRODUCTION_CONFIG,
+    )
+    assert bound in ([], [GateConfig().min_games_per_side]), (
+        f"configs/pbt2_small.yaml binds gate_min_games_per_side {bound!r} while "
+        f"the dataclass default is {GateConfig().min_games_per_side} — the two "
+        "copies moved apart, which is the drift the floor comment says needs a "
+        "ledger line moving BOTH"
+    )
 
     # And the arithmetic behind every quoted figure reproduces from the banked
     # per-iteration rows -- the docs are pinned to data, not to each other.
@@ -3886,9 +3905,10 @@ def test_gate_mode_is_restart_required_and_the_reload_says_so(
 
     The list's own comment claims membership "turns that silence into a
     WARNING". Nothing checked it, and the claim was only half true: the guard
-    read ``k in config and config[k] != v``, so a live ADD -- the ONLY way
-    ``gate_mode`` ever changes, because ``configs/pbt2_small.yaml`` ships no
-    ``gate_*`` key at all -- took the silent-overlay path. The value landed in
+    read ``k in config and config[k] != v``, so a live ADD -- at the time the
+    only way ``gate_mode`` ever changed, ``configs/pbt2_small.yaml`` then
+    shipping no ``gate_*`` key (the live branch's copy now carries the
+    bundle) -- took the silent-overlay path. The value landed in
     ``config``, ``PromotionGate`` had been built from the launch config
     iterations earlier, and the operator got a knob that reads back correctly
     and does nothing.

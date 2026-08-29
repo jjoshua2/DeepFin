@@ -57,6 +57,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.eval.audit import legal_full_indices
 from chess_anti_engine.nnue import _nnue_ext
 from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
+from chess_anti_engine.utils.audit_cache_format import iter_data_rows
 from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 from scripts import audit_label_candidates as gate
 from scripts import audit_targets
@@ -558,7 +559,8 @@ def test_an_unlisted_choice_is_censored_at_the_worst_listed_regret(
     assert cell["top1_regret_cp_mean"] == pytest.approx(80.0)
     assert cell["top1_move_unlisted_rate"] == pytest.approx(1.0)
     assert cell["top1_move_unlisted_positions"] == 1.0
-    row = json.loads(dump.read_text(encoding="utf-8").splitlines()[0])
+    # iter_data_rows skips the provenance header the stamped writer now emits.
+    row = next(iter_data_rows(dump))
     assert row["arm"][arm.arm]["move"] == unlisted
     assert row["arm"][arm.arm]["top1_move_listed_by_deep_sf"] is False
     assert report["metric_definitions"]["censoring_rule_for_unlisted_moves"].count(
@@ -1308,7 +1310,7 @@ def test_the_limit_bounds_the_rows_the_arms_are_actually_shown(
     # would still make if the slice had been skipped and two rows had failed to
     # encode instead.
     assert arm.positions == 2
-    assert len(dump.read_text(encoding="utf-8").splitlines()) == 2
+    assert len(list(iter_data_rows(dump))) == 2  # data rows; header excluded
     assert report["provenance"]["limit"] == 2
     assert report["provenance"]["limit_realized"] == 2
 
@@ -1646,7 +1648,8 @@ def test_a_whole_run_labels_through_the_depth_limit_and_dumps_the_ask(
     assert cell["nodes"] is None
     assert cell["depth_requested"] == 9
     assert cell["searches"] == len(ucis) + 1  # every child, plus the probe root
-    row = json.loads(dump.read_text(encoding="utf-8").splitlines()[0])
+    # iter_data_rows skips the provenance header the stamped writer now emits.
+    row = next(iter_data_rows(dump))
     assert row["arm"]["sf-d9"]["depth_requested"] == 9
     assert "search_limit_kind" in report["metric_definitions"]
 
@@ -1678,7 +1681,8 @@ def test_a_dump_row_claims_no_depth_for_an_arm_that_has_none(
     gate.run(gate_config(
         audit, (node_arm.arm, native_like.arm), dump_per_position=dump,
     ))
-    row = json.loads(dump.read_text(encoding="utf-8").splitlines()[0])
+    # iter_data_rows skips the provenance header the stamped writer now emits.
+    row = next(iter_data_rows(dump))
     assert row["arm"]["sf-512"]["depth_requested"] is None
     assert row["arm"]["scripted"]["depth_requested"] is None
     assert gate.depth_requested_of(cast(gate.ReportableArm, node_arm)) is None

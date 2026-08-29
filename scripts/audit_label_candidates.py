@@ -135,6 +135,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import logging
 import math
 import re
@@ -159,7 +160,7 @@ from chess_anti_engine.eval.audit import (
     load_audit_set,
     move_regrets,
 )
-from chess_anti_engine.eval.audit_cache import write_audit_cache
+from chess_anti_engine.eval.audit_cache import audit_set_provenance, write_audit_cache
 from chess_anti_engine.stockfish.uci import (
     StockfishResult,
     StockfishUCI,
@@ -1656,18 +1657,32 @@ def run(cfg: GateConfig) -> dict[str, Any]:
         # ⚑ STAMPED, via the same writer as audit_targets.py's dump: an
         # unstamped side makes paired_compare.require_same_stamp return early,
         # so every later comparison of this file would silently skip the
-        # ruler-version check. force=True for the same reason as there — the
-        # flag has no default path, so the operator always names the target
-        # and there is no silent-default clobber to guard against.
+        # ruler-version check.  The extra carries RULER IDENTITY ONLY —
+        # require_same_stamp treats every non-excluded key as identity, so
+        # spreading run metadata (run_id, started_utc) here would refuse every
+        # cross-run compare, the exact comparisons this dump exists for (a
+        # first cut did that; caught in review).  The full invocation record
+        # stays in the report json, where it belongs.  audit_set_provenance
+        # supplies the CONTENT digest require_same_audit_set reads; the cp map
+        # is stamped because q_from_effective_cp is on every arm's path.
+        # force=True as in audit_targets: no default path, no silent clobber
+        # to guard — but the write lands in a sibling tmp and replaces
+        # atomically, so an interruption cannot truncate a banked dump.
+        tmp_dump = cfg.dump_per_position.with_name(
+            cfg.dump_per_position.name + ".tmp",
+        )
         write_audit_cache(
-            cfg.dump_per_position,
+            tmp_dump,
             dump,
             force=True,
             extra={
                 "producer": "audit_label_candidates.py --dump-per-position",
-                **report["provenance"],
+                **audit_set_provenance(cfg.audit_set),
+                "cp_slope": float(cfg.cp_slope),
+                "cp_draw_width": float(cfg.cp_draw_width),
             },
         )
+        os.replace(tmp_dump, cfg.dump_per_position)
     for reason in reasons:
         _LOG.error("INADMISSIBLE: %s", reason)
     return report

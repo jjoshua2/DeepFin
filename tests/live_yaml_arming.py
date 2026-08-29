@@ -33,6 +33,18 @@ which is the exact distinction the two worlds turn on.
 and must not accumulate local absolute paths; the part of an artifact path that
 identifies WHICH ruler was armed is the trailing ``data/<dir>/<file>``, and the
 machine-specific prefix identifies nothing.
+
+⚑⚑ THE RESIDUAL A TWO-WORLD PIN CANNOT CLOSE, stated rather than implied
+away: a WHOLE-FILE overwrite of the live yaml with main's copy flips every
+bundle to ABSENT consistently, and each pin then reads a legitimate world.
+No unit test can tell "this tree is the live branch" without a lineage
+oracle, and the yaml deliberately carries no such key (adding one is a live
+key edit). The protections that DO cover it are the cross-bundle same-world
+consistency test (a PARTIAL merge — the realistic accident — disarms some
+bundles and not others, and fails there), the standing never-``git
+checkout``-in-the-live-tree rule the overwrite would have to violate, and
+the fact that a full overwrite also reverts 55 realized keys and cannot
+survive the first iteration's regime lines unnoticed.
 """
 from __future__ import annotations
 
@@ -88,13 +100,57 @@ class ArmingState:
         return self.world == ARMED
 
 
-def yaml_bindings(node: object, key: str) -> list[Any]:
-    """Every value ``key`` is bound to anywhere in a parsed yaml tree.
+def _bindings_in_node(node: yaml.Node, key: str) -> list[yaml.Node]:
+    """Every value node ``key`` is bound to, on the COMPOSED yaml tree.
 
-    Recursive rather than section-scoped so a key that MOVES between ``tune:``
-    and ``selfplay:`` (or into a section the flattener ignores entirely) is
-    still seen. A length other than 1 is itself reportable: a key bound twice
-    in one file has a value that depends on parse order.
+    ⚑ The composed tree, not ``safe_load``'s dicts, because ``safe_load``
+    collapses duplicate keys within one mapping to the last value BEFORE any
+    caller can look — so "bound exactly once" checked on the loaded dict is
+    vacuous for the classic copy-paste double binding (caught in review of
+    PR #488). Node-level walking preserves every occurrence.
+
+    Recursive rather than section-scoped so a key that MOVES between
+    ``tune:`` and ``selfplay:`` (or into a section the flattener ignores) is
+    still SEEN — whether a sighting counts as armed is the flattener's call,
+    made in ``classify_production_arming``.
+    """
+    found: list[yaml.Node] = []
+    if isinstance(node, yaml.MappingNode):
+        for key_node, value_node in node.value:
+            if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
+                found.append(value_node)
+            else:
+                found.extend(_bindings_in_node(value_node, key))
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            found.extend(_bindings_in_node(item, key))
+    return found
+
+
+def _construct(node: yaml.Node) -> Any:
+    loader = yaml.SafeLoader("")
+    try:
+        return loader.construct_object(node, deep=True)
+    finally:
+        loader.dispose()
+
+
+def yaml_bindings_from_text(text: str, key: str) -> list[Any]:
+    """Every value ``key`` is bound to anywhere in the document — duplicates
+    within one mapping included."""
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if root is None:
+        return []
+    return [_construct(node) for node in _bindings_in_node(root, key)]
+
+
+def yaml_bindings(node: object, key: str) -> list[Any]:
+    """Every value ``key`` is bound to anywhere in a PARSED yaml tree.
+
+    ⚑ Kept for callers that already hold a loaded dict, and honest about its
+    blind spot: a duplicate binding inside ONE mapping was collapsed by the
+    loader before this function ran. ``yaml_bindings_from_text`` sees those;
+    the classifier uses it.
     """
     found: list[Any] = []
     if isinstance(node, Mapping):
@@ -136,8 +192,8 @@ def classify_production_arming(
     so a mutation harness has exactly one name to redirect per module.
     """
     path = PRODUCTION_CONFIG if config is None else config
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    values = {key: yaml_bindings(raw, key) for key in pinned}
+    text = path.read_text(encoding="utf-8")
+    values = {key: yaml_bindings_from_text(text, key) for key in pinned}
     problems: list[str] = []
 
     present = sorted(key for key, bound in values.items() if bound)
@@ -164,6 +220,30 @@ def classify_production_arming(
                 f"{path.name}: {key!r} is {bound[0]!r}, pinned {pinned[key]!s}"
             )
 
+    # ⚑ THE EFFECTIVENESS CROSS-CHECK, using the production flattener as the
+    # oracle. A binding sighted by the raw walk can sit somewhere the loader
+    # never reads (nested inside another key's list value, say) — this
+    # codebase's signature defect is a value that is accepted and then
+    # silently ignored, and a guard that counts an INERT binding as armed
+    # would be that defect inside the instrument built to catch it (review of
+    # PR #488). ARMED therefore additionally requires each pinned value to
+    # SURVIVE ``flatten_run_config_defaults`` — the same function the trial
+    # boots through — so "armed" always means "reaches the run", never merely
+    # "appears in the file".
+    if not problems:
+        from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+        flat = flatten_run_config_defaults(yaml.safe_load(text))
+        for key in present:
+            realized = flat.get(key)
+            if not _matches(pinned[key], realized):
+                problems.append(
+                    f"{path.name}: {key!r} is bound at its pin in the file but "
+                    f"realizes {realized!r} through flatten_run_config_defaults "
+                    "— the binding sits somewhere the loader does not read, so "
+                    "the file LOOKS armed while the run is not"
+                )
+
     return ArmingState(
         world=ARMED if not problems else "mixed", problems=problems, values=values,
     )
@@ -178,7 +258,7 @@ def production_bindings(key: str, *, config: Path | None = None) -> list[Any]:
     the same run. This is the other half of that pair.
     """
     path = PRODUCTION_CONFIG if config is None else config
-    return yaml_bindings(yaml.safe_load(path.read_text(encoding="utf-8")), key)
+    return yaml_bindings_from_text(path.read_text(encoding="utf-8"), key)
 
 
 def other_configs_mentioning(keys: Sequence[str]) -> list[str]:

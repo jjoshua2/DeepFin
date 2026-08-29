@@ -79,9 +79,30 @@ CONTROL = REPO / "configs" / "lc0_positive_control.yaml"
 # moved to 1000. Named individually so a PARTIAL catch-up is visible instead of
 # being absorbed by a bare "the sets differ" — which, now that an empty drift is
 # also a legitimate world, is the only thing keeping this gate able to fail.
-LIVE_ONLY_TRAINER_KWARGS = (
+LIVE_ONLY_TRAINER_KWARGS: tuple[str, ...] = (
     "w_categorical", "rebuild_categorical_target", "warmup_steps",
 )
+
+# ⚑ THE WHOLE MEASURED GAP, not just its three flagship kwargs. STATE MAIN's
+# drift must EQUAL this set: requiring only the flagship three would accept a
+# 14/17 hybrid — the other kwargs caught up, the flagships not — as "stale",
+# which is exactly the partial state the two-world contract exists to refuse
+# (grok review of PR #488, finding 3; the architecture axis cannot make this
+# mistake because its MAIN state is key ABSENCE, while every trainer kwarg
+# always realizes a value, so only the drift's exact extent can discriminate).
+# Measured 2026-08-29 against `main`'s committed configs/pbt2_small.yaml — the
+# same measurement the module header cites. If a kwarg legitimately catches up
+# on `main`, re-measure and re-pin HERE with the commit, exactly as for
+# LIVE_TRAINER_PIN itself.
+MAIN_WORLD_DRIFT_KWARGS = frozenset({
+    "w_categorical", "rebuild_categorical_target", "warmup_steps",
+    "sf_wdl_frac", "search_wdl_frac", "categorical_target_params",
+    "sf_target_params", "lr_T0", "lr_T_mult", "w_sf_move", "w_sf_own",
+    "w_sf_own_regret", "w_sf_eval", "w_sf_policy_floor",
+    "sf_policy_floor_tau", "sf_policy_floor_tau_top1",
+    "sf_policy_floor_delta_cp",
+})
+assert set(LIVE_ONLY_TRAINER_KWARGS) <= MAIN_WORLD_DRIFT_KWARGS
 
 
 def _flat(path: Path) -> dict[str, Any]:
@@ -91,9 +112,13 @@ def _flat(path: Path) -> dict[str, Any]:
 def two_world_trainer_reference_problems(drift: Mapping[str, Any]) -> list[str]:
     """Classify an in-tree-vs-`LIVE_TRAINER_PIN` drift, and report a third state.
 
-    Empty list ⇒ the tree is in STATE MAIN (stale, drift covers every kwarg in
-    `LIVE_ONLY_TRAINER_KWARGS`) or STATE LIVE (drift empty). See this module's
-    header for why both are legitimate and why anything between them is not.
+    Empty list ⇒ the tree is in STATE MAIN (stale, drift EQUALS the measured
+    `MAIN_WORLD_DRIFT_KWARGS` gap) or STATE LIVE (drift empty). See this
+    module's header for why both are legitimate and why anything between them
+    is not. ⚑ Equality, not the flagship-three subset this used to require: a
+    drift of exactly the three `LIVE_ONLY_TRAINER_KWARGS` means the OTHER
+    fourteen caught up — a partial merge — and the old predicate read that
+    hybrid as a legitimate STATE MAIN (grok review of PR #488, finding 3).
 
     Returned rather than asserted so each caller keeps its own reference-decision
     message in its own module, where pytest rewrites the assertion — and so the
@@ -101,14 +126,21 @@ def two_world_trainer_reference_problems(drift: Mapping[str, Any]) -> list[str]:
     """
     if not drift:
         return []
-    caught_up = sorted(set(LIVE_ONLY_TRAINER_KWARGS) - set(drift))
-    if not caught_up:
-        return []
-    return [
+    caught_up = sorted(MAIN_WORLD_DRIFT_KWARGS - set(drift))
+    beyond = sorted(set(drift) - MAIN_WORLD_DRIFT_KWARGS)
+    problems = [
         f"the in-tree production config now realizes LIVE's {key!r} while still "
         f"drifting on {sorted(drift)}"
         for key in caught_up
     ]
+    problems.extend(
+        f"the in-tree production config drifts on {key!r}, which is OUTSIDE the "
+        "measured MAIN_WORLD_DRIFT_KWARGS gap — a kwarg moved on one side since "
+        "the 2026-08-29 measurement; re-measure the gap and re-pin it with the "
+        "commit"
+        for key in beyond
+    )
+    return problems
 
 
 def test_the_recorded_pin_still_matches_the_live_file_when_one_is_named() -> None:
@@ -177,6 +209,60 @@ def test_the_pin_records_a_recipe_the_in_tree_config_does_not(
         "this passes as STATE LIVE. A half-adopted recipe is the state to fix, "
         "not the assertion — re-read this module's reference decision rather "
         "than relaxing the named kwargs away."
+    )
+
+
+def test_a_flagship_only_hybrid_is_not_state_main() -> None:
+    """⚑ The 14/17 hybrid the old predicate waved through (grok #488, finding 3).
+
+    A partial merge that catches up every kwarg EXCEPT the flagship three
+    leaves a drift of exactly `LIVE_ONLY_TRAINER_KWARGS` — which the
+    subset-based predicate read as a legitimate STATE MAIN. STATE MAIN is the
+    MEASURED 17-kwarg gap, nothing narrower and nothing wider.
+    """
+    hybrid = dict.fromkeys(LIVE_ONLY_TRAINER_KWARGS, "moved")
+    problems = two_world_trainer_reference_problems(hybrid)
+    assert problems, "a flagship-only drift must be a third state, not MAIN"
+    assert any("sf_wdl_frac" in p for p in problems), problems
+
+    full_gap = dict.fromkeys(MAIN_WORLD_DRIFT_KWARGS, "moved")
+    assert two_world_trainer_reference_problems(full_gap) == []
+    assert two_world_trainer_reference_problems({}) == []
+
+    beyond = dict(full_gap, some_new_kwarg="moved")
+    problems = two_world_trainer_reference_problems(beyond)
+    assert any("some_new_kwarg" in p and "re-measure" in p for p in problems), problems
+
+
+def test_the_pinned_main_gap_is_the_measured_one() -> None:
+    """`MAIN_WORLD_DRIFT_KWARGS` re-measured, not restated, when main is here.
+
+    The constant claims to BE the drift of `main`'s committed yaml against
+    `LIVE_TRAINER_PIN`. Where a git checkout with an `origin/main` ref exists,
+    recompute it; a pin nothing re-measures is a number, not a gate. Skipping
+    (shallow CI clone, no ref) says what was NOT checked.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "show", "origin/main:configs/pbt2_small.yaml"],
+        cwd=REPO, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(
+            "origin/main is not resolvable here — MAIN_WORLD_DRIFT_KWARGS was "
+            "NOT re-measured by this run"
+        )
+    import yaml as _yaml
+
+    flat = flatten_run_config_defaults(_yaml.safe_load(proc.stdout))
+    drift = trainer_kwargs_drift(
+        trainer_kwargs_signature(flat), LIVE_TRAINER_PIN["kwargs"],
+    )
+    assert set(drift) == set(MAIN_WORLD_DRIFT_KWARGS), (
+        f"main's measured gap moved: missing={sorted(set(MAIN_WORLD_DRIFT_KWARGS) - set(drift))} "
+        f"extra={sorted(set(drift) - set(MAIN_WORLD_DRIFT_KWARGS))}. Re-pin the "
+        "constant with the commit that moved it."
     )
 
 
