@@ -1091,6 +1091,34 @@ def run_gumbel_root_many_c(
         pri[legal_idx] = priors
         root_pri[i] = pri
 
+        _realized_m: int | None = None
+        if terminal_mate is None and legal_idx.size > 1:
+            _game_budget = budget_remaining[i]
+            if _game_budget <= 1:
+                _realized_m = 1
+            else:
+                _m_cap = max(2, (_game_budget + 1) // 2)
+                _realized_m = int(
+                    min(int(cfg.topk), int(legal_idx.size), int(_m_cap))
+                )
+                _realized_m = max(2, _realized_m)
+            if (
+                _realized_m > _c_candidate_cap
+                and not allow_candidate_cap_truncation
+            ):
+                raise ValueError(
+                    f"run_gumbel_root_many_c: board[{i}] realized "
+                    f"{_realized_m} root candidates, but the loaded "
+                    f"_mcts_tree has GSS_MAX_CANDS={_c_candidate_cap}. "
+                    "The C halving scorer would rank only the first "
+                    "compiled-cap candidates while the requested/recorded "
+                    "search stays wider. Lower topk or the per-position "
+                    "simulation budget, route this search through "
+                    "run_gumbel_root_many, or set "
+                    "allow_candidate_cap_truncation=True only for an "
+                    "explicitly measured experiment."
+                )
+
   # Reuse existing root from persistent tree, or create new one.
   # Skip when pipelining — pipeline creates its own sub-trees.
         if not _use_pipeline:
@@ -1162,27 +1190,8 @@ def run_gumbel_root_many_c(
         )
         score: np.ndarray = g + log_pri
 
-        _game_budget = budget_remaining[i]
-        if _game_budget <= 1:
-            m = 1
-        else:
-            m_cap = max(2, (_game_budget + 1) // 2)
-            m = int(min(int(cfg.topk), int(legal_idx.size), int(m_cap)))
-            m = max(2, m)
-
-        if m > _c_candidate_cap and not allow_candidate_cap_truncation:
-            raise ValueError(
-                f"run_gumbel_root_many_c: board[{i}] realized {m} root "
-                f"candidates, but the loaded _mcts_tree has "
-                f"GSS_MAX_CANDS={_c_candidate_cap}. The C halving scorer "
-                "would rank only the first compiled-cap candidates while the "
-                "requested/recorded search stays wider. Lower topk or the "
-                "per-position simulation budget, route this search through "
-                "run_gumbel_root_many, or set "
-                "allow_candidate_cap_truncation=True only for an explicitly "
-                "measured experiment."
-            )
-
+        assert _realized_m is not None
+        m = _realized_m
         kth = min(m - 1, int(score.size) - 1)
         top_idx = np.argpartition(-score, kth)[:m]
         cands = legal_idx[top_idx].astype(int).tolist()
