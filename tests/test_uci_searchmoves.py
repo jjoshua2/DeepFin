@@ -166,6 +166,7 @@ def test_pool_prep_keeps_an_already_full_root(pool_path: str) -> None:
     assert worker._tree is tree
     assert worker._root_id == root
 
+
 def test_reused_root_info_is_restricted_to_searchmoves() -> None:
     board = chess.Board()
     e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
