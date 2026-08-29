@@ -939,7 +939,7 @@ def test_tt_context_reject_is_routine_and_announced_once(monkeypatch, capsys) ->
     monkeypatch.setattr(
         gumbel_c_mod._mcts_tree_ext,
         "tt_stats",
-        lambda *a, **k: {
+        lambda *_a, **_k: {
             "probe_hits": 9,
             "reuse": 4,
             "reject": 0,
@@ -968,7 +968,7 @@ def test_tt_reject_is_reported_on_the_production_path(monkeypatch, capsys) -> No
     monkeypatch.setattr(
         gumbel_c_mod._mcts_tree_ext,
         "tt_stats",
-        lambda *a, **k: {"probe_hits": 9, "reuse": 4, "reject": 5},
+        lambda *_a, **_k: {"probe_hits": 9, "reuse": 4, "reject": 5},
     )
     _tiny_search()
     err = capsys.readouterr().err
@@ -1028,7 +1028,8 @@ def test_tt_reuse_across_unusable_ep_twin_roots_is_correct(monkeypatch) -> None:
 
     # Exact-context control: the same unusable-EP position reuses.
     stats, rows = _prime_tt_then_search(ep, ep.copy(stack=True))
-    assert stats["reuse"] > 0 and stats["context_reject"] == 0, stats
+    assert stats["reuse"] > 0, stats
+    assert stats["context_reject"] == 0, stats
     assert rows == 0, stats
 
     # The twins: the probed CHILDREN are identical evaluator inputs, so this
