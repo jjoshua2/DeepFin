@@ -70994,3 +70994,29 @@ carrying the tail the optimal head SHARPENS 0.08→0.04 — reconciling the
 deep-SF screen's sharp verdict with the T80 interior optimum. Candidate arm
 for a ladder extension (needs a small deriver scheme + Josh's approval):
 `qtemp_0.04 + floor 0.002`.
+
+**2026-08-29 ladder REORDER (Josh):** "schedule the extreme ones back to back
+to see range and test floor early — if it helps, all need it." Arms 2/3
+(τ=1.0 mush extreme, τ=0.02 sharp extreme) already run consecutively; the
+τ=0.15 bracket arm is PARKED (marker renamed; driver skips it) and its slot
+goes to **arm 5 = qtemp_0.067 + floor 0.002** — the Gumbel-σ head unchanged,
+the exploration floor as the single new treatment (per the shape re-analysis:
+the floor carries ~85% of the KL gain at the default head; sharpening the
+head to 0.04 was declined on the lever-1 ground that eval-space sharpening
+amplifies label confidence on the ~7% of rows where d9 is wrong, unlike
+lc0's search-verified sharpness). Rationale for the floor recorded from
+Josh: misclassified moves must stay recoverable, and million-node search
+needs breadth seeds in the prior, not only depth. Arm 5 driver queued behind
+ladder.done + the floor deriver PR; same snapshot, same 5.5M rows, seed 0,
+9,680 steps.
+
+**2026-08-29 cp→WDL map grid (free re-read; Josh's question — do we need
+slope/draw arms?).** Banked `scratchpad/t80_ruler/cpmap_grid_v1.json`
+(slope {0.003,0.006,0.012} × draw {60,120,240} × τ × floor vs T80). WITHOUT
+the floor, the map matters beyond τ: 0.012/60 reads 0.427 vs production
+0.006/120's 0.487 — early saturation imitates the missing tail floor. WITH
+floor 0.002 the surface is FLAT at production values: 0.3355 vs global best
+0.3328 (0.8% across 4× ranges on both axes) — the floor is the correct
+parameterization of that degree of freedom. ⇒ **no cp→WDL arms**; slope/draw
+stay at production (also value-target-coupled in the deriver, and
+cp-logistic already beat native SF WDL on the value side).
