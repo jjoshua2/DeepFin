@@ -207,7 +207,10 @@ def test_the_clamps_these_refusals_are_about_are_still_there() -> None:
         "trusting the MIN_TOPK message"
     )
     c_path = (root / "gumbel_c.py").read_text(encoding="utf-8")
-    assert f"m = max({MIN_TOPK}, m)" in c_path
+    # The C path's clamp moved into `_realized_candidate_width`, the single
+    # definition the compiled-cap gate and `np.argpartition` both read. Pin the
+    # clamp where it now lives rather than the old inline `m = max(2, m)`.
+    assert f"return max({MIN_TOPK}, int(min(int(topk)" in c_path
     py_path = (root / "gumbel.py").read_text(encoding="utf-8")
     assert f"m = max({MIN_TOPK}, int(min(int(topk)" in py_path
 
