@@ -71183,3 +71183,29 @@ The mid-checkpoint take-effect control from the original prereg is dropped
 with the fresh 2× runs it belonged to; take-effect for a continuation is the
 trainer's own `--init-from` restore refusal (it aborts at launch if any
 state did not take).
+
+**2026-08-30 SECOND AMENDMENT to the round-2 prereg (still before any rung
+result).** Josh: "0.04 is a waste, I meant two sharper than our best — can't
+we calculate from 0.02 how much sharper we need to match BT4 after
+adjustments?" Calculated, from banked data only (no new runs):
+- **Undershoot law across the three trained arms: H_net = 0.520·H_tgt +
+  1.519 (r² = 0.999)** on (target-entropy, trained-net-entropy) pairs
+  (3.143→3.160, 1.961→2.525, 1.249→2.178). BT4-matching (H_net 1.632) needs
+  H_tgt ≈ 0.217 nats.
+- **The softmax(q/τ) family FLOORS at H_tgt ≈ 0.37** — exact/near-tied d9
+  evals keep splitting mass (mean top-1 mass saturates at 0.847 by
+  τ=0.0003) — so BT4's net-sharpness is UNREACHABLE inside the family;
+  predicted family-floor H_net ≈ 1.71. Going below needs forced
+  tie-breaking (one-hot), which the deriver has no scheme for and which
+  would add label noise on genuinely tied evals. Accepted residual.
+- **Arms replaced accordingly:** `qtemp_0.04` is DROPPED from training (its
+  derivation was already running and is banked untrained at
+  `data/nnue_derived/ladder_20260829/qtemp_0.04`). The two rungs are now
+  BOTH sharper than the champion: `qtemp_0.0067` (H_tgt 0.747, predicted
+  H_net 1.91) and `qtemp_0.0005` (H_tgt 0.376, the family tie-floor,
+  predicted H_net 1.71 — the closest reachable point to BT4). Driver
+  `round2c.sh`; everything else (yardsticks, standings rule, init-from
+  extensions, kill rules) unchanged from a2c24ed99.
+- Falsifier the round now carries: the undershoot law PREDICTS the two new
+  nets' entropies (1.91, 1.71). A trained value far off the line breaks the
+  law the τ* calculation rests on and is reportable either way.
