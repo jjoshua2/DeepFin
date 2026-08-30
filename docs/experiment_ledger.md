@@ -71156,3 +71156,30 @@ as the 08-29 prereg. One ladder entry, arms confounded only by τ/steps.
   the remaining arms still read out; no arm is re-rolled inside this window.
 Confounds: GPU shares the box with the run03 corpus generator (14 workers,
 nice 15) — identical for every arm, as in round 1.
+
+**2026-08-30 AMENDMENT to the round-2 prereg (before any rung result
+exists).** Josh: "extending is fine, we tested once that schedule doesn't
+matter. Two more normal sized ones and then extend best two after that."
+Three changes, driver `round2b.sh` (the fresh-19,360 back half of
+`round2_bend.sh` was killed before any training started; its derivations
+carried over):
+1. **Extension method = `--init-from` continuation** (+9,680 steps on the
+   arm's own shards; restores optimizer moments + LR scheduler + zclip EMA,
+   LR pinned to the donor's peak so the −494-Elo warm-start trap cannot
+   fire). Continuations stamp `valid_control: false` and `compare` refuses
+   them BY DESIGN — the deciding readers here are the ext-vs-ext h2h arena
+   and the stage-5 BT4 ruler, which do not consult that stamp. The
+   schedule-null result (MID2x==LAST1x) is the measured licence.
+2. **Selection of "best two" is DYNAMIC, decided after the bend rungs by a
+   mechanical rule fixed now:** rank {0.02: 0, 0.067: −47.2 (round-1 banked
+   h2h), 0.04: its h2h-vs-0.02 Elo, 0.0067: its h2h-vs-0.02 Elo}; extend the
+   top two. A rung whose arena failed is unrankable and drops out.
+3. **Deciding yardstick for the extension question** ("is the worse one
+   coming back") becomes the ext-vs-ext h2h at equal total steps (19,360
+   each), same rules as before: loser-of-round-1 winning with CI excluding 0
+   reopens the adoption; CI spanning 0 ⇒ adoption weakly held with the slope
+   read from each ext's BT4 Δregret vs its own donor (paired, banked rows).
+The mid-checkpoint take-effect control from the original prereg is dropped
+with the fresh 2× runs it belonged to; take-effect for a continuation is the
+trainer's own `--init-from` restore refusal (it aborts at launch if any
+state did not take).
