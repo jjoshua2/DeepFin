@@ -59,11 +59,28 @@ def _recency_exponent_world() -> tuple[str, list[str]]:
 
 
 def _sigma_cap_world() -> tuple[str, list[str]]:
+    """OFF admits the consumer's own spellings — absent, or a binding whose
+    ``max(0, int(v))`` realizes 0 (an explicit ``0``, or ``0.5``).
+
+    That is ``test_target_sigma_decoupling``'s recorded contract; refusing here
+    what the knob's own consumer accepts would make this gate disagree with the
+    per-bundle gate about what OFF means (codex round 2 on PR #488).
+    """
+    import yaml
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
     from tests.test_target_sigma_decoupling import (
         _ARMED_TARGET_MAX_VISIT_CAP,
         _CAP_KEY,
     )
 
+    bound = production_bindings(_CAP_KEY, config=PRODUCTION_CONFIG)
+    if bound and len(bound) == 1:
+        flat = flatten_run_config_defaults(
+            yaml.safe_load(PRODUCTION_CONFIG.read_text(encoding="utf-8"))
+        )
+        if int(flat.get(_CAP_KEY, 0) or 0) == 0:
+            return ABSENT, []
     state = classify_production_arming(
         {_CAP_KEY: _ARMED_TARGET_MAX_VISIT_CAP}, config=PRODUCTION_CONFIG,
     )
@@ -116,12 +133,39 @@ def _bt4heads_world() -> tuple[str, list[str]]:
     ]
 
 
+def _promotion_gate_world() -> tuple[str, list[str]]:
+    """The gate bundle, read off its switch key ``gate_mode``.
+
+    The live yaml arms the whole ``gate_*`` bundle (``gate_mode: shadow`` and
+    its operating-point keys); ``main``'s copy ships none and
+    ``gate_config_from_dict`` realizes the dataclass defaults. A partial merge
+    that strips the bundle while the other bundles stay armed silently drops
+    ``gate_mode`` from ``shadow`` to the default — exactly the split this
+    module exists to catch, and the bundle was missing from its first revision
+    (codex round 2 on PR #488). Internal consistency of the bundle's VALUES is
+    the consumer tests' job (``tests/test_promotion_gate.py`` pins
+    ``gate_min_games_per_side`` against the dataclass default); here only the
+    WORLD is read, off the one key that switches the machinery on.
+    """
+    bound = production_bindings("gate_mode", config=PRODUCTION_CONFIG)
+    if not bound:
+        return ABSENT, []
+    if bound == ["shadow"]:
+        return ARMED, []
+    return "mixed", [
+        f"gate_mode is bound as {bound!r} — neither absent (main's world) nor "
+        "the single ledger'd `shadow`; a mode change is a restart-time "
+        "decision with its own ledger note"
+    ]
+
+
 _BUNDLES = {
     "era_probe": _era_probe_world,
     "replay_shard_recency_exponent": _recency_exponent_world,
     "gumbel_target_max_visit_cap": _sigma_cap_world,
     "gumbel_target_untempered_prior": _untempered_prior_world,
     "bt4heads_model_keys": _bt4heads_world,
+    "promotion_gate": _promotion_gate_world,
 }
 
 

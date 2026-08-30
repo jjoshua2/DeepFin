@@ -75,6 +75,10 @@ MATCHED_ROWS_DIGEST_KEY = "matched_rows_digest"
 #: records it in the stamp. It names the comparison's SUBJECT, not its ruler.
 NET_KEY = "net"
 
+#: Label of the WRITER — `"audit_targets.py --dump-per-position"` and its
+#: siblings. Recorded for the human reading the header, like the path keys.
+PRODUCER_KEY = "producer"
+
 #: The keys `audit_cache_stamp` writes for EVERY stamped cache, whatever the
 #: writer. `chess_anti_engine.eval.audit_cache.audit_cache_stamp` builds its
 #: header from exactly these plus the caller's `extra`, and
@@ -146,11 +150,20 @@ CORE_STAMP_KEYS: frozenset[str] = frozenset({
 #:     `AUDIT_SET_KEY` is. `MATCHED_ROWS_DIGEST_KEY` is NOT excluded: in
 #:     `--input-encoding stored` mode the scores are a function of that
 #:     snapshot's contents.
+#:   - `PRODUCER_KEY` labels WHICH SCRIPT wrote the dump, and every writer
+#:     stamps a distinct one — so treating it as identity refuses every
+#:     cross-producer join (an `audit_label_candidates.py` dump against a
+#:     banked `audit_targets.py` cache, the comparison the label-candidates
+#:     header advertises) while catching nothing: any real ruler difference
+#:     between producers is carried by the actual ruler keys (`cp_slope`,
+#:     the digests, the versions), which stay compared. The writer's name is
+#:     the measurement's byline, not its ruler (codex round 2 on PR #488).
 STAMP_NON_IDENTITY_KEYS: frozenset[str] = frozenset({
     ROW_COUNT_KEY,
     AUDIT_SET_KEY,
     MATCHED_ROWS_KEY,
     NET_KEY,
+    PRODUCER_KEY,
 })
 
 

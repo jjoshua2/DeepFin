@@ -94,14 +94,39 @@ LIVE_ONLY_TRAINER_KWARGS: tuple[str, ...] = (
 # same measurement the module header cites. If a kwarg legitimately catches up
 # on `main`, re-measure and re-pin HERE with the commit, exactly as for
 # LIVE_TRAINER_PIN itself.
-MAIN_WORLD_DRIFT_KWARGS = frozenset({
-    "w_categorical", "rebuild_categorical_target", "warmup_steps",
-    "sf_wdl_frac", "search_wdl_frac", "categorical_target_params",
-    "sf_target_params", "lr_T0", "lr_T_mult", "w_sf_move", "w_sf_own",
-    "w_sf_own_regret", "w_sf_eval", "w_sf_policy_floor",
-    "sf_policy_floor_tau", "sf_policy_floor_tau_top1",
-    "sf_policy_floor_delta_cp",
-})
+# ⚑ VALUES, not just names (codex round 2 on PR #488): a key-set check reads a
+# main-world kwarg that moved to a THIRD value — neither `main`'s nor the live
+# pin's — as still-STATE-MAIN, because its name stays in the drift. So `main`'s
+# side of the gap is pinned by VALUE, and STATE MAIN means every one of these
+# kwargs realizes exactly this while the live pin says otherwise.
+MAIN_WORLD_KWARG_VALUES: dict[str, Any] = {
+    "categorical_target_params": {
+        "blend_frac": 0.0, "search_blend_frac": 0.0, "num_bins": 32,
+        "sigma": 0.04,
+    },
+    "lr_T0": 999999,
+    "lr_T_mult": 1,
+    "rebuild_categorical_target": False,
+    "search_wdl_frac": 0.2,
+    "sf_policy_floor_delta_cp": None,
+    "sf_policy_floor_tau": None,
+    "sf_policy_floor_tau_top1": None,
+    "sf_target_params": {
+        "sf_policy_temp": 0.012, "sf_policy_label_smooth": 0.01,
+        "sf_wdl_use_cp_logistic": True, "sf_wdl_cp_slope": 0.006,
+        "sf_wdl_cp_draw_width": 120.0, "sf_policy_score_mode": "wdl",
+        "sf_policy_cp_temp": 16.2,
+    },
+    "sf_wdl_frac": 0.5,
+    "w_categorical": 0.3,
+    "w_sf_eval": 0.1,
+    "w_sf_move": 0.02,
+    "w_sf_own": 0.1,
+    "w_sf_own_regret": 0.7,
+    "w_sf_policy_floor": 0.0,
+    "warmup_steps": 72,
+}
+MAIN_WORLD_DRIFT_KWARGS = frozenset(MAIN_WORLD_KWARG_VALUES)
 assert set(LIVE_ONLY_TRAINER_KWARGS) <= MAIN_WORLD_DRIFT_KWARGS
 
 
@@ -139,6 +164,20 @@ def two_world_trainer_reference_problems(drift: Mapping[str, Any]) -> list[str]:
         "the 2026-08-29 measurement; re-measure the gap and re-pin it with the "
         "commit"
         for key in beyond
+    )
+    # ⚑ Each drifting kwarg must realize `main`'s RECORDED value, not merely a
+    # value different from the live pin — "drifts, but to a third value" is a
+    # third state wearing STATE MAIN's key set (codex round 2 on PR #488).
+    # `drift` values are `(control, reference)` tuples from
+    # `trainer_kwargs_drift`; the control side is the in-tree realization.
+    problems.extend(
+        f"the in-tree production config realizes {key!r} as {value[0]!r}, "
+        f"which is neither LIVE's pin nor `main`'s recorded "
+        f"{MAIN_WORLD_KWARG_VALUES[key]!r} — a third value, not STATE MAIN"
+        for key, value in sorted(drift.items())
+        if key in MAIN_WORLD_KWARG_VALUES
+        and isinstance(value, tuple) and len(value) == 2
+        and value[0] != MAIN_WORLD_KWARG_VALUES[key]
     )
     return problems
 
@@ -220,18 +259,29 @@ def test_a_flagship_only_hybrid_is_not_state_main() -> None:
     subset-based predicate read as a legitimate STATE MAIN. STATE MAIN is the
     MEASURED 17-kwarg gap, nothing narrower and nothing wider.
     """
-    hybrid = dict.fromkeys(LIVE_ONLY_TRAINER_KWARGS, "moved")
+    def _drift_at_main(keys: frozenset[str] | tuple[str, ...]) -> dict[str, tuple[Any, Any]]:
+        return {
+            key: (MAIN_WORLD_KWARG_VALUES[key], "live-pin") for key in keys
+        }
+
+    hybrid = _drift_at_main(LIVE_ONLY_TRAINER_KWARGS)
     problems = two_world_trainer_reference_problems(hybrid)
     assert problems, "a flagship-only drift must be a third state, not MAIN"
     assert any("sf_wdl_frac" in p for p in problems), problems
 
-    full_gap = dict.fromkeys(MAIN_WORLD_DRIFT_KWARGS, "moved")
+    full_gap = _drift_at_main(MAIN_WORLD_DRIFT_KWARGS)
     assert two_world_trainer_reference_problems(full_gap) == []
     assert two_world_trainer_reference_problems({}) == []
 
-    beyond = dict(full_gap, some_new_kwarg="moved")
+    beyond = dict(full_gap, some_new_kwarg=("x", "y"))
     problems = two_world_trainer_reference_problems(beyond)
     assert any("some_new_kwarg" in p and "re-measure" in p for p in problems), problems
+
+    # The value teeth (codex round 2): the full key set with ONE kwarg at a
+    # value that is neither main's recorded one nor the live pin must fail.
+    third_value = dict(full_gap, warmup_steps=(4242, "live-pin"))
+    problems = two_world_trainer_reference_problems(third_value)
+    assert any("third value" in p and "warmup_steps" in p for p in problems), problems
 
 
 def test_the_pinned_main_gap_is_the_measured_one() -> None:
@@ -256,13 +306,21 @@ def test_the_pinned_main_gap_is_the_measured_one() -> None:
     import yaml as _yaml
 
     flat = flatten_run_config_defaults(_yaml.safe_load(proc.stdout))
-    drift = trainer_kwargs_drift(
-        trainer_kwargs_signature(flat), LIVE_TRAINER_PIN["kwargs"],
-    )
+    signature = trainer_kwargs_signature(flat)
+    drift = trainer_kwargs_drift(signature, LIVE_TRAINER_PIN["kwargs"])
     assert set(drift) == set(MAIN_WORLD_DRIFT_KWARGS), (
         f"main's measured gap moved: missing={sorted(set(MAIN_WORLD_DRIFT_KWARGS) - set(drift))} "
         f"extra={sorted(set(drift) - set(MAIN_WORLD_DRIFT_KWARGS))}. Re-pin the "
         "constant with the commit that moved it."
+    )
+    value_moves = {
+        key: (signature.get(key, "<absent>"), MAIN_WORLD_KWARG_VALUES[key])
+        for key in MAIN_WORLD_DRIFT_KWARGS
+        if signature.get(key, "<absent>") != MAIN_WORLD_KWARG_VALUES[key]
+    }
+    assert value_moves == {}, (
+        f"main's VALUES moved (realized, pinned): {value_moves}. Re-pin "
+        "MAIN_WORLD_KWARG_VALUES with the commit that moved them."
     )
 
 

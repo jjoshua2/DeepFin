@@ -160,7 +160,12 @@ from chess_anti_engine.eval.audit import (
     load_audit_set,
     move_regrets,
 )
-from chess_anti_engine.eval.audit_cache import audit_set_provenance, write_audit_cache
+from chess_anti_engine.eval.audit_cache import write_audit_cache
+from chess_anti_engine.utils.audit_cache_format import (
+    AUDIT_SET_DIGEST_KEY,
+    AUDIT_SET_KEY,
+    PRODUCER_KEY,
+)
 from chess_anti_engine.stockfish.uci import (
     StockfishResult,
     StockfishUCI,
@@ -1662,22 +1667,31 @@ def run(cfg: GateConfig) -> dict[str, Any]:
         # spreading run metadata (run_id, started_utc) here would refuse every
         # cross-run compare, the exact comparisons this dump exists for (a
         # first cut did that; caught in review).  The full invocation record
-        # stays in the report json, where it belongs.  audit_set_provenance
-        # supplies the CONTENT digest require_same_audit_set reads; the cp map
+        # stays in the report json, where it belongs.  AUDIT_SET_DIGEST_KEY
+        # carries the CONTENT digest require_same_audit_set reads; the cp map
         # is stamped because q_from_effective_cp is on every arm's path.
         # force=True as in audit_targets: no default path, no silent clobber
         # to guard — but the write lands in a sibling tmp and replaces
         # atomically, so an interruption cannot truncate a banked dump.
+        # ⚑ The digest is `audit_sha`, hashed BEFORE scoring under
+        # `_file_stamp`'s changed-while-read refusal — re-hashing the path
+        # here would stamp whatever sits at it NOW, which after a mid-run
+        # replacement is a digest the rows were never scored against. And the
+        # tmp name carries the pid so two overlapping invocations aimed at
+        # the same output cannot interleave on one inode; the loser's
+        # `os.replace` still wins last, but each replace moves a complete,
+        # self-consistent file. (Both from codex round 2 on PR #488.)
         tmp_dump = cfg.dump_per_position.with_name(
-            cfg.dump_per_position.name + ".tmp",
+            f"{cfg.dump_per_position.name}.tmp.{os.getpid()}",
         )
         write_audit_cache(
             tmp_dump,
             dump,
             force=True,
             extra={
-                "producer": "audit_label_candidates.py --dump-per-position",
-                **audit_set_provenance(cfg.audit_set),
+                PRODUCER_KEY: "audit_label_candidates.py --dump-per-position",
+                AUDIT_SET_KEY: str(cfg.audit_set),
+                AUDIT_SET_DIGEST_KEY: audit_sha[:16],
                 "cp_slope": float(cfg.cp_slope),
                 "cp_draw_width": float(cfg.cp_draw_width),
             },
