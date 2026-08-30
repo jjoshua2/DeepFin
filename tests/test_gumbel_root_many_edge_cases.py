@@ -1,3 +1,4 @@
+import copy
 from typing import Any, cast
 
 import chess
@@ -194,6 +195,124 @@ def test_gumbel_c_refuses_a_realized_candidate_set_wider_than_compiled_cap(
             allow_candidate_cap_truncation=True,
         )
     assert result[1][0] >= 0
+
+
+def _tree_snapshot(tree: MCTSTree) -> list[tuple[Any, ...]]:
+    """Full structural identity of every node the tree currently holds.
+
+    Node count alone is too weak for the reuse path: reusing a carried root
+    adds no node, so an in-place mutation of its children/visits/Q would slip
+    past a count compare. This walks every node id and pins everything the
+    extension exposes about it.
+    """
+    snapshot: list[tuple[Any, ...]] = []
+    for node_id in range(tree.node_count()):
+        actions, visits = tree.get_children_visits(node_id)
+        snapshot.append((
+            node_id,
+            bool(tree.is_expanded(node_id)),
+            float(tree.node_q(node_id)),
+            int(tree.get_virtual_loss(node_id)),
+            tuple(int(a) for a in actions),
+            tuple(int(v) for v in visits),
+        ))
+    return snapshot
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_candidate_cap_refusal_is_atomic_across_the_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cap refusal on a LATER board must leave the whole call side-effect free.
+
+    The refusal used to sit inside the per-board loop, so in a multi-board call
+    every board before the offending one had already created or reused its root
+    in the caller's persistent tree and drawn its Gumbel noise from the caller's
+    generator. The caller then held a tree carrying half a ply and an
+    unrepeatable RNG stream, with no way to retry the ply.
+
+    Board 0 realizes one candidate (per-game budget 1) and board 1 realizes two
+    (budget 4, topk 2), so with the exported cap patched to 1 the refusal names
+    board 1 -- after board 0 would have mutated everything. Both the persistent
+    tree and ``rng.bit_generator.state`` must come back byte-identical, in the
+    fresh-root case AND in the root-reuse case.
+    """
+    import chess_anti_engine.mcts._mcts_tree as mcts_ext
+
+    run_c = _require_run_gumbel_root_many_c()
+    boards = [chess.Board(), chess.Board()]
+    per_game_simulations = [1, 4]
+    cfg = GumbelConfig(
+        input_extra_features="v1", simulations=4, topk=2,
+        temperature=0.0, add_noise=True, gumbel_scale=1.0,
+    )
+    pre_pol = np.zeros((2, POLICY_SIZE), dtype=np.float32)
+    pre_wdl = np.zeros((2, 3), dtype=np.float32)
+
+    def refuse(tree: MCTSTree, rng: np.random.Generator, root_node_ids: list[int] | None):
+        with pytest.raises(
+            ValueError,
+            match=r"board\[1\] realized 2 root candidates.*GSS_MAX_CANDS=1",
+        ):
+            run_c(
+                None, boards, device="cpu", rng=rng, cfg=cfg,
+                evaluator=_ZeroEvaluator(), tree=tree,
+                root_node_ids=root_node_ids,
+                per_game_simulations=per_game_simulations,
+                pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+            )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mcts_ext, "GSS_MAX_CANDS", 1, raising=True)
+
+        # Fresh tree: board 0 would have added and expanded a root.
+        fresh_tree = MCTSTree()
+        fresh_rng = np.random.default_rng(20260829)
+        tree_before = _tree_snapshot(fresh_tree)
+        rng_before = copy.deepcopy(fresh_rng.bit_generator.state)
+
+        refuse(fresh_tree, fresh_rng, None)
+
+        assert _tree_snapshot(fresh_tree) == tree_before, (
+            "candidate-cap refusal mutated the caller's tree for an earlier board"
+        )
+        assert fresh_rng.bit_generator.state == rng_before, (
+            "candidate-cap refusal consumed Gumbel draws for an earlier board"
+        )
+
+        # Negative control: the explicit opt-in runs the same batch, and gives
+        # us a populated tree to re-test the reuse path against.
+        carried_tree = MCTSTree()
+        allowed = run_c(
+            None, boards, device="cpu", rng=np.random.default_rng(20260829),
+            cfg=cfg, evaluator=_ZeroEvaluator(), tree=carried_tree,
+            per_game_simulations=per_game_simulations,
+            pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+            allow_candidate_cap_truncation=True,
+        )
+        carried_root_ids = list(allowed[5])
+        first_action, second_action = allowed[1]
+        assert first_action is not None
+        assert first_action >= 0
+        assert second_action is not None
+        assert second_action >= 0
+        assert carried_tree.node_count() > 0
+
+        # Reuse path: board 0's root already exists, so no node is added and a
+        # count-only compare would pass even unguarded. The full snapshot and
+        # the RNG state are what carry this case.
+        reuse_rng = np.random.default_rng(20260829)
+        carried_before = _tree_snapshot(carried_tree)
+        reuse_rng_before = copy.deepcopy(reuse_rng.bit_generator.state)
+
+        refuse(carried_tree, reuse_rng, carried_root_ids)
+
+        assert _tree_snapshot(carried_tree) == carried_before, (
+            "candidate-cap refusal mutated a reused root before failing"
+        )
+        assert reuse_rng.bit_generator.state == reuse_rng_before, (
+            "candidate-cap refusal consumed Gumbel draws on the reuse path"
+        )
 
 
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")

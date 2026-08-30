@@ -19,7 +19,7 @@ import os
 import sys as _sys
 import time as _time
 from collections.abc import Sequence
-from typing import Literal, cast, overload
+from typing import Literal, NamedTuple, cast, overload
 
 import chess
 import numpy as np
@@ -623,6 +623,59 @@ def leaf_buffer_rows(n_boards: int, *, topk: int, pipelined: bool) -> int:
     return max(256, n_boards * max(2, int(topk))) * 2
 
 
+def _realized_candidate_width(game_budget: int, topk: int, n_legal: int) -> int:
+    """Root candidates sequential halving will actually rank for one board.
+
+    ``n_legal`` is the SEARCHED legal count -- i.e. after the winning-root
+    terminal-draw prune and any ``allowed_root_indices`` narrowing, both of
+    which only ever shrink it. Callers that only need an upper bound may pass
+    the unpruned count.
+
+    Sole definition of the width. It is the number compared against the
+    compiled ``GSS_MAX_CANDS`` buffer AND the number handed to
+    ``np.argpartition``; a second copy of this arithmetic is exactly how a
+    refusal starts guarding a width the search does not run.
+    """
+    if game_budget <= 1:
+        return 1
+    m_cap = max(2, (game_budget + 1) // 2)
+    return max(2, int(min(int(topk), int(n_legal), int(m_cap))))
+
+
+def _candidate_cap_refusal(board_index: int, width: int, cap: int) -> ValueError:
+    """Build the compiled-cap refusal raised by the batch gate and its backstop."""
+    return ValueError(
+        f"run_gumbel_root_many_c: board[{board_index}] realized {width} root "
+        f"candidates, but the loaded _mcts_tree has GSS_MAX_CANDS={cap}. The C "
+        "halving scorer would rank only the first compiled-cap candidates while "
+        "the requested/recorded search stays wider. Lower topk or the "
+        "per-position simulation budget, route this search through "
+        "run_gumbel_root_many, or set allow_candidate_cap_truncation=True only "
+        "for an explicitly measured experiment."
+    )
+
+
+class _RootPrep(NamedTuple):
+    """One board's root state, frozen BEFORE anything observable is mutated.
+
+    Produced by the prep pass of ``run_gumbel_root_many_c``, which touches
+    neither the caller's persistent ``MCTSTree`` nor ``rng``; consumed by the
+    mutating pass, which does both. ``m`` is carried rather than recomputed so
+    the width the compiled-cap gate refused and the width the search actually
+    ranks are the same object, not two evaluations of the same formula.
+
+    ``m`` is 0 for a board that never reaches candidate selection (an immediate
+    root mate, or a single searched legal move) -- those boards realize no
+    halving candidates at all, so the cap cannot bind on them.
+    """
+
+    legal_idx: np.ndarray
+    priors: np.ndarray
+    pri: np.ndarray
+    terminal_mate: tuple[np.ndarray, int, float] | None
+    m: int
+
+
 @torch.no_grad()
 @overload
 def run_gumbel_root_many_c(
@@ -720,6 +773,13 @@ def run_gumbel_root_many_c(
         wider ``topk`` while silently ranking only the first compiled-cap
         candidates. True is reserved for callers that explicitly measure and
         report that truncation (the generation-zero ``--all-root-moves`` lane).
+
+        The refusal is ATOMIC OVER THE BATCH: it is decided for every board
+        before any of them creates or reuses a root in the caller's ``tree``
+        and before any of them draws from ``rng``. A caller that catches the
+        ValueError therefore still holds the exact tree and RNG stream it
+        passed in, and can retry the same ply with a narrower ``topk`` or via
+        ``run_gumbel_root_many`` without an unrepeatable partial ply behind it.
 
     ``target_batch``
         Leaves to accumulate before handing a batch to the evaluator. 0 (the
@@ -1029,6 +1089,19 @@ def run_gumbel_root_many_c(
     _c_scale = float(cfg.c_scale)
 
     _t0 = _time.perf_counter()
+  # -- 2a. Root PREP pass: legal set, terminal shortcuts, priors and the
+  # realized candidate width. Deliberately side-effect free with respect to the
+  # two things a caller can observe across boards -- it never touches the
+  # caller's persistent `tree` and never draws from `rng`. Splitting it out of
+  # the mutating pass is what makes the compiled-cap refusal below atomic over
+  # the WHOLE batch: raising from inside a single fused loop would already have
+  # created/reused roots and consumed Gumbel draws for every earlier board, so
+  # a refusal on board 1 left board 0's mutations behind.
+  #
+  # The prep pass runs `immediate_terminal_cboard_policy_or_draws` -- the only
+  # non-trivial cost here -- exactly ONCE per board, same as before the split;
+  # the mutating pass consumes `_root_preps` and recomputes nothing.
+    _root_preps: list[_RootPrep | None] = [None] * n_boards
     for i in range(n_boards):
         root_cb = root_cboards[i]
         legal_idx = (
@@ -1091,33 +1164,46 @@ def run_gumbel_root_many_c(
         pri[legal_idx] = priors
         root_pri[i] = pri
 
-        _realized_m: int | None = None
-        if terminal_mate is None and legal_idx.size > 1:
-            _game_budget = budget_remaining[i]
-            if _game_budget <= 1:
-                _realized_m = 1
-            else:
-                _m_cap = max(2, (_game_budget + 1) // 2)
-                _realized_m = int(
-                    min(int(cfg.topk), int(legal_idx.size), int(_m_cap))
-                )
-                _realized_m = max(2, _realized_m)
-            if (
-                _realized_m > _c_candidate_cap
-                and not allow_candidate_cap_truncation
-            ):
-                raise ValueError(
-                    f"run_gumbel_root_many_c: board[{i}] realized "
-                    f"{_realized_m} root candidates, but the loaded "
-                    f"_mcts_tree has GSS_MAX_CANDS={_c_candidate_cap}. "
-                    "The C halving scorer would rank only the first "
-                    "compiled-cap candidates while the requested/recorded "
-                    "search stays wider. Lower topk or the per-position "
-                    "simulation budget, route this search through "
-                    "run_gumbel_root_many, or set "
-                    "allow_candidate_cap_truncation=True only for an "
-                    "explicitly measured experiment."
-                )
+  # Realized candidate width. 0 marks a board that never reaches candidate
+  # selection: the mutating pass short-circuits on `terminal_mate` and on a
+  # single searched legal move before any halving candidate exists, so the
+  # compiled cap cannot bind on those boards.
+        _realized_m = (
+            _realized_candidate_width(
+                budget_remaining[i], cfg.topk, int(legal_idx.size),
+            )
+            if terminal_mate is None and legal_idx.size > 1
+            else 0
+        )
+        _root_preps[i] = _RootPrep(
+            legal_idx=legal_idx,
+            priors=priors,
+            pri=pri,
+            terminal_mate=terminal_mate,
+            m=_realized_m,
+        )
+
+  # -- 2b. Compiled-cap gate, over the WHOLE batch, BEFORE the mutating pass.
+  # `budget_remaining` is built once above and only read afterwards, and the
+  # prep pass took no per-board decision that a later board could change, so
+  # every width here is the width that board will actually search.
+    if not allow_candidate_cap_truncation:
+        for i, _prep in enumerate(_root_preps):
+            if _prep is not None and _prep.m > _c_candidate_cap:
+                raise _candidate_cap_refusal(i, _prep.m, _c_candidate_cap)
+
+  # -- 2c. Root MUTATING pass: persistent-tree root reuse/creation and the
+  # Gumbel draws, i.e. everything the refusal above must not have done yet.
+  # It consumes `_root_preps` and recomputes nothing from it.
+    for i in range(n_boards):
+        _prep = _root_preps[i]
+        if _prep is None:
+            continue
+        legal_idx = _prep.legal_idx
+        priors = _prep.priors
+        pri = _prep.pri
+        terminal_mate = _prep.terminal_mate
+        m = _prep.m
 
   # Reuse existing root from persistent tree, or create new one.
   # Skip when pipelining — pipeline creates its own sub-trees.
@@ -1175,6 +1261,13 @@ def run_gumbel_root_many_c(
             actions_out[i] = a0
             continue
 
+  # Defense in depth. 2b already refused the whole batch on this condition, so
+  # this cannot fire on the generic path -- it stays because it is the last
+  # statement before a candidate set reaches the C scorer's fixed-size buffer,
+  # and it reads the SAME `_prep.m` 2b checked.
+        if m > _c_candidate_cap and not allow_candidate_cap_truncation:
+            raise _candidate_cap_refusal(i, m, _c_candidate_cap)
+
   # Gumbel noise -> select top-m
         log_pri = np.log(np.maximum(pri[legal_idx], 1e-12))
         _noise_this = per_game_add_noise[i] if per_game_add_noise is not None else cfg.add_noise
@@ -1190,8 +1283,6 @@ def run_gumbel_root_many_c(
         )
         score: np.ndarray = g + log_pri
 
-        assert _realized_m is not None
-        m = _realized_m
         kth = min(m - 1, int(score.size) - 1)
         top_idx = np.argpartition(-score, kth)[:m]
         cands = legal_idx[top_idx].astype(int).tolist()
