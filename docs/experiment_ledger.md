@@ -71209,3 +71209,32 @@ adjustments?" Calculated, from banked data only (no new runs):
 - Falsifier the round now carries: the undershoot law PREDICTS the two new
   nets' entropies (1.91, 1.71). A trained value far off the line breaks the
   law the τ* calculation rests on and is reportable either way.
+
+**2026-08-31 PREREG — round 3: teacher-depth ladder (d7/d8 vs the banked
+d9).** Josh: "test shallower training like depth 7 or 8 — cheaper than trying
+11 since we already have it — find the trend line and maybe a bend." The
+staircase corpus banks depths 1–9 per position, so d7/d8 targets are pure
+re-derivations of the SAME snapshot (zero new SF compute), and
+`uniform-d<D>` keeps `value_source=deepest_phase_covering` — the arms move
+ONLY the policy teacher's depth.
+- **Arms (9,680 steps, seed 0, limit 5.5M, τ=0.02 — the round-1 champion's
+  temp):** `d7_qtemp_0.02` (`--scheme uniform-d7`), `d8_qtemp_0.02`
+  (`--scheme uniform-d8`); the d9 point is the EXISTING `qtemp_0.02` arm,
+  reused unchanged. Driver `round3_depth.sh`, gated on round2c.done so it
+  never contends with round 2 for the GPU.
+- **Deciding yardsticks (read once at completion):** h2h arena vs
+  `qtemp_0.02` (200 games, sims 100, `--search-shape training`,
+  `--no-rolling`, `--max-seconds 5400`) and stage-5 BT4 capped Δregret.
+  Audit + puzzles secondary, direction-only.
+- **Pre-committed reads:** prediction d7 < d8 < d9 on both deciders. The
+  quantity of interest is the GAP RATIO: gap(d8→d9) vs gap(d7→d8) on h2h
+  Elo and on BT4 Δregret. gap(d8→d9) clearly smaller (CIs separating) ⇒
+  teacher depth is BENDING at d9 — deeper labels (d11+) are unlikely to pay
+  and the 100M plan should spend on rows, not depth. Gaps equal or growing ⇒
+  teacher depth still buying linearly — d11 generation becomes a live
+  candidate for the next corpus. d7 ≥ d9 on the deciders ⇒ the depth axis is
+  flat and label-quality concerns move elsewhere (width, convergence).
+- Kill rule: as round 2 — a failed arm reads out as absent, no re-rolls in
+  the window.
+Confounds: shares the box with round-2 extensions (serialised via the gate)
+and the run03 generator, identical for every arm.
