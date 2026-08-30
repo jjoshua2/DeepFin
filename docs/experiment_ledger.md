@@ -71068,3 +71068,55 @@ on the winner, the ARENA governs adoption and the audit set is flagged for
 recalibration in this ledger; anchor + puzzles are diagnostic evidence in
 that note, not gates. No instrument added after this entry counts for this
 readout.
+
+**2026-08-30 Stage-2 ladder READOUT — qtemp_0.02 ADOPTED, floor KILL, and the
+mapping-level screens INVERT at the trained-net level.** Judged by the
+2026-08-29 prereg above, same session as the final reads.
+1. **Arena (ADOPTION GATE):** every sharpened arm beats the qtemp_1.0 control
+   with CI excluding 0 — qtemp_0.067 +494.0 [+422.7, +607.9], floor_0.002
+   +456.1 [+386.1, +564.9], qtemp_0.02 +485.8 [+410.4, +610.5] (200 games,
+   sims 100, `--search-shape training`, banked `evalblock/arena_*.games.jsonl`).
+   Scores saturate at 0.93–0.95, so the vs-control legs cannot rank the sharp
+   arms; the pre-declared head-to-head can: **0.067 vs 0.02 = −47.2 Elo
+   [−87.0, −8.5] — qtemp_0.02 WINS.**
+2. **Deep-SF audit (SCREEN):** same winner, no conflict-rule trigger. Raw
+   policy E[regret]/top-1 cp: qtemp_0.02 **105.2/66.9** < qtemp_0.067
+   118.6/67.9 < floor 122.5/67.2 < control 171.8/81.6. With play-search:
+   60.7 < 64.3 ≈ 64.4 < 82.1.
+3. **BT4 anchor games: VOID.** No near-50% node setting exists — the control
+   lost 0W-0D-20L to BT4 at nodes=1 (banked `anchor_probe_n1.games.jsonl`);
+   n4/n16 probes died on external node enforcement (TimeoutError). Josh
+   clarified the intent was POLICY closeness, not games. The replacement —
+   stage5 BT4 policy ruler on the frozen 4000-row T80 bank
+   (`scratchpad/t80_ruler/stage5_arm_vs_bt4.py`, per-row policies banked in
+   `arms_vs_bt4_v1.rows.jsonl`) — is post-prereg and therefore NON-GATING
+   here, recorded as diagnostic: qtemp_0.02 closest to BT4 on every axis
+   (capped Δregret vs BT4 +63.5 [+60.4, +66.9] < 0.067's +78.1 [+74.6, +81.8]
+   < floor's +89.2 [+85.6, +93.0] < control's +185.4; top-1 agree 37.4%;
+   entropy 2.18 vs BT4's 1.63). Controls: rig reproduces the banked
+   BT4-vs-T80 bar (top-1 0.6805) exactly.
+4. **Puzzles (direction-only):** same order. Policy argmax 6.67% (0.02) >
+   6.43% (0.067) ≈ 6.23% (floor) >> 3.37% (control); value flat (43.6–44.6%).
+   The sharper net wins puzzles TOO — per the prereg's framing this
+   strengthens the real-game case.
+**Verdicts:** `qtemp_0.02` **WORKED — ladder winner on the gate and every
+diagnostic.** `floor_0.002` **KILL** — no instrument prefers it to plain
+0.067, and the BT4 ruler ranks it worse with disjoint CIs; T80's 0.002 target
+floor is an f16 storage artifact, not signal (floors belong in search, not in
+training targets). `qtemp_0.067` second.
+**Named finding — MAPPING SCREENS INVERT AT THE NET LEVEL (sharp end):** the
+0.02 TARGET was the worst T80 fit of the ladder (stage-4 KL 0.91 vs 0.067's
+0.49) and lost the mapping-level deep-SF screen, yet the NET trained on it
+wins the deep-SF audit, the arena h2h, the BT4 ruler, and puzzles. Mechanism:
+nets undershoot their target's sharpness (net entropy 3.16/2.53/2.63/2.18
+across the ladder vs BT4's 1.63), so a "too sharp" target lands the trained
+net nearest the sweet spot. ⇒ the audit-first kill-before-training rule does
+NOT transfer from mapping-level screens to trained-net outcomes in the sharp
+direction; killing a sharper-than-optimal-looking TARGET without training it
+is unsound from here on.
+**Open (needs its own prereg, NOT launched):** net-level gains are monotone in
+target sharpness and the winner is still flatter than BT4 — a rung sharper
+than 0.02 (τ≈0.0067, or rank-half) is a live hypothesis.
+Confounds: none new; all arms share the derivation pipeline, corpus, steps
+(9,680), seed, and eval settings; arm-3 trained after an OOM-forced requeue
+(`--move-existing-aside`, fresh directory) with the identical command.
