@@ -71120,3 +71120,39 @@ than 0.02 (τ≈0.0067, or rank-half) is a live hypothesis.
 Confounds: none new; all arms share the derivation pipeline, corpus, steps
 (9,680), seed, and eval settings; arm-3 trained after an OOM-forced requeue
 (`--move-existing-aside`, fresh directory) with the identical command.
+
+**2026-08-30 PREREG — ladder round 2: bracket the bend, and slope-check the
+two best at 2× steps.** Follows the 08-30 readout directly; Josh's directive:
+"one or two [sharper] arms until it stops gaining and maybe one that is
+weaker so we can guess where the bend is... extend the two best... make sure
+the worse one isn't starting to come back." Same snapshot
+(`run02_snap_20260829`), deriver, seed 0, trainer config, and eval protocol
+as the 08-29 prereg. One ladder entry, arms confounded only by τ/steps.
+- **Bend rungs (9,680 steps each):** `qtemp_0.04` (between 0.067 and 0.02 —
+  expected to land BETWEEN them on the net-level rulers, locating the bend's
+  flat side) and `qtemp_0.0067` (sharper than the winner — does the monotone
+  gain continue). Deciding yardsticks, read once at completion: arena h2h vs
+  `qtemp_0.02` (200 games, sims 100, `--search-shape training`,
+  `--no-rolling`, `--max-seconds 5400`) and the stage-5 BT4 capped Δregret
+  (CI-disjointness). Pre-committed reads: 0.0067 beats 0.02 on both ⇒
+  monotone continues, optimum unbracketed on the sharp side (next rung is a
+  NEW prereg); 0.0067 loses and 0.04 loses ⇒ interior optimum bracketed at
+  [0.04, 0.0067] with 0.02 at/near it; splits between instruments ⇒ arena
+  governs (standing conflict rule).
+- **Extensions (fresh OVERPLANNED 19,360-step runs, never resume-extend, per
+  the banked extend-by-resume trap):** `qtemp_0.02_x2` and `qtemp_0.067_x2`
+  on the EXISTING derived shards. Take-effect control: each run's
+  `checkpoint_mid.pt` (step 9,680) must match its 1× arm on the BT4 ruler
+  within CI (schedule-null predicts equality; a mismatch voids the arm).
+  Deciding yardstick: h2h `qtemp_0.02_x2` vs `qtemp_0.067_x2` at equal
+  steps. Pre-committed: 0.02 ahead with CI excluding 0 ⇒ adoption confirmed
+  at 2×; 0.067_x2 WINS with CI excluding 0 ⇒ the sharpness advantage is
+  transient — re-open the 08-30 adoption in a follow-up entry; CI spans 0 ⇒
+  adoption weakly held, slope read from each arm's 2×-vs-own-1× BT4 Δregret
+  (paired on the banked rows).
+- Secondary, non-gating: deep-SF audit + puzzles per arm (direction-only),
+  stage-5 rerun banked as v3.
+- Kill rule for the ROUND: any train/derive failure marks the arm .fail and
+  the remaining arms still read out; no arm is re-rolled inside this window.
+Confounds: GPU shares the box with the run03 corpus generator (14 workers,
+nice 15) — identical for every arm, as in round 1.
