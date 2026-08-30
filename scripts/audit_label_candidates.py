@@ -1694,9 +1694,28 @@ def run(cfg: GateConfig) -> dict[str, Any]:
                 AUDIT_SET_DIGEST_KEY: audit_sha[:16],
                 "cp_slope": float(cfg.cp_slope),
                 "cp_draw_width": float(cfg.cp_draw_width),
+                # ⚑ Ruler, not metadata: every row's per-arm
+                # `expected_regret_cp_at_sigma` is a softmax at THIS sigma, so
+                # two dumps at different `--oneply-sigma` values are different
+                # rulers and must refuse to join (codex round 3 on PR #488).
+                "oneply_sigma": float(cfg.oneply_sigma),
             },
         )
+        # Durability, not just atomicity: os.replace reorders ahead of the tmp
+        # file's dirty pages on a crash, leaving the bank REPLACED by a file
+        # whose contents never reached storage. fsync the data first, then the
+        # directory so the rename itself is durable (codex round 3 on PR #488).
+        fsync_fd = os.open(tmp_dump, os.O_RDONLY)
+        try:
+            os.fsync(fsync_fd)
+        finally:
+            os.close(fsync_fd)
         os.replace(tmp_dump, cfg.dump_per_position)
+        dir_fd = os.open(cfg.dump_per_position.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     for reason in reasons:
         _LOG.error("INADMISSIBLE: %s", reason)
     return report

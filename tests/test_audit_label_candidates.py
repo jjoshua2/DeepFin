@@ -1654,6 +1654,50 @@ def test_a_whole_run_labels_through_the_depth_limit_and_dumps_the_ask(
     assert "search_limit_kind" in report["metric_definitions"]
 
 
+def test_the_dump_header_carries_the_ruler_and_none_of_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The stamp's extra is RULER IDENTITY, pinned at the writer in both
+    directions: the keys that shape the numbers are present (so
+    ``require_same_stamp`` refuses a cross-sigma or cross-slope join), and the
+    run-scoped keys are absent (so it does not refuse the cross-run joins the
+    dump exists for). ``oneply_sigma`` is here because every row's
+    ``expected_regret_cp_at_sigma`` is a softmax at that sigma — two dumps at
+    different sigmas agreed on their stamps before codex round 3 on PR #488.
+    """
+    from chess_anti_engine.utils.audit_cache_format import (
+        AUDIT_SET_DIGEST_KEY,
+        STAMP_FORMAT_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+
+    ucis = legal_ucis_of(_ROOT_FEN)
+    audit = write_audit_set(tmp_path / "audit.jsonl", [
+        audit_row(_ROOT_FEN, listed=[(u, 100 - 10 * i)
+                                     for i, u in enumerate(ucis[:10])]),
+    ])
+    arm = ScriptedChildArm("scripted", {})
+    dump = tmp_path / "rows.jsonl"
+    run_with_arms(
+        monkeypatch,
+        gate_config(
+            audit, (arm.arm,), dump_per_position=dump, oneply_sigma=0.123,
+        ),
+        [arm],
+    )
+    with open(dump, encoding="utf-8") as fh:
+        header = json.loads(fh.readline())
+    assert STAMP_FORMAT_KEY in header, "line 1 is not the provenance stamp"
+    assert header["oneply_sigma"] == pytest.approx(0.123)
+    assert "oneply_sigma" not in STAMP_NON_IDENTITY_KEYS
+    assert header["cp_slope"] == pytest.approx(gen.NNUE_CP_SLOPE)
+    assert len(header[AUDIT_SET_DIGEST_KEY]) == 16
+    for run_scoped in ("run_id", "started_utc", "nice_requested"):
+        assert run_scoped not in header, (
+            f"{run_scoped} in the stamp refuses every cross-run compare"
+        )
+
+
 def test_a_dump_row_claims_no_depth_for_an_arm_that_has_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
