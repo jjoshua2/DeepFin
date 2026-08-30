@@ -229,8 +229,10 @@ def _ep_alias_game() -> bytes:
 
     ``h2h4`` gives Black a legal ``g4xh3``; four reversible plies later the
     piece placement and side to move are identical but the e.p. right is gone.
-    ``encoding/lc0.py::_check_repetitions`` keys without ``ep_square``, so OUR
-    encoder calls that a repetition; lc0 and python-chess do not.
+    ``encoding/lc0.py::_check_repetitions`` USED to key without ``ep_square``,
+    so our encoder called that a repetition while lc0 and python-chess did not
+    -- the defect ``1a2f47e72`` fixed by reusing python-chess's own
+    legal-e.p. predicate.  The fixture is kept as that fix's positive control.
     """
     # ⚑ No black pawn on the 5th rank: the first record must not trip
     # `first_record_en_passant_risk`, which refuses a first position where the
@@ -240,16 +242,32 @@ def _ep_alias_game() -> bytes:
     return make_game(["h2h4", "c4b5", "f8f7", "b5c4", "f7f8"], start=start)
 
 
-def test_ep_alias_repetition_is_named_and_dropped_not_silently_kept() -> None:
+def test_the_ep_alias_class_is_gone_because_the_key_is_fixed() -> None:
+    """⚑ The positive control of ``1a2f47e72`` (repetition keys on LEGAL e.p.).
+
+    Before that fix this test pinned the WORKAROUND: the fixture produced
+    exactly one plane mismatch, classified as a known ep-alias and dropped
+    (``rep_ep_alias_rows == 1``, one row short).  The fix removed the class at
+    the source -- our repetition key now uses python-chess's own legal-e.p.
+    predicate, so the encoder agrees with lc0's reference planes on this exact
+    game and every row converts bit-exact with nothing to classify away.
+
+    Mutation caught: re-keying ``_check_repetitions`` without ``ep_square``
+    (reverting 1a2f47e72) re-creates the alias -- ``rep_ep_alias_rows`` goes
+    back to 1 and the zero-drop assertions below fail.  The converter's
+    classifier/drop path is deliberately KEPT: it guards the external contract
+    that our planes match lc0's, and this test proves it stays silent when
+    that contract holds.
+    """
     records = parse_v6_stream(_ep_alias_game())
     stats = VerifyStats()
     rows = convert_game("t", records, stats, _options(), game_id=0, collect=True)
-    assert stats.rep_ep_alias_rows == 1, "fixture stopped producing the e.p. alias"
-    assert stats.planes_mismatch == 0          # classified, not counted as a failure
-    assert stats.rows == stats.attempts - 1    # the row is DROPPED, not emitted
+    assert stats.rep_ep_alias_rows == 0, "the fixed key re-created the e.p. alias"
+    assert stats.planes_mismatch == 0
+    assert stats.rows == stats.attempts        # nothing is dropped any more
     assert len(rows) == stats.rows
     assert stats.ok
-    assert any("ep-alias" in reason for reason in stats.drop_reasons)
+    assert not any("ep-alias" in reason for reason in stats.drop_reasons)
 
 
 def test_an_abandoned_game_leaves_no_rows_on_the_counter() -> None:
@@ -624,7 +642,12 @@ def test_row_takes_outcome_for_wdl_and_lc0_best_q_for_search_wdl() -> None:
     assert row.wdl_target == 2  # side to move lost
     assert row.sf_wdl is None
     assert row.search_wdl is not None
-    assert list(np.round(row.search_wdl, 4)) == [0.55, 0.4, 0.05]
+    # ⚑ approx, NOT exact-after-round: the W/D/L arithmetic runs in float32
+    # under numpy 1.x value-based casting and float64 under numpy 2.x NEP 50
+    # promotion, so `round(f32(0.55...)) == 0.55` is a numpy-VERSION test, not
+    # a converter test — it passed on CI (numpy 2) and failed on the dev box
+    # (numpy 1.26) with byte-identical converter code.
+    assert list(row.search_wdl) == pytest.approx([0.55, 0.4, 0.05], abs=1e-6)
     assert row.moves_left == pytest.approx(90.0 / 450.0)
     assert row.game_id == 7
 

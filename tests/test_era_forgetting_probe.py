@@ -49,6 +49,14 @@ from chess_anti_engine.replay.shard import (
 from chess_anti_engine.tune.trainable_config_ops import construction_only_config_keys
 from chess_anti_engine.tune.trainable_phases import _run_era_probes_if_due
 from chess_anti_engine.tune.trial_config import TrialConfig
+from tests.live_yaml_arming import (
+    ABSENT,
+    ARMED,
+    PRODUCTION_CONFIG,
+    PathEndingIn,
+    classify_production_arming,
+    other_configs_mentioning,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 POLICY = 1858
@@ -698,38 +706,95 @@ def test_the_trial_loop_hands_the_probes_to_the_reporting_phase() -> None:
     assert "probe_dict=probe_dict," in phases
 
 
+# ⚑ THE ARMED BUNDLE AND THE COMMIT THAT ARMED IT.
+#
+# ``67191f995`` — "restart: deploy the 08-04 minimal-core bundle -- boot512
+# --fresh, views 4.3, gate shadow, era probes; ledger pre-registration" — put all
+# five keys into the LIVE yaml, in a commit that touches
+# ``docs/experiment_ledger.md`` in the same breath. That commit IS the
+# "restart-time ruler decision with its own ledger note" the assertion below
+# demands; it is the opposite of a config line riding in on the machinery PR.
+# The in-window leg was later re-pointed by ``0f295875c`` — "restart: EP-fix
+# deploy prereg + era-probe in-window re-point (task #220)" — which is why the
+# two legs carry different dates. Both are deliberate, pre-registered restarts.
+#
+# The paths are pinned by their trailing ``data/era_probe/<set>.npz`` only; see
+# ``tests/live_yaml_arming.PathEndingIn`` for why the machine prefix is not here.
+ERA_PROBE_ARMED: dict[str, object] = {
+    "era_probe_path": PathEndingIn("data/era_probe/era_20260804.npz"),
+    "era_probe_inwindow_path": PathEndingIn("data/era_probe/inwindow_20260816.npz"),
+    "era_probe_rows": 2048,
+    "era_probe_interval": 1,
+    "era_probe_batch_size": 512,
+}
+# The three whose value decides WHAT the column measures. The other two are the
+# throttle, and `test_the_throttle_keys_are_live_and_the_ruler_keys_are_not`
+# pins that split; naming it here only sharpens the failure message.
+ERA_PROBE_RULER_KEYS = (
+    "era_probe_path", "era_probe_inwindow_path", "era_probe_rows",
+)
+
+
 def test_no_config_ships_any_of_the_five_probe_keys() -> None:
-    """The control the PR body and the ledger entry both CLAIM. It did not
-    exist until review asked for it (PR #315, finding 4).
+    """The control the PR body and the ledger entry both CLAIM, in BOTH worlds.
 
-    "No config carries the key" was true by grep and false as a guarantee: an
-    unbacked control stated in ``docs/experiment_ledger.md`` is precisely the
-    "a rule in a doc is not a control" failure, and the ledger is the one place
-    it must never appear. Arming a probe is a RULER decision that belongs to a
-    restart with its own ledger note, not to a config line riding in on the PR
-    that added the machinery.
+    It did not exist until review asked for it (PR #315, finding 4). "No config
+    carries the key" was true by grep and false as a guarantee: an unbacked
+    control stated in ``docs/experiment_ledger.md`` is precisely the "a rule in
+    a doc is not a control" failure, and the ledger is the one place it must
+    never appear. Arming a probe is a RULER decision that belongs to a restart
+    with its own ledger note, not to a config line riding in on the PR that
+    added the machinery.
 
-    Scans every ``configs/*.yaml``, not just the production one: an
-    ``exp_*.yaml`` that armed a probe would put the columns on a different
-    run's rows while this test watched only ``pbt2_small``.
+    ⚑⚑ TWO WORLDS, BECAUSE ``configs/pbt2_small.yaml`` IS TWO FILES.
+
+    * ``main``: ABSENT. The committed copy has not moved since the live branch
+      diverged and names no probe key at all — the state the original
+      single-world assertion pinned, and it still passes here unchanged.
+    * ``ops/live-20260725``: ARMED, at the values above, since ``67191f995``
+      (in-window leg re-pointed by ``0f295875c``). That commit is the ledger'd
+      restart the paragraph above demands, so the control is SATISFIED, not
+      waived — the restart happened, the ledger entry exists, and the yaml
+      records the decision.
+
+    Any third state fails: a partially armed bundle, a key bound twice, or a
+    ruler key pointing at a set nobody pre-registered. Every OTHER
+    ``configs/*.yaml`` must still not so much as name a probe key — an
+    ``exp_*.yaml`` that armed one would put the columns on a different run's
+    rows while this test watched only ``pbt2_small``.
     """
-    keys = (
-        "era_probe_path", "era_probe_inwindow_path", "era_probe_rows",
-        "era_probe_interval", "era_probe_batch_size",
+    state = classify_production_arming(ERA_PROBE_ARMED, config=PRODUCTION_CONFIG)
+    ruler_trouble = [
+        problem for problem in state.problems
+        if any(key in problem for key in ERA_PROBE_RULER_KEYS)
+    ]
+    assert not state.problems, (
+        "configs/pbt2_small.yaml is in NEITHER known world:\n  "
+        + "\n  ".join(state.problems)
+        + "\n"
+        + (
+            "⚑ A RULER key moved. Arming or re-pointing an era probe changes "
+            "what a published column is measured over, so it needs a restart "
+            "with its own ledger note — then update the pin above and cite the "
+            "commit, exactly as 67191f995/0f295875c are cited."
+            if ruler_trouble else
+            "Only a THROTTLE key moved (interval/batch_size are live-reloadable "
+            "and do not change what the column measures). Re-pin it above with "
+            "the reason; the ruler is unaffected."
+        )
     )
-    configs = sorted((_REPO / "configs").glob("*.yaml"))
-    assert configs, "no configs found; the glob is wrong and this test is vacuous"
-    offenders = sorted(
-        f"{p.name}:{key}"
-        for p in configs
-        for key in keys
-        if key in p.read_text(encoding="utf-8")
-    )
+    # Not redundant with the line above: a classifier that returned a third
+    # world with an EMPTY problem list would be a gate that cannot fail, which
+    # is the defect this whole file is written against.
+    assert state.world in (ABSENT, ARMED), state.world
+
+    offenders = other_configs_mentioning(tuple(ERA_PROBE_ARMED))
     assert not offenders, (
         f"{offenders} — arming an era probe changes what a published column is "
         "measured over. That is a restart-time ruler decision with its own "
         "ledger note, not a config line riding in on the PR that added the "
-        "machinery."
+        "machinery. Only the LIVE production yaml may carry these keys, and "
+        "only at the pinned values above."
     )
 
 

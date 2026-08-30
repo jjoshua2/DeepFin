@@ -55,7 +55,10 @@ def test_build_environment_forces_native_lto() -> None:
         },
     )
     assert env["CC"] == "/opt/gcc15/bin/gcc"
-    assert env["LDSHARED"] == "/opt/gcc15/bin/gcc -shared"
+    # ⚑ --build-id=sha1 is load-bearing, not decoration: gcc15 builds without
+    # it ship no GNU build-id and the provenance gate refuses the .so
+    # (a41cd9d18). An expectation without the flag re-opens that hole.
+    assert env["LDSHARED"] == "/opt/gcc15/bin/gcc -shared -Wl,--build-id=sha1"
     assert env["CAE_EXT_NATIVE"] == "1"
     assert env["CAE_EXT_LTO"] == "1"
     assert "CAE_EXT_SANITIZE" not in env
