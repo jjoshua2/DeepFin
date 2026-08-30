@@ -932,16 +932,19 @@ def test_the_shortcut_flag_reaching_the_search_is_the_one_the_config_implies(
 ) -> None:
     """Read at the CONSUMER's own call, not off the realized dict.
 
-    The realized line reports `allow_terminal_root_shortcuts` by recomputing
-    `not cfg.all_root_moves`; that is the producer restating its own intent. The
-    value that matters is the keyword `run_gumbel_root_many_c` actually
-    received, so the test intercepts the call.
+    The realized line reports both C-path exceptions by recomputing them from
+    `cfg.all_root_moves`; that is the producer restating its own intent. The
+    values that matter are the keywords `run_gumbel_root_many_c` actually
+    receives, so the test intercepts the call.
     """
-    seen: list[bool] = []
+    seen: list[tuple[bool, bool]] = []
     real = GEN.run_gumbel_root_many_c
 
     def spy(*args: Any, **kwargs: Any) -> Any:
-        seen.append(bool(kwargs["allow_terminal_root_shortcuts"]))
+        seen.append((
+            bool(kwargs["allow_terminal_root_shortcuts"]),
+            bool(kwargs["allow_candidate_cap_truncation"]),
+        ))
         return real(*args, **kwargs)
 
     for all_root in (True, False):
@@ -951,9 +954,16 @@ def test_the_shortcut_flag_reaching_the_search_is_the_one_the_config_implies(
         )
         with monkeypatch.context() as patch:
             patch.setattr(GEN, "run_gumbel_root_many_c", spy)
-            _play(cfg)
-    assert seen == [False, True], (
-        "all_root_moves=True must DISABLE the shortcut and vice versa"
+            _outcome, evaluator = _play(cfg)
+        realized = GEN.realized_config(
+            gcfg=GEN.build_gumbel_config(cfg), evaluator=evaluator,
+            opening_cfg=OpeningConfig(), cfg=cfg, worker_id=0,
+        )
+        assert bool(realized["allow_candidate_cap_truncation"]) is all_root
+    assert seen == [(False, True), (True, False)], (
+        "all_root_moves=True must disable terminal shortcuts AND explicitly "
+        "opt into the measured C candidate-cap truncation; the normal lane "
+        "must do neither"
     )
 
 
@@ -961,11 +971,10 @@ def test_a_root_wider_than_the_c_candidate_cap_is_counted_and_announced() -> Non
     """⚑ P1-4: the 218-move promise meets the C sampler's 64-candidate ceiling.
 
     ``gss_score_and_halve`` clamps the scored candidate set at
-    ``GSS_MAX_CANDS``. ``--topk 218`` therefore cannot be honoured on a root
-    with more than 64 legal moves: the surplus is dropped UNSCORED while the
-    legal mask still lists it. The decision recorded in the source is that the
-    C limit stays where it is and the generator REPORTS every root that
-    exceeded it, so a readout can price the effect instead of discovering it.
+    ``GSS_MAX_CANDS``. The generic C path now REFUSES a realized set above that
+    ceiling. This generator is the deliberate exception: `--all-root-moves`
+    opts into the measured truncation and REPORTS every root that exceeded it,
+    so a readout can price the effect instead of discovering it.
 
     ⚑ The cap is read off the extension, not restated: a build whose ceiling
     moved must move this test's expectation with it.
