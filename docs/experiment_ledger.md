@@ -71238,3 +71238,25 @@ ONLY the policy teacher's depth.
   the window.
 Confounds: shares the box with round-2 extensions (serialised via the gate)
 and the run03 generator, identical for every arm.
+
+**2026-08-31 AMENDMENT to round 3 (before any round-3 result): the
+depth-curriculum arm.** Josh: "possible we want to start training on
+shallower depths while it learns, since high depth is just noise [to an
+early net], then increase depth over time." Added arm `d7to9_qtemp_0.02`:
+4,840 steps on the d7 targets, then `--init-from` continuation for 4,840
+steps on the d9 targets — total budget 9,680, matched to every other arm.
+Driver `round3b_curriculum.sh`, gated on round3.done.
+- **Pre-committed reads at matched total steps, on the round-3 deciders
+  (h2h vs `qtemp_0.02` + BT4 capped Δregret):**
+  - curriculum ≈ d9-only (CIs overlapping) ⇒ deep labels are WASTED on the
+    first half of training ⇒ the 100M generation plan should run a
+    shallow-heavy staircase with a deep top-up — depth becomes a
+    LATE-training resource, a direct generation-throughput win.
+  - curriculum < d9-only ⇒ early deep labels matter (or the switch costs);
+    curriculum dead, generate at full depth.
+  - curriculum > d9-only (CI excluding 0 on the h2h) ⇒ genuine
+    noise-annealing effect; a finer schedule becomes its own prereg.
+  - Control reads: curriculum must beat d7-only (else the d9 phase taught
+    nothing — a wiring alarm, not a verdict).
+- The continuation stamps `valid_control: false` as always; deciders are
+  arena + BT4 ruler, which do not consult it.
