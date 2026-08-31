@@ -1845,6 +1845,7 @@ def load_shard_arrays(
     path: str | Path,
     *,
     lazy: bool = False,
+    validate: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a shard's arrays + meta, dispatching on suffix.
 
@@ -1852,6 +1853,22 @@ def load_shard_arrays(
     (always eager). ``.npz`` support exists for the bootstrap pipeline and
     as a defensive read path for archival shards; the production writer is
     ``save_local_shard_arrays``.
+
+    ``validate=False`` skips ONLY ``validate_arrays`` -- the content sanity
+    pass (NaN/Inf, policy row sums, index ranges). It does NOT skip
+    ``_reject_unsafe_shard_codecs``, which is the untrusted-deserialization
+    guard (issue #411) and runs before any chunk is decoded on every path.
+
+    ⚑ DEFAULT True, AND THE DEFAULT IS THE POINT. Every other caller -- the
+    server's upload handler, the boot-time pending-dir recovery, the inbox
+    walk, the worker -- reads shards it did not just validate, and several of
+    them read shards that arrived over the network. The one caller that opts
+    out is ``DiskReplayBuffer``, which re-reads the SAME local shard ~19x per
+    run and memoizes the verdict per (path, file count, total size, newest
+    mtime); see ``DiskReplayBuffer._shard_validation_fingerprint``. Making
+    this opt-out rather than a module-level cache keeps the weakening scoped
+    to one buffer instance's own re-reads instead of applying it to readers
+    whose first sight of a shard this is.
     """
     p = Path(path)
     if p.suffix == LEGACY_SHARD_SUFFIX:
@@ -1861,7 +1878,8 @@ def load_shard_arrays(
         meta = json.loads(str(meta_json)) if meta_json else {}
         _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
-        validate_arrays(arrs)
+        if validate:
+            validate_arrays(arrs)
         return arrs, meta
     g = zarr.open_group(str(p), mode="r")
     meta = dict(g.attrs.asdict())
@@ -1889,7 +1907,8 @@ def load_shard_arrays(
     arrs = {name: np.asarray(value) for name, value in proxies.items()}
     _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
-    validate_arrays(arrs)
+    if validate:
+        validate_arrays(arrs)
     return arrs, meta
 
 
