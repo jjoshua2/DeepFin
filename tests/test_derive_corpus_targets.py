@@ -27,6 +27,7 @@ import zarr
 
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.leela_index import compact_index_for_move
+from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import arrays_to_samples, iter_shard_paths, load_shard_arrays
 from chess_anti_engine.train.value_blend_guard import (
     ValueBlendMisconfigured,
@@ -2636,15 +2637,22 @@ def test_the_frozen_value_round_parameters_are_the_ledgers() -> None:
         derive.QZ_GATE_DEPTH_MID,
         derive.QZ_GATE_DEPTH_LOW,
     ) == (9, 8, 7)
-    # The CLI's defaults are those constants and not a second copy of them.
+    # ⚑ The frozen values live on QzParams, and the CLI carries PRESENCE
+    # SENTINELS rather than a second copy of them -- so "was this knob passed"
+    # is answerable, and there is exactly one place the literals can drift from.
+    frozen = derive.QzParams()
+    assert frozen.r_boundary == derive.QZ_R_BOUNDARY
+    assert frozen.u_scale == derive.QZ_U_SCALE
+    assert frozen.w_const is None
+    assert frozen.no_boundary is False
     args = derive.build_parser().parse_args(
         ["--corpus", "c", "--out", "o", "--scheme", "uniform-d9"],
     )
     assert args.value_scheme == derive.VALUE_SCHEME_SEARCH
-    assert args.qz_r_boundary == derive.QZ_R_BOUNDARY
-    assert args.qz_u_scale == derive.QZ_U_SCALE
+    assert args.qz_r_boundary is None
+    assert args.qz_u_scale is None
     assert args.qz_w_const is None
-    assert args.qz_no_boundary is False
+    assert args.qz_no_boundary is None
 
 
 def test_the_boundary_is_the_frozen_gates_half_credit_point() -> None:
@@ -3244,8 +3252,8 @@ def test_a_baked_blend_demands_game_frac_zero_in_the_manifest(
         "--value-scheme", derive.VALUE_SCHEME_QZ50,
     )
     assert out["value_blend"]["baked_into_rows"] is True
-    assert "game_frac" in out["required_training_overrides"]
-    assert out["required_training_overrides"]["game_frac"].startswith("0.0")
+    assert out["required_training_overrides"]["game_frac"] == 0.0
+    assert "REQUIRED" in out["required_training_overrides"]["game_frac_note"]
     assert "SECOND time" in out["value_blend"]["note"]
     # And the column's own description no longer claims to be the bare search.
     assert "TARGET" in out["value_channels"]["search_wdl"]
@@ -3328,6 +3336,7 @@ def test_the_alias_and_the_new_spelling_are_one_knob() -> None:
     """
     parser = derive.build_parser()
     base = ["--corpus", "c", "--out", "o", "--scheme", "uniform-d9"]
+    assert parser.parse_args(base).qz_u_scale is None
     assert parser.parse_args([*base, "--qz-u-scale", "0.07"]).qz_u_scale == 0.07
     assert parser.parse_args([*base, "--qz-lambda-u-scale", "0.07"]).qz_u_scale == 0.07
 
@@ -3499,3 +3508,366 @@ def test_grouping_does_not_move_a_row_into_another_shard(tmp_path: Path) -> None
     )
     assert [s["rows"] for s in control["shards"]] == [5, 5, 2]
     assert [s["rows"] for s in grouped["shards"]] == [s["rows"] for s in control["shards"]]
+
+
+# ── review round 1: the gate must read the WRITTEN column ────────────────────
+
+
+def test_a_dropped_write_is_refused_even_though_the_computation_was_right(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ THE BAD *WRITE* PATH, which the computation-side test cannot reach.
+
+    ``test_a_value_scheme_that_never_reaches_the_bytes_is_refused`` monkeypatches
+    ``game_value_targets``, so it exercises the gate on a bad COMPUTATION only.
+    An independent reviewer replaced the ``search_wdl`` assignment with the
+    baseline -- the flag parses, the scheme computes correctly, the WRITE drops
+    it -- and the gate stayed silent, because it was measuring the vector it had
+    just computed rather than the column.
+
+    Here the computation is left completely alone and only the write is broken:
+    ``write_value_target`` reports honestly what it stored and simply does not
+    store the target.  The gate must fire on that.
+    """
+    # Every row of this fixture has the same searched value, so "the write
+    # stored V0's vector instead of the target" is one constant.
+    searched = wdl_of_cp(CP_TOP).astype(np.float32)
+
+    def dropped_write(sample: Any, _target: np.ndarray) -> np.ndarray:
+        # ⚑ The reviewer's mutation, as a stub: the scheme's target is computed
+        # correctly and then DISCARDED by the write, which stores the searched
+        # value and reports honestly what it stored.
+        sample.search_wdl = searched.copy()
+        return np.asarray(
+            derive.shard_stored(np.asarray(sample.search_wdl, dtype=np.float64)),
+            dtype=np.float64,
+        )
+
+    monkeypatch.setattr(derive, "write_value_target", dropped_write)
+    with pytest.raises(derive.CorpusIntegrityError, match="did not reach the bytes"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+        ])
+
+
+def test_the_take_effect_reading_comes_off_the_row_not_off_the_target() -> None:
+    """``write_value_target``'s contract, in isolation: it hands back what it
+    READ off the sample, so a writer that stores the wrong thing reports the
+    wrong thing.  A version that returned ``target`` would make every gate above
+    it unfalsifiable.
+    """
+    sample = ReplaySample(
+        x=np.zeros((1, 8, 8), dtype=np.float32),
+        policy_target=np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32),
+        wdl_target=0,
+    )
+    want = np.array([0.25, 0.5, 0.25], dtype=np.float64)
+    got = derive.write_value_target(sample, want)
+    np.testing.assert_allclose(got, want, atol=1e-3)
+    np.testing.assert_allclose(np.asarray(sample.search_wdl, dtype=float), want, atol=1e-6)
+    # ⚑ And it is the SHARD's reading, not float64: the value comes back through
+    # the float32-then-float16 cast, so a target the column cannot hold reads
+    # back as what the column holds.
+    tiny = np.array([1.0 - 2.0 ** -20, 2.0 ** -20, 0.0], dtype=np.float64)
+    back = derive.write_value_target(sample, tiny)
+    assert float(back[1]) == float(np.float16(np.float32(2.0 ** -20)))
+
+
+def test_the_control_arms_delta_is_exactly_zero_through_the_shard_cast(
+    tmp_path: Path,
+) -> None:
+    """The baseline goes through the SAME cast as the read-back, so V0's delta
+    is an exact 0 rather than 0-to-within-float16 -- which is what lets
+    ``enforce_value_scheme_take_effect`` demand equality instead of a tolerance.
+    """
+    out = run_derive(game_corpus(tmp_path), tmp_path / "out", "uniform-d9")
+    delta = out["realized"]["value_scheme_realized"]["l1_delta_vs_search_value"]
+    assert delta["max"] == 0.0
+    assert delta["min"] == 0.0
+    assert delta["mean"] == 0.0
+
+
+def test_a_shard_whose_value_column_did_not_survive_the_write_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ The BYTES, one level below the row.  ``search_wdl`` is an OPTIONAL shard
+    column gated by ``has_search_wdl``; dropped, the shard stays well formed,
+    every row reads ``has_search_wdl=0``, and the trainer falls the search
+    component back to the raw one-hot outcome.  ``_flush`` reads the column back
+    off the written file, so such a shard never leaves this process.
+    """
+    real = derive.samples_to_arrays
+
+    def strip_value(samples: Any) -> Any:
+        arrs = dict(real(samples))
+        arrs["has_search_wdl"] = np.zeros_like(np.asarray(arrs["has_search_wdl"]))
+        return arrs
+
+    monkeypatch.setattr(derive, "samples_to_arrays", strip_value)
+    with pytest.raises(derive.CorpusIntegrityError, match="value target is gone"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZ50,
+        ])
+
+
+# ── review round 1: the ablation must differ in exactly ONE way ──────────────
+
+
+def test_the_no_boundary_ablation_treats_the_last_row_as_c_full_does() -> None:
+    """⚑ C-full never consults the LAST banked row's own regret -- the backward
+    pass starts at ``count - 2`` -- so an unpriceable last row is terminal there.
+    The ablation must agree: its only licensed difference is suppressing
+    boundaries, and a version that stopped that row at itself was STRICTER than
+    the arm it ablates, on one row per game.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN, played_off_book=True),  # the LAST row, unpriceable
+    ]
+    rows = build_game(plies, result_white=1.0)
+    full = targets_for(rows)
+    ablated = targets_for(rows, no_boundary=True)
+    q = wdl_of_cp(CP_TOP)
+    terminal = 0.5 * q + 0.5 * onehot(0)  # ply 2 is White; the game is a win
+    np.testing.assert_allclose(full[2], terminal, atol=1e-12)
+    np.testing.assert_allclose(ablated[2], terminal, atol=1e-12)
+    # The stop KIND agrees too, not merely the vector.
+    for params in (derive.QzParams(), derive.QzParams(no_boundary=True)):
+        _, readings = derive.game_value_targets(
+            facts_for(rows), value_scheme=derive.VALUE_SCHEME_QZSEGMENT, params=params,
+        )
+        assert readings[2] is not None
+        assert readings[2].stop == derive.SEGMENT_TERMINAL
+
+    # ⚑ And a MID-game unpriceable row is still stopped at itself under both,
+    # so the exemption is the last row's and not a blanket one.
+    mid = build_game(
+        [Ply(played=CP_CLEAN), Ply(played=CP_CLEAN, played_off_book=True),
+         Ply(played=CP_CLEAN)],
+        result_white=1.0,
+    )
+    np.testing.assert_allclose(targets_for(mid)[1], q, atol=1e-12)
+    np.testing.assert_allclose(targets_for(mid, no_boundary=True)[1], q, atol=1e-12)
+
+
+# ── review round 1: the manifest's overrides are machine-readable ────────────
+
+
+def test_every_required_override_that_names_a_fraction_is_a_float(
+    tmp_path: Path,
+) -> None:
+    """⚑ ``float(overrides[k])`` is exactly how the rig's own guard test consumes
+    the siblings, so a prose value in the same dict is a key nothing can read.
+    The reason lives in a ``_note`` key beside it instead.
+    """
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
+    )
+    overrides = out["required_training_overrides"]
+    assert overrides["game_frac"] == 0.0
+    for key, value in overrides.items():
+        if key.endswith("_note") or key == "search_wdl_frac":
+            continue
+        assert isinstance(value, float), f"{key} is {type(value).__name__}, not a float"
+        float(value)
+    assert "REQUIRED" in overrides["game_frac_note"]
+
+
+# ── review round 1: presence, not value ──────────────────────────────────────
+
+
+def test_a_qz_knob_passed_at_its_default_value_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE POINT OF A SENTINEL DEFAULT.  ``--value-scheme search
+    --qz-r-boundary 0.27`` passes the knob EXPLICITLY and the run cannot consume
+    it; a value-based check ("does it differ from the frozen default?") waves it
+    through, which is a knob accepted and then ignored inside the one check
+    written to forbid that.
+    """
+    for flag, value in (
+        ("--qz-r-boundary", str(derive.QZ_R_BOUNDARY)),
+        ("--qz-u-scale", str(derive.QZ_U_SCALE)),
+        ("--qz-lambda-u-scale", str(derive.QZ_U_SCALE)),
+    ):
+        with pytest.raises(ValueError, match="only affect --value-scheme"):
+            derive.main([
+                "--corpus", str(game_corpus(tmp_path, name=f"c{flag}")),
+                "--out", str(tmp_path / f"out{flag}"),
+                "--scheme", "uniform-d9",
+                flag, value,
+            ])
+
+
+def test_the_frozen_defaults_are_applied_from_the_sentinel(tmp_path: Path) -> None:
+    """The sentinel must not cost the frozen values: a run that passes no qz
+    knob still derives at the ledger's 0.27 / 0.05, and the summary says so.
+    """
+    parser = derive.build_parser()
+    args = parser.parse_args(["--corpus", "c", "--out", "o", "--scheme", "uniform-d9"])
+    assert args.qz_r_boundary is None
+    assert args.qz_u_scale is None
+    assert args.qz_no_boundary is None
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    params = out["value_scheme"]["params"]
+    assert params["r_boundary"] == derive.QZ_R_BOUNDARY == 0.27
+    assert params["u_scale"] == derive.QZ_U_SCALE == 0.05
+    assert params["no_boundary"] is False
+
+
+# ── review round 1: what a truncated game's last row is told ─────────────────
+
+
+def test_a_game_cut_by_the_limit_hands_its_last_read_row_the_outcome(
+    tmp_path: Path,
+) -> None:
+    """⚑ STATED AND PINNED rather than left to the counter.  ``--limit`` cuts the
+    last game wherever the row count ran out, and that row is then treated as
+    terminal -- under C it takes ``F = Z``, the game's recorded result, which the
+    derivation did not read far enough to witness.  The behaviour is deliberate
+    (dropping the cut game's rows would make ``--limit N`` emit fewer than N rows
+    as a function of the VALUE scheme, so two arms of a paired round would hold
+    different positions); the counter is what keeps it visible.
+    """
+    plies = [Ply(played=CP_CLEAN) for _ in range(5)]
+    corpus_dir = game_corpus(tmp_path, plies)
+    out = run_derive(
+        corpus_dir, tmp_path / "cut", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT, "--limit", "3",
+    )
+    assert out["realized"]["value_scheme_realized"]["games_cut_by_limit"] == 1
+    cut = value_rows(tmp_path / "cut")
+    assert sorted(cut) == [(0, 0), (0, 1), (0, 2)]
+    q = wdl_of_cp(CP_TOP)
+    # Ply 2 is White and the game is a White win: the cut row gets the OUTCOME.
+    np.testing.assert_allclose(cut[(0, 2)].search_wdl, 0.5 * q + 0.5 * onehot(0), atol=2e-3)
+
+    # ⚑ And the same row in the UNCUT derivation is not terminal, so the cut
+    # genuinely changed what that row was told -- the counter is not decorative.
+    run_derive(
+        corpus_dir, tmp_path / "whole", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    whole = value_rows(tmp_path / "whole")
+    np.testing.assert_allclose(
+        whole[(0, 2)].search_wdl, 0.5 * q + 0.5 * onehot(0), atol=2e-3,
+    )
+    # (Both read the outcome here because the whole game is clean -- what the
+    # cut changes is WHICH row is terminal, so ply 4 exists only in the uncut
+    # run and ply 2's span differs.)
+    assert (0, 4) in whole
+    assert (0, 4) not in cut
+
+
+def test_a_writer_that_mangles_the_value_column_is_caught_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read-back's other branch: the column is present on disk but is not
+    the one handed to the writer.  ⚑ The WRITER is what is broken here, not the
+    arrays -- ``_flush`` verifies the file against the array it passed down, so
+    a serializer that silently altered the column is caught even though every
+    in-process reading agreed.
+    """
+    real_save = derive.save_local_shard_arrays
+
+    def mangling_save(path: Any, *, arrs: Any, meta: Any) -> Any:
+        written = dict(arrs)
+        values = np.asarray(written["search_wdl"]).copy()
+        # ⚑ W and L swapped: a VALID distribution that still sums to 1, so the
+        # shard writer's own "active rows have non-positive sum" check cannot
+        # see it. That check is a real guard and it covers the degenerate case;
+        # the read-back is what covers a wrong-but-well-formed one.
+        swapped = values[0][::-1].copy()
+        assert not np.array_equal(swapped, values[0]), "pick a row that is not symmetric"
+        values[0] = swapped
+        written["search_wdl"] = values
+        return real_save(path, arrs=written, meta=meta)
+
+    monkeypatch.setattr(derive, "save_local_shard_arrays", mangling_save)
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="not the one that was written",
+    ):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZ50,
+        ])
+
+
+# ── review round 1: the manifest's game_frac note is now a GATE ──────────────
+
+
+def test_the_launcher_refuses_game_frac_against_a_baked_corpus(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE NOTE TURNED INTO A GATE, and driven by the RIG'S OWN function
+    against shards this tool actually wrote -- the same pattern as
+    ``test_the_manifests_overrides_pass_the_rigs_own_guards``.
+
+    Baking the blend created a hazard that did not exist before: ``wdl_target``
+    still carries the raw outcome, so ``game_frac > 0`` mixes it in a SECOND
+    time on top of the share the scheme chose. A manifest key saying "please
+    don't" is not a defence; ``lc0_control_train`` reads the shards' own
+    ``derive_value_scheme`` stamp and refuses.
+    """
+    from scripts.lc0_control_train import baked_value_blend_problems
+
+    corpus_dir = game_corpus(tmp_path)
+    control = tmp_path / "v0"
+    baked = tmp_path / "a"
+    run_derive(corpus_dir, control, "uniform-d9")
+    run_derive(
+        corpus_dir, baked, "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
+    )
+
+    # game_frac 0 is fine against anything, baked or not.
+    assert baked_value_blend_problems({"game_frac": 0.0}, [baked]) == []
+    assert baked_value_blend_problems({"game_frac": 0.3}, [control]) == []
+    # ⚑ Absent means unbaked: every pre-value-round corpus (and every
+    # lc0_data_to_rows one) carries no such attr and must keep launching.
+    assert baked_value_blend_problems({}, [baked]) == []
+
+    problems = baked_value_blend_problems({"game_frac": 0.3}, [baked])
+    assert len(problems) == 1
+    assert derive.VALUE_SCHEME_QZ50 in problems[0]
+    assert "ALREADY blended it in" in problems[0]
+    # And the manifest's own override is the number the gate enforces.
+    summary = json.loads(
+        (baked / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
+    )
+    assert summary["required_training_overrides"]["game_frac"] == 0.0
+
+
+def test_the_launcher_gate_reads_the_stamp_and_not_the_directory_name(
+    tmp_path: Path,
+) -> None:
+    """The stamp is per SHARD, so one baked shard in a mixed --shards pool is
+    enough to refuse -- the same "coverage, not any()" lesson the sf_wdl gate
+    beside it already learned.
+    """
+    from scripts.lc0_control_train import baked_value_blend_problems
+
+    corpus_dir = game_corpus(tmp_path)
+    control = tmp_path / "v0"
+    baked = tmp_path / "c"
+    run_derive(corpus_dir, control, "uniform-d9")
+    run_derive(
+        corpus_dir, baked, "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    problems = baked_value_blend_problems({"game_frac": 0.1}, [control, baked])
+    assert len(problems) == 1
+    assert derive.VALUE_SCHEME_QZSEGMENT in problems[0]

@@ -151,6 +151,7 @@ import dataclasses
 import hashlib
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
@@ -158,6 +159,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+import zarr
 
 from chess_anti_engine.eval.lc0_control_arch import (
     LIVE_FILE_UNREAD as _LIVE_FILE_UNREAD,
@@ -803,10 +805,75 @@ def preflight(
         fail("the config is wrong for these shards:\n  " + "\n  ".join(problems))
     else:
         print("[preflight] converter run-config gate: no problems")
+
+    for message in baked_value_blend_problems(cfg, shard_dirs):
+        fail(message)
     return {
         flag: {"labelled_rows": labelled, "rows": rows}
         for flag, (labelled, rows) in coverage.items()
     }
+
+
+#: The one ``derive_value_scheme`` stamp under which ``search_wdl`` is the bare
+#: searched root value.  Every other value scheme
+#: (``scripts/derive_corpus_targets.py``'s value round) has already blended some
+#: share of the GAME OUTCOME into that column.
+UNBAKED_VALUE_SCHEME = "search"
+
+
+def baked_value_blend_problems(
+    cfg: Mapping[str, Any], shard_dirs: Sequence[Path],
+) -> list[str]:
+    """⚑⚑ ``game_frac > 0`` against shards that already baked the outcome in.
+
+    ``derive_corpus_targets.py --value-scheme {qz50,qzphase,qzsegment}`` writes a
+    blend of the searched value and the game's outcome into ``search_wdl``, while
+    ``wdl_target`` still carries the RAW outcome (it is a required shard field
+    with no has-flag, so there is no way not to).  A run with ``game_frac > 0``
+    therefore mixes the outcome in a SECOND time, on top of the share the
+    derivation already chose -- producing a value target that is no arm of the
+    value round, including the one whose name is stamped on the shards it came
+    from.  Nothing else can see it: the shards are well formed, the coverage
+    gates pass, the loss converges.
+
+    ⚑ READ OFF THE SHARDS, not off a pin.  ``PRODUCTION_GAME_FRAC`` above
+    already refuses a drift in production's own blend, and that guard is the
+    reason this hazard is closed TODAY -- but it is closed by a hand-written
+    constant that is correct for production's current recipe, so the day
+    production legitimately moves to a positive ``game_frac`` and the pin is
+    refreshed, this hazard silently opens.  The shard's own
+    ``derive_value_scheme`` attr is a property of the DATA and cannot drift
+    away from it.
+
+    ⚑ Shards that carry no such attr are the pre-value-round corpora (and every
+    ``lc0_data_to_rows`` corpus), which bake nothing: absent means unbaked, and
+    that is the only default under which existing arms keep launching.
+    """
+    game_frac = float(cfg.get("game_frac", 0.0) or 0.0)
+    if game_frac <= 0.0:
+        return []
+    baked: dict[str, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            scheme = str(
+                zarr.open_group(str(path), mode="r").attrs.get(
+                    "derive_value_scheme", UNBAKED_VALUE_SCHEME,
+                ),
+            )
+            if scheme != UNBAKED_VALUE_SCHEME:
+                baked.setdefault(scheme, f"{Path(shard_dir).name}/{path.name}")
+    if not baked:
+        return []
+    named = ", ".join(f"{scheme} (e.g. {where})" for scheme, where in sorted(baked.items()))
+    return [
+        f"game_frac={game_frac:.4f} would put that share of the RAW game outcome "
+        f"on top of shards whose search_wdl ALREADY blended it in: {named}. "
+        "Those shards were derived by derive_corpus_targets.py with a "
+        "--value-scheme other than "
+        f"{UNBAKED_VALUE_SCHEME!r}, whose manifest requires game_frac 0.0 "
+        "(required_training_overrides.game_frac). Set game_frac=0.0, or train "
+        f"on a --value-scheme {UNBAKED_VALUE_SCHEME} corpus.",
+    ]
 
 
 def preflight_architecture(

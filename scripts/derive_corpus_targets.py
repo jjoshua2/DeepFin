@@ -338,6 +338,7 @@ from chess_anti_engine.moves.leela_index import compact_index_for_move
 from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import (
     ShardMeta,
+    load_shard_arrays,
     local_shard_path,
     samples_to_arrays,
     save_local_shard_arrays,
@@ -1544,10 +1545,8 @@ def game_value_targets(
 
     ``qzphase`` (B)
         ``(1 - w) * Q_t + w * Z_t`` with ``w = ply_t / terminal_ply``, where
-        ``terminal_ply`` is the ply of the game's LAST BANKED row.  ⚑ The last
-        banked row, not the game's last ply: a corpus row is banked on a dedup
-        MISS only, so the two are the same number in ``run02`` (every game's
-        plies are contiguous, MEASURED) and need not be in general.
+        ``terminal_ply`` is the ply of the game's LAST BANKED row -- see the
+        note below on what that is and is not.
         ⚑ ``terminal_ply == 0`` -- a game with a single banked row at ply 0 --
         is ``w = 1.0``, not ``0/0``: that row IS the terminal one, and arm C
         puts pure ``Z`` there for the same reason.  Counted as
@@ -1585,7 +1584,50 @@ def game_value_targets(
         that CANNOT price its own move still stops at itself -- the ledger's
         fail-toward-Q direction is about what a row can certify, not about the
         boundaries, and the ablation removes the second without weakening the
-        first.
+        first.  The LAST banked row is exempt from that, because C-full exempts
+        it (see the comment at the branch).
+
+    ⚑⚑ WHAT "THE GAME'S LAST BANKED ROW" IS, AND WHAT IT IS NOT
+    -----------------------------------------------------------
+    Both B and C anchor on it, and it is NOT reliably the game's terminal
+    position.  Three separate things end a game's banked rows, and only the
+    third is the game ending:
+
+    * **The banking floor.** ``gen_sf_rooted_corpus`` banks a row only at
+      ``piece_count >= MIN_BANKED_PIECES`` (7) and adjudicates the game from
+      tablebases at 6 or fewer, so most games stop banking ONE UNBANKED
+      TRANSITION before they end -- the capture into TB range.  MEASURED here on
+      ``run02_snap_20260829``: the last banked row has ``piece_count == 7`` in
+      **101 of 124 games (81.5%)** over the first three shards and **95 of 133
+      (71.4%)** over ``w00-00041..43``.  ⚑ An earlier revision of this comment
+      offered PLY CONTIGUITY as the evidence that the last banked row is the
+      terminal ply.  It is not evidence of that at all: contiguity is a
+      statement about INTERNAL gaps (measured 0 in both samples, which is why
+      ``GameGrouper``'s re-open refusal is well founded) and says nothing about
+      a truncated TAIL.  Two different claims, and the wrong one was cited.
+    * **``--limit``.** It takes a PREFIX of the corpus, so the last game read is
+      cut wherever the count ran out.  Counted as ``qz_games_cut_by_limit``.
+    * The game actually ending inside banking range.
+
+    In ALL THREE the arms behave identically and deliberately: the last banked
+    row is treated as terminal, so under B it gets ``w = 1`` and under C it gets
+    ``F = Z``, the game's own recorded ``result``.  ⚑ That is CORRECT for the
+    first and third -- ``result`` is the real outcome of the whole game however
+    it was reached, adjudication included (measured: the last banked row carries
+    an ``adjudication`` block in 91 of those 124 games), so a row one unbanked
+    capture from the end is being told the truth.  Arm C simply never
+    regret-checks that final transition: rows reaching it take ``Z``
+    unconditionally, which is the one place the blunder gate does not cover.
+    For ``--limit`` it is a row handed an outcome the derivation did not read
+    far enough to witness, which is why that case alone carries a counter.
+
+    ⚑ ``--limit`` is NOT refused for the grouped schemes, deliberately.  The
+    alternative -- dropping the cut game's rows -- would make ``--limit N`` emit
+    fewer than ``N`` rows as a FUNCTION OF THE VALUE SCHEME, so two arms of a
+    paired round would hold different POSITIONS and not merely different
+    targets.  That is the same argument ``--floor`` is refused at startup for
+    rather than dropped per row.  A production arm passes no ``--limit`` and its
+    summary proves it with ``games_cut_by_limit: 0``.
     """
     count = len(facts)
     if count == 0:
@@ -1638,7 +1680,24 @@ def game_value_targets(
             # ⚑ Self-only: a row that cannot price its own move still fails
             # toward Q, exactly as under the full scheme. What the flag removes
             # is the effect of OTHER rows' blunders on this row's future.
-            stop = index if fact.played_regret is None else None
+            #
+            # ⚑⚑ AND THE LAST BANKED ROW IS EXEMPT, because C-full exempts it:
+            # the backward pass above starts at ``count - 2``, so the final
+            # row's own regret is never consulted there and it is
+            # unconditionally terminal. Without the ``index != count - 1`` term
+            # this ablation was STRICTER than the arm it ablates on the one row
+            # per game whose played move cannot be priced -- C-full said
+            # ``terminal``, C-no-segment said ``boundary_self`` and handed it
+            # pure Q. A diagnostic arm whose only job is to differ in ONE way
+            # cannot afford a second difference, however rare (found by an
+            # independent reviewer; zero rows on run02, where
+            # ``rows_missing_played_move`` is 0 -- latent, not live, and fixed
+            # rather than documented because the next corpus decides which).
+            stop = (
+                index
+                if fact.played_regret is None and index != count - 1
+                else None
+            )
         else:
             stop = default_stop
         suppressed = bool(
@@ -1870,6 +1929,16 @@ class DeriveStats:
     qz_boundary_suppressed: int = 0
     #: Rows where ``--qz-w-const`` differs from what the frozen map would have
     #: said. The take-effect proof for that flag.
+    #:
+    #: ⚑ CROSS-CHECK IT AGAINST ``qz_rows_missing_depths`` BEFORE READING A
+    #: C-full vs C-no-u CONTRAST. On a row with no d7/d8/d9 the frozen map gives
+    #: ``w = 0`` (pure Q, the fail-toward-Q rule) while a constant gives ``w =
+    #: c``, so those rows differ between the two arms by TWO changes -- the
+    #: constant AND the loss of the missing-data fallback -- not one. That is
+    #: accepted (the ledger defines C-no-u as "constant blend w", full stop) and
+    #: it is bounded exactly by the counter two fields up, which reads 0 on
+    #: run02_snap_20260829. A future corpus with missing rungs would need this
+    #: subtracted before the contrast is one-dimensional again.
     qz_w_const_differs_from_map: int = 0
     qz_regret_n: int = 0
     qz_regret_min: float = math.inf
@@ -1884,9 +1953,15 @@ class DeriveStats:
     qz_weight_max: float = -math.inf
     qz_weight_sum: float = 0.0
     #: ⚑⚑ THE TAKE-EFFECT INSTRUMENT FOR ``--value-scheme`` ITSELF: the L1
-    #: distance between the vector actually written to ``search_wdl`` and the
-    #: vector V0 would have written for the same row. It is measured on EVERY
-    #: row of EVERY scheme -- V0 included, where it must read exactly 0 -- so
+    #: distance between the vector READ BACK OFF ``sample.search_wdl`` after the
+    #: write (through the shard's own float32-then-float16 cast, see
+    #: ``write_value_target``) and the vector V0 would have written for the same
+    #: row, through that same cast. ⚑ "Read back", not "computed": measuring the
+    #: computed target would make a dropped WRITE invisible, which a reviewer
+    #: demonstrated on the first cut of this file by replacing the assignment
+    #: with the baseline and watching the gate stay silent.
+    #: It is measured on EVERY row of EVERY scheme -- V0 included, where it must
+    #: read exactly 0 -- so
     #: the proof is symmetric: a value scheme that was parsed and never applied
     #: reads 0 and the run dies, and a `search` run that somehow blended reads
     #: nonzero and dies too. `enforce_take_effect` compares it before the
@@ -2230,13 +2305,18 @@ class TargetDeriver:
             policy_target=policy.astype(np.float32),
             wdl_target=z_index,
             legal_mask=legal_mask,
-            # ⚑ The SEARCHED value goes here and not in `sf_wdl`; see the module
-            # docstring for the guard that makes `sf_wdl` unreachable on this rig.
-            # ⚑ Under a non-`search` --value-scheme this is OVERWRITTEN with the
-            # blended target once the row's game is complete (`_apply_value_scheme`);
-            # it is written here so the V0 path and the take-effect stamp both
-            # read the same vector from the same line.
-            search_wdl=q_wdl,
+            # ⚑⚑ LEFT UNSET ON PURPOSE. The searched value belongs in this
+            # column and not in `sf_wdl` (see the module docstring for the guard
+            # that makes `sf_wdl` unreachable on this rig) -- but it is written
+            # by `write_value_target`, once, for EVERY arm including V0, and
+            # `facts.q_wdl` below is where the V0 vector and the take-effect
+            # baseline both come from.
+            #
+            # Seeding it with `q_wdl` here is what hid the original defect: a
+            # write that never happened still read back as a plausible vector.
+            # Unset, a missing write is a missing COLUMN, which nothing
+            # downstream can mistake for a value.
+            search_wdl=None,
             has_policy=True,
             is_selfplay=True,
             is_network_turn=True,
@@ -2911,7 +2991,9 @@ def enforce_value_scheme_take_effect(
     """⚑⚑ The value round's take-effect proof, on the EMITTED vectors.
 
     Every check here is a comparison against ``search_wdl`` as it was actually
-    written, not against the flag that asked for it.  The failure this exists
+    written -- ``write_value_target`` reads the column back off the row through
+    the shard's own cast, and ``_flush`` reads the whole column back off the
+    written FILE -- not against the flag that asked for it.  The failure this exists
     for is the one the ledger calls this repo's signature defect: a
     ``--value-scheme`` that parses, stamps a summary, writes 5.5M rows, trains
     for 9,680 steps, and turns out to have been V0 all along -- an arm that
@@ -3144,6 +3226,71 @@ def derive(
     return out
 
 
+def write_value_target(sample: ReplaySample, target: np.ndarray) -> np.ndarray:
+    """Put the value target ON the row, and hand back WHAT THE SHARD WILL HOLD.
+
+    ⚑⚑ THE READ-BACK IS OFF THE ATTRIBUTE, NEVER OFF ``target``, and that is the
+    entire reason this is a function instead of one assignment inline.  The
+    first cut of this file measured its take-effect delta from the vector it had
+    just COMPUTED and then assigned on the next line, so the two numbers could
+    not disagree by construction: an independent reviewer replaced the
+    assignment with ``sample.search_wdl = baseline`` -- the flag parses, the
+    scheme computes, the WRITE drops it, which is this repo's signature defect
+    in its purest form -- and the gate stayed silent.  Reading the attribute
+    back closes that: the delta is now a statement about the column.
+
+    ⚑ THROUGH ``shard_stored``, i.e. the shard's own float32-then-float16 cast,
+    for the same reason the floor stamp goes through it: ``search_wdl`` is a
+    float16 column (``replay/shard.py``'s ``_OptFieldSpec``), so a float64
+    reading is two casts away from the bytes and cannot see a storage-level
+    loss.  A blend the trainer would read as the bare searched value is not a
+    blend, however exactly it was computed.
+
+    ⚑ THIS IS THE SOLE WRITER OF ``search_wdl`` ON THIS PATH, and ``derive_row``
+    deliberately leaves the column ``None`` rather than pre-seeding it with
+    ``Q``.  A pre-seed is what made the original defect invisible: with ``Q``
+    already on the row, an assignment that never happened still read back as a
+    plausible vector, and only the arms whose target differs from ``Q`` could
+    ever notice.  Unset, a missing write is a missing COLUMN -- ``has_search_wdl``
+    goes to 0 and every downstream gate, here and in the trainer's launch
+    preflight, is looking straight at it.
+
+    ⚑ HONEST LIMIT, since the alternative reads better than it is: returning
+    ``shard_stored(target)`` instead of reading the attribute back is an
+    EQUIVALENT expression for as long as the write succeeds -- both sides go
+    through the same cast of the same numbers.  Reading the attribute is not a
+    better arithmetic, it is the only form that still says something TRUE when
+    the write does not happen, which is the case the reviewer built.  What
+    neither form can catch is a serializer that stores one thing and reports
+    another; that needs the bytes, and ``_flush`` reads them back off the shard.
+    """
+    sample.search_wdl = np.asarray(target, dtype=np.float64).astype(np.float32)
+    return np.asarray(shard_stored(stored_value_target(sample)), dtype=np.float64)
+
+
+def stored_value_target(sample: ReplaySample) -> np.ndarray:
+    """The value column AS IT NOW STANDS ON THE ROW, or a refusal.
+
+    ⚑ A SEPARATE FUNCTION so the ``None`` branch is REACHABLE.  Inline, right
+    after the assignment, a type checker narrows ``search_wdl`` to non-optional
+    and the guard reads as dead code -- which it is, until the assignment above
+    it is edited away, and that is precisely the edit it exists to catch
+    (basedpyright flagged the inline form as an unnecessary comparison, which
+    was a true statement about the narrowing and a false one about the risk).
+    Read through the field's own declared ``ndarray | None`` and the branch is
+    live again.
+    """
+    written = sample.search_wdl
+    if written is None:
+        raise CorpusIntegrityError(
+            "the value target for this row was never written to search_wdl. "
+            "Every reading taken of it downstream would be a reading of "
+            "nothing, and the shard would carry has_search_wdl=0 on a row that "
+            "was handed a target.",
+        )
+    return np.asarray(written, dtype=np.float64)
+
+
 def apply_value_scheme(
     rows: Sequence[DerivedRow],
     *,
@@ -3170,9 +3317,16 @@ def apply_value_scheme(
     )
     samples: list[ReplaySample] = []
     for row, target, reading in zip(rows, targets, readings):
-        baseline = np.asarray(row.facts.q_wdl, dtype=np.float64)
-        vector = np.asarray(target, dtype=np.float64)
-        stats.note_value_delta(float(np.abs(vector - baseline).sum()))
+        # ⚑ The baseline goes through the SAME cast as the read-back, so the
+        # control's delta is exactly 0 rather than 0-to-within-float16 -- an
+        # exact zero is a much stronger reading for the gate to enforce.
+        baseline = np.asarray(
+            shard_stored(np.asarray(row.facts.q_wdl, dtype=np.float64)),
+            dtype=np.float64,
+        )
+        # ⚑ WRITE FIRST, THEN MEASURE, and measure what came back off the row.
+        stored = write_value_target(row.sample, np.asarray(target, dtype=np.float64))
+        stats.note_value_delta(float(np.abs(stored - baseline).sum()))
         if reading is not None:
             stats.note_qz_weight(reading.weight)
             if reading.stop == SEGMENT_TERMINAL:
@@ -3188,7 +3342,6 @@ def apply_value_scheme(
                 and reading.weight != reading.weight_from_map
             ):
                 stats.qz_w_const_differs_from_map += 1
-        row.sample.search_wdl = vector.astype(np.float32)
         samples.append(row.sample)
     return samples
 
@@ -3308,9 +3461,10 @@ def _flush(
     order = rng.permutation(len(samples))
     ordered = [samples[int(i)] for i in order]
     path = local_shard_path(out_dir, index)
+    arrs = samples_to_arrays(ordered)
     save_local_shard_arrays(
         path,
-        arrs=samples_to_arrays(ordered),
+        arrs=arrs,
         meta=ShardMeta(
             run_id=SHARD_RUN_ID,
             input_history_encoding=INPUT_HISTORY_ENCODING,
@@ -3321,7 +3475,46 @@ def _flush(
         ),
     )
     _stamp_shard_attrs(path, options, corpus_sha)
+    _verify_value_column_on_disk(path, arrs)
     return {"path": path.name, "rows": len(ordered)}
+
+
+def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> None:
+    """⚑⚑ READ THE VALUE COLUMN BACK OFF THE WRITTEN SHARD.
+
+    The row-level stamp in :func:`write_value_target` proves the target reached
+    the ``ReplaySample``; this proves it reached the FILE.  Between the two sits
+    ``samples_to_arrays`` -> ``save_local_shard_arrays`` -> zarr, and the shard
+    schema's ``search_wdl`` is an OPTIONAL column gated by a ``has_search_wdl``
+    flag -- exactly the shape of thing that can be dropped without any error:
+    the shard would be well formed, every row would carry ``has_search_wdl=0``,
+    the trainer's ``compute_loss`` would fall the search component back to the
+    raw one-hot outcome, and the arm would train on something no summary
+    describes.  ``lc0_control_train``'s own launch guard measures that coverage
+    for exactly this reason; measuring it HERE means a broken shard never leaves
+    this process.
+
+    Cheap enough to be unconditional: the column is ``(rows, 3)`` float16, ~48 KB
+    on a full 8,192-row shard against the ~184 MB of planes beside it.  Lazy, so
+    only that column is read.
+    """
+    stored, _ = load_shard_arrays(path, lazy=True)
+    for key in ("search_wdl", "has_search_wdl"):
+        want = np.asarray(arrs[key])
+        if key not in stored:
+            raise CorpusIntegrityError(
+                f"{path.name}: the shard was written without a {key!r} column, "
+                "so its value target is gone. Every row was handed one; a "
+                "consumer would silently fall back to the raw game outcome.",
+            )
+        got = np.asarray(stored[key])
+        if got.shape != want.shape or not np.array_equal(got, want):
+            raise CorpusIntegrityError(
+                f"{path.name}: the {key!r} column read back off the shard is "
+                f"not the one that was written (shape {got.shape} vs "
+                f"{want.shape}). The value target this run computed is not the "
+                "value target the file holds.",
+            )
 
 
 def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> None:
@@ -3536,15 +3729,26 @@ def build_summary(
                 "1.0 — the whole value target. This scheme already blended the "
                 "outcome into search_wdl at the weight it chose"
             ),
+            # ⚑ A FLOAT, next to its float siblings. It was prose, which read
+            # fine and broke the one thing a consumer does with this dict:
+            # `float(overrides["sf_wdl_frac"])` is exactly how the rig's own
+            # guard test consumes the siblings, and `float("0.0 — REQUIRED…")`
+            # raises. The reason lives in its own `_note` key instead of inside
+            # the value (review finding 3).
             **(
                 {}
                 if options.value_scheme == VALUE_SCHEME_SEARCH
-                else {"game_frac": (
-                    "0.0 — REQUIRED. wdl_target still holds the raw outcome and "
-                    "any positive share would double-count it against the share "
-                    "this scheme baked in, which is a different target from "
-                    "every arm of the round including this one"
-                )}
+                else {
+                    "game_frac": 0.0,
+                    "game_frac_note": (
+                        "REQUIRED. wdl_target still holds the raw outcome and "
+                        "any positive share would double-count it against the "
+                        "share this scheme baked in, which is a different "
+                        "target from every arm of the round including this "
+                        "one. lc0_control_train.py's launch preflight enforces "
+                        "it from the shards' own derive_value_scheme stamp"
+                    ),
+                }
             ),
         },
         "limit_requested": options.limit,
@@ -3722,7 +3926,7 @@ def build_parser() -> argparse.ArgumentParser:
              "last two assemble whole games.",
     )
     parser.add_argument(
-        "--qz-r-boundary", type=float, default=QZ_R_BOUNDARY,
+        "--qz-r-boundary", type=float, default=None,
         help=f"--value-scheme {VALUE_SCHEME_QZSEGMENT} only: the played-move "
              "regret, in q units, above which a transition ends the clean "
              f"segment. Default {QZ_R_BOUNDARY} — the half-credit point of the "
@@ -3736,7 +3940,7 @@ def build_parser() -> argparse.ArgumentParser:
         # old spelling is kept because drivers were written against it — as an
         # ALIAS onto the same value, never as a second knob that is parsed and
         # dropped.
-        "--qz-u-scale", "--qz-lambda-u-scale", type=float, default=QZ_U_SCALE,
+        "--qz-u-scale", "--qz-lambda-u-scale", type=float, default=None,
         dest="qz_u_scale",
         help=f"--value-scheme {VALUE_SCHEME_QZSEGMENT} only: the instability u "
              f"at which the blend weight saturates. w = {QZ_W_MIN} + {QZ_W_SPAN} "
@@ -3752,7 +3956,7 @@ def build_parser() -> argparse.ArgumentParser:
              "to the segment.",
     )
     parser.add_argument(
-        "--qz-no-boundary", action="store_true",
+        "--qz-no-boundary", action="store_true", default=None,
         help=f"--value-scheme {VALUE_SCHEME_QZSEGMENT} ablation C-no-segment: "
              "every row whose own played move can be priced takes the game's "
              "outcome as its future, blunder boundaries ignored; the u map still "
@@ -3779,24 +3983,26 @@ def main(argv: list[str] | None = None) -> int:
     # scheme, an out-of-range constant weight or the refused both-ablations cell
     # is rejected before the corpus is opened rather than after a partial write.
     value_scheme = parse_value_scheme(str(args.value_scheme))
-    qz = QzParams(
-        r_boundary=float(args.qz_r_boundary),
-        u_scale=float(args.qz_u_scale),
-        w_const=None if args.qz_w_const is None else float(args.qz_w_const),
-        no_boundary=bool(args.qz_no_boundary),
-    )
     # ⚑ A qz knob on a scheme that cannot consume it is REFUSED, not ignored.
     # `--value-scheme qz50 --qz-w-const 0.725` looks exactly like a configured
     # ablation and would derive arm A, and a driver that lost its --value-scheme
     # line is precisely how that typo gets made.
+    #
+    # ⚑⚑ ON PRESENCE, NOT ON VALUE, and the difference is the whole doctrine.
+    # Every qz option defaults to the None SENTINEL and the frozen default is
+    # applied below, so "was it passed" is a real question. Testing
+    # `args.qz_r_boundary != QZ_R_BOUNDARY` instead -- which is what the first
+    # cut did -- waves `--value-scheme search --qz-r-boundary 0.27` straight
+    # through: a knob EXPLICITLY passed and then ignored, inside the one check
+    # written to forbid exactly that (review finding 7).
     if value_scheme != VALUE_SCHEME_QZSEGMENT:
         unused = [
             name for name, given in (
-                ("--qz-r-boundary", args.qz_r_boundary != QZ_R_BOUNDARY),
-                ("--qz-u-scale/--qz-lambda-u-scale", args.qz_u_scale != QZ_U_SCALE),
-                ("--qz-w-const", args.qz_w_const is not None),
-                ("--qz-no-boundary", bool(args.qz_no_boundary)),
-            ) if given
+                ("--qz-r-boundary", args.qz_r_boundary),
+                ("--qz-u-scale/--qz-lambda-u-scale", args.qz_u_scale),
+                ("--qz-w-const", args.qz_w_const),
+                ("--qz-no-boundary", args.qz_no_boundary),
+            ) if given is not None
         ]
         if unused:
             raise ValueError(
@@ -3805,6 +4011,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"{value_scheme}. Accepting them here would stamp a summary "
                 "naming knobs that touched none of the emitted rows.",
             )
+    qz = QzParams(
+        r_boundary=(
+            QZ_R_BOUNDARY if args.qz_r_boundary is None
+            else float(args.qz_r_boundary)
+        ),
+        u_scale=QZ_U_SCALE if args.qz_u_scale is None else float(args.qz_u_scale),
+        w_const=None if args.qz_w_const is None else float(args.qz_w_const),
+        no_boundary=bool(args.qz_no_boundary),
+    )
     if int(args.rows_per_shard) <= 0:
         raise ValueError(
             f"--rows-per-shard must be positive, got {args.rows_per_shard!r}",
