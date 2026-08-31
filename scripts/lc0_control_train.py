@@ -177,6 +177,7 @@ from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
+from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.eval.lc0_control_replay import (
     ControlReplayDrift,
@@ -848,8 +849,32 @@ def baked_value_blend_problems(
     ⚑ Shards that carry no such attr are the pre-value-round corpora (and every
     ``lc0_data_to_rows`` corpus), which bake nothing: absent means unbaked, and
     that is the only default under which existing arms keep launching.
+
+    ⚑⚑ THE OUTCOME SHARE IS DERIVED, NEVER READ BY NAME.  ``game_frac`` IS NOT A
+    CONFIG KEY: ``configs/lc0_positive_control.yaml`` mentions it only in
+    comments, and the value is the COMPLEMENT that
+    ``normalize_value_blend_fracs`` computes from ``sf_wdl_frac`` and
+    ``search_wdl_frac``.  The first cut of this gate read ``cfg["game_frac"]``,
+    which is absent from every real flattened config -- so it took the ``0.0``
+    default, returned ``[]`` at its first branch, and could not fire on ANY
+    config that will ever be handed to it.  MEASURED: ``sf_wdl_frac 0.0 /
+    search_wdl_frac 0.5`` leaves 0.5 of the value target on the raw outcome and
+    the gate said ALLOWED.  A gate keyed to a name that never exists is this
+    repo's signature defect wearing the uniform of the check written to stop it,
+    and the tests could not see it because they passed literal
+    ``{"game_frac": ...}`` dicts -- a shape no config file produces.
+
+    So the share comes through the SAME function the loss uses (one
+    implementation, two callers -- that function's own docstring), which is the
+    same reason ``lc0_control_trainer.live_production_game_frac`` exists rather
+    than a constant.  ⚑ From THIS RUN's ``cfg``, not from the live pin: the
+    question here is what the arm being launched will put on the raw outcome,
+    which is exactly what a deviating arm gets wrong.
     """
-    game_frac = float(cfg.get("game_frac", 0.0) or 0.0)
+    _, _, game_frac = normalize_value_blend_fracs(
+        float(cfg.get("sf_wdl_frac", 0.0) or 0.0),
+        float(cfg.get("search_wdl_frac", 0.0) or 0.0),
+    )
     if game_frac <= 0.0:
         return []
     baked: dict[str, str] = {}

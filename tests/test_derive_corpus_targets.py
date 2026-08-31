@@ -53,6 +53,12 @@ FEN_B = "7k/6pp/8/8/8/8/6PP/5NK1 b - - 0 1"
 SLOPE = float(gen.NNUE_CP_SLOPE)
 DRAW_WIDTH = float(gen.NNUE_CP_DRAW_WIDTH)
 
+#: The production-control training config, by path.  ⚑ The launcher's own
+#: default (``lc0_control_train.main``'s ``--config``), so the gate tests below
+#: are driven by the file a real launch reads rather than by a dict a test
+#: invented.
+CONTROL_CONFIG = "configs/lc0_positive_control.yaml"
+
 #: The generation config both of the corpus's own records stamp.
 CONFIG_REQUESTED: dict[str, Any] = {
     "cp_slope": SLOPE,
@@ -3896,18 +3902,54 @@ def test_a_writer_that_mangles_the_value_column_is_caught_on_disk(
 # ── review round 1: the manifest's game_frac note is now a GATE ──────────────
 
 
-def test_the_launcher_refuses_game_frac_against_a_baked_corpus(
+def real_control_config(**overrides: float) -> dict[str, Any]:
+    """The PRODUCTION-CONTROL config, flattened exactly as the launcher flattens it.
+
+    ⚑⚑ NOT A HAND-BUILT DICT, and that distinction is the whole point of this
+    helper.  The first cut of these tests passed ``{"game_frac": 0.3}`` -- a
+    shape NO config file produces, because ``game_frac`` is not a config key at
+    all but the complement ``normalize_value_blend_fracs`` derives from
+    ``sf_wdl_frac`` and ``search_wdl_frac``.  Those tests proved the gate's
+    logic and never that its input carries the field it reads, so a gate keyed
+    to a name that never exists passed them all.  New-test vacuity in its exact
+    documented form.  Driving off the real file means the key set under test is
+    the key set the launcher gets.
+    """
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+    cfg = dict(flatten_run_config_defaults(load_yaml_file(CONTROL_CONFIG)))
+    cfg.update(overrides)
+    return cfg
+
+
+def test_the_real_config_has_no_game_frac_key_at_all() -> None:
+    """⚑ The premise, pinned first: the outcome share is DERIVED, never named.
+
+    If this ever starts failing because ``game_frac`` became a real key, the
+    gate below should be re-read rather than trusted -- it would then have two
+    possible sources that could disagree.
+    """
+    cfg = real_control_config()
+    assert "game_frac" not in cfg
+    assert "sf_wdl_frac" in cfg
+    assert "search_wdl_frac" in cfg
+    # And the derivation is the loss's own, not a second copy.
+    from chess_anti_engine.train.losses import normalize_value_blend_fracs
+
+    assert normalize_value_blend_fracs(0.0, 0.5)[2] == 0.5
+    assert normalize_value_blend_fracs(0.0, 1.0)[2] == 0.0
+
+
+def test_the_launcher_refuses_a_derived_outcome_share_against_a_baked_corpus(
     tmp_path: Path,
 ) -> None:
-    """⚑⚑ THE NOTE TURNED INTO A GATE, and driven by the RIG'S OWN function
-    against shards this tool actually wrote -- the same pattern as
-    ``test_the_manifests_overrides_pass_the_rigs_own_guards``.
+    """⚑⚑ THE GATE, DRIVEN BY A REAL CONFIG.  ``sf_wdl_frac 0.0 /
+    search_wdl_frac 0.5`` leaves HALF the value target on the raw game outcome
+    -- and ``wdl_target`` still carries that outcome on a baked shard, so it
+    would be counted a second time on top of the share the scheme chose.
 
-    Baking the blend created a hazard that did not exist before: ``wdl_target``
-    still carries the raw outcome, so ``game_frac > 0`` mixes it in a SECOND
-    time on top of the share the scheme chose. A manifest key saying "please
-    don't" is not a defence; ``lc0_control_train`` reads the shards' own
-    ``derive_value_scheme`` stamp and refuses.
+    The config carries no ``game_frac`` key, so a gate that read one by name
+    took its 0.0 default and allowed this. Measured, before the fix: ALLOWED.
     """
     from scripts.lc0_control_train import baked_value_blend_problems
 
@@ -3920,22 +3962,45 @@ def test_the_launcher_refuses_game_frac_against_a_baked_corpus(
         "--value-scheme", derive.VALUE_SCHEME_QZ50,
     )
 
-    # game_frac 0 is fine against anything, baked or not.
-    assert baked_value_blend_problems({"game_frac": 0.0}, [baked]) == []
-    assert baked_value_blend_problems({"game_frac": 0.3}, [control]) == []
-    # ⚑ Absent means unbaked: every pre-value-round corpus (and every
-    # lc0_data_to_rows one) carries no such attr and must keep launching.
-    assert baked_value_blend_problems({}, [baked]) == []
-
-    problems = baked_value_blend_problems({"game_frac": 0.3}, [baked])
+    hazard = real_control_config(sf_wdl_frac=0.0, search_wdl_frac=0.5)
+    assert "game_frac" not in hazard  # the key the broken gate looked for
+    problems = baked_value_blend_problems(hazard, [baked])
     assert len(problems) == 1
     assert derive.VALUE_SCHEME_QZ50 in problems[0]
     assert "ALREADY blended it in" in problems[0]
-    # And the manifest's own override is the number the gate enforces.
-    summary = json.loads(
-        (baked / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
+    assert "0.5000" in problems[0]  # the DERIVED share, reported
+
+    # The same hazardous config is fine against the CONTROL arm's shards ...
+    assert baked_value_blend_problems(hazard, [control]) == []
+    # ... and the production config, whose derived share is 0, is fine against
+    # the baked one. Both directions, so the gate is not simply always-on.
+    shipped = real_control_config()
+    from chess_anti_engine.train.losses import normalize_value_blend_fracs
+
+    assert normalize_value_blend_fracs(
+        float(shipped["sf_wdl_frac"]), float(shipped["search_wdl_frac"]),
+    )[2] == 0.0
+    assert baked_value_blend_problems(shipped, [baked]) == []
+
+
+def test_a_legacy_corpus_without_the_stamp_still_launches(tmp_path: Path) -> None:
+    """⚑ Absent means unbaked.  Every pre-value-round corpus and every
+    ``lc0_data_to_rows`` corpus carries no ``derive_value_scheme`` attr, and a
+    gate that refused them would block arms this PR has nothing to do with.
+    """
+    from scripts.lc0_control_train import baked_value_blend_problems
+
+    baked = tmp_path / "a"
+    run_derive(
+        game_corpus(tmp_path), baked, "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
     )
-    assert summary["required_training_overrides"]["game_frac"] == 0.0
+    hazard = real_control_config(sf_wdl_frac=0.0, search_wdl_frac=0.5)
+    assert baked_value_blend_problems(hazard, [baked])  # refused while stamped
+    for path in iter_shard_paths(baked):
+        group = zarr.open_group(str(path), mode="a")
+        del group.attrs["derive_value_scheme"]
+    assert baked_value_blend_problems(hazard, [baked]) == []
 
 
 def test_the_launcher_gate_reads_the_stamp_and_not_the_directory_name(
