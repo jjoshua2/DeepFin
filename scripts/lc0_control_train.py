@@ -151,6 +151,7 @@ import dataclasses
 import hashlib
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
@@ -158,6 +159,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+import zarr
 
 from chess_anti_engine.eval.lc0_control_arch import (
     LIVE_FILE_UNREAD as _LIVE_FILE_UNREAD,
@@ -175,6 +177,7 @@ from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
+from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.eval.lc0_control_replay import (
     ControlReplayDrift,
@@ -803,10 +806,219 @@ def preflight(
         fail("the config is wrong for these shards:\n  " + "\n  ".join(problems))
     else:
         print("[preflight] converter run-config gate: no problems")
+
+  # ⚑ TWO SEPARATE VALUE-TARGET GATES, and the order matters for the operator
+  # rather than for correctness: the identity gate runs UNCONDITIONALLY (a mixed
+  # corpus is wrong under every blend, including the shipped one), and the
+  # blend gate is about what THIS config would add on top. Folding them into one
+  # function is what hid the mixing hazard behind the blend's early return.
+    for message in value_scheme_identity_problems(shard_dirs):
+        fail(message)
+    for message in baked_value_blend_problems(cfg, shard_dirs):
+        fail(message)
     return {
         flag: {"labelled_rows": labelled, "rows": rows}
         for flag, (labelled, rows) in coverage.items()
     }
+
+
+#: The one ``derive_value_scheme`` stamp under which ``search_wdl`` is the bare
+#: searched root value.  Every other value scheme
+#: (``scripts/derive_corpus_targets.py``'s value round) has already blended some
+#: share of the GAME OUTCOME into that column.
+UNBAKED_VALUE_SCHEME = "search"
+
+#: The ``derive_schema`` numbers THIS code knows how to read: 1 is the original
+#: contract (``search_wdl`` is the searched root value) and 2 is the value
+#: round's baked target.
+#:
+#: ⚑⚑ THE POINT OF READING IT AT ALL.  MEASURED on this tree: `derive_schema` had
+#: no reader anywhere in the repo -- the deriver stamped it, one write-side test
+#: asserted it, and `load_shard_arrays` copied the whole attrs dict through
+#: without inspecting a single version field.  A schema number nobody reads is
+#: this repo's signature defect in its purest form, and bumping such a number
+#: protects nothing.  So the bump comes with the reader that makes it mean
+#: something on the one path the value round actually trains through.
+#:
+#: ⚑ It FAILS CLOSED on a number from the future: a schema 3 written by a later
+#: deriver is refused here rather than trained on under schema-2 assumptions,
+#: which is the whole reason a version field exists.  The duplication with
+#: ``derive_corpus_targets.DERIVE_SCHEMA*`` is deliberate -- importing that
+#: module pulls the corpus generator's import chain into a training launcher --
+#: and ``tests/test_derive_corpus_targets.py`` pins the two together, so a
+#: divergence is a failing test rather than a silently narrowed gate.
+KNOWN_DERIVE_SCHEMAS = (1, 2)
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardValueStamps:
+    """What ``--shards`` says about itself, read off the shards themselves."""
+
+    #: ``derive_value_scheme`` -> one example ``dir/shard`` carrying it.  An
+    #: absent stamp is recorded as :data:`UNBAKED_VALUE_SCHEME`, because that is
+    #: what every pre-value-round corpus holds.
+    schemes: dict[str, str]
+    #: ``derive_schema`` -> one example ``dir/shard`` carrying it.
+    schemas: dict[int, str]
+
+
+def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
+    """Read every shard's value-identity attrs.  No policy, just the reading."""
+    schemes: dict[str, str] = {}
+    schemas: dict[int, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            where = f"{Path(shard_dir).name}/{path.name}"
+            scheme = str(attrs.get("derive_value_scheme", UNBAKED_VALUE_SCHEME))
+            schemes.setdefault(scheme, where)
+            # ⚑ ABSENT MEANS 1, and it has to: every shard written before the
+            # deriver stamped anything, and every `lc0_data_to_rows` corpus,
+            # holds the original contract and carries no attr at all.
+            schemas.setdefault(int(attrs.get("derive_schema", 1)), where)
+    return ShardValueStamps(schemes=schemes, schemas=schemas)
+
+
+def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
+    """⚑⚑ ONE value-target identity across ``--shards``, whatever the blend is.
+
+    This is NOT the ``game_frac`` guard below and must not be folded into it.
+    That one asks "would training add the outcome to shards that already have
+    it", and under the SHIPPED blend (``sf_wdl_frac 0.0`` / ``search_wdl_frac
+    1.0``) its answer is legitimately no -- so it returns at its first branch
+    and never looks at a stamp.  MEASURED: with the shipped blend, a
+    ``--shards`` list naming a ``qz50`` directory, a ``qzsegment`` directory and
+    a legacy one passed every launch guard, and the run trained on a per-row
+    mixture of three different value targets -- a corpus that is none of the
+    preregistered arms and that no summary anywhere would describe (Codex review
+    of PR #491).
+
+    The value round's entire method is that V0/A/B/C hold the SAME positions and
+    differ only in ``search_wdl``.  A run whose buffer mixes two of them cannot
+    be attributed to either, and nothing downstream would ever notice: the rows
+    are shape-compatible, the encoding identity matches, and the buffer merges
+    them without complaint.
+
+    ⚑ An ABSENT stamp is ``search``, so a legacy corpus and a V0 corpus are ONE
+    identity and mixing them is allowed -- they hold the same thing under the
+    same contract.  That is the only default under which existing arms keep
+    launching.
+    """
+    stamps = read_value_stamps(shard_dirs)
+    problems: list[str] = []
+    unknown = sorted(s for s in stamps.schemas if s not in KNOWN_DERIVE_SCHEMAS)
+    if unknown:
+        named = ", ".join(f"{s} (e.g. {stamps.schemas[s]})" for s in unknown)
+        problems.append(
+            f"--shards carries derive_schema {named}, which this code does not "
+            f"know how to read (it understands {list(KNOWN_DERIVE_SCHEMAS)}). "
+            "The schema number changes when the MEANING of an emitted column "
+            "changes, so a newer one means search_wdl may hold something this "
+            "trainer would misread as a value it is not. Update this launcher "
+            "to the deriver that wrote these shards.",
+        )
+    if len(stamps.schemes) > 1:
+        named = ", ".join(
+            f"{scheme} (e.g. {where})" for scheme, where in sorted(stamps.schemes.items())
+        )
+        problems.append(
+            f"--shards mixes {len(stamps.schemes)} different value-target "
+            f"identities: {named}. Every row is sampled into ONE replay buffer, "
+            "so the trained value target would be a per-row mixture of these "
+            "arms rather than any one of them -- none of the preregistered "
+            "V0/A/B/C cells, and nothing that could be compared against them. "
+            "Train one --value-scheme at a time. (An absent stamp reads as "
+            f"{UNBAKED_VALUE_SCHEME!r}: legacy and V0 corpora are one identity "
+            "and may be mixed.)",
+        )
+    return problems
+
+
+def baked_value_blend_problems(
+    cfg: Mapping[str, Any], shard_dirs: Sequence[Path],
+) -> list[str]:
+    """⚑⚑ ``game_frac > 0`` against shards that already baked the outcome in.
+
+    ``derive_corpus_targets.py --value-scheme {qz50,qzphase,qzsegment}`` writes a
+    blend of the searched value and the game's outcome into ``search_wdl``, while
+    ``wdl_target`` still carries the RAW outcome (it is a required shard field
+    with no has-flag, so there is no way not to).  A run with ``game_frac > 0``
+    therefore mixes the outcome in a SECOND time, on top of the share the
+    derivation already chose -- producing a value target that is no arm of the
+    value round, including the one whose name is stamped on the shards it came
+    from.  Nothing else can see it: the shards are well formed, the coverage
+    gates pass, the loss converges.
+
+    ⚑ READ OFF THE SHARDS, not off a pin.  ``PRODUCTION_GAME_FRAC`` above
+    already refuses a drift in production's own blend, and that guard is the
+    reason this hazard is closed TODAY -- but it is closed by a hand-written
+    constant that is correct for production's current recipe, so the day
+    production legitimately moves to a positive ``game_frac`` and the pin is
+    refreshed, this hazard silently opens.  The shard's own
+    ``derive_value_scheme`` attr is a property of the DATA and cannot drift
+    away from it.
+
+    ⚑ Shards that carry no such attr are the pre-value-round corpora (and every
+    ``lc0_data_to_rows`` corpus), which bake nothing: absent means unbaked, and
+    that is the only default under which existing arms keep launching.
+
+    ⚑⚑ THE OUTCOME SHARE IS DERIVED, NEVER READ BY NAME.  ``game_frac`` IS NOT A
+    CONFIG KEY: ``configs/lc0_positive_control.yaml`` mentions it only in
+    comments, and the value is the COMPLEMENT that
+    ``normalize_value_blend_fracs`` computes from ``sf_wdl_frac`` and
+    ``search_wdl_frac``.  The first cut of this gate read ``cfg["game_frac"]``,
+    which is absent from every real flattened config -- so it took the ``0.0``
+    default, returned ``[]`` at its first branch, and could not fire on ANY
+    config that will ever be handed to it.  MEASURED: ``sf_wdl_frac 0.0 /
+    search_wdl_frac 0.5`` leaves 0.5 of the value target on the raw outcome and
+    the gate said ALLOWED.  A gate keyed to a name that never exists is this
+    repo's signature defect wearing the uniform of the check written to stop it,
+    and the tests could not see it because they passed literal
+    ``{"game_frac": ...}`` dicts -- a shape no config file produces.
+
+    So the share comes through the SAME function the loss uses (one
+    implementation, two callers -- that function's own docstring), which is the
+    same reason ``lc0_control_trainer.live_production_game_frac`` exists rather
+    than a constant.  ⚑ From THIS RUN's ``cfg``, not from the live pin: the
+    question here is what the arm being launched will put on the raw outcome,
+    which is exactly what a deviating arm gets wrong.
+    """
+    _, _, game_frac = normalize_value_blend_fracs(
+        float(cfg.get("sf_wdl_frac", 0.0) or 0.0),
+        float(cfg.get("search_wdl_frac", 0.0) or 0.0),
+    )
+    if game_frac <= 0.0:
+        return []
+    baked = {
+        scheme: where
+        for scheme, where in read_value_stamps(shard_dirs).schemes.items()
+        if scheme != UNBAKED_VALUE_SCHEME
+    }
+    if not baked:
+        return []
+    named = ", ".join(f"{scheme} (e.g. {where})" for scheme, where in sorted(baked.items()))
+    return [
+        f"game_frac={game_frac:.4f} would put that share of the RAW game outcome "
+        f"on top of shards whose search_wdl ALREADY blended it in: {named}. "
+        "Those shards were derived by derive_corpus_targets.py with a "
+        f"--value-scheme other than {UNBAKED_VALUE_SCHEME!r}, whose manifest "
+        "requires the outcome share to be 0 "
+        "(required_training_overrides.game_frac). "
+        # ⚑⚑ NAME THE KEYS THAT EXIST. An earlier version of this line told the
+        # operator to "set game_frac=0.0" -- and `game_frac` is not a config
+        # key, it is the complement this function has just DERIVED. Following
+        # that advice puts an unknown key in the yaml, which
+        # `flatten_run_config_defaults` raises on before the main parser is even
+        # built, so the next launch dies at startup with an error about a key
+        # this message invented (CLAUDE.md's live-yaml category (a)). A refusal
+        # that hands the operator a remedy which cannot work is worse than one
+        # that hands them none (Codex review of PR #491).
+        "FIX: there is no game_frac key to set -- raise sf_wdl_frac + "
+        "search_wdl_frac until they sum to at least 1.0, which leaves nothing "
+        "for the outcome complement; the shipped control's sf_wdl_frac: 0.0 "
+        "with search_wdl_frac: 1.0 already does. Or train "
+        f"on a --value-scheme {UNBAKED_VALUE_SCHEME} corpus.",
+    ]
 
 
 def preflight_architecture(
