@@ -52,8 +52,19 @@ _REPO = Path(__file__).resolve().parents[1]
 # total that tests/test_param_count.py pins.
 _PROD_MATRIX_TENSORS = 48
 _PROD_MATRIX_PARAMS = 18_033_664
-_PROD_CLIPPED_TENSORS = 433
-_PROD_CLIPPED_PARAMS = 45_050_464
+#: ⚑ TWO CORRECT CLIPPED COUNTS — WHICH ONE DEPENDS ON WHICH BRANCH'S
+#: configs/pbt2_small.yaml this tree carries (CLAUDE.md "Configs": live
+#: realizes 61,444,448 trainable, main's copy 63,084,128; the 1,639,680 gap is
+#: the bt4heads bundle).  The matrix (Aurora, mlp_out) group is BYTE-IDENTICAL
+#: across both worlds — the whole branch delta lands on the AdamW/clipped
+#: side, which is why the pair below differs only there and why each pair sums
+#: with the matrix pin to exactly its branch's total.  The test accepts
+#: exactly these two worlds and refuses any third: a drift to a NEW split
+#: still fails, which is the pin's whole job.
+_PROD_CLIPPED_WORLDS = {
+    "main-yaml": (433, 45_050_464),   # 18_033_664 + 45_050_464 = 63_084_128
+    "live-yaml": (431, 43_410_784),   # 18_033_664 + 43_410_784 = 61_444_448
+}
 
 
 class _TinyMuonModel(nn.Module):
@@ -237,7 +248,12 @@ def test_production_config_split_is_the_measured_one() -> None:
         return sum({p.untyped_storage().data_ptr(): p.numel() for p in params}.values())
 
     assert (len(matrix), unique_params(matrix)) == (_PROD_MATRIX_TENSORS, _PROD_MATRIX_PARAMS)
-    assert (len(clipped), unique_params(clipped)) == (_PROD_CLIPPED_TENSORS, _PROD_CLIPPED_PARAMS)
+    measured = (len(clipped), unique_params(clipped))
+    assert measured in _PROD_CLIPPED_WORLDS.values(), (
+        f"clipped split {measured} matches NEITHER recorded world "
+        f"{_PROD_CLIPPED_WORLDS}: the split itself moved, not just the branch. "
+        "Re-measure deliberately and record which change moved it."
+    )
 
 
 # --- what zclip actually measures and rescales ------------------------------

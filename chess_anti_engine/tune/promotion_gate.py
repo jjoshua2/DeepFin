@@ -1055,14 +1055,22 @@ class GateConfig:
     # on BOTH axes at once -- false-brake 0.0176% vs 0.0346%, and 50% power at
     # -236 vs -244. 26 is where admissions start to cost (93/96). Not applied
     # here because ``gate_min_games_per_side`` is ALSO pinned in the LIVE
-    # (uncommitted) ``configs/pbt2_small.yaml``, whose own comment requires a
+    # ``configs/pbt2_small.yaml``, whose own comment requires a
     # ledger line for a change to the alarm's operating point; the two must
     # move together or the docs go stale again by the mechanism this whole
-    # section exists to record. ⚑ Do not look for that second copy in the
-    # COMMITTED yaml -- it ships no ``gate_*`` keys at all (see its own comment
-    # saying they are "deliberately NOT listed here yet"), so
-    # ``gate_config_from_dict`` falls back to this default and the committed
-    # tree has exactly ONE copy. The live file has the other.
+    # section exists to record. ⚑ WHERE that second copy sits is
+    # BRANCH-DEPENDENT, because the path is one file in two worlds: on
+    # ``main`` the committed yaml ships no ``gate_*`` keys (its comment says
+    # they are "deliberately NOT listed here yet"), ``gate_config_from_dict``
+    # falls back to this default, and that tree has exactly ONE copy. On
+    # ``ops/live-20260725`` the committed yaml IS the live file and carries
+    # the whole ``gate_*`` bundle -- ``gate_min_games_per_side: 15``
+    # included -- so there the committed tree has BOTH copies and they must
+    # agree. An earlier revision of this paragraph asserted ``main``'s world
+    # unconditionally ("do not look in the COMMITTED yaml"), which on the
+    # live branch was a false sentence pinned by a passing test (review of
+    # PR #488); ``tests/test_promotion_gate.py`` now checks the agreement
+    # instead of the prose.
     min_games_per_side: int = 15
     # -25, and the derivation is a FALSE-BRAKE BUDGET, not a sigma count. A
     # 4-sigma line (-45) was the first choice and it does not deliver what the

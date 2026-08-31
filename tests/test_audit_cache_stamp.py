@@ -1181,3 +1181,48 @@ def test_stored_mode_names_the_matched_rows_snapshot_in_the_stamp() -> None:
     # The path is for the human and must not be compared; the digest must be.
     assert MATCHED_ROWS_KEY in STAMP_NON_IDENTITY_KEYS
     assert MATCHED_ROWS_DIGEST_KEY not in STAMP_NON_IDENTITY_KEYS
+
+
+def test_the_producer_label_is_not_ruler_identity(tmp_path: Path) -> None:
+    """Cross-producer joins are the header's ADVERTISED use, so the byline
+    must not be compared as a ruler (codex round 2 on PR #488).
+
+    Every writer stamps a distinct `producer` — `audit_targets.py`,
+    `value_regret.py`, `blindspot_panel.py`, `audit_label_candidates.py` — so
+    treating the key as identity made `require_same_stamp` refuse EVERY pair
+    of dumps from different scripts while catching nothing: a real ruler
+    difference between producers is carried by the keys that stay compared.
+    Both directions here: the producers may differ, and the ruler still
+    may not.
+    """
+    import scripts.paired_compare as pc
+    from chess_anti_engine.utils.audit_cache_format import (
+        PRODUCER_KEY,
+        STAMP_NON_IDENTITY_KEYS,
+    )
+
+    assert PRODUCER_KEY in STAMP_NON_IDENTITY_KEYS
+
+    rows = [{"key": f"k{i}", "exp": float(i)} for i in range(3)]
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    audit_cache.write_audit_cache(a, rows, force=True, extra={
+        PRODUCER_KEY: "audit_targets.py --dump-per-position",
+        "audit_set_digest": "0123456789abcdef", "cp_slope": 0.006,
+    })
+    audit_cache.write_audit_cache(b, rows, force=True, extra={
+        PRODUCER_KEY: "audit_label_candidates.py --dump-per-position",
+        "audit_set_digest": "0123456789abcdef", "cp_slope": 0.006,
+    })
+    da = pc.load_dump(str(a), join_key="key", field="exp")
+    db = pc.load_dump(str(b), join_key="key", field="exp")
+    pc.require_same_stamp(da, db, label_a="A", label_b="B")
+
+    # The ruler keys still refuse: same producers, different cp map.
+    c = tmp_path / "c.jsonl"
+    audit_cache.write_audit_cache(c, rows, force=True, extra={
+        PRODUCER_KEY: "audit_targets.py --dump-per-position",
+        "audit_set_digest": "0123456789abcdef", "cp_slope": 0.004,
+    })
+    dc = pc.load_dump(str(c), join_key="key", field="exp")
+    with pytest.raises(SystemExit):
+        pc.require_same_stamp(da, dc, label_a="A", label_b="C")

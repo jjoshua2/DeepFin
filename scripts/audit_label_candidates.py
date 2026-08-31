@@ -135,6 +135,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import logging
 import math
 import re
@@ -158,6 +159,12 @@ from chess_anti_engine.eval.audit import (
     legal_full_indices,
     load_audit_set,
     move_regrets,
+)
+from chess_anti_engine.eval.audit_cache import write_audit_cache
+from chess_anti_engine.utils.audit_cache_format import (
+    AUDIT_SET_DIGEST_KEY,
+    AUDIT_SET_KEY,
+    PRODUCER_KEY,
 )
 from chess_anti_engine.stockfish.uci import (
     StockfishResult,
@@ -1652,10 +1659,63 @@ def run(cfg: GateConfig) -> dict[str, Any]:
         "admissible": not reasons,
     }
     if cfg.dump_per_position is not None:
-        readout._atomic_write_text(
-            cfg.dump_per_position,
-            "".join(json.dumps(r, sort_keys=True) + "\n" for r in dump),
+        # ⚑ STAMPED, via the same writer as audit_targets.py's dump: an
+        # unstamped side makes paired_compare.require_same_stamp return early,
+        # so every later comparison of this file would silently skip the
+        # ruler-version check.  The extra carries RULER IDENTITY ONLY —
+        # require_same_stamp treats every non-excluded key as identity, so
+        # spreading run metadata (run_id, started_utc) here would refuse every
+        # cross-run compare, the exact comparisons this dump exists for (a
+        # first cut did that; caught in review).  The full invocation record
+        # stays in the report json, where it belongs.  AUDIT_SET_DIGEST_KEY
+        # carries the CONTENT digest require_same_audit_set reads; the cp map
+        # is stamped because q_from_effective_cp is on every arm's path.
+        # force=True as in audit_targets: no default path, no silent clobber
+        # to guard — but the write lands in a sibling tmp and replaces
+        # atomically, so an interruption cannot truncate a banked dump.
+        # ⚑ The digest is `audit_sha`, hashed BEFORE scoring under
+        # `_file_stamp`'s changed-while-read refusal — re-hashing the path
+        # here would stamp whatever sits at it NOW, which after a mid-run
+        # replacement is a digest the rows were never scored against. And the
+        # tmp name carries the pid so two overlapping invocations aimed at
+        # the same output cannot interleave on one inode; the loser's
+        # `os.replace` still wins last, but each replace moves a complete,
+        # self-consistent file. (Both from codex round 2 on PR #488.)
+        tmp_dump = cfg.dump_per_position.with_name(
+            f"{cfg.dump_per_position.name}.tmp.{os.getpid()}",
         )
+        write_audit_cache(
+            tmp_dump,
+            dump,
+            force=True,
+            extra={
+                PRODUCER_KEY: "audit_label_candidates.py --dump-per-position",
+                AUDIT_SET_KEY: str(cfg.audit_set),
+                AUDIT_SET_DIGEST_KEY: audit_sha[:16],
+                "cp_slope": float(cfg.cp_slope),
+                "cp_draw_width": float(cfg.cp_draw_width),
+                # ⚑ Ruler, not metadata: every row's per-arm
+                # `expected_regret_cp_at_sigma` is a softmax at THIS sigma, so
+                # two dumps at different `--oneply-sigma` values are different
+                # rulers and must refuse to join (codex round 3 on PR #488).
+                "oneply_sigma": float(cfg.oneply_sigma),
+            },
+        )
+        # Durability, not just atomicity: os.replace reorders ahead of the tmp
+        # file's dirty pages on a crash, leaving the bank REPLACED by a file
+        # whose contents never reached storage. fsync the data first, then the
+        # directory so the rename itself is durable (codex round 3 on PR #488).
+        fsync_fd = os.open(tmp_dump, os.O_RDONLY)
+        try:
+            os.fsync(fsync_fd)
+        finally:
+            os.close(fsync_fd)
+        os.replace(tmp_dump, cfg.dump_per_position)
+        dir_fd = os.open(cfg.dump_per_position.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     for reason in reasons:
         _LOG.error("INADMISSIBLE: %s", reason)
     return report

@@ -22,6 +22,16 @@ from scripts.widen_ffn_aligned import (
     widen_checkpoint,
 )
 
+# ⚑ The production capacity figures are BRANCH-COUPLED (CLAUDE.md "Configs":
+# this tree's live yaml realizes 61,444,448 trainable, main's copy 63,084,128).
+# They are imported from the canonical pin rather than retyped here -- see
+# test_the_tool_does_not_print_the_wrong_number_CLAUDE_md_warns_about.
+from tests.test_param_count import (
+    _PRODUCTION_PARAMS,
+    _TIED_GEN_WEIGHT_NUMEL,
+    _TIED_GEN_WEIGHT_REFS,
+)
+
 
 def test_align_up() -> None:
     assert align_up(796, 128) == 896
@@ -1010,12 +1020,27 @@ def test_count_distinct_params_dedupes_TIED_storages() -> None:
 def test_the_tool_does_not_print_the_wrong_number_CLAUDE_md_warns_about() -> None:
     """⚑⚑ F3: `main()` printed `sum(numel())` as its headline capacity figure.
 
-    On production that is 78,812,768 against a real 63,084,128 — over by exactly
-    15 × 1,048,576 = 15,728,640, the tied `layer_smolgens.*.gen_weight.weight`
-    storage counted 16 times. `tests/test_param_count.py` pins 78,812,768 as
-    "the wrong number CLAUDE.md warns about", and a tool whose whole purpose is a
-    capacity claim was printing it. Measured here on the real production config,
-    not asserted from the docs.
+    On this tree's production config that is 77,173,088 against a real
+    61,444,448 — over by exactly 15 × 1,048,576 = 15,728,640, the tied
+    `layer_smolgens.*.gen_weight.weight` storage counted 16 times.
+    `tests/test_param_count.py` pins that naive sum as "the wrong number
+    CLAUDE.md warns about", and a tool whose whole purpose is a capacity claim
+    was printing it. Measured here on the real production config, not asserted
+    from the docs.
+
+    ⚑ BOTH FIGURES ARE BRANCH-COUPLED, which is why they are IMPORTED from the
+    canonical pin instead of retyped. The bt4heads promotion (`86492fa26`,
+    2026-08-15) moved this tree's `configs/pbt2_small.yaml` from 63,084,128 to
+    61,444,448 trainable params, and the re-measurement commit (`0f5b9a6ae`,
+    whose message banks the pair 63,084,128 -> 61,444,448 / 78,812,768 ->
+    77,173,088) swept `CLAUDE.md`, `tcec.md` and `tests/test_param_count.py` --
+    but not this file, nor `scripts/widen_ffn_aligned.py`. Both went on quoting
+    `main`'s numbers against a live-yaml build. That is precisely the "the copy
+    nobody recomputes is the one that gets cited" defect this test is about, so
+    the copy is now derived rather than kept: only the OVERCOUNT is asserted as
+    a standalone constant, because 15 x 1,048,576 is the one figure the
+    promotion did NOT move -- the whole 1,639,680 delta landed on untied
+    params.
     """
     from pathlib import Path
 
@@ -1027,7 +1052,10 @@ def test_the_tool_does_not_print_the_wrong_number_CLAUDE_md_warns_about() -> Non
     flat = flatten_run_config_defaults(load_yaml_file(str(repo / "configs" / "pbt2_small.yaml")))
     sd = build_model(model_config_from_flat_config(flat)).state_dict()
 
+    overcount = (_TIED_GEN_WEIGHT_REFS - 1) * _TIED_GEN_WEIGHT_NUMEL
+    assert overcount == 15 * 1_048_576
+
     naive = sum(int(v.numel()) for v in sd.values())
-    assert naive == 78_812_768, "the wrong number CLAUDE.md warns about"
-    assert count_distinct_params(sd) == 63_084_128
-    assert naive - count_distinct_params(sd) == 15 * 1_048_576
+    assert naive == _PRODUCTION_PARAMS + overcount, "the wrong number CLAUDE.md warns about"
+    assert count_distinct_params(sd) == _PRODUCTION_PARAMS
+    assert naive - count_distinct_params(sd) == overcount
