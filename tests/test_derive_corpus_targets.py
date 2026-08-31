@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -2612,10 +2613,14 @@ def targets_for(
     rows: list[dict[str, Any]],
     *,
     value_scheme: str = derive.VALUE_SCHEME_QZSEGMENT,
+    banked_tail_ply: int | None = None,
     **qz: Any,
 ) -> list[np.ndarray]:
     targets, _ = derive.game_value_targets(
-        facts_for(rows), value_scheme=value_scheme, params=derive.QzParams(**qz),
+        facts_for(rows),
+        value_scheme=value_scheme,
+        params=derive.QzParams(**qz),
+        banked_tail_ply=banked_tail_ply,
     )
     return targets
 
@@ -3383,8 +3388,22 @@ def test_a_staircase_that_cannot_answer_the_gate_is_refused(tmp_path: Path) -> N
 # ── assembling games out of a streamed corpus ────────────────────────────────
 
 
-def grouper_over(rows: list[dict[str, Any]]) -> tuple[Any, list[list[Any]]]:
-    """Feed rows through a real :class:`GameGrouper` and collect the games."""
+def grouper_over(
+    rows: list[dict[str, Any]],
+    *,
+    drop: Sequence[tuple[int, int, int]] = (),
+) -> tuple[Any, list[Any]]:
+    """Feed rows through a real :class:`GameGrouper` and collect the games.
+
+    ⚑ ``rows`` IS THE CORPUS ORDER AND IS NOT RESORTED. Two of these tests exist
+    precisely to check what happens when the order is pathological (a re-opened
+    game), so a helper that tidied the stream would delete their premise.
+
+    ``drop`` names ``(worker_id, game_id, ply)`` triples that ARE in ``rows``
+    but which derivation could not keep: they reach the grouper through
+    ``note_dropped`` instead of ``add``, exactly as the real loop routes a
+    tolerated ``EnvelopeMiss`` or a null-``result`` row.
+    """
     options = derive.DeriveOptions(
         scheme=derive.parse_scheme("uniform-d9"),
         temp=1.0,
@@ -3398,12 +3417,17 @@ def grouper_over(rows: list[dict[str, Any]]) -> tuple[Any, list[list[Any]]]:
     )
     deriver = derive.TargetDeriver(options)
     grouper = derive.GameGrouper(deriver)
-    games: list[list[Any]] = []
+    games: list[Any] = []
+    drops = set(drop)
     for row in rows:
+        key = (int(row["worker_id"]), int(row["game_id"]), int(row["ply"]))
+        if key in drops:
+            grouper.note_dropped(row)
+            continue
         derived = deriver.derive_row(row)
         assert derived is not None
         closed = grouper.add(row, derived)
-        if closed:
+        if closed is not None:
             games.append(closed)
     return grouper, games
 
@@ -3413,8 +3437,8 @@ def test_games_are_closed_when_the_next_ones_first_row_arrives() -> None:
     rows = build_game([Ply(played=CP_CLEAN)] * 3, result_white=1.0, game_id=0)
     rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=-1.0, game_id=1)
     grouper, games = grouper_over(rows)
-    assert [len(game) for game in games] == [3]
-    assert [len(game) for game in [grouper.flush(cut_by_limit=False)]] == [2]
+    assert [len(game.rows) for game in games] == [3]
+    assert len(grouper.flush(cut_by_limit=False).rows) == 2
 
 
 def test_a_re_opened_game_is_refused_rather_than_split() -> None:
@@ -3441,8 +3465,8 @@ def test_the_same_game_id_from_two_workers_is_two_games() -> None:
     rows = build_game([Ply(played=CP_CLEAN)] * 2, result_white=1.0, worker_id=0)
     rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=-1.0, worker_id=1)
     grouper, games = grouper_over(rows)
-    assert [len(game) for game in games] == [2]
-    assert len(grouper.flush(cut_by_limit=False)) == 2
+    assert [len(game.rows) for game in games] == [2]
+    assert len(grouper.flush(cut_by_limit=False).rows) == 2
 
 
 def test_a_gap_in_the_banked_plies_is_counted_and_still_rotates(
@@ -4012,6 +4036,14 @@ def test_the_launcher_gate_reads_the_stamp_and_not_the_directory_name(
     """The stamp is per SHARD, so one baked shard in a mixed --shards pool is
     enough to refuse -- the same "coverage, not any()" lesson the sf_wdl gate
     beside it already learned.
+
+    ⚑ This test USED to pass ``{"game_frac": 0.1}``, and it passed for a reason
+    that had nothing to do with its name: the fixed gate ignores that key, reads
+    ``sf_wdl_frac``/``search_wdl_frac`` as absent-and-therefore-0.0, and derives
+    a share of 1.0 -- so the gate fired on the empty-blend default rather than
+    on anything the test meant to set. Green for the wrong reason is the same
+    defect as the one the delta review caught, one test lower down; driven off
+    the real config now.
     """
     from scripts.lc0_control_train import baked_value_blend_problems
 
@@ -4023,7 +4055,8 @@ def test_the_launcher_gate_reads_the_stamp_and_not_the_directory_name(
         corpus_dir, baked, "uniform-d9",
         "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
     )
-    problems = baked_value_blend_problems({"game_frac": 0.1}, [control, baked])
+    hazard = real_control_config(sf_wdl_frac=0.0, search_wdl_frac=0.5)
+    problems = baked_value_blend_problems(hazard, [control, baked])
     assert len(problems) == 1
     assert derive.VALUE_SCHEME_QZSEGMENT in problems[0]
 
@@ -4099,3 +4132,454 @@ def test_a_working_ablation_reports_how_many_targets_it_moved(
         "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
     )
     assert plain["realized"]["value_scheme_realized"]["rows_differing_from_c_full"] == 0
+
+
+# ── review round 3 (Codex): the tail the grouper never saw ───────────────────
+
+
+def test_a_dropped_final_row_stops_the_last_survivor_at_itself() -> None:
+    """⚑⚑ THE TRAILING-DROP HAZARD, at the level of the emitted vector.
+
+    A game of four clean plies whose LAST banked row derivation could not keep.
+    Without the tail fact the third row looks exactly like a game's natural end
+    and blends toward the outcome -- across a move nobody priced, which is the
+    one thing arm C exists to refuse. With it, the row stops at itself and its
+    target is pure Q.
+
+    ⚑ The internal-gap clause structurally cannot catch this: it subtracts
+    ``facts[index + 1].ply``, and at the last index there is no such row.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    survivors = rows[:3]
+
+    blind = targets_for(survivors)
+    aware = targets_for(survivors, banked_tail_ply=3)
+
+    q_last = wdl_of_cp(CP_TOP)
+    # Blind: the last survivor reached the outcome and moved off its own Q.
+    assert not np.allclose(blind[2], q_last, atol=1e-9)
+    # Aware: it stops at itself, so the target IS its own searched value.
+    np.testing.assert_allclose(aware[2], q_last, atol=1e-12)
+    # And the rows BEHIND it stop there too, rather than scanning to Z.
+    for index in (0, 1):
+        assert not np.allclose(blind[index], aware[index], atol=1e-6)
+
+
+def test_a_dropped_final_row_moves_arm_bs_terminal_anchor() -> None:
+    """Arm B anchors ``w = ply / terminal_ply`` on the last BANKED row.
+
+    A dropped tail row was banked; it just did not survive. Reading the last
+    SURVIVING ply instead hands that row ``w = 1`` -- full terminal weight on a
+    position the game demonstrably continued past -- and makes every earlier
+    row's weight a function of ``--max-envelope-misses``.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    survivors = rows[:3]
+    facts = facts_for(survivors)
+
+    blind = targets_for(survivors, value_scheme=derive.VALUE_SCHEME_QZPHASE)
+    aware = targets_for(
+        survivors, value_scheme=derive.VALUE_SCHEME_QZPHASE, banked_tail_ply=3,
+    )
+
+    def weight_of(target: np.ndarray, fact: Any) -> float:
+        """Recover w from ``(1-w) Q + w Z`` on the coordinate where they differ."""
+        q = np.asarray(fact.q_wdl, dtype=np.float64)
+        z = onehot(fact.z_index)
+        axis = int(np.argmax(np.abs(z - q)))
+        return float((target[axis] - q[axis]) / (z[axis] - q[axis]))
+
+    assert weight_of(blind[2], facts[2]) == pytest.approx(1.0)
+    assert weight_of(aware[2], facts[2]) == pytest.approx(2.0 / 3.0)
+    assert weight_of(aware[1], facts[1]) == pytest.approx(1.0 / 3.0)
+
+
+def test_an_internal_drop_is_a_gap_and_not_a_dropped_tail() -> None:
+    """⚑ THE TWO PLY CURSORS DO NOT MERGE.
+
+    Drop the MIDDLE row of a game. The next surviving row still reveals it as a
+    non-unit ply step (the gap counter fires), and the game's tail is intact
+    (no dropped-tail counter). Merging ``_last_ply`` and ``_last_seen_ply``
+    would silence exactly one of these two readings, depending which won.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    grouper, _ = grouper_over(rows, drop=[(0, 0, 1)])
+    batch = grouper.flush(cut_by_limit=False)
+
+    assert batch.banked_tail_ply is None
+    assert [row.facts.ply for row in batch.rows] == [0, 2, 3]
+    stats = grouper._deriver.stats
+    assert stats.qz_ply_gaps_nonunit == 1
+    assert stats.qz_games_with_dropped_tail == 0
+
+
+def test_a_dropped_tail_is_reported_and_a_clean_game_reads_zero() -> None:
+    """The counter, both directions, off the real grouper."""
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+
+    grouper, _ = grouper_over(rows, drop=[(0, 0, 3)])
+    batch = grouper.flush(cut_by_limit=False)
+    assert batch.banked_tail_ply == 3
+    assert [row.facts.ply for row in batch.rows] == [0, 1, 2]
+    assert grouper._deriver.stats.qz_games_with_dropped_tail == 1
+
+    clean_grouper, _ = grouper_over(rows)
+    assert clean_grouper.flush(cut_by_limit=False).banked_tail_ply is None
+    assert clean_grouper._deriver.stats.qz_games_with_dropped_tail == 0
+
+
+def test_a_dropped_row_of_the_next_game_does_not_truncate_the_open_one() -> None:
+    """⚑ ATTRIBUTED BY (worker_id, game_id), not to whatever game is open.
+
+    Drops of the NEXT game's leading rows arrive while this game is still open.
+    Charging them to the open game would mark a game truncated that ended
+    perfectly normally.
+
+    ⚑ THE PLIES MUST CLIMB PAST THE OPEN GAME'S LAST ONE, or this test cannot
+    see the bug. The first version dropped only the next game's ply 0, and the
+    "keep the maximum" guard absorbed it -- 0 never exceeds the open game's 2,
+    so the missing key check was invisible and the mutant escaped. A RUN of
+    leading drops is what makes the two games' ply ranges overlap, and that is
+    the realistic corpus shape: consecutive rows of one game failing the same
+    envelope check.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 3, result_white=1.0, game_id=0)
+    rows += build_game([Ply(played=CP_CLEAN)] * 6, result_white=-1.0, game_id=1)
+    # game 1's plies 0..3 are dropped, and 3 is BEYOND game 0's last ply (2).
+    grouper, closed = grouper_over(
+        rows, drop=[(0, 1, 0), (0, 1, 1), (0, 1, 2), (0, 1, 3)],
+    )
+
+    assert [batch.banked_tail_ply for batch in closed] == [None]
+    assert [len(batch.rows) for batch in closed] == [3]
+    assert grouper._deriver.stats.qz_games_with_dropped_tail == 0
+    tail = grouper.flush(cut_by_limit=False)
+    assert [row.facts.ply for row in tail.rows] == [4, 5]
+    assert tail.banked_tail_ply is None
+
+
+def test_the_no_segment_ablation_still_stops_a_dropped_tail_at_itself() -> None:
+    """⚑ The per-row carve-out covers the tail hole too.
+
+    ``--qz-no-boundary`` removes the BLUNDER stop. A dropped tail is not a
+    blunder verdict, it is the absence of one -- the same reason an unpriceable
+    played move stops a scan under every cell. So the last survivor still fails
+    toward Q; rows behind it still scan past, because that is the ablation's
+    definition.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    survivors = rows[:3]
+    aware = targets_for(survivors, banked_tail_ply=3, no_boundary=True)
+
+    np.testing.assert_allclose(aware[2], wdl_of_cp(CP_TOP), atol=1e-12)
+    # Row 0 scanned PAST the stopped row to the outcome, so it is not pure Q.
+    assert not np.allclose(aware[0], wdl_of_cp(CP_TOP), atol=1e-6)
+
+
+def test_the_dropped_tail_survives_the_whole_pipeline(tmp_path: Path) -> None:
+    """⚑⚑ THE BYTES, not the pure function. A corpus whose last row carries a
+    null ``result`` -- the drop path the e2e run hit 997 times -- derived
+    end-to-end, read back through the RIG'S OWN reader.
+
+    A fix that computed the right vector and lost it between the grouper and
+    the shard would pass every test above and fail here.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    rows[-1]["result"] = None
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert out["realized"]["rows_dropped_no_result"] == 1
+    assert realized["games_with_dropped_tail"] == 1
+    # The last SURVIVING row stops at itself: its emitted target is its own Q.
+    emitted = value_rows(tmp_path / "out")
+    np.testing.assert_allclose(
+        emitted[(0, 2)].search_wdl, wdl_of_cp(CP_TOP), atol=2e-3,
+    )
+    assert realized["stop_boundary_self"] >= 1
+
+
+# ── review round 3 (Codex): one value identity across --shards ───────────────
+
+
+def test_mixing_two_value_schemes_is_refused_under_the_SHIPPED_blend(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE HAZARD THE BLEND GATE STRUCTURALLY CANNOT SEE.
+
+    With the shipped blend the derived outcome share is 0, so
+    ``baked_value_blend_problems`` returns at its FIRST branch and never reads a
+    stamp -- correctly, for its own question. A ``--shards`` list naming two
+    different arms then trains on a per-row mixture of both: shape-compatible,
+    encoding-identical, merged by the buffer without complaint, and describable
+    by no prereg entry.
+    """
+    from scripts.lc0_control_train import (
+        baked_value_blend_problems,
+        value_scheme_identity_problems,
+    )
+
+    corpus_dir = game_corpus(tmp_path)
+    arm_a = tmp_path / "a"
+    arm_c = tmp_path / "c"
+    run_derive(corpus_dir, arm_a, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZ50)
+    run_derive(corpus_dir, arm_c, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT)
+
+    shipped = real_control_config()
+    # The blend gate is silent — its question genuinely has answer "no".
+    assert baked_value_blend_problems(shipped, [arm_a, arm_c]) == []
+    # The identity gate is not.
+    problems = value_scheme_identity_problems([arm_a, arm_c])
+    assert len(problems) == 1
+    assert derive.VALUE_SCHEME_QZ50 in problems[0]
+    assert derive.VALUE_SCHEME_QZSEGMENT in problems[0]
+    # Either arm ALONE is fine, so the gate is not simply always-on.
+    assert value_scheme_identity_problems([arm_a]) == []
+    assert value_scheme_identity_problems([arm_c]) == []
+
+
+def test_a_legacy_corpus_and_the_control_arm_are_one_identity(
+    tmp_path: Path,
+) -> None:
+    """⚑ Absent reads as ``search``, so V0 + a pre-value-round corpus is ONE
+    identity and mixing them stays allowed. A gate that refused this would
+    block every arm that has nothing to do with the value round.
+    """
+    from scripts.lc0_control_train import value_scheme_identity_problems
+
+    corpus_dir = game_corpus(tmp_path)
+    control = tmp_path / "v0"
+    legacy = tmp_path / "legacy"
+    run_derive(corpus_dir, control, "uniform-d9")
+    run_derive(corpus_dir, legacy, "uniform-d9")
+    for path in iter_shard_paths(legacy):
+        group = zarr.open_group(str(path), mode="a")
+        del group.attrs["derive_value_scheme"]
+
+    assert value_scheme_identity_problems([control, legacy]) == []
+    # ... and a BAKED arm beside the legacy one is still two identities.
+    baked = tmp_path / "a"
+    run_derive(corpus_dir, baked, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZ50)
+    assert value_scheme_identity_problems([legacy, baked])
+
+
+def test_the_identity_gate_is_wired_into_preflight(tmp_path: Path) -> None:
+    """⚑ REACHABILITY. The function refusing in isolation proves nothing about
+    the launch path; this asserts ``preflight`` itself raises, which is the only
+    thing that stops a run.
+    """
+    import scripts.lc0_control_train as launcher
+
+    corpus_dir = game_corpus(tmp_path)
+    arm_a = tmp_path / "a"
+    arm_c = tmp_path / "c"
+    run_derive(corpus_dir, arm_a, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZ50)
+    run_derive(corpus_dir, arm_c, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT)
+
+    with pytest.raises(SystemExit, match="value-target identities"):
+        launcher.preflight(
+            real_control_config(), [arm_a, arm_c], allow_leak=False,
+        )
+
+
+# ── review round 3 (Codex): the schema number, and a reader for it ───────────
+
+
+def test_the_control_arm_keeps_schema_1_and_a_baked_arm_bumps_it(
+    tmp_path: Path,
+) -> None:
+    """⚑ The column's NAME, dtype and shape are identical across the arms; only
+    its MEANING changes. The schema number is the only field that says so to a
+    consumer written before ``derive_value_scheme`` existed.
+    """
+    corpus_dir = game_corpus(tmp_path)
+    control = tmp_path / "v0"
+    baked = tmp_path / "c"
+    v0 = run_derive(corpus_dir, control, "uniform-d9")
+    arm = run_derive(corpus_dir, baked, "uniform-d9",
+                     "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT)
+
+    assert v0["schema"] == derive.DERIVE_SCHEMA == 1
+    assert arm["schema"] == derive.DERIVE_SCHEMA_BAKED_VALUE == 2
+    for path in iter_shard_paths(control):
+        assert zarr.open_group(str(path), mode="r").attrs["derive_schema"] == 1
+    for path in iter_shard_paths(baked):
+        assert zarr.open_group(str(path), mode="r").attrs["derive_schema"] == 2
+
+
+def test_the_launchers_known_schemas_match_the_derivers() -> None:
+    """⚑ THE DUPLICATED CONSTANT, PINNED. The launcher spells the known schema
+    numbers itself rather than importing the deriver (whose import chain pulls
+    the corpus generator into a training launcher). That duplication is only
+    safe while this assertion holds, and it fails CLOSED: a deriver that adds a
+    schema the launcher does not list makes the launcher REFUSE those shards,
+    and makes this test say why.
+    """
+    from scripts.lc0_control_train import KNOWN_DERIVE_SCHEMAS
+
+    assert set(KNOWN_DERIVE_SCHEMAS) == {
+        derive.DERIVE_SCHEMA, derive.DERIVE_SCHEMA_BAKED_VALUE,
+    }
+
+
+def test_a_schema_from_the_future_is_refused_rather_than_trained_on(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE READER THAT MAKES THE BUMP MEAN ANYTHING.
+
+    MEASURED before this: ``derive_schema`` had NO reader anywhere in the repo.
+    The deriver stamped it, one write-side test asserted it, and
+    ``load_shard_arrays`` copied the whole attrs dict through without inspecting
+    a version field -- so bumping it would have protected nothing on this tree.
+    A number written and never read is the defect this repo is named for.
+    """
+    from scripts.lc0_control_train import value_scheme_identity_problems
+
+    out = tmp_path / "c"
+    run_derive(game_corpus(tmp_path), out, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT)
+    assert value_scheme_identity_problems([out]) == []
+
+    for path in iter_shard_paths(out):
+        zarr.open_group(str(path), mode="a").attrs["derive_schema"] = 3
+    problems = value_scheme_identity_problems([out])
+    assert len(problems) == 1
+    assert "derive_schema 3" in problems[0]
+
+
+# ── review round 3 (Codex): the manifest describes what it EMITTED ───────────
+
+
+def test_each_c_cell_describes_its_own_arithmetic(tmp_path: Path) -> None:
+    """⚑⚑ ``construction`` is presented as THE arithmetic a later consumer
+    should read, so an ablation that printed C-full's is provenance that
+    contradicts its own corpus -- and the contradiction is resolved by whichever
+    field the reader happens to trust.
+    """
+    # ⚑ A game with a real blunder in it: C-no-segment's take-effect gate
+    # refuses a corpus it did not change, and a blunder-free game is one it
+    # cannot change. The fixture has to give each cell something to ablate.
+    plies = [
+        Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN),
+    ]
+    corpus_dir = game_corpus(tmp_path, plies)
+    full = run_derive(corpus_dir, tmp_path / "full", "uniform-d9",
+                      "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT)
+    no_u = run_derive(corpus_dir, tmp_path / "nou", "uniform-d9",
+                      "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+                      "--qz-w-const", "0.725")
+    no_seg = run_derive(corpus_dir, tmp_path / "noseg", "uniform-d9",
+                        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+                        "--qz-no-boundary")
+
+    said = {
+        name: out["value_scheme"]["construction"]
+        for name, out in (("full", full), ("no_u", no_u), ("no_seg", no_seg))
+    }
+    assert len(set(said.values())) == 3
+
+    # ⚑ THE ASSERTIONS ARE ABOUT THE CLAIM, NOT THE VOCABULARY. An ablation may
+    # perfectly well NAME the mechanism it removed -- saying so is the point.
+    # What it must not do is assert that mechanism as the arithmetic it used,
+    # and that assertion has a distinctive form in each case.
+    map_claim = "w_t = 0.5 + 0.45 * min(u_t / u_scale, 1)"
+    stop_claim = "else the searched value at the first row whose played regret"
+
+    # C-full claims both mechanisms.
+    assert map_claim in said["full"]
+    assert stop_claim in said["full"]
+
+    # C-no-u must not claim w came from the map, and must name the constant.
+    assert map_claim not in said["no_u"]
+    assert "w is the CONSTANT 0.725" in said["no_u"]
+    assert "REMOVED" in said["no_u"]
+    # It DOES still claim the boundary stop, which it keeps.
+    assert stop_claim in said["no_u"]
+
+    # C-no-segment must not claim the blunder stop, and DOES keep the map.
+    assert stop_claim not in said["no_seg"]
+    assert "REMOVED" in said["no_seg"]
+    assert "no row ahead of t stops t's scan" in said["no_seg"]
+    assert "0.5 + 0.45 * min(u_t / u_scale, 1)" in said["no_seg"]
+
+    # Both ablations announce that they are not adoption candidates.
+    for name in ("no_u", "no_seg"):
+        assert "ABLATION" in said[name]
+        assert said[name] != said["full"]
+
+
+def test_the_refusal_message_names_only_keys_that_exist(tmp_path: Path) -> None:
+    """⚑⚑ A REMEDY THAT CANNOT WORK IS WORSE THAN NONE.
+
+    The refusal used to say "Set game_frac=0.0". ``game_frac`` is not a schema
+    key, so following that advice puts an unknown key in the yaml -- and
+    ``flatten_run_config_defaults`` raises on it before the argument parser is
+    built, killing the NEXT launch at startup with an error about a key this
+    message invented (CLAUDE.md's live-yaml category (a)).
+    """
+    from scripts.lc0_control_train import baked_value_blend_problems
+
+    baked = tmp_path / "a"
+    run_derive(game_corpus(tmp_path), baked, "uniform-d9",
+               "--value-scheme", derive.VALUE_SCHEME_QZ50)
+    hazard = real_control_config(sf_wdl_frac=0.0, search_wdl_frac=0.5)
+    message = baked_value_blend_problems(hazard, [baked])[0]
+
+    # It must not instruct an edit to a key that does not exist ...
+    assert "Set game_frac" not in message
+    assert "game_frac=0.0" not in message
+    assert "game_frac: 0.0" not in message
+    # ... it must name the ones that do ...
+    cfg = real_control_config()
+    for key in ("sf_wdl_frac", "search_wdl_frac"):
+        assert key in message
+        assert key in cfg
+    # ... and it must say plainly that game_frac is not settable.
+    assert "no game_frac key to set" in message
+
+
+def test_a_tolerated_envelope_miss_at_the_tail_is_the_live_trigger(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE PATH THAT CAN ACTUALLY TRUNCATE A GAME, end to end.
+
+    MEASURED on ``run02_snap_20260829``: the null-``result`` drop is the
+    numerically dominant one (1,897 of 24,576 rows) and can NEVER produce a
+    truncated tail there, because ``result`` is a whole-GAME property -- 9 of
+    124 games null on every row, 115 on none, ZERO mixed. An unfinished game
+    disappears entirely rather than losing its tail.
+
+    So the live trigger is the OTHER drop path: a tolerated ``EnvelopeMiss``
+    under ``--max-envelope-misses > 0`` drops INDIVIDUAL rows, and nothing stops
+    one from landing on a game's last. This is that run, through ``main``.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    # The last row can no longer answer --scheme uniform-d9: its deepest
+    # full-width block is d5, which is exactly what EnvelopeMiss is raised for.
+    last_fen = rows[-1]["fen"]
+    rows[-1]["phases"] = [
+        full_width_phase(last_fen, {5: ramp(last_fen, legal_ucis(last_fen)[1])}),
+    ]
+    corpus_dir = write_corpus(tmp_path, rows)
+    out = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--max-envelope-misses", "1",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert out["realized"]["rows_dropped_envelope"] == 1
+    assert out["realized"]["rows_dropped_no_result"] == 0
+    assert realized["games_with_dropped_tail"] == 1
+    # The last SURVIVING row stops at itself rather than taking the outcome.
+    emitted = value_rows(tmp_path / "out")
+    np.testing.assert_allclose(
+        emitted[(0, 2)].search_wdl, wdl_of_cp(CP_TOP), atol=2e-3,
+    )

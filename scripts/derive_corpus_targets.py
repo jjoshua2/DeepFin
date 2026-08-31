@@ -356,7 +356,29 @@ from scripts import gen_sf_rooted_corpus as corpus
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
 #: needs both numbers to know what it is holding, so both are stamped.
+#:
+#: ⚑ 1 IS THE UNCHANGED CONTRACT: ``search_wdl`` holds the bare searched root
+#: value.  Every shard this tool wrote before the value round holds that, and
+#: so does arm V0 (``--value-scheme search``) today.
 DERIVE_SCHEMA = 1
+
+#: ⚑⚑ THE SAME COLUMN, A DIFFERENT MEANING.  Under any ``--value-scheme`` other
+#: than ``search``, ``search_wdl`` is no longer the searched root value: some
+#: share of the GAME OUTCOME has already been blended into it.  The column's
+#: name, dtype and shape are identical, so nothing about the file announces the
+#: change -- which is precisely why the schema number moves.
+#:
+#: ⚑ ``derive_value_scheme`` also records this and is strictly more informative,
+#: but it is a NEW key: a consumer written against schema 1 does not know to
+#: look for it, and an unknown attr is silently ignored by every zarr reader.
+#: The version number is the field such a consumer ALREADY reads, so it is the
+#: only one that can reach it.  Two stamps, and the coarse one exists because
+#: the precise one cannot be seen by code that predates it (Codex review of
+#: PR #491).
+#:
+#: ⚑ V0 STAYS AT 1, deliberately: the control arm must remain byte-identical to
+#: what this tool produced before the value round existed, attrs included.
+DERIVE_SCHEMA_BAKED_VALUE = 2
 
 #: Pinned, not a flag.  The rig merges these shards into ONE ``DiskReplayBuffer``
 #: alongside whatever else is named in ``--shards``, and the buffer hard-fails on
@@ -550,6 +572,19 @@ VALUE_SCHEMES = (
 #: can be emitted.  ``qz50`` is not one of them: its blend is a function of the
 #: row alone, so it stays on the ungrouped path with V0.
 VALUE_SCHEMES_NEEDING_GAME = (VALUE_SCHEME_QZPHASE, VALUE_SCHEME_QZSEGMENT)
+
+
+def derive_schema_for(value_scheme: str) -> int:
+    """The shard schema this value scheme emits.  See :data:`DERIVE_SCHEMA`.
+
+    ⚑ A FUNCTION OF THE SCHEME, not of the run: the schema records what the
+    ``search_wdl`` column MEANS, and the only thing that changes its meaning is
+    which arm wrote it.  ``search`` is the pre-value-round contract and keeps
+    the pre-value-round number.
+    """
+    if value_scheme == VALUE_SCHEME_SEARCH:
+        return DERIVE_SCHEMA
+    return DERIVE_SCHEMA_BAKED_VALUE
 
 #: ⚑⚑ THE FROZEN PARAMETERS, from the ledger's 2026-08-31 prereg and its
 #: same-day amendment.  Every one of them is a DEFAULT with a flag, so a
@@ -1552,12 +1587,17 @@ def game_value_targets(
     *,
     value_scheme: str,
     params: QzParams,
+    banked_tail_ply: int | None = None,
 ) -> tuple[list[np.ndarray], list[SegmentReading | None]]:
     """One game's rows -> one WDL 3-vector per row, under ``value_scheme``.
 
     PURE: no I/O, no stats, no corpus.  Every arm of the ledger's value round is
     a different line here and nothing else, which is what makes the four arms
     paired by construction rather than by four scripts agreeing.
+
+    ``banked_tail_ply`` is the ply of the last row the CORPUS banked for this
+    game when that row did not survive derivation -- see the section on the
+    game's last banked row below, and :meth:`GameGrouper.note_dropped`.
 
     ``search`` (V0)
         ``Q_t``.  The vector this tool has always written; returned through the
@@ -1613,7 +1653,33 @@ def game_value_targets(
     ⚑⚑ WHAT "THE GAME'S LAST BANKED ROW" IS, AND WHAT IT IS NOT
     -----------------------------------------------------------
     Both B and C anchor on it, and it is NOT reliably the game's terminal
-    position.  Three separate things end a game's banked rows, and only the
+    position.  ⚑ IT IS ALSO NOT RELIABLY ``facts[-1]``: a row the CORPUS banked
+    can fail to survive derivation (a tolerated ``EnvelopeMiss`` under
+    ``--max-envelope-misses``, or a row with a null ``result``), and a drop at
+    the TAIL of a game leaves no later same-game row from which a ply gap could
+    be observed -- so the last SURVIVING row would silently inherit the
+    terminal treatment.  That is what ``banked_tail_ply`` closes: when it is
+    set, the corpus banked a row at that ply, this derivation did not price the
+    move out of ``facts[-1]``, and both arms are told so.  B anchors its ramp on
+    the ply the corpus banked rather than the ply that survived, so its weights
+    do not depend on the drop tolerance; C treats ``facts[-1]`` as unable to
+    reach the outcome and stops it at itself.
+
+    ⚑⚑ WHICH DROP PATH CAN ACTUALLY REACH IT — MEASURED, because the obvious
+    answer is wrong.  ``result is None`` is the numerically dominant drop (1,897
+    of 24,576 rows over ``run02_snap_20260829``'s first three shards, 7.7%) and
+    it can NEVER produce a truncated tail on a corpus shaped like that one:
+    ``result`` is a whole-GAME property there, so a game either has it on every
+    row or on none.  Measured over the same 124 games: **9 games null on every
+    row, 115 on none, and ZERO games mixed** -- an unfinished game disappears
+    entirely rather than losing its tail, which is both correct and harmless.
+    So the live trigger is the OTHER path: a tolerated ``EnvelopeMiss`` under
+    ``--max-envelope-misses > 0`` drops INDIVIDUAL rows and can land on a game's
+    last one.  Like the ply-gap boundary beside it, this is latent on run02
+    (``games_with_dropped_tail = 0`` over 115 assembled games) and is a property
+    of the next corpus, or of the next run that sets a drop tolerance.
+
+    Three separate things end a game's banked rows, and only the
     third is the game ending:
 
     * **The banking floor.** ``gen_sf_rooted_corpus`` banks a row only at
@@ -1667,7 +1733,15 @@ def game_value_targets(
             [None] * count,
         )
     if value_scheme == VALUE_SCHEME_QZPHASE:
-        terminal_ply = int(facts[-1].ply)
+        # ⚑ THE PLY THE CORPUS BANKED, not the ply that survived derivation.
+        # B's `w` is `ply / terminal_ply` and `terminal_ply` is defined as the
+        # game's last BANKED row; a dropped tail row was banked. Reading
+        # `facts[-1]` instead would hand the last surviving row `w = 1` -- full
+        # terminal weight on a position the game demonstrably continued past --
+        # and would make every earlier row's weight a function of
+        # `--max-envelope-misses`, so two runs of the same arm over the same
+        # corpus could differ in their targets because one tolerated a drop.
+        terminal_ply = int(facts[-1].ply if banked_tail_ply is None else banked_tail_ply)
         targets: list[np.ndarray] = []
         for fact in facts:
             weight = 1.0 if terminal_ply <= 0 else float(fact.ply) / float(terminal_ply)
@@ -1692,6 +1766,10 @@ def game_value_targets(
         target and false of its neighbours', and those are different claims.
 
         * the row's played move is missing from its own d9 block (or absent);
+        * ⚑ the row is the LAST surviving one and ``banked_tail_ply`` says the
+          corpus banked more of this game than survived derivation.  Same hole
+          as the next bullet, at the one index where the arithmetic there
+          cannot see it;
         * ⚑ the next BANKED row is more than one ply later.  A corpus row is
           banked on a dedup MISS only, so a game's plies need not be
           contiguous, and the moves inside a gap were never banked -- they
@@ -1705,7 +1783,15 @@ def game_value_targets(
         fact = facts[index]
         if fact.played_regret is None:
             return True
-        return index + 1 < count and facts[index + 1].ply - fact.ply != 1
+        if index + 1 < count:
+            return facts[index + 1].ply - fact.ply != 1
+        # ⚑ THE SAME HOLE AT THE TAIL, where no next row exists to reveal it.
+        # A dropped final row means the corpus banked at least one more move
+        # that this derivation never priced, so running off the end here is
+        # running ACROSS an unchecked move to claim its outcome -- the exact
+        # attribution error arm C exists to prevent, and invisible to the gap
+        # clause above because there is no `facts[index + 1]` to subtract.
+        return banked_tail_ply is not None
 
     def blocked(index: int) -> bool:
         regret = facts[index].played_regret
@@ -1976,6 +2062,18 @@ class DeriveStats:
     #: correctly -- this counts how often it happened. MEASURED 0 on
     #: run02_snap_20260829's first three shards.
     qz_ply_gaps_nonunit: int = 0
+    #: ⚑ Games whose LAST banked row did not survive derivation -- a tolerated
+    #: ``EnvelopeMiss`` or a null ``result`` at the tail. The last SURVIVING row
+    #: of such a game is not the game's last banked row, so arm C stops it at
+    #: itself instead of blending toward an outcome across the unpriced dropped
+    #: move, and arm B anchors its ramp on the banked ply rather than the
+    #: surviving one. The take-effect reading for that fix: it is 0 on a corpus
+    #: with no trailing drops, so a nonzero value is the only proof the path
+    #: ran. MEASURED 0 over run02_snap_20260829's first three shards (115
+    #: assembled games, 1,897 null-result drops, none of them game-final) --
+    #: see :func:`game_value_targets` for why that path cannot truncate a tail
+    #: there and which one can.
+    qz_games_with_dropped_tail: int = 0
     #: Rows that could not price their own played move, and rows missing one of
     #: the d9/d8/d7 full-width rungs. Disjoint; see ``_value_facts``.
     qz_rows_missing_played_move: int = 0
@@ -2192,6 +2290,7 @@ class DeriveStats:
                 "single_row_games": self.qz_single_row_games,
                 "games_cut_by_limit": self.qz_games_cut_by_limit,
                 "ply_gaps_nonunit": self.qz_ply_gaps_nonunit,
+                "games_with_dropped_tail": self.qz_games_with_dropped_tail,
                 "rows_missing_played_move": self.qz_rows_missing_played_move,
                 "rows_missing_depths": self.qz_rows_missing_depths,
                 "stop_terminal": self.qz_stop_terminal,
@@ -3206,7 +3305,7 @@ def derive(
     tt_carried: set[bool] = set()
     grouper = GameGrouper(deriver) if options.needs_game else None
 
-    def emit(batch: Sequence[DerivedRow]) -> None:
+    def emit(batch: GameBatch | None) -> None:
         """Take a batch's rows into ``pending`` and cut full shards off it.
 
         ⚑ THE SHARD BOUNDARIES ARE UNCHANGED BY BATCHING.  The ungrouped path
@@ -3217,9 +3316,14 @@ def derive(
         differ in their shard layout as well as in their targets.
         """
         nonlocal pending, shard_index
-        if not batch:
+        if batch is None or not batch.rows:
             return
-        pending.extend(apply_value_scheme(batch, options=options, stats=deriver.stats))
+        pending.extend(apply_value_scheme(
+            batch.rows,
+            options=options,
+            stats=deriver.stats,
+            banked_tail_ply=batch.banked_tail_ply,
+        ))
         while len(pending) >= options.rows_per_shard:
             chunk = pending[: options.rows_per_shard]
             written.append(_flush(out_dir, shard_index, chunk, options, rng, corpus_sha))
@@ -3237,6 +3341,12 @@ def derive(
                 derived = deriver.derive_row(row)
             except EnvelopeMiss as exc:
                 deriver.stats.rows_dropped_envelope += 1
+                # ⚑⚑ TELL THE GROUPER BEFORE `continue`. Both drop paths used
+                # to skip it entirely, so a dropped row was invisible to the
+                # game -- and a drop of a game's LAST row left the previous row
+                # looking like the game's end. See `note_dropped`.
+                if grouper is not None:
+                    grouper.note_dropped(row)
                 if len(deriver.stats.envelope_miss_examples) < 8:
                     deriver.stats.envelope_miss_examples.append(
                         f"{_row_label(row)}: {exc}",
@@ -3253,9 +3363,19 @@ def derive(
                     ) from exc
                 continue
             if derived is None:
+                # ⚑ THE SAME NOTIFICATION ON THE OTHER DROP PATH. `derive_row`
+                # returns None for a null `result`. ⚑ MEASURED that this path
+                # cannot truncate a tail on a run02-shaped corpus -- `result` is
+                # a whole-game property there, so such a game loses every row
+                # rather than its last (9 games all-null, 115 none, 0 mixed of
+                # 124). Notified anyway: the invariant is the corpus's, not this
+                # code's, and a branch that is correct only while an upstream
+                # habit holds is the kind that breaks silently.
+                if grouper is not None:
+                    grouper.note_dropped(row)
                 continue
             if grouper is None:
-                emit([derived])
+                emit(GameBatch(rows=[derived]))
             else:
                 emit(grouper.add(row, derived))
         if options.limit and deriver.stats.rows_read >= options.limit:
@@ -3365,6 +3485,7 @@ def apply_value_scheme(
     *,
     options: DeriveOptions,
     stats: DeriveStats,
+    banked_tail_ply: int | None = None,
 ) -> list[ReplaySample]:
     """Write the value scheme's target into each row's ``search_wdl``, in place.
 
@@ -3381,7 +3502,10 @@ def apply_value_scheme(
     """
     facts = [row.facts for row in rows]
     targets, readings = game_value_targets(
-        facts, value_scheme=options.value_scheme, params=options.qz,
+        facts,
+        value_scheme=options.value_scheme,
+        params=options.qz,
+        banked_tail_ply=banked_tail_ply,
     )
     # ⚑⚑ THE ABLATION'S TAKE-EFFECT EVIDENCE IS THE EMITTED TARGET ITSELF.
     # The weight and stop-kind counters below prove that an INTERMEDIATE choice
@@ -3400,6 +3524,11 @@ def apply_value_scheme(
             facts,
             value_scheme=options.value_scheme,
             params=options.qz.without_ablation(),
+            # ⚑ THE SAME TAIL FACT. C-full and the ablation must differ ONLY in
+            # the mechanism being ablated; handing C-full a different view of
+            # where the game's banked rows end would put a second difference
+            # into the comparison the gate reads.
+            banked_tail_ply=banked_tail_ply,
         )
     samples: list[ReplaySample] = []
     for index, (row, target, reading) in enumerate(zip(rows, targets, readings)):
@@ -3439,6 +3568,27 @@ def apply_value_scheme(
     return samples
 
 
+@dataclass(frozen=True)
+class GameBatch:
+    """The rows handed to :func:`apply_value_scheme` at once, plus their context.
+
+    ⚑ THE TAIL FACT TRAVELS WITH THE ROWS.  ``banked_tail_ply`` is a property of
+    the GAME, is known only to :class:`GameGrouper`, and is needed only by
+    :func:`game_value_targets` -- and there is a shard-cutting loop in between.
+    Carrying it as a field beside the rows keeps it attached to the game it
+    describes; a parallel variable would be one refactor away from being read
+    for the wrong game.
+    """
+
+    rows: list[DerivedRow]
+    #: The ply of the last row the CORPUS banked for this game, when that row
+    #: did NOT survive derivation.  ``None`` -- the overwhelmingly common case,
+    #: and the whole ungrouped path -- means the last surviving row IS the last
+    #: banked one and the arms behave exactly as they did before this field
+    #: existed.
+    banked_tail_ply: int | None = None
+
+
 class GameGrouper:
     """Buffers derived rows into whole games for the schemes that need one.
 
@@ -3464,12 +3614,64 @@ class GameGrouper:
         self._key: tuple[int, int] | None = None
         self._rows: list[DerivedRow] = []
         self._last_ply: int | None = None
+        # ⚑⚑ TWO PLY CURSORS, AND THEY MUST NOT BE MERGED. `_last_ply` is the
+        # last SURVIVING ply and drives the internal-gap detection: a row
+        # dropped at ply 40 with ply 41 surviving must read as a gap
+        # (41 - 39 = 2), so a drop must NOT advance it. `_last_seen_ply` is the
+        # last ply the CORPUS offered, drop or not, and exists only to notice
+        # that a game's banked rows ran past its surviving ones. Advancing
+        # `_last_ply` on a drop would silence the gap; ignoring drops in
+        # `_last_seen_ply` would silence the tail.
+        self._last_seen_ply: int | None = None
         self._closed: set[tuple[int, int]] = set()
 
-    def add(self, row: dict[str, Any], derived: DerivedRow) -> list[DerivedRow]:
+    def note_dropped(self, row: dict[str, Any]) -> None:
+        """Record that the corpus banked this row and derivation did not keep it.
+
+        ⚑⚑ THE ONLY WAY A TRAILING DROP IS EVER OBSERVABLE.  An INTERNAL drop
+        announces itself: the next surviving row of the same game arrives with a
+        non-unit ply step and :meth:`add` sees the gap.  A drop of a game's LAST
+        row announces nothing at all -- no later same-game row ever arrives, so
+        the previous surviving row looks exactly like a game's natural end and
+        is handed the terminal treatment (arm C blends toward ``Z`` across the
+        dropped row's unpriced move; arm B gives it ``w = 1``).  This is the
+        notification that makes the two cases symmetrical.
+
+        ⚑ ATTRIBUTED BY KEY, not to whatever game is open.  A drop of the FIRST
+        row of the NEXT game arrives while this game is still open, and charging
+        it here would truncate a game that was never truncated.  A leading drop
+        is then simply not recorded, which is correct: it shortens no scan and
+        moves no ramp anchor.
+        """
+        key = self._key_of(row)
+        if key != self._key:
+            return
+        ply = int(row["ply"])
+        if self._last_seen_ply is None or ply > self._last_seen_ply:
+            self._last_seen_ply = ply
+
+    def _key_of(self, row: dict[str, Any]) -> tuple[int, int]:
+        """``(worker_id, game_id)``, or a refusal naming what is missing.
+
+        ⚑ Read by SUBSCRIPT and raised on, rather than ``.get``-ed to a default:
+        a row with no game identity cannot be grouped, and a scheme that groups
+        by game must say so instead of quietly filing it under a placeholder.
+        """
+        try:
+            return (int(row["worker_id"]), int(row["game_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)} carries no usable (worker_id, game_id), so "
+                f"--value-scheme {self._deriver.options.value_scheme} cannot "
+                "tell which game it belongs to. The grouped schemes assemble "
+                "whole games; a row that cannot be attributed to one is not a "
+                "row they can derive.",
+            ) from exc
+
+    def add(self, row: dict[str, Any], derived: DerivedRow) -> GameBatch | None:
         """Buffer one row; return the game it displaced, if any."""
-        key = (int(row["worker_id"]), int(row["game_id"]))
-        finished: list[DerivedRow] = []
+        key = self._key_of(row)
+        finished: GameBatch | None = None
         if key != self._key:
             finished = self.flush(cut_by_limit=False)
             if key in self._closed:
@@ -3483,18 +3685,39 @@ class GameGrouper:
                 )
             self._key = key
             self._last_ply = None
+            self._last_seen_ply = None
         ply = int(row["ply"])
         if self._last_ply is not None and ply - self._last_ply != 1:
             self._deriver.stats.qz_ply_gaps_nonunit += 1
         self._last_ply = ply
+        if self._last_seen_ply is None or ply > self._last_seen_ply:
+            self._last_seen_ply = ply
         self._rows.append(derived)
         return finished
 
-    def flush(self, *, cut_by_limit: bool) -> list[DerivedRow]:
-        """Close the open game and hand back its rows."""
+    def flush(self, *, cut_by_limit: bool) -> GameBatch | None:
+        """Close the open game and hand back its rows plus its tail fact."""
         if self._key is None or not self._rows:
-            return []
+            return None
         rows, key = self._rows, self._key
+        # ⚑ STRICTLY GREATER, not merely different: only a ply BEYOND the last
+        # survivor proves the game continued past it. A drop at or below it is
+        # an internal drop, which the gap clause in `game_value_targets` already
+        # covers.
+        #
+        # ⚑ HONEST NOTE, so nobody later "restores" a difference that is not
+        # there: because `_last_seen_ply` keeps the MAXIMUM ply seen (in both
+        # `add` and `note_dropped`), it can never fall below `rows[-1]`'s ply,
+        # so `>` and `!=` are EQUIVALENT here today. Mutating one into the other
+        # is an equivalent mutant and no test can distinguish them. `>` is kept
+        # because it states the condition the code means; the max-keeping is
+        # what actually enforces it.
+        seen = self._last_seen_ply
+        banked_tail_ply = (
+            seen if seen is not None and seen > rows[-1].facts.ply else None
+        )
+        if banked_tail_ply is not None:
+            self._deriver.stats.qz_games_with_dropped_tail += 1
         self._deriver.stats.note_game(len(rows), cut_by_limit=cut_by_limit)
         if len(rows) == 1 and rows[0].facts.ply == 0:
             self._deriver.stats.qz_single_row_games += 1
@@ -3502,7 +3725,8 @@ class GameGrouper:
         self._rows = []
         self._key = None
         self._last_ply = None
-        return rows
+        self._last_seen_ply = None
+        return GameBatch(rows=rows, banked_tail_ply=banked_tail_ply)
 
 
 def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
@@ -3623,7 +3847,7 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
     """
     group = zarr.open_group(str(path), mode="a")
     group.attrs.update({
-        "derive_schema": DERIVE_SCHEMA,
+        "derive_schema": derive_schema_for(options.value_scheme),
         "derive_scheme": options.scheme.canonical,
         "derive_scheme_params": options.scheme.params(),
         "derive_temp": float(options.temp),
@@ -3663,7 +3887,7 @@ def build_summary(
     """The output manifest.  Every knob appears as a REALIZED reading."""
     facts = corpus_record.facts
     return {
-        "schema": DERIVE_SCHEMA,
+        "schema": derive_schema_for(options.value_scheme),
         "started_utc": started_utc,
         "tool": "scripts/derive_corpus_targets.py",
         "corpus": {
@@ -3877,11 +4101,68 @@ _VALUE_SCHEME_CONSTRUCTION = {
 }
 
 
+def _qzsegment_construction(qz: QzParams) -> str:
+    """Arm C's arithmetic AS REALIZED, which for an ablation is not C-full's.
+
+    ⚑⚑ THE ABLATIONS EMIT A DIFFERENT TARGET AND MUST SAY SO.  The dict above
+    describes C-full, and a manifest that printed it for ``--qz-w-const`` would
+    claim ``w_t`` came from the instability map while the corpus was written
+    with a constant, and for ``--qz-no-boundary`` would claim the scan stopped
+    at the first blunder while nothing stopped it.  ``params`` beside it does
+    expose the flags, but ``construction`` is the field this manifest presents
+    as THE arithmetic a later consumer should read, so a contradiction between
+    the two is resolved by whichever the reader happens to trust.  Built from
+    ``QzParams.variant`` and the realized numbers instead (Codex review of
+    PR #491).
+
+    ⚑ The variants are spelled out rather than assembled from fragments: the
+    point of the field is that someone holding only the shards can reconstruct
+    the target, and a sentence stitched from three conditionals is exactly the
+    kind of prose that reads fluently and means something slightly wrong.
+    """
+    future_full = (
+        "F_t is the game result in row t's seat when a forward scan over "
+        "played regret reaches the game's last banked row, else the searched "
+        "value at the first row whose played regret exceeds r_boundary "
+        f"({float(qz.r_boundary):g}) or cannot be priced, rotated into row t's "
+        "seat"
+    )
+    if qz.no_boundary:
+        return (
+            "(1 - w_t) * Q_t + w_t * F_t (C-no-segment ABLATION, diagnostic — "
+            "NOT an adoption candidate): F_t is the game result in row t's "
+            "seat for every row whose OWN played move can be priced; the "
+            f"r_boundary ({float(qz.r_boundary):g}) blunder stop is REMOVED, so "
+            "no row ahead of t stops t's scan. A row that cannot price its own "
+            "move, or whose own banked tail is missing, still stops at itself "
+            "and takes F_t = Q_t. w_t = 0.5 + 0.45 * min(u_t / u_scale, 1), "
+            "u_t = |q(d9)-q(d8)| + |q(d8)-q(d7)|. NO per-ply decay"
+        )
+    if qz.w_const is not None:
+        return (
+            "(1 - w) * Q_t + w * F_t (C-no-u ABLATION, diagnostic — NOT an "
+            f"adoption candidate): w is the CONSTANT {float(qz.w_const):g} for "
+            "every row; the frozen instability map 0.5 + 0.45 * min(u_t / "
+            "u_scale, 1) is REMOVED and u_t is not consulted. "
+            f"{future_full}. NO per-ply decay"
+        )
+    return (
+        f"(1 - w_t) * Q_t + w_t * F_t (C): {future_full}. "
+        "w_t = 0.5 + 0.45 * min(u_t / u_scale, 1), u_t = "
+        "|q(d9)-q(d8)| + |q(d8)-q(d7)|. NO per-ply decay"
+    )
+
+
 def value_scheme_manifest(options: DeriveOptions) -> dict[str, Any]:
     """The value arm, as a REALIZED reading rather than an echo of the flag."""
+    construction = (
+        _qzsegment_construction(options.qz)
+        if options.value_scheme == VALUE_SCHEME_QZSEGMENT
+        else _VALUE_SCHEME_CONSTRUCTION[options.value_scheme]
+    )
     manifest: dict[str, Any] = {
         "name": options.value_scheme,
-        "construction": _VALUE_SCHEME_CONSTRUCTION[options.value_scheme],
+        "construction": construction,
         "grouped_by_game": options.needs_game,
         "frozen_by": (
             "docs/experiment_ledger.md — 2026-08-31 PREREG VALUE-TARGET ROUND "
@@ -3930,7 +4211,8 @@ def _value_scheme_line(out: dict[str, Any]) -> str:
         f"regret mean={read['played_regret']['mean']:.4g} | "
         f"missing played_move={read['rows_missing_played_move']} "
         f"depths={read['rows_missing_depths']} "
-        f"nonunit ply gaps={read['ply_gaps_nonunit']}"
+        f"nonunit ply gaps={read['ply_gaps_nonunit']} "
+        f"dropped tails={read['games_with_dropped_tail']}"
     )
 
 
