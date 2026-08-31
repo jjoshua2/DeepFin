@@ -71292,3 +71292,47 @@ driver, not target temperature.
   bigger fork so it reads out first. Confound note: run03 rows are a
   different generation seed than run02's — same recipe, same book, same SF
   build; that is the point (fresh data), not a defect.
+
+**2026-08-31 PREREG — VALUE-TARGET ROUND (runs after the policy stack
+settles; parameters FROZEN NOW from banked data, before any training).**
+Hypothesis (Josh + an external-agent design): the value head trains on pure
+search values today; game outcomes carry long-horizon information d9 misses,
+but raw Z is corrupted by sampled-move blunders (the generator NEVER plays
+deterministic best: Gumbel temp 1.0 for plies 0-19, then 0.3 forever). Four
+arms, same recipe as the policy ladder (9,680 steps, seed 0, run02-snapshot
+derivation, policy target unchanged at the reigning τ):
+- **V0 (control):** 100% deepest-phase search value (today's target).
+- **A:** flat 0.5·Q_t + 0.5·Z.
+- **B:** phase ramp, weight_Z = ply/terminal_ply (100% Q at start → 100% Z
+  at terminal). The complexity bar C must beat.
+- **C: regret-gated adaptive λ-return.** Backward through each game:
+  G_t = (1−λ_t)·Q_t + λ_t·flip(G_{t+1}), computed on the WDL 3-VECTOR
+  (cp→WDL via the production `cp_to_wdl_array`, slope 0.006 / draw 120),
+  STM POV flipped each ply; G_T = one-hot Z. λ_t = c_t · λ_base(u_t) with:
+  - c_t = exp(−[max(0, r_t − r_free)/τ_r]²), r_t = q(best_d9) − q(played_d9);
+  - **frozen r_free = 0.06** (temp-low played-regret p75 = 0.0561 — exempts
+    ordinary sampling noise; measured zero-frac 0.21, p50 0.0168);
+  - **frozen τ_r = 0.25** (temp-low p95 = 0.2918 lands c≈0.37; p99 = 0.7711
+    lands c≈0 — genuine blunders close the gate);
+  - **frozen λ_base(u) = 0.5 + 0.45·min(u/0.05, 1)**, u_t =
+    |q(top_d9)−q(top_d8)| + |q(top_d8)−q(top_d7)| from the banked staircase
+    (measured p50 0.0058 / p90 0.0469 — stable teacher keeps more Q,
+    unconverged teacher listens forward; TRAC-style reliability weighting);
+  - NO phase term: measured temp-high played-regret (p50 0.2559, p75 0.7340)
+    self-gates through c_t — one less knob, stated deliberately.
+  Calibration sample: 98,304 rows / 12 shards of `run02_snap_20260829`,
+  played regret split by schedule_phase, all in q units.
+- **Deciders, read once per arm:** `value_regret.py` (the sanctioned value
+  ruler — Brier/ECE remain banned) and arena vs V0 (200 games, sims 100,
+  `--search-shape training`, `--no-rolling`); value puzzles secondary;
+  POLICY metrics reported as guardrails (shared trunk — a value arm that
+  wins value_regret while measurably degrading policy audit/top-1 is
+  flagged, arena governs). Cluster bootstrap by game everywhere (λ-return
+  targets are autocorrelated within games).
+- **Pre-committed rules:** an arm beats V0 only with value_regret improved
+  AND arena CI vs V0 not excluding 0 downward. C is adopted only if it also
+  beats B on the deciders — otherwise the simplest winner is. If NO arm
+  beats V0, outcomes stay out of the value target and the lane closes.
+  Winner is re-checked on the 20M confirmation run before entering the 100M
+  recipe (regime stamp: all verdicts here are 5M×1-view).
+- Aux reliability head: DEFERRED, flag-gated, contingent on C winning.
