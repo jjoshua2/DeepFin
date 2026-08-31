@@ -140,7 +140,13 @@ protocol that only works on a polite exit is a protocol that does not work.
   empty, the same condition ``main``'s exit code already uses), the gate reads
   THAT rather than the file's existence, and a crashed session's summary is
   moved aside to ``summary.unfinished_NN.json`` so the resumed session's own
-  ``open("x")`` still has its name free at the end.  ⚑ A summary that makes no
+  ``open("x")`` still has its name free at the end.  ⚑ AND SO IS ANYTHING AT
+  THE ``--json`` PATH, which ``main`` writes with a SECOND ``open("x")`` after
+  ``run`` returns: freeing only the in-directory name would move the same
+  days-late traceback one function further out, onto a resume that had already
+  banked a correct corpus.  That one is moved unconditionally -- an output
+  location the operator named is not corpus identity, and it is not in
+  ``config_stamp`` for the drift gate to speak to either.  ⚑ A summary that makes no
   ``run_finished`` claim -- unreadable, or written before this key existed --
   is REFUSED, not guessed at: the cost of failing closed is one manual rename,
   and the cost of failing open is games appended to a finished corpus.
@@ -236,10 +242,15 @@ MANIFEST_NAME = "manifest.json"
 #: existence of this file.
 SUMMARY_NAME = "summary.json"
 
-#: Where a crashed session's ``summary.json`` is moved so a resume can write its
-#: own (:func:`archive_unfinished_summary`).  The suffix stays ``.json`` and the
-#: name stays outside ``shard_glob``, so no consumer's inventory picks it up.
-UNFINISHED_SUMMARY_TEMPLATE = "summary.unfinished_{index:02d}.json"
+#: Where a crashed session's records are moved so a resume can write its own
+#: (:func:`unfinished_archive_path`).  ONE spelling for both of them -- the
+#: in-directory ``summary.json`` and any ``--json`` copy beside it -- because
+#: two conventions for the same act is two things to learn and one to get
+#: wrong.  The extension is preserved rather than appended to, so an archived
+#: record is still a ``.json`` file to every tool that opens one, and the
+#: infix keeps the name outside ``shard_glob`` and outside the ``.jsonl.*``
+#: suffixes a consumer's inventory globs.
+UNFINISHED_ARCHIVE_TEMPLATE = "{stem}.unfinished_{index:02d}{suffix}"
 
 DEFAULT_STAIRCASE = "all:9,16:11,4:13"
 DEFAULT_TEMP_PLIES = 20
@@ -3040,8 +3051,8 @@ def read_summary_run_finished(path: Path) -> bool | None:
         return None
 
 
-def unfinished_summary_path(out_dir: Path) -> Path:
-    """The first free ``summary.unfinished_NN.json`` in ``out_dir``.
+def unfinished_archive_path(path: Path) -> Path:
+    """The first free ``<stem>.unfinished_NN<suffix>`` beside ``path``.
 
     Counted rather than timestamped so the name is a pure function of what is
     already on disk: a corpus that survived three crashes keeps all three
@@ -3051,7 +3062,9 @@ def unfinished_summary_path(out_dir: Path) -> Path:
     """
     index = 0
     while True:
-        candidate = out_dir / UNFINISHED_SUMMARY_TEMPLATE.format(index=index)
+        candidate = path.with_name(UNFINISHED_ARCHIVE_TEMPLATE.format(
+            stem=path.stem, index=index, suffix=path.suffix,
+        ))
         if not candidate.exists():
             return candidate
         index += 1
@@ -3082,11 +3095,48 @@ def archive_unfinished_summary(out_dir: Path) -> Path | None:
             f"refusing to move {summary_path} aside: it does not state "
             "run_finished: false, so it is not a crashed session's record.",
         )
-    archive = unfinished_summary_path(out_dir)
+    archive = unfinished_archive_path(summary_path)
     summary_path.rename(archive)
     _LOG.info(
         "resume: the crashed session's %s is kept as %s; this session will "
         "write its own", SUMMARY_NAME, archive.name,
+    )
+    return archive
+
+
+def archive_json_copy_for_resume(json_path: Path | None) -> Path | None:
+    """Free the ``--json`` path the resumed session will write its copy to.
+
+    ⚑ THE SAME DAYS-LATE EXPLOSION AS THE SUMMARY, ONE FUNCTION FURTHER OUT.
+    ``main`` writes the ``--json`` copy with its own ``open("x")`` AFTER ``run``
+    returns, so a crashed session that had ``--json`` left TWO files behind and
+    :func:`archive_unfinished_summary` frees only one.  Repeating the original
+    command would then archive the summary, search for however many days, bank
+    a correct corpus and its ``summary.json`` -- and traceback on the last line
+    of ``main``, leaving automation an error code beside a complete corpus.
+
+    ⚑ NO VERDICT IS READ HERE, and that is the difference from
+    :func:`archive_unfinished_summary` rather than an omission.  ``--json`` is
+    an OUTPUT LOCATION the operator chose, not corpus identity: it is not in
+    ``config_stamp`` (so ``refuse_resume_config_drift`` cannot speak to it),
+    nothing ties it to this ``--out-dir``, and a previous run of something else
+    may simply own that name.  The corpus's OWN verdict was settled before this
+    is ever called -- ``load_resume_manifest`` refused every summary that said
+    it finished -- so whatever sits at the aux path is stale or foreign either
+    way, and refusing on it would be a NEW false refusal of exactly the kind
+    this change exists to remove.  So: moved aside, never deleted, never
+    overwritten, and said out loud in the log.
+
+    ``None`` when no ``--json`` was given or nothing is at that path, which is
+    every ordinary resume.
+    """
+    if json_path is None or not json_path.exists():
+        return None
+    archive = unfinished_archive_path(json_path)
+    json_path.rename(archive)
+    _LOG.info(
+        "resume: the file already at the --json path is kept as %s; this "
+        "session will write its own copy there", archive.name,
     )
     return archive
 
@@ -3266,11 +3316,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if manifest is not None:
         refuse_resume_config_drift(manifest, requested=requested)
         # ⚑ AFTER the last refusal and before the first game: a resume that is
-        # going to be turned away must leave the directory byte-identical to
-        # how it found it, and a resume that is going ahead must free the name
-        # its own summary is written under with `open("x")` at the end. `None`
-        # on every ordinary kill -9 resume, which left no summary at all.
+        # going to be turned away must leave BOTH files byte-identical to how
+        # it found them, and a resume that is going ahead must free every name
+        # this invocation writes with `open("x")` at the end. `None` from both
+        # on an ordinary kill -9 resume, which left no summary at all.
+        #
+        # ⚑ Summary FIRST: it is the record whose verdict was just checked, and
+        # archiving it is the step that re-checks it. The aux copy is handled
+        # second and unconditionally -- see `archive_json_copy_for_resume` for
+        # why an output location the operator named is not corpus identity.
+        # Both live here rather than in `main` because only `run` knows when
+        # the last refusal has passed, and moving a file before that would be
+        # a refused resume that changed the directory anyway.
         archive_unfinished_summary(out_dir)
+        archive_json_copy_for_resume(None if args.json is None else Path(args.json))
         # ⚑ THE CORPUS'S STAMP, NOT THIS SESSION'S. Every row banked before the
         # kill carries the manifest's sha, so the rows this session adds carry
         # it too -- a corpus with two stamps on rows made under one
@@ -3391,7 +3450,8 @@ def build_parser() -> argparse.ArgumentParser:
              "records -- a corpus may only ever have one configuration. A "
              "summary.json is only a refusal when it says run_finished: true "
              "or states no verdict at all; a crashed session's (run_finished: "
-             "false) is kept as summary.unfinished_NN.json and continued.",
+             "false) is kept as summary.unfinished_NN.json and continued, as "
+             "is anything at the --json path.",
     )
     p.add_argument(
         "--games", type=int, default=0,
@@ -3463,8 +3523,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--book-max-games", type=int, default=gen.DEFAULT_OPENING_MAX_GAMES,
     )
     p.add_argument("--run-id", default=DEFAULT_RUN_ID)
-    p.add_argument("--json", type=Path, default=None,
-                   help="also write the summary here (it always lands in --out-dir)")
+    p.add_argument(
+        "--json", type=Path, default=None,
+        help="also write the summary here (it always lands in --out-dir). "
+             "Written with an exclusive create, so an existing file is never "
+             "clobbered; on --resume anything already at this path is moved "
+             "to <stem>.unfinished_NN<suffix> first, because a name this "
+             "invocation cannot write is a multi-day run that fails after the "
+             "corpus is already banked.",
+    )
     return p
 
 

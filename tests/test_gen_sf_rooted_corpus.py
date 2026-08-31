@@ -3283,6 +3283,157 @@ def test_a_crashed_run_resumes_and_its_crash_record_survives(
         (out_dir / "summary.unfinished_00.json").read_text("utf-8"),
     )
     assert kept["failed_workers"] == crashed["failed_workers"]
+    # ⚑ No --json in this invocation, so nothing else was touched: exactly one
+    # archived record, and no stray `.unfinished_` beside it.
+    assert sorted(p.name for p in out_dir.glob("*.unfinished_*")) == [
+        "summary.unfinished_00.json",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "archived"),
+    [
+        ("summary.json", "summary.unfinished_00.json"),
+        ("run02.json", "run02.unfinished_00.json"),
+        ("report.tar.json", "report.tar.unfinished_00.json"),
+        ("no_suffix", "no_suffix.unfinished_00"),
+    ],
+)
+def test_an_archived_record_keeps_its_extension(
+    tmp_path: Path, name: str, archived: str,
+) -> None:
+    """One naming rule for the summary and for any ``--json`` copy.
+
+    The index is an INFIX rather than a suffix so an archived record is still a
+    ``.json`` file to whatever opens one -- and so the name lands outside both
+    ``shard_glob`` and the ``.jsonl.*`` suffixes a consumer's inventory globs.
+    """
+    (tmp_path / name).write_text("{}", encoding="utf-8")
+    assert corpus.unfinished_archive_path(tmp_path / name).name == archived
+
+
+def test_the_json_copy_is_freed_by_the_resume_and_written_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ THE SAME EXPLOSION ONE FUNCTION FURTHER OUT (review finding, P1).
+
+    ``main`` writes the ``--json`` copy with its OWN ``open("x")`` after ``run``
+    returns, so a crashed session that had ``--json`` left TWO files behind.
+    Freeing only the in-directory summary would let the resume archive it,
+    search for however many days, bank a correct corpus AND its ``summary.json``
+    -- and then traceback on ``main``'s last line, handing automation an error
+    code beside a complete corpus.  ⚑ ``--json`` is not in ``config_stamp``, so
+    the drift gate cannot see it either; this is the only thing that can.
+
+    Mutation caught: dropping the ``archive_json_copy_for_resume`` call from
+    ``run`` -- the resumed session then raises ``FileExistsError`` on the aux
+    path with both games already played and banked.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", InlineExecutor)
+    healthy = corpus.run_worker
+    oom_kills: set[int] = {1}
+
+    def pool_may_die(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        if spec.worker_id in oom_kills:
+            raise BrokenProcessPool("terminated abruptly")
+        return healthy(spec)
+
+    monkeypatch.setattr(corpus, "run_worker", pool_may_die)
+    out_dir = tmp_path / "run"
+    aux = tmp_path / "reports" / "burn.json"
+    aux.parent.mkdir()
+    argv = [
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+        "--json", str(aux),
+    ]
+
+    assert corpus.main(argv) == 1
+    assert json.loads(aux.read_text("utf-8"))["run_finished"] is False
+
+    oom_kills.clear()
+    assert corpus.main([*argv, "--resume"]) == 0
+
+    # The fresh copy landed at the path the operator asked for ...
+    assert json.loads(aux.read_text("utf-8"))["run_finished"] is True
+    assert json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))[
+        "run_finished"
+    ] is True
+    # ... and the crashed one is beside it, under one name, still readable.
+    kept = aux.parent / "burn.unfinished_00.json"
+    assert json.loads(kept.read_text("utf-8"))["run_finished"] is False
+    assert sorted(p.name for p in aux.parent.iterdir()) == [
+        "burn.json", "burn.unfinished_00.json",
+    ]
+
+
+def test_a_refused_resume_moves_neither_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ THE ORDERING GUARANTEE: nothing moves until every refusal has passed.
+
+    Both archive steps sit AFTER ``refuse_resume_config_drift`` inside ``run``,
+    which is the only reason a resume that is turned away leaves the directory
+    it was pointed at exactly as it found it.  Move either one up into ``main``
+    -- the obvious place, since ``main`` owns the ``--json`` write -- and a
+    refused resume silently renames the operator's files on its way out.
+
+    Mutation caught: archiving before the drift check.  Both digests below then
+    hold a file that is no longer there.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", InlineExecutor)
+    healthy = corpus.run_worker
+    oom_kills: set[int] = {1}
+
+    def pool_may_die(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        if spec.worker_id in oom_kills:
+            raise BrokenProcessPool("terminated abruptly")
+        return healthy(spec)
+
+    monkeypatch.setattr(corpus, "run_worker", pool_may_die)
+    out_dir = tmp_path / "run"
+    aux = tmp_path / "burn.json"
+    argv = [
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+        "--json", str(aux),
+    ]
+    assert corpus.main(argv) == 1
+    before = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (out_dir / corpus.SUMMARY_NAME, aux)
+    }
+
+    oom_kills.clear()
+    with pytest.raises(ValueError, match=r"temp_high: 0\.01 -> 0\.5"):
+        corpus.main([
+            *argv[:argv.index("--temp-high") + 1], "0.5",
+            *argv[argv.index("--temp-high") + 2:], "--resume",
+        ])
+
+    assert {
+        path: hashlib.sha256(path.read_bytes()).hexdigest() for path in before
+    } == before, "a refused resume must not touch a byte"
+    assert list(tmp_path.glob("*.unfinished_*")) == []
+    assert list(out_dir.glob("*.unfinished_*")) == []
 
 
 def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
