@@ -57,7 +57,10 @@ DRAW_WIDTH = float(gen.NNUE_CP_DRAW_WIDTH)
 #: default (``lc0_control_train.main``'s ``--config``), so the gate tests below
 #: are driven by the file a real launch reads rather than by a dict a test
 #: invented.
-CONTROL_CONFIG = "configs/lc0_positive_control.yaml"
+#: ⚑ Anchored to the repo root, not to the cwd: the repo's own idiom
+#: (`REPO_ROOT / "configs/..."`), so the test reads the same file wherever
+#: pytest was invoked from.
+CONTROL_CONFIG = Path(__file__).resolve().parents[1] / "configs/lc0_positive_control.yaml"
 
 #: The generation config both of the corpus's own records stamp.
 CONFIG_REQUESTED: dict[str, Any] = {
@@ -3917,7 +3920,7 @@ def real_control_config(**overrides: float) -> dict[str, Any]:
     """
     from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
-    cfg = dict(flatten_run_config_defaults(load_yaml_file(CONTROL_CONFIG)))
+    cfg = dict(flatten_run_config_defaults(load_yaml_file(str(CONTROL_CONFIG))))
     cfg.update(overrides)
     return cfg
 
