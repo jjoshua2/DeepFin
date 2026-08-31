@@ -71365,3 +71365,23 @@ reaches the middlegame), and a MEASUREMENT answering the first half.
   C-must-beat-B bar unchanged.
 - The robust future-Q aggregate variant (median of late-segment Qs instead
   of the endpoint) is NOTED, not added — a fifth arm needs C to earn it.
+
+**2026-08-31 SECOND AMENDMENT to the value-round prereg (still before any
+code merged or training).** Convergent with the external agent after the u
+measurement: keep u, fix propagation — and add attribution machinery so a C
+win (or loss) is explainable:
+- **Two ablation arms inside the C family** (diagnostic, NOT adoption
+  candidates unless they independently clear the beats-B bar):
+  `C-no-u` — same clean-segment F_t, constant blend w = 0.725 (the frozen
+  map's midpoint); `C-no-segment` — the frozen u→w map but F_t = terminal Z
+  always (no boundaries). C-full beating C-no-u shows the depth-instability
+  feature improves the NET, not merely correlates with teacher error;
+  C-no-u winning shows the segment does all the work; C-no-segment losing
+  on long-horizon positions is direct evidence for time-as-search-depth.
+- **Frozen adversarial diagnostic set:**
+  `scratchpad/t80_ruler/stable_wrong_v1.json` — 115 rows / 91 games where
+  u <= median AND |q_d9 − q_lc0_search| > 0.25 (the fortress-shaped class
+  the confidence feature structurally cannot see; membership frozen now).
+  Read per arm at readout: does the retrospective mechanism repair the class
+  u cannot detect? Diagnostic only — value_regret + arena remain the
+  deciders; cluster by game (91 clusters).
