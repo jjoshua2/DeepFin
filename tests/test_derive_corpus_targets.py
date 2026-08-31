@@ -3728,9 +3728,20 @@ def test_a_gap_in_the_banked_plies_stops_a_segment() -> None:
     np.testing.assert_allclose(gapped[0], 0.5 * q + 0.5 * flipped(q), atol=1e-12)
     # Ply 3 is past the gap and is the last banked row with a clean move.
     np.testing.assert_allclose(gapped[2], 0.5 * q + 0.5 * onehot(2), atol=1e-12)
-    # And the ablations do not suppress it -- it is an absent verdict, not one.
+    # ⚑ The ablations keep the carve-out for the row's OWN target ...
     np.testing.assert_allclose(targets_for(rows, no_boundary=True)[1], q, atol=1e-12)
     np.testing.assert_allclose(targets_for(rows, w_const=0.725)[1], q, atol=1e-12)
+    # ... and C-no-segment lets the row BEHIND it scan past, which is exactly
+    # what that cell ablates. Pinned rather than left accidental: "the ablation
+    # preserves fail-toward-Q" is true of a row's own target and false of its
+    # neighbours', and those are different claims.
+    np.testing.assert_allclose(
+        targets_for(rows, no_boundary=True)[0], 0.5 * q + 0.5 * onehot(0), atol=1e-12,
+    )
+    # C-no-u keeps the segment logic, so its row 0 still stops at the gap.
+    np.testing.assert_allclose(
+        targets_for(rows, w_const=0.725)[0], 0.275 * q + 0.725 * flipped(q), atol=1e-12,
+    )
 
 
 # ── review round 1: the manifest's overrides are machine-readable ────────────

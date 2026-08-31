@@ -221,9 +221,12 @@ them, which is what makes the round paired rather than four experiments.
     ``--qz-w-const c`` (C-no-u: constant weight, segment logic intact) and
     ``--qz-no-boundary`` (C-no-segment: blunder boundaries suppressed, u map
     intact).  Both at once is refused -- it is arm A with a different constant.
-    ⚑ Neither suppresses the fail-toward-Q rule: a transition that cannot be
-    PRICED (no played move, or a gap in the banked plies) stops a scan under
-    every cell, because that is the absence of a verdict rather than one.
+    ⚑ Under both, a row that cannot price its OWN transition (no played move,
+    or a gap in the banked plies ahead of it) still falls back to pure ``Q``:
+    that is the absence of a verdict rather than one, and the amendment carves
+    it out explicitly.  Under ``--qz-no-boundary`` the carve-out is per-row --
+    rows BEHIND such a row scan past it to the outcome, since suppressing what
+    lies ahead is exactly what that cell ablates.
 
 ⚑⚑ A NON-``search`` SCHEME BAKES THE BLEND IN, AND THE MANIFEST SAYS SO LOUDLY.
 ``wdl_target`` still carries the RAW outcome (it is a required shard field with
@@ -1679,9 +1682,14 @@ def game_value_targets(
     def uncertifiable(index: int) -> bool:
         """The transition out of this row cannot be priced AT ALL.
 
-        Two ways, and neither is a blunder verdict -- they are the absence of
-        one, which is why ``--qz-no-boundary`` does NOT suppress them: that
-        ablation removes the blunder gate, not the fail-toward-Q rule.
+        Two ways, and neither is a blunder verdict -- they are the ABSENCE of
+        one.  ⚑ Precisely what ``--qz-no-boundary`` does with them: a row that
+        cannot certify its OWN transition still stops at itself (pure Q), which
+        is the ledger amendment's stated carve-out; rows BEHIND it scan past,
+        because that ablation's whole definition is that nothing ahead of a row
+        stops it.  So the carve-out is per-row, not a boundary -- stated here
+        because "the ablation preserves fail-toward-Q" is true of the row's own
+        target and false of its neighbours', and those are different claims.
 
         * the row's played move is missing from its own d9 block (or absent);
         * ⚑ the next BANKED row is more than one ply later.  A corpus row is
@@ -1737,6 +1745,12 @@ def game_value_targets(
             # ⚑ Self-only: a row that cannot price its own move still fails
             # toward Q, exactly as under the full scheme. What the flag removes
             # is the effect of OTHER rows' blunders on this row's future.
+            #
+            # ⚑ SELF-ONLY, and that is the ablation's definition rather than a
+            # weaker version of C-full's rule: a row that cannot certify its own
+            # transition keeps the fail-toward-Q carve-out, and a row BEHIND one
+            # scans past it, because "nothing ahead of a row stops it" is
+            # precisely what C-no-segment removes.
             #
             # ⚑ The LAST banked row takes the same rule as every other, because
             # C-full now gives it the same rule: its move is a real played move
