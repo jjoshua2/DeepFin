@@ -71417,3 +71417,32 @@ draw 120), err=|q_d9−q_lc0|, base P(err>0.25)=0.157. Banked:
    — no prior verdict invalidated. stable_wrong_v1's "91 games" reads "91 game_ids".
 Not banked/testable: per-depth WDL shape (bank stores cp only — needs a custom SF
 run to test draw-logit movement as a fortress signal).
+
+**2026-08-31 CONDITIONAL PREREG: C2 — trajectory-calibrated blend (u2), gated on the
+C readout.** External-agent proposal, adopted with one correction: its C2 formula was
+the per-step recursive λ-return G_t=(1−λ_t)Q_t+λ_t·flip(G_{t+1}) — the formulation
+the first amendment KILLED (geometric Z attenuation). C2 keeps arm C's clean-segment
+retrospective target and boundary rule UNCHANGED; the only delta vs C is the blend
+weight: w_t from **u2_v1** by quantile map onto the same [0.5, 0.95] range the frozen
+u map spans, quantiles from the frozen OOF distribution (p10 0.0032 / p50 0.0820 /
+p90 0.2317).
+- **u2_v1 FROZEN today, before any value-arm training**: HistGradientBoosting
+  regressor, target |q_d9−q_lc0|, 11 value-morphology features (move-churn features
+  dropped as inert), fit on the T80 bank — independent of every arm outcome by
+  construction. Grouped-OOF Spearman 0.688 (frozen u 0.582), AUC@0.25 0.846 (u
+  0.762). Artifacts: `scratchpad/t80_ruler/u2_v1.{pkl,json,oof.jsonl}` +
+  `fit_u2_v1.py`.
+- **Launch condition**: C-family (best of C-full/ablations) ≥ arm B on the value
+  deciders. If C < B, C2 is dead without training (the mechanism, not the estimator,
+  failed). Deciders/instruments identical to the value-round prereg.
+- **Interpretation ladder** (worth stating): A→B = does phase matter; B→C = does
+  crude per-position uncertainty matter; C→C2 = does measured teacher reliability
+  matter. C2 beating C while C-no-u ≈ C-full would mean u was too weak an estimator,
+  not that adaptivity is wrong.
+- **Deferred to one post-C lc0 spend** (same run funds both): direct fit of the
+  u2→w map against the ruler (needs trajectory+ruler on the SAME rows — no current
+  bank has both) and the diagonal-residual scale-up (208-pair first read: resid AUC
+  0.739 vs u 0.707). Until then the quantile map stands.
+- Deployment caveat: u2 needs the d1-d9 staircase, so C2 applies to the
+  NNUE-bootstrap corpus lane; a selfplay-lane analogue would need MCTS-convergence
+  morphology instead.
