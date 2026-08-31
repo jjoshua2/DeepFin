@@ -71458,3 +71458,30 @@ distribution identical between C and C2: only which rows receive the weight
 changes. C vs C2 then isolates the estimator's ordering, nothing else. (External
 agent converged on the recursion correction and proposed a CDF^γ map; this is the
 comparability-preserving special case, chosen over introducing γ.)
+
+**2026-08-31 ROUND-2 EXTENSION READOUT — adoption WEAKLY HELD; no crossover; the
+softer arm is not coming back.** Judged by the a2c24ed99/0e83b23b6 rule, same
+session as the final legs. Arms: `qtemp_0.0005_ext` / `qtemp_0.0067_ext`
+(`--init-from` +9,680 steps on the same repeat shards; banked v3 =
+`scratchpad/t80_ruler/arms_vs_bt4_v3.*`, mid control `arms_vs_bt4_0067_mid.json`,
+paired slopes recomputed from the banked rows, game-cluster 2000×).
+1. **Deciding h2h** (200 games, sims 100, training shape): 0.0005_ext beats
+   0.0067_ext **+22.6 Elo [−20.4, +66.3]** — CI spans 0 ⇒ per the pre-committed
+   rule, the sharp-arm adoption is WEAKLY HELD and the slope read governs:
+2. **Paired 2×-vs-own-1× BT4 d9-regret**: 0.0005 −65.2 cp [−108.9,−21.5];
+   0.0067 −71.3 cp [−118.3,−30.5] — both improve; **slope difference −6.1 cp
+   [−47.4,+38.4]** — statistically zero. No catch-up trend; naive extrapolation
+   of the point estimate needs ~9 more extension units to close the +54.8 cp
+   [−6.7,+129.5] 2× gap. **No crossover in reach.**
+3. **Instruments split at 2× and arena governs** (standing rule): 0.0067_ext
+   leads top-1-vs-BT4 (0.3847 [0.369,0.400] vs 0.3730 [0.357,0.388]) while
+   0.0005_ext leads expected d9 regret (1601.8 vs 1656.6) and the arena.
+4. **Repeat-data signature strengthens**: KL-to-BT4 RISES with the 2nd view in
+   BOTH arms (0.0005: 0.8152→0.8908; 0.0067: 0.7919→0.8487) while top-1 and
+   regret improve — same wobble as the budget curve. Round 4 (fresh rows, same
+   donor/budget) is the discriminator and is training now.
+5. Take-effect control: 0.0067_ext mid (global step 14,520) top-1 0.3772
+   [0.361,0.393] vs its 1× base 0.3782 [0.362,0.394] — smooth continuation, no
+   anomaly (init-from design; continuation stamps valid_control:false as built).
+⇒ Champion lineage stays the SHARP family. τ for the 100M recipe waits on
+round-4's fresh-data read, per the round-4 prereg.
