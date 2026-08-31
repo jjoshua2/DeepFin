@@ -71446,3 +71446,15 @@ p90 0.2317).
 - Deployment caveat: u2 needs the d1-d9 staircase, so C2 applies to the
   NNUE-bootstrap corpus lane; a selfplay-lane analogue would need MCTS-convergence
   morphology instead.
+
+**2026-08-31 C2 map PINNED (closing amendment; C2 spec now complete, no further
+elaboration before C reads out).** The u2→w form is frozen as **quantile matching
+onto the frozen u scale**: û2_t → u* at the same quantile (empirical CDFs of
+u2_v1 OOF predictions and of frozen u, both on the T80 bank rows in
+`u2_v1.oof.jsonl` / `depth_morphology_v1.rows.jsonl`), then arm C's unchanged
+w(u*) = 0.5 + 0.45·min(u*/0.05, 1). Monotone by construction, zero new free
+parameters, and — unlike a direct CDF→[0.5,0.95] ramp — it makes the MARGINAL w
+distribution identical between C and C2: only which rows receive the weight
+changes. C vs C2 then isolates the estimator's ordering, nothing else. (External
+agent converged on the recursion correction and proposed a CDF^γ map; this is the
+comparability-preserving special case, chosen over introducing γ.)
