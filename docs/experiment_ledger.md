@@ -71260,3 +71260,35 @@ Driver `round3b_curriculum.sh`, gated on round3.done.
     nothing — a wiring alarm, not a verdict).
 - The continuation stamps `valid_control: false` as always; deciders are
   arena + BT4 ruler, which do not consult it.
+
+**2026-08-31 ROUND 4 PREREG + resequencing — the fresh-data extension Josh
+asked for (and the round-2 extensions should have been).** The round-2
+extensions reuse the same 5.5M derived rows (a SECOND view); the 4-point
+budget curve on qtemp_0.0005 (banked `arms_vs_bt4_0005_budget.rows.jsonl`)
+shows the second view's signature — KL(BT4‖net) bottoms then RISES
+(0.815 → 0.891) and top-1 plateaus while entropy keeps falling — which is
+either repeat-memorization of the sharp target's noisy argmax, or an
+intrinsic budget effect. The 100M plan (1 view by construction) needs to
+know which. Also banked from that curve: **the undershoot-law falsifier
+FIRED** — predicted H_net 1.71 for τ=0.0005 at 9,680 steps, measured 2.051;
+the target→net entropy relation is convex at the sharp end, and training
+budget (H 2.20→1.83 across 4 points, near-linear) is now the sharpness
+driver, not target temperature.
+- **Arm `qtemp_0.0005_extfresh`** (driver `round4_freshext.sh`): --init-from
+  the SAME donor (`qtemp_0.0005` @ 9,680) for the SAME +9,680 steps, on
+  τ=0.0005 targets derived from RUN03's closed shards (independent
+  generation, zero row overlap by construction; derivation records its
+  adopted shard inventory). Perfectly paired vs `qtemp_0.0005_ext`: only
+  repeat-vs-fresh differs.
+- **Deciding yardsticks:** h2h arena extfresh vs extrepeat (200 games, sims
+  100, `--search-shape training`) and the BT4 ruler. Pre-committed: fresh
+  wins with CI excluding 0 ⇒ the wobble is repeat memorization — the 100M
+  plan rides the sharpest target at 1 view; tie (CI spans 0) or fresh loses
+  ⇒ sharpness degrades with budget itself — the 100M recipe backs off toward
+  0.0067/0.02, decided by the depth-round-adjusted standings.
+- **Resequencing:** round 3 (d7/d8 + curriculum) now gates on round4.done
+  (`round3_depth2.sh`; derivations already banked, markers honoured). Depth
+  and fresh-vs-repeat both feed the run05 prereg; fresh-vs-repeat is the
+  bigger fork so it reads out first. Confound note: run03 rows are a
+  different generation seed than run02's — same recipe, same book, same SF
+  build; that is the point (fresh data), not a defect.
