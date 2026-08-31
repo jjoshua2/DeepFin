@@ -131,6 +131,19 @@ protocol that only works on a polite exit is a protocol that does not work.
   config is re-stamped and its sha256 compared against the manifest's, and a
   mismatch is refused before a single game is played.  ``--workers`` is in the
   stamp, so a resume cannot re-deal the game ids either.
+* ⚑ A ``summary.json`` IS NOT PROOF THAT THE RUN FINISHED, and the resume gate
+  does not treat it as one.  A crash the parent process SURVIVES -- an OOM kill
+  that breaks the worker pool is the measured one -- still reaches the end of
+  ``run`` and still writes a summary, one whose ``failed_workers`` block names
+  every worker it lost.  So the summary states its own verdict in
+  ``run_finished`` (``build_summary``: true exactly when ``failed_workers`` is
+  empty, the same condition ``main``'s exit code already uses), the gate reads
+  THAT rather than the file's existence, and a crashed session's summary is
+  moved aside to ``summary.unfinished_NN.json`` so the resumed session's own
+  ``open("x")`` still has its name free at the end.  ⚑ A summary that makes no
+  ``run_finished`` claim -- unreadable, or written before this key existed --
+  is REFUSED, not guessed at: the cost of failing closed is one manual rename,
+  and the cost of failing open is games appended to a finished corpus.
 
 WHAT IS SHARED RATHER THAN RESTATED
 -----------------------------------
@@ -217,10 +230,16 @@ SUMMARY_SCHEMA = 1
 MANIFEST_SCHEMA = 1
 MANIFEST_NAME = "manifest.json"
 
-#: The completion record, written once at run END.  Named rather than spelled
-#: inline because ``--resume`` has to REFUSE a directory that already holds one:
-#: a run with a summary finished, and there is nothing to resume.
+#: The run record, written once at run END.  ⚑ Its PRESENCE is not a completion
+#: claim -- a crash the parent survives writes one too -- so read the verdict it
+#: states in ``run_finished`` (see :func:`summary_run_finished`), never the
+#: existence of this file.
 SUMMARY_NAME = "summary.json"
+
+#: Where a crashed session's ``summary.json`` is moved so a resume can write its
+#: own (:func:`archive_unfinished_summary`).  The suffix stays ``.json`` and the
+#: name stays outside ``shard_glob``, so no consumer's inventory picks it up.
+UNFINISHED_SUMMARY_TEMPLATE = "summary.unfinished_{index:02d}.json"
 
 DEFAULT_STAIRCASE = "all:9,16:11,4:13"
 DEFAULT_TEMP_PLIES = 20
@@ -2784,9 +2803,21 @@ def build_summary(
     rows = rows_session + rows_prior
     games = games_session + games_prior
     search = merge_search(results)
+    failed_workers = [
+        {"worker_id": r["worker_id"], **r["failed"]}
+        for r in results if r["failed"] is not None
+    ]
     return {
         "schema": SUMMARY_SCHEMA,
         "row_schema": ROW_SCHEMA,
+        # ⚑ THE SUMMARY'S OWN VERDICT, and the only thing `--resume` is allowed
+        # to read as one. This file is written on the failure path too -- a
+        # crash the parent process survives (an OOM kill that breaks the worker
+        # pool) reaches the end of `run` and banks a summary whose counters are
+        # all zero -- so its EXISTENCE says nothing. Derived here, beside the
+        # list it is derived from, so the two can never disagree; the condition
+        # is `main`'s exit code, spelled once.
+        "run_finished": not failed_workers,
         "run_id": requested["run_id"],
         "started_utc": started_utc,
         "wall_s": wall_s,
@@ -2847,10 +2878,7 @@ def build_summary(
         # like a complete one is the whole hazard here: every other number in
         # this file is a sum over the workers that reported, and a reader has no
         # way to know one of them stopped early unless the summary says so.
-        "failed_workers": [
-            {"worker_id": r["worker_id"], **r["failed"]}
-            for r in results if r["failed"] is not None
-        ],
+        "failed_workers": failed_workers,
         "dedup": merge_dedup(results),
         "search": search,
         "terminations": merge_counters(results, "terminations"),
@@ -2918,6 +2946,15 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"ply {failed['last_ply']}, {failed['games_completed']} games done)"
         for failed in summary["failed_workers"]
     )
+    # ⚑ `.get`, and only on an explicit `False`: this formats summaries loaded
+    # off disk as well as freshly built ones, and a summary written before
+    # `run_finished` existed makes no claim either way. Silence is "did not
+    # say", never "finished".
+    if summary.get("run_finished") is False:
+        lines.append(
+            "RUN DID NOT FINISH (run_finished: false): every number above is "
+            "what the workers that reported managed. --resume continues it.",
+        )
     return "\n".join(lines)
 
 
@@ -2938,9 +2975,11 @@ def write_launch_manifest(
     The manifest banks the launch-time facts immediately and the per-worker
     ``w<id>.progress.jsonl`` files (see ``ShardWriter.close``) bank the shard
     inventory incrementally.  ``complete: false`` is stamped so no reader can
-    mistake this for the completion record: ``summary.json`` remains the only
-    document that says the run FINISHED, and a partial read has to say it is
-    one.
+    mistake this for the run record: ``summary.json`` remains the only document
+    that can say the run finished, and a partial read has to say it is one.
+    ⚑ *Can* say, not *does*: the summary states its verdict in ``run_finished``
+    and a crashed session's says ``false``.  This key is the MANIFEST's, it is
+    about which document you are holding, and it is never updated.
     """
     manifest = {
         "schema": MANIFEST_SCHEMA,
@@ -2966,21 +3005,121 @@ def write_launch_manifest(
         fh.write("\n")
 
 
+def summary_run_finished(summary: object) -> bool | None:
+    """The completion verdict a summary STATES, or ``None`` if it states none.
+
+    ⚑ ``None`` is not "no", it is "this document never said" -- what a summary
+    written before ``run_finished`` existed looks like, and what an unreadable
+    or non-object one looks like too.  Every caller has to decide that case
+    deliberately; :func:`load_resume_manifest` refuses on it, which leaves a
+    genuinely completed legacy corpus behaving exactly as it always did.
+
+    ⚑ ``isinstance(..., bool)`` rather than truthiness, on purpose.  The string
+    ``"false"`` is true in Python, and a completion claim decided by truthiness
+    is precisely the accepted-then-silently-ignored failure this repo keeps
+    finding: it would read a hand-edited summary as finished and refuse a
+    resume that should have run.
+    """
+    if not isinstance(summary, dict):
+        return None
+    claim = summary.get("run_finished")
+    return claim if isinstance(claim, bool) else None
+
+
+def read_summary_run_finished(path: Path) -> bool | None:
+    """:func:`summary_run_finished` for a summary on disk.
+
+    An unreadable or unparseable file is ``None`` -- ambiguous, exactly like a
+    summary that predates the key -- rather than an exception, because the
+    caller's response to both is the same refusal and a ``JSONDecodeError``
+    out of a resume gate says less than that refusal does.
+    """
+    try:
+        return summary_run_finished(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+
+def unfinished_summary_path(out_dir: Path) -> Path:
+    """The first free ``summary.unfinished_NN.json`` in ``out_dir``.
+
+    Counted rather than timestamped so the name is a pure function of what is
+    already on disk: a corpus that survived three crashes keeps all three
+    records, in the order they happened, and no clock skew or same-minute
+    collision can make one overwrite another.  WHEN each crash was is inside
+    the file it names, in ``started_utc`` and ``wall_s``.
+    """
+    index = 0
+    while True:
+        candidate = out_dir / UNFINISHED_SUMMARY_TEMPLATE.format(index=index)
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def archive_unfinished_summary(out_dir: Path) -> Path | None:
+    """Move a crashed session's ``summary.json`` aside, returning where it went.
+
+    ⚑ THIS IS WHAT MAKES THE RELAXED GATE SAFE RATHER THAN MERELY PERMISSIVE.
+    ``run`` banks its summary with ``open("x")``, so a resume that started with
+    a stale one still in place would search for however many days and then die
+    on the very last line -- the days-late failure the old blanket refusal was
+    really protecting against.  Moved, never overwritten: the crashed record
+    holds the ``failed_workers`` block naming what killed the run, and it is
+    the only copy of it.
+
+    ``None`` when there is no summary to move, which is every ordinary
+    ``kill -9`` resume.  A summary that does not state ``run_finished: false``
+    is REFUSED rather than moved: :func:`load_resume_manifest` has already
+    turned those away, and a second reader willing to move one would be a gate
+    you get past by calling the wrong function first.
+    """
+    summary_path = out_dir / SUMMARY_NAME
+    if not summary_path.exists():
+        return None
+    if read_summary_run_finished(summary_path) is not False:
+        raise ValueError(
+            f"refusing to move {summary_path} aside: it does not state "
+            "run_finished: false, so it is not a crashed session's record.",
+        )
+    archive = unfinished_summary_path(out_dir)
+    summary_path.rename(archive)
+    _LOG.info(
+        "resume: the crashed session's %s is kept as %s; this session will "
+        "write its own", SUMMARY_NAME, archive.name,
+    )
+    return archive
+
+
 def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
     """The manifest a ``--resume`` continues, or a refusal.
 
-    Three refusals, all before a single game is played:
+    Four refusals, all before a single game is played:
 
     * NO MANIFEST -- there is no run here to continue.  Told to drop the flag
       rather than quietly turned into a fresh run, because a fresh run into a
       populated directory is the thing `refuse_populated_dir` exists to stop.
-    * A ``summary.json`` -- that run FINISHED.  Resuming would append games to a
-      completed corpus and then fail at the very end on the summary's own
-      ``open("x")``, after however many days of searching.
+    * A ``summary.json`` that says ``run_finished: true`` -- that run FINISHED.
+      Resuming would append games to a completed corpus and then fail at the
+      very end on the summary's own ``open("x")``, after however many days of
+      searching.
+    * A ``summary.json`` that states NO verdict -- unreadable, or written
+      before ``run_finished`` existed.  ⚑ Refused rather than assumed either
+      way.  Failing closed costs one manual rename on a legacy directory;
+      failing open would append games to a corpus that really had finished,
+      and no consumer could then tell which rows were which.
     * A manifest whose ``config_sha256`` does not hash its own
       ``config_requested`` -- the record of what produced the banked half has
       been edited or truncated, and every later comparison against it would be
       comparing against fiction.
+
+    ⚑ What is NOT a refusal: a ``summary.json`` that says
+    ``run_finished: false``.  A crash the parent process survives -- the
+    measured one is an OOM kill breaking the worker pool -- writes a summary
+    recording its ``failed_workers`` and zero session totals, and that corpus
+    is exactly the one a resume is for.  Before 2026-08-29 the gate keyed on
+    the file's EXISTENCE, so such a run could not be resumed at all until an
+    operator renamed the crash record by hand.
     """
     manifest_path = out_dir / MANIFEST_NAME
     if not manifest_path.exists():
@@ -2989,12 +3128,25 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
             "is no run in this directory to continue. Drop --resume to start "
             "one (into an EMPTY directory).",
         )
-    if (out_dir / SUMMARY_NAME).exists():
-        raise ValueError(
-            f"--resume was given but {out_dir / SUMMARY_NAME} exists: that run "
-            "completed and wrote its summary. Nothing to resume; use a new "
-            "--out-dir.",
-        )
+    summary_path = out_dir / SUMMARY_NAME
+    if summary_path.exists():
+        finished = read_summary_run_finished(summary_path)
+        if finished is None:
+            raise ValueError(
+                f"--resume was given but {summary_path} states no "
+                "run_finished verdict -- it is unreadable, or it was written "
+                "before this generator stamped one. Refused rather than "
+                "guessed at, because guessing wrong appends games to a "
+                "finished corpus. If that run in fact crashed (its "
+                "failed_workers block says so), move the file aside and "
+                "re-run --resume; if it completed, use a new --out-dir.",
+            )
+        if finished:
+            raise ValueError(
+                f"--resume was given but {summary_path} says run_finished: "
+                "true: that run completed and wrote its summary. Nothing to "
+                "resume; use a new --out-dir.",
+            )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     stored = str(manifest.get("config_sha256", ""))
     recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
@@ -3113,6 +3265,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     config_sha = stamp_sha256(requested)
     if manifest is not None:
         refuse_resume_config_drift(manifest, requested=requested)
+        # ⚑ AFTER the last refusal and before the first game: a resume that is
+        # going to be turned away must leave the directory byte-identical to
+        # how it found it, and a resume that is going ahead must free the name
+        # its own summary is written under with `open("x")` at the end. `None`
+        # on every ordinary kill -9 resume, which left no summary at all.
+        archive_unfinished_summary(out_dir)
         # ⚑ THE CORPUS'S STAMP, NOT THIS SESSION'S. Every row banked before the
         # kill carries the manifest's sha, so the rows this session adds carry
         # it too -- a corpus with two stamps on rows made under one
@@ -3230,7 +3388,10 @@ def build_parser() -> argparse.ArgumentParser:
              "the shards it kept, and continues its shard numbering. REFUSED "
              "unless the directory holds a manifest.json (nothing to resume) "
              "and every generation-affecting setting matches the one it "
-             "records -- a corpus may only ever have one configuration.",
+             "records -- a corpus may only ever have one configuration. A "
+             "summary.json is only a refusal when it says run_finished: true "
+             "or states no verdict at all; a crashed session's (run_finished: "
+             "false) is kept as summary.unfinished_NN.json and continued.",
     )
     p.add_argument(
         "--games", type=int, default=0,

@@ -29,6 +29,7 @@ import threading
 import time
 from collections.abc import Sequence
 from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any, cast
 
@@ -3067,6 +3068,221 @@ def test_the_resume_gate_compares_the_manifests_own_keys_not_a_fresh_sha(
         corpus.refuse_resume_config_drift(
             manifest, requested={"games": 4, "out_dir": str(tmp_path)},
         )
+
+
+def resumable_dir(tmp_path: Path) -> Path:
+    """A directory holding a self-consistent manifest and nothing else.
+
+    Everything the resume gate checks BEFORE it looks at ``summary.json``, so a
+    test of the summary rule fails on the summary rule or not at all.
+    """
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    requested = {"games": 4, "seed": 7, "out_dir": str(out_dir)}
+    (out_dir / corpus.MANIFEST_NAME).write_text(
+        json.dumps({
+            "config_requested": requested,
+            "config_sha256": corpus.stamp_sha256(requested),
+        }),
+        encoding="utf-8",
+    )
+    return out_dir
+
+
+def write_summary(out_dir: Path, **keys: Any) -> Path:
+    """A ``summary.json`` carrying exactly the keys a case is about."""
+    path = out_dir / corpus.SUMMARY_NAME
+    path.write_text(json.dumps(keys), encoding="utf-8")
+    return path
+
+
+def test_the_resume_gate_reads_the_summarys_verdict_not_its_existence(
+    tmp_path: Path,
+) -> None:
+    """⚑ A ``summary.json`` is a run RECORD, not a completion claim.
+
+    OBSERVED 2026-08-29 on a multi-day burn: an OOM broke the worker pool.
+    ``run`` SURVIVED it -- that is the whole point of the synthesised failed
+    slot -- so it wrote the summary it always writes, with a full
+    ``failed_workers`` block and every this-session total at zero.  The gate
+    keyed on the FILE EXISTING, so it answered "that run completed and wrote
+    its summary" about a run that had crashed, and the corpus could not be
+    resumed until an operator moved the crash record aside by hand.
+
+    Three shapes, one rule -- the summary's own ``run_finished``:
+
+    * crashed (``false``)  -> the gate lets the resume through;
+    * completed (``true``) -> refused, in the words operators already know;
+    * no verdict at all    -> refused.  ⚑ FAIL CLOSED: a legacy summary is
+      ambiguous, and reading ambiguity as "crashed" would append games to a
+      corpus that really had finished.  The cost of this direction is one
+      manual rename; the cost of the other is a corpus nothing can un-mix.
+
+    Mutation caught: keying the refusal on ``summary_path.exists()`` again --
+    the crashed case then raises instead of returning the manifest.
+    """
+    out_dir = resumable_dir(tmp_path)
+    assert corpus.load_resume_manifest(out_dir)["config_sha256"], "no summary yet"
+
+    write_summary(out_dir, run_finished=False, failed_workers=[{"worker_id": 0}])
+    assert corpus.load_resume_manifest(out_dir)["config_requested"]["seed"] == 7
+
+    write_summary(out_dir, run_finished=True, failed_workers=[])
+    with pytest.raises(ValueError, match="Nothing to resume"):
+        corpus.load_resume_manifest(out_dir)
+
+    # The banked 2026-08-29 crash record's own shape: written before the key
+    # existed, so it makes no claim -- and is refused for that reason alone,
+    # not for what its `failed_workers` implies.
+    write_summary(out_dir, rows=0, games=0, failed_workers=[{"worker_id": 0}])
+    with pytest.raises(ValueError, match="states no run_finished verdict"):
+        corpus.load_resume_manifest(out_dir)
+
+
+@pytest.mark.parametrize(
+    "claim", [None, "false", "true", 0, 1, [], {"run_finished": False}],
+)
+def test_only_a_real_bool_is_a_completion_verdict(claim: Any) -> None:
+    """⚑ Truthiness is not a verdict, in either direction.
+
+    ``"false"`` is a true string and ``0`` is a false int, so a gate written as
+    ``if summary.get("run_finished")`` would read a hand-edited or
+    wrong-typed value as a claim nobody made -- accepted and then silently
+    meaning something else, which is this repo's signature defect.  Anything
+    that is not a ``bool`` states nothing, and stating nothing is refused.
+    """
+    assert corpus.summary_run_finished({"run_finished": claim}) is None
+    assert corpus.summary_run_finished({}) is None
+    assert corpus.summary_run_finished([1, 2, 3]) is None
+    assert corpus.summary_run_finished({"run_finished": True}) is True
+    assert corpus.summary_run_finished({"run_finished": False}) is False
+
+
+def test_an_unreadable_summary_states_no_verdict_rather_than_raising(
+    tmp_path: Path,
+) -> None:
+    """Truncated, absent, or not an object: all ambiguous, all refused."""
+    out_dir = resumable_dir(tmp_path)
+    (out_dir / corpus.SUMMARY_NAME).write_text('{"run_finished": fal', "utf-8")
+    assert corpus.read_summary_run_finished(out_dir / corpus.SUMMARY_NAME) is None
+    with pytest.raises(ValueError, match="states no run_finished verdict"):
+        corpus.load_resume_manifest(out_dir)
+
+    (out_dir / corpus.SUMMARY_NAME).write_text("[]", "utf-8")
+    assert corpus.read_summary_run_finished(out_dir / corpus.SUMMARY_NAME) is None
+    assert corpus.read_summary_run_finished(out_dir / "nothing-here.json") is None
+
+
+def test_a_crash_record_is_kept_rather_than_overwritten_by_the_resume(
+    tmp_path: Path,
+) -> None:
+    """⚑ What makes the relaxed gate SAFE rather than merely permissive.
+
+    ``run`` banks its summary with ``open("x")``.  A resume let past the gate
+    with the crashed session's summary still in place would search for however
+    many days and die on the very last line -- the days-late failure the old
+    blanket refusal was really buying.  So the crash record is MOVED, never
+    clobbered: it is the only copy of the ``failed_workers`` block that says
+    what killed the run, and three crashes keep three records in order.
+
+    Mutation caught: dropping the ``archive_unfinished_summary`` call from
+    ``run`` -- the resumed session then raises ``FileExistsError`` at the end
+    (proved end to end in
+    ``test_a_crashed_run_resumes_and_its_crash_record_survives``).
+    """
+    out_dir = resumable_dir(tmp_path)
+    assert corpus.archive_unfinished_summary(out_dir) is None, "nothing to move"
+
+    write_summary(out_dir, run_finished=False, failed_workers=[{"worker_id": 3}])
+    first = corpus.archive_unfinished_summary(out_dir)
+    assert first is not None
+    assert first.name == "summary.unfinished_00.json"
+    assert not (out_dir / corpus.SUMMARY_NAME).exists()
+    assert json.loads(first.read_text("utf-8"))["failed_workers"][0]["worker_id"] == 3
+
+    write_summary(out_dir, run_finished=False, failed_workers=[{"worker_id": 4}])
+    second = corpus.archive_unfinished_summary(out_dir)
+    assert second is not None
+    assert second.name == "summary.unfinished_01.json"
+    assert json.loads(first.read_text("utf-8"))["failed_workers"][0]["worker_id"] == 3
+
+    # ... and the archiver is not a way around the gate: a finished or
+    # verdict-less summary is refused here too, not quietly renamed.
+    for keys in ({"run_finished": True}, {"rows": 0}):
+        write_summary(out_dir, **keys)
+        with pytest.raises(ValueError, match="refusing to move"):
+            corpus.archive_unfinished_summary(out_dir)
+        assert (out_dir / corpus.SUMMARY_NAME).exists(), "left exactly as found"
+
+
+def test_a_crashed_run_resumes_and_its_crash_record_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2026-08-29 incident end to end, through ``main`` both times.
+
+    Session 1 loses worker 1's PROCESS -- ``BrokenProcessPool``, the pool path
+    ``run_worker`` cannot record from -- so the summary lands with
+    ``run_finished: false``.  Session 2 passes ``--resume``, replays only the
+    game no progress line claims, and banks a corpus of both games with its own
+    ``open("x")``.
+
+    Mutation caught: either half alone.  Without the gate change session 2
+    raises "Nothing to resume"; without the archive it dies on
+    ``FileExistsError`` writing the summary, after the games are already
+    played.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", InlineExecutor)
+    healthy = corpus.run_worker
+    oom_kills: set[int] = {1}
+
+    def pool_may_die(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        if spec.worker_id in oom_kills:
+            raise BrokenProcessPool(
+                "A process in the process pool was terminated abruptly",
+            )
+        return healthy(spec)
+
+    monkeypatch.setattr(corpus, "run_worker", pool_may_die)
+    out_dir = tmp_path / "run"
+    argv = [
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT),
+        "--temp-high", "0.01", "--temp-low", "0.01", "--nice", "0",
+    ]
+
+    assert corpus.main(argv) == 1, "a run that lost a worker did not finish"
+    crashed = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
+    assert crashed["run_finished"] is False
+    assert [f["exception_type"] for f in crashed["failed_workers"]] == [
+        "BrokenProcessPool",
+    ]
+    assert crashed["games"] == 1, "worker 0's game is banked, worker 1's is not"
+    assert "RUN DID NOT FINISH" in corpus.format_summary(crashed)
+
+    oom_kills.clear()  # the OOM is over; the same corpus, resumed
+    assert corpus.main([*argv, "--resume"]) == 0
+
+    resumed = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
+    assert resumed["run_finished"] is True
+    assert resumed["resumed"] is True
+    assert resumed["games"] == 2, "worker 1's game was replayed, worker 0's was not"
+    assert resumed["games_this_session"] == 1
+    assert resumed["games_completed_prior"] == 1
+    assert resumed["failed_workers"] == []
+    # The crash record is still on disk, under a name no consumer's inventory
+    # globs, and still says what killed the run.
+    kept = json.loads(
+        (out_dir / "summary.unfinished_00.json").read_text("utf-8"),
+    )
+    assert kept["failed_workers"] == crashed["failed_workers"]
 
 
 def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
