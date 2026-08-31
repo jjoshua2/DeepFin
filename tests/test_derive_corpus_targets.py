@@ -73,6 +73,12 @@ CONFIG_SHA = corpus.stamp_sha256(CONFIG_REQUESTED)
 STAIRCASE = [{"width": "all", "depth": 9}, {"width": 3, "depth": 11}]
 
 
+#: ``played_move=None`` is a real corpus state (a row whose game ended without
+#: one), so the default cannot be ``None`` -- it has to be distinguishable from
+#: "the caller asked for no played move".
+_UNSET: Any = object()
+
+
 def legal_ucis(fen: str) -> list[str]:
     return sorted(move.uci() for move in chess.Board(fen).legal_moves)
 
@@ -183,9 +189,13 @@ def corpus_row(
     game_id: int = 0,
     ply: int = 0,
     config_sha: str = CONFIG_SHA,
+    played_move: str | None = _UNSET,
+    worker_id: int = 0,
 ) -> dict[str, Any]:
     board = chess.Board(fen)
-    played = next(iter(board.legal_moves)).uci()
+    played = (
+        next(iter(board.legal_moves)).uci() if played_move is _UNSET else played_move
+    )
     return {
         "schema": corpus.ROW_SCHEMA,
         "run": {
@@ -195,7 +205,7 @@ def corpus_row(
         },
         "fen": fen,
         "dedup_key": " ".join(fen.split(" ")[:5]),
-        "worker_id": 0,
+        "worker_id": worker_id,
         "game_id": game_id,
         "ply": ply,
         "stm": "w" if board.turn == chess.WHITE else "b",
@@ -1753,7 +1763,7 @@ def test_a_saturated_row_is_held_out_of_the_temp_stamp_and_counted(
     ``softmax(q / temp)``, and only the temperature READ BACK off it is held
     out. The count is reported so the hold-out is visible.
 
-    Mutation caught: deleting the ``q_spread`` guard from ``sample_from_row`` --
+    Mutation caught: deleting the ``q_spread`` guard from ``derive_row`` --
     the run then stamps ``min=0.5`` for a ``--temp 1.0`` derivation and counts
     zero skips.
     """
@@ -2413,3 +2423,1079 @@ def test_the_stamps_use_the_shards_two_step_cast() -> None:
     tricky = np.asarray([2.0 ** -25 * (1.0 + 2.0 ** -30)], dtype=np.float64)
     assert float(np.float16(tricky[0])) > 0.0  # the one-step cast says "alive"
     assert float(derive.shard_stored(tricky)[0]) == 0.0  # the shard says "dead"
+
+
+# ── the value round: V0 / A / B / C ──────────────────────────────────────────
+#
+# ⚑ EVERY EXPECTED VECTOR BELOW IS RECOMPUTED FROM THE SHARED cp->WDL MAP, never
+# stored as a golden array -- the same rule the policy tests above follow, and
+# for the same reason: a golden array pins the map as well as the arm, so a
+# deliberate change to one would read as a failure of the other.  What IS pinned
+# as a literal is the ledger's frozen PARAMETERS, which is the opposite kind of
+# claim and belongs in a test that fails when they drift.
+
+#: The clean/blunder cps used throughout, and the q they land on (slope 0.006,
+#: draw width 120): q(120) = 0.30846, q(100) = 0.25922, q(0) = 0.  So a played
+#: move at 100 against a top of 120 is a regret of 0.049 -- ordinary sampling
+#: noise, well under the 0.27 boundary -- and one at 0 against the same top is
+#: 0.308, over it.  Both are asserted in ``test_the_toy_games_regrets_bracket_the_boundary``
+#: rather than left as arithmetic in a comment.
+CP_TOP = 120.0
+CP_CLEAN = 100.0
+CP_BLUNDER = 0.0
+
+
+def wdl_of_cp(cp: float) -> np.ndarray:
+    """One cp -> (W, D, L), through the same object the tool uses."""
+    return np.asarray(
+        gen.cp_to_wdl_array(
+            np.array([float(cp)], dtype=np.float64),
+            slope=SLOPE,
+            draw_width_cp=DRAW_WIDTH,
+        ),
+        dtype=np.float64,
+    ).reshape(-1)[:3]
+
+
+def q_of_cp(cp: float) -> float:
+    return float(
+        gate.q_from_effective_cp(
+            np.array([float(cp)], dtype=np.float64),
+            slope=SLOPE,
+            draw_width_cp=DRAW_WIDTH,
+        )[0],
+    )
+
+
+def onehot(index: int) -> np.ndarray:
+    return derive.onehot_wdl(index)
+
+
+def flipped(vector: np.ndarray) -> np.ndarray:
+    return derive.flip_wdl(vector)
+
+
+class Ply:
+    """One banked ply of a synthetic game, spelled in cp.
+
+    ``top9``/``top8``/``top7`` are the BEST value at each full-width rung, which
+    is what the instability ``u`` is built from; ``played`` is the cp the row's
+    played move carries at d9, which is what the regret is built from.  Anything
+    left at its default is the "nothing interesting here" reading: a settled
+    teacher (all three rungs agree) that played a best move (zero regret).
+    """
+
+    def __init__(
+        self,
+        *,
+        top9: float = CP_TOP,
+        top8: float | None = None,
+        top7: float | None = None,
+        played: float | None = None,
+        drop_d7: bool = False,
+        played_off_book: bool = False,
+        played_absent: bool = False,
+    ) -> None:
+        self.top9 = top9
+        self.top8 = top9 if top8 is None else top8
+        self.top7 = (self.top8 if top7 is None else top7)
+        self.played = top9 if played is None else played
+        self.drop_d7 = drop_d7
+        self.played_off_book = played_off_book
+        self.played_absent = played_absent
+
+    @property
+    def u(self) -> float:
+        """The instability this ply's rungs produce, in q units."""
+        return abs(q_of_cp(self.top9) - q_of_cp(self.top8)) + abs(
+            q_of_cp(self.top8) - q_of_cp(self.top7),
+        )
+
+    @property
+    def regret(self) -> float:
+        return q_of_cp(self.top9) - q_of_cp(self.played)
+
+    @property
+    def weight(self) -> float:
+        """The frozen map's blend weight for this ply."""
+        if self.drop_d7:
+            return 0.0
+        return derive.QZ_W_MIN + derive.QZ_W_SPAN * min(
+            self.u / derive.QZ_U_SCALE, 1.0,
+        )
+
+
+def build_game(
+    plies: list[Ply],
+    *,
+    result_white: float,
+    game_id: int = 0,
+    worker_id: int = 0,
+    start_fen: str = FEN_W,
+    step: float = 20.0,
+) -> list[dict[str, Any]]:
+    """A synthetic GAME: consecutive real positions, one banked row per ply.
+
+    ⚑ The positions are reached by PUSHING the played move, so ``stm``
+    alternates for real and the POV rotations under test are the ones a corpus
+    would produce.  ``result`` is stored per row in that row's own seat, exactly
+    as ``result_from_pov`` stores it -- which is why the arms never rotate ``Z``
+    and why a test that hand-rotated it would be testing the fixture.
+    """
+    board = chess.Board(start_fen)
+    rows: list[dict[str, Any]] = []
+    for index, spec in enumerate(plies):
+        legal = legal_ucis(board.fen())
+        played = legal[0]
+        best = legal[1]
+        per_depth: dict[int, dict[str, float]] = {}
+        for depth, top in ((7, spec.top7), (8, spec.top8), (9, spec.top9)):
+            if depth == 7 and spec.drop_d7:
+                continue
+            values = ramp(board.fen(), best, best_cp=top, step=step)
+            if depth == 9:
+                values[played] = spec.played
+            per_depth[depth] = values
+        if spec.played_absent:
+            named: str | None = None
+        elif spec.played_off_book:
+            # A uci no block ever carried: the row banked a played move and the
+            # d9 block cannot price it.  Legality is irrelevant here -- the
+            # support check compares the BANKED set against the legal set, and
+            # this touches neither.
+            named = "a1a2"
+        else:
+            named = played
+        rows.append(
+            corpus_row(
+                fen=board.fen(),
+                phases=[full_width_phase(board.fen(), per_depth)],
+                result=result_white if board.turn == chess.WHITE else -result_white,
+                game_id=game_id,
+                ply=index,
+                played_move=named,
+                worker_id=worker_id,
+            ),
+        )
+        board.push(chess.Move.from_uci(played))
+    return rows
+
+
+def facts_for(rows: list[dict[str, Any]]) -> list[Any]:
+    """The value facts the tool would derive for these rows, via the tool."""
+    options = derive.DeriveOptions(
+        scheme=derive.parse_scheme("uniform-d9"),
+        temp=1.0,
+        cp_slope=SLOPE,
+        cp_draw_width=DRAW_WIDTH,
+        limit=0,
+        seed=1,
+        rows_per_shard=64,
+        max_envelope_misses=0,
+    )
+    deriver = derive.TargetDeriver(options)
+    derived = [deriver.derive_row(row) for row in rows]
+    return [item.facts for item in derived if item is not None]
+
+
+def targets_for(
+    rows: list[dict[str, Any]],
+    *,
+    value_scheme: str = derive.VALUE_SCHEME_QZSEGMENT,
+    **qz: Any,
+) -> list[np.ndarray]:
+    targets, _ = derive.game_value_targets(
+        facts_for(rows), value_scheme=value_scheme, params=derive.QzParams(**qz),
+    )
+    return targets
+
+
+def value_rows(out_dir: Path) -> dict[tuple[int, int], Any]:
+    """The emitted rows, keyed back by (game_id, ply) through the RIG's reader."""
+    samples, _ = read_rows(out_dir)
+    return {(int(s.game_id), int(s.ply_index)): s for s in samples}
+
+
+# ── the frozen parameters ────────────────────────────────────────────────────
+
+
+def test_the_frozen_value_round_parameters_are_the_ledgers() -> None:
+    """⚑ THE LITERALS, pinned against the ledger's 2026-08-31 prereg and its
+    two same-day amendments.  Every one of them is a flag with a default, so
+    the only thing standing between a quiet edit here and four arms derived
+    under parameters no entry describes is this assertion.
+    """
+    assert derive.QZ_R_BOUNDARY == 0.27
+    assert derive.QZ_U_SCALE == 0.05
+    assert derive.QZ_W_MIN == 0.5
+    assert derive.QZ_W_SPAN == 0.45
+    assert derive.QZ_R_FREE_CALIBRATED == 0.06
+    assert derive.QZ_TAU_R_CALIBRATED == 0.25
+    assert (
+        derive.QZ_GATE_DEPTH_TOP,
+        derive.QZ_GATE_DEPTH_MID,
+        derive.QZ_GATE_DEPTH_LOW,
+    ) == (9, 8, 7)
+    # The CLI's defaults are those constants and not a second copy of them.
+    args = derive.build_parser().parse_args(
+        ["--corpus", "c", "--out", "o", "--scheme", "uniform-d9"],
+    )
+    assert args.value_scheme == derive.VALUE_SCHEME_SEARCH
+    assert args.qz_r_boundary == derive.QZ_R_BOUNDARY
+    assert args.qz_u_scale == derive.QZ_U_SCALE
+    assert args.qz_w_const is None
+    assert args.qz_no_boundary is False
+
+
+def test_the_boundary_is_the_frozen_gates_half_credit_point() -> None:
+    """0.27 is not a free parameter: it is where the prereg's soft gate
+    ``exp(-[max(0, r - r_free)/tau_r]^2)`` reaches c = 0.5.  The derivation is
+    recomputed here rather than asserted in prose, so a future edit to either
+    calibrated constant has to face the number it implies.
+    """
+    derived = derive.QZ_R_FREE_CALIBRATED + derive.QZ_TAU_R_CALIBRATED * math.sqrt(
+        math.log(2.0),
+    )
+    assert math.isclose(derived, 0.2681386527894244, rel_tol=1e-12)
+    assert abs(derived - derive.QZ_R_BOUNDARY) < 0.002
+    # And it really is the half-credit point of the gate it came from.
+    gate_at_boundary = math.exp(
+        -((max(0.0, derived - derive.QZ_R_FREE_CALIBRATED)
+           / derive.QZ_TAU_R_CALIBRATED) ** 2),
+    )
+    assert math.isclose(gate_at_boundary, 0.5, rel_tol=1e-12)
+
+
+def test_the_toy_games_regrets_bracket_the_boundary() -> None:
+    """The fixture's two cps must land on opposite sides of 0.27, or every
+    boundary test below would be asserting the same branch twice.
+    """
+    assert Ply(top9=CP_TOP, played=CP_CLEAN).regret < derive.QZ_R_BOUNDARY
+    assert Ply(top9=CP_TOP, played=CP_BLUNDER).regret > derive.QZ_R_BOUNDARY
+
+
+@pytest.mark.parametrize(
+    ("u", "expected"),
+    [
+        (0.0, 0.5),
+        (0.025, 0.725),
+        (0.05, 0.95),
+        (0.5, 0.95),
+    ],
+)
+def test_the_instability_map_is_the_frozen_one(u: float, expected: float) -> None:
+    """``w = 0.5 + 0.45 * min(u / 0.05, 1)``, saturating at the top."""
+    assert math.isclose(
+        derive.segment_blend_weight(u, u_scale=derive.QZ_U_SCALE), expected,
+    )
+
+
+def test_an_unmeasurable_instability_is_pure_q_not_the_maps_floor() -> None:
+    """⚑ The fail direction. ``u`` unknown is w = 0 (all Q), NOT u = 0's w = 0.5,
+    which would hand half the target to a retrospective value on exactly the
+    rows whose reliability could not be established.
+    """
+    assert derive.segment_blend_weight(None, u_scale=derive.QZ_U_SCALE) == 0.0
+    assert derive.segment_blend_weight(0.0, u_scale=derive.QZ_U_SCALE) == 0.5
+
+
+# ── the hand-computed toy game ───────────────────────────────────────────────
+
+#: A four-ply game White wins.  Ply 1's teacher is UNSTABLE (d9 120 against d8
+#: and d7 at 0), so its blend weight saturates at 0.95 while every other ply's
+#: rungs agree and weight 0.5 -- one game exercising both ends of the map.
+#: Every played move is clean (regret 0.049 < 0.27), so arm C's scan runs to the
+#: end from every row.
+TOY_PLIES = [
+    Ply(top9=CP_TOP, played=CP_CLEAN),
+    Ply(top9=CP_TOP, top8=CP_BLUNDER, top7=CP_BLUNDER, played=CP_CLEAN),
+    Ply(top9=CP_TOP, played=CP_CLEAN),
+    Ply(top9=CP_TOP, played=CP_CLEAN),
+]
+
+
+def toy_rows(**kwargs: Any) -> list[dict[str, Any]]:
+    return build_game(TOY_PLIES, result_white=1.0, **kwargs)
+
+
+def test_the_toy_games_seats_alternate_and_carry_their_own_result() -> None:
+    """The fixture's premise, checked before anything is built on it: White
+    wins, so the row-own-seat result alternates +1 / -1 down the game.
+    """
+    rows = toy_rows()
+    assert [row["stm"] for row in rows] == ["w", "b", "w", "b"]
+    assert [row["result"] for row in rows] == [1.0, -1.0, 1.0, -1.0]
+    assert [derive.wdl_target_from_result(row["result"]) for row in rows] == [0, 2, 0, 2]
+
+
+def test_the_control_arm_writes_the_searched_value_and_nothing_else() -> None:
+    """V0: every row is ``Q_t`` = the d9 top's WDL, hand-computed."""
+    targets = targets_for(toy_rows(), value_scheme=derive.VALUE_SCHEME_SEARCH)
+    expected = wdl_of_cp(CP_TOP)
+    assert len(targets) == 4
+    for target in targets:
+        np.testing.assert_allclose(target, expected, atol=1e-12)
+
+
+def test_arm_a_is_half_the_searched_value_and_half_the_outcome() -> None:
+    """A: ``0.5 * Q_t + 0.5 * Z_t``, and ``Z`` is the row's OWN seat -- so the
+    White rows blend toward a win and the Black rows toward a loss.
+    """
+    targets = targets_for(toy_rows(), value_scheme=derive.VALUE_SCHEME_QZ50)
+    q = wdl_of_cp(CP_TOP)
+    for index, target in enumerate(targets):
+        z = onehot(0 if index % 2 == 0 else 2)
+        np.testing.assert_allclose(target, 0.5 * q + 0.5 * z, atol=1e-12)
+
+
+def test_arm_b_ramps_the_outcome_in_by_ply() -> None:
+    """B: ``w = ply / terminal_ply`` over the game's last BANKED ply (3 here),
+    so row 0 is pure ``Q`` and row 3 is pure ``Z``.
+    """
+    targets = targets_for(toy_rows(), value_scheme=derive.VALUE_SCHEME_QZPHASE)
+    q = wdl_of_cp(CP_TOP)
+    for index, target in enumerate(targets):
+        weight = index / 3.0
+        z = onehot(0 if index % 2 == 0 else 2)
+        np.testing.assert_allclose(target, (1.0 - weight) * q + weight * z, atol=1e-12)
+    np.testing.assert_allclose(targets[0], q, atol=1e-12)
+    np.testing.assert_allclose(targets[3], onehot(2), atol=1e-12)
+
+
+def test_arm_c_blends_the_terminal_outcome_at_the_instability_weight() -> None:
+    """C on a wholly clean game: EVERY row's future is the game result in its
+    own seat, at the weight its own ``u`` sets -- 0.95 on the unstable ply 1,
+    0.5 on the three settled ones.  ⚑ The weights are per ROW; a scheme that
+    used the game's mean ``u``, or the terminal row's, would pass every other
+    assertion in this file and fail this one.
+    """
+    targets = targets_for(toy_rows())
+    q = wdl_of_cp(CP_TOP)
+    weights = [0.5, 0.95, 0.5, 0.5]
+    assert [round(ply.weight, 12) for ply in TOY_PLIES] == weights
+    for index, (target, weight) in enumerate(zip(targets, weights)):
+        z = onehot(0 if index % 2 == 0 else 2)
+        np.testing.assert_allclose(target, (1.0 - weight) * q + weight * z, atol=1e-12)
+
+
+def test_a_long_clean_segment_reaches_row_zero_undiminished() -> None:
+    """⚑⚑ THE AMENDMENT'S WHOLE POINT, and the mutation target.
+
+    Ten clean plies.  Row 0's future must be the TERMINAL outcome at full
+    strength -- identical to the four-ply game's row 0, because the segment
+    carries no length term at all.  The per-step lambda-return this arm replaced
+    would deliver ``lambda**9`` of it here and ``lambda**3`` there, so any
+    reintroduced per-step factor makes these two numbers differ and fails.
+    """
+    long_game = build_game([Ply(played=CP_CLEAN) for _ in range(10)], result_white=1.0)
+    short_game = build_game([Ply(played=CP_CLEAN) for _ in range(4)], result_white=1.0)
+    long_targets = targets_for(long_game)
+    short_targets = targets_for(short_game)
+    q = wdl_of_cp(CP_TOP)
+    expected = 0.5 * q + 0.5 * onehot(0)
+    np.testing.assert_allclose(long_targets[0], expected, atol=1e-12)
+    np.testing.assert_allclose(long_targets[0], short_targets[0], atol=1e-12)
+    # ... and the row nine plies from the end is not weaker than the row one
+    # ply from the end, which is exactly what decay would make it.
+    np.testing.assert_allclose(long_targets[0], long_targets[8], atol=1e-12)
+
+
+def test_a_blunder_stops_the_scan_before_it_and_not_after() -> None:
+    """One high-regret move at ply 2 of a five-ply game.
+
+    Rows 0 and 1 must blend toward ply 2's PRE-BOUNDARY searched value (rotated
+    into their own seat), not toward the outcome; rows 2 onward are past it and
+    still reach the terminal result.  ⚑ Row 2 itself is the blunder: its own
+    scan stops at itself, so its target collapses to pure ``Q`` -- the row that
+    threw the game learns nothing retrospective from it.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN),
+        Ply(top9=CP_TOP, played=CP_BLUNDER),
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    targets = targets_for(rows)
+    q = wdl_of_cp(CP_TOP)
+    # Rows 0 and 1: F is ply 2's Q, rotated by seat.  Ply 2 is White (even ply),
+    # so row 0 needs no rotation and row 1 does.
+    np.testing.assert_allclose(targets[0], 0.5 * q + 0.5 * q, atol=1e-12)
+    np.testing.assert_allclose(targets[1], 0.5 * q + 0.5 * flipped(q), atol=1e-12)
+    # ⚑ Row 0's target is Q only because ply 2's Q happens to equal it; the
+    # ROTATED one at row 1 is visibly not the outcome, which is the assertion
+    # that the boundary fired rather than the terminal being reached.
+    assert not np.allclose(targets[1], 0.5 * q + 0.5 * onehot(2))
+    # Row 2 is the blunder: pure Q.
+    np.testing.assert_allclose(targets[2], q, atol=1e-12)
+    # Rows 3 and 4 are past it and reach the terminal outcome.
+    np.testing.assert_allclose(targets[3], 0.5 * q + 0.5 * onehot(2), atol=1e-12)
+    np.testing.assert_allclose(targets[4], 0.5 * q + 0.5 * onehot(0), atol=1e-12)
+
+
+def test_a_pre_boundary_value_is_rotated_into_the_reading_rows_seat() -> None:
+    """The POV rotation on its own, with a value that cannot be mistaken for
+    its own mirror: the pre-boundary row's searched value is strongly winning,
+    so the row one ply earlier must read it as strongly LOSING.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(top9=500.0, played=500.0),
+        Ply(top9=500.0, played=CP_BLUNDER),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    targets = targets_for(rows)
+    boundary_q = wdl_of_cp(500.0)
+    assert boundary_q[0] > boundary_q[2]  # the pre-boundary seat is winning
+    # Row 1 (Black) and the boundary row 2 (White) are opposite seats.
+    row1_q = wdl_of_cp(500.0)
+    np.testing.assert_allclose(
+        targets[1], 0.5 * row1_q + 0.5 * flipped(boundary_q), atol=1e-12,
+    )
+    # Row 0 (White) shares the boundary's seat, so no rotation.
+    np.testing.assert_allclose(
+        targets[0], 0.5 * wdl_of_cp(CP_TOP) + 0.5 * boundary_q, atol=1e-12,
+    )
+
+
+# ── missing data, and the direction it fails in ──────────────────────────────
+
+
+def test_a_row_that_cannot_price_its_played_move_is_pure_q_and_counted() -> None:
+    """A row whose banked played move is absent from its own d9 block cannot
+    say whether the move it made was a blunder, so it must not inherit anything
+    from what came after -- and the corpus has to say how often that happened.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN, played_off_book=True),
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    facts = facts_for(rows)
+    assert [f.missing_played_move for f in facts] == [False, True, False, False]
+    assert [f.missing_depths for f in facts] == [False] * 4
+    assert facts[1].played_regret is None
+    assert facts[1].instability is not None  # its rungs were all banked
+    targets = targets_for(rows)
+    np.testing.assert_allclose(targets[1], wdl_of_cp(CP_TOP), atol=1e-12)
+
+
+def test_a_row_with_no_played_move_at_all_is_pure_q() -> None:
+    """The other spelling of the same absence: the generator banked no played
+    move for the row.  Same fail direction, same bucket.
+    """
+    plies = [Ply(played=CP_CLEAN), Ply(played_absent=True), Ply(played=CP_CLEAN)]
+    rows = build_game(plies, result_white=1.0)
+    facts = facts_for(rows)
+    assert facts[1].missing_played_move is True
+    assert facts[1].played_regret is None
+    np.testing.assert_allclose(targets_for(rows)[1], wdl_of_cp(CP_TOP), atol=1e-12)
+
+
+def test_a_row_missing_a_gate_depth_is_pure_q_and_counted_separately() -> None:
+    """A row without d7 cannot measure its teacher's instability, so its own
+    weight is 0 -- pure Q.  ⚑ It lands in the DEPTH bucket, not the played-move
+    one: the two counters are disjoint so that a reader comparing either against
+    ``rows_written`` is not reading the same failure twice.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN, drop_d7=True),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    facts = facts_for(rows)
+    assert [f.missing_depths for f in facts] == [False, True, False]
+    assert [f.missing_played_move for f in facts] == [False, False, False]
+    assert facts[1].instability is None
+    assert facts[1].played_regret is not None  # d9 was there; only d7 was not
+    np.testing.assert_allclose(targets_for(rows)[1], wdl_of_cp(CP_TOP), atol=1e-12)
+
+
+def test_a_row_that_cannot_price_itself_stops_the_scans_passing_through_it() -> None:
+    """⚑ The fail direction applies to OTHER rows too.  Row 0 cannot certify
+    that row 1's move was clean, so it must not inherit the outcome across it --
+    it stops at row 1's searched value instead.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(top9=500.0, played=500.0, played_off_book=True),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    targets = targets_for(rows)
+    # Row 0 (White) stops at row 1 (Black): row 1's Q, rotated.
+    np.testing.assert_allclose(
+        targets[0],
+        0.5 * wdl_of_cp(CP_TOP) + 0.5 * flipped(wdl_of_cp(500.0)),
+        atol=1e-12,
+    )
+    # Row 2 is past it and still reaches the terminal outcome.
+    np.testing.assert_allclose(
+        targets[2], 0.5 * wdl_of_cp(CP_TOP) + 0.5 * onehot(0), atol=1e-12,
+    )
+
+
+def test_a_single_row_game_is_all_outcome_under_both_ramps() -> None:
+    """``ply / terminal_ply`` is 0/0 for a game with one banked row at ply 0.
+    It is the game's terminal row, so arm B reads w = 1 -- the same place arm C
+    puts it -- rather than dividing by zero or silently reading 0.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)], result_white=1.0)
+    ramped = targets_for(rows, value_scheme=derive.VALUE_SCHEME_QZPHASE)
+    np.testing.assert_allclose(ramped[0], onehot(0), atol=1e-12)
+    segment = targets_for(rows)
+    np.testing.assert_allclose(
+        segment[0], 0.5 * wdl_of_cp(CP_TOP) + 0.5 * onehot(0), atol=1e-12,
+    )
+
+
+# ── the two diagnostic ablations ─────────────────────────────────────────────
+
+
+def test_qz_w_const_replaces_the_map_on_every_row() -> None:
+    """C-no-u: the constant is the weight everywhere, INCLUDING the unstable
+    ply the map would have pushed to 0.95.  The segment logic is untouched, so
+    the futures are the same ones C-full found.
+
+    Mutation caught: dropping the ``params.w_const is None`` branch in
+    ``game_value_targets`` -- ply 1 then reads 0.95 again and this fails.
+    """
+    rows = toy_rows()
+    targets = targets_for(rows, w_const=0.725)
+    q = wdl_of_cp(CP_TOP)
+    for index, target in enumerate(targets):
+        z = onehot(0 if index % 2 == 0 else 2)
+        np.testing.assert_allclose(target, 0.275 * q + 0.725 * z, atol=1e-12)
+    # ... and it really is a departure: C-full disagrees on the unstable ply.
+    assert not np.allclose(targets[1], targets_for(rows)[1])
+
+
+def test_qz_w_const_still_lets_a_boundary_stop_the_scan() -> None:
+    """⚑ The ablation removes ONE mechanism.  A blunder still hard-stops the
+    segment under a constant weight, or C-no-u would be testing two changes.
+    """
+    plies = [Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN)]
+    rows = build_game(plies, result_white=1.0)
+    targets = targets_for(rows, w_const=0.725)
+    np.testing.assert_allclose(
+        targets[0], 0.275 * wdl_of_cp(CP_TOP) + 0.725 * flipped(wdl_of_cp(500.0)),
+        atol=1e-12,
+    )
+
+
+def test_qz_no_boundary_carries_the_outcome_past_a_blunder() -> None:
+    """C-no-segment: row 0 takes the game result even though row 1 threw it
+    away, where the default scheme stops at row 1's searched value.  The u map
+    still sets the weight.
+
+    Mutation caught: deleting the ``params.no_boundary`` branch -- row 0 falls
+    back to the boundary's rotated Q and this fails.
+    """
+    plies = [Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN)]
+    rows = build_game(plies, result_white=1.0)
+    q = wdl_of_cp(CP_TOP)
+    default = targets_for(rows)
+    ablated = targets_for(rows, no_boundary=True)
+    np.testing.assert_allclose(ablated[0], 0.5 * q + 0.5 * onehot(0), atol=1e-12)
+    assert not np.allclose(default[0], ablated[0])
+    # The blunder row itself is unchanged: it is past its own boundary either
+    # way, so the ablation is visible on the rows BEFORE the blunder only.
+    np.testing.assert_allclose(
+        ablated[1], 0.5 * wdl_of_cp(500.0) + 0.5 * onehot(2), atol=1e-12,
+    )
+
+
+def test_qz_no_boundary_still_fails_toward_q_on_an_unpriceable_row() -> None:
+    """⚑ The ablation removes BLUNDER boundaries, not the fail-toward-Q rule.
+    A row that cannot price its own move still gets pure Q for itself, while the
+    rows before it now scan straight past it to the outcome.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN, played_off_book=True),
+        Ply(played=CP_CLEAN),
+    ]
+    rows = build_game(plies, result_white=1.0)
+    ablated = targets_for(rows, no_boundary=True)
+    q = wdl_of_cp(CP_TOP)
+    np.testing.assert_allclose(ablated[1], q, atol=1e-12)
+    np.testing.assert_allclose(ablated[0], 0.5 * q + 0.5 * onehot(0), atol=1e-12)
+
+
+def test_both_ablations_at_once_are_refused() -> None:
+    """Constant weight AND no boundaries is ``(1-c) Q + c Z`` -- arm A with a
+    different constant, and a cell no prereg describes.
+    """
+    with pytest.raises(ValueError, match="second amendment"):
+        derive.QzParams(w_const=0.725, no_boundary=True)
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.5])
+def test_a_blend_weight_outside_the_unit_interval_is_refused(bad: float) -> None:
+    """Outside [0, 1] the target extrapolates past both endpoints instead of
+    mixing them; that is not a weaker ablation, it is a different object.
+    """
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        derive.QzParams(w_const=bad)
+
+
+# ── the flag reaching the bytes ──────────────────────────────────────────────
+
+
+def game_corpus(
+    tmp_path: Path, plies: list[Ply] | None = None, *, name: str = "corpus",
+) -> Path:
+    """A one-game corpus whose rows are a real, consecutive ply sequence."""
+    return write_corpus(
+        tmp_path, build_game(plies or TOY_PLIES, result_white=1.0), name=name,
+    )
+
+
+def test_the_value_scheme_reaches_the_emitted_shards(tmp_path: Path) -> None:
+    """⚑ THE END-TO-END TAKE-EFFECT PROOF: the vectors the pure function
+    computes are the vectors the RIG'S OWN READER finds in the shards.  Every
+    other test in this section reads ``game_value_targets``; this one reads the
+    bytes, so a scheme that was computed and then not written would fail here
+    and nowhere else.
+    """
+    rows = build_game(TOY_PLIES, result_white=1.0)
+    corpus_dir = write_corpus(tmp_path, rows)
+    expected, _ = derive.game_value_targets(
+        facts_for(rows),
+        value_scheme=derive.VALUE_SCHEME_QZSEGMENT,
+        params=derive.QzParams(),
+    )
+    run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    emitted = value_rows(tmp_path / "out")
+    assert len(emitted) == 4
+    for ply, want in enumerate(expected):
+        # float16 is the shard's storage for this column, so the tolerance is
+        # the cast's and not the arithmetic's.
+        np.testing.assert_allclose(emitted[(0, ply)].search_wdl, want, atol=2e-3)
+
+
+def test_the_control_arm_writes_the_bare_searched_value(tmp_path: Path) -> None:
+    """V0 through the same path: every emitted row is the d9 top's WDL, and the
+    summary's own delta-against-V0 reading is exactly zero.  ⚑ The control's
+    zero is MEASURED, which is what makes the same instrument's nonzero reading
+    on the other arms mean something.
+    """
+    out = run_derive(game_corpus(tmp_path), tmp_path / "out", "uniform-d9")
+    emitted = value_rows(tmp_path / "out")
+    for sample in emitted.values():
+        np.testing.assert_allclose(sample.search_wdl, wdl_of_cp(CP_TOP), atol=2e-3)
+    realized = out["realized"]["value_scheme_realized"]
+    assert realized["rows_differing_from_search_value"] == 0
+    assert realized["l1_delta_vs_search_value"]["max"] == 0.0
+    assert realized["l1_delta_vs_search_value"]["n"] == 4
+    # V0 never assembles a game, so the grouped counters stay at zero.
+    assert realized["games"] == 0
+    assert out["value_blend"]["baked_into_rows"] is False
+
+
+def test_a_value_scheme_that_never_reaches_the_bytes_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ THE GATE THIS REPO EXISTS TO HAVE.  Simulate the signature defect --
+    the flag parses, the summary would stamp it, and the emitted rows are V0's
+    -- and the run must die rather than produce a directory that trains for
+    9,680 steps and reads as a clean null because it WAS the control.
+    """
+    monkeypatch.setattr(
+        derive,
+        "game_value_targets",
+        lambda facts, **_: ([f.q_wdl for f in facts], [None] * len(facts)),
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="did not reach the bytes"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZ50,
+        ])
+
+
+def test_a_control_arm_that_blended_anything_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same instrument in the other direction: if ``search`` ever stopped
+    writing the bare searched value, every arm measured against it would be
+    measured against nothing.
+    """
+    monkeypatch.setattr(
+        derive,
+        "game_value_targets",
+        lambda facts, **_: (
+            [0.5 * f.q_wdl + 0.5 * derive.onehot_wdl(f.z_index) for f in facts],
+            [None] * len(facts),
+        ),
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="control arm"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+        ])
+
+
+def test_an_ablation_that_changed_no_row_is_refused(tmp_path: Path) -> None:
+    """``--qz-no-boundary`` against a corpus with no blunder in it removes
+    nothing, so its rows ARE C-full's and the comparison would be empty.  A
+    positive reading is required, not the absence of a negative one.
+    """
+    with pytest.raises(derive.CorpusIntegrityError, match="removed nothing"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+            "--qz-no-boundary",
+        ])
+
+
+def test_an_ablation_that_changed_rows_is_stamped(tmp_path: Path) -> None:
+    """And with a blunder present it runs, and says how many rows it moved."""
+    plies = [Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN)]
+    out = run_derive(
+        game_corpus(tmp_path, plies), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT, "--qz-no-boundary",
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    # TWO rows change, not one: row 0 would have stopped at the blunder AHEAD of
+    # it, and the blunder row itself would have stopped at ITSELF (pure Q). The
+    # ablation lifts both, which is what "no boundaries" means.
+    assert realized["boundary_suppressed_by_flag"] == 2
+    assert realized["stop_boundary_ahead"] == 0  # the flag removed them all
+    assert out["value_scheme"]["params"]["variant"] == "C-no-segment"
+    assert out["value_scheme"]["params"]["adoption_candidate"] is False
+
+
+def test_a_constant_weight_run_is_stamped_and_measured(tmp_path: Path) -> None:
+    """C-no-u through the CLI: the variant name, the constant, and how many
+    rows it actually moved off the frozen map."""
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT, "--qz-w-const", "0.725",
+    )
+    params = out["value_scheme"]["params"]
+    assert params["variant"] == "C-no-u"
+    assert params["w_const"] == 0.725
+    realized = out["realized"]["value_scheme_realized"]
+    # Three settled plies at 0.5 and one unstable at 0.95: all four move.
+    assert realized["w_const_differs_from_map"] == 4
+    assert realized["blend_weight_w"]["min"] == 0.725
+    assert realized["blend_weight_w"]["max"] == 0.725
+
+
+def test_a_constant_weight_that_the_map_would_have_given_anyway_is_refused(
+    tmp_path: Path,
+) -> None:
+    """⚑ A positive take-effect reading again.  A settled-teacher corpus maps
+    every row to 0.5, so ``--qz-w-const 0.5`` is not an ablation of anything --
+    and it would otherwise produce a C-no-u directory identical to C-full's.
+    """
+    plies = [Ply(played=CP_CLEAN) for _ in range(4)]
+    with pytest.raises(derive.CorpusIntegrityError, match="not an ablation"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path, plies)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+            "--qz-w-const", "0.5",
+        ])
+
+
+def test_the_shards_carry_the_value_scheme_stamp(tmp_path: Path) -> None:
+    """⚑ ON THE SHARD, not only in the summary.  Four arms of the value round
+    share a scheme, a temp and a floor and differ only in this column; without
+    the stamp their shards are indistinguishable once copied out of their
+    directories, and comparing them is the entire round.
+    """
+    run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    for path in iter_shard_paths(tmp_path / "out"):
+        attrs = dict(zarr.open_group(str(path), mode="r").attrs)
+        assert attrs["derive_value_scheme"] == derive.VALUE_SCHEME_QZSEGMENT
+        assert attrs["derive_value_scheme_params"]["r_boundary"] == derive.QZ_R_BOUNDARY
+        assert attrs["derive_value_scheme_params"]["u_scale"] == derive.QZ_U_SCALE
+        assert attrs["derive_value_scheme_params"]["variant"] == "C-full"
+
+
+def test_a_baked_blend_demands_game_frac_zero_in_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """⚑ ``wdl_target`` still holds the RAW outcome, so a trainer run at
+    ``game_frac > 0`` against these shards mixes the outcome in a second time on
+    top of the share the scheme already chose -- producing a target that is no
+    arm of the round.  The manifest has to say so, because nothing else can.
+    """
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
+    )
+    assert out["value_blend"]["baked_into_rows"] is True
+    assert "game_frac" in out["required_training_overrides"]
+    assert out["required_training_overrides"]["game_frac"].startswith("0.0")
+    assert "SECOND time" in out["value_blend"]["note"]
+    # And the column's own description no longer claims to be the bare search.
+    assert "TARGET" in out["value_channels"]["search_wdl"]
+
+
+def test_the_summary_records_where_every_scan_stopped(tmp_path: Path) -> None:
+    """The three stop kinds are reported separately.  ⚑ ``self`` and ``ahead``
+    are never summed: a row that stopped at ITSELF learned nothing
+    retrospective, and a corpus of those would be V0 with a segment scheme's
+    name on it -- which is exactly what adding the two would hide.
+    """
+    plies = [Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN)]
+    out = run_derive(
+        game_corpus(tmp_path, plies), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert realized["stop_boundary_ahead"] == 1  # row 0 -> the blunder at row 1
+    assert realized["stop_boundary_self"] == 1   # row 1 is the blunder
+    assert realized["stop_terminal"] == 1        # row 2 is past it
+    assert realized["games"] == 1
+    assert realized["game_rows_min"] == realized["game_rows_max"] == 3
+    assert realized["ply_gaps_nonunit"] == 0
+    assert realized["played_regret"]["n"] == 3
+    assert realized["instability_u"]["n"] == 3
+
+
+# ── the refusals ─────────────────────────────────────────────────────────────
+
+
+def test_the_pre_amendment_scheme_name_is_refused_by_name() -> None:
+    """A driver written against the FIRST prereg asked for ``qzlambda``.  It
+    must be told which amendment replaced it, not merely that the name is
+    unknown -- the two are different targets and the next move after a generic
+    error is a guess.
+    """
+    with pytest.raises(ValueError, match="2026-08-31 amendment"):
+        derive.parse_value_scheme("qzlambda")
+    with pytest.raises(ValueError, match="qzsegment"):
+        derive.parse_value_scheme("qzlambda")
+
+
+def test_an_unknown_value_scheme_is_refused() -> None:
+    with pytest.raises(ValueError, match="not one of"):
+        derive.parse_value_scheme("qz75")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--qz-w-const", "0.725"],
+        ["--qz-no-boundary"],
+        ["--qz-r-boundary", "0.4"],
+        ["--qz-u-scale", "0.1"],
+        ["--qz-lambda-u-scale", "0.1"],
+    ],
+)
+def test_a_qz_knob_without_the_segment_scheme_is_refused(
+    tmp_path: Path, extra: list[str],
+) -> None:
+    """⚑ ACCEPTED-AND-IGNORED IS THE DEFECT.  ``--value-scheme qz50
+    --qz-w-const 0.725`` looks exactly like a configured ablation and would
+    derive arm A, stamping a summary that names a knob which touched no row.
+    """
+    with pytest.raises(ValueError, match="only affect --value-scheme"):
+        derive.main([
+            "--corpus", str(game_corpus(tmp_path)),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9",
+            "--value-scheme", derive.VALUE_SCHEME_QZ50,
+            *extra,
+        ])
+
+
+def test_the_alias_and_the_new_spelling_are_one_knob() -> None:
+    """``--qz-lambda-u-scale`` survives from the first prereg's drivers as an
+    ALIAS onto the same value -- never as a second knob that is parsed and
+    dropped, which is the failure this file's whole take-effect apparatus
+    exists for.
+    """
+    parser = derive.build_parser()
+    base = ["--corpus", "c", "--out", "o", "--scheme", "uniform-d9"]
+    assert parser.parse_args([*base, "--qz-u-scale", "0.07"]).qz_u_scale == 0.07
+    assert parser.parse_args([*base, "--qz-lambda-u-scale", "0.07"]).qz_u_scale == 0.07
+
+
+def test_a_staircase_that_cannot_answer_the_gate_is_refused(tmp_path: Path) -> None:
+    """⚑ WITHOUT THIS, ARM C ON A SHALLOW CORPUS IS ARM V0 WITH A COUNTER.
+    Every row would miss d9/d8/d7, every scan would stop where it started, every
+    weight would be 0 -- a complete derivation, fully counted, that trains as
+    the control.  Refused at startup, before the first row.
+    """
+    shallow = [{"width": "all", "depth": 5}]
+    rows = [
+        corpus_row(
+            fen=FEN_W,
+            phases=[full_width_phase(FEN_W, {5: ramp(FEN_W, "g2g4")}, depth_requested=5)],
+            result=1.0,
+        ),
+    ]
+    corpus_dir = write_corpus(tmp_path, rows, staircase=shallow)
+    # The POLICY scheme is answerable; only the value gate is not.
+    run_derive(corpus_dir, tmp_path / "ok", "uniform-d5")
+    with pytest.raises(derive.CorpusIntegrityError, match="silently be V0"):
+        derive.main([
+            "--corpus", str(corpus_dir),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d5",
+            "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+        ])
+
+
+# ── assembling games out of a streamed corpus ────────────────────────────────
+
+
+def grouper_over(rows: list[dict[str, Any]]) -> tuple[Any, list[list[Any]]]:
+    """Feed rows through a real :class:`GameGrouper` and collect the games."""
+    options = derive.DeriveOptions(
+        scheme=derive.parse_scheme("uniform-d9"),
+        temp=1.0,
+        cp_slope=SLOPE,
+        cp_draw_width=DRAW_WIDTH,
+        limit=0,
+        seed=1,
+        rows_per_shard=64,
+        max_envelope_misses=0,
+        value_scheme=derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    deriver = derive.TargetDeriver(options)
+    grouper = derive.GameGrouper(deriver)
+    games: list[list[Any]] = []
+    for row in rows:
+        derived = deriver.derive_row(row)
+        assert derived is not None
+        closed = grouper.add(row, derived)
+        if closed:
+            games.append(closed)
+    return grouper, games
+
+
+def test_games_are_closed_when_the_next_ones_first_row_arrives() -> None:
+    """The stream is game-contiguous, so a game ends where the next begins."""
+    rows = build_game([Ply(played=CP_CLEAN)] * 3, result_white=1.0, game_id=0)
+    rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=-1.0, game_id=1)
+    grouper, games = grouper_over(rows)
+    assert [len(game) for game in games] == [3]
+    assert [len(game) for game in [grouper.flush(cut_by_limit=False)]] == [2]
+
+
+def test_a_re_opened_game_is_refused_rather_than_split() -> None:
+    """⚑⚑ THE SILENT FAILURE THIS GUARD EXISTS FOR.  If a game's rows were ever
+    interleaved with another's, closing on key change would split it into
+    fragments -- and each fragment's LAST row would be handed the game's outcome
+    as a terminal position.  The result is a corpus that looks entirely normal
+    and whose arm-C targets are wrong in the middle of every game.  MEASURED on
+    run02_snap_20260829: 124 game-runs over the first three shards, zero
+    re-openings -- so the invariant holds, and it is checked rather than assumed.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 2, result_white=1.0, game_id=0)
+    rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=-1.0, game_id=1)
+    rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=1.0, game_id=0)
+    with pytest.raises(derive.CorpusIntegrityError, match="re-opens worker 0 game 0"):
+        grouper_over(rows)
+
+
+def test_the_same_game_id_from_two_workers_is_two_games() -> None:
+    """⚑ The key is ``(worker_id, game_id)``.  Every worker numbers its games
+    from 0, so a corpus of 14 workers holds 14 game 0s -- and joining them into
+    one 3,000-ply "game" would put one worker's outcome into another's rows.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 2, result_white=1.0, worker_id=0)
+    rows += build_game([Ply(played=CP_CLEAN)] * 2, result_white=-1.0, worker_id=1)
+    grouper, games = grouper_over(rows)
+    assert [len(game) for game in games] == [2]
+    assert len(grouper.flush(cut_by_limit=False)) == 2
+
+
+def test_a_gap_in_the_banked_plies_is_counted_and_still_rotates(
+    tmp_path: Path,
+) -> None:
+    """A corpus row is banked on a dedup MISS only, so a game's plies need not
+    be contiguous.  The gap is counted, and the seat is read off ``stm`` rather
+    than off ply parity so the rotation across it is the real one.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    del rows[2]  # plies 0, 1, 3 survive
+    out = run_derive(
+        write_corpus(tmp_path, rows), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert realized["ply_gaps_nonunit"] == 1
+    assert realized["games"] == 1
+    assert realized["game_rows_max"] == 3
+    emitted = value_rows(tmp_path / "out")
+    assert sorted(emitted) == [(0, 0), (0, 1), (0, 3)]
+    # Ply 3 is Black and the game's last banked row: pure outcome at w = 0.5.
+    np.testing.assert_allclose(
+        emitted[(0, 3)].search_wdl,
+        0.5 * wdl_of_cp(CP_TOP) + 0.5 * onehot(2),
+        atol=2e-3,
+    )
+
+
+def test_a_game_cut_by_the_row_limit_is_counted(tmp_path: Path) -> None:
+    """⚑ ``--limit`` takes a PREFIX, so its last game's last banked row is
+    treated as terminal and handed an outcome the derivation never read that
+    far to see.  A limited run is a smoke test and the counter is why nobody
+    mistakes one for an arm.
+    """
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT, "--limit", "3",
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert realized["games"] == 1
+    assert realized["games_cut_by_limit"] == 1
+    assert realized["game_rows_max"] == 3
+    assert out["realized"]["rows_written"] == 3
+
+
+def test_a_whole_corpus_run_reports_no_game_cut_by_the_limit(
+    tmp_path: Path,
+) -> None:
+    """The converse, so the counter above is a reading and not a constant."""
+    out = run_derive(
+        game_corpus(tmp_path), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    assert out["realized"]["value_scheme_realized"]["games_cut_by_limit"] == 0
+
+
+def test_grouping_does_not_move_a_row_into_another_shard(tmp_path: Path) -> None:
+    """⚑ The shard LAYOUT must not depend on the value scheme, or two arms of
+    the round would differ in how their rows were batched as well as in their
+    targets.  A grouped path pushing a whole game at once could otherwise
+    overshoot ``--rows-per-shard``; it cuts at exactly the same boundary.
+    """
+    rows: list[dict[str, Any]] = []
+    for game_id in range(4):
+        rows += build_game(
+            [Ply(played=CP_CLEAN)] * 3, result_white=1.0, game_id=game_id,
+        )
+    corpus_dir = write_corpus(tmp_path, rows)
+    control = run_derive(
+        corpus_dir, tmp_path / "v0", "uniform-d9", "--rows-per-shard", "5",
+    )
+    grouped = run_derive(
+        corpus_dir, tmp_path / "c", "uniform-d9", "--rows-per-shard", "5",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    assert [s["rows"] for s in control["shards"]] == [5, 5, 2]
+    assert [s["rows"] for s in grouped["shards"]] == [s["rows"] for s in control["shards"]]
