@@ -71385,3 +71385,35 @@ win (or loss) is explainable:
   Read per arm at readout: does the retrospective mechanism repair the class
   u cannot detect? Diagnostic only — value_regret + arena remain the
   deciders; cluster by game (91 clusters).
+
+**2026-08-31 MEASUREMENT: depth-trajectory morphology on the T80 bank (external-agent
+proposals; arm C untouched).** Bank `scratchpad/t80_ruler/merged_t80_bt4_d9.jsonl`
+(4000 rows, full d1-d9 MultiPV + lc0 search_wdl ruler), frozen cp→q map (slope 0.0060,
+draw 120), err=|q_d9−q_lc0|, base P(err>0.25)=0.157. Banked:
+`depth_morphology_v1.{json,rows.jsonl,py}`, `depth_morphology_v1_diag.json`.
+1. **Depth ensembles KILLED: raw d9 beats every late-depth average.** avg(d8,d9)
+   ΔMAE +0.0010 [+0.0003,+0.0017], mean(d7:9) +0.0017, mean(d6:9) +0.0028 — all
+   worse, game-cluster CIs exclude 0; same ordering after 2-fold affine calibration
+   (strips the lc0-scale confound). "Averaging the tail improves the teacher" is
+   refuted on this bank; the newest depth strictly dominates.
+2. **The full trajectory is a much stronger error predictor than frozen u.**
+   OOF (grouped) AUC for err>0.25: u alone 0.760 → u+parity 0.787 → all-features
+   LR 0.816 → GB 0.854. Best singles: total variation Σ|Δ| 0.799 (> u), settle_age
+   0.781, max revision 0.779. Odd/even parity oscillation is real (+0.027 AUC over
+   u). Best-move churn/agreement is nearly inert (0.53-0.57) — value morphology
+   carries the signal, move identity does not. ⇒ a justified **u2 candidate**
+   exists (post-value-round arm; the frozen u stays for arms A-C per prereg).
+3. **Settling depth is the dominant single fact.** No revision >0.05 anywhere in
+   d2-d9 (43% of rows): P(err>0.25)=0.022, mean err 0.037. Settled ≥6 depths ~0.105;
+   settled ≤3 ~0.31-0.36. "Stable since d3" is 15× safer than "moved at d8/d9".
+4. **Diagonal residual (depth×time) — positive first read, underpowered.** 208
+   truly adjacent pairs (canonical-STM mirror reconstruction): resid=|q(t,d9) −
+   flip(q(t+1,d8))| AUC 0.739 vs u 0.707 on the same rows; u+resid 0.755 in-sample.
+   Scale-up needs a small new lc0 ruler run on corpus adjacent pairs (corpus has
+   every ply + staircase but no deep ruler).
+5. **Bank cluster-key correction:** game_id collides across source dirs; the true
+   cluster key is (source_dir, shard, game_id) — 1283 clusters, not 824. Prior
+   game_id-only clustering on this bank is a coarsening: leak-free folds, wider CIs
+   — no prior verdict invalidated. stable_wrong_v1's "91 games" reads "91 game_ids".
+Not banked/testable: per-depth WDL shape (bank stores cp only — needs a custom SF
+run to test draw-logit movement as a fortress signal).
