@@ -287,6 +287,14 @@ selfplay:
   # settable from yaml and defaults True, so DELETING THIS LINE DROPS START SIMS 256 -> 50.
   mcts_start_simulations: 256
   playout_cap_fraction: 0.25
+  # 2026-08-19 pairing arm (ledger 84d636464 + amendment): force each base full ply's
+  # NEXT net turn full, so the sf_p0 one-ply teacher has an adjacent full ply.
+  # Base rate is stationary-corrected, so TOTAL full plies -- and SF label volume --
+  # stay at playout_cap_fraction. Verified on this code: full frac 0.2494 at p=1
+  # (vs 0.2504 at p=0) while adjacency goes 0.2502 -> 0.5714.
+  # RESTART KEY (_RECO_RESTART_KEYS): triggers a selfplay-session rebuild, not a
+  # trainer restart. Revert point: data/salvage/pre_pairing_20260819
+  full_ply_pair_fraction: 1.0
   fast_simulations: 32
   gumbel_topk: 16
   gumbel_vloss_weight: 1
