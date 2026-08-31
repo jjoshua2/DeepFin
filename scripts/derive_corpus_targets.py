@@ -219,8 +219,11 @@ them, which is what makes the round paired rather than four experiments.
 
     Two DIAGNOSTIC ablations share the code path (second amendment):
     ``--qz-w-const c`` (C-no-u: constant weight, segment logic intact) and
-    ``--qz-no-boundary`` (C-no-segment: the outcome is always the future, u map
+    ``--qz-no-boundary`` (C-no-segment: blunder boundaries suppressed, u map
     intact).  Both at once is refused -- it is arm A with a different constant.
+    ⚑ Neither suppresses the fail-toward-Q rule: a transition that cannot be
+    PRICED (no played move, or a gap in the banked plies) stops a scan under
+    every cell, because that is the absence of a verdict rather than one.
 
 ⚑⚑ A NON-``search`` SCHEME BAKES THE BLEND IN, AND THE MANIFEST SAYS SO LOUDLY.
 ``wdl_target`` still carries the RAW outcome (it is a required shard field with
@@ -640,10 +643,27 @@ class QzParams:
                 "retrospective one, and outside that range the target is an "
                 "extrapolation past both endpoints rather than a mixture.",
             )
-        if float(self.u_scale) <= 0.0:
-            raise ValueError(f"--qz-u-scale must be positive, got {self.u_scale!r}")
+        # ⚑ FINITE, not merely positive. `nan <= 0.0` is False, so a bare
+        # `<= 0` check ACCEPTS `--qz-u-scale nan`: `segment_blend_weight` then
+        # propagates NaN into every weight, every target, and every emitted
+        # shard, and the take-effect gate only notices at the END -- after a
+        # full corpus has been written to the output directory. Refused at
+        # startup, like every other bad knob here (Codex review of PR #491).
+        if not math.isfinite(float(self.u_scale)) or float(self.u_scale) <= 0.0:
+            raise ValueError(
+                f"--qz-u-scale must be positive and finite, got {self.u_scale!r}",
+            )
         if not math.isfinite(float(self.r_boundary)):
             raise ValueError(f"--qz-r-boundary must be finite, got {self.r_boundary!r}")
+
+    @property
+    def is_ablation(self) -> bool:
+        """Whether this is one of the two diagnostic cells rather than C-full."""
+        return self.w_const is not None or self.no_boundary
+
+    def without_ablation(self) -> QzParams:
+        """The C-full parameters this cell ablates, for the direct comparison."""
+        return QzParams(r_boundary=self.r_boundary, u_scale=self.u_scale)
 
     @property
     def variant(self) -> str:
@@ -1456,8 +1476,8 @@ def segment_blend_weight(u: float | None, *, u_scale: float) -> float:
     if u is None:
         return 0.0
     scale = float(u_scale)
-    if scale <= 0.0:
-        raise ValueError(f"--qz-u-scale must be positive, got {scale!r}")
+    if not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"--qz-u-scale must be positive and finite, got {scale!r}")
     return QZ_W_MIN + QZ_W_SPAN * min(float(u) / scale, 1.0)
 
 
@@ -1656,19 +1676,56 @@ def game_value_targets(
     if value_scheme != VALUE_SCHEME_QZSEGMENT:  # pragma: no cover - parse refuses first
         raise ValueError(f"unknown value scheme {value_scheme!r}")
 
+    def uncertifiable(index: int) -> bool:
+        """The transition out of this row cannot be priced AT ALL.
+
+        Two ways, and neither is a blunder verdict -- they are the absence of
+        one, which is why ``--qz-no-boundary`` does NOT suppress them: that
+        ablation removes the blunder gate, not the fail-toward-Q rule.
+
+        * the row's played move is missing from its own d9 block (or absent);
+        * ⚑ the next BANKED row is more than one ply later.  A corpus row is
+          banked on a dedup MISS only, so a game's plies need not be
+          contiguous, and the moves inside a gap were never banked -- they
+          cannot be priced even in principle.  Counting the gap and then
+          scanning straight across it (what this did before) lets an earlier
+          row inherit the terminal outcome through an UNOBSERVED blunder,
+          inside a stretch the summary is calling clean.  Latent on run02,
+          whose ``ply_gaps_nonunit`` is 0, and a property of the next corpus
+          rather than of this code.
+        """
+        fact = facts[index]
+        if fact.played_regret is None:
+            return True
+        return index + 1 < count and facts[index + 1].ply - fact.ply != 1
+
+    def blocked(index: int) -> bool:
+        regret = facts[index].played_regret
+        return uncertifiable(index) or (
+            regret is not None and regret > params.r_boundary
+        )
+
     # ⚑ ONE BACKWARD PASS computes every row's forward scan: the first boundary
     # at or after row i is row i itself when i is a boundary, and otherwise
     # whatever row i+1 already resolved.  O(game length) rather than the O(n^2)
     # the "scan forward from each row" reading invites.
+    #
+    # ⚑⚑ IT STARTS AT THE LAST BANKED ROW, WHOSE MOVE IS A REAL PLAYED MOVE.
+    # An earlier cut started at ``count - 2`` on the reasoning that the final
+    # banked row "has no outgoing transition". It has one: the generator writes
+    # ``played_move`` and then PUSHES it (``gen_sf_rooted_corpus.play_game``),
+    # and because the loop adjudicates at the TOP, that push is what ends the
+    # game -- the last banked move is usually the game's LAST move, and it is
+    # banked, priced and full-width like every other. Skipping it meant a
+    # game-losing final blunder stopped nothing: that row and every clean row
+    # behind it blended toward an outcome the blunder had just produced, which
+    # is the exact attribution error arm C exists to prevent. Found by the
+    # Codex review of PR #491.
     next_boundary: list[int | None] = [None] * count
-    # The LAST banked row has no outgoing transition inside this game, so its
-    # own regret is never consulted -- reaching it IS reaching the terminal.
-    for index in range(count - 2, -1, -1):
-        regret = facts[index].played_regret
-        if regret is None or regret > params.r_boundary:
-            next_boundary[index] = index
-        else:
-            next_boundary[index] = next_boundary[index + 1]
+    following: int | None = None
+    for index in range(count - 1, -1, -1):
+        next_boundary[index] = index if blocked(index) else following
+        following = next_boundary[index]
 
     targets = []
     readings: list[SegmentReading | None] = []
@@ -1681,23 +1738,13 @@ def game_value_targets(
             # toward Q, exactly as under the full scheme. What the flag removes
             # is the effect of OTHER rows' blunders on this row's future.
             #
-            # ⚑⚑ AND THE LAST BANKED ROW IS EXEMPT, because C-full exempts it:
-            # the backward pass above starts at ``count - 2``, so the final
-            # row's own regret is never consulted there and it is
-            # unconditionally terminal. Without the ``index != count - 1`` term
-            # this ablation was STRICTER than the arm it ablates on the one row
-            # per game whose played move cannot be priced -- C-full said
-            # ``terminal``, C-no-segment said ``boundary_self`` and handed it
-            # pure Q. A diagnostic arm whose only job is to differ in ONE way
-            # cannot afford a second difference, however rare (found by an
-            # independent reviewer; zero rows on run02, where
-            # ``rows_missing_played_move`` is 0 -- latent, not live, and fixed
-            # rather than documented because the next corpus decides which).
-            stop = (
-                index
-                if fact.played_regret is None and index != count - 1
-                else None
-            )
+            # ⚑ The LAST banked row takes the same rule as every other, because
+            # C-full now gives it the same rule: its move is a real played move
+            # (see the backward pass above). An earlier cut exempted it here, to
+            # match a C-full that wrongly treated it as terminal-by-construction;
+            # with C-full corrected, the exemption would REINTRODUCE the
+            # divergence it was added to remove.
+            stop = index if uncertifiable(index) else None
         else:
             stop = default_stop
         suppressed = bool(
@@ -1940,6 +1987,12 @@ class DeriveStats:
     #: run02_snap_20260829. A future corpus with missing rungs would need this
     #: subtracted before the contrast is one-dimensional again.
     qz_w_const_differs_from_map: int = 0
+    #: ⚑⚑ THE ABLATIONS' ONLY TAKE-EFFECT GATE: rows whose EMITTED, QUANTIZED
+    #: target differs from the one C-full would have emitted for the same row.
+    #: The two counters above are diagnostics about intermediate choices and
+    #: cannot carry this claim -- see `apply_value_scheme` for why each of them
+    #: can increment on a row whose emitted vector does not move at all.
+    qz_rows_differ_from_c_full: int = 0
     qz_regret_n: int = 0
     qz_regret_min: float = math.inf
     qz_regret_max: float = -math.inf
@@ -2132,6 +2185,7 @@ class DeriveStats:
                 "stop_boundary_ahead": self.qz_stop_boundary_ahead,
                 "boundary_suppressed_by_flag": self.qz_boundary_suppressed,
                 "w_const_differs_from_map": self.qz_w_const_differs_from_map,
+                "rows_differing_from_c_full": self.qz_rows_differ_from_c_full,
                 "played_regret": self._reading(
                     self.qz_regret_n,
                     self.qz_regret_min,
@@ -3006,9 +3060,12 @@ def enforce_value_scheme_take_effect(
     * any other scheme must have MOVED some row off it.
     * ``qzsegment`` must have priced at least one row's own move, or its gate
       never ran and its ``w`` never came from a real ``u``.
-    * each ablation flag must have CHANGED a row -- a positive reading, because
-      "no row stopped at a boundary" is also what a blunder-free corpus looks
-      like and "w equals the map" is also what a lucky constant looks like.
+    * an ablation must have moved a row OFF C-FULL'S OWN EMITTED TARGET,
+      compared as stored.  ⚑ Not off its intermediate counters: a weight that
+      differs from the map still emits C-full's vector on a self-boundary,
+      where it multiplies a difference of zero, and a suppressed boundary whose
+      replacement future equals the one it replaced emits C-full's vector too.
+      Both counters can be positive on a corpus that IS C-full.
     """
     delta_zero = stats.value_delta_max <= 0.0
     if options.value_scheme == VALUE_SCHEME_SEARCH:
@@ -3046,20 +3103,18 @@ def enforce_value_scheme_take_effect(
             f"{stats.qz_rows_missing_played_move}), so every scan stopped where "
             "it started and the arm is V0 wearing another name.",
         )
-    if options.qz.w_const is not None and stats.qz_w_const_differs_from_map == 0:
+    if options.qz.is_ablation and stats.qz_rows_differ_from_c_full == 0:
         raise CorpusIntegrityError(
-            f"--qz-w-const {options.qz.w_const} was requested but not one of "
-            f"{stats.qz_weight_n} rows got a weight the frozen u map would not "
-            "have given anyway: the C-no-u ablation is indistinguishable from "
-            "C-full on these rows, so it is not an ablation.",
-        )
-    if options.qz.no_boundary and stats.qz_boundary_suppressed == 0:
-        raise CorpusIntegrityError(
-            "--qz-no-boundary was requested but not one of "
-            f"{stats.value_delta_n} rows had its future changed by it: no row "
-            "in this corpus would have stopped at a blunder ahead of it under "
-            "the default scheme, so the C-no-segment ablation removed nothing "
-            "and its rows are C-full's. The comparison would be empty.",
+            f"the {options.qz.variant} ablation was requested but not one of "
+            f"{stats.value_delta_n} emitted rows differs from the target C-full "
+            "would have written for it, as stored. Its intermediate counters "
+            f"(w_const_differs_from_map={stats.qz_w_const_differs_from_map}, "
+            f"boundary_suppressed={stats.qz_boundary_suppressed}) can be "
+            "positive on rows whose emitted vector does not move -- a weight "
+            "multiplied into a zero difference, or a replacement future equal "
+            "to the one it replaced -- so they are diagnostics, not evidence. "
+            "This corpus IS C-full's, and the comparison the ablation exists "
+            "for would be empty.",
         )
 
 
@@ -3310,13 +3365,30 @@ def apply_value_scheme(
     an 11,200-float ``x`` and ``dataclasses.replace`` would copy every field of
     every row of a 5.5M-row corpus to change one 3-vector.
     """
+    facts = [row.facts for row in rows]
     targets, readings = game_value_targets(
-        [row.facts for row in rows],
-        value_scheme=options.value_scheme,
-        params=options.qz,
+        facts, value_scheme=options.value_scheme, params=options.qz,
     )
+    # ⚑⚑ THE ABLATION'S TAKE-EFFECT EVIDENCE IS THE EMITTED TARGET ITSELF.
+    # The weight and stop-kind counters below prove that an INTERMEDIATE choice
+    # changed, which is not the same claim: `w_const_differs_from_map`
+    # increments on a self-boundary where `future == q_own`, and there the
+    # weight multiplies a difference of zero and the emitted vector is
+    # identical; `boundary_suppressed` increments even when the replacement
+    # future happens to equal the one it replaced. A corpus could satisfy both
+    # counters, satisfy the separate nonzero-vs-V0 gate on other rows, and
+    # still be byte-for-byte C-full. So when an ablation is asked for, C-full is
+    # computed alongside it and the two are compared AS STORED (Codex review of
+    # PR #491).
+    reference: list[np.ndarray] | None = None
+    if options.value_scheme == VALUE_SCHEME_QZSEGMENT and options.qz.is_ablation:
+        reference, _ = game_value_targets(
+            facts,
+            value_scheme=options.value_scheme,
+            params=options.qz.without_ablation(),
+        )
     samples: list[ReplaySample] = []
-    for row, target, reading in zip(rows, targets, readings):
+    for index, (row, target, reading) in enumerate(zip(rows, targets, readings)):
         # ⚑ The baseline goes through the SAME cast as the read-back, so the
         # control's delta is exactly 0 rather than 0-to-within-float16 -- an
         # exact zero is a much stronger reading for the gate to enforce.
@@ -3327,6 +3399,13 @@ def apply_value_scheme(
         # ⚑ WRITE FIRST, THEN MEASURE, and measure what came back off the row.
         stored = write_value_target(row.sample, np.asarray(target, dtype=np.float64))
         stats.note_value_delta(float(np.abs(stored - baseline).sum()))
+        if reference is not None:
+            c_full = np.asarray(
+                shard_stored(np.asarray(reference[index], dtype=np.float64)),
+                dtype=np.float64,
+            )
+            if not np.array_equal(stored, c_full):
+                stats.qz_rows_differ_from_c_full += 1
         if reading is not None:
             stats.note_qz_weight(reading.weight)
             if reading.stop == SEGMENT_TERMINAL:

@@ -3159,7 +3159,9 @@ def test_an_ablation_that_changed_no_row_is_refused(tmp_path: Path) -> None:
     nothing, so its rows ARE C-full's and the comparison would be empty.  A
     positive reading is required, not the absence of a negative one.
     """
-    with pytest.raises(derive.CorpusIntegrityError, match="removed nothing"):
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="differs from the target C-full",
+    ):
         derive.main([
             "--corpus", str(game_corpus(tmp_path)),
             "--out", str(tmp_path / "out"),
@@ -3211,7 +3213,9 @@ def test_a_constant_weight_that_the_map_would_have_given_anyway_is_refused(
     and it would otherwise produce a C-no-u directory identical to C-full's.
     """
     plies = [Ply(played=CP_CLEAN) for _ in range(4)]
-    with pytest.raises(derive.CorpusIntegrityError, match="not an ablation"):
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="differs from the target C-full",
+    ):
         derive.main([
             "--corpus", str(game_corpus(tmp_path, plies)),
             "--out", str(tmp_path / "out"),
@@ -3619,12 +3623,65 @@ def test_a_shard_whose_value_column_did_not_survive_the_write_is_refused(
 # ── review round 1: the ablation must differ in exactly ONE way ──────────────
 
 
-def test_the_no_boundary_ablation_treats_the_last_row_as_c_full_does() -> None:
-    """⚑ C-full never consults the LAST banked row's own regret -- the backward
-    pass starts at ``count - 2`` -- so an unpriceable last row is terminal there.
-    The ablation must agree: its only licensed difference is suppressing
-    boundaries, and a version that stopped that row at itself was STRICTER than
-    the arm it ablates, on one row per game.
+def test_the_last_banked_move_is_priced_like_any_other() -> None:
+    """⚑⚑ THE LAST BANKED ROW'S MOVE IS A PLAYED MOVE, and arm C must price it.
+
+    ``gen_sf_rooted_corpus.play_game`` writes ``played_move`` and then PUSHES
+    it, and adjudicates at the TOP of its loop -- so the last banked move is
+    usually the move that ENDS the game, banked and full-width like every
+    other. A backward pass that started at ``count - 2`` never looked at it, so
+    a game thrown away on its final banked move stopped nothing: that row and
+    every clean row behind it blended toward the outcome the blunder had just
+    produced, which is the exact attribution error this arm exists to prevent.
+
+    Here the LAST move is the blunder and nothing else is. No row may reach the
+    game result.
+    """
+    plies = [
+        Ply(played=CP_CLEAN),
+        Ply(played=CP_CLEAN),
+        Ply(top9=CP_TOP, played=CP_BLUNDER),  # the final banked move throws it
+    ]
+    rows = build_game(plies, result_white=1.0)
+    facts = facts_for(rows)
+    assert facts[2].played_regret is not None
+    assert facts[2].played_regret > derive.QZ_R_BOUNDARY
+    targets, readings = derive.game_value_targets(
+        facts, value_scheme=derive.VALUE_SCHEME_QZSEGMENT, params=derive.QzParams(),
+    )
+    assert [r.stop for r in readings if r is not None] == [
+        derive.SEGMENT_BOUNDARY_AHEAD,
+        derive.SEGMENT_BOUNDARY_AHEAD,
+        derive.SEGMENT_BOUNDARY_SELF,
+    ]
+    q = wdl_of_cp(CP_TOP)
+    # Row 2 is the blunder: pure Q. Rows 0 and 1 stop there -- row 0 shares its
+    # seat (both White), row 1 does not.
+    np.testing.assert_allclose(targets[2], q, atol=1e-12)
+    np.testing.assert_allclose(targets[0], 0.5 * q + 0.5 * q, atol=1e-12)
+    np.testing.assert_allclose(targets[1], 0.5 * q + 0.5 * flipped(q), atol=1e-12)
+    # ⚑ And NOTHING reached the outcome, which is the whole claim.
+    for index, target in enumerate(targets):
+        z = onehot(0 if index % 2 == 0 else 2)
+        assert not np.allclose(target, 0.5 * q + 0.5 * z)
+
+
+def test_a_clean_final_move_still_reaches_the_outcome() -> None:
+    """The converse, so the test above pins the gate and not a constant."""
+    rows = build_game([Ply(played=CP_CLEAN)] * 3, result_white=1.0)
+    _, readings = derive.game_value_targets(
+        facts_for(rows), value_scheme=derive.VALUE_SCHEME_QZSEGMENT,
+        params=derive.QzParams(),
+    )
+    assert all(r is not None and r.stop == derive.SEGMENT_TERMINAL for r in readings)
+
+
+def test_an_unpriceable_last_row_stops_at_itself_under_both_c_cells() -> None:
+    """⚑ The fail-toward-Q rule is not a boundary and neither ablation
+    suppresses it.  With C-full now pricing the last banked move, an
+    UNPRICEABLE last row stops at itself under C-full -- and C-no-segment must
+    agree, because its licensed difference is suppressing BLUNDER boundaries
+    only.
     """
     plies = [
         Ply(played=CP_CLEAN),
@@ -3632,22 +3689,16 @@ def test_the_no_boundary_ablation_treats_the_last_row_as_c_full_does() -> None:
         Ply(played=CP_CLEAN, played_off_book=True),  # the LAST row, unpriceable
     ]
     rows = build_game(plies, result_white=1.0)
-    full = targets_for(rows)
-    ablated = targets_for(rows, no_boundary=True)
     q = wdl_of_cp(CP_TOP)
-    terminal = 0.5 * q + 0.5 * onehot(0)  # ply 2 is White; the game is a win
-    np.testing.assert_allclose(full[2], terminal, atol=1e-12)
-    np.testing.assert_allclose(ablated[2], terminal, atol=1e-12)
-    # The stop KIND agrees too, not merely the vector.
     for params in (derive.QzParams(), derive.QzParams(no_boundary=True)):
-        _, readings = derive.game_value_targets(
+        targets, readings = derive.game_value_targets(
             facts_for(rows), value_scheme=derive.VALUE_SCHEME_QZSEGMENT, params=params,
         )
         assert readings[2] is not None
-        assert readings[2].stop == derive.SEGMENT_TERMINAL
-
-    # ⚑ And a MID-game unpriceable row is still stopped at itself under both,
-    # so the exemption is the last row's and not a blanket one.
+        assert readings[2].stop == derive.SEGMENT_BOUNDARY_SELF
+        np.testing.assert_allclose(targets[2], q, atol=1e-12)
+    # A MID-game unpriceable row behaves the same way under both, so the rule
+    # is about certifiability and not about position in the game.
     mid = build_game(
         [Ply(played=CP_CLEAN), Ply(played=CP_CLEAN, played_off_book=True),
          Ply(played=CP_CLEAN)],
@@ -3655,6 +3706,31 @@ def test_the_no_boundary_ablation_treats_the_last_row_as_c_full_does() -> None:
     )
     np.testing.assert_allclose(targets_for(mid)[1], q, atol=1e-12)
     np.testing.assert_allclose(targets_for(mid, no_boundary=True)[1], q, atol=1e-12)
+
+
+def test_a_gap_in_the_banked_plies_stops_a_segment() -> None:
+    """⚑⚑ AN UNOBSERVED TRANSITION IS NOT A CLEAN ONE.  A dedup hit (or a
+    tolerated drop) leaves a non-unit ply gap, and the moves inside it were
+    never banked -- they cannot be priced even in principle.  Scanning across a
+    gap lets an earlier row inherit the terminal outcome through an unobserved
+    blunder, inside a stretch the summary is calling clean.  The gap is a hard
+    boundary under every C cell, ablations included.
+    """
+    rows = build_game([Ply(played=CP_CLEAN)] * 4, result_white=1.0)
+    contiguous = targets_for(rows)
+    del rows[2]  # plies 0, 1, 3 -- the transition out of ply 1 is now unobserved
+    gapped = targets_for(rows)
+    q = wdl_of_cp(CP_TOP)
+    # Contiguous: every row reaches the outcome.
+    np.testing.assert_allclose(contiguous[1], 0.5 * q + 0.5 * onehot(2), atol=1e-12)
+    # Gapped: ply 1 is the boundary, so it is pure Q and ply 0 stops there.
+    np.testing.assert_allclose(gapped[1], q, atol=1e-12)
+    np.testing.assert_allclose(gapped[0], 0.5 * q + 0.5 * flipped(q), atol=1e-12)
+    # Ply 3 is past the gap and is the last banked row with a clean move.
+    np.testing.assert_allclose(gapped[2], 0.5 * q + 0.5 * onehot(2), atol=1e-12)
+    # And the ablations do not suppress it -- it is an absent verdict, not one.
+    np.testing.assert_allclose(targets_for(rows, no_boundary=True)[1], q, atol=1e-12)
+    np.testing.assert_allclose(targets_for(rows, w_const=0.725)[1], q, atol=1e-12)
 
 
 # ── review round 1: the manifest's overrides are machine-readable ────────────
@@ -3871,3 +3947,76 @@ def test_the_launcher_gate_reads_the_stamp_and_not_the_directory_name(
     problems = baked_value_blend_problems({"game_frac": 0.1}, [control, baked])
     assert len(problems) == 1
     assert derive.VALUE_SCHEME_QZSEGMENT in problems[0]
+
+
+# ── review round 2 (Codex): evidence, and knobs refused at startup ───────────
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -0.01])
+def test_a_non_finite_instability_scale_is_refused_at_startup(bad: float) -> None:
+    """⚑ ``nan <= 0.0`` is FALSE, so a bare positivity check ACCEPTS
+    ``--qz-u-scale nan`` -- and ``segment_blend_weight`` then propagates NaN
+    into every weight, every target and every emitted shard, with the
+    take-effect gate noticing only at the END, after a whole corpus has been
+    written. Refused at startup, like every other bad knob here.
+    """
+    with pytest.raises(ValueError, match="positive and finite"):
+        derive.QzParams(u_scale=bad)
+    with pytest.raises(ValueError, match="positive and finite"):
+        derive.segment_blend_weight(0.01, u_scale=bad)
+
+
+def test_the_ablation_counters_can_move_when_the_emitted_target_does_not() -> None:
+    """⚑⚑ WHY THE ABLATION GATE READS TARGETS AND NOT COUNTERS.
+
+    Every move here is a blunder, so every row is a self-boundary and
+    ``F == Q``: the blend weight multiplies a difference of ZERO and the
+    emitted vector cannot move. ``w_const_differs_from_map`` nonetheless
+    increments on all of them, because the weight really is not the map's.
+    That counter is a diagnostic about an intermediate choice; it is not
+    evidence that anything reached a row.
+    """
+    plies = [Ply(top9=CP_TOP, played=CP_BLUNDER) for _ in range(3)]
+    rows = build_game(plies, result_white=1.0)
+    facts = facts_for(rows)
+    full, full_readings = derive.game_value_targets(
+        facts, value_scheme=derive.VALUE_SCHEME_QZSEGMENT, params=derive.QzParams(),
+    )
+    ablated, ablated_readings = derive.game_value_targets(
+        facts,
+        value_scheme=derive.VALUE_SCHEME_QZSEGMENT,
+        params=derive.QzParams(w_const=0.9),
+    )
+    # The counter's premise holds on every row ...
+    moved = [
+        r for r in ablated_readings
+        if r is not None and r.weight != r.weight_from_map
+    ]
+    assert len(moved) == 3
+    # ... and not one emitted target differs.
+    for a, b, reading in zip(full, ablated, full_readings):
+        assert reading is not None
+        assert reading.stop == derive.SEGMENT_BOUNDARY_SELF
+        np.testing.assert_allclose(a, b, atol=1e-12)
+
+
+def test_a_working_ablation_reports_how_many_targets_it_moved(
+    tmp_path: Path,
+) -> None:
+    """The gate's own reading, positive and in the summary: rows whose EMITTED,
+    QUANTIZED target differs from the one C-full would have written.
+    """
+    plies = [Ply(played=CP_CLEAN), Ply(top9=500.0, played=CP_BLUNDER), Ply(played=CP_CLEAN)]
+    out = run_derive(
+        game_corpus(tmp_path, plies), tmp_path / "out", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT, "--qz-no-boundary",
+    )
+    realized = out["realized"]["value_scheme_realized"]
+    assert realized["rows_differing_from_c_full"] > 0
+    assert realized["rows_differing_from_c_full"] <= out["realized"]["rows_written"]
+    # C-full itself has no reference to compare against, so it reads 0.
+    plain = run_derive(
+        game_corpus(tmp_path, plies, name="c2"), tmp_path / "full", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZSEGMENT,
+    )
+    assert plain["realized"]["value_scheme_realized"]["rows_differing_from_c_full"] == 0
