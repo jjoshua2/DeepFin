@@ -71336,3 +71336,32 @@ derivation, policy target unchanged at the reigning τ):
   Winner is re-checked on the 20M confirmation run before entering the 100M
   recipe (regime stamp: all verdicts here are 5M×1-view).
 - Aux reliability head: DEFERRED, flag-gated, contingent on C winning.
+
+**2026-08-31 AMENDMENT to the value-round prereg (before any code merged or
+training run).** Two inputs: an external-agent critique (iterative-deepening
+stability is not correctness — the fortress is stable and wrong; and a
+per-step λ-return geometrically attenuates Z so an 80-ply clean proof never
+reaches the middlegame), and a MEASUREMENT answering the first half.
+- **u IS a real error signal — the downgrade is refused, with numbers.** On
+  the 4000-row T80 bank against lc0's deep search value as ruler:
+  err=|q_d9 − q_lc0| vs u rank-corr 0.581; mean err 0.052 in the stable half
+  vs 0.223 above p90; P(err>0.25) 6% → 41% (7× risk ratio). The
+  stable-but-wrong (fortress-shaped) case holds only 18% of large errors.
+  u keeps its role, on the already-frozen quantile map. (Ruler caveat: lc0
+  and SF value scales differ systematically; an offset moves all buckets
+  equally, the gradient is the finding.)
+- **The attenuation critique is ACCEPTED — arm C reformulated as the
+  CLEAN-SEGMENT RETROSPECTIVE TARGET**, replacing the per-step recursion:
+  for each position t, scan forward to the first transition with played
+  regret r > 0.27 (the c=0.5 point of the frozen gate: r_free 0.06 +
+  τ_r·√ln2) or terminal, whichever first. F_t = one-hot Z (POV-adjusted) if
+  the segment reaches terminal, else the pre-boundary Q. Target
+  T_t = (1−w_t)·Q_t + w_t·F_t on the WDL 3-vector, w_t = 0.5 +
+  0.45·min(u_t/0.05, 1) — the SAME frozen map, now as a segment blend with
+  NO geometric decay: an arbitrarily long clean segment carries terminal
+  information all the way back ("time as effective search depth"); a blunder
+  hard-stops it. Missing-data rows terminate the scan as a boundary (fail
+  toward Q, counted). V0/A/B unchanged; deciders, kill rules, and the
+  C-must-beat-B bar unchanged.
+- The robust future-Q aggregate variant (median of late-segment Qs instead
+  of the endpoint) is NOTED, not added — a fifth arm needs C to earn it.
