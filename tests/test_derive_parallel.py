@@ -1003,3 +1003,51 @@ def test_a_drained_stream_is_the_values_in_order_however_often_it_flushed(
         reference.note_value_delta(value)
     assert bank.value_delta_n == reference.value_delta_n
     assert bank.value_delta_sum == reference.value_delta_sum
+
+
+# ── does the flag take effect at all? ────────────────────────────────────────
+
+
+def test_the_lane_count_reaches_the_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ EVERY IDENTITY TEST ABOVE PASSES IF ``--workers`` IS SILENTLY IGNORED.
+
+    That is the whole point of them: the output is supposed to be the same. So
+    a driver that parsed ``--workers 3``, ran one lane, and wrote the right
+    corpus would satisfy all of them -- a value accepted and then ignored, which
+    is this repo's signature defect wearing the disguise of a passing suite.
+
+    The observation that separates "took effect" from "was accepted" is the
+    SPILL: N lanes means N lane directories, each holding rows it derived. The
+    spill is removed on success, so the removal is stubbed out to look at it --
+    and the stub is in the coordinator's own process, which is where the removal
+    happens.
+    """
+    monkeypatch.setattr(derive, "_remove_spill", lambda spill_dir: None)
+    rows = [row for gid in range(9) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [12] * 6)
+    out = tmp_path / "out"
+    run(corpus_dir, out, "--workers", "3")
+
+    spill = out / derive.SPILL_DIR_NAME
+    lanes = sorted(path.name for path in spill.iterdir() if path.is_dir())
+    assert lanes == ["w000", "w001", "w002"], (
+        f"--workers 3 produced {lanes}; the flag reached the partition but not "
+        "the lanes"
+    )
+    for lane in lanes:
+        chunks = sorted((spill / lane).glob("chunk_*.zarr"))
+        assert chunks, f"lane {lane} derived nothing"
+    # And the rows really are split: no lane holds all of them.
+    per_lane = {
+        lane: sum(
+            int(np.asarray(zarr.open_group(str(chunk), mode="r")["x"]).shape[0])
+            for chunk in (spill / lane).glob("chunk_*.zarr")
+        )
+        for lane in lanes
+    }
+    assert sum(per_lane.values()) == 72, per_lane
+    assert max(per_lane.values()) < 72, (
+        f"one lane derived every row: {per_lane}"
+    )
