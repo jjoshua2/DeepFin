@@ -12497,6 +12497,9 @@ versus foreach hash
 Maximum parameter difference was one float32 ULP (`1.1920928955078125e-07`),
 but the pre-committed requirement was bitwise checkpoint/state continuity.
 Do not replace the fallback arithmetic with foreach kernels; retain the loop.
+**⇒ SUPERSEDED 2026-09-01 for PR #495** — see the entry "SUPERSESSION: the 2026-07-12 verdict" and
+its DEPLOY PREREG (same date): the 1-ULP divergence was a kernel-order artifact; phase-0b on real
+production inventory and real gradients is bitwise 10/10 on the merge candidate.
 
 **Threaded-dispatcher singleton legal-pack experiment -- UNREAD
 (2026-07-12).** `ThreadedDispatcher._submit_batch` always runs two
@@ -72592,6 +72595,22 @@ gain, which is read empirically from #496's `opt_step_s` on a corrected-history 
 deployment. PR #495 is being finished by an implementer (P2-1 retry scope + failure test, P2-2
 `last_adamw_stats` on the Ray row, P2-3 this supersession cited in the PR, language rewrite,
 phase-0b re-run), then reviewed independently, then merged on green.
+
+**2026-09-01 — DEPLOY PREREG for #495 (the entry the 2026-07-12 verdict lacked a successor for).**
+Hypothesis: the foreach fallback path lowers optimizer-step wall time with arithmetic identical to the
+loop. Deciding yardstick (exact): after the first restart that deploys the merged head, read
+`jq -s 'map({it: .training_iteration, opt: .opt_step_s, fe: .adamw_foreach_params, lp: .adamw_loop_params, rec: .adamw_foreach_recoveries})' <trial_dir>/result.json`
+and compare the median `opt_step_s` of the first 5 post-deploy iterations against the median of the
+last 5 pre-deploy iterations of the same run shape (same batch, same window mode). Pre-committed:
+**KILL (revert to the loop via the dtype allowlist)** if post/pre > 1.05, or if any row reads
+`adamw_loop_params > 0` on the production groups, or if `adamw_foreach_recoveries > 0` on ≥3 of the
+first 20 iterations (persistent allocation pressure). **SUCCESS** if post/pre ≤ 0.95 with
+`adamw_foreach_params == 394` and `adamw_loop_params == 0` on every row. Between 0.95 and 1.05:
+KEPT-NEUTRAL — the merge bar was bitwise identity, not throughput, so a null throughput read is not a
+regression. Take-effect observation: `adamw_foreach_params` on the Ray row (0 ⇒ the path did not run).
+Confounds: the first post-deploy window is also the first corrected-history window only if the
+schema-3 corpus is live by then — if both land in one restart, attribute throughput by the per-phase
+timers (#496), not by iteration wall.
 
 **2026-09-01 — TT WARM-UP MEASUREMENT (`tt_warmup_check.py`, 240 repeat rows, bank
 `tt_warmup_check.json`): short warm-ups do NOT reproduce the carried TT; only a full game-prefix
