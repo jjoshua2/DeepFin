@@ -71867,3 +71867,22 @@ releases it: **GPU order is now 3c stage 1 → 3c stage 2 → valueround2.**
 lands (~minutes). Net effect of tonight's four cancellations (d8, champ
 ranking, ext-vs-base, value-round-τ0.02, 3b): every remaining GPU hour is
 on the champion lane.
+
+**2026-09-01 — valueround2 AMENDMENT: 6th arm `f_vd7` (value-depth cap,
+PREREG) + deploy-window hold.** PR #494 adds `--value-depth D` to the
+deriver: value read becomes min(scheme depth, D), policy untouched, cap
+only ever shallows. The `uniform-d<D>` schemes always read value at the
+DEEPEST banked phase, so "d7 policy + d7 value" was an impossible cell;
+this flag creates it. Arm f_vd7: lane policy + `--value-depth 7`, value
+SCHEME stays default all-q — vs V0 the ONLY moved axis is value read
+depth (τ, steps 9,680, seed 0, lane identical). Hypothesis: the deepest-
+value convention is load-bearing; a d7-capped value read should lose
+vregret vs V0. Judged by the round's pre-committed rule (vregret vs
+V0-analog + arena vs V0CK, dumps banked) — no new rule. Guards: arm
+derives only if `.vd7_ready` marks VWT re-pinned onto merged #494 by its
+derivation slot, else auto-skips leaving the five preregged arms
+untouched; #494's identity test (D ≥ max ⇒ byte-identical) is what makes
+the re-pin inert for those five. Ops rider: valueround2's GPU legs now
+pause ≤45 min on a `gpu_hold` marker — a deploy window for a pending
+optimizer-throughput PR (foreach batching, bitwise-identity-gated, own
+prereg at merge); the hold self-expires so the chain cannot wedge.
