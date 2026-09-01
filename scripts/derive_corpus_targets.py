@@ -4937,6 +4937,33 @@ def _spill_path(spill_dir: Path, worker: int, chunk: int) -> Path:
     return spill_dir / f"w{worker:03d}" / f"chunk_{chunk:06d}.zarr"
 
 
+def _same_column(before: np.ndarray, after: np.ndarray) -> bool:
+    """One spilled column came back off disk as the SAME column.
+
+    ⚑⚑ NOT ``np.array_equal``, and the reason is dtype, not NaN.  A third review
+    flagged the original ``array_equal`` for treating NaN as unequal to itself.
+    That premise does not hold here: ``save_local_shard_arrays`` runs
+    ``validate_arrays``, which refuses non-finite values in ``x``, in
+    ``policy_target`` and in EVERY optional float column
+    (``replay/shard.py:1593``), so the write raises before this comparison ever
+    sees a NaN.  Reported rather than quietly "fixed" for the stated reason.
+
+    The change is kept on a different and reachable ground.  ⚑ MEASURED
+    2026-08-31, numpy 1.26: ``np.array_equal`` compares by VALUE and ignores
+    dtype entirely -- ``float32([1.0])`` equals ``float64([1.0])``,
+    ``float16([0.25])`` equals ``float32([0.25])``, ``int8`` equals ``int64``.
+    The whole point of this round trip is that the repack hands the sequential
+    writer the same columns the lane built, and a column that came back one cast
+    away from what went in is precisely the failure it exists to catch --
+    invisible to ``array_equal``, caught by comparing dtype, shape and bytes.
+    """
+    return (
+        before.dtype == after.dtype
+        and before.shape == after.shape
+        and before.tobytes() == after.tobytes()
+    )
+
+
 def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
     """Bank one run of surviving rows, and PROVE the banking is lossless.
 
@@ -4949,12 +4976,18 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
     looks at.  Comparing ``samples_to_arrays`` BEFORE against
     ``samples_to_arrays(arrays_to_samples(<read back off disk>))`` AFTER states
     exactly the property the repack depends on, over the same reader and writer
-    the repack uses, and costs a few percent of a derivation that is dominated
-    by JSON parsing and position encoding.
+    the repack uses.  ⚑ Its cost is one extra read and re-serialisation per
+    chunk, which at the default 2048 rows is amortised over a chunk; at
+    ``--spill-chunk-rows 1`` it is a zarr group written and re-read PER ROW, so
+    that setting is correct and pathological.  (No percentage is quoted: it was
+    never measured, and this file states measured numbers with dates.)
 
     ⚑ Read back off DISK rather than compared in memory: the serializer sits
     between the two, and ``_verify_value_column_on_disk`` exists in the
     sequential path for exactly that reason.
+
+    ⚑ COMPARED BY :func:`_same_column`, NOT ``np.array_equal`` -- see there for
+    what that buys and for the reviewer premise it declines.
     """
     want = samples_to_arrays(samples)
     save_local_shard_arrays(
@@ -4979,7 +5012,7 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
             "the shard the sequential path writes.",
         )
     for key in sorted(want):
-        if not np.array_equal(np.asarray(got[key]), np.asarray(want[key])):
+        if not _same_column(np.asarray(want[key]), np.asarray(got[key])):
             raise ParallelDeriveError(
                 f"{path.name}: column {key!r} did not survive the spill round "
                 "trip unchanged, so the repacked shard would differ from the "
@@ -5244,11 +5277,15 @@ def _plan_repack(
             flat.append((cursor, cursor + rows, worker, chunk))
             cursor += rows
     if cursor != sum(survivors):
-        # ⚑ NOT A GATE ON THE SPILL -- `_measure_spill` already read those rows
-        # off disk. Both numbers here come from `chunk_rows`, so this is an
-        # invariant of the loop above it and cannot fire on a corpus; it is kept
-        # because a future caller could pass the two apart, and it is labelled
-        # so nobody counts it as coverage.
+        # ⚑ THE SURVIVORS-VS-SPILL CROSS-CHECK, AND IT CAN FIRE.  An earlier
+        # comment here called it "true by construction" on the grounds that both
+        # numbers come from `chunk_rows`. They do not: `cursor` is summed from
+        # `chunk_rows`, while `survivors` is a SEPARATE accumulator incremented
+        # in `_run_worker.emit`. A lane that dropped its final `if buffered:
+        # cut(...)` -- rows counted as surviving, never written -- makes these
+        # disagree, and this is what notices. MEASURED by mutation (M27).
+        # ⚑ The label mattered more than the check: a future reader acting on
+        # "cannot fire" deletes a live gate. (Third review, P3#5.)
         raise ParallelDeriveError(
             f"the spill files hold {cursor} rows and the workers reported "
             f"{sum(survivors)} survivors; the two must be the same rows.",
@@ -5508,6 +5545,17 @@ def derive_parallel(
             "routing --workers 1 through here would give the default path no "
             "independent implementation to be compared against.",
         )
+    # ⚑ VALIDATED HERE TOO, not only in `main`.  Every test drives this function
+    # directly, and `workers` is already checked on this side -- leaving the
+    # chunk size to the CLI alone means a programmatic `spill_chunk_rows=0` dies
+    # as an opaque failure inside a spawned lane instead of on the way in.
+    # (Third review, P3#4.)
+    if int(options.spill_chunk_rows) <= 0:
+        raise ValueError(
+            f"spill_chunk_rows must be positive, got "
+            f"{options.spill_chunk_rows!r}; a non-positive size cuts an empty "
+            "chunk on every emit and refuses deep inside a lane.",
+        )
     started = datetime.now(timezone.utc).isoformat()
     corpus.refuse_populated_dir(out_dir)
     record = (
@@ -5727,12 +5775,15 @@ def build_parser() -> argparse.ArgumentParser:
              "The lanes are CPU-bound next to whatever else the box is running.",
     )
     parser.add_argument(
-        "--spill-chunk-rows", type=int, default=SPILL_CHUNK_ROWS,
-        help="surviving rows per --workers spill file. Changes no output -- the "
-             "output shard boundaries come from the survivor counts however the "
-             "rows were chunked -- and exists so the multi-chunk spill and "
-             "repack path is reachable at a size a test can drive. Lower it to "
-             "trade memory for spill files.",
+        "--spill-chunk-rows", type=int, default=None,
+        help=f"surviving rows per --workers spill file (default "
+             f"{SPILL_CHUNK_ROWS}). Changes no output -- the output shard "
+             "boundaries come from the survivor counts however the rows were "
+             "chunked -- and exists so the multi-chunk spill and repack path is "
+             "reachable at a size a test can drive. Lower it to trade memory "
+             "for spill files -- at 1 the per-chunk round-trip check writes and "
+             "re-reads a zarr group per row, which is correct and pathological. "
+             "REFUSED with --workers 1, which spills nothing.",
     )
     parser.add_argument(
         "--max-envelope-misses", type=int, default=0,
@@ -5795,10 +5846,11 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(
             f"--rows-per-shard must be positive, got {args.rows_per_shard!r}",
         )
-    if int(args.spill_chunk_rows) <= 0:
+    if args.spill_chunk_rows is not None and int(args.spill_chunk_rows) <= 0:
         raise ValueError(
             f"--spill-chunk-rows must be positive, got {args.spill_chunk_rows!r}; "
-            "a non-positive chunk would spill one file per row",
+            "a non-positive size cuts an EMPTY chunk on every emit and refuses "
+            "deep inside a lane. (1 is what spills one file per row.)",
         )
     if int(args.max_envelope_misses) < 0:
         raise ValueError(
@@ -5809,6 +5861,25 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(
             f"--workers must be >= 1, got {args.workers!r}",
         )
+    # ⚑⚑ THE SAME DOCTRINE AS THE QZ KNOBS ABOVE, AND IT WAS MISSED HERE FIRST.
+    # `--spill-chunk-rows` sizes the spill, and `--workers 1` runs `derive`,
+    # which spills nothing -- so the knob reaches no consumer at all on that
+    # path. Accepting it would stamp a summary naming a chunk size that chunked
+    # nothing: this repo's signature defect, in the knob added to fix a review
+    # finding about an unreachable code path. ⚑ ON PRESENCE, via the `None`
+    # sentinel -- with `default=SPILL_CHUNK_ROWS` an explicitly passed `2048` is
+    # indistinguishable from the default, so the check could not see the very
+    # case it exists for. (Second review, third pass.)
+    if workers == 1 and args.spill_chunk_rows is not None:
+        raise ValueError(
+            "--spill-chunk-rows sizes the --workers spill, and --workers 1 "
+            "derives in this process and spills nothing, so the value would "
+            "reach no consumer. Pass --workers N (N > 1), or drop the flag.",
+        )
+    spill_chunk_rows = (
+        SPILL_CHUNK_ROWS if args.spill_chunk_rows is None
+        else int(args.spill_chunk_rows)
+    )
     corpus_dir = Path(args.corpus)
     # ⚑ ONCE, and the SNAPSHOT of a live corpus's inventory is taken here.
     corpus_record = read_corpus_record(corpus_dir)
@@ -5824,7 +5895,7 @@ def main(argv: list[str] | None = None) -> int:
         rows_per_shard=int(args.rows_per_shard),
         max_envelope_misses=int(args.max_envelope_misses),
         value_scheme=value_scheme,
-        spill_chunk_rows=int(args.spill_chunk_rows),
+        spill_chunk_rows=spill_chunk_rows,
         qz=qz,
     )
     if workers > 1:

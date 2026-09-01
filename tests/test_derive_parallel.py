@@ -35,18 +35,20 @@ import itertools
 import json
 import multiprocessing
 import math
-from collections.abc import Iterator
+from collections.abc import Sequence
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 import chess
+import numcodecs.blosc
 import numpy as np
 import pytest
 import zarr
 from numcodecs.blosc import Blosc
 
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
+from chess_anti_engine.replay.sample import ReplaySample
 from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 from tests.test_derive_corpus_targets import (
@@ -212,6 +214,41 @@ def _probe_digests() -> list[str]:
 
 
 @functools.lru_cache(maxsize=1)
+def probe_roles() -> tuple[bool, bool]:
+    """``(the parent repeats itself, the parent and a spawned child agree)``.
+
+    ⚑⚑ TWO PROPERTIES, RETURNED SEPARATELY, because they are independently
+    falsifiable and a conjunction hides whichever one is already False.  A third
+    review measured that on this box the parent alone is non-repeatable (3, 3
+    and 1 distinct digests for the three probe shapes), so a parent-only probe
+    and a both-roles probe BOTH return ``False`` -- meaning the child half could
+    be deleted outright and no test would notice.  A knob with no observation
+    that it took effect is this repo's signature defect, and it does not stop
+    being one because the knob is in a test helper.
+
+    Measured on ``numcodecs 0.13.1`` 2026-08-31: ``(False, False)``.  The roles
+    disagree because ``numcodecs.blosc._get_use_threads()`` is True in the main
+    process and False in a spawned one, so ``--workers 1`` writes through the
+    threaded encoder and a repack lane writes through the context encoder.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    pool = ctx.Pool(1)
+    try:
+        child = pool.apply(_probe_digests)
+        pool.close()
+        pool.join()
+    finally:
+        pool.terminate()
+    parent = _probe_digests()
+    per_shape = len(parent) // len(_PROBE_SHAPES)
+    spans = range(0, len(parent), per_shape)
+    repeats = all(len(set(parent[i:i + per_shape])) == 1 for i in spans)
+    agree = all(
+        set(parent[i:i + per_shape]) == set(child[i:i + per_shape]) for i in spans
+    )
+    return repeats, agree
+
+
 def codec_is_deterministic() -> bool:
     """Would ``--workers 1`` and the repack write the same BYTES for one array?
 
@@ -236,15 +273,8 @@ def codec_is_deterministic() -> bool:
     this verdict against what two real derivations actually wrote, so a probe
     that stops matching reality is itself a failure.
     """
-    ctx = multiprocessing.get_context("spawn")
-    with ctx.Pool(1) as pool:
-        child = pool.apply(_probe_digests)
-    parent = _probe_digests()
-    per_shape = len(parent) // len(_PROBE_SHAPES)
-    return all(
-        len({*parent[i:i + per_shape], *child[i:i + per_shape]}) == 1
-        for i in range(0, len(parent), per_shape)
-    )
+    repeats, agree = probe_roles()
+    return repeats and agree
 
 
 def file_bytes(root: Path) -> dict[str, str]:
@@ -317,14 +347,21 @@ _RUN_COUNTER = itertools.count()
 
 def both_ways(
     tmp_path: Path, corpus_dir: Path, *extra: str, workers: int,
-    rows_per_shard: int = 37,
+    rows_per_shard: int = 37, parallel_only: Sequence[str] = (),
 ) -> tuple[Path, Path]:
-    """Derive the same corpus sequentially and in parallel; return both dirs."""
+    """Derive the same corpus sequentially and in parallel; return both dirs.
+
+    ``parallel_only`` carries flags that have no sequential meaning --
+    ``--spill-chunk-rows`` is refused at ``--workers 1``, which spills nothing.
+    ⚑ Keeping them off the sequential side is what the identity claim WANTS: the
+    reference run is then the plain default path, unchanged by anything this PR
+    added, rather than the same knob applied to both sides.
+    """
     tag = next(_RUN_COUNTER)
     sequential = tmp_path / f"seq_{tag}"
     parallel = tmp_path / f"par_{tag}"
     run(corpus_dir, sequential, *extra, rows_per_shard=rows_per_shard)
-    run(corpus_dir, parallel, *extra, "--workers", str(workers),
+    run(corpus_dir, parallel, *extra, *parallel_only, "--workers", str(workers),
         rows_per_shard=rows_per_shard)
     return sequential, parallel
 
@@ -372,14 +409,39 @@ def test_whether_the_shard_files_are_byte_reproducible_is_measured(
     # with reality -- it probes buffers up to 11.5 MB while the tool's smallest
     # chunk is a few KB, and Blosc's threading engages on SIZE -- the identity
     # tests would silently sit at array-only comparison for good, or go red for
-    # a reason unrelated to --workers. An earlier cut of this test asserted
+    # a reason unrelated to --workers. An earlier cut asserted
     # `all(... for key in differing)`, which `all([])` satisfies vacuously and
     # so could not notice either.
-    assert bool(differing) != codec_is_deterministic(), (
-        f"the codec probe says deterministic={codec_is_deterministic()} and two "
-        f"identical sequential derivations {'differ in ' + str(len(differing)) + ' file(s)' if differing else 'wrote identical files'}. "
+    #
+    # ⚑⚑ AGAINST `parent_repeats`, NOT AGAINST THE FULL VERDICT, and the
+    # difference is a real false alarm this test used to be able to raise. Both
+    # runs above are `--workers 1`, i.e. two writes by a PARENT process, so what
+    # they measure is exactly "does the parent repeat itself". The full verdict
+    # also demands that a spawned lane agree with the parent -- a third property
+    # these two runs never exercise. A future numcodecs that made the THREADED
+    # encoder repeatable while the roles still disagreed would leave `differing`
+    # empty and the verdict False, and the old `!=` would have fired blaming the
+    # probe for a mismatch that is not one. (Third review, P2#2.)
+    parent_repeats, roles_agree = probe_roles()
+    assert bool(differing) != parent_repeats, (
+        f"the codec probe says the parent repeats itself={parent_repeats} and "
+        f"two identical sequential derivations "
+        f"{'differ in ' + str(len(differing)) + ' file(s)' if differing else 'wrote identical files'}. "
         "The probe no longer describes what this tool writes, so the byte "
         "comparison in assert_same_corpus is gated on the wrong answer."
+    )
+    # The verdict may only be stronger than reality in the safe direction: it
+    # can decline to compare bytes that happen to match, never demand bytes that
+    # do not.
+    assert not (codec_is_deterministic() and differing)
+    # ⚑ And `roles_agree` is PINNED, so the both-roles half of the probe is a
+    # value some test reads rather than a term that cannot move the verdict
+    # while `parent_repeats` is already False. If this flips, the probe's second
+    # half started mattering and the comment above it should be re-measured.
+    assert roles_agree is False, (
+        "a spawned child now agrees with the parent about Blosc's output. That "
+        "is a change in numcodecs' use_threads behaviour, not in this PR -- "
+        "re-measure codec_is_deterministic's docstring before editing this."
     )
     if differing:
         # Only Blosc's own compressed chunks may vary; a `.zarray`, a `.zattrs`
@@ -387,6 +449,50 @@ def test_whether_the_shard_files_are_byte_reproducible_is_measured(
         assert all(key.endswith(("/0.0", "/0.0.0.0")) for key in differing), (
             f"something other than a compressed chunk differs: {differing[:6]}"
         )
+
+
+def test_the_byte_comparison_branch_works_where_the_codec_is_reproducible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ THE SELF-TIGHTENING BRANCH, ACTUALLY RUN.
+
+    :func:`assert_same_corpus` compares raw file bytes as well as arrays *when
+    the codec is reproducible*, so that the day someone pins ``use_threads =
+    False`` every identity test here starts checking bytes with nobody having to
+    notice.  ⚑ A third review measured the obvious problem with that: the branch
+    has never executed in any environment we ship in, because the probe returns
+    False here.  A guardian that only wakes up after a library change, and has
+    never been run, is not a guardian.
+
+    So the environment it is written for is CONSTRUCTED: Blosc's thread pool is
+    pinned off for the duration, which makes the parent's encoder the same
+    deterministic context encoder a spawned lane already uses -- and then a real
+    ``--workers 3`` derivation is put through the full byte comparison.  This
+    doubles as the proof that the pin genuinely would deliver byte identity,
+    which is what makes the "worth deciding separately" note in the PR a real
+    option rather than a guess.
+    """
+    monkeypatch.setattr(numcodecs.blosc, "use_threads", False)
+    probe_roles.cache_clear()
+    try:
+        # ⚑ The REAL gate, not a stub. Pinning the pool off is enough to make
+        # `codec_is_deterministic()` return True on its own, so what runs below
+        # is the production branch reached the production way.
+        assert probe_roles() == (True, True), (
+            "pinning use_threads=False did not make the encoder reproducible; "
+            "the byte branch cannot be exercised and the PR's claim that a pin "
+            "would deliver byte identity needs re-measuring"
+        )
+        rows = [row for gid in range(6) for row in game(gid, 9)]
+        corpus_dir = write_split_corpus(tmp_path, rows, [20, 20, 14])
+        sequential, parallel = both_ways(tmp_path, corpus_dir, workers=3)
+        # ⚑ Byte equality, for real: same shards, same chunks, same compressed
+        # bytes -- the strongest form of the identity claim, in the one regime
+        # where it is available.
+        assert file_bytes(sequential) == file_bytes(parallel)
+        assert_same_corpus(sequential, parallel)
+    finally:
+        probe_roles.cache_clear()
 
 
 # ── the merge table cannot silently miss a counter ───────────────────────────
@@ -858,16 +964,22 @@ def test_the_fold_never_materialises_the_whole_stream(tmp_path: Path) -> None:
     ⚑ ``isinstance(..., Iterator)`` IS NOT THE OBSERVATION, and the first cut of
     this test made exactly that mistake.  A generator that builds the whole list
     and then ``yield from``\\ s it is an ``Iterator`` too, and passed -- a mutant
-    doing precisely that SURVIVED.  What bounds the peak is that a value arrives
-    before the NEXT file is opened, so that is what is measured: the second path
-    does not exist, and the first file's values still come out.  A materialising
-    fold raises before yielding anything.
+    doing precisely that SURVIVED.  What is measured instead is PER-FILE
+    LAZINESS: the second path does not exist, and the first file's values still
+    come out.  A fold that reads every file up front raises before yielding
+    anything.
+
+    ⚑ AND THAT IS THE EXACT CLAIM, no more.  Per-file laziness is what makes the
+    peak one lane's file rather than the corpus; it is NOT the same as bounded
+    retention, and a third review confirmed by mutation that an implementation
+    which yields lazily while ALSO keeping every value it has yielded passes
+    this test.  Saying so here rather than letting the docstring imply a
+    stronger guarantee than the assertions carry.  (Third review, P3#6.)
     """
     lanes = [_lane(0, tmp_path, value_delta=[1.0, 2.0])]
     files = derive._stream_files(lanes)["value_delta"]
     assert all(isinstance(path, str) for path in files)
     probe = derive._stream_values([*files, str(tmp_path / "never_written.f64")])
-    assert isinstance(probe, Iterator)
     assert [next(probe), next(probe)] == [1.0, 2.0]
     with pytest.raises(FileNotFoundError):
         next(probe)
@@ -1035,6 +1147,59 @@ def test_a_spill_file_that_lost_rows_is_refused(tmp_path: Path) -> None:
         derive._measure_spill(tmp_path, [lane])
 
 
+def test_the_spill_round_trip_check_sees_a_dtype_change(tmp_path: Path) -> None:
+    """⚑⚑ ``np.array_equal`` IGNORES DTYPE, and that is what this gate is for.
+
+    A third review flagged the original ``np.array_equal`` here for treating NaN
+    as unequal to itself.  ⚑ THAT PREMISE DOES NOT HOLD, and it is recorded
+    rather than quietly accepted: ``save_local_shard_arrays`` runs
+    ``validate_arrays``, which refuses non-finite values in every float column
+    (``replay/shard.py:1593``), so the write raises long before the comparison
+    sees a NaN -- asserted below, so the day that validation is relaxed this
+    test says so.
+
+    The comparison was still changed, on a reachable ground the review did not
+    name.  ⚑ MEASURED, numpy 1.26: ``array_equal`` compares by VALUE only, so
+    ``float32([1.0]) == float64([1.0])`` and ``float16([0.25]) ==
+    float32([0.25])``.  The round trip exists to prove the repack hands the
+    writer the columns the lane built; a column that came back one cast away is
+    exactly its target, and ``array_equal`` cannot see it.
+    """
+    same_values_different_dtype = (
+        np.array([0.25, 0.5], dtype=np.float16),
+        np.array([0.25, 0.5], dtype=np.float32),
+    )
+    # The behaviour being relied on, stated as a fact about numpy...
+    assert np.array_equal(*same_values_different_dtype)
+    # ...and the gate that must not share it.
+    assert not derive._same_column(*same_values_different_dtype)
+    assert derive._same_column(
+        np.array([0.25, 0.5], dtype=np.float16),
+        np.array([0.25, 0.5], dtype=np.float16),
+    )
+    assert not derive._same_column(
+        np.zeros((2, 3), dtype=np.float32), np.zeros((3, 2), dtype=np.float32),
+    )
+
+    # ⚑ And the NaN case is pinned as UNREACHABLE, at the layer that makes it so.
+    samples = [
+        ReplaySample(
+            x=np.zeros((175, 8, 8), dtype=np.float32),
+            policy_target=np.full(
+                (COMPACT_POLICY_SIZE,), 1.0 / COMPACT_POLICY_SIZE,
+                dtype=np.float32,
+            ),
+            wdl_target=0,
+            priority=1.0,
+            has_policy=True,
+            sf_played_regret=float("nan") if index else 0.25,
+        )
+        for index in range(2)
+    ]
+    with pytest.raises(ValueError, match="contains NaN"):
+        derive._write_spill_chunk(derive._spill_path(tmp_path, 0, 0), samples)
+
+
 def test_the_merge_rules_do_not_name_a_field_twice() -> None:
     """⚑ A frozenset cannot see a duplicate, and a duplicate is a DOUBLE COUNT.
 
@@ -1163,7 +1328,8 @@ def test_many_spill_chunks_per_lane_derive_the_same_corpus(
     corpus_dir = write_split_corpus(tmp_path, rows, [c for c in cuts if c])
     sequential, parallel = both_ways(
         tmp_path, corpus_dir, "--value-scheme", value_scheme,
-        "--spill-chunk-rows", "7", workers=3, rows_per_shard=11,
+        workers=3, rows_per_shard=11,
+        parallel_only=("--spill-chunk-rows", "7"),
     )
     assert_same_corpus(sequential, parallel)
 
@@ -1196,6 +1362,36 @@ def test_the_spill_chunk_size_reaches_the_lanes(
         )
     assert max(sizes) == 7, f"a chunk exceeded the requested size: {sizes}"
     assert sum(sizes) == 120
+
+
+def test_the_spill_chunk_size_is_refused_where_it_would_reach_nobody(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ `--workers 1` spills nothing, so the knob would touch no consumer.
+
+    This is the finding a third review pass produced against the knob added to
+    close the SECOND pass: `--spill-chunk-rows 7 --workers 1` ran clean, wrote a
+    byte-identical corpus and an identical summary, and chunked nothing.  The
+    file already legislates exactly this for the qz knobs 40 lines above the
+    flag -- "a knob EXPLICITLY passed and then ignored, inside the one check
+    written to forbid exactly that" -- and the rule was not extended to the new
+    one.
+
+    ⚑ AND IT IS CHECKED ON PRESENCE.  The first cut gave the flag
+    ``default=SPILL_CHUNK_ROWS``, which makes an explicitly passed ``2048``
+    indistinguishable from the default, so a presence check could not have seen
+    the case it exists for.  Hence the ``None`` sentinel -- and hence the second
+    assertion here, which passes the DEFAULT value explicitly and still expects a
+    refusal.  A `!= SPILL_CHUNK_ROWS` implementation waves that one through.
+    """
+    rows = [row for gid in range(4) for row in game(gid, 10)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [20, 20])
+    for given in ("7", str(derive.SPILL_CHUNK_ROWS)):
+        with pytest.raises(ValueError, match="spills nothing"):
+            run(corpus_dir, tmp_path / f"out{given}",
+                "--workers", "1", "--spill-chunk-rows", given)
+    # ...and the flag's ABSENCE at --workers 1 is still the ordinary path.
+    run(corpus_dir, tmp_path / "plain", "--workers", "1")
 
 
 def test_plan_repack_tiles_the_survivors_across_chunks_and_lanes() -> None:
