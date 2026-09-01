@@ -579,8 +579,11 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         self.last_polar_stats: dict[str, float] = {}
   # Which AdamW-fallback path the LAST step ran, harvested onto the step row
   # by `Trainer.train_steps` like `last_uw_stats`. `adamw_foreach_params` is
-  # the take-effect column for the batched path: production is 431 tensors
-  # in 2 buckets with `adamw_loop_params` 0; a loop count that is not 0 means
+  # the take-effect column for the batched path. It counts tensors that
+  # CARRIED a gradient this step (a `grad is None` tensor is skipped by both
+  # paths): the lc0 control reads 394 of its 431 fallback tensors in 2 buckets
+  # with `adamw_loop_params` 0, the other 37 being dead heads with no grad.
+  # A loop count that is not 0 means
   # a batchability predicate (dtype allowlist, duplicate guard, mixed
   # device/dtype) sent tensors down the per-parameter path, silently. Written
   # every step -- four Python ints, no device sync.
