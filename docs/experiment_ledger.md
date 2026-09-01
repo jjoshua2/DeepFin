@@ -71780,3 +71780,18 @@ This removes the τ-mismatch and repeat-labels confounds entirely; cost is
 one extra 9,680-step train. Stage-5 scores all four nets in one run for
 paired BT4 deltas. Driver rewritten pre-launch (waiter relaunched); gates
 unchanged.
+
+**2026-09-01 SECOND AMENDMENT to round 3c (before launch, Josh): the control
+train is CUT — the reference is the EXISTING same-budget champion.** "We
+shouldn't need arm B, we already trained one with more steps, depth nine,
+all the way": `qtemp_0.0005_ext` is 19,360 steps of d9 targets (9,680 τ.0005
++ 9,680 ext), the round-2 extension champion. **Deciding yardstick: h2h
+`d7topup_d9` vs `qtemp_0.0005_ext`** (200 games, training shape, no-rolling,
+banked) — a RANKING read: does the top-up produce our best net at this
+budget? Stated confound, accepted by design: τ differs (.02 vs .0005), so
+first-half depth and τ ride together; a top-up WIN triggers a follow-up
+prereg to split them, a LOSS kills the direction regardless of mechanism
+(per the Elo-velocity priority). Secondary: vs-own-base arena, audit,
+puzzles, stage-5 with all four nets in one paired scoring run. Saves the
+2.6h `d9ext` control; round 3c is back to ONE new train. Driver rewritten,
+waiter relaunched, gates unchanged.
