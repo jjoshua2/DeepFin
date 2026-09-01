@@ -71554,3 +71554,17 @@ flag. Remaining wall unchanged: serving-side C encoder writes `turn` into the
 plane — arenas for a conditioned net need the encoder change; offline ruler
 readouts can use a python-encode override earlier. Still parked: launches only
 with its own prereg.
+
+**2026-09-01 correction to the contempt lane (Josh's objection, upheld).** The
+"targets re-derivable offline at any d with zero new SF compute" claim is
+OVERSTATED, twice: (1) the banked cp came from searches optimizing d=0.5 —
+conditional search consequences are not in the numbers; (2) the cp→WDL map's D
+depends only on |cp|, so re-ranking on W + d·D cannot distinguish a drawish
++30 from a sharp +30 — the exact distinction contempt needs. Offline
+re-derivation is at most a weak screen. Revised lane: (a) search-time backup
+contempt (q = W + (2d−1)·D) stays the near-term, no-training experiment;
+(b) TRAINED conditioning waits for the RL/gumbel era, where selfplay with d
+sampled per game and applied in backup yields genuinely d-conditional visit
+targets as a byproduct (rows labeled with their d, plane scalar-filled to
+match). Modern SF has no Contempt option; lc0-with-WDL-contempt as a
+conditional teacher is possible but costs real compute — not planned.
