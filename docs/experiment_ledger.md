@@ -72622,3 +72622,32 @@ Round 2 dispatched to the same implementer with `scratchpad/legacy_repair_spec_v
 `35a3e774d`, `input_key`/`search_key` on repaired rows (deriver `input_key_verified == 200`),
 labels byte-for-byte (relabel default off, tested + mutated), tags `rep_in_window` /
 `rep_in_segment` / `cur_position_repeat_count` / `label_regime`, all findings above.
+
+**2026-09-01 — PREREG: SCHEMA-2 ACTIVATION (run06+) — the training-affecting data-pipeline change
+of PR #497 (Codex P1 on the fix round: "add the required ledger plan before activating schema 2").**
+- Hypothesis: the corpus lane's inputs (zero history, 46.5% top-1 flips under real history) and, on
+  repeat rows, its labels (history-blind) are a large part of the −636 / −619 Elo gap to production
+  and to lc0-LAST2x; history-correct inputs alone (B) recover a material fraction, and history-aware
+  carried-TT labels from fresh generation (C) add on top.
+- Change: generator banks the reversible window (`history_root_fen`, `history_uci`, `history_plies`,
+  `history_root_reason`), sends `position fen <root> moves …`, keys the SF value cache on the
+  reversible-segment repetition state and row dedup on the encoded input (`input_key`); deriver
+  reconstructs and verifies every row. No change to schemes, temperatures, value targets, trainer.
+- Deciding yardsticks (unchanged from "LEGACY REPAIR PREREG v2" and "OPERATOR DECISIONS"):
+  **B** (repaired exact-5.5M, labels preserved) vs champion — normal-history d9 regret on the 4k
+  T80 bank (game-cluster CI) and a 200-game matched_sims-100 arena; SUCCESS = Δregret < 0 with CI
+  excluding 0 AND arena ≥ 0 with CI excluding −30; KILL = regret CI excludes any improvement OR arena
+  CI excludes 0 on the losing side. **C** (fresh run06 5.5M, same recipe) vs B: same instruments;
+  positions differ, so C−B is read with the position-source ablation, not alone.
+- Activation gate (all before the first run06 shard is trained on): #497 merged with the final
+  search-key semantics (ordered reversible-segment keys, or counts if the empirical adjudication
+  proves them sufficient) and all round-1/round-2 findings closed; paused generators KILLED with the
+  orphan-pool sweep (`scratchpad/.generators_paused_20260901`); run06 launched from `main`'s merged
+  code with run03's config + `seed 20260902`; take-effect on the FIRST run06 shards: every row has
+  `schema: 2`, `history_uci`, `input_key`, `search_key`; `history_plies` histogram non-degenerate
+  with `history_root_reason` counts; deriver summary `history_slots_nonzero_max == 8`,
+  `input_key_verified == rows`; generator summary `searches`/`rows_banked`/`row_key_hits` present
+  and consistent (`sum(histogram) == rows`). Any failure ⇒ stop generation, no rows enter training.
+- Confounds: none data-side beyond the change itself; the legacy 54M is a separate control corpus.
+- Revert point: `data/salvage/pre_lc0_control_20260819` (production) is unaffected; the corpus lane
+  has no live training to revert.
