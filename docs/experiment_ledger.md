@@ -72418,3 +72418,60 @@ standalone estimator"; test whether Z carries RESIDUAL information conditional o
 - Not a data-affecting change; runs on idle CPU beside the depth screen and the boundary block.
   The "complicated plan" Josh recalls is arm C `qzsegment` (clean-segment retrospective target with
   instability weights, derived but never trained); this screen fits its weights from data instead.
+
+**2026-09-01 — BOUNDARY BLOCK, C0/C1 READ UNDER THE PRE-COMMITTED TABLE: C1 DIVERGES ⇒ the
+phase-2 trajectory instrument is VOID; #495 stays unmerged pending Josh's explicit call.**
+Controls ran alone on the GPU after `valueround2.parked` (chain `scratchpad/boundary_block_20260902/
+chain.log`; post worktree `2a2c8b324`, pre `75c4e0402`; 200 steps, seed 0, same shards/config):
+- C1 post_a vs post_b (SAME code, SAME seed, two runs): **DIFFERS** — e.g. `blocks.0.out_proj.weight`
+  262143/262144 elements, max|Δ| 1.09e-3; 1,275 more tensors (`controls/C1_post_a_vs_post_b.compare.log`).
+- C0 pre_a vs post_a: DIFFERS at the same magnitudes (max|Δ| 1.02e-3 on the same tensor) —
+  UNINTERPRETABLE given C1, by construction.
+- Reading (refined table, `c81b3e82d`): "C1 diverges ⇒ instrument void, merge only if Josh lowers
+  the bar to optimizer-boundary identity (phase 0b) explicitly." #495's standing evidence is
+  phase-0b 10/10 bitwise-identical optimizer steps on real batches; the 200-step trajectory
+  divergence it was blocked on is now shown to be the RIG's own run-to-run nondeterminism (kernel
+  nondeterminism / atomics under `aurora_cuda_graphs`/compile), not the foreach change. C2 (post_c
+  under arena 1) runs next as a floor read only. Decision owed by Josh: (a) accept phase-0b identity
+  as the merge bar for #495 (then apply the three owed P2s and merge), or (b) require a
+  deterministic-rig pin first (`torch.use_deterministic_algorithms` / no cuda graphs) — a separate,
+  throughput-costly change. Not decided here.
+
+**2026-09-01 — DEPTH SCREEN, d13 READ (prereg 2026-09-01 "free d1–d9 curve + d11/d13/d15 screen";
+d15 still running):** `depth_curve.py` on the 4,000-row T80/BT4 bank, game-cluster CIs:
+| depth | T80 top-1 agree | 95% CI | BT4 top-1 agree | top-1 moved vs d9 | s/pos |
+|---|---|---|---|---|---|
+| 9 | 0.5490 | [0.5311, 0.5660] | 0.5315 | — | ~0.19 |
+| 10 | 0.5815 | [0.5625, 0.6003] | 0.5363 | 36.1% | (staircase) |
+| 11 | 0.5877 | [0.5686, 0.6053] | 0.5467 | 41.1% | (staircase) |
+| 12 | 0.6008 | [0.5841, 0.6176] | 0.5425 | 42.9% | (staircase) |
+| 13 | **0.6040** | [0.5873, 0.6216] | **0.5475** | **43.7%** | **2.7** |
+BT4-vs-T80 bar 0.6805. d9→d13: +5.5 pp on T80 (CIs disjoint), +1.6 pp on BT4, at 14× the label
+cost; increments d10..d13 = +3.3/+0.6/+1.3/+0.3 pp — flattening but not flat; d15 (6.6 s/pos)
+decides saturation. ⚑ SCREEN ONLY: no d11+ training arm (operator: the Round-3 "d11+ DEAD" line
+is stale relative to the champion-τ result where d7 lost −65 at τ=0.0005; the two depth
+experiments are to be reported side-by-side with their recipe/τ/data differences when d15 lands,
+and the depth decision rule is not changed until then).
+
+**2026-09-01 AMENDMENT — Z-RESIDUAL SCREEN hypotheses and outputs (operator, supersedes the
+prereg's model-space paragraph where it differs).** Null is NOT "Z worse than Q in every bucket ⇒
+dead"; A/B are evidence against LARGE global blends only. Test: H1 tactical resolution near the end —
+bucket by plies-to-termination [1–4] [5–8] [9–16] [17–32] [33+] × termination class {checkmate,
+syzygy, other decisive, draw, capped} and ask whether (Z−Q) predicts (truth−Q); report the
+1–8-ply DECISIVE subset separately. H2 tiny residual — `V = Q + λ(Z−Q)`, λ ∈ {0, .01, .02, .03,
+.05, .075, .10, .15, .20} fit on TRAIN games, evaluated on HELD-OUT games; then a simple
+conditional λ over {plies-to-end, termination class, |Q|, piece count/phase, resolved-vs-capped};
+the question is whether the held-out optimum is consistently λ > 0. H3 Q-tie resolution — rows
+with small |Q| / small d9 move-value gap: does Z carry conditional information about deep truth
+after Q; NO manufactured sibling test (only state-level Z exists). H4 opening winnability — for
+early rows, hold out whole games AND whole book-line clusters (`opening_key` = the game's ply-0
+FEN); distinguish Z predicting deep-SF value beyond Q from Z predicting winnability under our
+Gumbel policy. Truth ruler: the T80 bank cannot be reused (T80 positions carry no Z); d15 on corpus
+rows, with depth agreement d9/d11/d13/d15 from the depth screen reported as the ruler's stability;
+rows with a repeat in the reversible segment get HISTORY-AWARE d15 (`position fen <root> moves`,
+`supplement_repeat_rows.py`, 300 rows) — the other rows are history-exact by the 0/1200
+calibration. Outputs: best global λ (held-out) + CI vs λ=0; best conditional λ; gain in the final
+1–8 plies; gain on decisive/checkmate endings; gain on Q-ambiguous rows; opening residual
+generalization; fraction of the corpus receiving non-zero weight. A narrow beneficial region is a
+SUCCESS (C becomes a small hindsight-gated residual), not a failure. Priority: below repair / #497
+/ the depth screen.
