@@ -1,7 +1,10 @@
 """``derive_corpus_targets.py --workers N``: the parallel read emits one corpus.
 
 ⚑⚑ THE IDENTITY ASSERTED HERE IS OVER THE DATA, NOT OVER THE COMPRESSED FILES,
-AND THAT IS NOT A WEAKENING -- IT IS THE STRONGEST CLAIM THAT IS TRUE.  The shard
+AND THAT IS NOT A WEAKENING -- IT IS THE STRONGEST CLAIM THAT IS TRUE HERE, and
+:func:`codec_is_deterministic` measures whether "here" still applies rather than
+hard-coding it: where the codec IS reproducible, :func:`assert_same_corpus`
+compares the files too.  The shard
 writer goes through ``numcodecs`` Blosc, whose MULTI-THREADED encoder emits
 different compressed bytes for identical input on every call, so
 ``--workers 1`` does not reproduce its own files either.
@@ -25,6 +28,7 @@ the shard cuts is this file's.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import itertools
@@ -38,6 +42,7 @@ import chess
 import numpy as np
 import pytest
 import zarr
+from numcodecs.blosc import Blosc
 
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from scripts import derive_corpus_targets as derive
@@ -179,6 +184,37 @@ def shard_content(out_dir: Path) -> dict[str, str]:
     return content
 
 
+@functools.lru_cache(maxsize=1)
+def codec_is_deterministic() -> bool:
+    """Does this environment's Blosc emit the same bytes for the same array?
+
+    ⚑⚑ PROBED, NOT ASSUMED IN EITHER DIRECTION.  Today it does not -- the
+    multi-threaded encoder splits by thread count and its output varies call to
+    call, which is why the assertions in this file are over decompressed arrays.
+    But that is a property of the installed ``numcodecs`` and of
+    ``numcodecs.blosc.use_threads``, either of which can change under us, and a
+    test that hard-codes "the files must differ" is a test that fails the day
+    the tool gets BETTER.  So the regime is measured and every identity
+    assertion states the strongest thing true in it.
+
+    Sized like a real shard column, because the threading only engages above a
+    block-size threshold: a small array compresses deterministically here even
+    while the arrays this tool writes do not.
+    """
+    array = (np.arange(2048 * 175 * 8 * 8, dtype=np.int64) % 7).astype(np.float16)
+    codec = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
+    return len({codec.encode(array) for _ in range(4)}) == 1
+
+
+def file_bytes(root: Path) -> dict[str, str]:
+    """Every file under the output dir but the summary, by sha256."""
+    return {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.name != derive.SUMMARY_NAME
+    }
+
+
 def canonical_summary(path: Path) -> dict[str, Any]:
     """The summary with every NaN replaced by a sentinel, minus ``started_utc``.
 
@@ -216,6 +252,19 @@ def assert_same_corpus(sequential: Path, parallel: Path) -> None:
     )
     differing = sorted(key for key in want if want[key] != got[key])
     assert not differing, f"{len(differing)} array(s) differ, first {differing[:6]}"
+    if codec_is_deterministic():
+        # ⚑ THE ASSERTION TIGHTENS ITSELF.  Where the codec is reproducible
+        # there is no reason to settle for array equality, and requiring it here
+        # means the day someone pins `use_threads = False` (or numcodecs stops
+        # varying) every test in this file starts checking the bytes without
+        # anyone having to notice.
+        one, two = file_bytes(sequential), file_bytes(parallel)
+        assert sorted(one) == sorted(two)
+        by_bytes = sorted(key for key in one if one[key] != two[key])
+        assert not by_bytes, (
+            f"the codec is deterministic here and {len(by_bytes)} file(s) still "
+            f"differ, first {by_bytes[:6]}"
+        )
     assert canonical_summary(sequential / derive.SUMMARY_NAME) == (
         canonical_summary(parallel / derive.SUMMARY_NAME)
     )
@@ -242,16 +291,25 @@ def both_ways(
 # ── the property the whole file rests on ─────────────────────────────────────
 
 
-def test_the_shard_files_are_not_byte_reproducible_even_sequentially(
+def test_whether_the_shard_files_are_byte_reproducible_is_measured(
     tmp_path: Path,
 ) -> None:
     """⚑⚑ WHY THE ASSERTIONS HERE ARE OVER ARRAYS AND NOT OVER FILES.
 
     Two SEQUENTIAL derivations of one corpus at one ``--seed`` write the same
-    numbers and different bytes, because ``numcodecs`` Blosc's multi-threaded
-    encoder is non-deterministic.  This test fails the day that stops being
-    true, which is the day a byte-level assertion would become legitimate --
-    and until then it is the reason not to write one.
+    numbers.  Whether they write the same BYTES is a property of the installed
+    Blosc, not of this tool: the multi-threaded encoder's output varies call to
+    call.  ⚑ MEASURED 2026-08-31 on ``numcodecs 0.13.1`` -- one process
+    compressing one array four times gave four digests, and two back-to-back
+    ``--workers 1`` runs differed in 11 of 324 files, every one an ``x`` or
+    ``policy_target`` chunk (the arrays big enough for the threading to engage).
+
+    ⚑ THE ASSERTION IS NOT "THE FILES MUST DIFFER".  That would be a test of the
+    codec's flakiness, and it would fail the day the tool became reproducible --
+    exactly when it should instead start demanding more.  Both regimes are
+    stated here, and :func:`assert_same_corpus` follows the same rule, so a
+    deterministic environment silently upgrades every identity test in this file
+    from array equality to byte equality.
     """
     rows = [row for gid in range(6) for row in game(gid, 9)]
     corpus_dir = write_split_corpus(tmp_path, rows, [20, 20, 14])
@@ -259,24 +317,23 @@ def test_the_shard_files_are_not_byte_reproducible_even_sequentially(
     run(corpus_dir, first)
     run(corpus_dir, second)
 
-    def files(root: Path) -> dict[str, str]:
-        return {
-            str(path.relative_to(root)): hashlib.sha256(
-                path.read_bytes()).hexdigest()
-            for path in sorted(root.rglob("*"))
-            if path.is_file() and path.name != derive.SUMMARY_NAME
-        }
+    # The DATA is identical either way, and that is what every other test here
+    # compares.
+    assert shard_content(first) == shard_content(second)
 
-    one, two = files(first), files(second)
+    one, two = file_bytes(first), file_bytes(second)
     assert sorted(one) == sorted(two)
     differing = [key for key in one if one[key] != two[key]]
-    assert differing, (
-        "the shard files are byte-reproducible now, so the identity claim in "
-        "this file and in derive_corpus_targets.py can be tightened from "
-        "'every array' to 'every file' -- read the --workers section first"
-    )
-    # And the DATA is identical, which is the claim every other test makes.
-    assert shard_content(first) == shard_content(second)
+    if codec_is_deterministic():
+        assert not differing, (
+            "the codec is reproducible in this environment, so two identical "
+            f"derivations must write identical files; {len(differing)} differ"
+        )
+    else:
+        assert all(key.endswith(("/0.0", "/0.0.0.0")) for key in differing), (
+            "the codec is non-deterministic here, so only its own compressed "
+            f"chunks may differ; these did too: {sorted(differing)[:6]}"
+        )
 
 
 # ── the merge table cannot silently miss a counter ───────────────────────────
@@ -667,8 +724,10 @@ def _lane(index: int, tmp_path: Path, **streams: list[float]) -> Any:
     """A ``_WorkerResult`` carrying nothing but banked streams."""
     paths: dict[str, str] = {}
     for name, values in streams.items():
-        path = tmp_path / f"lane{index}_{name}.npy"
-        np.save(path, np.asarray(values, dtype=np.float64))
+        # ⚑ RAW float64, the form the lanes append -- headerless, so a stream
+        # can be flushed in pieces without a header to keep consistent.
+        path = tmp_path / f"lane{index}_{name}.f64"
+        np.asarray(values, dtype=np.float64).tofile(path)
         paths[name] = str(path)
     return derive._WorkerResult(
         index=index, stats=derive.DeriveStats(), games=[], envelope=[],
@@ -915,3 +974,32 @@ def test_the_merge_rules_do_not_name_a_field_twice() -> None:
     repeated = sorted({n for n in named if named.count(n) > 1})
     assert not repeated, f"{repeated} carry two merge rules and would double-count"
     assert len(named) == len(derive._MERGE_COVERAGE)
+
+
+def test_a_drained_stream_is_the_values_in_order_however_often_it_flushed(
+    tmp_path: Path,
+) -> None:
+    """⚑ The bank is a BUFFER; the file is the record, and it is appended to.
+
+    A lane drains at every spill cut, so a stream reaches disk in pieces. Two
+    ways for that to go wrong silently: a drain that does not clear its buffer
+    re-banks everything it already wrote, and a drain that truncates keeps only
+    the last piece. Either changes the sequence the coordinator folds, and the
+    fold is the summary.
+    """
+    bank = derive._BankingStats(tmp_path)
+    for value in (1.0, 2.0, 3.0):
+        bank.note_value_delta(value)
+    bank.drain()
+    for value in (4.0, 5.0):
+        bank.note_value_delta(value)
+    bank.drain()
+    bank.drain()  # nothing pending; must not disturb the file
+    stored = np.fromfile(bank.stream_path("value_delta"), dtype=np.float64)
+    assert stored.tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
+    # And the counters the drain does NOT own are still the sequential ones.
+    reference = derive.DeriveStats()
+    for value in (1.0, 2.0, 3.0, 4.0, 5.0):
+        reference.note_value_delta(value)
+    assert bank.value_delta_n == reference.value_delta_n
+    assert bank.value_delta_sum == reference.value_delta_sum

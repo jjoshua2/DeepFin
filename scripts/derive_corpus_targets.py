@@ -4596,8 +4596,18 @@ class _BankingStats(DeriveStats):
     with the sequential one by construction rather than by a second opinion.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, spill_dir: Path | None = None) -> None:
         super().__init__()
+        #: ⚑ A BUFFER, NOT AN ARCHIVE. `min_legal_prob` and `value_delta` take a
+        #: value from EVERY surviving row and a grouped run adds four more, so
+        #: holding a lane's whole range would be ~6 lists of ~790k Python floats
+        #: on a 5.5M-row / 7-lane derivation -- around a gigabyte of small
+        #: objects that exists only to be summed once. `drain` appends them to
+        #: their files at every spill cut, so what is resident is one cut's
+        #: worth. ⚑ RAW float64 BYTES, appended: the fold has to see the exact
+        #: doubles the sequential path folded, and `tofile`/`fromfile` is the
+        #: form with no header to keep consistent across appends.
+        self.spill_dir = spill_dir
         self.banked: dict[str, list[float]] = {
             name: [] for name, _ in _ORDERED_STREAMS
         }
@@ -4640,6 +4650,23 @@ class _BankingStats(DeriveStats):
     def note_game(self, rows: int, *, cut_by_limit: bool) -> None:
         self.banked_games.append((int(rows), bool(cut_by_limit)))
         super().note_game(rows, cut_by_limit=cut_by_limit)
+
+    def stream_path(self, name: str) -> Path:
+        if self.spill_dir is None:
+            raise ParallelDeriveError(
+                "this DeriveStats was built without a spill directory, so it "
+                "cannot bank its ordered streams",
+            )
+        return self.spill_dir / f"stream_{name}.f64"
+
+    def drain(self) -> None:
+        """Append what has accumulated since the last call, in order."""
+        for name, values in self.banked.items():
+            if not values:
+                continue
+            with open(self.stream_path(name), "ab") as handle:
+                np.asarray(values, dtype=np.float64).tofile(handle)
+            values.clear()
 
     def plain(self) -> DeriveStats:
         """A picklable ``DeriveStats`` holding exactly this worker's counters."""
@@ -4913,7 +4940,9 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     options = task.options
     limit = int(options.limit)
     deriver = TargetDeriver(options)
-    bank = _BankingStats()
+    spill_dir = task.spill_dir / f"w{task.index:03d}"
+    spill_dir.mkdir(parents=True, exist_ok=True)
+    bank = _BankingStats(spill_dir)
     deriver.stats = bank
     grouper = GameGrouper(deriver) if options.needs_game else None
 
@@ -4922,8 +4951,6 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     if grouper is not None and span.lo > 0:
         carry_in = _carry_in_key(task.shards, span.lo)
 
-    spill_dir = task.spill_dir / f"w{task.index:03d}"
-    spill_dir.mkdir(parents=True, exist_ok=True)
     buffered: list[ReplaySample] = []
     chunk_rows: list[int] = []
     survivors = 0
@@ -4940,6 +4967,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             _spill_path(task.spill_dir, task.index, len(chunk_rows)), rows,
         )
         chunk_rows.append(len(rows))
+        bank.drain()
 
     def emit(batch: GameBatch | None) -> None:
         nonlocal survivors
@@ -5044,14 +5072,12 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         cut(list(buffered))
         buffered.clear()
 
-    stream_paths: dict[str, str] = {}
-    for name, _ in _ORDERED_STREAMS:
-        values = bank.banked[name]
-        if not values:
-            continue
-        path = spill_dir / f"stream_{name}.npy"
-        np.save(path, np.asarray(values, dtype=np.float64))
-        stream_paths[name] = str(path)
+    bank.drain()
+    stream_paths = {
+        name: str(bank.stream_path(name))
+        for name, _ in _ORDERED_STREAMS
+        if bank.stream_path(name).exists()
+    }
 
     return _WorkerResult(
         index=task.index,
@@ -5216,7 +5242,7 @@ def _concat_streams(
         for item in sorted(results, key=lambda entry: entry.index):
             path = item.stream_paths.get(name)
             if path is not None:
-                values.extend(np.load(path).tolist())
+                values.extend(np.fromfile(path, dtype=np.float64).tolist())
         if values:
             streams[name] = values
     return streams
