@@ -71579,3 +71579,12 @@ prerequisite for this lane, not an unrelated thread). Play-time backup
 contempt remains real at our depth because the net's own WDL head sees
 drawishness (unlike the |cp|-only SF map). Trained conditioning: parked to the
 RL era, Z-carried, multi-generation.
+
+**2026-09-01 final parking note — dose + launch condition (Josh).** When the
+lane activates: small variance only — d ∈ {0.4, 0.6} in ~half the selfplay
+games (bounded shift, most data on-objective), plane scalar-filled to match,
+Z scored under the game's own d. Launch CONDITION, not date: external matches
+vs sub-Stockfish engines showing wins capped by draw conversion rather than by
+collapses (today's Cheese profile is the opposite — 80% of losses are single
+collapses). Until then the lane stays parked; search-time backup contempt
+remains the only near-term experiment.
