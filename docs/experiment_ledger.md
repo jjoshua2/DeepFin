@@ -71622,3 +71622,26 @@ prose; the guard greps bare words package-wide). Fixed by naming the ctor arg
 `refresh_interval` instead (130aa1b60); merge gates re-keyed to the exact head
 SHA's check-runs. Beneficiary is the 100M-corpus training; the preregged value
 round stays pinned at bead931e6 (identity makes a re-pin pointless).
+
+**2026-09-01 — PR #493 MERGED (542d8cd4e): parallel corpus derivation, 4.9×,
+content-identical contract.** `derive_corpus_targets.py --workers N`:
+range-partition over shards + per-lane spill + exact repack through the
+untouched `_flush` writer; cross-shard game handoff by (worker_id, game_id)
+key-run at range boundaries; 7 order-dependent float accumulator streams
+banked per-row and replayed through `DeriveStats.note_*` in lane order; RNG
+permutations drawn once from `--seed` after survivor counts. Contract is
+identical CONTENT, not bytes — Blosc's threaded encoder is non-repeatable
+(11/324 files differ across two runs of the UNMODIFIED sequential tool), with
+a self-tightening byte assertion exercised under a `use_threads=False` pin
+(full byte equality — measured, not guessed). Acceptance: three full 5.5M-row
+runs vs frozen sequential baselines (qz50 ×2 incl. one re-run ON the merge
+candidate 5d62f88d2, qzphase for the game handoff): 598 vs 598 shards,
+10,764 arrays+stamps and 149 summary fields, 0 differing in every run;
+comparator falsified first on a known-different pair. 37m39s vs 3h06m at
+W=7. Review: 3 Claude rounds + Codex (4 inline P2s) + Grok clean pass, all
+findings closed; the repo's signature defect surfaced 3× during authoring
+(a knob reaching only the parser, a probe change with no observable, an
+isinstance laziness test a materialising generator satisfies) — each now has
+a mutation-verified gate. 28 mutants killed, 2 documented survivors. Not a
+data-affecting change (the sequential path and --workers 1 are untouched);
+first consumer: the 100M-corpus derivation (~40h → ~2h at high W).
