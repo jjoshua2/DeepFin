@@ -287,6 +287,11 @@ _LOG = logging.getLogger("gen_sf_rooted_corpus")
 #: deriver verifies every row against ``input_key``, so a schema-2 corpus can
 #: only be regenerated (or repaired by a tool that adds the keys).  In the
 #: ledger's and the spec's prose "schema 2" names THIS shape; in code it is 3.
+#: ⚑ VERIFIED 2026-09-01: schema 2 never produced an accepted corpus (every
+#: persistent manifest under ``data/nnue_bootstrap`` reads ``row_schema: 1``;
+#: the only schema-2 rows ever written were test fixtures and scratch output),
+#: so it is refused with no compatibility carried.  Schema 1 stays readable by
+#: the deriver; 3 is the only schema this generator writes.
 ROW_SCHEMA = 3
 ROW_SCHEMA_HISTORY_WITHOUT_KEYS = 2
 

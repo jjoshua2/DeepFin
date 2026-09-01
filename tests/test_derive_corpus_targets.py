@@ -2043,6 +2043,44 @@ def test_a_partial_corpus_still_refuses_a_scheme_its_staircase_cannot_answer(
         run_derive(partial, tmp_path / "out", "uniform-d20")
 
 
+def test_the_progress_inventory_lists_complete_shards_and_names_in_flight_ones(
+    tmp_path: Path,
+) -> None:
+    """⚑ Round 2, gate B: the importable inventory reader, on its own.
+
+    One closed shard (listed), one game-completion record (no file, ignored),
+    one shard file on disk that nothing lists (IN FLIGHT), and the summary
+    absent.  This is the reading #498's repair consumes instead of re-parsing
+    the progress grammar.
+    """
+    row = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0", schema=1,
+    )
+    partial = write_corpus(tmp_path, [row], row_schema=1, complete=False)
+    with open(partial / corpus.progress_name(0), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7]}) + "\n")
+    in_flight = partial / "w00-00001.jsonl.zst"
+    in_flight.write_bytes(b"")
+
+    inventory = derive.read_progress_inventory(partial)
+    assert [p.name for p in inventory.shards] == ["w00-00000.jsonl.zst"]
+    assert inventory.shard_rows == (1,)
+    assert inventory.rows_claimed == 1
+    assert inventory.progress_files == (corpus.progress_name(0),)
+    assert inventory.torn_tail_files == ()
+    assert inventory.unlisted_on_disk == ("w00-00001.jsonl.zst",)
+    # The record built on top of it says the same thing, and derives.
+    record = derive.read_corpus_record(partial)
+    assert record.mode == derive.CORPUS_RECORD_PARTIAL
+    assert record.shards == inventory.shards
+    assert record.unlisted_on_disk == inventory.unlisted_on_disk
+    # A listed shard that is gone is refused by the reader itself.
+    (partial / "w00-00000.jsonl.zst").unlink()
+    with pytest.raises(derive.CorpusIntegrityError, match="not in"):
+        derive.read_progress_inventory(partial)
+
+
 def test_the_deriver_opens_a_legacy_partial_corpus_the_generator_refuses_to_resume(
     tmp_path: Path,
 ) -> None:

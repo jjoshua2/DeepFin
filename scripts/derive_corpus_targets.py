@@ -507,7 +507,13 @@ ROW_SCHEMA_HISTORY = 3
 #: A window WITHOUT ``search_key``/``input_key`` -- the shape one intermediate
 #: build wrote, never produced outside smoke runs.  Refused by name with a
 #: message that says what to do, rather than falling through to a KeyError on
-#: the missing key (review round 2, Fable F2 / Grok B2).
+#: the missing key (review round 2, Fable F2 / Grok B2).  ⚑ VERIFIED
+#: 2026-09-01: schema 2 never produced an accepted corpus -- every persistent
+#: corpus manifest (run02, run02_snap_20260829, run03, run04, run05) reads
+#: ``row_schema: 1`` and no record anywhere stamps 2; the only schema-2 rows
+#: ever written were test fixtures and scratch output.  Refused, no
+#: compatibility carried.  Schema 1 stays READABLE; schema 3 is the only
+#: schema this generator WRITES.
 ROW_SCHEMA_HISTORY_WITHOUT_KEYS = corpus.ROW_SCHEMA_HISTORY_WITHOUT_KEYS
 
 #: WHICH encoder wrote the planes, stamped rather than implied.  Two callable
@@ -3558,6 +3564,56 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
         ) from exc
     _check_row_schema(manifest, source=manifest_path)
 
+    inventory = read_progress_inventory(corpus_dir)
+    if not inventory.shards:
+        raise CorpusIntegrityError(
+            f"{corpus_dir}'s progress files name no shards at all (only "
+            "game-completion records). No CLOSED shard exists yet, so there is "
+            "nothing to derive from.",
+        )
+    return CorpusRecord(
+        mode=CORPUS_RECORD_PARTIAL,
+        facts=manifest,
+        shards=inventory.shards,
+        rows_claimed=inventory.rows_claimed,
+        shard_rows=inventory.shard_rows,
+        progress_files=inventory.progress_files,
+        torn_tail_files=inventory.torn_tail_files,
+        unlisted_on_disk=inventory.unlisted_on_disk,
+    )
+
+
+@dataclass(frozen=True)
+class ProgressInventory:
+    """⚑ THE CANONICAL READING of ``w*.progress.jsonl``: which shards are
+    COMPLETE (listed by a progress record, present on disk) and which shard
+    files are IN FLIGHT (on disk, listed by nothing -- a worker is appending
+    to them, or a kill caught them mid-write).  Importable so every consumer
+    (this tool, ``scripts/lc0_control_train.py``'s launch guards, the legacy
+    repair of #498) reads the inventory through ONE function rather than
+    re-implementing the progress-record grammar (review round 2, gate B).
+    """
+
+    #: The complete shards, in name order, resolved BESIDE the progress file.
+    shards: tuple[Path, ...]
+    #: The rows each progress record claims, aligned with ``shards``.
+    shard_rows: tuple[int, ...]
+    rows_claimed: int
+    progress_files: tuple[str, ...]
+    torn_tail_files: tuple[str, ...]
+    #: Shard files on disk that no record lists: the in-flight ones.
+    unlisted_on_disk: tuple[str, ...]
+
+
+def read_progress_inventory(corpus_dir: Path) -> ProgressInventory:
+    """Read every worker's progress file once; see :class:`ProgressInventory`.
+
+    Refuses (``CorpusIntegrityError``) a progress file damaged anywhere but its
+    torn final line, a shard listed twice across workers, and a listed shard
+    missing from disk.  Does NOT refuse an inventory with zero complete shards:
+    that is a reading (a run that has not closed a shard yet), and the caller
+    decides whether it can work with it.
+    """
     progress_paths = sorted(corpus_dir.glob(PROGRESS_GLOB))
     if not progress_paths:
         raise CorpusIntegrityError(
@@ -3615,22 +3671,14 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
             claimed_rows[name] = int(record["rows"])
             rows_claimed += int(record["rows"])
 
-    if not listed:
-        raise CorpusIntegrityError(
-            f"{corpus_dir}'s progress files name no shards at all (only "
-            "game-completion records). No CLOSED shard exists yet, so there is "
-            "nothing to derive from.",
-        )
     unlisted = tuple(
         path.name for path in corpus_shard_paths(corpus_dir)
         if path.name not in listed
     )
-    return CorpusRecord(
-        mode=CORPUS_RECORD_PARTIAL,
-        facts=manifest,
+    return ProgressInventory(
         shards=tuple(listed[name] for name in sorted(listed)),
-        rows_claimed=rows_claimed,
         shard_rows=tuple(claimed_rows[name] for name in sorted(listed)),
+        rows_claimed=rows_claimed,
         progress_files=tuple(path.name for path in progress_paths),
         torn_tail_files=tuple(torn),
         unlisted_on_disk=unlisted,
