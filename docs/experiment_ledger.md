@@ -71832,3 +71832,25 @@ matched; only phase-1 teacher depth differs). Stage-5 BT4 on all nets in one
 run. Cost: 1 derivation + at most 2 trains, zero new controls. Scheduling
 serialized: round-3b re-gated on extbase.done (paired arenas OOMed training
 twice before); 3c gates on round3b.done.
+
+**2026-09-01 — VALUE ROUND KILLED PRE-READOUT AND RE-PREREGGED IN THE
+CHAMPION LANE (valueround2); ext-vs-base arenas CANCELLED; queue
+resequenced (Josh).** The τ0.02 value round was killed at train 1 of 5
+(value_a_qz50, ~1.5h in, NO readouts taken — no optional-stopping issue;
+the partial `runs/nnue_ladder_20260829/value_a_qz50` dir is VOID, its five
+τ0.02 derived corpora remain banked). Reason: same champion error as
+round 3 — the round would have answered in a lane ~85 Elo below the
+champion. Josh also cancelled the ext-vs-base arenas mid-first-game: the
+extension gain is already established (clean-target scaling +144/doubling;
+round-4 fresh≈repeat at the ext level), so its exact Elo gates nothing —
+"knowing exact elo doesn't help, we know it gained already."
+**valueround2 (driver `valueround2.sh`, waiter live):** same five arms,
+schemes, 9,680 steps, seed 0, judgment rules, per-position dumps — only the
+policy lane moves to τ=0.0005 with depth chosen by round-3c's stage-1
+decider under a pre-committed rule: stage-1 arena elo ≥ 0 ⇒ `uniform-d7`
+lane, V0-analog `d7_qtemp_0.0005`; else `uniform-d9` lane, V0-analog
+`qtemp_0.0005`. Derivations (--workers 7) start the moment the stage-1
+ARENA lands, running on CPU beside 3c stage-2's GPU train; GPU legs gate on
+round3c.done. **New GPU order: round-3b (phase-1 train ALREADY RUNNING on
+the freed GPU) → round-3c (staged, τ0.0005) → valueround2 → confirmation
+round (10M d7/d9 pair).**
