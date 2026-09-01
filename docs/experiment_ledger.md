@@ -71588,3 +71588,15 @@ vs sub-Stockfish engines showing wins capped by draw conversion rather than by
 collapses (today's Cheese profile is the opposite — 80% of losses are single
 collapses). Until then the lane stays parked; search-time backup contempt
 remains the only near-term experiment.
+
+**2026-08-31 — run05 launched: ADDITIVE capacity for the same 100M-d9 corpus,
+not a new lane.** run03 (500k games, seed 20260830) IS the 100M run and all
+banked rows pool (run02+run03+run04 ≈ 21M already). Worker count is fixed at
+launch (game deal = id % n), so capacity was added as a parallel run rather
+than a risky mid-run restart-redeal: run05 = run03's recipe VERBATIM (same
+book incl. 2move_thinbeam lines, staircase all:9, temps, timeout 2.0, hash
+64), seed 20260901, 12 workers, --games 500000 (a ceiling, not a target —
+generation stops when the pooled corpus hits ~100M). Enabled by the orphan
+reap (40GB+swap freed, same day). Fleet ~32 engines; trainer/derivations
+outrank generators on the nice ladder. Confound: none — identical recipe,
+stamped per-run seeds.
