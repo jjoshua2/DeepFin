@@ -4583,3 +4583,330 @@ def test_a_tolerated_envelope_miss_at_the_tail_is_the_live_trigger(
     np.testing.assert_allclose(
         emitted[(0, 2)].search_wdl, wdl_of_cp(CP_TOP), atol=2e-3,
     )
+
+
+# ── the value depth cap (--value-depth) ──────────────────────────────────────
+#
+# The flag moves the VALUE target's read onto a shallower rung and leaves the
+# POLICY target on the scheme's own depth, so every test here checks BOTH
+# columns: a change that moved them together would be a --scheme change wearing
+# --value-depth's name, and one that moved neither is the silent no-op this
+# repo's every other presence check exists to forbid.
+
+#: The three rungs the cap tests read, and the cp each one's BEST move carries.
+#: ⚑ The best MOVE differs between d7 and d9 as well as the number, so a capped
+#: read that re-used d9's argmax and merely re-priced it would come back with
+#: ``g2g3``'s slot holding ``f1e3``'s cp and fail on the value rather than pass
+#: by arithmetic accident.
+CAP_BEST_BY_DEPTH: dict[int, tuple[str, float]] = {
+    7: ("g2g3", 120.0),
+    8: ("f1e3", 350.0),
+    9: ("f1e3", 400.0),
+}
+
+
+def staircase_row(
+    *, game_id: int = 0, ply: int = 0, depths: Sequence[int] = (7, 8, 9),
+) -> dict[str, Any]:
+    """One row banking a full-width block at each of ``depths``."""
+    return corpus_row(
+        fen=FEN_W,
+        phases=[full_width_phase(FEN_W, {
+            depth: ramp(
+                FEN_W,
+                CAP_BEST_BY_DEPTH[depth][0],
+                best_cp=CAP_BEST_BY_DEPTH[depth][1],
+                step=25.0,
+            )
+            for depth in depths
+        })],
+        result=1.0,
+        result_pgn="1-0",
+        game_id=game_id,
+        ply=ply,
+    )
+
+
+def test_the_value_depth_cap_moves_the_value_and_not_the_policy(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE TAKE-EFFECT PROOF, on the two columns that must move differently.
+
+    One corpus, two derivations, one flag between them.  The emitted policy is
+    identical bit for bit -- it is ``uniform-d9``'s on both sides -- and the
+    emitted ``search_wdl`` moves from d9's best cp to d7's.
+
+    ⚑ The expected vectors are recomputed from the SHARED cp map at the two cps
+    the fixture banked, not read off the other run: two identical bugs would
+    agree with each other, and "the two runs differ" alone does not say the
+    capped one landed on the rung it named.
+
+    Mutation caught: ``_value_view`` returning ``values`` unconditionally (the
+    cap ignored) -- the ``search_wdl`` assertions fail, and
+    ``enforce_value_depth_take_effect`` refuses the run before the summary is
+    written.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    deep = run_derive(corpus_dir, tmp_path / "deep", "uniform-d9")
+    capped = run_derive(
+        corpus_dir, tmp_path / "capped", "uniform-d9", "--value-depth", "7",
+    )
+
+    got_deep, _ = read_rows(tmp_path / "deep")
+    got_capped, _ = read_rows(tmp_path / "capped")
+    assert np.array_equal(
+        np.asarray(got_deep[0].policy_target),
+        np.asarray(got_capped[0].policy_target),
+    )
+    assert np.array_equal(
+        np.asarray(got_deep[0].legal_mask), np.asarray(got_capped[0].legal_mask),
+    )
+    np.testing.assert_allclose(
+        got_deep[0].search_wdl, wdl_of_cp(CAP_BEST_BY_DEPTH[9][1]), atol=2e-3,
+    )
+    np.testing.assert_allclose(
+        got_capped[0].search_wdl, wdl_of_cp(CAP_BEST_BY_DEPTH[7][1]), atol=2e-3,
+    )
+    assert not np.array_equal(
+        np.asarray(got_deep[0].search_wdl), np.asarray(got_capped[0].search_wdl),
+    )
+
+    # ⚑ And the SUMMARY says which rung each run read, off the rows rather than
+    # off the flag: an uncapped run reports the scheme's depth, so the two are
+    # distinguishable by a realized number and not only by the stamp.
+    assert deep["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+    assert deep["scheme"]["value_depth"] is None
+    assert deep["realized"]["realized_value_depth_histogram"] == {"9": 1}
+    assert deep["realized"]["value_depth_capped_rows"] == 0
+    assert capped["scheme"]["value_source"] == "deepest_phase_covering_capped_d7"
+    assert capped["scheme"]["value_depth"] == 7
+    assert capped["realized"]["realized_value_depth_histogram"] == {"7": 1}
+    assert capped["realized"]["value_depth_capped_rows"] == 1
+    # The POLICY's own depth stamp is untouched by the cap.
+    assert capped["realized"]["realized_base_depth_histogram"] == {"9": 1}
+    assert capped["scheme"]["canonical"] == "uniform-d9"
+
+
+@pytest.mark.parametrize("cap", ["9", "10", "11"])
+def test_a_cap_at_or_above_the_scheme_depth_is_the_identity(
+    tmp_path: Path, cap: str,
+) -> None:
+    """⚑ THE INSTRUMENT'S OWN CONTROL: a non-binding cap must change nothing.
+
+    ``9`` is the scheme's own depth, ``11`` is the staircase's deepest rung, and
+    ``10`` is a legal request for a depth nobody banked.  All three read d9 --
+    the same rung the unflagged run reads -- so every emitted array is equal to
+    the unflagged one and ``value_depth_capped_rows`` is 0.
+
+    This is why ``enforce_value_depth_take_effect`` asserts "no row read DEEPER
+    than the cap" rather than "some row moved": the second rule would refuse
+    these three cells, which are exactly the control that shows the take-effect
+    instrument can read "no change".
+
+    Mutation caught: dropping ``value_read_scheme``'s ``deepest_read <= cap``
+    short circuit so an unbinding cap re-reads the bank -- the arrays still
+    match, but ``value_depth_capped_rows`` reads 1 and fails here.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    run_derive(corpus_dir, tmp_path / "plain", "uniform-d9")
+    summary = run_derive(
+        corpus_dir, tmp_path / f"cap{cap}", "uniform-d9", "--value-depth", cap,
+    )
+
+    plain_rows, _ = read_rows(tmp_path / "plain")
+    capped_rows, _ = read_rows(tmp_path / f"cap{cap}")
+    for name in ("policy_target", "legal_mask", "search_wdl", "x"):
+        assert np.array_equal(
+            np.asarray(getattr(plain_rows[0], name)),
+            np.asarray(getattr(capped_rows[0], name)),
+        ), f"{name} moved under a cap that cannot bind"
+    assert summary["realized"]["realized_value_depth_histogram"] == {"9": 1}
+    assert summary["realized"]["value_depth_capped_rows"] == 0
+    # The stamp still records what was ASKED for -- a summary that hid a
+    # non-binding cap could not be used to reconstruct the command.
+    assert summary["scheme"]["value_depth"] == int(cap)
+    assert summary["scheme"]["value_source"] == f"deepest_phase_covering_capped_d{cap}"
+
+
+def test_the_cap_never_deepens_the_value_read(tmp_path: Path) -> None:
+    """⚑ THE DIRECTION, pinned.  ``uniform-d7 --value-depth 9`` reads d7.
+
+    The flag is a CAP: the value read is the shallower of the scheme's depth and
+    ``D``.  An implementation that read "the deepest banked rung at or below D"
+    without the ``min`` would deepen this run's value from d7 to d9 -- a
+    different, untested experiment reached by a flag documented as a cap, and
+    silently, because the summary would still say ``capped_d9``.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    plain = run_derive(corpus_dir, tmp_path / "d7", "uniform-d7")
+    widened = run_derive(
+        corpus_dir, tmp_path / "d7cap9", "uniform-d7", "--value-depth", "9",
+    )
+    plain_rows, _ = read_rows(tmp_path / "d7")
+    widened_rows, _ = read_rows(tmp_path / "d7cap9")
+    np.testing.assert_allclose(
+        plain_rows[0].search_wdl, wdl_of_cp(CAP_BEST_BY_DEPTH[7][1]), atol=2e-3,
+    )
+    assert np.array_equal(
+        np.asarray(plain_rows[0].search_wdl),
+        np.asarray(widened_rows[0].search_wdl),
+    )
+    assert plain["realized"]["realized_value_depth_histogram"] == {"7": 1}
+    assert widened["realized"]["realized_value_depth_histogram"] == {"7": 1}
+    assert widened["realized"]["value_depth_capped_rows"] == 0
+
+
+def test_a_cap_below_every_banked_rung_is_an_envelope_miss(tmp_path: Path) -> None:
+    """A row with no full-width block at or below the cap cannot answer it.
+
+    ⚑ Counted and refused like any other envelope miss rather than falling back
+    to the uncapped read: a silent fallback would emit the uncapped value under
+    the capped arm's name on an unknown fraction of the corpus, which is the one
+    outcome a paired round cannot survive.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row(depths=(9,))])
+    with pytest.raises(derive.CorpusIntegrityError, match="value-depth 7"):
+        derive.main([
+            "--corpus", str(corpus_dir), "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", "7",
+        ])
+
+
+def test_value_depth_is_refused_on_a_nodes_scheme(tmp_path: Path) -> None:
+    """⚑ REFUSED, NOT IGNORED.  ``nodes-<N>`` reads phase 0 at the depth the
+    budget bought, so the cap would reach no consumer -- and the refusal lands
+    before the corpus is opened, so it cannot depend on which rows it holds."""
+    with pytest.raises(ValueError, match="cannot apply to --scheme nodes-3000"):
+        derive.main([
+            "--corpus", str(tmp_path / "does_not_exist"),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "nodes-3000", "--temp", "1.0", "--value-depth", "7",
+        ])
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("bad", ["0", "-3"])
+def test_a_value_depth_below_one_is_refused_before_the_corpus_is_touched(
+    tmp_path: Path, bad: str,
+) -> None:
+    with pytest.raises(ValueError, match="--value-depth must be >= 1"):
+        derive.main([
+            "--corpus", str(tmp_path / "does_not_exist"),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", bad,
+        ])
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_cap_deeper_than_the_corpus_staircase_is_refused(tmp_path: Path) -> None:
+    """The staircase declares a deepest rung of 11; 12 names a depth nobody
+    searched, and it is knowable from the corpus record before a row is read."""
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    with pytest.raises(derive.CorpusIntegrityError, match="deepest rung reaches depth 11"):
+        derive.main([
+            "--corpus", str(corpus_dir), "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", "12",
+        ])
+
+
+def cap_options(scheme: derive.Scheme) -> derive.DeriveOptions:
+    return derive.DeriveOptions(
+        scheme=scheme, temp=1.0, cp_slope=SLOPE, cp_draw_width=DRAW_WIDTH,
+        limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
+    )
+
+
+def test_the_take_effect_gate_reads_the_rows_and_not_the_flag() -> None:
+    """⚑⚑ THE GATE ITSELF, driven directly, in all four of its cells.
+
+    ``enforce_value_depth_take_effect`` is what turns "the cap was requested"
+    into "the rows carry it", so it is exercised against fabricated readings
+    rather than only through a derivation that happens to be correct: a gate
+    only ever run on passing input is a gate nobody has seen fail.
+    """
+    scheme = derive.with_value_depth(derive.parse_scheme("uniform-d9"), 7)
+    options = cap_options(scheme)
+
+    # (1) rows read at the cap: passes.
+    ok = derive.DeriveStats(rows_written=3, value_depth_histogram={7: 3})
+    derive.enforce_value_depth_take_effect(options, ok)
+
+    # (2) rows read DEEPER than the cap: the flag did not take effect.
+    ignored = derive.DeriveStats(rows_written=3, value_depth_histogram={9: 3})
+    with pytest.raises(derive.CorpusIntegrityError, match="did not take effect"):
+        derive.enforce_value_depth_take_effect(options, ignored)
+
+    # (3) rows written and no reading at all: the proof is absent, not passed.
+    silent = derive.DeriveStats(rows_written=3)
+    with pytest.raises(derive.CorpusIntegrityError, match="take-effect proof is absent"):
+        derive.enforce_value_depth_take_effect(options, silent)
+
+    # (4) no cap requested: the gate is inert, whatever the rows say.
+    derive.enforce_value_depth_take_effect(
+        cap_options(derive.parse_scheme("uniform-d9")),
+        derive.DeriveStats(rows_written=3, value_depth_histogram={9: 3}),
+    )
+
+
+def test_the_cap_collapses_a_two_tier_read_into_a_uniform_one() -> None:
+    """``top-K`` under a cap that reaches below D2 is a UNIFORM read, and says so.
+
+    ⚑ Spelled as ``uniform`` rather than as a ``topk`` whose two tiers happen to
+    coincide: ``apply_scheme`` would otherwise re-read the top K at the depth
+    they already hold and report every one of them as a deep-tier move, so the
+    provenance histograms would describe a two-tier read that never happened.
+    """
+    row = corpus_row(
+        fen=FEN_W,
+        phases=[
+            full_width_phase(FEN_W, {
+                7: ramp(FEN_W, "g2g3", best_cp=120.0),
+                9: ramp(FEN_W, "f1e3", best_cp=400.0),
+                11: ramp(FEN_W, "f1e3", best_cp=420.0),
+            }),
+            narrowed_phase({13: {"f1e3": 500.0, "g2g3": 300.0, "h2h3": 100.0}}),
+        ],
+        result=1.0,
+        result_pgn="1-0",
+    )
+    bank = derive.RowBank(row)
+    two_tier = derive.parse_scheme("top3-d13-rest-d9")
+
+    # Below D2 but at or above D1: still two tiers, with the deep one pulled in.
+    assert derive.value_read_scheme(
+        derive.with_value_depth(two_tier, 11), bank,
+    ) == derive.Scheme(kind="topk", depth=9, deep_depth=11, top_k=3)
+    # At D1: the tiers coincide, so the capped read IS uniform.
+    assert derive.value_read_scheme(
+        derive.with_value_depth(two_tier, 9), bank,
+    ) == derive.Scheme(kind="uniform", depth=9)
+    # Below D1: both tiers land on the deepest banked rung at or below the cap.
+    assert derive.value_read_scheme(
+        derive.with_value_depth(two_tier, 8), bank,
+    ) == derive.Scheme(kind="uniform", depth=7)
+    # At or above D2, and with no cap at all: the identity, signalled as None.
+    assert derive.value_read_scheme(
+        derive.with_value_depth(two_tier, 13), bank,
+    ) is None
+    assert derive.value_read_scheme(two_tier, bank) is None
+
+
+def test_the_cap_and_a_value_scheme_compose_on_the_capped_q(tmp_path: Path) -> None:
+    """⚑ ORTHOGONAL, and the composition is checked rather than argued.
+
+    ``--value-depth`` decides which searched value ``Q`` IS; ``--value-scheme``
+    decides how much of the game's retrospect is mixed into it.  Arm A is
+    ``0.5 * Q + 0.5 * Z``, so under a d7 cap the emitted vector must be half of
+    d7's value -- not half of d9's, which is what an implementation that capped
+    ``q_wdl`` but let the blend re-read the scheme would write.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    run_derive(
+        corpus_dir, tmp_path / "a7", "uniform-d9",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "7",
+    )
+    got, _ = read_rows(tmp_path / "a7")
+    shallow = 0.5 * wdl_of_cp(CAP_BEST_BY_DEPTH[7][1]) + 0.5 * onehot(0)
+    deep = 0.5 * wdl_of_cp(CAP_BEST_BY_DEPTH[9][1]) + 0.5 * onehot(0)
+    np.testing.assert_allclose(got[0].search_wdl, shallow, atol=2e-3)
+    assert not np.allclose(got[0].search_wdl, deep, atol=2e-3)

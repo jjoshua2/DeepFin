@@ -1489,3 +1489,88 @@ def test_an_overstated_claim_refuses_rather_than_deriving_a_short_corpus(
     run(corpus_dir, tmp_path / "seq")
     with pytest.raises(derive.ParallelDeriveError, match="not the rows on disk"):
         run(corpus_dir, tmp_path / "par", "--workers", "2")
+
+
+# ── --value-depth across the handoff ─────────────────────────────────────────
+
+
+def column(out_dir: Path, name: str) -> np.ndarray:
+    """One named array, concatenated across the output shards in shard order."""
+    return np.concatenate([
+        np.asarray(zarr.open_group(str(shard), mode="r")[name])
+        for shard in sorted(out_dir.glob("shard_*.zarr"))
+    ])
+
+
+def test_the_value_depth_cap_reaches_the_lanes_and_agrees_with_the_sequential_read(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ ``--value-depth`` ON BOTH PATHS, AND PROVED TO HAVE MOVED SOMETHING.
+
+    Two claims, and neither is worth much without the other:
+
+    * the parallel read of a CAPPED derivation is the sequential read of it --
+      same shards, same rows, same summary. ``DeriveOptions`` carries the
+      scheme, and the scheme now carries the cap, so this is the assertion that
+      the lanes are deriving under the flag rather than under the default;
+    * and the capped corpus is not the uncapped one. ⚑ THIS HALF IS THE POINT:
+      every identity assertion in this file passes when a flag is silently
+      dropped on BOTH sides, so "seq == par" alone cannot tell a threaded cap
+      from an ignored one. The uncapped run is the reference that can.
+
+    The two columns are checked separately, because the flag's whole claim is
+    that they move differently: ``policy_target`` is ``uniform-d9``'s on all
+    three runs and ``search_wdl`` moves on every row of the capped ones.
+    """
+    rows = [row for gid in range(6) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [16, 16, 16])
+
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--value-depth", "7", workers=3,
+    )
+    assert_same_corpus(sequential, parallel)
+
+    uncapped = tmp_path / "uncapped"
+    plain = run(corpus_dir, uncapped)
+    capped = json.loads(
+        (parallel / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
+    )
+
+    # The POLICY target is the scheme's on both sides of the cap.
+    assert np.array_equal(
+        column(uncapped, "policy_target"), column(parallel, "policy_target"),
+    )
+    # The VALUE target moved, on every row, in the LANES' output.
+    plain_wdl, capped_wdl = (
+        column(uncapped, "search_wdl"), column(parallel, "search_wdl"),
+    )
+    assert plain_wdl.shape == capped_wdl.shape
+    moved = int((plain_wdl != capped_wdl).any(axis=1).sum())
+    assert moved == plain_wdl.shape[0], (
+        f"{moved} of {plain_wdl.shape[0]} rows moved under --value-depth 7; the "
+        "fixture banks a distinct d7 and d9 best value on every row, so any row "
+        "that did not move was derived without the cap"
+    )
+
+    # ⚑ And the MERGED counters say so too -- the histogram is a
+    # `_DICT_SUM_FIELDS` merge and the capped-row count a `_SUM_FIELDS` one, so
+    # this is also the assertion that the new counters were classified.
+    assert plain["realized"]["realized_value_depth_histogram"] == {"9": 48}
+    assert plain["realized"]["value_depth_capped_rows"] == 0
+    assert capped["realized"]["realized_value_depth_histogram"] == {"7": 48}
+    assert capped["realized"]["value_depth_capped_rows"] == 48
+    assert capped["scheme"]["value_source"] == "deepest_phase_covering_capped_d7"
+
+
+def test_a_cap_deeper_than_the_staircase_is_refused_on_the_parallel_path_too(
+    tmp_path: Path,
+) -> None:
+    """The staircase check runs in ``derive_parallel`` as well as in ``derive``.
+
+    ⚑ A refusal that only one entry point makes is a refusal the other path can
+    walk past, and the parallel path is the one production uses (`--workers 7`).
+    """
+    rows = [row for gid in range(2) for row in game(gid, 6)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [6, 6])
+    with pytest.raises(derive.CorpusIntegrityError, match="value-depth 12"):
+        run(corpus_dir, tmp_path / "par", "--value-depth", "12", "--workers", "2")

@@ -152,7 +152,9 @@ VALUE -- the construction is ``data/lc0_rows``'s, mirrored:
 * ``wdl_target`` = the row's EXACT game result, already stored from that row's
   own side-to-move seat by ``result_from_pov``.  0=W / 1=D / 2=L.
 * ``search_wdl`` = ``cp_to_wdl_array`` of the scheme's BEST-MOVE value, i.e. the
-  searched root value of the position, side-to-move POV.
+  searched root value of the position, side-to-move POV.  ⚑ Read at the
+  scheme's own depth unless ``--value-depth`` caps it shallower; see THE VALUE
+  DEPTH CAP below.
 * ``sf_wdl`` is ABSENT.
 
 ⚑⚑ AND THE SEARCHED VALUE GOES IN ``search_wdl`` EVEN THOUGH IT IS A STOCKFISH
@@ -248,6 +250,45 @@ boundary" is also what a blunder-free corpus looks like.  A value scheme that
 parsed, stamped a summary and turned out to be V0 all along would read as a
 clean experimental null, because it WOULD BE the control.
 
+THE VALUE DEPTH CAP (``--value-depth``)
+---------------------------------------
+``--scheme`` sets ONE depth and both targets read it: the policy is the softmax
+over the scheme's per-move values, and ``Q`` is the best of those same values.
+So until this flag existed the teacher depth was a single axis, and the ledger's
+round-3 readout -- a d7 POLICY teacher at least as good as a d9 one at matched
+steps -- could not be followed up on the value side, because there was no way to
+derive a corpus whose two targets disagree about depth.
+
+``--value-depth D`` caps the VALUE read at ``D`` and leaves the policy on the
+scheme's own ``Dpol``.  Per row, ``Q`` is read off the deepest banked full-width
+rung at or below ``D``; the policy target, the row set, the move support and
+every other column are untouched, so ``uniform-d9`` and
+``uniform-d9 --value-depth 7`` are a paired pair differing in one column.
+
+* **A CAP, NOT A SETTING.**  At or above what the scheme already reads it is the
+  IDENTITY -- ``--value-depth 9`` on ``uniform-d7`` returns d7's value, it does
+  not deepen anything.  A knob spelled "cap" that could deepen the read would be
+  a different experiment wearing this one's name.
+* **REFUSED, NOT IGNORED, WHERE IT CANNOT APPLY.**  ``nodes-<N>`` reads phase 0
+  at whatever depth the budget bought, so a cap there would reach no consumer;
+  ``D`` above the corpus staircase's deepest rung names a depth nobody searched;
+  ``D < 1`` selects no block.  All three refuse before a row is read.
+* **PROVED OFF THE ROWS.**  ``realized_value_depth_histogram`` in the summary is
+  the depth each written row's ``Q`` actually came from -- maintained on capped
+  and uncapped runs alike, so the two corpora are told apart by a number read
+  off the rows rather than by the flag that asked for them --  and
+  ``enforce_value_depth_take_effect`` refuses a run any of whose rows read
+  DEEPER than the cap.  ``value_depth_capped_rows`` counts the rows the cap
+  actually moved, so the identity case above is visible rather than silent.
+* ⚑ ORTHOGONAL TO ``--value-scheme``.  The cap decides which searched value
+  ``Q_t`` IS; the value scheme decides how much of the game's retrospect is
+  mixed into it.  Both apply, in that order -- arm C blends the CAPPED ``Q_t``.
+  ⚑ What the cap does NOT touch is arm C's own d9/d8/d7 readings: the played
+  regret ``r`` and the instability ``u`` are a difference between three FIXED
+  full-width rungs, and re-basing them on the cap would change what ``w``
+  MEANS rather than what ``Q`` is -- two changes in one arm.  See
+  ``_value_facts`` for why those three are read the way they are.
+
 ⚑ A ROW WITH NO RESULT IS SKIPPED AND COUNTED (``rows_dropped_no_result``).  The
 generator's ply cap outside tablebase range banks ``result: null`` and its own
 docstring refuses to call that a draw; ``wdl_target`` is a REQUIRED shard field
@@ -331,7 +372,7 @@ import re
 import shutil
 import sys
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -558,6 +599,13 @@ FLOOR_RECOVERY_FLOOR_TOL = 1e-6
 #: Which phases a scheme is allowed to read a move's value from.
 VALUE_SOURCE_DEEPEST = "deepest_phase_covering"
 VALUE_SOURCE_PHASE0 = "phase0_only"
+
+#: ``--value-depth D`` spells its source ``deepest_phase_covering_capped_d<D>``.
+#: ⚑ A DIFFERENT STRING, not the bare name plus a sibling key, because
+#: ``value_source`` is what ``format_summary`` prints and what a reader greps: a
+#: capped corpus that stamped ``deepest_phase_covering`` would be indistinguishable
+#: from an uncapped one in the one line most people ever read.
+VALUE_SOURCE_CAPPED_SUFFIX = "_capped_d"
 
 # -- the value round's four arms ----------------------------------------------
 #
@@ -866,6 +914,22 @@ class Scheme:
     deep_depth: int | None = None
     top_k: int | None = None
     nodes: int | None = None
+    #: ``--value-depth D``: the depth the VALUE target's ``q`` is capped at.
+    #:
+    #: ⚑ NOT PART OF ``canonical`` AND NOT SET BY ``parse_scheme``.  The scheme
+    #: string names the POLICY target's read and nothing else, and a corpus
+    #: derived at ``uniform-d9 --value-depth 7`` still has a ``uniform-d9``
+    #: policy -- folding the cap into the name would make two different corpora
+    #: with the same policy read compare unequal on the axis that describes the
+    #: policy.  It rides on ``Scheme`` rather than on :class:`DeriveOptions`
+    #: because ``value_source`` is a ``Scheme`` property and the summary's
+    #: ``scheme`` block is built from ``params()``: putting it anywhere else
+    #: would mean a second place that has to remember to stamp it.
+    #:
+    #: ⚑ A CAP, NOT A SETTING.  It can only make the value read SHALLOWER: a
+    #: cap at or above what the scheme already reads is the identity, never a
+    #: deepening.  See :func:`value_read_scheme`.
+    value_depth: int | None = None
 
     @property
     def canonical(self) -> str:
@@ -883,7 +947,11 @@ class Scheme:
 
     @property
     def value_source(self) -> str:
-        return VALUE_SOURCE_PHASE0 if self.kind == "nodes" else VALUE_SOURCE_DEEPEST
+        if self.kind == "nodes":
+            return VALUE_SOURCE_PHASE0
+        if self.value_depth is None:
+            return VALUE_SOURCE_DEEPEST
+        return f"{VALUE_SOURCE_DEEPEST}{VALUE_SOURCE_CAPPED_SUFFIX}{self.value_depth}"
 
     def params(self) -> dict[str, Any]:
         return {
@@ -893,6 +961,12 @@ class Scheme:
             "top_k": self.top_k,
             "nodes": self.nodes,
             "value_source": self.value_source,
+            #: ⚑ The REQUESTED cap, next to the source string it produced. The
+            #: REALIZED depths are a separate reading in ``realized`` -- this is
+            #: what was asked for, that is what the rows carry, and a summary
+            #: that only carried one of them could not be used to check the
+            #: other.
+            "value_depth": self.value_depth,
         }
 
 
@@ -943,6 +1017,40 @@ def _require_positive(spec: str, **values: int) -> None:
             raise ValueError(f"--scheme {spec!r}: {name} must be positive, got {value}")
 
 
+def with_value_depth(scheme: Scheme, requested: int | None) -> Scheme:
+    """``--value-depth``, checked against the SCHEME and attached to it.
+
+    The two refusals a corpus is not needed for, so both land before it is
+    opened -- the rule ``--temp``, ``--floor`` and ``--value-scheme`` already
+    follow.  The third (a cap deeper than the corpus banked) needs the
+    staircase and lives in :func:`scheme_vs_staircase_problems`.
+
+    ⚑ ``nodes-<N>`` IS REFUSED RATHER THAN IGNORED.  Its value already comes
+    from phase 0 at whatever depth the budget bought
+    (:data:`VALUE_SOURCE_PHASE0`), so a cap has nothing to cap: it would parse,
+    stamp a summary, derive the whole corpus and change not one row -- a knob
+    accepted and silently dropped, which is the failure this file's every other
+    presence check exists to forbid.
+    """
+    if requested is None:
+        return scheme
+    depth = int(requested)
+    if depth < 1:
+        raise ValueError(
+            f"--value-depth must be >= 1, got {requested!r}: depth 0 selects no "
+            "block, and Stockfish silently replaces `go depth 0` with a real "
+            "iteration anyway.",
+        )
+    if scheme.kind == "nodes":
+        raise ValueError(
+            f"--value-depth {depth} cannot apply to --scheme {scheme.canonical}: "
+            f"a nodes budget reads its value from {VALUE_SOURCE_PHASE0} at "
+            "whatever depth the budget bought, so the cap would reach no "
+            "consumer and the summary would name a depth that capped nothing.",
+        )
+    return replace(scheme, value_depth=depth)
+
+
 def scheme_vs_staircase_problems(
     scheme: Scheme, staircase: Sequence[dict[str, Any]],
 ) -> list[str]:
@@ -971,6 +1079,19 @@ def scheme_vs_staircase_problems(
         problems.append(
             f"the scheme's deep depth {scheme.deep_depth} exceeds the corpus "
             f"envelope: the staircase's deepest rung reaches depth {deepest}",
+        )
+    # ⚑ THE VALUE CAP IS CHECKED HERE rather than at its own call site so BOTH
+    # entry points get it: `derive` and `derive_parallel` each call this
+    # function once against the corpus's own staircase, and a third caller that
+    # had to remember a fourth check is the shape of an omission. A cap above
+    # the corpus's deepest rung cannot bind on any row -- it names a depth the
+    # generator never searched -- so it is refused rather than silently
+    # degraded to "whatever was banked".
+    if scheme.value_depth is not None and int(scheme.value_depth) > deepest:
+        problems.append(
+            f"--value-depth {scheme.value_depth} exceeds the corpus envelope: "
+            f"the staircase's deepest rung reaches depth {deepest}, so the cap "
+            "names a depth this corpus never searched",
         )
     return problems
 
@@ -1172,6 +1293,73 @@ def apply_scheme(bank: RowBank, scheme: Scheme) -> MoveValues:
         base_depth=base,
         floor_hit=False,
     )
+
+
+def value_read_scheme(scheme: Scheme, bank: RowBank) -> Scheme | None:
+    """The scheme ONE row's VALUE ``q`` is read under, or None for "the same one".
+
+    ``--value-depth D`` moves the value target -- and only the value target --
+    onto the deepest banked rung at or below ``D``, leaving the policy target on
+    the scheme's own ``Dpol``.  The round-3 readout says a d7 POLICY teacher is
+    at least as good as a d9 one; whether the same is true of the value ``q`` is
+    a separate axis, and until this flag existed the deriver could not put a
+    corpus on it: ``q`` is ``effective_cp[best_index]`` off the policy's own
+    :func:`apply_scheme` read, so the two depths moved together or not at all.
+
+    ⚑⚑ IT IS A CAP AND THE ``min`` IS THE POINT.  ``--value-depth 9`` against
+    ``uniform-d7`` returns None -- the identity -- and does NOT deepen the value
+    to d9.  A flag named "cap" that could make the read DEEPER would be a
+    different knob wearing this one's name, and the direction matters: a deeper
+    value read is a different (untested) experiment, while a shallower one is
+    the arm the ledger asked for.
+
+    ⚑ None MEANS "REUSE THE POLICY'S ``MoveValues``", which is what makes an
+    unbinding cap byte-identical to no cap at all rather than merely equal: the
+    caller does not re-read the bank, so there is no second float path for a
+    rounding difference to enter through.
+
+    ⚑ THE CAP IS RESOLVED AGAINST THE ROW, not against the run.  ``D`` need not
+    be a rung anyone banked (``--value-depth 8`` on a d7/d9 staircase is a legal
+    request for d7), and rows in one corpus do not all carry the same rungs, so
+    the realized depth is per row and the summary reports the histogram of them
+    rather than a single claimed number.
+    """
+    cap = scheme.value_depth
+    if cap is None or scheme.kind == "nodes":
+        return None
+    cap = int(cap)
+    # The uncapped read's deepest depth. Below the cap, nothing can bind, and
+    # the bank is never consulted -- so the common "cap wider than the scheme"
+    # case costs one comparison and reuses the policy's own values.
+    deepest_read = _required(scheme.depth, "depth")
+    if scheme.deep_depth is not None:
+        deepest_read = max(deepest_read, int(scheme.deep_depth))
+    if deepest_read <= cap:
+        return None
+    banked = [depth for depth in bank.full_width_depths() if depth <= cap]
+    if not banked:
+        # ⚑ An EnvelopeMiss, so a row that cannot answer the cap is counted and
+        # bounded by --max-envelope-misses exactly like a row that cannot answer
+        # the scheme. Falling back to the uncapped read would emit V0's value
+        # under the capped arm's name on some unknown fraction of the corpus.
+        raise EnvelopeMiss(
+            f"--value-depth {cap} asks for the deepest full-width block at or "
+            f"below depth {cap} and this row's full-width envelope is "
+            f"{bank.full_width_depths()}",
+        )
+    row_cap = max(banked)
+    base = min(_required(scheme.depth, "depth"), row_cap)
+    if scheme.kind == "topk":
+        deep = min(_required(scheme.deep_depth, "deep_depth"), row_cap)
+        if deep > base:
+            return Scheme(
+                kind="topk", depth=base, deep_depth=deep, top_k=scheme.top_k,
+            )
+        # ⚑ The two tiers collapsed under the cap, so the capped read IS a
+        # uniform one and is spelled as one. Handing `apply_scheme` a topk
+        # scheme with deep == base would re-read the top K at the depth they
+        # already hold and report every one of them as a "deep tier" move.
+    return Scheme(kind="uniform", depth=base)
 
 
 # -- targets ------------------------------------------------------------------
@@ -2006,6 +2194,19 @@ class DeriveStats:
     values_by_phase: dict[int, int] = field(default_factory=dict)
     deep_tier_moves: int = 0
     base_tier_moves: int = 0
+    #: The depth each written row's VALUE ``q`` was actually read at, bucketed.
+    #: ⚑ MAINTAINED ON EVERY RUN, capped or not, and that is what makes it an
+    #: instrument rather than a flag's self-report: an uncapped ``uniform-d9``
+    #: derivation reads ``{9: n}`` and a ``--value-depth 7`` one reads ``{7: n}``,
+    #: so the two corpora are told apart by a number off the ROWS instead of by
+    #: the stamp that asked for them. :func:`enforce_value_depth_take_effect`
+    #: refuses a run whose rows disagree with the cap they were derived under.
+    value_depth_histogram: dict[int, int] = field(default_factory=dict)
+    #: Rows whose value read was actually moved by ``--value-depth``. ⚑ 0 is a
+    #: legal reading, not a failure: a cap at or above what the scheme already
+    #: reads is the documented identity, and the counter saying so is how a
+    #: non-binding cap is visible instead of silent.
+    value_depth_capped_rows: int = 0
     #: How many staircase rungs the ROWS carried, which is not necessarily how
     #: many ``staircase_parsed`` declares -- and ``values_by_phase`` is
     #: uninterpretable without it (a corpus of one-phase rows reads
@@ -2197,6 +2398,11 @@ class DeriveStats:
         if cut_by_limit:
             self.qz_games_cut_by_limit += 1
 
+    def note_value_depth(self, depth: int) -> None:
+        self.value_depth_histogram[depth] = (
+            self.value_depth_histogram.get(depth, 0) + 1
+        )
+
     def note_temp(self, value: float) -> None:
         self.temp_recovered_n += 1
         self.temp_recovered_sum += value
@@ -2248,6 +2454,14 @@ class DeriveStats:
             },
             "deep_tier_moves": self.deep_tier_moves,
             "base_tier_moves": self.base_tier_moves,
+            # ⚑ THE REALIZED VALUE DEPTH, off the rows. `scheme.value_depth` is
+            # what --value-depth ASKED for; this is the depth each row's q was
+            # read at, and on an uncapped run it is the scheme's own depth --
+            # which is the reading that used to exist nowhere at all.
+            "realized_value_depth_histogram": {
+                str(k): v for k, v in sorted(self.value_depth_histogram.items())
+            },
+            "value_depth_capped_rows": self.value_depth_capped_rows,
             "phases_per_row": {
                 str(k): v for k, v in sorted(self.phases_per_row.items())
             },
@@ -2504,7 +2718,13 @@ class TargetDeriver:
         planes = self._encode(board)
         self._note_shapes(planes, policy, probs, values)
 
-        q_wdl = self.wdl_of(float(values.effective_cp[values.best_index]))
+        value_values = self._value_view(bank, values)
+        q_wdl = self.wdl_of(
+            float(value_values.effective_cp[value_values.best_index]),
+        )
+        self.stats.note_value_depth(
+            int(value_values.depth_by_move[value_values.best_index]),
+        )
         z_index = wdl_target_from_result(float(row["result"]))
         sample = ReplaySample(
             x=planes,
@@ -2535,6 +2755,30 @@ class TargetDeriver:
             sample=sample,
             facts=self._value_facts(row, bank, q_wdl=q_wdl, z_index=z_index),
         )
+
+    def _value_view(self, bank: RowBank, values: MoveValues) -> MoveValues:
+        """The ``MoveValues`` this row's VALUE ``q`` is read off.
+
+        ``values`` itself without ``--value-depth``, which is the whole of the
+        behaviour this tool had before the flag: the same object, so an uncapped
+        run does not merely agree with the old one, it runs the old one.
+
+        ⚑ THE POLICY IS NOT TOUCHED.  The caller has already built the emitted
+        policy from ``values``; this second read feeds ``q_wdl`` and nothing
+        else, which is exactly the separation the flag exists to create.
+
+        ⚑ ``deep_tier_moves``/``base_tier_moves``/``values_by_phase`` are NOT
+        noted for the capped read.  Those counters describe the POLICY target's
+        provenance -- ``_note_shapes`` folds them in from ``values`` -- and
+        adding a second row's worth of moves from a read no policy came from
+        would make a histogram nobody can interpret.  The capped read's own
+        provenance is ``value_depth_histogram``, which is per ROW.
+        """
+        capped = value_read_scheme(self.options.scheme, bank)
+        if capped is None:
+            return values
+        self.stats.value_depth_capped_rows += 1
+        return apply_scheme(bank, capped)
 
     def _value_facts(
         self,
@@ -3207,7 +3451,55 @@ def enforce_take_effect(options: DeriveOptions, stats: DeriveStats) -> None:
                 f"carry {mean_temp:.6g} (mean over {stats.temp_recovered_n} "
                 f"readable rows): the flag did not take effect as requested.",
             )
+    enforce_value_depth_take_effect(options, stats)
     enforce_value_scheme_take_effect(options, stats)
+
+
+def enforce_value_depth_take_effect(
+    options: DeriveOptions, stats: DeriveStats,
+) -> None:
+    """⚑⚑ ``--value-depth``'s take-effect proof, off the ROWS' realized depths.
+
+    The invariant is the flag's own claim, stated so that it holds in every
+    legal cell: **no written row's value ``q`` was read deeper than the cap**.
+    That is true of a cap that binds on every row, of one that binds on some,
+    and of the boundary cap that binds on none -- and it is FALSE the moment the
+    capped read is skipped, which is the only failure this flag has.
+
+    ⚑ WHY NOT "the cap must have bound on at least one row".  A cap at or above
+    what the scheme already reads is a documented identity (see
+    :func:`value_read_scheme`), and the identity case is precisely the control
+    the take-effect test needs in order to know its instrument can read "no
+    change" -- the same argument ``enforce_value_scheme_take_effect`` makes for
+    measuring V0's zero instead of assuming it. Refusing it would delete the
+    control. ``value_depth_capped_rows`` publishes how many rows moved, so a
+    non-binding cap is VISIBLE rather than silent, which is the actual hazard.
+
+    ⚑ The absent-reading case is refused, though: rows were written and not one
+    of them said which depth its value came from, so the proof is missing rather
+    than passed. Same asymmetry, same reason, as ``--floor``'s.
+    """
+    cap = options.scheme.value_depth
+    if cap is None:
+        return
+    if stats.rows_written > 0 and not stats.value_depth_histogram:
+        raise CorpusIntegrityError(
+            f"--value-depth {cap} was requested and {stats.rows_written} rows "
+            "were written, but not one of them recorded the depth its value was "
+            "read at: the take-effect proof is absent, not passed.",
+        )
+    over = sorted(
+        depth for depth in stats.value_depth_histogram if depth > int(cap)
+    )
+    if over:
+        rows = sum(stats.value_depth_histogram[depth] for depth in over)
+        raise CorpusIntegrityError(
+            f"--value-depth {cap} was requested but {rows} written row(s) read "
+            f"their value at depth(s) {over}, deeper than the cap: the flag did "
+            "not take effect, and a corpus stamped "
+            f"{options.scheme.value_source!r} that does not carry it is worse "
+            "than no corpus.",
+        )
 
 
 def enforce_value_scheme_take_effect(
@@ -4088,9 +4380,17 @@ def build_summary(
                 "row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
             ),
             "search_wdl": (
-                "cp_to_wdl_array of the SCHEME's best-move value: Stockfish's "
-                "searched root value, side-to-move POV. ⚑ NOT our MCTS's "
-                "value, which is what this column means on production shards"
+                "cp_to_wdl_array of the "
+                + (
+                    "SCHEME's best-move value"
+                    if options.scheme.value_depth is None else
+                    f"best-move value read at --value-depth "
+                    f"{options.scheme.value_depth} or the deepest banked rung "
+                    "below it, NOT at the scheme's own depth"
+                )
+                + ": Stockfish's searched root value, side-to-move POV. "
+                "⚑ NOT our MCTS's value, which is what this column means on "
+                "production shards"
             ) if options.value_scheme == VALUE_SCHEME_SEARCH else (
                 f"the --value-scheme {options.value_scheme} TARGET: a blend of "
                 "the searched root value and the game's retrospect, already "
@@ -4330,6 +4630,13 @@ def format_summary(out: dict[str, Any]) -> str:
         f"nodes_floor_hits={realized['nodes_floor_hits']} "
         f"base depths={realized['realized_base_depth_histogram']} "
         f"values by phase={realized['values_by_phase']}",
+        # ⚑ ON ITS OWN LINE AND PRINTED ALWAYS. The value's realized depth was
+        # invisible before --value-depth existed, and printing it only under the
+        # flag would mean the uncapped RUN one wants to compare against never
+        # shows the number being compared.
+        f"value depths={realized['realized_value_depth_histogram']} "
+        f"capped rows={realized['value_depth_capped_rows']} "
+        f"(--value-depth {out['scheme']['value_depth']})",
         f"temp recovered from the emitted policy: n={recovered['n']} "
         f"min={recovered['min']:.6f} max={recovered['max']:.6f} "
         f"skipped(saturated)={realized['temp_recovery_skipped_saturated']} "
@@ -4557,6 +4864,7 @@ _SUM_FIELDS: tuple[str, ...] = (
     "support_checks",
     "deep_tier_moves",
     "base_tier_moves",
+    "value_depth_capped_rows",
     "repetition_planes_nonzero_rows",
     "temp_recovery_skipped_saturated",
     "floor_recovery_skipped_few_values",
@@ -4584,6 +4892,7 @@ _MAX_FIELDS: tuple[str, ...] = (
 #: ``{bucket: count}`` histograms, merged key by key.
 _DICT_SUM_FIELDS: tuple[str, ...] = (
     "depth_histogram", "values_by_phase", "phases_per_row",
+    "value_depth_histogram",
 )
 
 #: Assigned (not accumulated) per row, so every row writes the same value and a
@@ -5786,6 +6095,18 @@ def build_parser() -> argparse.ArgumentParser:
              "REFUSED with --workers 1, which spills nothing.",
     )
     parser.add_argument(
+        "--value-depth", type=int, default=None,
+        help="cap the depth the VALUE target's q is read at, leaving the POLICY "
+             "target on the --scheme's own depth. Absent (default) reads both "
+             f"off the scheme, which is {VALUE_SOURCE_DEEPEST}. Given, the value "
+             "is read at the deepest banked full-width rung at or below D and "
+             f"the summary stamps {VALUE_SOURCE_DEEPEST}"
+             f"{VALUE_SOURCE_CAPPED_SUFFIX}<D>. A CAP: at or above what the "
+             "scheme already reads it is the identity, never a deepening. "
+             "Refused with a nodes-<N> scheme, which reads phase 0 only, and "
+             "refused above the corpus staircase's deepest rung.",
+    )
+    parser.add_argument(
         "--max-envelope-misses", type=int, default=0,
         help="how many rows may be dropped for lacking the block the scheme "
              "asks for before the run refuses. 0 (default) refuses on the first.",
@@ -5796,6 +6117,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     scheme = parse_scheme(str(args.scheme))
+    # ⚑ Next to the parse, and before the corpus is opened: a cap on a scheme
+    # that cannot consume it is refused rather than derived. The remaining
+    # refusal (a cap deeper than this corpus's staircase) needs the corpus and
+    # runs inside `derive`/`derive_parallel`, so BOTH paths make it.
+    scheme = with_value_depth(scheme, args.value_depth)
     temp = validate_temp(float(args.temp))
     # ⚑ Next to --temp, and for the same reason: before the corpus is opened,
     # so a bad floor is refused rather than discovered on the first row that
