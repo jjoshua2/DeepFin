@@ -4583,3 +4583,724 @@ def test_a_tolerated_envelope_miss_at_the_tail_is_the_live_trigger(
     np.testing.assert_allclose(
         emitted[(0, 2)].search_wdl, wdl_of_cp(CP_TOP), atol=2e-3,
     )
+
+
+
+# ── the value depth axis (--value-depth) ─────────────────────────────────────
+#
+# The flag reads the VALUE target at an EXACT full-width rung and leaves the
+# POLICY target on the scheme's own depth, so every test here checks BOTH
+# columns: a change that moved them together would be a --scheme change wearing
+# --value-depth's name, and one that moved neither is the silent no-op this
+# repo's every other presence check exists to forbid.
+#
+# ⚑ BOTH DIRECTIONS ARE TESTED, and the deepening one is the reason the flag
+# exists. `q` is the best of the SAME apply_scheme values the policy is built
+# from, so `uniform-d7` already reads its value at d7 -- the round's target cell
+# is d7 policy with a d9 VALUE, and only an exact (not capped) depth reaches it.
+
+#: The three rungs these tests read, and the cp each one's BEST move carries.
+#: ⚑ The best MOVE differs between d7 and d9 as well as the number, so a read
+#: that re-used the other rung's argmax and merely re-priced it would come back
+#: with ``g2g3``'s slot holding ``f1e3``'s cp and fail on the value rather than
+#: pass by arithmetic accident.
+DEPTH_BEST: dict[int, tuple[str, float]] = {
+    7: ("g2g3", 120.0),
+    8: ("f1e3", 350.0),
+    9: ("f1e3", 400.0),
+}
+
+
+def staircase_row(
+    *, game_id: int = 0, ply: int = 0, depths: Sequence[int] = (7, 8, 9),
+) -> dict[str, Any]:
+    """One row banking a full-width block at each of ``depths``."""
+    return corpus_row(
+        fen=FEN_W,
+        phases=[full_width_phase(FEN_W, {
+            depth: ramp(
+                FEN_W, DEPTH_BEST[depth][0],
+                best_cp=DEPTH_BEST[depth][1], step=25.0,
+            )
+            for depth in depths
+        })],
+        result=1.0,
+        result_pgn="1-0",
+        game_id=game_id,
+        ply=ply,
+    )
+
+
+def test_value_depth_shallows_the_value_and_leaves_the_policy_alone(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE TAKE-EFFECT PROOF (shallowing), on the two columns that must move
+    differently.
+
+    One corpus, two derivations, one flag between them.  The emitted policy is
+    identical bit for bit -- it is ``uniform-d9``'s on both sides -- and the
+    emitted ``search_wdl`` moves from d9's best cp to d7's.
+
+    ⚑ The expected vectors are recomputed from the SHARED cp map at the two cps
+    the fixture banked, not read off the other run: two identical bugs would
+    agree with each other, and "the two runs differ" alone does not say the
+    flagged one landed on the rung it named.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    plain = run_derive(corpus_dir, tmp_path / "d9", "uniform-d9")
+    moved = run_derive(
+        corpus_dir, tmp_path / "d9_v7", "uniform-d9", "--value-depth", "7",
+    )
+
+    got_plain, _ = read_rows(tmp_path / "d9")
+    got_moved, _ = read_rows(tmp_path / "d9_v7")
+    assert np.array_equal(
+        np.asarray(got_plain[0].policy_target),
+        np.asarray(got_moved[0].policy_target),
+    )
+    assert np.array_equal(
+        np.asarray(got_plain[0].legal_mask), np.asarray(got_moved[0].legal_mask),
+    )
+    np.testing.assert_allclose(
+        got_plain[0].search_wdl, wdl_of_cp(DEPTH_BEST[9][1]), atol=2e-3,
+    )
+    np.testing.assert_allclose(
+        got_moved[0].search_wdl, wdl_of_cp(DEPTH_BEST[7][1]), atol=2e-3,
+    )
+    assert not np.array_equal(
+        np.asarray(got_plain[0].search_wdl), np.asarray(got_moved[0].search_wdl),
+    )
+
+    # ⚑ And the SUMMARY says which rung each run read, off the rows rather than
+    # off the flag: an unflagged run reports the scheme's depth, so the two are
+    # distinguishable by a realized number and not only by the stamp.
+    assert plain["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+    assert plain["scheme"]["value_depth"] is None
+    assert plain["realized"]["realized_value_depth_histogram"] == {"9": 1}
+    assert plain["realized"]["value_depth_moved_rows"] == 0
+    assert moved["scheme"]["value_source"] == "deepest_phase_covering_at_d7"
+    assert moved["scheme"]["value_depth"] == 7
+    assert moved["realized"]["realized_value_depth_histogram"] == {"7": 1}
+    assert moved["realized"]["value_depth_moved_rows"] == 1
+    # The POLICY's own depth stamp is untouched.
+    assert moved["realized"]["realized_base_depth_histogram"] == {"9": 1}
+    assert moved["scheme"]["canonical"] == "uniform-d9"
+
+
+def test_value_depth_deepens_the_value_and_leaves_the_policy_alone(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE CELL THE FLAG EXISTS FOR: d7 policy with a d9 VALUE.
+
+    ``q`` is ``effective_cp[best_index]`` off the POLICY's own ``apply_scheme``
+    read, so ``uniform-d7`` already reads its value at d7 and no cap-shaped flag
+    could ever reach this cell -- ``--value-depth 7`` there is a no-op and
+    ``--value-depth 9`` would have been clamped away.  The depth is EXACT
+    precisely so this arm is derivable.
+
+    Mutation caught: clamping the requested depth to the scheme's own
+    (``min(Dpol, D)``, the flag's first cut) -- the value comes back as d7's and
+    both the value assertion and ``realized_value_depth_histogram`` fail, and
+    ``enforce_value_depth_take_effect`` refuses the run before the summary is
+    written.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    plain = run_derive(corpus_dir, tmp_path / "d7", "uniform-d7")
+    deeper = run_derive(
+        corpus_dir, tmp_path / "d7_v9", "uniform-d7", "--value-depth", "9",
+    )
+
+    got_plain, _ = read_rows(tmp_path / "d7")
+    got_deeper, _ = read_rows(tmp_path / "d7_v9")
+    # The POLICY is d7's on both sides -- that is the arm's whole construction.
+    assert np.array_equal(
+        np.asarray(got_plain[0].policy_target),
+        np.asarray(got_deeper[0].policy_target),
+    )
+    # The VALUE is d7's without the flag and d9's with it.
+    np.testing.assert_allclose(
+        got_plain[0].search_wdl, wdl_of_cp(DEPTH_BEST[7][1]), atol=2e-3,
+    )
+    np.testing.assert_allclose(
+        got_deeper[0].search_wdl, wdl_of_cp(DEPTH_BEST[9][1]), atol=2e-3,
+    )
+    assert not np.array_equal(
+        np.asarray(got_plain[0].search_wdl), np.asarray(got_deeper[0].search_wdl),
+    )
+    assert plain["realized"]["realized_value_depth_histogram"] == {"7": 1}
+    assert deeper["realized"]["realized_value_depth_histogram"] == {"9": 1}
+    assert deeper["realized"]["value_depth_moved_rows"] == 1
+    assert deeper["realized"]["realized_base_depth_histogram"] == {"7": 1}
+    assert deeper["scheme"]["canonical"] == "uniform-d7"
+    assert deeper["scheme"]["value_source"] == "deepest_phase_covering_at_d9"
+
+
+def test_the_schemes_own_depth_is_the_byte_identical_identity(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE INSTRUMENT'S OWN CONTROL: ``D == Dpol`` must change nothing.
+
+    The deriver reuses the policy's own ``MoveValues`` object rather than
+    re-reading the bank, so this is the OLD code path and not new code that
+    agrees with it.  This is why ``enforce_value_depth_take_effect`` asserts
+    "every row read at D" rather than "some row moved": the second rule would
+    refuse this cell, which is exactly the control that shows the take-effect
+    instrument can read "no change".
+
+    Mutation caught: dropping ``value_read_scheme``'s ``Dpol == D`` short
+    circuit so the identity cell re-reads the bank -- the arrays still match,
+    but ``value_depth_moved_rows`` is unchanged at 0 only because
+    ``value_read_moved`` compares the readings; drop THAT too and this fails.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    run_derive(corpus_dir, tmp_path / "plain", "uniform-d9")
+    summary = run_derive(
+        corpus_dir, tmp_path / "same", "uniform-d9", "--value-depth", "9",
+    )
+
+    plain_rows, _ = read_rows(tmp_path / "plain")
+    same_rows, _ = read_rows(tmp_path / "same")
+    for name in ("policy_target", "legal_mask", "search_wdl", "x"):
+        assert np.array_equal(
+            np.asarray(getattr(plain_rows[0], name)),
+            np.asarray(getattr(same_rows[0], name)),
+        ), f"{name} moved under --value-depth at the scheme's own depth"
+    assert summary["realized"]["realized_value_depth_histogram"] == {"9": 1}
+    assert summary["realized"]["value_depth_moved_rows"] == 0
+    # ⚑ THE IDENTITY IS THE NATIVE ONE, because the rows ARE the native rows.
+    # `value_source` is what the trainer keys its value identity on, so a cell
+    # whose every emitted array is byte-identical to the unflagged run must
+    # stamp the unflagged source -- see the mixing test below.
+    assert summary["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+    # ... and the REQUESTED depth is still recorded, so the summary can still
+    # reconstruct the command. Two questions, two fields.
+    assert summary["scheme"]["value_depth"] == 9
+
+
+def test_a_row_missing_the_requested_rung_is_an_envelope_miss(
+    tmp_path: Path,
+) -> None:
+    """A row with no complete full-width block at D cannot answer the request.
+
+    ⚑ Counted and refused like any other envelope miss rather than falling back
+    to the scheme's own read: a silent fallback would emit the POLICY's value
+    under the value arm's name on an unknown fraction of the corpus, which is
+    the one outcome a paired round cannot survive.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row(depths=(9,))])
+    with pytest.raises(derive.CorpusIntegrityError, match="value-depth 7"):
+        derive.main([
+            "--corpus", str(corpus_dir), "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", "7",
+        ])
+
+
+def test_value_depth_is_refused_on_a_nodes_scheme(tmp_path: Path) -> None:
+    """⚑ REFUSED, NOT IGNORED. ``nodes-<N>`` reads phase 0 at the depth the
+    budget bought; pinning it to a fixed rung would leave the budget -- the one
+    thing the scheme is about -- deciding nothing the value target sees. The
+    refusal lands before the corpus is opened, so it cannot depend on rows."""
+    with pytest.raises(ValueError, match="cannot apply to --scheme nodes-3000"):
+        derive.main([
+            "--corpus", str(tmp_path / "does_not_exist"),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "nodes-3000", "--temp", "1.0", "--value-depth", "7",
+        ])
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("bad", ["0", "-3"])
+def test_a_value_depth_below_one_is_refused_before_the_corpus_is_touched(
+    tmp_path: Path, bad: str,
+) -> None:
+    with pytest.raises(ValueError, match="--value-depth must be >= 1"):
+        derive.main([
+            "--corpus", str(tmp_path / "does_not_exist"),
+            "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", bad,
+        ])
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("beyond", ["10", "11"])
+def test_a_value_depth_above_the_full_width_rung_is_refused(
+    tmp_path: Path, beyond: str,
+) -> None:
+    """⚑ BOUNDED BY THE FULL-WIDTH RUNG, NOT BY THE DEEPEST ONE.
+
+    The fixture staircase is the production shape: a full-width d9 scout and a
+    NARROWED d11 rung.  The value target is read at full width, so d11 cannot
+    serve it even though the corpus "reaches" 11 -- and ``10`` names a rung
+    nobody searched at all.  Both refuse rather than resolving to the deepest
+    full-width rung at or below, which would be a requested depth silently
+    replaced by a different one.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    with pytest.raises(
+        derive.CorpusIntegrityError, match="full-width phase reaches depth 9",
+    ):
+        derive.main([
+            "--corpus", str(corpus_dir), "--out", str(tmp_path / "out"),
+            "--scheme", "uniform-d9", "--temp", "1.0", "--value-depth", beyond,
+        ])
+
+
+def depth_options(scheme: derive.Scheme) -> derive.DeriveOptions:
+    return derive.DeriveOptions(
+        scheme=scheme, temp=1.0, cp_slope=SLOPE, cp_draw_width=DRAW_WIDTH,
+        limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
+    )
+
+
+def test_the_take_effect_gate_reads_the_rows_and_not_the_flag() -> None:
+    """⚑⚑ THE GATE ITSELF, driven directly, in all five of its cells.
+
+    ``enforce_value_depth_take_effect`` is what turns "the depth was requested"
+    into "the rows carry it", so it is exercised against fabricated readings
+    rather than only through a derivation that happens to be correct: a gate
+    only ever run on passing input is a gate nobody has seen fail.
+
+    ⚑ THE RULE IS AN EQUALITY, and cell (3) is why.  The flag's first cut
+    asserted ``<= D``, which cannot see a DEEPENING run whose rows all came back
+    at the scheme's shallower depth -- i.e. it was blind to the flag being
+    ignored in the direction the round actually needs.
+    """
+    scheme = derive.with_value_depth(derive.parse_scheme("uniform-d7"), 9)
+    options = depth_options(scheme)
+
+    # (1) every row read at D: passes.
+    derive.enforce_value_depth_take_effect(
+        options, derive.DeriveStats(rows_written=3, value_depth_histogram={9: 3}),
+    )
+    # (2) rows read DEEPER than D.
+    with pytest.raises(derive.CorpusIntegrityError, match="did not take effect"):
+        derive.enforce_value_depth_take_effect(
+            options,
+            derive.DeriveStats(rows_written=3, value_depth_histogram={11: 3}),
+        )
+    # (3) rows read SHALLOWER than D -- a clamped deepening, which the old
+    #     ``<= D`` rule waved through.
+    with pytest.raises(derive.CorpusIntegrityError, match="did not take effect"):
+        derive.enforce_value_depth_take_effect(
+            options,
+            derive.DeriveStats(rows_written=3, value_depth_histogram={7: 3}),
+        )
+    # (4) rows written and no reading at all: the proof is absent, not passed.
+    with pytest.raises(derive.CorpusIntegrityError, match="take-effect proof is absent"):
+        derive.enforce_value_depth_take_effect(
+            options, derive.DeriveStats(rows_written=3),
+        )
+    # (5) no depth requested: the gate is inert, whatever the rows say.
+    derive.enforce_value_depth_take_effect(
+        depth_options(derive.parse_scheme("uniform-d9")),
+        derive.DeriveStats(rows_written=3, value_depth_histogram={7: 3}),
+    )
+
+
+def test_a_top_k_scheme_reads_full_width_and_has_no_identity_cell() -> None:
+    """``top-K``'s native value read is two-tier, so no exact depth reproduces it.
+
+    ⚑ Every ``--value-depth`` on a ``top-K`` scheme therefore builds a view --
+    including one at D1 and one at D2 -- and the returned scheme is always a
+    UNIFORM full-width read, never a ``topk`` whose tiers were rewritten.
+    Whether that view actually CHANGED the value is a separate question, asked
+    by ``value_read_moved`` and tested below.
+    """
+    row = corpus_row(
+        fen=FEN_W,
+        phases=[
+            full_width_phase(FEN_W, {
+                7: ramp(FEN_W, "g2g3", best_cp=120.0),
+                9: ramp(FEN_W, "f1e3", best_cp=400.0),
+                11: ramp(FEN_W, "f1e3", best_cp=420.0),
+            }),
+            narrowed_phase({13: {"f1e3": 500.0, "g2g3": 300.0, "h2h3": 100.0}}),
+        ],
+        result=1.0,
+        result_pgn="1-0",
+    )
+    bank = derive.RowBank(row)
+    two_tier = derive.parse_scheme("top3-d13-rest-d9")
+    for depth in (7, 9, 11):
+        assert derive.value_read_scheme(
+            derive.with_value_depth(two_tier, depth), bank,
+        ) == derive.Scheme(kind="uniform", depth=depth)
+    # No flag at all is the only None on a top-K scheme.
+    assert derive.value_read_scheme(two_tier, bank) is None
+    # And on a uniform scheme the scheme's own depth is the None.
+    uniform = derive.parse_scheme("uniform-d9")
+    assert derive.value_read_scheme(
+        derive.with_value_depth(uniform, 9), bank,
+    ) is None
+    assert derive.value_read_scheme(
+        derive.with_value_depth(uniform, 7), bank,
+    ) == derive.Scheme(kind="uniform", depth=7)
+
+
+#: A staircase whose FULL-WIDTH scout reaches d11, so a ``top2-d11-rest-d7``
+#: scheme and a ``--value-depth 11`` are both inside the envelope.
+DEEP_STAIRCASE = [{"width": "all", "depth": 11}, {"width": 3, "depth": 13}]
+
+
+def same_reading_row() -> dict[str, Any]:
+    """A ``top2-d11-rest-d7`` row whose d7 best is ALSO the global d11 best.
+
+    So the scheme's native value (that move, re-read at d11 as a top-2 member)
+    and the exact d11 full-width read select the same move, cp, depth and phase.
+    """
+    at7 = dict(zip(
+        legal_ucis(FEN_W),
+        [400.0, 390.0, 380.0, 200.0, 190.0, 180.0, 170.0, 160.0, 150.0],
+    ))
+    top2 = sorted(at7, key=lambda m: (-at7[m], m))[:2]
+    at11 = {
+        move: (420.0 if move == top2[0] else 90.0 if move == top2[1] else 50.0)
+        for move in at7
+    }
+    return corpus_row(
+        fen=FEN_W,
+        phases=[full_width_phase(FEN_W, {7: at7, 11: at11})],
+        result=1.0,
+        result_pgn="1-0",
+    )
+
+
+def test_the_moved_counter_ignores_a_read_that_landed_on_the_same_value(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ A VIEW WAS BUILT AND NOTHING MOVED, and the counter must say so.
+
+    Under ``top-K`` the exact read can select the very same reading the scheme
+    already had: here the d7-best move is also the global d11 best, so
+    ``--value-depth 11`` re-reads every move at d11 and the emitted
+    ``search_wdl`` comes back byte-identical.  ``value_read_scheme`` still
+    returns a view -- it must, the scheme's read is two-tier -- so a counter
+    incremented on "a view was built" would report this row among those the flag
+    moved and inflate the knob's own effect report (Codex review of PR #494).
+
+    ⚑ The realized-depth histogram still reads ``{11: 1}``, and that is correct
+    and not a contradiction: the value WAS read at d11 both times. The two
+    numbers answer different questions and are both in the summary.
+    """
+    corpus_dir = write_corpus(
+        tmp_path, [same_reading_row()], staircase=DEEP_STAIRCASE,
+    )
+    native = run_derive(corpus_dir, tmp_path / "native", "top2-d11-rest-d7")
+    exact = run_derive(
+        corpus_dir, tmp_path / "exact", "top2-d11-rest-d7", "--value-depth", "11",
+    )
+    got_native, _ = read_rows(tmp_path / "native")
+    got_exact, _ = read_rows(tmp_path / "exact")
+    assert np.array_equal(
+        np.asarray(got_native[0].search_wdl), np.asarray(got_exact[0].search_wdl),
+    ), "the fixture no longer produces the same reading; the case is not covered"
+    assert exact["realized"]["value_depth_moved_rows"] == 0
+    assert exact["realized"]["realized_value_depth_histogram"] == {"11": 1}
+    assert native["realized"]["realized_value_depth_histogram"] == {"11": 1}
+    # ⚑ And the counter is not simply stuck at 0 on this corpus: a depth that
+    # DOES change the reading reports 1, so the assertion above is a measurement
+    # rather than a fixture that cannot move.
+    moved = run_derive(
+        corpus_dir, tmp_path / "moved", "top2-d11-rest-d7", "--value-depth", "7",
+    )
+    assert moved["realized"]["value_depth_moved_rows"] == 1
+    assert moved["realized"]["realized_value_depth_histogram"] == {"7": 1}
+
+
+def test_the_depth_and_a_value_scheme_compose_on_the_re_read_q(
+    tmp_path: Path,
+) -> None:
+    """⚑ ORTHOGONAL, and the composition is checked rather than argued.
+
+    ``--value-depth`` decides which searched value ``Q`` IS; ``--value-scheme``
+    decides how much of the game's retrospect is mixed into it.  Arm A is
+    ``0.5 * Q + 0.5 * Z``, so on the d7 policy arm with a d9 value the emitted
+    vector must be half of d9's value -- not half of d7's, which is what an
+    implementation that moved ``q_wdl`` but let the blend re-read the scheme
+    would write.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    run_derive(
+        corpus_dir, tmp_path / "a9", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "9",
+    )
+    got, _ = read_rows(tmp_path / "a9")
+    deep = 0.5 * wdl_of_cp(DEPTH_BEST[9][1]) + 0.5 * onehot(0)
+    shallow = 0.5 * wdl_of_cp(DEPTH_BEST[7][1]) + 0.5 * onehot(0)
+    np.testing.assert_allclose(got[0].search_wdl, deep, atol=2e-3)
+    assert not np.allclose(got[0].search_wdl, shallow, atol=2e-3)
+
+
+def test_the_identity_cell_mixes_cleanly_with_the_unflagged_corpus(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ A GATE FIRING ON A NON-HAZARD IS THE SAME DEFECT, POINTED THE OTHER WAY.
+
+    ``uniform-d9 --value-depth 9`` emits arrays byte-identical to ``uniform-d9``
+    -- the deriver reuses the policy's own ``MoveValues`` object -- so the two
+    corpora hold ONE value target and mixing them in a replay buffer is not a
+    mixture of anything.  When ``value_source`` and ``value_read_scheme`` used
+    two separate predicates, the identity cell stamped
+    ``deepest_phase_covering_at_d9`` and the launcher refused that launch: a
+    correct gate blocking correct work, which erodes trust in the gate exactly
+    as a missed hazard does (Codex re-review of PR #494).
+
+    ⚑ The byte-identity is ASSERTED HERE TOO, not taken from the test above: the
+    claim being made is "identical data ⇒ identical identity", and a test of the
+    second half that assumed the first could pass while the data diverged.
+
+    Mutation caught: stamping the ``_at_d<D>`` form in the identity cell (i.e.
+    keying ``value_source`` on ``value_depth is None`` instead of on
+    ``value_reads_the_scheme``) -- the gate then returns one problem here.
+    """
+    from scripts.lc0_control_train import value_scheme_identity_problems
+
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    unflagged = tmp_path / "unflagged"
+    identity = tmp_path / "identity"
+    run_derive(corpus_dir, unflagged, "uniform-d9")
+    run_derive(corpus_dir, identity, "uniform-d9", "--value-depth", "9")
+
+    got_unflagged, _ = read_rows(unflagged)
+    got_identity, _ = read_rows(identity)
+    for name in ("policy_target", "legal_mask", "search_wdl", "x"):
+        assert np.array_equal(
+            np.asarray(getattr(got_unflagged[0], name)),
+            np.asarray(getattr(got_identity[0], name)),
+        ), f"{name} differs, so this is not the identity cell any more"
+
+    assert value_scheme_identity_problems([unflagged, identity]) == []
+    # ⚑ And the gate is not simply off: the same corpus at a depth that MOVES
+    # the read is still refused beside the unflagged one, so the assertion above
+    # is a measurement rather than a gate that stopped working.
+    moved = tmp_path / "moved"
+    run_derive(corpus_dir, moved, "uniform-d9", "--value-depth", "7")
+    assert value_scheme_identity_problems([unflagged, moved])
+
+
+def test_the_manifest_says_which_read_q_came_from(tmp_path: Path) -> None:
+    """⚑⚑ ``q_definition`` FOLLOWS ``--value-depth``.
+
+    A ``uniform-d7 --value-depth 9 --value-scheme qz50`` shard bakes a
+    d9-derived ``Q`` into ``search_wdl``.  A manifest still claiming ``Q`` came
+    from "the --scheme's best-move value" would misdescribe the one column it
+    exists to describe -- and a derived directory is routinely read months later
+    by someone who has only the shards and this summary (Codex re-review of
+    PR #494).
+
+    Both directions are pinned: the native text when the value comes off the
+    scheme's own read, and the exact-depth text when it does not.
+
+    Mutation caught: reverting ``q_definition`` to the static string -- the
+    moved run then claims the scheme's read and both assertions below fail.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    native = run_derive(
+        corpus_dir, tmp_path / "native", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
+    )
+    moved = run_derive(
+        corpus_dir, tmp_path / "moved", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "9",
+    )
+
+    assert "--scheme's best-move value" in native["value_scheme"]["q_definition"]
+    assert "--value-depth" not in native["value_scheme"]["q_definition"]
+
+    moved_q = moved["value_scheme"]["q_definition"]
+    assert "depth exactly 9" in moved_q
+    assert "--value-depth" in moved_q
+    assert "NOT at the --scheme's own depth (uniform-d7)" in moved_q
+
+    # ⚑ And the manifest's claim is checked against the ROWS, not just against
+    # itself: the emitted vector really is half of d9's Q.
+    got, _ = read_rows(tmp_path / "moved")
+    np.testing.assert_allclose(
+        got[0].search_wdl,
+        0.5 * wdl_of_cp(DEPTH_BEST[9][1]) + 0.5 * onehot(0),
+        atol=2e-3,
+    )
+    # The identity cell keeps the NATIVE wording, because its Q is the native Q.
+    same = run_derive(
+        corpus_dir, tmp_path / "same", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "7",
+    )
+    assert same["value_scheme"]["q_definition"] == native["value_scheme"]["q_definition"]
+
+
+def search_wdl_channel(summary: dict[str, Any]) -> str:
+    return str(summary["value_channels"]["search_wdl"])
+
+
+def test_the_summarys_search_wdl_description_agrees_with_its_own_stamp(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE SAME TWO-PREDICATE DRIFT, SURVIVING IN PROSE.
+
+    ``value_channels.search_wdl`` says in words what the column holds, and it
+    branched on whether ``--value-depth`` was PASSED rather than on whether it
+    MOVED the read.  So ``uniform-d9 --value-depth 9`` shipped a summary whose
+    description said the column was read "at depth exactly 9 ... NOT at the
+    scheme's own depth" while ``scheme.value_source`` on the very same summary
+    correctly said ``deepest_phase_covering`` -- a document contradicting itself
+    one field apart, which is worse than no description (delta review of #494).
+
+    ⚑ THE ASSERTION IS AGREEMENT WITH THE STAMP, not a string match against a
+    literal.  The stamp is what the trainer's value identity is keyed on, so
+    tying the prose to it is the property that actually has to hold; pinning
+    both to hard-coded text would pass just as well with the two disagreeing.
+
+    Mutation caught: branching on ``options.scheme.value_depth is None`` -- the
+    identity cell's description then claims the moved read and the agreement
+    assertion fails.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    # ⚑ --value-scheme search: this description has a second branch for the
+    # baked arms, and the depth wording lives only on the V0 side.
+    cells = {
+        "native": run_derive(corpus_dir, tmp_path / "n", "uniform-d9"),
+        "identity": run_derive(
+            corpus_dir, tmp_path / "i", "uniform-d9", "--value-depth", "9",
+        ),
+        "moved": run_derive(
+            corpus_dir, tmp_path / "m", "uniform-d9", "--value-depth", "7",
+        ),
+    }
+    for name, summary in cells.items():
+        native_stamp = summary["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+        says_native = "SCHEME's best-move value" in search_wdl_channel(summary)
+        assert says_native == native_stamp, (
+            f"{name}: value_source={summary['scheme']['value_source']!r} but the "
+            f"search_wdl description says native={says_native}"
+        )
+
+    # And the identity cell's prose is literally the unflagged run's prose.
+    assert search_wdl_channel(cells["identity"]) == search_wdl_channel(cells["native"])
+    # ... while a moved read names the rung it was actually read at.
+    moved_text = search_wdl_channel(cells["moved"])
+    assert "depth exactly 7" in moved_text
+    assert "NOT at the scheme's own depth" in moved_text
+    assert search_wdl_channel(cells["native"]) != moved_text
+
+
+def test_the_value_source_and_the_value_read_agree_on_the_identity_cell() -> None:
+    """⚑ ONE PREDICATE, TWO READERS -- asserted directly so they cannot drift.
+
+    ``value_source`` (what the shard stamps, and what the trainer's value
+    identity is keyed on) and ``value_read_scheme`` (whether the bank is re-read
+    at all) must answer the same question. They were two separate expressions
+    once, and the disagreement was a false refusal at launch time.
+    """
+    row = staircase_row()
+    bank = derive.RowBank(row)
+    cases = [
+        (derive.parse_scheme("uniform-d9"), None),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d9"), 9), None),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d9"), 7), 7),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d7"), 9), 9),
+        (derive.parse_scheme("nodes-3000"), None),
+    ]
+    for scheme, moved_to in cases:
+        reads_native = derive.value_read_scheme(scheme, bank) is None
+        stamps_native = scheme.value_source in (
+            derive.VALUE_SOURCE_DEEPEST, derive.VALUE_SOURCE_PHASE0,
+        )
+        assert reads_native == stamps_native == (moved_to is None), (
+            f"{scheme.canonical} value_depth={scheme.value_depth}: the read says "
+            f"native={reads_native} and the stamp says native={stamps_native}"
+        )
+        assert scheme.value_reads_the_scheme == (moved_to is None)
+
+
+# ── the value depth is part of the TRAINER's value identity ──────────────────
+
+
+def test_two_value_depths_in_one_shards_list_are_refused(tmp_path: Path) -> None:
+    """⚑⚑ THE MIXING HAZARD THE VALUE-SCHEME KEY STRUCTURALLY CANNOT SEE.
+
+    ``uniform-d7`` and ``uniform-d7 --value-depth 9`` derived from ONE bank agree
+    on ``derive_value_scheme`` (both ``search``), on ``derive_schema`` (both 1)
+    and even on their POLICY target -- and their ``search_wdl`` columns differ on
+    every row.  Keyed on the value scheme alone the launcher's identity gate
+    returned ``[]`` for that pair, so a run could train on a per-row mixture of
+    two value-depth arms and nothing anywhere would say so (Codex review of
+    PR #494).
+
+    Mutation caught: dropping ``derive_value_source`` from ``_stamp_shard_attrs``,
+    and dropping the ``sources`` branch from ``value_scheme_identity_problems``
+    -- either one puts the gate back to returning ``[]`` here.
+    """
+    from scripts.lc0_control_train import (
+        baked_value_blend_problems,
+        value_scheme_identity_problems,
+    )
+
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    shallow = tmp_path / "v7"
+    deep = tmp_path / "v9"
+    run_derive(corpus_dir, shallow, "uniform-d7")
+    run_derive(corpus_dir, deep, "uniform-d7", "--value-depth", "9")
+
+    # The rows really do differ, so this is a live hazard and not a naming one.
+    got_shallow, _ = read_rows(shallow)
+    got_deep, _ = read_rows(deep)
+    assert np.array_equal(
+        np.asarray(got_shallow[0].policy_target),
+        np.asarray(got_deep[0].policy_target),
+    ), "the policy targets must AGREE, or the gate is not the only thing missing"
+    assert not np.array_equal(
+        np.asarray(got_shallow[0].search_wdl), np.asarray(got_deep[0].search_wdl),
+    )
+    # The blend gate is silent -- its question genuinely has answer "no".
+    assert baked_value_blend_problems(real_control_config(), [shallow, deep]) == []
+    # The identity gate is not.
+    problems = value_scheme_identity_problems([shallow, deep])
+    assert len(problems) == 1
+    assert "value SOURCES" in problems[0]
+    assert derive.VALUE_SOURCE_DEEPEST in problems[0]
+    assert "deepest_phase_covering_at_d9" in problems[0]
+    # Either arm ALONE is fine, so the gate is not simply always-on.
+    assert value_scheme_identity_problems([shallow]) == []
+    assert value_scheme_identity_problems([deep]) == []
+
+
+def test_a_corpus_predating_the_stamp_is_one_identity_with_the_schemes_own_read(
+    tmp_path: Path,
+) -> None:
+    """⚑ An ABSENT ``derive_value_source`` reads as the scheme's own read, so a
+    pre-flag corpus and a freshly derived unflagged one stay ONE identity.
+
+    That default is what keeps every existing arm launching: a gate that refused
+    a legacy corpus for lacking a stamp it could not have written would block
+    work that has nothing to do with the value-depth axis.
+    """
+    from scripts.lc0_control_train import value_scheme_identity_problems
+
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    fresh = tmp_path / "fresh"
+    legacy = tmp_path / "legacy"
+    run_derive(corpus_dir, fresh, "uniform-d9")
+    run_derive(corpus_dir, legacy, "uniform-d9")
+    for path in iter_shard_paths(legacy):
+        del zarr.open_group(str(path), mode="a").attrs["derive_value_source"]
+
+    assert value_scheme_identity_problems([fresh, legacy]) == []
+    # ... and a MOVED value depth beside the legacy one is still two identities.
+    moved = tmp_path / "moved"
+    run_derive(corpus_dir, moved, "uniform-d9", "--value-depth", "7")
+    assert value_scheme_identity_problems([legacy, moved])
+
+
+def test_the_launchers_unstamped_value_source_is_the_derivers_own_constant() -> None:
+    """⚑ THE DUPLICATED LITERAL, PINNED.
+
+    ``lc0_control_train`` cannot import the deriver (it would pull the corpus
+    generator's import chain into a training launcher), so the default it reads
+    an unstamped shard as is a hand-written copy.  A divergence would silently
+    split every legacy corpus off from the schemes' own read and refuse launches
+    that must keep working -- so it is a failing test here rather than a
+    surprise at launch, exactly as ``KNOWN_DERIVE_SCHEMAS`` is.
+    """
+    from scripts.lc0_control_train import UNSTAMPED_VALUE_SOURCE
+
+    assert UNSTAMPED_VALUE_SOURCE == derive.VALUE_SOURCE_DEEPEST
