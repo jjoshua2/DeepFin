@@ -846,6 +846,9 @@ def _log_iteration_scalars(
 
 _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "train_loss": 999.0, "train_time_s": 0.0, "optimizer_step_time_s": 0.0,
+    "batch_prefetch_wait_s": 0.0, "fwd_loss_s": 0.0, "bwd_s": 0.0, "gradnorm_zclip_s": 0.0,
+    "opt_step_s": 0.0, "pipeline_other_s": 0.0, "gpu_fwd_loss_s": 0.0, "gpu_bwd_s": 0.0,
+    "gpu_gradnorm_zclip_s": 0.0, "gpu_opt_step_s": 0.0,
     "trainer_steps_done": 0, "train_samples_seen": 0,
     "trainer_steps_per_s": 0.0, "trainer_samples_per_s": 0.0, "optimizer_steps_per_s": 0.0,
     "policy_loss": 0.0, "soft_policy_loss": 0.0, "future_policy_loss": 0.0,
@@ -1018,6 +1021,19 @@ def _train_metrics_dict(metrics) -> dict:
         "trainer_steps_per_s": float(metrics.train_steps_done / train_t) if metrics.train_time_s > 0.0 else 0.0,
         "trainer_samples_per_s": float(metrics.train_samples_seen / train_t) if metrics.train_time_s > 0.0 else 0.0,
         "optimizer_steps_per_s": float(metrics.train_steps_done / opt_t) if metrics.opt_step_time_s > 0.0 else 0.0,
+  # The window's pipeline-bubble decomposition (see `_PipelinePhaseTimer`).
+  # Promoted here on purpose: a TensorBoard-only field is how the grad-norm
+  # family went unread for weeks, and this file's own comment says so.
+        "batch_prefetch_wait_s": float(metrics.batch_prefetch_wait_s),
+        "fwd_loss_s": float(metrics.fwd_loss_s),
+        "bwd_s": float(metrics.bwd_s),
+        "gradnorm_zclip_s": float(metrics.gradnorm_zclip_s),
+        "opt_step_s": float(metrics.opt_step_s),
+        "pipeline_other_s": float(metrics.pipeline_other_s),
+        "gpu_fwd_loss_s": float(metrics.gpu_fwd_loss_s),
+        "gpu_bwd_s": float(metrics.gpu_bwd_s),
+        "gpu_gradnorm_zclip_s": float(metrics.gpu_gradnorm_zclip_s),
+        "gpu_opt_step_s": float(metrics.gpu_opt_step_s),
         "policy_loss": float(metrics.policy_loss),
         "soft_policy_loss": float(metrics.soft_policy_loss),
         "future_policy_loss": float(metrics.future_policy_loss),

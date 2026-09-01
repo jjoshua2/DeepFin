@@ -72177,3 +72177,524 @@ Fable's probe found a sign-of-zero bit difference (fixed, pinned) and the
 Ray-row omission (promoted, pinned); head `a9d42cc99`; Fable's final gate
 run pending. Pinned worktree for the controls: `chess-wt-optforeach` @
 `2a2c8b324` — NOTHING is committed there until the controls have run.
+
+**2026-09-01 — ⚑⚑ THE HISTORY MATERIALITY GATE FIRED AND SUPERSEDES THE
+`valueround2.done → 20M → 100M` ORDERING (Josh, operator decision, with an
+external agent's concurring read).** Actions taken this session, in order:
+(1) generators run03/04/05 SIGSTOPped at 16:37 (69 processes, pid list
+`scratchpad/.generators_paused_20260901`); they will be KILLED (orphan sweep)
+once schema 2 lands and generation restarts as run06+. The 54.0M banked
+rows are a LEGACY/CONTROL corpus — not mixed into corrected training by
+default. Measured on a run03 sample (49,494 rows / 256 games): **96.4% of
+legacy rows can rebuild a full 7-ply history by chaining banked
+`played_move`s** (97.9% ≥ 4 plies), so repair is possible later if a prereg
+wants it; not done now. (2) valueround2's background derivation driver
+KILLED (arms c_no_seg / f_vmix never derived); the running `b_qzphase` arm
+finishes its train + legs (natural boundary ~18:35), then
+`park_after_b.sh` kills the chain before `c_full` trains and writes
+`valueround2.parked` (never `.done` — the round is unfinished by decision;
+its spec stays in `valueround2.sh` for a schema-2 rerun of the useful arms).
+(3) the boundary block is re-gated on `.parked`
+(`boundary_block_parked.sh`); the anchor arenas are now read as OOD
+LOWER-BOUND-ish measurements of the old champion, not as the 20M projection
+gate — the meaningful bootstrap-vs-production anchor is the corrected-history
+5.5M net. (4) the depth screen continues (screen only). (5) the
+value/policy 20M and 100M runs are UNSCHEDULED until the schema-2 isolation
+arm reads out.
+**Schema-2 spec, strengthened (Josh's four requirements), for the
+`feat/corpus-history-banking` worktree:** (a) take-effect gate = EXACT
+tensor equivalence with live play — `deriver._encode(reconstructed) ==
+encode_cboard(CBoard.from_board(live board with its full stack), hist_mode
+2, v2_threats)` bit-for-bit over the whole (175,8,8) tensor, on positions
+from real games incl. game-start short histories, castling, en passant,
+irreversible moves and repetitions; (b) the banked window must carry ALL
+repetition-relevant state: root = the position after the last irreversible
+move at or before ply−7 (or the game's own start), so every position that
+could repeat with any of the 8 frames is inside the window — a bare
+7-move window would silently lose earlier occurrences; (c) the SF LABEL
+path is history-blind today (`position fen {fen}` at
+`gen_sf_rooted_corpus.py:979`): the fix sends `position fen {root} moves
+…` so Stockfish sees the reversible segment and its repetition/draw
+detection applies to the target too — labels are re-derived, not
+retained; (d) the equivalence test is the gate; the schema is extended if
+it fails, the test is never weakened. Details: `scratchpad/history_banking_spec.md`.
+**Then:** run06+ on schema 2 → first corrected 5.5M → isolation arm (same
+recipe as `qtemp_0.0005`, history the only change), judged by the 4k
+history-vs-FEN probe, normal-history arenas vs the old champion AND vs
+production, d9/T80 diagnostics. That arm gates any 20M/100M.
+
+**2026-09-01 — LEGACY-CORPUS HISTORY CALIBRATION: history-blind SF labels differ ONLY where a
+repeat sits in the reversible segment (0/1200 outside it) ⇒ REPAIR, not discard — prereg.**
+Question (Josh): rather than throw away every repetition-prone legacy row (which would bias the
+corpus against exactly the fortress/shuffling positions this project exists for), can the 54M
+schema-1 rows be REPAIRED — history reconstructed by chaining, labels re-searched only where
+history can change them? Instrument: `scratchpad/legacy_history_calib/calib.py`; bank
+`scratchpad/legacy_history_calib/ab_rows.jsonl` (per row: both full-width d9 label sets, top-1s,
+max |Δcp|, predictors) + `reconstruction_stats.json`. Sample: run03 w03–w06 shards 100–102 =
+100,006 rows; histories rebuilt by `prev.fen + prev.played_move == fen` back to the
+halfmove-clock-0 root. Reconstruction: segment complete **99.15%**, chain gap 0.85%, ply<7 **3.63%**
+(book moves are unrecoverable — `opening_source` is `None` on every banked row), repeat in
+segment **1.59%**, current position already seen **0.23%**. A/B = cold-TT single-thread `go depth 9`
+MultiPV=all on the corpus's own engine build, A = `position fen <fen>` (what the corpus did), B =
+`position fen <root> moves …` (what schema 2 does); fixed depth + cold TT + 1 thread is
+deterministic, so every A≠B is the history. Stratified 1200 repeat / 1200 no-repeat, 0 timeouts:
+
+| bucket | n | top-1 changed | any move moved >50 cp |
+|---|---|---|---|
+| NO repeat in segment (all clock bands 0–200) | 1200 | **0.00%** | **0.00%** |
+| repeat in segment (1.59% of rows) | 1200 | **12.50%** | 21.17% |
+|   └ current position already seen (0.23%) | 164 | 19.51% | 38.41% |
+| by phase: opening / middlegame / endgame | 139/1116/1145 | 0.0 / 2.8 / 10.4% | 0.7 / 7.4 / 14.9% |
+
+VERDICT (pre-committed rule was "flag is usable if the no-repeat bucket changes <1%"): the flag is
+EXACT on this sample — SF consults game history only for repetition, and the rule-50 counter is
+already in the FEN. Population-weighted, **~0.20% of legacy rows carry a changed top-1 label and
+~0.34% a >50 cp move shift**; the INPUT side (history planes) is wrong on 100% of rows, but that is
+free to fix (chaining, no SF). ⚑ The 46.5% top-1 flip in `3db96659a` is therefore an INPUT-plane
+effect, not a label effect — the net was trained to read zero history, not trained on wrong labels.
+
+PREREG — legacy repair (`scratchpad/legacy_repair_spec.md`; implemented AFTER the schema-2 PR lands,
+same helpers, its own PR):
+- R1 chain every row to schema 2 (`history_root_fen`/`history_uci`/`history_plies`/
+  `history_root_reason`); rows whose history is truncated (ply<7 without a clock-0 root, chain gaps:
+  ≈4.5%) are **dropped by default** — live play from the book never produces a short stack, so a
+  truncated row is the same mixed-input hazard being removed; `--keep-truncated` exists for the
+  control read only.
+- R2 re-label ONLY rows with a repeat inside `[root, row]` (≈1.6% ≈ 860k of 54M, ≈60 core-hours at
+  d9) with `position fen <root> moves …` through the generator's own label routine (same staircase,
+  same engine build). Stated confound: re-labels run on a fresh per-game TT rather than the
+  generator's carried TT — affects 1.6% of rows, same fixed depth.
+- Take-effect: deriver summary `history_slots_nonzero_max == 8` (slot 0 is the position; corrected per PR #497 — the "7" first written here was wrong) and `history_root_reason_counts`
+  on the repaired corpus; 200 re-labeled rows re-derived must match this calibration's banked B
+  labels move-for-move (`ab_rows.jsonl`, keyed `(worker_id, game_id, ply)`).
+- Yardstick (admissibility of the legacy 54M for the 20M mix; NOT the corrected-history isolation
+  gate, which stays the fresh run06 5.5M arm of `6c43a33e4`): repair the exact
+  `run02_snap_20260829` rows the champion trained on, retrain the champion recipe (uniform-d9
+  τ=0.0005, 9,680 steps, seed 0, `configs/lc0_positive_control.yaml`) → `stage5_history_probe.py`
+  (4k bank) + 200-game matched_sims-100 arena vs `qtemp_0.0005` under NORMAL history.
+  **SUCCESS = flips ≤ 25% (production reads 21.2%) AND Δregret(hist−fen) ≤ +5 cp AND arena ≥ 0 Elo
+  (CI excludes −30); anything else ⇒ legacy stays control-only and the 20M is run06+ rows alone.**
+- Confounds: none data-side (one change: history). Runs on the GPU only in a pause window after the
+  fresh-5.5M isolation arm.
+
+**2026-09-01 — LEGACY REPAIR PREREG v2 (supersedes the R1/R2 block above after operator review):
+book openings RE-DERIVE EXACTLY, so nothing is dropped by default; repaired champion-exact 5.5M is
+the PRIMARY causal arm.** Operator changes (relayed 2026-09-01): relabel EVERY repeat row; do not
+drop "truncated" rows — audit the book reverse-join first; reconcile the denominators; the drop
+criterion is "encodes exactly as live play would", never "has 7 frames"; repaired-champion arm is
+the primary validation, run06 fresh 5.5M the replication; flip rate is a diagnostic, not a gate;
+schema-1 stays untouched with a provenance manifest; benchmark before projecting.
+Audit (`scratchpad/legacy_history_calib/book_audit.py`, bank `book_audit_rows.jsonl`,
+`book_audit_summary.json`; same run03 w03–w06 shards 100–102, 100,006 rows, 521 games):
+- FACT: the generator seeds each opening with `book_rng(seed, worker_id, game_id)` (no wall clock),
+  so `sample_starting_board` re-derives the start board WITH its book move stack. **505/505
+  games whose ply-0 row is in the window match the resampled start FEN exactly; 0 mismatches.**
+  (16 games start before the shard window — resolvable with the preceding shard.)
+- RECONCILIATION (one denominator, 100,006 rows): ply≥7 with the reversible root inside the
+  banked plies **73.42%**; ply≥7 with clock≥7 (segment reaches back >7 plies) **22.94%**; ply<7
+  **3.63%**. Rows that NEED the book (frames or segment before ply 0) = 4.45% — a superset of the
+  ply<7 rows. The earlier "99.15% segment-complete / 0.85% gap / 3.63% ply<7 ≈ 4.5% truncated"
+  mixed two denominators: "gap" counted walks that ran into the book (now recovered) plus real
+  dedup gaps; ply<7 overlapped both.
+- PER-ROW CLASS: `exact` 95.414% · `exact_via_book` 4.452% · `ambiguous_multi_path` **0** ·
+  `unbridged_gap` 0.112% (112 rows, 13 games, ALL at ply<20 — opening dedup runs: ≥4 consecutive dedup-dropped plies or no path at
+  ≤3) · `unverifiable_in_sample` 0.022%. **Usable exact = 99.888%** of rows with a reachable game
+  start. Dedup-dropped plies are bridged by enumerating move paths between neighbouring banked
+  positions; a unique path is exact (the intermediate FEN is fully determined), >1 path taints
+  every row whose 7-frame window or reversible segment spans the gap (none occurred).
+- BENCH (single core): reconstruct incl. book resample + chain + bridge **31,176 rows/s**;
+  replay + C-encode with history **2,867 rows/s**; relabel (calibration, cold TT, d9 full-width,
+  1 thread) **0.19 s/row**. PROJECTION for 54M: reconstruct ≈0.5 core-h; relabel ≈1.6% ≈ 860k
+  rows ≈ **45 core-h (~2 h on 24 cores)**; usable corrected rows ≈ **53.9M**. ⇒ repair the full
+  54M; do not regenerate.
+PREREG (repair PR = `scratchpad/legacy_repair_spec.md`, stacked on PR #497):
+- Output = new schema-2 shards beside the untouched schema-1 shards + manifest mapping every
+  `(worker_id, game_id, ply)` → `repaired` / `relabeled` / `quarantined:<reason>`.
+- Quarantine ONLY `ambiguous_multi_path` and `unbridged_gap`/`no_source`; short TRUE histories
+  are kept with live fill semantics.
+- Take-effect: PR #497's equivalence gate re-run on 200 repaired rows (reconstructed vs a live
+  board built from the resampled book stack + played moves) — **bit-identical (175,8,8)**;
+  deriver summary `history_slots_nonzero_max == 8`; 200 relabeled rows match the calibration's
+  banked B labels move-for-move.
+- PRIMARY causal arm: repair the exact `run02_snap_20260829` rows the champion trained on; retrain
+  the champion recipe (uniform-d9 τ=0.0005, 9,680 steps, seed 0, `configs/lc0_positive_control.yaml`,
+  history the only change). Yardsticks, all under NORMAL history on the 4k T80 bank
+  (`stage5_history_probe.py`, game-cluster bootstrap): (i) d9 regret repaired − champion, (ii) T80
+  top-1 agreement, (iii) value regret (`value_regret.py`) and policy CE diagnostics, (iv) 200-game
+  matched_sims-100 arena vs `qtemp_0.0005`, (v) vs production g1586 anchor if the GPU window allows.
+  **SUCCESS = (i) < 0 with 95% CI excluding 0 AND (iv) ≥ 0 Elo with CI excluding −30. KILL = (i)
+  CI excludes any improvement OR (iv) CI excludes 0 on the losing side.** Flip rate (hist vs FEN)
+  is reported as a diagnostic only. Fresh run06 5.5M (`6c43a33e4`) becomes the replication point.
+- Confounds: relabeled rows carry a cold-TT label vs the generator's carried TT (1.6% of rows, same
+  fixed depth). No other data-side change.
+
+**2026-09-01 — #496 MERGED (`8d9839520`, step-sync + pipeline instrumentation); #497 gets a
+DEDUP MERGE GATE.** #496: Codex 3 P2 + Grok 5 + Grok delta 2 + Fable review all closed, whole-repo
+lint 0, CI green on the final head, merged 21:41Z under the standing authorization. Its
+`batch_prefetch_wait_s` reads out on the first corrected-history training run (memory:
+trainer-is-data-starved). #497 (schema 2, PR body: 435/435 bit-identical tensors vs the live
+selfplay encoder, 4/4 mutants caught, 346 cp label error on one 3-fold demonstrated): NOT mergeable
+yet — operator gate (2026-09-01): the generator's dedup is keyed on `dedup_key(board)` = FEN minus
+the fullmove counter, and a later route to the same key is served the FIRST route's
+`SelectionValues` and banks NO row. Under schema 2 two routes can differ in (1) the 8-frame input
+tensor, (2) repetition state / SF values, (3) therefore the right move. Audit BEFORE merge
+(`scratchpad/legacy_history_calib/dedup_audit.py`, worker w03 full stream, every trajectory
+position reconstructed incl. the dedup-dropped ones): position-key hit rate; among hits the
+fraction with a different full encoded tensor / different repetition signature / different cold-TT
+d9 label (stratified pairs, banked `dedup_label_pairs.jsonl`); searches and rows per 1000
+positions under four key designs — current position key; position + SF repetition signature;
+model-input tensor key; SPLIT (SF value cache by the signature, row dedup by the tensor). Design
+question for the fix: the SF cache may be reused only when the histories are provably
+engine-equivalent (minimum safe signature = FEN5 + the transposition keys occurring ≥2 times in the
+reversible segment with their counts + the current position's count: SF's `is_draw`/`has_game_cycle`
+consult game history only through repetition counts, which the calibration above corroborates —
+0/1200 label changes without a repeat), and a row is deduped only against an IDENTICAL model input.
+Fixture tests required: two paths to one FEN/clock with different prior frames (row must be banked),
+and one with different repetition status (cached values must NOT be served).
+
+**2026-09-01 — VALUE ROUND 2 ARM B `b_qzphase` KILLED: −98.1 Elo [−140.7, −58.2] vs V0
+(`qtemp_0.0005`), 200 games / 100 opening pairs, matched_sims 100.** Judged by the round's
+pre-committed rule (arena vs V0 + vregret vs V0; CI excludes 0 on the losing side ⇒ KILL). Worse
+than arm A `a_qz50` (−49.0 [−88.6, −10.5]). Both value-blend arms lose to the plain champion value
+target; the remaining zero-history value arms stay PARKED per `6c43a33e4` and the value-round spec
+is preserved for a corrected-history rerun only if a future value diagnostic motivates it. Both arms
+and V0 trained on zero-history rows, so the comparison is internally consistent (OOD in absolute
+terms, per the history gate). Arm B's `vregret`/audit numbers are appended by the chain to
+`scratchpad/nnue_ladder_20260829/valueround2/` (audit running at the time of writing); they cannot
+reverse an arena KILL. Boundary block (C0/C1/C2 + anchors) fires on `valueround2.parked`.
+
+**2026-09-01 — DEDUP AUDIT (#497 merge gate): position-keyed dedup hits are 0.015% of positions
+and ALL of them are byte-identical inputs with identical repetition state — no dropped
+model-distinct row, no history-wrong value served, in the legacy corpus.** Instrument
+`scratchpad/legacy_history_calib/dedup_audit2.py` (bank `dedup_audit2_summary.json`), worker w03 of
+run03, 8,901 games, 1,717,460 banked rows, every trajectory position reconstructed (book resample +
+chained moves). Method note: a first version modelled hits as mid-game gaps and found none — hits
+occur ONLY as the LEADING dropped plies of a game (a book exit + temp-1.0 first move that an earlier
+game already produced): k-histogram {0: 8651, 1: 242, 2: 8}; 2.81% of games have k>0; all 250
+leading gaps bridged by a UNIQUE move path. Hits vs the first route of the same `dedup_key`:
+tensor differs **0/258**, frames differ 0, SF repetition signature differs 0, `is_repetition`
+differs 0 (same book line ⇒ literally the same stack). Key-design benchmark per 1000 positions:
+current 999.8 searches / 999.8 rows; position+SF-signature 999.8/999.8; tensor key 999.8/999.8;
+split 999.8/999.8; full-history key 1000.0/1000.0 — the cache's total saving is 0.015% of searches.
+VERDICT: the schema-2 dedup change is a CORRECTNESS guarantee (two routes with different frames or
+repetition state must bank a row / must not share values), not a throughput trade; the split design
+(SF value cache keyed on FEN5 + reversible-segment repetition counts; row dedup keyed on the encoded
+input tensor; `input_key` banked per row and re-verified by the deriver) is being implemented on
+#497 with fixture tests T1–T4 and mutants. Label-change check on collision pairs: no pairs existed
+to check (0 differing signatures). Also closes the legacy-repair "unbridged 0.11%" class: those rows
+were leading gaps my first bridger could not start from the book position; v2 bridges 250/250.
+
+**2026-09-01 — PREREG: Z-RESIDUAL SCREEN (value lane, CPU-only, no training).** Trigger: both value
+arms lost (A −49.0, B −98.1) and Josh's hypothesis that Z matters only (i) in the last ~8 plies
+where d9 misses a tactical/mating resolution and (ii) as a small tie-breaker when Q is near-equal,
+averaging out over 100M rows. Operator design (relayed 2026-09-01): do NOT judge by "Z beats Q as a
+standalone estimator"; test whether Z carries RESIDUAL information conditional on Q.
+- Data: `scratchpad/z_residual/sample.py` → `sample.jsonl`: run03 w03 shards 100–134, games with a
+  result only, rows with a repeat in the reversible segment EXCLUDED (so bare-FEN deep labels are
+  history-exact), stratified by plies-to-end bins [1–4] [5–8] [9–16] [17–32] [33–64] [65+] at ≤1000
+  rows/bin, ≤3 rows per game per bin. Banked per row: Z (STM POV), the full d9 root block (rank,
+  move, cp, nodes → Q and Q-margin), plies-to-end, termination type (syzygy / natural decisive /
+  natural draw), phase, piece count, clock, played move, selection temperature.
+- Truth: cold-TT single-thread `go depth 15` full-width (`stage2_sf_depthN.py --depth 15`, 10
+  slices, banked `sf_d15.slice*.jsonl`, ~6.6 s/position). d15 is a PROXY for truth; Q (d9) and
+  truth share the engine's biases, which if anything favours Q — stated as a caveat, not corrected.
+- Model space (fit on a TRAIN split of games, evaluate on HELD-OUT games; game-cluster bootstrap
+  CIs on every number): `truth ≈ Q + f(features)·(Z − Q)` with `f` a small, monotone/regularized
+  weight over features {plies-to-end, termination type, piece count/phase, |Q|, Q-margin, clock};
+  plus a constant-weight sweep w ∈ {0, 0.02, 0.05, 0.10, 0.20, 0.50}. Value space = expected score
+  from the deriver's cp-logistic (`cp_slope` 0.006, `cp_draw_width` 120) so Q, Z and truth are
+  commensurable; error = MAE and log-loss vs the d15 WDL.
+- Pre-committed outputs: Q-only error; Z-only error; best held-out residual blend + its
+  incremental gain with CI; gain by plies-to-end bin; gain on near-ties (|Q| < 30 cp, Q-margin <
+  20 cp); pairwise ordering accuracy on row pairs with |Q1−Q2| < 15 cp (does Q + w(Z−Q) pick the
+  d15-better row more often than Q alone); fraction of held-out rows whose fitted weight is
+  materially (> 0.02) non-zero; and, for openings/early middlegame, whether Z predicts the d15
+  residual (bootstrap signal) versus only the game outcome (policy-specific winnability).
+- Decision rule: a region (bin or feature cell) with held-out incremental gain > 0 and a 95% CI
+  excluding 0 ⇒ arm C′ = a small TARGETED retrospective correction with the fitted weights,
+  preregistered for the corrected-history corpus, judged by the value round's rules. No such region
+  ⇒ the value lane is CLOSED (V0 stays). A global-only gain at w ≤ 0.05 without a region ⇒ report;
+  it needs the 100M readout, not a 5.5M arm.
+- Not a data-affecting change; runs on idle CPU beside the depth screen and the boundary block.
+  The "complicated plan" Josh recalls is arm C `qzsegment` (clean-segment retrospective target with
+  instability weights, derived but never trained); this screen fits its weights from data instead.
+
+**2026-09-01 — BOUNDARY BLOCK, C0/C1 READ UNDER THE PRE-COMMITTED TABLE: C1 DIVERGES ⇒ the
+phase-2 trajectory instrument is VOID; #495 stays unmerged pending Josh's explicit call.**
+Controls ran alone on the GPU after `valueround2.parked` (chain `scratchpad/boundary_block_20260902/
+chain.log`; post worktree `2a2c8b324`, pre `75c4e0402`; 200 steps, seed 0, same shards/config):
+- C1 post_a vs post_b (SAME code, SAME seed, two runs): **DIFFERS** — e.g. `blocks.0.out_proj.weight`
+  262143/262144 elements, max|Δ| 1.09e-3; 1,275 more tensors (`controls/C1_post_a_vs_post_b.compare.log`).
+- C0 pre_a vs post_a: DIFFERS at the same magnitudes (max|Δ| 1.02e-3 on the same tensor) —
+  UNINTERPRETABLE given C1, by construction.
+- Reading (refined table, `c81b3e82d`): "C1 diverges ⇒ instrument void, merge only if Josh lowers
+  the bar to optimizer-boundary identity (phase 0b) explicitly." #495's standing evidence is
+  phase-0b 10/10 bitwise-identical optimizer steps on real batches; the 200-step trajectory
+  divergence it was blocked on is now shown to be the RIG's own run-to-run nondeterminism (kernel
+  nondeterminism / atomics under `aurora_cuda_graphs`/compile), not the foreach change. C2 (post_c
+  under arena 1) runs next as a floor read only. Decision owed by Josh: (a) accept phase-0b identity
+  as the merge bar for #495 (then apply the three owed P2s and merge), or (b) require a
+  deterministic-rig pin first (`torch.use_deterministic_algorithms` / no cuda graphs) — a separate,
+  throughput-costly change. Not decided here.
+
+**2026-09-01 — DEPTH SCREEN, d13 READ (prereg 2026-09-01 "free d1–d9 curve + d11/d13/d15 screen";
+d15 still running):** `depth_curve.py` on the 4,000-row T80/BT4 bank, game-cluster CIs:
+| depth | T80 top-1 agree | 95% CI | BT4 top-1 agree | top-1 moved vs d9 | s/pos |
+|---|---|---|---|---|---|
+| 9 | 0.5490 | [0.5311, 0.5660] | 0.5315 | — | ~0.19 |
+| 10 | 0.5815 | [0.5625, 0.6003] | 0.5363 | 36.1% | (staircase) |
+| 11 | 0.5877 | [0.5686, 0.6053] | 0.5467 | 41.1% | (staircase) |
+| 12 | 0.6008 | [0.5841, 0.6176] | 0.5425 | 42.9% | (staircase) |
+| 13 | **0.6040** | [0.5873, 0.6216] | **0.5475** | **43.7%** | **2.7** |
+BT4-vs-T80 bar 0.6805. d9→d13: +5.5 pp on T80 (CIs disjoint), +1.6 pp on BT4, at 14× the label
+cost; increments d10..d13 = +3.3/+0.6/+1.3/+0.3 pp — flattening but not flat; d15 (6.6 s/pos)
+decides saturation. ⚑ SCREEN ONLY: no d11+ training arm (operator: the Round-3 "d11+ DEAD" line
+is stale relative to the champion-τ result where d7 lost −65 at τ=0.0005; the two depth
+experiments are to be reported side-by-side with their recipe/τ/data differences when d15 lands,
+and the depth decision rule is not changed until then).
+
+**2026-09-01 AMENDMENT — Z-RESIDUAL SCREEN hypotheses and outputs (operator, supersedes the
+prereg's model-space paragraph where it differs).** Null is NOT "Z worse than Q in every bucket ⇒
+dead"; A/B are evidence against LARGE global blends only. Test: H1 tactical resolution near the end —
+bucket by plies-to-termination [1–4] [5–8] [9–16] [17–32] [33+] × termination class {checkmate,
+syzygy, other decisive, draw, capped} and ask whether (Z−Q) predicts (truth−Q); report the
+1–8-ply DECISIVE subset separately. H2 tiny residual — `V = Q + λ(Z−Q)`, λ ∈ {0, .01, .02, .03,
+.05, .075, .10, .15, .20} fit on TRAIN games, evaluated on HELD-OUT games; then a simple
+conditional λ over {plies-to-end, termination class, |Q|, piece count/phase, resolved-vs-capped};
+the question is whether the held-out optimum is consistently λ > 0. H3 Q-tie resolution — rows
+with small |Q| / small d9 move-value gap: does Z carry conditional information about deep truth
+after Q; NO manufactured sibling test (only state-level Z exists). H4 opening winnability — for
+early rows, hold out whole games AND whole book-line clusters (`opening_key` = the game's ply-0
+FEN); distinguish Z predicting deep-SF value beyond Q from Z predicting winnability under our
+Gumbel policy. Truth ruler: the T80 bank cannot be reused (T80 positions carry no Z); d15 on corpus
+rows, with depth agreement d9/d11/d13/d15 from the depth screen reported as the ruler's stability;
+rows with a repeat in the reversible segment get HISTORY-AWARE d15 (`position fen <root> moves`,
+`supplement_repeat_rows.py`, 300 rows) — the other rows are history-exact by the 0/1200
+calibration. Outputs: best global λ (held-out) + CI vs λ=0; best conditional λ; gain in the final
+1–8 plies; gain on decisive/checkmate endings; gain on Q-ambiguous rows; opening residual
+generalization; fraction of the corpus receiving non-zero weight. A narrow beneficial region is a
+SUCCESS (C becomes a small hindsight-gated residual), not a failure. Priority: below repair / #497
+/ the depth screen.
+
+**2026-09-01 — ANCHOR 1: champion `qtemp_0.0005_ext` vs PRODUCTION iter-595 (g1586,
+`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt`, step 171327): −636.4 Elo
+[−854.8, −540.0], score 0.025 ± 0.009, 200 games / 100 opening pairs, matched_sims 100, training
+shape, same search both sides** (`scratchpad/boundary_block_20260902/arena_champ_vs_iter595.*`,
+appended to `chess-ladderarena/runs/arena_results.jsonl`). Read per the prereg (`6c43a33e4` item 7):
+an OOD LOWER BOUND for the corpus lane — the champion plays here with REAL history (46.5% of its
+top-1s flip under history, +20.2 cp regret) while production plays in-distribution — not the 20M
+projection gate. Even so the gap is not a history artifact alone: FEN-only d9 regret on the 4k bank
+is 64.9 cp (champion) vs 36.7 cp (production). Scale check against the clean-target law (~+144
+Elo/doubling, `clean_target_scaling_near_linear_schedule_null`): 5.5M → 100M is 4.2 doublings ≈
++600 Elo — the corpus lane reaches production only if BOTH the history correction and the scaling
+deliver in full. This is the number the repaired-champion arm (primary causal arm) is measured
+against next: its arena vs production under normal history is yardstick (v) of the repair prereg.
+C2 (post_c under arena 1 vs post_a): DIFFERS — a floor read only, given C1. Anchor 2 (vs
+lc0-LAST2x) running.
+
+**2026-09-01 — ANCHOR 2 + BOUNDARY BLOCK DONE (22:15Z): champion `qtemp_0.0005_ext` vs
+lc0-LAST2x (`runs/lc0_control_2x_20260827/checkpoint.pt`) = −619.4 Elo [−900.0, −513.7], score
+0.0275 ± 0.011, 200 games / 100 pairs, matched_sims 100, training shape**
+(`scratchpad/boundary_block_20260902/arena_champ_vs_lc02x.*`). Same trainer, same architecture,
+same step budget (19,360), the other net trained on lc0 T80 rows (which carry history): the
+SF-rooted corpus at 5.5M rows is ~600 Elo behind BOTH external anchors. Read (prereg item 7): OOD
+lower bound for the champion, and the sharpest statement yet that the corpus lane's DATA — inputs
+(zero history) and/or targets/positions (SF-vs-SF at temp 1.0/0.3) — is what limits it, not the
+trainer (the lc0 positive control `#438 PASS` already showed the stack learns). Decomposition owed
+by the repaired-champion arm (history only) and then by position-source ablations if history does
+not close most of it. Block summary: C0 differs / C1 differs (rig nondeterministic; #495 instrument
+void, Josh's call) / C2 differs (floor); anchors −636.4 and −619.4. GPU idle after 22:15Z; nothing
+starts on it without a prereg (repaired-champion arm after the repair PR; fresh run06 5.5M after
+schema 2 + generation).
+
+**2026-09-01 — PR #498 (legacy repair) OPEN, head `1f2599487`, stacked on #497; PR #497 fix
+round landed at `35a3e774d`; and a NEW FACT: the generator's labels are CARRIED-TT, and cold-TT
+relabels flip 55% of top-1s on repeat rows.** #498 real slice (run03 w03 shards 100–102, 25,055
+rows, 134 games): repaired 97.146%, relabeled 2.854% (715), quarantined 0; second audit-only slice
+(w04+w05, 50,126 rows): quarantined 0, relabeled 2.32%; segment-scope flag 1.64% (= calibration's
+1.59%). Take-effect: deriver `history_slots_nonzero_max == 8` on 200/200; 200/200 rows bit-identical
+(175,8,8) vs a live board from the resampled book stack + played moves; 388 relabeled rows overlap
+the calibration bank and match its history-aware cold-TT labels per move 388/388. Mutants 5/5.
+Bench: reconstruct 1,583 rows/s/core (validation included), relabel 0.131 s/row (7.7 rows/s/core);
+inventory 41.07M rows over run02_snap+run03+run04+run05 (54.4M with the full run02); projection
+48 core-h (window scope) / 35 (segment) for 41M, 63 / 46 for 54.4M ≈ 3.5–4 h wall on 24 cores;
+usable corrected rows ≈ 41.0M / 54.3M. Deviations (14, in the PR body) — the material ones:
+games never span shards (writer rotates on game boundaries) so parallelism is per worker; dedup-
+served ply-0 games (2.2–2.7%) are bridged from the resampled start by a UNIQUE ≤3-ply path (the
+earlier "unbridged" class); `--relabel-scope window|segment`.
+⚑ THE TT FACT (deviation 6, then measured here): old-vs-new top-1 differs on 53.85% of relabeled
+rows, while cold history-blind vs cold history-aware differs on only 58/388 = 15%. The generator
+runs `ucinewgame` once per GAME and carries the TT across plies (`tt_carried_across_phases: true`
+on every row), so an original label is a d9 search on a TT warmed by every previous ply of the
+game; the relabel is cold. Determinism check (`tt_carry_check.py`, 24 games / 4,118 rows, ordered
+replay with one `ucinewgame` per game, bare FEN, MultiPV=all): original top-1 reproduced **96.4%**
+(100% for ply < 40, 95.3% for ply ≥ 40 — the generator's 2 s search cap is the likely residual),
+per-move cp reproduced 93.0%. ⇒ carried-TT labels are real, mostly reproducible, and materially
+different from cold ones on the repetition-prone rows the repair touches. A cold relabel would put
+2.85% of rows on a different effective search depth than their neighbours — exactly the fortress/
+shuffle rows the project targets. Decision instrument running: `tt_warmup_check.py` — for 240
+flagged rows, agreement of (i) cold, (ii) 1-ply warm-up, (iii) 3-ply warm-up with (iv) the FULL
+game-prefix replay + history-aware final search (= schema-2 semantics with the generator's carried
+TT). Rule: adopt the cheapest variant whose top-1 agreement with (iv) is ≥ the replay's own
+reproducibility floor (96%); otherwise #498 relabels by full-prefix replay (cost ≈ the original
+generation cost of the flagged games, ~400 core-h for 54M). This is a #498 merge gate.
+
+**2026-09-01 — OPERATOR DECISIONS (Josh via the reviewing agent): #495 merge bar = phase-0b
+optimizer-boundary identity (option a); #498 relabel strategy STOPPED — R1 input repair only, labels
+byte-for-byte; decomposition A/B/C; 20M/100M parked until B.**
+- #495: no deterministic-rig pin as a prerequisite (C1 established that 200-step trajectory
+  identity is not a valid discriminator on this stack, and a deterministic environment would not be
+  the environment we run). To merge: (1) the three owed P2s — scope the CUDA-retry/moment-mutation
+  behaviour exactly and pin it with the required failure test; add a production-observable
+  foreach-path counter/stamp proving the optimized path ran; explicitly supersede the 2026-07-12
+  "keep the loop" verdict with the phase-0b evidence; (2) rewrite the PR/ledger language that says
+  phases 1–2 gate deployment — the failed trajectory experiment stays as EVIDENCE of rig
+  nondeterminism, never as a pass; (3) require phase-0b 10/10 bitwise identity on real production
+  inventory/batches, the path take-effect proof, the owed tests/mutants, an independent review, CI
+  green — then merge. Throughput remains empirical: read #496's `opt_step_s`/pipeline keys on a real
+  corrected-history window; keep #495 only if the measured optimizer bottleneck improves; no
+  throughput claim from py-spy attaches to the merge.
+- #498: the 53.85% old→new top-1 change is carried-TT→cold-TT, not history; `--relabel-scope
+  segment` only applies the confounded relabel to fewer rows. SPLIT: **R1 (history/input repair)
+  proceeds corpus-wide** — reconstruct the true history, write schema 2 (with `input_key`/
+  `search_key` per the #497 fix round), prove bit-identical live tensors, preserve provenance,
+  quarantine only the genuinely unreconstructable, and KEEP EVERY ORIGINAL SF LABEL BYTE-FOR-BYTE.
+  This is the default repaired corpus. **R2 (label correction) is PARKED**: rows are TAGGED
+  (repeat in the encoder window; repeat in the current reversible segment; current-position
+  repetition state) but labels are not replaced. R2 is re-specced separately only if the warm-TT
+  paired audit below says the legacy label error is material; reproducing the counterfactual
+  carried-TT teacher may need the original search prefix replayed, not just the move stack.
+- Warm-TT paired audit (`scratchpad/legacy_history_calib/tt_paired_history_audit.py`, running):
+  two identical engines replay the exact original game prefix (bare FEN, one `ucinewgame` per game,
+  MultiPV=all, d9) so their TT matches the legacy generator right before the target; only the target
+  differs — A `position fen <row>` vs B `position fen <root> moves …`. Outputs: top-1 changes,
+  per-move cp changes, magnitudes, population weight (repeat rows = 1.59%). Pre-committed reading:
+  if the warm-TT paired top-1 change stays ≈12–15% of repeat rows (≈0.2% of the corpus), original
+  labels are preserved and R2 stays parked; only a materially larger effect re-opens R2.
+- Decomposition: **A** old champion (zero-history inputs + legacy carried-TT labels) → **B**
+  repaired exact-5.5M (correct-history inputs + the SAME legacy labels + same recipe/seed) →
+  **C** fresh run06 5.5M (correct-history inputs + history-aware carried-TT labels, positions differ).
+  B−A prices the history-input bug cleanly (this is the PRIMARY causal arm; relabelling at the same
+  time would destroy the interpretation); C−B is fresh generation + correct labels, strict
+  decomposition via the planned position-source ablation. Given anchors −636/−619, 20M/100M stay
+  PARKED until B is measured; if B does not recover a large chunk, go straight to the
+  position-source ablation rather than assuming volume saves the lane. d15 and the Z-residual
+  screen continue as preregistered.
+
+**2026-09-01 — SUPERSESSION: the 2026-07-12 verdict "do not replace the fallback arithmetic with
+foreach kernels" (ledger :12479) is SUPERSEDED for PR #495.** Basis: phase-0b — ten real
+production batches, matched op order, `_foreach_*` kernels vs the per-tensor loop, bitwise-identical
+optimizer state after each step (10/10, CUDA, torch 2.11.0+cu128, `scratchpad/optforeach_ab/`),
+re-run on the PR's final head as a merge condition. The 2026-07-12 concern (fused kernels change
+the arithmetic) is answered by measurement, not argument. What is NOT claimed: trajectory identity
+over 200 steps — C1 showed the rig itself diverges run-to-run at that horizon — and any throughput
+gain, which is read empirically from #496's `opt_step_s` on a corrected-history window after
+deployment. PR #495 is being finished by an implementer (P2-1 retry scope + failure test, P2-2
+`last_adamw_stats` on the Ray row, P2-3 this supersession cited in the PR, language rewrite,
+phase-0b re-run), then reviewed independently, then merged on green.
+
+**2026-09-01 — TT WARM-UP MEASUREMENT (`tt_warmup_check.py`, 240 repeat rows, bank
+`tt_warmup_check.json`): short warm-ups do NOT reproduce the carried TT; only a full game-prefix
+replay does, at 16.6 s/row (mean prefix 205 plies).** Top-1 agreement with the full-prefix replay
+(bare-FEN prefix, then history-aware target): cold 44.2%, 1-ply warm-up 46.7%, 3-ply 52.9%
+(per-move cp: 24.5 / 25.3 / 29.1%). The full replay agrees with the banked (carried, history-BLIND)
+top-1 on 83.3% — i.e. under the SAME warm TT, history moves the top-1 on ≈17% of repeat rows, of
+which ≈4% is replay nondeterminism (`tt_carry_check`: 96.4% reproducibility) ⇒ true history
+effect ≈13%, consistent with the cold calibration's 12.5%. Consequences: (1) R2 (label
+correction) stays PARKED per the operator decision — the cheap variants are wrong and the exact one
+costs ~400 core-h for ~0.2% of corpus top-1s; (2) the exact number comes from the running paired
+audit (two engines, identical prefix, target differs only); (3) any future R2 spec must replay the
+original search prefix, not just reconstruct the move stack.
+
+**2026-09-01 — PR #498 REVIEW ROUND 1 (head `1f2599487`) and ROUND-2 DISPATCH (R1-only).**
+Fable (reviewer ≠ author): APPROVE-WITH-CHANGES. Independent oracle on the 25,055-row smoke slice:
+25,055/25,055 window strings equal `history_for(live)`, 25,055/25,055 classes equal an independent
+repeat scan, 25,055/25,055 planes bit-identical; provenance in == out + 0; input shards untouched.
+Findings: F1 MAJOR gate power — `repeats_in` has no test where the repeat involves the segment
+ROOT; mutant `keys = []` survived 16/16 and would un-flag 108/715 real rows (now protects the
+tags); F2 the TT confound quantified on the 388 overlap rows: old (carried TT, blind) vs cold A
+(blind) **57.7%**, cold A vs cold B (pure history) **14.9%** — ≈80% TT regime / ≈20% history —
+resolved by the R1-only redesign; F3 stamp the book zip sha/size; F4 engine-sha gate must refuse
+an empty manifest sha; F5 run05's relative book path; F6 ep wording. Codex: P1 use the recorded
+shard inventory, not a glob (the paused runs have in-flight/abandoned last shards); P2 output
+names must end `.jsonl.zst`; P2 recompute and check `config_sha256`. Grok's pass pending.
+Round 2 dispatched to the same implementer with `scratchpad/legacy_repair_spec_v3.md`: rebase onto
+`35a3e774d`, `input_key`/`search_key` on repaired rows (deriver `input_key_verified == 200`),
+labels byte-for-byte (relabel default off, tested + mutated), tags `rep_in_window` /
+`rep_in_segment` / `cur_position_repeat_count` / `label_regime`, all findings above.
+
+**2026-09-01 — PREREG: SCHEMA-2 ACTIVATION (run06+) — the training-affecting data-pipeline change
+of PR #497 (Codex P1 on the fix round: "add the required ledger plan before activating schema 2").**
+- Hypothesis: the corpus lane's inputs (zero history, 46.5% top-1 flips under real history) and, on
+  repeat rows, its labels (history-blind) are a large part of the −636 / −619 Elo gap to production
+  and to lc0-LAST2x; history-correct inputs alone (B) recover a material fraction, and history-aware
+  carried-TT labels from fresh generation (C) add on top.
+- Change: generator banks the reversible window (`history_root_fen`, `history_uci`, `history_plies`,
+  `history_root_reason`), sends `position fen <root> moves …`, keys the SF value cache on the
+  reversible-segment repetition state and row dedup on the encoded input (`input_key`); deriver
+  reconstructs and verifies every row. No change to schemes, temperatures, value targets, trainer.
+- Deciding yardsticks (unchanged from "LEGACY REPAIR PREREG v2" and "OPERATOR DECISIONS"):
+  **B** (repaired exact-5.5M, labels preserved) vs champion — normal-history d9 regret on the 4k
+  T80 bank (game-cluster CI) and a 200-game matched_sims-100 arena; SUCCESS = Δregret < 0 with CI
+  excluding 0 AND arena ≥ 0 with CI excluding −30; KILL = regret CI excludes any improvement OR arena
+  CI excludes 0 on the losing side. **C** (fresh run06 5.5M, same recipe) vs B: same instruments;
+  positions differ, so C−B is read with the position-source ablation, not alone.
+- Activation gate (all before the first run06 shard is trained on): #497 merged with the final
+  search-key semantics (ordered reversible-segment keys, or counts if the empirical adjudication
+  proves them sufficient) and all round-1/round-2 findings closed; paused generators KILLED with the
+  orphan-pool sweep (`scratchpad/.generators_paused_20260901`); run06 launched from `main`'s merged
+  code with run03's config + `seed 20260902`; take-effect on the FIRST run06 shards: every row has
+  `schema: 2`, `history_uci`, `input_key`, `search_key`; `history_plies` histogram non-degenerate
+  with `history_root_reason` counts; deriver summary `history_slots_nonzero_max == 8`,
+  `input_key_verified == rows`; generator summary `searches`/`rows_banked`/`row_key_hits` present
+  and consistent (`sum(histogram) == rows`). Any failure ⇒ stop generation, no rows enter training.
+- Confounds: none data-side beyond the change itself; the legacy 54M is a separate control corpus.
+- Revert point: `data/salvage/pre_lc0_control_20260819` (production) is unaffected; the corpus lane
+  has no live training to revert.
+
+**2026-09-01 — #497 DELTA REVIEW (Fable, reviewer ≠ author): APPROVE-WITH-CHANGES; the
+"search_key loses repetition chronology" claim (Grok MAJOR, Codex P2, operator concern) is a FALSE
+POSITIVE BY MEASUREMENT.** Real Stockfish, fresh engine per route, through the generator's own
+`history_for`/`position_command`: on the label-sensitive fixture `REPETITION_ROOT`, A′ (prior
+occurrence at distance 4) and B′ (same repetition multiset, a 5-ply never-seen detour ⇒ different
+distances, byte-equal signature) both score the repetition move **0**; C′ (same FEN/clock, position
+seen once) scores **349**. Semantics: `do_move` sets `repetition = ±i` with the sign carrying "that
+occurrence was itself a repeat"; `is_draw(ply)` needs `repetition < ply`, so a single pre-root
+occurrence is never a draw; `has_game_cycle` for `i ≥ ply` needs `stp->repetition != 0`. Count ≥ 2
+inside the rule-50 window is the whole of SF's history dependence, and the signature walks exactly
+that window over the full stack (book moves included). Signature unchanged. Other delta findings:
+the row shape changed without a `ROW_SCHEMA` bump (→ 3, round 2); the two FIFO structures drift but
+can only re-bank or re-search (documented, no change). Round 2 dispatched with Codex's adopted-
+resume tallies fix, a READER for the derived-shard `zero_history` stamp (refuse mixing at ingest),
+`input_key_verified` in `enforce_take_effect`, and two test-power minors. #497 stays unmerged until
+round 2 + reviews + CI on the final head; #498 rebases onto that head.
+
+### 2026-09-01 23:05Z — #495 Grok clean; #498 round 2 landed (R1-only, 24b3998fe); reviews dispatched
+
+- **#495** (`perf/optimizer-foreach`): Grok focused pass on `aurora.py` = explicit clean (NONE) after a real read; Fable = APPROVE-WITH-CHANGES (success path byte-identical, recovery = loop by construction, stats reach the Ray row). Owed before merge: helper tests at lr=1.0 / `torch.equal` on the denominators (the "eps before the bias-correction divide" mutant survived 26/26 at lr=3e-4 — below the parameter ulp), commit of the 394-of-431 comment (`14b1584d1`), PR body "431" → "394 carried a gradient", real-gradient phase-0b, CI green on the final head. Bar unchanged: phase 0b 10/10 (operator option (a)).
+- **#498** round 2 head `24b3998fe` (rebased onto 35a3e774d): labels copied byte-for-byte (`out = dict(row)`, only window fields + `input_key`/`search_key` from `corpus.row_key`/`corpus.search_key` on the rebuilt live board + tags + `label_regime` + `repair` added); `--relabel {off,window,segment}` default `off`; `schema` from `corpus.ROW_SCHEMA`. Real slice run03 w03 100–102: 25,055 in / 25,055 out, 134 games, repaired 100%, quarantined 0; tags `rep_in_window` 0.718% · `rep_in_segment` 1.948% · `rep_in_banked_window` 2.854% · `cur_position_repeat_count≥2` 0.227%; book exact 131 / bridged_from_start 3; 1,088 rows/s/core. Take-effect: deriver `history_slots_nonzero_max 8`, `input_key_verified 200/200`, `row_schema_counts {"2": 200}`, 200/200 bit-identical vs live. Mutants 8/8 caught (N1 label bytes, N2 rep_in_segment, N3 root skip, N4 bare-FEN key, N5 glob vs inventory, M1/M3/M5). Lint 0; +23 tests / 0 regressions. ⚑ Finding for #497: on 35a3e774d `derive.read_corpus_record` → `load_resume_manifest` refuses schema-1 manifests, so the DERIVER cannot open legacy corpora in manifest mode — forwarded to the #497 round-2 implementer (refusal belongs to generator resume only; deriver dispatches per row schema).
+- Dispatched: Fable `reviewer` on #498 r2 (private detached copy — reviewers no longer mutate a PR worktree, after the #495 clobber), Grok two focused passes (script; tests), `@codex review`. #498 stays stacked/unmerged; one more rebase onto #497 r2 (ROW_SCHEMA 3) before its gates re-run.
+
+### 2026-09-01 23:20Z — OPERATOR GATES (Josh via the reviewing agent): final head = AFTER the live-base merge; arm-B pivot PINNED numerically; position-source ablation design
+
+**1. Final head means final after rebase.** #495 is 42 commits behind `ops/live-20260725` (upstream #496 touched `chess_anti_engine/train/`: 38ad48849, 928b97edf, fc49e939a, a9d42cc99), #497 is 27 behind. Neither current proof is final. Rule: finish the current-head work (still useful), then MERGE the live base into the PR branch (merge, not rebase; minimal conflict resolution, every hunk listed), then RERUN on the merge candidate — #495: synthetic phase-0b 10/10 + real-gradient phase-0b + denominator pin + take-effect stats test + scoped suites + lint + CI + independent delta review; #497: equivalence gate + key/chronology + resume/schema refusal + stamp-reader tests + CI. If upstream changed Aurora/trainer/optimizer semantics, the candidate is a NEW head (no ancestry argument). #498 rebases only onto #497's final head. Dispatched to both implementers 23:12Z.
+
+**2. #495 real-gradient phase-0b = optimizer-boundary only.** Capture gradients ONCE from a few real production batches together with the exact pre-step model+optimizer state; clone; feed the SAME captured grads to (A) the frozen per-parameter loop and (B) foreach; compare every parameter and optimizer-state tensor bitwise. No second forward/backward (CUDA nondeterminism must not enter the oracle). Synthetic phase-0b already covers ranges/steps/lazy state; this proves the production gradient distribution exposes no omitted case.
+
+**3. #497 schema.** `input_key`/`search_key` are part of the persisted row contract ⇒ ROW_SCHEMA 3; schema 1 stays readable; schema 2 (35a3e774d shape) is REFUSED unless a persistent accepted schema-2 corpus exists — the implementer documents that check (expected: none; only fixtures + #498 scratch slices). The schema-1 manifest/progress regression is fixed IN #497; the inventory reader becomes an importable canonical function that #498 consumes (no duplicated deriver inventory logic).
+
+**4. Warm-TT audit.** Hard oracle unchanged: arm A must reproduce the stored legacy d9 block EXACTLY (moves, cp, rank order) or the pair is `TT_REPLAY_MISMATCH`. Never relaxed to a tolerance to raise N. Report the VALID-pair fraction FIRST; a low fraction makes the A/B read untrustworthy and R2 stays parked.
+
+**5. ARM-B PIVOT — PINNED BEFORE IT TRAINS (replaces "recover a large chunk of the −600 Elo gap").**
+Primary causal read = **B vs A DIRECTLY** (repaired exact-5.5M champion recipe vs the old champion `qtemp_0.0005_ext`... at MATCHED steps — B is trained to the base champion's 9,680 steps first and compared to `qtemp_0.0005` (9,680), the ext leg only if the base read is positive), paired-opening arena, training shape, sims 100, **400 games** (no rolling reads; pentanomial 95% CI), banked. NOT a subtraction of two extreme-anchor Elos.
+| B vs A (Elo, 400 games) | Reading | Next |
+|---|---|---|
+| < +75, or CI includes a substantial loss (≤ −30) | history repair = correctness fix, NOT the main strength bottleneck | position-source ablation (§6); NO 20M |
+| +75 to +200 | meaningful recovery, clearly not most of the ~600-Elo deficit | position-source ablation BEFORE any scaling |
+| ≥ +200 AND CI lower bound > +100 | history explains a large part of the failure | re-anchor B vs production g1586 and vs lc0-LAST2x; then decide whether a 20M point is justified |
+Co-requirements (both must hold for any "history mattered" reading): (a) normal-history d9/T80 regret on the 4k bank (`stage5_history_probe.py`, game-cluster bootstrap) improves over A with the 95% CI excluding 0; (b) the +20.2 cp history-vs-FEN OOD penalty measured on A (ledger `3db96659a`) is gone on B — |Δregret(hist − FEN)| CI includes 0 or is ≤ +3 cp. If the arena says "recovered" but (a)/(b) do not, the arena read is NOT accepted as a history effect. B is not required to close the gap; the question is bug vs bottleneck.
+Prerequisites (GPU stays idle until all hold): #497 final head merged; #498 merged; full-corpus R1 repair of the exact `run02_snap_20260829` rows (manifest maps every champion row → repaired, quarantines listed); deriver on the repaired rows with `input_key_verified == rows` and `history_slots_nonzero_max 8`; the derived shard stamps read `history` (not `zero_history`).
+
+**6. Position-source ablation isolates POSITION SOURCE only.** Same corrected-history representation, same SF-d9 history-aware carried-TT teacher, same τ/target construction, same row count and recipe; ONLY the position source differs: SF-rooted trajectories vs an lc0/T80/self-play position stream (re-labelled by the same teacher). Comparing SF-rooted d9 directly to lc0 T80 targets changes positions AND teacher and is not this ablation.
+
+**7. d15 depth screen and Z-residual screen** continue under their preregs; neither delays #497/#498 or arm B.

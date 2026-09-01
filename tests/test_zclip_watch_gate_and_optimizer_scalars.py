@@ -394,7 +394,7 @@ def test_train_steps_accumulates_adaptive_bound_over_the_whole_iteration(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -402,8 +402,9 @@ def test_train_steps_accumulates_adaptive_bound_over_the_whole_iteration(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         steps["n"] += 1
         hard = steps["n"] == 4
         step_opt_stats["grad_norm"] = 8.0
@@ -412,7 +413,7 @@ def test_train_steps_accumulates_adaptive_bound_over_the_whole_iteration(
         step_opt_stats["adaptive_bound"] = 0.0 if hard else 1.0
         step_opt_stats["adaptive_clip"] = 1.0
         step_opt_stats["lr"] = 1e-3
-        step_sums.update(dict.fromkeys(_LOSS_METRIC_KEYS, 0.0))
+        step_sums.add_losses(dict.fromkeys(_LOSS_METRIC_KEYS, torch.zeros(())))
         return 1, 0.0
 
     monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
