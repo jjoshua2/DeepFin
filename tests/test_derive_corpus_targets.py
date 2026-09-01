@@ -202,13 +202,34 @@ def corpus_row(
     config_sha: str = CONFIG_SHA,
     played_move: str | None = _UNSET,
     worker_id: int = 0,
+    schema: int = corpus.ROW_SCHEMA,
+    history_moves: Sequence[str] = (),
 ) -> dict[str, Any]:
+    """One corpus row.
+
+    ``schema`` picks the row shape: the current ``corpus.ROW_SCHEMA`` (2, which
+    banks a move window) or ``1``, the legacy bare-FEN shape the 54M-row corpus
+    is in.  Both are derivable and this file has tests for each, so the fixture
+    has to be able to build either.
+
+    ``history_moves`` are played onto ``fen`` BEFORE the row is built, so the
+    row's position is the one after them and its window is the real one the
+    generator would have banked (``corpus.history_for``, not a re-spelling of
+    it).  Empty means the position is its own root -- which is what a fixture
+    built from a bare FEN honestly has.
+    """
     board = chess.Board(fen)
+    for uci in history_moves:
+        board.push(chess.Move.from_uci(uci))
+    fen = board.fen()
     played = (
         next(iter(board.legal_moves)).uci() if played_move is _UNSET else played_move
     )
+    history: dict[str, Any] = (
+        corpus.history_for(board).as_row_fields() if int(schema) >= 2 else {}
+    )
     return {
-        "schema": corpus.ROW_SCHEMA,
+        "schema": int(schema),
         "run": {
             "run_id": "test_corpus",
             "config_sha256": config_sha,
@@ -220,6 +241,7 @@ def corpus_row(
         "game_id": game_id,
         "ply": ply,
         "stm": "w" if board.turn == chess.WHITE else "b",
+        **history,
         "piece_count": int(chess.popcount(board.occupied)),
         "game_phase": corpus.PHASE_MIDDLEGAME,
         "played_move": played,
@@ -249,6 +271,7 @@ def write_corpus(
     name: str = "corpus",
     drop_shard_from_summary: bool = False,
     complete: bool = True,
+    row_schema: int = corpus.ROW_SCHEMA,
 ) -> Path:
     """A corpus directory, written by the GENERATOR'S OWN writer.
 
@@ -280,12 +303,14 @@ def write_corpus(
     if open_game is not None:
         writer.end_game(open_game)
     writer.close()
-    write_manifest(out, staircase=staircase, config_sha=config_sha)
+    write_manifest(
+        out, staircase=staircase, config_sha=config_sha, row_schema=row_schema,
+    )
     if not complete:
         return out
     summary = {
         "schema": corpus.SUMMARY_SCHEMA,
-        "row_schema": corpus.ROW_SCHEMA,
+        "row_schema": int(row_schema),
         "run_id": "test_corpus",
         "config_sha256": config_sha,
         "config_requested": dict(CONFIG_REQUESTED),
@@ -305,6 +330,7 @@ def write_manifest(
     staircase: list[dict[str, Any]] | None = None,
     config_sha: str = CONFIG_SHA,
     config_requested: dict[str, Any] | None = None,
+    row_schema: int = corpus.ROW_SCHEMA,
 ) -> dict[str, Any]:
     """The launch record, in the shape ``write_launch_manifest`` writes it."""
     requested = (
@@ -312,7 +338,7 @@ def write_manifest(
     )
     manifest = {
         "schema": corpus.MANIFEST_SCHEMA,
-        "row_schema": corpus.ROW_SCHEMA,
+        "row_schema": int(row_schema),
         "complete": False,
         "config_requested": requested,
         "config_sha256": config_sha,
@@ -827,16 +853,52 @@ def test_the_manifests_overrides_pass_the_rigs_own_guards(tmp_path: Path) -> Non
         assert_pid_cannot_reassert_sf_wdl(sf_wdl_frac=0.69, sf_wdl_frac_floor=0.0)
 
 
-def test_history_is_zero_and_the_summary_measures_it(tmp_path: Path) -> None:
+#: Eight REVERSIBLE plies from ``FEN_W`` (a knight and a king shuffling), so a
+#: row banked at the end of them has all 7 previous positions and the encoder
+#: fills all 8 frames.  Reversible on purpose: the window then reaches past the
+#: 7 frames, which is what a schema-2 row is meant to carry.
+HISTORY_MOVES = ["f1e3", "h8g8", "e3f1", "g8h8", "f1e3", "h8g8", "e3f1", "g8h8"]
+
+
+def history_row(**overrides: Any) -> dict[str, Any]:
+    """A schema-2 row whose position sits 8 reversible plies into a game."""
+    board = chess.Board(FEN_W)
+    for uci in HISTORY_MOVES:
+        board.push_uci(uci)
+    leaf = board.fen()
+    fields: dict[str, Any] = {
+        "fen": FEN_W,
+        "history_moves": HISTORY_MOVES,
+        # ⚑ SPELLED OUT, not taken from ``corpus.ROW_SCHEMA``: these tests are
+        # about schema 2 specifically, and reading the generator's current
+        # value would make them pass vacuously the day it moves again.
+        "schema": derive.ROW_SCHEMA_HISTORY,
+        "phases": [full_width_phase(leaf, {9: ramp(leaf, "f1e3")})],
+        "result": 1.0,
+        "result_pgn": "1-0",
+        "ply": len(HISTORY_MOVES),
+    }
+    fields.update(overrides)
+    return corpus_row(**fields)
+
+
+def test_a_schema_1_row_has_zero_history_and_the_summary_measures_it(
+    tmp_path: Path,
+) -> None:
+    """The LEGACY shape, still derivable, still honestly reported."""
     row = corpus_row(
         fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
-        result=1.0, result_pgn="1-0",
+        result=1.0, result_pgn="1-0", schema=1,
     )
-    corpus_dir = write_corpus(tmp_path, [row])
+    corpus_dir = write_corpus(tmp_path, [row], row_schema=1)
     summary = run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
 
     assert summary["input"]["zero_history"] is True
+    assert summary["input"]["encoder"] == derive.ENCODER_NAME
     assert summary["realized"]["history_slots_nonzero_max"] == 1
+    assert summary["realized"]["history_slots_filled_histogram"] == {"1": 1}
+    assert summary["realized"]["row_schema_counts"] == {"1": 1}
+    assert summary["realized"]["history_root_reason_counts"] == {}
     assert summary["realized"]["repetition_planes_nonzero_rows"] == 0
 
     samples, _ = read_rows(tmp_path / "out")
@@ -844,6 +906,68 @@ def test_history_is_zero_and_the_summary_measures_it(tmp_path: Path) -> None:
     # Slot 0 carries the position; slots 1..7 (planes 13..103) are empty.
     assert bool(np.any(planes[0:12]))
     assert not bool(np.any(planes[13:104]))
+
+
+def test_a_schema_2_row_carries_all_eight_frames(tmp_path: Path) -> None:
+    """⚑ The take-effect proof for the whole schema, read off the PLANES.
+
+    A schema-2 row whose window is 8 plies long must encode 8 filled frames --
+    not "a window was banked", but "the window reached the encoder".
+    """
+    corpus_dir = write_corpus(
+        tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+    summary = run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+    assert summary["input"]["zero_history"] is False
+    assert summary["realized"]["history_slots_nonzero_max"] == 8
+    assert summary["realized"]["history_slots_filled_histogram"] == {"8": 1}
+    assert summary["realized"]["row_schema_counts"] == {"2": 1}
+    assert summary["realized"]["history_root_reason_counts"] == {"game_start": 1}
+    # The shuffle repeats, so the repetition planes fire too -- the half of the
+    # encoding a zero-history row can never reach at all.
+    assert summary["realized"]["repetition_planes_nonzero_rows"] == 1
+
+    samples, _ = read_rows(tmp_path / "out")
+    planes = np.asarray(samples[0].x)
+    for slot in range(8):
+        assert bool(np.any(planes[slot * 13 : slot * 13 + 12])), slot
+
+
+def test_a_mixed_corpus_reports_both_schemas(tmp_path: Path) -> None:
+    """⚑ The 54M legacy rows and the new ones can sit in one derivation.
+
+    A gate pinned to the newest schema would refuse the legacy corpus outright;
+    the histogram is what keeps "mixed" visible instead of averaged away.
+    """
+    legacy = corpus_row(
+        fen=FEN_B, phases=[full_width_phase(FEN_B, {9: ramp(FEN_B, "h8g8")})],
+        result=-1.0, result_pgn="1-0", schema=1, ply=1,
+    )
+    corpus_dir = write_corpus(
+        tmp_path, [history_row(), legacy], row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+    summary = run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
+
+    assert summary["realized"]["row_schema_counts"] == {"1": 1, "2": 1}
+    assert summary["realized"]["history_slots_filled_histogram"] == {"1": 1, "8": 1}
+    assert summary["realized"]["history_root_reason_counts"] == {"game_start": 1}
+    assert summary["input"]["zero_history"] is False
+
+
+def test_a_row_whose_window_misses_its_own_fen_stops_the_run(
+    tmp_path: Path,
+) -> None:
+    """⚑ NEVER A SILENT FALLBACK.  A window that does not reproduce the row's
+    position would otherwise emit zero-history planes under a summary claiming
+    otherwise -- accepted, ignored, invisible."""
+    row = history_row()
+    row["history_uci"] = row["history_uci"][:-1]
+    corpus_dir = write_corpus(
+        tmp_path, [row], row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="not the row's own"):
+        run_derive(corpus_dir, tmp_path / "out", "uniform-d9")
 
 
 def test_shards_carry_the_scheme_and_schema_stamps(tmp_path: Path) -> None:

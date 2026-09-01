@@ -328,18 +328,32 @@ with no has-flag, so there is no way to emit such a row without inventing an
 outcome for it.  The count is in the summary because dropping them shifts the
 corpus's position mix and a consumer has to be able to see by how much.
 
-⚑⚑ ZERO HISTORY, AND IT IS MEASURED RATHER THAN ASSERTED
---------------------------------------------------------
-A corpus row is a FEN.  It carries ``game_id`` and ``ply``, but rows are banked
-only above ``MIN_BANKED_PIECES`` and only on a dedup MISS, so the plies of one
-game are not contiguous and the move stack cannot be rebuilt from the corpus
-alone.  ``encode_position`` on a ``chess.Board(fen)`` therefore fills history
-slot 0 and leaves slots 1..7 -- planes 13..103 -- ZERO, and every repetition
-plane with them.  That is the same blindness the frozen rulers score under, and
-it is a real difference from both production selfplay rows and the lc0 corpus,
-whose 8 frames are all real.  The summary stamps
-``history_slots_nonzero_max``, measured off the planes this run actually wrote,
-so the claim is a reading and not a comment.
+⚑⚑ HISTORY: SCHEMA 1 HAS NONE, SCHEMA 2 HAS ALL OF IT, AND WHICH ONE THIS RUN
+DERIVED IS MEASURED RATHER THAN ASSERTED
+-----------------------------------------------------------------------------
+**Schema 1** -- the 54M-row legacy corpus.  A row is a FEN.  It carries
+``game_id`` and ``ply``, but rows are banked only above ``MIN_BANKED_PIECES``
+and only on a dedup MISS, so the plies of one game are not contiguous and the
+move stack cannot be rebuilt from the corpus alone.  The encoder on a
+``chess.Board(fen)`` therefore fills history slot 0 and leaves slots 1..7 --
+planes 13..103 -- ZERO, and every repetition plane with them.  That is a real
+difference from both production selfplay rows and the lc0 corpus, whose 8
+frames are all real: measured 2026-09-01, the champion flips **46.5%** of its
+top-1 moves and loses **+20.2 cp** of regret between the two input
+distributions.
+
+**Schema 2** banks ``history_root_fen`` + ``history_uci`` -- the window from
+the last irreversible move (or the game start) to the row's position.
+:func:`board_from_row` replays it, so the board handed to the encoder has the
+same ``_stack`` live play hands it and all 8 frames, both castling states, the
+ep square and every repetition plane come out as they do in play.  ⚑ The replay
+must reproduce the row's own ``fen`` or the run STOPS: a silent fall back to the
+bare FEN would emit zero-history planes under a summary that claims otherwise.
+
+Which one a run derived is a READING, never a setting: ``row_schema_counts``
+off the rows, ``history_slots_filled_histogram`` and ``history_slots_nonzero_max``
+off the planes this run actually wrote, ``history_root_reason_counts`` off the
+windows.  A mixed corpus reports both, per row.
 
 ⚑⚑ TWO CORPUS RECORDS, AND A PARTIAL ONE IS NEVER SILENT
 ---------------------------------------------------------
@@ -469,6 +483,27 @@ INPUT_EXTRA_FEATURES = "v2_threats"
 #: stamped anyway, because it is replay IDENTITY: the same encoding name with a
 #: different flag is a different plane set and the buffer refuses to mix them.
 HISTORY_REP_FIX = True
+
+#: Row schemas this tool can decode.  ⚑ NOT ``== corpus.ROW_SCHEMA``: schema 1
+#: is the 54M-row legacy corpus (a bare FEN per row, zero history) and schema 2
+#: banks the move window.  Both are derivable and they encode DIFFERENTLY, so
+#: the set is explicit and the summary reports the mix
+#: (``row_schema_counts``) rather than a reader having to assume it.
+SUPPORTED_ROW_SCHEMAS: frozenset[int] = frozenset({1, 2})
+
+#: The bare-FEN schema.  A row without a ``schema`` key predates the field.
+ROW_SCHEMA_BARE_FEN = 1
+
+#: The first schema that banks ``history_root_fen`` / ``history_uci``.
+ROW_SCHEMA_HISTORY = 2
+
+#: WHICH encoder wrote the planes, stamped rather than implied.  Two callable
+#: paths produce this plane set -- ``encode_position`` (python repetition scan,
+#: C plane packing) and ``encode_cboard(CBoard.from_board(...))`` (the call live
+#: search makes on its root) -- and the corpus is only interchangeable with
+#: production rows because a test pins them bit-identical.  See
+#: ``Deriver._encode``.
+ENCODER_NAME = "encode_position"
 
 #: 8192 rows x 175 planes x 64 squares of float16 is ~184 MB on disk, the same
 #: rotation ``lc0_data_to_rows`` uses for the same reason.
@@ -2188,6 +2223,50 @@ def game_value_targets(
     return targets, readings
 
 
+def board_from_row(row: Mapping[str, Any]) -> chess.Board:
+    """The row's position, WITH the move stack the encoder reads history from.
+
+    Schema 1 has none to give: the row is a bare FEN, ``chess.Board(fen)`` has
+    an empty ``_stack``, and the encoder fills history slot 0 and leaves slots
+    1..7 and every repetition plane zero.  That is the legacy corpus and it is
+    still derivable; the summary reports the mix.
+
+    Schema 2 replays ``history_uci`` from ``history_root_fen``, which gives the
+    board exactly the ``_stack`` live play would have handed the encoder -- the
+    7 previous positions AND the reversible run behind them, which is what
+    python-chess's repetition scan and the C ``hash_stack`` both walk.
+
+    ⚑ THE REPLAY IS VERIFIED, NEVER TRUSTED.  A window that does not reproduce
+    the row's own ``fen`` is a corpus fault, and the only safe response is to
+    stop: a silent fall back to the bare FEN would emit a row whose planes are
+    the zero-history distribution while every stamp in the run says otherwise --
+    accepted, ignored, and invisible.  Both sides of the comparison are
+    python-chess's DEFAULT ``fen()`` (ep printed only when a capture is legal),
+    so the check is like-for-like even though the root itself is banked with
+    ``en_passant="fen"``.
+    """
+    fen = str(row["fen"])
+    if int(row.get("schema", ROW_SCHEMA_BARE_FEN)) < ROW_SCHEMA_HISTORY:
+        return chess.Board(fen)
+    root_fen = str(row["history_root_fen"])
+    try:
+        board = chess.Board(root_fen)
+        for uci in row["history_uci"]:
+            board.push(chess.Move.from_uci(str(uci)))
+    except (ValueError, AssertionError) as exc:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: the banked window does not replay from "
+            f"{root_fen!r}: {exc}",
+        ) from exc
+    if board.fen() != fen:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: replaying {len(list(row['history_uci']))} "
+            f"banked moves from {root_fen!r} gives {board.fen()!r}, not the "
+            f"row's own {fen!r}",
+        )
+    return board
+
+
 def history_slots_filled(planes: np.ndarray) -> int:
     """How many of the 8 history slots carry a piece.  MEASURED, per row.
 
@@ -2314,6 +2393,15 @@ class DeriveStats:
     #: ``{"0": n}`` whether or not the scheme could ever have looked deeper).
     phases_per_row: dict[int, int] = field(default_factory=dict)
     history_slots_nonzero_max: int = 0
+    #: ``{slots filled: rows}``, off the planes.  The max above says the best
+    #: any row managed; this says what the CORPUS is, which is the only way a
+    #: mixed schema-1/schema-2 derivation is visible instead of averaged away.
+    history_slots_filled_histogram: dict[int, int] = field(default_factory=dict)
+    #: ``{history_root_reason: rows}`` off the ROWS.  Empty on a schema-1
+    #: corpus, which is itself the reading.
+    history_root_reason_counts: dict[str, int] = field(default_factory=dict)
+    #: ``{row schema: rows}``, so "mixed" is a number rather than a guess.
+    row_schema_counts: dict[int, int] = field(default_factory=dict)
     repetition_planes_nonzero_rows: int = 0
     temp_recovered_n: int = 0
     temp_recovered_min: float = math.inf
@@ -2567,6 +2655,15 @@ class DeriveStats:
                 str(k): v for k, v in sorted(self.phases_per_row.items())
             },
             "history_slots_nonzero_max": self.history_slots_nonzero_max,
+            "history_slots_filled_histogram": {
+                str(k): v for k, v in sorted(self.history_slots_filled_histogram.items())
+            },
+            "history_root_reason_counts": dict(
+                sorted(self.history_root_reason_counts.items()),
+            ),
+            "row_schema_counts": {
+                str(k): v for k, v in sorted(self.row_schema_counts.items())
+            },
             "repetition_planes_nonzero_rows": self.repetition_planes_nonzero_rows,
             "temp_recovered_from_emitted_policy": self._reading(
                 self.temp_recovered_n,
@@ -2818,6 +2915,7 @@ class TargetDeriver:
 
         planes = self._encode(board)
         self._note_shapes(planes, policy, probs, values)
+        self._note_row_history(row)
 
         value_values = self._value_view(bank, values)
         q_wdl = self.wdl_of(
@@ -3039,7 +3137,7 @@ class TargetDeriver:
         disagreement means the fields a consumer would filter on describe a
         different position from the one it would encode.
         """
-        board = chess.Board(str(row["fen"]))
+        board = board_from_row(row)
         stm = "w" if board.turn == chess.WHITE else "b"
         if stm != str(row["stm"]):
             raise CorpusIntegrityError(
@@ -3081,6 +3179,23 @@ class TargetDeriver:
         self.stats.support_checks += 1
 
     def _encode(self, board: chess.Board) -> np.ndarray:
+        """The row's planes.
+
+        ⚑ ``encode_position`` and NOT the C ``encode_cboard`` live-play path --
+        and that is a MEASURED equality rather than an assumption.
+        ``tests/test_corpus_history_banking.py`` asserts the complete
+        (175, 8, 8) tensor is bit-identical between this call and
+        ``encode_cboard(CBoard.from_board(board), ...)`` -- the exact call live
+        search makes on its root -- over every case the schema has to survive
+        (short histories, castling, ep including the pseudo-legal-only kind,
+        irreversible moves inside the window, 2- and 3-fold repetitions
+        including one whose earlier occurrence is more than 7 plies back).  The
+        two paths differ in WHERE repetition is computed (python
+        ``_check_repetitions`` here, the C per-slot flags there), which is
+        exactly why the equality is pinned by a test instead of argued from the
+        source.  ``ENCODER_NAME`` is stamped in the summary so a run says which
+        one it used.
+        """
         return np.asarray(
             encode_position(
                 board,
@@ -3090,6 +3205,18 @@ class TargetDeriver:
             ),
             dtype=np.float32,
         )
+
+    def _note_row_history(self, row: Mapping[str, Any]) -> None:
+        """The row's SCHEMA and window reason, counted once per emitted row."""
+        stats = self.stats
+        schema = int(row.get("schema", ROW_SCHEMA_BARE_FEN))
+        stats.row_schema_counts[schema] = stats.row_schema_counts.get(schema, 0) + 1
+        reason = row.get("history_root_reason")
+        if reason is not None:
+            key = str(reason)
+            stats.history_root_reason_counts[key] = (
+                stats.history_root_reason_counts.get(key, 0) + 1
+            )
 
     def _note_shapes(
         self,
@@ -3124,8 +3251,10 @@ class TargetDeriver:
             else min(stats.policy_support_min, support)
         )
         stats.policy_support_max = max(stats.policy_support_max, support)
-        stats.history_slots_nonzero_max = max(
-            stats.history_slots_nonzero_max, history_slots_filled(planes),
+        filled = history_slots_filled(planes)
+        stats.history_slots_nonzero_max = max(stats.history_slots_nonzero_max, filled)
+        stats.history_slots_filled_histogram[filled] = (
+            stats.history_slots_filled_histogram.get(filled, 0) + 1
         )
         rep_planes = planes[
             [slot * _PLANES_PER_SLOT + _PIECE_PLANES_PER_SLOT
@@ -3147,7 +3276,7 @@ class TargetDeriver:
 # -- driving ------------------------------------------------------------------
 
 
-def _row_label(row: dict[str, Any]) -> str:
+def _row_label(row: Mapping[str, Any]) -> str:
     return f"game {row.get('game_id')} ply {row.get('ply')}"
 
 
@@ -3165,14 +3294,22 @@ def read_corpus_summary(corpus_dir: Path) -> dict[str, Any]:
 
 
 def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
-    """Both records stamp ``row_schema``, and both are checked the same way."""
+    """Both records stamp ``row_schema``, and both are checked the same way.
+
+    ⚑ Against ``SUPPORTED_ROW_SCHEMAS``, not against this build's
+    ``corpus.ROW_SCHEMA``.  The staircase block keys -- which are all this tool
+    reads out of a row besides the position -- are unchanged between 1 and 2;
+    what schema 2 ADDS is the move window, and :func:`board_from_row` is what
+    branches on it.  Pinning to the newest schema instead would make a
+    generator-side bump un-derive 54M banked rows for no reason.
+    """
     row_schema = int(facts.get("row_schema", -1))
-    if row_schema != corpus.ROW_SCHEMA:
+    if row_schema not in SUPPORTED_ROW_SCHEMAS:
         raise CorpusIntegrityError(
-            f"corpus row schema {row_schema} != this build's "
-            f"{corpus.ROW_SCHEMA} (read from {source.name}); the block keys "
-            "this tool reads are not promised to mean the same thing across a "
-            "schema bump",
+            f"corpus row schema {row_schema} is not one of "
+            f"{sorted(SUPPORTED_ROW_SCHEMAS)} (read from {source.name}); the "
+            "block keys this tool reads are not promised to mean the same "
+            "thing across a schema bump",
         )
 
 
@@ -4208,9 +4345,10 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
     by hand.
     """
     schema = int(row.get("schema", -1))
-    if schema != corpus.ROW_SCHEMA:
+    if schema not in SUPPORTED_ROW_SCHEMAS:
         raise CorpusIntegrityError(
-            f"{_row_label(row)}: row schema {schema} != {corpus.ROW_SCHEMA}",
+            f"{_row_label(row)}: row schema {schema} is not one of "
+            f"{sorted(SUPPORTED_ROW_SCHEMAS)}",
         )
     run = row.get("run")
     if not isinstance(run, dict) or corpus.KEY_TT_CARRIED not in run:
@@ -4455,11 +4593,19 @@ def build_summary(
             "input_extra_features": INPUT_EXTRA_FEATURES,
             "history_rep_fix": HISTORY_REP_FIX,
             "history_frames_total": _HISTORY_SLOTS,
+            "encoder": ENCODER_NAME,
+            # ⚑ A READING OFF THE PLANES, not a property of the schema. A
+            # schema-2 corpus whose windows were dropped somewhere between the
+            # generator and here reads `true` and says so.
             "zero_history": stats.history_slots_nonzero_max <= 1,
             "why_zero_history": (
-                "a corpus row is a FEN; banked plies are non-contiguous "
-                "(dedup misses above MIN_BANKED_PIECES only) so the move stack "
-                "cannot be rebuilt, and encode_position fills slot 0 only"
+                "row schema 1: a row is a bare FEN, chess.Board(fen) has an "
+                "empty move stack, and the encoder fills history slot 0 only "
+                "-- slots 1..7 (planes 13..103) and every repetition plane stay "
+                "ZERO. Row schema 2 banks history_root_fen + history_uci and "
+                "board_from_row replays them, so the 8 frames are the frames "
+                "live play encodes; see row_schema_counts and "
+                "history_slots_filled_histogram for which this run derived"
             ),
         },
         "policy": {
@@ -4809,7 +4955,9 @@ def format_summary(out: dict[str, Any]) -> str:
         _value_scheme_line(out),
         f"x planes={realized['x_planes']} policy width={realized['policy_width']} "
         f"support {realized['policy_support_min']}..{realized['policy_support_max']} "
-        f"history slots filled<={realized['history_slots_nonzero_max']}",
+        f"history slots filled<={realized['history_slots_nonzero_max']} "
+        f"{realized.get('history_slots_filled_histogram', {})} "
+        f"row schemas={realized.get('row_schema_counts', {})}",
         f"shards={len(out['shards'])}",
     ]
     return "\n".join(lines)
@@ -5042,7 +5190,8 @@ _MAX_FIELDS: tuple[str, ...] = (
 #: ``{bucket: count}`` histograms, merged key by key.
 _DICT_SUM_FIELDS: tuple[str, ...] = (
     "depth_histogram", "values_by_phase", "phases_per_row",
-    "value_depth_histogram",
+    "value_depth_histogram", "history_slots_filled_histogram",
+    "history_root_reason_counts", "row_schema_counts",
 )
 
 #: Assigned (not accumulated) per row, so every row writes the same value and a
