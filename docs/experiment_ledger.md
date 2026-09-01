@@ -72006,3 +72006,22 @@ test minus the confound); C2 post×2 one-under-arena (confound repro).
 Reading table pre-committed in the attribution report. C1 diverging voids
 the phase-2 instrument (then re-run with --no-compile to separate
 autotune from SDPA/graph-capture). #495 stays unmerged/undeployed.
+
+
+**2026-09-01 — VALUEROUND2 ARM A (flat 0.5·Q + 0.5·Z) — KILLED by the
+pre-committed rule; recorded from the banked legs (arena 15:07, vregret
+14:50, audit 15:15, puzzles 15:17 local).** Lane uniform-d9, τ0.0005,
+9,680 steps, seed 0, V0-analog `qtemp_0.0005`. Deciders: `value_regret.py`
+OVERALL **74.1 cp vs V0 65.0 cp** (worse by 9.1; endgame 89.4 vs 72.7,
+middlegame 81.1 vs 74.1, opening 55.0 vs 49.9; >100cp tail 21.1% vs 18.5%);
+arena vs V0 **−49.0 Elo [−88.6, −10.5]**, 200 games, pentanomial WW 5 /
+WD 19 / DD+WL 37 / LD 21 / LL 18 (`valueround2/arena_a_qz50_vs_v0.games.jsonl`).
+Both halves of the rule fail (regret not improved AND CI excludes 0
+downward). Policy guardrail: raw audit 97.3/65.2 vs V0 96.4/65.3 and
+puzzles policy 6.60% vs 6.67% — unchanged, so the shared trunk did not move;
+the loss is in the value head alone (value puzzles 41.8% vs 43.7%).
+Reading: raw Z from Gumbel-sampled games (temp 1.0 → 0.3) is noise the head
+cannot average out at a flat 50% weight — the direction the C arm's
+regret-gated λ-return is built to fix. B / C / ablations / f_vmix continue
+per the chain; no rule change. Per-position dump banked
+(`vregret_a_qz50.perpos.jsonl`).
