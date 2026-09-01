@@ -72491,3 +72491,18 @@ deliver in full. This is the number the repaired-champion arm (primary causal ar
 against next: its arena vs production under normal history is yardstick (v) of the repair prereg.
 C2 (post_c under arena 1 vs post_a): DIFFERS — a floor read only, given C1. Anchor 2 (vs
 lc0-LAST2x) running.
+
+**2026-09-01 — ANCHOR 2 + BOUNDARY BLOCK DONE (22:15Z): champion `qtemp_0.0005_ext` vs
+lc0-LAST2x (`runs/lc0_control_2x_20260827/checkpoint.pt`) = −619.4 Elo [−900.0, −513.7], score
+0.0275 ± 0.011, 200 games / 100 pairs, matched_sims 100, training shape**
+(`scratchpad/boundary_block_20260902/arena_champ_vs_lc02x.*`). Same trainer, same architecture,
+same step budget (19,360), the other net trained on lc0 T80 rows (which carry history): the
+SF-rooted corpus at 5.5M rows is ~600 Elo behind BOTH external anchors. Read (prereg item 7): OOD
+lower bound for the champion, and the sharpest statement yet that the corpus lane's DATA — inputs
+(zero history) and/or targets/positions (SF-vs-SF at temp 1.0/0.3) — is what limits it, not the
+trainer (the lc0 positive control `#438 PASS` already showed the stack learns). Decomposition owed
+by the repaired-champion arm (history only) and then by position-source ablations if history does
+not close most of it. Block summary: C0 differs / C1 differs (rig nondeterministic; #495 instrument
+void, Josh's call) / C2 differs (floor); anchors −636.4 and −619.4. GPU idle after 22:15Z; nothing
+starts on it without a prereg (repaired-champion arm after the repair PR; fresh run06 5.5M after
+schema 2 + generation).
