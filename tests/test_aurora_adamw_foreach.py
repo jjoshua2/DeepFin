@@ -1024,3 +1024,66 @@ def test_train_steps_sums_recoveries_over_the_window_not_the_last_step(
   # A second window starts from the counter where the first left it.
     metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
     assert metrics.adamw_foreach_recoveries == 0.0
+
+
+def test_the_base_loop_had_the_same_retry_residue_param_major(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P1 on the retry: the residue a mid-step CUDA error leaves for the
+    trainer's retry is not new in this PR -- the frozen per-parameter loop at
+    the PR base has the same CLASS of hazard, param-major instead of op-major.
+
+    Inject a retryable error into the k-th tensor's `addcdiv_`. The base loop
+    commits `step` BEFORE the tensor's ops, so it leaves: tensors < k fully
+    stepped and committed; tensor k decayed, moments updated, `step` committed,
+    parameter NOT updated; tensors > k untouched. The trainer's retry then
+    double-steps everything at or below k and single-steps the rest, recorded
+    as one clean step. The PR's batched chain changes the SHAPE of that residue
+    (whole bucket at one op) and, unlike the base, does NOT commit `step`
+    before the update; it does not introduce the class.
+    """
+    weight_decay = 0.03
+    base = _make_params()
+    params = _clone_params(base)
+    state: dict[Tensor, dict[str, object]] = {}
+    grads = _grads_for_step(params, 0)
+    for param, grad in zip(params, grads):
+        param.grad = None if grad is None else grad.clone()
+    k = 2
+    real_addcdiv = torch.Tensor.addcdiv_
+    seen: list[int] = []
+
+    def flaky_addcdiv(self: Tensor, *args: object, **kwargs: object) -> Tensor:
+        seen.append(len(seen))
+        if len(seen) == k + 1:
+            raise RuntimeError("CUDA error: an illegal memory access was encountered")
+        return real_addcdiv(self, *args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(torch.Tensor, "addcdiv_", flaky_addcdiv)
+    with pytest.raises(RuntimeError, match="CUDA"):
+        _reference_adamw_loop(params, state, lr=_LR, weight_decay=weight_decay)
+    monkeypatch.undo()
+
+    steps = [int(state.get(p, {}).get("step", 0)) for p in params]  # pyright: ignore[reportArgumentType]
+    assert steps == [1, 1, 1, 0, 0, 0], "committed through k, untouched after"
+    for index, (param, grad) in enumerate(zip(params, grads)):
+        assert grad is not None
+        if index < k:
+            assert not torch.equal(param.detach(), base[index].detach() * (1.0 - _LR * weight_decay))
+        elif index == k:
+  # Decayed and moments updated, parameter not stepped: `step` says 1.
+            assert torch.equal(param.detach(), base[index].detach() * (1.0 - _LR * weight_decay))
+            exp_avg = state[param]["exp_avg"]
+            assert isinstance(exp_avg, Tensor)
+            assert torch.equal(exp_avg, grad * (1.0 - _BETA1))
+        else:
+            assert torch.equal(param.detach(), base[index].detach())
+            assert param not in state
+
+  # The retry, as the trainer runs it: a replacement batch, one more loop.
+    second = _grads_for_step(params, 1)
+    for param, grad in zip(params, second):
+        param.grad = None if grad is None else grad.clone()
+    _reference_adamw_loop(params, state, lr=_LR, weight_decay=weight_decay)
+    steps = [int(state[p]["step"]) for p in params]  # pyright: ignore[reportArgumentType]
+    assert steps == [2, 2, 2, 1, 1, 1], "double-stepped through k, single-stepped after"

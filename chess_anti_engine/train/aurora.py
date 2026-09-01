@@ -403,24 +403,38 @@ def _adamw_group_aliases(params: list[Tensor]) -> bool:
     views, over one storage, so the check is on the byte ranges the tensors
     actually cover: sort by first byte and look for a range that starts before
     the previous one ends. Disjoint views of one storage share no element and
-    stay batchable. ~431 tuples per step on production, a few tens of
-    microseconds; measured on both `configs/lc0_positive_control.yaml` and
-    `configs/pbt2_small.yaml`: 431 unique storages / 431 params, 0 overlaps.
+    stay batchable; interleaved strided views overlap by span and are read
+    CONSERVATIVELY as aliasing (the loop is exactly right there).
+
+    Cost, MEASURED on the real 431-tensor production inventory (CPU, median of
+    200 calls): the first cut ran a per-dimension strided-extent loop on every
+    tensor and cost ~0.5 ms per step (reviewer's number: 527 us). This version
+    takes the contiguous fast path -- `data_ptr()`, which already includes the
+    storage offset, plus `numel() * element_size()` -- for every contiguous
+    tensor (all 431 in production) and computes the strided extent only for a
+    non-contiguous view: 61 us for the 142-tensor group + 126 us for the
+    289-tensor group = ~0.19 ms per step, ~0.008% of a 2.26 s optimizer step.
+    Runs once per group per step. On both `configs/lc0_positive_control.yaml`
+    and `configs/pbt2_small.yaml`: 431 unique storages / 431 params, 0 overlaps.
     """
     if len({id(param) for param in params}) != len(params):
         return True
     spans: list[tuple[int, int]] = []
     for param in params:
-        element_size = param.element_size()
-        start = param.untyped_storage().data_ptr() + param.storage_offset() * element_size
-        if param.numel() == 0:
+        numel = param.numel()
+        if numel == 0:
             continue
+        element_size = param.element_size()
+        start = int(param.data_ptr())
+        if param.is_contiguous():
+            extent = numel
+        else:
   # Extent in elements of the strided view, not `numel()`: a non-contiguous
   # view covers more storage than it has elements.
-        extent = 1 + sum(
-            (int(size) - 1) * abs(int(stride)) for size, stride in zip(param.shape, param.stride())
-        )
-        spans.append((int(start), int(start) + extent * element_size))
+            extent = 1 + sum(
+                (int(size) - 1) * abs(int(stride)) for size, stride in zip(param.shape, param.stride())
+            )
+        spans.append((start, start + extent * element_size))
     spans.sort()
     return any(nxt_start < prev_end for (_, prev_end), (nxt_start, _) in pairwise(spans))
 
