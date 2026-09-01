@@ -39,6 +39,7 @@ import numpy as np
 import pytest
 import zarr
 
+from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 from tests.test_derive_corpus_targets import (
@@ -582,20 +583,39 @@ def test_a_tolerated_envelope_miss_reports_the_same_first_examples(
             result=1.0, game_id=game_id, ply=ply, worker_id=0,
         )
 
+    # ⚑ TEN MISSES IN THE FIRST LANE AND THREE IN THE LAST, and both halves of
+    # that matter. The first lane exceeds its OWN cap of 8, so the claim the cap
+    # rests on -- a lane's ninth miss can never be in the global first eight --
+    # is exercised rather than assumed. The last lane contributes candidates the
+    # merge must then order BEHIND them; with every miss in one lane the merged
+    # list is exactly 8 long and its first eight and last eight are the same
+    # list, which is how an earlier version of this fixture let a mutant that
+    # reported the LAST eight survive.
     rows: list[dict[str, Any]] = []
-    for gid in range(12):
-        rows.extend(game(gid, 7))
-        rows.append(blind(gid, 7))
-    corpus_dir = write_split_corpus(tmp_path, rows, [24] * 4)
+    for gid in range(5):
+        rows.extend(game(gid, 3))
+        rows.extend(blind(gid, ply) for ply in (3, 4))
+    for gid in range(5, 10):
+        rows.extend(game(gid, 5))
+    for gid in range(10, 13):
+        rows.extend(game(gid, 4))
+        rows.append(blind(gid, 4))
+    cuts = [25, 25, 15]
+    corpus_dir = write_split_corpus(tmp_path, rows, cuts)
     sequential, parallel = both_ways(
-        tmp_path, corpus_dir, "--max-envelope-misses", "50", workers=4,
+        tmp_path, corpus_dir, "--max-envelope-misses", "50", workers=3,
     )
     assert_same_corpus(sequential, parallel)
     got = json.loads(
         (parallel / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
     )["realized"]
     assert len(got["envelope_miss_examples"]) == 8
-    assert got["rows_dropped_envelope"] == 12
+    assert got["rows_dropped_envelope"] == 13
+    # The global first eight by read order -- not a round-robin over the lanes,
+    # and not the last eight.
+    assert [text.split(":")[0] for text in got["envelope_miss_examples"]] == [
+        f"game {gid} ply {ply}" for gid in range(4) for ply in (3, 4)
+    ]
 
 
 def test_the_default_path_is_the_sequential_one(
@@ -735,8 +755,11 @@ def test_an_empty_shard_before_a_range_does_not_break_the_handoff(
 
     A zero-row shard has no last row.  A lane that read only ``lo - 1`` would
     get ``None``, skip nothing, and derive the rows the previous lane is
-    carrying through a second time -- caught by the ``rows_read`` guard as a
-    crash rather than produced as a correct read.
+    carrying through a second time.  ⚑ MEASURED that ``_check_closed_keys`` is
+    what fires on that (``worker 0 game 1 closed by lanes 0 and 2``), not the
+    ``rows_read`` guard -- a crash rather than a wrong corpus either way, but a
+    crash is not the answer, and naming the wrong instrument is how a reader
+    later concludes the wrong thing is load-bearing.
     """
     rows = game(0, 10) + game(1, 12) + game(2, 10)
     corpus_dir = write_split_corpus(tmp_path, rows, [14, 0, 10, 8])
@@ -771,3 +794,124 @@ def test_the_ungrouped_arms_do_not_require_a_worker_id(tmp_path: Path) -> None:
         tmp_path, corpus_dir, "--value-scheme", "qz50", workers=3,
     )
     assert_same_corpus(sequential, parallel)
+
+
+# ── the guards, each made to fire ────────────────────────────────────────────
+
+
+def test_a_non_binding_limit_puts_every_shard_back_in_play(tmp_path: Path) -> None:
+    """⚑⚑ THE GUARD WAS SCOPED BY THE THING IT VALIDATES.
+
+    ``plan_ranges`` drops a shard from play on the strength of the inventory's
+    claim, and ``_check_claimed_rows`` can only check a shard some lane opened --
+    so a claim that UNDERSTATES could exclude a shard on a number nothing tests.
+    Found by an independent review of this PR; before the fix, this corpus read
+    24 rows at ``--workers 1`` and 16 above it, with no guard firing and a
+    smaller corpus written and stamped.
+    """
+    rows = [row for gid in range(3) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [8, 8, 8], claim={2: 0})
+    sequential = run(corpus_dir, tmp_path / "seq", "--limit", "30")
+    assert sequential["realized"]["rows_read"] == 24
+    out = tmp_path / "par"
+    with pytest.raises(derive.ParallelDeriveError, match="not the rows on disk"):
+        run(corpus_dir, out, "--limit", "30", "--workers", "2")
+    assert not (out / derive.SUMMARY_NAME).exists()
+
+
+def test_plan_ranges_only_drops_shards_when_the_limit_binds() -> None:
+    _, in_play, rows = derive.plan_ranges([10, 10, 0], workers=2, limit=25)
+    assert (in_play, rows) == (3, 20), "a limit past the claims drops nothing"
+    _, in_play, rows = derive.plan_ranges([10, 10, 10], workers=2, limit=25)
+    assert (in_play, rows) == (3, 25)
+    _, in_play, rows = derive.plan_ranges([10, 10, 10], workers=2, limit=15)
+    assert (in_play, rows) == (2, 15), "a binding limit still drops the tail"
+
+
+def _result(index: int, **kwargs: Any) -> Any:
+    base: dict[str, Any] = {
+        "index": index, "stats": derive.DeriveStats(), "games": [], "envelope": [],
+        "stream_paths": {}, "chunk_rows": [], "actual_rows": {}, "closed_keys": [],
+        "tt_carried": [], "survivors": 0,
+    }
+    base.update(kwargs)
+    return derive._WorkerResult(**base)
+
+
+def test_two_lanes_closing_one_game_is_refused() -> None:
+    """⚑ The split-game failure, which is the one that yields a NORMAL corpus.
+
+    Unreachable from a corpus while the handoff is right -- so it is asserted on
+    the check itself rather than left as a gate nobody has watched fire.
+    """
+    lanes = [
+        _result(0, closed_keys=[(0, 1), (0, 2)]),
+        _result(1, closed_keys=[(0, 2), (0, 3)]),
+    ]
+    with pytest.raises(derive.ParallelDeriveError, match="assembled by two lanes"):
+        derive._check_closed_keys(lanes)
+    derive._check_closed_keys([
+        _result(0, closed_keys=[(0, 1)]), _result(1, closed_keys=[(0, 2)]),
+    ])
+
+
+def test_lanes_that_do_not_tile_the_prefix_are_refused() -> None:
+    """The only thing that notices overlapping ranges on an UNGROUPED arm."""
+    stats = derive.DeriveStats()
+    stats.rows_read = 40
+    with pytest.raises(derive.ParallelDeriveError, match="do not tile"):
+        derive._check_rows_read([_result(0, stats=stats)], 30)
+    derive._check_rows_read([_result(0, stats=stats)], 40)
+
+
+def test_a_repack_that_loses_a_row_is_refused() -> None:
+    with pytest.raises(derive.ParallelDeriveError, match="lost or duplicated"):
+        derive._check_rows_written([{"path": "a", "rows": 9}], [10])
+    assert derive._check_rows_written([{"path": "a", "rows": 10}], [4, 6]) == 10
+
+
+def test_a_spill_file_that_lost_rows_is_refused(tmp_path: Path) -> None:
+    """⚑ Read off the FILE, so the check is not the lane's word for itself."""
+    from chess_anti_engine.replay.shard import ShardMeta, save_local_shard_arrays
+
+    lane = _result(0, chunk_rows=[3], survivors=3)
+    path = derive._spill_path(tmp_path, 0, 0)
+    save_local_shard_arrays(
+        path,
+        arrs={
+            "x": np.zeros((2, 4, 8, 8), dtype=np.float16),
+            "policy_target": np.full(
+                (2, COMPACT_POLICY_SIZE), 1.0 / COMPACT_POLICY_SIZE,
+                dtype=np.float16,
+            ),
+            "wdl_target": np.zeros((2,), dtype=np.int8),
+            "priority": np.ones((2,), dtype=np.float32),
+            "has_policy": np.ones((2,), dtype=np.uint8),
+        },
+        meta=ShardMeta(run_id="t", policy_size=COMPACT_POLICY_SIZE, positions=2),
+    )
+    with pytest.raises(derive.ParallelDeriveError, match="the file holds 2"):
+        derive._measure_spill(tmp_path, [lane])
+
+
+def test_the_merge_rules_do_not_name_a_field_twice() -> None:
+    """⚑ A frozenset cannot see a duplicate, and a duplicate is a DOUBLE COUNT.
+
+    A stream-owned field also listed in ``_SUM_FIELDS`` would be summed off the
+    partials and then replayed on top of that sum, and the coverage gate above
+    would still pass because the union collapses the repeat.
+    """
+    named = (
+        derive._SUM_FIELDS
+        + derive._MAX_FIELDS
+        + derive._DICT_SUM_FIELDS
+        + derive._CONSTANT_FIELDS
+        + derive._SENTINEL_MIN_FIELDS
+        + derive._ORDERED_EXAMPLE_FIELDS
+        + derive._REPACK_OWNED_FIELDS
+        + derive._GAME_OWNED_FIELDS
+        + tuple(n for owned in derive._STREAM_OWNED_FIELDS.values() for n in owned)
+    )
+    repeated = sorted({n for n in named if named.count(n) > 1})
+    assert not repeated, f"{repeated} carry two merge rules and would double-count"
+    assert len(named) == len(derive._MERGE_COVERAGE)

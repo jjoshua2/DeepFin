@@ -4433,7 +4433,15 @@ SPILL_DIR_NAME = "spill"
 #: unpacked), and the output shard boundaries are decided by the coordinator
 #: from the survivor counts regardless of how the rows were chunked on the way
 #: there.  A repack that needs rows spanning two spill files simply reads two.
-SPILL_CHUNK_ROWS = 4096
+#:
+#: ⚑ IT SETS THE PEAK, and the round-trip verification roughly triples it: at a
+#: cut a lane holds the samples, the arrays built from them, the arrays read
+#: back, and the samples rebuilt from those.  2,048 rows is ~90 MB of planes,
+#: so a lane peaks near 300 MB and `--workers 7` near 2 GB -- against the
+#: repack's ~600 MB per process at the default `--rows-per-shard 8192`, which
+#: is the sequential path's own footprint and cannot be lowered without moving
+#: the shard boundaries.
+SPILL_CHUNK_ROWS = 2048
 
 _SPILL_RUN_ID = "derive_parallel_spill"
 
@@ -4702,6 +4710,19 @@ def plan_ranges(
     evenly would leave three of seven workers with nothing to do and cost most
     of the speedup, while changing no output.  The ranges still cover a
     contiguous prefix, so the global row indices are unchanged.
+
+    ⚑⚑ AND ONLY WHEN THE LIMIT STRICTLY BINDS, because otherwise the guard that
+    checks the claims is scoped BY the claims.  A shard is dropped from play on
+    the strength of the inventory's numbers, and ``_check_claimed_rows`` can only
+    check a shard some lane opened -- so a shard whose claim UNDERSTATES what it
+    holds could be excluded on a claim nothing ever tests.  MEASURED: three
+    8-row shards, the inventory claiming 0 for the third, ``--limit 30``:
+    ``--workers 1`` reads 24 rows and above 1 read 16, no guard firing, a smaller
+    corpus written and stamped.  ⚑ That is only reachable when ``limit >= the
+    claimed total`` -- when the limit falls INSIDE the claims, the shards it
+    excludes start past the row the sequential read stops on, and every shard
+    before it is opened and its claim checked.  So a non-binding limit puts every
+    shard back in play, where a lying claim is caught rather than believed.
     """
     if workers < 1:
         raise ValueError(f"--workers must be >= 1, got {workers}")
@@ -4711,7 +4732,7 @@ def plan_ranges(
     total = prefix[-1]
     rows_to_read = min(limit, total) if limit else total
     shards_in_play = len(counts)
-    if limit:
+    if limit and limit < total:
         # The last shard holding a row below the limit; the ones after it are
         # never opened by any worker, exactly as the sequential loop's `break`
         # never opens them.
@@ -5103,6 +5124,41 @@ def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     )
 
 
+def _measure_spill(
+    spill_dir: Path, results: Sequence[_WorkerResult],
+) -> None:
+    """Every spill file holds the rows its lane said it holds.
+
+    ⚑ READ OFF DISK, and that is the point.  The obvious version of this check
+    compares the lanes' ``chunk_rows`` with their ``survivors`` -- and both are
+    incremented from the same ``len()`` inside the same function, so it is true
+    by construction and cannot fire (an independent reviewer of this PR proved
+    it).  A gate that cannot fail is this repo's signature defect, so the
+    comparison is made against the ``x`` column's own first dimension instead:
+    a different source, answering the same question, before the repack reads a
+    single row.
+    """
+    for item in results:
+        for chunk, rows in enumerate(item.chunk_rows):
+            path = _spill_path(spill_dir, item.index, chunk)
+            stored = int(np.asarray(
+                zarr.open_group(str(path), mode="r")["x"].shape,
+            )[0])
+            if stored != rows:
+                raise ParallelDeriveError(
+                    f"{path.name}: lane {item.index} banked {rows} rows and the "
+                    f"file holds {stored}. The repack cuts output shards by "
+                    "counting those rows, so it would take the wrong slice of "
+                    "every shard after this one.",
+                )
+        banked = sum(item.chunk_rows)
+        if banked != item.survivors:
+            raise ParallelDeriveError(
+                f"lane {item.index} derived {item.survivors} surviving rows and "
+                f"spilled {banked}.",
+            )
+
+
 def _plan_repack(
     survivors: Sequence[int], chunk_rows: Sequence[Sequence[int]], rows_per_shard: int,
 ) -> list[tuple[_SpillSlice, ...]]:
@@ -5176,6 +5232,10 @@ def _merge_stats(
     which is what makes the IEEE sums identical rather than merely close.
     """
     merged = DeriveStats()
+    # ⚑ LANE ORDER, like `_concat_streams`: `note_game`'s first-game sentinel
+    # makes the game replay order-sensitive too, and two functions that disagree
+    # about who owns the ordering is one refactor away from a bug.
+    results = sorted(results, key=lambda item: item.index)
     for name in _SUM_FIELDS:
         setattr(merged, name, sum(getattr(item.stats, name) for item in results))
     for name in _MAX_FIELDS:
@@ -5203,12 +5263,15 @@ def _merge_stats(
             if getattr(item.stats, name) >= 0
         ]
         setattr(merged, name, min(measured) if measured else -1)
-    merged.envelope_miss_examples = [
+    # ⚑ Off the rule rather than beside it: a field named in one place as data
+    # and in another as code is two rules that can disagree.
+    (example_field,) = _ORDERED_EXAMPLE_FIELDS
+    setattr(merged, example_field, [
         text for _, text in sorted(
             (entry for item in results for entry in item.envelope),
             key=lambda entry: entry[0],
         )[:8]
-    ]
+    ])
     for rows, cut in [game for item in results for game in item.games]:
         merged.note_game(rows, cut_by_limit=cut)
     for name, method in _ORDERED_STREAMS:
@@ -5240,6 +5303,67 @@ def _check_claimed_rows(
             "would cut somewhere the sequential read does not. Nothing was "
             "finalised; derive with --workers 1.",
         )
+
+
+def _check_rows_read(
+    results: Sequence[_WorkerResult], rows_to_read: int,
+) -> None:
+    """The lanes between them read the corpus prefix the partition covers.
+
+    ⚑ THE ONLY THING THAT NOTICES OVERLAPPING RANGES ON AN UNGROUPED ARM.  V0 and
+    A assemble no game, so `_check_closed_keys` has nothing to compare; a handoff
+    that let two lanes derive the same rows shows up here and nowhere else.  (On
+    a grouped arm the reverse holds, which is why both are kept.)
+    """
+    rows_read = sum(item.stats.rows_read for item in results)
+    if rows_read != rows_to_read:
+        raise ParallelDeriveError(
+            f"the lanes read {rows_read} corpus rows and the partition covers "
+            f"{rows_to_read}; the ranges do not tile the corpus prefix the "
+            "sequential read walks.",
+        )
+
+
+def _check_envelope_budget(
+    results: Sequence[_WorkerResult], max_envelope_misses: int,
+) -> None:
+    """``--max-envelope-misses`` is a budget over the WHOLE read.
+
+    ⚑⚑ THE FAIL-OPEN A PARTITION CREATES.  Each lane carries its own copy of the
+    sequential refusal and each lane sees only its own share, so three misses
+    split three ways pass every lane's budget of 1 and the run succeeds where
+    ``--workers 1`` refuses.  Nothing else looks at the total.
+    """
+    misses = sum(item.stats.rows_dropped_envelope for item in results)
+    if misses > max_envelope_misses:
+        raise CorpusIntegrityError(
+            f"{misses} envelope miss(es) across the whole read against "
+            f"--max-envelope-misses {max_envelope_misses}. Each lane sees only "
+            "its own share, so this is the count the sequential run would have "
+            "refused on. Dropping rows changes which positions the corpus "
+            "contains, so the tolerance is stated rather than assumed.",
+        )
+
+
+def _check_rows_written(
+    written: Sequence[dict[str, Any]], survivors: Sequence[int],
+) -> int:
+    """The shards the repack planned hold every surviving row exactly once.
+
+    ⚑ AN ASSERTION ABOUT THE REPACK'S TILING, not about the writer: it compares
+    what `_flush_ordered` was handed with what the lanes produced, and both are
+    upstream of the bytes.  The on-disk statement is
+    `_verify_value_column_on_disk`, per shard, inside the writer.  Stated because
+    the two are easy to conflate and only one of them has read a file.
+    """
+    rows_written = sum(int(entry["rows"]) for entry in written)
+    if rows_written != sum(survivors):
+        raise ParallelDeriveError(
+            f"the repacked shards were handed {rows_written} rows and the lanes "
+            f"produced {sum(survivors)} surviving rows; the repack lost or "
+            "duplicated rows.",
+        )
+    return rows_written
 
 
 def _check_closed_keys(results: Sequence[_WorkerResult]) -> None:
@@ -5351,22 +5475,8 @@ def derive_parallel(
 
         _check_claimed_rows(results, counts, shards)
         _check_closed_keys(results)
-        rows_read = sum(item.stats.rows_read for item in results)
-        if rows_read != rows_to_read:
-            raise ParallelDeriveError(
-                f"the lanes read {rows_read} corpus rows and the partition covers "
-                f"{rows_to_read}; the ranges do not tile the corpus prefix the "
-                "sequential read walks.",
-            )
-        misses = sum(item.stats.rows_dropped_envelope for item in results)
-        if misses > options.max_envelope_misses:
-            raise CorpusIntegrityError(
-                f"{misses} envelope miss(es) across the whole read against "
-                f"--max-envelope-misses {options.max_envelope_misses}. Each lane "
-                "sees only its own share, so this is the count the sequential run "
-                "would have refused on. Dropping rows changes which positions the "
-                "corpus contains, so the tolerance is stated rather than assumed.",
-            )
+        _check_rows_read(results, rows_to_read)
+        _check_envelope_budget(results, options.max_envelope_misses)
 
         survivors = [item.survivors for item in results]
         if sum(survivors) == 0:
@@ -5375,6 +5485,7 @@ def derive_parallel(
                 "before rerunning: an empty corpus and a corpus every row of which "
                 "was dropped are different problems.",
             )
+        _measure_spill(spill_dir, results)
         plans = _plan_repack(
             survivors, [item.chunk_rows for item in results], options.rows_per_shard,
         )
@@ -5398,14 +5509,7 @@ def derive_parallel(
         written = pool.map(_repack_shard, repack, chunksize=1)
 
     stats = _merge_stats(results, streams=_concat_streams(results))
-    rows_written = sum(int(entry["rows"]) for entry in written)
-    if rows_written != sum(survivors):
-        raise ParallelDeriveError(
-            f"the shards hold {rows_written} rows and the lanes produced "
-            f"{sum(survivors)} surviving rows; the repack lost or duplicated "
-            "rows.",
-        )
-    stats.rows_written = rows_written
+    stats.rows_written = _check_rows_written(written, survivors)
 
     enforce_take_effect(options, stats)
     out = build_summary(
