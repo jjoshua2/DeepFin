@@ -13,9 +13,16 @@ segment and on 12.5% of rows WITH one (same ledger entry).  So the repair is
 * R1 -- rebuild every row's move window from the corpus itself and bank it as
   schema 2, exactly as the generator would have (its own ``history_for`` on a
   replayed board, so the root definition is the generator's and not a copy);
-* R2 -- re-search ONLY rows whose window contains a repeated position, through
-  the generator's own staircase searcher on the same engine build, replacing
-  ``phases`` wholesale.
+* R2 -- PARKED (ledger 2026-09-01 "OPERATOR DECISIONS").  The original
+  Stockfish labels are copied BYTE-FOR-BYTE; every row is TAGGED instead
+  (``rep_in_window`` / ``rep_in_segment`` / ``cur_position_repeat_count`` /
+  ``label_regime``) so a consumer knows which labels a history-aware search
+  could have moved.  Measured: re-searching a repeat row cold changes its top-1
+  on 53.85% of rows, of which only ~13% is the history -- the rest is the
+  generator's carried transposition table, which no cheap warm-up reproduces
+  (``tt_warmup_check``).  The re-label path stays behind ``--relabel
+  {off,window,segment}``, default ``off``, for a future R2 that replays the
+  original search prefix.
 
 WHERE THE HISTORY COMES FROM.  Rows chain: ``prev.fen + prev.played_move`` is
 ``fen`` within one ``(worker_id, game_id)``.  Three things break the chain and
@@ -98,6 +105,7 @@ from chess_anti_engine.selfplay.opening import (
 )
 from chess_anti_engine.stockfish.uci import StockfishTimeoutError, StockfishUCI
 from scripts import audit_targets
+from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 
 _LOG = logging.getLogger("repair_corpus_history")
@@ -148,16 +156,29 @@ RELABEL_AUDIT_TEMPLATE = "relabel_audit-w{worker_id:02d}.jsonl"
 DEFAULT_SF_SEARCH_TIMEOUT_S = 30.0
 DEFAULT_BENCH_ENCODE_ROWS = 2000
 
-#: ``--relabel-scope``.  ``window`` is the prereg's flag -- a repeated
-#: transposition key anywhere in ``[root, row]``.  ``segment`` narrows it to
-#: the row's OWN reversible run (the last ``halfmove_clock`` plies): a repeat
-#: that lies entirely before the last irreversible move changes the encoded
-#: repetition planes but cannot change the label, because the engine's
-#: repetition scan stops at that move.  Measured on run03 w03 shards 100-102:
-#: window flags 2.85% of rows, segment 1.6%; the calibration's 0/1200
-#: no-change result was measured under a superset of the segment definition.
+#: ``--relabel``.  ``off`` (the default, and the operator's decision) keeps
+#: every original label byte-for-byte.  ``window`` re-searches rows with a
+#: repeated transposition key anywhere in the banked ``[root, row]`` window;
+#: ``segment`` only rows with a repeat in their own reversible run (the last
+#: ``halfmove_clock`` plies, all the engine's repetition scan can see).
+#: Measured on run03 w03-w05 shards 100-102: window 2.50% of rows, segment
+#: 1.64%.  ⚑ Neither reproduces the generator's carried-TT label (see the
+#: module docstring); both are kept for a future R2 that does.
+RELABEL_OFF = "off"
 RELABEL_WINDOW = "window"
 RELABEL_SEGMENT = "segment"
+RELABEL_MODES = (RELABEL_OFF, RELABEL_WINDOW, RELABEL_SEGMENT)
+
+#: ``label_regime`` on every repaired row whose label was copied: the search
+#: ran on the generator's carried transposition table and was sent the bare
+#: FEN, i.e. it never saw the history the row now carries.
+LABEL_REGIME_CARRIED_BLIND = "carried_tt_history_blind"
+LABEL_REGIME_COLD_HISTORY = "cold_tt_history_aware"
+
+
+#: Where a manifest's RELATIVE book path is resolved from (the generator was
+#: launched from the repo root and stored the path as typed).
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepairError(RuntimeError):
@@ -187,10 +208,12 @@ class RepairSpec:
     audit_only: bool
     shard_indices: tuple[int, ...] | None
     bench_encode_rows: int
-    #: ``RELABEL_WINDOW`` (the spec: any repeat in ``[root, row]``) or
-    #: ``RELABEL_SEGMENT`` (only the row's own reversible run, which is all the
-    #: engine's repetition detection can see).  Both counts are always reported.
-    relabel_scope: str = "window"
+    #: The shards this run may read, BY NAME, from the corpus's own inventory
+    #: (``derive.read_corpus_record``) -- never a glob, so a paused run's
+    #: in-flight or abandoned last shard is not repaired.
+    listed_shards: tuple[str, ...] = ()
+    #: One of ``RELABEL_MODES``; ``off`` copies every label byte-for-byte.
+    relabel: str = RELABEL_OFF
 
 
 def opening_config_from_manifest(
@@ -205,11 +228,15 @@ def opening_config_from_manifest(
             "other source for pre-ply-0 positions",
         )
     book_path = Path(str(book))
+    if not book_path.is_absolute():
+        # run05's manifest stores the book relative to the repo root the
+        # generator was launched from; resolve against THIS checkout's root.
+        book_path = REPO_ROOT / book_path
     if not book_path.exists():
         raise RepairError(
-            f"opening book {book_path} does not exist (a relative path is "
-            "resolved against the current directory, as the generator resolved "
-            "it); pass --book to point at the same file",
+            f"opening book {book!r} does not exist (resolved to {book_path}; a "
+            f"relative manifest path is taken against the repo root {REPO_ROOT}). "
+            "Pass --book to point at the SAME book file the run sampled from",
         )
     return OpeningConfig(
         opening_book_path=str(book_path),
@@ -222,29 +249,90 @@ def opening_config_from_manifest(
 # -- shard inventory ------------------------------------------------------------
 
 
-def worker_shards(in_dir: Path, worker_id: int, indices: Sequence[int] | None) -> list[Path]:
-    """This worker's shards in index order, optionally restricted to ``indices``."""
+def corpus_inventory(in_dir: Path) -> tuple[tuple[str, ...], tuple[str, ...], str]:
+    """``(listed shard names, unlisted shard names on disk, record mode)``.
+
+    The corpus's OWN inventory, the way ``derive.read_corpus_record`` reads it:
+    ``summary.json``'s shard list when the run ended, else every shard the
+    ``w*.progress.jsonl`` files claim (through the generator's own
+    ``read_worker_progress``, so a torn tail is tolerated exactly as there and
+    any other damage refuses).  ⚑ Not ``read_corpus_record`` itself: on this
+    branch its manifest path goes through ``load_resume_manifest``, which
+    refuses a row-schema-1 manifest outright -- the legacy corpora this tool
+    exists for.  Whatever is on disk but unlisted (a paused run's in-flight
+    shard, a killed run's abandoned one) is reported and never repaired.
+    """
+    on_disk = sorted(
+        p.name for p in in_dir.iterdir() if shard_worker_id(p.name) is not None
+    )
+    summary_path = in_dir / corpus.SUMMARY_NAME
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        listed = [Path(str(e["path"])).name for e in summary.get("shards", [])]
+        mode = "summary"
+    else:
+        listed = []
+        progress_paths = sorted(in_dir.glob(derive.PROGRESS_GLOB))
+        if not progress_paths:
+            raise RepairError(
+                f"{in_dir} has neither {corpus.SUMMARY_NAME} nor {derive.PROGRESS_GLOB}; "
+                "without an inventory nothing says which shards the corpus claims",
+            )
+        for progress_path in progress_paths:
+            try:
+                records, _torn = corpus.read_worker_progress(progress_path)
+            except ValueError as exc:
+                raise RepairError(f"{progress_path.name} is damaged: {exc}") from exc
+            for record in records:
+                if record.get("path") is None:
+                    continue  # a game-completion record, not a shard
+                listed.append(Path(str(record["path"])).name)
+        mode = "manifest+progress"
+    if len(set(listed)) != len(listed):
+        raise RepairError(f"{in_dir}'s inventory lists a shard twice")
+    missing = sorted(set(listed) - set(on_disk))
+    if missing:
+        raise RepairError(
+            f"{in_dir}'s inventory lists shards that are not on disk: {missing[:5]}",
+        )
+    unlisted = tuple(name for name in on_disk if name not in set(listed))
+    return tuple(listed), unlisted, mode
+
+
+def shard_worker_id(name: str) -> int | None:
+    """``w03-00100.jsonl.zst`` -> 3, or ``None`` for a name that is not a shard."""
+    if not (name.startswith("w") and name.endswith((".jsonl.zst", ".jsonl.gz"))):
+        return None
+    head = name.split("-", 1)[0][1:]
+    return int(head) if head.isdigit() else None
+
+
+def worker_shards(
+    in_dir: Path, worker_id: int, indices: Sequence[int] | None, listed: Sequence[str],
+) -> list[Path]:
+    """This worker's LISTED shards in index order, optionally restricted to ``indices``.
+
+    ⚑ ``listed`` is the corpus's own inventory (``read_corpus_record``: the
+    summary's shard list, or the progress files' on a run that has not
+    ended), never a glob of the directory.  A paused or killed run leaves its
+    in-flight shard on disk unlisted -- possibly torn, possibly holding a game
+    that never ended -- and a resume deletes and replays it; repairing it
+    would bank rows the corpus itself does not claim.
+    """
     found: list[tuple[int, Path]] = []
-    for path in in_dir.glob(corpus.shard_glob(worker_id)):
-        index = corpus.shard_index_of(path.name)
-        if index is None:
+    for name in listed:
+        if shard_worker_id(name) != int(worker_id):
             continue
-        if indices is not None and index not in indices:
+        index = corpus.shard_index_of(name)
+        if index is None or (indices is not None and index not in indices):
             continue
-        found.append((index, path))
+        found.append((index, in_dir / name))
     return [path for _, path in sorted(found)]
 
 
-def worker_ids_in(in_dir: Path) -> list[int]:
-    ids: set[int] = set()
-    for path in in_dir.iterdir():
-        name = path.name
-        if not (name.endswith((".jsonl.zst", ".jsonl.gz")) and name.startswith("w")):
-            continue
-        head = name.split("-", 1)[0]
-        if head[1:].isdigit():
-            ids.add(int(head[1:]))
-    return sorted(ids)
+def worker_ids_in(listed: Sequence[str]) -> list[int]:
+    ids = {shard_worker_id(name) for name in listed}
+    return sorted(i for i in ids if i is not None)
 
 
 def parse_shard_range(spec: str | None) -> tuple[int, ...] | None:
@@ -381,10 +469,8 @@ class RowRepair:
     board: chess.Board | None
     history: corpus.RowHistory | None
     history_kind: str | None
-    #: A transposition key repeats inside ``[root, row]`` -- the prereg's flag.
-    repeat_in_window: bool
-    #: A transposition key repeats inside the row's own reversible run.
-    repeat_in_segment: bool
+    #: The repetition tags (see :class:`RepeatTags`); empty on a quarantined row.
+    tags: RepeatTags
     #: The board was rebuilt from the root position itself because the ply
     #: before it is unresolved (see ``GameReconstructor._classify``).
     anchorless: bool = False
@@ -396,28 +482,68 @@ class RowRepair:
     def repaired(self) -> bool:
         return self.board is not None
 
-    def flagged(self, scope: str) -> bool:
-        return self.repeat_in_segment if scope == RELABEL_SEGMENT else self.repeat_in_window
+    def flagged(self, mode: str) -> bool:
+        if mode == RELABEL_WINDOW:
+            return self.tags.banked_window
+        if mode == RELABEL_SEGMENT:
+            return self.tags.segment
+        return False
+
+
+@dataclass(frozen=True)
+class RepeatTags:
+    """What a history-aware reader could see that the banked label did not.
+
+    All computed on the REPLAY of the banked window, so they describe the
+    row as written.  ``frames`` is over the 8 encoder frames (the position and
+    the 7 before it) -- a repetition PLANE will be set; ``segment`` is over the
+    row's own reversible run (the last ``halfmove_clock`` plies, which is all
+    the engine's repetition scan reads); ``banked_window`` is over the whole
+    ``[root, row]`` window; ``cur_count`` is how many times the row's own
+    position occurs in the segment, itself included (2 = a repetition claim
+    is one move away, 3 = threefold).
+    """
+
+    banked_window: bool = False
+    frames: bool = False
+    segment: bool = False
+    cur_count: int = 0
+
+    def as_row_fields(self) -> dict[str, Any]:
+        return {
+            "rep_in_window": self.frames,
+            "rep_in_segment": self.segment,
+            "cur_position_repeat_count": self.cur_count,
+        }
 
 
 def quarantined(reason: str) -> RowRepair:
     return RowRepair(
         row_class=QUARANTINE_PREFIX + reason, board=None, history=None,
-        history_kind=None, repeat_in_window=False, repeat_in_segment=False,
+        history_kind=None, tags=RepeatTags(),
     )
 
 
-def repeats_in(history: corpus.RowHistory, *, halfmove_clock: int) -> tuple[bool, bool]:
-    """``(repeat in [root, row], repeat in the row's reversible run)``, on the REPLAY."""
+def repeats_in(history: corpus.RowHistory, *, halfmove_clock: int) -> RepeatTags:
+    """The row's repetition tags, from the replayed window.
+
+    ⚑ The ROOT position is in every scan: the commonest shuffle is a clock-0
+    position (the window's root) recurring four plies later, and a scan that
+    started one position late would tag none of them.
+    """
     board = chess.Board(history.root_fen)
     keys = [board._transposition_key()]
     for uci in history.uci:
         board.push(chess.Move.from_uci(uci))
         keys.append(board._transposition_key())
-    in_window = len(set(keys)) != len(keys)
+    frames = keys[-(corpus.HISTORY_WINDOW_PLIES + 1):]
     segment = keys[max(0, len(keys) - 1 - int(halfmove_clock)):]
-    in_segment = len(set(segment)) != len(segment)
-    return in_window, in_segment
+    return RepeatTags(
+        banked_window=len(set(keys)) != len(keys),
+        frames=len(set(frames)) != len(frames),
+        segment=len(set(segment)) != len(segment),
+        cur_count=segment.count(keys[-1]),
+    )
 
 
 def could_have_double_stepped(board: chess.Board) -> bool:
@@ -554,7 +680,11 @@ class GameReconstructor:
           start, so the reason is set to ``irreversible`` explicitly (the
           chain proves it is not the game start, and its clock is 0).  The one
           string that can differ from live is a pseudo-legal-only ep square on
-          the root, which no plane, key or engine reads; it is counted
+          the root.  No encoder plane reads it (the root is never frame 0
+          here) and python-chess keys it only when a capture is legal, but
+          Stockfish's ``Position::set``/``do_move`` keep an ep square on the
+          pseudo-legal criterion, so a pinned-capturer ep square DOES enter
+          the engine's key for that one position.  Counted
           (``root_ep_unverifiable``) rather than assumed away.
         """
         window = corpus.HISTORY_WINDOW_PLIES
@@ -619,13 +749,10 @@ class GameReconstructor:
             root_board = chess.Board(history.root_fen)
             root_ep_unverifiable = could_have_double_stepped(root_board)
             history = dataclasses.replace(history, reason=corpus.HISTORY_ROOT_IRREVERSIBLE)
-        in_window, in_segment = repeats_in(
-            history, halfmove_clock=fen_halfmove_clock(game.fen_at[ply]),
-        )
+        tags = repeats_in(history, halfmove_clock=fen_halfmove_clock(game.fen_at[ply]))
         return RowRepair(
             row_class=CLASS_REPAIRED, board=board, history=history, history_kind=kind,
-            repeat_in_window=in_window, repeat_in_segment=in_segment,
-            anchorless=anchorless, root_ep_unverifiable=root_ep_unverifiable,
+            tags=tags, anchorless=anchorless, root_ep_unverifiable=root_ep_unverifiable,
         )
 
 
@@ -657,6 +784,14 @@ class ZstdLines:
         self._binary.close()
 
 
+def output_shard_name(name: str) -> str:
+    """The output is always zstd, whatever codec the input shard used."""
+    for suffix in (".jsonl.zst", ".jsonl.gz"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)] + ".jsonl.zst"
+    raise RepairError(f"{name!r} is not a corpus shard name")
+
+
 def top1_of_phases(phases: Sequence[Mapping[str, Any]]) -> tuple[str | None, float | None]:
     """The rank-1 move and its cp in phase 0's deepest complete block."""
     if not phases:
@@ -677,9 +812,24 @@ def repaired_row(
     """The schema-2 row: the input row, the window, the provenance block."""
     if repair.history is None or repair.history_kind is None:
         raise RepairError(f"game {row.get('game_id')} ply {row.get('ply')}: a quarantined row cannot be written")
+    if repair.board is None:
+        raise RepairError(f"game {row.get('game_id')} ply {row.get('ply')}: no board to key")
+    # ⚑ ``dict(row)``: every original value is the SAME object the input row
+    # held -- ``phases`` included -- so the labels are copied, never rebuilt.
+    # Only the schema-2 additions and the tags are new keys.
     out = dict(row)
     out["schema"] = TARGET_SCHEMA
     out.update(repair.history.as_row_fields())
+    # The two identities the #497 fix round banks on every schema-2 row, from
+    # the generator's own helpers on the rebuilt live board; the deriver
+    # refuses a schema-2 row whose reconstructed tensor does not hash to
+    # ``input_key``.
+    out["input_key"] = corpus.row_key(repair.board)
+    out["search_key"] = corpus.search_key(repair.board)
+    out.update(repair.tags.as_row_fields())
+    out["label_regime"] = (
+        LABEL_REGIME_COLD_HISTORY if phases is not None else LABEL_REGIME_CARRIED_BLIND
+    )
     out["repair"] = {
         "source_schema": SOURCE_SCHEMA,
         "history": repair.history_kind,
@@ -743,8 +893,10 @@ class WorkerTally:
     history_plies: Counter[str] = field(default_factory=Counter)
     book_games: Counter[str] = field(default_factory=Counter)
     games: int = 0
-    repeat_in_window: int = 0
-    repeat_in_segment: int = 0
+    rep_in_window: int = 0
+    rep_in_segment: int = 0
+    rep_in_banked_window: int = 0
+    cur_position_repeated: int = 0
     anchorless: int = 0
     root_ep_unverifiable: int = 0
     relabeled: int = 0
@@ -767,8 +919,12 @@ class WorkerTally:
             "history_root_reasons": dict(self.root_reasons),
             "history_plies_histogram": dict(self.history_plies),
             "book_games": dict(self.book_games),
-            "repeat_in_window": self.repeat_in_window,
-            "repeat_in_segment": self.repeat_in_segment,
+            "tags": {
+                "rep_in_window": self.rep_in_window,
+                "rep_in_segment": self.rep_in_segment,
+                "rep_in_banked_window": self.rep_in_banked_window,
+                "cur_position_repeat_count_ge2": self.cur_position_repeated,
+            },
             "anchorless": self.anchorless,
             "root_ep_unverifiable": self.root_ep_unverifiable,
             "relabel": {
@@ -812,9 +968,9 @@ def repair_worker(
 ) -> dict[str, Any]:
     """One worker's shards, in order.  Returns the tally ``main`` merges."""
     tally = WorkerTally()
-    shards = worker_shards(spec.in_dir, worker_id, spec.shard_indices)
+    shards = worker_shards(spec.in_dir, worker_id, spec.shard_indices, spec.listed_shards)
     if not shards:
-        raise RepairError(f"worker {worker_id} has no shards in {spec.in_dir}")
+        raise RepairError(f"worker {worker_id} has no listed shards in {spec.in_dir}")
     reconstructor = GameReconstructor(spec, worker_id)
     lease: corpus.EngineLease | None = None
     row_map: ZstdLines | None = None
@@ -832,7 +988,7 @@ def repair_worker(
     try:
         for shard in shards:
             started = time.perf_counter()
-            writer = ZstdLines(out_dir / shard.name) if out_dir is not None else None
+            writer = ZstdLines(out_dir / output_shard_name(shard.name)) if out_dir is not None else None
             rows_in = 0
             games: list[int] = []
             for row in corpus.iter_shard_rows(shard):
@@ -850,11 +1006,13 @@ def repair_worker(
                         encode(repair.board)
                         tally.encode_s += time.perf_counter() - t0
                         tally.encode_rows += 1
-                    tally.repeat_in_window += int(repair.repeat_in_window)
-                    tally.repeat_in_segment += int(repair.repeat_in_segment)
+                    tally.rep_in_window += int(repair.tags.frames)
+                    tally.rep_in_segment += int(repair.tags.segment)
+                    tally.rep_in_banked_window += int(repair.tags.banked_window)
+                    tally.cur_position_repeated += int(repair.tags.cur_count >= 2)
                     tally.anchorless += int(repair.anchorless)
                     tally.root_ep_unverifiable += int(repair.root_ep_unverifiable)
-                    if repair.flagged(spec.relabel_scope):
+                    if repair.flagged(spec.relabel):
                         row_class = CLASS_RELABELED
                         if not spec.audit_only and audit is not None:
                             if lease is None:
@@ -876,7 +1034,8 @@ def repair_worker(
                     writer.write(repaired_row(row, repair, phases=phases))
             tally.rows_in += rows_in
             entry = {
-                "path": str(shard.name), "rows_in": rows_in,
+                "path": output_shard_name(shard.name), "source": str(shard.name),
+                "rows_in": rows_in,
                 "rows": writer.rows if writer is not None else None,
                 "games": games, "codec": "zstd",
             }
@@ -977,7 +1136,8 @@ def _engine_id_name(spec: RepairSpec) -> str | None:
 def build_records(
     *, spec: RepairSpec, manifest: Mapping[str, Any], manifest_sha: str,
     results: Sequence[Mapping[str, Any]], started_utc: str, wall_s: float,
-    engine_id_name: str | None,
+    engine_id_name: str | None, book_sha256: str, book_size: int,
+    unlisted_shards: Sequence[str] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """``(repair_manifest, summary)`` -- provenance, and the deriver-facing record."""
     classes = merge_counters(results, "classes")
@@ -1007,6 +1167,10 @@ def build_records(
             "row_schema": SOURCE_SCHEMA,
             "shards": None if spec.shard_indices is None else list(spec.shard_indices),
             "workers": [int(r["worker_id"]) for r in results],
+            "listed_shards": len(spec.listed_shards),
+            # On disk but not in the corpus's own inventory (a paused run's
+            # in-flight shard): NOT repaired, by name.
+            "unlisted_shards_skipped": list(unlisted_shards),
         },
         "output": {"row_schema": TARGET_SCHEMA, "dir": None if spec.out_dir is None else str(spec.out_dir)},
         "engine": {
@@ -1016,6 +1180,8 @@ def build_records(
         },
         "book": {
             "path": spec.opening.opening_book_path,
+            "sha256": book_sha256,
+            "size": book_size,
             "plies": spec.opening.opening_book_max_plies,
             "max_games": spec.opening.opening_book_max_games,
             "seed": spec.seed,
@@ -1032,12 +1198,21 @@ def build_records(
         "history_root_reasons": merge_counters(results, "history_root_reasons"),
         "history_plies_histogram": merge_counters(results, "history_plies_histogram"),
         "book_games": merge_counters(results, "book_games"),
-        "repeat_in_window": sum(int(r["repeat_in_window"]) for r in results),
-        "repeat_in_segment": sum(int(r["repeat_in_segment"]) for r in results),
-        "relabel_scope": spec.relabel_scope,
+        "tags": {
+            key: sum(int(r["tags"][key]) for r in results)
+            for key in (
+                "rep_in_window", "rep_in_segment", "rep_in_banked_window",
+                "cur_position_repeat_count_ge2",
+            )
+        },
+        "label_regime": (
+            LABEL_REGIME_CARRIED_BLIND if spec.relabel == RELABEL_OFF
+            else f"{LABEL_REGIME_CARRIED_BLIND} except relabeled rows ({LABEL_REGIME_COLD_HISTORY})"
+        ),
         "anchorless": sum(int(r["anchorless"]) for r in results),
         "root_ep_unverifiable": sum(int(r["root_ep_unverifiable"]) for r in results),
         "relabel": {
+            "mode": spec.relabel,
             "rows": relabel_rows,
             "top1_changed": sum(int(r["relabel"]["top1_changed"]) for r in results),
             "timeouts": sum(int(r["relabel"]["timeouts"]) for r in results),
@@ -1103,13 +1278,14 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
     lines.append("root reasons: " + ", ".join(
         f"{k}={v}" for k, v in sorted(repair_manifest["history_root_reasons"].items())
     ))
+    tags = repair_manifest["tags"]
     lines.append(
-        f"repeat flags: window {repair_manifest['repeat_in_window']} "
-        f"({repair_manifest['repeat_in_window'] / rows_in if rows_in else 0:.3%}), "
-        f"segment {repair_manifest['repeat_in_segment']} "
-        f"({repair_manifest['repeat_in_segment'] / rows_in if rows_in else 0:.3%}); "
-        f"scope={repair_manifest['relabel_scope']}; anchorless {repair_manifest['anchorless']}, "
-        f"root ep unverifiable {repair_manifest['root_ep_unverifiable']}",
+        "tags: " + ", ".join(
+            f"{k}={v} ({v / rows_in if rows_in else 0:.3%})" for k, v in tags.items()
+        )
+        + f"; relabel={repair_manifest['relabel']['mode']}; anchorless "
+        f"{repair_manifest['anchorless']}, root ep unverifiable "
+        f"{repair_manifest['root_ep_unverifiable']}",
     )
     bench = repair_manifest["bench"]
     relabel = repair_manifest["relabel"]
@@ -1133,25 +1309,34 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
 
 
 def build_spec(
-    args: argparse.Namespace, manifest: Mapping[str, Any], *, verify_engine: bool = True,
+    args: argparse.Namespace, manifest: Mapping[str, Any], *, listed_shards: Sequence[str],
+    verify_engine: bool = True,
 ) -> RepairSpec:
     """The spec, with the engine and tablebases verified unless a test injects a searcher."""
     requested = manifest.get("config_requested") or {}
     engine_record = manifest.get("engine") or {}
     sf_binary = str(args.engine or engine_record.get("path") or requested.get("stockfish"))
-    if not args.audit_only and verify_engine:
+    if not args.audit_only and verify_engine and str(args.relabel) != RELABEL_OFF:
         if not Path(sf_binary).exists():
             raise RepairError(f"engine {sf_binary} does not exist; pass --engine")
-        want = str(engine_record.get("sha256", ""))
+        want = str(engine_record.get("sha256") or "")
+        if not want:
+            raise RepairError(
+                "the input manifest records no engine sha256, so a re-label "
+                "cannot be proven to run the corpus's own build; refused",
+            )
         have = sha256_of(Path(sf_binary))
-        if want and have != want:
+        if have != want:
             raise RepairError(
                 f"engine {sf_binary} hashes to {have}, but the corpus was "
                 f"labeled by {want}; a re-label on a different build is not the "
                 "same label and is refused",
             )
     syzygy = str(args.syzygy_path or requested.get("syzygy_path") or "")
-    if not args.audit_only and verify_engine:
+    relabel = str(args.relabel)
+    if relabel not in RELABEL_MODES:
+        raise RepairError(f"--relabel {relabel!r} is not one of {RELABEL_MODES}")
+    if not args.audit_only and verify_engine and relabel != RELABEL_OFF:
         corpus.refuse_unopenable_syzygy(syzygy)
     return RepairSpec(
         in_dir=Path(args.in_dir),
@@ -1170,7 +1355,8 @@ def build_spec(
         audit_only=bool(args.audit_only),
         shard_indices=parse_shard_range(args.shards),
         bench_encode_rows=int(args.bench_encode_rows),
-        relabel_scope=str(args.relabel_scope),
+        listed_shards=tuple(listed_shards),
+        relabel=relabel,
     )
 
 
@@ -1190,11 +1376,41 @@ def run(
             f"{manifest_path} says row_schema {manifest.get('row_schema')}; this "
             f"tool repairs schema {SOURCE_SCHEMA} only",
         )
+    # ⚑ The stamp is recomputed, not trusted: an edited config_requested
+    # would put the wrong seed or book under every resampled opening.
+    recomputed = corpus.stamp_sha256(dict(manifest.get("config_requested") or {}))
+    if recomputed != str(manifest.get("config_sha256", "")):
+        raise RepairError(
+            f"{manifest_path} is inconsistent with itself: config_sha256 is "
+            f"{manifest.get('config_sha256')!r} but config_requested hashes to "
+            f"{recomputed!r}; the record of what produced the rows has been altered",
+        )
     manifest_sha = sha256_of(manifest_path)
-    spec = build_spec(args, manifest, verify_engine=searcher_factory is None)
-    workers = [int(w) for w in args.workers] if args.workers else worker_ids_in(in_dir)
+    # ⚑ The corpus's OWN inventory, through the deriver's reader: summary.json
+    # when the run ended, else manifest + progress files.  Whatever is on disk
+    # but unlisted is skipped by name and reported.
+    listed, unlisted, inventory_mode = corpus_inventory(in_dir)
+    _LOG.info("inventory (%s): %d listed shards, %d unlisted", inventory_mode, len(listed), len(unlisted))
+    if unlisted:
+        _LOG.warning(
+            "%d shard(s) on disk are not in the corpus inventory and will NOT be "
+            "repaired: %s", len(unlisted), ", ".join(unlisted),
+        )
+    spec = build_spec(
+        args, manifest, listed_shards=listed, verify_engine=searcher_factory is None,
+    )
+    workers = [int(w) for w in args.workers] if args.workers else worker_ids_in(listed)
     if not workers:
-        raise RepairError(f"{in_dir} holds no worker shards")
+        raise RepairError(f"{in_dir} lists no worker shards")
+    book_path = Path(str(spec.opening.opening_book_path))
+    book_sha256 = sha256_of(book_path)
+    book_size = book_path.stat().st_size
+    if args.book_sha256 and args.book_sha256.lower() != book_sha256:
+        raise RepairError(
+            f"opening book {book_path} hashes to {book_sha256}, not the "
+            f"--book-sha256 {args.book_sha256}; the resampled openings would "
+            "come from a different book than the run's",
+        )
     if spec.out_dir is not None:
         spec.out_dir.mkdir(parents=True, exist_ok=True)
         corpus.refuse_populated_dir(spec.out_dir)
@@ -1205,7 +1421,9 @@ def run(
     warm_opening_book_cache(spec.opening)
     _LOG.info("book warm in %.1fs; %d workers, %d procs", time.perf_counter() - started, len(workers), args.procs)
     engine_id_name = (
-        None if spec.audit_only or searcher_factory is not None else _engine_id_name(spec)
+        None
+        if spec.audit_only or searcher_factory is not None or spec.relabel == RELABEL_OFF
+        else _engine_id_name(spec)
     )
     results: list[dict[str, Any]] = []
     if int(args.procs) <= 1 or searcher_factory is not None:
@@ -1222,7 +1440,8 @@ def run(
     repair_manifest, summary = build_records(
         spec=spec, manifest=manifest, manifest_sha=manifest_sha, results=results,
         started_utc=started_utc, wall_s=time.perf_counter() - started,
-        engine_id_name=engine_id_name,
+        engine_id_name=engine_id_name, book_sha256=book_sha256, book_size=book_size,
+        unlisted_shards=unlisted,
     )
     if spec.out_dir is not None:
         with open(spec.out_dir / RELABEL_AUDIT_NAME, "x", encoding="utf-8") as merged:
@@ -1257,7 +1476,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--syzygy-path", help="tablebase path override (default: the manifest's)")
     parser.add_argument("--sf-hash-mb", type=int, help="engine hash (default: the manifest's)")
     parser.add_argument("--sf-search-timeout-s", type=float, default=DEFAULT_SF_SEARCH_TIMEOUT_S, help="per-search wedge tripwire for the cold re-labels")
-    parser.add_argument("--relabel-scope", choices=(RELABEL_WINDOW, RELABEL_SEGMENT), default=RELABEL_WINDOW, help="which repeat flag selects rows for re-labeling (default: the prereg's window)")
+    parser.add_argument("--relabel", choices=RELABEL_MODES, default=RELABEL_OFF, help="R2 is PARKED: 'off' (default) copies every label byte-for-byte and only tags rows; 'window'/'segment' re-search the flagged rows cold (NOT the generator's carried-TT label)")
+    parser.add_argument("--book-sha256", help="refuse unless the opening book hashes to this (the run's book)")
     parser.add_argument("--bench-encode-rows", type=int, default=DEFAULT_BENCH_ENCODE_ROWS, help="--audit-only: rows to time through the deriver's encoder per worker")
     parser.add_argument("--report-json", help="also write the repair manifest here (audit mode has no --out)")
     return parser

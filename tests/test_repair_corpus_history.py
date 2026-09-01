@@ -12,8 +12,13 @@ TRUE game the test generated it from:
   what catches a root written with the default ``fen()``;
 * the quarantine set is exactly the rows whose window spans an ambiguous or
   unbridgeable gap, or needs a book the corpus cannot verify;
-* the re-label path sends ``position fen <root> moves ...`` for EVERY flagged
-  row, ONLY for flagged rows, with a fresh ``ucinewgame`` each.
+* every label is copied BYTE-FOR-BYTE (R2 is parked): ``phases`` and every
+  other original field of the output row equal the input's;
+* the repetition TAGS, ``input_key`` and ``search_key`` equal an independent
+  computation on the live board;
+* with ``--relabel window`` the parked re-label path sends ``position fen
+  <root> moves ...`` for EVERY flagged row, ONLY for flagged rows, with a
+  fresh ``ucinewgame`` each.
 
 The oracle is the true game, never the tool's own output.
 """
@@ -85,12 +90,18 @@ GAME_C = "b1c3 g8f6 c1g5 f8e7 e2e3 e8g8 g1f3 b8d7 f1d3 c7c6 e1g1 f8e8 d1c2 d7f8 
 #: TRUE history that is kept, never dropped.
 GAME_D = "f1c4 g8f6 d2d3 f8c5 b1c3"
 
+#: Game E: the commonest shuffle -- a clock-0 position (the ROOT of every
+#: later window) recurring four plies later, then again.  A repeat scan that
+#: starts one position late tags none of these rows (review finding F1).
+GAME_E = "d2d3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8"
+
 GAMES: dict[int, tuple[str | None, str, frozenset[int]]] = {
     # game_id -> (start override, moves, dropped plies)
     10: (None, GAME_A, DROPPED_A),
     24: (None, GAME_B, DROPPED_B),
     38: (GAME_C_START, GAME_C, frozenset()),
     52: (None, GAME_D, frozenset()),
+    66: (None, GAME_E, frozenset()),
 }
 
 
@@ -231,19 +242,33 @@ def requested_config(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+SHARDS = ("w03-00000.jsonl.zst", "w03-00001.jsonl.zst")
+#: On disk, NOT in the progress inventory -- a paused run's in-flight shard.
+UNLISTED_SHARD = "w03-00002.jsonl.zst"
+
+
 def build_corpus(tmp_path: Path) -> Path:
-    """Two shards for worker 3, games contiguous, game B spanning the pair."""
+    """Two listed shards for worker 3 (game B spanning them) plus an unlisted one."""
     in_dir = tmp_path / "in"
     in_dir.mkdir()
     rows_a = game_rows(10, tmp_path)
     rows_b = game_rows(24, tmp_path)
     head_b = [r for r in rows_b if r["ply"] < SPLIT_B]
     tail_b = [r for r in rows_b if r["ply"] >= SPLIT_B]
-    write_shard(in_dir / "w03-00000.jsonl.zst", [*rows_a, *head_b])
-    write_shard(
-        in_dir / "w03-00001.jsonl.zst",
-        [*tail_b, *game_rows(38, tmp_path), *game_rows(52, tmp_path)],
-    )
+    shard_rows = {
+        SHARDS[0]: [*rows_a, *head_b],
+        SHARDS[1]: [*tail_b, *game_rows(38, tmp_path), *game_rows(52, tmp_path), *game_rows(66, tmp_path)],
+    }
+    for name, rows in shard_rows.items():
+        write_shard(in_dir / name, rows)
+    # The unlisted shard holds a game the corpus does not claim.
+    write_shard(in_dir / UNLISTED_SHARD, game_rows(52, tmp_path)[:2])
+    with open(in_dir / "w03.progress.jsonl", "w", encoding="utf-8") as progress:
+        for name, rows in shard_rows.items():
+            progress.write(json.dumps({
+                "path": str(in_dir / name), "rows": len(rows), "codec": "zstd",
+                "games": sorted({r["game_id"] for r in rows}),
+            }) + "\n")
     requested = requested_config(tmp_path)
     manifest = {
         "schema": 1, "row_schema": 1, "config_requested": requested,
@@ -267,6 +292,7 @@ def fake_factory(engine: ScriptedEngine) -> repair.SearcherFactory:
 
 
 def args_for(in_dir: Path, out_dir: Path | None, **extra: Any) -> argparse.Namespace:
+    """CLI args; ``relabel`` defaults to the parser's default (off)."""
     argv = ["--in", str(in_dir)]
     if out_dir is not None:
         argv += ["--out", str(out_dir)]
@@ -294,7 +320,9 @@ def repeat_in(board: chess.Board, plies: int) -> bool:
     return len(set(keys)) != len(keys)
 
 
-def expected_class(game_id: int, ply: int, live: chess.Board) -> tuple[str, str | None]:
+def expected_class(
+    game_id: int, ply: int, live: chess.Board, *, relabel: str = repair.RELABEL_OFF,
+) -> tuple[str, str | None]:
     """``(class, must-be-bridged)`` for a banked row, from the true game alone."""
     start_override, _, dropped = GAMES[game_id]
     history = corpus.history_for(live)
@@ -309,10 +337,32 @@ def expected_class(game_id: int, ply: int, live: chess.Board) -> tuple[str, str 
     if root < 0 and start_override is not None:
         return repair.QUARANTINE_PREFIX + repair.REASON_BOOK_MISMATCH, None
     bridged = bool(set(span) & set(dropped) - set(GAP_AMBIGUOUS_A) - set(GAP_UNBRIDGED_A))
-    flagged = repeat_in(live, history.plies)
+    if relabel == repair.RELABEL_WINDOW:
+        flagged = repeat_in(live, history.plies)
+    elif relabel == repair.RELABEL_SEGMENT:
+        flagged = repeat_in(live, min(live.halfmove_clock, history.plies))
+    else:
+        flagged = False
     return (repair.CLASS_RELABELED if flagged else repair.CLASS_REPAIRED), (
         "bridged" if bridged else None
     )
+
+
+def expected_tags(live: chess.Board) -> dict[str, Any]:
+    """The tags from the live stack: frames, segment, current-position count."""
+    plies = len(live.move_stack)
+    walk = live.copy(stack=True)
+    keys = [walk._transposition_key()]
+    for _ in range(plies):
+        walk.pop()
+        keys.append(walk._transposition_key())
+    frames = keys[: corpus.HISTORY_WINDOW_PLIES + 1]
+    segment = keys[: live.halfmove_clock + 1]
+    return {
+        "rep_in_window": len(set(frames)) != len(frames),
+        "rep_in_segment": len(set(segment)) != len(segment),
+        "cur_position_repeat_count": segment.count(keys[0]),
+    }
 
 
 REASON_AMB = repair.REASON_AMBIGUOUS
@@ -329,24 +379,41 @@ def row_map(out_dir: Path) -> dict[tuple[int, int], str]:
 # ── the run under test ───────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def repaired(tmp_path: Path) -> dict[str, Any]:
+def run_repair(tmp_path: Path, **extra: Any) -> dict[str, Any]:
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out"
     engine = ScriptedEngine(multipv=1)
-    manifest = repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(engine))
+    manifest = repair.run(args_for(in_dir, out_dir, **extra), searcher_factory=fake_factory(engine))
     written = {
         (int(r["game_id"]), int(r["ply"])): r
-        for shard in ("w03-00000.jsonl.zst", "w03-00001.jsonl.zst")
+        for shard in SHARDS
         for r in read_rows(out_dir / shard)
+    }
+    inputs = {
+        (int(r["game_id"]), int(r["ply"])): r
+        for shard in SHARDS
+        for r in read_rows(in_dir / shard)
     }
     truth = {
         game_id: true_boards(game_id, tmp_path) for game_id in GAMES
     }
     return {
         "in_dir": in_dir, "out_dir": out_dir, "engine": engine, "manifest": manifest,
-        "written": written, "truth": truth, "map": row_map(out_dir), "tmp_path": tmp_path,
+        "written": written, "inputs": inputs, "truth": truth, "map": row_map(out_dir),
+        "tmp_path": tmp_path,
     }
+
+
+@pytest.fixture
+def repaired(tmp_path: Path) -> dict[str, Any]:
+    """The DEFAULT run: labels preserved, rows tagged."""
+    return run_repair(tmp_path)
+
+
+@pytest.fixture
+def relabeled(tmp_path: Path) -> dict[str, Any]:
+    """The parked R2 path, switched on explicitly."""
+    return run_repair(tmp_path, relabel=repair.RELABEL_WINDOW)
 
 
 def banked_rows() -> list[tuple[int, int]]:
@@ -367,12 +434,17 @@ def test_the_row_map_names_every_input_row_exactly_once(repaired: dict[str, Any]
 
 
 def test_every_row_gets_the_class_the_true_game_dictates(repaired: dict[str, Any]) -> None:
-    """⚑ The oracle is the true game: gaps, book verdict, repeats -- not the tool."""
+    """⚑ The oracle is the true game: gaps, book verdict -- not the tool."""
+    check_classes(repaired, relabel=repair.RELABEL_OFF)
+
+
+def check_classes(result: dict[str, Any], *, relabel: str) -> None:
+    repaired = result
     mismatches = []
     seen_classes: set[str] = set()
     for game_id, ply in banked_rows():
         live = repaired["truth"][game_id][ply]
-        want, bridged = expected_class(game_id, ply, live)
+        want, bridged = expected_class(game_id, ply, live, relabel=relabel)
         got = repaired["map"][(game_id, ply)]
         seen_classes.add(got)
         if got != want:
@@ -390,11 +462,81 @@ def test_every_row_gets_the_class_the_true_game_dictates(repaired: dict[str, Any
                 mismatches.append((game_id, ply, "not bridged", kind))
     assert not mismatches, mismatches
     # Every branch of the classifier was actually exercised.
-    assert seen_classes == {
-        repair.CLASS_REPAIRED, repair.CLASS_RELABELED,
+    want_classes = {
+        repair.CLASS_REPAIRED,
         repair.QUARANTINE_PREFIX + REASON_AMB, repair.QUARANTINE_PREFIX + REASON_UNB,
         repair.QUARANTINE_PREFIX + repair.REASON_BOOK_MISMATCH,
     }
+    if relabel != repair.RELABEL_OFF:
+        want_classes.add(repair.CLASS_RELABELED)
+    assert seen_classes == want_classes
+
+
+def test_labels_are_copied_byte_for_byte_and_rows_are_tagged_and_keyed(repaired: dict[str, Any]) -> None:
+    """⚑⚑ R2 IS PARKED: no original field changes; the additions are exactly the schema-2 set."""
+    added = {
+        "history_root_fen", "history_uci", "history_plies", "history_root_reason",
+        "input_key", "search_key", "rep_in_window", "rep_in_segment",
+        "cur_position_repeat_count", "label_regime", "repair",
+    }
+    tag_hits = {"rep_in_window": 0, "rep_in_segment": 0, "cur_position_repeat_count": 0}
+    for key, row in repaired["written"].items():
+        source = repaired["inputs"][key]
+        label = f"game {key[0]} ply {key[1]}"
+        assert json.dumps(row["phases"], sort_keys=True) == json.dumps(source["phases"], sort_keys=True), label
+        for name, value in source.items():
+            if name != "schema":
+                assert row[name] == value, (label, name)
+        assert set(row) - set(source) == added, label
+        assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND, label
+        assert row["repair"]["label"] == repair.LABEL_ORIGINAL, label
+        live = repaired["truth"][key[0]][key[1]]
+        assert row["input_key"] == corpus.row_key(live), label
+        assert row["search_key"] == corpus.search_key(live), label
+        want = expected_tags(live)
+        got = {name: row[name] for name in want}
+        assert got == want, (label, got, want)
+        tag_hits["rep_in_window"] += int(row["rep_in_window"])
+        tag_hits["rep_in_segment"] += int(row["rep_in_segment"])
+        tag_hits["cur_position_repeat_count"] += int(row["cur_position_repeat_count"] >= 2)
+    # The tags are not vacuous: every one fires somewhere, and game E (the
+    # clock-0 root recurring) is tagged on its shuffle rows.
+    assert all(v > 0 for v in tag_hits.values()), tag_hits
+    game_e = {ply: repaired["written"][(66, ply)] for ply in range(8, len(GAME_E.split()))}
+    assert all(r["rep_in_segment"] and r["rep_in_window"] for r in game_e.values()), game_e
+    assert max(r["cur_position_repeat_count"] for r in game_e.values()) >= 3
+    manifest = repaired["manifest"]
+    assert manifest["tags"]["rep_in_segment"] == tag_hits["rep_in_segment"]
+    assert manifest["tags"]["rep_in_window"] == tag_hits["rep_in_window"]
+    assert manifest["relabel"]["mode"] == repair.RELABEL_OFF
+    assert manifest["classes"].get(repair.CLASS_RELABELED, 0) == 0
+    assert manifest["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND
+
+
+def test_the_repeat_scan_sees_the_root_position(tmp_path: Path) -> None:
+    """F1: the repeat partner IS the window root (index 0 of the replay)."""
+    boards = true_boards(66, tmp_path)
+    root = boards[1]  # after d2d3: clock 0, and it recurs at plies 5 and 9
+    history = corpus.RowHistory(
+        fen=boards[5].fen(), root_fen=root.fen(en_passant="fen"),
+        uci=tuple(GAME_E.split()[1:5]), reason=corpus.HISTORY_ROOT_IRREVERSIBLE,
+    )
+    tags = repair.repeats_in(history, halfmove_clock=boards[5].halfmove_clock)
+    assert tags == repair.RepeatTags(banked_window=True, frames=True, segment=True, cur_count=2)
+    # One ply short of the recurrence: nothing repeats yet.
+    short = corpus.RowHistory(
+        fen=boards[4].fen(), root_fen=root.fen(en_passant="fen"),
+        uci=tuple(GAME_E.split()[1:4]), reason=corpus.HISTORY_ROOT_IRREVERSIBLE,
+    )
+    assert repair.repeats_in(short, halfmove_clock=boards[4].halfmove_clock) == repair.RepeatTags(
+        banked_window=False, frames=False, segment=False, cur_count=1,
+    )
+    # Threefold at ply 9, and the frames window (8 positions) still holds it.
+    long = corpus.RowHistory(
+        fen=boards[9].fen(), root_fen=root.fen(en_passant="fen"),
+        uci=tuple(GAME_E.split()[1:9]), reason=corpus.HISTORY_ROOT_IRREVERSIBLE,
+    )
+    assert repair.repeats_in(long, halfmove_clock=boards[9].halfmove_clock).cur_count == 3
 
 
 def test_every_written_row_encodes_exactly_like_live_play(repaired: dict[str, Any]) -> None:
@@ -445,14 +587,16 @@ def test_the_cases_the_gate_exists_for_are_present_in_the_written_rows(repaired:
     manifest = repaired["manifest"]
     assert manifest["anchorless"] > 0
     assert manifest["book_games"] == {
-        repair.BOOK_EXACT: 2, repair.BOOK_BRIDGED: 1, repair.BOOK_MISMATCH: 1,
+        repair.BOOK_EXACT: 3, repair.BOOK_BRIDGED: 1, repair.BOOK_MISMATCH: 1,
     }
     # Game B's rows straddle the shard boundary and every one of them survived.
     assert {ply for game_id, ply in written if game_id == 24} == set(range(1, len(GAME_B.split())))
 
 
-def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(repaired: dict[str, Any]) -> None:
-    """⚑ The exact ``position`` line, once per flagged row, after a fresh ``ucinewgame``."""
+def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(relabeled: dict[str, Any]) -> None:
+    """The PARKED path, switched on: the exact ``position`` line, once per flagged row."""
+    repaired = relabeled
+    check_classes(repaired, relabel=repair.RELABEL_WINDOW)
     engine: ScriptedEngine = repaired["engine"]
     written = repaired["written"]
     flagged = sorted(
@@ -469,12 +613,14 @@ def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(repaired:
     for key, row in written.items():
         if key in flagged:
             assert row["repair"]["label"] == repair.LABEL_RELABELED
+            assert row["label_regime"] == repair.LABEL_REGIME_COLD_HISTORY
             block = row["phases"][0]["per_depth"][-1]
             assert block["depth"] == 3
             legal = {m.uci() for m in chess.Board(row["fen"]).legal_moves}
             assert {line[1] for line in block["lines"]} == legal
         else:
             assert row["repair"]["label"] == repair.LABEL_ORIGINAL
+            assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND
             assert row["phases"] == fake_phases(chess.Board(row["fen"]), row["played_move"])
     audit = [
         json.loads(line)
@@ -486,17 +632,20 @@ def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(repaired:
         assert entry["new_top1"] == written[(entry["game_id"], entry["ply"])]["phases"][0]["per_depth"][-1]["lines"][0][1]
 
 
-def test_the_segment_scope_is_a_subset_of_the_window_scope(tmp_path: Path) -> None:
+def test_the_relabel_modes_select_by_the_matching_tag(tmp_path: Path) -> None:
     in_dir = build_corpus(tmp_path)
-    manifest = repair.run(
-        args_for(in_dir, None, audit_only=True, bench_encode_rows=0),
+    off = repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
+    tags = off["tags"]
+    assert 0 < tags["rep_in_segment"] <= tags["rep_in_banked_window"]
+    assert repair.CLASS_RELABELED not in off["classes"]
+    window = repair.run(
+        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="window"),
     )
-    assert 0 < manifest["repeat_in_segment"] <= manifest["repeat_in_window"]
-    assert manifest["classes"][repair.CLASS_RELABELED] == manifest["repeat_in_window"]
-    narrowed = repair.run(
-        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel_scope="segment"),
+    assert window["classes"][repair.CLASS_RELABELED] == tags["rep_in_banked_window"]
+    segment = repair.run(
+        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="segment"),
     )
-    assert narrowed["classes"][repair.CLASS_RELABELED] == manifest["repeat_in_segment"]
+    assert segment["classes"][repair.CLASS_RELABELED] == tags["rep_in_segment"]
 
 
 def test_the_output_is_a_corpus_the_deriver_reads(repaired: dict[str, Any]) -> None:
@@ -505,7 +654,7 @@ def test_the_output_is_a_corpus_the_deriver_reads(repaired: dict[str, Any]) -> N
     record = derive.read_corpus_record(out_dir)
     assert record.complete
     assert record.rows_claimed == repaired["manifest"]["rows_out"]
-    assert {p.name for p in record.shards} == {"w03-00000.jsonl.zst", "w03-00001.jsonl.zst"}
+    assert {p.name for p in record.shards} == set(SHARDS)
     summary = json.loads((out_dir / corpus.SUMMARY_NAME).read_text())
     assert summary["row_schema"] == corpus.ROW_SCHEMA
     derived = derive.derive(
@@ -516,7 +665,8 @@ def test_the_output_is_a_corpus_the_deriver_reads(repaired: dict[str, Any]) -> N
         ),
     )
     assert derived["realized"]["history_slots_nonzero_max"] == 8
-    assert derived["realized"]["row_schema_counts"] == {"2": repaired["manifest"]["rows_out"]}
+    assert derived["realized"]["row_schema_counts"] == {str(corpus.ROW_SCHEMA): repaired["manifest"]["rows_out"]}
+    assert derived["realized"]["input_key_verified"] == repaired["manifest"]["rows_out"]
 
 
 def test_the_provenance_manifest_carries_the_input_sha_and_the_counts(repaired: dict[str, Any]) -> None:
@@ -526,9 +676,16 @@ def test_the_provenance_manifest_carries_the_input_sha_and_the_counts(repaired: 
         repaired["in_dir"] / corpus.MANIFEST_NAME,
     )
     assert manifest["classes"] == repaired["manifest"]["classes"]
-    assert manifest["relabel"]["rows"] == manifest["classes"][repair.CLASS_RELABELED]
-    # The input shards are byte-identical to what the test wrote.
-    for name in ("w03-00000.jsonl.zst", "w03-00001.jsonl.zst"):
+    assert manifest["relabel"] == {**manifest["relabel"], "mode": repair.RELABEL_OFF, "rows": 0}
+    book = Path(requested_config(repaired["tmp_path"])["book"])
+    assert manifest["book"]["sha256"] == repair.sha256_of(book)
+    assert manifest["book"]["size"] == book.stat().st_size
+    # The unlisted shard was skipped BY NAME and reported.
+    assert manifest["input"]["unlisted_shards_skipped"] == [UNLISTED_SHARD]
+    assert not (repaired["out_dir"] / UNLISTED_SHARD).exists()
+    assert {s["path"] for s in manifest["shards"]} == set(SHARDS)
+    # The input shards are untouched.
+    for name in (*SHARDS, UNLISTED_SHARD):
         assert all("history_uci" not in r for r in read_rows(repaired["in_dir"] / name))
 
 
@@ -541,15 +698,57 @@ def test_audit_only_writes_nothing_and_runs_no_engine(tmp_path: Path, capsys: py
     out = capsys.readouterr().out
     assert "rows in" in out
     assert "rows/s/core" in out
-    assert "relabeled" in out
+    assert "repaired" in out
+    assert "rep_in_segment" in out
 
 
 def test_a_different_engine_build_is_refused_before_anything_is_written(tmp_path: Path) -> None:
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out"
     with pytest.raises(repair.RepairError, match="hashes to"):
-        repair.run(args_for(in_dir, out_dir, engine="/bin/true"))
-    assert not any(out_dir.iterdir()) if out_dir.exists() else True
+        repair.run(args_for(in_dir, out_dir, engine="/bin/true", relabel="window"))
+    assert not out_dir.exists() or not any(out_dir.iterdir())
+
+
+def test_a_manifest_without_an_engine_sha_cannot_relabel(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    manifest_path = in_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    del manifest["engine"]["sha256"]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(repair.RepairError, match="no engine sha256"):
+        repair.run(args_for(in_dir, tmp_path / "out", engine="/bin/true", relabel="window"))
+
+
+def test_a_manifest_whose_stamp_does_not_hash_its_config_is_refused(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    manifest_path = in_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    manifest["config_requested"]["seed"] = SEED + 1
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(repair.RepairError, match="inconsistent with itself"):
+        repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
+
+
+def test_a_different_book_is_refused_by_its_hash(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    with pytest.raises(repair.RepairError, match="--book-sha256"):
+        repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0, book_sha256="0" * 64))
+
+
+def test_a_relative_book_path_resolves_against_the_repo_root_or_says_so(tmp_path: Path) -> None:
+    requested = {**requested_config(tmp_path), "book": "data/opening_books/does_not_exist.pgn.zip"}
+    with pytest.raises(repair.RepairError, match="repo root"):
+        repair.opening_config_from_manifest(requested)
+    cfg = repair.opening_config_from_manifest(requested, book_override=str(book_path(tmp_path)))
+    assert cfg.opening_book_path == str(book_path(tmp_path))
+
+
+def test_output_shards_are_always_zstd_named() -> None:
+    assert repair.output_shard_name("w03-00100.jsonl.gz") == "w03-00100.jsonl.zst"
+    assert repair.output_shard_name("w03-00100.jsonl.zst") == "w03-00100.jsonl.zst"
+    with pytest.raises(repair.RepairError):
+        repair.output_shard_name("notes.txt")
 
 
 def test_a_populated_output_directory_is_refused(tmp_path: Path) -> None:
@@ -588,7 +787,7 @@ def test_a_window_that_cannot_reproduce_its_row_is_refused_at_write_time() -> No
         history=corpus.RowHistory(
             fen=history.fen, root_fen=history.root_fen, uci=("d2d4",), reason=history.reason,
         ),
-        history_kind=repair.HISTORY_CHAINED, repeat_in_window=False, repeat_in_segment=False,
+        history_kind=repair.HISTORY_CHAINED, tags=repair.RepeatTags(),
     )
     with pytest.raises(repair.RepairError, match="replaying"):
         repair.repaired_row({"fen": board.fen(), "game_id": 0, "ply": 1}, bad, phases=None)
