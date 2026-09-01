@@ -71918,3 +71918,20 @@ has yet isolated either axis. Consequences, executed same session:
   stamp value depth — a gate that today cannot fail on a mixed-depth
   shard pair — and moved-rows overcount) → all folded into the rework;
   merge waits on the new head's CI + delta re-review.
+
+**2026-09-01 — PR #494 MERGED (`--value-depth`, exact semantics) at
+`28542bb4e` (head `299c92e71`), VWT re-pinned same window.** Four review
+lanes: Claude fork ×3 (APPROVE at every stage; parallel take-effect proven
+off the rows), Grok clean pass (scoped, after two max-turns runs — recorded
+as unparseable, not clean), Codex ×2 rounds (4 findings, all verified real,
+all fixed: launcher value-identity now keyed on (scheme, source) pair;
+moved-rows counter honest; identity cell stamps native source; manifest
+q_definition follows the flag), CI green on the exact final head. Take-
+effect proof: 15-mutant table, all caught; byte-identity vs the PRISTINE
+branch point (51/51 arrays). Launcher hunk verified VALIDATION-ONLY ⇒ the
+VWT re-pin (d34449c33 → 28542bb4e, zero chess_anti_engine/ changes) is
+trainer-inert: valueround2's five preregged arms and 3c stage 2 train
+byte-identically. `.vdmix_ready` set — arm f_vmix derives when its slot
+arrives. Known accepted holes (PR body): launcher still not keyed on
+POLICY scheme (pre-existing, narrowed by this PR); envelope-miss stats
+pollution unreachable on the production staircase.
