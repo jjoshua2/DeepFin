@@ -71485,3 +71485,118 @@ paired slopes recomputed from the banked rows, game-cluster 2000×).
    anomaly (init-from design; continuation stamps valid_control:false as built).
 ⇒ Champion lineage stays the SHARP family. τ for the 100M recipe waits on
 round-4's fresh-data read, per the round-4 prereg.
+
+**2026-09-01 ROUND-4 READOUT — THE 2-VIEW WOBBLE IS REPEAT MEMORIZATION;
+FRESH DATA WINS; the 100M recipe is 1 VIEW ON FRESH ROWS.** Judged per the
+9230f95ef prereg, same session as the legs. Perfectly paired arms: same donor
+(qtemp_0.0005 @9,680), same +9,680 budget, same recipe — only the second
+half's data differs (run03 fresh 5.34M rows vs run02-snapshot repeat).
+Banked: `scratchpad/t80_ruler/arms_vs_bt4_freshext.*`, paired stats
+game-clustered 2000×, arena games jsonl in round4/.
+1. **Arena fresh vs repeat: exact null** — +0.0 Elo [−39.5, +39.5], 200
+   games. At this budget the data source does not move play strength.
+2. **The BT4 ruler separates them decisively, and the wobble REVERSES on
+   fresh:** repeat KL rose 0.8152→0.8908 over the extension; fresh FELL to
+   0.7476. Paired fresh−repeat at 19,360: top-1 **+3.15 pp [+1.84,+4.49]**,
+   KL **−0.1418 [−0.1562,−0.1284]**. Fresh at 14,520 already beats repeat at
+   19,360 on both. The repeat extension's KL rise was memorization, not a
+   budget property.
+3. Instruments split on d9 regret (repeat 1601.8 vs fresh 1637.6 — repeat
+   slightly better); arena is a tie, so the generalization metrics carry the
+   verdict: **fresh**.
+4. **Scaling point #1 banked**: base 9,680 → fresh 19,360 = top-1 0.3643→
+   0.4045, KL 0.8152→0.7476 at 2× fresh views-1 budget.
+⇒ For run05/100M: one view over fresh rows, no second-view pass (confirms
+the standing 1-view rule at this scale); τ stays the sharp family (round-2
+weakly-held adoption unchanged — this round adds no τ evidence). Second
+views are not poison but buy ~arena-nothing while degrading the
+generalization signature — spend generation, not repetition.
+
+**2026-09-01 AMENDMENT to the round-4 readout (Josh's challenge, accepted in
+part).** "1 view fresh" is a PREFERENCE at equal cost, not a claim that 2nd
+views are inert: production draws with `mirror_prob=0.5` (Trainer default,
+surfaced by the PR-492 profiling), so a repeat view sees ~half its rows in a
+novel orientation — semi-fresh by construction. Consistent with that, the
+repeat extension matched fresh exactly in the arena and kept the better d9
+regret while its KL-to-BT4 rose. What was NEVER measured is whether an
+extension beats its own 1× donor in play — rounds 2/4 only ran ext-vs-ext.
+Queued: `ext_vs_base_arenas.sh` (gated on valueround.done) — repeat-ext vs
+base and fresh-ext vs base, 200 games each. Decides whether 2nd views buy
+strength when fresh data is exhausted — the regime that matters once
+generation is the bottleneck. The run05 fresh-first recipe is unchanged.
+
+**2026-09-01 PARKED CANDIDATE LANE — contempt, two routes (Josh + discussion;
+no prereg, no launch).** (1) Search-time WDL contempt, lc0 v0.31-style: rescale
+the wdl head's W/D/L mass in MCTS backup by a tunable contempt before backup —
+no retraining, arena-testable as a knob on the existing champion; motivated by
+the Cheese tail (losses are single-collapse games; draw-heavy play squanders
+exploit margin against weaker opponents). (2) Trained conditioning, KataGo-
+style: repurpose the legacy TURN PLANE (one absolute-color plane confirmed in
+the lc0_root_legacy_meta layout; game-theoretically spurious vs a color-blind
+SF) as an explicit style/contempt input at the next input-format revision —
+policy-level asymmetry by construction (e.g., aggressive-as-white set at
+inference). Related decisions parked with it: turn-plane randomization rider
+(p=0.5 vs Josh's p=0.25 preference) goes in the 20M-confirmation prereg;
+domain-flag (lc0-vs-own corpus) is the competing use for the same plane.
+Neither route launches without its own prereg + yardstick.
+
+**2026-09-01 amendment to the parked contempt lane — LEADING DESIGN (Josh):
+the plane carries a CONTINUOUS draw-score d ∈ [0,1].** Key insight making it
+cheap: the WDL head stays UNCONDITIONAL (probabilities don't depend on what a
+draw is worth; backup q = W + (2d−1)·D gives value-level contempt free at
+search time), so ONLY the policy target is d-dependent — and the banked
+staircase (full MultiPV cp per depth) lets the deriver re-rank on W + d·D and
+rebuild the τ-softmax target under ANY d with zero new SF compute
+(`--draw-score` deriver knob). Train with the plane scalar-filled per row
+(rule50-plane precedent) matching the d its target was derived under ⇒ one net
+learns the whole contempt family, dialable at play. Subsumes the binary style
+flag. Remaining wall unchanged: serving-side C encoder writes `turn` into the
+plane — arenas for a conditioned net need the encoder change; offline ruler
+readouts can use a python-encode override earlier. Still parked: launches only
+with its own prereg.
+
+**2026-09-01 correction to the contempt lane (Josh's objection, upheld).** The
+"targets re-derivable offline at any d with zero new SF compute" claim is
+OVERSTATED, twice: (1) the banked cp came from searches optimizing d=0.5 —
+conditional search consequences are not in the numbers; (2) the cp→WDL map's D
+depends only on |cp|, so re-ranking on W + d·D cannot distinguish a drawish
++30 from a sharp +30 — the exact distinction contempt needs. Offline
+re-derivation is at most a weak screen. Revised lane: (a) search-time backup
+contempt (q = W + (2d−1)·D) stays the near-term, no-training experiment;
+(b) TRAINED conditioning waits for the RL/gumbel era, where selfplay with d
+sampled per game and applied in backup yields genuinely d-conditional visit
+targets as a byproduct (rows labeled with their d, plane scalar-filled to
+match). Modern SF has no Contempt option; lc0-with-WDL-contempt as a
+conditional teacher is possible but costs real compute — not planned.
+
+**2026-09-01 second refinement (Josh): the d-conditional TRAINING signal is
+Z, not the visit target.** At ~100 sims the visit distribution is prior plus
+one shallow value re-rank — it cannot encode long-horizon consequences of
+draw-averse play. The carrier is outcomes: games played under d-backup produce
+shifted W/D/L, and Z feeds that back over GENERATIONS of the RL loop (which is
+also why the value round's Z-propagation machinery — clean segments — is a
+prerequisite for this lane, not an unrelated thread). Play-time backup
+contempt remains real at our depth because the net's own WDL head sees
+drawishness (unlike the |cp|-only SF map). Trained conditioning: parked to the
+RL era, Z-carried, multi-generation.
+
+**2026-09-01 final parking note — dose + launch condition (Josh).** When the
+lane activates: small variance only — d ∈ {0.4, 0.6} in ~half the selfplay
+games (bounded shift, most data on-objective), plane scalar-filled to match,
+Z scored under the game's own d. Launch CONDITION, not date: external matches
+vs sub-Stockfish engines showing wins capped by draw conversion rather than by
+collapses (today's Cheese profile is the opposite — 80% of losses are single
+collapses). Until then the lane stays parked; search-time backup contempt
+remains the only near-term experiment.
+
+**2026-08-31 — run05 launched: ADDITIVE capacity for the same 100M-d9 corpus,
+not a new lane.** run03 (500k games, seed 20260830) IS the 100M run and all
+banked rows pool (run02+run03+run04 ≈ 21M already). Worker count is fixed at
+launch (game deal = id % n), so capacity was added as a parallel run rather
+than a risky mid-run restart-redeal: run05 = run03's recipe VERBATIM (same
+book incl. 2move_thinbeam lines, staircase all:9, temps, timeout 2.0, hash
+64), seed 20260901, 12 workers, --games 500000 (a ceiling, not a target —
+generation stops when the pooled corpus hits ~100M). Enabled by the orphan
+reap (40GB+swap freed, same day). Fleet ~32 engines; trainer/derivations
+outrank generators on the nice ladder. Confound: none — identical recipe,
+stamped per-run seeds.
