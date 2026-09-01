@@ -72362,3 +72362,24 @@ and V0 trained on zero-history rows, so the comparison is internally consistent 
 terms, per the history gate). Arm B's `vregret`/audit numbers are appended by the chain to
 `scratchpad/nnue_ladder_20260829/valueround2/` (audit running at the time of writing); they cannot
 reverse an arena KILL. Boundary block (C0/C1/C2 + anchors) fires on `valueround2.parked`.
+
+**2026-09-01 — DEDUP AUDIT (#497 merge gate): position-keyed dedup hits are 0.015% of positions
+and ALL of them are byte-identical inputs with identical repetition state — no dropped
+model-distinct row, no history-wrong value served, in the legacy corpus.** Instrument
+`scratchpad/legacy_history_calib/dedup_audit2.py` (bank `dedup_audit2_summary.json`), worker w03 of
+run03, 8,901 games, 1,717,460 banked rows, every trajectory position reconstructed (book resample +
+chained moves). Method note: a first version modelled hits as mid-game gaps and found none — hits
+occur ONLY as the LEADING dropped plies of a game (a book exit + temp-1.0 first move that an earlier
+game already produced): k-histogram {0: 8651, 1: 242, 2: 8}; 2.81% of games have k>0; all 250
+leading gaps bridged by a UNIQUE move path. Hits vs the first route of the same `dedup_key`:
+tensor differs **0/258**, frames differ 0, SF repetition signature differs 0, `is_repetition`
+differs 0 (same book line ⇒ literally the same stack). Key-design benchmark per 1000 positions:
+current 999.8 searches / 999.8 rows; position+SF-signature 999.8/999.8; tensor key 999.8/999.8;
+split 999.8/999.8; full-history key 1000.0/1000.0 — the cache's total saving is 0.015% of searches.
+VERDICT: the schema-2 dedup change is a CORRECTNESS guarantee (two routes with different frames or
+repetition state must bank a row / must not share values), not a throughput trade; the split design
+(SF value cache keyed on FEN5 + reversible-segment repetition counts; row dedup keyed on the encoded
+input tensor; `input_key` banked per row and re-verified by the deriver) is being implemented on
+#497 with fixture tests T1–T4 and mutants. Label-change check on collision pairs: no pairs existed
+to check (0 differing signatures). Also closes the legacy-repair "unbridged 0.11%" class: those rows
+were leading gaps my first bridger could not start from the book position; v2 bridges 250/250.
