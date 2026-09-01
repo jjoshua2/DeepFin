@@ -232,6 +232,11 @@ def corpus_row(
     # key and the hash of the tensor live play encodes for this board -- which
     # the deriver re-hashes off its own reconstruction and refuses on a
     # mismatch, so a fixture that spelled its own hash would test nothing.
+    # ``row_key`` REQUIRES production's repetition-plane regime, which the
+    # generator's ``run``/``run_worker`` apply; this helper stands in for them
+    # (every importer of it too), and ``conftest.py`` rewinds the flag per test.
+    if int(schema) >= 2:
+        corpus.apply_history_rep_fix()
     keys: dict[str, Any] = (
         {"search_key": corpus.search_key(board), "input_key": corpus.row_key(board)}
         if int(schema) >= 2 else {}
@@ -242,6 +247,8 @@ def corpus_row(
             "run_id": "test_corpus",
             "config_sha256": config_sha,
             corpus.KEY_TT_CARRIED: True,
+            # A keyed row stamps the regime its input_key was hashed under.
+            **({corpus.KEY_HISTORY_REP_FIX: True} if int(schema) >= 3 else {}),
         },
         "fen": fen,
         "dedup_key": " ".join(fen.split(" ")[:5]),
@@ -320,6 +327,7 @@ def write_corpus(
     summary = {
         "schema": corpus.SUMMARY_SCHEMA,
         "row_schema": int(row_schema),
+        **({corpus.KEY_HISTORY_REP_FIX: True} if int(row_schema) >= 3 else {}),
         "run_id": "test_corpus",
         "config_sha256": config_sha,
         "config_requested": dict(CONFIG_REQUESTED),
@@ -348,6 +356,7 @@ def write_manifest(
     manifest = {
         "schema": corpus.MANIFEST_SCHEMA,
         "row_schema": int(row_schema),
+        **({corpus.KEY_HISTORY_REP_FIX: True} if int(row_schema) >= 3 else {}),
         "complete": False,
         "config_requested": requested,
         "config_sha256": config_sha,
@@ -1033,6 +1042,96 @@ def test_a_row_whose_input_key_disagrees_with_its_reconstruction_stops_the_run(
         run_derive(corpus_dir, tmp_path / "out_missing", "uniform-d9")
 
 
+def test_a_history_corpus_in_another_repetition_regime_is_refused_by_name(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ #498 reviewer (blocking): the regime is checked, not assumed.
+
+    Missing stamp and differing stamp, at the record AND at the row -- each
+    refused with the cause, before the per-row verification could fail on the
+    first repeat-outside-the-frames row with a misleading message.
+    """
+    def corpus_with_stamp(name: str, stamp: Any, *, row_stamp: Any = True) -> Path:
+        row = history_row()
+        if row_stamp is None:
+            del row["run"][corpus.KEY_HISTORY_REP_FIX]
+        else:
+            row["run"][corpus.KEY_HISTORY_REP_FIX] = row_stamp
+        out = write_corpus(tmp_path, [row], row_schema=derive.ROW_SCHEMA_HISTORY, name=name)
+        summary_path = out / corpus.SUMMARY_NAME
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if stamp is None:
+            del summary[corpus.KEY_HISTORY_REP_FIX]
+        else:
+            summary[corpus.KEY_HISTORY_REP_FIX] = stamp
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        return out
+
+    with pytest.raises(derive.CorpusIntegrityError, match="carries no history_rep_fix"):
+        run_derive(corpus_with_stamp("missing", None), tmp_path / "o1", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match="history_rep_fix is False"):
+        run_derive(corpus_with_stamp("differs", False), tmp_path / "o2", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match="run block history_rep_fix=None"):
+        run_derive(corpus_with_stamp("row_missing", True, row_stamp=None),
+                   tmp_path / "o3", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match="run block history_rep_fix=False"):
+        run_derive(corpus_with_stamp("row_differs", True, row_stamp=False),
+                   tmp_path / "o4", "uniform-d9")
+    # ... and the stamped-true corpus derives, every row verified.
+    summary = run_derive(corpus_with_stamp("ok", True), tmp_path / "o5", "uniform-d9")
+    assert summary["realized"]["input_key_verified"] == 1
+    assert summary["input"]["history_rep_fix"] is True
+
+
+def test_an_envelope_dropped_row_is_in_no_per_row_count(tmp_path: Path) -> None:
+    """⚑ Fable (round 2 delta): one ``zero_history`` definition, one denominator.
+
+    A history-aware row (emitted) beside a bare-FEN row that the envelope
+    DROPS.  Before the fix the dropped row was counted -- schema 1 in
+    ``row_schema_counts``, one empty window -- while ``rows_written`` excluded
+    it, so ``history_window_empty_rows == rows_written`` stamped
+    ``zero_history: True`` on a history-aware shard, which the launcher's reader
+    would then let mix with bare-FEN corpora.
+    """
+    # ⚑ The drop has to come from the LAST tolerated raise, `_value_view`, not
+    # from `apply_scheme` at the top of `derive_row` -- a policy-envelope miss
+    # never reaches the counters under either order, so it cannot tell them
+    # apart. Policy at d5 (both rows have it), value at d9 (only the emitted
+    # row has it): the bare-FEN row passes the policy read and dies in the
+    # value read, after the point where the first cut had already counted it.
+    leaf = chess.Board(FEN_W)
+    for uci in HISTORY_MOVES:
+        leaf.push_uci(uci)
+    emitted = history_row(phases=[full_width_phase(
+        leaf.fen(), {5: ramp(leaf.fen(), "f1e3"), 9: ramp(leaf.fen(), "f1e3")},
+    )])
+    dropped = corpus_row(
+        fen=FEN_B, phases=[full_width_phase(FEN_B, {5: ramp(FEN_B, "h8g8")})],
+        result=-1.0, result_pgn="1-0", schema=1, game_id=1,
+    )
+    corpus_dir = write_corpus(
+        tmp_path, [emitted, dropped], row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+    summary = run_derive(
+        corpus_dir, tmp_path / "out", "uniform-d5", "--value-depth", "9",
+        "--max-envelope-misses", "1",
+    )
+    realized = summary["realized"]
+    assert realized["rows_dropped_envelope"] == 1
+    assert realized["rows_written"] == 1
+    assert realized["row_schema_counts"] == {"3": 1}, "the dropped row is not counted"
+    assert realized["history_window_empty_rows"] == 0
+    assert realized["input_key_verified"] == 1
+    assert realized["history_slots_filled_histogram"] == {"8": 1}
+    assert realized["realized_value_depth_histogram"] == {"9": 1}
+    assert summary["input"]["zero_history"] is False
+    assert summary["corpus"]["row_schema_realized"] == 3
+    (attrs,) = shard_attrs(tmp_path / "out")
+    assert attrs["zero_history"] is False
+    assert attrs["derive_corpus_row_schema"] == 3
+    assert attrs["derive_corpus_row_schema_counts"] == {"3": 1}
+
+
 def test_the_keyless_intermediate_schema_is_refused_by_name(tmp_path: Path) -> None:
     """⚑ Round 2 (Fable F2 / Grok B2): schema 2 -- a window without the keys --
     is refused with a message that says what to do, at BOTH the record and the
@@ -1119,7 +1218,7 @@ def test_mixed_history_shards_are_refused_at_launch_unless_allowed(
     ) == []
     assert launcher.history_identity_record(stamps, allow_mixed_history=True) == {
         "row_schemas": ["1", "3"], "zero_history": [False, True],
-        "mixed": True, "allow_mixed_history": True,
+        "mixed_within": [], "mixed": True, "allow_mixed_history": True,
     }
     # An UNSTAMPED shard (pre-#497 deriver) reads as the bare-FEN shape, so a
     # legacy directory and a zero-history one are one identity ...
@@ -1136,6 +1235,84 @@ def test_mixed_history_shards_are_refused_at_launch_unless_allowed(
         launcher.preflight(
             real_control_config(), [zero_dir, hist_dir], allow_leak=True,
         )
+
+
+def test_a_shard_mixed_within_itself_is_refused_at_launch_unless_allowed(
+    tmp_path: Path,
+) -> None:
+    """⚑ Grok P2-B (round 3): ONE derived directory holding schema-1 AND
+    schema-3 rows stamps ``derive_corpus_row_schema: "mixed"`` and counts
+    ``{"1": n, "3": m}``.  Across directories that is one key, so the first
+    reader called it one identity; the mix is inside the shard.
+    """
+    import scripts.lc0_control_train as launcher
+
+    legacy = corpus_row(
+        fen=FEN_B, phases=[full_width_phase(FEN_B, {9: ramp(FEN_B, "h8g8")})],
+        result=-1.0, result_pgn="1-0", schema=1, ply=1,
+    )
+    corpus_dir = write_corpus(
+        tmp_path, [history_row(), legacy], row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+    out = tmp_path / "out"
+    run_derive(corpus_dir, out, "uniform-d9")
+    (attrs,) = shard_attrs(out)
+    assert attrs["derive_corpus_row_schema"] == "mixed", "the fixture is the mixed shard"
+
+    stamps = launcher.read_history_stamps([out])
+    assert stamps.row_schemas.keys() == {"mixed"}
+    assert stamps.zero_history.keys() == {False}
+    assert len(stamps.mixed_within) == 1
+    assert stamps.mixed
+    problems = launcher.history_identity_problems([out], allow_mixed_history=False)
+    assert len(problems) == 1
+    assert "input-history identities" in problems[0]
+    assert "Mixed WITHIN" in problems[0]
+    assert "counts {'1': 1, '3': 1}" in problems[0]
+    assert launcher.history_identity_problems([out], allow_mixed_history=True) == []
+    record = launcher.history_identity_record(stamps, allow_mixed_history=True)
+    assert record["mixed"] is True
+    assert record["mixed_within"] == [f"{out.name}/{next(iter(stamps.mixed_within)).split('/')[-1]}"]
+    # A shard whose stamp reads one schema but whose COUNTS name two is the
+    # same finding, so the counts are read too.
+    for path in iter_shard_paths(out):
+        group = zarr.open_group(str(path), mode="a")
+        group.attrs["derive_corpus_row_schema"] = 3
+    assert launcher.read_history_stamps([out]).mixed
+    assert launcher.history_identity_problems([out], allow_mixed_history=False)
+    # REACHABILITY: preflight refuses the single directory.
+    with pytest.raises(SystemExit, match="Mixed WITHIN"):
+        launcher.preflight(real_control_config(), [out], allow_leak=True)
+
+
+def test_a_keyless_window_row_cannot_take_the_bare_fen_path() -> None:
+    """⚑ Grok P2-A (round 3): the dispatch is EXACT, at every consumer.
+
+    A schema-2 row with a non-empty window, handed straight to the helpers
+    that used to test ``schema < 3`` -- no run, no ``_check_row_identity``
+    upstream to catch it first.  Each refuses by name instead of reading the
+    bare FEN.
+    """
+    row = history_row()
+    row["schema"] = derive.ROW_SCHEMA_HISTORY_WITHOUT_KEYS
+    del row["search_key"], row["input_key"]
+    assert row["history_uci"], "the fixture must have a window to mis-route"
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
+        derive.board_from_row(row)
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
+        derive.row_schema_of(row)
+    deriver = derive.TargetDeriver(derive.DeriveOptions(
+        scheme=derive.parse_scheme("uniform-d9"), temp=1.0, cp_slope=1.0,
+        cp_draw_width=1.0, limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
+    ))
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
+        deriver._verify_input_key(row, np.zeros((1,), dtype=np.float32))
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
+        deriver._note_row_history(row)
+    # And a schema nobody defined is refused too, not read as bare FEN.
+    row["schema"] = 7
+    with pytest.raises(derive.CorpusIntegrityError, match="row schema 7 is not one this tool"):
+        derive.board_from_row(row)
 
 
 def test_a_row_whose_window_misses_its_own_fen_stops_the_run(

@@ -486,7 +486,7 @@ INPUT_EXTRA_FEATURES = corpus.INPUT_EXTRA_FEATURES
 #: fix unconditionally.  Vacuous on a zero-history row (nothing can repeat) and
 #: stamped anyway, because it is replay IDENTITY: the same encoding name with a
 #: different flag is a different plane set and the buffer refuses to mix them.
-HISTORY_REP_FIX = True
+HISTORY_REP_FIX = corpus.HISTORY_REP_FIX
 
 #: Row schemas this tool can decode.  ⚑ NOT ``== corpus.ROW_SCHEMA``: schema 1
 #: is the 54M-row legacy corpus (a bare FEN per row, zero history) and schema 3
@@ -2242,6 +2242,37 @@ def game_value_targets(
     return targets, readings
 
 
+def row_schema_of(row: Mapping[str, Any]) -> int:
+    """The row's schema, and EXACTLY one of the two this tool derives.
+
+    ⚑ EXACT, NOT ORDERED (Grok P2-A, round 3).  The first cut dispatched on
+    ``schema < ROW_SCHEMA_HISTORY``, which sent a schema-2 row -- a banked
+    window WITHOUT keys -- down the bare-FEN path: no replay, no ``input_key``
+    check, window counted as empty, and the only thing standing between that
+    and a silent mis-derivation was ``_check_row_identity``'s by-name refusal
+    upstream.  Every consumer (``board_from_row``, ``_verify_input_key``,
+    ``_note_row_history``) now asks THIS, so no new caller, bypass or
+    monkeypatch can route a windowed row to the FEN path: 1 is bare FEN, 3 is
+    replay-and-verify, anything else is refused here with its name.
+    """
+    schema = int(row.get("schema", ROW_SCHEMA_BARE_FEN))
+    if schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is a history window "
+            "WITHOUT search_key/input_key (the keyless intermediate, never an "
+            "accepted corpus); it is not a bare-FEN row and cannot be verified "
+            f"as a schema-{ROW_SCHEMA_HISTORY} one. Regenerate under schema "
+            f"{ROW_SCHEMA_HISTORY} or repair with a tool that adds the keys.",
+        )
+    if schema not in SUPPORTED_ROW_SCHEMAS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is not one this tool "
+            f"derives ({ROW_SCHEMA_BARE_FEN}: bare FEN, {ROW_SCHEMA_HISTORY}: "
+            "banked window with keys)",
+        )
+    return schema
+
+
 def board_from_row(row: Mapping[str, Any]) -> chess.Board:
     """The row's position, WITH the move stack the encoder reads history from.
 
@@ -2265,7 +2296,7 @@ def board_from_row(row: Mapping[str, Any]) -> chess.Board:
     ``en_passant="fen"``.
     """
     fen = str(row["fen"])
-    if int(row.get("schema", ROW_SCHEMA_BARE_FEN)) < ROW_SCHEMA_HISTORY:
+    if row_schema_of(row) == ROW_SCHEMA_BARE_FEN:
         return chess.Board(fen)
     root_fen = str(row["history_root_fen"])
     try:
@@ -2945,19 +2976,26 @@ class TargetDeriver:
             policy[index] = float(prob)
             legal_mask[index] = 1
 
-        planes = self._encode(board)
-        self._verify_input_key(row, planes)
-        self._note_shapes(planes, policy, probs, values)
-        self._note_row_history(row)
-
+        # ⚑ THE LAST NON-FATAL RAISE FIRST. `_value_view` can raise
+        # `EnvelopeMiss`, which the caller may TOLERATE (the row is dropped and
+        # counted). Every per-row counter below it must therefore run after
+        # it, or a dropped row is in `row_schema_counts`,
+        # `history_window_empty_rows` and `input_key_verified` while
+        # `rows_written` excludes it -- and `zero_history` on the shard could
+        # then read True on a history-aware corpus (Fable, round 2 delta).
         value_values = self._value_view(bank, values)
         q_wdl = self.wdl_of(
             float(value_values.effective_cp[value_values.best_index]),
         )
+        z_index = wdl_target_from_result(float(row["result"]))
+
+        planes = self._encode(board)
+        self._verify_input_key(row, planes)
+        self._note_shapes(planes, policy, probs, values)
+        self._note_row_history(row)
         self.stats.note_value_depth(
             int(value_values.depth_by_move[value_values.best_index]),
         )
-        z_index = wdl_target_from_result(float(row["result"]))
         sample = ReplaySample(
             x=planes,
             policy_target=policy.astype(np.float32),
@@ -3252,7 +3290,7 @@ class TargetDeriver:
         different history, an encoder that drifted from the C path) and the
         run stops rather than emit a plausible tensor nothing vouches for.
         """
-        if int(row.get("schema", ROW_SCHEMA_BARE_FEN)) < ROW_SCHEMA_HISTORY:
+        if row_schema_of(row) == ROW_SCHEMA_BARE_FEN:
             return
         if "input_key" not in row:
             raise CorpusIntegrityError(
@@ -3271,11 +3309,15 @@ class TargetDeriver:
         self.stats.input_key_verified += 1
 
     def _note_row_history(self, row: Mapping[str, Any]) -> None:
-        """The row's SCHEMA and window reason, counted once per emitted row."""
+        """The row's SCHEMA and window reason, counted once per EMITTED row.
+
+        ⚑ Emitted, not derived: called after the last tolerated raise in
+        ``derive_row``, so a row the envelope drops is never in these counts.
+        """
         stats = self.stats
-        schema = int(row.get("schema", ROW_SCHEMA_BARE_FEN))
+        schema = row_schema_of(row)
         stats.row_schema_counts[schema] = stats.row_schema_counts.get(schema, 0) + 1
-        window = 0 if schema < ROW_SCHEMA_HISTORY else int(row["history_plies"])
+        window = 0 if schema == ROW_SCHEMA_BARE_FEN else int(row["history_plies"])
         if window == 0:
             stats.history_window_empty_rows += 1
         reason = row.get("history_root_reason")
@@ -3371,6 +3413,30 @@ def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
     generator-side bump un-derive 54M banked rows for no reason.
     """
     row_schema = int(facts.get("row_schema", -1))
+    if row_schema == ROW_SCHEMA_HISTORY:
+        # ⚑ THE REGIME, BY NAME. A schema-3 corpus hashed every input_key
+        # under the generator's repetition-plane regime; this tool encodes
+        # under HISTORY_REP_FIX, and a corpus made under the other one (or
+        # one that does not say) would fail the per-row verification on its
+        # first repeat-outside-the-frames row -- a true refusal with a
+        # misleading message. Refused here, at the record, with the cause.
+        stamp = facts.get(corpus.KEY_HISTORY_REP_FIX)
+        if stamp is None:
+            raise CorpusIntegrityError(
+                f"corpus row schema {row_schema} (read from {source.name}) "
+                f"carries no {corpus.KEY_HISTORY_REP_FIX} stamp; a schema-"
+                f"{ROW_SCHEMA_HISTORY} record names the repetition-plane regime "
+                "its input_keys were hashed under, and without it nothing says "
+                "whether this tool can reproduce them",
+            )
+        if bool(stamp) is not HISTORY_REP_FIX:
+            raise CorpusIntegrityError(
+                f"corpus {corpus.KEY_HISTORY_REP_FIX} is {stamp!r} (read from "
+                f"{source.name}) but this tool encodes under {HISTORY_REP_FIX}; "
+                "the banked input_keys were hashed in the other repetition-plane "
+                "regime and every repeat-outside-the-frames row would fail "
+                "verification",
+            )
     if row_schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
         raise CorpusIntegrityError(
             f"corpus row schema {row_schema} (read from {source.name}) is a "
@@ -4507,6 +4573,15 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
             f"{corpus.KEY_TT_CARRIED}; the derived shards could not disclose "
             "whether these searches shared a transposition table",
         )
+    if schema == ROW_SCHEMA_HISTORY:
+        stamp = run.get(corpus.KEY_HISTORY_REP_FIX)
+        if stamp is None or bool(stamp) is not HISTORY_REP_FIX:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)}: run block {corpus.KEY_HISTORY_REP_FIX}="
+                f"{stamp!r}, this tool encodes under {HISTORY_REP_FIX}; the "
+                "row's input_key was hashed in another repetition-plane regime "
+                "(or none is recorded) and cannot be verified",
+            )
     row_sha = str(run["config_sha256"])
     if corpus_sha and row_sha != corpus_sha:
         raise CorpusIntegrityError(
@@ -4658,10 +4733,11 @@ def _stamp_realized_row_schema(
         "derive_corpus_row_schema": realized_row_schema(stats),
         "derive_corpus_row_schema_counts": counts,
         "derive_corpus_record_row_schema": int(corpus_record.facts["row_schema"]),
-        "zero_history": bool(
-            stats.rows_written > 0
-            and stats.history_window_empty_rows == stats.rows_written
-        ),
+        # ⚑ ONE definition, the SUMMARY's, off the planes: no emitted row
+        # filled more than history slot 0. The first cut compared
+        # `history_window_empty_rows` to `rows_written`, a second definition
+        # on a second denominator (Fable, round 2 delta).
+        "zero_history": stats.history_slots_nonzero_max <= 1,
     }
     for entry in written:
         group = zarr.open_group(str(out_dir / str(entry["path"])), mode="a")

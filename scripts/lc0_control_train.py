@@ -933,28 +933,49 @@ class ShardHistoryStamps:
     row_schemas: dict[str, str]
     #: ``zero_history`` -> example shard.
     zero_history: dict[bool, str]
+    #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
+    #: ``derive_corpus_row_schema_counts`` naming more than one schema.
+    mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @property
     def mixed(self) -> bool:
-        return len(self.row_schemas) > 1 or len(self.zero_history) > 1
+        """⚑ ACROSS directories OR WITHIN a shard (Grok P2-B, round 3).
+
+        The first cut computed this as ``len(keys) > 1`` across shards only,
+        and ``str()`` absorbed the deriver's fail-closed ``"mixed"`` stamp into
+        a single key -- so one derived directory holding schema-1 AND schema-3
+        rows read as one identity and launched.
+        """
+        return (
+            len(self.row_schemas) > 1
+            or len(self.zero_history) > 1
+            or bool(self.mixed_within)
+        )
 
 
 def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
     """Read every shard's history-identity attrs.  No policy, just the reading."""
     row_schemas: dict[str, str] = {}
     zero_history: dict[bool, str] = {}
+    mixed_within: dict[str, str] = {}
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
             where = f"{Path(shard_dir).name}/{path.name}"
-            row_schemas.setdefault(
-                str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA)),
-                where,
-            )
+            schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
+            row_schemas.setdefault(schema, where)
             zero_history.setdefault(
                 bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
             )
-    return ShardHistoryStamps(row_schemas=row_schemas, zero_history=zero_history)
+            counts = dict(attrs.get("derive_corpus_row_schema_counts", {}) or {})
+            if schema == "mixed" or len(counts) > 1:
+                mixed_within[where] = (
+                    f"derive_corpus_row_schema {schema!r}, counts "
+                    f"{dict(sorted(counts.items()))}"
+                )
+    return ShardHistoryStamps(
+        row_schemas=row_schemas, zero_history=zero_history, mixed_within=mixed_within,
+    )
 
 
 def history_identity_problems(
@@ -976,9 +997,12 @@ def history_identity_problems(
         return []
     schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
     zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
+    within = "".join(
+        f" Mixed WITHIN {w}: {why}." for w, why in sorted(stamps.mixed_within.items())
+    )
     return [
         f"--shards mixes input-history identities: derive_corpus_row_schema "
-        f"{{{schemas}}}, zero_history {{{zero}}}. A zero-history shard fills "
+        f"{{{schemas}}}, zero_history {{{zero}}}.{within} A zero-history shard fills "
         "history slot 0 only; a history-aware one fills all 8 frames and the "
         "repetition planes, and the champion flips 46.5% of its top-1 moves "
         "between the two. One replay buffer would sample both. Train one "
@@ -996,6 +1020,7 @@ def history_identity_record(
     return {
         "row_schemas": sorted(stamps.row_schemas),
         "zero_history": sorted(stamps.zero_history),
+        "mixed_within": sorted(stamps.mixed_within),
         "mixed": stamps.mixed,
         "allow_mixed_history": bool(allow_mixed_history),
     }

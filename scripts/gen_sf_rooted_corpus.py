@@ -244,6 +244,7 @@ import chess
 import chess.polyglot
 import numpy as np
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
@@ -325,6 +326,25 @@ HISTORY_ROOT_GAME_START = "game_start"
 #: pins the deriver's python encoder to this C call, plane for plane.
 INPUT_HISTORY_ENCODING = "lc0_root_legacy_meta"
 INPUT_EXTRA_FEATURES = "v2_threats"
+
+#: ⚑⚑ THE REPETITION-PLANE REGIME, and it is part of the input identity.  The C
+#: encoder :func:`row_key` goes through records per-slot repetition flags at
+#: board construction under a PROCESS-GLOBAL flag
+#: (``chess_anti_engine/encoding/rep_fix.py``); its C default is UNFIXED, which
+#: under-reports repetitions older than the hash stack the encoder rebuilds
+#: after an irreversible move.  Production plays FIXED
+#: (``configs/pbt2_small.yaml`` ``history_rep_fix: true`` -- pinned by
+#: ``tests/test_gen_sf_rooted_corpus.py``) and the deriver's python encoder is
+#: always fixed, so an unfixed generator would (a) bank an ``input_key`` the
+#: deriver can never reproduce on any row with a repeat inside the window but
+#: outside the 8 frames (measured 2026-09-01 on run03: 77/24,590 rows) and
+#: (b) fold two rows that differ only in a repetition plane into one.
+#: ``apply_history_rep_fix`` sets it at ``run``/``run_worker`` start, before
+#: any CBoard exists; :func:`row_key` REQUIRES it; the manifest, the summary
+#: and every row's ``run`` block stamp it; the deriver refuses a schema-3
+#: corpus whose stamp is missing or differs from its own regime.
+HISTORY_REP_FIX = True
+KEY_HISTORY_REP_FIX = "history_rep_fix"
 
 #: Repetition counts above this are indistinguishable to the engine (a 3-fold
 #: is a draw whether it is the third or the fifth occurrence), so the signature
@@ -1549,6 +1569,36 @@ def input_tensor_key(planes: np.ndarray) -> str:
     ).hexdigest()
 
 
+def apply_history_rep_fix() -> None:
+    """Put the process in production's repetition-plane regime.
+
+    Called at the top of ``run`` (the parent: before the engine handshake and
+    before any opening book is warmed) and of ``run_worker`` (each worker is a
+    SPAWNED process, so a C global set in the parent does not reach it).  No
+    CBoard exists in either process before this call -- every one the
+    generator builds is inside :func:`row_key`, after it -- which is what
+    ``boards_discarded=True`` certifies.
+    """
+    rep_fix.apply(HISTORY_REP_FIX, boards_discarded=True)
+
+
+def require_history_rep_fix() -> None:
+    """The precondition :func:`row_key` checks, spelled once and LOUD.
+
+    A wrong or unset regime here would hash planes the deriver cannot
+    reproduce; raising is the only honest response, because the C global is
+    write-only and the planes carry no mark of which regime made them.
+    """
+    if rep_fix.current() is not HISTORY_REP_FIX:
+        raise RuntimeError(
+            f"history_rep_fix is {rep_fix.current()!r} in this process but the "
+            f"corpus is defined under {HISTORY_REP_FIX}; call "
+            "apply_history_rep_fix() before building any board -- the C "
+            "encoder would otherwise hash repetition planes the deriver "
+            "never produces",
+        )
+
+
 def row_key(board: chess.Board) -> str:
     """MODEL-INPUT identity: the hash of the tensor live play encodes for ``board``.
 
@@ -1556,8 +1606,9 @@ def row_key(board: chess.Board) -> str:
     is the call the UCI search makes on its root -- so "same row" means "the
     net would see the same 175 planes", history frames and repetition planes
     included, rather than "same FEN".  ~0.35 ms per position beside a search
-    of order 100 ms.
+    of order 100 ms.  ⚑ Under ``HISTORY_REP_FIX``, checked on every call.
     """
+    require_history_rep_fix()
     return input_tensor_key(
         encode_cboard(
             CBoard.from_board(board),
@@ -2685,6 +2736,9 @@ def play_game(
                     "config_sha256": spec.config_sha256,
                     # Observed at write time, same counter as the worker stamp.
                     KEY_TT_CARRIED: searcher.tt_cleared_mid_position == 0,
+                    # The REALIZED regime, read off the flag `row_key` just
+                    # required, not off the constant.
+                    KEY_HISTORY_REP_FIX: bool(rep_fix.current()),
                 },
                 "fen": board.fen(),
                 # `dedup_key` is kept for consumers that join on it; the two
@@ -2857,6 +2911,8 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     looks healthy.
     """
     nice_realized = apply_nice(spec.nice)
+    # ⚑ FIRST, before the resume re-warm, the opening book and every board.
+    apply_history_rep_fix()
     staircase = parse_staircase(spec.staircase)
 
     def spawn_searcher(stats: SearchStats) -> StaircaseSearcher:
@@ -3503,6 +3559,7 @@ def build_summary(
         },
         "engine": {**engine_record, "id_name": engine_id_name},
         "banked_rows_min_piece_count": MIN_BANKED_PIECES,
+        KEY_HISTORY_REP_FIX: HISTORY_REP_FIX,
         "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
         "python": sys.version.split()[0],
     }
@@ -3603,6 +3660,7 @@ def write_launch_manifest(
         ],
         "engine": {**engine_record, "id_name": engine_id_name},
         "banked_rows_min_piece_count": MIN_BANKED_PIECES,
+        KEY_HISTORY_REP_FIX: HISTORY_REP_FIX,
         "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
         "started_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -3834,6 +3892,14 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
     # `run` calls this before it archives any record and before any worker
     # is dispatched, so a refused resume leaves the directory untouched.
     banked_schema = manifest.get("row_schema")
+    if banked_schema == ROW_SCHEMA and manifest.get(KEY_HISTORY_REP_FIX) != HISTORY_REP_FIX:
+        raise ValueError(
+            f"--resume was given but {manifest_path} stamps "
+            f"{KEY_HISTORY_REP_FIX}={manifest.get(KEY_HISTORY_REP_FIX)!r} and "
+            f"this build encodes under {HISTORY_REP_FIX}; the banked input_keys "
+            "were hashed in another repetition-plane regime and cannot be "
+            "continued. Use a new --out-dir.",
+        )
     if banked_schema != ROW_SCHEMA:
         raise ValueError(
             f"--resume was given but {manifest_path} was opened under row "
@@ -3892,6 +3958,7 @@ def refuse_resume_config_drift(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, fan out, merge and write ``summary.json``."""
+    apply_history_rep_fix()
     staircase = parse_staircase(str(args.staircase))
     if float(args.temp_high) <= 0.0 or float(args.temp_low) <= 0.0:
         raise ValueError(

@@ -25,6 +25,8 @@ import hashlib
 import json
 import math
 import os
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Sequence
@@ -38,8 +40,10 @@ import chess.polyglot
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from scripts import audit_label_candidates as gate
@@ -48,6 +52,20 @@ from scripts import gen_sf_rooted_corpus as corpus
 from tests.stockfish_binary import find_stockfish
 
 # ── the scripted engine ──────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def production_rep_fix() -> None:
+    """Production's repetition-plane regime, which ``corpus.row_key`` REQUIRES.
+
+    The generator sets it itself at ``run``/``run_worker`` start; a test that
+    drives ``play_game`` or ``row_key`` directly stands in for that call.  The
+    suite-wide hookwrapper in ``conftest.py`` rewinds the flag after each test.
+    ⚑ This is why the in-process tests cannot see a generator that FORGOT the
+    call -- ``test_a_fresh_process_generates_and_derives_under_one_regime``
+    runs the generator in a SUBPROCESS for exactly that reason.
+    """
+    rep_fix.apply(True)
+
 
 #: Score handed to a move named in a fake's preference list.  Far enough above
 #: the hashed scores that q/tau at the test temperature is a landslide.
@@ -1219,6 +1237,200 @@ def test_the_search_key_is_the_dedup_key_plus_the_reversible_segments_repeats() 
     cut = board_after("g1f3 g8f6 f3g1 f6g8 e2e4")
     assert cut.halfmove_clock == 0
     assert corpus.search_key(cut) == f"{corpus.dedup_key(cut)}|"
+
+
+#: ⚑ THE ROUTE WHERE THE TWO REGIMES DISAGREE: two knight cycles (every position
+#: a repeat) then ``e2e4 e7e5``.  The irreversible move clears the hash stack
+#: the UNFIXED encoder rebuilds repetition planes from, so at plies 9-10 the
+#: older frames' repetition planes are set only under the FIXED regime.
+#: Measured in fresh subprocesses (2026-09-01): of 102 positions across seven
+#: routes, exactly these two hash differently.
+REGIME_SENSITIVE_ROUTE = "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 e2e4 e7e5"
+
+
+def unfixed_key_in_a_fresh_process(moves: str) -> str:
+    """``input_tensor_key`` of the C planes under the UNFIXED regime.
+
+    A fresh interpreter, because the fixed flag cannot be flipped back under a
+    live board in this one (``rep_fix.RepFixFlipError``) -- and because the
+    unfixed regime is the C DEFAULT, which is the whole hazard.
+    """
+    code = (
+        "import chess, sys\n"
+        "from chess_anti_engine.encoding import rep_fix\n"
+        "from chess_anti_engine.encoding._lc0_ext import CBoard\n"
+        "from chess_anti_engine.encoding.cboard_encode import encode_cboard\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "rep_fix.apply(False)\n"
+        "b = chess.Board()\n"
+        f"for u in {moves.split()!r}: b.push_uci(u)\n"
+        "print(corpus.input_tensor_key(encode_cboard(CBoard.from_board(b), "
+        "input_history_encoding=corpus.INPUT_HISTORY_ENCODING, "
+        "input_extra_features=corpus.INPUT_EXTRA_FEATURES)))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=str(corpus.REPO_ROOT), env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT)},
+    )
+    return proc.stdout.strip().splitlines()[-1]
+
+
+def test_the_generator_writes_the_fixed_input_key_where_the_regimes_differ(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ The regime is part of the key (#498 reviewer, blocking).
+
+    The row's ``input_key`` must be the FIXED hash -- the one the deriver's
+    python encoder reproduces -- and not the C default's.
+    """
+    board = board_after(REGIME_SENSITIVE_ROUTE)
+    unfixed = unfixed_key_in_a_fresh_process(REGIME_SENSITIVE_ROUTE)
+    fixed = fixed_key(REGIME_SENSITIVE_ROUTE)
+    assert unfixed != fixed, "the route no longer separates the regimes"
+
+    games = SeededGames(tmp_path)
+    outcome = games.play(REGIME_SENSITIVE_ROUTE, tag="regime")
+    (row,) = outcome.rows
+    assert row["input_key"] == fixed
+    assert row["input_key"] != unfixed
+    assert row["run"][corpus.KEY_HISTORY_REP_FIX] is True
+    assert corpus.row_key(board) == fixed
+
+
+def test_row_key_refuses_a_process_in_the_wrong_regime() -> None:
+    """The precondition is loud: an unset or unfixed flag cannot hash a row."""
+    code = (
+        "import chess\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "try:\n"
+        "    corpus.row_key(chess.Board())\n"
+        "except RuntimeError as exc:\n"
+        "    print('REFUSED', 'history_rep_fix is None' in str(exc))\n"
+        "else:\n"
+        "    print('ACCEPTED')\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=str(corpus.REPO_ROOT), env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT)},
+    )
+    assert proc.stdout.strip().splitlines()[-1] == "REFUSED True"
+
+
+def test_the_generators_regime_is_productions() -> None:
+    """``HISTORY_REP_FIX`` is read from the same place production reads it."""
+    import yaml
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    cfg = flatten_run_config_defaults(yaml.safe_load(
+        (corpus.REPO_ROOT / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8"),
+    ))
+    assert corpus.HISTORY_REP_FIX is bool(cfg["history_rep_fix"])
+
+
+#: The other route where the regimes differ (delta reviewer, measured over all
+#: 522 gate positions): the irreversible ``e2e4`` lands INSIDE the 8 frames
+#: after the ``c3b1 c6b8`` repeat, and ``f3g1`` at ply 11 keeps it in the window.
+IRREVERSIBLE_AFTER_LONG_RUN = "g1f3 g8f6 b1c3 b8c6 c3b1 c6b8 b1a3 b8a6 e2e4 e7e5 f3g1"
+#: ``(route, plies)`` -> the board the subprocess gate must key like the deriver:
+#: ``repetition_then_irreversible_in_window[9]`` and
+#: ``irreversible_after_long_run[10]``, plus ``[10]`` of the first.
+REGIME_SENSITIVE_POSITIONS = (
+    (REGIME_SENSITIVE_ROUTE, 9),
+    (REGIME_SENSITIVE_ROUTE, 10),
+    (IRREVERSIBLE_AFTER_LONG_RUN, 10),
+)
+
+
+def fixed_key(moves: str) -> str:
+    """The DERIVER's hash of the position: python encoder, always fixed."""
+    return corpus.input_tensor_key(np.asarray(encode_position(
+        board_after(moves), add_features=True,
+        input_history_encoding=corpus.INPUT_HISTORY_ENCODING,
+        input_extra_features=corpus.INPUT_EXTRA_FEATURES,
+    ), dtype=np.float32))
+
+
+def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) -> None:
+    """⚑⚑ THE SUBPROCESS GATE.  A fresh interpreter (C default: UNFIXED) runs
+    the generator through ``corpus.run`` on the three regime-sensitive
+    positions with a scripted engine, then the deriver over the whole output
+    with ``enforce_input_key_take_effect`` armed.  No fixture applies the flag
+    in a subprocess: only the generator's own ``apply_history_rep_fix`` can
+    make every banked ``input_key`` the deriver's hash here, and each of the
+    three is also checked by value against the FIXED key computed in this
+    process and against the UNFIXED key from a third interpreter -- so the
+    gate is one that can fail.  Mutant: that call made a no-op -> ``row_key``
+    refuses, the run dies, this test fails.
+    """
+    lines = [
+        f"{chess.STARTING_FEN} | {' '.join(route.split()[:plies])}"
+        for route, plies in REGIME_SENSITIVE_POSITIONS
+    ]
+    driver = tmp_path / "driver.py"
+    driver.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "from scripts import derive_corpus_targets as derive\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "from tests.test_gen_sf_rooted_corpus import (\n"
+        "    SMOKE_SYZYGY, ScriptedEngine, fen_list_opening, uci_double,\n"
+        ")\n"
+        "root = Path(sys.argv[1])\n"
+        f"lines = {lines!r}\n"
+        "mp = pytest.MonkeyPatch()\n"
+        "mp.setattr(corpus, 'StockfishUCI', lambda *_a, **_kw: uci_double(ScriptedEngine()))\n"
+        "mp.setattr(corpus, 'build_opening_config',\n"
+        "           lambda _spec: fen_list_opening(lines, root / 'seeds.txt'))\n"
+        "# The production sampler draws WITH replacement; deal the three lines\n"
+        "# round-robin so every game gets its own (one worker plays in order).\n"
+        "real_sample = corpus.sample_starting_board\n"
+        "dealt = iter(lines)\n"
+        "mp.setattr(corpus, 'sample_starting_board', lambda *, rng, cfg: real_sample(\n"
+        "    rng=rng, cfg=fen_list_opening([next(dealt)], root / f'seed{rng.random()}.txt')))\n"
+        "# The deriver drops result-less rows before it verifies them, and a\n"
+        "# ply-capped scripted game has no result: stamp a draw so every row\n"
+        "# reaches the input_key check. A test seam, not a generator setting.\n"
+        "mp.setattr(corpus, 'result_from_pov', lambda _r, *, white_to_move: 0.0)\n"
+        "out = root / 'corpus'\n"
+        "summary = corpus.run(corpus.build_parser().parse_args([\n"
+        "    '--out-dir', str(out), '--games', str(len(lines)), '--workers', '1',\n"
+        "    '--syzygy-path', str(SMOKE_SYZYGY or corpus.REPO_ROOT),\n"
+        "    '--temp-high', '0.01', '--temp-low', '0.01', '--nice', '0', '--max-plies', '1',\n"
+        "]))\n"
+        "rows = [{'fen': r['fen'], 'input_key': r['input_key'],\n"
+        "         'stamp': r['run'][corpus.KEY_HISTORY_REP_FIX]}\n"
+        "        for p in sorted(out.glob('w*.jsonl.zst')) for r in derive.iter_corpus_rows(p)]\n"
+        "rc = derive.main(['--corpus', str(out), '--out', str(root / 'derived'),\n"
+        "                  '--scheme', 'uniform-d9', '--temp', '1.0'])\n"
+        "d = json.loads((root / 'derived' / derive.SUMMARY_NAME).read_text())\n"
+        "print(json.dumps({'rc': rc, 'rows': rows, 'banked': summary['rows'],\n"
+        "                  'stamp': summary[corpus.KEY_HISTORY_REP_FIX],\n"
+        "                  'verified': d['realized']['input_key_verified'],\n"
+        "                  'written': d['realized']['rows_written']}))\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(driver), str(tmp_path)], capture_output=True, text=True,
+        check=False, cwd=str(corpus.REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT), "CUDA_VISIBLE_DEVICES": ""},
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert result["rc"] == 0
+    assert result["stamp"] is True
+    assert result["banked"] == len(lines)
+    assert result["verified"] == result["written"] == len(lines)
+    keyed = {row["fen"]: row for row in result["rows"]}
+    assert len(keyed) == len(lines)
+    for route, plies in REGIME_SENSITIVE_POSITIONS:
+        moves = " ".join(route.split()[:plies])
+        row = keyed[board_after(moves).fen()]
+        assert row["stamp"] is True
+        unfixed = unfixed_key_in_a_fresh_process(moves)
+        assert row["input_key"] == fixed_key(moves), (route, plies)
+        assert row["input_key"] != unfixed, (route, plies, "route no longer separates")
 
 
 def test_the_row_key_is_the_hash_of_the_tensor_live_play_encodes() -> None:
@@ -3645,6 +3857,7 @@ def resumable_dir(tmp_path: Path) -> Path:
     (out_dir / corpus.MANIFEST_NAME).write_text(
         json.dumps({
             "row_schema": corpus.ROW_SCHEMA,
+            corpus.KEY_HISTORY_REP_FIX: corpus.HISTORY_REP_FIX,
             "config_requested": requested,
             "config_sha256": corpus.stamp_sha256(requested),
         }),
@@ -3681,6 +3894,31 @@ def test_a_resume_onto_an_older_row_schema_is_refused_at_the_manifest(
 
     rewrite_manifest_row_schema(out_dir, None)
     with pytest.raises(ValueError, match="row schema None"):
+        corpus.load_resume_manifest(out_dir)
+
+
+def test_a_schema_2_manifest_is_refused_by_name_on_resume(tmp_path: Path) -> None:
+    """The keyless intermediate shape, named in the refusal (Fable, round 2 delta)."""
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA_HISTORY_WITHOUT_KEYS)
+    with pytest.raises(ValueError, match=r"search_key/input_key.*Regenerate") as excinfo:
+        corpus.load_resume_manifest(out_dir)
+    assert "row schema 2" in str(excinfo.value)
+
+
+def test_a_manifest_in_another_repetition_regime_is_refused_on_resume(
+    tmp_path: Path,
+) -> None:
+    out_dir = resumable_dir(tmp_path)
+    path = out_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest[corpus.KEY_HISTORY_REP_FIX] = False
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="history_rep_fix=False"):
+        corpus.load_resume_manifest(out_dir)
+    del manifest[corpus.KEY_HISTORY_REP_FIX]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="history_rep_fix=None"):
         corpus.load_resume_manifest(out_dir)
 
 

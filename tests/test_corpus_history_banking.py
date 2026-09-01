@@ -389,32 +389,52 @@ def test_the_reference_encoding_is_also_what_selfplay_rows_are_written_from() ->
     assert checked == len(FAR_REPETITION.split())
 
 
-def test_the_history_rep_fix_stamp_is_inert_on_the_construction_this_tool_uses(
-) -> None:
-    """⚑ MEASURED, because the deriver STAMPS ``history_rep_fix: true`` into
-    every shard as replay identity and never applies the flag.
+#: ``(case, index)`` of every gate position whose C planes DIFFER between the
+#: two regimes: an irreversible move inside the 8 frames after a repetition.
+#: ``cboard_push`` clears ``hash_stack`` at the irreversible move, so the
+#: UNFIXED regime loses the repetition planes of the frames before it, while
+#: the FIXED one records each slot's flag at push time.  Measured over all 522
+#: gate positions in two subprocesses (delta reviewer, 2026-09-01): exactly
+#: these four; ``far_repetition``/``near_repetition`` are byte-identical.
+REGIME_SENSITIVE = (
+    ("repetition_then_irreversible_in_window", 9),
+    ("repetition_then_irreversible_in_window", 10),
+    ("irreversible_after_long_run", 10),
+    ("irreversible_after_long_run", 11),
+)
 
-    On a zero-history corpus that stamp was vacuous (nothing can repeat).  On
-    schema 2 it is a real claim about the planes, so it needs a reading rather
-    than an argument: over the repetition cases, a ``from_board`` CBoard encodes
-    IDENTICALLY under both regimes.  The flag exists for CBoards built by
-    ``cboard_push``, whose ``hash_stack`` is cleared at an irreversible move;
-    ``from_board`` rebuilds that stack from the python stack, so the default
-    path has the same look-back the fix records.  If that ever stops being true
-    this fails, and the deriver then has to APPLY the flag it stamps.
+
+def test_the_history_rep_fix_stamp_is_load_bearing_and_the_deriver_is_on_the_fixed_side(
+) -> None:
+    """⚑⚑ The stamp is a CLAIM about the planes, checked on the boards where it
+    can fail.  The first cut of this test certified the flag "inert" on
+    ``far_repetition``/``near_repetition`` -- the two cases where it IS inert --
+    which is the gate-that-cannot-fail shape.  Here: on every regime-sensitive
+    position the two C regimes disagree, the disagreement is confined to the
+    frame repetition planes, and the deriver's python encoder equals the FIXED
+    C planes -- so the generator MUST encode fixed
+    (``corpus.apply_history_rep_fix``) for its ``input_key`` to be reproducible,
+    and ``derive.HISTORY_REP_FIX`` is a reading of that, bound to the
+    generator's constant.
     """
-    boards = [*CASES["far_repetition"], *CASES["near_repetition"]]
+    assert derive.HISTORY_REP_FIX is corpus.HISTORY_REP_FIX is True
+    boards = [CASES[case][index] for case, index in REGIME_SENSITIVE]
     with_fix = [live_planes(b) for b in boards]
     rep_fix.apply(False, boards_discarded=True)
     try:
         without_fix = [live_planes(b) for b in boards]
     finally:
         rep_fix.apply(True, boards_discarded=True)
-    for board, want, got in zip(boards, with_fix, without_fix):
-        assert np.array_equal(want, got), board.fen()
-    # And the deriver's own encoder agrees with both.
-    for board, want in zip(boards, with_fix):
-        assert np.array_equal(derived_planes(board), want), board.fen()
+    for (case, index), want, got in zip(REGIME_SENSITIVE, with_fix, without_fix):
+        assert not np.array_equal(want, got), (case, index, "regimes agree here")
+        differing = {int(p) for p in np.flatnonzero(
+            (want != got).reshape(want.shape[0], -1).any(axis=1),
+        )}
+        assert differing, (case, index)
+        assert differing <= set(REP_PLANES), (case, index, sorted(differing))
+    for (case, index), board, want in zip(REGIME_SENSITIVE, boards, with_fix):
+        assert np.array_equal(derived_planes(board), want), (case, index)
+        assert corpus.row_key(board) == corpus.input_tensor_key(want), (case, index)
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
