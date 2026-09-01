@@ -168,8 +168,9 @@ def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         seen.append(int(next(batch_iter)["x"].item()))
         if len(seen) == 1:
             raise RuntimeError("CUDA transient test failure")
@@ -237,8 +238,9 @@ def test_train_steps_closes_prefetch_after_terminal_error(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del timer, step_opt_stats, step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         next(batch_iter)
         raise RuntimeError("terminal host failure")
 
@@ -757,8 +759,9 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, batch_iter
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, batch_iter
         assert update_lr is False
         seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
@@ -839,8 +842,9 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
   # `_DeviceLossSums` takes DEVICE TENSORS, not host floats: the real
   # `_run_optimizer_step` no longer materializes the per-step scalars, so a
@@ -1393,8 +1397,9 @@ def test_train_steps_reports_clip_rate_without_double_counting_retries(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         attempts["n"] += 1
         # The first attempt records a huge clipped norm and then dies: the retry
         # must replace it, not add to it.
@@ -1485,8 +1490,9 @@ def test_train_steps_reports_iteration_mean_lr_not_the_release_trough(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         step_opt_stats["lr"] = float(trainer.opt.param_groups[0]["lr"])
         step_sums.add_losses(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, torch.zeros(())))
         return 1, 0.0

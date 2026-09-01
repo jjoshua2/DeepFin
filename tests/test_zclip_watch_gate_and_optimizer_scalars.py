@@ -402,8 +402,9 @@ def test_train_steps_accumulates_adaptive_bound_over_the_whole_iteration(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         steps["n"] += 1
         hard = steps["n"] == 4
         step_opt_stats["grad_norm"] = 8.0
