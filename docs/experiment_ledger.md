@@ -71511,3 +71511,16 @@ the standing 1-view rule at this scale); τ stays the sharp family (round-2
 weakly-held adoption unchanged — this round adds no τ evidence). Second
 views are not poison but buy ~arena-nothing while degrading the
 generalization signature — spend generation, not repetition.
+
+**2026-09-01 AMENDMENT to the round-4 readout (Josh's challenge, accepted in
+part).** "1 view fresh" is a PREFERENCE at equal cost, not a claim that 2nd
+views are inert: production draws with `mirror_prob=0.5` (Trainer default,
+surfaced by the PR-492 profiling), so a repeat view sees ~half its rows in a
+novel orientation — semi-fresh by construction. Consistent with that, the
+repeat extension matched fresh exactly in the arena and kept the better d9
+regret while its KL-to-BT4 rose. What was NEVER measured is whether an
+extension beats its own 1× donor in play — rounds 2/4 only ran ext-vs-ext.
+Queued: `ext_vs_base_arenas.sh` (gated on valueround.done) — repeat-ext vs
+base and fresh-ext vs base, 200 games each. Decides whether 2nd views buy
+strength when fresh data is exhausted — the regime that matters once
+generation is the bottleneck. The run05 fresh-first recipe is unchanged.
