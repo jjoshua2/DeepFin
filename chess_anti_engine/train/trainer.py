@@ -975,6 +975,18 @@ class TrainMetrics:
     aurora_uw_floored_frac: float = 0.0
     aurora_uw_effective_ratio_min: float = 0.0
     aurora_uw_effective_ratio_median: float = 0.0
+  # Which AdamW-fallback path the iteration's LAST optimizer step ran
+  # (`AuroraWithAuxAdam.last_adamw_stats`). `adamw_foreach_params` is the
+  # take-effect column for the batched `_foreach_*` update: production reads
+  # 431 tensors in 2 buckets and `adamw_loop_params` 0.0. A non-zero loop
+  # count means a batchability predicate sent tensors down the per-parameter
+  # path, which nothing else reports. `adamw_foreach_recoveries` counts
+  # buckets whose denominator allocation failed and were finished per tensor
+  # instead (see `_DenominatorAllocationFailed`) -- 0.0 on a healthy step.
+    adamw_foreach_buckets: float = 0.0
+    adamw_foreach_params: float = 0.0
+    adamw_loop_params: float = 0.0
+    adamw_foreach_recoveries: float = 0.0
   # Polar residual of the update Aurora applied, sampled on ONE designated
   # tensor per shape class per iteration (`train.aurora.polar_convergence`).
   # `_sv_ratio_*` is sigma_min/sigma_max (1.0 = a true orthogonal step) and
@@ -4984,6 +4996,7 @@ class Trainer:
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
             **getattr(self.opt, "last_polar_stats", {}),
+            **getattr(self.opt, "last_adamw_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._warn_if_value_blend_leaks_to_outcome(metrics)

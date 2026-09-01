@@ -116,6 +116,10 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
     def last_polar_stats(self) -> dict[str, float]:
         return getattr(self.base, "last_polar_stats", {})
 
+    @property
+    def last_adamw_stats(self) -> dict[str, float]:
+        return getattr(self.base, "last_adamw_stats", {})
+
     def set_collect_polar_stats(self, collect: bool) -> None:
         setter = getattr(self.base, "set_collect_polar_stats", None)
         if callable(setter):

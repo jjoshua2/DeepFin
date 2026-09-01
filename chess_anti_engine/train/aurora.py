@@ -422,13 +422,55 @@ def _adamw_update_one(
         param.mul_(1.0 - lr * weight_decay)
     exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+    _adamw_finish_one(
+        param, exp_avg, exp_avg_sq, step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
+    )
 
+
+def _adamw_finish_one(
+    param: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    *,
+    step: int,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """The tail of `_adamw_update_one` from the denominator on: the ops AFTER
+    the moments have been decayed and accumulated.
+
+    Split out because it is also the recovery path for a bucket whose
+    `_foreach_sqrt` failed to allocate (see `_DenominatorAllocationFailed`):
+    the moments of every tensor in that bucket are already at their post-step
+    values, so finishing each tensor here, one denominator at a time, lands the
+    bucket exactly where the batched chain would have. Per-tensor `sqrt` /
+    `div` / `add_` / `addcdiv_` are the reference ops the batched kernels are
+    pinned to bit for bit, so this is not an approximation of the step -- it
+    IS the step, in the pre-change order.
+    """
     bias_correction1 = 1.0 - beta1**step
     bias_correction2 = 1.0 - beta2**step
     denom = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
     denom.add_(eps)
     step_size = lr / max(bias_correction1, 1e-12)
     param.addcdiv_(exp_avg, denom, value=-step_size)
+
+
+class _DenominatorAllocationFailed(RuntimeError):
+    """`_foreach_sqrt` raised inside `_adamw_update_foreach`, AFTER the
+    in-place moment kernels had run and BEFORE any parameter update.
+
+    It is the one point in the batched chain where the state is both mutated
+    and recoverable: the four in-place kernels before it allocate nothing and
+    have completed for the whole bucket, `_foreach_sqrt` is out-of-place so a
+    failure inside it leaves its inputs untouched, and everything after it
+    only needs one denominator at a time. `step` catches this and finishes the
+    bucket per tensor. The message is the original error's, so if the recovery
+    itself fails and this propagates, `Trainer.train_steps`' "CUDA" retry test
+    still sees what it would have seen.
+    """
 
 
 def _adamw_update_foreach(
@@ -466,7 +508,26 @@ def _adamw_update_foreach(
 
     bias_correction1 = 1.0 - beta1**step
     bias_correction2 = 1.0 - beta2**step
-    denoms = torch._foreach_sqrt(exp_avg_sqs)
+  # ⚑ Scope of what a mid-chain failure leaves behind, stated exactly. The four
+  # in-place kernels above are the ONLY mutation before the parameter update,
+  # and `_foreach_sqrt` below is the ONLY allocation in the chain (one fp32
+  # denominator per tensor -- 165.6 MiB for the production 142-tensor group),
+  # so an allocator `RuntimeError` fires HERE, after every moment in the bucket
+  # has been decayed and accumulated and before any parameter has moved (the
+  # weight-decay `mul_` at the top excepted, when it is on). `Trainer.train_steps`
+  # retries a step whose error mentions "CUDA" and records the retry as clean,
+  # so left alone that retry would decay/accumulate the whole bucket's moments a
+  # SECOND time with the replacement batch's gradients -- the old loop had the
+  # same shape bounded to the one tensor it was on; batching widens it to the
+  # bucket. Rather than reorder the kernels (a kernel change, which would need
+  # its own phase-0b identity run), the failure is typed and `step` finishes the
+  # bucket per tensor from the moments it already has: same ops, one
+  # denominator at a time, bitwise the loop's result. Failures inside the
+  # in-place kernels are NOT recoverable this way and propagate unchanged.
+    try:
+        denoms = torch._foreach_sqrt(exp_avg_sqs)
+    except RuntimeError as exc:
+        raise _DenominatorAllocationFailed(str(exc)) from exc
     torch._foreach_div_(denoms, math.sqrt(max(bias_correction2, 1e-12)))
     torch._foreach_add_(denoms, eps)
     step_size = lr / max(bias_correction1, 1e-12)
@@ -516,6 +577,14 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
         self.last_polar_stats: dict[str, float] = {}
+  # Which AdamW-fallback path the LAST step ran, harvested onto the step row
+  # by `Trainer.train_steps` like `last_uw_stats`. `adamw_foreach_params` is
+  # the take-effect column for the batched path: production is 431 tensors
+  # in 2 buckets with `adamw_loop_params` 0; a loop count that is not 0 means
+  # a batchability predicate (dtype allowlist, duplicate guard, mixed
+  # device/dtype) sent tensors down the per-parameter path, silently. Written
+  # every step -- four Python ints, no device sync.
+        self.last_adamw_stats: dict[str, float] = {}
         self._collect_uw_stats = True
         self._collect_polar_stats = False
         self._use_update_graphs = bool(aurora_cuda_graphs)
@@ -599,6 +668,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        adamw_foreach_buckets = 0
+        adamw_foreach_params = 0
+        adamw_loop_params = 0
+        adamw_foreach_recoveries = 0
         for group in self.param_groups:
             lr = float(group["lr"])
             weight_decay = float(group.get("weight_decay", 0.0))
@@ -808,6 +881,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     beta1=beta1, beta2=beta2, eps=eps,
                 )
                 state["step"] = step
+                adamw_loop_params += 1
 
   # Deferring the batched buckets past the scan reorders parameters against
   # each other, and that is safe for exactly the reason the batching itself is:
@@ -815,12 +889,48 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # leaves alone. It is NOT safe if two entries alias, which `allow_batching`
   # is what rules out.
             for (_device, _dtype, step), bucket in buckets.items():
-                _adamw_update_foreach(
-                    bucket[0], bucket[1], bucket[2], bucket[3],
-                    step=step, lr=lr, weight_decay=weight_decay,
-                    beta1=beta1, beta2=beta2, eps=eps,
-                )
+                adamw_foreach_buckets += 1
+                adamw_foreach_params += len(bucket[0])
+                try:
+                    _adamw_update_foreach(
+                        bucket[0], bucket[1], bucket[2], bucket[3],
+                        step=step, lr=lr, weight_decay=weight_decay,
+                        beta1=beta1, beta2=beta2, eps=eps,
+                    )
+                except _DenominatorAllocationFailed as exc:
+  # The bucket's moments are already at their post-step values and no
+  # parameter has taken its update (see the class docstring). Finish each
+  # tensor from those moments, one denominator at a time, and commit its
+  # `step` the moment IT is complete -- so if this loop dies too, every
+  # tensor's recorded step is true for that tensor: the ones it reached are
+  # fully updated and committed, the ones it did not are moments-mutated
+  # and uncommitted, and the error propagates to the trainer's retry, which
+  # then double-applies exactly those. That residue is stated, not hidden:
+  # `adamw_foreach_recoveries` counts the recoveries that completed, and the
+  # warning below names the bucket.
+                    adamw_foreach_recoveries += 1
+                    logging.getLogger(__name__).warning(
+                        "batched AdamW denominator allocation failed on a %d-tensor "
+                        "bucket at step %d (%s); finishing the bucket per tensor "
+                        "from its already-updated moments",
+                        len(bucket[0]), step, exc,
+                    )
+                    for param, exp_avg, exp_avg_sq, state in zip(
+                        bucket[0], bucket[2], bucket[3], bucket[4],
+                    ):
+                        _adamw_finish_one(
+                            param, exp_avg, exp_avg_sq,
+                            step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
+                        )
+                        state["step"] = step
+                    continue
                 for state in bucket[4]:
                     state["step"] = step
 
+        self.last_adamw_stats = {
+            "adamw_foreach_buckets": float(adamw_foreach_buckets),
+            "adamw_foreach_params": float(adamw_foreach_params),
+            "adamw_loop_params": float(adamw_loop_params),
+            "adamw_foreach_recoveries": float(adamw_foreach_recoveries),
+        }
         return loss

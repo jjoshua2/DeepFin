@@ -994,6 +994,8 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "aurora_uw_ratio_median": 0.0,
     "aurora_uw_effective_ratio_min": 0.0,
     "aurora_uw_effective_ratio_median": 0.0,
+    "adamw_foreach_buckets": 0.0, "adamw_foreach_params": 0.0,
+    "adamw_loop_params": 0.0, "adamw_foreach_recoveries": 0.0,
     "aurora_polar_steps_configured": 0.0, "aurora_polar_sv_samples": 0.0,
     "aurora_polar_sv_errors": 0.0,
     "aurora_polar_sv_ratio_square": 0.0, "aurora_polar_sv_ratio_rect": 0.0,
@@ -1225,6 +1227,18 @@ def _train_metrics_dict(metrics) -> dict:
         "aurora_uw_effective_ratio_median": float(
             metrics.aurora_uw_effective_ratio_median
         ),
+        # Which AdamW-fallback path the iteration's last optimizer step ran.
+        # `adamw_foreach_params` is the proof-of-effect column for the batched
+        # `_foreach_*` update (431 / 2 buckets / loop 0.0 on production); a
+        # non-zero `adamw_loop_params` is the batchability predicates
+        # silently routing tensors to the per-parameter path, and
+        # `adamw_foreach_recoveries` is a bucket finished per tensor after its
+        # denominator allocation failed. Read off the optimizer's own
+        # counters during the step, never off the config.
+        "adamw_foreach_buckets": float(metrics.adamw_foreach_buckets),
+        "adamw_foreach_params": float(metrics.adamw_foreach_params),
+        "adamw_loop_params": float(metrics.adamw_loop_params),
+        "adamw_foreach_recoveries": float(metrics.adamw_foreach_recoveries),
         # Polar residual of the update Aurora applied, at the step count that
         # produced it. `aurora_polar_steps_configured` is the proof-of-effect
         # column for any change to `aurora_polar_steps`: it is read off the

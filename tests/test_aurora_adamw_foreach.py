@@ -32,6 +32,7 @@ from chess_anti_engine.train.aurora import (
     _adamw_update_foreach,
     _adamw_update_one,
 )
+from chess_anti_engine.train.soda import SODAWeightDecayWrapper
 
 _LR = 3e-4
 _BETA1 = 0.9
@@ -464,3 +465,363 @@ def test_foreach_and_loop_helpers_agree_on_a_single_tensor() -> None:
             )
             for got, want in zip(batch, loop):
                 assert torch.equal(got, want)
+
+
+# --- P2-1: what a mid-chain failure leaves behind -----------------------------
+
+
+def _raise_cuda_once(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
+    """Make `torch.<name>` raise a retryable CUDA error on its FIRST call only.
+
+    Returns the call log so a test can assert the injection actually fired --
+    an injection that never ran would make the "recovered" assertions below
+    hold vacuously, since a clean step also matches the reference.
+    """
+    real = getattr(torch, name)
+    calls: list[int] = []
+
+    def flaky(*args: object, **kwargs: object) -> object:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 165.6 MiB")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(torch, name, flaky)
+    return calls
+
+
+def test_a_denominator_allocation_failure_is_finished_per_tensor_bitwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_foreach_sqrt` is the only allocation in the batched chain and it fires
+    AFTER the four in-place moment kernels. Left alone, the trainer's CUDA
+    retry would decay/accumulate the whole bucket's moments a second time and
+    record the step as clean. Instead the bucket is finished per tensor from
+    the moments it already has, and the result is the loop's, bit for bit.
+    """
+    calls = _raise_cuda_once(monkeypatch, "_foreach_sqrt")
+    counter = _PathCounter(monkeypatch)
+    opt, opt_params, ref_params, ref_state = _run_paired(
+        weight_decay=0.03, steps=3, counter=counter,
+    )
+    assert len(calls) == 3, "the injected _foreach_sqrt failure never fired"
+  # No exception escaped `step`, the batched helper was the path every step,
+  # and the recovery is counted exactly once -- on step 1, the failing one.
+    assert counter.foreach == 1
+    assert counter.single == 0
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+    assert all(int(opt.state[p]["step"]) == 3 for p in opt_params)
+    assert opt.last_adamw_stats["adamw_foreach_recoveries"] == 0.0, (
+        "the LAST step (a clean one) must not carry the earlier recovery"
+    )
+
+
+def test_the_recovery_counter_reads_one_on_the_step_that_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _raise_cuda_once(monkeypatch, "_foreach_sqrt")
+    finish_calls: list[int] = []
+    real_finish = aurora_module._adamw_finish_one
+
+    def counted_finish(*args: object, **kwargs: object) -> None:
+        finish_calls.append(1)
+        real_finish(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(aurora_module, "_adamw_finish_one", counted_finish)
+    opt, opt_params, ref_params, ref_state = _run_paired(weight_decay=0.03, steps=1)
+    assert opt.last_adamw_stats["adamw_foreach_recoveries"] == 1.0
+    assert opt.last_adamw_stats["adamw_foreach_buckets"] == 1.0
+    assert len(finish_calls) == len(opt_params), "every tensor of the bucket is finished"
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+
+
+def test_the_recovery_path_is_never_taken_on_a_healthy_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The successful path's arithmetic is untouched by the recovery hook: the
+    per-tensor finisher is not called at all on the batched path, and the
+    tensors still equal the frozen reference loop bit for bit."""
+    finish_calls: list[int] = []
+    real_finish = aurora_module._adamw_finish_one
+
+    def counted_finish(*args: object, **kwargs: object) -> None:
+        finish_calls.append(1)
+        real_finish(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(aurora_module, "_adamw_finish_one", counted_finish)
+    opt, opt_params, ref_params, ref_state = _run_paired(weight_decay=0.03, steps=4)
+    assert finish_calls == []
+    assert opt.last_adamw_stats["adamw_foreach_recoveries"] == 0.0
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+
+
+def test_a_failure_inside_an_in_place_moment_kernel_is_not_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The honest residue, pinned rather than papered over.
+
+    A retryable error raised by an IN-PLACE kernel (here the `exp_avg_sq`
+    accumulate, the last one before the allocation) is not the allocation
+    case: the recovery hook does not fire, the error propagates with its
+    "CUDA" message intact, `step` is NOT committed, and the parameters and
+    `exp_avg` HAVE been mutated. A trainer retry then re-applies the
+    weight-decay multiply and the `exp_avg` decay on top of that. This test
+    asserts that exact double-applied state, so the day it changes the change
+    is a deliberate one.
+    """
+    calls = _raise_cuda_once(monkeypatch, "_foreach_addcmul_")
+    weight_decay = 0.03
+    base = _make_params()
+    opt_params = _clone_params(base)
+    opt = AuroraWithAuxAdam(
+        [{"params": opt_params, "lr": _LR, "weight_decay": weight_decay, "use_aurora": False}],
+    )
+    first_grads = _grads_for_step(opt_params, 0)
+    for param, grad in zip(opt_params, first_grads):
+        param.grad = None if grad is None else grad.clone()
+    with pytest.raises(RuntimeError, match="CUDA") as excinfo:
+        opt.step()
+    assert not isinstance(excinfo.value, aurora_module._DenominatorAllocationFailed)
+    assert calls == [0]
+  # Nothing committed, but the bucket IS mutated: params decayed once and
+  # `exp_avg` holds the first batch's accumulate; `exp_avg_sq` is still zero.
+    assert all(int(opt.state[p].get("step", 0)) == 0 for p in opt_params)
+    for param, grad in zip(opt_params, first_grads):
+        assert grad is not None
+        assert torch.equal(opt.state[param]["exp_avg"], grad * (1.0 - _BETA1))
+        assert torch.equal(opt.state[param]["exp_avg_sq"], torch.zeros_like(grad))
+
+  # The retry, as `Trainer.train_steps` would run it: a fresh batch.
+    second_grads = _grads_for_step(opt_params, 1)
+    for param, grad in zip(opt_params, second_grads):
+        param.grad = None if grad is None else grad.clone()
+    opt.step()
+    assert all(int(opt.state[p]["step"]) == 1 for p in opt_params)
+
+  # Expected: the reference loop run ONCE on the second batch, starting from
+  # the mutated state the failure left -- i.e. the double application.
+    ref_params = _clone_params(base)
+    ref_state: dict[Tensor, dict[str, object]] = {}
+    for ref_param, grad in zip(ref_params, first_grads):
+        assert grad is not None
+        with torch.no_grad():
+            ref_param.mul_(1.0 - _LR * weight_decay)
+        exp_avg = torch.zeros_like(grad)
+        exp_avg.mul_(_BETA1).add_(grad, alpha=1.0 - _BETA1)
+        ref_state[ref_param] = {
+            "step": 0, "exp_avg": exp_avg, "exp_avg_sq": torch.zeros_like(grad),
+        }
+    for ref_param, grad in zip(ref_params, second_grads):
+        ref_param.grad = None if grad is None else grad.clone()
+    _reference_adamw_loop(ref_params, ref_state, lr=_LR, weight_decay=weight_decay)
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+
+  # ...and it is NOT what a clean step on the second batch would have given.
+    clean_params = _clone_params(base)
+    clean_state: dict[Tensor, dict[str, object]] = {}
+    for clean_param, grad in zip(clean_params, second_grads):
+        clean_param.grad = None if grad is None else grad.clone()
+    _reference_adamw_loop(clean_params, clean_state, lr=_LR, weight_decay=weight_decay)
+    assert not torch.equal(opt_params[0].detach(), clean_params[0].detach())
+
+
+# --- P2-2: the production observation that the batched path ran --------------
+
+
+def test_last_adamw_stats_round_trip_the_batched_path() -> None:
+    opt, opt_params, _ref_params, _ref_state = _run_paired(weight_decay=0.03, steps=2)
+    assert opt.last_adamw_stats == {
+        "adamw_foreach_buckets": 1.0,
+        "adamw_foreach_params": float(len(opt_params)),
+        "adamw_loop_params": 0.0,
+        "adamw_foreach_recoveries": 0.0,
+    }
+
+
+def test_last_adamw_stats_count_buckets_on_a_staggered_step() -> None:
+    opt, opt_params, _ref_params, _ref_state = _run_paired(
+        weight_decay=0.03, steps=3, skip_grads={0: {2}, 1: {2}},
+    )
+    assert opt.last_adamw_stats["adamw_foreach_buckets"] == 2.0
+    assert opt.last_adamw_stats["adamw_foreach_params"] == float(len(opt_params))
+    assert opt.last_adamw_stats["adamw_loop_params"] == 0.0
+
+
+def test_last_adamw_stats_read_the_loop_when_the_batched_path_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  # The forced fallback: an empty allowlist routes every tensor to the loop,
+  # and the row must SAY so -- foreach 0 / loop N -- rather than read like a
+  # healthy step. This is the observation P2-2 exists for.
+    monkeypatch.setattr(aurora_module, "_FOREACH_EXACT_DTYPES", frozenset())
+    opt, opt_params, ref_params, ref_state = _run_paired(weight_decay=0.03, steps=2)
+    assert opt.last_adamw_stats == {
+        "adamw_foreach_buckets": 0.0,
+        "adamw_foreach_params": 0.0,
+        "adamw_loop_params": float(len(opt_params)),
+        "adamw_foreach_recoveries": 0.0,
+    }
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+
+
+def test_last_adamw_stats_exclude_parameters_without_a_gradient() -> None:
+    used = torch.nn.Parameter(torch.randn(3, 2))
+    unused = torch.nn.Parameter(torch.randn(3, 2))
+    opt = AuroraWithAuxAdam(
+        [{"params": [used, unused], "lr": _LR, "weight_decay": 0.02, "use_aurora": False}],
+    )
+    used.grad = torch.randn(3, 2)
+    opt.step()
+    assert opt.last_adamw_stats["adamw_foreach_params"] == 1.0
+    assert opt.last_adamw_stats["adamw_loop_params"] == 0.0
+
+
+def test_soda_wrapper_forwards_last_adamw_stats() -> None:
+  # Production may wrap the optimizer; the trainer harvests off the wrapper,
+  # so a missing passthrough is a row that silently reads all zeros.
+    params = _make_params()
+    base_opt = AuroraWithAuxAdam(
+        [{"params": params, "lr": _LR, "weight_decay": 0.03, "use_aurora": False}],
+    )
+    wrapped = SODAWeightDecayWrapper(base_opt)
+    for param, grad in zip(params, _grads_for_step(params, 0)):
+        param.grad = None if grad is None else grad.clone()
+    wrapped.step()
+    assert wrapped.last_adamw_stats == base_opt.last_adamw_stats
+    assert wrapped.last_adamw_stats["adamw_foreach_params"] == float(len(params))
+
+
+def test_every_adamw_stat_key_is_a_train_metrics_field_and_a_ray_column() -> None:
+  # `_build_metrics(**last_adamw_stats)` is a keyword splat: a key the
+  # dataclass does not declare is a TypeError mid-iteration, and a field the
+  # Ray row does not list reaches TensorBoard only.
+    import dataclasses
+
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.tune import trainable_report
+
+    opt, _p, _r, _s = _run_paired(weight_decay=0.0, steps=1)
+    emitted = set(opt.last_adamw_stats)
+    assert emitted == {
+        "adamw_foreach_buckets", "adamw_foreach_params",
+        "adamw_loop_params", "adamw_foreach_recoveries",
+    }
+    fields = {f.name for f in dataclasses.fields(trainer_module.TrainMetrics)}
+    assert emitted <= fields
+    assert emitted <= set(trainable_report._train_metrics_dict(None))
+
+
+def test_ray_row_round_trips_the_adamw_path_values() -> None:
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.tune import trainable_report
+
+    metrics = trainer_module.TrainMetrics(
+        **dict.fromkeys(
+            (
+                "loss", "policy_loss", "soft_policy_loss", "future_policy_loss",
+                "wdl_loss", "sf_move_loss", "sf_move_acc", "sf_eval_loss",
+                "categorical_loss", "volatility_loss", "sf_volatility_loss",
+                "moves_left_loss",
+            ),
+            0.0,
+        ),
+        adamw_foreach_buckets=2.0,
+        adamw_foreach_params=431.0,
+        adamw_loop_params=7.0,
+        adamw_foreach_recoveries=1.0,
+    )
+    row = trainable_report._train_metrics_dict(metrics)
+  # Values, not membership: a column wired to the wrong field would still be
+  # present.
+    assert row["adamw_foreach_buckets"] == 2.0
+    assert row["adamw_foreach_params"] == 431.0
+    assert row["adamw_loop_params"] == 7.0
+    assert row["adamw_foreach_recoveries"] == 1.0
+    assert set(trainable_report._train_metrics_dict(None)) == set(row)
+    for key in ("adamw_foreach_buckets", "adamw_foreach_params",
+                "adamw_loop_params", "adamw_foreach_recoveries"):
+        assert trainable_report._TRAIN_METRIC_DEFAULTS[key] == 0.0
+
+
+class _MatrixAndHeadModel(torch.nn.Module):
+    """One Aurora-owned matrix plus AdamW tensors (a head weight and bias)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks = torch.nn.ModuleList([torch.nn.Linear(8, 8, bias=False)])
+        self.head = torch.nn.Linear(8, 3)
+
+    def forward(self, x: Tensor) -> dict[str, Tensor]:
+        del x
+        return {
+            "policy": self.head.weight[:1],
+            "wdl": torch.zeros((1, 3), dtype=torch.float32, device=self.head.weight.device),
+        }
+
+
+def _adamw_group_sizes(opt: torch.optim.Optimizer) -> int:
+    return sum(
+        len(group["params"]) for group in opt.param_groups if not group.get("use_aurora")
+    )
+
+
+@pytest.mark.parametrize("force_loop", [False, True])
+def test_train_steps_carries_adamw_stats_onto_the_step_metrics(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch, force_loop: bool,
+) -> None:
+    """The whole production chain: `AuroraWithAuxAdam.step` writes
+    `last_adamw_stats`, `train_steps` splats it into `_build_metrics`, and the
+    fields exist on `TrainMetrics` to receive it. Read from the CONSUMER's
+    metrics object, not the optimizer's. With the allowlist emptied the same
+    row must flip to foreach 0 / loop N."""
+    from typing import Any, cast
+
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.train.trainer import Trainer
+
+    if force_loop:
+        monkeypatch.setattr(aurora_module, "_FOREACH_EXACT_DTYPES", frozenset())
+    torch.manual_seed(4242)
+    trainer = Trainer(
+        _MatrixAndHeadModel(),
+        device="cpu", lr=1e-3, optimizer="aurora", use_amp=False,
+        log_dir=cast(Any, tmp_path), tb_log_interval=1000, prefetch_batches=False,
+    )
+    every_param = list(trainer.model.parameters())
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, Tensor]:
+        del out, batch, kwargs
+        total = cast(Tensor, sum((t * t).sum() for t in every_param))
+        losses: dict[str, Tensor] = {"total": total}
+        losses.update(dict.fromkeys(
+            (
+                "policy_ce", "soft_policy_ce", "future_policy_ce", "wdl_ce", "sf_move_ce",
+                "sf_eval_ce", "categorical_ce", "volatility", "sf_volatility", "moves_left",
+            ),
+            total.detach(),
+        ))
+        return losses
+
+    monkeypatch.setattr(trainer_module, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+
+    def fake_batches(buf: Any, **kwargs: Any):
+        del buf, kwargs
+        while True:
+            yield {"x": torch.zeros((1, 4, 8, 8))}
+
+    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_batches)
+
+    expected = _adamw_group_sizes(trainer.opt)
+    assert expected >= 2, "the fixture must put more than one tensor on AdamW"
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    assert metrics.train_steps_done == 2
+    if force_loop:
+        assert metrics.adamw_foreach_params == 0.0
+        assert metrics.adamw_foreach_buckets == 0.0
+        assert metrics.adamw_loop_params == float(expected)
+    else:
+        assert metrics.adamw_foreach_params == float(expected)
+        assert metrics.adamw_foreach_buckets >= 1.0
+        assert metrics.adamw_loop_params == 0.0
+    assert metrics.adamw_foreach_recoveries == 0.0
