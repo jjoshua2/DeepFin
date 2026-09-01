@@ -72297,7 +72297,7 @@ Audit (`scratchpad/legacy_history_calib/book_audit.py`, bank `book_audit_rows.js
   mixed two denominators: "gap" counted walks that ran into the book (now recovered) plus real
   dedup gaps; ply<7 overlapped both.
 - PER-ROW CLASS: `exact` 95.414% · `exact_via_book` 4.452% · `ambiguous_multi_path` **0** ·
-  `unbridged_gap` 0.112% (112 rows, 15 games: ≥4 consecutive dedup-dropped plies or no path at
+  `unbridged_gap` 0.112% (112 rows, 13 games, ALL at ply<20 — opening dedup runs: ≥4 consecutive dedup-dropped plies or no path at
   ≤3) · `unverifiable_in_sample` 0.022%. **Usable exact = 99.888%** of rows with a reachable game
   start. Dedup-dropped plies are bridged by enumerating move paths between neighbouring banked
   positions; a unique path is exact (the intermediate FEN is fully determined), >1 path taints
