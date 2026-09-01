@@ -849,6 +849,28 @@ UNBAKED_VALUE_SCHEME = "search"
 #: divergence is a failing test rather than a silently narrowed gate.
 KNOWN_DERIVE_SCHEMAS = (1, 2)
 
+#: What ``derive_value_source`` reads as when a shard does not carry it.
+#:
+#: ⚑ THE PRE-``--value-depth`` CONTRACT: every corpus written before that flag
+#: existed read its value off the scheme's own rung through the deepest phase
+#: covering each move, and stamped nothing.  So this default is what those
+#: shards HOLD, which is what keeps a legacy corpus and a freshly derived
+#: depth-scheme corpus ONE identity and every existing arm launching.
+#:
+#: ⚑ It is wrong about exactly one legacy shape -- a ``nodes-<N>`` corpus
+#: derived before the stamp, whose value really is ``phase0_only`` -- and that
+#: is accepted knowingly: no round in the ledger has ever derived one, a nodes
+#: corpus differs in its POLICY target too (a mixing hazard this gate never
+#: claimed to cover), and the alternative is refusing every legacy corpus for
+#: lack of a stamp it could not have written.
+#:
+#: ⚑ Duplicated from ``derive_corpus_targets.VALUE_SOURCE_DEEPEST`` for the same
+#: reason ``KNOWN_DERIVE_SCHEMAS`` is -- importing that module pulls the corpus
+#: generator's import chain into a training launcher -- and pinned to it by
+#: ``tests/test_derive_corpus_targets.py``, so a divergence is a failing test
+#: rather than a silently widened gate.
+UNSTAMPED_VALUE_SOURCE = "deepest_phase_covering"
+
 
 @dataclasses.dataclass(frozen=True)
 class ShardValueStamps:
@@ -860,12 +882,16 @@ class ShardValueStamps:
     schemes: dict[str, str]
     #: ``derive_schema`` -> one example ``dir/shard`` carrying it.
     schemas: dict[int, str]
+    #: ``derive_value_source`` -> one example ``dir/shard`` carrying it.  An
+    #: absent stamp is recorded as :data:`UNSTAMPED_VALUE_SOURCE`.
+    sources: dict[str, str]
 
 
 def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
     """Read every shard's value-identity attrs.  No policy, just the reading."""
     schemes: dict[str, str] = {}
     schemas: dict[int, str] = {}
+    sources: dict[str, str] = {}
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
@@ -876,7 +902,11 @@ def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
             # deriver stamped anything, and every `lc0_data_to_rows` corpus,
             # holds the original contract and carries no attr at all.
             schemas.setdefault(int(attrs.get("derive_schema", 1)), where)
-    return ShardValueStamps(schemes=schemes, schemas=schemas)
+            sources.setdefault(
+                str(attrs.get("derive_value_source", UNSTAMPED_VALUE_SOURCE)),
+                where,
+            )
+    return ShardValueStamps(schemes=schemes, schemas=schemas, sources=sources)
 
 
 def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
@@ -903,6 +933,17 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
     identity and mixing them is allowed -- they hold the same thing under the
     same contract.  That is the only default under which existing arms keep
     launching.
+
+    ⚑⚑ THE IDENTITY IS THE PAIR ``(value scheme, value SOURCE)``, and the second
+    half is not optional.  ``derive_corpus_targets.py --value-depth`` reads the
+    searched value at a different rung from the scheme's own, so
+    ``uniform-d7`` and ``uniform-d7 --value-depth 9`` derive from ONE bank into
+    two corpora that agree on ``derive_value_scheme`` (both ``search``), on
+    ``derive_schema`` (both 1) and even on their POLICY target -- while their
+    ``search_wdl`` columns differ on every row.  Keyed on the scheme alone this
+    gate returned ``[]`` for that pair: the value round's own mixing hazard, in
+    the value round's own gate, invisible (Codex review of PR #494).  The
+    source string spells the realized depth, so the pair separates them.
     """
     stamps = read_value_stamps(shard_dirs)
     problems: list[str] = []
@@ -930,6 +971,22 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
             "Train one --value-scheme at a time. (An absent stamp reads as "
             f"{UNBAKED_VALUE_SCHEME!r}: legacy and V0 corpora are one identity "
             "and may be mixed.)",
+        )
+    if len(stamps.sources) > 1:
+        named = ", ".join(
+            f"{source} (e.g. {where})" for source, where in sorted(stamps.sources.items())
+        )
+        problems.append(
+            f"--shards mixes {len(stamps.sources)} different value SOURCES: "
+            f"{named}. These corpora agree on their value scheme -- and may "
+            "agree on their policy target too -- but their search_wdl columns "
+            "were read at different depths, so every row sampled into the one "
+            "replay buffer would carry whichever teacher depth its shard "
+            "happened to come from. That is a per-row mixture of two "
+            "value-depth arms and is none of them. Train one --value-depth at "
+            f"a time. (An absent stamp reads as {UNSTAMPED_VALUE_SOURCE!r}: "
+            "corpora predating the flag are one identity with the schemes' own "
+            "read and may be mixed.)",
         )
     return problems
 
