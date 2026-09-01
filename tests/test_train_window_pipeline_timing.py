@@ -44,7 +44,7 @@ from chess_anti_engine.train.trainer import (
 
 _ZERO_LOSS_KEYS = tuple(trainer_mod._LOSS_KEY_TO_METRIC_FIELD)
 _CPU_PHASE_KEYS = (*_PIPELINE_PHASE_GPU_KEY, _PIPELINE_RESIDUAL_KEY)
-_GPU_PHASE_KEYS = tuple(_PIPELINE_PHASE_GPU_KEY.values())
+_GPU_PHASE_KEYS = tuple(twin for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None)
 
 
 class _TinyModel(nn.Module):
@@ -235,11 +235,13 @@ class _FakeEvent:
     def __init__(self, *, enable_timing: bool = False) -> None:
         assert enable_timing, "a timing span needs enable_timing=True"
         self.recorded_at: float | None = None
+        self.stream: Any = None
         self.synchronized = 0
         _FakeEvent.created.append(self)
 
-    def record(self) -> None:
+    def record(self, stream: Any = None) -> None:
         self.recorded_at = float(len(_FakeEvent.created))
+        self.stream = stream
 
     def synchronize(self) -> None:
         self.synchronized += 1
@@ -250,12 +252,58 @@ class _FakeEvent:
         return other.recorded_at - self.recorded_at
 
 
+class _FakeStream:
+    """What `torch.cuda.current_stream(device)` hands back under the fake."""
+
+    def __init__(self, device: Any) -> None:
+        self.device = device
+
+
 @pytest.fixture
 def fake_cuda_events(monkeypatch: pytest.MonkeyPatch) -> type[_FakeEvent]:
     _FakeEvent.created = []
     monkeypatch.setattr(trainer_mod.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(trainer_mod.torch.cuda, "Event", _FakeEvent)
+    monkeypatch.setattr(trainer_mod.torch.cuda, "current_stream", lambda device=None: _FakeStream(device))
     return _FakeEvent
+
+
+def test_the_fetch_phase_records_no_gpu_events_and_publishes_no_h2d_span(
+    fake_cuda_events: type[_FakeEvent],
+) -> None:
+    """⚑ A span around `next(batches)` brackets the HOST wait: the device idles
+    between the two records whenever the sampler is late, so it would report
+    starvation as a slow copy. The phase keeps its wall clock and has no twin."""
+    timer = _PipelinePhaseTimer(device="cuda:0")
+
+    with timer.phase("batch_prefetch_wait_s"):
+        time.sleep(0.005)
+
+    out = timer.drain(window_wall_s=1.0)
+
+    assert fake_cuda_events.created == [], "the fetch phase must not record events"
+    assert out["batch_prefetch_wait_s"] >= 0.004
+    assert "h2d_s" not in out
+    assert "h2d_s" not in {f.name for f in trainer_mod.dataclasses.fields(TrainMetrics)}
+
+
+def test_events_are_recorded_on_the_configured_devices_stream(
+    fake_cuda_events: type[_FakeEvent],
+) -> None:
+    """A bare `event.record()` uses the process's CURRENT device (`cuda:0`
+    unless `set_device` was called), so a trainer on `cuda:1` would time an
+    idle GPU. Every event must be recorded on the configured device's stream."""
+    timer = _PipelinePhaseTimer(device="cuda:1")
+
+    with timer.phase("fwd_loss_s"):
+        pass
+    with timer.phase("opt_step_s"):
+        pass
+
+    assert len(fake_cuda_events.created) == 4
+    for event in fake_cuda_events.created:
+        assert isinstance(event.stream, _FakeStream), "recorded without a stream"
+        assert event.stream.device == torch.device("cuda:1")
 
 
 def test_the_gpu_spans_come_off_cuda_events_and_are_reported_in_seconds(

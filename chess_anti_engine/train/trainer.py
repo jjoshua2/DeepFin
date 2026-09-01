@@ -265,10 +265,11 @@ class _DeviceLossSums:
     iteration, under ``torch.no_grad``).
     """
 
-    __slots__ = ("_sums",)
+    __slots__ = ("_names", "_vec")
 
     def __init__(self) -> None:
-        self._sums: dict[str, torch.Tensor] = {}
+        self._names: list[str] = []
+        self._vec: torch.Tensor | None = None
 
     def add_losses(
         self,
@@ -283,30 +284,76 @@ class _DeviceLossSums:
         ``total_scale`` treatment of the gradient-accumulation divisor -- the
         DIVIDED loss is what gets materialized and the scale is applied after,
         so the reported number is the undivided total either way.
+
+        ⚑ ONE ``stack`` and ONE cast per microbatch, not a cast per key (Codex
+        review, PR #496): ``compute_loss`` returns dozens of scalars, and on a
+        launch-bound step a kernel per key per microbatch is the very overhead
+        this class exists to remove. ``stack`` promotes exactly as the old
+        ``_extract_loss_scalars`` stack did, so a mixed bf16/fp32 dict lands
+        in the same dtype before the lossless widen to float64.
         """
+        names: list[str] = []
+        scalars: list[torch.Tensor] = []
+        total_at = -1
         for key, tensor in losses.items():
             src = total_override if (key == "total" and total_override is not None) else tensor
-            value = src.detach().to(torch.float64)
-            name = key
             if key == "total":
-                name = "loss"
-                value = value * float(total_scale)
-            prev = self._sums.get(name)
-            self._sums[name] = value if prev is None else prev + value
+                total_at = len(names)
+                names.append("loss")
+            else:
+                names.append(key)
+            scalars.append(src)
+        if not scalars:
+            return
+  # `detach` AFTER the stack: it is a view op, not a kernel, but it is still
+  # one dispatch per key, and the test below pins the dispatch count to be
+  # independent of the key count.
+        vec = torch.stack(scalars).detach().to(torch.float64)
+        if total_at >= 0 and float(total_scale) != 1.0:
+            vec[total_at] = vec[total_at] * float(total_scale)
+        self._accumulate(names, vec)
 
     def merge(self, other: _DeviceLossSums) -> None:
         """Commit a completed step's sums into this window's sums."""
-        for name, value in other._sums.items():
-            prev = self._sums.get(name)
-            self._sums[name] = value if prev is None else prev + value
+        if other._vec is not None:
+            self._accumulate(other._names, other._vec)
+
+    def _accumulate(self, names: list[str], vec: torch.Tensor) -> None:
+        if self._vec is None:
+            self._names = list(names)
+            self._vec = vec
+            return
+        if names == self._names:
+  # One elementwise kernel: per key, the same float64 add in the same order
+  # the host fold performed -- bit-identical by construction.
+            self._vec = self._vec + vec
+            return
+  # Key sets drift only when an optional term (a channel-balance loss, a
+  # disarmed blend) appears or vanishes mid-window. Align by name and keep
+  # FIRST-SEEN order, exactly as the old dict did; a key seen for the first
+  # time lands on a 0.0 slot, and 0.0 + v == v for every finite v.
+        index = {name: i for i, name in enumerate(self._names)}
+        fresh = [name for name in names if name not in index]
+        if fresh:
+            self._names = self._names + fresh
+            pad = torch.zeros(len(fresh), dtype=self._vec.dtype, device=self._vec.device)
+            self._vec = torch.cat([self._vec, pad])
+            index = {name: i for i, name in enumerate(self._names)}
+        positions = torch.tensor([index[name] for name in names], device=vec.device)
+        self._vec = self._vec.index_add(0, positions, vec)
 
     def tensor(self, name: str) -> torch.Tensor | None:
         """The running device sum for one key, or None when it never appeared."""
-        return self._sums.get(name)
+        if self._vec is None or name not in self._names:
+            return None
+        return self._vec[self._names.index(name)]
 
     def items(self) -> list[tuple[str, torch.Tensor]]:
         """(key, device sum) pairs in FIRST-SEEN order, matching the old dict."""
-        return list(self._sums.items())
+        if self._vec is None:
+            return []
+        vec = self._vec
+        return [(name, vec[i]) for i, name in enumerate(self._names)]
 
 
 def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
@@ -328,11 +375,16 @@ def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
 #: training thread was inside it, and how long the GPU spent on the work it
 #: enqueued. They diverge exactly where the bubble is.
 #:
-#: ⚑ `batch_prefetch_wait_s` -> `h2d_s` is not a typo. The wall clock is the
-#: time the loop was BLOCKED fetching a batch (the prefetch future, then
-#: `pin_memory`); the event span is the device-side H2D copy that fetch issued.
-_PIPELINE_PHASE_GPU_KEY = {
-    "batch_prefetch_wait_s": "h2d_s",
+#: ⚑ `batch_prefetch_wait_s` HAS NO GPU TWIN, on purpose. Its region is
+#: `next(batches)`: the prefetch future, then `pin_memory` + the H2D issue. A
+#: pair of events around that region would bracket the HOST wait too -- the
+#: device idles between the two records whenever the sampler is late -- so the
+#: span would report starvation as a slow copy (Codex review, PR #496). The
+#: copy itself is issued inside `_host_batch_to_tensors`, which sits in the
+#: frozen holdout-ruler digest and cannot grow a probe; a span that does not
+#: mean what its name says is worse than no span, so the twin is `None`.
+_PIPELINE_PHASE_GPU_KEY: dict[str, str | None] = {
+    "batch_prefetch_wait_s": None,
     "fwd_loss_s": "gpu_fwd_loss_s",
     "bwd_s": "gpu_bwd_s",
     "gradnorm_zclip_s": "gpu_gradnorm_zclip_s",
@@ -354,7 +406,7 @@ class _PipelinePhaseSpan:
 
     def __enter__(self) -> _PipelinePhaseSpan:
         self._t0 = time.perf_counter()
-        self._start = self._timer.begin_gpu()
+        self._start = self._timer.begin_gpu(self._name)
         return self
 
   # ⚑ Returns None, NOT False. They behave identically at runtime, and a
@@ -387,7 +439,7 @@ class _PipelinePhaseTimer:
     * the phase key (`fwd_loss_s`, ...) is the CPU wall clock -- how long the
       training thread was inside that region. These five plus
       `pipeline_other_s` PARTITION `train_time_s` by construction.
-    * `gpu_*_s` / `h2d_s` are CUDA event spans -- how long the device spent on
+    * `gpu_*_s` are CUDA event spans -- how long the device spent on
       the work the region enqueued. They overlap each other and the CPU walls,
       and they do not sum to anything.
 
@@ -397,28 +449,36 @@ class _PipelinePhaseTimer:
     next to the numbers rather than leaving a reader to infer it.
     """
 
-    __slots__ = ("_cpu", "_events", "cuda")
+    __slots__ = ("_cpu", "_device", "_events", "cuda")
 
     def __init__(self, *, device: Any) -> None:
         self.cuda = str(device).startswith("cuda") and torch.cuda.is_available()
+        self._device: Any = torch.device(device) if self.cuda else None
         self._cpu: dict[str, float] = dict.fromkeys(_PIPELINE_PHASE_GPU_KEY, 0.0)
         self._events: list[tuple[str, Any, Any]] = []
 
     def phase(self, name: str) -> _PipelinePhaseSpan:
         return _PipelinePhaseSpan(self, name)
 
-    def begin_gpu(self) -> Any:
-        if not self.cuda:
+    def begin_gpu(self, name: str) -> Any:
+  # The lookup runs BEFORE the CUDA check, so an unknown phase fails the same
+  # way (KeyError) on every device, not only on the one that records events.
+        if _PIPELINE_PHASE_GPU_KEY[name] is None or not self.cuda:
             return None
-        event = torch.cuda.Event(enable_timing=True)
-        event.record()
-        return event
+        return self._record_event()
 
     def end_gpu(self, start: Any) -> Any:
         if start is None:
             return None
+        return self._record_event()
+
+    def _record_event(self) -> Any:
+  # ⚑ Recorded on the CONFIGURED device's current stream, never the bare
+  # `event.record()`: that form uses the process's CURRENT device -- `cuda:0`
+  # unless someone called `set_device` -- so a trainer built on `cuda:1`
+  # would be timing an idle GPU's stream (Codex review, PR #496).
         event = torch.cuda.Event(enable_timing=True)
-        event.record()
+        event.record(torch.cuda.current_stream(self._device))
         return event
 
     def record(self, name: str, start: Any, end: Any, elapsed_s: float) -> None:
@@ -437,11 +497,14 @@ class _PipelinePhaseTimer:
         queue, so it is a formality that keeps `elapsed_time` legal rather than
         a stall.
         """
-        gpu = dict.fromkeys(_PIPELINE_PHASE_GPU_KEY.values(), 0.0)
+        gpu = {twin: 0.0 for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None}
         if self._events:
             self._events[-1][2].synchronize()
             for name, start, end in self._events:
-                gpu[_PIPELINE_PHASE_GPU_KEY[name]] += float(start.elapsed_time(end)) / 1000.0
+                twin = _PIPELINE_PHASE_GPU_KEY[name]
+                if twin is None:  # `begin_gpu` never records for these, so never appended
+                    continue
+                gpu[twin] += float(start.elapsed_time(end)) / 1000.0
             self._events.clear()
         out = {key: float(value) for key, value in self._cpu.items()}
         out.update(gpu)
@@ -1208,7 +1271,6 @@ class TrainMetrics:
   # `[trainer] window_timing` line prints `gpu_events=on|off` beside them so
   # the two cases cannot be confused. Unlike the block above these OVERLAP each
   # other and the wall clocks, and they sum to nothing in particular.
-    h2d_s: float = 0.0
     gpu_fwd_loss_s: float = 0.0
     gpu_bwd_s: float = 0.0
     gpu_gradnorm_zclip_s: float = 0.0
@@ -4988,7 +5050,7 @@ class Trainer:
         for _ in range(self.accum_steps):
   # ⚑ THE STARVATION PHASE. Everything the loop waits for to get a batch: the
   # prefetch thread's sample (`future.result()`) and then `pin_memory` + the
-  # H2D issue. Its GPU-event twin `h2d_s` is the copy itself.
+  # H2D issue. Deliberately no GPU twin -- see `_PIPELINE_PHASE_GPU_KEY`.
             with phases.phase("batch_prefetch_wait_s"):
                 batch = next(batches)
             with phases.phase("fwd_loss_s"):
@@ -5301,7 +5363,6 @@ class Trainer:
             f"gradnorm_zclip_s={phase_timings['gradnorm_zclip_s']:.3f} "
             f"opt_step_s={phase_timings['opt_step_s']:.3f} "
             f"pipeline_other_s={phase_timings['pipeline_other_s']:.3f} "
-            f"h2d_s={phase_timings['h2d_s']:.3f} "
             f"gpu_fwd_loss_s={phase_timings['gpu_fwd_loss_s']:.3f} "
             f"gpu_bwd_s={phase_timings['gpu_bwd_s']:.3f} "
             f"gpu_gradnorm_zclip_s={phase_timings['gpu_gradnorm_zclip_s']:.3f} "

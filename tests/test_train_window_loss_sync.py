@@ -398,3 +398,84 @@ def test_the_guard_reads_host_floats_not_device_tensors(
     trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
 
     assert seen == [(float, float), (float, float)]
+
+
+class _DispatchCounter(torch.overrides.TorchFunctionMode):
+    """Every torch function dispatched inside the block, by name. Counts
+    view ops and kernels alike -- on a launch-bound step both cost a
+    Python round-trip, which is the thing being bounded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ops: list[str] = []
+
+    def __torch_function__(
+        self, func: Any, types: Any, args: tuple[Any, ...] = (), kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        self.ops.append(getattr(func, "__name__", str(func)))
+        return func(*args, **(kwargs or {}))
+
+
+def _dispatches_for(n_keys: int, *, total_scale: float) -> list[str]:
+    losses = {f"term_{i}": torch.tensor(float(i) + 0.125) for i in range(n_keys)}
+    losses["total"] = torch.tensor(2.5)
+    sums = _DeviceLossSums()
+    sums.add_losses(losses, total_scale=total_scale)  # first microbatch: no running sum yet
+    with _DispatchCounter() as counter:
+        sums.add_losses(losses, total_scale=total_scale)  # second: the accumulate path too
+    return counter.ops
+
+
+@pytest.mark.parametrize("total_scale", [1.0, 2.0])
+def test_the_dispatch_count_per_microbatch_does_not_grow_with_the_key_count(
+    total_scale: float,
+) -> None:
+    """⚑ The Codex finding on PR #496: a per-key `.to(float64)` plus a per-key
+    add is dozens of tiny dispatches per microbatch on a launch-bound step --
+    the overhead the accumulator exists to remove. The count must be a small
+    constant: one stack, one detach, one cast, one add (plus the scale's
+    getitem/mul/setitem when accumulating), whatever the key count."""
+    few = _dispatches_for(4, total_scale=total_scale)
+    many = _dispatches_for(40, total_scale=total_scale)
+
+    assert few == many, f"dispatch count grew with the key count:\n{few}\n{many}"
+    assert len(many) <= 8, many
+
+
+def test_a_key_that_appears_mid_window_still_matches_the_host_fold() -> None:
+    """Optional terms (a channel-balance loss, a disarmed blend) come and go
+    between steps. The vectorised accumulator must keep the old dict's
+    first-seen order and per-key sums, digit for digit."""
+    gen = torch.Generator().manual_seed(20260902)
+
+    def draw() -> torch.Tensor:
+        return torch.rand((), generator=gen) * 7.3 + 0.01
+
+    window = [
+        [{"total": draw(), "policy_ce": draw()}],
+        [{"total": draw(), "policy_ce": draw(), "channel_balance": draw()}],
+        [{"total": draw(), "channel_balance": draw(), "policy_ce": draw(), "wdl_ce": draw()}],
+        [{"total": draw(), "policy_ce": draw()}],
+    ]
+
+    device = _device_sums(window, accum_steps=1)
+    host = _host_reference(window, accum_steps=1)
+
+    assert device == host
+    assert list(device) == ["loss", "policy_ce", "channel_balance", "wdl_ce"]
+
+
+def test_mixed_dtype_scalars_promote_exactly_as_the_old_stack_did() -> None:
+    """Under autocast the total can be bf16 while diagnostics are fp32; the old
+    path stacked them (promoting to fp32) before `.tolist()`. Same stack, same
+    promotion, same bits."""
+    window = [
+        [{
+            "total": torch.tensor(1.3, dtype=torch.bfloat16),
+            "policy_ce": torch.tensor(0.7, dtype=torch.float32),
+            "wdl_ce": torch.tensor(2.9, dtype=torch.float32),
+        }]
+        for _ in range(3)
+    ]
+
+    assert _device_sums(window, accum_steps=2) == _host_reference(window, accum_steps=2)
