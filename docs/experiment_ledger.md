@@ -71807,3 +71807,28 @@ extbase.done, arenas stay serialized): `0.0005_ext` vs `qtemp_0.02` and vs
 `d7_qtemp_0.02`, 200 games each, standard shape, banked. The round-3c
 top-up design (reference choice, τ lane) re-preregs AFTER these land —
 whoever wins is the reference. round-3b stays armed unchanged.
+
+**2026-09-01 — CORRECTION + round-3c RE-PREREG (Josh caught the champion
+error).** Two of today's entries carried a wrong premise:
+- "qtemp_0.02 is the champion" is a ROUND-1 fact. The round-2 bend arms beat
+  it at matched 9,680 steps: `qtemp_0.0067` **+54.3**, `qtemp_0.0005`
+  **+85.0** (arena bank). The BASE champion is `qtemp_0.0005`; the standing
+  best net is `qtemp_0.0005_ext` (19,360; extfresh tied it 0.0 exactly).
+- The 90-min-ago claim "the ext lane was never ranked" was wrong at BASE
+  level — 0.0005-vs-0.02 WAS played (+85). What was never played is the ext
+  arms cross-lane, and those arenas are now MOOT: `champ_ranking_arenas.sh`
+  KILLED pre-run (base ranking answers the lane question; 400 games saved).
+- ⇒ round-3's d7 ≥ d9 verdict stands but is **τ.02-lane-internal**; its
+  "champion" framing is corrected here. The value round's V0 anchor is
+  unaffected (V0 isolates value schemes against itself).
+**Round-3c re-preregged (driver rewritten, staged, EXISTING controls both
+stages — Josh's design):** stage 1: derive `uniform-d7 --temp 0.0005` (same
+snapshot, --workers 7) and train 9,680 from scratch; DECIDER h2h vs existing
+`qtemp_0.0005` at matched steps — the d7-vs-d9 read at the champion τ.
+Stage 2 (runs unless stage 1 loses clearly, pre-committed elo ≤ −40): +9,680
+on `DERIVED/qtemp_0.0005` — the exact shards `0.0005_ext`'s second phase
+used; DECIDER h2h vs existing `qtemp_0.0005_ext` (τ, steps, phase-2 all
+matched; only phase-1 teacher depth differs). Stage-5 BT4 on all nets in one
+run. Cost: 1 derivation + at most 2 trains, zero new controls. Scheduling
+serialized: round-3b re-gated on extbase.done (paired arenas OOMed training
+twice before); 3c gates on round3b.done.
