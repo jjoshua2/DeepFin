@@ -72592,3 +72592,16 @@ gain, which is read empirically from #496's `opt_step_s` on a corrected-history 
 deployment. PR #495 is being finished by an implementer (P2-1 retry scope + failure test, P2-2
 `last_adamw_stats` on the Ray row, P2-3 this supersession cited in the PR, language rewrite,
 phase-0b re-run), then reviewed independently, then merged on green.
+
+**2026-09-01 — TT WARM-UP MEASUREMENT (`tt_warmup_check.py`, 240 repeat rows, bank
+`tt_warmup_check.json`): short warm-ups do NOT reproduce the carried TT; only a full game-prefix
+replay does, at 16.6 s/row (mean prefix 205 plies).** Top-1 agreement with the full-prefix replay
+(bare-FEN prefix, then history-aware target): cold 44.2%, 1-ply warm-up 46.7%, 3-ply 52.9%
+(per-move cp: 24.5 / 25.3 / 29.1%). The full replay agrees with the banked (carried, history-BLIND)
+top-1 on 83.3% — i.e. under the SAME warm TT, history moves the top-1 on ≈17% of repeat rows, of
+which ≈4% is replay nondeterminism (`tt_carry_check`: 96.4% reproducibility) ⇒ true history
+effect ≈13%, consistent with the cold calibration's 12.5%. Consequences: (1) R2 (label
+correction) stays PARKED per the operator decision — the cheap variants are wrong and the exact one
+costs ~400 core-h for ~0.2% of corpus top-1s; (2) the exact number comes from the running paired
+audit (two engines, identical prefix, target differs only); (3) any future R2 spec must replay the
+original search prefix, not just reconstruct the move stack.
