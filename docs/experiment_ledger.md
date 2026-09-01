@@ -72538,3 +72538,45 @@ game-prefix replay + history-aware final search (= schema-2 semantics with the g
 TT). Rule: adopt the cheapest variant whose top-1 agreement with (iv) is ≥ the replay's own
 reproducibility floor (96%); otherwise #498 relabels by full-prefix replay (cost ≈ the original
 generation cost of the flagged games, ~400 core-h for 54M). This is a #498 merge gate.
+
+**2026-09-01 — OPERATOR DECISIONS (Josh via the reviewing agent): #495 merge bar = phase-0b
+optimizer-boundary identity (option a); #498 relabel strategy STOPPED — R1 input repair only, labels
+byte-for-byte; decomposition A/B/C; 20M/100M parked until B.**
+- #495: no deterministic-rig pin as a prerequisite (C1 established that 200-step trajectory
+  identity is not a valid discriminator on this stack, and a deterministic environment would not be
+  the environment we run). To merge: (1) the three owed P2s — scope the CUDA-retry/moment-mutation
+  behaviour exactly and pin it with the required failure test; add a production-observable
+  foreach-path counter/stamp proving the optimized path ran; explicitly supersede the 2026-07-12
+  "keep the loop" verdict with the phase-0b evidence; (2) rewrite the PR/ledger language that says
+  phases 1–2 gate deployment — the failed trajectory experiment stays as EVIDENCE of rig
+  nondeterminism, never as a pass; (3) require phase-0b 10/10 bitwise identity on real production
+  inventory/batches, the path take-effect proof, the owed tests/mutants, an independent review, CI
+  green — then merge. Throughput remains empirical: read #496's `opt_step_s`/pipeline keys on a real
+  corrected-history window; keep #495 only if the measured optimizer bottleneck improves; no
+  throughput claim from py-spy attaches to the merge.
+- #498: the 53.85% old→new top-1 change is carried-TT→cold-TT, not history; `--relabel-scope
+  segment` only applies the confounded relabel to fewer rows. SPLIT: **R1 (history/input repair)
+  proceeds corpus-wide** — reconstruct the true history, write schema 2 (with `input_key`/
+  `search_key` per the #497 fix round), prove bit-identical live tensors, preserve provenance,
+  quarantine only the genuinely unreconstructable, and KEEP EVERY ORIGINAL SF LABEL BYTE-FOR-BYTE.
+  This is the default repaired corpus. **R2 (label correction) is PARKED**: rows are TAGGED
+  (repeat in the encoder window; repeat in the current reversible segment; current-position
+  repetition state) but labels are not replaced. R2 is re-specced separately only if the warm-TT
+  paired audit below says the legacy label error is material; reproducing the counterfactual
+  carried-TT teacher may need the original search prefix replayed, not just the move stack.
+- Warm-TT paired audit (`scratchpad/legacy_history_calib/tt_paired_history_audit.py`, running):
+  two identical engines replay the exact original game prefix (bare FEN, one `ucinewgame` per game,
+  MultiPV=all, d9) so their TT matches the legacy generator right before the target; only the target
+  differs — A `position fen <row>` vs B `position fen <root> moves …`. Outputs: top-1 changes,
+  per-move cp changes, magnitudes, population weight (repeat rows = 1.59%). Pre-committed reading:
+  if the warm-TT paired top-1 change stays ≈12–15% of repeat rows (≈0.2% of the corpus), original
+  labels are preserved and R2 stays parked; only a materially larger effect re-opens R2.
+- Decomposition: **A** old champion (zero-history inputs + legacy carried-TT labels) → **B**
+  repaired exact-5.5M (correct-history inputs + the SAME legacy labels + same recipe/seed) →
+  **C** fresh run06 5.5M (correct-history inputs + history-aware carried-TT labels, positions differ).
+  B−A prices the history-input bug cleanly (this is the PRIMARY causal arm; relabelling at the same
+  time would destroy the interpretation); C−B is fresh generation + correct labels, strict
+  decomposition via the planned position-source ablation. Given anchors −636/−619, 20M/100M stay
+  PARKED until B is measured; if B does not recover a large chunk, go straight to the
+  position-source ablation rather than assuming volume saves the lane. d15 and the Z-residual
+  screen continue as preregistered.
