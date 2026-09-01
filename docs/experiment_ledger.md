@@ -71645,3 +71645,21 @@ isinstance laziness test a materialising generator satisfies) — each now has
 a mutation-verified gate. 28 mutants killed, 2 documented survivors. Not a
 data-affecting change (the sequential path and --workers 1 are untouched);
 first consumer: the 100M-corpus derivation (~40h → ~2h at high W).
+
+**2026-09-01 AMENDMENT — value-round train worktree re-pinned bead931e6 →
+d34449c33 (post-#492/#493), BEFORE any value train started.** Trigger: Josh —
+"we have inefficient algorithm": the round-3 d7 train ran 4.6h for 9,680 steps
+(~0.58 steps/s vs the rig's ~1.34 benchmark) on pre-#492 code, and the value
+round's 5 trains would repeat that (~23h). Basis for the re-pin: #492 is proven
+batch-identical (100/100 checksum-identical batches A/B on the real corpus)
+and touches neither trainer.py nor lc0_control_replay.py — the DiskReplayBuffer
+ctor signature is unchanged between the pins, so the control replay pin cannot
+fire and the training draws are unchanged; only refresh stalls shrink (1.74×
+measured). All five value derivations were already .done at the OLD pin
+(a_qz50/b_qzphase/c_full/c_no_u/c_no_seg — the arm DATA is fixed and
+unaffected). #492's two test files pass in the re-pinned worktree (exit 0).
+The prereg's arms, steps (9,680), seed, and judgment rules are UNCHANGED —
+this amendment changes wall clock only. Round-3's d8 train was NOT re-pinned:
+it auto-launched from the old worktree minutes before this and modifying a
+worktree mid-run is the known instrument-voiding trap; it eats the slow path
+once more (~4.6h).
