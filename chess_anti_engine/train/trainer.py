@@ -14,8 +14,8 @@ from typing import Any
 
 import numpy as np
 import torch
+from zclip import ZClip
 
-from chess_anti_engine.train.zclip_foreach import ForeachZClip
 from chess_anti_engine.utils.amp import inference_autocast
 from chess_anti_engine.utils.atomic import atomic_write
 
@@ -2767,12 +2767,7 @@ class Trainer:
             else None
         )
         max_grad_norm = None if zclip_max_norm is None else float(zclip_max_norm)
-  # `ForeachZClip` is `ZClip` with ONE method replaced -- the local
-  # grad-norm walk, batched into a single `_foreach_norm`. Everything the
-  # rest of this file reads off `self.zclip` (`mean`, `var`, `buffer`,
-  # `initialized`, `max_grad_norm`, `z_thresh`, `alpha`, `clip_factor`,
-  # `eps`, `mode`, `clip_option`) is the parent's and is untouched.
-        self.zclip = ForeachZClip(
+        self.zclip = ZClip(
             mode="zscore",
             alpha=float(zclip_alpha),
             z_thresh=float(zclip_z_thresh),
