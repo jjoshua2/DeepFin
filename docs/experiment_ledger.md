@@ -71935,3 +71935,21 @@ byte-identically. `.vdmix_ready` set — arm f_vmix derives when its slot
 arrives. Known accepted holes (PR body): launcher still not keyed on
 POLICY scheme (pre-existing, narrowed by this PR); envelope-miss stats
 pollution unreachable on the production staircase.
+
+**2026-09-01 — ROUND 3c STAGE-1 VERDICT: d7 KILLED in the champion lane.**
+Decider arena (preregged): `d7_qtemp_0.0005` vs `qtemp_0.0005`, matched
+9,680 steps/seed/τ, 200 games paired — **−65.0 Elo [−113.7, −18.7]**,
+pentanomial (candidate POV) WW 12 / WD 12 / DD+WL 32 / LD 15 / LL 29;
+games banked `round3/arena_d7q0005_vs_d9q0005.games.jsonl`. CI excludes
+zero. Preregged consequences both fired automatically: stage 2 SKIPPED
+(−65.0 ≤ −40 kill bar; `round3c_stage2.skip`), and valueround2's lane
+rule chose **uniform-d9** (V0-analog `qtemp_0.0005`; `lane.chosen`
+written 11:19, derivations started on the re-pinned VWT). Stage-5 ruler
+ran with the three nets (`arms_vs_bt4_topup.json`).
+⚑ SIGN REVERSAL vs round 3: at τ0.02 d7 ≥ d9 (h2h +1.7 tie; BT4 paired
+ΔE[regret] −45.5cp d7-better), at τ0.0005 d7 loses −65 decisively. Both
+are COMPOUND-depth readings (per today's premise correction: uniform-d<D>
+moves policy AND value depth together) — the depth knob's effect reverses
+between τ lanes, the knob-reversal pattern again. The champion recipe
+stays d9-everything at τ0.0005; arm f_vmix (d9 policy + d7 value) is now
+the only remaining depth probe this round.
