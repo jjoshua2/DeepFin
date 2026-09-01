@@ -4789,18 +4789,48 @@ def _raw_game_key(row: dict[str, Any]) -> tuple[int, int]:
     the identical predicate to the identical row.  ``GameGrouper._key_of``
     answers the same question for rows that DID survive and raises a
     scheme-specific refusal for ones that cannot; this one is deliberately the
-    plain read, and a row that cannot answer it reaches ``_key_of`` moments
-    later on the path that owns that message.
+    plain read.
+
+    ⚑ Read by SUBSCRIPT and raised on, for the same reason ``_key_of`` is: the
+    partition is defined by these keys, and a row filed under a placeholder
+    would put a game boundary where there is none.  ⚑ ``_key_of`` reaches every
+    row of a grouped run too -- both drop paths call ``note_dropped`` -- so this
+    refuses exactly the rows the sequential path refuses, only sooner, and it
+    says the same thing.
     """
-    return (int(row["worker_id"]), int(row["game_id"]))
+    try:
+        return (int(row["worker_id"]), int(row["game_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)} carries no usable (worker_id, game_id), so "
+            "--workers cannot tell which lane's game it belongs to. The "
+            "grouped schemes assemble whole games from contiguous runs of "
+            "rows; a row that cannot be attributed to one is not a row they "
+            "can derive.",
+        ) from exc
 
 
-def _last_key_of_shard(path: Path) -> tuple[int, int] | None:
-    """The raw game key of a shard's LAST row, or ``None`` for an empty shard."""
-    key: tuple[int, int] | None = None
-    for row in iter_corpus_rows(path):
-        key = _raw_game_key(row)
-    return key
+def _carry_in_key(
+    shards: Sequence[Path], before: int,
+) -> tuple[int, int] | None:
+    """The raw key of the last row BEFORE ``shards[before]``, or ``None``.
+
+    ⚑ SCANS BACK OVER EMPTY SHARDS rather than reading only ``before - 1``.  A
+    zero-row shard has no last row, and stopping there would hand the lane a
+    ``None`` carry-in -- it would skip nothing, while the lane before it is
+    overflowing through the same rows on the key it read past the empty shard.
+    Every row derived twice, and the only thing that would notice is the
+    ``rows_read`` guard, which is a crash rather than a correct read.  The
+    mirror holds because the overflowing lane's range-end key is likewise the
+    last key it SAW, not the last shard it opened.
+    """
+    for index in range(before - 1, -1, -1):
+        key: tuple[int, int] | None = None
+        for row in iter_corpus_rows(shards[index]):
+            key = _raw_game_key(row)
+        if key is not None:
+            return key
+    return None
 
 
 def _spill_path(spill_dir: Path, worker: int, chunk: int) -> Path:
@@ -4869,7 +4899,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     span = task.span
     carry_in: tuple[int, int] | None = None
     if grouper is not None and span.lo > 0:
-        carry_in = _last_key_of_shard(task.shards[span.lo - 1])
+        carry_in = _carry_in_key(task.shards, span.lo)
 
     spill_dir = task.spill_dir / f"w{task.index:03d}"
     spill_dir.mkdir(parents=True, exist_ok=True)
@@ -4932,7 +4962,14 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
                     complete = False
                     stop = True
                     break
-            else:
+            elif grouper is not None:
+                # ⚑ ONLY THE GROUPED SCHEMES KEY THE ROW.  V0 and A never
+                # assemble a game, so nothing here needs one -- and the
+                # sequential path does not read `worker_id` on those arms at
+                # all.  Keying every row unconditionally would make a corpus
+                # that derives fine at `--workers 1` refuse above it, which is
+                # a difference in what the flag ACCEPTS rather than in what it
+                # writes, and no output comparison would ever show it.
                 range_end_key = _raw_game_key(row)
                 if skipping:
                     if range_end_key == carry_in:

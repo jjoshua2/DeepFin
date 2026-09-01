@@ -29,6 +29,7 @@ import hashlib
 import io
 import itertools
 import json
+import math
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -113,7 +114,9 @@ def write_split_corpus(
     start = 0
     for index, size in enumerate(cuts):
         chunk = rows[start:start + size]
-        assert chunk, f"cut {index} is empty"
+        # ⚑ A zero-row shard IS written when a cut asks for one: the inventory
+        # can name one, and a lane whose preceding shard is empty must still
+        # find the row before its range.
         path = out / f"w00-{index:05d}.jsonl.zst"
         with open(path, "wb") as binary:
             writer = module.ZstdCompressor().stream_writer(binary)
@@ -175,6 +178,33 @@ def shard_content(out_dir: Path) -> dict[str, str]:
     return content
 
 
+def canonical_summary(path: Path) -> dict[str, Any]:
+    """The summary with every NaN replaced by a sentinel, minus ``started_utc``.
+
+    ⚑ EXPLICIT, not left to ``==``.  ``float('nan') != float('nan')``, so two
+    summaries that both report an empty reading compare UNEQUAL -- except that
+    CPython's ``json`` scanner hands out one shared NaN object and dict equality
+    takes an identity shortcut, so today they happen to compare equal.  That is
+    an implementation detail of the parser, and an assertion that rests on it is
+    one interpreter release away from failing for a reason that has nothing to
+    do with this flag.  A NaN reading is a REAL and expected value here (an
+    unfloored run's recovered floor, a value-less arm's blend weight), so it is
+    mapped to a sentinel that compares equal to itself and to nothing else.
+    """
+    def canon(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: canon(sub) for key, sub in value.items()}
+        if isinstance(value, list):
+            return [canon(item) for item in value]
+        if isinstance(value, float) and math.isnan(value):
+            return "<nan>"
+        return value
+
+    out = json.loads(path.read_text(encoding="utf-8"))
+    out.pop("started_utc")
+    return canon(out)  # pyright: ignore[reportReturnType]
+
+
 def assert_same_corpus(sequential: Path, parallel: Path) -> None:
     """The two output directories are one corpus, described one way."""
     want, got = shard_content(sequential), shard_content(parallel)
@@ -185,11 +215,9 @@ def assert_same_corpus(sequential: Path, parallel: Path) -> None:
     )
     differing = sorted(key for key in want if want[key] != got[key])
     assert not differing, f"{len(differing)} array(s) differ, first {differing[:6]}"
-    a = json.loads((sequential / derive.SUMMARY_NAME).read_text(encoding="utf-8"))
-    b = json.loads((parallel / derive.SUMMARY_NAME).read_text(encoding="utf-8"))
-    a.pop("started_utc")
-    b.pop("started_utc")
-    assert a == b
+    assert canonical_summary(sequential / derive.SUMMARY_NAME) == (
+        canonical_summary(parallel / derive.SUMMARY_NAME)
+    )
 
 
 #: Distinct output directories inside one test's ``tmp_path``.
@@ -698,3 +726,48 @@ def test_the_game_stream_is_replayed_through_note_game(tmp_path: Path) -> None:
     assert merged.qz_game_rows_min == reference.qz_game_rows_min == 3
     assert merged.qz_game_rows_max == reference.qz_game_rows_max == 11
     assert merged.qz_games_cut_by_limit == reference.qz_games_cut_by_limit == 1
+
+
+def test_an_empty_shard_before_a_range_does_not_break_the_handoff(
+    tmp_path: Path,
+) -> None:
+    """⚑ The carry-in is the last row BEFORE the range, not of the shard before.
+
+    A zero-row shard has no last row.  A lane that read only ``lo - 1`` would
+    get ``None``, skip nothing, and derive the rows the previous lane is
+    carrying through a second time -- caught by the ``rows_read`` guard as a
+    crash rather than produced as a correct read.
+    """
+    rows = game(0, 10) + game(1, 12) + game(2, 10)
+    corpus_dir = write_split_corpus(tmp_path, rows, [14, 0, 10, 8])
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--value-scheme", "qzphase", workers=4,
+    )
+    assert_same_corpus(sequential, parallel)
+
+
+def test_a_row_without_a_game_identity_is_refused_by_name(tmp_path: Path) -> None:
+    """The parallel read refuses it saying the same thing the grouper says."""
+    rows = game(0, 6)
+    rows[3].pop("game_id")
+    corpus_dir = write_split_corpus(tmp_path, rows, [3, 3])
+    with pytest.raises(derive.CorpusIntegrityError, match="worker_id, game_id"):
+        run(corpus_dir, tmp_path / "out", "--value-scheme", "qzphase",
+            "--workers", "2")
+
+
+def test_the_ungrouped_arms_do_not_require_a_worker_id(tmp_path: Path) -> None:
+    """⚑ A DIFFERENCE IN WHAT THE FLAG ACCEPTS, WHICH NO OUTPUT DIFF WOULD SHOW.
+
+    ``search`` and ``qz50`` assemble no game, so the sequential path never reads
+    ``worker_id``.  A handoff that keyed every row regardless would refuse a
+    corpus ``--workers 1`` derives happily.
+    """
+    rows = [row for gid in range(6) for row in game(gid, 8)]
+    for row in rows:
+        row.pop("worker_id")
+    corpus_dir = write_split_corpus(tmp_path, rows, [16, 16, 16])
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--value-scheme", "qz50", workers=3,
+    )
+    assert_same_corpus(sequential, parallel)
