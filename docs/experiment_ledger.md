@@ -71795,3 +71795,15 @@ prereg to split them, a LOSS kills the direction regardless of mechanism
 puzzles, stage-5 with all four nets in one paired scoring run. Saves the
 2.6h `d9ext` control; round 3c is back to ONE new train. Driver rewritten,
 waiter relaunched, gates unchanged.
+
+**2026-09-01 — round 3c PAUSED pre-launch; champion-ranking arenas queued
+instead (zero training).** Surfaced by Josh ("I thought the champion was the
+sharpest net, which is why we extended that one"): the sharp-extension lane
+(19,360-step `qtemp_0.0005_ext`) was extended to test dip-and-recover, NOT
+because it was champion — and it has NEVER been played against the τ.02
+champions (arena history grep: no such pair). "Our best net" is therefore
+unresolved across lanes. Queued `champ_ranking_arenas.sh` (gated on
+extbase.done, arenas stay serialized): `0.0005_ext` vs `qtemp_0.02` and vs
+`d7_qtemp_0.02`, 200 games each, standard shape, banked. The round-3c
+top-up design (reference choice, τ lane) re-preregs AFTER these land —
+whoever wins is the reference. round-3b stays armed unchanged.
