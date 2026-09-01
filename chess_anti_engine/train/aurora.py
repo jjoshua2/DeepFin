@@ -747,7 +747,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             allow_batching = len({id(param) for param in params}) == len(params)
             buckets: dict[
                 tuple[torch.device, torch.dtype, int],
-                tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor]],
+                tuple[
+                    list[Tensor], list[Tensor], list[Tensor], list[Tensor],
+                    list[dict[str, object]],
+                ],
             ] = {}
             for param in params:
                 if param.grad is None:
@@ -757,8 +760,23 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     raise RuntimeError("Aurora AdamW fallback does not support sparse gradients")
 
                 state = self.state[param]
+  # ⚑ `step` is COMPUTED here and COMMITTED only once the update that uses it
+  # has run. `Trainer.train_steps` catches a `RuntimeError` whose message
+  # contains "CUDA" and RETRIES the whole step up to three times
+  # (`trainer.py`), so an optimizer step is not the unrecoverable event it
+  # looks like -- and the batched path raises AFTER the scan has visited every
+  # parameter, where the old loop raised part-way through. Writing the counter
+  # during the scan would hand the retry a whole group of parameters whose
+  # bias corrections had advanced without their moments, and the retry is
+  # recorded as a successful step, so nothing downstream would ever say so.
+  #
+  # The moment BUFFERS are still committed during the scan, and that is
+  # correct rather than an oversight: lazily created `exp_avg`/`exp_avg_sq`
+  # are zeros, which is exactly the state a retry should find. This bounds
+  # the damage of a failed step; it does not make one atomic (a bucket that
+  # dies mid-chain has already mutated some tensors), and no cheap version of
+  # it does.
                 step = int(state.get("step", 0)) + 1
-                state["step"] = step
 
                 exp_avg = state.get("exp_avg")
                 exp_avg_sq = state.get("exp_avg_sq")
@@ -775,12 +793,13 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     key = (param.device, param.dtype, step)
                     bucket = buckets.get(key)
                     if bucket is None:
-                        bucket = ([], [], [], [])
+                        bucket = ([], [], [], [], [])
                         buckets[key] = bucket
                     bucket[0].append(param)
                     bucket[1].append(grad)
                     bucket[2].append(exp_avg)
                     bucket[3].append(exp_avg_sq)
+                    bucket[4].append(state)
                     continue
 
                 _adamw_update_one(
@@ -788,6 +807,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     step=step, lr=lr, weight_decay=weight_decay,
                     beta1=beta1, beta2=beta2, eps=eps,
                 )
+                state["step"] = step
 
   # Deferring the batched buckets past the scan reorders parameters against
   # each other, and that is safe for exactly the reason the batching itself is:
@@ -796,9 +816,11 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # is what rules out.
             for (_device, _dtype, step), bucket in buckets.items():
                 _adamw_update_foreach(
-                    *bucket,
+                    bucket[0], bucket[1], bucket[2], bucket[3],
                     step=step, lr=lr, weight_decay=weight_decay,
                     beta1=beta1, beta2=beta2, eps=eps,
                 )
+                for state in bucket[4]:
+                    state["step"] = step
 
         return loss

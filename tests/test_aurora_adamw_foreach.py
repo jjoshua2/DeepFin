@@ -365,6 +365,59 @@ def test_duplicate_parameters_in_a_group_fall_back_to_the_loop(
     )
 
 
+def test_a_failed_step_does_not_advance_the_step_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A step that dies in the batched update must not leave `step` incremented.
+
+    ⚑ `Trainer.train_steps` catches a `RuntimeError` whose message contains
+    "CUDA" and RETRIES the whole step up to three times, so an optimizer step
+    is NOT the unrecoverable event it looks like. The batched path raises after
+    the scan has visited every parameter, where the loop raised part-way
+    through -- so a counter committed during the scan would advance the bias
+    correction of an ENTIRE group whose moments never moved, and the retry is
+    recorded as a success, so nothing downstream would report it.
+
+    The invariant asserted is the one that matters to the retry: a step that
+    failed before any tensor was mutated must be indistinguishable from a step
+    that never ran.
+    """
+    base = _make_params()
+    opt_params = _clone_params(base)
+    ref_params = _clone_params(base)
+    ref_state: dict[Tensor, dict[str, object]] = {}
+    opt = AuroraWithAuxAdam(
+        [{"params": opt_params, "lr": _LR, "weight_decay": 0.03, "use_aurora": False}],
+    )
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("CUDA error: out of memory")
+
+    grads = _grads_for_step(opt_params, 0)
+    for param, grad in zip(opt_params, grads):
+        param.grad = None if grad is None else grad.clone()
+    before = [p.detach().clone() for p in opt_params]
+
+    monkeypatch.setattr(aurora_module, "_adamw_update_foreach", explode)
+    with pytest.raises(RuntimeError, match="CUDA"):
+        opt.step()
+    monkeypatch.undo()
+
+    assert all(int(opt.state[p].get("step", 0)) == 0 for p in opt_params)
+    for index, (got, want) in enumerate(zip(opt_params, before)):
+        assert torch.equal(got.detach(), want), f"param {index} mutated by a failed step"
+
+  # Now the retry: one clean step must land exactly where a first clean step
+  # would have, moments and all.
+    for param, ref_param, grad in zip(opt_params, ref_params, grads):
+        param.grad = None if grad is None else grad.clone()
+        ref_param.grad = None if grad is None else grad.clone()
+    opt.step()
+    _reference_adamw_loop(ref_params, ref_state, lr=_LR, weight_decay=0.03)
+    _assert_states_bitwise_equal(opt, opt_params, ref_params, ref_state)
+    assert all(int(opt.state[p]["step"]) == 1 for p in opt_params)
+
+
 def test_parameter_without_a_gradient_is_never_touched() -> None:
     used = torch.nn.Parameter(torch.randn(3, 2))
     unused = torch.nn.Parameter(torch.randn(3, 2))
