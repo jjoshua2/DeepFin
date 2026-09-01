@@ -8,7 +8,7 @@ compares the files too.  The shard
 writer goes through ``numcodecs`` Blosc, whose MULTI-THREADED encoder emits
 different compressed bytes for identical input on every call, so
 ``--workers 1`` does not reproduce its own files either.
-:func:`test_the_shard_files_are_not_byte_reproducible_even_sequentially` measures
+the test below measures
 exactly that, and it is in this file so nobody "tightens" the assertions below
 into something that fails at random.  What every test here compares is what a
 shard MEANS: each array's dtype, shape and decompressed bytes, the ``.zattrs``
@@ -33,7 +33,9 @@ import hashlib
 import io
 import itertools
 import json
+import multiprocessing
 import math
+from collections.abc import Iterator
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -184,26 +186,65 @@ def shard_content(out_dir: Path) -> dict[str, str]:
     return content
 
 
+#: The buffers ``save_local_shard_arrays`` actually hands Blosc.  ``_local_chunks``
+#: caps the leading dimension at 512, so these are the LARGEST chunks this tool
+#: ever writes -- and the smallest matter too, because Blosc's threading only
+#: engages above a block-size threshold and a small enough buffer compresses
+#: repeatably even here.  Both the widest (``x``) and the narrowest (``search_wdl``)
+#: are probed, at the writer's own dtype and codec parameters.
+_PROBE_SHAPES: tuple[tuple[int, ...], ...] = (
+    (512, 175, 8, 8), (512, COMPACT_POLICY_SIZE), (512, 3),
+)
+
+
+def _probe_digests() -> list[str]:
+    """Compress each probe shape three times; return the digests, in order."""
+    codec = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
+    out: list[str] = []
+    for shape in _PROBE_SHAPES:
+        count = int(np.prod(shape))
+        array = (np.arange(count, dtype=np.float32) % 7.0).astype(np.float16)
+        array = array.reshape(shape)
+        out.extend(
+            hashlib.sha256(codec.encode(array)).hexdigest() for _ in range(3)
+        )
+    return out
+
+
 @functools.lru_cache(maxsize=1)
 def codec_is_deterministic() -> bool:
-    """Does this environment's Blosc emit the same bytes for the same array?
+    """Would ``--workers 1`` and the repack write the same BYTES for one array?
 
-    ⚑⚑ PROBED, NOT ASSUMED IN EITHER DIRECTION.  Today it does not -- the
-    multi-threaded encoder splits by thread count and its output varies call to
-    call, which is why the assertions in this file are over decompressed arrays.
-    But that is a property of the installed ``numcodecs`` and of
-    ``numcodecs.blosc.use_threads``, either of which can change under us, and a
-    test that hard-codes "the files must differ" is a test that fails the day
-    the tool gets BETTER.  So the regime is measured and every identity
-    assertion states the strongest thing true in it.
+    ⚑⚑ PROBED, IN BOTH PROCESS ROLES, because the two paths do not use the same
+    encoder.  ``numcodecs`` disables Blosc's thread pool outside the main
+    process: ``--workers 1`` writes in the MAIN process (threaded) and the
+    repack writes in a SPAWNED lane (context encoder), and the two emit
+    different bytes for identical input.  A probe taken only in the parent
+    answers "is this process repeatable", which is a different question from the
+    one :func:`assert_same_corpus` needs -- and today the difference is masked
+    only because the threaded encoder is not repeatable either.  If a future
+    Blosc made it repeatable, a parent-only probe would return True and every
+    identity test would start demanding byte equality between a threaded write
+    and a child's -- red for a reason that has nothing to do with ``--workers``.
 
-    Sized like a real shard column, because the threading only engages above a
-    block-size threshold: a small array compresses deterministically here even
-    while the arrays this tool writes do not.
+    ⚑ ALSO NOT ASSUMED IN THE OTHER DIRECTION.  Today it returns False, which is
+    why the assertions in this file are over decompressed arrays.  That is a
+    property of the installed ``numcodecs`` and of
+    ``numcodecs.blosc.use_threads``, either of which can change under us, so the
+    regime is measured and every assertion states the strongest thing true in it.
+    ``test_whether_the_shard_files_are_byte_reproducible_is_measured`` checks
+    this verdict against what two real derivations actually wrote, so a probe
+    that stops matching reality is itself a failure.
     """
-    array = (np.arange(2048 * 175 * 8 * 8, dtype=np.int64) % 7).astype(np.float16)
-    codec = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
-    return len({codec.encode(array) for _ in range(4)}) == 1
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(1) as pool:
+        child = pool.apply(_probe_digests)
+    parent = _probe_digests()
+    per_shape = len(parent) // len(_PROBE_SHAPES)
+    return all(
+        len({*parent[i:i + per_shape], *child[i:i + per_shape]}) == 1
+        for i in range(0, len(parent), per_shape)
+    )
 
 
 def file_bytes(root: Path) -> dict[str, str]:
@@ -323,16 +364,28 @@ def test_whether_the_shard_files_are_byte_reproducible_is_measured(
 
     one, two = file_bytes(first), file_bytes(second)
     assert sorted(one) == sorted(two)
-    differing = [key for key in one if one[key] != two[key]]
-    if codec_is_deterministic():
-        assert not differing, (
-            "the codec is reproducible in this environment, so two identical "
-            f"derivations must write identical files; {len(differing)} differ"
-        )
-    else:
+    differing = sorted(key for key in one if one[key] != two[key])
+
+    # ⚑⚑ THE PROBE IS CHECKED AGAINST WHAT TWO REAL DERIVATIONS WROTE, and this
+    # is the assertion that keeps the whole scheme honest. `codec_is_deterministic`
+    # decides whether `assert_same_corpus` compares bytes; if it ever disagreed
+    # with reality -- it probes buffers up to 11.5 MB while the tool's smallest
+    # chunk is a few KB, and Blosc's threading engages on SIZE -- the identity
+    # tests would silently sit at array-only comparison for good, or go red for
+    # a reason unrelated to --workers. An earlier cut of this test asserted
+    # `all(... for key in differing)`, which `all([])` satisfies vacuously and
+    # so could not notice either.
+    assert bool(differing) != codec_is_deterministic(), (
+        f"the codec probe says deterministic={codec_is_deterministic()} and two "
+        f"identical sequential derivations {'differ in ' + str(len(differing)) + ' file(s)' if differing else 'wrote identical files'}. "
+        "The probe no longer describes what this tool writes, so the byte "
+        "comparison in assert_same_corpus is gated on the wrong answer."
+    )
+    if differing:
+        # Only Blosc's own compressed chunks may vary; a `.zarray`, a `.zattrs`
+        # or a chunk of a small column moving would be a real difference.
         assert all(key.endswith(("/0.0", "/0.0.0.0")) for key in differing), (
-            "the codec is non-deterministic here, so only its own compressed "
-            f"chunks may differ; these did too: {sorted(differing)[:6]}"
+            f"something other than a compressed chunk differs: {differing[:6]}"
         )
 
 
@@ -766,11 +819,11 @@ def test_the_ordered_streams_fold_in_read_order_not_as_lane_subtotals(
             _lane(0, tmp_path, **{name: head}),
             _lane(1, tmp_path, **{name: tail}),
         ]
-        streams = derive._concat_streams(lanes)
-        assert streams[name] == [*head, *tail]
+        streams = derive._stream_files(lanes)
+        assert list(derive._stream_values(streams[name])) == [*head, *tail]
         merged = derive._merge_stats(lanes, streams=streams)
         reference = derive.DeriveStats()
-        for value in streams[name]:
+        for value in derive._stream_values(streams[name]):
             getattr(reference, method)(value)
         for field_name in derive._STREAM_OWNED_FIELDS[name]:
             assert getattr(merged, field_name) == getattr(reference, field_name), (
@@ -783,12 +836,41 @@ def test_the_ordered_streams_fold_in_read_order_not_as_lane_subtotals(
 
 
 def test_the_stream_concatenation_is_in_lane_order(tmp_path: Path) -> None:
-    """Handed the lanes out of order, the concatenation still reads lane 0 first."""
+    """Handed the lanes out of order, the fold still reads lane 0 first."""
     lanes = [
         _lane(1, tmp_path, value_delta=[3.0, 4.0]),
         _lane(0, tmp_path, value_delta=[1.0, 2.0]),
     ]
-    assert derive._concat_streams(lanes)["value_delta"] == [1.0, 2.0, 3.0, 4.0]
+    files = derive._stream_files(lanes)["value_delta"]
+    assert [Path(path).name for path in files] == [
+        "lane0_value_delta.f64", "lane1_value_delta.f64",
+    ]
+    assert list(derive._stream_values(files)) == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_the_fold_never_materialises_the_whole_stream(tmp_path: Path) -> None:
+    """⚑ The lanes drain to disk to bound memory; the coordinator must not undo it.
+
+    ``_stream_files`` hands back PATHS. Returning the concatenated floats would
+    move ~1 GB from seven lanes into one coordinator, where adding lanes cannot
+    reduce it -- the same gigabyte the drain exists to avoid, in the worse place.
+
+    ⚑ ``isinstance(..., Iterator)`` IS NOT THE OBSERVATION, and the first cut of
+    this test made exactly that mistake.  A generator that builds the whole list
+    and then ``yield from``\\ s it is an ``Iterator`` too, and passed -- a mutant
+    doing precisely that SURVIVED.  What bounds the peak is that a value arrives
+    before the NEXT file is opened, so that is what is measured: the second path
+    does not exist, and the first file's values still come out.  A materialising
+    fold raises before yielding anything.
+    """
+    lanes = [_lane(0, tmp_path, value_delta=[1.0, 2.0])]
+    files = derive._stream_files(lanes)["value_delta"]
+    assert all(isinstance(path, str) for path in files)
+    probe = derive._stream_values([*files, str(tmp_path / "never_written.f64")])
+    assert isinstance(probe, Iterator)
+    assert [next(probe), next(probe)] == [1.0, 2.0]
+    with pytest.raises(FileNotFoundError):
+        next(probe)
 
 
 def test_the_game_stream_is_replayed_through_note_game(tmp_path: Path) -> None:
@@ -1051,3 +1133,163 @@ def test_the_lane_count_reaches_the_lanes(
     assert max(per_lane.values()) < 72, (
         f"one lane derived every row: {per_lane}"
     )
+
+
+# ── the multi-chunk spill and repack path ────────────────────────────────────
+
+
+@pytest.mark.parametrize("value_scheme", ["search", "qzsegment"])
+def test_many_spill_chunks_per_lane_derive_the_same_corpus(
+    tmp_path: Path, value_scheme: str,
+) -> None:
+    """⚑⚑ THE PATH PRODUCTION ALWAYS TAKES AND NO TEST EVER DID.
+
+    A lane cuts a spill file every ``--spill-chunk-rows`` surviving rows, so a
+    5.5M-row derivation writes thousands per lane -- while every fixture corpus
+    here is small enough that each lane wrote exactly ONE, leaving the
+    multi-chunk spill, the cross-chunk repack slice and the repeated drain with
+    no coverage at all. MEASURED by an independent review of PR #493: with the
+    chunk size at its default, deleting the final ``drain`` broke nothing and a
+    ``drain`` that truncated instead of appending passed all twelve identity
+    tests above.
+
+    Seven rows per chunk against ~60 surviving rows a lane: every lane cuts
+    several, most output shards are stitched from more than one, and the drain
+    runs many times per lane.
+    """
+    rows = [row for gid in range(16) for row in game(gid, 11 + gid % 4)]
+    cuts = [30] * (len(rows) // 30)
+    cuts.append(len(rows) - sum(cuts))
+    corpus_dir = write_split_corpus(tmp_path, rows, [c for c in cuts if c])
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--value-scheme", value_scheme,
+        "--spill-chunk-rows", "7", workers=3, rows_per_shard=11,
+    )
+    assert_same_corpus(sequential, parallel)
+
+
+def test_the_spill_chunk_size_reaches_the_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ The knob is only worth having if it reaches the code that spills.
+
+    The lanes are spawned children that re-import the module, so this is not a
+    thing a monkeypatch could ever have done -- it travels in ``_WorkerTask``.
+    Asserted on the spill itself: at 7 rows a chunk every lane must cut several,
+    and none may hold more than 7 rows.
+    """
+    monkeypatch.setattr(derive, "_remove_spill", lambda spill_dir: None)
+    rows = [row for gid in range(12) for row in game(gid, 10)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [30] * 4)
+    out = tmp_path / "out"
+    run(corpus_dir, out, "--workers", "2", "--spill-chunk-rows", "7")
+
+    sizes: list[int] = []
+    for lane in sorted((out / derive.SPILL_DIR_NAME).iterdir()):
+        if not lane.is_dir():
+            continue
+        chunks = sorted(lane.glob("chunk_*.zarr"))
+        assert len(chunks) > 1, f"{lane.name} cut {len(chunks)} chunk(s) at 7 rows"
+        sizes.extend(
+            int(np.asarray(zarr.open_group(str(chunk), mode="r")["x"]).shape[0])
+            for chunk in chunks
+        )
+    assert max(sizes) == 7, f"a chunk exceeded the requested size: {sizes}"
+    assert sum(sizes) == 120
+
+
+def test_plan_repack_tiles_the_survivors_across_chunks_and_lanes() -> None:
+    """Every surviving row lands in exactly one output shard, in order."""
+    survivors = [10, 7, 3]
+    chunks = [[4, 4, 2], [4, 3], [3]]
+    plans = derive._plan_repack(survivors, chunks, 8)
+    assert [sum(part.hi - part.lo for part in plan) for plan in plans] == [8, 8, 4]
+    # Walk the plan back into a global row order and require 0..19 exactly once.
+    offsets: dict[tuple[int, int], int] = {}
+    cursor = 0
+    for lane, lane_chunks in enumerate(chunks):
+        for chunk, rows in enumerate(lane_chunks):
+            offsets[(lane, chunk)] = cursor
+            cursor += rows
+    seen: list[int] = []
+    for plan in plans:
+        for part in plan:
+            base = offsets[(part.worker, part.chunk)]
+            seen.extend(range(base + part.lo, base + part.hi))
+    assert seen == list(range(20))
+
+
+def test_plan_repack_refuses_a_spill_that_does_not_match_the_survivors() -> None:
+    with pytest.raises(derive.ParallelDeriveError, match="the same rows"):
+        derive._plan_repack([10], [[4, 4]], 8)
+
+
+def test_a_mid_corpus_zero_claim_is_refused_once_a_lane_bases_on_it(
+    tmp_path: Path,
+) -> None:
+    """⚑ ``_check_rows_read`` end to end: two lanes computing the same base.
+
+    A shard claiming 0 rows in the MIDDLE leaves the shards after it with global
+    bases that are 8 too low. With three lanes, lane 1 (shard 1) and lane 2
+    (shard 2) both start at row 8 and both read the rows the limit allows, so
+    the lanes between them read 16 rows for a partition that covers 12. Neither
+    `_check_claimed_rows` (shard 1 is never read to EOF, so its claim is never
+    checked) nor the closed-key check (this arm assembles no game) sees it.
+    This is the guard that does, and it had no end-to-end test.
+    """
+    rows = [row for gid in range(3) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [8, 8, 8], claim={1: 0})
+    assert run(corpus_dir, tmp_path / "seq", "--limit", "12")[
+        "realized"]["rows_read"] == 12
+    out = tmp_path / "par"
+    with pytest.raises(derive.ParallelDeriveError, match="do not tile"):
+        run(corpus_dir, out, "--limit", "12", "--workers", "3")
+    assert not (out / derive.SUMMARY_NAME).exists()
+
+
+def test_the_same_zero_claim_is_harmless_when_the_limit_stops_first(
+    tmp_path: Path,
+) -> None:
+    """⚑ AND IT IS NOT REFUSED WHEN IT CANNOT MATTER, which is worth pinning.
+
+    The same corpus at two lanes puts shards 1 and 2 in ONE lane, which reads
+    them in order and stops at the limit inside shard 1 -- exactly where the
+    sequential read stops. The mis-based shard is never reached, so the run is
+    correct and succeeds. A guard that refused here would be refusing a corpus
+    `--workers 1` derives, on the strength of a claim that changed nothing.
+    """
+    rows = [row for gid in range(3) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [8, 8, 8], claim={1: 0})
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--limit", "12", workers=2,
+    )
+    assert_same_corpus(sequential, parallel)
+
+
+def test_plan_ranges_at_a_limit_exactly_equal_to_the_claimed_total() -> None:
+    """The boundary the binding predicate turns on, which `<` and `>` miss."""
+    _, in_play, rows = derive.plan_ranges([10, 10, 10], workers=2, limit=30)
+    assert (in_play, rows) == (3, 30)
+    _, in_play, rows = derive.plan_ranges([10, 10, 10], workers=2, limit=29)
+    assert (in_play, rows) == (3, 29)
+    _, in_play, rows = derive.plan_ranges([10, 10, 10], workers=2, limit=31)
+    assert (in_play, rows) == (3, 30)
+
+
+def test_an_overstated_claim_refuses_rather_than_deriving_a_short_corpus(
+    tmp_path: Path,
+) -> None:
+    """⚑ STATED, because it IS a difference in what the two paths accept.
+
+    A shard holding fewer rows than the inventory claims derives fine at
+    `--workers 1` and is REFUSED above it. That is the fail-closed direction --
+    the partition's global row indices come from those claims, so believing them
+    would cut `--limit` somewhere the sequential read does not -- but it is the
+    same category as the ungrouped-arm test above, so it is a test rather than a
+    surprise.
+    """
+    rows = [row for gid in range(3) for row in game(gid, 8)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [8, 8, 8], claim={1: 9})
+    run(corpus_dir, tmp_path / "seq")
+    with pytest.raises(derive.ParallelDeriveError, match="not the rows on disk"):
+        run(corpus_dir, tmp_path / "par", "--workers", "2")

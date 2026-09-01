@@ -401,6 +401,28 @@ HISTORY_REP_FIX = True
 #: rotation ``lc0_data_to_rows`` uses for the same reason.
 DEFAULT_ROWS_PER_SHARD = 8192
 
+#: Where the workers' intermediate rows live, under ``--out``.  Removed on
+#: success; left behind on failure, where ``refuse_populated_dir`` then makes the
+#: next attempt at the same ``--out`` refuse rather than half-overwrite.
+SPILL_DIR_NAME = "spill"
+
+#: Surviving rows per spill file.  ⚑ NOT tied to ``--rows-per-shard``: it bounds
+#: a worker's RESIDENT sample list (a row's planes are 175*8*8 float32, ~45 KB
+#: unpacked), and the output shard boundaries are decided by the coordinator
+#: from the survivor counts regardless of how the rows were chunked on the way
+#: there.  A repack that needs rows spanning two spill files simply reads two.
+#:
+#: ⚑ IT SETS THE PEAK, and the round-trip verification roughly triples it: at a
+#: cut a lane holds the samples, the arrays built from them, the arrays read
+#: back, and the samples rebuilt from those.  2,048 rows is ~90 MB of planes,
+#: so a lane peaks near 300 MB and `--workers 7` near 2 GB -- against the
+#: repack's ~600 MB per process at the default `--rows-per-shard 8192`, which
+#: is the sequential path's own footprint and cannot be lowered without moving
+#: the shard boundaries.
+SPILL_CHUNK_ROWS = 2048
+
+_SPILL_RUN_ID = "derive_parallel_spill"
+
 DEFAULT_SEED = 20260827
 
 #: ``--floor`` off.  The identity: ``(1 - 0 * n) * softmax + 0`` is the softmax,
@@ -2354,6 +2376,20 @@ class DeriveOptions:
     #: that predates the value round keeps deriving V0's corpus.
     value_scheme: str = VALUE_SCHEME_SEARCH
     qz: QzParams = field(default_factory=QzParams)
+    #: Surviving rows per ``--workers`` spill file.  ⚑⚑ A FIELD, NOT A MODULE
+    #: CONSTANT, AND THAT IS THE WHOLE POINT.  It changes no output -- the
+    #: coordinator cuts output shards from the survivor counts however the rows
+    #: were chunked on the way there -- so the only thing it is good for is
+    #: reaching the multi-chunk spill and repack path from a test.  As a
+    #: constant it was UNREACHABLE: lanes are spawned children that re-import
+    #: this module, so a monkeypatch cannot follow them, and every fixture
+    #: corpus is small enough that each lane wrote exactly ONE chunk.  MEASURED
+    #: (independent review of PR #493): with the constant in place, deleting the
+    #: final ``drain`` broke nothing and a truncating ``drain`` passed all twelve
+    #: end-to-end identity tests.  Production runs thousands of chunks per lane
+    #: through that path.  Travels to the lanes inside ``_WorkerTask``, so a test
+    #: that lowers it lowers it for the code that actually writes the spill.
+    spill_chunk_rows: int = SPILL_CHUNK_ROWS
 
     @property
     def needs_game(self) -> bool:
@@ -4324,11 +4360,41 @@ def format_summary(out: dict[str, Any]) -> str:
 
 # ── --workers: the same corpus, derived in parallel ────────────────────────────
 #
-# ``--workers N > 1``, and the contract is not "equivalent" but ``diff -r``:
+# ``--workers N > 1``, and the contract is not "equivalent" but IDENTICAL
+# CONTENT:
 #
-#     every file under every ``shard_*.zarr`` is byte-for-byte what
-#     ``--workers 1`` writes, and ``derive_targets_summary.json`` differs only in
-#     ``started_utc``.
+#     every array of every ``shard_*.zarr`` decompresses to the same dtype,
+#     shape and bytes as ``--workers 1`` writes; the shards are the same shards
+#     in the same order holding the same rows in the same permuted positions;
+#     every ``.zattrs`` stamp matches; and ``derive_targets_summary.json``
+#     matches field for field but for ``started_utc``.
+#
+# ⚑⚑ AND NOT THE COMPRESSED FILES, WHICH CAN NEVER MATCH, FOR TWO SEPARATE
+# REASONS.  ``save_local_shard_arrays`` writes through ``numcodecs`` Blosc.
+#
+#   1. ITS MULTI-THREADED ENCODER IS NON-DETERMINISTIC.  MEASURED 2026-08-31 on
+#      ``numcodecs 0.13.1``: one process compressing one float16 array three
+#      times produced three different digests, and two back-to-back SEQUENTIAL
+#      derivations of one fixture corpus at one ``--seed`` differed in 11 of 324
+#      files -- every one an ``x`` or ``policy_target`` chunk, i.e. exactly the
+#      arrays large enough for Blosc to split across threads.  So ``--workers 1``
+#      does not reproduce its OWN bytes.
+#   2. THE TWO PATHS DO NOT EVEN USE THE SAME ENCODER.  ``numcodecs`` disables
+#      Blosc's thread pool outside the main process, so ``_get_use_threads()`` is
+#      True where ``--workers 1`` writes (the main process) and False in every
+#      spawned lane, where the repack writes.  Threaded and context encoders
+#      emit different bytes for identical input.  ⇒ the parallel output is
+#      byte-STABLE run to run, the sequential output is not, and the two are
+#      different byte streams by construction.
+#
+# The single-threaded encoder IS deterministic, so the tool COULD be made
+# byte-reproducible by pinning ``numcodecs.blosc.use_threads = False`` -- at a
+# wall cost, and by changing what ``--workers 1`` writes, which is the one thing
+# this flag must not do.  So the identity claim is stated over the DATA, which is
+# what a shard means and all any consumer reads.  ⚑ Do not "restore" a byte-level
+# assertion here or in the tests; ``codec_is_deterministic`` in
+# ``tests/test_derive_parallel.py`` measures the regime instead, and tightens the
+# comparison automatically if it ever changes.
 #
 # :func:`derive` above is a single pass over the corpus's shard snapshot doing
 # three separable things -- read and derive each row, fold every row into an
@@ -4341,7 +4407,7 @@ def format_summary(out: dict[str, Any]) -> str:
 # driver with one lane" -- it is the same :func:`derive` call, statement for
 # statement, that this tool ran before the flag existed.  A refactor that routed
 # the default through a one-lane coordinator would make every future bug here a
-# production bug, and the byte-identity claim would then have nothing to compare
+# production bug, and the identity claim would then have nothing to compare
 # against.
 #
 # ⚑ IT LIVES IN THIS FILE, next to the loop it mirrors, rather than in a module
@@ -4423,27 +4489,6 @@ def format_summary(out: dict[str, Any]) -> str:
 #   can only ever see its own share, so the per-worker refusal that mirrors the
 #   sequential one is fail-OPEN across the partition; this is the check that is
 #   not.
-#: Where the workers' intermediate rows live, under ``--out``.  Removed on
-#: success; left behind on failure, where ``refuse_populated_dir`` then makes the
-#: next attempt at the same ``--out`` refuse rather than half-overwrite.
-SPILL_DIR_NAME = "spill"
-
-#: Surviving rows per spill file.  ⚑ NOT tied to ``--rows-per-shard``: it bounds
-#: a worker's RESIDENT sample list (a row's planes are 175*8*8 float32, ~45 KB
-#: unpacked), and the output shard boundaries are decided by the coordinator
-#: from the survivor counts regardless of how the rows were chunked on the way
-#: there.  A repack that needs rows spanning two spill files simply reads two.
-#:
-#: ⚑ IT SETS THE PEAK, and the round-trip verification roughly triples it: at a
-#: cut a lane holds the samples, the arrays built from them, the arrays read
-#: back, and the samples rebuilt from those.  2,048 rows is ~90 MB of planes,
-#: so a lane peaks near 300 MB and `--workers 7` near 2 GB -- against the
-#: repack's ~600 MB per process at the default `--rows-per-shard 8192`, which
-#: is the sequential path's own footprint and cannot be lowered without moving
-#: the shard boundaries.
-SPILL_CHUNK_ROWS = 2048
-
-_SPILL_RUN_ID = "derive_parallel_spill"
 
 
 # ── the ordered streams ──────────────────────────────────────────────────────
@@ -4818,7 +4863,7 @@ class _WorkerResult:
     games: list[tuple[int, bool]]
     #: ``(global_row_index, text)`` for this worker's first envelope misses.
     envelope: list[tuple[int, str]]
-    #: The ``.npy`` this worker banked each ordered stream into.
+    #: The raw-float64 file this lane banked each ordered stream into.
     stream_paths: dict[str, str]
     #: One entry per spill file, in this worker's emission order.
     chunk_rows: list[int]
@@ -4838,6 +4883,13 @@ def _raw_game_key(row: dict[str, Any]) -> tuple[int, int]:
     answers the same question for rows that DID survive and raises a
     scheme-specific refusal for ones that cannot; this one is deliberately the
     plain read.
+
+    ⚑ IT RUNS FIRST ON A GROUPED ARM, so a row with no game identity is refused
+    HERE rather than by ``_key_of``, and the two messages name different flags --
+    this one ``--workers``, that one ``--value-scheme``. Both are true and the
+    corpus fault is the same; the wording differs between ``--workers 1`` and
+    above it, which is stated so nobody reads the difference as a difference in
+    what the two paths accept. They accept the same rows.
 
     ⚑ Read by SUBSCRIPT and raised on, for the same reason ``_key_of`` is: the
     partition is defined by these keys, and a row filed under a placeholder
@@ -4981,9 +5033,9 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         )
         buffered.extend(produced)
         survivors += len(produced)
-        while len(buffered) >= SPILL_CHUNK_ROWS:
-            cut(buffered[:SPILL_CHUNK_ROWS])
-            del buffered[:SPILL_CHUNK_ROWS]
+        while len(buffered) >= options.spill_chunk_rows:
+            cut(buffered[:options.spill_chunk_rows])
+            del buffered[:options.spill_chunk_rows]
 
     stop = False
     for shard_index in range(span.lo, task.shards_in_play):
@@ -5162,7 +5214,9 @@ def _measure_spill(
     it).  A gate that cannot fail is this repo's signature defect, so the
     comparison is made against the ``x`` column's own first dimension instead:
     a different source, answering the same question, before the repack reads a
-    single row.
+    single row -- and it fires on a real fault (a lane that writes ``rows[:-1]``
+    while reporting ``len(rows)`` is invisible to the per-chunk round trip,
+    which compares the file with what it was handed and is self-consistent).
     """
     for item in results:
         for chunk, rows in enumerate(item.chunk_rows):
@@ -5177,12 +5231,6 @@ def _measure_spill(
                     "counting those rows, so it would take the wrong slice of "
                     "every shard after this one.",
                 )
-        banked = sum(item.chunk_rows)
-        if banked != item.survivors:
-            raise ParallelDeriveError(
-                f"lane {item.index} derived {item.survivors} surviving rows and "
-                f"spilled {banked}.",
-            )
 
 
 def _plan_repack(
@@ -5196,6 +5244,11 @@ def _plan_repack(
             flat.append((cursor, cursor + rows, worker, chunk))
             cursor += rows
     if cursor != sum(survivors):
+        # ⚑ NOT A GATE ON THE SPILL -- `_measure_spill` already read those rows
+        # off disk. Both numbers here come from `chunk_rows`, so this is an
+        # invariant of the loop above it and cannot fire on a corpus; it is kept
+        # because a future caller could pass the two apart, and it is labelled
+        # so nobody counts it as coverage.
         raise ParallelDeriveError(
             f"the spill files hold {cursor} rows and the workers reported "
             f"{sum(survivors)} survivors; the two must be the same rows.",
@@ -5220,41 +5273,61 @@ def _plan_repack(
 # ── merging ──────────────────────────────────────────────────────────────────
 
 
-def _concat_streams(
+def _stream_files(
     results: Sequence[_WorkerResult],
-) -> dict[str, list[float]]:
-    """Each banked stream's values, IN LANE ORDER, read back off the spill.
+) -> dict[str, list[str]]:
+    """Each banked stream's files, IN LANE ORDER.
 
     ⚑ LANE ORDER IS READ ORDER.  Lane ``k``'s rows are all globally after lane
     ``k-1``'s -- the ranges are contiguous and the handoff hands each boundary
-    game to exactly one of them -- so concatenating the lanes in index order
+    game to exactly one of them -- so reading the lanes in index order
     reproduces the sequence the sequential read produced these values in.  A
     ``dict``-iteration or completion order here would be a different sequence
     and therefore a different IEEE sum.
+
+    ⚑ PATHS, NOT VALUES, and that is the point.  Returning the concatenated
+    floats would undo what the lanes' incremental ``drain`` bought: ~6 per-row
+    streams over a 5.5M-row corpus is ~1 GB of Python floats, and materialising
+    all of it in the COORDINATOR is worse than in the lanes, because it is one
+    process and adding lanes cannot reduce it.  :func:`_stream_values` walks the
+    files one at a time, so the peak is one lane's file.
 
     ⚑ A FUNCTION so the ordering is testable without deriving a corpus: a small
     corpus's subtotals are usually bit-identical to its sequential sum anyway,
     so an end-to-end test cannot be relied on to notice.
     """
-    streams: dict[str, list[float]] = {}
+    streams: dict[str, list[str]] = {}
     for name, _ in _ORDERED_STREAMS:
-        values: list[float] = []
-        for item in sorted(results, key=lambda entry: entry.index):
-            path = item.stream_paths.get(name)
-            if path is not None:
-                values.extend(np.fromfile(path, dtype=np.float64).tolist())
-        if values:
-            streams[name] = values
+        paths = [
+            path
+            for item in sorted(results, key=lambda entry: entry.index)
+            if (path := item.stream_paths.get(name)) is not None
+        ]
+        if paths:
+            streams[name] = paths
     return streams
 
 
+def _stream_values(paths: Sequence[str]) -> Iterator[float]:
+    """The banked doubles, one file at a time, in the order they were banked.
+
+    ⚑ ``fromfile`` per path rather than one concatenation: the fold only ever
+    needs the next value, and holding the whole sequence is the memory this
+    design exists to avoid.  ``tolist`` on ONE file still materialises that
+    file, which is bounded by a lane's share and is the point at which the cost
+    stops scaling with the corpus.
+    """
+    for path in paths:
+        yield from np.fromfile(path, dtype=np.float64).tolist()
+
+
 def _merge_stats(
-    results: Sequence[_WorkerResult], *, streams: dict[str, list[float]],
+    results: Sequence[_WorkerResult], *, streams: Mapping[str, Sequence[str]],
 ) -> DeriveStats:
     """One ``DeriveStats`` describing the whole run, in the sequential order.
 
-    ``streams`` holds each banked stream's values already concatenated in worker
-    order; they are replayed through the very methods the sequential path calls,
+    ``streams`` maps each banked stream to its lanes' files in lane order; the
+    values are replayed through the very methods the sequential path calls,
     which is what makes the IEEE sums identical rather than merely close.
     """
     merged = DeriveStats()
@@ -5302,7 +5375,7 @@ def _merge_stats(
         merged.note_game(rows, cut_by_limit=cut)
     for name, method in _ORDERED_STREAMS:
         note = getattr(merged, method)
-        for value in streams.get(name, ()):
+        for value in _stream_values(streams.get(name, ())):
             note(value)
     return merged
 
@@ -5534,7 +5607,7 @@ def derive_parallel(
         ]
         written = pool.map(_repack_shard, repack, chunksize=1)
 
-    stats = _merge_stats(results, streams=_concat_streams(results))
+    stats = _merge_stats(results, streams=_stream_files(results))
     stats.rows_written = _check_rows_written(written, survivors)
 
     enforce_take_effect(options, stats)
@@ -5648,10 +5721,18 @@ def build_parser() -> argparse.ArgumentParser:
              "started_utc. Not the compressed bytes -- Blosc's threaded encoder "
              "is non-deterministic and --workers 1 does not reproduce its own "
              "either; see this file's --workers section. Intermediate rows are "
-             "spilled under <out>/spill and removed on success; budget roughly "
-             "1 GB of RAM and one output corpus of scratch disk per lane, and "
-             "remember the lanes are CPU-bound next to whatever else the box is "
-             "running.",
+             "spilled under <out>/spill and removed on success: one output "
+             "corpus of scratch disk in total (every surviving row is spilled "
+             "once, whatever the lane count) and roughly 1 GB of RAM per lane. "
+             "The lanes are CPU-bound next to whatever else the box is running.",
+    )
+    parser.add_argument(
+        "--spill-chunk-rows", type=int, default=SPILL_CHUNK_ROWS,
+        help="surviving rows per --workers spill file. Changes no output -- the "
+             "output shard boundaries come from the survivor counts however the "
+             "rows were chunked -- and exists so the multi-chunk spill and "
+             "repack path is reachable at a size a test can drive. Lower it to "
+             "trade memory for spill files.",
     )
     parser.add_argument(
         "--max-envelope-misses", type=int, default=0,
@@ -5714,6 +5795,11 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(
             f"--rows-per-shard must be positive, got {args.rows_per_shard!r}",
         )
+    if int(args.spill_chunk_rows) <= 0:
+        raise ValueError(
+            f"--spill-chunk-rows must be positive, got {args.spill_chunk_rows!r}; "
+            "a non-positive chunk would spill one file per row",
+        )
     if int(args.max_envelope_misses) < 0:
         raise ValueError(
             f"--max-envelope-misses must be >= 0, got {args.max_envelope_misses!r}",
@@ -5738,12 +5824,13 @@ def main(argv: list[str] | None = None) -> int:
         rows_per_shard=int(args.rows_per_shard),
         max_envelope_misses=int(args.max_envelope_misses),
         value_scheme=value_scheme,
+        spill_chunk_rows=int(args.spill_chunk_rows),
         qz=qz,
     )
     if workers > 1:
         # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers
         # 1` runs `derive` -- the code this tool has always run, statement for
-        # statement -- and the byte-identity claim is worth exactly as much as
+        # statement -- and the identity claim is worth exactly as much as
         # the independence of the two sides, so the default path is not "the
         # parallel driver with one lane".
         out = derive_parallel(
