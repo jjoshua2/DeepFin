@@ -84,7 +84,7 @@ _SHARD_LOAD_WARN_INTERVAL_S = 60.0
 _REFRESH_LOAD_WORKERS = 4
 
 # How often the shard-validation memo reports its hit rate. Throttled because
-# production runs `shuffle_refresh_interval` as low as 1.
+# production runs `refresh_interval` as low as 1.
 _VALIDATION_MEMO_LOG_INTERVAL_S = 300.0
 
 # Advisory lock naming the one process allowed to write shards into a window
@@ -1624,7 +1624,7 @@ class DiskReplayBuffer:
         -- a corpus being rewritten under the run, a fingerprint that never
         matches -- the whole 7.31x would be handed back with nothing in the log
         saying so. Throttled rather than per-refresh because production runs
-        `shuffle_refresh_interval` as low as 1.
+        `refresh_interval` as low as 1.
         """
         now = time.time()
         with self._validation_memo_lock:
