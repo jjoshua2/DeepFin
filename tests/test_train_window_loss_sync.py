@@ -479,3 +479,32 @@ def test_mixed_dtype_scalars_promote_exactly_as_the_old_stack_did() -> None:
     ]
 
     assert _device_sums(window, accum_steps=2) == _host_reference(window, accum_steps=2)
+
+
+def test_a_negative_zero_first_value_keeps_the_host_folds_positive_zero() -> None:
+    """The host fold began every key with `0.0 + v`, so a `-0.0` first value
+    became `+0.0`. `==` cannot see the difference; the sign bit can."""
+    import math
+
+    sums = _DeviceLossSums()
+    sums.add_losses({"total": torch.tensor(-0.0), "policy_ce": torch.tensor(1.5)})
+    window = _DeviceLossSums()
+    window.merge(sums)
+    flat = _materialize_device_scalars([t for _, t in window.items()])
+
+    assert flat[0] == 0.0
+    assert math.copysign(1.0, flat[0]) == 1.0, "sign of zero differs from the host fold"
+
+
+def test_the_pipeline_timing_keys_reach_the_ray_report_row() -> None:
+    """A field that lands only in TensorBoard is this repo's signature defect;
+    the Ray progress row is enumerated by hand, so pin every timing key there."""
+    from chess_anti_engine.tune import trainable_report
+    from chess_anti_engine.train.trainer import _PIPELINE_PHASE_GPU_KEY, _PIPELINE_RESIDUAL_KEY
+
+    keys = [*_PIPELINE_PHASE_GPU_KEY, _PIPELINE_RESIDUAL_KEY,
+            *(twin for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None)]
+    defaults = trainable_report._train_metrics_dict(None)
+    missing = [k for k in keys if k not in defaults]
+
+    assert not missing, f"timing keys absent from the Ray report row: {missing}"

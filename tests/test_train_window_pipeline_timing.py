@@ -7,7 +7,8 @@ residual, publishes them on `TrainMetrics`, and prints one
 * the phase key is the CPU WALL CLOCK. Those five plus `pipeline_other_s`
   PARTITION `train_time_s`, which is the property that makes the numbers
   readable as shares.
-* `gpu_*_s` / `h2d_s` are CUDA event spans. They overlap, and on a CPU-only
+* `gpu_*_s` are CUDA event spans (`batch_prefetch_wait_s` deliberately has
+  none -- see `_PIPELINE_PHASE_GPU_KEY`). They overlap, and on a CPU-only
   run they are 0.0 -- which is why `gpu_events=on|off` is printed beside them.
 
 What this file pins, and why each one is a test rather than a comment:
@@ -359,16 +360,28 @@ def test_no_device_wide_synchronize_or_elapsed_read_outside_drain() -> None:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         ]
 
+  # ⚑ `_record_event` is the ONLY method that touches CUDA on the record path,
+  # so it is the one a stray `torch.cuda.synchronize()` would land in; and the
+  # loss accumulator's methods are where a `.item()`/`.tolist()` would put the
+  # per-microbatch stall back while the by-name spy test still passed (Grok
+  # review, PR #496). Both are pinned here, read off the source.
     for method in (
         _PipelinePhaseTimer.begin_gpu,
         _PipelinePhaseTimer.end_gpu,
         _PipelinePhaseTimer.record,
+        _PipelinePhaseTimer._record_event,
         trainer_mod._PipelinePhaseSpan.__enter__,
         trainer_mod._PipelinePhaseSpan.__exit__,
+        trainer_mod._DeviceLossSums.add_losses,
+        trainer_mod._DeviceLossSums.merge,
+        trainer_mod._DeviceLossSums._accumulate,
+        trainer_mod._DeviceLossSums.tensor,
+        trainer_mod._DeviceLossSums.items,
+        trainer_mod._drift_positions,
     ):
         named = calls(method)
-        assert "synchronize" not in named, f"{method.__qualname__} stalls the pipeline"
-        assert "elapsed_time" not in named, f"{method.__qualname__} reads a span early"
+        for forbidden in ("synchronize", "elapsed_time", "item", "tolist", "cpu", "numpy"):
+            assert forbidden not in named, f"{method.__qualname__} calls .{forbidden}() on the hot path"
 
     drained = calls(_PipelinePhaseTimer.drain)
     assert drained.count("synchronize") == 1

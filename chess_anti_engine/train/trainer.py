@@ -321,7 +321,11 @@ class _DeviceLossSums:
     def _accumulate(self, names: list[str], vec: torch.Tensor) -> None:
         if self._vec is None:
             self._names = list(names)
-            self._vec = vec
+  # `+ 0.0`, not a bare store: the host fold began every key with
+  # `0.0 + v`, which turns a `-0.0` first value into `+0.0`. One elementwise
+  # kernel per instance keeps the sign of zero bit-identical too (found by the
+  # independent review's probe against the real `_extract_loss_scalars`).
+            self._vec = vec + 0.0
             return
         if names == self._names:
   # One elementwise kernel: per key, the same float64 add in the same order
@@ -332,14 +336,13 @@ class _DeviceLossSums:
   # disarmed blend) appears or vanishes mid-window. Align by name and keep
   # FIRST-SEEN order, exactly as the old dict did; a key seen for the first
   # time lands on a 0.0 slot, and 0.0 + v == v for every finite v.
-        index = {name: i for i, name in enumerate(self._names)}
-        fresh = [name for name in names if name not in index]
+        known = set(self._names)
+        fresh = [name for name in names if name not in known]
         if fresh:
             self._names = self._names + fresh
             pad = torch.zeros(len(fresh), dtype=self._vec.dtype, device=self._vec.device)
             self._vec = torch.cat([self._vec, pad])
-            index = {name: i for i, name in enumerate(self._names)}
-        positions = torch.tensor([index[name] for name in names], device=vec.device)
+        positions = _drift_positions(tuple(self._names), tuple(names), vec.device)
         self._vec = self._vec.index_add(0, positions, vec)
 
     def tensor(self, name: str) -> torch.Tensor | None:
@@ -354,6 +357,27 @@ class _DeviceLossSums:
             return []
         vec = self._vec
         return [(name, vec[i]) for i, name in enumerate(self._names)]
+
+
+_DRIFT_POSITIONS_CACHE: dict[tuple[tuple[str, ...], tuple[str, ...], str], torch.Tensor] = {}
+
+
+def _drift_positions(all_names: tuple[str, ...], names: tuple[str, ...], device: Any) -> torch.Tensor:
+    """Slot indices of `names` inside `all_names`, as a device tensor, CACHED.
+
+    ⚑ Built once per distinct (layout, device), not per microbatch: the
+    uncached form was an unpinned host->device copy sitting between
+    `backward()` and zclip on every step whose optional keys flickered -- the
+    kind of stall this accumulator exists to remove (Grok review, PR #496).
+    Key sets are a handful of layouts per run, so the cache is tiny.
+    """
+    key = (all_names, names, str(device))
+    hit = _DRIFT_POSITIONS_CACHE.get(key)
+    if hit is None:
+        index = {name: i for i, name in enumerate(all_names)}
+        hit = torch.tensor([index[name] for name in names], device=device)
+        _DRIFT_POSITIONS_CACHE[key] = hit
+    return hit
 
 
 def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
@@ -492,10 +516,14 @@ class _PipelinePhaseTimer:
     def drain(self, *, window_wall_s: float) -> dict[str, float]:
         """Every phase key for this window. Call ONCE, at window end.
 
-        The single `synchronize()` is on the LAST EVENT, not the device: by
-        this point the window's loss-scalar transfer has already drained the
-        queue, so it is a formality that keeps `elapsed_time` legal rather than
-        a stall.
+        The single `synchronize()` is on the LAST EVENT, not the device. On
+        the stream the trainer uses, the window's loss-scalar `.tolist()` is a
+        stream-ordered memcpy, so every kernel enqueued before it -- the last
+        `opt.step()` included -- has completed by the time it returns, and the
+        event wait is redundant there. It stays because `elapsed_time` on an
+        unfinished event is an error, and because that stream-order argument
+        does not cover work a future change might enqueue on a side stream;
+        it is one wait per window either way, never per step.
         """
         gpu = {twin: 0.0 for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None}
         if self._events:
@@ -1258,7 +1286,9 @@ class TrainMetrics:
   # `pipeline_other_s` is the residual: the accuracy accumulators, the
   # on-device loss adds, the SWA update, the retry bookkeeping and loop
   # overhead. `opt_step_s` and the pre-existing `opt_step_time_s` cover the
-  # same region and should agree to microseconds; the old one is kept because
+  # same region; the outer `opt_step_time_s` additionally spans the phase's
+  # two CUDA-event records (tens of microseconds per step), so the pair
+  # agrees to that overhead and no more. The old one is kept because
   # `optimizer_steps_per_s` in the Ray report is derived from it.
     batch_prefetch_wait_s: float = 0.0
     fwd_loss_s: float = 0.0
