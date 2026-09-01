@@ -364,6 +364,115 @@ def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: f
     }
 
 
+  # Dtypes on which the batched AdamW fallback is BITWISE identical to the
+  # per-parameter loop it replaces, and the only dtypes it is allowed to take.
+  #
+  # ⚑ This is an allowlist, not a "floating point" test, because ONE op breaks
+  # the identity: `torch._foreach_mul_(tensors, <python float>)` disagrees with
+  # `Tensor.mul_(<python float>)` in the last bit on reduced precision.
+  # MEASURED on torch 2.11.0, CPU, shapes (512,512)/(512,)/(1858,512)/(3,):
+  # every other op in the chain -- `add_(other, alpha=)`, `addcmul_`, `sqrt`,
+  # `div_(scalar)`, `add_(scalar)`, `addcdiv_` -- is bitwise identical on
+  # bfloat16 AND float16, while the scalar `mul_` differs on both; neither the
+  # `ScalarList` nor the 0-d `TensorList` overload of `_foreach_mul_` closes it.
+  # float32/float64 are exact for the whole chain. The MECHANISM (which side
+  # keeps a wider accumulator for the scalar multiply) was not established --
+  # only the disagreement was, which is all the allowlist needs, and
+  # `test_bfloat16_would_not_survive_the_batched_path` re-measures it rather
+  # than trusting this comment.
+  #
+  # Production trains fp32 parameters under a bf16 autocast (`Trainer` pins
+  # `inference_autocast(..., dtype="bf16")` for the FORWARD only, so params and
+  # grads stay fp32), which is why the live path is the batched one. Anything
+  # else -- a reduced-precision master weight, a checkpoint whose moments were
+  # saved at another dtype, a mixed param/grad dtype -- falls back to the exact
+  # per-parameter sequence rather than being silently approximated.
+_FOREACH_EXACT_DTYPES = frozenset({torch.float32, torch.float64})
+
+
+def _adamw_batchable(param: Tensor, grad: Tensor, exp_avg: Tensor, exp_avg_sq: Tensor) -> bool:
+    """True when this parameter's four tensors may join a `_foreach_*` bucket."""
+    if param.dtype not in _FOREACH_EXACT_DTYPES:
+        return False
+    return all(
+        t.dtype == param.dtype and t.device == param.device
+        for t in (grad, exp_avg, exp_avg_sq)
+    )
+
+
+def _adamw_update_one(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    *,
+    step: int,
+    lr: float,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """One parameter's AdamW fallback update, in the original op order.
+
+    This is the reference the batched path must reproduce bit for bit, and it
+    is also the live path for any tensor `_adamw_batchable` rejects.
+    """
+    if weight_decay != 0.0:
+        param.mul_(1.0 - lr * weight_decay)
+    exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+    exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+
+    bias_correction1 = 1.0 - beta1**step
+    bias_correction2 = 1.0 - beta2**step
+    denom = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
+    denom.add_(eps)
+    step_size = lr / max(bias_correction1, 1e-12)
+    param.addcdiv_(exp_avg, denom, value=-step_size)
+
+
+def _adamw_update_foreach(
+    params: list[Tensor],
+    grads: list[Tensor],
+    exp_avgs: list[Tensor],
+    exp_avg_sqs: list[Tensor],
+    *,
+    step: int,
+    lr: float,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """`_adamw_update_one` for a whole bucket, as batched `_foreach_*` kernels.
+
+    Every op in `_adamw_update_one` is ELEMENTWISE -- no op mixes elements of
+    one tensor, and none mixes tensors with each other -- so evaluating them
+    parameter-major (the loop) or op-major (this) computes the same expression
+    on the same inputs. The order below is the loop's order, unchanged.
+
+    The caller guarantees the bucket shares `step`, dtype and device, because
+    `bias_correction*` and `step_size` are step-dependent scalars and the
+    identity above only holds within `_FOREACH_EXACT_DTYPES`. It also
+    guarantees no tensor appears twice: `_foreach_mul_` over a list holding
+    the same storage twice is not the loop's two sequential updates.
+    """
+    if weight_decay != 0.0:
+        torch._foreach_mul_(params, 1.0 - lr * weight_decay)
+    torch._foreach_mul_(exp_avgs, beta1)
+    torch._foreach_add_(exp_avgs, grads, alpha=1.0 - beta1)
+    torch._foreach_mul_(exp_avg_sqs, beta2)
+    torch._foreach_addcmul_(exp_avg_sqs, grads, grads, value=1.0 - beta2)
+
+    bias_correction1 = 1.0 - beta1**step
+    bias_correction2 = 1.0 - beta2**step
+    denoms = torch._foreach_sqrt(exp_avg_sqs)
+    torch._foreach_div_(denoms, math.sqrt(max(bias_correction2, 1e-12)))
+    torch._foreach_add_(denoms, eps)
+    step_size = lr / max(bias_correction1, 1e-12)
+    torch._foreach_addcdiv_(params, exp_avgs, denoms, value=-step_size)
+
+
 class AuroraWithAuxAdam(torch.optim.Optimizer):
     """Aurora for 2D hidden weights, AdamW for auxiliary tensors.
 
@@ -623,14 +732,29 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
 
             beta1, beta2 = tuple(group.get("betas", (0.9, 0.95)))
             eps = float(group.get("eps", 1e-8))
-            for param in group["params"]:
+            params = group["params"]
+  # `step` is per-parameter (a tensor that had no grad on some step is behind
+  # the rest), and `bias_correction*` / `step_size` are functions of it, so the
+  # step count is part of the bucket key rather than a loop invariant.
+  #
+  # ⚑ Duplicates disqualify the WHOLE group, checked before any state is
+  # touched. A tied weight reaching one group twice would appear twice in a
+  # bucket, and `_foreach_mul_` applied to a list holding one storage twice is
+  # not the loop's two sequential updates of it. The loop stays exactly right
+  # in that case, so it is what runs -- this repo has tied tensors (the 16
+  # `layer_smolgens.N.gen_weight.weight` keys are one storage), which is why
+  # the check is here and not assumed away.
+            allow_batching = len({id(param) for param in params}) == len(params)
+            buckets: dict[
+                tuple[torch.device, torch.dtype, int],
+                tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor]],
+            ] = {}
+            for param in params:
                 if param.grad is None:
                     continue
                 grad = param.grad.detach()
                 if grad.is_sparse:
                     raise RuntimeError("Aurora AdamW fallback does not support sparse gradients")
-                if weight_decay != 0.0:
-                    param.mul_(1.0 - lr * weight_decay)
 
                 state = self.state[param]
                 step = int(state.get("step", 0)) + 1
@@ -644,14 +768,37 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     state["exp_avg"] = exp_avg
                     state["exp_avg_sq"] = exp_avg_sq
 
-                exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+                if allow_batching and _adamw_batchable(param, grad, exp_avg, exp_avg_sq):
+  # `get`, not `setdefault`: this runs once per parameter per step in a
+  # change whose whole point is Python overhead, and `setdefault` would
+  # build four throwaway lists and a tuple on every hit.
+                    key = (param.device, param.dtype, step)
+                    bucket = buckets.get(key)
+                    if bucket is None:
+                        bucket = ([], [], [], [])
+                        buckets[key] = bucket
+                    bucket[0].append(param)
+                    bucket[1].append(grad)
+                    bucket[2].append(exp_avg)
+                    bucket[3].append(exp_avg_sq)
+                    continue
 
-                bias_correction1 = 1.0 - beta1**step
-                bias_correction2 = 1.0 - beta2**step
-                denom = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
-                denom.add_(eps)
-                step_size = lr / max(bias_correction1, 1e-12)
-                param.addcdiv_(exp_avg, denom, value=-step_size)
+                _adamw_update_one(
+                    param, grad, exp_avg, exp_avg_sq,
+                    step=step, lr=lr, weight_decay=weight_decay,
+                    beta1=beta1, beta2=beta2, eps=eps,
+                )
+
+  # Deferring the batched buckets past the scan reorders parameters against
+  # each other, and that is safe for exactly the reason the batching itself is:
+  # a parameter's update reads only its own four tensors, all of which the scan
+  # leaves alone. It is NOT safe if two entries alias, which `allow_batching`
+  # is what rules out.
+            for (_device, _dtype, step), bucket in buckets.items():
+                _adamw_update_foreach(
+                    *bucket,
+                    step=step, lr=lr, weight_decay=weight_decay,
+                    beta1=beta1, beta2=beta2, eps=eps,
+                )
 
         return loss
