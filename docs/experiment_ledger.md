@@ -71738,3 +71738,28 @@ pairing chosen over new-data (Josh: "either same or new data since we have
 both comparators" — same-data inherits nothing but the depth change). The
 scale trend decides the 100M derivation depth. Corpus is already sufficient
 (~24M banked); launches inside the confirmation round after round-3b.
+
+**2026-09-01 — PREREG round 3c: the d9 TOP-UP arm (Josh — "continue the same
+net at d9 and see if bootstrap weak can help the strong gain"; the more-steps
+control is already priced).** Arm `d7topup_d9`: `--init-from` the fully
+trained d7 winner (`d7_qtemp_0.02`, 9,680 steps) and continue **9,680 steps
+on the d9 τ=0.02 targets** — same 5.5M snapshot rows, labels switched. The
+budget deliberately matches the round-2 ext arms (+9,680 on repeat rows), so
+the queued ext-vs-base arenas (fire on valueround.done) are the more-steps
+baseline and no bespoke control train is needed.
+- **Deciding yardstick:** h2h arena top-up vs its OWN base `d7_qtemp_0.02`
+  (200 games, training shape, no-rolling, banked) read AGAINST the
+  ext-vs-base repeat-extension gain: top-up gain clearly above it (CIs
+  separating) ⇒ the d9 finish adds beyond repetition — the weak-bootstrap
+  hypothesis pays; ≈ the repeat gain ⇒ the label switch adds nothing; below /
+  negative ⇒ the d9 finish harms a d7-converged net. Stage-5 BT4 paired vs
+  base is the co-decider; audit + puzzles direction-only.
+- **Confounds, stated up front:** the repeat-extension baseline comes from
+  τ=0.0005/0.0067 ext arms (τ mismatch with 0.02); the ext arms repeated
+  rows with the SAME labels while the top-up repeats with d9 labels —
+  memorization dynamics may differ; total budget 19,360 is unmatched vs the
+  9,680 endpoints (matched only vs the ext family, which is the comparison
+  preregged here).
+- Driver `round3c_topup.sh`, gated on round3b.done (GPU order: valueround →
+  3b → 3c); fast worktree, identity chain as recorded 2026-09-01. Kill rule:
+  a failed arm reads out as absent, no re-rolls.
