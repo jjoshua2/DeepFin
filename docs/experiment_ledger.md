@@ -71728,3 +71728,13 @@ re-derive the WINNING value scheme with value read at d7 vs d9 from the same
 snapshot (derivation-time knob, zero new SF compute), same 9,680/seed-0
 recipe, judged on value_regret + h2h vs the value-round winner. Not before
 the value verdict — one value-affecting change per readout window.
+
+**2026-09-01 — SPEC for the parked d7-vs-d9 confirmation pair (Josh):** at the
+confirmation round's 10M point, derive BOTH `uniform-d7` and `uniform-d9`
+(τ=0.02) from the SAME fresh 10M snapshot — paired rows, matched steps/seed,
+so the only delta is the policy teacher's depth — and read h2h + paired BT4
+against each other AND against the 5.5M pair for the scale trend. Same-data
+pairing chosen over new-data (Josh: "either same or new data since we have
+both comparators" — same-data inherits nothing but the depth change). The
+scale trend decides the 100M derivation depth. Corpus is already sufficient
+(~24M banked); launches inside the confirmation round after round-3b.
