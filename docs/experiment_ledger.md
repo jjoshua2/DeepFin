@@ -72475,3 +72475,19 @@ calibration. Outputs: best global λ (held-out) + CI vs λ=0; best conditional �
 generalization; fraction of the corpus receiving non-zero weight. A narrow beneficial region is a
 SUCCESS (C becomes a small hindsight-gated residual), not a failure. Priority: below repair / #497
 / the depth screen.
+
+**2026-09-01 — ANCHOR 1: champion `qtemp_0.0005_ext` vs PRODUCTION iter-595 (g1586,
+`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt`, step 171327): −636.4 Elo
+[−854.8, −540.0], score 0.025 ± 0.009, 200 games / 100 opening pairs, matched_sims 100, training
+shape, same search both sides** (`scratchpad/boundary_block_20260902/arena_champ_vs_iter595.*`,
+appended to `chess-ladderarena/runs/arena_results.jsonl`). Read per the prereg (`6c43a33e4` item 7):
+an OOD LOWER BOUND for the corpus lane — the champion plays here with REAL history (46.5% of its
+top-1s flip under history, +20.2 cp regret) while production plays in-distribution — not the 20M
+projection gate. Even so the gap is not a history artifact alone: FEN-only d9 regret on the 4k bank
+is 64.9 cp (champion) vs 36.7 cp (production). Scale check against the clean-target law (~+144
+Elo/doubling, `clean_target_scaling_near_linear_schedule_null`): 5.5M → 100M is 4.2 doublings ≈
++600 Elo — the corpus lane reaches production only if BOTH the history correction and the scaling
+deliver in full. This is the number the repaired-champion arm (primary causal arm) is measured
+against next: its arena vs production under normal history is yardstick (v) of the repair prereg.
+C2 (post_c under arena 1 vs post_a): DIFFERS — a floor read only, given C1. Anchor 2 (vs
+lc0-LAST2x) running.
