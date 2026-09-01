@@ -72351,3 +72351,14 @@ consult game history only through repetition counts, which the calibration above
 0/1200 label changes without a repeat), and a row is deduped only against an IDENTICAL model input.
 Fixture tests required: two paths to one FEN/clock with different prior frames (row must be banked),
 and one with different repetition status (cached values must NOT be served).
+
+**2026-09-01 — VALUE ROUND 2 ARM B `b_qzphase` KILLED: −98.1 Elo [−140.7, −58.2] vs V0
+(`qtemp_0.0005`), 200 games / 100 opening pairs, matched_sims 100.** Judged by the round's
+pre-committed rule (arena vs V0 + vregret vs V0; CI excludes 0 on the losing side ⇒ KILL). Worse
+than arm A `a_qz50` (−49.0 [−88.6, −10.5]). Both value-blend arms lose to the plain champion value
+target; the remaining zero-history value arms stay PARKED per `6c43a33e4` and the value-round spec
+is preserved for a corrected-history rerun only if a future value diagnostic motivates it. Both arms
+and V0 trained on zero-history rows, so the comparison is internally consistent (OOD in absolute
+terms, per the history gate). Arm B's `vregret`/audit numbers are appended by the chain to
+`scratchpad/nnue_ladder_20260829/valueround2/` (audit running at the time of writing); they cannot
+reverse an arena KILL. Boundary block (C0/C1/C2 + anchors) fires on `valueround2.parked`.
