@@ -4767,10 +4767,14 @@ def test_the_schemes_own_depth_is_the_byte_identical_identity(
         ), f"{name} moved under --value-depth at the scheme's own depth"
     assert summary["realized"]["realized_value_depth_histogram"] == {"9": 1}
     assert summary["realized"]["value_depth_moved_rows"] == 0
-    # The stamp still records what was ASKED for -- a summary that hid the
-    # identity cell could not be used to reconstruct the command.
+    # ⚑ THE IDENTITY IS THE NATIVE ONE, because the rows ARE the native rows.
+    # `value_source` is what the trainer keys its value identity on, so a cell
+    # whose every emitted array is byte-identical to the unflagged run must
+    # stamp the unflagged source -- see the mixing test below.
+    assert summary["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+    # ... and the REQUESTED depth is still recorded, so the summary can still
+    # reconstruct the command. Two questions, two fields.
     assert summary["scheme"]["value_depth"] == 9
-    assert summary["scheme"]["value_source"] == "deepest_phase_covering_at_d9"
 
 
 def test_a_row_missing_the_requested_rung_is_an_envelope_miss(
@@ -5025,6 +5029,132 @@ def test_the_depth_and_a_value_scheme_compose_on_the_re_read_q(
     shallow = 0.5 * wdl_of_cp(DEPTH_BEST[7][1]) + 0.5 * onehot(0)
     np.testing.assert_allclose(got[0].search_wdl, deep, atol=2e-3)
     assert not np.allclose(got[0].search_wdl, shallow, atol=2e-3)
+
+
+def test_the_identity_cell_mixes_cleanly_with_the_unflagged_corpus(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ A GATE FIRING ON A NON-HAZARD IS THE SAME DEFECT, POINTED THE OTHER WAY.
+
+    ``uniform-d9 --value-depth 9`` emits arrays byte-identical to ``uniform-d9``
+    -- the deriver reuses the policy's own ``MoveValues`` object -- so the two
+    corpora hold ONE value target and mixing them in a replay buffer is not a
+    mixture of anything.  When ``value_source`` and ``value_read_scheme`` used
+    two separate predicates, the identity cell stamped
+    ``deepest_phase_covering_at_d9`` and the launcher refused that launch: a
+    correct gate blocking correct work, which erodes trust in the gate exactly
+    as a missed hazard does (Codex re-review of PR #494).
+
+    ⚑ The byte-identity is ASSERTED HERE TOO, not taken from the test above: the
+    claim being made is "identical data ⇒ identical identity", and a test of the
+    second half that assumed the first could pass while the data diverged.
+
+    Mutation caught: stamping the ``_at_d<D>`` form in the identity cell (i.e.
+    keying ``value_source`` on ``value_depth is None`` instead of on
+    ``value_reads_the_scheme``) -- the gate then returns one problem here.
+    """
+    from scripts.lc0_control_train import value_scheme_identity_problems
+
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    unflagged = tmp_path / "unflagged"
+    identity = tmp_path / "identity"
+    run_derive(corpus_dir, unflagged, "uniform-d9")
+    run_derive(corpus_dir, identity, "uniform-d9", "--value-depth", "9")
+
+    got_unflagged, _ = read_rows(unflagged)
+    got_identity, _ = read_rows(identity)
+    for name in ("policy_target", "legal_mask", "search_wdl", "x"):
+        assert np.array_equal(
+            np.asarray(getattr(got_unflagged[0], name)),
+            np.asarray(getattr(got_identity[0], name)),
+        ), f"{name} differs, so this is not the identity cell any more"
+
+    assert value_scheme_identity_problems([unflagged, identity]) == []
+    # ⚑ And the gate is not simply off: the same corpus at a depth that MOVES
+    # the read is still refused beside the unflagged one, so the assertion above
+    # is a measurement rather than a gate that stopped working.
+    moved = tmp_path / "moved"
+    run_derive(corpus_dir, moved, "uniform-d9", "--value-depth", "7")
+    assert value_scheme_identity_problems([unflagged, moved])
+
+
+def test_the_manifest_says_which_read_q_came_from(tmp_path: Path) -> None:
+    """⚑⚑ ``q_definition`` FOLLOWS ``--value-depth``.
+
+    A ``uniform-d7 --value-depth 9 --value-scheme qz50`` shard bakes a
+    d9-derived ``Q`` into ``search_wdl``.  A manifest still claiming ``Q`` came
+    from "the --scheme's best-move value" would misdescribe the one column it
+    exists to describe -- and a derived directory is routinely read months later
+    by someone who has only the shards and this summary (Codex re-review of
+    PR #494).
+
+    Both directions are pinned: the native text when the value comes off the
+    scheme's own read, and the exact-depth text when it does not.
+
+    Mutation caught: reverting ``q_definition`` to the static string -- the
+    moved run then claims the scheme's read and both assertions below fail.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    native = run_derive(
+        corpus_dir, tmp_path / "native", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50,
+    )
+    moved = run_derive(
+        corpus_dir, tmp_path / "moved", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "9",
+    )
+
+    assert "--scheme's best-move value" in native["value_scheme"]["q_definition"]
+    assert "--value-depth" not in native["value_scheme"]["q_definition"]
+
+    moved_q = moved["value_scheme"]["q_definition"]
+    assert "depth exactly 9" in moved_q
+    assert "--value-depth" in moved_q
+    assert "NOT at the --scheme's own depth (uniform-d7)" in moved_q
+
+    # ⚑ And the manifest's claim is checked against the ROWS, not just against
+    # itself: the emitted vector really is half of d9's Q.
+    got, _ = read_rows(tmp_path / "moved")
+    np.testing.assert_allclose(
+        got[0].search_wdl,
+        0.5 * wdl_of_cp(DEPTH_BEST[9][1]) + 0.5 * onehot(0),
+        atol=2e-3,
+    )
+    # The identity cell keeps the NATIVE wording, because its Q is the native Q.
+    same = run_derive(
+        corpus_dir, tmp_path / "same", "uniform-d7",
+        "--value-scheme", derive.VALUE_SCHEME_QZ50, "--value-depth", "7",
+    )
+    assert same["value_scheme"]["q_definition"] == native["value_scheme"]["q_definition"]
+
+
+def test_the_value_source_and_the_value_read_agree_on_the_identity_cell() -> None:
+    """⚑ ONE PREDICATE, TWO READERS -- asserted directly so they cannot drift.
+
+    ``value_source`` (what the shard stamps, and what the trainer's value
+    identity is keyed on) and ``value_read_scheme`` (whether the bank is re-read
+    at all) must answer the same question. They were two separate expressions
+    once, and the disagreement was a false refusal at launch time.
+    """
+    row = staircase_row()
+    bank = derive.RowBank(row)
+    cases = [
+        (derive.parse_scheme("uniform-d9"), None),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d9"), 9), None),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d9"), 7), 7),
+        (derive.with_value_depth(derive.parse_scheme("uniform-d7"), 9), 9),
+        (derive.parse_scheme("nodes-3000"), None),
+    ]
+    for scheme, moved_to in cases:
+        reads_native = derive.value_read_scheme(scheme, bank) is None
+        stamps_native = scheme.value_source in (
+            derive.VALUE_SOURCE_DEEPEST, derive.VALUE_SOURCE_PHASE0,
+        )
+        assert reads_native == stamps_native == (moved_to is None), (
+            f"{scheme.canonical} value_depth={scheme.value_depth}: the read says "
+            f"native={reads_native} and the stamp says native={stamps_native}"
+        )
+        assert scheme.value_reads_the_scheme == (moved_to is None)
 
 
 # ── the value depth is part of the TRAINER's value identity ──────────────────

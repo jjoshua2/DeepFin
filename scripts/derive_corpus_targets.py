@@ -274,8 +274,15 @@ one column.
   every combination of flags.
 * **THE IDENTITY CELL IS ``D == Dpol``** on a uniform scheme: the deriver reuses
   the policy's own ``MoveValues`` object, so that run is byte-identical to one
-  with no flag at all.  A ``top-K`` scheme has no identity cell -- its native
-  value read is two-tier and no single exact depth reproduces it.
+  with no flag at all -- and it STAMPS the plain ``deepest_phase_covering``, so
+  the two corpora are also one value IDENTITY and mix cleanly.  ⚑ Both halves
+  come off one predicate (``Scheme.value_reads_the_scheme``) precisely so they
+  cannot drift: when they were two, the identity cell emitted identical rows
+  under a different stamp and the trainer refused to mix them -- a gate firing
+  on a non-hazard, which is the same defect as a gate that cannot fire.  The
+  REQUESTED depth is still recorded in the summary's ``value_depth``, so the
+  command remains reconstructible.  A ``top-K`` scheme has no identity cell --
+  its native value read is two-tier and no single exact depth reproduces it.
 * **REFUSED, NOT IGNORED, WHERE IT CANNOT APPLY.**  ``nodes-<N>`` reads phase 0
   at whatever depth the budget bought, so the exact rung would reach no
   consumer; ``D`` above the staircase's FULL-WIDTH rung is refused (the value is
@@ -300,6 +307,12 @@ one column.
   at different value depths are a MIXTURE of two arms in one replay buffer, and
   since they agree on ``--value-scheme``, on ``derive_schema`` and even on their
   policy target, that gate was the only thing that could ever see it.
+* **THE MANIFEST SAYS WHICH READ ``Q`` CAME FROM.**  ``value_scheme.q_definition``
+  follows the flag, so a ``--value-scheme qz50 --value-depth 9`` corpus does not
+  describe its baked ``Q`` as the scheme's.  ⚑ It is the ONLY place ``Q_t``'s
+  source is asserted -- the per-arm ``construction`` strings name ``Q_t`` and
+  leave defining it to that one field, because a second place asserting a source
+  is a second place that goes stale.
 * ⚑ ORTHOGONAL TO ``--value-scheme``.  The depth decides which searched value
   ``Q_t`` IS; the value scheme decides how much of the game's retrospect is
   mixed into it.  Both apply, in that order -- arm C blends the RE-READ ``Q_t``.
@@ -974,10 +987,34 @@ class Scheme:
         return f"nodes-{self.nodes}"
 
     @property
+    def value_reads_the_scheme(self) -> bool:
+        """Whether the VALUE target comes off the scheme's OWN read.
+
+        ⚑⚑ THE ONE RULE, WITH TWO READERS, AND THAT IS THE POINT.
+        :func:`value_read_scheme` returns None here (reuse the policy's own
+        ``MoveValues``, so the run is byte-identical to an unflagged one) and
+        :attr:`value_source` stamps the plain source here (so a corpus that IS
+        byte-identical also has the same value IDENTITY).  Those two facts have
+        to be the same fact: when they were two predicates, ``uniform-d9
+        --value-depth 9`` emitted arrays indistinguishable from ``uniform-d9``
+        and stamped a DIFFERENT source, so
+        ``lc0_control_train.value_scheme_identity_problems`` refused to mix them
+        -- a gate firing on a non-hazard, which is the same defect as a gate
+        that cannot fire, pointed the other way (Codex re-review of PR #494).
+        """
+        if self.value_depth is None or self.kind == "nodes":
+            return True
+        return (
+            self.kind == "uniform"
+            and self.depth is not None
+            and int(self.depth) == int(self.value_depth)
+        )
+
+    @property
     def value_source(self) -> str:
         if self.kind == "nodes":
             return VALUE_SOURCE_PHASE0
-        if self.value_depth is None:
+        if self.value_reads_the_scheme:
             return VALUE_SOURCE_DEEPEST
         return f"{VALUE_SOURCE_DEEPEST}{VALUE_SOURCE_AT_SUFFIX}{self.value_depth}"
 
@@ -989,7 +1026,12 @@ class Scheme:
             "top_k": self.top_k,
             "nodes": self.nodes,
             "value_source": self.value_source,
-            #: ⚑ The REQUESTED cap, next to the source string it produced. The
+            #: ⚑ The REQUESTED depth, next to the source string it produced --
+            #: and it is recorded even in the identity cell, where the source
+            #: string deliberately does NOT mention it: the summary must still
+            #: be able to reconstruct the command that was run, while the
+            #: IDENTITY must reflect what the rows hold. Two questions, two
+            #: fields. The
             #: REALIZED depths are a separate reading in ``realized`` -- this is
             #: what was asked for, that is what the rows carry, and a summary
             #: that only carried one of them could not be used to check the
@@ -1360,12 +1402,9 @@ def value_read_scheme(scheme: Scheme, bank: RowBank) -> Scheme | None:
     D1), and no single exact depth reproduces it.  Every ``--value-depth`` on a
     ``top-K`` scheme therefore moves the read, to a uniform full-width one.
     """
-    depth = scheme.value_depth
-    if depth is None or scheme.kind == "nodes":
+    if scheme.value_reads_the_scheme:
         return None
-    depth = int(depth)
-    if scheme.kind == "uniform" and _required(scheme.depth, "depth") == depth:
-        return None
+    depth = _required(scheme.value_depth, "value_depth")
     if bank.full_width_block(depth) is None:
         # ⚑ An EnvelopeMiss, so a row that cannot answer the requested depth is
         # counted and bounded by --max-envelope-misses exactly like a row that
@@ -4553,7 +4592,10 @@ def build_summary(
 #: docstring, because a derived directory is routinely read months later by
 #: someone who has only the shards and the summary.
 _VALUE_SCHEME_CONSTRUCTION = {
-    VALUE_SCHEME_SEARCH: "Q_t — the scheme's searched root value, unchanged (V0)",
+    # ⚑ "Q_t", not "the scheme's searched root value": --value-depth can move
+    # which read Q_t IS, and a second place asserting its source is a second
+    # place that goes stale. `q_definition` below is the only one.
+    VALUE_SCHEME_SEARCH: "Q_t — the searched root value, unchanged (V0)",
     VALUE_SCHEME_QZ50: "0.5 * Q_t + 0.5 * Z_t (A)",
     VALUE_SCHEME_QZPHASE: (
         "(1 - w) * Q_t + w * Z_t, w = ply_t / terminal_ply of the game's last "
@@ -4637,9 +4679,23 @@ def value_scheme_manifest(options: DeriveOptions) -> dict[str, Any]:
             "docs/experiment_ledger.md — 2026-08-31 PREREG VALUE-TARGET ROUND "
             "and its two same-day amendments"
         ),
+        # ⚑⚑ THE ONE PLACE Q_t's SOURCE IS STATED, and it follows
+        # --value-depth. A `uniform-d7 --value-depth 9 --value-scheme qz50`
+        # shard bakes a d9-derived Q into search_wdl; a manifest that still said
+        # Q came from the d7 scheme would misdescribe the column it exists to
+        # describe -- the same metadata-honesty failure as a counter that
+        # over-reports (Codex re-review of PR #494).
         "q_definition": (
             "cp_to_wdl_array of the --scheme's best-move value: the SAME vector "
             "the search arm writes, so V0/A/B/C differ only in the retrospect"
+            if options.scheme.value_reads_the_scheme else
+            "cp_to_wdl_array of the best-move value at the full-width rung at "
+            f"depth exactly {options.scheme.value_depth} (--value-depth), NOT at "
+            f"the --scheme's own depth ({options.scheme.canonical}): the SAME "
+            "vector the search arm writes AT THIS --value-depth, so V0/A/B/C "
+            "differ only in the retrospect — but a corpus derived at a "
+            "different --value-depth carries a different Q and is a different "
+            "arm, which is why derive_value_source is part of the value identity"
         ),
         "z_definition": (
             "one-hot of the row's own `result`, which result_from_pov already "
