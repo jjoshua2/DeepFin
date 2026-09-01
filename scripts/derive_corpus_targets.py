@@ -5622,7 +5622,10 @@ def build_parser() -> argparse.ArgumentParser:
              "started_utc. Not the compressed bytes -- Blosc's threaded encoder "
              "is non-deterministic and --workers 1 does not reproduce its own "
              "either; see this file's --workers section. Intermediate rows are "
-             "spilled under <out>/spill and removed on success.",
+             "spilled under <out>/spill and removed on success; budget roughly "
+             "1 GB of RAM and one output corpus of scratch disk per lane, and "
+             "remember the lanes are CPU-bound next to whatever else the box is "
+             "running.",
     )
     parser.add_argument(
         "--max-envelope-misses", type=int, default=0,
