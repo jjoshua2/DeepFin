@@ -279,7 +279,16 @@ _LOG = logging.getLogger("gen_sf_rooted_corpus")
 #: loses +20.2 cp of regret when its history planes are filled the way play
 #: fills them).  Schema 2 banks the window that makes a row's encoded input and
 #: its Stockfish label both see what play sees; see :func:`history_for`.
-ROW_SCHEMA = 2
+#:
+#: 3 adds the two dedup keys (``search_key``, ``input_key`` -- see the module
+#: docstring) and the per-shard ``tallies`` on progress records.  ⚑ SCHEMA 2 --
+#: a window WITHOUT those keys -- was never produced outside smoke runs, and it
+#: is REFUSED rather than read: the resume re-warm needs both keys and the
+#: deriver verifies every row against ``input_key``, so a schema-2 corpus can
+#: only be regenerated (or repaired by a tool that adds the keys).  In the
+#: ledger's and the spec's prose "schema 2" names THIS shape; in code it is 3.
+ROW_SCHEMA = 3
+ROW_SCHEMA_HISTORY_WITHOUT_KEYS = 2
 
 #: How many PREVIOUS positions the encoder keeps (``CBOARD_HISTORY_MAX`` in
 #: ``chess_anti_engine/encoding/_cboard_impl.h``).  The 8 encoded frames are
@@ -1611,6 +1620,14 @@ class DedupCache:
     which is the opposite of where the cheap hits are; FIFO is also one
     ``popitem`` with no per-hit bookkeeping, and a cache read on the hot path
     should not write.
+
+    ⚑ THE VALUES AND THE SEEN-INPUT SET CAN DRIFT APART under eviction (a
+    label evicted while its tensor is still remembered, or the reverse), and
+    that drift can only ever cost a RE-SEARCH or a RE-BANK -- an evicted label
+    is searched again, an evicted tensor is banked again -- never a dropped
+    row and never a label served for the wrong state, because serving requires
+    BOTH keys to hit and banking requires the tensor to be absent (review
+    round 2, Fable F3 / Grok D4: traced, no code change).
     """
 
     def __init__(self, *, max_entries: int) -> None:
@@ -2314,6 +2331,13 @@ def resume_worker_state(
             "rows": int(record["rows"]),
             "codec": str(record["codec"]),
         }
+        # ⚑ THE PRIOR SHARD'S TALLIES TRAVEL WITH IT, so the corpus-level
+        # window histograms can be summed over prior + this session and still
+        # equal the corpus-level `rows` (Codex P2, review round 2). A record
+        # without them (a pre-tallies progress line) is counted as UNKNOWN
+        # rows rather than as zero windows.
+        if "tallies" in record:
+            adopted["tallies"] = dict(record["tallies"])
         derived: set[int] = set()
         # ONE pass over the shard: it re-warms the cache, and it is also where
         # a legacy line's game ids come from.
@@ -2784,6 +2808,9 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "opening_sources": {},
         "history_plies_histogram": {},
         "history_root_reasons": {},
+        "history_plies_histogram_prior": {},
+        "history_root_reasons_prior": {},
+        "history_tallies_unknown_rows_prior": 0,
         "adjudication_unavailable_plies": 0,
         "dedup": {
             **DedupStats().summary(),
@@ -2938,6 +2965,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     # abandoned unlisted (Codex review of PR #497).
     history_plies = merge_shard_tallies(writer.shards, "history_plies")
     history_root_reasons = merge_shard_tallies(writer.shards, "history_root_reason")
+    prior = prior_shard_tallies(resume.shards)
     return {
         "worker_id": spec.worker_id,
         "failed": failure,
@@ -2952,6 +2980,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "opening_sources": dict(opening_sources),
         "history_plies_histogram": dict(history_plies),
         "history_root_reasons": dict(history_root_reasons),
+        # The adopted shards' tallies, kept apart from this session's so the
+        # merge can publish both a corpus-level and a session-level reading.
+        "history_plies_histogram_prior": prior.history_plies,
+        "history_root_reasons_prior": prior.history_root_reasons,
+        "history_tallies_unknown_rows_prior": prior.unknown_rows,
         "adjudication_unavailable_plies": unavailable,
         "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
@@ -3147,6 +3180,49 @@ def merge_shard_tallies(
     for shard in shards:
         for name, count in shard["tallies"][key].items():
             merged[str(name)] += int(count)
+    return dict(merged)
+
+
+@dataclass(frozen=True)
+class PriorTallies:
+    """The adopted shards' window tallies, and the rows that carried none."""
+
+    history_plies: dict[str, int]
+    history_root_reasons: dict[str, int]
+    #: Rows in adopted shards whose progress record predates ``tallies``.
+    #: Reported, not folded into a bucket: ``sum(histogram) + unknown == rows``.
+    unknown_rows: int
+
+
+def _carries_tallies(shard: Mapping[str, Any]) -> bool:
+    """Whether a shard record tallies EVERY key the summary reads.
+
+    A record with no ``tallies`` predates them; one whose ``tallies`` lacks a
+    key was written by a writer configured without it.  Both are UNKNOWN rows
+    rather than a zero bucket -- a partial tally is not a smaller histogram.
+    """
+    tallies = shard.get("tallies")
+    return isinstance(tallies, Mapping) and all(k in tallies for k in _SHARD_TALLY_KEYS)
+
+
+def prior_shard_tallies(shards: Sequence[Mapping[str, Any]]) -> PriorTallies:
+    with_tallies = [shard for shard in shards if _carries_tallies(shard)]
+    unknown = sum(int(shard["rows"]) for shard in shards if not _carries_tallies(shard))
+    return PriorTallies(
+        history_plies=merge_shard_tallies(with_tallies, "history_plies"),
+        history_root_reasons=merge_shard_tallies(with_tallies, "history_root_reason"),
+        unknown_rows=unknown,
+    )
+
+
+def merge_counters_across(
+    results: Sequence[dict[str, Any]], *keys: str,
+) -> dict[str, int]:
+    """Several per-worker counters summed into one (prior + this session)."""
+    merged: Counter[str] = Counter()
+    for key in keys:
+        for name, count in merge_counters(results, key).items():
+            merged[name] += count
     return dict(merged)
 
 
@@ -3380,11 +3456,29 @@ def build_summary(
             int(r["adjudication_unavailable_plies"]) for r in results
         ),
         "opening_sources": merge_counters(results, "opening_sources"),
-        # ⚑ The window every banked row of this session actually carries.  A
-        # corpus whose rows are all `history_plies: 0` is a corpus the schema
-        # bump did not reach, and this is where that shows.
-        "history_plies_histogram": merge_counters(results, "history_plies_histogram"),
-        "history_root_reasons": merge_counters(results, "history_root_reasons"),
+        # ⚑ The window every banked row of the CORPUS carries -- prior shards'
+        # tallies plus this session's, so `sum(histogram) + unknown == rows`
+        # holds at this level exactly as it does per worker (Codex P2, round
+        # 2: a zero-work resume used to report rows > 0 beside an empty
+        # histogram). The session-only reading keeps the `_this_session`
+        # suffix like every other session-scoped counter here. A corpus whose
+        # rows are all `history_plies: 0` is one the schema bump did not
+        # reach, and this is where that shows.
+        "history_plies_histogram": merge_counters_across(
+            results, "history_plies_histogram", "history_plies_histogram_prior",
+        ),
+        "history_root_reasons": merge_counters_across(
+            results, "history_root_reasons", "history_root_reasons_prior",
+        ),
+        "history_plies_histogram_this_session": merge_counters(
+            results, "history_plies_histogram",
+        ),
+        "history_root_reasons_this_session": merge_counters(
+            results, "history_root_reasons",
+        ),
+        "history_tallies_unknown_rows": sum(
+            int(r["history_tallies_unknown_rows_prior"]) for r in results
+        ),
         # Prior first, then this session's, per worker: the order they were
         # banked in, which is also the order their rows must be re-warmed in.
         "shards": [
@@ -3642,6 +3736,33 @@ def archive_json_copy_for_resume(json_path: Path | None) -> Path | None:
     return archive
 
 
+def read_launch_manifest(out_dir: Path) -> dict[str, Any]:
+    """The manifest, self-checked -- and NOTHING about whether to resume onto it.
+
+    ⚑ THE READER'S HALF, split out (review round 2): the deriver opens a
+    live/killed corpus through this, and it must be able to open EVERY schema
+    the deriver can dispatch on -- the 54M-row legacy corpora are schema 1 --
+    while the generator's ``--resume`` must refuse the same manifest.  The
+    row-schema gate is a statement about APPENDING to a corpus, so it lives in
+    :func:`load_resume_manifest`; what belongs to every reader is that the
+    record hashes its own ``config_requested``.
+    """
+    manifest_path = out_dir / MANIFEST_NAME
+    if not manifest_path.exists():
+        raise ValueError(f"{manifest_path} does not exist")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stored = str(manifest.get("config_sha256", ""))
+    recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
+    if recomputed != stored:
+        raise ValueError(
+            f"{manifest_path} is inconsistent with itself: config_sha256 is "
+            f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
+            "The record of what produced the banked rows has been altered, and "
+            "anything validated against it would prove nothing.",
+        )
+    return manifest
+
+
 def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
     """The manifest a ``--resume`` continues, or a refusal.
 
@@ -3698,16 +3819,7 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
                 "true: that run completed and wrote its summary. Nothing to "
                 "resume; use a new --out-dir.",
             )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    stored = str(manifest.get("config_sha256", ""))
-    recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
-    if recomputed != stored:
-        raise ValueError(
-            f"{manifest_path} is inconsistent with itself: config_sha256 is "
-            f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
-            "The record of what produced the banked rows has been altered, and "
-            "a resume validated against it would prove nothing.",
-        )
+    manifest = read_launch_manifest(out_dir)
     # ⚑ THE ROW SCHEMA IS A REFUSAL HERE, AT THE MANIFEST, not a KeyError
     # somewhere inside a worker. The per-row check in the cache re-warm fires
     # only for a worker that HAS shards; a worker whose progress file holds
@@ -3721,9 +3833,12 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
         raise ValueError(
             f"--resume was given but {manifest_path} was opened under row "
             f"schema {banked_schema!r} and this build writes schema "
-            f"{ROW_SCHEMA}. A schema-{banked_schema!r} row has no window to "
-            "re-bank and nothing downstream could tell the two shapes apart, "
-            "so the corpus is not continued. Use a new --out-dir.",
+            f"{ROW_SCHEMA}. A schema-1 row has no window to re-bank; a "
+            f"schema-{ROW_SCHEMA_HISTORY_WITHOUT_KEYS} row is a window without "
+            "search_key/input_key (never produced outside smoke runs) and has "
+            "nothing to re-warm the two-key cache from. Regenerate the corpus "
+            "(or repair it with a tool that adds the keys); use a new "
+            "--out-dir.",
         )
     return manifest
 

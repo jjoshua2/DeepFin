@@ -193,6 +193,15 @@ EP_DECLINED_LEGAL = "e2e4 a7a6 e4e5 d7d5"
 #: so the root's halfmove-clock walk starts from a clock that is not the row's.
 IRREVERSIBLE_IN_WINDOW = "e2e4 d7d5 e4d5 d8d5 b1c3 d5a5 g1f3 g8f6 f1c4 c8g4"
 
+#: ⚑ A LONG REVERSIBLE RUN, THEN AN IRREVERSIBLE MOVE INSIDE THE WINDOW.  Eight
+#: knight plies (clock 8), ``e2e4 e7e5`` (clock 0), one more knight move: at the
+#: last position P (7 plies back) sits at clock 4 and the walk-back of P's own
+#: clock adds 4 plies beyond the 7 -- ``history_plies`` reads 11 while the
+#: row's own clock is 1.  ``irreversible_in_window`` above never exercises that
+#: second stage (P's clock is 0 at every ply there, so ``history_for`` equals a
+#: last-7 banker); this case is where a last-7 banker fails (Grok, round 2).
+IRREVERSIBLE_AFTER_LONG_RUN = "g1f3 g8f6 b1c3 b8c6 c3b1 c6b8 b1a3 b8a6 e2e4 e7e5 f3g1"
+
 #: ⚑⚑ A REPETITION AMONG THE OLDER FRAMES, THEN AN IRREVERSIBLE MOVE INSIDE THE
 #: WINDOW.  Two knight cycles make the start position a 3-fold at ply 8 (and
 #: every position of the cycle a 2-fold), then ``e2e4 e7e5`` zero the clock.
@@ -238,6 +247,9 @@ def named_cases() -> dict[str, list[chess.Board]]:
         ),
         "repetition_then_irreversible_in_window": positions(
             chess.STARTING_FEN, REPETITION_THEN_IRREVERSIBLE_IN_WINDOW,
+        ),
+        "irreversible_after_long_run": positions(
+            chess.STARTING_FEN, IRREVERSIBLE_AFTER_LONG_RUN,
         ),
         "pseudo_legal_ep_root": positions(PSEUDO_LEGAL_EP_FEN, "e8d8 e1d1"),
         "pseudo_legal_ep_pinned": positions(
@@ -477,10 +489,18 @@ def test_every_named_case_exercises_what_it_claims_to() -> None:
         "no window in the far-repetition case is rooted at an irreversible move"
     )
 
-    # Castling, both wings, both colours -- read off the rights that VANISH.
+    # Castling, both wings, both colours -- read off the rights that VANISH,
+    # AND off the pieces that moved: rights vanish on a king step too, so the
+    # squares are what say a castle happened (Grok, round 2).
     ks = CASES["castle_kingside"][-1]
     assert not ks.has_castling_rights(chess.WHITE)
     assert not ks.has_castling_rights(chess.BLACK)
+    assert ks.king(chess.WHITE) == chess.G1
+    assert ks.king(chess.BLACK) == chess.G8
+    assert ks.piece_at(chess.F1) == chess.Piece(chess.ROOK, chess.WHITE)
+    assert ks.piece_at(chess.F8) == chess.Piece(chess.ROOK, chess.BLACK)
+    assert ks.piece_at(chess.H1) is None
+    assert ks.piece_at(chess.H8) is None
     qs = CASES["castle_queenside"][-1]
     assert qs.king(chess.WHITE) == chess.C1
     assert qs.king(chess.BLACK) == chess.C8
@@ -529,6 +549,24 @@ def test_every_named_case_exercises_what_it_claims_to() -> None:
         "no position has a repetition plane on slot >= 3 with its own clock < 3, "
         "so a walk that read the row's clock instead of P's would pass the gate"
     )
+
+    # ⚑ The SECOND stage of the walk adds plies: some row's window is longer
+    # than the 7 frames while its own clock is smaller than 7, and a last-7
+    # banker (the first mutant) returns a different, shorter window for it.
+    long_run = CASES["irreversible_after_long_run"]
+    extended = [
+        b for b in long_run
+        if corpus.history_for(b).plies > corpus.HISTORY_WINDOW_PLIES
+        and b.halfmove_clock < corpus.HISTORY_WINDOW_PLIES
+    ]
+    assert extended, "no row's window reaches past the 7 frames via P's clock"
+    for b in extended:
+        window = corpus.history_for(b)
+        last_seven = [m.uci() for m in b.move_stack[-corpus.HISTORY_WINDOW_PLIES:]]
+        assert list(window.uci) != last_seven
+        assert list(window.uci)[-corpus.HISTORY_WINDOW_PLIES:] == last_seven
+    assert long_run[-1].halfmove_clock == 1
+    assert corpus.history_for(long_run[-1]).plies == 11
 
     # Short histories at both kinds of start.
     assert CASES["bare_fen_start"][0].move_stack == []

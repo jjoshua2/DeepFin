@@ -1707,7 +1707,7 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
         "history_root_fen", "history_uci", "history_plies",
         "history_root_reason",
     }
-    assert row["schema"] == 2
+    assert row["schema"] == 3
     assert row["search_key"].startswith(row["dedup_key"] + "|")
     assert len(row["input_key"]) == 32
     assert int(row["input_key"], 16) >= 0
@@ -1753,7 +1753,7 @@ def test_every_banked_row_carries_the_window_the_engine_was_given(
 
     for row in outcome.rows:
         label = f"ply {row['ply']}"
-        assert row["schema"] == 2, label
+        assert row["schema"] == corpus.ROW_SCHEMA, label
         assert row["history_root_reason"] in {
             corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
         }, label
@@ -2148,6 +2148,9 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "opening_sources": {"start": 2}, "adjudication_unavailable_plies": 1,
             "history_plies_histogram": {"7": 4, "11": 1},
             "history_root_reasons": {"irreversible": 4, "game_start": 1},
+            "history_plies_histogram_prior": {},
+            "history_root_reasons_prior": {},
+            "history_tallies_unknown_rows_prior": 0,
             "dedup": {
                 "positions_first_seen": 8, "dup_hits": 2,
                 "first_seen_by_phase": {"opening": 8, "middlegame": 0, "endgame": 0},
@@ -2188,6 +2191,11 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "opening_sources": {"start": 1}, "adjudication_unavailable_plies": 0,
             "history_plies_histogram": {"7": 3},
             "history_root_reasons": {"irreversible": 3},
+            # The adopted prior shard's 4 rows: 3 with tallies, 1 whose record
+            # predates them (reported as unknown, never as a bucket).
+            "history_plies_histogram_prior": {"9": 3},
+            "history_root_reasons_prior": {"game_start": 3},
+            "history_tallies_unknown_rows_prior": 1,
             "dedup": {
                 "positions_first_seen": 4, "dup_hits": 0,
                 "first_seen_by_phase": {"opening": 4, "middlegame": 0, "endgame": 0},
@@ -2266,8 +2274,21 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["terminations"] == {"natural": 2, "syzygy": 1}
     # The window histograms merge like every other per-worker counter; a
     # merge rule that was never added would read {} here rather than 0s.
-    assert summary["history_plies_histogram"] == {"7": 7, "11": 1}
-    assert summary["history_root_reasons"] == {"irreversible": 7, "game_start": 1}
+    assert summary["history_plies_histogram_this_session"] == {"7": 7, "11": 1}
+    assert summary["history_root_reasons_this_session"] == {
+        "irreversible": 7, "game_start": 1,
+    }
+    # ⚑ CORPUS level: prior + session, and the invariant the reader holds it
+    # to -- sum(histogram) + unknown == rows (12 = 8 session + 4 prior).
+    assert summary["history_plies_histogram"] == {"7": 7, "11": 1, "9": 3}
+    assert summary["history_root_reasons"] == {
+        "irreversible": 7, "game_start": 4,
+    }
+    assert summary["history_tallies_unknown_rows"] == 1
+    assert (
+        sum(summary["history_plies_histogram"].values())
+        + summary["history_tallies_unknown_rows"]
+    ) == summary["rows"]
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
     assert summary["dedup"]["positions_visited"] == 14
@@ -3209,6 +3230,54 @@ def test_a_resumed_worker_re_warms_its_dedup_cache_from_its_own_shards(
     assert second["search"]["positions_searched"] == 0
 
 
+def test_a_zero_work_resume_reports_the_corpus_windows_it_adopted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Codex P2 (round 2): a resume that plays nothing new still has rows.
+
+    Session 1 banks the corpus; session 2 is dealt the same games, replays
+    none, and its summary must still say what windows the corpus's rows carry
+    -- ``sum(histogram) == rows`` at the CORPUS level, off the tallies the
+    progress records committed with each shard.  Before this round the
+    histograms were session-only, so this summary read ``rows: 2`` beside
+    ``history_plies_histogram: {}``.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+
+    first = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    assert first["rows"] == 2
+    second = corpus.run_worker(worker_spec(out_dir, game_ids=(0,), resume=True))
+    assert second["games"] == 0
+    assert second["rows"] == 0
+    assert second["history_plies_histogram"] == {}, "session-scoped: nothing new"
+    assert second["history_plies_histogram_prior"] == first["history_plies_histogram"]
+    assert second["history_root_reasons_prior"] == first["history_root_reasons"]
+    assert second["history_tallies_unknown_rows_prior"] == 0
+
+    summary = corpus.build_summary(
+        results=[second],
+        requested={"run_id": "t"},
+        config_sha="abc",
+        engine_record={"path": "/bin/sf", "sha256": "d" * 64},
+        engine_id_name="Stockfish test",
+        staircase=corpus.parse_staircase(corpus.DEFAULT_STAIRCASE),
+        started_utc="2026-09-01T00:00:00+00:00",
+        wall_s=1.0,
+    )
+    assert summary["rows"] == 2
+    assert sum(summary["history_plies_histogram"].values()) == summary["rows"]
+    assert sum(summary["history_root_reasons"].values()) == summary["rows"]
+    assert summary["history_plies_histogram_this_session"] == {}
+    assert summary["history_tallies_unknown_rows"] == 0
+
+
 def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
     tmp_path: Path,
 ) -> None:
@@ -3604,7 +3673,10 @@ def test_a_resume_onto_an_older_row_schema_is_refused_at_the_manifest(
     corpus.load_resume_manifest(out_dir)  # the current schema passes
 
     rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
-    with pytest.raises(ValueError, match=r"row schema 1 .* schema 2"):
+    with pytest.raises(ValueError, match=r"row schema 2 .* schema 3"):
+        corpus.load_resume_manifest(out_dir)
+    rewrite_manifest_row_schema(out_dir, 1)
+    with pytest.raises(ValueError, match=r"row schema 1 .* schema 3"):
         corpus.load_resume_manifest(out_dir)
 
     rewrite_manifest_row_schema(out_dir, None)
@@ -3652,7 +3724,7 @@ def test_a_schema_1_corpus_cannot_be_resumed_by_any_worker_shape(
         "--out-dir", str(out_dir), "--games", "1", "--workers", "1",
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
     ]
-    with pytest.raises(ValueError, match="row schema 1"):
+    with pytest.raises(ValueError, match="row schema 2"):
         corpus.run(corpus.build_parser().parse_args(argv))
 
     after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
@@ -3693,7 +3765,7 @@ def test_a_two_worker_schema_1_resume_is_refused_before_either_worker_exists(
         "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
         "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
     ]
-    with pytest.raises(ValueError, match="row schema 1"):
+    with pytest.raises(ValueError, match="row schema 2"):
         corpus.run(corpus.build_parser().parse_args(argv))
 
     after = {p.name: p.read_bytes() for p in out_dir.iterdir()}

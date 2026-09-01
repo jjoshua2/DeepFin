@@ -489,17 +489,26 @@ INPUT_EXTRA_FEATURES = corpus.INPUT_EXTRA_FEATURES
 HISTORY_REP_FIX = True
 
 #: Row schemas this tool can decode.  ⚑ NOT ``== corpus.ROW_SCHEMA``: schema 1
-#: is the 54M-row legacy corpus (a bare FEN per row, zero history) and schema 2
-#: banks the move window.  Both are derivable and they encode DIFFERENTLY, so
-#: the set is explicit and the summary reports the mix
-#: (``row_schema_counts``) rather than a reader having to assume it.
-SUPPORTED_ROW_SCHEMAS: frozenset[int] = frozenset({1, 2})
+#: is the 54M-row legacy corpus (a bare FEN per row, zero history) and schema 3
+#: banks the move window plus the two dedup keys.  Both are derivable and they
+#: encode DIFFERENTLY, so the set is explicit and the summary reports the mix
+#: (``row_schema_counts``) rather than a reader having to assume it.  ⚑ 2 is
+#: deliberately absent: see ``ROW_SCHEMA_HISTORY_WITHOUT_KEYS``.
+SUPPORTED_ROW_SCHEMAS: frozenset[int] = frozenset({1, 3})
 
 #: The bare-FEN schema.  A row without a ``schema`` key predates the field.
 ROW_SCHEMA_BARE_FEN = 1
 
-#: The first schema that banks ``history_root_fen`` / ``history_uci``.
-ROW_SCHEMA_HISTORY = 2
+#: The schema that banks ``history_root_fen`` / ``history_uci`` AND the keys
+#: this tool verifies every row against (``input_key``).  In the ledger's and
+#: the spec's prose this shape is "schema 2"; in code it is 3.
+ROW_SCHEMA_HISTORY = 3
+
+#: A window WITHOUT ``search_key``/``input_key`` -- the shape one intermediate
+#: build wrote, never produced outside smoke runs.  Refused by name with a
+#: message that says what to do, rather than falling through to a KeyError on
+#: the missing key (review round 2, Fable F2 / Grok B2).
+ROW_SCHEMA_HISTORY_WITHOUT_KEYS = corpus.ROW_SCHEMA_HISTORY_WITHOUT_KEYS
 
 #: WHICH encoder wrote the planes, stamped rather than implied.  Two callable
 #: paths produce this plane set -- ``encode_position`` (python repetition scan,
@@ -3356,6 +3365,14 @@ def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
     generator-side bump un-derive 54M banked rows for no reason.
     """
     row_schema = int(facts.get("row_schema", -1))
+    if row_schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
+        raise CorpusIntegrityError(
+            f"corpus row schema {row_schema} (read from {source.name}) is a "
+            "history window WITHOUT input_key/search_key -- a shape never "
+            "produced outside smoke runs, and one this tool cannot verify row "
+            "by row. Regenerate the corpus under schema "
+            f"{ROW_SCHEMA_HISTORY}, or repair it with a tool that adds the keys.",
+        )
     if row_schema not in SUPPORTED_ROW_SCHEMAS:
         raise CorpusIntegrityError(
             f"corpus row schema {row_schema} is not one of "
@@ -3499,7 +3516,7 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
 def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
     """``manifest.json`` + ``w*.progress.jsonl``: a corpus that has not ended.
 
-    ⚑ THE INTEGRITY CHECK IS THE GENERATOR'S OWN.  ``load_resume_manifest``
+    ⚑ THE INTEGRITY CHECK IS THE GENERATOR'S OWN.  ``read_launch_manifest``
     already refuses a manifest whose ``config_sha256`` does not hash its own
     ``config_requested``, and that refusal is exactly the one this path needs:
     the cp map, the staircase and the row-identity join key all come out of that
@@ -3527,8 +3544,14 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
             f"its run has written {corpus.SUMMARY_NAME}.",
         )
     try:
-        # ⚑ IMPORTED, not mirrored: this is the generator's own refusal.
-        manifest: dict[str, Any] = corpus.load_resume_manifest(corpus_dir)
+        # ⚑ IMPORTED, not mirrored: this is the generator's own refusal. And
+        # the READER's half only -- `load_resume_manifest` also refuses any
+        # manifest whose row schema this build would not APPEND to, which is
+        # right for a resume and wrong here: the legacy schema-1 corpora are
+        # exactly what this tool must keep opening (review round 2, #498).
+        # Row-schema dispatch is per row (`_check_row_identity`) plus the
+        # record check below.
+        manifest: dict[str, Any] = corpus.read_launch_manifest(corpus_dir)
     except ValueError as exc:
         raise CorpusIntegrityError(
             f"{manifest_path} cannot be trusted as this corpus's record: {exc}",
@@ -3748,6 +3771,26 @@ def enforce_take_effect(options: DeriveOptions, stats: DeriveStats) -> None:
             )
     enforce_value_depth_take_effect(options, stats)
     enforce_value_scheme_take_effect(options, stats)
+    enforce_input_key_take_effect(stats)
+
+
+def enforce_input_key_take_effect(stats: DeriveStats) -> None:
+    """⚑ Every history row was VERIFIED against its ``input_key`` -- checked.
+
+    ``input_key_verified`` is published in the summary, and a published count
+    nobody compares is the accepted-then-ignored shape (Grok D5, review round
+    2): a build that stopped calling ``_verify_input_key`` would derive a clean
+    corpus, stamp ``input_key_verified: 0`` and pass.  So the count is held to
+    the number of ``ROW_SCHEMA_HISTORY`` rows here, before the summary exists.
+    """
+    expected = int(stats.row_schema_counts.get(ROW_SCHEMA_HISTORY, 0))
+    if stats.input_key_verified != expected:
+        raise CorpusIntegrityError(
+            f"input_key_verified is {stats.input_key_verified} but the run "
+            f"derived {expected} schema-{ROW_SCHEMA_HISTORY} row(s); the per-row "
+            "input verification did not run on every history row, so nothing "
+            "vouches for the planes these shards hold.",
+        )
 
 
 def enforce_value_depth_take_effect(
@@ -4398,6 +4441,12 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
     by hand.
     """
     schema = int(row.get("schema", -1))
+    if schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is a history window "
+            "WITHOUT input_key/search_key -- never produced outside smoke "
+            f"runs. Regenerate under schema {ROW_SCHEMA_HISTORY} or repair.",
+        )
     if schema not in SUPPORTED_ROW_SCHEMAS:
         raise CorpusIntegrityError(
             f"{_row_label(row)}: row schema {schema} is not one of "

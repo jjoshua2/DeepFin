@@ -730,6 +730,7 @@ def purity_receipt_problems(
 
 def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
+    allow_mixed_history: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -814,6 +815,12 @@ def preflight(
   # function is what hid the mixing hazard behind the blend's early return.
     for message in value_scheme_identity_problems(shard_dirs):
         fail(message)
+    # ⚑ NOT downgraded by --allow-leak: mixing input histories is not a value
+    # leak, and it has its own explicit opt-in.
+    for message in history_identity_problems(
+        shard_dirs, allow_mixed_history=allow_mixed_history,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
     for message in baked_value_blend_problems(cfg, shard_dirs):
         fail(message)
     return {
@@ -907,6 +914,91 @@ def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
                 where,
             )
     return ShardValueStamps(schemes=schemes, schemas=schemas, sources=sources)
+
+
+#: What a derived shard written before the history stamps existed holds: the
+#: deriver of that era reconstructed a bare FEN per row, so its planes are the
+#: zero-history distribution.  ⚑ Absent reads as THIS, deliberately: every
+#: pre-#497 corpus is that shape, and the gate must keep them launchable while
+#: still refusing to mix them with a history-aware one.
+UNSTAMPED_CORPUS_ROW_SCHEMA = 1
+UNSTAMPED_ZERO_HISTORY = True
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardHistoryStamps:
+    """What ``--shards`` says about the HISTORY its planes carry."""
+
+    #: ``derive_corpus_row_schema`` (an int, or ``"mixed"``) -> example shard.
+    row_schemas: dict[str, str]
+    #: ``zero_history`` -> example shard.
+    zero_history: dict[bool, str]
+
+    @property
+    def mixed(self) -> bool:
+        return len(self.row_schemas) > 1 or len(self.zero_history) > 1
+
+
+def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
+    """Read every shard's history-identity attrs.  No policy, just the reading."""
+    row_schemas: dict[str, str] = {}
+    zero_history: dict[bool, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            where = f"{Path(shard_dir).name}/{path.name}"
+            row_schemas.setdefault(
+                str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA)),
+                where,
+            )
+            zero_history.setdefault(
+                bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
+            )
+    return ShardHistoryStamps(row_schemas=row_schemas, zero_history=zero_history)
+
+
+def history_identity_problems(
+    shard_dirs: Sequence[Path], *, allow_mixed_history: bool,
+) -> list[str]:
+    """⚑⚑ ONE input-history identity across ``--shards`` (Grok D3, round 2).
+
+    ``derive_corpus_targets.py`` stamps ``derive_corpus_row_schema`` and
+    ``zero_history`` on every shard, and until this reader existed nothing READ
+    them: a directory derived from schema-1 bare-FEN rows (slots 1..7 and every
+    repetition plane zero) and one derived from schema-3 windows carry the same
+    ``input_history_encoding`` and the same ``history_rep_fix``, so the replay
+    buffer's own identity merge lets them mix and the net trains on two input
+    distributions no summary names.  ``--allow-mixed-history`` is the explicit
+    opt-in, and the run's summary then records the mix.
+    """
+    stamps = read_history_stamps(shard_dirs)
+    if not stamps.mixed or allow_mixed_history:
+        return []
+    schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
+    zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
+    return [
+        f"--shards mixes input-history identities: derive_corpus_row_schema "
+        f"{{{schemas}}}, zero_history {{{zero}}}. A zero-history shard fills "
+        "history slot 0 only; a history-aware one fills all 8 frames and the "
+        "repetition planes, and the champion flips 46.5% of its top-1 moves "
+        "between the two. One replay buffer would sample both. Train one "
+        "identity at a time, or pass --allow-mixed-history to record the mix "
+        f"deliberately. (An absent stamp reads as row schema "
+        f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
+        "corpora derived before the stamps existed are the bare-FEN shape.)",
+    ]
+
+
+def history_identity_record(
+    stamps: ShardHistoryStamps, *, allow_mixed_history: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the reader saw, mixed or not."""
+    return {
+        "row_schemas": sorted(stamps.row_schemas),
+        "zero_history": sorted(stamps.zero_history),
+        "mixed": stamps.mixed,
+        "allow_mixed_history": bool(allow_mixed_history),
+    }
 
 
 def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
@@ -1508,6 +1600,12 @@ def main(argv: list[str] | None = None) -> int:
         help="skip torch.compile; changes throughput, not the objective",
     )
     parser.add_argument(
+        "--allow-mixed-history", action="store_true",
+        help="let --shards mix zero-history (schema-1-derived) and "
+             "history-aware (schema-3-derived) directories; the mix is then "
+             "recorded in summary.json under corpus.history_identity.",
+    )
+    parser.add_argument(
         "--allow-leak", action="store_true",
         help="⚑ downgrade the LAUNCH guards (0c, 0d, 1 and 2) to a banner so the "
              "run reaches the REALIZED per-step guard and that guard can be "
@@ -1595,7 +1693,14 @@ def main(argv: list[str] | None = None) -> int:
             "purity receipt (which compares sets) can see it. Name each "
             "directory once.",
         )
-    coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
+    coverage = preflight(
+        cfg, shard_dirs, allow_leak=bool(args.allow_leak),
+        allow_mixed_history=bool(args.allow_mixed_history),
+    )
+    history_identity = history_identity_record(
+        read_history_stamps(shard_dirs),
+        allow_mixed_history=bool(args.allow_mixed_history),
+    )
 
     receipt: dict[str, Any] | None = None
     receipt_path = Path(args.purity_receipt) if args.purity_receipt else None
@@ -1998,6 +2103,9 @@ def main(argv: list[str] | None = None) -> int:
             "shard_dirs": [str(Path(d).resolve()) for d in shard_dirs],
             "staged_shards": staged,
             "label_coverage": coverage,
+            # ⚑ What the history-identity reader saw (round 2, Grok D3): a
+            # run launched with --allow-mixed-history says so here.
+            "history_identity": history_identity,
         },
         "purity_receipt": (
             None if receipt is None or receipt_path is None else {
