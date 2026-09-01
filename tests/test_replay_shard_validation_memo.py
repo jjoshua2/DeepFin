@@ -29,6 +29,7 @@ import numpy as np
 import pytest
 import zarr
 
+from chess_anti_engine.replay import disk_buffer as db
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.shard import (
     ShardMeta,
@@ -231,6 +232,142 @@ def test_a_shard_swapped_for_different_content_is_revalidated(tmp_path: Path) ->
     assert buf._shard_validations_run == 1, (
         "different content at the same path must be re-validated"
     )
+
+
+# --- the rewrite-during-decode race (review F1 / Codex P1) -----------------
+
+
+def _poison_on_next_load(
+    monkeypatch: pytest.MonkeyPatch, shard: Path,
+) -> dict[str, int]:
+    """Rewrite *shard* with bad rows DURING the decode, once.
+
+    This is the F1 window made deterministic: the buffer fingerprints the
+    shard, and only then does the decode read bytes. Poisoning from inside
+    ``load_shard_arrays`` puts the rewrite exactly in that gap, so the loader
+    returns rows the pre-read fingerprint does not describe.
+    """
+    real = db.load_shard_arrays
+    calls = {"n": 0}
+
+    def _fake(path, **kwargs):
+        if Path(path) == shard and calls["n"] == 0:
+            calls["n"] += 1
+            _poison_policy_rows(shard)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(db, "load_shard_arrays", _fake)
+    return calls
+
+
+def test_a_shard_rewritten_during_the_decode_cannot_ride_a_stale_memo_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ REVIEW F1 / CODEX P1 — the reviewer got 256 corrupt rows in this way.
+
+    Warm the memo on clean bytes, then rewrite the shard in the window between
+    the fingerprint and the decode. The pre-read footprint still matches the
+    memo, so validation is skipped -- and without a post-decode re-stat the
+    poisoned rows are handed straight to the shuffle pool.
+    """
+    shard_dir = _write_window(tmp_path, n=1)
+    shard = local_shard_path(shard_dir, 0)
+    buf = _buffer(shard_dir)
+
+    assert buf._try_load_shard(shard, context="test") is not None
+    assert len(buf._validated_shards) == 1, "precondition: the memo must be warm"
+
+    calls = _poison_on_next_load(monkeypatch, shard)
+    got = buf._try_load_shard(shard, context="test")
+
+    assert calls["n"] == 1, "precondition: the poisoning must have run"
+    assert got is None, (
+        "a shard rewritten mid-decode was admitted on a stale memo hit — the "
+        "post-decode re-stat did not fire"
+    )
+    assert buf._validated_shards == {}, (
+        "the stale entry must be dropped, or the next read skips again"
+    )
+
+
+def test_a_rewrite_during_a_validating_decode_is_not_memoized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same race on a memo MISS: validation runs, but on which bytes?
+
+    Here validation does run and (because the poisoned rows are rejected) the
+    load fails. The point of the test is the entry: a footprint that did not
+    hold still across the read must never be recorded as validated.
+    """
+    shard_dir = _write_window(tmp_path, n=1)
+    shard = local_shard_path(shard_dir, 0)
+    buf = _buffer(shard_dir)
+    buf._validated_shards.clear()
+
+    _poison_on_next_load(monkeypatch, shard)
+    assert buf._try_load_shard(shard, context="test") is None
+    assert buf._validated_shards == {}
+
+
+def test_a_stable_read_is_still_memoized_after_the_re_stat(tmp_path: Path) -> None:
+    """The fix must not cost the win: an unchanged shard still memoizes."""
+    shard_dir = _write_window(tmp_path, n=1)
+    shard = local_shard_path(shard_dir, 0)
+    buf = _buffer(shard_dir)
+    buf._validated_shards.clear()
+    buf._shard_validations_run = 0
+    buf._shard_validations_skipped = 0
+
+    for _ in range(3):
+        assert buf._try_load_shard(shard, context="test") is not None
+
+    assert buf._shard_validations_run == 1
+    assert buf._shard_validations_skipped == 2
+
+
+# --- the counters must reach production, and mean what they say -------------
+
+
+def test_the_hit_rate_line_reports_the_real_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """⚑ REVIEW F3. A counter only tests read is a counter production cannot use.
+
+    Also pins the arithmetic, because the first cut of this line was WRONG in
+    the way that matters: it fired on the first refresh, where a hit is
+    impossible, and so always printed 0.0% — a run that ended at a 38% hit rate
+    reported the memo as inert.
+    """
+    shard_dir = _write_window(tmp_path, n=1)
+    shard = local_shard_path(shard_dir, 0)
+    buf = _buffer(shard_dir)
+    buf._validated_shards.clear()
+    buf._shard_validations_run = 0
+    buf._shard_validations_skipped = 0
+
+    monkeypatch.setattr(db, "_VALIDATION_MEMO_LOG_INTERVAL_S", 0.0)
+    for _ in range(4):
+        buf._try_load_shard(shard, context="test")
+
+    line = [
+        ln for ln in capsys.readouterr().out.splitlines()
+        if "[disk_buf] refresh: shard validations" in ln
+    ][-1]
+    assert "run=1" in line
+    assert "skipped=3" in line
+    assert "75.0%" in line, f"hit rate must be skipped/(run+skipped): {line}"
+
+
+def test_the_hit_rate_line_does_not_fire_on_a_cold_buffer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The throttle starts at construction, so no 0.0% line on the first read."""
+    shard_dir = _write_window(tmp_path, n=1)
+    buf = _buffer(shard_dir)
+    capsys.readouterr()
+    buf._try_load_shard(local_shard_path(shard_dir, 0), context="test")
+    assert "[disk_buf] refresh: shard validations" not in capsys.readouterr().out
 
 
 # --- the memo must not change what is loaded -------------------------------

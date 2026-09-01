@@ -1854,10 +1854,12 @@ def load_shard_arrays(
     as a defensive read path for archival shards; the production writer is
     ``save_local_shard_arrays``.
 
-    ``validate=False`` skips ONLY ``validate_arrays`` -- the content sanity
-    pass (NaN/Inf, policy row sums, index ranges). It does NOT skip
-    ``_reject_unsafe_shard_codecs``, which is the untrusted-deserialization
-    guard (issue #411) and runs before any chunk is decoded on every path.
+    ``validate=False`` skips ``validate_arrays`` -- the content sanity pass
+    (NaN/Inf, policy row sums, index ranges) AND, because it is the first thing
+    ``validate_arrays`` calls, the ``validate_array_declarations`` shape/dtype
+    pass with it. It does NOT skip ``_reject_unsafe_shard_codecs``, which is
+    the untrusted-deserialization guard (issue #411) and runs before any chunk
+    is decoded on every path.
 
     ⚑ DEFAULT True, AND THE DEFAULT IS THE POINT. Every other caller -- the
     server's upload handler, the boot-time pending-dir recovery, the inbox

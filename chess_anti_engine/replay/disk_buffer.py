@@ -42,6 +42,7 @@ from .shard import (
     shard_index,
     shard_positions,
     sparsify_chunk,
+    validate_arrays,
     zeros_for_storage_field,
 )
 from .threat_upgrade import (
@@ -81,6 +82,10 @@ _SHARD_LOAD_WARN_INTERVAL_S = 60.0
 # serial gets blosc's 8 threads for free and a 4-way pool measured SLOWER), and
 # why raising this number is not free on a box that is also running selfplay.
 _REFRESH_LOAD_WORKERS = 4
+
+# How often the shard-validation memo reports its hit rate. Throttled because
+# production runs `shuffle_refresh_interval` as low as 1.
+_VALIDATION_MEMO_LOG_INTERVAL_S = 300.0
 
 # Advisory lock naming the one process allowed to write shards into a window
 # dir. Two writers is not hypothetical: on 2026-07-11 two of them interleaved
@@ -566,6 +571,13 @@ class DiskReplayBuffer:
         self._validation_memo_lock = threading.Lock()
         self._shard_validations_run = 0
         self._shard_validations_skipped = 0
+  # ⚑ SEEDED WITH now(), NOT 0.0. With 0.0 the first line lands on the FIRST
+  # refresh -- where a hit is arithmetically impossible, because nothing has
+  # been read twice yet -- so it always reported "memo hit rate 0.0%" and a
+  # reader would conclude the memo was inert. Measured: a 100-batch run that
+  # finished at a 38% hit rate printed 0.0%. Starting the clock here means
+  # every line that IS printed describes a warmed-up buffer.
+        self._validation_memo_logged_at = time.time()
 
   # In-memory hot replay as chunked sparse arrays with logical front offsets.
   # Sampling stays random over the hot pool while trims avoid front-copy churn.
@@ -1394,6 +1406,16 @@ class DiskReplayBuffer:
   # `test_parallel_refresh_decode_is_byte_identical_to_serial` pins.
         picks = [int(idx) for idx in np.asarray(chosen_idxs, dtype=np.int64)]
         workers = min(_REFRESH_LOAD_WORKERS, len(picks))
+  # ⚑ THE POOL IS FOR WORKER-THREAD CALLERS ONLY, and the branch is the same
+  # numcodecs fact the pool exists for. blosc's internal 8-thread decompression
+  # is enabled only on the MAIN thread, so a main-thread refresh already
+  # decodes 8-way and handing it to a 4-way outer pool measured 0.82x -- a
+  # REGRESSION. Production's refresh always runs on a worker (the trainer's
+  # prefetch pool, or this buffer's own `_prefetch_loop`), so gating costs the
+  # production path nothing and protects the offline/main-thread callers
+  # (`_seed_shuffle_pool` at construction, scripts that sample inline).
+        if threading.current_thread() is threading.main_thread():
+            workers = 1
         if workers <= 1:
             results = [
                 self._try_load_shard(shard_paths[idx], context=context)
@@ -1406,14 +1428,30 @@ class DiskReplayBuffer:
   # exception -- whereas a long-lived pool would need its own shutdown wired
   # into buffer teardown, which is precisely the abandoned-thread failure this
   # module already carries scar tissue for (see `_prefetch_loop`).
-            with ThreadPoolExecutor(
-                max_workers=workers, thread_name_prefix="replay-refresh-load",
-            ) as pool:
-                futures = [
-                    pool.submit(self._try_load_shard, shard_paths[idx], context=context)
+            try:
+                with ThreadPoolExecutor(
+                    max_workers=workers, thread_name_prefix="replay-refresh-load",
+                ) as pool:
+                    futures = [
+                        pool.submit(
+                            self._try_load_shard, shard_paths[idx], context=context,
+                        )
+                        for idx in picks
+                    ]
+                    results = [f.result() for f in futures]
+            except RuntimeError:
+  # ⚑ INTERPRETER TEARDOWN. `_prefetch_loop` is a DAEMON thread, so it can
+  # still be inside a refresh when `threading._shutdown` runs, after which
+  # `submit` raises "cannot schedule new futures after interpreter
+  # shutdown". Nothing is wrong with the run at that point -- the process
+  # is exiting -- so the only visible effect would be a spurious traceback
+  # on a clean shutdown. Fall back to the serial path, which needs no new
+  # threads; `_try_load_shard` swallows and accounts for its own failures,
+  # so a torn-down interpreter yields Nones rather than raising again.
+                results = [
+                    self._try_load_shard(shard_paths[idx], context=context)
                     for idx in picks
                 ]
-                results = [f.result() for f in futures]
 
         loaded: list[dict[str, np.ndarray]] = []
         for idx, arrs in zip(picks, results):
@@ -1515,36 +1553,94 @@ class DiskReplayBuffer:
         self, sp: Path, *, context: str,
     ) -> dict[str, np.ndarray] | None:
         """Load one shard, accounting for -- rather than swallowing -- failures."""
-  # Fingerprint BEFORE the read: taken afterwards, a shard rewritten during
-  # the decode would be memoized under the post-write footprint while the
-  # arrays validated came from the pre-write bytes, and the next read of the
-  # new content would match the memo and skip. Taking it first can only be
-  # conservative -- a concurrent write moves the footprint and the entry
-  # written below simply never matches again.
   # Always RESOLVED, so the staging symlink farm (`stage_shards` points N
   # names at one converted shard) shares one entry per real shard rather than
   # re-validating the same bytes under every alias.
         key = str(sp.resolve())
-        fingerprint = self._shard_validation_fingerprint(sp)
+        before = self._shard_validation_fingerprint(sp)
         already_validated = False
-        if fingerprint is not None:
+        if before is not None:
             with self._validation_memo_lock:
-                already_validated = self._validated_shards.get(key) == fingerprint
+                already_validated = self._validated_shards.get(key) == before
         try:
             arrs, _ = load_shard_arrays(sp, lazy=False, validate=not already_validated)
         except Exception as exc:
             self._note_shard_load_failure(sp, exc, context=context)
             return None
+
+  # ⚑⚑ RE-STAT AFTER THE DECODE, AND THE PR THAT ADDED THIS MEMO GOT IT WRONG.
+  # The first cut fingerprinted only BEFORE the read and argued that could
+  # "only be conservative". It cannot: a shard rewritten in the window between
+  # the fingerprint and the decode is read as NEW bytes while
+  # `already_validated` still reflects the OLD footprint, so validation is
+  # skipped on content nothing ever checked. Review reproduced it and got 256
+  # corrupt rows into the shuffle pool. A second walk costs ~2.6 ms against an
+  # 878 ms load.
+  #
+  # The invariant is now: ONLY A FOOTPRINT THAT HELD STILL ACROSS THE WHOLE
+  # READ MAY BE MEMOIZED, because it is the only one the bytes we actually
+  # decoded can be attributed to. Anything else drops the entry, so the next
+  # read re-validates -- the safe direction.
+        after = self._shard_validation_fingerprint(sp)
+  # Carried as the FOOTPRINT ITSELF rather than a bool, so the only value that
+  # can ever be memoized below is one this line proved stable -- there is no
+  # second place where "which fingerprint do we record" could get it wrong.
+        stable = after if (after is not None and after == before) else None
+
+        revalidated = False
+        if already_validated and stable is None:
+  # We skipped `validate_arrays` on the strength of a footprint that no
+  # longer describes the file, so check what we actually decoded. This is
+  # the branch that keeps the corrupt rows out.
+            try:
+                validate_arrays(arrs)
+            except Exception as exc:
+                self._note_shard_load_failure(sp, exc, context=context)
+                with self._validation_memo_lock:
+                    self._validated_shards.pop(key, None)
+                return None
+            revalidated = True
+
         with self._validation_memo_lock:
-            if already_validated:
+            if already_validated and not revalidated:
                 self._shard_validations_skipped += 1
             else:
                 self._shard_validations_run += 1
-  # Recorded only after `validate_arrays` returned without raising, so a
-  # shard that fails validation is never memoized as good.
-                if fingerprint is not None:
-                    self._validated_shards[key] = fingerprint
+            if stable is not None:
+  # Recorded only once `validate_arrays` has returned without raising for
+  # THIS footprint, so a shard that fails validation is never memoized as
+  # good.
+                self._validated_shards[key] = stable
+            else:
+                self._validated_shards.pop(key, None)
+        self._maybe_log_validation_memo()
         return arrs
+
+    def _maybe_log_validation_memo(self) -> None:
+        """Put the memo's hit/miss counts somewhere production can see them.
+
+        A counter only tests ever read is this repo's accepted-then-ignored
+        smell wearing a performance hat: if the memo silently stopped hitting
+        -- a corpus being rewritten under the run, a fingerprint that never
+        matches -- the whole 7.31x would be handed back with nothing in the log
+        saying so. Throttled rather than per-refresh because production runs
+        `shuffle_refresh_interval` as low as 1.
+        """
+        now = time.time()
+        with self._validation_memo_lock:
+            if now - self._validation_memo_logged_at < _VALIDATION_MEMO_LOG_INTERVAL_S:
+                return
+            self._validation_memo_logged_at = now
+            run = self._shard_validations_run
+            skipped = self._shard_validations_skipped
+            memoized = len(self._validated_shards)
+        total = run + skipped
+        rate = (skipped / total) if total else 0.0
+        print(
+            f"[disk_buf] refresh: shard validations run={run} skipped={skipped} "
+            f"(memo hit rate {rate:.1%}, {memoized} shard(s) memoized)",
+            flush=True,
+        )
 
     def _note_shard_load_failure(
         self, sp: Path, exc: BaseException, *, context: str,

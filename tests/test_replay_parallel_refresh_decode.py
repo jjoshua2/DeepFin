@@ -20,7 +20,9 @@ that appends on completion cannot accidentally agree with the serial order.
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,63 @@ def _ranks(chunks: list[dict[str, np.ndarray]]) -> list[float]:
     return [float(np.asarray(c["x"]).reshape(-1)[0]) for c in chunks]
 
 
+def _on_worker_thread(fn, *args, **kwargs):
+    """Run *fn* off the main thread.
+
+    ⚑ NOT A DETAIL — WITHOUT THIS EVERY TEST BELOW IS VACUOUS. The pool is
+    deliberately gated to non-main-thread callers (blosc already decodes 8-way
+    on the main thread, where an outer pool measured 0.82x), and pytest runs
+    tests ON the main thread. Calling `_load_refresh_chunks` directly would
+    therefore take the SERIAL branch, and "parallel is byte-identical to
+    serial" would be comparing serial against serial.
+    """
+    with ThreadPoolExecutor(max_workers=1) as driver:
+        return driver.submit(fn, *args, **kwargs).result()
+
+
+def test_the_main_thread_does_not_get_the_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ REVIEW F2. Main-thread callers keep blosc's own 8-way decode.
+
+    Pinned by observing the THREAD the loads actually run on, not by reading
+    the branch back: a gate asserted against its own condition cannot fail.
+    """
+    shard_dir = _write_window(tmp_path)
+    buf = _buffer(shard_dir)
+    paths = list(buf._shard_paths)
+    monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 4)
+
+    real_load = DiskReplayBuffer._try_load_shard
+    threads: list[str] = []
+
+    def _record(self: DiskReplayBuffer, sp: Path, *, context: str) -> Any:
+        threads.append(threading.current_thread().name)
+        return real_load(self, sp, context=context)
+
+    monkeypatch.setattr(DiskReplayBuffer, "_try_load_shard", _record)
+
+    buf._load_refresh_chunks(
+        shard_paths=paths, refresh_shards=REFRESH_SHARDS,
+        rng=np.random.default_rng(2),
+    )
+    assert threads, "precondition: some shard must have been loaded"
+    assert set(threads) == {threading.main_thread().name}, (
+        "a main-thread refresh must decode inline, not on pool threads"
+    )
+
+    threads.clear()
+    _on_worker_thread(
+        buf._load_refresh_chunks,
+        shard_paths=paths, refresh_shards=REFRESH_SHARDS,
+        rng=np.random.default_rng(2),
+    )
+    assert threads, "precondition: some shard must have been loaded"
+    assert all(t.startswith("replay-refresh-load") for t in threads), (
+        "a worker-thread refresh must use the decode pool"
+    )
+
+
 def test_parallel_refresh_decode_is_byte_identical_to_serial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -105,12 +164,14 @@ def test_parallel_refresh_decode_is_byte_identical_to_serial(
     )
 
     monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 4)
-    parallel = buf._load_refresh_chunks(
+    parallel = _on_worker_thread(
+        buf._load_refresh_chunks,
         shard_paths=paths, refresh_shards=REFRESH_SHARDS,
         rng=np.random.default_rng(11),
     )
     parallel_idx: list[int] = []
-    buf._load_refresh_chunks(
+    _on_worker_thread(
+        buf._load_refresh_chunks,
         shard_paths=paths, refresh_shards=REFRESH_SHARDS,
         rng=np.random.default_rng(11), chosen_out=parallel_idx,
     )
@@ -160,7 +221,8 @@ def test_completion_order_does_not_leak_into_the_pool(
 
     monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", REFRESH_SHARDS)
     monkeypatch.setattr(DiskReplayBuffer, "_try_load_shard", _staggered)
-    parallel = buf._load_refresh_chunks(
+    parallel = _on_worker_thread(
+        buf._load_refresh_chunks,
         shard_paths=paths, refresh_shards=REFRESH_SHARDS,
         rng=np.random.default_rng(3),
     )
@@ -200,7 +262,8 @@ def test_a_failed_shard_still_drops_out_without_shifting_the_rest(
     monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 4)
     monkeypatch.setattr(DiskReplayBuffer, "_try_load_shard", _one_fails)
     got_idx: list[int] = []
-    got = buf._load_refresh_chunks(
+    got = _on_worker_thread(
+        buf._load_refresh_chunks,
         shard_paths=paths, refresh_shards=REFRESH_SHARDS,
         rng=np.random.default_rng(5), chosen_out=got_idx,
     )
@@ -219,13 +282,16 @@ def test_the_sampled_batch_stream_is_unchanged_by_the_pool(
     """End to end: 50 draws, serial vs 4-way decode, byte for byte."""
     shard_dir = _write_window(tmp_path)
 
+    def _draw(buf: DiskReplayBuffer) -> list[dict[str, np.ndarray]]:
+        # On a worker thread, exactly as `_iter_prefetched_batches` samples --
+        # and the only way the pool arm reaches the pool at all.
+        return [buf.sample_batch_arrays(BATCH) for _ in range(DRAWS)]
+
     monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 1)
-    serial_buf = _buffer(shard_dir, seed=7)
-    serial_draws = [serial_buf.sample_batch_arrays(BATCH) for _ in range(DRAWS)]
+    serial_draws = _on_worker_thread(_draw, _buffer(shard_dir, seed=7))
 
     monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 4)
-    par_buf = _buffer(shard_dir, seed=7)
-    par_draws = [par_buf.sample_batch_arrays(BATCH) for _ in range(DRAWS)]
+    par_draws = _on_worker_thread(_draw, _buffer(shard_dir, seed=7))
 
     assert len(serial_draws) == len(par_draws) == DRAWS
     for i, (a, b) in enumerate(zip(serial_draws, par_draws)):
