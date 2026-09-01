@@ -72264,7 +72264,7 @@ same helpers, its own PR):
   d9) with `position fen <root> moves …` through the generator's own label routine (same staircase,
   same engine build). Stated confound: re-labels run on a fresh per-game TT rather than the
   generator's carried TT — affects 1.6% of rows, same fixed depth.
-- Take-effect: deriver summary `history_slots_nonzero_max == 7` and `history_root_reason_counts`
+- Take-effect: deriver summary `history_slots_nonzero_max == 8` (slot 0 is the position; corrected per PR #497 — the "7" first written here was wrong) and `history_root_reason_counts`
   on the repaired corpus; 200 re-labeled rows re-derived must match this calibration's banked B
   labels move-for-move (`ab_rows.jsonl`, keyed `(worker_id, game_id, ply)`).
 - Yardstick (admissibility of the legacy 54M for the 20M mix; NOT the corrected-history isolation
