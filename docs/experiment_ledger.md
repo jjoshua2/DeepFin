@@ -72222,3 +72222,57 @@ it fails, the test is never weakened. Details: `scratchpad/history_banking_spec.
 recipe as `qtemp_0.0005`, history the only change), judged by the 4k
 history-vs-FEN probe, normal-history arenas vs the old champion AND vs
 production, d9/T80 diagnostics. That arm gates any 20M/100M.
+
+**2026-09-01 — LEGACY-CORPUS HISTORY CALIBRATION: history-blind SF labels differ ONLY where a
+repeat sits in the reversible segment (0/1200 outside it) ⇒ REPAIR, not discard — prereg.**
+Question (Josh): rather than throw away every repetition-prone legacy row (which would bias the
+corpus against exactly the fortress/shuffling positions this project exists for), can the 54M
+schema-1 rows be REPAIRED — history reconstructed by chaining, labels re-searched only where
+history can change them? Instrument: `scratchpad/legacy_history_calib/calib.py`; bank
+`scratchpad/legacy_history_calib/ab_rows.jsonl` (per row: both full-width d9 label sets, top-1s,
+max |Δcp|, predictors) + `reconstruction_stats.json`. Sample: run03 w03–w06 shards 100–102 =
+100,006 rows; histories rebuilt by `prev.fen + prev.played_move == fen` back to the
+halfmove-clock-0 root. Reconstruction: segment complete **99.15%**, chain gap 0.85%, ply<7 **3.63%**
+(book moves are unrecoverable — `opening_source` is `None` on every banked row), repeat in
+segment **1.59%**, current position already seen **0.23%**. A/B = cold-TT single-thread `go depth 9`
+MultiPV=all on the corpus's own engine build, A = `position fen <fen>` (what the corpus did), B =
+`position fen <root> moves …` (what schema 2 does); fixed depth + cold TT + 1 thread is
+deterministic, so every A≠B is the history. Stratified 1200 repeat / 1200 no-repeat, 0 timeouts:
+
+| bucket | n | top-1 changed | any move moved >50 cp |
+|---|---|---|---|
+| NO repeat in segment (all clock bands 0–200) | 1200 | **0.00%** | **0.00%** |
+| repeat in segment (1.59% of rows) | 1200 | **12.50%** | 21.17% |
+|   └ current position already seen (0.23%) | 164 | 19.51% | 38.41% |
+| by phase: opening / middlegame / endgame | 139/1116/1145 | 0.0 / 2.8 / 10.4% | 0.7 / 7.4 / 14.9% |
+
+VERDICT (pre-committed rule was "flag is usable if the no-repeat bucket changes <1%"): the flag is
+EXACT on this sample — SF consults game history only for repetition, and the rule-50 counter is
+already in the FEN. Population-weighted, **~0.20% of legacy rows carry a changed top-1 label and
+~0.34% a >50 cp move shift**; the INPUT side (history planes) is wrong on 100% of rows, but that is
+free to fix (chaining, no SF). ⚑ The 46.5% top-1 flip in `3db96659a` is therefore an INPUT-plane
+effect, not a label effect — the net was trained to read zero history, not trained on wrong labels.
+
+PREREG — legacy repair (`scratchpad/legacy_repair_spec.md`; implemented AFTER the schema-2 PR lands,
+same helpers, its own PR):
+- R1 chain every row to schema 2 (`history_root_fen`/`history_uci`/`history_plies`/
+  `history_root_reason`); rows whose history is truncated (ply<7 without a clock-0 root, chain gaps:
+  ≈4.5%) are **dropped by default** — live play from the book never produces a short stack, so a
+  truncated row is the same mixed-input hazard being removed; `--keep-truncated` exists for the
+  control read only.
+- R2 re-label ONLY rows with a repeat inside `[root, row]` (≈1.6% ≈ 860k of 54M, ≈60 core-hours at
+  d9) with `position fen <root> moves …` through the generator's own label routine (same staircase,
+  same engine build). Stated confound: re-labels run on a fresh per-game TT rather than the
+  generator's carried TT — affects 1.6% of rows, same fixed depth.
+- Take-effect: deriver summary `history_slots_nonzero_max == 7` and `history_root_reason_counts`
+  on the repaired corpus; 200 re-labeled rows re-derived must match this calibration's banked B
+  labels move-for-move (`ab_rows.jsonl`, keyed `(worker_id, game_id, ply)`).
+- Yardstick (admissibility of the legacy 54M for the 20M mix; NOT the corrected-history isolation
+  gate, which stays the fresh run06 5.5M arm of `6c43a33e4`): repair the exact
+  `run02_snap_20260829` rows the champion trained on, retrain the champion recipe (uniform-d9
+  τ=0.0005, 9,680 steps, seed 0, `configs/lc0_positive_control.yaml`) → `stage5_history_probe.py`
+  (4k bank) + 200-game matched_sims-100 arena vs `qtemp_0.0005` under NORMAL history.
+  **SUCCESS = flips ≤ 25% (production reads 21.2%) AND Δregret(hist−fen) ≤ +5 cp AND arena ≥ 0 Elo
+  (CI excludes −30); anything else ⇒ legacy stays control-only and the 20M is run06+ rows alone.**
+- Confounds: none data-side (one change: history). Runs on the GPU only in a pause window after the
+  fresh-5.5M isolation arm.
