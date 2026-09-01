@@ -72276,3 +72276,54 @@ same helpers, its own PR):
   (CI excludes −30); anything else ⇒ legacy stays control-only and the 20M is run06+ rows alone.**
 - Confounds: none data-side (one change: history). Runs on the GPU only in a pause window after the
   fresh-5.5M isolation arm.
+
+**2026-09-01 — LEGACY REPAIR PREREG v2 (supersedes the R1/R2 block above after operator review):
+book openings RE-DERIVE EXACTLY, so nothing is dropped by default; repaired champion-exact 5.5M is
+the PRIMARY causal arm.** Operator changes (relayed 2026-09-01): relabel EVERY repeat row; do not
+drop "truncated" rows — audit the book reverse-join first; reconcile the denominators; the drop
+criterion is "encodes exactly as live play would", never "has 7 frames"; repaired-champion arm is
+the primary validation, run06 fresh 5.5M the replication; flip rate is a diagnostic, not a gate;
+schema-1 stays untouched with a provenance manifest; benchmark before projecting.
+Audit (`scratchpad/legacy_history_calib/book_audit.py`, bank `book_audit_rows.jsonl`,
+`book_audit_summary.json`; same run03 w03–w06 shards 100–102, 100,006 rows, 521 games):
+- FACT: the generator seeds each opening with `book_rng(seed, worker_id, game_id)` (no wall clock),
+  so `sample_starting_board` re-derives the start board WITH its book move stack. **505/505
+  games whose ply-0 row is in the window match the resampled start FEN exactly; 0 mismatches.**
+  (16 games start before the shard window — resolvable with the preceding shard.)
+- RECONCILIATION (one denominator, 100,006 rows): ply≥7 with the reversible root inside the
+  banked plies **73.42%**; ply≥7 with clock≥7 (segment reaches back >7 plies) **22.94%**; ply<7
+  **3.63%**. Rows that NEED the book (frames or segment before ply 0) = 4.45% — a superset of the
+  ply<7 rows. The earlier "99.15% segment-complete / 0.85% gap / 3.63% ply<7 ≈ 4.5% truncated"
+  mixed two denominators: "gap" counted walks that ran into the book (now recovered) plus real
+  dedup gaps; ply<7 overlapped both.
+- PER-ROW CLASS: `exact` 95.414% · `exact_via_book` 4.452% · `ambiguous_multi_path` **0** ·
+  `unbridged_gap` 0.112% (112 rows, 15 games: ≥4 consecutive dedup-dropped plies or no path at
+  ≤3) · `unverifiable_in_sample` 0.022%. **Usable exact = 99.888%** of rows with a reachable game
+  start. Dedup-dropped plies are bridged by enumerating move paths between neighbouring banked
+  positions; a unique path is exact (the intermediate FEN is fully determined), >1 path taints
+  every row whose 7-frame window or reversible segment spans the gap (none occurred).
+- BENCH (single core): reconstruct incl. book resample + chain + bridge **31,176 rows/s**;
+  replay + C-encode with history **2,867 rows/s**; relabel (calibration, cold TT, d9 full-width,
+  1 thread) **0.19 s/row**. PROJECTION for 54M: reconstruct ≈0.5 core-h; relabel ≈1.6% ≈ 860k
+  rows ≈ **45 core-h (~2 h on 24 cores)**; usable corrected rows ≈ **53.9M**. ⇒ repair the full
+  54M; do not regenerate.
+PREREG (repair PR = `scratchpad/legacy_repair_spec.md`, stacked on PR #497):
+- Output = new schema-2 shards beside the untouched schema-1 shards + manifest mapping every
+  `(worker_id, game_id, ply)` → `repaired` / `relabeled` / `quarantined:<reason>`.
+- Quarantine ONLY `ambiguous_multi_path` and `unbridged_gap`/`no_source`; short TRUE histories
+  are kept with live fill semantics.
+- Take-effect: PR #497's equivalence gate re-run on 200 repaired rows (reconstructed vs a live
+  board built from the resampled book stack + played moves) — **bit-identical (175,8,8)**;
+  deriver summary `history_slots_nonzero_max == 8`; 200 relabeled rows match the calibration's
+  banked B labels move-for-move.
+- PRIMARY causal arm: repair the exact `run02_snap_20260829` rows the champion trained on; retrain
+  the champion recipe (uniform-d9 τ=0.0005, 9,680 steps, seed 0, `configs/lc0_positive_control.yaml`,
+  history the only change). Yardsticks, all under NORMAL history on the 4k T80 bank
+  (`stage5_history_probe.py`, game-cluster bootstrap): (i) d9 regret repaired − champion, (ii) T80
+  top-1 agreement, (iii) value regret (`value_regret.py`) and policy CE diagnostics, (iv) 200-game
+  matched_sims-100 arena vs `qtemp_0.0005`, (v) vs production g1586 anchor if the GPU window allows.
+  **SUCCESS = (i) < 0 with 95% CI excluding 0 AND (iv) ≥ 0 Elo with CI excluding −30. KILL = (i)
+  CI excludes any improvement OR (iv) CI excludes 0 on the losing side.** Flip rate (hist vs FEN)
+  is reported as a diagnostic only. Fresh run06 5.5M (`6c43a33e4`) becomes the replication point.
+- Confounds: relabeled rows carry a cold-TT label vs the generator's carried TT (1.6% of rows, same
+  fixed depth). No other data-side change.
