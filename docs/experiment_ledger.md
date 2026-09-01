@@ -71485,3 +71485,29 @@ paired slopes recomputed from the banked rows, game-cluster 2000×).
    anomaly (init-from design; continuation stamps valid_control:false as built).
 ⇒ Champion lineage stays the SHARP family. τ for the 100M recipe waits on
 round-4's fresh-data read, per the round-4 prereg.
+
+**2026-09-01 ROUND-4 READOUT — THE 2-VIEW WOBBLE IS REPEAT MEMORIZATION;
+FRESH DATA WINS; the 100M recipe is 1 VIEW ON FRESH ROWS.** Judged per the
+9230f95ef prereg, same session as the legs. Perfectly paired arms: same donor
+(qtemp_0.0005 @9,680), same +9,680 budget, same recipe — only the second
+half's data differs (run03 fresh 5.34M rows vs run02-snapshot repeat).
+Banked: `scratchpad/t80_ruler/arms_vs_bt4_freshext.*`, paired stats
+game-clustered 2000×, arena games jsonl in round4/.
+1. **Arena fresh vs repeat: exact null** — +0.0 Elo [−39.5, +39.5], 200
+   games. At this budget the data source does not move play strength.
+2. **The BT4 ruler separates them decisively, and the wobble REVERSES on
+   fresh:** repeat KL rose 0.8152→0.8908 over the extension; fresh FELL to
+   0.7476. Paired fresh−repeat at 19,360: top-1 **+3.15 pp [+1.84,+4.49]**,
+   KL **−0.1418 [−0.1562,−0.1284]**. Fresh at 14,520 already beats repeat at
+   19,360 on both. The repeat extension's KL rise was memorization, not a
+   budget property.
+3. Instruments split on d9 regret (repeat 1601.8 vs fresh 1637.6 — repeat
+   slightly better); arena is a tie, so the generalization metrics carry the
+   verdict: **fresh**.
+4. **Scaling point #1 banked**: base 9,680 → fresh 19,360 = top-1 0.3643→
+   0.4045, KL 0.8152→0.7476 at 2× fresh views-1 budget.
+⇒ For run05/100M: one view over fresh rows, no second-view pass (confirms
+the standing 1-view rule at this scale); τ stays the sharp family (round-2
+weakly-held adoption unchanged — this round adds no τ evidence). Second
+views are not poison but buy ~arena-nothing while degrading the
+generalization signature — spend generation, not repetition.
