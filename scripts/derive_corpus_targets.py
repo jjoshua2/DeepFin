@@ -326,10 +326,12 @@ import gzip
 import io
 import json
 import math
+import multiprocessing as mp
 import re
+import shutil
 import sys
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -344,6 +346,7 @@ from chess_anti_engine.moves.leela_index import compact_index_for_move
 from chess_anti_engine.replay.sample import ReplaySample
 from chess_anti_engine.replay.shard import (
     ShardMeta,
+    arrays_to_samples,
     load_shard_arrays,
     local_shard_path,
     samples_to_arrays,
@@ -2832,6 +2835,14 @@ class CorpusRecord:
     #: will emit: it is the inventory's own number, and comparing the two is
     #: how a reader sees what the schemes and the result filter dropped.
     rows_claimed: int
+    #: The SAME claim, per shard and aligned with ``shards``.  ⚑ Kept here
+    #: rather than re-derived by the caller that wants it: both records already
+    #: read these numbers to produce ``rows_claimed``, and a second reader of
+    #: the inventory is a second thing to keep in step with the writer.
+    #: ``--workers`` prefix-sums this to place ``--limit`` at a global row
+    #: index, and then checks every claim it used against the rows the shard
+    #: actually held.
+    shard_rows: tuple[int, ...]
     #: The ``w*.progress.jsonl`` files read (partial mode only).
     progress_files: tuple[str, ...]
     #: Progress files whose torn final line was dropped -- the ONE damage
@@ -2888,6 +2899,13 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
                 f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards",
             )
         check_shard_inventory(on_disk, summary)
+        # ⚑ BY BASENAME, the same join ``check_shard_inventory`` just proved is
+        # total in both directions -- the entries store the producing machine's
+        # absolute paths and a corpus is routinely read from somewhere else.
+        claimed_by_name = {
+            Path(str(entry["path"])).name: int(entry.get("rows", 0))
+            for entry in summary.get("shards", [])
+        }
         return CorpusRecord(
             mode=CORPUS_RECORD_SUMMARY,
             facts=summary,
@@ -2895,6 +2913,7 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
             rows_claimed=sum(
                 int(entry.get("rows", 0)) for entry in summary.get("shards", [])
             ),
+            shard_rows=tuple(claimed_by_name[path.name] for path in on_disk),
             progress_files=(),
             torn_tail_files=(),
             unlisted_on_disk=(),
@@ -2952,6 +2971,7 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
         )
 
     listed: dict[str, Path] = {}
+    claimed_rows: dict[str, int] = {}
     rows_claimed = 0
     torn: list[str] = []
     for progress_path in progress_paths:
@@ -2994,6 +3014,7 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
                     "from what is left would train on a subset nothing recorded",
                 )
             listed[name] = path
+            claimed_rows[name] = int(record["rows"])
             rows_claimed += int(record["rows"])
 
     if not listed:
@@ -3011,6 +3032,7 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
         facts=manifest,
         shards=tuple(listed[name] for name in sorted(listed)),
         rows_claimed=rows_claimed,
+        shard_rows=tuple(claimed_rows[name] for name in sorted(listed)),
         progress_files=tuple(path.name for path in progress_paths),
         torn_tail_files=tuple(torn),
         unlisted_on_disk=unlisted,
@@ -3625,6 +3647,18 @@ class GameGrouper:
         self._last_seen_ply: int | None = None
         self._closed: set[tuple[int, int]] = set()
 
+    @property
+    def closed_keys(self) -> frozenset[tuple[int, int]]:
+        """Every game this grouper assembled and closed.
+
+        ⚑ The re-open refusal in :meth:`add` is a WITHIN-grouper check, and a
+        partitioned read has one grouper per lane -- so a game split across two
+        lanes reaches neither grouper's ``_closed``.  Published here so
+        ``derive_parallel`` can check the lanes' sets are pairwise disjoint,
+        which is the same invariant one lane up.
+        """
+        return frozenset(self._closed)
+
     def note_dropped(self, row: dict[str, Any]) -> None:
         """Record that the corpus banked this row and derivation did not keep it.
 
@@ -3776,7 +3810,28 @@ def _flush(
     order a mid-budget checkpoint would otherwise split by game.
     """
     order = rng.permutation(len(samples))
-    ordered = [samples[int(i)] for i in order]
+    return _flush_ordered(
+        out_dir, index, [samples[int(i)] for i in order], options, corpus_sha,
+    )
+
+
+def _flush_ordered(
+    out_dir: Path,
+    index: int,
+    ordered: list[ReplaySample],
+    options: DeriveOptions,
+    corpus_sha: str,
+) -> dict[str, Any]:
+    """Write one shard whose row ORDER has already been decided.
+
+    ⚑ SPLIT OUT OF :func:`_flush` AND NOTHING ELSE CHANGED.  The sequential path
+    still draws its permutation from the run's one generator and then calls
+    this, so its statements are the statements it always ran.  The split exists
+    because ``derive_parallel`` replays the whole permutation chain up front --
+    it cannot hand a generator that is about to produce the i-th draw -- and a
+    second copy of the writer is the one thing that could make a parallel shard
+    differ from a sequential one without any check noticing.
+    """
     path = local_shard_path(out_dir, index)
     arrs = samples_to_arrays(ordered)
     save_local_shard_arrays(
@@ -4267,6 +4322,1083 @@ def format_summary(out: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# ── --workers: the same corpus, derived in parallel ────────────────────────────
+#
+# ``--workers N > 1``, and the contract is not "equivalent" but ``diff -r``:
+#
+#     every file under every ``shard_*.zarr`` is byte-for-byte what
+#     ``--workers 1`` writes, and ``derive_targets_summary.json`` differs only in
+#     ``started_utc``.
+#
+# :func:`derive` above is a single pass over the corpus's shard snapshot doing
+# three separable things -- read and derive each row, fold every row into an
+# order-dependent running statistic, and cut the surviving rows into
+# seed-permuted output shards.  Only the FIRST is parallelisable; the other two
+# are DEFINED by the global row order and have to be reconstructed exactly.
+#
+# ⚑⚑ ``--workers 1`` DOES NOT COME THROUGH HERE AT ALL.  ``main`` calls
+# :func:`derive_parallel` only above 1, so the default path is not "the parallel
+# driver with one lane" -- it is the same :func:`derive` call, statement for
+# statement, that this tool ran before the flag existed.  A refactor that routed
+# the default through a one-lane coordinator would make every future bug here a
+# production bug, and the byte-identity claim would then have nothing to compare
+# against.
+#
+# ⚑ IT LIVES IN THIS FILE, next to the loop it mirrors, rather than in a module
+# of its own.  Every part of it -- the deriver, the grouper, ``apply_value_scheme``,
+# the shard writer -- is :func:`derive`'s own, because reimplementing any of them
+# is the single thing that could make a parallel shard differ from a sequential
+# one; and a change to that loop then shows up in the same diff as the mirror it
+# has to stay in step with.
+#
+# How the four hazards are closed
+# -------------------------------
+#
+# **1. The row order.**  Workers take CONTIGUOUS ranges of the record's shard
+# snapshot, so the union of their processed rows, sorted by global input-row
+# index, is exactly the sequential read order.  ``--limit`` is a cut at a global
+# input-row INDEX, not a per-worker budget: the worker owning that index stops
+# there and the ones after it read nothing.
+#
+# **2. Whole games.**  ``qzphase``/``qzsegment`` assemble a game before any of its
+# rows can be emitted, and ⚑ MEASURED on ``run02_snap_20260829``: a game DOES span
+# input shards there (``w00-00000`` ends on game 1176 and ``w00-00001`` opens on
+# it), so a partition that assumed otherwise would split a game and hand each
+# fragment's last row the terminal treatment.  The handoff is a strict mirror:
+# worker ``k`` skips its range's leading run of rows carrying the raw
+# ``(worker_id, game_id)`` of the last row of the shard BEFORE its range, and
+# worker ``k-1`` overflows past its own range end while rows carry that SAME key,
+# read off that SAME row.  Both sides name one row, so the skip and the overflow
+# cannot disagree.
+#
+# ⚑ THE OVERFLOW KEY IS THE RAW ONE, NOT "THE LAST ROW I PROCESSED".  Those differ
+# whenever a shard's final rows were DROPPED (a null ``result``, a tolerated
+# envelope miss) and belong to a different game from the last surviving row: the
+# skipping side reads the raw key regardless of drops, so an overflow anchored on
+# the last SURVIVING row would stop one game early and the rows in between would
+# be processed by nobody.  See ``test_a_dropped_tail_at_the_boundary_is_not_lost``.
+#
+# ⚑ AND IT IS CONDITIONAL: a worker overflows only when its range-end key DIFFERS
+# from its carry-in key.  When they are equal the whole range lies inside one
+# game's run, the worker skipped every row of it, and the game belongs to an
+# earlier worker that is already overflowing through it -- overflowing again would
+# process those rows twice.
+#
+# **3. The order-dependent floats.**  Seven of the summary's readings are running
+# IEEE sums (``temp_recovered_sum``, ``floor_recovered_sum``,
+# ``min_legal_prob_sum``, ``qz_regret_sum``, ``qz_instability_sum``,
+# ``qz_weight_sum``, ``value_delta_sum``), and float addition is not associative,
+# so per-worker subtotals added together are NOT the sequential sum.  Every worker
+# therefore BANKS the individual float64 values in the order it produced them, and
+# the coordinator replays them through :class:`DeriveStats`'s own ``note_*``
+# methods in worker order.  ⚑ REPLAYED THROUGH THE METHODS rather than merged
+# field by field: ``note_value_delta`` also maintains a count and a nonzero
+# tally, ``note_game`` maintains a first-game sentinel, and a hand-written merge
+# of the fields they touch is a second implementation free to drift.  The same
+# rule is why the game stream is banked and replayed rather than merged.
+#
+# **4. The shard permutation.**  ``_flush`` draws ``rng.permutation(n)`` from ONE
+# generator seeded with ``--seed``, once per output shard, in shard order.  The
+# coordinator can only replay that chain once every surviving row count is known,
+# so it does: workers spill, the coordinator prefix-sums their survivor counts,
+# draws the whole chain in shard order (the partial last shard included), and
+# hands each repack task its own already-drawn order.
+#
+# Runtime guards, all unconditional
+# ---------------------------------
+#
+# Byte-identity is a claim about a run that SUCCEEDED, so every way this could
+# quietly emit a different corpus is checked before the summary is written:
+#
+# * the inventory's claimed rows against the rows actually streamed, for every
+#   shard a worker read to EOF -- the partition's global indices are computed from
+#   the claimed counts, so a claim that is wrong puts ``--limit`` in the wrong
+#   place;
+# * ``sum(rows_read)`` against the rows the partition said would be read;
+# * ``sum(rows_written)`` against the rows the output shards actually hold;
+# * the workers' closed game keys, pairwise disjoint -- a game assembled by two
+#   workers is the split-game failure the handoff exists to prevent, and it is the
+#   one failure that produces a plausible-looking corpus;
+# * the MERGED envelope-miss count against ``--max-envelope-misses``.  ⚑ A worker
+#   can only ever see its own share, so the per-worker refusal that mirrors the
+#   sequential one is fail-OPEN across the partition; this is the check that is
+#   not.
+#: Where the workers' intermediate rows live, under ``--out``.  Removed on
+#: success; left behind on failure, where ``refuse_populated_dir`` then makes the
+#: next attempt at the same ``--out`` refuse rather than half-overwrite.
+SPILL_DIR_NAME = "spill"
+
+#: Surviving rows per spill file.  ⚑ NOT tied to ``--rows-per-shard``: it bounds
+#: a worker's RESIDENT sample list (a row's planes are 175*8*8 float32, ~45 KB
+#: unpacked), and the output shard boundaries are decided by the coordinator
+#: from the survivor counts regardless of how the rows were chunked on the way
+#: there.  A repack that needs rows spanning two spill files simply reads two.
+SPILL_CHUNK_ROWS = 4096
+
+_SPILL_RUN_ID = "derive_parallel_spill"
+
+
+# ── the ordered streams ──────────────────────────────────────────────────────
+#
+# ⚑ NAME -> the DeriveStats method that consumes one value.  The coordinator
+# replays each stream through its own method, so these are the only places the
+# summary's order-dependent readings are ever computed -- here and in the
+# sequential path, which is the SAME code.
+
+_ORDERED_STREAMS: tuple[tuple[str, str], ...] = (
+    ("temp_recovered", "note_temp"),
+    ("floor_recovered", "note_floor"),
+    ("min_legal_prob", "note_min_legal_prob"),
+    ("qz_regret", "note_qz_regret"),
+    ("qz_instability", "note_qz_instability"),
+    ("qz_weight", "note_qz_weight"),
+    ("value_delta", "note_value_delta"),
+)
+
+#: Which ``DeriveStats`` fields each replayed stream OWNS.  A field listed here
+#: is produced entirely by the replay and must never also be summed off the
+#: partials; :data:`_MERGE_COVERAGE` is what stops the two lists drifting apart.
+_STREAM_OWNED_FIELDS: dict[str, tuple[str, ...]] = {
+    "temp_recovered": (
+        "temp_recovered_n", "temp_recovered_sum",
+        "temp_recovered_min", "temp_recovered_max",
+    ),
+    "floor_recovered": (
+        "floor_recovered_n", "floor_recovered_sum",
+        "floor_recovered_min", "floor_recovered_max",
+    ),
+    "min_legal_prob": (
+        "min_legal_prob_n", "min_legal_prob_sum",
+        "min_legal_prob_min", "min_legal_prob_max",
+    ),
+    "qz_regret": (
+        "qz_regret_n", "qz_regret_sum", "qz_regret_min", "qz_regret_max",
+    ),
+    "qz_instability": (
+        "qz_instability_n", "qz_instability_sum",
+        "qz_instability_min", "qz_instability_max",
+    ),
+    "qz_weight": (
+        "qz_weight_n", "qz_weight_sum", "qz_weight_min", "qz_weight_max",
+    ),
+    # ⚑ ``value_delta_rows_nonzero`` is in here, not in the summed fields:
+    # ``note_value_delta`` increments it, so summing it too would double it.
+    "value_delta": (
+        "value_delta_n", "value_delta_sum", "value_delta_min",
+        "value_delta_max", "value_delta_rows_nonzero",
+    ),
+}
+
+#: Produced by replaying the banked ``note_game`` calls, for the same reason.
+_GAME_OWNED_FIELDS: tuple[str, ...] = (
+    "qz_games", "qz_game_rows_min", "qz_game_rows_max", "qz_games_cut_by_limit",
+)
+
+#: Event counters: every one of them is a count of rows or games, so the
+#: partition's disjointness makes the sum exact.
+_SUM_FIELDS: tuple[str, ...] = (
+    "rows_read",
+    "rows_dropped_no_result",
+    "rows_dropped_envelope",
+    "nodes_floor_hits",
+    "support_checks",
+    "deep_tier_moves",
+    "base_tier_moves",
+    "repetition_planes_nonzero_rows",
+    "temp_recovery_skipped_saturated",
+    "floor_recovery_skipped_few_values",
+    "floor_recovery_skipped_ill_conditioned",
+    "policy_support_lost_to_float16",
+    "qz_single_row_games",
+    "qz_ply_gaps_nonunit",
+    "qz_games_with_dropped_tail",
+    "qz_rows_missing_played_move",
+    "qz_rows_missing_depths",
+    "qz_stop_terminal",
+    "qz_stop_boundary_self",
+    "qz_stop_boundary_ahead",
+    "qz_boundary_suppressed",
+    "qz_w_const_differs_from_map",
+    "qz_rows_differ_from_c_full",
+)
+
+#: Extrema over rows, which no ordering can move.
+_MAX_FIELDS: tuple[str, ...] = (
+    "history_slots_nonzero_max",
+    "policy_support_max",
+)
+
+#: ``{bucket: count}`` histograms, merged key by key.
+_DICT_SUM_FIELDS: tuple[str, ...] = (
+    "depth_histogram", "values_by_phase", "phases_per_row",
+)
+
+#: Assigned (not accumulated) per row, so every row writes the same value and a
+#: disagreement between workers is a real corpus fault rather than a merge one.
+_CONSTANT_FIELDS: tuple[str, ...] = ("x_planes", "policy_width")
+
+#: ``-1`` until the first row is measured, because ``0`` is a legal support --
+#: so a plain ``min`` would adopt an untouched worker's sentinel.
+_SENTINEL_MIN_FIELDS: tuple[str, ...] = ("policy_support_min",)
+
+#: Merged from the per-worker examples' GLOBAL row indices; see
+#: :func:`_merge_stats`.
+_ORDERED_EXAMPLE_FIELDS: tuple[str, ...] = ("envelope_miss_examples",)
+
+#: ⚑ COUNTED WHERE THE SHARDS ARE WRITTEN, which on this path is the repack and
+#: not the lanes: a lane spills surviving rows and writes no shard, so summing
+#: its ``rows_written`` would report 0 for every run.  The coordinator sets it
+#: from the shards that exist and cross-checks it against the survivor counts,
+#: which is a stronger statement than the sequential path's running total.
+_REPACK_OWNED_FIELDS: tuple[str, ...] = ("rows_written",)
+
+#: ⚑⚑ THE ANTI-DRIFT GATE, and the reason the six lists above are data instead
+#: of code.  ``tests/test_derive_parallel.py`` asserts this covers
+#: ``dataclasses.fields(DeriveStats)`` exactly, so a counter added to the
+#: sequential summary without a merge rule fails a test instead of silently
+#: reading 0 in every parallel run -- which is this repo's signature defect
+#: aimed squarely at the instrument that would have caught it.
+_MERGE_COVERAGE: frozenset[str] = frozenset(
+    _SUM_FIELDS
+    + _MAX_FIELDS
+    + _DICT_SUM_FIELDS
+    + _CONSTANT_FIELDS
+    + _SENTINEL_MIN_FIELDS
+    + _ORDERED_EXAMPLE_FIELDS
+    + _REPACK_OWNED_FIELDS
+    + _GAME_OWNED_FIELDS
+    + tuple(name for owned in _STREAM_OWNED_FIELDS.values() for name in owned),
+)
+
+
+class ParallelDeriveError(CorpusIntegrityError):
+    """A guard on the parallel path refused.  A ``CorpusIntegrityError``, so the
+    caller's existing handling of a refusal is unchanged."""
+
+
+# ── the banking stats ────────────────────────────────────────────────────────
+
+
+class _BankingStats(DeriveStats):
+    """``DeriveStats`` that also keeps every ordered value it was handed.
+
+    ⚑ A SUBCLASS, so the counters the summary reads are still maintained by the
+    sequential code.  The bank is a pure ADDITION alongside each ``note_*``; if
+    one of them ever stops being a running fold the parallel path keeps agreeing
+    with the sequential one by construction rather than by a second opinion.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.banked: dict[str, list[float]] = {
+            name: [] for name, _ in _ORDERED_STREAMS
+        }
+        #: ``(rows, cut_by_limit)`` per assembled game, in assembly order.
+        self.banked_games: list[tuple[int, bool]] = []
+        #: ``(global_row_index, text)`` for the first envelope misses this
+        #: worker saw.  The GLOBAL index is what lets the coordinator take the
+        #: first eight in the sequential order rather than the first eight of
+        #: whichever worker happened to finish first.
+        self.banked_envelope: list[tuple[int, str]] = []
+
+    def note_temp(self, value: float) -> None:
+        self.banked["temp_recovered"].append(value)
+        super().note_temp(value)
+
+    def note_floor(self, value: float) -> None:
+        self.banked["floor_recovered"].append(value)
+        super().note_floor(value)
+
+    def note_min_legal_prob(self, value: float) -> None:
+        self.banked["min_legal_prob"].append(value)
+        super().note_min_legal_prob(value)
+
+    def note_qz_regret(self, value: float) -> None:
+        self.banked["qz_regret"].append(value)
+        super().note_qz_regret(value)
+
+    def note_qz_instability(self, value: float) -> None:
+        self.banked["qz_instability"].append(value)
+        super().note_qz_instability(value)
+
+    def note_qz_weight(self, value: float) -> None:
+        self.banked["qz_weight"].append(value)
+        super().note_qz_weight(value)
+
+    def note_value_delta(self, value: float) -> None:
+        self.banked["value_delta"].append(value)
+        super().note_value_delta(value)
+
+    def note_game(self, rows: int, *, cut_by_limit: bool) -> None:
+        self.banked_games.append((int(rows), bool(cut_by_limit)))
+        super().note_game(rows, cut_by_limit=cut_by_limit)
+
+    def plain(self) -> DeriveStats:
+        """A picklable ``DeriveStats`` holding exactly this worker's counters."""
+        return DeriveStats(**{
+            spec.name: getattr(self, spec.name) for spec in fields(DeriveStats)
+        })
+
+
+# ── the partition ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ShardRange:
+    """One worker's contiguous slice of the record's shard snapshot."""
+
+    lo: int
+    hi: int
+
+    @property
+    def empty(self) -> bool:
+        return self.hi <= self.lo
+
+
+def shard_row_counts(record: CorpusRecord) -> tuple[int, ...]:
+    """Rows the corpus's INVENTORY claims for each shard, in snapshot order.
+
+    ⚑ CLAIMED, not measured: measuring would mean decompressing the whole corpus
+    before the first row is derived.  The claims decide where ``--limit`` falls,
+    so every shard a worker reads to EOF is checked against its claim while it
+    streams and the run is refused on a mismatch -- before any output shard is
+    finalised.  See :func:`_check_claimed_rows`.
+
+    ⚑ READ OFF THE RECORD, not re-read off the inventory: both of
+    ``read_corpus_record``'s branches already parse these numbers, and a second
+    reader here would be free to drift from the one the sequential path's
+    ``rows_claimed`` comes from.
+    """
+    counts = record.shard_rows
+    if len(counts) != len(record.shards):
+        raise ParallelDeriveError(
+            f"the corpus record carries {len(counts)} per-shard row claims for "
+            f"{len(record.shards)} shards. --workers partitions by claimed "
+            "rows and cuts --limit at a global row index, so a shard with no "
+            "claim cannot be placed; derive this corpus with --workers 1.",
+        )
+    negative = [
+        record.shards[index].name
+        for index, value in enumerate(counts) if int(value) < 0
+    ]
+    if negative:
+        raise ParallelDeriveError(
+            f"the corpus inventory claims a negative row count for {negative[:4]} "
+            f"({len(negative)} shard(s)); the partition cannot be placed.",
+        )
+    return tuple(int(value) for value in counts)
+
+
+def plan_ranges(
+    counts: Sequence[int], *, workers: int, limit: int,
+) -> tuple[list[ShardRange], int, int]:
+    """Split the shards ``--limit`` will actually reach into balanced ranges.
+
+    Returns the ranges, the number of shards in play, and the number of input
+    rows the run will read.
+
+    ⚑ THE SHARDS PAST ``--limit`` ARE NOT PARTITIONED.  A 5.5M-row limit over a
+    10M-row corpus touches the first ~671 of 1,232 shards; splitting all 1,232
+    evenly would leave three of seven workers with nothing to do and cost most
+    of the speedup, while changing no output.  The ranges still cover a
+    contiguous prefix, so the global row indices are unchanged.
+    """
+    if workers < 1:
+        raise ValueError(f"--workers must be >= 1, got {workers}")
+    prefix = [0]
+    for count in counts:
+        prefix.append(prefix[-1] + int(count))
+    total = prefix[-1]
+    rows_to_read = min(limit, total) if limit else total
+    shards_in_play = len(counts)
+    if limit:
+        # The last shard holding a row below the limit; the ones after it are
+        # never opened by any worker, exactly as the sequential loop's `break`
+        # never opens them.
+        shards_in_play = 0
+        for index in range(len(counts)):
+            if prefix[index] < rows_to_read:
+                shards_in_play = index + 1
+    if shards_in_play == 0:
+        raise ParallelDeriveError(
+            "--limit leaves no corpus shard to read; the sequential path would "
+            "write nothing and refuse.",
+        )
+    lanes = min(workers, shards_in_play)
+    edges = [0]
+    for lane in range(1, lanes):
+        want = rows_to_read * lane / lanes
+        index = edges[-1] + 1
+        while index < shards_in_play and prefix[index] < want:
+            index += 1
+        # Every remaining lane keeps at least one shard, and every lane keeps
+        # the one it already has: an empty range would give a lane no range-end
+        # key, and the handoff is defined by one.
+        edges.append(max(
+            edges[-1] + 1, min(index, shards_in_play - (lanes - lane)),
+        ))
+    edges.append(shards_in_play)
+    ranges = [ShardRange(edges[i], edges[i + 1]) for i in range(lanes)]
+    if any(item.empty for item in ranges):
+        raise ParallelDeriveError(
+            f"the partition produced an empty range ({ranges}); this is a bug "
+            "in plan_ranges, not a corpus fault",
+        )
+    return ranges, shards_in_play, rows_to_read
+
+
+# ── the worker ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _WorkerTask:
+    index: int
+    shards: tuple[Path, ...]
+    prefix: tuple[int, ...]
+    span: ShardRange
+    options: DeriveOptions
+    corpus_sha: str
+    spill_dir: Path
+    shards_in_play: int
+
+
+@dataclass
+class _WorkerResult:
+    index: int
+    stats: DeriveStats
+    #: ``(rows, cut_by_limit)`` per game, in assembly order.
+    games: list[tuple[int, bool]]
+    #: ``(global_row_index, text)`` for this worker's first envelope misses.
+    envelope: list[tuple[int, str]]
+    #: The ``.npy`` this worker banked each ordered stream into.
+    stream_paths: dict[str, str]
+    #: One entry per spill file, in this worker's emission order.
+    chunk_rows: list[int]
+    #: ``{shard_index: rows}`` for every shard this worker read to EOF.
+    actual_rows: dict[int, int]
+    closed_keys: list[tuple[int, int]]
+    tt_carried: list[bool]
+    survivors: int
+
+
+def _raw_game_key(row: dict[str, Any]) -> tuple[int, int]:
+    """The row's ``(worker_id, game_id)`` READ OFF THE JSON, drops included.
+
+    ⚑ The handoff's key must not depend on whether a row survives derivation:
+    the skipping worker sees the raw row and the overflowing worker must apply
+    the identical predicate to the identical row.  ``GameGrouper._key_of``
+    answers the same question for rows that DID survive and raises a
+    scheme-specific refusal for ones that cannot; this one is deliberately the
+    plain read, and a row that cannot answer it reaches ``_key_of`` moments
+    later on the path that owns that message.
+    """
+    return (int(row["worker_id"]), int(row["game_id"]))
+
+
+def _last_key_of_shard(path: Path) -> tuple[int, int] | None:
+    """The raw game key of a shard's LAST row, or ``None`` for an empty shard."""
+    key: tuple[int, int] | None = None
+    for row in iter_corpus_rows(path):
+        key = _raw_game_key(row)
+    return key
+
+
+def _spill_path(spill_dir: Path, worker: int, chunk: int) -> Path:
+    return spill_dir / f"w{worker:03d}" / f"chunk_{chunk:06d}.zarr"
+
+
+def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
+    """Bank one run of surviving rows, and PROVE the banking is lossless.
+
+    ⚑⚑ THE ROUND TRIP IS CHECKED HERE, ON EVERY CHUNK, and it is the whole
+    correctness argument for the spill.  The repack rebuilds ``ReplaySample``\\ s
+    out of these files and hands them to the sequential writer, so anything the
+    columnar form cannot carry -- a field ``derive_row`` starts setting
+    tomorrow, an optional column the pruner drops -- would come back absent and
+    the output would differ from the sequential corpus in a way no other check
+    looks at.  Comparing ``samples_to_arrays`` BEFORE against
+    ``samples_to_arrays(arrays_to_samples(<read back off disk>))`` AFTER states
+    exactly the property the repack depends on, over the same reader and writer
+    the repack uses, and costs a few percent of a derivation that is dominated
+    by JSON parsing and position encoding.
+
+    ⚑ Read back off DISK rather than compared in memory: the serializer sits
+    between the two, and ``_verify_value_column_on_disk`` exists in the
+    sequential path for exactly that reason.
+    """
+    want = samples_to_arrays(samples)
+    save_local_shard_arrays(
+        path,
+        arrs=want,
+        meta=ShardMeta(
+            run_id=_SPILL_RUN_ID,
+            input_history_encoding=INPUT_HISTORY_ENCODING,
+            history_rep_fix=HISTORY_REP_FIX,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+            positions=len(samples),
+        ),
+    )
+    stored, _ = load_shard_arrays(path, lazy=False)
+    got = samples_to_arrays(arrays_to_samples(dict(stored)))
+    if set(got) != set(want):
+        raise ParallelDeriveError(
+            f"{path.name}: the spill round trip changed which columns the rows "
+            f"carry (lost {sorted(set(want) - set(got))}, gained "
+            f"{sorted(set(got) - set(want))}). The repacked shard would not be "
+            "the shard the sequential path writes.",
+        )
+    for key in sorted(want):
+        if not np.array_equal(np.asarray(got[key]), np.asarray(want[key])):
+            raise ParallelDeriveError(
+                f"{path.name}: column {key!r} did not survive the spill round "
+                "trip unchanged, so the repacked shard would differ from the "
+                "sequential one in that column.",
+            )
+
+
+def _run_worker(task: _WorkerTask) -> _WorkerResult:
+    """Derive one contiguous range of shards, plus its game handoff, to spill."""
+    options = task.options
+    limit = int(options.limit)
+    deriver = TargetDeriver(options)
+    bank = _BankingStats()
+    deriver.stats = bank
+    grouper = GameGrouper(deriver) if options.needs_game else None
+
+    span = task.span
+    carry_in: tuple[int, int] | None = None
+    if grouper is not None and span.lo > 0:
+        carry_in = _last_key_of_shard(task.shards[span.lo - 1])
+
+    spill_dir = task.spill_dir / f"w{task.index:03d}"
+    spill_dir.mkdir(parents=True, exist_ok=True)
+    buffered: list[ReplaySample] = []
+    chunk_rows: list[int] = []
+    survivors = 0
+    tt_carried: set[bool] = set()
+    actual_rows: dict[int, int] = {}
+    max_gidx: int = -1
+    skipping = carry_in is not None
+    # The raw key of the last row seen inside the worker's OWN range; the
+    # overflow predicate and the next worker's skip predicate both name it.
+    range_end_key: tuple[int, int] | None = None
+
+    def cut(rows: list[ReplaySample]) -> None:
+        _write_spill_chunk(
+            _spill_path(task.spill_dir, task.index, len(chunk_rows)), rows,
+        )
+        chunk_rows.append(len(rows))
+
+    def emit(batch: GameBatch | None) -> None:
+        nonlocal survivors
+        if batch is None or not batch.rows:
+            return
+        produced = apply_value_scheme(
+            batch.rows,
+            options=options,
+            stats=deriver.stats,
+            banked_tail_ply=batch.banked_tail_ply,
+        )
+        buffered.extend(produced)
+        survivors += len(produced)
+        while len(buffered) >= SPILL_CHUNK_ROWS:
+            cut(buffered[:SPILL_CHUNK_ROWS])
+            del buffered[:SPILL_CHUNK_ROWS]
+
+    stop = False
+    for shard_index in range(span.lo, task.shards_in_play):
+        overflow = shard_index >= span.hi
+        if overflow and (
+            grouper is None or range_end_key is None or range_end_key == carry_in
+        ):
+            # Nothing to carry: the ungrouped schemes assemble no game, or this
+            # worker's whole range lay inside the carried-in game -- which an
+            # EARLIER worker owns and is already overflowing through, so
+            # carrying it again would derive those rows twice.
+            break
+        base = task.prefix[shard_index]
+        seen = 0
+        complete = True
+        for row in iter_corpus_rows(task.shards[shard_index]):
+            gidx = base + seen
+            seen += 1
+            if limit and gidx >= limit:
+                complete = False
+                stop = True
+                break
+            if overflow:
+                if _raw_game_key(row) != range_end_key:
+                    complete = False
+                    stop = True
+                    break
+            else:
+                range_end_key = _raw_game_key(row)
+                if skipping:
+                    if range_end_key == carry_in:
+                        continue
+                    skipping = False
+            max_gidx = gidx
+            deriver.stats.rows_read += 1
+            tt_carried.add(_check_row_identity(row, task.corpus_sha))
+            try:
+                derived = deriver.derive_row(row)
+            except EnvelopeMiss as exc:
+                deriver.stats.rows_dropped_envelope += 1
+                if grouper is not None:
+                    grouper.note_dropped(row)
+                if len(bank.banked_envelope) < 8:
+                    bank.banked_envelope.append(
+                        (gidx, f"{_row_label(row)}: {exc}"),
+                    )
+                if deriver.stats.rows_dropped_envelope > options.max_envelope_misses:
+                    raise CorpusIntegrityError(
+                        f"{_row_label(row)} cannot answer "
+                        f"--scheme {options.scheme.canonical}: {exc}. That is "
+                        f"{deriver.stats.rows_dropped_envelope} envelope miss(es) "
+                        f"against --max-envelope-misses "
+                        f"{options.max_envelope_misses}. Dropping rows changes "
+                        "which positions the corpus contains, so the tolerance "
+                        "is stated rather than assumed.",
+                    ) from exc
+                continue
+            if derived is None:
+                if grouper is not None:
+                    grouper.note_dropped(row)
+                continue
+            if grouper is None:
+                emit(GameBatch(rows=[derived]))
+            else:
+                emit(grouper.add(row, derived))
+        if complete and not overflow:
+            actual_rows[shard_index] = seen
+        if stop:
+            break
+
+    if grouper is not None:
+        # ⚑ THE SAME PREDICATE THE SEQUENTIAL FLUSH USES, expressed in global
+        # indices: ``rows_read >= limit`` there is true exactly when the read
+        # consumed the row at index ``limit - 1``, and exactly one lane does.
+        # A lane that stopped because its range ended, or because the carried
+        # game did, flushes ``False`` -- the game ended, the budget did not.
+        emit(grouper.flush(cut_by_limit=bool(limit and max_gidx + 1 >= limit)))
+    if buffered:
+        cut(list(buffered))
+        buffered.clear()
+
+    stream_paths: dict[str, str] = {}
+    for name, _ in _ORDERED_STREAMS:
+        values = bank.banked[name]
+        if not values:
+            continue
+        path = spill_dir / f"stream_{name}.npy"
+        np.save(path, np.asarray(values, dtype=np.float64))
+        stream_paths[name] = str(path)
+
+    return _WorkerResult(
+        index=task.index,
+        stats=bank.plain(),
+        games=list(bank.banked_games),
+        envelope=list(bank.banked_envelope),
+        stream_paths=stream_paths,
+        chunk_rows=chunk_rows,
+        actual_rows=actual_rows,
+        closed_keys=sorted(grouper.closed_keys) if grouper is not None else [],
+        tt_carried=sorted(tt_carried),
+        survivors=survivors,
+    )
+
+
+# ── the repack ───────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _SpillSlice:
+    worker: int
+    chunk: int
+    lo: int
+    hi: int
+
+
+@dataclass(frozen=True)
+class _RepackTask:
+    index: int
+    slices: tuple[_SpillSlice, ...]
+    order: np.ndarray
+    options: DeriveOptions
+    corpus_sha: str
+    out_dir: Path
+    spill_dir: Path
+
+
+def _slice_arrays(arrs: dict[str, Any], lo: int, hi: int) -> dict[str, np.ndarray]:
+    """Rows ``[lo, hi)`` of a spill chunk's columns.
+
+    ⚑ The two encoding-identity markers (``input_history_encoding``,
+    ``history_rep_fix``) are 0-d scalars describing the whole file and are
+    carried through unsliced; every other column is per row.
+    """
+    out: dict[str, np.ndarray] = {}
+    for key, value in arrs.items():
+        array = np.asarray(value)
+        out[key] = array if array.ndim == 0 else array[lo:hi]
+    return out
+
+
+def _repack_shard(task: _RepackTask) -> dict[str, Any]:
+    """Rebuild one output shard's rows and write it through the sequential writer."""
+    samples: list[ReplaySample] = []
+    for part in task.slices:
+        arrs, _ = load_shard_arrays(
+            _spill_path(task.spill_dir, part.worker, part.chunk), lazy=False,
+        )
+        samples.extend(arrays_to_samples(_slice_arrays(dict(arrs), part.lo, part.hi)))
+    order = np.asarray(task.order)
+    if order.shape != (len(samples),):
+        raise ParallelDeriveError(
+            f"shard {task.index}: the replayed permutation is for "
+            f"{order.shape} rows and the repack assembled {len(samples)}; the "
+            "seed chain and the shard layout disagree.",
+        )
+    ordered = [samples[int(i)] for i in order]
+    return _flush_ordered(
+        task.out_dir, task.index, ordered, task.options, task.corpus_sha,
+    )
+
+
+def _plan_repack(
+    survivors: Sequence[int], chunk_rows: Sequence[Sequence[int]], rows_per_shard: int,
+) -> list[tuple[_SpillSlice, ...]]:
+    """Map each output shard onto the spill slices that hold its rows, in order."""
+    flat: list[tuple[int, int, int, int]] = []
+    cursor = 0
+    for worker, chunks in enumerate(chunk_rows):
+        for chunk, rows in enumerate(chunks):
+            flat.append((cursor, cursor + rows, worker, chunk))
+            cursor += rows
+    if cursor != sum(survivors):
+        raise ParallelDeriveError(
+            f"the spill files hold {cursor} rows and the workers reported "
+            f"{sum(survivors)} survivors; the two must be the same rows.",
+        )
+    plans: list[tuple[_SpillSlice, ...]] = []
+    start = 0
+    while start < cursor:
+        end = min(start + rows_per_shard, cursor)
+        parts: list[_SpillSlice] = []
+        for lo, hi, worker, chunk in flat:
+            if hi <= start or lo >= end:
+                continue
+            parts.append(_SpillSlice(
+                worker=worker, chunk=chunk,
+                lo=max(start, lo) - lo, hi=min(end, hi) - lo,
+            ))
+        plans.append(tuple(parts))
+        start = end
+    return plans
+
+
+# ── merging ──────────────────────────────────────────────────────────────────
+
+
+def _concat_streams(
+    results: Sequence[_WorkerResult],
+) -> dict[str, list[float]]:
+    """Each banked stream's values, IN LANE ORDER, read back off the spill.
+
+    ⚑ LANE ORDER IS READ ORDER.  Lane ``k``'s rows are all globally after lane
+    ``k-1``'s -- the ranges are contiguous and the handoff hands each boundary
+    game to exactly one of them -- so concatenating the lanes in index order
+    reproduces the sequence the sequential read produced these values in.  A
+    ``dict``-iteration or completion order here would be a different sequence
+    and therefore a different IEEE sum.
+
+    ⚑ A FUNCTION so the ordering is testable without deriving a corpus: a small
+    corpus's subtotals are usually bit-identical to its sequential sum anyway,
+    so an end-to-end test cannot be relied on to notice.
+    """
+    streams: dict[str, list[float]] = {}
+    for name, _ in _ORDERED_STREAMS:
+        values: list[float] = []
+        for item in sorted(results, key=lambda entry: entry.index):
+            path = item.stream_paths.get(name)
+            if path is not None:
+                values.extend(np.load(path).tolist())
+        if values:
+            streams[name] = values
+    return streams
+
+
+def _merge_stats(
+    results: Sequence[_WorkerResult], *, streams: dict[str, list[float]],
+) -> DeriveStats:
+    """One ``DeriveStats`` describing the whole run, in the sequential order.
+
+    ``streams`` holds each banked stream's values already concatenated in worker
+    order; they are replayed through the very methods the sequential path calls,
+    which is what makes the IEEE sums identical rather than merely close.
+    """
+    merged = DeriveStats()
+    for name in _SUM_FIELDS:
+        setattr(merged, name, sum(getattr(item.stats, name) for item in results))
+    for name in _MAX_FIELDS:
+        setattr(merged, name, max(
+            (getattr(item.stats, name) for item in results), default=0,
+        ))
+    for name in _DICT_SUM_FIELDS:
+        totals: dict[int, int] = {}
+        for item in results:
+            for key, value in getattr(item.stats, name).items():
+                totals[key] = totals.get(key, 0) + value
+        setattr(merged, name, totals)
+    for name in _CONSTANT_FIELDS:
+        seen = {getattr(item.stats, name) for item in results} - {0}
+        if len(seen) > 1:
+            raise ParallelDeriveError(
+                f"the workers disagree about {name}: {sorted(seen)}. Every row "
+                "of a corpus carries the same shape, so this is the corpus "
+                "changing shape mid-read, not a merge fault.",
+            )
+        setattr(merged, name, seen.pop() if seen else 0)
+    for name in _SENTINEL_MIN_FIELDS:
+        measured = [
+            getattr(item.stats, name) for item in results
+            if getattr(item.stats, name) >= 0
+        ]
+        setattr(merged, name, min(measured) if measured else -1)
+    merged.envelope_miss_examples = [
+        text for _, text in sorted(
+            (entry for item in results for entry in item.envelope),
+            key=lambda entry: entry[0],
+        )[:8]
+    ]
+    for rows, cut in [game for item in results for game in item.games]:
+        merged.note_game(rows, cut_by_limit=cut)
+    for name, method in _ORDERED_STREAMS:
+        note = getattr(merged, method)
+        for value in streams.get(name, ()):
+            note(value)
+    return merged
+
+
+def _check_claimed_rows(
+    results: Sequence[_WorkerResult], counts: Sequence[int], shards: Sequence[Path],
+) -> None:
+    """Every shard a worker read to EOF held the rows the inventory claimed."""
+    problems: list[str] = []
+    for item in results:
+        for shard_index, actual in sorted(item.actual_rows.items()):
+            claimed = int(counts[shard_index])
+            if actual != claimed:
+                problems.append(
+                    f"{shards[shard_index].name}: inventory claims {claimed}, "
+                    f"holds {actual}",
+                )
+    if problems:
+        raise ParallelDeriveError(
+            "the corpus inventory's row counts are not the rows on disk: "
+            + "; ".join(problems[:6])
+            + f" ({len(problems)} shard(s)). --workers places --limit at a "
+            "global row index computed from those claims, so the partition "
+            "would cut somewhere the sequential read does not. Nothing was "
+            "finalised; derive with --workers 1.",
+        )
+
+
+def _check_closed_keys(results: Sequence[_WorkerResult]) -> None:
+    """No game was assembled by two workers."""
+    owner: dict[tuple[int, int], int] = {}
+    clashes: list[str] = []
+    for item in results:
+        for key in item.closed_keys:
+            previous = owner.get(key)
+            if previous is not None:
+                clashes.append(f"worker {key[0]} game {key[1]} closed by "
+                               f"lanes {previous} and {item.index}")
+            else:
+                owner[key] = item.index
+    if clashes:
+        raise ParallelDeriveError(
+            "the same game was assembled by two lanes: "
+            + "; ".join(clashes[:6])
+            + f" ({len(clashes)} game(s)). Each fragment's last row would be "
+            "treated as terminal and handed the game's outcome, which is a "
+            "corpus that looks entirely normal and whose grouped-scheme targets "
+            "are wrong in the middle of every split game.",
+        )
+
+
+# ── the driver ───────────────────────────────────────────────────────────────
+
+
+def derive_parallel(
+    *,
+    corpus_dir: Path,
+    out_dir: Path,
+    options: DeriveOptions,
+    corpus_record: CorpusRecord | None = None,
+    workers: int,
+    context: str = "spawn",
+) -> dict[str, Any]:
+    """The ``--workers N > 1`` path.  Writes what ``--workers 1`` writes."""
+    if workers < 2:
+        raise ValueError(
+            f"derive_parallel is the N > 1 path and was asked for {workers}; "
+            "the sequential derivation is derive_corpus_targets.derive, and "
+            "routing --workers 1 through here would give the default path no "
+            "independent implementation to be compared against.",
+        )
+    started = datetime.now(timezone.utc).isoformat()
+    corpus.refuse_populated_dir(out_dir)
+    record = (
+        corpus_record if corpus_record is not None
+        else read_corpus_record(corpus_dir)
+    )
+    summary = record.facts
+    problems = scheme_vs_staircase_problems(
+        options.scheme, summary.get("staircase_parsed", []),
+    )
+    if problems:
+        raise CorpusIntegrityError(
+            f"--scheme {options.scheme.canonical} cannot be answered by this "
+            "corpus: " + "; ".join(problems),
+        )
+    value_problems = value_scheme_vs_staircase_problems(
+        options.value_scheme, summary.get("staircase_parsed", []),
+    )
+    if value_problems:
+        raise CorpusIntegrityError(
+            f"--value-scheme {options.value_scheme} cannot be answered by this "
+            "corpus: " + "; ".join(value_problems),
+        )
+    shards = list(record.shards)
+    if not shards:
+        raise CorpusIntegrityError(
+            f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards",
+        )
+    corpus_sha = str(summary.get("config_sha256", ""))
+
+    counts = shard_row_counts(record)
+    ranges, shards_in_play, rows_to_read = plan_ranges(
+        counts, workers=workers, limit=int(options.limit),
+    )
+    prefix = [0]
+    for count in counts:
+        prefix.append(prefix[-1] + int(count))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    spill_dir = out_dir / SPILL_DIR_NAME
+    spill_dir.mkdir(parents=True, exist_ok=True)
+    ctx = mp.get_context(context)
+
+    tasks = [
+        _WorkerTask(
+            index=index,
+            shards=tuple(shards),
+            prefix=tuple(prefix),
+            span=span,
+            options=options,
+            corpus_sha=corpus_sha,
+            spill_dir=spill_dir,
+            shards_in_play=shards_in_play,
+        )
+        for index, span in enumerate(ranges)
+    ]
+    # ⚑ ONE pool for BOTH phases.  Under the "spawn" start method every lane
+    # re-imports this module and its torch-backed dependencies, which is several
+    # seconds each; a second pool for the repack would pay that twice for no
+    # isolation the first pool does not already give.
+    with ctx.Pool(processes=len(tasks)) as pool:
+        results = pool.map(_run_worker, tasks, chunksize=1)
+        results.sort(key=lambda item: item.index)
+
+        _check_claimed_rows(results, counts, shards)
+        _check_closed_keys(results)
+        rows_read = sum(item.stats.rows_read for item in results)
+        if rows_read != rows_to_read:
+            raise ParallelDeriveError(
+                f"the lanes read {rows_read} corpus rows and the partition covers "
+                f"{rows_to_read}; the ranges do not tile the corpus prefix the "
+                "sequential read walks.",
+            )
+        misses = sum(item.stats.rows_dropped_envelope for item in results)
+        if misses > options.max_envelope_misses:
+            raise CorpusIntegrityError(
+                f"{misses} envelope miss(es) across the whole read against "
+                f"--max-envelope-misses {options.max_envelope_misses}. Each lane "
+                "sees only its own share, so this is the count the sequential run "
+                "would have refused on. Dropping rows changes which positions the "
+                "corpus contains, so the tolerance is stated rather than assumed.",
+            )
+
+        survivors = [item.survivors for item in results]
+        if sum(survivors) == 0:
+            raise CorpusIntegrityError(
+                "no rows survived; nothing was written. Read the drop counters "
+                "before rerunning: an empty corpus and a corpus every row of which "
+                "was dropped are different problems.",
+            )
+        plans = _plan_repack(
+            survivors, [item.chunk_rows for item in results], options.rows_per_shard,
+        )
+        # ⚑ ONE generator, drawn in shard order, exactly as `_flush` draws it.
+        rng = np.random.default_rng(options.seed)
+        sizes = [sum(part.hi - part.lo for part in plan) for plan in plans]
+        orders = [rng.permutation(size) for size in sizes]
+
+        repack = [
+            _RepackTask(
+                index=index,
+                slices=plan,
+                order=orders[index],
+                options=options,
+                corpus_sha=corpus_sha,
+                out_dir=out_dir,
+                spill_dir=spill_dir,
+            )
+            for index, plan in enumerate(plans)
+        ]
+        written = pool.map(_repack_shard, repack, chunksize=1)
+
+    stats = _merge_stats(results, streams=_concat_streams(results))
+    rows_written = sum(int(entry["rows"]) for entry in written)
+    if rows_written != sum(survivors):
+        raise ParallelDeriveError(
+            f"the shards hold {rows_written} rows and the lanes produced "
+            f"{sum(survivors)} surviving rows; the repack lost or duplicated "
+            "rows.",
+        )
+    stats.rows_written = rows_written
+
+    enforce_take_effect(options, stats)
+    out = build_summary(
+        options=options,
+        stats=stats,
+        corpus_dir=corpus_dir,
+        corpus_record=record,
+        shards=written,
+        started_utc=started,
+        tt_carried={flag for item in results for flag in item.tt_carried},
+    )
+    (out_dir / SUMMARY_NAME).write_text(
+        json.dumps(out, indent=2, sort_keys=True, default=_json_default),
+        encoding="utf-8",
+    )
+    _remove_spill(spill_dir)
+    return out
+
+
+def _remove_spill(spill_dir: Path) -> None:
+    """Drop the intermediate rows once the summary describes the shards.
+
+    ⚑ AFTER the summary, never before: the summary is written last on purpose
+    (a directory of shards with no summary is a run that DIED), and deleting the
+    only other copy of the rows before that stamp exists would turn a crash in
+    the last few lines into a full re-derivation.
+    """
+    shutil.rmtree(spill_dir, ignore_errors=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--corpus", type=Path, required=True)
@@ -4339,6 +5471,19 @@ def build_parser() -> argparse.ArgumentParser:
              "--qz-w-const, which would leave neither of C's mechanisms.",
     )
     parser.add_argument(
+        "--workers", type=int, default=1,
+        help="derive with this many processes over contiguous ranges of the "
+             "corpus's shard snapshot. 1 (default) is the sequential read, and "
+             "is not the parallel driver with one lane -- it is the same code "
+             "path it has always been. Above 1 the emitted CONTENT is "
+             "identical to it: the same shards holding the same rows in the "
+             "same permuted order, every array equal, the same summary but for "
+             "started_utc. Not the compressed bytes -- Blosc's threaded encoder "
+             "is non-deterministic and --workers 1 does not reproduce its own "
+             "either; see this file's --workers section. Intermediate rows are "
+             "spilled under <out>/spill and removed on success.",
+    )
+    parser.add_argument(
         "--max-envelope-misses", type=int, default=0,
         help="how many rows may be dropped for lacking the block the scheme "
              "asks for before the run refuses. 0 (default) refuses on the first.",
@@ -4403,28 +5548,48 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(
             f"--max-envelope-misses must be >= 0, got {args.max_envelope_misses!r}",
         )
+    workers = int(args.workers)
+    if workers < 1:
+        raise ValueError(
+            f"--workers must be >= 1, got {args.workers!r}",
+        )
     corpus_dir = Path(args.corpus)
     # ⚑ ONCE, and the SNAPSHOT of a live corpus's inventory is taken here.
     corpus_record = read_corpus_record(corpus_dir)
     slope, draw_width = cp_map_params(corpus_record.facts)
-    out = derive(
-        corpus_dir=corpus_dir,
-        out_dir=Path(args.out),
-        corpus_record=corpus_record,
-        options=DeriveOptions(
-            scheme=scheme,
-            temp=temp,
-            floor=floor,
-            cp_slope=slope,
-            cp_draw_width=draw_width,
-            limit=max(0, int(args.limit)),
-            seed=int(args.seed),
-            rows_per_shard=int(args.rows_per_shard),
-            max_envelope_misses=int(args.max_envelope_misses),
-            value_scheme=value_scheme,
-            qz=qz,
-        ),
+    options = DeriveOptions(
+        scheme=scheme,
+        temp=temp,
+        floor=floor,
+        cp_slope=slope,
+        cp_draw_width=draw_width,
+        limit=max(0, int(args.limit)),
+        seed=int(args.seed),
+        rows_per_shard=int(args.rows_per_shard),
+        max_envelope_misses=int(args.max_envelope_misses),
+        value_scheme=value_scheme,
+        qz=qz,
     )
+    if workers > 1:
+        # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers
+        # 1` runs `derive` -- the code this tool has always run, statement for
+        # statement -- and the byte-identity claim is worth exactly as much as
+        # the independence of the two sides, so the default path is not "the
+        # parallel driver with one lane".
+        out = derive_parallel(
+            corpus_dir=corpus_dir,
+            out_dir=Path(args.out),
+            corpus_record=corpus_record,
+            options=options,
+            workers=workers,
+        )
+    else:
+        out = derive(
+            corpus_dir=corpus_dir,
+            out_dir=Path(args.out),
+            corpus_record=corpus_record,
+            options=options,
+        )
     print(format_summary(out))
     return 0
 
