@@ -1161,6 +1161,13 @@ def scheme_vs_staircase_problems(
     # production staircase (full width 9, deepest 11) that refuses `10` and `11`
     # instead of quietly resolving them to the deepest rung at or below, which
     # would be a requested depth silently replaced by another one.
+    # ⚑ ON PRESENCE (`is not None`), NOT on `value_reads_the_scheme`, and that
+    # is deliberate: a REFUSAL validates what was ASKED FOR, exactly as the qz
+    # knobs and --spill-chunk-rows do. It cannot fire spuriously in the identity
+    # cell -- there `value_depth == scheme.depth`, which the base-depth check
+    # above already bounds by `full_width_depth` -- so the two rules never
+    # disagree here, and keying it on the identity rule would only make a bad
+    # request survive whenever it happened to equal the scheme's own depth.
     if scheme.value_depth is not None and int(scheme.value_depth) > full_width_depth:
         problems.append(
             f"--value-depth {scheme.value_depth} exceeds the corpus envelope: "
@@ -4496,11 +4503,20 @@ def build_summary(
                 "the corpus row's exact game result, already stored from that "
                 "row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
             ),
+            # ⚑ ON ``value_reads_the_scheme``, NOT ON ``value_depth is None`` --
+            # the SAME rule the stamp and the read use. Keyed on the flag's mere
+            # presence, this sentence told the identity cell's reader that the
+            # column was read "at depth exactly 9 ... NOT at the scheme's own
+            # depth" while ``value_source`` on the very same summary correctly
+            # said it was native: the two-predicate drift that produced the
+            # false launch refusal, surviving one more time in prose (delta
+            # review of PR #494). A description that contradicts the stamp beside
+            # it is worse than no description.
             "search_wdl": (
                 "cp_to_wdl_array of the "
                 + (
                     "SCHEME's best-move value"
-                    if options.scheme.value_depth is None else
+                    if options.scheme.value_reads_the_scheme else
                     "best-move value read at the full-width rung at depth "
                     f"exactly {options.scheme.value_depth} (--value-depth), NOT "
                     "at the scheme's own depth"

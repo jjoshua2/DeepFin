@@ -5128,6 +5128,61 @@ def test_the_manifest_says_which_read_q_came_from(tmp_path: Path) -> None:
     assert same["value_scheme"]["q_definition"] == native["value_scheme"]["q_definition"]
 
 
+def search_wdl_channel(summary: dict[str, Any]) -> str:
+    return str(summary["value_channels"]["search_wdl"])
+
+
+def test_the_summarys_search_wdl_description_agrees_with_its_own_stamp(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE SAME TWO-PREDICATE DRIFT, SURVIVING IN PROSE.
+
+    ``value_channels.search_wdl`` says in words what the column holds, and it
+    branched on whether ``--value-depth`` was PASSED rather than on whether it
+    MOVED the read.  So ``uniform-d9 --value-depth 9`` shipped a summary whose
+    description said the column was read "at depth exactly 9 ... NOT at the
+    scheme's own depth" while ``scheme.value_source`` on the very same summary
+    correctly said ``deepest_phase_covering`` -- a document contradicting itself
+    one field apart, which is worse than no description (delta review of #494).
+
+    ⚑ THE ASSERTION IS AGREEMENT WITH THE STAMP, not a string match against a
+    literal.  The stamp is what the trainer's value identity is keyed on, so
+    tying the prose to it is the property that actually has to hold; pinning
+    both to hard-coded text would pass just as well with the two disagreeing.
+
+    Mutation caught: branching on ``options.scheme.value_depth is None`` -- the
+    identity cell's description then claims the moved read and the agreement
+    assertion fails.
+    """
+    corpus_dir = write_corpus(tmp_path, [staircase_row()])
+    # ⚑ --value-scheme search: this description has a second branch for the
+    # baked arms, and the depth wording lives only on the V0 side.
+    cells = {
+        "native": run_derive(corpus_dir, tmp_path / "n", "uniform-d9"),
+        "identity": run_derive(
+            corpus_dir, tmp_path / "i", "uniform-d9", "--value-depth", "9",
+        ),
+        "moved": run_derive(
+            corpus_dir, tmp_path / "m", "uniform-d9", "--value-depth", "7",
+        ),
+    }
+    for name, summary in cells.items():
+        native_stamp = summary["scheme"]["value_source"] == derive.VALUE_SOURCE_DEEPEST
+        says_native = "SCHEME's best-move value" in search_wdl_channel(summary)
+        assert says_native == native_stamp, (
+            f"{name}: value_source={summary['scheme']['value_source']!r} but the "
+            f"search_wdl description says native={says_native}"
+        )
+
+    # And the identity cell's prose is literally the unflagged run's prose.
+    assert search_wdl_channel(cells["identity"]) == search_wdl_channel(cells["native"])
+    # ... while a moved read names the rung it was actually read at.
+    moved_text = search_wdl_channel(cells["moved"])
+    assert "depth exactly 7" in moved_text
+    assert "NOT at the scheme's own depth" in moved_text
+    assert search_wdl_channel(cells["native"]) != moved_text
+
+
 def test_the_value_source_and_the_value_read_agree_on_the_identity_cell() -> None:
     """⚑ ONE PREDICATE, TWO READERS -- asserted directly so they cannot drift.
 
