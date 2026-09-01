@@ -71524,3 +71524,18 @@ Queued: `ext_vs_base_arenas.sh` (gated on valueround.done) — repeat-ext vs
 base and fresh-ext vs base, 200 games each. Decides whether 2nd views buy
 strength when fresh data is exhausted — the regime that matters once
 generation is the bottleneck. The run05 fresh-first recipe is unchanged.
+
+**2026-09-01 PARKED CANDIDATE LANE — contempt, two routes (Josh + discussion;
+no prereg, no launch).** (1) Search-time WDL contempt, lc0 v0.31-style: rescale
+the wdl head's W/D/L mass in MCTS backup by a tunable contempt before backup —
+no retraining, arena-testable as a knob on the existing champion; motivated by
+the Cheese tail (losses are single-collapse games; draw-heavy play squanders
+exploit margin against weaker opponents). (2) Trained conditioning, KataGo-
+style: repurpose the legacy TURN PLANE (one absolute-color plane confirmed in
+the lc0_root_legacy_meta layout; game-theoretically spurious vs a color-blind
+SF) as an explicit style/contempt input at the next input-format revision —
+policy-level asymmetry by construction (e.g., aggressive-as-white set at
+inference). Related decisions parked with it: turn-plane randomization rider
+(p=0.5 vs Josh's p=0.25 preference) goes in the 20M-confirmation prereg;
+domain-flag (lc0-vs-own corpus) is the competing use for the same plane.
+Neither route launches without its own prereg + yardstick.
