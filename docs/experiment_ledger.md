@@ -72506,3 +72506,35 @@ not close most of it. Block summary: C0 differs / C1 differs (rig nondeterminist
 void, Josh's call) / C2 differs (floor); anchors −636.4 and −619.4. GPU idle after 22:15Z; nothing
 starts on it without a prereg (repaired-champion arm after the repair PR; fresh run06 5.5M after
 schema 2 + generation).
+
+**2026-09-01 — PR #498 (legacy repair) OPEN, head `1f2599487`, stacked on #497; PR #497 fix
+round landed at `35a3e774d`; and a NEW FACT: the generator's labels are CARRIED-TT, and cold-TT
+relabels flip 55% of top-1s on repeat rows.** #498 real slice (run03 w03 shards 100–102, 25,055
+rows, 134 games): repaired 97.146%, relabeled 2.854% (715), quarantined 0; second audit-only slice
+(w04+w05, 50,126 rows): quarantined 0, relabeled 2.32%; segment-scope flag 1.64% (= calibration's
+1.59%). Take-effect: deriver `history_slots_nonzero_max == 8` on 200/200; 200/200 rows bit-identical
+(175,8,8) vs a live board from the resampled book stack + played moves; 388 relabeled rows overlap
+the calibration bank and match its history-aware cold-TT labels per move 388/388. Mutants 5/5.
+Bench: reconstruct 1,583 rows/s/core (validation included), relabel 0.131 s/row (7.7 rows/s/core);
+inventory 41.07M rows over run02_snap+run03+run04+run05 (54.4M with the full run02); projection
+48 core-h (window scope) / 35 (segment) for 41M, 63 / 46 for 54.4M ≈ 3.5–4 h wall on 24 cores;
+usable corrected rows ≈ 41.0M / 54.3M. Deviations (14, in the PR body) — the material ones:
+games never span shards (writer rotates on game boundaries) so parallelism is per worker; dedup-
+served ply-0 games (2.2–2.7%) are bridged from the resampled start by a UNIQUE ≤3-ply path (the
+earlier "unbridged" class); `--relabel-scope window|segment`.
+⚑ THE TT FACT (deviation 6, then measured here): old-vs-new top-1 differs on 53.85% of relabeled
+rows, while cold history-blind vs cold history-aware differs on only 58/388 = 15%. The generator
+runs `ucinewgame` once per GAME and carries the TT across plies (`tt_carried_across_phases: true`
+on every row), so an original label is a d9 search on a TT warmed by every previous ply of the
+game; the relabel is cold. Determinism check (`tt_carry_check.py`, 24 games / 4,118 rows, ordered
+replay with one `ucinewgame` per game, bare FEN, MultiPV=all): original top-1 reproduced **96.4%**
+(100% for ply < 40, 95.3% for ply ≥ 40 — the generator's 2 s search cap is the likely residual),
+per-move cp reproduced 93.0%. ⇒ carried-TT labels are real, mostly reproducible, and materially
+different from cold ones on the repetition-prone rows the repair touches. A cold relabel would put
+2.85% of rows on a different effective search depth than their neighbours — exactly the fortress/
+shuffle rows the project targets. Decision instrument running: `tt_warmup_check.py` — for 240
+flagged rows, agreement of (i) cold, (ii) 1-ply warm-up, (iii) 3-ply warm-up with (iv) the FULL
+game-prefix replay + history-aware final search (= schema-2 semantics with the generator's carried
+TT). Rule: adopt the cheapest variant whose top-1 agreement with (iv) is ≥ the replay's own
+reproducibility floor (96%); otherwise #498 relabels by full-prefix replay (cost ≈ the original
+generation cost of the flagged games, ~400 core-h for 54M). This is a #498 merge gate.
