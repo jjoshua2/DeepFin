@@ -72099,3 +72099,36 @@ at gpu-mem-fraction 0.15).
    so this screen is admissible as a screen, never as a verdict.
 Confounds: none new — the block runs alone on the GPU after the chain;
 the CPU screens take ~4 of 32 cores from generation for ~2 h.
+
+**2026-09-01 — HISTORY-MISMATCH PROBE VERDICT: MATERIAL — the pre-committed
+rule FIRED. STOP before the 100M corpus format freezes.** Instrument
+`scratchpad/t80_ruler/stage5_history_probe.py`, banked
+`history_probe_v1.json` + per-row `*.rows.jsonl` (4000 T80-bank rows, 3962
+joined on slot-0 planes; 3999 carry non-zero stored history). Same position,
+two encodings — stored x (true 8-frame history, what PLAY feeds) vs FEN-only
+(what the corpus TRAINS on) — game-cluster bootstrap 2000×:
+| net | top-1 flips | ΔT80 top-1 (hist−fen) | ΔBT4 top-1 | Δd9 regret cp (hist−fen) | entropy hist/fen |
+|---|---|---|---|---|---|
+| `champ_ext` (0.0005, 19,360) | **46.5%** | −6.2 pp [−7.7, −4.9] | −7.0 pp [−8.5, −5.4] | **+20.2 [+15.4, +25.3]** | 2.37 / 1.83 |
+| `champ_base` (0.0005, 9,680) | 40.5% | −5.3 pp [−6.5, −4.1] | −5.8 pp [−7.2, −4.4] | +15.9 [+11.8, +20.3] | 2.55 / 2.06 |
+| `prod_g1586` (control, trained on real history) | 21.2% | **+1.5 pp** [+0.4, +2.5] | +2.1 pp [+0.9, +3.1] | −2.5 [−5.1, +0.1] | 0.87 / 0.88 |
+Reading: a net trained on zero history slots rewrites its top move on ~half
+of positions when the slots are filled, and gets WORSE on every ruler by a
+large margin (+20 cp regret ≈ the whole d7→d9 depth effect); the production
+control, which saw real history, uses it and improves. Both bars of the
+prereg (flips ≥ 5%; Δregret ≥ +5 cp, CI excluding 0) are exceeded ~4× and
+~3×. ⇒ every ladder arena to date was played in the champion's
+out-of-distribution regime (internally consistent, absolute Elo
+understated), the anchor arenas will understate the champion relative to
+production (which plays in-distribution) — read them with that bias named —
+and the RL handoff would start from a net confused by its own inputs.
+Side-fact worth its own line: on this bank production's FEN-only d9 top-1
+regret is **36.7 cp vs the champion's 64.9** — the corpus net is far behind
+the production net on raw policy; the anchor arena prices that in Elo.
+Consequences (Josh's directive #5, pre-committed): the 100M corpus format is
+NOT frozen; the 20M confirmation does not start on zero-history rows; the
+minimum generator/deriver change that banks history is specced in the next
+entry and goes through review before generation resumes on it. Generators
+run03/04/05 keep producing legacy-format rows until Josh decides
+(pause-and-patch vs keep-and-mix); the 54.0M banked rows are usable only as
+a history-zeroed mix, which is a hypothesis to test, not a plan.
