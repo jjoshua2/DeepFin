@@ -71886,3 +71886,35 @@ the re-pin inert for those five. Ops rider: valueround2's GPU legs now
 pause ≤45 min on a `gpu_hold` marker — a deploy window for a pending
 optimizer-throughput PR (foreach batching, bitwise-identity-gated, own
 prereg at merge); the hold self-expires so the chain cannot wedge.
+
+**2026-09-01 — ⚑⚑ PREMISE CORRECTION (caught by the independent PR #494
+reviewer, then verified in-tree): a `uniform-d<D>` scheme reads the VALUE
+off the SAME `apply_scheme` read as the policy** — `q_wdl =
+wdl_of(values.effective_cp[values.best_index])` (derive_corpus_targets.py
+:2507). `VALUE_SOURCE_DEEPEST` ("deepest_phase_covering") names which
+banked PHASE may supply a move's value inside that read, not a separate
+deepest-depth read. ⇒ the parked-arm entry's claim above ("Round 3 moved
+only the POLICY teacher's depth … pins value to d9") is WRONG: **rounds 3
+and 3c stage-1 compare d7-EVERYTHING vs d9-EVERYTHING** (policy and value
+moved together). Their verdicts stand as compound-depth results; nothing
+has yet isolated either axis. Consequences, executed same session:
+- **valueround2 arm f re-preregged: `f_vd7` → `f_vmix`.** As preregged,
+  `--value-depth 7` in the d7 lane was the documented IDENTITY — a
+  duplicate of 3c stage-1's corpus and a wasted train. New pre-committed
+  rule: d7 lane ⇒ `--value-depth 9` (d7 policy + d9 value — Josh's
+  originally requested cell); d9 lane ⇒ `--value-depth 7` (d9 policy +
+  d7 value). Value scheme stays default all-q; vs V0 the only moved axis
+  is the value read depth. Judgment rules unchanged. Gate marker renamed
+  `.vdmix_ready` (set only after VWT is re-pinned onto merged #494).
+- **PR #494 semantics reworked cap→EXACT before merge**: value read at
+  exactly the named full-width rung (deepening now possible — required
+  for the d7-lane cell); identity control becomes D == scheme depth ⇒
+  byte-identical; take-effect gate tightens to realized-depth EQUALITY;
+  D without a banked full-width rung refuses at startup; moved-rows
+  counter made honest (counts only rows whose realized value/provenance
+  differs). Review state at rework: Claude fork APPROVE on `bd5cbf37f`
+  (parallel take-effect proven five ways), Grok clean pass on the scoped
+  parallel/merge questions, Codex 2×P2 (launcher value-identity must
+  stamp value depth — a gate that today cannot fail on a mixed-depth
+  shard pair — and moved-rows overcount) → all folded into the rework;
+  merge waits on the new head's CI + delta re-review.
