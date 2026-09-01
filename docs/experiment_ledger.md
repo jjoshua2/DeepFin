@@ -71568,3 +71568,14 @@ sampled per game and applied in backup yields genuinely d-conditional visit
 targets as a byproduct (rows labeled with their d, plane scalar-filled to
 match). Modern SF has no Contempt option; lc0-with-WDL-contempt as a
 conditional teacher is possible but costs real compute — not planned.
+
+**2026-09-01 second refinement (Josh): the d-conditional TRAINING signal is
+Z, not the visit target.** At ~100 sims the visit distribution is prior plus
+one shallow value re-rank — it cannot encode long-horizon consequences of
+draw-averse play. The carrier is outcomes: games played under d-backup produce
+shifted W/D/L, and Z feeds that back over GENERATIONS of the RL loop (which is
+also why the value round's Z-propagation machinery — clean segments — is a
+prerequisite for this lane, not an unrelated thread). Play-time backup
+contempt remains real at our depth because the net's own WDL head sees
+drawishness (unlike the |cp|-only SF map). Trained conditioning: parked to the
+RL era, Z-carried, multi-generation.
