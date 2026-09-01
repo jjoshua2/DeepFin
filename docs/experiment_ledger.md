@@ -72743,3 +72743,29 @@ Found by the #498 Fable review (`24b3998fe`), verified on real run03 rows. The C
 - **Book reverse-join audit (`book_audit.py`): not re-run** — its identical-encoding class never decided a row (ambiguous 0, all paths unique), so an unfixed tensor comparison could not have changed a classification.
 - **Calibration (`calib.py`) and the warm-TT audit: no board encoding** — SF labels only.
 - #497's 435/435 equivalence gate and #498's 200/200 bit-identical claims were measured under the FIXED regime (autouse fixture) — correct for the regime production uses; the defect is that the CLIs did not enter it. Fix rounds in flight on both.
+
+### 2026-09-02 01:40Z — DEPTH SCREEN COMPLETE THROUGH d15 (prereg 2026-09-01 "free d1–d9 curve + d11/d13/d15 screen"): saturates at d12–d14; the pre-committed "live lever on the NEXT corpus" clause fires — as a PARKED prereg, no arm now. Round 3 vs Round 3c side-by-side.
+
+`depth_curve.py --bank merged_t80_bt4_d9.jsonl --deep depth_screen/sf_d1*.slice*.jsonl depth_screen15/sf_d15.slice*.jsonl --boot 2000` (4,000 rows, 4,000 unique keys, game-cluster CIs; bank `depth_screen15/depth_curve_d15.out`):
+| depth | T80 top-1 agree | 95% CI | BT4 top-1 agree | top-1 moved vs d9 | s/pos |
+|---|---|---|---|---|---|
+| 9 | 0.5490 | [0.5311, 0.5660] | 0.5315 | — | 0.19 |
+| 10 | 0.5815 | [0.5625, 0.6003] | 0.5363 | 36.1% | (staircase) |
+| 11 | 0.5877 | [0.5686, 0.6053] | 0.5467 | 41.1% | (staircase) |
+| 12 | 0.6008 | [0.5841, 0.6176] | 0.5425 | 42.9% | (staircase) |
+| 13 | 0.6040 | [0.5873, 0.6216] | 0.5475 | 43.7% | 2.7 |
+| 14 | **0.6097** | [0.5915, 0.6281] | **0.5496** | 43.4% | (staircase) |
+| 15 | 0.6049 | [0.5864, 0.6230] | 0.5391 | 44.3% | 6.6 |
+BT4-vs-T80 bar 0.6805 (banked). Increments d10..d15 = +3.3 / +0.6 / +1.3 / +0.3 / +0.6 / −0.5 pp: **saturated from d12** (d12–d15 all inside one CI; d14 is the nominal max, d15 is not above d13). Deep SF at every depth ≤ 15 agrees with T80 LESS than BT4 does (0.605 vs 0.6805) — the deep-SF ruler is not the deep-net ruler, as the τ screen already showed.
+- **Pre-committed reading (prereg text): d13 − d9 = +5.5 pp, CIs disjoint ⇒ "depth is a live lever worth a preregged training arm on the NEXT corpus".** The clause fires. What it does NOT say: which depth, at what cost, in which τ lane — and a mapping screen has inverted against training twice (τ: sharp end; depth: Round 3 vs 3c). So the arm is PARKED with launch conditions, not queued: after arm B (history repair) reads out on the corrected corpus; matched rows and recipe vs a d9 control on the SAME corrected corpus; τ = champion 0.0005. Cost shapes the candidate: d10 captures +3.3 of the +5.5 pp at roughly 2× d9's label cost, d13 the rest at 14× (a 5.5M-row d13 derivation ≈ 4,100 core-h). Candidate for that prereg: **d10-everything vs d9-everything** first (cheap, most of the gain); a d13 arm only if d10 wins. No d11+ training arm is launched by this entry; the depth decision rule is unchanged.
+- **The two depth TRAINING experiments, side-by-side** (both compound-depth: uniform-d<D> moves policy AND value depth together):
+| | Round 3 (prereg d4db2556a) | Round 3c stage 1 |
+|---|---|---|
+| lane / τ | τ = 0.02 (round-1 champion lane) | τ = 0.0005 (base champion lane) |
+| arms | uniform-d7 vs uniform-d9 (d8 killed mid-train) | `d7_qtemp_0.0005` vs `qtemp_0.0005` |
+| data | same run02 snapshot, 5.5M rows, 9,680 steps, seed 0 | same snapshot, matched 9,680 steps / seed / τ |
+| h2h arena (200 games, sims 100, training shape) | **+1.7 Elo [−37.9, +41.4]** — tie | **−65.0 Elo [−113.7, −18.7]** — d7 KILLED |
+| stage-5 BT4 paired | d7 BETTER: ΔKL −0.0052 [−0.0097, −0.0007], ΔE[regret] −45.5 cp [−64.1, −26.8] | not the decider (stage-2 skip fired at −65 ≤ −40) |
+| verdict | d7 ≥ d9 ⇒ "d11+ dead as a spend" (lane-internal) | d9 > d7 decisively; champion stays d9-everything |
+The sign reverses between τ lanes; the Round-3 "d11+ DEAD" line was a τ.02-lane statement and is superseded for the champion lane by 3c, where deeper won. Neither experiment tested d11+ in training. ⇒ Depth is live on the mapping ruler (this screen), live in the champion lane's training evidence (3c, d7→d9), and untested above d9 — exactly the state in which a preregged arm is warranted and a launch is not (prove strength on arm B first).
+- Ruler note for the Z-residual screen: d13 and d15 top-1 agreement with T80 differ by 0.1 pp and both move ~44% of d9's top-1s — d15 truth is not materially "deeper" than d13 on this bank; the Z analysis reports d9/d11/d13/d15 agreement per its prereg.
