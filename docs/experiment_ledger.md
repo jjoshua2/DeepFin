@@ -71854,3 +71854,16 @@ ARENA lands, running on CPU beside 3c stage-2's GPU train; GPU legs gate on
 round3c.done. **New GPU order: round-3b (phase-1 train ALREADY RUNNING on
 the freed GPU) → round-3c (staged, τ0.0005) → valueround2 → confirmation
 round (10M d7/d9 pair).**
+
+**2026-09-01 — ROUND 3b CANCELLED ~10 min into phase 1 (Josh: "I don't
+understand how 3b helps us either. We already tested that").** Correct: the
+amendment predates the round-3 verdict. With d7-only ≥ d9-only at τ.02
+already measured, the matched half-curriculum at τ.02 answers a question in
+a lane 85 Elo below champion, and round-3c runs the d7-then-d9 design at
+τ0.0005 with existing controls at both stages. `train_d7to9.fail` written
+(the kill outran the script's own marker), which per 3c's preregged gate
+releases it: **GPU order is now 3c stage 1 → 3c stage 2 → valueround2.**
+3c's d7 τ0.0005 derivation is mid-flight; stage-1 train starts when it
+lands (~minutes). Net effect of tonight's four cancellations (d8, champ
+ranking, ext-vs-base, value-round-τ0.02, 3b): every remaining GPU hour is
+on the champion lane.
