@@ -15,14 +15,20 @@ proof that it actually closes it: not "the history is plausible", but
 bit for bit over the complete (175, 8, 8) tensor -- every history frame, every
 repetition plane, castling, side-to-move, rule-50, ep and every feature plane.
 
-⚑ THE RIGHT-HAND SIDE IS THE PLAY PATH, not the python encoder.  Live search
-encodes its root with ``encode_cboard(CBoard.from_board(board), ...)`` (see
-``chess_anti_engine/uci/root_parallel_gumbel.py`` and
-``selfplay/stockfish_turn.py``), whose repetition planes come from per-slot
-flags recorded in C.  The deriver calls ``encode_position``, whose repetition
-planes come from python-chess's own scan.  Those are two different
-implementations of the same claim, and pinning them here is what lets the
-deriver keep the cheaper call.
+⚑ THE RIGHT-HAND SIDE IS THE PLAY PATH, not the python encoder.  The UCI search
+encodes its root with exactly ``encode_cboard(CBoard.from_board(board), ...)``
+(``chess_anti_engine/uci/root_parallel_gumbel.py``, ``uci/search.py``), whose
+repetition planes come from per-slot flags recorded in C.  The deriver calls
+``encode_position``, whose repetition planes come from python-chess's own scan.
+Those are two different implementations of the same claim, and pinning them
+here is what lets the deriver keep the cheaper call.
+
+⚑ Live SELFPLAY rows are encoded from a THIRD construction -- a CBoard built
+once with ``from_board`` at the opening and advanced with ``push_index``
+(``selfplay/state.py``, ``selfplay/stockfish_turn.py``) -- so "the play path" is
+not one object.  ``test_the_reference_encoding_is_also_what_selfplay_rows_are
+_written_from`` measures that the pushed and the reconstructed constructions
+agree, which is what makes the reference above the right one.
 
 ⚑ THE NEGATIVE HALF IS NOT OPTIONAL.  ``test_the_schema_1_bare_fen_path_differs
 _from_live_on_every_position_with_history`` asserts the OLD behaviour still
