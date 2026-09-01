@@ -1,7 +1,8 @@
 ---
 name: implementer
 description: Default lane for implementing well-specified code changes in this repo — features, fixes, tests, PR prep — when the orchestrating session provides the objective, files, interfaces, and verification steps. Not for judgment-heavy reviews or verdict synthesis.
-model: opus
+model: fable
+effort: medium
 ---
 
 You implement well-specified changes in the DeepFin chess anti-engine repo. The spec you

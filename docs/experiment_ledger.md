@@ -72177,3 +72177,48 @@ Fable's probe found a sign-of-zero bit difference (fixed, pinned) and the
 Ray-row omission (promoted, pinned); head `a9d42cc99`; Fable's final gate
 run pending. Pinned worktree for the controls: `chess-wt-optforeach` @
 `2a2c8b324` — NOTHING is committed there until the controls have run.
+
+**2026-09-01 — ⚑⚑ THE HISTORY MATERIALITY GATE FIRED AND SUPERSEDES THE
+`valueround2.done → 20M → 100M` ORDERING (Josh, operator decision, with an
+external agent's concurring read).** Actions taken this session, in order:
+(1) generators run03/04/05 SIGSTOPped at 16:37 (69 processes, pid list
+`scratchpad/.generators_paused_20260901`); they will be KILLED (orphan sweep)
+once schema 2 lands and generation restarts as run06+. The 54.0M banked
+rows are a LEGACY/CONTROL corpus — not mixed into corrected training by
+default. Measured on a run03 sample (49,494 rows / 256 games): **96.4% of
+legacy rows can rebuild a full 7-ply history by chaining banked
+`played_move`s** (97.9% ≥ 4 plies), so repair is possible later if a prereg
+wants it; not done now. (2) valueround2's background derivation driver
+KILLED (arms c_no_seg / f_vmix never derived); the running `b_qzphase` arm
+finishes its train + legs (natural boundary ~18:35), then
+`park_after_b.sh` kills the chain before `c_full` trains and writes
+`valueround2.parked` (never `.done` — the round is unfinished by decision;
+its spec stays in `valueround2.sh` for a schema-2 rerun of the useful arms).
+(3) the boundary block is re-gated on `.parked`
+(`boundary_block_parked.sh`); the anchor arenas are now read as OOD
+LOWER-BOUND-ish measurements of the old champion, not as the 20M projection
+gate — the meaningful bootstrap-vs-production anchor is the corrected-history
+5.5M net. (4) the depth screen continues (screen only). (5) the
+value/policy 20M and 100M runs are UNSCHEDULED until the schema-2 isolation
+arm reads out.
+**Schema-2 spec, strengthened (Josh's four requirements), for the
+`feat/corpus-history-banking` worktree:** (a) take-effect gate = EXACT
+tensor equivalence with live play — `deriver._encode(reconstructed) ==
+encode_cboard(CBoard.from_board(live board with its full stack), hist_mode
+2, v2_threats)` bit-for-bit over the whole (175,8,8) tensor, on positions
+from real games incl. game-start short histories, castling, en passant,
+irreversible moves and repetitions; (b) the banked window must carry ALL
+repetition-relevant state: root = the position after the last irreversible
+move at or before ply−7 (or the game's own start), so every position that
+could repeat with any of the 8 frames is inside the window — a bare
+7-move window would silently lose earlier occurrences; (c) the SF LABEL
+path is history-blind today (`position fen {fen}` at
+`gen_sf_rooted_corpus.py:979`): the fix sends `position fen {root} moves
+…` so Stockfish sees the reversible segment and its repetition/draw
+detection applies to the target too — labels are re-derived, not
+retained; (d) the equivalence test is the gate; the schema is extended if
+it fails, the test is never weakened. Details: `scratchpad/history_banking_spec.md`.
+**Then:** run06+ on schema 2 → first corrected 5.5M → isolation arm (same
+recipe as `qtemp_0.0005`, history the only change), judged by the 4k
+history-vs-FEN probe, normal-history arenas vs the old champion AND vs
+production, d9/T80 diagnostics. That arm gates any 20M/100M.
