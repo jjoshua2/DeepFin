@@ -72651,3 +72651,20 @@ of PR #497 (Codex P1 on the fix round: "add the required ledger plan before acti
 - Confounds: none data-side beyond the change itself; the legacy 54M is a separate control corpus.
 - Revert point: `data/salvage/pre_lc0_control_20260819` (production) is unaffected; the corpus lane
   has no live training to revert.
+
+**2026-09-01 — #497 DELTA REVIEW (Fable, reviewer ≠ author): APPROVE-WITH-CHANGES; the
+"search_key loses repetition chronology" claim (Grok MAJOR, Codex P2, operator concern) is a FALSE
+POSITIVE BY MEASUREMENT.** Real Stockfish, fresh engine per route, through the generator's own
+`history_for`/`position_command`: on the label-sensitive fixture `REPETITION_ROOT`, A′ (prior
+occurrence at distance 4) and B′ (same repetition multiset, a 5-ply never-seen detour ⇒ different
+distances, byte-equal signature) both score the repetition move **0**; C′ (same FEN/clock, position
+seen once) scores **349**. Semantics: `do_move` sets `repetition = ±i` with the sign carrying "that
+occurrence was itself a repeat"; `is_draw(ply)` needs `repetition < ply`, so a single pre-root
+occurrence is never a draw; `has_game_cycle` for `i ≥ ply` needs `stp->repetition != 0`. Count ≥ 2
+inside the rule-50 window is the whole of SF's history dependence, and the signature walks exactly
+that window over the full stack (book moves included). Signature unchanged. Other delta findings:
+the row shape changed without a `ROW_SCHEMA` bump (→ 3, round 2); the two FIFO structures drift but
+can only re-bank or re-search (documented, no change). Round 2 dispatched with Codex's adopted-
+resume tallies fix, a READER for the derived-shard `zero_history` stamp (refuse mixing at ingest),
+`input_key_verified` in `enforce_take_effect`, and two test-power minors. #497 stays unmerged until
+round 2 + reviews + CI on the final head; #498 rebases onto that head.
