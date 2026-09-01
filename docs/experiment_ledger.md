@@ -71539,3 +71539,18 @@ inference). Related decisions parked with it: turn-plane randomization rider
 (p=0.5 vs Josh's p=0.25 preference) goes in the 20M-confirmation prereg;
 domain-flag (lc0-vs-own corpus) is the competing use for the same plane.
 Neither route launches without its own prereg + yardstick.
+
+**2026-09-01 amendment to the parked contempt lane — LEADING DESIGN (Josh):
+the plane carries a CONTINUOUS draw-score d ∈ [0,1].** Key insight making it
+cheap: the WDL head stays UNCONDITIONAL (probabilities don't depend on what a
+draw is worth; backup q = W + (2d−1)·D gives value-level contempt free at
+search time), so ONLY the policy target is d-dependent — and the banked
+staircase (full MultiPV cp per depth) lets the deriver re-rank on W + d·D and
+rebuild the τ-softmax target under ANY d with zero new SF compute
+(`--draw-score` deriver knob). Train with the plane scalar-filled per row
+(rule50-plane precedent) matching the d its target was derived under ⇒ one net
+learns the whole contempt family, dialable at play. Subsumes the binary style
+flag. Remaining wall unchanged: serving-side C encoder writes `turn` into the
+plane — arenas for a conditioned net need the encoder change; offline ruler
+readouts can use a python-encode override earlier. Still parked: launches only
+with its own prereg.
