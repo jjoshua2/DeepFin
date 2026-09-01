@@ -71953,3 +71953,25 @@ moves policy AND value depth together) — the depth knob's effect reverses
 between τ lanes, the knob-reversal pattern again. The champion recipe
 stays d9-everything at τ0.0005; arm f_vmix (d9 policy + d7 value) is now
 the only remaining depth probe this round.
+
+**2026-09-01 — optimizer-foreach (PR #495): phase-0 PASS / phase-2 FAIL —
+MERGE AND DEPLOYMENT BLOCKED pending attribution.** Motivation banked: the
+running d7 train profiled at GPU 18%, main thread 63% inside aurora's
+per-param AdamW loop + ~10% zclip per-param norms. Phase 0 (CUDA kernel-
+level, run beside the arena): aurora elementwise chain BITWISE PASS across
+wd × step cells; zclip `_foreach_norm` FAIL (reduction diverges) → zclip
+commit reverted same session, PR trimmed to aurora-only (head `2a2c8b324`,
+CI green, fork review APPROVE, 8/8 mutants). Phases 1-2 ran inside the
+valueround2 gpu_hold window (pre = branch point, post = trimmed head,
+200 steps seed 0, both exit 0): **1295/2389 checkpoint leaves differ**,
+max|Δ| ~1e-3; the step-88 MID checkpoints already fully diverged and
+window-1 losses differ in the 6th decimal ⇒ source engages early.
+⚑ CONFOUND, mine: the pre train's first minutes overlapped the stage-1
+arena tail; the post train ran alone — run-to-run nondeterminism is not
+excluded (prior stack evidence against it: VWT's byte-identical 9,680-step
+same-code reproduction). Attribution in flight, GPU-cheap: phase-0b probe
+over the REAL param inventory (shapes/strides/buckets from the banked
+checkpoint_mid) + integration audit; a same-code control train is the
+fallback when the GPU frees. Everything banked in
+`scratchpad/optforeach_ab/` (both checkpoints, both MIDs, logs). The
+champion queue is unaffected — every live train runs pre-#495 code.
