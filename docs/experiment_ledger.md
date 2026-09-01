@@ -72327,3 +72327,27 @@ PREREG (repair PR = `scratchpad/legacy_repair_spec.md`, stacked on PR #497):
   is reported as a diagnostic only. Fresh run06 5.5M (`6c43a33e4`) becomes the replication point.
 - Confounds: relabeled rows carry a cold-TT label vs the generator's carried TT (1.6% of rows, same
   fixed depth). No other data-side change.
+
+**2026-09-01 — #496 MERGED (`8d9839520`, step-sync + pipeline instrumentation); #497 gets a
+DEDUP MERGE GATE.** #496: Codex 3 P2 + Grok 5 + Grok delta 2 + Fable review all closed, whole-repo
+lint 0, CI green on the final head, merged 21:41Z under the standing authorization. Its
+`batch_prefetch_wait_s` reads out on the first corrected-history training run (memory:
+trainer-is-data-starved). #497 (schema 2, PR body: 435/435 bit-identical tensors vs the live
+selfplay encoder, 4/4 mutants caught, 346 cp label error on one 3-fold demonstrated): NOT mergeable
+yet — operator gate (2026-09-01): the generator's dedup is keyed on `dedup_key(board)` = FEN minus
+the fullmove counter, and a later route to the same key is served the FIRST route's
+`SelectionValues` and banks NO row. Under schema 2 two routes can differ in (1) the 8-frame input
+tensor, (2) repetition state / SF values, (3) therefore the right move. Audit BEFORE merge
+(`scratchpad/legacy_history_calib/dedup_audit.py`, worker w03 full stream, every trajectory
+position reconstructed incl. the dedup-dropped ones): position-key hit rate; among hits the
+fraction with a different full encoded tensor / different repetition signature / different cold-TT
+d9 label (stratified pairs, banked `dedup_label_pairs.jsonl`); searches and rows per 1000
+positions under four key designs — current position key; position + SF repetition signature;
+model-input tensor key; SPLIT (SF value cache by the signature, row dedup by the tensor). Design
+question for the fix: the SF cache may be reused only when the histories are provably
+engine-equivalent (minimum safe signature = FEN5 + the transposition keys occurring ≥2 times in the
+reversible segment with their counts + the current position's count: SF's `is_draw`/`has_game_cycle`
+consult game history only through repetition counts, which the calibration above corroborates —
+0/1200 label changes without a repeat), and a row is deduped only against an IDENTICAL model input.
+Fixture tests required: two paths to one FEN/clock with different prior frames (row must be banked),
+and one with different repetition status (cached values must NOT be served).
