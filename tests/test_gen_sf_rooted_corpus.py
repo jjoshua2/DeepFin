@@ -149,6 +149,11 @@ class ScriptedEngine:
         self.wedge_on_go: int | None = None
         self.go_count = 0
         self.fen = chess.STARTING_FEN
+        #: The last ``position`` line, split into what it actually said.  Kept
+        #: so a test can assert the WINDOW rather than only the position it
+        #: happens to reconstruct to.
+        self.position_root = chess.STARTING_FEN
+        self.position_moves: tuple[str, ...] = ()
         self._pending: list[str] = []
 
     # -- driver-facing surface --------------------------------------------
@@ -159,7 +164,20 @@ class ScriptedEngine:
         elif cmd.startswith("setoption name MultiPV value "):
             self.multipv = int(cmd.split()[-1])
         elif cmd.startswith("position fen "):
-            self.fen = cmd[len("position fen "):]
+            # ⚑ THE FAKE REPLAYS THE WINDOW, exactly as the engine does.  It
+            # answers `go` from `self.fen`, so a `position fen <root> moves ...`
+            # line that named the wrong root or the wrong moves would produce
+            # PV lines for a DIFFERENT position and every scripted game would
+            # come apart -- rather than the fake quietly scoring the root while
+            # the generator believed it had asked about the leaf.
+            rest = cmd[len("position fen "):]
+            root, _, moves = rest.partition(" moves ")
+            board = chess.Board(root)
+            self.position_root = root
+            self.position_moves = tuple(moves.split())
+            for uci in self.position_moves:
+                board.push(chess.Move.from_uci(uci))
+            self.fen = board.fen()
         elif cmd.startswith("go "):
             self.go_count += 1
             if self.raise_on_go is not None and self.go_count == self.raise_on_go:
@@ -210,6 +228,10 @@ class ScriptedEngine:
     @property
     def go_lines(self) -> list[str]:
         return [c for c in self.commands if c.startswith("go ")]
+
+    @property
+    def position_lines(self) -> list[str]:
+        return [c for c in self.commands if c.startswith("position ")]
 
     @property
     def multipv_lines(self) -> list[str]:
@@ -648,7 +670,8 @@ def test_an_illegal_narrowing_move_is_refused_by_the_drivers_own_validator() -> 
     searcher = searcher_for(engine)
     with pytest.raises(ValueError, match="not legal in this position"):
         searcher.stream(
-            chess.STARTING_FEN, depth=5, multipv=1, searchmoves=["e7e5"],
+            corpus.history_for(chess.Board()),
+            depth=5, multipv=1, searchmoves=["e7e5"],
         )
 
 
@@ -1449,7 +1472,10 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
         "schema", "run", "fen", "dedup_key", "worker_id", "game_id", "ply",
         "stm", "piece_count", "game_phase", "played_move", "selection",
         "phases", "result", "result_pgn", "adjudication",
+        "history_root_fen", "history_uci", "history_plies",
+        "history_root_reason",
     }
+    assert row["schema"] == 2
     assert row["run"][corpus.KEY_TT_CARRIED] is True
     assert row["run"]["config_sha256"] == "0" * 64
     assert row["played_move"] in {m.uci() for m in chess.Board(row["fen"]).legal_moves}
@@ -1467,6 +1493,133 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     # search reported, banked so a re-analysis is a re-read.
     assert len(phase["per_depth"][0]["lines"][0]) == 4
     assert json.loads(json.dumps(row, sort_keys=True)) == row
+
+
+# ── the banked move window ───────────────────────────────────────────────────
+
+
+def test_every_banked_row_carries_the_window_the_engine_was_given(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE TAKE-EFFECT PROOF FOR THE WHOLE SCHEMA, on both halves at once.
+
+    The row's window and the engine's ``position`` line come from ONE object
+    (``PositionSearch.history``), so the assertion that the exact command the
+    window builds is in the transcript is a structural check that the label was
+    computed under the history the row banks -- not two spellings that agree
+    today.
+
+    A bare-FEN start (the blind-spot branch) is used on purpose: its early plies
+    are the short-history case, and its later ones must reach the full 7.
+    """
+    engine = ScriptedEngine()
+    outcome, _, _ = play(chess.STARTING_FEN, tmp_path, engine=engine)
+    assert len(outcome.rows) > 10
+
+    for row in outcome.rows:
+        label = f"ply {row['ply']}"
+        assert row["schema"] == 2, label
+        assert row["history_root_reason"] in {
+            corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
+        }, label
+        assert row["history_plies"] == len(row["history_uci"]), label
+        # A bare-FEN start has an empty stack, so the window can be no longer
+        # than the ply -- and past the 7 frames it must be at least that long.
+        assert row["history_plies"] <= row["ply"], label
+        if row["ply"] >= corpus.HISTORY_WINDOW_PLIES:
+            assert row["history_plies"] >= corpus.HISTORY_WINDOW_PLIES, label
+
+        replayed = chess.Board(row["history_root_fen"])
+        for uci in row["history_uci"]:
+            replayed.push(chess.Move.from_uci(uci))
+        assert replayed.fen() == row["fen"], label
+
+        command = corpus.position_command(corpus.RowHistory(
+            fen=row["fen"],
+            root_fen=row["history_root_fen"],
+            uci=tuple(row["history_uci"]),
+            reason=row["history_root_reason"],
+        ))
+        # One send per staircase rung, and no other position line for this row.
+        assert engine.commands.count(command) == 3, f"{label}: {command}"
+
+    # ⚑ THE OLD FORM IS GONE FROM THE WIRE, not merely joined by a new one.
+    with_moves = [c for c in engine.position_lines if " moves " in c]
+    assert len(with_moves) == len(engine.position_lines) - 3, (
+        "exactly one position (the game's own ply 0, whose window is empty) "
+        "may be sent without moves"
+    )
+    assert max(len(c.split(" moves ")[1].split()) for c in with_moves) >= 7
+
+
+#: A seed line in the production ``<start_fen> | <uci> ...`` grammar: eight
+#: REVERSIBLE king moves, so the board the game starts on already carries a
+#: halfmove clock of 8 and a real move stack.  A "last 7 moves" banker reports
+#: 7 here; the clock-aware one reports 8.
+SEEDED_HISTORY_LINE = (
+    "1n4k1/5ppp/8/8/8/8/5PPP/1N4K1 w - - 0 1 | g1f1 g8f8 f1e1 f8e8 e1d1 e8d8 "
+    "d1c1 d8c8"
+)
+
+
+def test_the_window_reaches_back_past_the_seven_frames_when_the_clock_allows(
+    tmp_path: Path,
+) -> None:
+    """The root is the last irreversible move, NOT ply-7.
+
+    Driven through the production seeding grammar, so the board the first row is
+    banked from arrives with real history on its stack -- the same shape a book
+    opening produces.  A 7-move banker would report a flat 7 for every row here.
+    """
+    engine = ScriptedEngine()
+    spec = worker_spec(tmp_path, max_plies=12)
+    outcome = corpus.play_game(
+        spec=spec,
+        searcher=searcher_for(engine, staircase=spec.staircase),
+        opening_cfg=fen_list_opening([SEEDED_HISTORY_LINE], tmp_path / "seeded.txt"),
+        game_id=0,
+        cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+        dedup=corpus.DedupStats(),
+        progress=corpus.WorkerProgress(),
+    )
+    windows = [int(row["history_plies"]) for row in outcome.rows]
+    assert windows, "no rows banked"
+    assert max(windows) > corpus.HISTORY_WINDOW_PLIES, windows
+    assert outcome.rows[0]["history_plies"] == 8, outcome.rows[0]
+    reasons = {row["history_root_reason"] for row in outcome.rows}
+    assert corpus.HISTORY_ROOT_GAME_START in reasons, reasons
+
+
+def test_the_worker_summary_counts_the_windows_it_banked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ THE SUMMARY FIELD'S TAKE-EFFECT PROOF, read off the ROWS.
+
+    The histogram is built where the rows are HANDED TO THE WRITER, not where
+    the windows are constructed, so it cannot report a window that was computed
+    and then dropped (a sub-``MIN_BANKED_PIECES`` ply and a dedup-served ply
+    both build one and bank nothing).  ``sum(histogram) == rows`` is what makes
+    that a reading rather than a claim.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(ScriptedEngine()),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(chess.STARTING_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,), max_plies=20))
+
+    histogram = result["history_plies_histogram"]
+    assert result["rows"] > 0
+    assert sum(histogram.values()) == result["rows"]
+    assert sum(result["history_root_reasons"].values()) == result["rows"]
+    assert max(int(k) for k in histogram) >= corpus.HISTORY_WINDOW_PLIES
+    assert set(result["history_root_reasons"]) <= {
+        corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
+    }
 
 
 # ── run assembly ─────────────────────────────────────────────────────────────
@@ -1527,9 +1680,9 @@ def test_a_mid_position_clear_voids_the_carried_tt_stamp(
     searcher = searcher_for(engine)
     real_stream = searcher.stream
 
-    def clearing_stream(fen: str, **kw: Any) -> list[str]:
+    def clearing_stream(history: corpus.RowHistory, **kw: Any) -> list[str]:
         searcher.new_game()
-        return real_stream(fen, **kw)
+        return real_stream(history, **kw)
 
     monkeypatch.setattr(searcher, "stream", clearing_stream)
     searcher.search_position(chess.Board())
@@ -1550,9 +1703,9 @@ def test_width_streamed_reports_the_stream_not_the_ask(
     searcher = searcher_for(engine, staircase="3:5")
     real_stream = searcher.stream
 
-    def dropping_stream(fen: str, **kw: Any) -> list[str]:
+    def dropping_stream(history: corpus.RowHistory, **kw: Any) -> list[str]:
         return [
-            line for line in real_stream(fen, **kw)
+            line for line in real_stream(history, **kw)
             if " multipv 3 " not in f" {line} "
         ]
 
@@ -1680,6 +1833,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "plies_total": 40,
             "terminations": {"natural": 2}, "adjudications": {"none": 2},
             "opening_sources": {"start": 2}, "adjudication_unavailable_plies": 1,
+            "history_plies_histogram": {"7": 4, "11": 1},
+            "history_root_reasons": {"irreversible": 4, "game_start": 1},
             "dedup": {
                 "positions_first_seen": 8, "dup_hits": 2,
                 "first_seen_by_phase": {"opening": 8, "middlegame": 0, "endgame": 0},
@@ -1713,6 +1868,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "games": 1, "rows": 3, "plies_total": 20,
             "terminations": {"syzygy": 1}, "adjudications": {"syzygy_wdl_2": 1},
             "opening_sources": {"start": 1}, "adjudication_unavailable_plies": 0,
+            "history_plies_histogram": {"7": 3},
+            "history_root_reasons": {"irreversible": 3},
             "dedup": {
                 "positions_first_seen": 4, "dup_hits": 0,
                 "first_seen_by_phase": {"opening": 4, "middlegame": 0, "endgame": 0},
@@ -1784,6 +1941,10 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     # Prior first, then this session's: the order they were banked in.
     assert [shard["path"] for shard in summary["shards"]] == ["a", "b-prior", "b"]
     assert summary["terminations"] == {"natural": 2, "syzygy": 1}
+    # The window histograms merge like every other per-worker counter; a
+    # merge rule that was never added would read {} here rather than 0s.
+    assert summary["history_plies_histogram"] == {"7": 7, "11": 1}
+    assert summary["history_root_reasons"] == {"irreversible": 7, "game_start": 1}
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
     assert summary["dedup"]["positions_visited"] == 14
@@ -2169,7 +2330,7 @@ def test_the_search_deadline_bounds_the_go_and_the_handshake_keeps_its_own() -> 
 
     # multipv=4 differs from the engine's current 1, so the stream opens with
     # a setoption/isready handshake before the go.
-    searcher.stream(chess.STARTING_FEN, depth=2, multipv=4)
+    searcher.stream(corpus.history_for(chess.Board()), depth=2, multipv=4)
 
     handshake, search_reads = remaining[0], remaining[1:]
     assert handshake > 100.0, "the readyok wait must run on read_timeout_s"
@@ -3492,6 +3653,75 @@ def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
 
 
 # ── the real engine ──────────────────────────────────────────────────────────
+
+
+#: ⚑ A REAL 3-FOLD, built by shuffling knights.  Black is a whole rook up, so a
+#: draw and a search are numbers nobody can confuse: ``c6b8`` from the position
+#: after these moves completes the THIRD occurrence of the root.
+REPETITION_ROOT = "1n4k1/8/8/8/8/8/r7/1N4K1 w - - 0 1"
+REPETITION_MOVES = "b1c3 b8c6 c3b1 c6b8 b1c3 b8c6 c3b1"
+REPETITION_MOVE = "c6b8"
+
+
+@pytest.mark.skipif(find_stockfish() is None, reason="no Stockfish binary")
+def test_real_stockfish_scores_the_repetition_as_a_draw_only_with_the_window() -> None:
+    """⚑⚑ THE LABEL-PATH TAKE-EFFECT PROOF, against the real engine.
+
+    Same position, same ``searchmoves``, same depth -- only the ``position``
+    line differs.  With the window the engine sees its own repetition and
+    returns the DRAW score; without it the same move is scored as the material
+    count, which for a rook-up side is hundreds of centipawns away.  That gap is
+    the label error the history-blind form was banking.
+
+    ⚑ The blind arm is built as a ``RowHistory`` with an EMPTY move list rather
+    than by calling a removed code path, so both arms run through exactly the
+    same sender and the only difference on the wire is the window.
+    """
+    board = chess.Board(REPETITION_ROOT)
+    for uci in REPETITION_MOVES.split():
+        board.push_uci(uci)
+    after = board.copy(stack=True)
+    after.push_uci(REPETITION_MOVE)
+    assert after.is_repetition(3), "the fixture no longer 3-folds"
+
+    binary = find_stockfish()
+    assert binary is not None
+    engine = StockfishUCI(binary, multipv=1, hash_mb=16, nice=15)
+    try:
+        searcher = corpus.StaircaseSearcher(
+            engine=engine,
+            staircase=corpus.parse_staircase("all:12"),
+            cp_slope=gen.NNUE_CP_SLOPE,
+            cp_draw_width=gen.NNUE_CP_DRAW_WIDTH,
+        )
+        aware = corpus.history_for(board)
+        blind = corpus.RowHistory(
+            fen=aware.fen, root_fen=aware.fen, uci=(),
+            reason=corpus.HISTORY_ROOT_GAME_START,
+        )
+        assert " moves " in corpus.position_command(aware)
+        assert " moves " not in corpus.position_command(blind)
+        scores = {
+            name: score_of_last_block(
+                searcher.stream(
+                    window, depth=12, multipv=1, searchmoves=[REPETITION_MOVE],
+                ),
+            )
+            for name, window in (("aware", aware), ("blind", blind))
+        }
+    finally:
+        engine.close()
+
+    assert scores["aware"] == 0, scores
+    assert scores["blind"] >= 200, scores
+
+
+def score_of_last_block(lines: Sequence[str]) -> int:
+    """The cp of the deepest ``multipv 1`` line in a stream, through the
+    generator's OWN parser rather than a second one."""
+    parse = corpus.parse_depth_blocks(lines, expected_lines=1)
+    block, _ = corpus.deepest_block_with_width(parse.blocks, want=1)
+    return round(block.lines[0].effective_cp)
 
 
 @pytest.mark.skipif(find_stockfish() is None, reason="no Stockfish binary")

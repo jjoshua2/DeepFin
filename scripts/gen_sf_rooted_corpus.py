@@ -35,6 +35,36 @@ so a consumer cannot mistake these for independent searches.  The table IS
 cleared (``ucinewgame``) at the start of every GAME, so one game's tree cannot
 leak into the next -- ``tt_cleared_per_game`` says so.
 
+THE MOVE WINDOW (ROW SCHEMA 2)
+------------------------------
+Every banked row carries the moves that led to it, and the SAME window is what
+the engine is set up with.  Both halves matter and they are one change:
+
+* THE INPUT.  A row that is only a FEN encodes with history slot 0 filled and
+  slots 1..7 -- planes 13..103 -- and every repetition plane ZERO.  That is not
+  a small difference: measured 2026-09-01 (``docs/experiment_ledger.md``, the
+  history-materiality probe) the champion flips **46.5% of its top-1 moves** and
+  loses **+20.2 cp** of regret when its history planes are filled the way play
+  fills them.  A corpus built on the zero-history distribution trains on inputs
+  production never sees.
+* THE LABEL.  ``position fen <fen>`` hands Stockfish a position with no past,
+  so its own repetition and fifty-move detection cannot fire and a drawn-by-
+  repetition line scores as if it were fresh.  ``position fen <root> moves ...``
+  gives it the reversible segment, which is exactly what those rules need.
+
+``history_for`` picks the window; :func:`position_command` is the ONLY place a
+``position`` line is spelled.  See both for the root definition and why it is
+7 plies plus the halfmove clock rather than just 7.
+
+⚑ DEDUP IS STILL KEYED ON THE POSITION, so the FIRST route to a position banks
+its history and every later route is served that row's values.  ``dedup_key``
+keeps the halfmove clock (so the fifty-move component of a label cannot be
+served across a boundary) but not the repetition count: two routes to one
+position that differ only in how many times it has already occurred share a
+label.  That is the pre-existing dedup bargain, stated rather than widened --
+the alternative is keying on the whole window, which would collapse the hit
+rate the corpus's throughput depends on.
+
 THE STREAM RULES, MEASURED AGAINST THE REAL BINARY (2026-08-27)
 ---------------------------------------------------------------
 * The FIRST non-bound emission per ``(depth, multipv-rank)`` wins, NEVER the
@@ -225,7 +255,36 @@ _LOG = logging.getLogger("gen_sf_rooted_corpus")
 #: phases per position, each with every depth block it emitted).  A consumer
 #: that reads a single-search corpus's keys off one of these rows gets a
 #: KeyError rather than a plausible wrong number.
-ROW_SCHEMA = 1
+#:
+#: 2 adds the MOVE HISTORY (``history_root_fen`` / ``history_uci`` /
+#: ``history_plies`` / ``history_root_reason``).  A schema-1 row is a bare FEN,
+#: so a consumer encoding it fills history slot 0 and leaves slots 1..7 and
+#: every repetition plane ZERO -- an input distribution live play never
+#: produces (ledger 2026-09-01: the champion flips 46.5% of its top-1 moves and
+#: loses +20.2 cp of regret when its history planes are filled the way play
+#: fills them).  Schema 2 banks the window that makes a row's encoded input and
+#: its Stockfish label both see what play sees; see :func:`history_for`.
+ROW_SCHEMA = 2
+
+#: How many PREVIOUS positions the encoder keeps (``CBOARD_HISTORY_MAX`` in
+#: ``chess_anti_engine/encoding/_cboard_impl.h``).  The 8 encoded frames are
+#: this many plus the position itself.  Read here rather than imported because
+#: it is a C compile-time constant; ``tests/test_corpus_history_banking.py``
+#: pins the two together.
+HISTORY_WINDOW_PLIES = 7
+
+#: ``history_root_reason``: the window reaches back to the position right after
+#: the last irreversible move (no earlier position can repeat with any frame in
+#: the window, and no earlier move can matter to the engine's own repetition or
+#: fifty-move detection)...
+HISTORY_ROOT_IRREVERSIBLE = "irreversible"
+
+#: ...or the game ran out of stack first, so the window is the whole game.  ⚑
+#: "The game" is the board the worker plays on, whose stack CARRIES the book
+#: moves the opening sampler pushed -- so for a book opening this root is the
+#: standard starting position, not the book exit.  For the blind-spot FEN-list
+#: branch it is that bare FEN.
+HISTORY_ROOT_GAME_START = "game_start"
 
 #: Summary schema, versioned separately: the summary gains aggregate keys far
 #: more often than a row changes shape, and bumping the row schema for a new
@@ -706,6 +765,11 @@ class PositionSearch:
     values: tuple[PvLine, ...]
     value_depth: int
     value_full_width: bool
+    #: The move window every rung of this staircase was searched on -- the SAME
+    #: object the bank site writes into the row.  ⚑ REQUIRED, with no default:
+    #: there is exactly one constructor and a defaulted ``None`` would let a
+    #: future one bank a row whose window nobody built.
+    history: RowHistory
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -902,6 +966,133 @@ class SearchStats:
         }
 
 
+# -- the banked move window ---------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RowHistory:
+    """The move window a row is banked with AND the one its label is searched on.
+
+    ONE object serves both, on purpose.  ``search_position`` builds it, hands it
+    to :func:`position_command` for the engine, and hands the same instance back
+    on the ``PositionSearch`` for the bank site to write out -- so the window in
+    the row is the window the engine saw, structurally, rather than by two call
+    sites agreeing.
+
+    ⚑ ``fen`` is the position's own FEN under python-chess's DEFAULT ep policy,
+    which is what the row's ``fen`` field has always been and what
+    ``_validated_searchmoves`` and ``dedup_key`` read.  ``root_fen`` is written
+    with ``en_passant="fen"`` instead: the default policy PRINTS AN EP SQUARE
+    ONLY WHEN AN EP CAPTURE IS LEGAL, so a root that sits right after a double
+    pawn push with no legal capture would come back from ``chess.Board(...)``
+    with ``ep_square = None`` -- and the encoder's legacy-meta ep plane (110)
+    reads ``ep_square`` RAW, without the legality test.  That is a plane that
+    differs from live play, so the root keeps the pseudo-legal square.
+    """
+
+    #: The position the row is about.
+    fen: str
+    #: The window's first position, ``en_passant="fen"``.
+    root_fen: str
+    #: Root -> row, oldest first.
+    uci: tuple[str, ...]
+    #: ``HISTORY_ROOT_IRREVERSIBLE`` or ``HISTORY_ROOT_GAME_START``.
+    reason: str
+
+    @property
+    def plies(self) -> int:
+        return len(self.uci)
+
+    def as_row_fields(self) -> dict[str, Any]:
+        """The schema-2 keys, spelled once."""
+        return {
+            "history_root_fen": self.root_fen,
+            "history_uci": list(self.uci),
+            "history_plies": self.plies,
+            "history_root_reason": self.reason,
+        }
+
+
+def history_for(board: chess.Board) -> RowHistory:
+    """The window ``board`` is banked and searched with.
+
+    ⚑ THE ROOT DEFINITION, and it is a repetition-state guarantee rather than a
+    convenience.  Let ``P`` be the position ``HISTORY_WINDOW_PLIES`` plies back
+    (or the game's first position if fewer exist).  The root is ``P`` walked
+    back ``halfmove_clock(P)`` further plies -- the first position at or before
+    ``P`` whose halfmove clock is 0, i.e. the one right after the last
+    irreversible move -- or the game's own start if the stack empties first.
+
+    Two things need that much and no more:
+
+    * **The 8 encoded frames.**  Every frame is ``P`` or later.  No position
+      after an irreversible move can equal any position before it (a pawn never
+      un-moves and a captured piece never comes back), so a frame's repetition
+      partners all lie at or after the start of that frame's own reversible
+      run -- and the earliest such run start over all 8 frames is exactly the
+      root.  Anything earlier cannot change a plane; anything later can lose one.
+    * **The engine's own detection for the row's position.**  Its repetition and
+      fifty-move state needs the moves since the last irreversible move, which
+      is a SUFFIX of the same window.
+
+    Bound: ``7 + 100`` plies by the fifty-move rule, so ~100 UCI tokens per row;
+    inside a zstd shard consecutive rows share almost all of that prefix.
+
+    The replay is CHECKED here, not asserted downstream: a row that cannot
+    reproduce its own FEN from its own window is never written.
+    """
+    fen = board.fen()
+    walk = board.copy(stack=True)
+    moves: list[str] = []
+    for _ in range(HISTORY_WINDOW_PLIES):
+        if not walk.move_stack:
+            break
+        moves.append(walk.pop().uci())
+    # ⚑ Read AFTER the first walk: it is P's clock, not the row position's.  An
+    # irreversible move inside the window makes the row's own clock small while
+    # P's is large, and it is P's run that has to be covered.
+    for _ in range(int(walk.halfmove_clock)):
+        if not walk.move_stack:
+            break
+        moves.append(walk.pop().uci())
+    moves.reverse()
+    reason = (
+        HISTORY_ROOT_GAME_START if not walk.move_stack
+        else HISTORY_ROOT_IRREVERSIBLE
+    )
+    history = RowHistory(
+        fen=fen,
+        root_fen=walk.fen(en_passant="fen"),
+        uci=tuple(moves),
+        reason=reason,
+    )
+    replayed = chess.Board(history.root_fen)
+    for uci in history.uci:
+        replayed.push(chess.Move.from_uci(uci))
+    if replayed.fen() != fen:
+        raise RuntimeError(
+            f"the banked window does not reproduce its own position: replaying "
+            f"{list(history.uci)} from {history.root_fen!r} gives "
+            f"{replayed.fen()!r}, not {fen!r}",
+        )
+    return history
+
+
+def position_command(history: RowHistory) -> str:
+    """The ONE ``position`` line every search in this file sends.
+
+    ⚑ ``position fen <root> moves ...`` rather than ``position fen <row>``:
+    with the moves the engine can see its own repetitions and count its own
+    fifty-move clock, so the LABEL is computed under the same history the row's
+    encoded input carries.  A bare-FEN send is history-blind, and a
+    ``position``-sender that spelled its own line would be blind again the next
+    time one is added -- hence one helper and no second speller.
+    """
+    if not history.uci:
+        return f"position fen {history.root_fen}"
+    return f"position fen {history.root_fen} moves {' '.join(history.uci)}"
+
+
 class StaircaseSearcher:
     """One engine, driven through the staircase, position after position.
 
@@ -962,21 +1153,30 @@ class StaircaseSearcher:
 
     def stream(
         self,
-        fen: str,
+        history: RowHistory,
         *,
         depth: int,
         multipv: int,
         searchmoves: Sequence[str] | None = None,
     ) -> list[str]:
-        """Drive one ``go depth`` and return every line before ``bestmove``."""
-        tokens = _validated_searchmoves(fen, searchmoves) if searchmoves else []
+        """Drive one ``go depth`` and return every line before ``bestmove``.
+
+        ⚑ Takes the WINDOW, not a FEN.  The engine is set up with
+        :func:`position_command`, so every rung of every staircase -- including
+        the cold-TT retry, which re-enters here through ``search_position`` --
+        sees the same move history the row banks.  ``searchmoves`` is still
+        validated against the TERMINAL position, which is what the moves name.
+        """
+        tokens = (
+            _validated_searchmoves(history.fen, searchmoves) if searchmoves else []
+        )
         with self.engine._lock, self.engine._protocol_section():
             if int(multipv) != self._engine_multipv:
                 self.engine._send(f"setoption name MultiPV value {int(multipv)}")
                 self.engine._send("isready")
                 self.engine._wait_for("readyok")
                 self._engine_multipv = int(multipv)
-            self.engine._send(f"position fen {fen}")
+            self.engine._send(position_command(history))
             go_cmd = f"go depth {int(depth)}"
             if tokens:
                 # ⚑ LAST PARAMETER ON THE LINE, always: per the UCI spec
@@ -1007,7 +1207,8 @@ class StaircaseSearcher:
 
     def search_position(self, board: chess.Board) -> PositionSearch:
         """Run every rung on ``board`` and pick the selection value vector."""
-        fen = board.fen()
+        history = history_for(board)
+        fen = history.fen
         legal = [move.uci() for move in board.legal_moves]
         if not legal:
             raise RuntimeError(
@@ -1026,7 +1227,7 @@ class StaircaseSearcher:
             # search.  Later phases always name theirs.
             restrict = None if index == 0 else tuple(candidates[:width])
             lines = self.stream(
-                fen, depth=phase.depth, multipv=width, searchmoves=restrict,
+                history, depth=phase.depth, multipv=width, searchmoves=restrict,
             )
             parse = parse_depth_blocks(lines, expected_lines=width)
             block, full = deepest_block_with_width(parse.blocks, want=width)
@@ -1063,6 +1264,7 @@ class StaircaseSearcher:
             values=value_block.lines,
             value_depth=value_block.depth,
             value_full_width=full_width,
+            history=history,
         )
 
     def q_of(self, values: SelectionValues) -> np.ndarray:
@@ -2212,6 +2414,18 @@ def play_game(
         played = values.moves[chosen]
 
         if search is not None and piece_count >= MIN_BANKED_PIECES:
+            # ⚑ THE ROW'S WINDOW IS THE SEARCH'S WINDOW, read off the object the
+            # engine was set up from rather than rebuilt here.  Two builders
+            # would be two chances for the banked input and the banked label to
+            # describe different histories, which is the failure this whole
+            # schema exists to remove.
+            history = search.history
+            if history.fen != board.fen():
+                raise RuntimeError(
+                    "the search's window is for a different position than the "
+                    f"one being banked ({history.fen!r} against "
+                    f"{board.fen()!r})",
+                )
             rows.append({
                 "schema": ROW_SCHEMA,
                 # Present ONLY on a row whose search re-ran on a fresh engine
@@ -2230,6 +2444,7 @@ def play_game(
                 "game_id": game_id,
                 "ply": ply,
                 "stm": "w" if board.turn == chess.WHITE else "b",
+                **history.as_row_fields(),
                 "piece_count": piece_count,
                 "game_phase": phase,
                 "played_move": played,
@@ -2343,6 +2558,8 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "terminations": {},
         "adjudications": {},
         "opening_sources": {},
+        "history_plies_histogram": {},
+        "history_root_reasons": {},
         "adjudication_unavailable_plies": 0,
         "dedup": {
             **DedupStats().summary(),
@@ -2439,6 +2656,14 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
     opening_sources: Counter[str] = Counter()
+    # ⚑ READ OFF THE ROWS, not off a counter kept beside `history_for`.  A
+    # histogram built where the window is CONSTRUCTED would report a window
+    # that was computed and then dropped (the sub-`MIN_BANKED_PIECES` and
+    # dedup-served plies both compute one and bank nothing) as if it were in
+    # the corpus.  These count rows handed to the writer, which is the same set
+    # every other per-session counter here is over.
+    history_plies: Counter[str] = Counter()
+    history_root_reasons: Counter[str] = Counter()
     plies: list[int] = []
     games = 0
     games_started = 0
@@ -2454,6 +2679,8 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             )
             for row in outcome.rows:
                 writer.write(row)
+                history_plies[str(int(row["history_plies"]))] += 1
+                history_root_reasons[str(row["history_root_reason"])] += 1
             # ⚑ AFTER the last row and BEFORE the next game: this is the
             # commit point of the whole resume protocol. A kill between the
             # last `write` and here leaves the shard unlisted, so the game is
@@ -2500,6 +2727,8 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "terminations": dict(terminations),
         "adjudications": dict(adjudications),
         "opening_sources": dict(opening_sources),
+        "history_plies_histogram": dict(history_plies),
+        "history_root_reasons": dict(history_root_reasons),
         "adjudication_unavailable_plies": unavailable,
         "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
@@ -2898,6 +3127,11 @@ def build_summary(
             int(r["adjudication_unavailable_plies"]) for r in results
         ),
         "opening_sources": merge_counters(results, "opening_sources"),
+        # ⚑ The window every banked row of this session actually carries.  A
+        # corpus whose rows are all `history_plies: 0` is a corpus the schema
+        # bump did not reach, and this is where that shows.
+        "history_plies_histogram": merge_counters(results, "history_plies_histogram"),
+        "history_root_reasons": merge_counters(results, "history_root_reasons"),
         # Prior first, then this session's, per worker: the order they were
         # banked in, which is also the order their rows must be re-warmed in.
         "shards": [
@@ -2922,6 +3156,15 @@ def build_summary(
     }
 
 
+def _histogram_range(histogram: dict[str, Any]) -> str:
+    """``min..max (n rows)`` for a ``{bucket: count}`` map, or ``"none"``."""
+    if not histogram:
+        return "none"
+    buckets = sorted(int(k) for k in histogram)
+    total = sum(int(v) for v in histogram.values())
+    return f"{buckets[0]}..{buckets[-1]} ({total} rows)"
+
+
 def format_summary(summary: dict[str, Any]) -> str:
     dedup = summary["dedup"]
     search = summary["search"]
@@ -2939,6 +3182,11 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"bytes/entry={dedup['dedup_cache_bytes_per_entry_est']:.0f}",
         f"anomalies={search['anomalies']}",
         f"terminations={summary['terminations']}",
+        # ⚑ `.get` for the same reason `run_finished` uses one below: this
+        # formats summaries loaded off disk, and a schema-1 corpus's summary
+        # has no window to report.
+        f"history roots={summary.get('history_root_reasons', {})} "
+        f"plies={_histogram_range(summary.get('history_plies_histogram', {}))}",
     ]
     if summary["resumed"]:
         # Said out loud, because every line above it is a CORPUS total on a
