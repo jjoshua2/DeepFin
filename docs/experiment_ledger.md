@@ -72605,3 +72605,20 @@ correction) stays PARKED per the operator decision — the cheap variants are wr
 costs ~400 core-h for ~0.2% of corpus top-1s; (2) the exact number comes from the running paired
 audit (two engines, identical prefix, target differs only); (3) any future R2 spec must replay the
 original search prefix, not just reconstruct the move stack.
+
+**2026-09-01 — PR #498 REVIEW ROUND 1 (head `1f2599487`) and ROUND-2 DISPATCH (R1-only).**
+Fable (reviewer ≠ author): APPROVE-WITH-CHANGES. Independent oracle on the 25,055-row smoke slice:
+25,055/25,055 window strings equal `history_for(live)`, 25,055/25,055 classes equal an independent
+repeat scan, 25,055/25,055 planes bit-identical; provenance in == out + 0; input shards untouched.
+Findings: F1 MAJOR gate power — `repeats_in` has no test where the repeat involves the segment
+ROOT; mutant `keys = []` survived 16/16 and would un-flag 108/715 real rows (now protects the
+tags); F2 the TT confound quantified on the 388 overlap rows: old (carried TT, blind) vs cold A
+(blind) **57.7%**, cold A vs cold B (pure history) **14.9%** — ≈80% TT regime / ≈20% history —
+resolved by the R1-only redesign; F3 stamp the book zip sha/size; F4 engine-sha gate must refuse
+an empty manifest sha; F5 run05's relative book path; F6 ep wording. Codex: P1 use the recorded
+shard inventory, not a glob (the paused runs have in-flight/abandoned last shards); P2 output
+names must end `.jsonl.zst`; P2 recompute and check `config_sha256`. Grok's pass pending.
+Round 2 dispatched to the same implementer with `scratchpad/legacy_repair_spec_v3.md`: rebase onto
+`35a3e774d`, `input_key`/`search_key` on repaired rows (deriver `input_key_verified == 200`),
+labels byte-for-byte (relabel default off, tested + mutated), tags `rep_in_window` /
+`rep_in_segment` / `cur_position_repeat_count` / `label_regime`, all findings above.
