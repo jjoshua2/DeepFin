@@ -276,6 +276,60 @@ def test_a_failed_shard_still_drops_out_without_shifting_the_rest(
     ]
 
 
+def test_a_refusing_executor_falls_back_to_serial_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ REVIEW F4. At interpreter teardown `submit` refuses new futures.
+
+    `_prefetch_loop` is a DAEMON thread, so it can still be inside a refresh
+    when `threading._shutdown` has run, after which
+    `ThreadPoolExecutor.submit` raises "cannot schedule new futures after
+    interpreter shutdown". Nothing is wrong with the run at that point — the
+    process is exiting — so the only visible effect of not catching it is a
+    spurious traceback on a clean shutdown.
+
+    Simulated by an executor that refuses, rather than by tearing down a real
+    interpreter: the branch under test is "submit raised RuntimeError", and
+    that is exactly what is injected.
+    """
+    shard_dir = _write_window(tmp_path)
+    buf = _buffer(shard_dir)
+    paths = list(buf._shard_paths)
+    monkeypatch.setattr(db, "_REFRESH_LOAD_WORKERS", 4)
+
+    expected = _on_worker_thread(
+        buf._load_refresh_chunks,
+        shard_paths=paths, refresh_shards=REFRESH_SHARDS,
+        rng=np.random.default_rng(9),
+    )
+
+    class _RefusingExecutor:
+        def __init__(self, *_a: Any, **_k: Any) -> None:
+            pass
+
+        def __enter__(self) -> _RefusingExecutor:
+            return self
+
+        def __exit__(self, *_a: Any) -> None:
+            return None
+
+        def submit(self, *_a: Any, **_k: Any) -> Any:
+            raise RuntimeError(
+                "cannot schedule new futures after interpreter shutdown",
+            )
+
+    monkeypatch.setattr(db, "ThreadPoolExecutor", _RefusingExecutor)
+    got = _on_worker_thread(
+        buf._load_refresh_chunks,
+        shard_paths=paths, refresh_shards=REFRESH_SHARDS,
+        rng=np.random.default_rng(9),
+    )
+
+    assert _ranks(got) == _ranks(expected), (
+        "the serial fallback must load the same shards in the same order"
+    )
+
+
 def test_the_sampled_batch_stream_is_unchanged_by_the_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
