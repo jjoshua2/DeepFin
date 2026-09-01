@@ -71975,3 +71975,34 @@ checkpoint_mid) + integration audit; a same-code control train is the
 fallback when the GPU frees. Everything banked in
 `scratchpad/optforeach_ab/` (both checkpoints, both MIDs, logs). The
 champion queue is unaffected — every live train runs pre-#495 code.
+
+**2026-09-01 — optforeach ATTRIBUTION (phase 0b + forensics): the foreach
+arithmetic is CLEAN on device; the phase-2 divergence points at the
+UNTOUCHED Aurora matrix path under contention.** Phase 0b (banked
+`scratchpad/optforeach_phase0b.py`, log in
+`scratchpad/optforeach_ab/attribution/`): loop-vs-foreach through the REAL
+`AuroraWithAuxAdam.step` on the real 431-tensor inventory from
+checkpoint_mid — 10/10 cells bitwise PASS (lazy-init, warmup-lr, zero/
+subnormal/huge/half-zero grads, staggered steps), `loop=0` everywhere so
+the pass is non-vacuous. Bonus end-to-end: 37 dead-head params traversed
+the changed path for all 200 REAL steps and are bitwise identical pre-vs-
+post. Divergence-by-group (banked): the AURORA matrix group (48 weights,
+code the PR does not touch, processed BEFORE the changed code each step)
+diverges FIRST-CLASS at ~30× the AdamW groups' deltas, with
+`aurora_polar_sv_ratio_square` off by 39% relative — ill-conditioned
+polar decomposition amplifying a tiny input difference. Stack facts: fp16
+polar GEMMs are CUDA-graph-captured at step 1 (cuBLAS algo frozen at
+capture), compile is `max-autotune` (kernel choice by BENCHMARKING → load-
+sensitive), SDPA backward unpinned, and NO determinism knob is set
+anywhere. ⚑ CORRECTION to the previous entry: the two phase-1 logs are
+byte-identical for 273 lines — there is no window-1 loss divergence; the
+earliest observable divergence is the step-88 MID checkpoint, and the
+refresh-line difference is print-throttling, not data. Verdict split
+remaining: contention nondeterminism vs a non-arithmetic allocator/timing
+route (the change makes opt.step 2.58× faster, 5.82s → 2.26s measured).
+PREREGGED CONTROLS (~10 min GPU each, at the arm-a→arm-b boundary):
+C1 post×2 alone (reproducibility floor); C0 pre-vs-post alone (the failed
+test minus the confound); C2 post×2 one-under-arena (confound repro).
+Reading table pre-committed in the attribution report. C1 diverging voids
+the phase-2 instrument (then re-run with --no-compile to separate
+autotune from SDPA/graph-capture). #495 stays unmerged/undeployed.
