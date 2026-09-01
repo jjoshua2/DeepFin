@@ -72132,3 +72132,48 @@ entry and goes through review before generation resumes on it. Generators
 run03/04/05 keep producing legacy-format rows until Josh decides
 (pause-and-patch vs keep-and-mix); the 54.0M banked rows are usable only as
 a history-zeroed mix, which is a hypothesis to test, not a plan.
+
+**2026-09-01 — PR #495 INDEPENDENT REVIEW (Fable, reviewer ≠ author):
+BLOCKED-ON-CONTROLS; code APPROVE-WITH-CHANGES. Three P2s owed on the
+branch AFTER the controls run on the pinned head `2a2c8b324`.** Findings:
+(P2-1) a retryable CUDA error inside `_adamw_update_foreach` fires AFTER
+the four in-place moment kernels (only `_foreach_sqrt` allocates), so the
+trainer's retry decays/accumulates the whole bucket's moments TWICE with the
+step recorded clean — the old loop had the same shape bounded to one
+tensor; in production the bucket is the 142-tensor group. Scratch
+simulation: exp_avg max|Δ| 0.23 on every tensor of the bucket. Owed: honest
+scope in the comment/PR body + a mid-chain failure test; moving the
+allocation before the mutation is a kernel change needing its own phase-0b.
+(P2-2) NO production observation says the batched path ran — the
+batchability predicates fall back to the loop silently; owed:
+`last_adamw_stats = {foreach_buckets, foreach_params, loop_params}` on the
+step row (harvested like `last_uw_stats`). (P2-3) the PR contradicts the
+2026-07-12 ledger verdict (:12479, "do not replace the fallback arithmetic
+with foreach kernels") without citing it — owed: explicit supersession
+(matched op order, 10/10 CUDA on the real inventory, torch 2.11.0+cu128).
+(P2-4) the divergence-by-group table ATTRIBUTES NOTHING: once any bit
+differs every group differs next step; Aurora's 8–31× larger |Δ| is its
+20× LR + spectral-normalised update; the 37 "identical dead-head params"
+are decay-only and trivially identical. ⇒ the phase-2 FAIL is UNEXPLAINED,
+not attributed. Non-arithmetic routes assessed and closed: data
+(`deterministic_refresh: true` on the rig; the shard-validation count
+difference is a wall-clock-throttled print), graph capture (before any
+foreach op), stream order, RNG, allocator (alignment-insensitive); open:
+contention and unknown. Provenance check (Fable's suspicion, my read): the
+worktree reflog moved to `2a2c8b324` at 11:09:46, pre.log closed 11:34,
+post.log closed 11:44 and mentions no `ForeachZClip` ⇒ the post run WAS on
+the trimmed head — but `summary.json` carries no code SHA, so the control
+runs log `git rev-parse HEAD` per worktree. Refined reading table
+(supersedes today's prereg where it differs): run C0 FIRST (the actual
+test); C1 confirms the floor; C2 last. C0 identical (C1 identical) ⇒ merge
++ deploy licensed; C0 diverges (C1 identical) ⇒ no merge, bisect with
+`aurora_cuda_graphs: false` / `--no-compile`; C1 diverges ⇒ instrument void,
+merge only if Josh lowers the bar to optimizer-boundary identity (phase 0b)
+explicitly; C2 AND C0 identical ⇒ the original FAIL is unexplained by both
+hypotheses — re-run the exact phase-1 pair before any merge. Tests on the
+head: 392 passed / 5 skipped, +13 vs base, 0 new failures; bare lint 0.
+PR #496 status: Codex 3× P2 fixed (re-review clean), Grok 5 findings fixed,
+Fable's probe found a sign-of-zero bit difference (fixed, pinned) and the
+Ray-row omission (promoted, pinned); head `a9d42cc99`; Fable's final gate
+run pending. Pinned worktree for the controls: `chess-wt-optforeach` @
+`2a2c8b324` — NOTHING is committed there until the controls have run.
