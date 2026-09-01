@@ -377,7 +377,7 @@ def _drive_one_step(
 
     step_opt_stats: dict[str, float] = {}
     trainer._run_optimizer_step(
-        step_sums={},
+        step_sums=trainer_mod._DeviceLossSums(),
         step_acc_sums={},
         step_opt_stats=step_opt_stats,
         buf=cast(Any, None),

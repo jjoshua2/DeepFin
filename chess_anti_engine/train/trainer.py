@@ -230,6 +230,97 @@ class _TrainBatchIterator:
         if callable(close):
             close()
 
+
+class _DeviceLossSums:
+    """``compute_loss`` scalars accumulated ON DEVICE, one host transfer per window.
+
+    ⚑ WHAT THIS REMOVES. ``Trainer._extract_loss_scalars`` materializes its
+    stack with ``.tolist()``, and on CUDA that is a HOST SYNC: the training
+    thread blocks on everything queued so far immediately after
+    ``loss.backward()`` -- before zclip, the matrix grad norm and the optimizer
+    step have even been ENQUEUED. It is paid once per microbatch. This class
+    holds the same detached scalars as 0-dim device tensors and adds them
+    there, so the window pays ONE transfer, taken in ``train_steps`` where the
+    window's metrics are assembled.
+
+    ⚑ BIT-EXACT, NOT "close enough". Every value is cast to float64 on arrival
+    -- lossless from bf16/fp32 -- and the additions happen in the SAME ORDER
+    the host loop used: microbatches accumulate into a per-step instance,
+    per-step instances ``merge`` into the window instance. IEEE-754 double
+    addition is deterministic, so the window totals equal the ones the
+    ``float(...)`` path produced, digit for digit.
+    ``tests/test_train_window_loss_sync.py`` asserts ``==``, not ``approx``.
+
+    ⚑ THE PER-STEP INSTANCE IS NOT AN OPTIMIZATION, IT IS THE RETRY SEMANTICS.
+    ``train_steps`` throws a step's ``step_sums`` away when a transient CUDA
+    error forces a retry, and commits it only on success. Accumulating
+    straight into the window sum would double-count every retried step.
+
+    ⚑ ``_extract_loss_scalars`` ITSELF IS DELIBERATELY UNTOUCHED. It sits
+    inside ``call_closure(Trainer._compute_metrics)`` -- the frozen holdout
+    ruler's source digest -- so editing its body moves ``v1:full_pass:...`` and
+    fires a best-model handover on every running trial. This class is the
+    TRAINING path's accumulator; the eval path still calls the original, whose
+    per-batch sync is not on the hot loop (``_compute_metrics`` runs once per
+    iteration, under ``torch.no_grad``).
+    """
+
+    __slots__ = ("_sums",)
+
+    def __init__(self) -> None:
+        self._sums: dict[str, torch.Tensor] = {}
+
+    def add_losses(
+        self,
+        losses: Mapping[str, torch.Tensor],
+        *,
+        total_override: torch.Tensor | None = None,
+        total_scale: float = 1.0,
+    ) -> None:
+        """One microbatch's scalars, with ``_extract_loss_scalars``' semantics.
+
+        Same key rename (``total`` -> ``loss``), same ``total_override`` /
+        ``total_scale`` treatment of the gradient-accumulation divisor -- the
+        DIVIDED loss is what gets materialized and the scale is applied after,
+        so the reported number is the undivided total either way.
+        """
+        for key, tensor in losses.items():
+            src = total_override if (key == "total" and total_override is not None) else tensor
+            value = src.detach().to(torch.float64)
+            name = key
+            if key == "total":
+                name = "loss"
+                value = value * float(total_scale)
+            prev = self._sums.get(name)
+            self._sums[name] = value if prev is None else prev + value
+
+    def merge(self, other: _DeviceLossSums) -> None:
+        """Commit a completed step's sums into this window's sums."""
+        for name, value in other._sums.items():
+            prev = self._sums.get(name)
+            self._sums[name] = value if prev is None else prev + value
+
+    def tensor(self, name: str) -> torch.Tensor | None:
+        """The running device sum for one key, or None when it never appeared."""
+        return self._sums.get(name)
+
+    def items(self) -> list[tuple[str, torch.Tensor]]:
+        """(key, device sum) pairs in FIRST-SEEN order, matching the old dict."""
+        return list(self._sums.items())
+
+
+def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
+    """One host transfer for a whole window's worth of 0-dim device scalars.
+
+    ⚑ ONE ``.tolist()``, not one per tensor: the point of the batching is that
+    the window blocks on the CUDA queue exactly once, and N separate
+    ``.item()`` calls would put N sync points back.
+    """
+    if not tensors:
+        return []
+    return [float(v) for v in torch.stack(list(tensors)).tolist()]
+
+
 _LC0_HISTORY_STEPS = LC0_FULL.history_len
 _LC0_PIECE_PLANES = LC0_FULL.piece_planes_per_history
 _INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
@@ -3750,6 +3841,14 @@ class Trainer:
         # ``inference_autocast`` helper would auto-fallback to FP16 there.
         return inference_autocast(device=self.device, enabled=self.use_amp, dtype="bf16")
 
+  # ⚑⚑ FROZEN SOURCE — EDIT THE BODY AND YOU MOVE THE HOLDOUT RULER.
+  # This method is inside `call_closure(Trainer._compute_metrics)`, so its
+  # source digest is part of `v1:full_pass:...` / `v1:sampled:...`. Changing
+  # a line here bumps `holdout_generation` and makes every running trial hand
+  # over its best-model record. That is why the training loop's per-microbatch
+  # sync was removed by ADDING `_DeviceLossSums` rather than by restructuring
+  # this function: the eval path (once per iteration, `torch.no_grad`) still
+  # calls it and its per-batch `.tolist()` is not on the hot loop.
     @staticmethod
     def _extract_loss_scalars(
         losses: dict[str, torch.Tensor], *,
@@ -4688,7 +4787,7 @@ class Trainer:
 
     def _run_optimizer_step(
         self, *,
-        step_sums: dict[str, float],
+        step_sums: _DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: ReplayBuffer,
@@ -4701,6 +4800,12 @@ class Trainer:
 
         Mutates step_sums/step_acc_sums/step_opt_stats in place. Returns
         (step_n_micro, opt_step_time_s).
+
+        ⚑ ``step_sums`` is a ``_DeviceLossSums``, NOT a ``dict[str, float]``:
+        the loss scalars stay on the device until ``train_steps`` drains the
+        whole window. Everything in ``step_opt_stats`` is still a host float,
+        including the two grad norms the non-finite guard below branches on --
+        that sync is DELIBERATELY KEPT, see the guard's own comment.
         """
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
@@ -4727,13 +4832,15 @@ class Trainer:
                 loss = losses["total"] / self.accum_steps
             loss.backward()
 
-            scalars = self._extract_loss_scalars(
+  # ⚑ ON-DEVICE, so no `.tolist()` sync lands between `backward()` and the
+  # zclip/optimizer work below. Same keys, same values, same accumulation
+  # order as the `_extract_loss_scalars` path this replaced -- see
+  # `_DeviceLossSums`. The window pays one transfer, in `train_steps`.
+            step_sums.add_losses(
                 losses,
                 total_override=loss,
                 total_scale=float(self.accum_steps),
             )
-            for k, v in scalars.items():
-                step_sums[k] = step_sums.get(k, 0.0) + v
 
             with torch.no_grad():
                 for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
@@ -4762,6 +4869,16 @@ class Trainer:
   # RuntimeError mid-iteration. Guard the clipped group too — zclip never
   # protected it either (`clip_coef = cap / (nan + 1e-6)` leaves `nan > cap`
   # False, so the whole non-finite gradient passes through unscaled).
+  #
+  # ⚑⚑ THE KEPT SYNC. `_matrix_grad_norm` and `_zclip_step` return HOST floats,
+  # i.e. one device->host transfer per optimizer step, and this line BRANCHES on
+  # them: it decides whether `self.opt.step()` runs at all, whether zclip's EMA
+  # is rolled back, and whether the step is counted as skipped. It therefore
+  # cannot be batched to the end of the window the way the LOSS scalars were --
+  # a window-batched safety check would apply a non-finite update ~88 times
+  # before noticing. Do not "finish the optimization" by moving it.
+  # `tests/test_train_window_loss_sync.py::test_the_nonfinite_gradient_guard_is_
+  # still_read_every_step` pins that it is consulted once per step.
         if not (math.isfinite(matrix_grad_norm) and math.isfinite(grad_norm)):
             logging.getLogger(__name__).warning(
                 "non-finite gradient at step %d (matrix ||g||=%r, clipped "
@@ -4829,7 +4946,17 @@ class Trainer:
         self.model.train()
         train_wall_start = time.perf_counter()
 
-        sums: dict[str, float] = {}
+  # ⚑ DEVICE-RESIDENT until the window ends. `sums` (the host dict every
+  # downstream consumer reads) is built below, after the loop, from ONE
+  # transfer. See `_DeviceLossSums`.
+        window_sums = _DeviceLossSums()
+  # (step at which it was logged, device tensor for that step's mean total
+  # loss). The per-step `train/loss` TB series is PRESERVED EXACTLY -- same
+  # values, same step numbers -- by deferring the WRITE to the window's single
+  # transfer instead of dropping the series or replacing it with a mean. A
+  # scalar is written with an explicit `global_step`, so writing it late is
+  # indistinguishable in the event file from writing it on time.
+        pending_step_loss: list[tuple[int, torch.Tensor]] = []
         acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         n_micro = 0
         opt_step_time_s = 0.0
@@ -4862,7 +4989,7 @@ class Trainer:
         try:
             for _ in range(requested_steps):
               for _attempt in range(3):
-                step_sums: dict[str, float] = {}
+                step_sums = _DeviceLossSums()
                 step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
                 step_opt_stats: dict[str, float] = {}
                 consumed_before_attempt = batch_iter.consumed
@@ -4899,8 +5026,7 @@ class Trainer:
                     continue
 
   # Success — commit metrics from this step.
-                for k, v in step_sums.items():
-                    sums[k] = sums.get(k, 0.0) + v
+                window_sums.merge(step_sums)
                 for name, (n_, d_) in step_acc_sums.items():
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
@@ -4922,13 +5048,48 @@ class Trainer:
                     self._swa_model.update_parameters(self.model)
 
                 if self._should_log_step_scalars():
-                    self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
+  # ⚑ QUEUED, NOT DROPPED. The value is `step_sums["loss"] / step_n_micro`
+  # exactly as before; only the host read moves to the window's single
+  # transfer, and the `global_step` is captured HERE so the series lands on
+  # the same x-axis it always did. The absent-key case still publishes the
+  # literal 0.0 the old `.get("loss", 0.0)` produced, immediately, because
+  # there is nothing to transfer.
+                    step_loss = step_sums.tensor("loss")
+                    if step_loss is None:
+                        self.writer.add_scalar("train/loss", 0.0, self.step)
+                    else:
+                        pending_step_loss.append(
+                            (int(self.step), step_loss / float(max(1, step_n_micro))),
+                        )
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
                 break
         finally:
             batch_iter.close()
+
+  # ⚑⚑ THE WINDOW'S ONE HOST TRANSFER, and the only one the loss scalars now
+  # cost. Every per-microbatch `.tolist()` this replaced was a full CUDA sync
+  # immediately after `backward()`; here the window's accumulated sums AND the
+  # deferred per-step `train/loss` series ride out together in a single
+  # `torch.stack(...).tolist()`.
+  #
+  # ⚑ Taken BEFORE `train_time_s` is read, deliberately. The syncs it replaces
+  # were inside the loop and therefore inside the window's wall clock, so
+  # counting the replacement keeps `train_time_s` (and everything derived from
+  # it -- `steps_per_s`, `samples_per_s`, the phase decomposition's residual)
+  # measuring the same thing it did before.
+        _sum_items = window_sums.items()
+        _flat = _materialize_device_scalars(
+            [t for _, t in _sum_items] + [t for _, t in pending_step_loss],
+        )
+        sums: dict[str, float] = {
+            key: _flat[i] for i, (key, _) in enumerate(_sum_items)
+        }
+        for (_logged_step, _), _value in zip(
+            pending_step_loss, _flat[len(_sum_items):], strict=True,
+        ):
+            self.writer.add_scalar("train/loss", _value, _logged_step)
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)
