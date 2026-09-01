@@ -1,0 +1,1281 @@
+#!/usr/bin/env python3
+"""Repair a schema-1 corpus (bare-FEN rows) to schema 2 (rows with their history).
+
+WHY.  A schema-1 row is a bare FEN.  The deriver encodes it with history slot 0
+filled and slots 1..7 plus every repetition plane ZERO, an input distribution
+live play never produces (ledger 2026-09-01: the champion flips 46.5% of its
+top-1 moves and loses +20.2 cp of regret between that input and the eight real
+frames play fills).  The labels are almost all fine: a cold-TT fixed-depth
+search differs between ``position fen <fen>`` and ``position fen <root>
+moves ...`` on 0/1200 rows WITHOUT a repeated position in the reversible
+segment and on 12.5% of rows WITH one (same ledger entry).  So the repair is
+
+* R1 -- rebuild every row's move window from the corpus itself and bank it as
+  schema 2, exactly as the generator would have (its own ``history_for`` on a
+  replayed board, so the root definition is the generator's and not a copy);
+* R2 -- re-search ONLY rows whose window contains a repeated position, through
+  the generator's own staircase searcher on the same engine build, replacing
+  ``phases`` wholesale.
+
+WHERE THE HISTORY COMES FROM.  Rows chain: ``prev.fen + prev.played_move`` is
+``fen`` within one ``(worker_id, game_id)``.  Three things break the chain and
+each is handled without guessing:
+
+* THE BOOK.  Every game's opening was sampled with ``book_rng(seed, worker,
+  game)`` and no wall clock, so ``sample_starting_board`` re-derives the start
+  board WITH its book move stack.  It is trusted only when it is VERIFIED --
+  the resampled start FEN equals the game's ply-0 row exactly (505/505 games
+  on the audit sample) -- or, when the ply-0 row itself was dedup-served, when
+  a UNIQUE legal path of at most ``MAX_BRIDGE_PLIES`` joins the resampled
+  start to the first banked row.  Otherwise every row that needs a position
+  before ply 0 is quarantined ``no_source_book_mismatch``.
+* DEDUP-DROPPED PLIES.  A position already searched was served from the cache
+  and never banked, so its ``played_move`` is missing.  The gap is BRIDGED by
+  enumerating every legal move sequence of the gap's length from the position
+  after the last banked move to the next banked FEN.  Exactly one path is an
+  exact reconstruction (every intermediate position is determined); more than
+  one taints every row whose window spans the gap (``ambiguous_multi_path`` --
+  the intermediate frames differ, and no plausible path is ever picked); none,
+  or a gap longer than ``MAX_BRIDGE_PLIES``, is ``unbridged_gap``.
+* A CHAIN MISMATCH -- consecutive plies whose FENs do not chain -- is a corpus
+  fault and is quarantined as ``chain_mismatch`` for every row that needs it.
+
+THE CRITERION IS EXACT EQUIVALENCE WITH LIVE PLAY, never "has 7 frames".  A
+row is written only when the board it is banked from is the board live play
+had -- the game's true stack, book moves included -- so a short TRUE history
+(a book line shorter than 7 plies) is kept and encodes with the live fill
+semantics.  Every written row re-verifies that replaying ``history_uci`` from
+``history_root_fen`` reproduces ``fen``.
+
+PROVENANCE.  The input shards are never modified.  The output is a sibling
+directory of schema-2 shards under the input names, a ``summary.json`` the
+deriver reads (``derive_corpus_targets.py``), ``repair_manifest.json`` with the
+per-class counts and the input manifest's sha256, per-worker
+``repair_rows-wNN.jsonl.zst`` files mapping EVERY input row
+``(worker_id, game_id, ply)`` to ``repaired`` / ``relabeled`` /
+``quarantined:<reason>``, and ``relabel_audit.jsonl`` with the old and new
+top-1 of every re-labeled row.
+
+PARALLELISM.  ``--procs`` runs whole WORKERS in parallel: each worker's shards
+are processed in order with a rolling per-game buffer (a game's rows only ever
+look backward, so a row is repaired as soon as it is read), and each worker
+process owns one engine for its re-labels.  The opening book is warmed ONCE in
+the parent (~70 s for the production book) and inherited across the fork.
+
+Usage::
+
+    PYTHONPATH=. python3 scripts/repair_corpus_history.py \\
+        --in data/nnue_bootstrap/run03 --out data/nnue_bootstrap/run03_s2 --procs 14
+    PYTHONPATH=. python3 scripts/repair_corpus_history.py \\
+        --in data/nnue_bootstrap/run03 --audit-only --workers 3 --shards 100-102
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import hashlib
+import io
+import json
+import logging
+import multiprocessing
+import sys
+import time
+from collections import Counter
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, TextIO
+
+import chess
+
+from chess_anti_engine.selfplay.opening import (
+    OpeningConfig,
+    sample_starting_board,
+    warm_opening_book_cache,
+)
+from chess_anti_engine.stockfish.uci import StockfishTimeoutError, StockfishUCI
+from scripts import audit_targets
+from scripts import gen_sf_rooted_corpus as corpus
+
+_LOG = logging.getLogger("repair_corpus_history")
+
+#: The schema this tool reads and the one it writes.
+SOURCE_SCHEMA = 1
+TARGET_SCHEMA = corpus.ROW_SCHEMA
+
+#: Longest dedup gap that is bridged by path enumeration.  Beyond it the
+#: enumeration is both expensive and, on the audit sample, never unique.
+MAX_BRIDGE_PLIES = 3
+#: The enumeration stops as soon as a SECOND path is found: the verdict is
+#: "unique or not", and a third path changes nothing.
+BRIDGE_PATH_CAP = 2
+
+#: Row classes in the provenance map.
+CLASS_REPAIRED = "repaired"
+CLASS_RELABELED = "relabeled"
+QUARANTINE_PREFIX = "quarantined:"
+REASON_AMBIGUOUS = "ambiguous_multi_path"
+REASON_UNBRIDGED = "unbridged_gap"
+REASON_CHAIN_MISMATCH = "chain_mismatch"
+REASON_BOOK_MISMATCH = "no_source_book_mismatch"
+REASON_RELABEL_TIMEOUT = "relabel_timeout"
+
+#: ``repair.history`` values.
+HISTORY_CHAINED = "chained"
+HISTORY_CHAINED_BOOK = "chained+book"
+HISTORY_CHAINED_BRIDGED = "chained+bridged"
+HISTORY_CHAINED_BOOK_BRIDGED = "chained+book+bridged"
+LABEL_ORIGINAL = "original"
+LABEL_RELABELED = "relabeled"
+
+#: Per-game book verdicts (counted in the manifest).
+BOOK_EXACT = "exact"
+BOOK_BRIDGED = "bridged_from_start"
+BOOK_MISMATCH = "mismatch"
+BOOK_UNRESOLVED = "start_gap_unresolved"
+
+REPAIR_MANIFEST_NAME = "repair_manifest.json"
+RELABEL_AUDIT_NAME = "relabel_audit.jsonl"
+#: The per-row class maps live in a subdirectory: the deriver's inventory
+#: check reads every ``*.jsonl.zst`` beside the shards as a shard.
+PROVENANCE_DIR = "provenance"
+ROW_MAP_TEMPLATE = "repair_rows-w{worker_id:02d}.jsonl.zst"
+RELABEL_AUDIT_TEMPLATE = "relabel_audit-w{worker_id:02d}.jsonl"
+
+DEFAULT_SF_SEARCH_TIMEOUT_S = 30.0
+DEFAULT_BENCH_ENCODE_ROWS = 2000
+
+#: ``--relabel-scope``.  ``window`` is the prereg's flag -- a repeated
+#: transposition key anywhere in ``[root, row]``.  ``segment`` narrows it to
+#: the row's OWN reversible run (the last ``halfmove_clock`` plies): a repeat
+#: that lies entirely before the last irreversible move changes the encoded
+#: repetition planes but cannot change the label, because the engine's
+#: repetition scan stops at that move.  Measured on run03 w03 shards 100-102:
+#: window flags 2.85% of rows, segment 1.6%; the calibration's 0/1200
+#: no-change result was measured under a superset of the segment definition.
+RELABEL_WINDOW = "window"
+RELABEL_SEGMENT = "segment"
+
+
+class RepairError(RuntimeError):
+    """The corpus is not what the repair was told it is; nothing is written."""
+
+
+# -- the spec -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RepairSpec:
+    """Everything a worker process needs.  Frozen and picklable across a fork."""
+
+    in_dir: Path
+    out_dir: Path | None
+    seed: int
+    opening: OpeningConfig
+    staircase: str
+    cp_slope: float
+    cp_draw_width: float
+    sf_binary: str
+    sf_hash_mb: int
+    sf_read_timeout_s: float
+    sf_search_timeout_s: float
+    syzygy_path: str
+    nice: int
+    audit_only: bool
+    shard_indices: tuple[int, ...] | None
+    bench_encode_rows: int
+    #: ``RELABEL_WINDOW`` (the spec: any repeat in ``[root, row]``) or
+    #: ``RELABEL_SEGMENT`` (only the row's own reversible run, which is all the
+    #: engine's repetition detection can see).  Both counts are always reported.
+    relabel_scope: str = "window"
+
+
+def opening_config_from_manifest(
+    requested: Mapping[str, Any], *, book_override: str | None = None,
+) -> OpeningConfig:
+    """The run's opening sampler config, spelled the way ``build_opening_config`` spells it."""
+    book = book_override if book_override is not None else requested.get("book")
+    if not book:
+        raise RepairError(
+            "the input manifest's config_requested names no opening book; a "
+            "bookless run has no book stack to re-derive and this tool has no "
+            "other source for pre-ply-0 positions",
+        )
+    book_path = Path(str(book))
+    if not book_path.exists():
+        raise RepairError(
+            f"opening book {book_path} does not exist (a relative path is "
+            "resolved against the current directory, as the generator resolved "
+            "it); pass --book to point at the same file",
+        )
+    return OpeningConfig(
+        opening_book_path=str(book_path),
+        opening_book_max_plies=int(requested["book_plies"]),
+        opening_book_max_games=int(requested["book_max_games"]),
+        opening_book_prob=1.0,
+    )
+
+
+# -- shard inventory ------------------------------------------------------------
+
+
+def worker_shards(in_dir: Path, worker_id: int, indices: Sequence[int] | None) -> list[Path]:
+    """This worker's shards in index order, optionally restricted to ``indices``."""
+    found: list[tuple[int, Path]] = []
+    for path in in_dir.glob(corpus.shard_glob(worker_id)):
+        index = corpus.shard_index_of(path.name)
+        if index is None:
+            continue
+        if indices is not None and index not in indices:
+            continue
+        found.append((index, path))
+    return [path for _, path in sorted(found)]
+
+
+def worker_ids_in(in_dir: Path) -> list[int]:
+    ids: set[int] = set()
+    for path in in_dir.iterdir():
+        name = path.name
+        if not (name.endswith((".jsonl.zst", ".jsonl.gz")) and name.startswith("w")):
+            continue
+        head = name.split("-", 1)[0]
+        if head[1:].isdigit():
+            ids.add(int(head[1:]))
+    return sorted(ids)
+
+
+def parse_shard_range(spec: str | None) -> tuple[int, ...] | None:
+    """``"100-102,110"`` -> ``(100, 101, 102, 110)``; ``None`` means every shard."""
+    if spec is None:
+        return None
+    out: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        lo, sep, hi = part.partition("-")
+        if sep:
+            out.update(range(int(lo), int(hi) + 1))
+        else:
+            out.add(int(part))
+    if not out:
+        raise ValueError(f"--shards {spec!r} names no shard")
+    return tuple(sorted(out))
+
+
+# -- bridging -------------------------------------------------------------------
+
+
+def bridge_paths(
+    before: chess.Board, target_fen: str, plies: int, *, cap: int = BRIDGE_PATH_CAP,
+) -> list[list[str]]:
+    """Distinct legal move sequences of exactly ``plies`` from ``before`` to ``target_fen``.
+
+    Stops after ``cap`` paths: the caller only asks whether the path is UNIQUE.
+    The one prune is exact -- a capture removes one piece per ply, so a
+    position with more surplus pieces than plies left cannot reach the target.
+    """
+    target_pieces = chess.popcount(chess.Board(target_fen).occupied)
+    found: list[list[str]] = []
+
+    def walk(board: chess.Board, depth: int, acc: list[str]) -> None:
+        if len(found) >= cap:
+            return
+        remaining = plies - depth
+        if remaining == 0:
+            if board.fen() == target_fen:
+                found.append(list(acc))
+            return
+        if chess.popcount(board.occupied) - target_pieces > remaining:
+            return
+        for move in list(board.legal_moves):
+            board.push(move)
+            acc.append(move.uci())
+            walk(board, depth + 1, acc)
+            acc.pop()
+            board.pop()
+            if len(found) >= cap:
+                return
+
+    walk(before.copy(stack=False), 0, [])
+    return found
+
+
+# -- per-game reconstruction ----------------------------------------------------
+
+
+@dataclass
+class GameState:
+    """One game's chain, filled as its rows stream past.
+
+    ``fen_at`` / ``move_at`` hold every ply whose position and played move are
+    KNOWN -- banked, or bridged through a unique path.  ``gap_reason`` names
+    every ply that is not, and ``bridged`` marks the ones a bridge supplied.
+    ``book_moves`` is the verified book stack, or ``None`` when no position
+    before ply 0 may be used.
+    """
+
+    worker_id: int
+    game_id: int
+    book_status: str
+    book_moves: list[str] | None
+    fen_at: dict[int, str] = field(default_factory=dict)
+    move_at: dict[int, str] = field(default_factory=dict)
+    gap_reason: dict[int, str] = field(default_factory=dict)
+    bridged: set[int] = field(default_factory=set)
+    last_ply: int = -1
+
+    def fill_gap(self, start: int, stop: int, before: chess.Board, target_fen: str) -> None:
+        """Resolve plies ``[start, stop)`` between ``before`` and the banked ``target_fen``."""
+        gap = stop - start
+        if gap > MAX_BRIDGE_PLIES:
+            self.mark_gap(start, stop, REASON_UNBRIDGED)
+            return
+        paths = bridge_paths(before, target_fen, gap)
+        if len(paths) != 1:
+            self.mark_gap(
+                start, stop, REASON_AMBIGUOUS if len(paths) > 1 else REASON_UNBRIDGED,
+            )
+            return
+        board = before.copy(stack=False)
+        for offset, uci in enumerate(paths[0]):
+            ply = start + offset
+            self.fen_at[ply] = board.fen()
+            self.move_at[ply] = uci
+            self.bridged.add(ply)
+            board.push(chess.Move.from_uci(uci))
+
+    def mark_gap(self, start: int, stop: int, reason: str) -> None:
+        for ply in range(start, stop):
+            self.gap_reason[ply] = reason
+
+    def unresolved_in(self, start: int, stop: int) -> str | None:
+        """The quarantine reason for a window over ``[start, stop)``, or ``None``."""
+        reasons = {self.gap_reason[p] for p in range(start, stop) if p in self.gap_reason}
+        if not reasons:
+            return None
+        if REASON_AMBIGUOUS in reasons:
+            return REASON_AMBIGUOUS
+        if REASON_CHAIN_MISMATCH in reasons:
+            return REASON_CHAIN_MISMATCH
+        return REASON_UNBRIDGED
+
+    def any_bridged_in(self, start: int, stop: int) -> bool:
+        return any(p in self.bridged for p in range(start, stop))
+
+
+def fen_halfmove_clock(fen: str) -> int:
+    return int(fen.split(" ")[4])
+
+
+@dataclass(frozen=True)
+class RowRepair:
+    """What R1 decided for one row."""
+
+    #: ``CLASS_REPAIRED`` or a ``quarantined:<reason>`` class.
+    row_class: str
+    #: The board live play had, with its full stack (repaired rows only).
+    board: chess.Board | None
+    history: corpus.RowHistory | None
+    history_kind: str | None
+    #: A transposition key repeats inside ``[root, row]`` -- the prereg's flag.
+    repeat_in_window: bool
+    #: A transposition key repeats inside the row's own reversible run.
+    repeat_in_segment: bool
+    #: The board was rebuilt from the root position itself because the ply
+    #: before it is unresolved (see ``GameReconstructor._classify``).
+    anchorless: bool = False
+    #: Anchorless AND the root has a pawn that could have just double-stepped,
+    #: so a pseudo-legal-only ep square on the live root cannot be ruled out.
+    root_ep_unverifiable: bool = False
+
+    @property
+    def repaired(self) -> bool:
+        return self.board is not None
+
+    def flagged(self, scope: str) -> bool:
+        return self.repeat_in_segment if scope == RELABEL_SEGMENT else self.repeat_in_window
+
+
+def quarantined(reason: str) -> RowRepair:
+    return RowRepair(
+        row_class=QUARANTINE_PREFIX + reason, board=None, history=None,
+        history_kind=None, repeat_in_window=False, repeat_in_segment=False,
+    )
+
+
+def repeats_in(history: corpus.RowHistory, *, halfmove_clock: int) -> tuple[bool, bool]:
+    """``(repeat in [root, row], repeat in the row's reversible run)``, on the REPLAY."""
+    board = chess.Board(history.root_fen)
+    keys = [board._transposition_key()]
+    for uci in history.uci:
+        board.push(chess.Move.from_uci(uci))
+        keys.append(board._transposition_key())
+    in_window = len(set(keys)) != len(keys)
+    segment = keys[max(0, len(keys) - 1 - int(halfmove_clock)):]
+    in_segment = len(set(segment)) != len(segment)
+    return in_window, in_segment
+
+
+def could_have_double_stepped(board: chess.Board) -> bool:
+    """Could the side that just moved have made a double pawn step into ``board``?
+
+    A pawn of the side NOT to move sits on its fourth rank with the two
+    squares behind it empty.  When this is false the position can carry no
+    ep square at all, so the banked FEN (ep printed only when a capture is
+    legal) and the live ``fen(en_passant="fen")`` are the same string.
+    """
+    mover = not board.turn
+    rank = 3 if mover == chess.WHITE else 4
+    step = -1 if mover == chess.WHITE else 1
+    for square in chess.SquareSet(board.pieces(chess.PAWN, mover) & chess.BB_RANKS[rank]):
+        file = chess.square_file(square)
+        behind = chess.square(file, rank + step)
+        origin = chess.square(file, rank + 2 * step)
+        if board.piece_at(behind) is None and board.piece_at(origin) is None:
+            return True
+    return False
+
+
+class GameReconstructor:
+    """Streams one worker's rows, game by game, and repairs each row as it arrives."""
+
+    def __init__(self, spec: RepairSpec, worker_id: int) -> None:
+        self.spec = spec
+        self.worker_id = int(worker_id)
+        self.game: GameState | None = None
+        self.seen_games: set[int] = set()
+        self.book_games: Counter[str] = Counter()
+
+    def _start_game(self, row: Mapping[str, Any]) -> GameState:
+        game_id = int(row["game_id"])
+        if game_id in self.seen_games:
+            raise RepairError(
+                f"worker {self.worker_id} game {game_id} reappears after another "
+                "game's rows; games are banked contiguously and a split one "
+                "cannot be chained",
+            )
+        self.seen_games.add(game_id)
+        start = sample_starting_board(
+            rng=corpus.book_rng(seed=self.spec.seed, worker_id=self.worker_id, game_id=game_id),
+            cfg=self.spec.opening,
+        )
+        book_moves = [m.uci() for m in start.board.move_stack]
+        start_fen = start.board.fen()
+        ply = int(row["ply"])
+        fen = str(row["fen"])
+        if ply == 0:
+            if start_fen == fen:
+                game = GameState(self.worker_id, game_id, BOOK_EXACT, book_moves)
+            else:
+                game = GameState(self.worker_id, game_id, BOOK_MISMATCH, None)
+        else:
+            # The ply-0 position was dedup-served.  The only verification left
+            # is the bridge itself: a unique path from the resampled start.
+            game = GameState(self.worker_id, game_id, BOOK_BRIDGED, book_moves)
+            game.fill_gap(0, ply, start.board, fen)
+            if 0 in game.gap_reason:
+                game.book_status = BOOK_UNRESOLVED
+                game.book_moves = None
+            game.last_ply = ply - 1
+        self.book_games[game.book_status] += 1
+        return game
+
+    def _extend(self, game: GameState, row: Mapping[str, Any]) -> None:
+        ply = int(row["ply"])
+        fen = str(row["fen"])
+        if ply <= game.last_ply:
+            raise RepairError(
+                f"worker {self.worker_id} game {game.game_id}: ply {ply} after "
+                f"ply {game.last_ply}; rows of a game are banked in ply order",
+            )
+        prev = game.last_ply
+        if prev >= 0 and prev in game.move_at:
+            before = chess.Board(game.fen_at[prev])
+            try:
+                before.push(chess.Move.from_uci(game.move_at[prev]))
+            except (ValueError, AssertionError):
+                before = None
+            if before is None:
+                game.mark_gap(prev, ply, REASON_CHAIN_MISMATCH)
+                del game.move_at[prev]
+            elif ply == prev + 1:
+                if before.fen() != fen:
+                    game.mark_gap(prev, ply, REASON_CHAIN_MISMATCH)
+                    del game.move_at[prev]
+            else:
+                game.fill_gap(prev + 1, ply, before, fen)
+        elif prev >= 0:
+            # The previous ply is itself unresolved; nothing to bridge from.
+            game.mark_gap(prev + 1, ply, game.gap_reason.get(prev, REASON_UNBRIDGED))
+        game.fen_at[ply] = fen
+        game.move_at[ply] = str(row["played_move"])
+        game.last_ply = ply
+
+    def repair(self, row: Mapping[str, Any]) -> RowRepair:
+        if int(row.get("schema", SOURCE_SCHEMA)) != SOURCE_SCHEMA:
+            raise RepairError(
+                f"worker {self.worker_id} game {row.get('game_id')} ply "
+                f"{row.get('ply')} is schema {row.get('schema')}, not "
+                f"{SOURCE_SCHEMA}; this tool repairs bare-FEN rows only",
+            )
+        if int(row["worker_id"]) != self.worker_id:
+            raise RepairError(
+                f"a row of worker {row['worker_id']} is in worker "
+                f"{self.worker_id}'s shard",
+            )
+        game_id = int(row["game_id"])
+        if self.game is None or self.game.game_id != game_id:
+            self.game = self._start_game(row)
+        game = self.game
+        self._extend(game, row)
+        return self._classify(game, int(row["ply"]))
+
+    def _classify(self, game: GameState, ply: int) -> RowRepair:
+        """The generator's root definition, evaluated on the chain.
+
+        ``P`` is the position ``HISTORY_WINDOW_PLIES`` back; the root is ``P``
+        walked back ``halfmove_clock(P)`` plies.  Three rebuilds, tried in
+        order, and each yields the board live play had:
+
+        * ANCHORED -- root at ply ``r >= 1`` and ply ``r - 1`` known: the board
+          is rebuilt from ``r - 1``, so ``history_for`` sees a non-empty stack
+          at the root (its reason is ``irreversible``, as live) and the root's
+          raw ep square survives the push.
+        * BOOK -- the root is at or before ply 0: rebuilt from the standard
+          start through the verified book stack, exactly as the worker's board
+          was.
+        * ANCHORLESS -- the root is known but the ply before it is not (an
+          unresolved gap ends exactly at the root): rebuilt from the root
+          position itself.  ``history_for`` then reads the root as the game
+          start, so the reason is set to ``irreversible`` explicitly (the
+          chain proves it is not the game start, and its clock is 0).  The one
+          string that can differ from live is a pseudo-legal-only ep square on
+          the root, which no plane, key or engine reads; it is counted
+          (``root_ep_unverifiable``) rather than assumed away.
+        """
+        window = corpus.HISTORY_WINDOW_PLIES
+        p_ply = ply - window
+        root: int | None = None
+        if p_ply >= 0:
+            if p_ply not in game.fen_at:
+                return quarantined(game.unresolved_in(p_ply, ply) or REASON_UNBRIDGED)
+            root = p_ply - fen_halfmove_clock(game.fen_at[p_ply])
+        anchorless = False
+        if root is not None and root >= 1 and (root - 1) not in game.gap_reason:
+            anchor = root - 1
+            reason = game.unresolved_in(anchor, ply)
+            if reason is not None:
+                return quarantined(reason)
+            board = chess.Board(game.fen_at[anchor])
+            for p in range(anchor, ply):
+                board.push(chess.Move.from_uci(game.move_at[p]))
+            bridged = game.any_bridged_in(anchor, ply)
+            kind = HISTORY_CHAINED_BRIDGED if bridged else HISTORY_CHAINED
+        elif (root is None or root <= 0) and game.book_moves is not None:
+            reason = game.unresolved_in(0, ply)
+            if reason is not None:
+                return quarantined(reason)
+            board = chess.Board()
+            for uci in game.book_moves:
+                board.push(chess.Move.from_uci(uci))
+            for p in range(ply):
+                board.push(chess.Move.from_uci(game.move_at[p]))
+            bridged = game.any_bridged_in(0, ply)
+            kind = HISTORY_CHAINED_BOOK_BRIDGED if bridged else HISTORY_CHAINED_BOOK
+        elif root is not None and root >= 0 and root in game.fen_at:
+            reason = game.unresolved_in(root, ply)
+            if reason is not None:
+                return quarantined(reason)
+            board = chess.Board(game.fen_at[root])
+            for p in range(root, ply):
+                board.push(chess.Move.from_uci(game.move_at[p]))
+            bridged = game.any_bridged_in(root, ply)
+            kind = HISTORY_CHAINED_BRIDGED if bridged else HISTORY_CHAINED
+            anchorless = True
+        elif root is not None and root >= 0:
+            return quarantined(game.unresolved_in(root, ply) or REASON_UNBRIDGED)
+        else:
+            reason = game.unresolved_in(0, ply)
+            return quarantined(reason if reason is not None else REASON_BOOK_MISMATCH)
+        if board.fen() != game.fen_at[ply]:
+            raise RepairError(
+                f"worker {self.worker_id} game {game.game_id} ply {ply}: the "
+                f"rebuilt board is {board.fen()!r}, not the row's "
+                f"{game.fen_at[ply]!r}",
+            )
+        history = corpus.history_for(board)
+        if root is not None and history.plies != ply - root:
+            raise RepairError(
+                f"worker {self.worker_id} game {game.game_id} ply {ply}: the "
+                f"generator's window has {history.plies} plies where the chain "
+                f"placed the root {ply - root} plies back",
+            )
+        root_ep_unverifiable = False
+        if anchorless:
+            root_board = chess.Board(history.root_fen)
+            root_ep_unverifiable = could_have_double_stepped(root_board)
+            history = dataclasses.replace(history, reason=corpus.HISTORY_ROOT_IRREVERSIBLE)
+        in_window, in_segment = repeats_in(
+            history, halfmove_clock=fen_halfmove_clock(game.fen_at[ply]),
+        )
+        return RowRepair(
+            row_class=CLASS_REPAIRED, board=board, history=history, history_kind=kind,
+            repeat_in_window=in_window, repeat_in_segment=in_segment,
+            anchorless=anchorless, root_ep_unverifiable=root_ep_unverifiable,
+        )
+
+
+# -- output -----------------------------------------------------------------------
+
+
+class ZstdLines:
+    """A ``.jsonl.zst`` writer opened ``"xb"`` -- a rerun never overwrites."""
+
+    def __init__(self, path: Path) -> None:
+        module = corpus.zstandard_module()
+        if module is None:
+            raise RepairError("the zstandard module is not importable")
+        self.path = path
+        self._binary = open(path, "xb")  # noqa: SIM115 - closed in close()
+        self._raw = module.ZstdCompressor().stream_writer(self._binary)
+        self._text = io.TextIOWrapper(self._raw, encoding="utf-8")
+        self.rows = 0
+
+    def write(self, record: Mapping[str, Any]) -> None:
+        self._text.write(json.dumps(record, sort_keys=True) + "\n")
+        self.rows += 1
+
+    def close(self) -> None:
+        # The same order ``ShardWriter.close`` uses: the text layer flushes
+        # into the compressor, the compressor writes its end-of-frame.
+        self._text.close()
+        self._raw.close()
+        self._binary.close()
+
+
+def top1_of_phases(phases: Sequence[Mapping[str, Any]]) -> tuple[str | None, float | None]:
+    """The rank-1 move and its cp in phase 0's deepest complete block."""
+    if not phases:
+        return None, None
+    blocks = list(phases[0].get("per_depth", []))
+    complete = [b for b in blocks if b.get("complete")] or blocks
+    if not complete:
+        return None, None
+    lines = complete[-1].get("lines", [])
+    if not lines:
+        return None, None
+    return str(lines[0][1]), float(lines[0][2])
+
+
+def repaired_row(
+    row: Mapping[str, Any], repair: RowRepair, *, phases: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """The schema-2 row: the input row, the window, the provenance block."""
+    if repair.history is None or repair.history_kind is None:
+        raise RepairError(f"game {row.get('game_id')} ply {row.get('ply')}: a quarantined row cannot be written")
+    out = dict(row)
+    out["schema"] = TARGET_SCHEMA
+    out.update(repair.history.as_row_fields())
+    out["repair"] = {
+        "source_schema": SOURCE_SCHEMA,
+        "history": repair.history_kind,
+        "label": LABEL_RELABELED if phases is not None else LABEL_ORIGINAL,
+    }
+    if phases is not None:
+        out["phases"] = list(phases)
+    # ⚑ Asserted on the ROW, not on the object it was built from: this is the
+    # check the deriver will repeat, on the bytes about to be written.
+    replayed = chess.Board(str(out["history_root_fen"]))
+    for uci in out["history_uci"]:
+        replayed.push(chess.Move.from_uci(str(uci)))
+    if replayed.fen() != str(out["fen"]):
+        raise RepairError(
+            f"game {out.get('game_id')} ply {out.get('ply')}: replaying "
+            f"{out['history_uci']} from {out['history_root_fen']!r} gives "
+            f"{replayed.fen()!r}, not {out['fen']!r}",
+        )
+    return out
+
+
+# -- the worker --------------------------------------------------------------------
+
+
+SearcherFactory = Callable[[corpus.SearchStats], corpus.StaircaseSearcher]
+
+
+def default_searcher_factory(spec: RepairSpec) -> SearcherFactory:
+    staircase = corpus.parse_staircase(spec.staircase)
+
+    def spawn(stats: corpus.SearchStats) -> corpus.StaircaseSearcher:
+        return corpus.StaircaseSearcher(
+            engine=StockfishUCI(
+                spec.sf_binary,
+                multipv=1,
+                hash_mb=int(spec.sf_hash_mb),
+                syzygy_path=spec.syzygy_path,
+                nice=int(spec.nice),
+                threads=1,
+                read_timeout_s=float(spec.sf_read_timeout_s),
+            ),
+            staircase=staircase,
+            cp_slope=spec.cp_slope,
+            cp_draw_width=spec.cp_draw_width,
+            stats=stats,
+            search_timeout_s=float(spec.sf_search_timeout_s),
+        )
+
+    return spawn
+
+
+@dataclass
+class WorkerTally:
+    """Every counter one worker reports, all events."""
+
+    rows_in: int = 0
+    rows_out: int = 0
+    classes: Counter[str] = field(default_factory=Counter)
+    history_kinds: Counter[str] = field(default_factory=Counter)
+    root_reasons: Counter[str] = field(default_factory=Counter)
+    history_plies: Counter[str] = field(default_factory=Counter)
+    book_games: Counter[str] = field(default_factory=Counter)
+    games: int = 0
+    repeat_in_window: int = 0
+    repeat_in_segment: int = 0
+    anchorless: int = 0
+    root_ep_unverifiable: int = 0
+    relabeled: int = 0
+    relabel_top1_changed: int = 0
+    relabel_timeouts: int = 0
+    relabel_s: float = 0.0
+    relabel_max_s: float = 0.0
+    reconstruct_s: float = 0.0
+    encode_rows: int = 0
+    encode_s: float = 0.0
+    shards: list[dict[str, Any]] = field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "rows_in": self.rows_in,
+            "rows_out": self.rows_out,
+            "games": self.games,
+            "classes": dict(self.classes),
+            "history_kinds": dict(self.history_kinds),
+            "history_root_reasons": dict(self.root_reasons),
+            "history_plies_histogram": dict(self.history_plies),
+            "book_games": dict(self.book_games),
+            "repeat_in_window": self.repeat_in_window,
+            "repeat_in_segment": self.repeat_in_segment,
+            "anchorless": self.anchorless,
+            "root_ep_unverifiable": self.root_ep_unverifiable,
+            "relabel": {
+                "rows": self.relabeled,
+                "top1_changed": self.relabel_top1_changed,
+                "timeouts": self.relabel_timeouts,
+                "wall_s": self.relabel_s,
+                "max_s_per_row": self.relabel_max_s,
+                "rows_per_s": (self.relabeled / self.relabel_s) if self.relabel_s else None,
+            },
+            "bench": {
+                "reconstruct_s": self.reconstruct_s,
+                "reconstruct_rows_per_s": (
+                    (self.rows_in / self.reconstruct_s) if self.reconstruct_s else None
+                ),
+                "encode_rows": self.encode_rows,
+                "encode_s": self.encode_s,
+                "encode_rows_per_s": (
+                    (self.encode_rows / self.encode_s) if self.encode_s else None
+                ),
+            },
+            "shards": list(self.shards),
+        }
+
+
+def _encoder() -> Callable[[chess.Board], Any]:
+    """The deriver's own encoder, for the audit-mode benchmark only."""
+    from scripts import derive_corpus_targets as derive
+
+    deriver = derive.TargetDeriver(
+        derive.DeriveOptions(
+            scheme=derive.parse_scheme("uniform-d9"), temp=1.0, cp_slope=1.0,
+            cp_draw_width=1.0, limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
+        ),
+    )
+    return deriver._encode
+
+
+def repair_worker(
+    spec: RepairSpec, worker_id: int, *, searcher_factory: SearcherFactory | None = None,
+) -> dict[str, Any]:
+    """One worker's shards, in order.  Returns the tally ``main`` merges."""
+    tally = WorkerTally()
+    shards = worker_shards(spec.in_dir, worker_id, spec.shard_indices)
+    if not shards:
+        raise RepairError(f"worker {worker_id} has no shards in {spec.in_dir}")
+    reconstructor = GameReconstructor(spec, worker_id)
+    lease: corpus.EngineLease | None = None
+    row_map: ZstdLines | None = None
+    audit: TextIO | None = None
+    out_dir = spec.out_dir
+    encode = _encoder() if spec.audit_only and spec.bench_encode_rows > 0 else None
+    if out_dir is not None:
+        row_map = ZstdLines(
+            out_dir / PROVENANCE_DIR / ROW_MAP_TEMPLATE.format(worker_id=worker_id),
+        )
+        audit = open(  # noqa: SIM115 - closed in the finally
+            out_dir / PROVENANCE_DIR / RELABEL_AUDIT_TEMPLATE.format(worker_id=worker_id),
+            "x", encoding="utf-8",
+        )
+    try:
+        for shard in shards:
+            started = time.perf_counter()
+            writer = ZstdLines(out_dir / shard.name) if out_dir is not None else None
+            rows_in = 0
+            games: list[int] = []
+            for row in corpus.iter_shard_rows(shard):
+                rows_in += 1
+                if not games or games[-1] != int(row["game_id"]):
+                    games.append(int(row["game_id"]))
+                t0 = time.perf_counter()
+                repair = reconstructor.repair(row)
+                tally.reconstruct_s += time.perf_counter() - t0
+                row_class = repair.row_class
+                phases: list[dict[str, Any]] | None = None
+                if repair.board is not None and repair.history is not None:
+                    if encode is not None and tally.encode_rows < spec.bench_encode_rows:
+                        t0 = time.perf_counter()
+                        encode(repair.board)
+                        tally.encode_s += time.perf_counter() - t0
+                        tally.encode_rows += 1
+                    tally.repeat_in_window += int(repair.repeat_in_window)
+                    tally.repeat_in_segment += int(repair.repeat_in_segment)
+                    tally.anchorless += int(repair.anchorless)
+                    tally.root_ep_unverifiable += int(repair.root_ep_unverifiable)
+                    if repair.flagged(spec.relabel_scope):
+                        row_class = CLASS_RELABELED
+                        if not spec.audit_only and audit is not None:
+                            if lease is None:
+                                lease = corpus.EngineLease(
+                                    searcher_factory or default_searcher_factory(spec),
+                                )
+                            phases, row_class = _relabel(lease, row, repair, tally, audit)
+                    if not row_class.startswith(QUARANTINE_PREFIX):
+                        tally.root_reasons[repair.history.reason] += 1
+                        tally.history_plies[str(repair.history.plies)] += 1
+                        tally.history_kinds[str(repair.history_kind)] += 1
+                tally.classes[row_class] += 1
+                if row_map is not None:
+                    row_map.write({
+                        "worker_id": int(row["worker_id"]), "game_id": int(row["game_id"]),
+                        "ply": int(row["ply"]), "class": row_class,
+                    })
+                if writer is not None and not row_class.startswith(QUARANTINE_PREFIX):
+                    writer.write(repaired_row(row, repair, phases=phases))
+            tally.rows_in += rows_in
+            entry = {
+                "path": str(shard.name), "rows_in": rows_in,
+                "rows": writer.rows if writer is not None else None,
+                "games": games, "codec": "zstd",
+            }
+            if writer is not None:
+                writer.close()
+                tally.rows_out += writer.rows
+            tally.shards.append(entry)
+            _LOG.info(
+                "worker %02d %s: %d rows in %.1fs (%s)", worker_id, shard.name, rows_in,
+                time.perf_counter() - started,
+                ", ".join(f"{k}={v}" for k, v in sorted(tally.classes.items())),
+            )
+    finally:
+        if lease is not None:
+            lease.close()
+        if row_map is not None:
+            row_map.close()
+        if audit is not None:
+            audit.close()
+    tally.games = len(reconstructor.seen_games)
+    tally.book_games = reconstructor.book_games
+    return {"worker_id": int(worker_id), **tally.summary()}
+
+
+def _relabel(
+    lease: corpus.EngineLease, row: Mapping[str, Any], repair: RowRepair,
+    tally: WorkerTally, audit: TextIO,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """R2 for one flagged row: a cold search under the row's own window."""
+    if repair.board is None or repair.history is None:
+        raise RepairError("a quarantined row reached the re-label step")
+    started = time.perf_counter()
+    lease.new_game()
+    try:
+        search = lease.search_position(repair.board)
+    except StockfishTimeoutError:
+        tally.relabel_timeouts += 1
+        return None, QUARANTINE_PREFIX + REASON_RELABEL_TIMEOUT
+    elapsed = time.perf_counter() - started
+    # The searcher builds its own window from the same board; it must be the
+    # one being banked.  ⚑ The reason is compared only on an anchored board:
+    # an anchorless rebuild starts its stack AT the root, so ``history_for``
+    # there reads ``game_start`` where the row (correctly) says
+    # ``irreversible``; the position line the engine saw is the same.
+    searched = (search.history.fen, search.history.root_fen, search.history.uci)
+    banked = (repair.history.fen, repair.history.root_fen, repair.history.uci)
+    if searched != banked or (
+        not repair.anchorless and search.history.reason != repair.history.reason
+    ):
+        raise RepairError(
+            f"game {row['game_id']} ply {row['ply']}: the searcher's window "
+            f"differs from the banked one ({search.history} vs {repair.history})",
+        )
+    phases = [p.as_row() for p in search.phases]
+    old_move, old_cp = top1_of_phases(row.get("phases", []))
+    new_move, new_cp = top1_of_phases(phases)
+    tally.relabeled += 1
+    tally.relabel_s += elapsed
+    tally.relabel_max_s = max(tally.relabel_max_s, elapsed)
+    tally.relabel_top1_changed += int(old_move != new_move)
+    audit.write(json.dumps({
+        "worker_id": int(row["worker_id"]), "game_id": int(row["game_id"]),
+        "ply": int(row["ply"]), "fen": str(row["fen"]),
+        "history_plies": repair.history.plies,
+        "history_root_reason": repair.history.reason,
+        "old_top1": old_move, "old_cp": old_cp, "new_top1": new_move, "new_cp": new_cp,
+        "top1_changed": old_move != new_move, "search_s": elapsed,
+        "cold_tt_retry": bool(lease.cold_tt_retry_last),
+    }, sort_keys=True) + "\n")
+    return phases, CLASS_RELABELED
+
+
+# -- the run ------------------------------------------------------------------------
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def merge_counters(results: Sequence[Mapping[str, Any]], key: str) -> dict[str, int]:
+    total: Counter[str] = Counter()
+    for r in results:
+        total.update({str(k): int(v) for k, v in r[key].items()})
+    return dict(sorted(total.items()))
+
+
+def _engine_id_name(spec: RepairSpec) -> str | None:
+    try:
+        return audit_targets.engine_identity(spec.sf_binary)
+    except Exception:  # identity is a stamp, not a gate; the sha256 check is the gate
+        return None
+
+
+def build_records(
+    *, spec: RepairSpec, manifest: Mapping[str, Any], manifest_sha: str,
+    results: Sequence[Mapping[str, Any]], started_utc: str, wall_s: float,
+    engine_id_name: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``(repair_manifest, summary)`` -- provenance, and the deriver-facing record."""
+    classes = merge_counters(results, "classes")
+    rows_in = sum(int(r["rows_in"]) for r in results)
+    rows_out = sum(int(r["rows_out"]) for r in results)
+    relabel_rows = sum(int(r["relabel"]["rows"]) for r in results)
+    relabel_s = sum(float(r["relabel"]["wall_s"]) for r in results)
+    reconstruct_s = sum(float(r["bench"]["reconstruct_s"]) for r in results)
+    encode_rows = sum(int(r["bench"]["encode_rows"]) for r in results)
+    encode_s = sum(float(r["bench"]["encode_s"]) for r in results)
+    shards = [
+        {**entry, "worker_id": int(r["worker_id"])}
+        for r in sorted(results, key=lambda r: int(r["worker_id"]))
+        for entry in r["shards"]
+    ]
+    repair_manifest = {
+        "schema": 1,
+        "tool": "scripts/repair_corpus_history.py",
+        "started_utc": started_utc,
+        "wall_s": wall_s,
+        "audit_only": spec.audit_only,
+        "input": {
+            "dir": str(spec.in_dir),
+            "manifest_sha256": manifest_sha,
+            "config_sha256": manifest.get("config_sha256"),
+            "run_id": (manifest.get("config_requested") or {}).get("run_id"),
+            "row_schema": SOURCE_SCHEMA,
+            "shards": None if spec.shard_indices is None else list(spec.shard_indices),
+            "workers": [int(r["worker_id"]) for r in results],
+        },
+        "output": {"row_schema": TARGET_SCHEMA, "dir": None if spec.out_dir is None else str(spec.out_dir)},
+        "engine": {
+            "path": spec.sf_binary, "sha256": (manifest.get("engine") or {}).get("sha256"),
+            "id_name": engine_id_name, "threads": 1, "hash_mb": spec.sf_hash_mb,
+            "ucinewgame_per_row": True, "staircase": spec.staircase,
+        },
+        "book": {
+            "path": spec.opening.opening_book_path,
+            "plies": spec.opening.opening_book_max_plies,
+            "max_games": spec.opening.opening_book_max_games,
+            "seed": spec.seed,
+        },
+        "bridge": {"max_plies": MAX_BRIDGE_PLIES, "path_cap": BRIDGE_PATH_CAP},
+        "rows_in": rows_in,
+        "rows_out": rows_out,
+        "games": sum(int(r["games"]) for r in results),
+        "classes": classes,
+        "class_fractions": {k: v / rows_in for k, v in classes.items()} if rows_in else {},
+        "quarantined": sum(v for k, v in classes.items() if k.startswith(QUARANTINE_PREFIX)),
+        "relabeled": classes.get(CLASS_RELABELED, 0),
+        "history_kinds": merge_counters(results, "history_kinds"),
+        "history_root_reasons": merge_counters(results, "history_root_reasons"),
+        "history_plies_histogram": merge_counters(results, "history_plies_histogram"),
+        "book_games": merge_counters(results, "book_games"),
+        "repeat_in_window": sum(int(r["repeat_in_window"]) for r in results),
+        "repeat_in_segment": sum(int(r["repeat_in_segment"]) for r in results),
+        "relabel_scope": spec.relabel_scope,
+        "anchorless": sum(int(r["anchorless"]) for r in results),
+        "root_ep_unverifiable": sum(int(r["root_ep_unverifiable"]) for r in results),
+        "relabel": {
+            "rows": relabel_rows,
+            "top1_changed": sum(int(r["relabel"]["top1_changed"]) for r in results),
+            "timeouts": sum(int(r["relabel"]["timeouts"]) for r in results),
+            "wall_s": relabel_s,
+            "max_s_per_row": max((float(r["relabel"]["max_s_per_row"]) for r in results), default=0.0),
+            "rows_per_s_per_core": (relabel_rows / relabel_s) if relabel_s else None,
+        },
+        "bench": {
+            "reconstruct_s": reconstruct_s,
+            "reconstruct_rows_per_s_per_core": (rows_in / reconstruct_s) if reconstruct_s else None,
+            "encode_rows": encode_rows,
+            "encode_rows_per_s_per_core": (encode_rows / encode_s) if encode_s else None,
+        },
+        "workers": {str(r["worker_id"]): {k: v for k, v in r.items() if k != "shards"} for r in results},
+        "row_map_files": [
+            f"{PROVENANCE_DIR}/{ROW_MAP_TEMPLATE.format(worker_id=int(r['worker_id']))}"
+            for r in results
+        ],
+        "relabel_audit": RELABEL_AUDIT_NAME,
+        "shards": shards,
+    }
+    summary = {
+        "schema": corpus.SUMMARY_SCHEMA,
+        "row_schema": TARGET_SCHEMA,
+        "run_finished": True,
+        "run_id": (manifest.get("config_requested") or {}).get("run_id"),
+        "started_utc": started_utc,
+        "wall_s": wall_s,
+        "rows": rows_out,
+        "games": sum(int(r["games"]) for r in results),
+        "shards": [
+            {"path": s["path"], "rows": s["rows"], "games": s["games"], "codec": s["codec"]}
+            for s in shards
+        ],
+        "config_requested": manifest.get("config_requested"),
+        "config_sha256": manifest.get("config_sha256"),
+        "staircase_parsed": manifest.get("staircase_parsed"),
+        "config_realized_by_worker": {},
+        "engine": {**(manifest.get("engine") or {}), "relabel_id_name": engine_id_name},
+        "banked_rows_min_piece_count": manifest.get("banked_rows_min_piece_count", corpus.MIN_BANKED_PIECES),
+        "adjudication_max_piece_count": manifest.get("adjudication_max_piece_count", corpus.ADJUDICATION_MAX_PIECES),
+        "history_plies_histogram": repair_manifest["history_plies_histogram"],
+        "history_root_reasons": repair_manifest["history_root_reasons"],
+        "repair": {"manifest": REPAIR_MANIFEST_NAME, "source": str(spec.in_dir)},
+    }
+    return repair_manifest, summary
+
+
+def format_report(repair_manifest: Mapping[str, Any]) -> str:
+    rows_in = int(repair_manifest["rows_in"])
+    lines = [
+        f"rows in {rows_in}  out {repair_manifest['rows_out']}  games {repair_manifest['games']}",
+        "classes:",
+    ]
+    for name, count in sorted(repair_manifest["classes"].items(), key=lambda kv: -kv[1]):
+        lines.append(f"  {name:40s} {count:9d} {count / rows_in if rows_in else 0:8.3%}")
+    lines.append("book games: " + ", ".join(
+        f"{k}={v}" for k, v in sorted(repair_manifest["book_games"].items())
+    ))
+    lines.append("history kinds: " + ", ".join(
+        f"{k}={v}" for k, v in sorted(repair_manifest["history_kinds"].items())
+    ))
+    lines.append("root reasons: " + ", ".join(
+        f"{k}={v}" for k, v in sorted(repair_manifest["history_root_reasons"].items())
+    ))
+    lines.append(
+        f"repeat flags: window {repair_manifest['repeat_in_window']} "
+        f"({repair_manifest['repeat_in_window'] / rows_in if rows_in else 0:.3%}), "
+        f"segment {repair_manifest['repeat_in_segment']} "
+        f"({repair_manifest['repeat_in_segment'] / rows_in if rows_in else 0:.3%}); "
+        f"scope={repair_manifest['relabel_scope']}; anchorless {repair_manifest['anchorless']}, "
+        f"root ep unverifiable {repair_manifest['root_ep_unverifiable']}",
+    )
+    bench = repair_manifest["bench"]
+    relabel = repair_manifest["relabel"]
+    rps = bench["reconstruct_rows_per_s_per_core"]
+    lines.append(
+        f"reconstruct {rps:,.0f} rows/s/core" if rps else "reconstruct: no timing",
+    )
+    if bench["encode_rows_per_s_per_core"]:
+        lines.append(
+            f"replay+encode {bench['encode_rows_per_s_per_core']:,.0f} rows/s/core "
+            f"({bench['encode_rows']} rows)",
+        )
+    if relabel["rows"]:
+        lines.append(
+            f"relabel {relabel['rows']} rows, {relabel['rows_per_s_per_core']:.3f} "
+            f"rows/s/core, top-1 changed {relabel['top1_changed']} "
+            f"({relabel['top1_changed'] / relabel['rows']:.2%}), max "
+            f"{relabel['max_s_per_row']:.2f}s, timeouts {relabel['timeouts']}",
+        )
+    return "\n".join(lines)
+
+
+def build_spec(
+    args: argparse.Namespace, manifest: Mapping[str, Any], *, verify_engine: bool = True,
+) -> RepairSpec:
+    """The spec, with the engine and tablebases verified unless a test injects a searcher."""
+    requested = manifest.get("config_requested") or {}
+    engine_record = manifest.get("engine") or {}
+    sf_binary = str(args.engine or engine_record.get("path") or requested.get("stockfish"))
+    if not args.audit_only and verify_engine:
+        if not Path(sf_binary).exists():
+            raise RepairError(f"engine {sf_binary} does not exist; pass --engine")
+        want = str(engine_record.get("sha256", ""))
+        have = sha256_of(Path(sf_binary))
+        if want and have != want:
+            raise RepairError(
+                f"engine {sf_binary} hashes to {have}, but the corpus was "
+                f"labeled by {want}; a re-label on a different build is not the "
+                "same label and is refused",
+            )
+    syzygy = str(args.syzygy_path or requested.get("syzygy_path") or "")
+    if not args.audit_only and verify_engine:
+        corpus.refuse_unopenable_syzygy(syzygy)
+    return RepairSpec(
+        in_dir=Path(args.in_dir),
+        out_dir=None if args.audit_only else Path(args.out_dir),
+        seed=int(requested["seed"]),
+        opening=opening_config_from_manifest(requested, book_override=args.book),
+        staircase=str(requested["staircase"]),
+        cp_slope=float(requested["cp_slope"]),
+        cp_draw_width=float(requested["cp_draw_width"]),
+        sf_binary=sf_binary,
+        sf_hash_mb=int(args.sf_hash_mb if args.sf_hash_mb is not None else requested.get("sf_hash_mb", corpus.DEFAULT_SF_HASH_MB)),
+        sf_read_timeout_s=float(requested.get("sf_read_timeout_s", corpus.DEFAULT_SF_READ_TIMEOUT_S)),
+        sf_search_timeout_s=float(args.sf_search_timeout_s),
+        syzygy_path=syzygy,
+        nice=int(requested.get("nice", corpus.DEFAULT_NICE)),
+        audit_only=bool(args.audit_only),
+        shard_indices=parse_shard_range(args.shards),
+        bench_encode_rows=int(args.bench_encode_rows),
+        relabel_scope=str(args.relabel_scope),
+    )
+
+
+def run(
+    args: argparse.Namespace, *, searcher_factory: SearcherFactory | None = None,
+) -> dict[str, Any]:
+    """The whole repair.  ``searcher_factory`` is the test seam: a scripted
+    engine in place of Stockfish, which also skips the binary's sha256 and
+    tablebase checks (there is no binary) and runs in-process."""
+    in_dir = Path(args.in_dir)
+    manifest_path = in_dir / corpus.MANIFEST_NAME
+    if not manifest_path.exists():
+        raise RepairError(f"{manifest_path} does not exist; the repair reads the run's config from it")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if int(manifest.get("row_schema", -1)) != SOURCE_SCHEMA:
+        raise RepairError(
+            f"{manifest_path} says row_schema {manifest.get('row_schema')}; this "
+            f"tool repairs schema {SOURCE_SCHEMA} only",
+        )
+    manifest_sha = sha256_of(manifest_path)
+    spec = build_spec(args, manifest, verify_engine=searcher_factory is None)
+    workers = [int(w) for w in args.workers] if args.workers else worker_ids_in(in_dir)
+    if not workers:
+        raise RepairError(f"{in_dir} holds no worker shards")
+    if spec.out_dir is not None:
+        spec.out_dir.mkdir(parents=True, exist_ok=True)
+        corpus.refuse_populated_dir(spec.out_dir)
+        (spec.out_dir / PROVENANCE_DIR).mkdir()
+    started = time.perf_counter()
+    started_utc = datetime.now(timezone.utc).isoformat()
+    _LOG.info("warming the opening book %s", spec.opening.opening_book_path)
+    warm_opening_book_cache(spec.opening)
+    _LOG.info("book warm in %.1fs; %d workers, %d procs", time.perf_counter() - started, len(workers), args.procs)
+    engine_id_name = (
+        None if spec.audit_only or searcher_factory is not None else _engine_id_name(spec)
+    )
+    results: list[dict[str, Any]] = []
+    if int(args.procs) <= 1 or searcher_factory is not None:
+        results.extend(
+            repair_worker(spec, worker_id, searcher_factory=searcher_factory)
+            for worker_id in workers
+        )
+    else:
+        context = multiprocessing.get_context("fork")
+        with ProcessPoolExecutor(max_workers=int(args.procs), mp_context=context) as pool:
+            futures = {pool.submit(repair_worker, spec, w): w for w in workers}
+            results.extend(future.result() for future in as_completed(futures))
+    results.sort(key=lambda r: int(r["worker_id"]))
+    repair_manifest, summary = build_records(
+        spec=spec, manifest=manifest, manifest_sha=manifest_sha, results=results,
+        started_utc=started_utc, wall_s=time.perf_counter() - started,
+        engine_id_name=engine_id_name,
+    )
+    if spec.out_dir is not None:
+        with open(spec.out_dir / RELABEL_AUDIT_NAME, "x", encoding="utf-8") as merged:
+            for worker_id in workers:
+                part = spec.out_dir / PROVENANCE_DIR / RELABEL_AUDIT_TEMPLATE.format(worker_id=worker_id)
+                merged.write(part.read_text(encoding="utf-8"))
+                part.unlink()
+        (spec.out_dir / REPAIR_MANIFEST_NAME).write_text(
+            json.dumps(repair_manifest, indent=1, sort_keys=True), encoding="utf-8",
+        )
+        (spec.out_dir / corpus.SUMMARY_NAME).write_text(
+            json.dumps(summary, indent=1, sort_keys=True), encoding="utf-8",
+        )
+    if args.report_json:
+        Path(args.report_json).write_text(
+            json.dumps(repair_manifest, indent=1, sort_keys=True), encoding="utf-8",
+        )
+    print(format_report(repair_manifest), flush=True)
+    return repair_manifest
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--in", dest="in_dir", required=True, help="schema-1 corpus directory (never modified)")
+    parser.add_argument("--out", dest="out_dir", help="output directory for the schema-2 shards (must be empty)")
+    parser.add_argument("--audit-only", action="store_true", help="classify and benchmark; write nothing, run no engine")
+    parser.add_argument("--procs", type=int, default=1, help="worker processes (each repairs whole workers and owns one engine)")
+    parser.add_argument("--workers", nargs="*", help="worker ids to repair (default: every worker with shards)")
+    parser.add_argument("--shards", help="shard index range per worker, e.g. 100-102 (default: all)")
+    parser.add_argument("--engine", help="Stockfish binary (default: the manifest's; must hash to the manifest's sha256)")
+    parser.add_argument("--book", help="opening book path override (same book the run used)")
+    parser.add_argument("--syzygy-path", help="tablebase path override (default: the manifest's)")
+    parser.add_argument("--sf-hash-mb", type=int, help="engine hash (default: the manifest's)")
+    parser.add_argument("--sf-search-timeout-s", type=float, default=DEFAULT_SF_SEARCH_TIMEOUT_S, help="per-search wedge tripwire for the cold re-labels")
+    parser.add_argument("--relabel-scope", choices=(RELABEL_WINDOW, RELABEL_SEGMENT), default=RELABEL_WINDOW, help="which repeat flag selects rows for re-labeling (default: the prereg's window)")
+    parser.add_argument("--bench-encode-rows", type=int, default=DEFAULT_BENCH_ENCODE_ROWS, help="--audit-only: rows to time through the deriver's encoder per worker")
+    parser.add_argument("--report-json", help="also write the repair manifest here (audit mode has no --out)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    args = build_parser().parse_args(argv)
+    if not args.audit_only and not args.out_dir:
+        print("--out is required unless --audit-only", file=sys.stderr)
+        return 2
+    try:
+        run(args)
+    except (RepairError, ValueError, FileExistsError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
