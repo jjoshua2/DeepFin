@@ -977,8 +977,10 @@ class TrainMetrics:
     aurora_uw_effective_ratio_median: float = 0.0
   # Which AdamW-fallback path the iteration's LAST optimizer step ran
   # (`AuroraWithAuxAdam.last_adamw_stats`). `adamw_foreach_params` is the
-  # take-effect column for the batched `_foreach_*` update: production reads
-  # 431 tensors in 2 buckets and `adamw_loop_params` 0.0. A non-zero loop
+  # take-effect column for the batched `_foreach_*` update: it counts the
+  # fallback tensors that carried a gradient (the lc0 control reads 394 of
+  # 431 in 2 buckets, the rest dead heads) with `adamw_loop_params` 0.0. A
+  # non-zero loop
   # count means a batchability predicate sent tensors down the per-parameter
   # path, which nothing else reports. `adamw_foreach_recoveries` counts
   # buckets whose denominator allocation failed and were finished per tensor

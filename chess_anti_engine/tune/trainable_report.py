@@ -1229,7 +1229,8 @@ def _train_metrics_dict(metrics) -> dict:
         ),
         # Which AdamW-fallback path the iteration's last optimizer step ran.
         # `adamw_foreach_params` is the proof-of-effect column for the batched
-        # `_foreach_*` update (431 / 2 buckets / loop 0.0 on production); a
+        # `_foreach_*` update (tensors that carried a grad: 394 of 431 in 2
+        # buckets, loop 0.0 on the lc0 control); a
         # non-zero `adamw_loop_params` is the batchability predicates
         # silently routing tensors to the per-parameter path, and
         # `adamw_foreach_recoveries` is a bucket finished per tensor after its
