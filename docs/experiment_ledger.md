@@ -71701,3 +71701,20 @@ KILLED mid-train as uninformative (Josh).** Deciders, read once at completion:
 Confounds: d7 trained beside the 32-engine generation fleet on pre-#492 code
 (wall clock only; batches identical by construction). Same-snapshot targets,
 same steps/seed as the d9 champion arm.
+
+**2026-09-01 — ROUND 3b LAUNCHED (arm unchanged from amendment bc741c5f1).**
+Josh, with the round-3 inversion in hand: "d9 is too hard to predict without
+search at least while the net is weak. Maybe starting with 7 and doing 2nd
+pass at 9 is worth trying" — which is the parked curriculum arm verbatim
+(4,840 steps d7 → --init-from → 4,840 steps d9, total 9,680 matched; deciders
+and pre-committed reads as preregged, judged vs BOTH endpoints now that
+d7-only > d9-only on the ruler). Launch mechanics only, no recipe change:
+gate round3b.go → valueround.done (the manual go arrived; the value round
+owns the GPU first), waiter relaunched (old pid killed by verified pid), and
+the train worktree re-pinned to the fast post-#492 tree — identity chain:
+VWT reproduced V0's training byte-identically at bead931e6 and #492 is
+batch-identical, so draws match the endpoints trained on the old worktree.
+Mechanism note for the readout: the depth-morphology bank locates the d7↔d9
+label difference in high-u/late-settling (tactical) rows — precisely the
+labels a weak searchless student cannot absorb, so the curriculum hypothesis
+and the round-3 inversion share one mechanism candidate.
