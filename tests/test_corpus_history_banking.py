@@ -42,6 +42,7 @@ would pass every equality above while testing nothing).
 
 from __future__ import annotations
 
+import ast
 import random
 from collections.abc import Sequence
 from pathlib import Path
@@ -134,6 +135,8 @@ def row_for(board: chess.Board, *, ply: int = 0) -> dict[str, Any]:
         "fen": board.fen(),
         "game_id": 0,
         "ply": ply,
+        "search_key": corpus.search_key(board),
+        "input_key": corpus.row_key(board),
         **history.as_row_fields(),
     }
 
@@ -190,6 +193,18 @@ EP_DECLINED_LEGAL = "e2e4 a7a6 e4e5 d7d5"
 #: so the root's halfmove-clock walk starts from a clock that is not the row's.
 IRREVERSIBLE_IN_WINDOW = "e2e4 d7d5 e4d5 d8d5 b1c3 d5a5 g1f3 g8f6 f1c4 c8g4"
 
+#: ⚑⚑ A REPETITION AMONG THE OLDER FRAMES, THEN AN IRREVERSIBLE MOVE INSIDE THE
+#: WINDOW.  Two knight cycles make the start position a 3-fold at ply 8 (and
+#: every position of the cycle a 2-fold), then ``e2e4 e7e5`` zero the clock.
+#: At plies 9-10 the row's OWN clock is 0-1 while frames 3..7 still carry
+#: repetition planes -- so a walk that read the row's clock instead of P's
+#: would root the window at e2e4, lose those planes, and STILL replay to the
+#: right FEN.  Review finding (Fable, 2026-09-01): without this case that
+#: mutant passed all 19 gate instances.
+REPETITION_THEN_IRREVERSIBLE_IN_WINDOW = (
+    "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 e2e4 e7e5"
+)
+
 #: ⚑ A ROOT RIGHT AFTER A DOUBLE PAWN PUSH WITH NO LEGAL EP CAPTURE.  White's
 #: e-pawn double-steps with no black pawn on d4/f4, so python-chess sets
 #: ``ep_square`` but ``fen()`` under its DEFAULT ``en_passant="legal"`` policy
@@ -220,6 +235,9 @@ def named_cases() -> dict[str, list[chess.Board]]:
         "ep_declined_legal": positions(chess.STARTING_FEN, EP_DECLINED_LEGAL),
         "irreversible_in_window": positions(
             chess.STARTING_FEN, IRREVERSIBLE_IN_WINDOW,
+        ),
+        "repetition_then_irreversible_in_window": positions(
+            chess.STARTING_FEN, REPETITION_THEN_IRREVERSIBLE_IN_WINDOW,
         ),
         "pseudo_legal_ep_root": positions(PSEUDO_LEGAL_EP_FEN, "e8d8 e1d1"),
         "pseudo_legal_ep_pinned": positions(
@@ -497,6 +515,21 @@ def test_every_named_case_exercises_what_it_claims_to() -> None:
     irr = CASES["irreversible_in_window"]
     assert any(b.halfmove_clock == 0 for b in irr[-corpus.HISTORY_WINDOW_PLIES:])
 
+    # ⚑ A repetition plane on an OLDER frame (slot >= 3) while the row's own
+    # clock is < 3: the frame's reversible run is longer than the row's, which
+    # is the case the two-stage walk in `history_for` exists for.  Read off the
+    # live planes AND the board, so a retyped move list fails here.
+    old_rep = CASES["repetition_then_irreversible_in_window"]
+    assert old_rep[8].is_repetition(3), "the start is no longer a 3-fold at ply 8"
+    assert [b.halfmove_clock for b in old_rep[9:]] == [0, 0], "e4 and e5 zero the clock"
+    assert any(
+        b.halfmove_clock < 3 and bool(np.any(live_planes(b)[REP_PLANES[3:]]))
+        for b in old_rep
+    ), (
+        "no position has a repetition plane on slot >= 3 with its own clock < 3, "
+        "so a walk that read the row's clock instead of P's would pass the gate"
+    )
+
     # Short histories at both kinds of start.
     assert CASES["bare_fen_start"][0].move_stack == []
     assert len(CASES["sampled_start"][0].move_stack) > 0, (
@@ -629,16 +662,54 @@ def test_the_position_command_carries_the_window() -> None:
     assert corpus.position_command(empty) == f"position fen {chess.STARTING_FEN}"
 
 
-def test_the_generator_sends_no_position_line_it_did_not_build() -> None:
-    """Every ``position`` in the generator goes through ONE helper.
+def test_the_window_length_is_the_encoders_frame_count_minus_one() -> None:
+    """``HISTORY_WINDOW_PLIES`` is the C ``CBOARD_HISTORY_MAX``, pinned here.
 
-    Grep-level, on purpose: a second speller added later is exactly how the
-    label path goes history-blind again, and it would not show up in any test
-    that only drives the engine through today's call sites.
+    The constant's own docstring says this file pins it; before this test the
+    file only used it as a bound, which is a claim and not a pin.  The C
+    extension exports no name for it, so the pin is against the frame count the
+    encoded tensor actually carries.
     """
-    source = Path(corpus.__file__).read_text(encoding="utf-8")
-    sends = [
-        line.strip() for line in source.splitlines()
-        if "_send(" in line and "position" in line
-    ]
-    assert sends == ["self.engine._send(position_command(history))"], sends
+    assert corpus.HISTORY_WINDOW_PLIES == _HISTORY_SLOTS - 1
+    assert len(REP_PLANES) == _HISTORY_SLOTS
+    # ... and the tensor really has that many frames: the 8th slot's piece
+    # planes are filled on a board with 8+ positions of history.
+    board = CASES["far_repetition"][-1]
+    assert bool(np.any(live_planes(board)[7 * _PLANES_PER_SLOT : 7 * _PLANES_PER_SLOT + 12]))
+
+
+def test_the_generator_sends_no_position_line_it_did_not_build() -> None:
+    """Every ``position`` literal in the generator lives in ONE function.
+
+    ⚑ THE TRANSCRIPT ASSERTION IS THE REAL GUARD --
+    ``tests/test_gen_sf_rooted_corpus.py::test_every_banked_row_carries_the_
+    window_the_engine_was_given`` reads the position lines the engine was
+    actually handed off a whole scripted game and matches each to the row it
+    banked.  This is the structural complement: a second speller would make
+    the label path history-blind, and it shows up here the day it is written
+    rather than the day a label disagrees.  AST-level rather than a same-line
+    grep (the first cut paired ``_send(`` and ``position`` on one line), so a
+    sender split over several lines, or a literal assembled far from its
+    ``_send``, is still seen.
+    """
+    tree = ast.parse(Path(corpus.__file__).read_text(encoding="utf-8"))
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def enclosing_function(node: ast.AST) -> str | None:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node.name
+        return None
+
+    spellers = {
+        enclosing_function(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("position ")
+    }
+    assert spellers == {"position_command"}, spellers

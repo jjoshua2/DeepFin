@@ -228,6 +228,14 @@ def corpus_row(
     history: dict[str, Any] = (
         corpus.history_for(board).as_row_fields() if int(schema) >= 2 else {}
     )
+    # The two keys the generator decides by, built by ITS helpers: the label
+    # key and the hash of the tensor live play encodes for this board -- which
+    # the deriver re-hashes off its own reconstruction and refuses on a
+    # mismatch, so a fixture that spelled its own hash would test nothing.
+    keys: dict[str, Any] = (
+        {"search_key": corpus.search_key(board), "input_key": corpus.row_key(board)}
+        if int(schema) >= 2 else {}
+    )
     return {
         "schema": int(schema),
         "run": {
@@ -237,6 +245,7 @@ def corpus_row(
         },
         "fen": fen,
         "dedup_key": " ".join(fen.split(" ")[:5]),
+        **keys,
         "worker_id": worker_id,
         "game_id": game_id,
         "ply": ply,
@@ -391,6 +400,14 @@ def run_derive(
     ])
     assert code == 0
     return json.loads((out_dir / derive.SUMMARY_NAME).read_text(encoding="utf-8"))
+
+
+def shard_attrs(out_dir: Path) -> list[dict[str, Any]]:
+    """Every emitted shard's zarr attrs, in shard order."""
+    return [
+        dict(zarr.open_group(str(path), mode="r").attrs.asdict())
+        for path in iter_shard_paths(out_dir)
+    ]
 
 
 def read_rows(out_dir: Path) -> tuple[list[Any], dict[str, Any]]:
@@ -900,6 +917,17 @@ def test_a_schema_1_row_has_zero_history_and_the_summary_measures_it(
     assert summary["realized"]["row_schema_counts"] == {"1": 1}
     assert summary["realized"]["history_root_reason_counts"] == {}
     assert summary["realized"]["repetition_planes_nonzero_rows"] == 0
+    # ⚑ THE SOURCE's schema, not this build's (Fable finding 1 / Codex P2):
+    # the record's stamp, the rows' reading, and the shard's attrs all say 1.
+    assert summary["corpus"]["row_schema"] == 1
+    assert summary["corpus"]["row_schema_realized"] == 1
+    assert summary["realized"]["history_window_empty_rows"] == 1
+    assert summary["realized"]["input_key_verified"] == 0, "no schema-2 row to verify"
+    (attrs,) = shard_attrs(tmp_path / "out")
+    assert attrs["derive_corpus_row_schema"] == 1
+    assert attrs["derive_corpus_record_row_schema"] == 1
+    assert attrs["derive_corpus_row_schema_counts"] == {"1": 1}
+    assert attrs["zero_history"] is True
 
     samples, _ = read_rows(tmp_path / "out")
     planes = np.asarray(samples[0].x)
@@ -927,6 +955,17 @@ def test_a_schema_2_row_carries_all_eight_frames(tmp_path: Path) -> None:
     # The shuffle repeats, so the repetition planes fire too -- the half of the
     # encoding a zero-history row can never reach at all.
     assert summary["realized"]["repetition_planes_nonzero_rows"] == 1
+    # ⚑ THE PER-ROW TAKE-EFFECT PROOF: the reconstructed tensor hashed to the
+    # input_key the generator banked off the LIVE board, on every schema-2 row.
+    assert summary["realized"]["input_key_verified"] == 1
+    assert summary["realized"]["history_window_empty_rows"] == 0
+    assert summary["corpus"]["row_schema"] == 2
+    assert summary["corpus"]["row_schema_realized"] == 2
+    (attrs,) = shard_attrs(tmp_path / "out")
+    assert attrs["derive_corpus_row_schema"] == 2
+    assert attrs["derive_corpus_record_row_schema"] == 2
+    assert attrs["derive_corpus_row_schema_counts"] == {"2": 1}
+    assert attrs["zero_history"] is False
 
     samples, _ = read_rows(tmp_path / "out")
     planes = np.asarray(samples[0].x)
@@ -953,6 +992,45 @@ def test_a_mixed_corpus_reports_both_schemas(tmp_path: Path) -> None:
     assert summary["realized"]["history_slots_filled_histogram"] == {"1": 1, "8": 1}
     assert summary["realized"]["history_root_reason_counts"] == {"game_start": 1}
     assert summary["input"]["zero_history"] is False
+    # The record claims 2 (the fixture's manifest); the rows say "mixed", and
+    # the shard carries both so a reader can see the disagreement.
+    assert summary["corpus"]["row_schema"] == 2
+    assert summary["corpus"]["row_schema_realized"] == derive.ROW_SCHEMA_MIXED
+    assert summary["realized"]["input_key_verified"] == 1, "the one schema-2 row"
+    assert summary["realized"]["history_window_empty_rows"] == 1, "the schema-1 row"
+    (attrs,) = shard_attrs(tmp_path / "out")
+    assert attrs["derive_corpus_row_schema"] == "mixed"
+    assert attrs["derive_corpus_record_row_schema"] == 2
+    assert attrs["derive_corpus_row_schema_counts"] == {"1": 1, "2": 1}
+    assert attrs["zero_history"] is False
+
+
+def test_a_row_whose_input_key_disagrees_with_its_reconstruction_stops_the_run(
+    tmp_path: Path,
+) -> None:
+    """⚑ THE NEGATIVE HALF of the per-row proof.
+
+    A schema-2 row's ``input_key`` is the hash of the tensor live play encoded;
+    a reconstruction that hashes to anything else is a row whose planes nothing
+    vouches for, and the run stops rather than emit it.  Mutation caught:
+    dropping ``_verify_input_key`` -- both refusals below then derive cleanly
+    and ``input_key_verified`` silently reads 0.
+    """
+    tampered = history_row()
+    tampered["input_key"] = "0" * 32
+    corpus_dir = write_corpus(
+        tmp_path, [tampered], row_schema=derive.ROW_SCHEMA_HISTORY, name="tampered",
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="not the banked input_key"):
+        run_derive(corpus_dir, tmp_path / "out_tampered", "uniform-d9")
+
+    missing = history_row()
+    del missing["input_key"]
+    corpus_dir = write_corpus(
+        tmp_path, [missing], row_schema=derive.ROW_SCHEMA_HISTORY, name="missing",
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="no input_key"):
+        run_derive(corpus_dir, tmp_path / "out_missing", "uniform-d9")
 
 
 def test_a_row_whose_window_misses_its_own_fen_stops_the_run(
@@ -985,7 +1063,10 @@ def test_shards_carry_the_scheme_and_schema_stamps(tmp_path: Path) -> None:
     assert attrs["derive_temp"] == pytest.approx(0.7)
     assert attrs["derive_scheme_params"]["depth"] == 9
     assert attrs["derive_corpus_config_sha256"] == CONFIG_SHA
-    assert attrs["derive_corpus_row_schema"] == corpus.ROW_SCHEMA
+    # Spelled as the schema the ROWS had (the fixture's default is schema 2),
+    # never as `corpus.ROW_SCHEMA`: that stamp read 2 on a schema-1 corpus.
+    assert attrs["derive_corpus_row_schema"] == derive.ROW_SCHEMA_HISTORY
+    assert attrs["derive_corpus_record_row_schema"] == derive.ROW_SCHEMA_HISTORY
     # The extra attrs must not disturb the reader that ignores them.
     _arrs, meta = load_shard_arrays(path, lazy=False)
     assert meta["run_id"] == derive.SHARD_RUN_ID

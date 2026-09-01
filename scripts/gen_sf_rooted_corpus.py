@@ -56,14 +56,26 @@ the engine is set up with.  Both halves matter and they are one change:
 ``position`` line is spelled.  See both for the root definition and why it is
 7 plies plus the halfmove clock rather than just 7.
 
-⚑ DEDUP IS STILL KEYED ON THE POSITION, so the FIRST route to a position banks
-its history and every later route is served that row's values.  ``dedup_key``
-keeps the halfmove clock (so the fifty-move component of a label cannot be
-served across a boundary) but not the repetition count: two routes to one
-position that differ only in how many times it has already occurred share a
-label.  That is the pre-existing dedup bargain, stated rather than widened --
-the alternative is keying on the whole window, which would collapse the hit
-rate the corpus's throughput depends on.
+⚑⚑ DEDUP IS TWO KEYS, NOT ONE.  Under schema 2 a position reached by two
+routes can differ in (1) the 8-frame input tensor, (2) the repetition state the
+engine's ``is_draw``/``has_game_cycle`` read, and (3) therefore the right move
+-- so "same FEN" is neither "same row" nor "same label".  ``play_game`` keys
+the two concepts separately (see :func:`search_key` and :func:`row_key`):
+
+* ``search_key`` -- LABEL equivalence: ``dedup_key`` (FEN minus the fullmove
+  number) plus the repetition signature of the reversible segment.  Stockfish
+  consults game history only through repetition counts, so two routes with
+  equal signatures get the same values (0/1200 label changes measured without a
+  repeat, 2026-09-01 calibration).
+* ``row_key`` -- MODEL-INPUT identity: a hash of the encoded 175-plane tensor,
+  banked on the row as ``input_key``.  A route whose tensor is new is SEARCHED
+  and BANKED even when its ``search_key`` is cached (the compact cache cannot
+  supply the ``phases`` a row needs); a route whose tensor was seen banks
+  nothing, and is served from the cache only when its ``search_key`` hits.
+
+Measured on run03/w03 (1,717,460 rows): position-key collisions are 0.015% of
+positions, all in the first 1-2 plies after a shared book exit, so the split is
+a CORRECTNESS guarantee for schema 2 and not a throughput trade.
 
 THE STREAM RULES, MEASURED AGAINST THE REAL BINARY (2026-08-27)
 ---------------------------------------------------------------
@@ -229,8 +241,11 @@ from pathlib import Path
 from typing import Any
 
 import chess
+import chess.polyglot
 import numpy as np
 
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
 from chess_anti_engine.stockfish.uci import (
     StockfishTimeoutError,
@@ -285,6 +300,23 @@ HISTORY_ROOT_IRREVERSIBLE = "irreversible"
 #: standard starting position, not the book exit.  For the blind-spot FEN-list
 #: branch it is that bare FEN.
 HISTORY_ROOT_GAME_START = "game_start"
+
+#: The production input encoding, spelled ONCE for the whole corpus chain.
+#: :func:`row_key` hashes the tensor live play would encode for a position
+#: (``encode_cboard(CBoard.from_board(board), ...)``, the UCI search-root call)
+#: and ``scripts/derive_corpus_targets.py`` re-encodes the reconstructed row
+#: with the SAME two constants -- imported from here, because the deriver
+#: already imports this module and a second spelling is how the two sides drift
+#: apart without any test noticing.  ``tests/test_corpus_history_banking.py``
+#: pins the deriver's python encoder to this C call, plane for plane.
+INPUT_HISTORY_ENCODING = "lc0_root_legacy_meta"
+INPUT_EXTRA_FEATURES = "v2_threats"
+
+#: Repetition counts above this are indistinguishable to the engine (a 3-fold
+#: is a draw whether it is the third or the fifth occurrence), so the signature
+#: caps them here rather than growing a key for a state that cannot change a
+#: label.
+_SEARCH_KEY_REPEAT_CAP = 3
 
 #: Summary schema, versioned separately: the summary gains aggregate keys far
 #: more often than a row changes shape, and bumping the row schema for a new
@@ -1455,6 +1487,72 @@ def dedup_key(board: chess.Board) -> str:
     return " ".join(board.fen().split(" ")[:5])
 
 
+def search_key(board: chess.Board) -> str:
+    """LABEL equivalence: ``dedup_key`` plus the reversible segment's repeats.
+
+    ⚑ THE MINIMUM SAFE SIGNATURE, and why it is enough: Stockfish consults game
+    history only through ``is_draw``/``has_game_cycle``, and both read
+    REPETITION COUNTS over the positions since the last irreversible move --
+    nothing else about the route.  So two routes whose reversible segments hold
+    the same multiset of repeated positions get the same search, and the
+    2026-09-01 legacy-corpus calibration measured exactly that: 0/1200 label
+    changes between the history-blind and history-aware sends where no repeat
+    sits in the segment, 12.50% top-1 changes where one does.
+
+    The segment is walked back ``halfmove_clock`` plies from the position
+    itself (the game start bounds it), every position's polyglot Zobrist hash
+    is counted, and the hashes seen at least twice are serialised with their
+    counts (capped at ``_SEARCH_KEY_REPEAT_CAP``) in a fixed order.  A route
+    with no repeat serialises to ``<dedup_key>|`` -- the old key with an empty
+    signature -- so the cache still folds every transposition that IS
+    label-equivalent.
+    """
+    counts: Counter[int] = Counter()
+    walk = board.copy(stack=True)
+    counts[chess.polyglot.zobrist_hash(walk)] += 1
+    for _ in range(int(board.halfmove_clock)):
+        if not walk.move_stack:
+            break
+        walk.pop()
+        counts[chess.polyglot.zobrist_hash(walk)] += 1
+    repeats = sorted(
+        (h, min(c, _SEARCH_KEY_REPEAT_CAP)) for h, c in counts.items() if c >= 2
+    )
+    return f"{dedup_key(board)}|{','.join(f'{h:016x}:{c}' for h, c in repeats)}"
+
+
+def input_tensor_key(planes: np.ndarray) -> str:
+    """The identity of one encoded input: blake2b-128 over its float32 bytes.
+
+    Spelled once and called from BOTH ends of the chain: the generator hashes
+    the tensor live play would encode (:func:`row_key`) and the deriver hashes
+    the tensor it reconstructed from the banked window, and a row whose two
+    hashes differ is refused there.  ``float32`` and C order are forced so the
+    bytes are the same whichever encoder produced the array.
+    """
+    return hashlib.blake2b(
+        np.ascontiguousarray(planes, dtype=np.float32).tobytes(), digest_size=16,
+    ).hexdigest()
+
+
+def row_key(board: chess.Board) -> str:
+    """MODEL-INPUT identity: the hash of the tensor live play encodes for ``board``.
+
+    ⚑ THE C PLAY PATH, verbatim -- ``encode_cboard(CBoard.from_board(board))``
+    is the call the UCI search makes on its root -- so "same row" means "the
+    net would see the same 175 planes", history frames and repetition planes
+    included, rather than "same FEN".  ~0.35 ms per position beside a search
+    of order 100 ms.
+    """
+    return input_tensor_key(
+        encode_cboard(
+            CBoard.from_board(board),
+            input_history_encoding=INPUT_HISTORY_ENCODING,
+            input_extra_features=INPUT_EXTRA_FEATURES,
+        ),
+    )
+
+
 def game_phase(*, ply: int, piece_count: int) -> str:
     """Which dedup bucket a position belongs to.  Endgame wins -- see the constants."""
     if int(piece_count) <= ENDGAME_MAX_PIECES:
@@ -1526,6 +1624,12 @@ class DedupCache:
         self._entries: OrderedDict[str, SelectionValues] = OrderedDict()
         self.evictions = 0
         self._bytes = 0
+        #: The ``row_key``s whose tensor has already been BANKED (or searched
+        #: for a sub-``MIN_BANKED_PIECES`` position), bounded by the same FIFO
+        #: rule as the values so a resume re-warms both from the same shards
+        #: in the same order.  A seen input banks no second row.
+        self._inputs: OrderedDict[str, None] = OrderedDict()
+        self.input_evictions = 0
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -1533,6 +1637,21 @@ class DedupCache:
     def get(self, key: str) -> SelectionValues | None:
         """Serve a position, WITHOUT touching the eviction order (FIFO)."""
         return self._entries.get(key)
+
+    def input_seen(self, key: str) -> bool:
+        """Whether a row with this input tensor has already been banked."""
+        return key in self._inputs
+
+    def remember_input(self, key: str) -> None:
+        """Mark an input tensor as banked.  ⚑ AFTER the search succeeds, never
+        before: a ply whose search wedged banked nothing, and marking it seen
+        would deny the next route to that tensor its row."""
+        if key in self._inputs:
+            return
+        self._inputs[key] = None
+        while len(self._inputs) > self.max_entries:
+            self._inputs.popitem(last=False)
+            self.input_evictions += 1
 
     def put(self, key: str, values: SelectionValues) -> None:
         if key in self._entries:
@@ -1561,6 +1680,8 @@ class DedupCache:
                 "an evicted position that recurs is re-searched and RE-BANKED; "
                 "two rows may share a dedup_key"
             ),
+            "dedup_input_set_entries": len(self._inputs),
+            "dedup_input_set_evictions": self.input_evictions,
         }
 
 
@@ -1674,7 +1795,7 @@ class ShardWriter:
 
     def __init__(
         self, *, out_dir: Path, worker_id: int, shard_rows: int,
-        first_index: int = 0,
+        first_index: int = 0, tally_keys: Sequence[str] = (),
     ) -> None:
         if int(shard_rows) <= 0:
             raise ValueError(
@@ -1707,6 +1828,15 @@ class ShardWriter:
         self._text: Any = None
         self._raw: Any = None
         self._binary: Any = None
+        #: Row fields tallied PER SHARD and committed WITH the shard record
+        #: (``tallies``), so a histogram summed over ``shards`` can never count
+        #: a row that was abandoned with its file.  ⚑ Read by SUBSCRIPT: a row
+        #: missing a tallied key is a writer fault, not a zero.
+        self.tally_keys = tuple(str(key) for key in tally_keys)
+        self._tallies: dict[str, Counter[str]] = self._fresh_tallies()
+
+    def _fresh_tallies(self) -> dict[str, Counter[str]]:
+        return {key: Counter() for key in self.tally_keys}
 
     def path_for(self, index: int) -> Path:
         return self.out_dir / f"w{self.worker_id:02d}-{index:05d}{self.suffix}"
@@ -1734,6 +1864,8 @@ class ShardWriter:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
         self._rows += 1
         self._uncommitted += 1
+        for key in self.tally_keys:
+            self._tallies[key][str(row[key])] += 1
 
     def end_game(self, game_id: int) -> None:
         """Record ``game_id`` as banked in full, and rotate if the shard is due.
@@ -1789,7 +1921,11 @@ class ShardWriter:
             "rows": self._rows,
             "codec": self.codec,
             "games": games,
+            "tallies": {
+                key: dict(counter) for key, counter in self._tallies.items()
+            },
         }
+        self._tallies = self._fresh_tallies()
         if self._uncommitted:
             # ⚑⚑ A GAME'S ROWS ARE IN THIS FILE AND THE GAME NEVER ENDED --
             # the worker died between `write` and `end_game` (a disk error, an
@@ -1874,6 +2010,21 @@ def iter_shard_rows(path: Path) -> Iterator[dict[str, Any]]:
                 yield _decode_shard_line(path, number, line)
 
 
+def require_current_row_schema(row: Mapping[str, Any]) -> None:
+    """A resume re-warms ONLY from rows this build wrote the shape of.
+
+    Checked before any key of the row is read: a schema-1 row has no
+    ``search_key``/``input_key``, and a ``KeyError`` on one of those would name
+    the symptom rather than the cause.
+    """
+    if int(row["schema"]) != ROW_SCHEMA:
+        raise ValueError(
+            f"row schema {row['schema']!r} is not {ROW_SCHEMA}; a resume that "
+            "re-warmed its dedup cache from a foreign row shape would serve "
+            "values it cannot read",
+        )
+
+
 def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
     """Rebuild the CACHED value vector from the row that position banked.
 
@@ -1887,12 +2038,7 @@ def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
     approximation.  ``value_width`` is checked rather than trusted: a row shape
     that drifted must fail here, not serve a quietly wrong value vector.
     """
-    if int(row["schema"]) != ROW_SCHEMA:
-        raise ValueError(
-            f"row schema {row['schema']!r} is not {ROW_SCHEMA}; a resume that "
-            "re-warmed its dedup cache from a foreign row shape would serve "
-            "values it cannot read",
-        )
+    require_current_row_schema(row)
     selection = row["selection"]
     depth = int(selection["value_depth"])
     blocks = [
@@ -2173,10 +2319,19 @@ def resume_worker_state(
         # a legacy line's game ids come from.
         for row in iter_shard_rows(path):
             derived.add(int(row["game_id"]))
-            key = str(row["dedup_key"])
+            require_current_row_schema(row)
+            # ⚑ BOTH KEYS, in the order the live session filled them: the
+            # values under the row's `search_key`, and the row's `input_key`
+            # into the seen-input set. A re-warm that restored only the values
+            # would have the resumed session search AND RE-BANK every position
+            # the killed one already banked -- a duplicate row per replayed
+            # transposition, and `test_a_resumed_worker_re_warms_...` reads
+            # `rows == 0` off exactly this.
+            key = str(row["search_key"])
             if cache.get(key) is None:
                 cache.put(key, selection_values_from_row(row))
                 rewarmed += 1
+            cache.remember_input(str(row["input_key"]))
         if "games" in record:
             adopted["games"] = [int(game) for game in record["games"]]
         else:
@@ -2249,10 +2404,38 @@ class WorkerSpec:
 
 @dataclass
 class DedupStats:
-    """First-seen and cache-served counts, split by phase of game."""
+    """Searched and cache-served counts by phase, plus the two-key breakdown.
+
+    Every visited ply is exactly one of ``first_seen`` (it ran a search) or
+    ``hits`` (it was served from the cache with no search).  The scalar
+    counters below say WHY, in terms of the two keys ``play_game`` reads:
+
+    * ``row_key_hits`` -- the input tensor had been banked before; no row.
+    * ``search_key_hits`` -- the ``search_key`` was in the cache, whether or
+      not the ply was served from it.
+    * ``search_key_hit_on_new_input`` -- the label was cached but the tensor
+      was new: searched and banked anyway, because the compact cache cannot
+      supply a row's ``phases``.  The count of rows the old position-keyed
+      dedup would have DROPPED.
+    * ``search_key_miss_on_seen_input`` -- the tensor was banked before but an
+      older repeat outside the frames changed the engine-relevant state:
+      searched, not banked.  The count of labels the old dedup would have
+      SERVED WRONG.
+    * ``searches`` -- every ply that ran a search (``== positions_first_seen``,
+      spelled under the name the ledger uses).
+    * ``rows_banked`` -- rows handed to the game's row list.  ⚑ NOT the
+      committed row count: a row can still be abandoned with its shard, which
+      is why the worker's ``rows`` is read off the inventory instead.
+    """
 
     first_seen: Counter[str] = field(default_factory=Counter)
     hits: Counter[str] = field(default_factory=Counter)
+    row_key_hits: int = 0
+    search_key_hits: int = 0
+    search_key_hit_on_new_input: int = 0
+    search_key_miss_on_seen_input: int = 0
+    searches: int = 0
+    rows_banked: int = 0
 
     def summary(self) -> dict[str, Any]:
         seen = int(sum(self.first_seen.values()))
@@ -2265,6 +2448,12 @@ class DedupStats:
             "dup_rate": (hits / total) if total else math.nan,
             "first_seen_by_phase": {p: int(self.first_seen[p]) for p in GAME_PHASES},
             "dup_hits_by_phase": {p: int(self.hits[p]) for p in GAME_PHASES},
+            "row_key_hits": int(self.row_key_hits),
+            "search_key_hits": int(self.search_key_hits),
+            "search_key_hit_on_new_input": int(self.search_key_hit_on_new_input),
+            "search_key_miss_on_seen_input": int(self.search_key_miss_on_seen_input),
+            "searches": int(self.searches),
+            "rows_banked": int(self.rows_banked),
         }
 
 
@@ -2375,9 +2564,23 @@ def play_game(
             break
 
         key = dedup_key(board)
+        label_key = search_key(board)
+        input_key = row_key(board)
         phase = game_phase(ply=ply, piece_count=piece_count)
-        cached = cache.get(key)
+        # ⚑⚑ TWO KEYS, TWO QUESTIONS (module docstring).  `cached` answers "is
+        # this LABEL known"; `new_input` answers "has this TENSOR been banked".
+        # A new tensor is searched and banked whatever the cache says, because
+        # the compact cache holds two arrays and a row needs the phases; a
+        # seen tensor banks nothing, and is served only when the label matches
+        # too -- an older repeat outside the frames changes what the engine
+        # sees without changing a single plane.
+        cached = cache.get(label_key)
+        new_input = not cache.input_seen(input_key)
         if cached is not None:
+            dedup.search_key_hits += 1
+        if not new_input:
+            dedup.row_key_hits += 1
+        if cached is not None and not new_input:
             dedup.hits[phase] += 1
             values = cached
             search: PositionSearch | None = None
@@ -2393,10 +2596,26 @@ def play_game(
                 termination = "engine_wedge"
                 break
             dedup.first_seen[phase] += 1
+            dedup.searches += 1
+            if cached is not None:
+                dedup.search_key_hit_on_new_input += 1
+            elif not new_input:
+                dedup.search_key_miss_on_seen_input += 1
             # ⚑ Selection reads the COMPACT object on the first visit too, so a
             # cache-served ply and a first-seen ply cannot disagree about q.
             values = SelectionValues.from_lines(search.values)
-            cache.put(key, values)
+            cache.put(label_key, values)
+            if new_input:
+                # ⚑ After the search, so a wedged ply never marks its tensor
+                # banked.  Remembered whether or not a row follows: a sub-
+                # `MIN_BANKED_PIECES` position can never bank one, and the
+                # next route to it should be served, not re-searched.
+                cache.remember_input(input_key)
+            else:
+                # A seen tensor whose label was NOT cached: the search was
+                # needed for the move, the row is not (its tensor is already
+                # in the corpus under another label).
+                search = None
 
         temp, temp_phase = temperature_for(
             ply,
@@ -2439,7 +2658,11 @@ def play_game(
                     KEY_TT_CARRIED: searcher.tt_cleared_mid_position == 0,
                 },
                 "fen": board.fen(),
+                # `dedup_key` is kept for consumers that join on it; the two
+                # keys the generator actually decides by sit beside it.
                 "dedup_key": key,
+                "search_key": label_key,
+                "input_key": input_key,
                 "worker_id": spec.worker_id,
                 "game_id": game_id,
                 "ply": ply,
@@ -2467,6 +2690,7 @@ def play_game(
                 "result_pgn": None,
                 "adjudication": None,
             })
+            dedup.rows_banked += 1
 
         board.push(chess.Move.from_uci(played))
         ply += 1
@@ -2644,6 +2868,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     writer = ShardWriter(
         out_dir=spec.out_dir, worker_id=spec.worker_id, shard_rows=spec.shard_rows,
         first_index=resume.next_shard_index,
+        tally_keys=_SHARD_TALLY_KEYS,
     )
     game_ids = tuple(
         game_id for game_id in spec.game_ids
@@ -2656,14 +2881,6 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
     opening_sources: Counter[str] = Counter()
-    # ⚑ READ OFF THE ROWS, not off a counter kept beside `history_for`.  A
-    # histogram built where the window is CONSTRUCTED would report a window
-    # that was computed and then dropped (the sub-`MIN_BANKED_PIECES` and
-    # dedup-served plies both compute one and bank nothing) as if it were in
-    # the corpus.  These count rows handed to the writer, which is the same set
-    # every other per-session counter here is over.
-    history_plies: Counter[str] = Counter()
-    history_root_reasons: Counter[str] = Counter()
     plies: list[int] = []
     games = 0
     games_started = 0
@@ -2679,8 +2896,6 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             )
             for row in outcome.rows:
                 writer.write(row)
-                history_plies[str(int(row["history_plies"]))] += 1
-                history_root_reasons[str(row["history_root_reason"])] += 1
             # ⚑ AFTER the last row and BEFORE the next game: this is the
             # commit point of the whole resume protocol. A kill between the
             # last `write` and here leaves the shard unlisted, so the game is
@@ -2715,6 +2930,14 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     # keep claiming it -- `summary["rows"]` must equal the rows a consumer
     # reaches by iterating `summary["shards"]`, on the failure path too.
     rows_written = sum(int(shard["rows"]) for shard in writer.shards)
+    # ⚑ THE SAME RULE FOR THE WINDOW HISTOGRAMS. Each shard record carries the
+    # tallies of the rows it holds (`ShardWriter.tally_keys`), committed with
+    # the shard and dropped with it, so `sum(histogram) == rows` is an
+    # identity over the inventory rather than a happy-path coincidence -- a
+    # counter kept beside the writer kept counting rows whose shard was then
+    # abandoned unlisted (Codex review of PR #497).
+    history_plies = merge_shard_tallies(writer.shards, "history_plies")
+    history_root_reasons = merge_shard_tallies(writer.shards, "history_root_reason")
     return {
         "worker_id": spec.worker_id,
         "failed": failure,
@@ -2910,6 +3133,32 @@ def merge_counters(results: Sequence[dict[str, Any]], key: str) -> dict[str, int
     return dict(merged)
 
 
+#: The row fields ``ShardWriter`` tallies per committed shard for the worker
+#: summary.  ``history_plies`` feeds ``history_plies_histogram`` and
+#: ``history_root_reason`` feeds ``history_root_reasons``.
+_SHARD_TALLY_KEYS: tuple[str, ...] = ("history_plies", "history_root_reason")
+
+
+def merge_shard_tallies(
+    shards: Sequence[Mapping[str, Any]], key: str,
+) -> dict[str, int]:
+    """One tallied field summed over COMMITTED shard records."""
+    merged: Counter[str] = Counter()
+    for shard in shards:
+        for name, count in shard["tallies"][key].items():
+            merged[str(name)] += int(count)
+    return dict(merged)
+
+
+#: The scalar two-key counters ``DedupStats.summary`` emits, summed by
+#: ``merge_dedup``.  Listed once so the merge cannot silently skip one.
+_DEDUP_SCALAR_COUNTERS: tuple[str, ...] = (
+    "row_key_hits", "search_key_hits", "search_key_hit_on_new_input",
+    "search_key_miss_on_seen_input", "searches", "rows_banked",
+    "dedup_input_set_entries", "dedup_input_set_evictions",
+)
+
+
 def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     seen = sum(int(r["dedup"]["positions_first_seen"]) for r in results)
     hits = sum(int(r["dedup"]["dup_hits"]) for r in results)
@@ -2921,6 +3170,10 @@ def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "positions_first_seen": seen,
         "dup_hits": hits,
         "dup_rate": (hits / total) if total else math.nan,
+        **{
+            name: sum(int(r["dedup"][name]) for r in results)
+            for name in _DEDUP_SCALAR_COUNTERS
+        },
         "first_seen_by_phase": {
             p: sum(int(r["dedup"]["first_seen_by_phase"][p]) for r in results)
             for p in GAME_PHASES
@@ -3454,6 +3707,23 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
             f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
             "The record of what produced the banked rows has been altered, and "
             "a resume validated against it would prove nothing.",
+        )
+    # ⚑ THE ROW SCHEMA IS A REFUSAL HERE, AT THE MANIFEST, not a KeyError
+    # somewhere inside a worker. The per-row check in the cache re-warm fires
+    # only for a worker that HAS shards; a worker whose progress file holds
+    # nothing but zero-row completion records re-warms nothing, passes, and
+    # appends schema-2 rows beside the other workers' schema-1 shards -- one
+    # corpus, two row shapes, and a manifest that describes only the first.
+    # `run` calls this before it archives any record and before any worker
+    # is dispatched, so a refused resume leaves the directory untouched.
+    banked_schema = manifest.get("row_schema")
+    if banked_schema != ROW_SCHEMA:
+        raise ValueError(
+            f"--resume was given but {manifest_path} was opened under row "
+            f"schema {banked_schema!r} and this build writes schema "
+            f"{ROW_SCHEMA}. A schema-{banked_schema!r} row has no window to "
+            "re-bank and nothing downstream could tell the two shapes apart, "
+            "so the corpus is not continued. Use a new --out-dir.",
         )
     return manifest
 

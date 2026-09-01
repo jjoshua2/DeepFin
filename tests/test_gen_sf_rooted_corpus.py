@@ -34,9 +34,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import chess
+import chess.polyglot
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from scripts import audit_label_candidates as gate
@@ -1112,6 +1115,234 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
     assert (second.plies, second.result_pgn) == (first.plies, first.result_pgn)
 
 
+# ── the two dedup keys ───────────────────────────────────────────────────────
+#
+# Every route below is a knight shuffle from the standard start, so the
+# halfmove clock never resets and the FEN (with clock) at the end is shared by
+# the pair.  The routes are pre-pushed through the production seed grammar
+# (``<fen> | <uci> ...``) so the game's OWN ply 0 is the position under test and
+# ``max_plies=1`` searches exactly that one position per game.
+
+#: T1: one FEN, one clock, different prior frames.
+T1_ROUTE_A = "g1f3 g8f6 b1c3 b8c6"
+T1_ROUTE_B = "b1c3 b8c6 g1f3 g8f6"
+#: T2: one FEN, one clock; A arrives at a position it has ALREADY occupied
+#: (a 2-fold, 4 plies apart), B arrives there for the first time.
+T2_ROUTE_REPEATED = "g1f3 g8f6 b1c3 b8c6 f3g1 f6g8 g1f3 g8f6"
+T2_ROUTE_DIRECT = "g1h3 g8h6 h3g5 h6g4 g5f3 g4f6 b1c3 b8c6"
+#: T4: identical last 8 positions (so identical tensors) after a prefix that
+#: in D repeats a position (plies 2 and 6) and in E repeats nothing.  The
+#: repeat sits 8+ plies behind the searched position -- outside every encoded
+#: frame, inside the reversible segment the engine reads.
+T4_TAIL = "b1a3 b8c6 f3g1 f6g8 g1f3 c6a5 a3b1 a5c4"
+T4_ROUTE_OLD_REPEAT = f"g1f3 g8f6 b1c3 b8c6 c3b1 c6b8 {T4_TAIL}"
+T4_ROUTE_NO_REPEAT = f"g1f3 b8a6 b1c3 g8f6 c3b1 a6b8 {T4_TAIL}"
+
+
+def board_after(moves: str) -> chess.Board:
+    board = chess.Board()
+    for uci in moves.split():
+        board.push_uci(uci)
+    return board
+
+
+def live_input_key(board: chess.Board) -> str:
+    """The hash of EXACTLY what live search encodes -- spelled here, not imported."""
+    return corpus.input_tensor_key(encode_cboard(
+        CBoard.from_board(board),
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    ))
+
+
+class SeededGames:
+    """One engine, one cache, one stats object; a game per pre-pushed route."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.engine = ScriptedEngine()
+        self.spec = worker_spec(tmp_path, max_plies=1)
+        self.searcher = searcher_for(self.engine, staircase=self.spec.staircase)
+        self.cache = corpus.DedupCache(max_entries=self.spec.dedup_cache_max)
+        self.dedup = corpus.DedupStats()
+        self.games = 0
+
+    def play(self, moves: str, *, tag: str) -> corpus.GameOutcome:
+        line = f"{chess.STARTING_FEN} | {moves}"
+        outcome = corpus.play_game(
+            spec=self.spec, searcher=self.searcher,
+            opening_cfg=fen_list_opening([line], self.tmp_path / f"{tag}.txt"),
+            game_id=self.games, cache=self.cache, dedup=self.dedup,
+            progress=corpus.WorkerProgress(),
+        )
+        self.games += 1
+        return outcome
+
+    @property
+    def go_count(self) -> int:
+        return len(self.engine.go_lines)
+
+    def counters(self) -> dict[str, int]:
+        summary = self.dedup.summary()
+        return {
+            name: summary[name] for name in (
+                "dup_hits", "row_key_hits", "search_key_hits",
+                "search_key_hit_on_new_input", "search_key_miss_on_seen_input",
+                "searches", "rows_banked",
+            )
+        }
+
+
+def test_the_search_key_is_the_dedup_key_plus_the_reversible_segments_repeats() -> None:
+    """The exact string, because it is what the cache is keyed on."""
+    direct = board_after(T2_ROUTE_DIRECT)
+    repeated = board_after(T2_ROUTE_REPEATED)
+    assert direct.fen() == repeated.fen(), "the pair no longer shares a FEN"
+    assert corpus.dedup_key(direct) == corpus.dedup_key(repeated)
+    assert corpus.search_key(direct) == f"{corpus.dedup_key(direct)}|"
+    assert corpus.search_key(repeated) == (
+        f"{corpus.dedup_key(repeated)}|"
+        f"{chess.polyglot.zobrist_hash(repeated):016x}:2"
+    )
+    # The count is CAPPED: a 3-fold and a 4-fold are the same engine state.
+    # (A third cycle also makes every intermediate position a 2-fold, so the
+    # signature holds several entries; the current position's is read by hash.)
+    three = board_after(T2_ROUTE_REPEATED + " f3g1 f6g8 g1f3 g8f6")
+    four = board_after(T2_ROUTE_REPEATED + " f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 g1f3 g8f6")
+    assert three.is_repetition(3)
+    assert four.is_repetition(4)
+    assert f"{chess.polyglot.zobrist_hash(three):016x}:3" in corpus.search_key(three)
+    assert f"{chess.polyglot.zobrist_hash(four):016x}:3" in corpus.search_key(four)
+    assert ":4" not in corpus.search_key(four)
+    # An irreversible move ends the segment: the start position repeated
+    # BEFORE e2e4, and the engine cannot see it, so neither does the key.
+    cut = board_after("g1f3 g8f6 f3g1 f6g8 e2e4")
+    assert cut.halfmove_clock == 0
+    assert corpus.search_key(cut) == f"{corpus.dedup_key(cut)}|"
+
+
+def test_the_row_key_is_the_hash_of_the_tensor_live_play_encodes() -> None:
+    for moves in (T1_ROUTE_A, T1_ROUTE_B, T2_ROUTE_REPEATED, T4_ROUTE_OLD_REPEAT):
+        board = board_after(moves)
+        assert corpus.row_key(board) == live_input_key(board), moves
+    assert corpus.row_key(board_after(T1_ROUTE_A)) != corpus.row_key(
+        board_after(T1_ROUTE_B),
+    ), "two routes with different prior frames hashed alike"
+    assert corpus.row_key(board_after(T1_ROUTE_A)) == corpus.row_key(
+        board_after(T1_ROUTE_A),
+    )
+
+
+def test_t1_two_routes_to_one_fen_with_different_frames_both_bank(
+    tmp_path: Path,
+) -> None:
+    """T1: the second route is a fresh search and a second row, not a hit."""
+    games = SeededGames(tmp_path)
+    first = games.play(T1_ROUTE_A, tag="a")
+    go_after_first = games.go_count
+    second = games.play(T1_ROUTE_B, tag="b")
+
+    assert len(first.rows) == 1
+    assert len(second.rows) == 1
+    a, b = first.rows[0], second.rows[0]
+    assert a["fen"] == b["fen"]
+    assert a["dedup_key"] == b["dedup_key"]
+    assert a["search_key"] == b["search_key"], "no repeat on either route"
+    assert a["input_key"] != b["input_key"], "different frames, one hash"
+    assert a["input_key"] == live_input_key(board_after(T1_ROUTE_A))
+    assert b["input_key"] == live_input_key(board_after(T1_ROUTE_B))
+    assert b["history_uci"] == T1_ROUTE_B.split(), "the row banks ITS route"
+    assert games.go_count == 2 * go_after_first, "the second route was searched"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 0, "search_key_hits": 1,
+        "search_key_hit_on_new_input": 1, "search_key_miss_on_seen_input": 0,
+        "searches": 2, "rows_banked": 2,
+    }
+
+
+def test_t2_a_route_that_repeats_its_position_is_not_served_the_direct_label(
+    tmp_path: Path,
+) -> None:
+    """T2: same FEN, different repetition state -- a fresh search, a new row."""
+    assert board_after(T2_ROUTE_REPEATED).is_repetition(2)
+    assert not board_after(T2_ROUTE_DIRECT).is_repetition(2)
+    games = SeededGames(tmp_path)
+    direct = games.play(T2_ROUTE_DIRECT, tag="direct")
+    go_after_first = games.go_count
+    repeated = games.play(T2_ROUTE_REPEATED, tag="repeated")
+
+    assert len(direct.rows) == 1
+    assert len(repeated.rows) == 1
+    d, r = direct.rows[0], repeated.rows[0]
+    assert d["dedup_key"] == r["dedup_key"]
+    assert d["search_key"] != r["search_key"], "the repeat is in the label key"
+    assert r["search_key"].endswith(":2")
+    assert games.go_count == 2 * go_after_first, "the repeated route was searched"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 0, "search_key_hits": 0,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 0,
+        "searches": 2, "rows_banked": 2,
+    }
+    assert games.cache.get(d["search_key"]) is not games.cache.get(r["search_key"])
+
+
+def test_t3_a_true_duplicate_is_one_row_and_one_search(tmp_path: Path) -> None:
+    """T3: the cache still works -- identical book exit, identical first move."""
+    games = SeededGames(tmp_path)
+    first = games.play(T1_ROUTE_A, tag="same")
+    go_after_first = games.go_count
+    second = games.play(T1_ROUTE_A, tag="same")
+
+    assert len(first.rows) == 1
+    assert second.rows == [], "a duplicate tensor under a cached label banks nothing"
+    assert games.go_count == go_after_first, "served from the cache, no search"
+    assert games.counters() == {
+        "dup_hits": 1, "row_key_hits": 1, "search_key_hits": 1,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 0,
+        "searches": 1, "rows_banked": 1,
+    }
+
+
+def test_t4_an_older_repeat_outside_the_frames_is_searched_and_not_banked(
+    tmp_path: Path,
+) -> None:
+    """T4: same tensor, different engine state -- no row, but no served label either."""
+    old_repeat = board_after(T4_ROUTE_OLD_REPEAT)
+    no_repeat = board_after(T4_ROUTE_NO_REPEAT)
+    # The premise, read off the boards: same FEN and clock, same tensor, and
+    # the repeat in D is a position that is NOT among the last 8.
+    assert old_repeat.fen() == no_repeat.fen()
+    assert corpus.row_key(old_repeat) == corpus.row_key(no_repeat)
+    assert corpus.search_key(old_repeat) != corpus.search_key(no_repeat)
+    assert corpus.search_key(no_repeat).endswith("|")
+    keys = [board_after(" ".join(T4_ROUTE_OLD_REPEAT.split()[:n]))._transposition_key()
+            for n in range(len(T4_ROUTE_OLD_REPEAT.split()) + 1)]
+    repeated_at = [i for i, k in enumerate(keys) if keys.count(k) > 1]
+    assert repeated_at == [2, 6], repeated_at
+    assert len(keys) - 1 - max(repeated_at) >= corpus.HISTORY_WINDOW_PLIES + 1
+
+    games = SeededGames(tmp_path)
+    first = games.play(T4_ROUTE_NO_REPEAT, tag="no_repeat")
+    go_after_first = games.go_count
+    second = games.play(T4_ROUTE_OLD_REPEAT, tag="old_repeat")
+
+    assert len(first.rows) == 1
+    assert second.rows == [], "the tensor is already in the corpus"
+    assert games.go_count == 2 * go_after_first, "the cached label was NOT served"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 1, "search_key_hits": 0,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 1,
+        "searches": 2, "rows_banked": 1,
+    }
+    # ... and the second label is now cached under ITS key, so a third route
+    # with the same engine state and tensor is served.
+    go_after_second = games.go_count
+    third = games.play(T4_ROUTE_OLD_REPEAT, tag="old_repeat")
+    assert third.rows == []
+    assert games.go_count == go_after_second
+    assert games.counters()["dup_hits"] == 1
+
+
 def test_dup_hits_are_split_by_phase_of_game() -> None:
     assert corpus.game_phase(ply=0, piece_count=32) == corpus.PHASE_OPENING
     assert corpus.game_phase(ply=20, piece_count=32) == corpus.PHASE_OPENING
@@ -1469,13 +1700,17 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     row = outcome.rows[0]
 
     assert set(row) == {
-        "schema", "run", "fen", "dedup_key", "worker_id", "game_id", "ply",
+        "schema", "run", "fen", "dedup_key", "search_key", "input_key",
+        "worker_id", "game_id", "ply",
         "stm", "piece_count", "game_phase", "played_move", "selection",
         "phases", "result", "result_pgn", "adjudication",
         "history_root_fen", "history_uci", "history_plies",
         "history_root_reason",
     }
     assert row["schema"] == 2
+    assert row["search_key"].startswith(row["dedup_key"] + "|")
+    assert len(row["input_key"]) == 32
+    assert int(row["input_key"], 16) >= 0
     assert row["run"][corpus.KEY_TT_CARRIED] is True
     assert row["run"]["config_sha256"] == "0" * 64
     assert row["played_move"] in {m.uci() for m in chess.Board(row["fen"]).legal_moves}
@@ -1620,6 +1855,84 @@ def test_the_worker_summary_counts_the_windows_it_banked(
     assert set(result["history_root_reasons"]) <= {
         corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
     }
+
+
+def test_the_window_counters_come_off_committed_shards_not_a_counter_beside_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Codex P2: ``sum(histogram) == rows`` has to hold on the FAILURE path.
+
+    The writer dies on the second row of the first game -- AFTER writing it, so
+    the shard holds rows of a game that never ended and is abandoned unlisted.
+    ``rows`` reads 0 off the inventory; the histograms must read 0 too.  A
+    counter incremented beside ``writer.write`` reads 1 here (the first row's
+    increment happened, the second's raise skipped it) and the summary claims
+    a window for a row the corpus does not hold.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(engine))
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    original_write = corpus.ShardWriter.write
+    writes = {"n": 0}
+
+    def write_then_die(self: corpus.ShardWriter, row: dict[str, Any]) -> None:
+        original_write(self, row)
+        writes["n"] += 1
+        if writes["n"] == 2:
+            raise RuntimeError("disk full after the second row")
+
+    monkeypatch.setattr(corpus.ShardWriter, "write", write_then_die)
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+
+    assert result["failed"] is not None
+    assert result["failed"]["exception"] == "disk full after the second row"
+    assert result["rows"] == 0
+    assert result["shards"] == []
+    assert result["history_plies_histogram"] == {}
+    assert result["history_root_reasons"] == {}
+    # The rows are not lost silently: the abandoned record discloses them,
+    # tallies included, and a resume deletes the file.
+    (abandoned,) = result["shards_abandoned"]
+    assert abandoned["rows"] == 2
+    assert abandoned["uncommitted_rows"] == 2
+    assert sum(abandoned["tallies"]["history_plies"].values()) == 2
+    assert sum(abandoned["tallies"]["history_root_reason"].values()) == 2
+    # ... and the counters the game loop kept say two rows were HANDED OVER,
+    # which is exactly the number the inventory is allowed to disagree with.
+    assert result["dedup"]["rows_banked"] == 2
+
+
+def test_a_committed_shards_tallies_are_the_rows_it_holds(tmp_path: Path) -> None:
+    """The per-shard tally is committed WITH the shard, on its progress line."""
+    writer = corpus.ShardWriter(
+        out_dir=tmp_path, worker_id=0, shard_rows=2, tally_keys=("history_plies",),
+    )
+    for game, plies in ((0, (3, 7)), (1, (7,))):
+        for n in plies:
+            writer.write({"game_id": game, "history_plies": n})
+        writer.end_game(game)
+    writer.close()
+
+    assert [s["tallies"] for s in writer.shards] == [
+        {"history_plies": {"3": 1, "7": 1}}, {"history_plies": {"7": 1}},
+    ]
+    assert [line["tallies"] for line in read_progress(tmp_path, 0)] == [
+        s["tallies"] for s in writer.shards
+    ]
+    assert corpus.merge_shard_tallies(writer.shards, "history_plies") == {"3": 1, "7": 2}
+    # A row missing a tallied key is a writer fault, never a silent zero.
+    (tmp_path / "other").mkdir()
+    with pytest.raises(KeyError):
+        corpus.ShardWriter(
+            out_dir=tmp_path / "other", worker_id=1, shard_rows=2,
+            tally_keys=("history_plies",),
+        ).write({"game_id": 0})
 
 
 # ── run assembly ─────────────────────────────────────────────────────────────
@@ -1841,6 +2154,11 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                 "dup_hits_by_phase": {"opening": 2, "middlegame": 0, "endgame": 0},
                 "dedup_cache_entries": 8, "dedup_cache_evictions": 3,
                 "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 8000,
+                "row_key_hits": 3, "search_key_hits": 3,
+                "search_key_hit_on_new_input": 1,
+                "search_key_miss_on_seen_input": 1, "searches": 8,
+                "rows_banked": 5, "dedup_input_set_entries": 7,
+                "dedup_input_set_evictions": 2,
             },
             "search": {
                 "positions_searched": 8, "searches": 24, "search_s": 4.0,
@@ -1876,6 +2194,11 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                 "dup_hits_by_phase": {"opening": 0, "middlegame": 0, "endgame": 0},
                 "dedup_cache_entries": 4, "dedup_cache_evictions": 0,
                 "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 4400,
+                "row_key_hits": 0, "search_key_hits": 1,
+                "search_key_hit_on_new_input": 1,
+                "search_key_miss_on_seen_input": 0, "searches": 4,
+                "rows_banked": 3, "dedup_input_set_entries": 4,
+                "dedup_input_set_evictions": 0,
             },
             "search": {
                 "positions_searched": 4, "searches": 12, "search_s": 2.0,
@@ -1948,6 +2271,14 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
     assert summary["dedup"]["positions_visited"] == 14
+    # The two-key counters merge as sums, every one of them: a counter the
+    # merge forgot would be absent here, not 0.
+    assert {name: summary["dedup"][name] for name in corpus._DEDUP_SCALAR_COUNTERS} == {
+        "row_key_hits": 3, "search_key_hits": 4,
+        "search_key_hit_on_new_input": 2, "search_key_miss_on_seen_input": 1,
+        "searches": 12, "rows_banked": 8, "dedup_input_set_entries": 11,
+        "dedup_input_set_evictions": 2,
+    }
     # The bound's counters merge as sums; the bound itself is per worker.
     assert summary["dedup"]["dedup_cache_evictions"] == 3
     assert summary["dedup"]["dedup_cache_entries"] == 12
@@ -2904,8 +3235,9 @@ def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
 
     assert outcome.rows
     for row in outcome.rows:
-        live = cache.get(row["dedup_key"])
+        live = cache.get(row["search_key"])
         assert live is not None
+        assert cache.input_seen(row["input_key"])
         rebuilt = corpus.selection_values_from_row(row)
         assert rebuilt.moves == live.moves
         assert np.array_equal(rebuilt.effective_cp, live.effective_cp)
@@ -3091,6 +3423,7 @@ def test_a_listed_shard_that_is_truncated_is_refused_by_name(
     """
     whole = {
         "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "dedup_key": "k",
+        "search_key": "k|", "input_key": "0" * 32,
         "selection": {"value_depth": 1, "value_width": 1},
         "phases": [{"per_depth": [{"depth": 1, "lines": [[1, "e2e4", 0.0, 9]]}]}],
     }
@@ -3242,12 +3575,129 @@ def resumable_dir(tmp_path: Path) -> Path:
     requested = {"games": 4, "seed": 7, "out_dir": str(out_dir)}
     (out_dir / corpus.MANIFEST_NAME).write_text(
         json.dumps({
+            "row_schema": corpus.ROW_SCHEMA,
             "config_requested": requested,
             "config_sha256": corpus.stamp_sha256(requested),
         }),
         encoding="utf-8",
     )
     return out_dir
+
+
+def rewrite_manifest_row_schema(out_dir: Path, row_schema: Any) -> None:
+    """Stamp another row schema on an otherwise self-consistent manifest."""
+    path = out_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["row_schema"] = row_schema
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_a_resume_onto_an_older_row_schema_is_refused_at_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """⚑ Codex P1: the schema gate is the MANIFEST's, before any worker.
+
+    The per-row check in the cache re-warm only fires for a worker that has
+    shards to re-warm from; the gate that protects every worker is this one.
+    """
+    out_dir = resumable_dir(tmp_path)
+    corpus.load_resume_manifest(out_dir)  # the current schema passes
+
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    with pytest.raises(ValueError, match=r"row schema 1 .* schema 2"):
+        corpus.load_resume_manifest(out_dir)
+
+    rewrite_manifest_row_schema(out_dir, None)
+    with pytest.raises(ValueError, match="row schema None"):
+        corpus.load_resume_manifest(out_dir)
+
+
+@pytest.mark.parametrize(
+    "progress_record",
+    [
+        pytest.param(
+            {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+            id="worker_with_a_schema_1_shard",
+        ),
+        pytest.param(
+            {"path": None, "rows": 0, "codec": "zstd", "games": [0]},
+            id="worker_with_only_zero_row_completion_records",
+        ),
+    ],
+)
+def test_a_schema_1_corpus_cannot_be_resumed_by_any_worker_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, progress_record: dict[str, Any],
+) -> None:
+    """⚑⚑ Through ``run``: refused BEFORE a record is archived or a worker starts.
+
+    The second shape is the one the row-level check cannot catch: a worker whose
+    progress file holds nothing but zero-row completion records re-warms no row,
+    so nothing in it ever reads a schema -- and it would append schema-2 rows
+    beside the other workers' schema-1 shards.  The refusal has to come from
+    the manifest, and it has to leave the directory exactly as it found it.
+    """
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    write_summary(out_dir, run_finished=False, failed_workers=[{"worker_id": 0}])
+    (out_dir / corpus.progress_name(0)).write_text(
+        json.dumps(progress_record) + "\n", encoding="utf-8",
+    )
+    before = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+
+    def no_worker(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        raise AssertionError(f"a worker was dispatched onto a refused resume: {spec}")
+
+    monkeypatch.setattr(corpus, "run_worker", no_worker)
+    argv = [
+        "--out-dir", str(out_dir), "--games", "1", "--workers", "1",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
+    ]
+    with pytest.raises(ValueError, match="row schema 1"):
+        corpus.run(corpus.build_parser().parse_args(argv))
+
+    after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+    assert after == before, "a refused resume must not archive or write a byte"
+
+
+def test_a_two_worker_schema_1_resume_is_refused_before_either_worker_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Grok B1/B2, the multi-worker shape: one worker has a listed schema-1
+    shard, the other an EMPTY progress file.  Without the manifest gate the
+    first would raise inside its re-warm (outside ``run_worker``'s ``try``, so
+    the parent records a failed slot with nothing in it) and the second would
+    start cold and bank schema-2 rows into the schema-1 corpus.  The refusal
+    has to come before the pool is even built.
+    """
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    (out_dir / corpus.progress_name(0)).write_text(
+        json.dumps({
+            "path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / corpus.progress_name(1)).write_text("", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+
+    class NoPool:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("a worker pool was built for a refused resume")
+
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", NoPool)
+    monkeypatch.setattr(
+        corpus, "run_worker",
+        lambda spec: (_ for _ in ()).throw(AssertionError(f"worker started: {spec}")),
+    )
+    argv = [
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
+    ]
+    with pytest.raises(ValueError, match="row schema 1"):
+        corpus.run(corpus.build_parser().parse_args(argv))
+
+    after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+    assert after == before
 
 
 def write_summary(out_dir: Path, **keys: Any) -> Path:

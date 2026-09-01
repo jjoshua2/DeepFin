@@ -474,9 +474,13 @@ DERIVE_SCHEMA_BAKED_VALUE = 2
 #: alongside whatever else is named in ``--shards``, and the buffer hard-fails on
 #: mixed encoding identity -- so a per-run knob here would turn a typo into an
 #: unmergeable corpus, and a wrong-but-mergeable value into 146 planes fed to a
-#: 175-plane net.  Changing these is a code edit, deliberately.
-INPUT_HISTORY_ENCODING = "lc0_root_legacy_meta"
-INPUT_EXTRA_FEATURES = "v2_threats"
+#: 175-plane net.  Changing these is a code edit, deliberately -- and it is the
+#: GENERATOR's edit: the two names are imported from there, because the
+#: generator hashes the live-play tensor under them (``corpus.row_key``) and
+#: this tool re-encodes the reconstructed row under the same two and refuses a
+#: row whose hash differs.  Two spellings would be two chances to drift.
+INPUT_HISTORY_ENCODING = corpus.INPUT_HISTORY_ENCODING
+INPUT_EXTRA_FEATURES = corpus.INPUT_EXTRA_FEATURES
 
 #: The rows are encoded by TODAY's encoder, which applies the repetition-plane
 #: fix unconditionally.  Vacuous on a zero-history row (nothing can repeat) and
@@ -2402,6 +2406,17 @@ class DeriveStats:
     history_root_reason_counts: dict[str, int] = field(default_factory=dict)
     #: ``{row schema: rows}``, so "mixed" is a number rather than a guess.
     row_schema_counts: dict[int, int] = field(default_factory=dict)
+    #: Rows whose banked window is EMPTY -- every schema-1 row, and a schema-2
+    #: row at a bare-FEN game's own ply 0.  Off the ROW (``history_plies``),
+    #: not off the planes; ``zero_history`` on the emitted shards is this
+    #: against ``rows_written``.
+    history_window_empty_rows: int = 0
+    #: ⚑ THE PER-ROW TAKE-EFFECT PROOF OF THE WHOLE CHAIN.  Every schema-2 row
+    #: banks ``input_key``, the hash of the tensor LIVE PLAY encoded for that
+    #: position when the generator visited it; this counts the rows whose
+    #: RECONSTRUCTED tensor hashed to the same value.  Must equal the schema-2
+    #: row count, and a row that disagrees stops the run.
+    input_key_verified: int = 0
     repetition_planes_nonzero_rows: int = 0
     temp_recovered_n: int = 0
     temp_recovered_min: float = math.inf
@@ -2664,6 +2679,8 @@ class DeriveStats:
             "row_schema_counts": {
                 str(k): v for k, v in sorted(self.row_schema_counts.items())
             },
+            "history_window_empty_rows": self.history_window_empty_rows,
+            "input_key_verified": self.input_key_verified,
             "repetition_planes_nonzero_rows": self.repetition_planes_nonzero_rows,
             "temp_recovered_from_emitted_policy": self._reading(
                 self.temp_recovered_n,
@@ -2914,6 +2931,7 @@ class TargetDeriver:
             legal_mask[index] = 1
 
         planes = self._encode(board)
+        self._verify_input_key(row, planes)
         self._note_shapes(planes, policy, probs, values)
         self._note_row_history(row)
 
@@ -3206,11 +3224,45 @@ class TargetDeriver:
             dtype=np.float32,
         )
 
+    def _verify_input_key(self, row: Mapping[str, Any], planes: np.ndarray) -> None:
+        """⚑⚑ THE ROW'S OWN PROOF that the reconstruction reached the encoder.
+
+        A schema-2 row carries ``input_key``, the hash of the tensor LIVE PLAY
+        encoded for this position when the generator visited it (the C
+        ``encode_cboard(CBoard.from_board(...))`` call).  The planes just
+        produced from the banked window, through THIS tool's python encoder,
+        must hash to the same value -- one hash function
+        (``corpus.input_tensor_key``), two encoders, every row.  A disagreement
+        is a corpus fault (a window that replays to the right FEN but a
+        different history, an encoder that drifted from the C path) and the
+        run stops rather than emit a plausible tensor nothing vouches for.
+        """
+        if int(row.get("schema", ROW_SCHEMA_BARE_FEN)) < ROW_SCHEMA_HISTORY:
+            return
+        if "input_key" not in row:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)}: a schema-{ROW_SCHEMA_HISTORY} row with no "
+                "input_key; the generator banks one on every row, so this row "
+                "was not written by it",
+            )
+        want = str(row["input_key"])
+        got = corpus.input_tensor_key(planes)
+        if got != want:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)}: the reconstructed input hashes to {got}, "
+                f"not the banked input_key {want}; the planes this row would "
+                "train on are not the planes live play encoded for it",
+            )
+        self.stats.input_key_verified += 1
+
     def _note_row_history(self, row: Mapping[str, Any]) -> None:
         """The row's SCHEMA and window reason, counted once per emitted row."""
         stats = self.stats
         schema = int(row.get("schema", ROW_SCHEMA_BARE_FEN))
         stats.row_schema_counts[schema] = stats.row_schema_counts.get(schema, 0) + 1
+        window = 0 if schema < ROW_SCHEMA_HISTORY else int(row["history_plies"])
+        if window == 0:
+            stats.history_window_empty_rows += 1
         reason = row.get("history_root_reason")
         if reason is not None:
             key = str(reason)
@@ -3993,6 +4045,7 @@ def derive(
         )
 
     enforce_take_effect(options, deriver.stats)
+    _stamp_realized_row_schema(out_dir, written, deriver.stats, record)
     out = build_summary(
         options=options,
         stats=deriver.stats,
@@ -4462,6 +4515,63 @@ def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> 
             )
 
 
+#: The realized row schema of a derivation whose rows came in more than one
+#: shape.  A string on purpose: a reader that does ``int(attrs[...])`` on a
+#: mixed shard fails loudly instead of adopting one half's number.
+ROW_SCHEMA_MIXED = "mixed"
+
+
+def realized_row_schema(stats: DeriveStats) -> int | str:
+    """The schema the ROWS had: one integer, or ``"mixed"`` with the counts beside."""
+    schemas = sorted(stats.row_schema_counts)
+    if len(schemas) == 1:
+        return int(schemas[0])
+    return ROW_SCHEMA_MIXED
+
+
+def _stamp_realized_row_schema(
+    out_dir: Path, written: Sequence[Mapping[str, Any]], stats: DeriveStats,
+    corpus_record: CorpusRecord,
+) -> dict[str, Any]:
+    """Put what the rows WERE on every shard, once every row has been counted.
+
+    ⚑ THE SOURCE SCHEMA, READ OFF THE ROWS, and not this build's constant.  A
+    derived shard is routinely read on its own, far from its run summary, and
+    ``ShardMeta`` stamps only the encoding name and the rep-fix flag -- so
+    without these keys a shard of zero-history schema-1 derivations and a shard
+    of full-history schema-2 ones are indistinguishable at ingest and the replay
+    buffer would mix them silently (Fable review note 6, Codex P2).
+
+    * ``derive_corpus_row_schema`` -- the one schema every row had, or
+      ``"mixed"``;
+    * ``derive_corpus_row_schema_counts`` -- ``{schema: rows}``, so "mixed" is
+      a number;
+    * ``derive_corpus_record_row_schema`` -- what the corpus's own record
+      (summary or manifest) claimed, kept beside the reading so a disagreement
+      is visible on the shard;
+    * ``zero_history`` -- every emitted row was derived from an EMPTY window.
+
+    Written after the last shard on BOTH the sequential and the parallel path,
+    from the same merged stats, so the two paths' ``.zattrs`` stay identical.
+    """
+    counts = {
+        str(k): int(v) for k, v in sorted(stats.row_schema_counts.items())
+    }
+    attrs = {
+        "derive_corpus_row_schema": realized_row_schema(stats),
+        "derive_corpus_row_schema_counts": counts,
+        "derive_corpus_record_row_schema": int(corpus_record.facts["row_schema"]),
+        "zero_history": bool(
+            stats.rows_written > 0
+            and stats.history_window_empty_rows == stats.rows_written
+        ),
+    }
+    for entry in written:
+        group = zarr.open_group(str(out_dir / str(entry["path"])), mode="a")
+        group.attrs.update(attrs)
+    return attrs
+
+
 def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> None:
     """Put the scheme, its parameters and the code schema ON the shard.
 
@@ -4488,7 +4598,12 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
         "derive_cp_slope": float(options.cp_slope),
         "derive_cp_draw_width": float(options.cp_draw_width),
         "derive_corpus_config_sha256": corpus_sha,
-        "derive_corpus_row_schema": corpus.ROW_SCHEMA,
+        # ⚑ NO row-schema key HERE. It used to stamp this build's
+        # `corpus.ROW_SCHEMA`, which claimed history-aware inputs on a shard
+        # derived from schema-1 bare-FEN rows (Codex review of PR #497). The
+        # realized schema is a READING off the rows, known only once every row
+        # is counted, so `_stamp_realized_row_schema` writes it at the end of
+        # the run -- and a shard without it is a run that died before then.
         # ⚑ ON THE SHARD, for the same reason `derive_floor` is: four arms of
         # the value round share a --scheme, a --temp and a --floor and differ
         # ONLY in what search_wdl holds. Without these two keys their shards are
@@ -4551,7 +4666,11 @@ def build_summary(
             "run_id": facts.get(
                 "run_id", (facts.get("config_requested") or {}).get("run_id"),
             ),
-            "row_schema": corpus.ROW_SCHEMA,
+            # ⚑ THE RECORD'S stamp, and beside it what the ROWS were. The first
+            # cut wrote this build's `corpus.ROW_SCHEMA` here, which read 2 on
+            # a schema-1 corpus (Fable review, finding 1).
+            "row_schema": int(facts["row_schema"]),
+            "row_schema_realized": realized_row_schema(stats),
             "staircase_parsed": facts.get("staircase_parsed"),
             # Passed THROUGH, from the rows themselves rather than the summary:
             # a consumer must not mistake these for independent searches.
@@ -5163,6 +5282,8 @@ _SUM_FIELDS: tuple[str, ...] = (
     "deep_tier_moves",
     "base_tier_moves",
     "value_depth_moved_rows",
+    "history_window_empty_rows",
+    "input_key_verified",
     "repetition_planes_nonzero_rows",
     "temp_recovery_skipped_saturated",
     "floor_recovery_skipped_few_values",
@@ -6267,6 +6388,7 @@ def derive_parallel(
     stats.rows_written = _check_rows_written(written, survivors)
 
     enforce_take_effect(options, stats)
+    _stamp_realized_row_schema(out_dir, written, stats, record)
     out = build_summary(
         options=options,
         stats=stats,
