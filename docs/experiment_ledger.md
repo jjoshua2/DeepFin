@@ -71763,3 +71763,20 @@ baseline and no bespoke control train is needed.
 - Driver `round3c_topup.sh`, gated on round3b.done (GPU order: valueround →
   3b → 3c); fast worktree, identity chain as recorded 2026-09-01. Kill rule:
   a failed arm reads out as absent, no re-rolls.
+
+**2026-09-01 AMENDMENT to round 3c (before launch, Josh): SAME-STEPS
+head-to-head replaces the external baseline.** "We don't strictly need to
+know the gain if we are comparing ones with all the same steps." Added
+control arm `d9ext_qtemp_0.02`: the d9 champion + 9,680 more steps on the
+SAME d9 shards. Both arms are now 19,360 total steps with an IDENTICAL
+second phase — the only difference is the first half's teacher depth
+(d7 vs d9). **New deciding yardstick: h2h `d7topup_d9` vs
+`d9ext_qtemp_0.02` (200 games, training shape, no-rolling, banked).**
+Top-up wins CI-excluding-0 ⇒ the d7 first half beats the d9 first half at
+full budget — weak-bootstrap pays at scale; tie ⇒ first-half depth is
+irrelevant at this budget; top-up loses ⇒ the d7 start costs. The
+ext-vs-base read and the vs-own-base arenas demote to secondary context.
+This removes the τ-mismatch and repeat-labels confounds entirely; cost is
+one extra 9,680-step train. Stage-5 scores all four nets in one run for
+paired BT4 deltas. Driver rewritten pre-launch (waiter relaunched); gates
+unchanged.
