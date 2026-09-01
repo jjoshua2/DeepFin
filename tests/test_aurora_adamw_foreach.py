@@ -367,6 +367,90 @@ def test_duplicate_parameters_in_a_group_fall_back_to_the_loop(
     )
 
 
+def test_two_parameters_over_one_storage_fall_back_to_the_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P2 on the identity-only guard: two DISTINCT Parameter objects (a
+    tensor and a view of it) share every element, so batching them is not the
+    loop's ordered sequential update. Weight decay on is what makes the two
+    orders differ -- (P(1-x) - u_a)(1-x) - u_b against P(1-x)^2 - u_a - u_b --
+    so it is on here; the loop result is the frozen reference either way."""
+    counter = _PathCounter(monkeypatch)
+    storage = torch.randn(4, 3)
+    first = torch.nn.Parameter(storage)
+    second = torch.nn.Parameter(storage.view(-1))
+    assert first.untyped_storage().data_ptr() == second.untyped_storage().data_ptr()
+    ref_storage = storage.detach().clone()
+    ref_first = torch.nn.Parameter(ref_storage)
+    ref_second = torch.nn.Parameter(ref_storage.view(-1))
+    ref_state: dict[Tensor, dict[str, object]] = {}
+    opt = AuroraWithAuxAdam(
+        [{"params": [first, second], "lr": _LR, "weight_decay": 0.03, "use_aurora": False}],
+    )
+    for step_index in range(3):
+        generator = torch.Generator().manual_seed(500 + step_index)
+        grad_first = torch.randn(4, 3, generator=generator)
+        grad_second = torch.randn(12, generator=generator)
+        first.grad, ref_first.grad = grad_first.clone(), grad_first.clone()
+        second.grad, ref_second.grad = grad_second.clone(), grad_second.clone()
+        counter.reset()
+        opt.step()
+        _reference_adamw_loop(
+            [ref_first, ref_second], ref_state, lr=_LR, weight_decay=0.03,
+        )
+    assert counter.foreach == 0
+    assert counter.single == 2
+    assert opt.last_adamw_stats["adamw_loop_params"] == 2.0
+    _assert_states_bitwise_equal(
+        opt, [first, second], [ref_first, ref_second], ref_state,
+    )
+
+
+def test_disjoint_views_of_one_storage_stay_batched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  # Same storage, no shared element: nothing aliases, so the batched path is
+  # still the loop bit for bit and the guard must not over-fire.
+    counter = _PathCounter(monkeypatch)
+    storage = torch.randn(8)
+    head = torch.nn.Parameter(storage[:4])
+    tail = torch.nn.Parameter(storage[4:])
+    ref_storage = storage.detach().clone()
+    ref_head = torch.nn.Parameter(ref_storage[:4])
+    ref_tail = torch.nn.Parameter(ref_storage[4:])
+    ref_state: dict[Tensor, dict[str, object]] = {}
+    opt = AuroraWithAuxAdam(
+        [{"params": [head, tail], "lr": _LR, "weight_decay": 0.03, "use_aurora": False}],
+    )
+    for step_index in range(3):
+        generator = torch.Generator().manual_seed(600 + step_index)
+        grads = torch.randn(8, generator=generator)
+        head.grad, ref_head.grad = grads[:4].clone(), grads[:4].clone()
+        tail.grad, ref_tail.grad = grads[4:].clone(), grads[4:].clone()
+        counter.reset()
+        opt.step()
+        _reference_adamw_loop([ref_head, ref_tail], ref_state, lr=_LR, weight_decay=0.03)
+    assert counter.foreach == 1
+    assert counter.single == 0
+    _assert_states_bitwise_equal(opt, [head, tail], [ref_head, ref_tail], ref_state)
+
+
+def test_alias_guard_sees_a_strided_view_s_full_extent() -> None:
+  # A non-contiguous view covers more storage than it has elements; the guard
+  # measures the byte span it touches, not `numel()`. Two interleaved stride-2
+  # views share no element but their spans overlap, and the guard is
+  # deliberately CONSERVATIVE there: it reads them as aliasing and takes the
+  # loop, which is exactly right, rather than proving element-disjointness.
+    storage = torch.randn(8)
+    even = torch.nn.Parameter(storage[::2])
+    odd = torch.nn.Parameter(storage[1::2])
+    assert aurora_module._adamw_group_aliases([even, odd]) is True
+    tail = torch.nn.Parameter(storage[7:])
+    assert aurora_module._adamw_group_aliases([even, tail]) is False, "even covers 0..6, tail is 7"
+    assert aurora_module._adamw_group_aliases([even, torch.nn.Parameter(storage[6:])]) is True
+    assert aurora_module._adamw_group_aliases([even, even]) is True
+
+
 def test_a_failed_step_does_not_advance_the_step_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -532,6 +616,9 @@ def test_a_denominator_allocation_failure_is_finished_per_tensor_bitwise(
     assert opt.last_adamw_stats["adamw_foreach_recoveries"] == 0.0, (
         "the LAST step (a clean one) must not carry the earlier recovery"
     )
+  # ...but the lifetime counter does, which is what the trainer differences
+  # over a window so a step-1 recovery is not lost behind two clean steps.
+    assert opt.adamw_foreach_recoveries_total == 1
 
 
 def test_the_recovery_counter_reads_one_on_the_step_that_recovered(
@@ -878,3 +965,62 @@ def test_the_finisher_denominator_matches_the_batched_chain_bitwise() -> None:
             ones, denom_loop, value=-(1.0 / max(1.0 - _BETA1**step, 1e-12)),
         )
         assert torch.equal(param, expected)
+
+
+def test_train_steps_sums_recoveries_over_the_window_not_the_last_step(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P2: `last_adamw_stats` is the LAST step's, so a recovery on a
+    non-final step of a multi-step window used to publish 0 on the row. The
+    injected `_foreach_sqrt` failure fires on the FIRST of three steps; the
+    row must still read it."""
+    from typing import Any, cast
+
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.train.trainer import Trainer
+
+    calls = _raise_cuda_once(monkeypatch, "_foreach_sqrt")
+    torch.manual_seed(4242)
+    trainer = Trainer(
+        _MatrixAndHeadModel(),
+        device="cpu", lr=1e-3, optimizer="aurora", use_amp=False,
+        log_dir=cast(Any, tmp_path), tb_log_interval=1000, prefetch_batches=False,
+    )
+    every_param = list(trainer.model.parameters())
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, Tensor]:
+        del out, batch, kwargs
+        total = cast(Tensor, sum((t * t).sum() for t in every_param))
+        losses: dict[str, Tensor] = {"total": total}
+        losses.update(dict.fromkeys(
+            (
+                "policy_ce", "soft_policy_ce", "future_policy_ce", "wdl_ce", "sf_move_ce",
+                "sf_eval_ce", "categorical_ce", "volatility", "sf_volatility", "moves_left",
+            ),
+            total.detach(),
+        ))
+        return losses
+
+    monkeypatch.setattr(trainer_module, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+
+    def fake_batches(buf: Any, **kwargs: Any):
+        del buf, kwargs
+        while True:
+            yield {"x": torch.zeros((1, 4, 8, 8))}
+
+    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_batches)
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=3)
+    assert metrics.train_steps_done == 3
+    assert calls, "the injection never fired"
+  # The failing step was step 1 of 3 and was recovered, not retried.
+    assert metrics.transient_cuda_retry_batches == 0.0
+    assert metrics.adamw_foreach_recoveries == 1.0
+  # The path counts are still the last step's, and that step was clean.
+    assert cast(Any, trainer.opt).last_adamw_stats["adamw_foreach_recoveries"] == 0.0
+    assert metrics.adamw_foreach_params == float(_adamw_group_sizes(trainer.opt))
+
+  # A second window starts from the counter where the first left it.
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    assert metrics.adamw_foreach_recoveries == 0.0

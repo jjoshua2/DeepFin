@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from itertools import pairwise
 from collections.abc import Callable
 from itertools import repeat
 
@@ -390,6 +391,40 @@ def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: f
 _FOREACH_EXACT_DTYPES = frozenset({torch.float32, torch.float64})
 
 
+def _adamw_group_aliases(params: list[Tensor]) -> bool:
+    """True when two entries of the group share MEMORY, by object or by storage.
+
+    The batched path is the loop's ordered sequential update only if no two
+    entries of a bucket touch the same element: `_foreach_mul_` over a list
+    holding one storage twice is not two sequential decays of it, and with
+    weight decay on the two orders differ (P·(1-x)·(1-x) - u_a - u_b against
+    (P·(1-x) - u_a)·(1-x) - u_b). Identity catches a tied Parameter reaching a
+    group twice; it does NOT catch two distinct Parameter objects, or two
+    views, over one storage, so the check is on the byte ranges the tensors
+    actually cover: sort by first byte and look for a range that starts before
+    the previous one ends. Disjoint views of one storage share no element and
+    stay batchable. ~431 tuples per step on production, a few tens of
+    microseconds; measured on both `configs/lc0_positive_control.yaml` and
+    `configs/pbt2_small.yaml`: 431 unique storages / 431 params, 0 overlaps.
+    """
+    if len({id(param) for param in params}) != len(params):
+        return True
+    spans: list[tuple[int, int]] = []
+    for param in params:
+        element_size = param.element_size()
+        start = param.untyped_storage().data_ptr() + param.storage_offset() * element_size
+        if param.numel() == 0:
+            continue
+  # Extent in elements of the strided view, not `numel()`: a non-contiguous
+  # view covers more storage than it has elements.
+        extent = 1 + sum(
+            (int(size) - 1) * abs(int(stride)) for size, stride in zip(param.shape, param.stride())
+        )
+        spans.append((int(start), int(start) + extent * element_size))
+    spans.sort()
+    return any(nxt_start < prev_end for (_, prev_end), (nxt_start, _) in pairwise(spans))
+
+
 def _adamw_batchable(param: Tensor, grad: Tensor, exp_avg: Tensor, exp_avg_sq: Tensor) -> bool:
     """True when this parameter's four tensors may join a `_foreach_*` bucket."""
     if param.dtype not in _FOREACH_EXACT_DTYPES:
@@ -588,6 +623,14 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # device/dtype) sent tensors down the per-parameter path, silently. Written
   # every step -- four Python ints, no device sync.
         self.last_adamw_stats: dict[str, float] = {}
+  # Monotone count of buckets finished per tensor after a denominator
+  # allocation failure, over the optimizer's lifetime. `last_adamw_stats`
+  # is the LAST step only, so a recovery on any step but the last of a
+  # `train_steps` window would publish 0 on the row; the trainer reports
+  # the window's DIFFERENCE of this counter instead. Incremented only once
+  # the per-tensor completion has succeeded -- a completion that dies is
+  # not a recovery.
+        self.adamw_foreach_recoveries_total = 0
         self._collect_uw_stats = True
         self._collect_polar_stats = False
         self._use_update_graphs = bool(aurora_cuda_graphs)
@@ -813,14 +856,14 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # the rest), and `bias_correction*` / `step_size` are functions of it, so the
   # step count is part of the bucket key rather than a loop invariant.
   #
-  # ⚑ Duplicates disqualify the WHOLE group, checked before any state is
-  # touched. A tied weight reaching one group twice would appear twice in a
-  # bucket, and `_foreach_mul_` applied to a list holding one storage twice is
-  # not the loop's two sequential updates of it. The loop stays exactly right
-  # in that case, so it is what runs -- this repo has tied tensors (the 16
-  # `layer_smolgens.N.gen_weight.weight` keys are one storage), which is why
-  # the check is here and not assumed away.
-            allow_batching = len({id(param) for param in params}) == len(params)
+  # ⚑ Aliases disqualify the WHOLE group, checked before any state is
+  # touched: a tied weight reaching one group twice, or two Parameters /
+  # views over one storage (`_adamw_group_aliases`). `_foreach_mul_` applied
+  # to a list holding one storage twice is not the loop's two sequential
+  # updates of it. The loop stays exactly right in that case, so it is what
+  # runs -- this repo has tied tensors (the 16 `layer_smolgens.N.gen_weight.weight`
+  # keys are one storage), which is why the check is here and not assumed away.
+            allow_batching = not _adamw_group_aliases(params)
             buckets: dict[
                 tuple[torch.device, torch.dtype, int],
                 tuple[
@@ -911,7 +954,6 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # then double-applies exactly those. That residue is stated, not hidden:
   # `adamw_foreach_recoveries` counts the recoveries that completed, and the
   # warning below names the bucket.
-                    adamw_foreach_recoveries += 1
                     logging.getLogger(__name__).warning(
                         "batched AdamW denominator allocation failed on a %d-tensor "
                         "bucket at step %d (%s); finishing the bucket per tensor "
@@ -926,6 +968,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                             step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
                         )
                         state["step"] = step
+                    adamw_foreach_recoveries += 1
+                    self.adamw_foreach_recoveries_total += 1
                     continue
                 for state in bucket[4]:
                     state["step"] = step

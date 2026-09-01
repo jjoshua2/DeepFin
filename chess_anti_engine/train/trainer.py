@@ -1328,7 +1328,9 @@ class TrainMetrics:
   # count means a batchability predicate sent tensors down the per-parameter
   # path, which nothing else reports. `adamw_foreach_recoveries` counts
   # buckets whose denominator allocation failed and were finished per tensor
-  # instead (see `_DenominatorAllocationFailed`) -- 0.0 on a healthy step.
+  # instead (see `_DenominatorAllocationFailed`), summed over EVERY step of
+  # the window (the optimizer's monotone counter, differenced) -- the path
+  # counts are the last step's, this one is not. 0.0 on a healthy window.
     adamw_foreach_buckets: float = 0.0
     adamw_foreach_params: float = 0.0
     adamw_loop_params: float = 0.0
@@ -5264,6 +5266,10 @@ class Trainer:
             "nonfinite_grad": 0,
         }
         transient_cuda_retry_batches = 0
+  # Window baseline for the optimizer's monotone recovery counter; the row
+  # publishes the DIFFERENCE, i.e. every recovery in this window, where the
+  # last-step-only `last_adamw_stats` would drop all but the final step's.
+        adamw_recoveries_at_start = int(getattr(self.opt, "adamw_foreach_recoveries_total", 0))
 
         _log = logging.getLogger(__name__)
 
@@ -5468,7 +5474,13 @@ class Trainer:
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
             **getattr(self.opt, "last_polar_stats", {}),
-            **getattr(self.opt, "last_adamw_stats", {}),
+            **{
+                **getattr(self.opt, "last_adamw_stats", {}),
+                "adamw_foreach_recoveries": float(
+                    int(getattr(self.opt, "adamw_foreach_recoveries_total", 0))
+                    - adamw_recoveries_at_start
+                ),
+            },
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._warn_if_value_blend_leaks_to_outcome(metrics)
