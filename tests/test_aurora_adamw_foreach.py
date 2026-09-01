@@ -175,13 +175,14 @@ def _run_paired(
     dtype: torch.dtype = torch.float32,
     skip_grads: dict[int, set[int]] | None = None,
     counter: _PathCounter | None = None,
+    lr: float = _LR,
 ) -> tuple[AuroraWithAuxAdam, list[torch.nn.Parameter], list[torch.nn.Parameter], dict[Tensor, dict[str, object]]]:
     base = _make_params(dtype)
     opt_params = _clone_params(base)
     ref_params = _clone_params(base)
     ref_state: dict[Tensor, dict[str, object]] = {}
     opt = AuroraWithAuxAdam(
-        [{"params": opt_params, "lr": _LR, "weight_decay": weight_decay, "use_aurora": False}],
+        [{"params": opt_params, "lr": lr, "weight_decay": weight_decay, "use_aurora": False}],
     )
 
     for step_index in range(steps):
@@ -194,7 +195,7 @@ def _run_paired(
             counter.reset()
         opt.step()
         _reference_adamw_loop(
-            ref_params, ref_state, lr=_LR, weight_decay=weight_decay,
+            ref_params, ref_state, lr=lr, weight_decay=weight_decay,
         )
     return opt, opt_params, ref_params, ref_state
 
@@ -444,8 +445,14 @@ def test_sparse_gradients_are_still_refused() -> None:
         opt.step()
 
 
-def test_foreach_and_loop_helpers_agree_on_a_single_tensor() -> None:
-    """The two helpers are one expression written twice; pin them to each other."""
+@pytest.mark.parametrize("lr", [_LR, 1.0])
+def test_foreach_and_loop_helpers_agree_on_a_single_tensor(lr: float) -> None:
+    """The two helpers are one expression written twice; pin them to each other.
+
+    Run at lr=1.0 as well as the production-sized lr: at 3e-4 a last-bit
+    denominator difference vanishes below the parameter's ulp, so only the
+    large-lr case has the power to see a finisher that rounds differently.
+    """
     generator = torch.Generator().manual_seed(11)
     for step in (1, 2, 17):
         for weight_decay in (0.0, 0.05):
@@ -456,7 +463,7 @@ def test_foreach_and_loop_helpers_agree_on_a_single_tensor() -> None:
             loop = (param.clone(), exp_avg.clone(), exp_avg_sq.clone())
             batch = (param.clone(), exp_avg.clone(), exp_avg_sq.clone())
             kwargs = {
-                "step": step, "lr": _LR, "weight_decay": weight_decay,
+                "step": step, "lr": lr, "weight_decay": weight_decay,
                 "beta1": _BETA1, "beta2": _BETA2, "eps": _EPS,
             }
             _adamw_update_one(loop[0], grad, loop[1], loop[2], **kwargs)  # pyright: ignore[reportArgumentType]
@@ -490,8 +497,19 @@ def _raise_cuda_once(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
     return calls
 
 
+  # ⚑ GATE POWER. At a production-sized lr (3e-4) a last-bit change to the
+  # DENOMINATOR is absorbed below the parameter's ulp: the review's mutant
+  # "add `eps` BEFORE the bias-correction divide in `_adamw_finish_one`"
+  # survived every test at lr=3e-4 (5/135 denominators differed, 0/135
+  # params). Helper-level tests own their hyperparameters, so the ones that
+  # pin the finisher also run at lr=1.0, where the same mutant moves 5/135
+  # parameters and is caught.
+_GATE_LRS = [_LR, 1.0]
+
+
+@pytest.mark.parametrize("lr", _GATE_LRS)
 def test_a_denominator_allocation_failure_is_finished_per_tensor_bitwise(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, lr: float,
 ) -> None:
     """`_foreach_sqrt` is the only allocation in the batched chain and it fires
     AFTER the four in-place moment kernels. Left alone, the trainer's CUDA
@@ -502,7 +520,7 @@ def test_a_denominator_allocation_failure_is_finished_per_tensor_bitwise(
     calls = _raise_cuda_once(monkeypatch, "_foreach_sqrt")
     counter = _PathCounter(monkeypatch)
     opt, opt_params, ref_params, ref_state = _run_paired(
-        weight_decay=0.03, steps=3, counter=counter,
+        weight_decay=0.03, steps=3, counter=counter, lr=lr,
     )
     assert len(calls) == 3, "the injected _foreach_sqrt failure never fired"
   # No exception escaped `step`, the batched helper was the path every step,
@@ -825,3 +843,38 @@ def test_train_steps_carries_adamw_stats_onto_the_step_metrics(
         assert metrics.adamw_foreach_buckets >= 1.0
         assert metrics.adamw_loop_params == 0.0
     assert metrics.adamw_foreach_recoveries == 0.0
+
+
+def test_the_finisher_denominator_matches_the_batched_chain_bitwise() -> None:
+    """The denominators themselves, not their effect on the parameter.
+
+    `_adamw_finish_one` and the `_foreach_sqrt` / `_foreach_div_` /
+    `_foreach_add_` chain must agree on `denom` bit for bit -- the parameter
+    comparison alone cannot see a last-bit denominator change at a small lr.
+    Read off the update: with `exp_avg == 1` and `lr == 1`, `step == 1`,
+    `param == 0`, the finisher writes `param = -1/denom` exactly, so two
+    finishers with different denominators write different parameters.
+    """
+    generator = torch.Generator().manual_seed(21)
+    for step in (1, 3, 40):
+        exp_avg_sq = torch.randn(64, 32, generator=generator).abs() * 1e-6
+        ones = torch.ones_like(exp_avg_sq)
+        bias_correction2 = 1.0 - _BETA2**step
+        denom_loop = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
+        denom_loop.add_(_EPS)
+        denoms = torch._foreach_sqrt([exp_avg_sq])
+        torch._foreach_div_(denoms, math.sqrt(max(bias_correction2, 1e-12)))
+        torch._foreach_add_(denoms, _EPS)
+        assert torch.equal(denom_loop, denoms[0])
+      # And the finisher reproduces exactly that denominator: param ends at
+      # -(1 / (1 - beta1**step)) / denom, which `addcdiv_` computes from the
+      # same `denom` only if the finisher built it the same way.
+        param = torch.zeros_like(exp_avg_sq)
+        aurora_module._adamw_finish_one(
+            param, ones, exp_avg_sq.clone(),
+            step=step, lr=1.0, beta1=_BETA1, beta2=_BETA2, eps=_EPS,
+        )
+        expected = torch.zeros_like(exp_avg_sq).addcdiv_(
+            ones, denom_loop, value=-(1.0 / max(1.0 - _BETA1**step, 1e-12)),
+        )
+        assert torch.equal(param, expected)
