@@ -71663,3 +71663,41 @@ this amendment changes wall clock only. Round-3's d8 train was NOT re-pinned:
 it auto-launched from the old worktree minutes before this and modifying a
 worktree mid-run is the known instrument-voiding trap; it eats the slow path
 once more (~4.6h).
+
+**2026-09-01 — ROUND 3 VERDICT (prereg d4db2556a): PREDICTION FALSIFIED — the
+SHALLOWER teacher WINS the policy ruler. d7 > d9 paired on BT4; h2h tie; d8
+KILLED mid-train as uninformative (Josh).** Deciders, read once at completion:
+- h2h arena d7 vs the d9 champion (200 games, sims 100, training shape,
+  no-rolling, banked): **+1.7 Elo [−37.9, +41.4]** — tie.
+- Stage-5 BT4 ruler, PAIRED game-clustered deltas on the same 4,000 banked
+  rows (re-analysis of `arms_vs_bt4_depth.rows.jsonl`; per-arm means
+  reproduce the banked summary to 4 decimals): ΔKL(BT4‖arm) d7−d9
+  **−0.0052 [−0.0097, −0.0007]** nats, ΔE[deep-SF regret] **−45.5 cp
+  [−64.1, −26.8]** — d7 BETTER on both, CIs exclude 0. Per-arm CIs overlap
+  (0.7645 vs 0.7697); only the paired read resolves it — the banked-rows rule
+  paying out again.
+- Pre-committed map: prereg predicted d7 < d8 < d9 and keyed the gap-ratio
+  bend test. Outcome is d7 ≥ d9 on BOTH deciders (strictly > on BT4) ⇒ the
+  prereg's own clause fires: "the depth axis is flat [here: inverted] and
+  label-quality concerns move elsewhere (width, convergence)." d11+ is DEAD
+  as a spend. Coheres with the depth-morphology bank: d9's extra label
+  accuracy concentrates in high-u/late-settling rows — the zone where the
+  net learns the target's bad tail, so the "better" labels may carry the
+  noisier tail.
+- **d8: KILLED at step ~5,900/9,680** on Josh's directive after d7's readout
+  landed ("if d7 is only a bit worse d8 is in between — doesn't tell us
+  much"); with d7 ≥ d9 the in-between point is void. Kill-rule conformant
+  (failed arm reads as absent, no re-roll). Banked for a possible later
+  FRESH train (never resume — schedule comparability): derived d8 corpus,
+  checkpoint_mid.pt @4840, staged shards.
+- **Consequence for the 100M:** teacher depth is a DERIVATION-time knob and
+  d7 currently reads better-or-equal at 1/1.9 the search cost — but one 4k
+  ruler + one 200-game tie at 5.5M rows does not license switching the 100M
+  teacher. Follow-up PARKED into the 20M confirmation round: derive d7 AND
+  d9 targets from the same snapshot (cheap post-#493) and prereg the pair as
+  arms there. A standalone 600-game confirmation arena (fresh openings,
+  N fixed) is the optional sooner instrument; extending the existing 200-game
+  read is banned (optional stopping).
+Confounds: d7 trained beside the 32-engine generation fleet on pre-#492 code
+(wall clock only; batches identical by construction). Same-snapshot targets,
+same steps/seed as the d9 champion arm.
