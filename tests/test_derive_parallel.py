@@ -1489,3 +1489,143 @@ def test_an_overstated_claim_refuses_rather_than_deriving_a_short_corpus(
     run(corpus_dir, tmp_path / "seq")
     with pytest.raises(derive.ParallelDeriveError, match="not the rows on disk"):
         run(corpus_dir, tmp_path / "par", "--workers", "2")
+
+
+# ── --value-depth across the handoff ─────────────────────────────────────────
+
+
+def column(out_dir: Path, name: str) -> np.ndarray:
+    """One named array, concatenated across the output shards in shard order."""
+    return np.concatenate([
+        np.asarray(zarr.open_group(str(shard), mode="r")[name])
+        for shard in sorted(out_dir.glob("shard_*.zarr"))
+    ])
+
+
+def value_depth_corpus(tmp_path: Path) -> Path:
+    """48 rows over 6 games, each banking distinct d7 / d8 / d9 best values."""
+    rows = [row for gid in range(6) for row in game(gid, 8)]
+    return write_split_corpus(tmp_path, rows, [16, 16, 16])
+
+
+def test_the_value_depth_reaches_the_lanes_and_agrees_with_the_sequential_read(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ ``--value-depth`` ON BOTH PATHS, AND PROVED TO HAVE MOVED SOMETHING.
+
+    Two claims, and neither is worth much without the other:
+
+    * the parallel read of a depth-moved derivation is the sequential read of it
+      -- same shards, same rows, same summary. ``DeriveOptions`` carries the
+      scheme, and the scheme now carries the value depth, so this is the
+      assertion that the lanes are deriving under the flag rather than under the
+      default;
+    * and the moved corpus is not the unflagged one. ⚑ THIS HALF IS THE POINT:
+      every identity assertion in this file passes when a flag is silently
+      dropped on BOTH sides, so "seq == par" alone cannot tell a threaded flag
+      from an ignored one. The unflagged run is the reference that can.
+
+    The two columns are checked separately, because the flag's whole claim is
+    that they move differently: ``policy_target`` is ``uniform-d9``'s on all
+    three runs and ``search_wdl`` moves on every row of the flagged ones.
+    """
+    corpus_dir = value_depth_corpus(tmp_path)
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--value-depth", "7", workers=3,
+    )
+    assert_same_corpus(sequential, parallel)
+
+    unflagged = tmp_path / "unflagged"
+    plain = run(corpus_dir, unflagged)
+    moved = json.loads(
+        (parallel / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
+    )
+
+    # The POLICY target is the scheme's on both sides of the flag.
+    assert np.array_equal(
+        column(unflagged, "policy_target"), column(parallel, "policy_target"),
+    )
+    # The VALUE target moved, on every row, in the LANES' output.
+    plain_wdl, moved_wdl = (
+        column(unflagged, "search_wdl"), column(parallel, "search_wdl"),
+    )
+    assert plain_wdl.shape == moved_wdl.shape
+    differing = int((plain_wdl != moved_wdl).any(axis=1).sum())
+    assert differing == plain_wdl.shape[0], (
+        f"{differing} of {plain_wdl.shape[0]} rows moved under --value-depth 7; "
+        "the fixture banks a distinct d7 and d9 best value on every row, so any "
+        "row that did not move was derived without the flag"
+    )
+
+    # ⚑ And the MERGED counters say so too -- the histogram is a
+    # `_DICT_SUM_FIELDS` merge and the moved-row count a `_SUM_FIELDS` one, so
+    # this is also the assertion that the new counters were classified.
+    assert plain["realized"]["realized_value_depth_histogram"] == {"9": 48}
+    assert plain["realized"]["value_depth_moved_rows"] == 0
+    assert moved["realized"]["realized_value_depth_histogram"] == {"7": 48}
+    assert moved["realized"]["value_depth_moved_rows"] == 48
+    assert moved["scheme"]["value_source"] == "deepest_phase_covering_at_d7"
+
+
+def test_deepening_the_value_reaches_the_lanes_too(tmp_path: Path) -> None:
+    """⚑⚑ THE DEEPENING DIRECTION ON THE PARALLEL PATH -- the arm the round wants.
+
+    ``uniform-d7 --value-depth 9`` is d7 policy with a d9 value, and it is the
+    cell no cap-shaped flag could reach. It is tested on the lanes separately
+    from the shallowing one because a clamp to the scheme's own depth is a
+    plausible regression that the ``--value-depth 7`` test above CANNOT see: on
+    a ``uniform-d9`` scheme a clamp to ``min(9, 7) = 7`` is the correct answer.
+
+    Mutation caught: clamping the requested depth to the scheme's own -- the
+    policy assertion still passes, the value comes back as d7's, and both the
+    row comparison and the merged histogram fail here.
+    """
+    corpus_dir = value_depth_corpus(tmp_path)
+    sequential, parallel = both_ways(
+        tmp_path, corpus_dir, "--scheme", "uniform-d7", "--value-depth", "9",
+        workers=3,
+    )
+    assert_same_corpus(sequential, parallel)
+
+    plain_d7 = tmp_path / "plain_d7"
+    run(corpus_dir, plain_d7, "--scheme", "uniform-d7")
+    plain_d9 = tmp_path / "plain_d9"
+    run(corpus_dir, plain_d9)
+    deeper = json.loads(
+        (parallel / derive.SUMMARY_NAME).read_text(encoding="utf-8"),
+    )
+
+    # The POLICY is d7's -- byte-identical to the plain d7 arm.
+    assert np.array_equal(
+        column(plain_d7, "policy_target"), column(parallel, "policy_target"),
+    )
+    assert not np.array_equal(
+        column(plain_d9, "policy_target"), column(parallel, "policy_target"),
+    )
+    # The VALUE is d9's: it left d7's on every row and landed on the d9 arm's.
+    assert np.array_equal(
+        column(plain_d9, "search_wdl"), column(parallel, "search_wdl"),
+    ), "the deepened value must equal what a d9 scheme's own value read wrote"
+    moved = int(
+        (column(plain_d7, "search_wdl") != column(parallel, "search_wdl"))
+        .any(axis=1).sum()
+    )
+    assert moved == 48, f"only {moved} of 48 rows deepened"
+    assert deeper["realized"]["realized_base_depth_histogram"] == {"7": 48}
+    assert deeper["realized"]["realized_value_depth_histogram"] == {"9": 48}
+    assert deeper["realized"]["value_depth_moved_rows"] == 48
+    assert deeper["scheme"]["canonical"] == "uniform-d7"
+
+
+def test_a_value_depth_outside_the_envelope_is_refused_on_the_parallel_path_too(
+    tmp_path: Path,
+) -> None:
+    """The staircase check runs in ``derive_parallel`` as well as in ``derive``.
+
+    ⚑ A refusal that only one entry point makes is a refusal the other path can
+    walk past, and the parallel path is the one production uses (`--workers 7`).
+    """
+    rows = [row for gid in range(2) for row in game(gid, 6)]
+    corpus_dir = write_split_corpus(tmp_path, rows, [6, 6])
+    with pytest.raises(derive.CorpusIntegrityError, match="value-depth 12"):
+        run(corpus_dir, tmp_path / "par", "--value-depth", "12", "--workers", "2")
