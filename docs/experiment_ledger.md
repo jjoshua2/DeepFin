@@ -72580,3 +72580,15 @@ byte-for-byte; decomposition A/B/C; 20M/100M parked until B.**
   PARKED until B is measured; if B does not recover a large chunk, go straight to the
   position-source ablation rather than assuming volume saves the lane. d15 and the Z-residual
   screen continue as preregistered.
+
+**2026-09-01 — SUPERSESSION: the 2026-07-12 verdict "do not replace the fallback arithmetic with
+foreach kernels" (ledger :12479) is SUPERSEDED for PR #495.** Basis: phase-0b — ten real
+production batches, matched op order, `_foreach_*` kernels vs the per-tensor loop, bitwise-identical
+optimizer state after each step (10/10, CUDA, torch 2.11.0+cu128, `scratchpad/optforeach_ab/`),
+re-run on the PR's final head as a merge condition. The 2026-07-12 concern (fused kernels change
+the arithmetic) is answered by measurement, not argument. What is NOT claimed: trajectory identity
+over 200 steps — C1 showed the rig itself diverges run-to-run at that horizon — and any throughput
+gain, which is read empirically from #496's `opt_step_s` on a corrected-history window after
+deployment. PR #495 is being finished by an implementer (P2-1 retry scope + failure test, P2-2
+`last_adamw_stats` on the Ray row, P2-3 this supersession cited in the PR, language rewrite,
+phase-0b re-run), then reviewed independently, then merged on green.
