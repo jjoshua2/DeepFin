@@ -71718,3 +71718,13 @@ Mechanism note for the readout: the depth-morphology bank locates the d7↔d9
 label difference in high-u/late-settling (tactical) rows — precisely the
 labels a weak searchless student cannot absorb, so the curriculum hypothesis
 and the round-3 inversion share one mechanism candidate.
+
+**2026-09-01 — PARKED: value-target depth arm (d7-value vs d9-value). Launch
+condition: the value round's verdict lands and names a winning scheme.**
+Josh: "Once we find winning value arm we can try adjusting depth." Round 3
+moved only the POLICY teacher's depth (`uniform-d<D>` pins value to
+deepest_phase_covering = d9), so value depth is unmeasured. When launched:
+re-derive the WINNING value scheme with value read at d7 vs d9 from the same
+snapshot (derivation-time knob, zero new SF compute), same 9,680/seed-0
+recipe, judged on value_regret + h2h vs the value-round winner. Not before
+the value verdict — one value-affecting change per readout window.
