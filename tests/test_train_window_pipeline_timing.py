@@ -388,6 +388,36 @@ def test_no_device_wide_synchronize_or_elapsed_read_outside_drain() -> None:
     assert drained.count("elapsed_time") == 1
 
 
+def test_a_repeated_drift_layout_builds_no_new_index_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The AST pin above forbids `.item()`-class reads, but the drift path's
+    stall is `torch.tensor(list, device=...)` -- a pageable host->device copy
+    on every flickering microbatch if `_drift_positions` ever loses its cache.
+    Spy the constructor across two accumulations with the SAME drifted layout:
+    the first may build the index once, the second must build nothing
+    (Grok review, PR #496)."""
+    real_tensor = torch.tensor
+    built: list[Any] = []
+
+    def spy(*args: Any, **kwargs: Any) -> torch.Tensor:
+        built.append(args[0] if args else kwargs.get("data"))
+        return real_tensor(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "tensor", spy)
+    trainer_mod._DRIFT_POSITIONS_CACHE.clear()
+
+    def drifted_window() -> None:
+        sums = trainer_mod._DeviceLossSums()
+        sums.add_losses({"total": real_tensor(1.0), "policy_ce": real_tensor(2.0)})
+        sums.add_losses({"total": real_tensor(1.0), "channel_balance": real_tensor(0.5)})
+
+    drifted_window()
+    first = len(built)
+    drifted_window()
+
+    assert first >= 1, "the drifted layout never built an index tensor -- the spy saw nothing"
+    assert len(built) == first, f"a repeated drift layout rebuilt its index tensor: {built[first:]}"
+
+
 def test_without_cuda_the_spans_fall_back_to_wall_clock_and_never_touch_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

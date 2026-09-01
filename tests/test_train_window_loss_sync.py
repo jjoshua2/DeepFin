@@ -508,3 +508,28 @@ def test_the_pipeline_timing_keys_reach_the_ray_report_row() -> None:
     missing = [k for k in keys if k not in defaults]
 
     assert not missing, f"timing keys absent from the Ray report row: {missing}"
+
+
+def test_the_pipeline_timing_values_round_trip_into_the_ray_report_row() -> None:
+    """Membership is not a value read: `_train_metrics_dict` enumerates the
+    row by hand, so a key wired to a literal `0.0` or to the wrong field
+    passes the test above. Push ten distinct spans through a real
+    `TrainMetrics` and read every one back off the row (Grok review, PR #496)."""
+    import dataclasses
+
+    from chess_anti_engine.tune import trainable_report
+    from chess_anti_engine.train.trainer import _PIPELINE_PHASE_GPU_KEY, _PIPELINE_RESIDUAL_KEY, TrainMetrics
+
+    keys = [*_PIPELINE_PHASE_GPU_KEY, _PIPELINE_RESIDUAL_KEY,
+            *(twin for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None)]
+    spans: dict[str, Any] = {key: 0.125 * (i + 1) for i, key in enumerate(keys)}
+    required: dict[str, Any] = {
+        f.name: 0.0
+        for f in dataclasses.fields(TrainMetrics)
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+    }
+    row = trainable_report._train_metrics_dict(TrainMetrics(**required, **spans))
+
+    wrong = {key: (row.get(key), spans[key]) for key in keys if row.get(key) != spans[key]}
+    assert not wrong, f"Ray row does not carry the TrainMetrics span: {wrong}"
+
