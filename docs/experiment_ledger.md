@@ -71600,3 +71600,25 @@ generation stops when the pooled corpus hits ~100M). Enabled by the orphan
 reap (40GB+swap freed, same day). Fleet ~32 engines; trainer/derivations
 outrank generators on the nice ladder. Confound: none — identical recipe,
 stamped per-run seeds.
+
+**2026-09-01 — PR #492 MERGED (39cddfbc4): trainer shard loads 1.74× via
+validation memo + parallel refresh decode. Throughput-only; batch stream
+byte-identical.** Two independent fixes to the replay read path: (1) a
+shard-validation memo keyed by a tree-walk fingerprint (file count / bytes /
+newest mtime_ns — the .zarr dir mtime does NOT change on chunk rewrite), 7.31×
+on re-validation, hit rate logged to production at 300s throttle; (2)
+ordered-parallel refresh decode on worker threads only (numcodecs enables
+blosc's 8-thread pool solely on the MAIN thread, so a pool off-main is where
+the parallelism exists; submission-order assembly). Root cause profile: ~20×
+decode amplification (refresh 4 steps × 5 shards × 8192 rows vs 2048 consumed)
+plus ~19×/shard re-validation. A/B on the real corpus: 1.74× wall with 100/100
+batches checksum-identical — the take-effect proof and the no-data-change
+proof in one read. Not a data-affecting change; no readout window consumed.
+Review: 5 findings fixed + Codex zero-finding pass on the final head. CI
+history note: the first "green" report was a STALE poller read — the actual
+final-head run FAILED `test_construction_only_keys_have_no_live_consumer`
+(two comments quoted the construction-only key `shuffle_refresh_interval` in
+prose; the guard greps bare words package-wide). Fixed by naming the ctor arg
+`refresh_interval` instead (130aa1b60); merge gates re-keyed to the exact head
+SHA's check-runs. Beneficiary is the 100M-corpus training; the preregged value
+round stays pinned at bead931e6 (identity makes a re-pin pointless).
