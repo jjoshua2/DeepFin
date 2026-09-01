@@ -414,7 +414,7 @@ def test_the_optimizer_samples_nothing_until_the_caller_arms_it(
     opt = cast(AuroraWithAuxAdam, trainer.opt)
 
     trainer._run_optimizer_step(
-        step_sums={}, step_acc_sums={}, step_opt_stats={},
+        step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
         buf=cast(Any, None), batch_size=1,
         collect_optimizer_stats=False,
         batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
@@ -422,7 +422,7 @@ def test_the_optimizer_samples_nothing_until_the_caller_arms_it(
     assert opt.last_polar_stats == {}
 
     trainer._run_optimizer_step(
-        step_sums={}, step_acc_sums={}, step_opt_stats={},
+        step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
         buf=cast(Any, None), batch_size=1,
         collect_optimizer_stats=True,
         batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
@@ -459,7 +459,7 @@ def test_run_optimizer_step_arms_the_collector_from_its_own_flag(
     )
     for flag in (False, True):
         trainer._run_optimizer_step(
-            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
             buf=cast(Any, None), batch_size=1,
             collect_optimizer_stats=flag,
             batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
@@ -518,7 +518,7 @@ def test_a_failed_sample_is_counted_and_named_but_an_oom_is_re_raised(
     monkeypatch.setattr(aurora_mod, "polar_convergence", boom_linalg)
     with caplog.at_level("WARNING"):
         trainer._run_optimizer_step(
-            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
             buf=cast(Any, None), batch_size=1,
             collect_optimizer_stats=True,
             batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
@@ -534,7 +534,7 @@ def test_a_failed_sample_is_counted_and_named_but_an_oom_is_re_raised(
     monkeypatch.setattr(aurora_mod, "polar_convergence", boom_oom)
     with pytest.raises(torch.cuda.OutOfMemoryError):
         trainer._run_optimizer_step(
-            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
             buf=cast(Any, None), batch_size=1,
             collect_optimizer_stats=True,
             batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
@@ -613,7 +613,7 @@ def test_polar_sampling_is_deterministic_given_the_same_state(
         _stub_losses(trainer, monkeypatch)
         opt = cast(AuroraWithAuxAdam, trainer.opt)
         trainer._run_optimizer_step(
-            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
             buf=cast(Any, None), batch_size=1,
             collect_optimizer_stats=True,
             batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),

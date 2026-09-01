@@ -160,7 +160,7 @@ def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -168,12 +168,16 @@ def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         seen.append(int(next(batch_iter)["x"].item()))
         if len(seen) == 1:
             raise RuntimeError("CUDA transient test failure")
-        for key in (
+  # `_DeviceLossSums` takes DEVICE TENSORS, not host floats: the real
+  # `_run_optimizer_step` no longer materializes the per-step scalars, so a
+  # fake standing in for it has to hand `train_steps` the same shape of thing.
+        step_sums.add_losses(dict.fromkeys((
             "loss",
             "policy_loss",
             "soft_policy_loss",
@@ -185,8 +189,7 @@ def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
             "volatility_loss",
             "sf_volatility_loss",
             "moves_left_loss",
-        ):
-            step_sums[key] = 0.0
+        ), torch.zeros(())))
         return 1, 0.0
 
     monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_iter_prefetched_batches)
@@ -227,7 +230,7 @@ def test_train_steps_closes_prefetch_after_terminal_error(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -235,8 +238,9 @@ def test_train_steps_closes_prefetch_after_terminal_error(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del timer, step_opt_stats, step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         next(batch_iter)
         raise RuntimeError("terminal host failure")
 
@@ -747,7 +751,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -755,12 +759,16 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, batch_iter
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, batch_iter
         assert update_lr is False
         seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
-        for key in (
+  # `_DeviceLossSums` takes DEVICE TENSORS, not host floats: the real
+  # `_run_optimizer_step` no longer materializes the per-step scalars, so a
+  # fake standing in for it has to hand `train_steps` the same shape of thing.
+        step_sums.add_losses(dict.fromkeys((
             "loss",
             "policy_loss",
             "soft_policy_loss",
@@ -772,8 +780,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
             "volatility_loss",
             "sf_volatility_loss",
             "moves_left_loss",
-        ):
-            step_sums[key] = 0.0
+        ), torch.zeros(())))
         return 1, 0.0
 
     monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
@@ -827,7 +834,7 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -835,10 +842,14 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_opt_stats, step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
+        del timer, step_opt_stats, step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
-        for key in (
+  # `_DeviceLossSums` takes DEVICE TENSORS, not host floats: the real
+  # `_run_optimizer_step` no longer materializes the per-step scalars, so a
+  # fake standing in for it has to hand `train_steps` the same shape of thing.
+        step_sums.add_losses(dict.fromkeys((
             "loss",
             "policy_loss",
             "soft_policy_loss",
@@ -850,8 +861,7 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
             "volatility_loss",
             "sf_volatility_loss",
             "moves_left_loss",
-        ):
-            step_sums[key] = 0.0
+        ), torch.zeros(())))
         if update_lr:
             trainer._update_lr()
         return 1, 0.0
@@ -1349,7 +1359,7 @@ def test_run_optimizer_step_collects_clip_stats_off_the_tb_log_stride(
 
     step_opt_stats: dict[str, float] = {}
     trainer._run_optimizer_step(
-        step_sums={},
+        step_sums=trainer_mod._DeviceLossSums(),
         step_acc_sums={},
         step_opt_stats=step_opt_stats,
         buf=cast(Any, None),
@@ -1379,7 +1389,7 @@ def test_train_steps_reports_clip_rate_without_double_counting_retries(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -1387,8 +1397,9 @@ def test_train_steps_reports_clip_rate_without_double_counting_retries(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         attempts["n"] += 1
         # The first attempt records a huge clipped norm and then dies: the retry
         # must replace it, not add to it.
@@ -1400,7 +1411,7 @@ def test_train_steps_reports_clip_rate_without_double_counting_retries(
         step_opt_stats["lr"] = 1e-3
         if first:
             raise RuntimeError("CUDA transient test failure")
-        step_sums.update(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, 0.0))
+        step_sums.add_losses(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, torch.zeros(())))
         return 1, 0.0
 
     monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
@@ -1471,7 +1482,7 @@ def test_train_steps_reports_iteration_mean_lr_not_the_release_trough(
 
     def fake_run_optimizer_step(
         *,
-        step_sums: dict[str, float],
+        step_sums: trainer_mod._DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: Any,
@@ -1479,10 +1490,11 @@ def test_train_steps_reports_iteration_mean_lr_not_the_release_trough(
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
+        timer: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        del timer, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
         step_opt_stats["lr"] = float(trainer.opt.param_groups[0]["lr"])
-        step_sums.update(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, 0.0))
+        step_sums.add_losses(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, torch.zeros(())))
         return 1, 0.0
 
     monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)

@@ -230,6 +230,320 @@ class _TrainBatchIterator:
         if callable(close):
             close()
 
+
+class _DeviceLossSums:
+    """``compute_loss`` scalars accumulated ON DEVICE, one host transfer per window.
+
+    ⚑ WHAT THIS REMOVES. ``Trainer._extract_loss_scalars`` materializes its
+    stack with ``.tolist()``, and on CUDA that is a HOST SYNC: the training
+    thread blocks on everything queued so far immediately after
+    ``loss.backward()`` -- before zclip, the matrix grad norm and the optimizer
+    step have even been ENQUEUED. It is paid once per microbatch. This class
+    holds the same detached scalars as 0-dim device tensors and adds them
+    there, so the window pays ONE transfer, taken in ``train_steps`` where the
+    window's metrics are assembled.
+
+    ⚑ BIT-EXACT, NOT "close enough". Every value is cast to float64 on arrival
+    -- lossless from bf16/fp32 -- and the additions happen in the SAME ORDER
+    the host loop used: microbatches accumulate into a per-step instance,
+    per-step instances ``merge`` into the window instance. IEEE-754 double
+    addition is deterministic, so the window totals equal the ones the
+    ``float(...)`` path produced, digit for digit.
+    ``tests/test_train_window_loss_sync.py`` asserts ``==``, not ``approx``.
+
+    ⚑ THE PER-STEP INSTANCE IS NOT AN OPTIMIZATION, IT IS THE RETRY SEMANTICS.
+    ``train_steps`` throws a step's ``step_sums`` away when a transient CUDA
+    error forces a retry, and commits it only on success. Accumulating
+    straight into the window sum would double-count every retried step.
+
+    ⚑ ``_extract_loss_scalars`` ITSELF IS DELIBERATELY UNTOUCHED. It sits
+    inside ``call_closure(Trainer._compute_metrics)`` -- the frozen holdout
+    ruler's source digest -- so editing its body moves ``v1:full_pass:...`` and
+    fires a best-model handover on every running trial. This class is the
+    TRAINING path's accumulator; the eval path still calls the original, whose
+    per-batch sync is not on the hot loop (``_compute_metrics`` runs once per
+    iteration, under ``torch.no_grad``).
+    """
+
+    __slots__ = ("_names", "_vec")
+
+    def __init__(self) -> None:
+        self._names: list[str] = []
+        self._vec: torch.Tensor | None = None
+
+    def add_losses(
+        self,
+        losses: Mapping[str, torch.Tensor],
+        *,
+        total_override: torch.Tensor | None = None,
+        total_scale: float = 1.0,
+    ) -> None:
+        """One microbatch's scalars, with ``_extract_loss_scalars``' semantics.
+
+        Same key rename (``total`` -> ``loss``), same ``total_override`` /
+        ``total_scale`` treatment of the gradient-accumulation divisor -- the
+        DIVIDED loss is what gets materialized and the scale is applied after,
+        so the reported number is the undivided total either way.
+
+        ⚑ ONE ``stack`` and ONE cast per microbatch, not a cast per key (Codex
+        review, PR #496): ``compute_loss`` returns dozens of scalars, and on a
+        launch-bound step a kernel per key per microbatch is the very overhead
+        this class exists to remove. ``stack`` promotes exactly as the old
+        ``_extract_loss_scalars`` stack did, so a mixed bf16/fp32 dict lands
+        in the same dtype before the lossless widen to float64.
+        """
+        names: list[str] = []
+        scalars: list[torch.Tensor] = []
+        total_at = -1
+        for key, tensor in losses.items():
+            src = total_override if (key == "total" and total_override is not None) else tensor
+            if key == "total":
+                total_at = len(names)
+                names.append("loss")
+            else:
+                names.append(key)
+            scalars.append(src)
+        if not scalars:
+            return
+  # `detach` AFTER the stack: it is a view op, not a kernel, but it is still
+  # one dispatch per key, and the test below pins the dispatch count to be
+  # independent of the key count.
+        vec = torch.stack(scalars).detach().to(torch.float64)
+        if total_at >= 0 and float(total_scale) != 1.0:
+            vec[total_at] = vec[total_at] * float(total_scale)
+        self._accumulate(names, vec)
+
+    def merge(self, other: _DeviceLossSums) -> None:
+        """Commit a completed step's sums into this window's sums."""
+        if other._vec is not None:
+            self._accumulate(other._names, other._vec)
+
+    def _accumulate(self, names: list[str], vec: torch.Tensor) -> None:
+        if self._vec is None:
+            self._names = list(names)
+  # `+ 0.0`, not a bare store: the host fold began every key with
+  # `0.0 + v`, which turns a `-0.0` first value into `+0.0`. One elementwise
+  # kernel per instance keeps the sign of zero bit-identical too (found by the
+  # independent review's probe against the real `_extract_loss_scalars`).
+            self._vec = vec + 0.0
+            return
+        if names == self._names:
+  # One elementwise kernel: per key, the same float64 add in the same order
+  # the host fold performed -- bit-identical by construction.
+            self._vec = self._vec + vec
+            return
+  # Key sets drift only when an optional term (a channel-balance loss, a
+  # disarmed blend) appears or vanishes mid-window. Align by name and keep
+  # FIRST-SEEN order, exactly as the old dict did; a key seen for the first
+  # time lands on a 0.0 slot, and 0.0 + v == v for every finite v.
+        known = set(self._names)
+        fresh = [name for name in names if name not in known]
+        if fresh:
+            self._names = self._names + fresh
+            pad = torch.zeros(len(fresh), dtype=self._vec.dtype, device=self._vec.device)
+            self._vec = torch.cat([self._vec, pad])
+        positions = _drift_positions(tuple(self._names), tuple(names), vec.device)
+        self._vec = self._vec.index_add(0, positions, vec)
+
+    def tensor(self, name: str) -> torch.Tensor | None:
+        """The running device sum for one key, or None when it never appeared."""
+        if self._vec is None or name not in self._names:
+            return None
+        return self._vec[self._names.index(name)]
+
+    def items(self) -> list[tuple[str, torch.Tensor]]:
+        """(key, device sum) pairs in FIRST-SEEN order, matching the old dict."""
+        if self._vec is None:
+            return []
+        vec = self._vec
+        return [(name, vec[i]) for i, name in enumerate(self._names)]
+
+
+_DRIFT_POSITIONS_CACHE: dict[tuple[tuple[str, ...], tuple[str, ...], str], torch.Tensor] = {}
+
+
+def _drift_positions(all_names: tuple[str, ...], names: tuple[str, ...], device: Any) -> torch.Tensor:
+    """Slot indices of `names` inside `all_names`, as a device tensor, CACHED.
+
+    ⚑ Built once per distinct (layout, device), not per microbatch: the
+    uncached form was an unpinned host->device copy sitting between
+    `backward()` and zclip on every step whose optional keys flickered -- the
+    kind of stall this accumulator exists to remove (Grok review, PR #496).
+    Key sets are a handful of layouts per run, so the cache is tiny.
+    """
+    key = (all_names, names, str(device))
+    hit = _DRIFT_POSITIONS_CACHE.get(key)
+    if hit is None:
+        index = {name: i for i, name in enumerate(all_names)}
+        hit = torch.tensor([index[name] for name in names], device=device)
+        _DRIFT_POSITIONS_CACHE[key] = hit
+    return hit
+
+
+def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
+    """One host transfer for a whole window's worth of 0-dim device scalars.
+
+    ⚑ ONE ``.tolist()``, not one per tensor: the point of the batching is that
+    the window blocks on the CUDA queue exactly once, and N separate
+    ``.item()`` calls would put N sync points back.
+    """
+    if not tensors:
+        return []
+    return [float(v) for v in torch.stack(list(tensors)).tolist()]
+
+
+#: Pipeline phase -> the metric key carrying that phase's GPU-timeline span.
+#:
+#: The phase NAME is itself a metric key and carries the CPU WALL CLOCK, so
+#: each phase publishes two numbers that mean different things: how long the
+#: training thread was inside it, and how long the GPU spent on the work it
+#: enqueued. They diverge exactly where the bubble is.
+#:
+#: ⚑ `batch_prefetch_wait_s` HAS NO GPU TWIN, on purpose. Its region is
+#: `next(batches)`: the prefetch future, then `pin_memory` + the H2D issue. A
+#: pair of events around that region would bracket the HOST wait too -- the
+#: device idles between the two records whenever the sampler is late -- so the
+#: span would report starvation as a slow copy (Codex review, PR #496). The
+#: copy itself is issued inside `_host_batch_to_tensors`, which sits in the
+#: frozen holdout-ruler digest and cannot grow a probe; a span that does not
+#: mean what its name says is worse than no span, so the twin is `None`.
+_PIPELINE_PHASE_GPU_KEY: dict[str, str | None] = {
+    "batch_prefetch_wait_s": None,
+    "fwd_loss_s": "gpu_fwd_loss_s",
+    "bwd_s": "gpu_bwd_s",
+    "gradnorm_zclip_s": "gpu_gradnorm_zclip_s",
+    "opt_step_s": "gpu_opt_step_s",
+}
+_PIPELINE_RESIDUAL_KEY = "pipeline_other_s"
+
+
+class _PipelinePhaseSpan:
+    """One timed region. Not reentrant, and never nested with itself."""
+
+    __slots__ = ("_name", "_start", "_t0", "_timer")
+
+    def __init__(self, timer: _PipelinePhaseTimer, name: str) -> None:
+        self._timer = timer
+        self._name = name
+        self._t0 = 0.0
+        self._start: Any = None
+
+    def __enter__(self) -> _PipelinePhaseSpan:
+        self._t0 = time.perf_counter()
+        self._start = self._timer.begin_gpu(self._name)
+        return self
+
+  # ⚑ Returns None, NOT False. They behave identically at runtime, and a
+  # `-> bool` return makes a type checker treat every `with` on this span as
+  # potentially SUPPRESSING the exception -- which reports every variable bound
+  # inside the block as possibly-unbound afterwards. 28 basedpyright errors
+  # came from that one annotation.
+    def __exit__(self, *_exc: Any) -> None:
+        end = self._timer.end_gpu(self._start)
+        self._timer.record(self._name, self._start, end, time.perf_counter() - self._t0)
+        self._start = None
+
+
+class _PipelinePhaseTimer:
+    """Where ONE training window's wall clock went, and where its GPU time went.
+
+    ⚑ ALWAYS ON, NO KNOB. A decomposition you have to remember to switch on is
+    a decomposition nobody has when the throughput question comes up. The cost
+    is two `perf_counter()` reads and (on CUDA) two `cudaEventRecord`s per
+    phase per optimizer step -- order 1.5 ms across a ~300 s window.
+
+    ⚑ NO `torch.cuda.synchronize()` ANYWHERE ON THE HOT PATH. Recording an
+    event is asynchronous; the elapsed times are read once, in `drain`, at the
+    point the window's loss scalars transfer anyway. An instrument that
+    serialized the pipeline to measure the pipeline would be measuring itself.
+
+    Two clocks, published side by side because the GAP between them IS the
+    bubble:
+
+    * the phase key (`fwd_loss_s`, ...) is the CPU wall clock -- how long the
+      training thread was inside that region. These five plus
+      `pipeline_other_s` PARTITION `train_time_s` by construction.
+    * `gpu_*_s` are CUDA event spans -- how long the device spent on
+      the work the region enqueued. They overlap each other and the CPU walls,
+      and they do not sum to anything.
+
+    ⚑ WITHOUT CUDA THE `gpu_*` KEYS ARE 0.0, AND 0.0 THERE MEANS "NOT
+    MEASURED", NOT "NO GPU TIME". That is exactly the shape of defect this repo
+    keeps paying for, so the window's summary line prints `gpu_events=on|off`
+    next to the numbers rather than leaving a reader to infer it.
+    """
+
+    __slots__ = ("_cpu", "_device", "_events", "cuda")
+
+    def __init__(self, *, device: Any) -> None:
+        self.cuda = str(device).startswith("cuda") and torch.cuda.is_available()
+        self._device: Any = torch.device(device) if self.cuda else None
+        self._cpu: dict[str, float] = dict.fromkeys(_PIPELINE_PHASE_GPU_KEY, 0.0)
+        self._events: list[tuple[str, Any, Any]] = []
+
+    def phase(self, name: str) -> _PipelinePhaseSpan:
+        return _PipelinePhaseSpan(self, name)
+
+    def begin_gpu(self, name: str) -> Any:
+  # The lookup runs BEFORE the CUDA check, so an unknown phase fails the same
+  # way (KeyError) on every device, not only on the one that records events.
+        if _PIPELINE_PHASE_GPU_KEY[name] is None or not self.cuda:
+            return None
+        return self._record_event()
+
+    def end_gpu(self, start: Any) -> Any:
+        if start is None:
+            return None
+        return self._record_event()
+
+    def _record_event(self) -> Any:
+  # ⚑ Recorded on the CONFIGURED device's current stream, never the bare
+  # `event.record()`: that form uses the process's CURRENT device -- `cuda:0`
+  # unless someone called `set_device` -- so a trainer built on `cuda:1`
+  # would be timing an idle GPU's stream (Codex review, PR #496).
+        event = torch.cuda.Event(enable_timing=True)
+        event.record(torch.cuda.current_stream(self._device))
+        return event
+
+    def record(self, name: str, start: Any, end: Any, elapsed_s: float) -> None:
+  # `+=` on a pre-seeded dict, NOT `.get(name, 0.0)`: a phase name that is not
+  # in `_PIPELINE_PHASE_GPU_KEY` has no metric field to land in, and a KeyError
+  # here is far better than a timing silently accumulated into nothing.
+        self._cpu[name] += float(elapsed_s)
+        if start is not None and end is not None:
+            self._events.append((name, start, end))
+
+    def drain(self, *, window_wall_s: float) -> dict[str, float]:
+        """Every phase key for this window. Call ONCE, at window end.
+
+        The single `synchronize()` is on the LAST EVENT, not the device. On
+        the stream the trainer uses, the window's loss-scalar `.tolist()` is a
+        stream-ordered memcpy, so every kernel enqueued before it -- the last
+        `opt.step()` included -- has completed by the time it returns, and the
+        event wait is redundant there. It stays because `elapsed_time` on an
+        unfinished event is an error, and because that stream-order argument
+        does not cover work a future change might enqueue on a side stream;
+        it is one wait per window either way, never per step.
+        """
+        gpu = {twin: 0.0 for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None}
+        if self._events:
+            self._events[-1][2].synchronize()
+            for name, start, end in self._events:
+                twin = _PIPELINE_PHASE_GPU_KEY[name]
+                if twin is None:  # `begin_gpu` never records for these, so never appended
+                    continue
+                gpu[twin] += float(start.elapsed_time(end)) / 1000.0
+            self._events.clear()
+        out = {key: float(value) for key, value in self._cpu.items()}
+        out.update(gpu)
+  # Clamped at 0: the phases are disjoint CPU regions inside the window, so the
+  # residual is non-negative in practice, and a negative one would mean the
+  # window clock and the phase clocks disagree -- report no residual rather
+  # than a negative duration.
+        out[_PIPELINE_RESIDUAL_KEY] = max(0.0, float(window_wall_s) - sum(self._cpu.values()))
+        return out
+
+
 _LC0_HISTORY_STEPS = LC0_FULL.history_len
 _LC0_PIECE_PLANES = LC0_FULL.piece_planes_per_history
 _INPUT_HISTORY_SELECTED_KEY = "_input_history_encoding_selected"
@@ -961,6 +1275,36 @@ class TrainMetrics:
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
     train_samples_seen: int = 0
+  # Pipeline-bubble decomposition of ONE training window (`train_steps`), from
+  # `_PipelinePhaseTimer`. Read that class before reading these.
+  #
+  # ⚑ THESE FIVE PLUS `pipeline_other_s` PARTITION `train_time_s`. They are CPU
+  # WALL CLOCKS -- how long the training thread sat in each region -- so
+  # `gradnorm_zclip_s` being large is the normal reading, not an anomaly: that
+  # region contains the step's only host sync, so the GPU work enqueued by
+  # forward and backward is DRAINED there and shows up as its wall time.
+  # `pipeline_other_s` is the residual: the accuracy accumulators, the
+  # on-device loss adds, the SWA update, the retry bookkeeping and loop
+  # overhead. `opt_step_s` and the pre-existing `opt_step_time_s` cover the
+  # same region; the outer `opt_step_time_s` additionally spans the phase's
+  # two CUDA-event records (tens of microseconds per step), so the pair
+  # agrees to that overhead and no more. The old one is kept because
+  # `optimizer_steps_per_s` in the Ray report is derived from it.
+    batch_prefetch_wait_s: float = 0.0
+    fwd_loss_s: float = 0.0
+    bwd_s: float = 0.0
+    gradnorm_zclip_s: float = 0.0
+    opt_step_s: float = 0.0
+    pipeline_other_s: float = 0.0
+  # ⚑ GPU-TIMELINE SPANS FROM CUDA EVENTS, AND ALL-ZERO MEANS "NOT MEASURED",
+  # NOT "NO GPU TIME". They are 0.0 on any CPU-only run. The window's
+  # `[trainer] window_timing` line prints `gpu_events=on|off` beside them so
+  # the two cases cannot be confused. Unlike the block above these OVERLAP each
+  # other and the wall clocks, and they sum to nothing in particular.
+    gpu_fwd_loss_s: float = 0.0
+    gpu_bwd_s: float = 0.0
+    gpu_gradnorm_zclip_s: float = 0.0
+    gpu_opt_step_s: float = 0.0
     aurora_uw_floor: float = 0.0
   # The matrix-group LR the effective-ratio pair below was multiplied by.
   # Sampled at the sqrt_release sawtooth FLOOR (M4-2) -- ~10x under a typical
@@ -3750,6 +4094,14 @@ class Trainer:
         # ``inference_autocast`` helper would auto-fallback to FP16 there.
         return inference_autocast(device=self.device, enabled=self.use_amp, dtype="bf16")
 
+  # ⚑⚑ FROZEN SOURCE — EDIT THE BODY AND YOU MOVE THE HOLDOUT RULER.
+  # This method is inside `call_closure(Trainer._compute_metrics)`, so its
+  # source digest is part of `v1:full_pass:...` / `v1:sampled:...`. Changing
+  # a line here bumps `holdout_generation` and makes every running trial hand
+  # over its best-model record. That is why the training loop's per-microbatch
+  # sync was removed by ADDING `_DeviceLossSums` rather than by restructuring
+  # this function: the eval path (once per iteration, `torch.no_grad`) still
+  # calls it and its per-batch `.tolist()` is not on the hot loop.
     @staticmethod
     def _extract_loss_scalars(
         losses: dict[str, torch.Tensor], *,
@@ -4688,7 +5040,7 @@ class Trainer:
 
     def _run_optimizer_step(
         self, *,
-        step_sums: dict[str, float],
+        step_sums: _DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: ReplayBuffer,
@@ -4696,12 +5048,25 @@ class Trainer:
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Iterator[dict[str, torch.Tensor]] | None = None,
+        timer: _PipelinePhaseTimer | None = None,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
         Mutates step_sums/step_acc_sums/step_opt_stats in place. Returns
         (step_n_micro, opt_step_time_s).
+
+        ⚑ ``step_sums`` is a ``_DeviceLossSums``, NOT a ``dict[str, float]``:
+        the loss scalars stay on the device until ``train_steps`` drains the
+        whole window. Everything in ``step_opt_stats`` is still a host float,
+        including the two grad norms the non-finite guard below branches on --
+        that sync is DELIBERATELY KEPT, see the guard's own comment.
+
+        ``timer`` accumulates this step's phase spans into the caller's window.
+        A direct caller that passes none still runs the spans, into a throwaway
+        CPU-only timer -- the instrumentation is never conditional, only its
+        destination is.
         """
+        phases = timer if timer is not None else _PipelinePhaseTimer(device="cpu")
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
         batches = batch_iter
@@ -4713,27 +5078,35 @@ class Trainer:
                 count=self.accum_steps,
             )
         for _ in range(self.accum_steps):
-            batch = next(batches)
-            self._apply_feature_group_dropout(batch["x"])
-            with self._amp_context():
-                _rel = batch.get("relations")
+  # ⚑ THE STARVATION PHASE. Everything the loop waits for to get a batch: the
+  # prefetch thread's sample (`future.result()`) and then `pin_memory` + the
+  # H2D issue. Deliberately no GPU twin -- see `_PIPELINE_PHASE_GPU_KEY`.
+            with phases.phase("batch_prefetch_wait_s"):
+                batch = next(batches)
+            with phases.phase("fwd_loss_s"):
+                self._apply_feature_group_dropout(batch["x"])
+                with self._amp_context():
+                    _rel = batch.get("relations")
   # kwarg only when present: TinyNet's forward has no relations param.
-                out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
-                losses = compute_loss(out, batch, **self._loss_kwargs)
-                balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
-                if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
-                    losses["channel_balance"] = balance_loss
-                    losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                loss = losses["total"] / self.accum_steps
-            loss.backward()
+                    out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
+                    losses = compute_loss(out, batch, **self._loss_kwargs)
+                    balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
+                    if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
+                        losses["channel_balance"] = balance_loss
+                        losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
+                    loss = losses["total"] / self.accum_steps
+            with phases.phase("bwd_s"):
+                loss.backward()
 
-            scalars = self._extract_loss_scalars(
+  # ⚑ ON-DEVICE, so no `.tolist()` sync lands between `backward()` and the
+  # zclip/optimizer work below. Same keys, same values, same accumulation
+  # order as the `_extract_loss_scalars` path this replaced -- see
+  # `_DeviceLossSums`. The window pays one transfer, in `train_steps`.
+            step_sums.add_losses(
                 losses,
                 total_override=loss,
                 total_scale=float(self.accum_steps),
             )
-            for k, v in scalars.items():
-                step_sums[k] = step_sums.get(k, 0.0) + v
 
             with torch.no_grad():
                 for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
@@ -4749,9 +5122,14 @@ class Trainer:
   # Measured BEFORE the clip, which is a distinction without a difference
   # while the matrix group is outside the clip scope, and the honest
   # pre-clip reading if it ever is not.
-        zclip_stats_before = self._zclip_stats_snapshot()
-        matrix_grad_norm = self._matrix_grad_norm()
-        grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
+  # ⚑ THE STEP'S ONLY REMAINING HOST SYNC LIVES IN THIS PHASE, so its wall
+  # clock is where the forward and backward GPU work gets DRAINED. A large
+  # `gradnorm_zclip_s` next to a small `gpu_gradnorm_zclip_s` is the normal
+  # reading and says "the loop is GPU-bound", not "zclip is slow".
+        with phases.phase("gradnorm_zclip_s"):
+            zclip_stats_before = self._zclip_stats_snapshot()
+            matrix_grad_norm = self._matrix_grad_norm()
+            grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
         if zclip_stats is not None:
             step_opt_stats.update(zclip_stats)
         step_opt_stats["grad_norm"] = float(grad_norm)
@@ -4762,6 +5140,16 @@ class Trainer:
   # RuntimeError mid-iteration. Guard the clipped group too — zclip never
   # protected it either (`clip_coef = cap / (nan + 1e-6)` leaves `nan > cap`
   # False, so the whole non-finite gradient passes through unscaled).
+  #
+  # ⚑⚑ THE KEPT SYNC. `_matrix_grad_norm` and `_zclip_step` return HOST floats,
+  # i.e. one device->host transfer per optimizer step, and this line BRANCHES on
+  # them: it decides whether `self.opt.step()` runs at all, whether zclip's EMA
+  # is rolled back, and whether the step is counted as skipped. It therefore
+  # cannot be batched to the end of the window the way the LOSS scalars were --
+  # a window-batched safety check would apply a non-finite update ~88 times
+  # before noticing. Do not "finish the optimization" by moving it.
+  # `tests/test_train_window_loss_sync.py::test_the_nonfinite_gradient_guard_is_
+  # still_read_every_step` pins that it is consulted once per step.
         if not (math.isfinite(matrix_grad_norm) and math.isfinite(grad_norm)):
             logging.getLogger(__name__).warning(
                 "non-finite gradient at step %d (matrix ||g||=%r, clipped "
@@ -4794,16 +5182,20 @@ class Trainer:
   # "what LR is the trunk training at" under sqrt_release (I19).
         step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
         opt_step_start = time.perf_counter()
-        set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
-        if callable(set_collect_uw_stats):
-            set_collect_uw_stats(bool(collect_optimizer_stats))
+        with phases.phase("opt_step_s"):
+            set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
+            if callable(set_collect_uw_stats):
+                set_collect_uw_stats(bool(collect_optimizer_stats))
   # Polar residual rides the same one-step-per-iteration gate. It is
   # scale-invariant and carries no `lr` factor, so unlike the uw-effective
   # pair (M4-2) sampling at the sawtooth floor does not bias it.
-        set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
-        if callable(set_collect_polar_stats):
-            set_collect_polar_stats(bool(collect_optimizer_stats))
-        self.opt.step()
+            set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
+            if callable(set_collect_polar_stats):
+                set_collect_polar_stats(bool(collect_optimizer_stats))
+            self.opt.step()
+  # Unchanged boundaries: `opt_step_time_s` is still the wall clock of exactly
+  # this region, because `optimizer_steps_per_s` in the Ray report divides by
+  # it and a redefinition would move that column without moving the run.
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
             self._update_lr()
@@ -4827,9 +5219,23 @@ class Trainer:
         #     byte-identical.
         self._assert_gated_heads_exist()
         self.model.train()
+  # Always on, one instance per window, no config key. See
+  # `_PipelinePhaseTimer` for why there is no switch and what the two clocks
+  # mean.
+        phase_timer = _PipelinePhaseTimer(device=self.device)
         train_wall_start = time.perf_counter()
 
-        sums: dict[str, float] = {}
+  # ⚑ DEVICE-RESIDENT until the window ends. `sums` (the host dict every
+  # downstream consumer reads) is built below, after the loop, from ONE
+  # transfer. See `_DeviceLossSums`.
+        window_sums = _DeviceLossSums()
+  # (step at which it was logged, device tensor for that step's mean total
+  # loss). The per-step `train/loss` TB series is PRESERVED EXACTLY -- same
+  # values, same step numbers -- by deferring the WRITE to the window's single
+  # transfer instead of dropping the series or replacing it with a mean. A
+  # scalar is written with an explicit `global_step`, so writing it late is
+  # indistinguishable in the event file from writing it on time.
+        pending_step_loss: list[tuple[int, torch.Tensor]] = []
         acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         n_micro = 0
         opt_step_time_s = 0.0
@@ -4862,7 +5268,7 @@ class Trainer:
         try:
             for _ in range(requested_steps):
               for _attempt in range(3):
-                step_sums: dict[str, float] = {}
+                step_sums = _DeviceLossSums()
                 step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
                 step_opt_stats: dict[str, float] = {}
                 consumed_before_attempt = batch_iter.consumed
@@ -4880,6 +5286,7 @@ class Trainer:
                         update_lr=not local_release_cycle,
                         collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
                         batch_iter=batch_iter,
+                        timer=phase_timer,
                     )
                     opt_step_time_s += this_opt_time
                 except RuntimeError as exc:
@@ -4899,8 +5306,7 @@ class Trainer:
                     continue
 
   # Success — commit metrics from this step.
-                for k, v in step_sums.items():
-                    sums[k] = sums.get(k, 0.0) + v
+                window_sums.merge(step_sums)
                 for name, (n_, d_) in step_acc_sums.items():
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
@@ -4922,7 +5328,19 @@ class Trainer:
                     self._swa_model.update_parameters(self.model)
 
                 if self._should_log_step_scalars():
-                    self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
+  # ⚑ QUEUED, NOT DROPPED. The value is `step_sums["loss"] / step_n_micro`
+  # exactly as before; only the host read moves to the window's single
+  # transfer, and the `global_step` is captured HERE so the series lands on
+  # the same x-axis it always did. The absent-key case still publishes the
+  # literal 0.0 the old `.get("loss", 0.0)` produced, immediately, because
+  # there is nothing to transfer.
+                    step_loss = step_sums.tensor("loss")
+                    if step_loss is None:
+                        self.writer.add_scalar("train/loss", 0.0, self.step)
+                    else:
+                        pending_step_loss.append(
+                            (int(self.step), step_loss / float(max(1, step_n_micro))),
+                        )
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
@@ -4930,7 +5348,58 @@ class Trainer:
         finally:
             batch_iter.close()
 
+  # ⚑⚑ THE WINDOW'S ONE HOST TRANSFER, and the only one the loss scalars now
+  # cost. Every per-microbatch `.tolist()` this replaced was a full CUDA sync
+  # immediately after `backward()`; here the window's accumulated sums AND the
+  # deferred per-step `train/loss` series ride out together in a single
+  # `torch.stack(...).tolist()`.
+  #
+  # ⚑ Taken BEFORE `train_time_s` is read, deliberately. The syncs it replaces
+  # were inside the loop and therefore inside the window's wall clock, so
+  # counting the replacement keeps `train_time_s` (and everything derived from
+  # it -- `steps_per_s`, `samples_per_s`, the phase decomposition's residual)
+  # measuring the same thing it did before.
+        _sum_items = window_sums.items()
+        _flat = _materialize_device_scalars(
+            [t for _, t in _sum_items] + [t for _, t in pending_step_loss],
+        )
+        sums: dict[str, float] = {
+            key: _flat[i] for i, (key, _) in enumerate(_sum_items)
+        }
+        for (_logged_step, _), _value in zip(
+            pending_step_loss, _flat[len(_sum_items):], strict=True,
+        ):
+            self.writer.add_scalar("train/loss", _value, _logged_step)
+
         train_time_s = time.perf_counter() - train_wall_start
+  # ⚑ ONE `elapsed_time` sweep for the whole window, taken here because the
+  # transfer above has already drained the CUDA queue -- so the events are
+  # complete and reading them costs nothing. `pipeline_other_s` is whatever of
+  # `train_time_s` the phases did not claim.
+        phase_timings = phase_timer.drain(window_wall_s=train_time_s)
+  # print(), NOT logging.info() -- the trial actor installs no logging handler;
+  # see the `export_swa` comment. One line per window, unconditional: a
+  # throughput decomposition that only appears when someone remembers to ask
+  # for it is not there on the day the throughput question comes up.
+  # ⚑ `gpu_events=` is part of the reading, not decoration: without it a
+  # CPU-only run's all-zero `gpu_*` columns are indistinguishable from a GPU
+  # that did no work.
+        print(
+            f"[trainer] window_timing steps={train_steps_done} "
+            f"train_time_s={train_time_s:.3f} "
+            f"batch_prefetch_wait_s={phase_timings['batch_prefetch_wait_s']:.3f} "
+            f"fwd_loss_s={phase_timings['fwd_loss_s']:.3f} "
+            f"bwd_s={phase_timings['bwd_s']:.3f} "
+            f"gradnorm_zclip_s={phase_timings['gradnorm_zclip_s']:.3f} "
+            f"opt_step_s={phase_timings['opt_step_s']:.3f} "
+            f"pipeline_other_s={phase_timings['pipeline_other_s']:.3f} "
+            f"gpu_fwd_loss_s={phase_timings['gpu_fwd_loss_s']:.3f} "
+            f"gpu_bwd_s={phase_timings['gpu_bwd_s']:.3f} "
+            f"gpu_gradnorm_zclip_s={phase_timings['gpu_gradnorm_zclip_s']:.3f} "
+            f"gpu_opt_step_s={phase_timings['gpu_opt_step_s']:.3f} "
+            f"gpu_events={'on' if phase_timer.cuda else 'off'}",
+            flush=True,
+        )
         train_samples_seen = int(n_micro * batch_size)
   # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
   # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
@@ -4980,6 +5449,7 @@ class Trainer:
   # disagree on it did not sample the same rows, whatever their shard pools say.
             batches_drawn=float(batch_iter.consumed),
             transient_cuda_retry_batches=float(transient_cuda_retry_batches),
+            **phase_timings,
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
