@@ -72025,3 +72025,77 @@ cannot average out at a flat 50% weight — the direction the C arm's
 regret-gated λ-return is built to fix. B / C / ablations / f_vmix continue
 per the chain; no rule change. Per-position dump banked
 (`vregret_a_qz50.perpos.jsonl`).
+
+**2026-09-01 — PREREG (Josh-approved order, ledgered before any result): the
+`valueround2.done` BOUNDARY BLOCK + two CPU-side screens. No 20M
+confirmation run until the consolidated readout of all of these is
+recorded.** Drivers: `scratchpad/boundary_block_20260902/boundary_block.sh`
+(waiter armed, gated on `valueround2/valueround2.done` AND no GPU job alive),
+`scratchpad/t80_ruler/stage2_sf_depthN.py` (running now, 3 slices nice 5),
+`scratchpad/t80_ruler/stage5_history_probe.py` (running now beside training
+at gpu-mem-fraction 0.15).
+1. **optforeach controls (PR #495 attribution).** 200-step
+   `lc0_control_train.py` runs, seed 0, the same 122 `training-run2-test91`
+   shard dirs as the confounded phase 1: `post_a`, `post_b`, `pre_a` run ALONE
+   and sequentially; `post_c` runs UNDER the first anchor arena. Bitwise
+   compare (`scratchpad/optforeach_compare.py`, the phase-2 script verbatim):
+   **C1** = post_a vs post_b (reproducibility floor), **C0** = pre_a vs post_a
+   (the failed test minus the confound), **C2** = post_c vs post_a (confound
+   repro). READING TABLE, pre-committed: C1 DIFFERS ⇒ the phase-2 instrument
+   is void on this stack (same code diverges alone) — #495 merges on phase-0b
+   PASS + tests + reviews, and its throughput claim is read off #496's
+   `opt_step_s` on a real window, not off phase 2. C1 IDENTICAL and C0
+   IDENTICAL ⇒ #495 is bitwise clean end-to-end — merge. C1 IDENTICAL and C0
+   DIFFERS ⇒ the foreach change moves the trajectory by a non-arithmetic route
+   — DO NOT MERGE; open an attribution (allocator/stream/graph-capture) before
+   any deploy. C2 DIFFERS with C1 IDENTICAL ⇒ contention explains the original
+   phase-2 failure (confirms the confound); C2 IDENTICAL too ⇒ the original
+   failure is unexplained and #495 stays blocked.
+2. **External anchors for the bootstrap lane (Josh: "know the actual gap
+   before assuming scaling gets us there").** `qtemp_0.0005_ext` (19,360
+   steps, standing best net) vs (a) production iter-595 = g1586
+   (`data/salvage/pre_lc0_control_20260819/seeds/slot_000/trainer.pt`,
+   step 171327 — the mix-ladder init) and (b) lc0-control 2× LAST
+   (`runs/lc0_control_2x_20260827/checkpoint.pt`). 200 games each,
+   `matched_sims --sims 100 --search-shape training --no-rolling`, games
+   banked. Reading: descriptive Elo gap + its CI; anchors are
+   non-transitive ([[arena_elo_is_anchor_dependent]]) so the two numbers
+   are NOT chained. Decision rule for the 20M/100M plan: if the champion sits
+   ≤ −400 vs g1586 with the CI's upper edge below −300, the linear
+   +144/doubling projection (5M→100M ≈ 4.3 doublings) does not reach
+   production and the lane needs a lever beyond volume (depth, history) BEFORE
+   the 100M format freezes; between −400 and −150 the 100M run proceeds as
+   planned with the anchor re-read at 20M; above −150 the lane is already
+   competitive and the 20M run doubles as the handoff candidate.
+3. **History-plane mismatch (policy-level decider).** Corpus rows carry ZERO
+   history in slots 1..7; play fills them. Probe: the same 4000 T80-bank rows
+   fed as (a) stored x (true 8-frame history) and (b) FEN-only encoding, to
+   `champ_ext`, `champ_base`, and `prod_g1586` (control: trained on real
+   history). Per net: top-1 flip rate, KL both ways, ΔT80/ΔBT4 top-1 agreement
+   and Δd9-regret (hist − fen), game-cluster bootstrap. Join check: slot-0
+   piece planes must match per row. MATERIAL (pre-committed) if for the
+   champion top-1 flips ≥ 5% OR Δd9-regret(hist−fen) ≥ +5 cp with CI
+   excluding 0 ⇒ STOP before the 100M format freezes and spec the minimum
+   generator change that banks history (the generator has the move stack;
+   the deriver does not). IMMATERIAL (flips < 2% and regret CI spanning 0) ⇒
+   no format change; the arena confirmation is skipped (no zero-history play
+   switch exists in the C encoder — `c_input_history_mode` derives the mode
+   from the encoding string; building one is only worth it if the probe is
+   material). In between ⇒ build the arena switch and read Elo at the next
+   boundary.
+4. **Label-depth screen (mapping-level, NOT a training arm).** Free read
+   from the existing d9 bank first (banked all depth blocks 1..9): top-1
+   agreement with T80 rises 0.484 (d5) → 0.502 (d6) → 0.512 (d7) → 0.525
+   (d8) → **0.549 (d9)** [0.534, 0.566], BT4 bar 0.6805 — the last ply step
+   is the LARGEST (+2.4 pp), no saturation at d9. Running: `go depth 13`
+   full-width on the same 4000 rows (banks d10..d13; wall cap 180 s/pos),
+   ~2 h on 3 nice'd cores. Report: agreement vs T80 and BT4 per depth,
+   top-1 movement vs d9, seconds/position, and whether the curve is
+   saturating. Pre-committed reading: if d13 gains ≥ +4 pp over d9 with the
+   game-cluster CI excluding 0, depth is a live lever worth a preregged
+   training arm on the NEXT corpus; if < +2 pp, depth is spent at d9 and the
+   lever is volume. ⚑ Mapping screens inverted for τ at the sharp end; for
+   depth the mapping direction AGREED with the trained result (d7 −65 vs d9),
+   so this screen is admissible as a screen, never as a verdict.
+Confounds: none new — the block runs alone on the GPU after the chain;
+the CPU screens take ~4 of 32 cores from generation for ~2 h.
