@@ -72383,3 +72383,38 @@ input tensor; `input_key` banked per row and re-verified by the deriver) is bein
 #497 with fixture tests T1–T4 and mutants. Label-change check on collision pairs: no pairs existed
 to check (0 differing signatures). Also closes the legacy-repair "unbridged 0.11%" class: those rows
 were leading gaps my first bridger could not start from the book position; v2 bridges 250/250.
+
+**2026-09-01 — PREREG: Z-RESIDUAL SCREEN (value lane, CPU-only, no training).** Trigger: both value
+arms lost (A −49.0, B −98.1) and Josh's hypothesis that Z matters only (i) in the last ~8 plies
+where d9 misses a tactical/mating resolution and (ii) as a small tie-breaker when Q is near-equal,
+averaging out over 100M rows. Operator design (relayed 2026-09-01): do NOT judge by "Z beats Q as a
+standalone estimator"; test whether Z carries RESIDUAL information conditional on Q.
+- Data: `scratchpad/z_residual/sample.py` → `sample.jsonl`: run03 w03 shards 100–134, games with a
+  result only, rows with a repeat in the reversible segment EXCLUDED (so bare-FEN deep labels are
+  history-exact), stratified by plies-to-end bins [1–4] [5–8] [9–16] [17–32] [33–64] [65+] at ≤1000
+  rows/bin, ≤3 rows per game per bin. Banked per row: Z (STM POV), the full d9 root block (rank,
+  move, cp, nodes → Q and Q-margin), plies-to-end, termination type (syzygy / natural decisive /
+  natural draw), phase, piece count, clock, played move, selection temperature.
+- Truth: cold-TT single-thread `go depth 15` full-width (`stage2_sf_depthN.py --depth 15`, 10
+  slices, banked `sf_d15.slice*.jsonl`, ~6.6 s/position). d15 is a PROXY for truth; Q (d9) and
+  truth share the engine's biases, which if anything favours Q — stated as a caveat, not corrected.
+- Model space (fit on a TRAIN split of games, evaluate on HELD-OUT games; game-cluster bootstrap
+  CIs on every number): `truth ≈ Q + f(features)·(Z − Q)` with `f` a small, monotone/regularized
+  weight over features {plies-to-end, termination type, piece count/phase, |Q|, Q-margin, clock};
+  plus a constant-weight sweep w ∈ {0, 0.02, 0.05, 0.10, 0.20, 0.50}. Value space = expected score
+  from the deriver's cp-logistic (`cp_slope` 0.006, `cp_draw_width` 120) so Q, Z and truth are
+  commensurable; error = MAE and log-loss vs the d15 WDL.
+- Pre-committed outputs: Q-only error; Z-only error; best held-out residual blend + its
+  incremental gain with CI; gain by plies-to-end bin; gain on near-ties (|Q| < 30 cp, Q-margin <
+  20 cp); pairwise ordering accuracy on row pairs with |Q1−Q2| < 15 cp (does Q + w(Z−Q) pick the
+  d15-better row more often than Q alone); fraction of held-out rows whose fitted weight is
+  materially (> 0.02) non-zero; and, for openings/early middlegame, whether Z predicts the d15
+  residual (bootstrap signal) versus only the game outcome (policy-specific winnability).
+- Decision rule: a region (bin or feature cell) with held-out incremental gain > 0 and a 95% CI
+  excluding 0 ⇒ arm C′ = a small TARGETED retrospective correction with the fitted weights,
+  preregistered for the corrected-history corpus, judged by the value round's rules. No such region
+  ⇒ the value lane is CLOSED (V0 stays). A global-only gain at w ≤ 0.05 without a region ⇒ report;
+  it needs the 100M readout, not a 5.5M arm.
+- Not a data-affecting change; runs on idle CPU beside the depth screen and the boundary block.
+  The "complicated plan" Josh recalls is arm C `qzsegment` (clean-segment retrospective target with
+  instability weights, derived but never trained); this screen fits its weights from data instead.
