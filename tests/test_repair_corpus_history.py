@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -95,6 +98,36 @@ GAME_D = "f1c4 g8f6 d2d3 f8c5 b1c3"
 #: starts one position late tags none of these rows (review finding F1).
 GAME_E = "d2d3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8"
 
+#: Game F: the banking gate's FAR repetition (each side cycles two knights, so
+#: a position recurs EIGHT plies later) followed by an IRREVERSIBLE move
+#: (d2d3 at ply 16) and seven reversible plies.  Rows 17-23 have a repetition
+#: and then that pawn move inside their 8 frames: the unfixed C encoder clears
+#: its hash stack at the irreversible move and loses the earlier frames'
+#: repetition planes, the fixed one keeps the per-slot flags recorded at push
+#: time -- so ``row_key`` differs between the regimes on exactly these rows,
+#: and only there (a repetition with no irreversible move in the frames keys
+#: identically either way).  The deriver runs FIXED.
+GAME_F = (
+    "f3g1 c6b8 b1c3 g8f6 g1f3 b8c6 c3b1 f6g8 f3g1 c6b8 b1c3 g8f6 g1f3 b8c6 c3b1 f6g8 "
+    "d2d3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8"
+)
+
+#: Game H: the ONLY repeat is the clock-0 root recurring once (ply 5 == ply 1),
+#: and row 8's production window is rooted exactly there -- so a scan that
+#: starts at ``keys[1:]`` finds nothing (review G5).  Rows stop at ply 8.
+GAME_H = "d2d3 g8f6 f3g1 f6g8 g1f3 a8b8 f3h4 b8a8 h4f3"
+
+#: Game I: an ambiguous 3-ply gap ending on a capture whose root CANNOT have
+#: been reached by a double pawn step (the e2 bishop sits behind the e4 pawn, the d-pawn is on d3),
+#: so the rows rooted there are rebuilt ANCHORLESS and written (review G2's
+#: other half: game A's anchorless rows have a d4 pawn with d3/d2 empty and
+#: are quarantined ``root_ep_unverifiable``).
+GAME_I = "f1e2 c6a5 d2d3 a5c4 b1d2 h7h6 d2c4 g8f6 e1g1 f8e7 c1e3 e8g8 d1d2 a8b8 a1b1 b8a8 b1a1"
+GAP_AMBIGUOUS_I = (4, 5, 6)
+#: A bridgeable 1-ply gap AFTER game I's anchorless root: only the queen can
+#: play d1d2, so rows 13-16 are ``chained+bridged`` anchorless rebuilds.
+GAP_BRIDGED_I = (12,)
+
 GAMES: dict[int, tuple[str | None, str, frozenset[int]]] = {
     # game_id -> (start override, moves, dropped plies)
     10: (None, GAME_A, DROPPED_A),
@@ -102,12 +135,21 @@ GAMES: dict[int, tuple[str | None, str, frozenset[int]]] = {
     38: (GAME_C_START, GAME_C, frozenset()),
     52: (None, GAME_D, frozenset()),
     66: (None, GAME_E, frozenset()),
+    70: (None, GAME_F, frozenset()),
+    84: (None, GAME_H, frozenset()),
+    106: (None, GAME_I, frozenset(GAP_AMBIGUOUS_I + GAP_BRIDGED_I)),
+    # In the UNLISTED shard only: a complete game and a torn one.
+    80: (None, GAME_D, frozenset()),
+    94: (None, GAME_E, frozenset()),
 }
-
-
-@pytest.fixture(autouse=True)
-def production_rep_fix() -> None:
-    rep_fix.apply(True)
+LISTED_GAMES = (10, 24, 38, 52, 66, 70, 84, 106)
+UNLISTED_COMPLETE_GAME = 80
+UNLISTED_TORN_GAME = 94
+#: Rows of game D given a cold label by the generator: a wedge retry, and a
+#: run block whose table was cleared mid-position.
+COLD_RETRY_ROW = (52, 1)
+TT_CLEARED_ROW = (52, 3)
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 # ── the two encoders (the PR #497 gate's, restated) ──────────────────────────
@@ -174,21 +216,34 @@ def true_boards(game_id: int, tmp_path: Path) -> list[chess.Board]:
     return boards
 
 
-def fake_phases(board: chess.Board, played: str) -> list[dict[str, Any]]:
-    """A schema-1 staircase block whose rank 1 is the played move."""
+def fake_phases(board: chess.Board, played: str, *, nonce: int = 1000) -> list[dict[str, Any]]:
+    """A schema-1 staircase block whose rank 1 is the played move.
+
+    ``nonce`` is a PER-ROW number written into the node counts and the cp of
+    every line, so two rows at the same position carry different label bytes
+    and a rebuilt-from-the-position block cannot masquerade as the copy
+    (review G4).
+    """
     legal = [m.uci() for m in board.legal_moves]
     ranked = [played, *[m for m in legal if m != played]]
-    lines = [[rank, move, float(100 - rank), 1000] for rank, move in enumerate(ranked, start=1)]
+    lines = [
+        [rank, move, float(100 - rank) + nonce / 1e6, nonce + rank]
+        for rank, move in enumerate(ranked, start=1)
+    ]
     return [{
         "index": 0, "width_requested": "all", "width_realized": len(legal),
         "width_streamed": len(legal), "depth_requested": 3, "searchmoves": None,
         "per_depth": [{
             "depth": 3, "complete": True, "emissions": len(legal),
-            "nodes_at_depth": 1000, "lines": lines,
+            "nodes_at_depth": nonce, "lines": lines,
         }],
-        "nodes_at_depth": {"3": 1000},
+        "nodes_at_depth": {"3": nonce},
         "anomalies": {},
     }]
+
+
+def row_nonce(game_id: int, ply: int) -> int:
+    return 100_000 + game_id * 1_000 + ply
 
 
 def row_for(
@@ -196,7 +251,11 @@ def row_for(
 ) -> dict[str, Any]:
     return {
         "schema": 1,
-        "run": {"run_id": "test_repair", "config_sha256": config_sha, corpus.KEY_TT_CARRIED: True},
+        **({"cold_tt_retry": True} if (game_id, ply) == COLD_RETRY_ROW else {}),
+        "run": {
+            "run_id": "test_repair", "config_sha256": config_sha,
+            corpus.KEY_TT_CARRIED: (game_id, ply) != TT_CLEARED_ROW,
+        },
         "fen": board.fen(),
         "dedup_key": corpus.dedup_key(board),
         "worker_id": WORKER,
@@ -207,7 +266,7 @@ def row_for(
         "game_phase": "opening",
         "played_move": played,
         "selection": {"temp": 1.0, "legal_moves": board.legal_moves.count()},
-        "phases": fake_phases(board, played),
+        "phases": fake_phases(board, played, nonce=row_nonce(game_id, ply)),
         "result": 0.0, "result_pgn": "1/2-1/2", "adjudication": None,
     }
 
@@ -257,12 +316,19 @@ def build_corpus(tmp_path: Path) -> Path:
     tail_b = [r for r in rows_b if r["ply"] >= SPLIT_B]
     shard_rows = {
         SHARDS[0]: [*rows_a, *head_b],
-        SHARDS[1]: [*tail_b, *game_rows(38, tmp_path), *game_rows(52, tmp_path), *game_rows(66, tmp_path)],
+        SHARDS[1]: [
+            *tail_b, *game_rows(38, tmp_path), *game_rows(52, tmp_path),
+            *game_rows(66, tmp_path), *game_rows(70, tmp_path),
+            *game_rows(84, tmp_path), *game_rows(106, tmp_path),
+        ],
     }
     for name, rows in shard_rows.items():
         write_shard(in_dir / name, rows)
-    # The unlisted shard holds a game the corpus does not claim.
-    write_shard(in_dir / UNLISTED_SHARD, game_rows(52, tmp_path)[:2])
+    # The unlisted shard: a complete game and the head of one that never ended.
+    write_shard(
+        in_dir / UNLISTED_SHARD,
+        [*game_rows(UNLISTED_COMPLETE_GAME, tmp_path), *game_rows(UNLISTED_TORN_GAME, tmp_path)[:4]],
+    )
     with open(in_dir / "w03.progress.jsonl", "w", encoding="utf-8") as progress:
         for name, rows in shard_rows.items():
             progress.write(json.dumps({
@@ -330,13 +396,29 @@ def expected_class(
     span = range(max(root, 0), ply)
     gaps = {
         10: {REASON_AMB: GAP_AMBIGUOUS_A, REASON_UNB: GAP_UNBRIDGED_A},
+        106: {REASON_AMB: GAP_AMBIGUOUS_I},
     }.get(game_id, {})
     for reason, plies in gaps.items():
         if set(span) & set(plies):
             return repair.QUARANTINE_PREFIX + reason, None
     if root < 0 and start_override is not None:
         return repair.QUARANTINE_PREFIX + repair.REASON_BOOK_MISMATCH, None
-    bridged = bool(set(span) & set(dropped) - set(GAP_AMBIGUOUS_A) - set(GAP_UNBRIDGED_A))
+    unresolved = set().union(*gaps.values()) if gaps else set()
+    # Anchorless: an unresolved ply before a known root, or the ply-0 row of a
+    # game whose book cannot be used (the position before ply 0 is unknown).
+    if (root >= 1 and (root - 1) in unresolved) or (root == 0 and start_override is not None):
+        # Anchorless: the root itself must provably carry no ep square.
+        root_board = live.copy(stack=True)
+        for _ in range(history.plies):
+            root_board.pop()
+        mover = not root_board.turn
+        rank = 3 if mover == chess.WHITE else 4
+        behind = -1 if mover == chess.WHITE else 1
+        for sq in chess.SquareSet(root_board.pieces(chess.PAWN, mover) & chess.BB_RANKS[rank]):
+            f = chess.square_file(sq)
+            if root_board.piece_at(chess.square(f, rank + behind)) is None and root_board.piece_at(chess.square(f, rank + 2 * behind)) is None:
+                return repair.QUARANTINE_PREFIX + repair.REASON_ROOT_EP, None
+    bridged = bool(set(span) & set(dropped) - set(GAP_AMBIGUOUS_A) - set(GAP_UNBRIDGED_A) - set(GAP_AMBIGUOUS_I))
     if relabel == repair.RELABEL_WINDOW:
         flagged = repeat_in(live, history.plies)
     elif relabel == repair.RELABEL_SEGMENT:
@@ -359,7 +441,7 @@ def expected_tags(live: chess.Board) -> dict[str, Any]:
     frames = keys[: corpus.HISTORY_WINDOW_PLIES + 1]
     segment = keys[: live.halfmove_clock + 1]
     return {
-        "rep_in_window": len(set(frames)) != len(frames),
+        "rep_in_frames8": len(set(frames)) != len(frames),
         "rep_in_segment": len(set(segment)) != len(segment),
         "cur_position_repeat_count": segment.count(keys[0]),
     }
@@ -395,7 +477,7 @@ def run_repair(tmp_path: Path, **extra: Any) -> dict[str, Any]:
         for r in read_rows(in_dir / shard)
     }
     truth = {
-        game_id: true_boards(game_id, tmp_path) for game_id in GAMES
+        game_id: true_boards(game_id, tmp_path) for game_id in LISTED_GAMES
     }
     return {
         "in_dir": in_dir, "out_dir": out_dir, "engine": engine, "manifest": manifest,
@@ -416,11 +498,38 @@ def relabeled(tmp_path: Path) -> dict[str, Any]:
     return run_repair(tmp_path, relabel=repair.RELABEL_WINDOW)
 
 
+def test_a_partial_repair_is_not_a_corpus_unless_the_operator_says_so(tmp_path: Path) -> None:
+    """G1: a --shards slice writes no summary.json (the deriver refuses the
+    directory); with --write-summary-for-partial it is marked run_finished
+    false and names the slice."""
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out_partial"
+    manifest = repair.run(
+        args_for(in_dir, out_dir, shards="0"), searcher_factory=fake_factory(ScriptedEngine()),
+    )
+    assert [s["path"] for s in manifest["shards"]] == [SHARDS[0]]
+    assert not (out_dir / corpus.SUMMARY_NAME).exists()
+    with pytest.raises(derive.CorpusIntegrityError):
+        derive.read_corpus_record(out_dir)
+    out_dir2 = tmp_path / "out_partial_marked"
+    repair.run(
+        args_for(in_dir, out_dir2, shards="0", write_summary_for_partial=True),
+        searcher_factory=fake_factory(ScriptedEngine()),
+    )
+    summary = json.loads((out_dir2 / corpus.SUMMARY_NAME).read_text())
+    assert summary["run_finished"] is False
+    assert summary["partial_repair"] == {
+        "workers": [WORKER], "shards": [0], "listed_input_shards": 2, "repaired_shards": 1,
+    }
+    full = json.loads((tmp_path / "out_full" / corpus.SUMMARY_NAME).read_text()) if (tmp_path / "out_full").exists() else None
+    assert full is None
+
+
 def banked_rows() -> list[tuple[int, int]]:
     return [
         (game_id, ply)
-        for game_id, (_, moves, dropped) in GAMES.items()
-        for ply in range(len(moves.split())) if ply not in dropped
+        for game_id in LISTED_GAMES
+        for ply in range(len(GAMES[game_id][1].split())) if ply not in GAMES[game_id][2]
     ]
 
 
@@ -466,6 +575,7 @@ def check_classes(result: dict[str, Any], *, relabel: str) -> None:
         repair.CLASS_REPAIRED,
         repair.QUARANTINE_PREFIX + REASON_AMB, repair.QUARANTINE_PREFIX + REASON_UNB,
         repair.QUARANTINE_PREFIX + repair.REASON_BOOK_MISMATCH,
+        repair.QUARANTINE_PREFIX + repair.REASON_ROOT_EP,
     }
     if relabel != repair.RELABEL_OFF:
         want_classes.add(repair.CLASS_RELABELED)
@@ -476,19 +586,27 @@ def test_labels_are_copied_byte_for_byte_and_rows_are_tagged_and_keyed(repaired:
     """⚑⚑ R2 IS PARKED: no original field changes; the additions are exactly the schema-2 set."""
     added = {
         "history_root_fen", "history_uci", "history_plies", "history_root_reason",
-        "input_key", "search_key", "rep_in_window", "rep_in_segment",
+        "input_key", "search_key", "rep_in_frames8", "rep_in_segment",
         "cur_position_repeat_count", "label_regime", "repair",
     }
-    tag_hits = {"rep_in_window": 0, "rep_in_segment": 0, "cur_position_repeat_count": 0}
+    tag_hits = {"rep_in_frames8": 0, "rep_in_segment": 0, "cur_position_repeat_count": 0}
     for key, row in repaired["written"].items():
         source = repaired["inputs"][key]
         label = f"game {key[0]} ply {key[1]}"
-        assert json.dumps(row["phases"], sort_keys=True) == json.dumps(source["phases"], sort_keys=True), label
+        # ⚑ RAW SERIALISED BYTES, not ``==`` (0 == 0.0 would pass), and the
+        # source carries a per-row nonce so a block rebuilt from the position
+        # cannot match by shape.
+        assert source["phases"][0]["per_depth"][0]["nodes_at_depth"] == row_nonce(*key)
         for name, value in source.items():
-            if name != "schema":
-                assert row[name] == value, (label, name)
+            if name == "run":
+                assert row["run"] == {**value, repair.KEY_HISTORY_REP_FIX: True}, label
+            elif name != "schema":
+                assert json.dumps(row[name], sort_keys=True) == json.dumps(value, sort_keys=True), (label, name)
         assert set(row) - set(source) == added, label
-        assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND, label
+        if key in (COLD_RETRY_ROW, TT_CLEARED_ROW):
+            assert row["label_regime"] == repair.LABEL_REGIME_COLD_BLIND, label
+        else:
+            assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND, label
         assert row["repair"]["label"] == repair.LABEL_ORIGINAL, label
         live = repaired["truth"][key[0]][key[1]]
         assert row["input_key"] == corpus.row_key(live), label
@@ -496,21 +614,28 @@ def test_labels_are_copied_byte_for_byte_and_rows_are_tagged_and_keyed(repaired:
         want = expected_tags(live)
         got = {name: row[name] for name in want}
         assert got == want, (label, got, want)
-        tag_hits["rep_in_window"] += int(row["rep_in_window"])
+        tag_hits["rep_in_frames8"] += int(row["rep_in_frames8"])
         tag_hits["rep_in_segment"] += int(row["rep_in_segment"])
         tag_hits["cur_position_repeat_count"] += int(row["cur_position_repeat_count"] >= 2)
     # The tags are not vacuous: every one fires somewhere, and game E (the
     # clock-0 root recurring) is tagged on its shuffle rows.
     assert all(v > 0 for v in tag_hits.values()), tag_hits
     game_e = {ply: repaired["written"][(66, ply)] for ply in range(8, len(GAME_E.split()))}
-    assert all(r["rep_in_segment"] and r["rep_in_window"] for r in game_e.values()), game_e
+    assert all(r["rep_in_segment"] and r["rep_in_frames8"] for r in game_e.values()), game_e
     assert max(r["cur_position_repeat_count"] for r in game_e.values()) >= 3
     manifest = repaired["manifest"]
     assert manifest["tags"]["rep_in_segment"] == tag_hits["rep_in_segment"]
-    assert manifest["tags"]["rep_in_window"] == tag_hits["rep_in_window"]
+    assert manifest["tags"]["rep_in_frames8"] == tag_hits["rep_in_frames8"]
     assert manifest["relabel"]["mode"] == repair.RELABEL_OFF
     assert manifest["classes"].get(repair.CLASS_RELABELED, 0) == 0
     assert manifest["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND
+    assert manifest["label_regimes"] == {
+        repair.LABEL_REGIME_CARRIED_BLIND: manifest["rows_out"] - 2,
+        repair.LABEL_REGIME_COLD_BLIND: 2,
+    }
+    assert manifest["engine"] is None
+    assert manifest[repair.KEY_HISTORY_REP_FIX] is True
+    assert rep_fix.current() is True
 
 
 def test_the_repeat_scan_sees_the_root_position(tmp_path: Path) -> None:
@@ -539,6 +664,28 @@ def test_the_repeat_scan_sees_the_root_position(tmp_path: Path) -> None:
     assert repair.repeats_in(long, halfmove_clock=boards[9].halfmove_clock).cur_count == 3
 
 
+def test_the_root_only_repeat_is_tagged_on_the_production_window(repaired: dict[str, Any]) -> None:
+    """G5: game H row 8 -- its window is rooted at the clock-0 position and
+    that root's single recurrence (ply 5) is the ONLY repeat anywhere in it,
+    so the tags are true only if the scan includes index 0."""
+    boards = repaired["truth"][84]
+    history = corpus.history_for(boards[8])
+    assert 8 - history.plies == 1, history
+    walk = boards[8].copy(stack=True)
+    keys = [walk._transposition_key()]
+    for _ in range(history.plies):
+        walk.pop()
+        keys.append(walk._transposition_key())
+    partners = [i for i, k in enumerate(keys) if k == keys[-1]]  # keys[-1] is the root
+    assert partners == [3, len(keys) - 1], partners
+    assert len(set(keys[:-1])) == len(keys) - 1, "no repeat should exist without the root"
+    tags = repair.repeats_in(history, halfmove_clock=boards[8].halfmove_clock)
+    assert tags == repair.RepeatTags(banked_window=True, frames=True, segment=True, cur_count=1)
+    row = repaired["written"][(84, 8)]
+    assert row["rep_in_frames8"] is True
+    assert row["rep_in_segment"] is True
+
+
 def test_every_written_row_encodes_exactly_like_live_play(repaired: dict[str, Any]) -> None:
     """⚑⚑ THE DELIVERABLE, on repaired rows: window strings AND planes equal live."""
     for (game_id, ply), row in repaired["written"].items():
@@ -554,6 +701,11 @@ def test_every_written_row_encodes_exactly_like_live_play(repaired: dict[str, An
         rebuilt = derive.board_from_row(row)
         assert rebuilt.fen() == live.fen(), label
         assert np.array_equal(derived_planes(rebuilt), live_planes(live)), label
+        # G6: the C play-path encoder on the REBUILT board too, under the
+        # production regime -- the comparison ``input_key`` rests on.
+        assert rep_fix.current() is True
+        assert np.array_equal(live_planes(rebuilt), live_planes(live)), label
+        assert row["input_key"] == corpus.input_tensor_key(live_planes(rebuilt)), label
         assert CBoard.from_board(rebuilt).is_repetition() == CBoard.from_board(live).is_repetition(), label
 
 
@@ -583,11 +735,15 @@ def test_the_cases_the_gate_exists_for_are_present_in_the_written_rows(repaired:
     # Rows repaired from the chain alone in the book-MISMATCH game.
     assert any(game_id == 38 for game_id, _ in written)
     # The anchorless rebuild (a run whose root is the position right after an
-    # ambiguous gap) produced written rows in game A.
+    # ambiguous gap): written in game I (root provably ep-free), quarantined
+    # in game A (a d4 pawn with d3/d2 empty could have double-stepped).
     manifest = repaired["manifest"]
     assert manifest["anchorless"] > 0
+    assert manifest["classes"][repair.QUARANTINE_PREFIX + repair.REASON_ROOT_EP] > 0
+    assert any(game_id == 106 and ply >= 14 for game_id, ply in written)
+    assert not any(game_id == 10 and 21 <= ply <= 31 for game_id, ply in written)
     assert manifest["book_games"] == {
-        repair.BOOK_EXACT: 3, repair.BOOK_BRIDGED: 1, repair.BOOK_MISMATCH: 1,
+        repair.BOOK_EXACT: 6, repair.BOOK_BRIDGED: 1, repair.BOOK_MISMATCH: 1,
     }
     # Game B's rows straddle the shard boundary and every one of them survived.
     assert {ply for game_id, ply in written if game_id == 24} == set(range(1, len(GAME_B.split())))
@@ -620,8 +776,14 @@ def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(relabeled
             assert {line[1] for line in block["lines"]} == legal
         else:
             assert row["repair"]["label"] == repair.LABEL_ORIGINAL
-            assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND
-            assert row["phases"] == fake_phases(chess.Board(row["fen"]), row["played_move"])
+            assert row["label_regime"] == (
+                repair.LABEL_REGIME_COLD_BLIND if key in (COLD_RETRY_ROW, TT_CLEARED_ROW)
+                else repair.LABEL_REGIME_CARRIED_BLIND
+            )
+            assert json.dumps(row["phases"], sort_keys=True) == json.dumps(
+                fake_phases(chess.Board(row["fen"]), row["played_move"], nonce=row_nonce(*key)),
+                sort_keys=True,
+            )
     audit = [
         json.loads(line)
         for line in (repaired["out_dir"] / repair.RELABEL_AUDIT_NAME).read_text().splitlines()
@@ -639,7 +801,7 @@ def test_the_relabel_modes_select_by_the_matching_tag(tmp_path: Path) -> None:
     assert 0 < tags["rep_in_segment"] <= tags["rep_in_banked_window"]
     assert repair.CLASS_RELABELED not in off["classes"]
     window = repair.run(
-        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="window"),
+        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="banked_window"),
     )
     assert window["classes"][repair.CLASS_RELABELED] == tags["rep_in_banked_window"]
     segment = repair.run(
@@ -680,9 +842,19 @@ def test_the_provenance_manifest_carries_the_input_sha_and_the_counts(repaired: 
     book = Path(requested_config(repaired["tmp_path"])["book"])
     assert manifest["book"]["sha256"] == repair.sha256_of(book)
     assert manifest["book"]["size"] == book.stat().st_size
-    # The unlisted shard was skipped BY NAME and reported.
+    # The unlisted shard was skipped BY NAME, counted, and reported.
     assert manifest["input"]["unlisted_shards_skipped"] == [UNLISTED_SHARD]
     assert not (repaired["out_dir"] / UNLISTED_SHARD).exists()
+    (entry,) = manifest["input"]["unlisted_shards"]
+    assert entry == {
+        "path": UNLISTED_SHARD, "decodable_rows": len(GAME_D.split()) + 4,
+        "decodable_games": 2, "damage": None, "salvaged": False,
+    }
+    assert manifest["input"]["salvage_unlisted_complete_games"] is False
+    # The inventory's claim per shard is recorded beside what was read.
+    for shard in manifest["shards"]:
+        assert shard["rows_claimed"] == shard["rows_in"]
+        assert shard["salvaged_from_unlisted"] is False
     assert {s["path"] for s in manifest["shards"]} == set(SHARDS)
     # The input shards are untouched.
     for name in (*SHARDS, UNLISTED_SHARD):
@@ -706,7 +878,7 @@ def test_a_different_engine_build_is_refused_before_anything_is_written(tmp_path
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out"
     with pytest.raises(repair.RepairError, match="hashes to"):
-        repair.run(args_for(in_dir, out_dir, engine="/bin/true", relabel="window"))
+        repair.run(args_for(in_dir, out_dir, engine="/bin/true", relabel="banked_window"))
     assert not out_dir.exists() or not any(out_dir.iterdir())
 
 
@@ -717,7 +889,7 @@ def test_a_manifest_without_an_engine_sha_cannot_relabel(tmp_path: Path) -> None
     del manifest["engine"]["sha256"]
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(repair.RepairError, match="no engine sha256"):
-        repair.run(args_for(in_dir, tmp_path / "out", engine="/bin/true", relabel="window"))
+        repair.run(args_for(in_dir, tmp_path / "out", engine="/bin/true", relabel="banked_window"))
 
 
 def test_a_manifest_whose_stamp_does_not_hash_its_config_is_refused(tmp_path: Path) -> None:
@@ -760,6 +932,102 @@ def test_a_populated_output_directory_is_refused(tmp_path: Path) -> None:
         repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(ScriptedEngine()))
 
 
+def test_the_cli_process_hashes_input_keys_in_the_derivers_regime(tmp_path: Path) -> None:
+    """⚑⚑ BLOCKING FINDING ROUND 2: ``row_key`` reads the process-global
+    ``history_rep_fix``; a fresh CLI process must apply it before keying, or
+    every far repetition (game F) is keyed under the wrong regime and the
+    deriver refuses the corpus.  The whole output is derived, no --limit."""
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out_cli"
+    env = {**os.environ, "PYTHONPATH": ".", "CUDA_VISIBLE_DEVICES": ""}
+    proc = subprocess.run(
+        [sys.executable, "scripts/repair_corpus_history.py", "--in", str(in_dir), "--out", str(out_dir)],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=600, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    manifest = json.loads((out_dir / repair.REPAIR_MANIFEST_NAME).read_text())
+    assert manifest[repair.KEY_HISTORY_REP_FIX] is True
+    rows = [r for shard in SHARDS for r in read_rows(out_dir / shard)]
+    assert all(r["run"][repair.KEY_HISTORY_REP_FIX] is True for r in rows)
+    derived = derive.derive(
+        corpus_dir=out_dir, out_dir=tmp_path / "derived_cli",
+        options=derive.DeriveOptions(
+            scheme=derive.parse_scheme("uniform-d3"), temp=1.0, cp_slope=0.006,
+            cp_draw_width=120.0, limit=0, seed=0, rows_per_shard=64, max_envelope_misses=0,
+        ),
+    )
+    assert derived["realized"]["input_key_verified"] == manifest["rows_out"] == len(rows)
+
+
+def test_game_f_is_keyed_differently_under_the_unfixed_regime(tmp_path: Path) -> None:
+    """The fixture is not vacuous: with the flag OFF in a FRESH interpreter,
+    game F's rows with a repetition then an irreversible move inside their 8
+    frames hash to different ``input_key``s -- the disagreement the CLI test
+    would surface through the deriver.  Only ``row_key`` diverges;
+    ``search_key`` (python zobrist over the segment) is regime-free."""
+    boards = true_boards(70, tmp_path)
+    rep_fix.apply(True)
+    fixed = [corpus.row_key(b) for b in boards[9:]]
+    fixed_search = [corpus.search_key(b) for b in boards[9:]]
+    code = (
+        "import sys, json, chess\n"
+        "from chess_anti_engine.encoding import rep_fix\n"
+        "rep_fix.apply(False)\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        f"book = {BOOK_LINE!r}.split(); moves = {GAME_F!r}.split()\n"
+        "b = chess.Board()\n"
+        "for u in book: b.push_uci(u)\n"
+        "keys = []\n"
+        "for i, u in enumerate(moves):\n"
+        "    b.push_uci(u)\n"
+        "    if i + 1 >= 9: keys.append([corpus.row_key(b), corpus.search_key(b)])\n"
+        "print(json.dumps(keys))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True,
+        env={**os.environ, "PYTHONPATH": ".", "CUDA_VISIBLE_DEVICES": ""}, timeout=300, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    unfixed = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert len(unfixed) == len(fixed)
+    differing = [9 + i for i, (row, _search) in enumerate(unfixed) if row != fixed[i]]
+    # Plies 17..23: the frames hold the repetition AND the d2d3 pawn move.
+    assert differing == list(range(17, 24)), differing
+    assert [search for _, search in unfixed] == fixed_search
+
+
+def test_a_listed_shard_whose_rows_disagree_with_the_inventory_is_refused(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    rows = read_rows(in_dir / SHARDS[1])
+    (in_dir / SHARDS[1]).unlink()
+    write_shard(in_dir / SHARDS[1], rows[:-1])  # truncated at a line boundary
+    with pytest.raises(repair.RepairError, match="claims"):
+        repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
+
+
+def test_unlisted_shards_are_salvaged_only_on_request_and_minus_the_torn_game(tmp_path: Path) -> None:
+    result = run_repair(tmp_path, salvage_unlisted_complete_games=True)
+    manifest = result["manifest"]
+    assert manifest["input"]["salvage_unlisted_complete_games"] is True
+    assert manifest["input"]["unlisted_shards_skipped"] == []
+    (entry,) = manifest["input"]["unlisted_shards"]
+    assert entry["salvaged"] is True
+    assert entry["torn_game_dropped"] == UNLISTED_TORN_GAME
+    assert entry["torn_game_rows_dropped"] == 4
+    salvaged = read_rows(result["out_dir"] / UNLISTED_SHARD)
+    assert {r["game_id"] for r in salvaged} == {UNLISTED_COMPLETE_GAME}
+    assert len(salvaged) == len(GAME_D.split())
+    truth = true_boards(UNLISTED_COMPLETE_GAME, tmp_path)
+    for row in salvaged:
+        live = truth[row["ply"]]
+        assert np.array_equal(derived_planes(derive.board_from_row(row)), live_planes(live))
+        assert row["input_key"] == corpus.row_key(live)
+    shard = next(s for s in manifest["shards"] if s["path"] == UNLISTED_SHARD)
+    assert shard["salvaged_from_unlisted"] is True
+    assert shard["rows_claimed"] is None
+    assert shard["torn_game_dropped"] == UNLISTED_TORN_GAME
+
+
 @pytest.mark.parametrize(
     ("before", "after", "plies", "count"),
     [
@@ -790,7 +1058,10 @@ def test_a_window_that_cannot_reproduce_its_row_is_refused_at_write_time() -> No
         history_kind=repair.HISTORY_CHAINED, tags=repair.RepeatTags(),
     )
     with pytest.raises(repair.RepairError, match="replaying"):
-        repair.repaired_row({"fen": board.fen(), "game_id": 0, "ply": 1}, bad, phases=None)
+        repair.repaired_row(
+            {"fen": board.fen(), "game_id": 0, "ply": 1, "run": {corpus.KEY_TT_CARRIED: True}},
+            bad, phases=None,
+        )
 
 
 def test_could_have_double_stepped_reads_the_position_not_the_move() -> None:

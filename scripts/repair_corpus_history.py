@@ -98,6 +98,7 @@ from typing import Any, TextIO
 
 import chess
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     sample_starting_board,
@@ -129,6 +130,12 @@ REASON_AMBIGUOUS = "ambiguous_multi_path"
 REASON_UNBRIDGED = "unbridged_gap"
 REASON_CHAIN_MISMATCH = "chain_mismatch"
 REASON_BOOK_MISMATCH = "no_source_book_mismatch"
+#: An anchorless rebuild whose root could carry a pseudo-legal-only ep square
+#: (the ply before it is unresolved, and the side that moved into it has a
+#: pawn on its fourth rank with both squares behind it empty).  The live
+#: board would have ``ep_square`` set where ``chess.Board(fen)`` has none; a
+#: later return to the same placement then keys and encodes differently.
+REASON_ROOT_EP = "root_ep_unverifiable"
 REASON_RELABEL_TIMEOUT = "relabel_timeout"
 
 #: ``repair.history`` values.
@@ -165,7 +172,9 @@ DEFAULT_BENCH_ENCODE_ROWS = 2000
 #: 1.64%.  ⚑ Neither reproduces the generator's carried-TT label (see the
 #: module docstring); both are kept for a future R2 that does.
 RELABEL_OFF = "off"
-RELABEL_WINDOW = "window"
+#: Named after the TAG each mode selects by (``rep_in_banked_window`` /
+#: ``rep_in_segment``), so "window" cannot mean two things.
+RELABEL_WINDOW = "banked_window"
 RELABEL_SEGMENT = "segment"
 RELABEL_MODES = (RELABEL_OFF, RELABEL_WINDOW, RELABEL_SEGMENT)
 
@@ -173,7 +182,24 @@ RELABEL_MODES = (RELABEL_OFF, RELABEL_WINDOW, RELABEL_SEGMENT)
 #: ran on the generator's carried transposition table and was sent the bare
 #: FEN, i.e. it never saw the history the row now carries.
 LABEL_REGIME_CARRIED_BLIND = "carried_tt_history_blind"
+#: The generator re-ran this row's search on a FRESH engine after a wedge
+#: (``cold_tt_retry``), or the row's run block says the table was cleared
+#: mid-position: the label is history-blind AND cold.
+LABEL_REGIME_COLD_BLIND = "cold_tt_history_blind"
 LABEL_REGIME_COLD_HISTORY = "cold_tt_history_aware"
+
+#: ⚑ THE ENCODER REGIME ``input_key`` IS HASHED UNDER, stamped in the manifest
+#: and in every row's ``run`` block under the deriver's own key name.  The C
+#: play-path encoder (``corpus.row_key`` -> ``encode_cboard``) reads a
+#: PROCESS-GLOBAL flag, ``history_rep_fix``: off, its repetition planes only
+#: see partners inside the kept hash window; on, a per-slot flag recorded at
+#: push time with full look-back.  Production and the deriver run FIXED, so a
+#: key hashed in a fresh process that never applied the flag disagrees with
+#: the deriver on every row whose repeat partner sits more than the window
+#: back (measured 2026-09-01 on run03 w03 100-102: 77/24,590 rows), and the
+#: deriver refuses the corpus.  ``run`` applies it before any board exists.
+KEY_HISTORY_REP_FIX = "history_rep_fix"
+HISTORY_REP_FIX = True
 
 
 #: Where a manifest's RELATIVE book path is resolved from (the generator was
@@ -211,7 +237,19 @@ class RepairSpec:
     #: The shards this run may read, BY NAME, from the corpus's own inventory
     #: (``derive.read_corpus_record``) -- never a glob, so a paused run's
     #: in-flight or abandoned last shard is not repaired.
-    listed_shards: tuple[str, ...] = ()
+    listed_shards: tuple[tuple[str, int], ...] = ()
+    #: Shard files on disk that the inventory does not list (a paused run's
+    #: in-flight shards).  Counted per worker; repaired only under
+    #: ``salvage_unlisted``, and then minus their torn last game.
+    unlisted_shards: tuple[str, ...] = ()
+    salvage_unlisted: bool = False
+    #: ``--shards``/``--workers`` restricted the input: the output is NOT the
+    #: whole corpus, and the deriver-facing ``summary.json`` is written only
+    #: under ``--write-summary-for-partial`` (with ``run_finished: false``
+    #: and a ``partial_repair`` block); without it the deriver refuses the
+    #: directory for lack of a record.
+    partial: bool = False
+    write_summary_for_partial: bool = False
     #: One of ``RELABEL_MODES``; ``off`` copies every label byte-for-byte.
     relabel: str = RELABEL_OFF
 
@@ -249,8 +287,10 @@ def opening_config_from_manifest(
 # -- shard inventory ------------------------------------------------------------
 
 
-def corpus_inventory(in_dir: Path) -> tuple[tuple[str, ...], tuple[str, ...], str]:
-    """``(listed shard names, unlisted shard names on disk, record mode)``.
+def corpus_inventory(
+    in_dir: Path,
+) -> tuple[tuple[tuple[str, int], ...], tuple[str, ...], str]:
+    """``(listed (shard name, rows claimed), unlisted shard names on disk, record mode)``.
 
     The corpus's OWN inventory, the way ``derive.read_corpus_record`` reads it:
     ``summary.json``'s shard list when the run ended, else every shard the
@@ -268,7 +308,9 @@ def corpus_inventory(in_dir: Path) -> tuple[tuple[str, ...], tuple[str, ...], st
     summary_path = in_dir / corpus.SUMMARY_NAME
     if summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        listed = [Path(str(e["path"])).name for e in summary.get("shards", [])]
+        listed = [
+            (Path(str(e["path"])).name, int(e["rows"])) for e in summary.get("shards", [])
+        ]
         mode = "summary"
     else:
         listed = []
@@ -286,16 +328,17 @@ def corpus_inventory(in_dir: Path) -> tuple[tuple[str, ...], tuple[str, ...], st
             for record in records:
                 if record.get("path") is None:
                     continue  # a game-completion record, not a shard
-                listed.append(Path(str(record["path"])).name)
+                listed.append((Path(str(record["path"])).name, int(record["rows"])))
         mode = "manifest+progress"
-    if len(set(listed)) != len(listed):
+    names = [name for name, _ in listed]
+    if len(set(names)) != len(names):
         raise RepairError(f"{in_dir}'s inventory lists a shard twice")
-    missing = sorted(set(listed) - set(on_disk))
+    missing = sorted(set(names) - set(on_disk))
     if missing:
         raise RepairError(
             f"{in_dir}'s inventory lists shards that are not on disk: {missing[:5]}",
         )
-    unlisted = tuple(name for name in on_disk if name not in set(listed))
+    unlisted = tuple(name for name in on_disk if name not in set(names))
     return tuple(listed), unlisted, mode
 
 
@@ -308,9 +351,10 @@ def shard_worker_id(name: str) -> int | None:
 
 
 def worker_shards(
-    in_dir: Path, worker_id: int, indices: Sequence[int] | None, listed: Sequence[str],
-) -> list[Path]:
-    """This worker's LISTED shards in index order, optionally restricted to ``indices``.
+    in_dir: Path, worker_id: int, indices: Sequence[int] | None,
+    listed: Sequence[tuple[str, int]],
+) -> list[tuple[Path, int]]:
+    """This worker's LISTED shards ``(path, rows claimed)`` in index order.
 
     ⚑ ``listed`` is the corpus's own inventory (``read_corpus_record``: the
     summary's shard list, or the progress files' on a run that has not
@@ -319,8 +363,23 @@ def worker_shards(
     that never ended -- and a resume deletes and replays it; repairing it
     would bank rows the corpus itself does not claim.
     """
+    found: list[tuple[int, Path, int]] = []
+    for name, rows in listed:
+        if shard_worker_id(name) != int(worker_id):
+            continue
+        index = corpus.shard_index_of(name)
+        if index is None or (indices is not None and index not in indices):
+            continue
+        found.append((index, in_dir / name, int(rows)))
+    return [(path, rows) for _, path, rows in sorted(found)]
+
+
+def worker_unlisted_shards(
+    in_dir: Path, worker_id: int, indices: Sequence[int] | None, unlisted: Sequence[str],
+) -> list[Path]:
+    """This worker's UNLISTED shard files, under the same index filter."""
     found: list[tuple[int, Path]] = []
-    for name in listed:
+    for name in unlisted:
         if shard_worker_id(name) != int(worker_id):
             continue
         index = corpus.shard_index_of(name)
@@ -330,9 +389,26 @@ def worker_shards(
     return [path for _, path in sorted(found)]
 
 
-def worker_ids_in(listed: Sequence[str]) -> list[int]:
-    ids = {shard_worker_id(name) for name in listed}
+def worker_ids_in(listed: Sequence[tuple[str, int]]) -> list[int]:
+    ids = {shard_worker_id(name) for name, _ in listed}
     return sorted(i for i in ids if i is not None)
+
+
+def iter_decodable_rows(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    """Every row of a shard up to the first damage, and what the damage was.
+
+    For an UNLISTED shard only: a listed shard is claimed whole and any damage
+    in it is a refusal, never a truncation.
+    """
+    rows: list[dict[str, Any]] = []
+    stream = corpus.iter_shard_rows(path)
+    while True:
+        try:
+            rows.append(next(stream))
+        except StopIteration:
+            return rows, None
+        except Exception as exc:  # zstd frame errors and torn JSON lines alike
+            return rows, f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
 def parse_shard_range(spec: str | None) -> tuple[int, ...] | None:
@@ -474,9 +550,6 @@ class RowRepair:
     #: The board was rebuilt from the root position itself because the ply
     #: before it is unresolved (see ``GameReconstructor._classify``).
     anchorless: bool = False
-    #: Anchorless AND the root has a pawn that could have just double-stepped,
-    #: so a pseudo-legal-only ep square on the live root cannot be ruled out.
-    root_ep_unverifiable: bool = False
 
     @property
     def repaired(self) -> bool:
@@ -495,11 +568,14 @@ class RepeatTags:
     """What a history-aware reader could see that the banked label did not.
 
     All computed on the REPLAY of the banked window, so they describe the
-    row as written.  ``frames`` is over the 8 encoder frames (the position and
-    the 7 before it) -- a repetition PLANE will be set; ``segment`` is over the
+    row as written.  ``frames`` (row tag ``rep_in_frames8``) is a repeat AMONG
+    the 8 encoder frames (the position and the 7 before it; a repetition
+    plane can also be set by a partner further back inside the window, so
+    this is narrower than "any plane set"); ``segment`` is over the
     row's own reversible run (the last ``halfmove_clock`` plies, which is all
-    the engine's repetition scan reads); ``banked_window`` is over the whole
-    ``[root, row]`` window; ``cur_count`` is how many times the row's own
+    the engine's repetition scan reads); ``banked_window`` (manifest count
+    ``rep_in_banked_window``, the ``--relabel banked_window`` scope) is over
+    the whole ``[root, row]`` window; ``cur_count`` is how many times the row's own
     position occurs in the segment, itself included (2 = a repetition claim
     is one move away, 3 = threefold).
     """
@@ -511,7 +587,7 @@ class RepeatTags:
 
     def as_row_fields(self) -> dict[str, Any]:
         return {
-            "rep_in_window": self.frames,
+            "rep_in_frames8": self.frames,
             "rep_in_segment": self.segment,
             "cur_position_repeat_count": self.cur_count,
         }
@@ -678,14 +754,16 @@ class GameReconstructor:
           unresolved gap ends exactly at the root): rebuilt from the root
           position itself.  ``history_for`` then reads the root as the game
           start, so the reason is set to ``irreversible`` explicitly (the
-          chain proves it is not the game start, and its clock is 0).  The one
-          string that can differ from live is a pseudo-legal-only ep square on
-          the root.  No encoder plane reads it (the root is never frame 0
-          here) and python-chess keys it only when a capture is legal, but
-          Stockfish's ``Position::set``/``do_move`` keep an ep square on the
-          pseudo-legal criterion, so a pinned-capturer ep square DOES enter
-          the engine's key for that one position.  Counted
-          (``root_ep_unverifiable``) rather than assumed away.
+          chain proves it is not the game start, and its clock is 0).  What
+          can differ from live is a pseudo-legal-only ep square on the root:
+          ``chess.Board(fen)`` has none where the live board has one, so a
+          later return to the same placement is a repetition on one board
+          and not the other -- a different plane and a different
+          ``input_key`` -- and Stockfish's ``Position::set``/``do_move`` key
+          the square on the pseudo-legal criterion too.  Whenever the root
+          COULD have been reached by a double pawn step the row is
+          QUARANTINED (``root_ep_unverifiable``); only a root that provably
+          carries no ep square is rebuilt this way.
         """
         window = corpus.HISTORY_WINDOW_PLIES
         p_ply = ply - window
@@ -744,15 +822,14 @@ class GameReconstructor:
                 f"generator's window has {history.plies} plies where the chain "
                 f"placed the root {ply - root} plies back",
             )
-        root_ep_unverifiable = False
         if anchorless:
-            root_board = chess.Board(history.root_fen)
-            root_ep_unverifiable = could_have_double_stepped(root_board)
+            if could_have_double_stepped(chess.Board(history.root_fen)):
+                return quarantined(REASON_ROOT_EP)
             history = dataclasses.replace(history, reason=corpus.HISTORY_ROOT_IRREVERSIBLE)
         tags = repeats_in(history, halfmove_clock=fen_halfmove_clock(game.fen_at[ply]))
         return RowRepair(
             row_class=CLASS_REPAIRED, board=board, history=history, history_kind=kind,
-            tags=tags, anchorless=anchorless, root_ep_unverifiable=root_ep_unverifiable,
+            tags=tags, anchorless=anchorless,
         )
 
 
@@ -782,6 +859,20 @@ class ZstdLines:
         self._text.close()
         self._raw.close()
         self._binary.close()
+
+
+def label_regime(row: Mapping[str, Any], *, relabeled: bool) -> str:
+    """Where this row's label came from, for the consumer that reads it."""
+    if relabeled:
+        return LABEL_REGIME_COLD_HISTORY
+    run_block = row.get("run")
+    carried = (
+        bool(run_block.get(corpus.KEY_TT_CARRIED, True))
+        if isinstance(run_block, Mapping) else True
+    )
+    if bool(row.get("cold_tt_retry")) or not carried:
+        return LABEL_REGIME_COLD_BLIND
+    return LABEL_REGIME_CARRIED_BLIND
 
 
 def output_shard_name(name: str) -> str:
@@ -827,9 +918,13 @@ def repaired_row(
     out["input_key"] = corpus.row_key(repair.board)
     out["search_key"] = corpus.search_key(repair.board)
     out.update(repair.tags.as_row_fields())
-    out["label_regime"] = (
-        LABEL_REGIME_COLD_HISTORY if phases is not None else LABEL_REGIME_CARRIED_BLIND
-    )
+    out["label_regime"] = label_regime(row, relabeled=phases is not None)
+    # The encoder regime the key above was hashed under, READ off the flag
+    # in force (never the constant), beside the run stamps the deriver reads.
+    run_block = row.get("run")
+    if not isinstance(run_block, Mapping):
+        raise RepairError(f"game {row.get('game_id')} ply {row.get('ply')}: no run block")
+    out["run"] = {**run_block, KEY_HISTORY_REP_FIX: rep_fix.current()}
     out["repair"] = {
         "source_schema": SOURCE_SCHEMA,
         "history": repair.history_kind,
@@ -893,12 +988,11 @@ class WorkerTally:
     history_plies: Counter[str] = field(default_factory=Counter)
     book_games: Counter[str] = field(default_factory=Counter)
     games: int = 0
-    rep_in_window: int = 0
+    rep_in_frames8: int = 0
     rep_in_segment: int = 0
     rep_in_banked_window: int = 0
     cur_position_repeated: int = 0
     anchorless: int = 0
-    root_ep_unverifiable: int = 0
     relabeled: int = 0
     relabel_top1_changed: int = 0
     relabel_timeouts: int = 0
@@ -908,6 +1002,8 @@ class WorkerTally:
     encode_rows: int = 0
     encode_s: float = 0.0
     shards: list[dict[str, Any]] = field(default_factory=list)
+    label_regimes: Counter[str] = field(default_factory=Counter)
+    unlisted: list[dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -920,13 +1016,12 @@ class WorkerTally:
             "history_plies_histogram": dict(self.history_plies),
             "book_games": dict(self.book_games),
             "tags": {
-                "rep_in_window": self.rep_in_window,
+                "rep_in_frames8": self.rep_in_frames8,
                 "rep_in_segment": self.rep_in_segment,
                 "rep_in_banked_window": self.rep_in_banked_window,
                 "cur_position_repeat_count_ge2": self.cur_position_repeated,
             },
             "anchorless": self.anchorless,
-            "root_ep_unverifiable": self.root_ep_unverifiable,
             "relabel": {
                 "rows": self.relabeled,
                 "top1_changed": self.relabel_top1_changed,
@@ -947,6 +1042,8 @@ class WorkerTally:
                 ),
             },
             "shards": list(self.shards),
+            "label_regimes": dict(self.label_regimes),
+            "unlisted_shards": list(self.unlisted),
         }
 
 
@@ -968,8 +1065,21 @@ def repair_worker(
 ) -> dict[str, Any]:
     """One worker's shards, in order.  Returns the tally ``main`` merges."""
     tally = WorkerTally()
-    shards = worker_shards(spec.in_dir, worker_id, spec.shard_indices, spec.listed_shards)
-    if not shards:
+    if rep_fix.current() is not HISTORY_REP_FIX:
+        # ⚑ Read off the flag, in the process that will hash: a worker that
+        # forked before `run` applied it would key every far repetition wrong.
+        raise RepairError(
+            f"history_rep_fix is {rep_fix.current()!r} in worker {worker_id}; the "
+            f"input_key must be hashed under {HISTORY_REP_FIX} (the deriver's regime)",
+        )
+    shards: list[tuple[Path, int | None, bool]] = [
+        (path, rows, False)
+        for path, rows in worker_shards(spec.in_dir, worker_id, spec.shard_indices, spec.listed_shards)
+    ]
+    unlisted = worker_unlisted_shards(spec.in_dir, worker_id, spec.shard_indices, spec.unlisted_shards)
+    if spec.salvage_unlisted:
+        shards.extend((path, None, True) for path in unlisted)
+    if not shards and not unlisted:
         raise RepairError(f"worker {worker_id} has no listed shards in {spec.in_dir}")
     reconstructor = GameReconstructor(spec, worker_id)
     lease: corpus.EngineLease | None = None
@@ -986,12 +1096,35 @@ def repair_worker(
             "x", encoding="utf-8",
         )
     try:
-        for shard in shards:
+        for shard, claimed, salvage in shards:
             started = time.perf_counter()
-            writer = ZstdLines(out_dir / output_shard_name(shard.name)) if out_dir is not None else None
             rows_in = 0
             games: list[int] = []
-            for row in corpus.iter_shard_rows(shard):
+            dropped_torn_game: int | None = None
+            dropped_torn_rows = 0
+            if salvage:
+                # ⚑ An unlisted shard: read what decodes, DROP the last game
+                # (it never ended -- its rows are a prefix of a game).
+                decodable, damage = iter_decodable_rows(shard)
+                torn_game = int(decodable[-1]["game_id"]) if decodable else None
+                source_rows: list[dict[str, Any]] = [
+                    r for r in decodable if int(r["game_id"]) != torn_game
+                ]
+                dropped_torn_game = torn_game
+                dropped_torn_rows = len(decodable) - len(source_rows)
+                tally.unlisted.append({
+                    "path": shard.name, "decodable_rows": len(decodable),
+                    "decodable_games": len({int(r["game_id"]) for r in decodable}),
+                    "damage": damage, "salvaged": True,
+                    "torn_game_dropped": torn_game, "torn_game_rows_dropped": dropped_torn_rows,
+                })
+                if not source_rows:
+                    continue
+                source: Any = source_rows
+            else:
+                source = corpus.iter_shard_rows(shard)
+            writer = ZstdLines(out_dir / output_shard_name(shard.name)) if out_dir is not None else None
+            for row in source:
                 rows_in += 1
                 if not games or games[-1] != int(row["game_id"]):
                     games.append(int(row["game_id"]))
@@ -1006,12 +1139,11 @@ def repair_worker(
                         encode(repair.board)
                         tally.encode_s += time.perf_counter() - t0
                         tally.encode_rows += 1
-                    tally.rep_in_window += int(repair.tags.frames)
+                    tally.rep_in_frames8 += int(repair.tags.frames)
                     tally.rep_in_segment += int(repair.tags.segment)
                     tally.rep_in_banked_window += int(repair.tags.banked_window)
                     tally.cur_position_repeated += int(repair.tags.cur_count >= 2)
                     tally.anchorless += int(repair.anchorless)
-                    tally.root_ep_unverifiable += int(repair.root_ep_unverifiable)
                     if repair.flagged(spec.relabel):
                         row_class = CLASS_RELABELED
                         if not spec.audit_only and audit is not None:
@@ -1025,6 +1157,8 @@ def repair_worker(
                         tally.history_plies[str(repair.history.plies)] += 1
                         tally.history_kinds[str(repair.history_kind)] += 1
                 tally.classes[row_class] += 1
+                if not row_class.startswith(QUARANTINE_PREFIX):
+                    tally.label_regimes[label_regime(row, relabeled=phases is not None)] += 1
                 if row_map is not None:
                     row_map.write({
                         "worker_id": int(row["worker_id"]), "game_id": int(row["game_id"]),
@@ -1032,12 +1166,23 @@ def repair_worker(
                     })
                 if writer is not None and not row_class.startswith(QUARANTINE_PREFIX):
                     writer.write(repaired_row(row, repair, phases=phases))
+            if claimed is not None and rows_in != claimed:
+                # ⚑ The inventory's claim is compared, not merely carried: a
+                # shard truncated at a line boundary decodes cleanly and
+                # would otherwise repair a subset the corpus never recorded.
+                raise RepairError(
+                    f"{shard.name}: the inventory claims {claimed} rows but the "
+                    f"shard decodes to {rows_in}; a listed shard is claimed whole",
+                )
             tally.rows_in += rows_in
             entry = {
                 "path": output_shard_name(shard.name), "source": str(shard.name),
-                "rows_in": rows_in,
+                "rows_in": rows_in, "rows_claimed": claimed,
                 "rows": writer.rows if writer is not None else None,
                 "games": games, "codec": "zstd",
+                "salvaged_from_unlisted": bool(salvage),
+                **({"torn_game_dropped": dropped_torn_game,
+                    "torn_game_rows_dropped": dropped_torn_rows} if salvage else {}),
             }
             if writer is not None:
                 writer.close()
@@ -1055,6 +1200,14 @@ def repair_worker(
             row_map.close()
         if audit is not None:
             audit.close()
+    if not spec.salvage_unlisted:
+        for shard in unlisted:
+            decodable, damage = iter_decodable_rows(shard)
+            tally.unlisted.append({
+                "path": shard.name, "decodable_rows": len(decodable),
+                "decodable_games": len({int(r["game_id"]) for r in decodable}),
+                "damage": damage, "salvaged": False,
+            })
     tally.games = len(reconstructor.seen_games)
     tally.book_games = reconstructor.book_games
     return {"worker_id": int(worker_id), **tally.summary()}
@@ -1169,15 +1322,25 @@ def build_records(
             "workers": [int(r["worker_id"]) for r in results],
             "listed_shards": len(spec.listed_shards),
             # On disk but not in the corpus's own inventory (a paused run's
-            # in-flight shard): NOT repaired, by name.
-            "unlisted_shards_skipped": list(unlisted_shards),
+            # in-flight shard): never repaired by default; under
+            # --salvage-unlisted-complete-games their complete games are.
+            "unlisted_shards_skipped": (
+                [] if spec.salvage_unlisted else list(unlisted_shards)
+            ),
+            "unlisted_shards": [
+                entry for r in results for entry in r["unlisted_shards"]
+            ],
+            "salvage_unlisted_complete_games": spec.salvage_unlisted,
         },
         "output": {"row_schema": TARGET_SCHEMA, "dir": None if spec.out_dir is None else str(spec.out_dir)},
-        "engine": {
+        # ⚑ No engine ran under --relabel off, so no engine is recorded.
+        "engine": None if spec.relabel == RELABEL_OFF else {
             "path": spec.sf_binary, "sha256": (manifest.get("engine") or {}).get("sha256"),
             "id_name": engine_id_name, "threads": 1, "hash_mb": spec.sf_hash_mb,
             "ucinewgame_per_row": True, "staircase": spec.staircase,
         },
+        KEY_HISTORY_REP_FIX: rep_fix.current(),
+        "label_regimes": merge_counters(results, "label_regimes"),
         "book": {
             "path": spec.opening.opening_book_path,
             "sha256": book_sha256,
@@ -1201,7 +1364,7 @@ def build_records(
         "tags": {
             key: sum(int(r["tags"][key]) for r in results)
             for key in (
-                "rep_in_window", "rep_in_segment", "rep_in_banked_window",
+                "rep_in_frames8", "rep_in_segment", "rep_in_banked_window",
                 "cur_position_repeat_count_ge2",
             )
         },
@@ -1210,7 +1373,6 @@ def build_records(
             else f"{LABEL_REGIME_CARRIED_BLIND} except relabeled rows ({LABEL_REGIME_COLD_HISTORY})"
         ),
         "anchorless": sum(int(r["anchorless"]) for r in results),
-        "root_ep_unverifiable": sum(int(r["root_ep_unverifiable"]) for r in results),
         "relabel": {
             "mode": spec.relabel,
             "rows": relabel_rows,
@@ -1237,7 +1399,16 @@ def build_records(
     summary = {
         "schema": corpus.SUMMARY_SCHEMA,
         "row_schema": TARGET_SCHEMA,
-        "run_finished": True,
+        # ⚑ A --shards/--workers slice is NOT the corpus: it says so here, in
+        # the field a resume reads, and names the slice for a reader that
+        # refuses partial repairs by name.
+        "run_finished": not spec.partial,
+        **({"partial_repair": {
+            "workers": [int(r["worker_id"]) for r in results],
+            "shards": None if spec.shard_indices is None else list(spec.shard_indices),
+            "listed_input_shards": len(spec.listed_shards),
+            "repaired_shards": len(shards),
+        }} if spec.partial else {}),
         "run_id": (manifest.get("config_requested") or {}).get("run_id"),
         "started_utc": started_utc,
         "wall_s": wall_s,
@@ -1251,7 +1422,11 @@ def build_records(
         "config_sha256": manifest.get("config_sha256"),
         "staircase_parsed": manifest.get("staircase_parsed"),
         "config_realized_by_worker": {},
-        "engine": {**(manifest.get("engine") or {}), "relabel_id_name": engine_id_name},
+        "engine": {
+            **(manifest.get("engine") or {}),
+            **({} if spec.relabel == RELABEL_OFF else {"relabel_id_name": engine_id_name}),
+        },
+        KEY_HISTORY_REP_FIX: rep_fix.current(),
         "banked_rows_min_piece_count": manifest.get("banked_rows_min_piece_count", corpus.MIN_BANKED_PIECES),
         "adjudication_max_piece_count": manifest.get("adjudication_max_piece_count", corpus.ADJUDICATION_MAX_PIECES),
         "history_plies_histogram": repair_manifest["history_plies_histogram"],
@@ -1275,6 +1450,9 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
     lines.append("history kinds: " + ", ".join(
         f"{k}={v}" for k, v in sorted(repair_manifest["history_kinds"].items())
     ))
+    lines.append("label regimes: " + ", ".join(
+        f"{k}={v}" for k, v in sorted(repair_manifest["label_regimes"].items())
+    ))
     lines.append("root reasons: " + ", ".join(
         f"{k}={v}" for k, v in sorted(repair_manifest["history_root_reasons"].items())
     ))
@@ -1283,9 +1461,8 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
         "tags: " + ", ".join(
             f"{k}={v} ({v / rows_in if rows_in else 0:.3%})" for k, v in tags.items()
         )
-        + f"; relabel={repair_manifest['relabel']['mode']}; anchorless "
-        f"{repair_manifest['anchorless']}, root ep unverifiable "
-        f"{repair_manifest['root_ep_unverifiable']}",
+        + f"; relabel={repair_manifest['relabel']['mode']}; anchorless rebuilds "
+        f"{repair_manifest['anchorless']}",
     )
     bench = repair_manifest["bench"]
     relabel = repair_manifest["relabel"]
@@ -1309,7 +1486,8 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
 
 
 def build_spec(
-    args: argparse.Namespace, manifest: Mapping[str, Any], *, listed_shards: Sequence[str],
+    args: argparse.Namespace, manifest: Mapping[str, Any], *,
+    listed_shards: Sequence[tuple[str, int]], unlisted_shards: Sequence[str] = (),
     verify_engine: bool = True,
 ) -> RepairSpec:
     """The spec, with the engine and tablebases verified unless a test injects a searcher."""
@@ -1356,6 +1534,10 @@ def build_spec(
         shard_indices=parse_shard_range(args.shards),
         bench_encode_rows=int(args.bench_encode_rows),
         listed_shards=tuple(listed_shards),
+        unlisted_shards=tuple(unlisted_shards),
+        salvage_unlisted=bool(args.salvage_unlisted_complete_games),
+        partial=bool(args.shards) or bool(args.workers),
+        write_summary_for_partial=bool(args.write_summary_for_partial),
         relabel=relabel,
     )
 
@@ -1366,6 +1548,11 @@ def run(
     """The whole repair.  ``searcher_factory`` is the test seam: a scripted
     engine in place of Stockfish, which also skips the binary's sha256 and
     tablebase checks (there is no binary) and runs in-process."""
+    # ⚑ FIRST, before the book warm and before any CBoard exists (forked
+    # workers inherit it): see KEY_HISTORY_REP_FIX.
+    rep_fix.apply(HISTORY_REP_FIX)
+    if rep_fix.current() is not HISTORY_REP_FIX:
+        raise RepairError("history_rep_fix could not be applied; the encoder build predates it")
     in_dir = Path(args.in_dir)
     manifest_path = in_dir / corpus.MANIFEST_NAME
     if not manifest_path.exists():
@@ -1397,7 +1584,8 @@ def run(
             "repaired: %s", len(unlisted), ", ".join(unlisted),
         )
     spec = build_spec(
-        args, manifest, listed_shards=listed, verify_engine=searcher_factory is None,
+        args, manifest, listed_shards=listed, unlisted_shards=unlisted,
+        verify_engine=searcher_factory is None,
     )
     workers = [int(w) for w in args.workers] if args.workers else worker_ids_in(listed)
     if not workers:
@@ -1452,9 +1640,17 @@ def run(
         (spec.out_dir / REPAIR_MANIFEST_NAME).write_text(
             json.dumps(repair_manifest, indent=1, sort_keys=True), encoding="utf-8",
         )
-        (spec.out_dir / corpus.SUMMARY_NAME).write_text(
-            json.dumps(summary, indent=1, sort_keys=True), encoding="utf-8",
-        )
+        if not spec.partial or spec.write_summary_for_partial:
+            (spec.out_dir / corpus.SUMMARY_NAME).write_text(
+                json.dumps(summary, indent=1, sort_keys=True), encoding="utf-8",
+            )
+        else:
+            _LOG.warning(
+                "partial repair (--shards/--workers): no %s written, so the "
+                "deriver refuses this directory; pass --write-summary-for-partial "
+                "to mark it run_finished: false and derive it anyway",
+                corpus.SUMMARY_NAME,
+            )
     if args.report_json:
         Path(args.report_json).write_text(
             json.dumps(repair_manifest, indent=1, sort_keys=True), encoding="utf-8",
@@ -1476,7 +1672,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--syzygy-path", help="tablebase path override (default: the manifest's)")
     parser.add_argument("--sf-hash-mb", type=int, help="engine hash (default: the manifest's)")
     parser.add_argument("--sf-search-timeout-s", type=float, default=DEFAULT_SF_SEARCH_TIMEOUT_S, help="per-search wedge tripwire for the cold re-labels")
-    parser.add_argument("--relabel", choices=RELABEL_MODES, default=RELABEL_OFF, help="R2 is PARKED: 'off' (default) copies every label byte-for-byte and only tags rows; 'window'/'segment' re-search the flagged rows cold (NOT the generator's carried-TT label)")
+    parser.add_argument("--relabel", choices=RELABEL_MODES, default=RELABEL_OFF, help="R2 is PARKED: 'off' (default) copies every label byte-for-byte and only tags rows; 'banked_window'/'segment' re-search the rows the tag of that name flags, cold (NOT the generator's carried-TT label)")
+    parser.add_argument("--salvage-unlisted-complete-games", action="store_true", help="ALSO repair the complete games of shards the inventory does not list (a paused run's in-flight shards), dropping each one's torn last game; default OFF -- those rows are not claimed by the corpus")
+    parser.add_argument("--write-summary-for-partial", action="store_true", help="with --shards/--workers: still write the deriver-facing summary.json, marked run_finished: false with a partial_repair block")
     parser.add_argument("--book-sha256", help="refuse unless the opening book hashes to this (the run's book)")
     parser.add_argument("--bench-encode-rows", type=int, default=DEFAULT_BENCH_ENCODE_ROWS, help="--audit-only: rows to time through the deriver's encoder per worker")
     parser.add_argument("--report-json", help="also write the repair manifest here (audit mode has no --out)")
