@@ -551,3 +551,61 @@ def test_train_steps_surfaces_the_skip_rate(
 
     assert metrics.grad_nonfinite_skip_rate == pytest.approx(1.0)
     assert metrics.grad_norm_samples == 2
+
+
+def test_exact_without_replacement_aborts_instead_of_discarding_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        return {"total": (matrix_param * matrix_param).sum() * float("inf")}
+
+    class ExactBufferMarker:
+        exact_without_replacement = True
+
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(
+        trainer,
+        "_iter_prefetched_batches",
+        lambda *_args, **_kwargs: iter([{"x": torch.zeros((2, 4, 8, 8))}]),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot discard a non-finite-gradient"):
+        trainer.train_steps(cast(Any, ExactBufferMarker()), batch_size=2, steps=1)
+
+    assert trainer.step == 0
+
+
+def test_train_samples_seen_uses_realized_ragged_batch_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        zero = torch.zeros(())
+        return {
+            "total": (matrix_param * matrix_param).sum(),
+            **dict.fromkeys(trainer_mod._LOSS_KEY_TO_METRIC_FIELD, zero),
+        }
+
+    batches = [
+        {"x": torch.zeros((2, 4, 8, 8))},
+        {"x": torch.zeros((1, 4, 8, 8))},
+    ]
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(
+        trainer,
+        "_iter_prefetched_batches",
+        lambda *_args, **_kwargs: iter(batches),
+    )
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=2, steps=2)
+
+    assert metrics.train_samples_seen == 3

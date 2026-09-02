@@ -158,6 +158,32 @@ def _write_shards(
     return shard_dir
 
 
+def _write_game_rows(
+    shard_dir: Path, game_rows: list[tuple[int, int]],
+) -> Path:
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    samples = [
+        dataclasses.replace(
+            _lc0_like_sample(10_000 + row, with_sf_wdl=False),
+            game_id=game,
+            ply_index=row,
+        )
+        for game, row in game_rows
+    ]
+    save_local_shard_arrays(
+        shard_dir / "shard_000000.zarr",
+        arrs=samples_to_arrays(samples),
+        meta=ShardMeta(
+            positions=len(samples),
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=True,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+        ),
+    )
+    return shard_dir
+
+
 # ── lc0_control_train: the realized guard, and whether it is REACHED ──────────
 
 
@@ -904,6 +930,135 @@ def test_the_driver_builds_productions_buffer_not_the_constructor_defaults(
     assert "replay" in summary["replay_judged_against"].lower() or summary[
         "replay_judged_against"
     ], "the artifact must name what guard 0d judged against"
+
+
+def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
+    tmp_path: Path,
+) -> None:
+    game_rows = [(0, ply) for ply in range(4)] + [
+        (game, 100 + game) for game in range(1, 10)
+    ]
+    shards = _write_game_rows(tmp_path / "rows", game_rows)
+    out = tmp_path / "epoch_run"
+
+    rc = lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
+        "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+        "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+        "--allow-arch-drift", "--allow-invalid-control",
+    ])
+
+    assert rc == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["steps"] == 4
+    assert summary["steps_realized"] == 4
+    assert summary["sampling"]["mode"] == "game_epoch"
+    assert summary["sampling"]["rows_planned"] == 13
+    assert summary["sampling"]["rows_realized"] == 13
+    assert summary["sampling"]["batches_planned"] == 4
+    assert summary["sampling"]["batches_realized"] == 4
+    assert summary["sampling"]["min_batch_rows_planned"] == 3
+    assert summary["sampling"]["same_game_repeats_max"] == 0
+    assert summary["sampling"]["complete"] is True
+    assert summary["sampling"]["plan_sha256"] == summary["sampling"]["realized_sha256"]
+    realized_replay = summary["realized_replay_after_guard"]
+    assert realized_replay["sampling_mode"] == "game_epoch"
+    assert realized_replay["applied"]["batch_size"] == 4
+    assert realized_replay["applied"]["input_planes"] == PLANES
+    assert "shuffle_cap" not in realized_replay["applied"]
+    assert "shuffle_cap" in realized_replay["ignored_disk_replay_kwargs"]
+    assert summary["valid_control"] is False
+    assert any("sampler intervention" in item for item in summary["validity_problems"])
+
+
+def test_game_epoch_driver_refuses_a_budget_that_cannot_use_every_row(
+    tmp_path: Path,
+) -> None:
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "truncated_epoch"
+
+    with pytest.raises(SystemExit, match="stop before every row was used"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "3", "--batch-size", "4",
+            "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+            "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift", "--allow-invalid-control",
+        ])
+
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
+
+
+def test_game_epoch_driver_refuses_gradient_accumulation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shards = _write_game_rows(
+        tmp_path / "rows",
+        [(game, game * 10 + ply) for game in range(4) for ply in range(2)],
+    )
+    out = tmp_path / "accumulated_epoch"
+    # This test deliberately changes a production trainer knob in order to
+    # reach the sampler's stricter invariant. Bypass the earlier control-arm
+    # recipe pin only; the constructed Trainer must still realize accum_steps=2.
+    monkeypatch.setattr(
+        lc0_control_train,
+        "preflight_trainer",
+        lambda _cfg, *, allow_leak: "test override for sampler guard",
+    )
+
+    with pytest.raises(SystemExit, match=r"requires Trainer\.accum_steps=1"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path, train={"accum_steps": 2})),
+            "--shards", str(shards), "--out-dir", str(out), "--steps", "0",
+            "--batch-size", "2", "--sampling-mode", "game_epoch",
+            "--epoch-plan-workers", "2", "--epoch-load-workers", "2",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
+        ])
+
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
+
+
+def test_game_epoch_failure_after_midpoint_removes_the_partial_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_rows = [(0, ply) for ply in range(4)] + [
+        (game, 100 + game) for game in range(1, 10)
+    ]
+    shards = _write_game_rows(tmp_path / "rows", game_rows)
+    out = tmp_path / "failed_epoch"
+    original = lc0_control_train.GameAwareEpochBuffer.sample_batch_arrays
+    calls = 0
+
+    def fail_third_batch(
+        self: Any, batch_size: int, *, wdl_balance: bool = True,
+    ) -> dict[str, np.ndarray]:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("injected exact-epoch read failure")
+        return original(self, batch_size, wdl_balance=wdl_balance)
+
+    monkeypatch.setattr(
+        lc0_control_train.GameAwareEpochBuffer,
+        "sample_batch_arrays",
+        fail_third_batch,
+    )
+    with pytest.raises(RuntimeError, match="injected exact-epoch"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
+            "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+            "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift", "--allow-invalid-control",
+        ])
+
+    assert calls == 3
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
 
 
 def test_the_replay_guard_refuses_a_drifted_control_at_launch(

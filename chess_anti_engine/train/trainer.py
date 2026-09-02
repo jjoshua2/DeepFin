@@ -5085,6 +5085,7 @@ class Trainer:
         phases = timer if timer is not None else _PipelinePhaseTimer(device="cpu")
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
+        step_samples_seen = 0
         batches = batch_iter
         if batches is None:
             batches = self._iter_prefetched_batches(
@@ -5099,6 +5100,11 @@ class Trainer:
   # H2D issue. Deliberately no GPU twin -- see `_PIPELINE_PHASE_GPU_KEY`.
             with phases.phase("batch_prefetch_wait_s"):
                 batch = next(batches)
+            # Shape metadata is available without a device synchronization.
+            # Count what the buffer actually returned: an exact finite epoch
+            # deliberately spreads a remainder over near-full ragged batches,
+            # so ``n_micro * requested batch_size`` is not generally true.
+            step_samples_seen += int(batch["x"].shape[0])
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
@@ -5130,6 +5136,8 @@ class Trainer:
                     step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
             step_n_micro += 1
+
+        step_opt_stats["samples_seen"] = float(step_samples_seen)
 
   # Collect on EVERY step, not just tb_log_interval ones: the stats are
   # pure Python arithmetic over floats zclip already materialized, and a
@@ -5180,6 +5188,12 @@ class Trainer:
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
+            if bool(getattr(buf, "exact_without_replacement", False)):
+                raise RuntimeError(
+                    "exact without-replacement training cannot discard a "
+                    "non-finite-gradient update after consuming its rows; "
+                    "restart the deterministic epoch after correcting the fault",
+                )
             if update_lr:
                 self._update_lr()
             return step_n_micro, 0.0
@@ -5278,6 +5292,7 @@ class Trainer:
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
+        train_samples_seen = 0
   # Committed only on a successful step, so a retried CUDA-error attempt
   # can't double-count (same discipline as step_sums).
         grad_norms: list[float] = []
@@ -5341,6 +5356,17 @@ class Trainer:
                 except OptimizerStepFailed:
                     raise
                 except RuntimeError as exc:
+                    # An exact finite-corpus epoch cannot replace a consumed
+                    # batch without silently leaving those rows unused.  The
+                    # rolling replay sampler is allowed to retry from a fresh
+                    # draw; a without-replacement sampler must fail closed so
+                    # the whole epoch can be restarted from its deterministic
+                    # seed.  This check is deliberately before the generic
+                    # CUDA retry branch -- otherwise the first fault advances
+                    # the one-shot iterator and the run can still report a
+                    # complete step count over an incomplete corpus.
+                    if bool(getattr(buf, "exact_without_replacement", False)):
+                        raise
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
                     _retry_batches = batch_iter.consumed - consumed_before_attempt
@@ -5362,6 +5388,7 @@ class Trainer:
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
                 n_micro += step_n_micro
+                train_samples_seen += int(step_opt_stats.get("samples_seen", 0.0))
                 if "grad_norm" in step_opt_stats:
                     grad_norms.append(step_opt_stats["grad_norm"])
                     for flag in clip_counts:
@@ -5451,7 +5478,6 @@ class Trainer:
             f"gpu_events={'on' if phase_timer.cuda else 'off'}",
             flush=True,
         )
-        train_samples_seen = int(n_micro * batch_size)
   # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
   # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
   # and never trips the non-finite-GRADIENT guard in `_run_optimizer_step`: it
