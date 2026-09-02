@@ -280,7 +280,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RepairError(RuntimeError):
-    """The corpus is not what the repair was told it is; nothing is written."""
+    """The corpus is not what the repair was told it is. Gates that fire before the output
+    directory exists write nothing; the whole-inventory gate fires after the workers have
+    written shards and provenance, but never a summary or manifest, so a refused output
+    cannot be read as a corpus."""
 
 
 # -- the spec -----------------------------------------------------------------
@@ -531,7 +534,7 @@ def enforce_whole_inventory(
             f"production repair covered {shards} shard(s) / {rows_in} rows but the "
             f"inventory lists {len(inventory.shards)} shard(s) claiming "
             f"{inventory.rows_claimed} rows; a production output must be the whole "
-            "recorded corpus, so nothing is written",
+            "recorded corpus, so no summary or manifest is written (the partial output is not a corpus)",
         )
 
 
