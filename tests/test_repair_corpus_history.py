@@ -541,6 +541,10 @@ def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not
     record = derive.read_corpus_record(out_dir)
     assert record.facts["run_finished"] is True
     assert record.complete is True
+    assert record.corpus_complete is True  # the merged deriver's own reading
+    # The regime stamp passes the deriver's STRICT boolean check.
+    assert derive.regime_stamp_problem(summary[corpus.KEY_HISTORY_REP_FIX]) is None
+    assert derive.regime_stamp_problem(record.facts[corpus.KEY_HISTORY_REP_FIX]) is None
 
     out_dir2 = tmp_path / "out_slice"
     with pinned(tmp_path):
@@ -557,6 +561,7 @@ def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not
     assert summary["partial_repair"] == {
         "workers": [WORKER], "shards": [0], "listed_input_shards": 2, "repaired_shards": 1,
     }
+    assert derive.read_corpus_record(out_dir2).corpus_complete is False
 
     # ⚑ A FULL-INVENTORY audit-mode run is not a slice and is still not the
     # corpus: `run_finished` -- the only field a consumer reads -- is false.
@@ -573,6 +578,7 @@ def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not
     assert summary["audit"] == {"reasons": ["--audit-mode", "--relabel"]}
     assert "partial_repair" not in summary
     assert derive.read_corpus_record(out_dir3).facts["run_finished"] is False
+    assert derive.read_corpus_record(out_dir3).corpus_complete is False
 
 
 @pytest.mark.parametrize(
