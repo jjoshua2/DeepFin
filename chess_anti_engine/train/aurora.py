@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from itertools import pairwise
 from collections.abc import Callable
 from itertools import repeat
 
@@ -364,6 +365,224 @@ def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: f
     }
 
 
+  # Dtypes on which the batched AdamW fallback is BITWISE identical to the
+  # per-parameter loop it replaces, and the only dtypes it is allowed to take.
+  #
+  # ⚑ This is an allowlist, not a "floating point" test, because ONE op breaks
+  # the identity: `torch._foreach_mul_(tensors, <python float>)` disagrees with
+  # `Tensor.mul_(<python float>)` in the last bit on reduced precision.
+  # MEASURED on torch 2.11.0, CPU, shapes (512,512)/(512,)/(1858,512)/(3,):
+  # every other op in the chain -- `add_(other, alpha=)`, `addcmul_`, `sqrt`,
+  # `div_(scalar)`, `add_(scalar)`, `addcdiv_` -- is bitwise identical on
+  # bfloat16 AND float16, while the scalar `mul_` differs on both; neither the
+  # `ScalarList` nor the 0-d `TensorList` overload of `_foreach_mul_` closes it.
+  # float32/float64 are exact for the whole chain. The MECHANISM (which side
+  # keeps a wider accumulator for the scalar multiply) was not established --
+  # only the disagreement was, which is all the allowlist needs, and
+  # `test_bfloat16_would_not_survive_the_batched_path` re-measures it rather
+  # than trusting this comment.
+  #
+  # Production trains fp32 parameters under a bf16 autocast (`Trainer` pins
+  # `inference_autocast(..., dtype="bf16")` for the FORWARD only, so params and
+  # grads stay fp32), which is why the live path is the batched one. Anything
+  # else -- a reduced-precision master weight, a checkpoint whose moments were
+  # saved at another dtype, a mixed param/grad dtype -- falls back to the exact
+  # per-parameter sequence rather than being silently approximated.
+_FOREACH_EXACT_DTYPES = frozenset({torch.float32, torch.float64})
+
+
+def _adamw_group_aliases(params: list[Tensor]) -> bool:
+    """True when two entries of the group share MEMORY, by object or by storage.
+
+    The batched path is the loop's ordered sequential update only if no two
+    entries of a bucket touch the same element: `_foreach_mul_` over a list
+    holding one storage twice is not two sequential decays of it, and with
+    weight decay on the two orders differ (P·(1-x)·(1-x) - u_a - u_b against
+    (P·(1-x) - u_a)·(1-x) - u_b). Identity catches a tied Parameter reaching a
+    group twice; it does NOT catch two distinct Parameter objects, or two
+    views, over one storage, so the check is on the byte ranges the tensors
+    actually cover: sort by first byte and look for a range that starts before
+    the previous one ends. Disjoint views of one storage share no element and
+    stay batchable; interleaved strided views overlap by span and are read
+    CONSERVATIVELY as aliasing (the loop is exactly right there).
+
+    Cost, MEASURED on the real 431-tensor production inventory (CPU, median of
+    200 calls): the first cut ran a per-dimension strided-extent loop on every
+    tensor and cost ~0.5 ms per step (reviewer's number: 527 us). This version
+    takes the contiguous fast path -- `data_ptr()`, which already includes the
+    storage offset, plus `numel() * element_size()` -- for every contiguous
+    tensor (all 431 in production) and computes the strided extent only for a
+    non-contiguous view: 61 us for the 142-tensor group + 126 us for the
+    289-tensor group = ~0.19 ms per step, ~0.008% of a 2.26 s optimizer step.
+    Runs once per group per step. On both `configs/lc0_positive_control.yaml`
+    and `configs/pbt2_small.yaml`: 431 unique storages / 431 params, 0 overlaps.
+    """
+    if len({id(param) for param in params}) != len(params):
+        return True
+    spans: list[tuple[int, int]] = []
+    for param in params:
+        numel = param.numel()
+        if numel == 0:
+            continue
+        element_size = param.element_size()
+        start = int(param.data_ptr())
+        if param.is_contiguous():
+            extent = numel
+        else:
+  # Extent in elements of the strided view, not `numel()`: a non-contiguous
+  # view covers more storage than it has elements.
+            extent = 1 + sum(
+                (int(size) - 1) * abs(int(stride)) for size, stride in zip(param.shape, param.stride())
+            )
+        spans.append((start, start + extent * element_size))
+    spans.sort()
+    return any(nxt_start < prev_end for (_, prev_end), (nxt_start, _) in pairwise(spans))
+
+
+def _adamw_batchable(param: Tensor, grad: Tensor, exp_avg: Tensor, exp_avg_sq: Tensor) -> bool:
+    """True when this parameter's four tensors may join a `_foreach_*` bucket."""
+    if param.dtype not in _FOREACH_EXACT_DTYPES:
+        return False
+    return all(
+        t.dtype == param.dtype and t.device == param.device
+        for t in (grad, exp_avg, exp_avg_sq)
+    )
+
+
+def _adamw_update_one(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    *,
+    step: int,
+    lr: float,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """One parameter's AdamW fallback update, in the original op order.
+
+    This is the reference the batched path must reproduce bit for bit, and it
+    is also the live path for any tensor `_adamw_batchable` rejects.
+    """
+    if weight_decay != 0.0:
+        param.mul_(1.0 - lr * weight_decay)
+    exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+    exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+    _adamw_finish_one(
+        param, exp_avg, exp_avg_sq, step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
+    )
+
+
+def _adamw_finish_one(
+    param: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    *,
+    step: int,
+    lr: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """The tail of `_adamw_update_one` from the denominator on: the ops AFTER
+    the moments have been decayed and accumulated.
+
+    Split out because it is also the recovery path for a bucket whose
+    `_foreach_sqrt` failed to allocate (see `_DenominatorAllocationFailed`):
+    the moments of every tensor in that bucket are already at their post-step
+    values, so finishing each tensor here, one denominator at a time, lands the
+    bucket exactly where the batched chain would have. Per-tensor `sqrt` /
+    `div` / `add_` / `addcdiv_` are the reference ops the batched kernels are
+    pinned to bit for bit, so this is not an approximation of the step -- it
+    IS the step, in the pre-change order.
+    """
+    bias_correction1 = 1.0 - beta1**step
+    bias_correction2 = 1.0 - beta2**step
+    denom = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
+    denom.add_(eps)
+    step_size = lr / max(bias_correction1, 1e-12)
+    param.addcdiv_(exp_avg, denom, value=-step_size)
+
+
+class _DenominatorAllocationFailed(RuntimeError):
+    """`_foreach_sqrt` raised inside `_adamw_update_foreach`, AFTER the
+    in-place moment kernels had run and BEFORE any parameter update.
+
+    It is the one point in the batched chain where the state is both mutated
+    and recoverable: the four in-place kernels before it allocate nothing and
+    have completed for the whole bucket, `_foreach_sqrt` is out-of-place so a
+    failure inside it leaves its inputs untouched, and everything after it
+    only needs one denominator at a time. `step` catches this and finishes the
+    bucket per tensor. The message is the original error's, so if the recovery
+    itself fails and this propagates, `Trainer.train_steps`' "CUDA" retry test
+    still sees what it would have seen.
+    """
+
+
+def _adamw_update_foreach(
+    params: list[Tensor],
+    grads: list[Tensor],
+    exp_avgs: list[Tensor],
+    exp_avg_sqs: list[Tensor],
+    *,
+    step: int,
+    lr: float,
+    weight_decay: float,
+    beta1: float,
+    beta2: float,
+    eps: float,
+) -> None:
+    """`_adamw_update_one` for a whole bucket, as batched `_foreach_*` kernels.
+
+    Every op in `_adamw_update_one` is ELEMENTWISE -- no op mixes elements of
+    one tensor, and none mixes tensors with each other -- so evaluating them
+    parameter-major (the loop) or op-major (this) computes the same expression
+    on the same inputs. The order below is the loop's order, unchanged.
+
+    The caller guarantees the bucket shares `step`, dtype and device, because
+    `bias_correction*` and `step_size` are step-dependent scalars and the
+    identity above only holds within `_FOREACH_EXACT_DTYPES`. It also
+    guarantees no tensor appears twice: `_foreach_mul_` over a list holding
+    the same storage twice is not the loop's two sequential updates.
+    """
+    if weight_decay != 0.0:
+        torch._foreach_mul_(params, 1.0 - lr * weight_decay)
+    torch._foreach_mul_(exp_avgs, beta1)
+    torch._foreach_add_(exp_avgs, grads, alpha=1.0 - beta1)
+    torch._foreach_mul_(exp_avg_sqs, beta2)
+    torch._foreach_addcmul_(exp_avg_sqs, grads, grads, value=1.0 - beta2)
+
+    bias_correction1 = 1.0 - beta1**step
+    bias_correction2 = 1.0 - beta2**step
+  # ⚑ Scope of what a mid-chain failure leaves behind, stated exactly. The four
+  # in-place kernels above are the ONLY mutation before the parameter update,
+  # and `_foreach_sqrt` below is the ONLY allocation in the chain (one fp32
+  # denominator per tensor -- 165.6 MiB for the production 142-tensor group),
+  # so an allocator `RuntimeError` fires HERE, after every moment in the bucket
+  # has been decayed and accumulated and before any parameter has moved (the
+  # weight-decay `mul_` at the top excepted, when it is on). `Trainer.train_steps`
+  # retries a step whose error mentions "CUDA" and records the retry as clean,
+  # so left alone that retry would decay/accumulate the whole bucket's moments a
+  # SECOND time with the replacement batch's gradients -- the old loop had the
+  # same shape bounded to the one tensor it was on; batching widens it to the
+  # bucket. Rather than reorder the kernels (a kernel change, which would need
+  # its own phase-0b identity run), the failure is typed and `step` finishes the
+  # bucket per tensor from the moments it already has: same ops, one
+  # denominator at a time, bitwise the loop's result. Failures inside the
+  # in-place kernels are NOT recoverable this way and propagate unchanged.
+    try:
+        denoms = torch._foreach_sqrt(exp_avg_sqs)
+    except RuntimeError as exc:
+        raise _DenominatorAllocationFailed(str(exc)) from exc
+    torch._foreach_div_(denoms, math.sqrt(max(bias_correction2, 1e-12)))
+    torch._foreach_add_(denoms, eps)
+    step_size = lr / max(bias_correction1, 1e-12)
+    torch._foreach_addcdiv_(params, exp_avgs, denoms, value=-step_size)
+
+
 class AuroraWithAuxAdam(torch.optim.Optimizer):
     """Aurora for 2D hidden weights, AdamW for auxiliary tensors.
 
@@ -407,6 +626,25 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
         self.last_polar_stats: dict[str, float] = {}
+  # Which AdamW-fallback path the LAST step ran, harvested onto the step row
+  # by `Trainer.train_steps` like `last_uw_stats`. `adamw_foreach_params` is
+  # the take-effect column for the batched path. It counts tensors that
+  # CARRIED a gradient this step (a `grad is None` tensor is skipped by both
+  # paths): the lc0 control reads 394 of its 431 fallback tensors in 2 buckets
+  # with `adamw_loop_params` 0, the other 37 being dead heads with no grad.
+  # A loop count that is not 0 means
+  # a batchability predicate (dtype allowlist, duplicate guard, mixed
+  # device/dtype) sent tensors down the per-parameter path, silently. Written
+  # every step -- four Python ints, no device sync.
+        self.last_adamw_stats: dict[str, float] = {}
+  # Monotone count of buckets finished per tensor after a denominator
+  # allocation failure, over the optimizer's lifetime. `last_adamw_stats`
+  # is the LAST step only, so a recovery on any step but the last of a
+  # `train_steps` window would publish 0 on the row; the trainer reports
+  # the window's DIFFERENCE of this counter instead. Incremented only once
+  # the per-tensor completion has succeeded -- a completion that dies is
+  # not a recovery.
+        self.adamw_foreach_recoveries_total = 0
         self._collect_uw_stats = True
         self._collect_polar_stats = False
         self._use_update_graphs = bool(aurora_cuda_graphs)
@@ -490,6 +728,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        adamw_foreach_buckets = 0
+        adamw_foreach_params = 0
+        adamw_loop_params = 0
+        adamw_foreach_recoveries = 0
         for group in self.param_groups:
             lr = float(group["lr"])
             weight_decay = float(group.get("weight_decay", 0.0))
@@ -623,18 +865,51 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
 
             beta1, beta2 = tuple(group.get("betas", (0.9, 0.95)))
             eps = float(group.get("eps", 1e-8))
-            for param in group["params"]:
+            params = group["params"]
+  # `step` is per-parameter (a tensor that had no grad on some step is behind
+  # the rest), and `bias_correction*` / `step_size` are functions of it, so the
+  # step count is part of the bucket key rather than a loop invariant.
+  #
+  # ⚑ Aliases disqualify the WHOLE group, checked before any state is
+  # touched: a tied weight reaching one group twice, or two Parameters /
+  # views over one storage (`_adamw_group_aliases`). `_foreach_mul_` applied
+  # to a list holding one storage twice is not the loop's two sequential
+  # updates of it. The loop stays exactly right in that case, so it is what
+  # runs -- this repo has tied tensors (the 16 `layer_smolgens.N.gen_weight.weight`
+  # keys are one storage), which is why the check is here and not assumed away.
+            allow_batching = not _adamw_group_aliases(params)
+            buckets: dict[
+                tuple[torch.device, torch.dtype, int],
+                tuple[
+                    list[Tensor], list[Tensor], list[Tensor], list[Tensor],
+                    list[dict[str, object]],
+                ],
+            ] = {}
+            for param in params:
                 if param.grad is None:
                     continue
                 grad = param.grad.detach()
                 if grad.is_sparse:
                     raise RuntimeError("Aurora AdamW fallback does not support sparse gradients")
-                if weight_decay != 0.0:
-                    param.mul_(1.0 - lr * weight_decay)
 
                 state = self.state[param]
+  # ⚑ `step` is COMPUTED here and COMMITTED only once the update that uses it
+  # has run. `Trainer.train_steps` catches a `RuntimeError` whose message
+  # contains "CUDA" and RETRIES the whole step up to three times
+  # (`trainer.py`), so an optimizer step is not the unrecoverable event it
+  # looks like -- and the batched path raises AFTER the scan has visited every
+  # parameter, where the old loop raised part-way through. Writing the counter
+  # during the scan would hand the retry a whole group of parameters whose
+  # bias corrections had advanced without their moments, and the retry is
+  # recorded as a successful step, so nothing downstream would ever say so.
+  #
+  # The moment BUFFERS are still committed during the scan, and that is
+  # correct rather than an oversight: lazily created `exp_avg`/`exp_avg_sq`
+  # are zeros, which is exactly the state a retry should find. This bounds
+  # the damage of a failed step; it does not make one atomic (a bucket that
+  # dies mid-chain has already mutated some tensors), and no cheap version of
+  # it does.
                 step = int(state.get("step", 0)) + 1
-                state["step"] = step
 
                 exp_avg = state.get("exp_avg")
                 exp_avg_sq = state.get("exp_avg_sq")
@@ -644,14 +919,79 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     state["exp_avg"] = exp_avg
                     state["exp_avg_sq"] = exp_avg_sq
 
-                exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+                if allow_batching and _adamw_batchable(param, grad, exp_avg, exp_avg_sq):
+  # `get`, not `setdefault`: this runs once per parameter per step in a
+  # change whose whole point is Python overhead, and `setdefault` would
+  # build four throwaway lists and a tuple on every hit.
+                    key = (param.device, param.dtype, step)
+                    bucket = buckets.get(key)
+                    if bucket is None:
+                        bucket = ([], [], [], [], [])
+                        buckets[key] = bucket
+                    bucket[0].append(param)
+                    bucket[1].append(grad)
+                    bucket[2].append(exp_avg)
+                    bucket[3].append(exp_avg_sq)
+                    bucket[4].append(state)
+                    continue
 
-                bias_correction1 = 1.0 - beta1**step
-                bias_correction2 = 1.0 - beta2**step
-                denom = exp_avg_sq.sqrt() / math.sqrt(max(bias_correction2, 1e-12))
-                denom.add_(eps)
-                step_size = lr / max(bias_correction1, 1e-12)
-                param.addcdiv_(exp_avg, denom, value=-step_size)
+                _adamw_update_one(
+                    param, grad, exp_avg, exp_avg_sq,
+                    step=step, lr=lr, weight_decay=weight_decay,
+                    beta1=beta1, beta2=beta2, eps=eps,
+                )
+                state["step"] = step
+                adamw_loop_params += 1
 
+  # Deferring the batched buckets past the scan reorders parameters against
+  # each other, and that is safe for exactly the reason the batching itself is:
+  # a parameter's update reads only its own four tensors, all of which the scan
+  # leaves alone. It is NOT safe if two entries alias, which `allow_batching`
+  # is what rules out.
+            for (_device, _dtype, step), bucket in buckets.items():
+                adamw_foreach_buckets += 1
+                adamw_foreach_params += len(bucket[0])
+                try:
+                    _adamw_update_foreach(
+                        bucket[0], bucket[1], bucket[2], bucket[3],
+                        step=step, lr=lr, weight_decay=weight_decay,
+                        beta1=beta1, beta2=beta2, eps=eps,
+                    )
+                except _DenominatorAllocationFailed as exc:
+  # The bucket's moments are already at their post-step values and no
+  # parameter has taken its update (see the class docstring). Finish each
+  # tensor from those moments, one denominator at a time, and commit its
+  # `step` the moment IT is complete -- so if this loop dies too, every
+  # tensor's recorded step is true for that tensor: the ones it reached are
+  # fully updated and committed, the ones it did not are moments-mutated
+  # and uncommitted, and the error propagates to the trainer's retry, which
+  # then double-applies exactly those. That residue is stated, not hidden:
+  # `adamw_foreach_recoveries` counts the recoveries that completed, and the
+  # warning below names the bucket.
+                    logging.getLogger(__name__).warning(
+                        "batched AdamW denominator allocation failed on a %d-tensor "
+                        "bucket at step %d (%s); finishing the bucket per tensor "
+                        "from its already-updated moments",
+                        len(bucket[0]), step, exc,
+                    )
+                    for param, exp_avg, exp_avg_sq, state in zip(
+                        bucket[0], bucket[2], bucket[3], bucket[4],
+                    ):
+                        _adamw_finish_one(
+                            param, exp_avg, exp_avg_sq,
+                            step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
+                        )
+                        state["step"] = step
+                    adamw_foreach_recoveries += 1
+                    self.adamw_foreach_recoveries_total += 1
+                    continue
+                for state in bucket[4]:
+                    state["step"] = step
+
+        self.last_adamw_stats = {
+            "adamw_foreach_buckets": float(adamw_foreach_buckets),
+            "adamw_foreach_params": float(adamw_foreach_params),
+            "adamw_loop_params": float(adamw_loop_params),
+            "adamw_foreach_recoveries": float(adamw_foreach_recoveries),
+        }
         return loss
