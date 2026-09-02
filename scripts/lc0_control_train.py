@@ -928,6 +928,10 @@ def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
 #: still refusing to mix them with a history-aware one.
 UNSTAMPED_CORPUS_ROW_SCHEMA = 1
 UNSTAMPED_ZERO_HISTORY = True
+#: ``derive_corpus_targets.DERIVE_IN_PROGRESS``, duplicated for the same reason
+#: the ``DERIVE_SCHEMA*`` constants above are (no deriver import here) and
+#: pinned by ``tests/test_derive_corpus_targets.py``.
+DERIVE_IN_PROGRESS = "in_progress"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -941,6 +945,11 @@ class ShardHistoryStamps:
     #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
     #: ``derive_corpus_row_schema_counts`` naming more than one schema.
     mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Shards the deriver wrote but never FINALIZED (``derive_in_progress``
+    #: true, or the provisional ``"in_progress"`` row-schema stamp): a
+    #: derivation that is still running or died after the flush.  ⚑ No
+    #: opt-in admits these -- their identity is not unknown, it is unwritten.
+    in_progress: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @property
     def mixed(self) -> bool:
@@ -963,11 +972,17 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
     row_schemas: dict[str, str] = {}
     zero_history: dict[bool, str] = {}
     mixed_within: dict[str, str] = {}
+    in_progress: dict[str, str] = {}
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
             where = f"{Path(shard_dir).name}/{path.name}"
             schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
+            if attrs.get("derive_in_progress") is True or schema == DERIVE_IN_PROGRESS:
+                in_progress[where] = (
+                    f"derive_in_progress={attrs.get('derive_in_progress')!r}, "
+                    f"derive_corpus_row_schema={schema!r}"
+                )
             row_schemas.setdefault(schema, where)
             zero_history.setdefault(
                 bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
@@ -980,6 +995,7 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
                 )
     return ShardHistoryStamps(
         row_schemas=row_schemas, zero_history=zero_history, mixed_within=mixed_within,
+        in_progress=in_progress,
     )
 
 
@@ -998,8 +1014,19 @@ def history_identity_problems(
     opt-in, and the run's summary then records the mix.
     """
     stamps = read_history_stamps(shard_dirs)
+    problems: list[str] = []
+    if stamps.in_progress:
+        listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.in_progress.items()))
+        problems.append(
+            f"--shards holds {len(stamps.in_progress)} shard(s) whose derivation "
+            f"is IN PROGRESS or died before finalizing them: {listed}. Their "
+            "history identity was never stamped (the deriver writes a "
+            "provisional stamp at flush and finalizes it after the last row), "
+            "so nothing says what planes they hold. No flag admits them: "
+            "finish or rerun the derivation.",
+        )
     if not stamps.mixed or allow_mixed_history:
-        return []
+        return problems
     schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
     zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
     within = "".join(
@@ -1015,6 +1042,7 @@ def history_identity_problems(
         f"deliberately. (An absent stamp reads as row schema "
         f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
         "corpora derived before the stamps existed are the bare-FEN shape.)",
+        *problems,
     ]
 
 
@@ -1095,6 +1123,7 @@ def history_identity_record(
         "row_schemas": sorted(stamps.row_schemas),
         "zero_history": sorted(stamps.zero_history),
         "mixed_within": sorted(stamps.mixed_within),
+        "in_progress": sorted(stamps.in_progress),
         "mixed": stamps.mixed,
         "allow_mixed_history": bool(allow_mixed_history),
     }

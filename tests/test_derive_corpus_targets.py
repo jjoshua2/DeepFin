@@ -1083,10 +1083,139 @@ def test_a_history_corpus_in_another_repetition_regime_is_refused_by_name(
     with pytest.raises(derive.CorpusIntegrityError, match="run block history_rep_fix=False"):
         run_derive(corpus_with_stamp("row_differs", True, row_stamp=False),
                    tmp_path / "o4", "uniform-d9")
+    # ⚑ STRICT, not truthy (Grok round 3): the string "false" and the int 1
+    # are both truthy, and a `bool(stamp)` compare read each as the fixed
+    # regime. Refused by name, at the record and at the row.
+    with pytest.raises(derive.CorpusIntegrityError, match=r"'false' \(str\) is not a boolean"):
+        run_derive(corpus_with_stamp("str_false", "false"), tmp_path / "o6", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match=r"is 1 .*1 \(int\) is not a boolean"):
+        run_derive(corpus_with_stamp("int_one", 1), tmp_path / "o7", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match=r"run block history_rep_fix='false'.*not a boolean"):
+        run_derive(corpus_with_stamp("row_str", True, row_stamp="false"),
+                   tmp_path / "o8", "uniform-d9")
+    with pytest.raises(derive.CorpusIntegrityError, match=r"run block history_rep_fix=1: 1 \(int\) is not a boolean"):
+        run_derive(corpus_with_stamp("row_int", True, row_stamp=1),
+                   tmp_path / "o9", "uniform-d9")
+    assert derive.regime_stamp_problem(True) is None
+    assert derive.regime_stamp_problem(1) is not None
+    assert derive.regime_stamp_problem("true") is not None
     # ... and the stamped-true corpus derives, every row verified.
     summary = run_derive(corpus_with_stamp("ok", True), tmp_path / "o5", "uniform-d9")
     assert summary["realized"]["input_key_verified"] == 1
     assert summary["input"]["history_rep_fix"] is True
+
+
+def _bare_deriver() -> derive.TargetDeriver:
+    return derive.TargetDeriver(derive.DeriveOptions(
+        scheme=derive.parse_scheme("uniform-d9"), temp=1.0, cp_slope=1.0,
+        cp_draw_width=1.0, limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
+    ))
+
+
+@pytest.mark.parametrize("row_stamp", [False, None, "false", 1, "true"])
+def test_a_row_in_the_other_regime_is_refused_on_the_row_path_itself(
+    row_stamp: Any,
+) -> None:
+    """⚑ Grok round 3: the regime refusal lived only in the driver's
+    ``_check_row_identity``; ``TargetDeriver.derive_row`` handed a schema-3
+    row directly skipped it.  ``_verify_input_key`` now requires the row's
+    own regime, so no caller can route around it.
+    """
+    row = history_row()
+    if row_stamp is None:
+        del row["run"][corpus.KEY_HISTORY_REP_FIX]
+    else:
+        row["run"][corpus.KEY_HISTORY_REP_FIX] = row_stamp
+    deriver = _bare_deriver()
+    with pytest.raises(derive.CorpusIntegrityError, match="run block history_rep_fix="):
+        deriver.derive_row(row)
+    assert deriver.stats.input_key_verified == 0
+    # The same row, stamped correctly, derives on the same path.
+    good = history_row()
+    assert deriver.derive_row(good) is not None
+    assert deriver.stats.input_key_verified == 1
+
+
+def test_zero_history_refuses_an_unread_slot_histogram() -> None:
+    """⚑ Grok round 3: ``history_slots_nonzero_max`` starts at 0, so a run
+    whose slot reading never fired stamped ``zero_history: true`` on a
+    history-aware corpus -- the answer that lets the launcher mix it.  The
+    reading now demands the histogram cover every emitted row.
+    """
+    stats = derive.DeriveStats()
+    assert derive.zero_history_reading(stats) is True, "no rows: nothing to claim"
+    stats.rows_written = 3
+    with pytest.raises(derive.CorpusIntegrityError, match="fired on 0 row"):
+        derive.zero_history_reading(stats)
+    stats.history_slots_filled_histogram = {8: 2}
+    with pytest.raises(derive.CorpusIntegrityError, match=r"fired on 2 row.*3 were written"):
+        derive.zero_history_reading(stats)
+    stats.history_slots_filled_histogram = {8: 2, 1: 1}
+    assert derive.zero_history_reading(stats) is False
+    stats.history_slots_filled_histogram = {1: 3}
+    assert derive.zero_history_reading(stats) is True
+    stats.history_slots_nonzero_max = 0  # the old reading's input: irrelevant now
+    stats.history_slots_filled_histogram = {8: 3}
+    assert derive.zero_history_reading(stats) is False
+
+
+def test_a_shard_is_provisional_until_finalized_and_the_launcher_refuses_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Codex P1 (thread on the write site): a derivation that dies after
+    flushing shards but before ``_stamp_realized_row_schema`` left shards
+    with history-aware planes and NO identity stamp, which the launcher
+    read as bare-FEN.  Now every shard is written ``derive_in_progress:
+    true`` with the provisional ``"in_progress"`` row-schema stamp, the
+    finalizer overwrites both, and the launcher refuses the provisional
+    state by name under EVERY flag.
+    """
+    import scripts.lc0_control_train as launcher
+
+    assert launcher.DERIVE_IN_PROGRESS == derive.DERIVE_IN_PROGRESS
+    src = write_corpus(tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY)
+
+    def dies_after_the_flush(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("simulated death between flush and finalize")
+
+    monkeypatch.setattr(derive, "_stamp_realized_row_schema", dies_after_the_flush)
+    with pytest.raises(RuntimeError, match="between flush and finalize"):
+        run_derive(src, tmp_path / "dead", "uniform-d9")
+    (attrs,) = shard_attrs(tmp_path / "dead")
+    assert attrs["derive_in_progress"] is True
+    assert attrs["derive_corpus_row_schema"] == derive.DERIVE_IN_PROGRESS
+    assert "zero_history" not in attrs
+
+    stamps = launcher.read_history_stamps([tmp_path / "dead"])
+    assert stamps.in_progress.keys() == {"dead/shard_000000.zarr"}
+    assert launcher.read_history_stamps([tmp_path / "dead"]).mixed is False
+    for allow in (False, True):
+        (problem,) = launcher.history_identity_problems(
+            [tmp_path / "dead"], allow_mixed_history=allow,
+        )
+        assert "IN PROGRESS" in problem
+        assert "No flag admits them" in problem
+    assert launcher.history_identity_record(stamps, allow_mixed_history=True)[
+        "in_progress"
+    ] == ["dead/shard_000000.zarr"]
+    with pytest.raises(SystemExit, match="IN PROGRESS"):
+        launcher.preflight(
+            real_control_config(), [tmp_path / "dead"], allow_leak=True,
+            allow_mixed_history=True, allow_partial_corpus=True,
+        )
+
+    # The finalizer clears the provisional state, and only then is the
+    # shard admissible.
+    monkeypatch.undo()
+    run_derive(src, tmp_path / "done", "uniform-d9")
+    (attrs,) = shard_attrs(tmp_path / "done")
+    assert attrs["derive_in_progress"] is False
+    assert attrs["derive_corpus_row_schema"] == 3
+    assert attrs["zero_history"] is False
+    assert launcher.read_history_stamps([tmp_path / "done"]).in_progress == {}
+    assert launcher.history_identity_problems(
+        [tmp_path / "done"], allow_mixed_history=False,
+    ) == []
 
 
 def test_an_envelope_dropped_row_is_in_no_per_row_count(tmp_path: Path) -> None:
@@ -1224,7 +1353,8 @@ def test_mixed_history_shards_are_refused_at_launch_unless_allowed(
     ) == []
     assert launcher.history_identity_record(stamps, allow_mixed_history=True) == {
         "row_schemas": ["1", "3"], "zero_history": [False, True],
-        "mixed_within": [], "mixed": True, "allow_mixed_history": True,
+        "mixed_within": [], "in_progress": [], "mixed": True,
+        "allow_mixed_history": True,
     }
     # An UNSTAMPED shard (pre-#497 deriver) reads as the bare-FEN shape, so a
     # legacy directory and a zero-history one are one identity ...
@@ -1411,10 +1541,7 @@ def test_a_keyless_window_row_cannot_take_the_bare_fen_path() -> None:
         derive.board_from_row(row)
     with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
         derive.row_schema_of(row)
-    deriver = derive.TargetDeriver(derive.DeriveOptions(
-        scheme=derive.parse_scheme("uniform-d9"), temp=1.0, cp_slope=1.0,
-        cp_draw_width=1.0, limit=0, seed=0, rows_per_shard=8, max_envelope_misses=0,
-    ))
+    deriver = _bare_deriver()
     with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):
         deriver._verify_input_key(row, np.zeros((1,), dtype=np.float32))
     with pytest.raises(derive.CorpusIntegrityError, match="row schema 2 is a history window"):

@@ -191,7 +191,8 @@ def test_the_history_identity_is_read_back_off_the_written_summary(
     summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
     assert summary["corpus"]["history_identity"] == {
         "row_schemas": ["1", "3"], "zero_history": [False, True],
-        "mixed_within": [], "mixed": True, "allow_mixed_history": True,
+        "mixed_within": [], "in_progress": [], "mixed": True,
+        "allow_mixed_history": True,
     }
 
 

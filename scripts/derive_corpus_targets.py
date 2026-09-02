@@ -2242,6 +2242,46 @@ def game_value_targets(
     return targets, readings
 
 
+def regime_stamp_problem(stamp: object) -> str | None:
+    """Why ``stamp`` is not this tool's ``history_rep_fix`` regime, or ``None``.
+
+    ⚑ STRICT, not truthy (Grok round 3): ``bool("false")`` is ``True`` and
+    ``bool(1)`` is ``True``, so a truthiness compare read a hand-edited or
+    mis-serialized stamp as the right regime.  Only the boolean equal to
+    ``HISTORY_REP_FIX`` passes; ``None``, the other boolean, and any
+    non-boolean are each refused with their own name.
+    """
+    if stamp is None:
+        return "no stamp"
+    if not isinstance(stamp, bool):
+        return (
+            f"{stamp!r} ({type(stamp).__name__}) is not a boolean and so not a "
+            "regime claim"
+        )
+    if stamp != HISTORY_REP_FIX:
+        return f"{stamp!r} is the other repetition-plane regime"
+    return None
+
+
+def require_row_regime(row: Mapping[str, Any]) -> None:
+    """⚑ ON THE ROW PATH.  A schema-3 row's ``run.history_rep_fix`` must be
+    this tool's regime, or its ``input_key`` was hashed under planes this
+    tool never produces.  Called by ``_verify_input_key`` (every emitted
+    row, whoever the caller is) and by the driver's ``_check_row_identity``
+    (before the row is decoded) -- the first cut checked only in the driver,
+    so ``TargetDeriver.derive_row`` handed a row directly skipped it.
+    """
+    run = row.get("run")
+    stamp = run.get(corpus.KEY_HISTORY_REP_FIX) if isinstance(run, dict) else None
+    problem = regime_stamp_problem(stamp)
+    if problem is not None:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: run block {corpus.KEY_HISTORY_REP_FIX}="
+            f"{stamp!r}: {problem}; this tool encodes under {HISTORY_REP_FIX} "
+            "and the row's input_key cannot be verified",
+        )
+
+
 def row_schema_of(row: Mapping[str, Any]) -> int:
     """The row's schema, and EXACTLY one of the two this tool derives.
 
@@ -2452,10 +2492,11 @@ class DeriveStats:
     history_root_reason_counts: dict[str, int] = field(default_factory=dict)
     #: ``{row schema: rows}``, so "mixed" is a number rather than a guess.
     row_schema_counts: dict[int, int] = field(default_factory=dict)
-    #: Rows whose banked window is EMPTY -- every schema-1 row, and a schema-2
+    #: Rows whose banked window is EMPTY -- every schema-1 row, and a schema-3
     #: row at a bare-FEN game's own ply 0.  Off the ROW (``history_plies``),
-    #: not off the planes; ``zero_history`` on the emitted shards is this
-    #: against ``rows_written``.
+    #: not off the planes.  ⚑ NOT what ``zero_history`` is read from: that
+    #: stamp is :func:`zero_history_reading`, off the planes' slot histogram,
+    #: on every emitted row; this counter is a cross-reading of the rows.
     history_window_empty_rows: int = 0
     #: ⚑ THE PER-ROW TAKE-EFFECT PROOF OF THE WHOLE CHAIN.  Every schema-2 row
     #: banks ``input_key``, the hash of the tensor LIVE PLAY encoded for that
@@ -3297,6 +3338,7 @@ class TargetDeriver:
         """
         if row_schema_of(row) == ROW_SCHEMA_BARE_FEN:
             return
+        require_row_regime(row)
         if "input_key" not in row:
             raise CorpusIntegrityError(
                 f"{_row_label(row)}: a schema-{ROW_SCHEMA_HISTORY} row with no "
@@ -3437,13 +3479,13 @@ def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
                 "its input_keys were hashed under, and without it nothing says "
                 "whether this tool can reproduce them",
             )
-        if bool(stamp) is not HISTORY_REP_FIX:
+        problem = regime_stamp_problem(stamp)
+        if problem is not None:
             raise CorpusIntegrityError(
                 f"corpus {corpus.KEY_HISTORY_REP_FIX} is {stamp!r} (read from "
-                f"{source.name}) but this tool encodes under {HISTORY_REP_FIX}; "
-                "the banked input_keys were hashed in the other repetition-plane "
-                "regime and every repeat-outside-the-frames row would fail "
-                "verification",
+                f"{source.name}): {problem}; this tool encodes under "
+                f"{HISTORY_REP_FIX} and the banked input_keys cannot be "
+                "reproduced under it",
             )
     if row_schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
         raise CorpusIntegrityError(
@@ -4605,14 +4647,7 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
             "whether these searches shared a transposition table",
         )
     if schema == ROW_SCHEMA_HISTORY:
-        stamp = run.get(corpus.KEY_HISTORY_REP_FIX)
-        if stamp is None or bool(stamp) is not HISTORY_REP_FIX:
-            raise CorpusIntegrityError(
-                f"{_row_label(row)}: run block {corpus.KEY_HISTORY_REP_FIX}="
-                f"{stamp!r}, this tool encodes under {HISTORY_REP_FIX}; the "
-                "row's input_key was hashed in another repetition-plane regime "
-                "(or none is recorded) and cannot be verified",
-            )
+        require_row_regime(row)
     row_sha = str(run["config_sha256"])
     if corpus_sha and row_sha != corpus_sha:
         raise CorpusIntegrityError(
@@ -4722,6 +4757,33 @@ def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> 
 #: shape.  A string on purpose: a reader that does ``int(attrs[...])`` on a
 #: mixed shard fails loudly instead of adopting one half's number.
 ROW_SCHEMA_MIXED = "mixed"
+#: ``derive_corpus_row_schema`` between a shard's write and its finalization.
+DERIVE_IN_PROGRESS = "in_progress"
+
+
+def zero_history_reading(stats: DeriveStats) -> bool:
+    """⚑ THE ONE ``zero_history`` READING, and it FAILS CLOSED (Grok round 3).
+
+    Off the planes: no emitted row filled more than history slot 0.  The
+    first cut read ``history_slots_nonzero_max <= 1`` -- a counter that
+    STARTS at 0, so a run whose slot reading never fired (``_note_shapes``
+    skipped, a refactor that moved it) stamped a history-aware corpus
+    ``zero_history: true``, exactly the answer that lets the launcher mix it
+    with bare-FEN shards.  Now the slot histogram must account for EVERY
+    emitted row before a reading is given; a histogram that does not is a
+    refusal by name, never a default.
+    """
+    noted = sum(stats.history_slots_filled_histogram.values())
+    if noted != stats.rows_written:
+        raise CorpusIntegrityError(
+            f"zero_history cannot be stamped: the history-slot reading fired "
+            f"on {noted} row(s) but {stats.rows_written} were written; a "
+            "shard stamped from an unread histogram would claim the bare-FEN "
+            "identity by default",
+        )
+    if not stats.history_slots_filled_histogram:
+        return True
+    return max(stats.history_slots_filled_histogram) <= 1
 
 
 def realized_row_schema(stats: DeriveStats) -> int | str:
@@ -4752,7 +4814,14 @@ def _stamp_realized_row_schema(
     * ``derive_corpus_record_row_schema`` -- what the corpus's own record
       (summary or manifest) claimed, kept beside the reading so a disagreement
       is visible on the shard;
-    * ``zero_history`` -- every emitted row was derived from an EMPTY window.
+    * ``zero_history`` -- :func:`zero_history_reading`: off the PLANES, no
+      emitted row filled more than history slot 0, and refused rather than
+      defaulted when the slot histogram does not cover every emitted row;
+    * ``derive_in_progress`` -- ``False`` here; ``True`` from the moment the
+      shard is written until this finalizes it (Codex P1, thread on the
+      write site): a derivation that dies between the flush and this call
+      leaves shards the launcher refuses by name instead of reading their
+      absent identity as bare-FEN.
 
     Written after the last shard on BOTH the sequential and the parallel path,
     from the same merged stats, so the two paths' ``.zattrs`` stay identical.
@@ -4768,7 +4837,8 @@ def _stamp_realized_row_schema(
         # filled more than history slot 0. The first cut compared
         # `history_window_empty_rows` to `rows_written`, a second definition
         # on a second denominator (Fable, round 2 delta).
-        "zero_history": stats.history_slots_nonzero_max <= 1,
+        "zero_history": zero_history_reading(stats),
+        "derive_in_progress": False,
         # ⚑ WHOLE OR PARTIAL, on the shard. A repair run's summary can say
         # `run_finished: false` and a manifest+progress read is partial by
         # definition; either way the derived shards are a SUBSET of a corpus,
@@ -4801,6 +4871,13 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
     """
     group = zarr.open_group(str(path), mode="a")
     group.attrs.update({
+        # ⚑ PROVISIONAL IDENTITY, from the first byte (Codex P1). Until
+        # `_stamp_realized_row_schema` finalizes it the shard holds planes
+        # whose history identity is not yet stamped, and an absent stamp
+        # reads as bare-FEN at the launcher -- the dangerous direction. Both
+        # keys are refused there by name; the finalizer overwrites both.
+        "derive_in_progress": True,
+        "derive_corpus_row_schema": DERIVE_IN_PROGRESS,
         "derive_schema": derive_schema_for(options.value_scheme),
         "derive_scheme": options.scheme.canonical,
         "derive_scheme_params": options.scheme.params(),
@@ -4934,8 +5011,9 @@ def build_summary(
             "encoder": ENCODER_NAME,
             # ⚑ A READING OFF THE PLANES, not a property of the schema. A
             # schema-2 corpus whose windows were dropped somewhere between the
-            # generator and here reads `true` and says so.
-            "zero_history": stats.history_slots_nonzero_max <= 1,
+            # generator and here reads `true` and says so. Same reading as the
+            # shard stamp, and it refuses rather than defaults.
+            "zero_history": zero_history_reading(stats),
             "why_zero_history": (
                 "row schema 1: a row is a bare FEN, chess.Board(fen) has an "
                 "empty move stack, and the encoder fills history slot 0 only "
