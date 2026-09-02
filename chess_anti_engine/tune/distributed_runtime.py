@@ -501,37 +501,55 @@ def _first_iteration_games_need(config: dict) -> int:
     return _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
 
 
-def _seed_dole_gate_claims_iteration(
+def _seed_dole_generation_for_iteration(
     *, server_root: Path, trial_id: str, training_iteration: int,
-) -> bool:
-    """True when ``seed_dole_gate.json`` already records this iteration claimed.
-
-    Split out of ``_publish_distributed_trial_state`` so the read can be
-    ORDERED before the manifest write while its use stays with the rearm block
-    (audit L5) -- and so the ordering is testable without driving a publish.
-
-    The server writes the gate with tmp+rename, so this unlocked cross-process
-    read can never see a torn file; what it CAN see is a claim that landed
-    after the caller made this iteration visible, which is what the ordering
-    prevents. Suffix matching on the trial key and the fail-closed ``except``
-    are carried over verbatim from the inline version.
-    """
+) -> str | None:
+    """Durable generation token for an already-claimed iteration, if known."""
     gate_path = Path(server_root) / "seed_dole_gate.json"
-    try:
-        if not gate_path.exists():
-            return False
-        gate = json.loads(gate_path.read_text(encoding="utf-8"))
-        tid = str(trial_id or "").strip()
-        last = gate.get(tid)
-        if last is None and tid:
-            for k, v in gate.items():
+    winners_path = gate_path.with_suffix(gate_path.suffix + ".winners.json")
+
+    def _find(mapping: dict, tid: str) -> tuple[str | None, object | None]:
+        if tid in mapping:
+            return tid, mapping.get(tid)
+        if tid:
+            for k, v in mapping.items():
                 ks = str(k)
                 if ks == tid or ks.endswith(tid) or tid.endswith(ks):
-                    last = v
-                    break
-        return int(last if last is not None else -1) == int(training_iteration)
+                    return ks, v
+        return None, None
+
+    try:
+        if not gate_path.exists() or not winners_path.exists():
+            return None
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        winners = json.loads(winners_path.read_text(encoding="utf-8"))
+        tid = str(trial_id or "").strip()
+        gate_key, last = _find(dict(gate), tid)
+        if int(last if last is not None else -1) != int(training_iteration):
+            return None
+        winner_key, winner = _find(dict(winners), str(gate_key or tid))
+        if winner_key is None or not isinstance(winner, dict):
+            return None
+        if int(winner.get("iteration", -1)) != int(training_iteration):
+            return None
+        token = str(winner.get("grant_token") or "").strip()
+        return token or None
     except Exception:
-        return False
+        return None
+
+
+def _seed_dole_rearm_payload(
+    *, server_root: Path, trial_id: str, training_iteration: int,
+) -> dict[str, object] | None:
+    """Generation-bound rearm request, or None when it cannot be fenced."""
+    token = _seed_dole_generation_for_iteration(
+        server_root=server_root,
+        trial_id=trial_id,
+        training_iteration=training_iteration,
+    )
+    if not token:
+        return None
+    return {"training_iteration": int(training_iteration), "grant_token": token}
 
 
 def _publish_distributed_trial_state(
@@ -754,65 +772,11 @@ def _publish_distributed_trial_state(
             "version": str(PACKAGE_VERSION),
         }
 
-  # READ THE GATE BEFORE THE MANIFEST IS WRITTEN (audit L5). The rearm block
-  # below asks "was this iteration already claimed", and the manifest write on
-  # the next statement is the ONLY way a worker learns this iteration exists.
-  # Read afterwards, that predicate silently became "claimed at any point,
-  # including 400us ago BECAUSE OF THIS VERY PUBLISH": a worker polls the fresh
-  # manifest, wins claim(N), the server persists the gate, and the read then
-  # arms a rearm that a SECOND worker consumes -- handing the whole seed list
-  # out twice for one iteration, the exact double-dole the block exists to
-  # prevent. The server consumes the rearm under ``_SeedDoleGate._lock`` and
-  # this producer never held it, so no care on the consumer side can close it.
-  #
-  # Hoisting is the fix rather than locking, because before the manifest exists
-  # any claim recorded in the gate is NECESSARILY from an EARLIER publish. THE
-  # ADJACENCY IS LOAD-BEARING: anything inserted between this read and the write
-  # below reopens the window it closes.
-  #
-  # WHAT THAT DOES AND DOES NOT BUY. Ordering removes exactly one case: a claim
-  # caused BY this publish can no longer arm off this publish. It does NOT make
-  # the armed set correct, and an earlier draft of this comment claimed it did.
-  # The armed set is "some earlier publish saw this iteration claimed", which
-  # still contains two situations the trainer cannot tell apart:
-  #
-  #   ARM IS RIGHT  -- a previous trial process (or an earlier attempt at this
-  #                    same iteration) doled iteration N, then died. The claim
-  #                    is burned, the seeds were never played, and without a
-  #                    rearm they are skipped for this iteration entirely.
-  #   ARM IS WRONG  -- a retry republish of iteration N while the worker that
-  #                    won the previous dole is STILL ALIVE and playing it. The
-  #                    rearm hands the same seed list to a second worker and
-  #                    the batch is doubled -- the residual, and a genuine
-  #                    double-dole of the kind the block exists to prevent.
-  #
-  # NO CHEAP DISCRIMINATOR EXISTS, and the near-misses are worth naming so the
-  # next reader does not re-derive them:
-  #   * "did I publish this iteration before, in this process?" is cheap and
-  #     would remove the residual -- by also removing the ARM IS RIGHT case for
-  #     retries, which `test_manifest_rearms_dole_after_same_iter_republish`
-  #     pins as intended. The retry path fires when NO games came back, which
-  #     correlates with dead workers, i.e. the case where re-doling is correct.
-  #     Trading a real behaviour for a rarer one is not an improvement.
-  #   * the gate file's mtime (or a manifest publish nonce/timestamp) answers
-  #     "how recently was this claimed", not "is the claimant still alive" -- a
-  #     worker can claim and die a second later. Recency is not the question.
-  # The question that WOULD settle it is whether the EARLIER dole of this
-  # iteration was PLAYED, and nothing answers that at this call site. Note what
-  # does exist, so this does not read as a bigger gap than it is: audit A8
-  # (#339) made the dole observable -- `seed dole GRANTED: trial=... iteration=...
-  # seeds=...` plus the rearm counters, in chess_anti_engine/server/app.py --
-  # but a GRANT proves a batch was handed out, not that a game ever came back
-  # from it, and it is emitted in the SERVER process, not this one. The other
-  # near-signal is per-row `opening_source_code` on ingested shards (2 =
-  # fenlist, 3 = fenlist_sf_refute), which does mark seed-origin games; it is
-  # no help on THIS code path, because the retry republish that arms the rearm
-  # fires only when NO games came back for the iteration, so at this moment
-  # there is nothing seed-origin to count. Closing this residual means a
-  # dole-completion signal, or the server recording which publish a claim was
-  # made against; both are server-side machinery and neither is taken here.
-  # Blast radius until then is one extra seed batch on a retried iteration.
-    seed_dole_gate_claimed = _seed_dole_gate_claims_iteration(
+  # Capture the exact DURABLE generation before making this publish visible.
+  # A worker claim caused by the manifest below cannot appear in this snapshot,
+  # preserving audit L5 ordering. The server only reopens this SAME generation
+  # after its heartbeat lease expires.
+    seed_dole_rearm_payload = _seed_dole_rearm_payload(
         server_root=Path(server_root),
         trial_id=str(trial_id),
         training_iteration=int(training_iteration),
@@ -836,11 +800,12 @@ def _publish_distributed_trial_state(
     dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
     arm_rearm = False
     if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
-        arm_rearm = seed_dole_gate_claimed
+        arm_rearm = seed_dole_rearm_payload is not None
     if arm_rearm:
+        assert seed_dole_rearm_payload is not None
         atomic_write_text(
             rearm_path,
-            json.dumps({"training_iteration": int(training_iteration)}, sort_keys=True),
+            json.dumps(seed_dole_rearm_payload, sort_keys=True),
             encoding="utf-8",
         )
     else:

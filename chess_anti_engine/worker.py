@@ -2062,10 +2062,20 @@ class WorkerSession:
         if self._dole_claim_key != key:
             self._dole_claim_key = key
             self._dole_claim_id = uuid.uuid4().hex
+        claim_payload = {
+            "claim_id": self._dole_claim_id,
+            "manifest_revision": revision,
+        }
+        # ACK means this exact generation was applied to the local dole queues;
+        # the same idempotent replay retries a dropped ACK and heartbeats lease.
+        scope = key[0]
+        ack_token = str(getattr(self, "_applied_dole_token", {}).get(scope) or "")
+        if ack_token:
+            claim_payload["ack_grant_token"] = ack_token
         try:
             r = self._requests.post(
                 self._server_url_for(endpoint.strip()),
-                json={"claim_id": self._dole_claim_id, "manifest_revision": revision},
+                json=claim_payload,
                 auth=self._auth,
                 headers=_worker_headers(),
                 # ⚑ SHORTER THAN THE OTHER WORKER CALLS, DELIBERATELY. This POST
