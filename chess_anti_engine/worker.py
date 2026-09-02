@@ -2065,6 +2065,11 @@ class WorkerSession:
         claim_payload = {
             "claim_id": self._dole_claim_id,
             "manifest_revision": revision,
+            # Presence of this explicit capability lets the server distinguish
+            # an updated worker that has not installed the generation from a
+            # legacy worker that has no way to ACK it. Without that distinction,
+            # a permanent local FEN-load failure can heartbeat forever.
+            "supports_seed_dole_ack": True,
         }
         # ACK means this exact generation was applied to the local dole queues;
         # the same idempotent replay retries a dropped ACK and heartbeats lease.

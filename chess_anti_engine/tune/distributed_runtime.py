@@ -507,6 +507,14 @@ def _seed_dole_generation_for_iteration(
                     return ks, v
         return None, None
 
+    def _stored_int(value: object) -> int | None:
+        if not isinstance(value, (str, int, float)):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
     try:
         if not gate_path.exists() or not winners_path.exists():
             return None
@@ -514,12 +522,12 @@ def _seed_dole_generation_for_iteration(
         winners = json.loads(winners_path.read_text(encoding="utf-8"))
         tid = str(trial_id or "").strip()
         gate_key, last = _find(dict(gate), tid)
-        if int(last if last is not None else -1) != int(training_iteration):
+        if _stored_int(last) != int(training_iteration):
             return None
         winner_key, winner = _find(dict(winners), str(gate_key or tid))
         if winner_key is None or not isinstance(winner, dict):
             return None
-        if int(winner.get("iteration", -1)) != int(training_iteration):
+        if _stored_int(winner.get("iteration")) != int(training_iteration):
             return None
         token = str(winner.get("grant_token") or "").strip()
         return token or None

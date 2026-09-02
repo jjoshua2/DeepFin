@@ -811,6 +811,7 @@ def _poll_and_claim_n(
                     json={
                         "claim_id": uuid.uuid4().hex,
                         "manifest_revision": manifest.get("manifest_revision"),
+                        "supports_seed_dole_ack": True,
                     },
                     auth=auth,
                     headers=headers,
@@ -1046,8 +1047,10 @@ def test_consume_seed_dole_rearm_is_one_shot(tmp_path: Path) -> None:
     assert not (pub / SEED_DOLE_REARM_FILENAME).exists()
 
 
-def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
-    """Selfplay-window republish re-opens the gate only when already claimed."""
+def test_manifest_rearm_waits_for_the_live_generation_lease(tmp_path: Path) -> None:
+    """A republish leaves recovery pending while the current generation is live."""
+    from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME
+
     fen_path = tmp_path / "blindspot.txt"
     fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
@@ -1059,12 +1062,20 @@ def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
         app, "/v1/trials/trial_00000/manifest", headers=headers, n=2,
     ) == [True, False]
 
-    # Same iteration republished after claim → gate last==20 → rearm armed;
-    # exactly one new claim must win.
+    # Same iteration republished after claim -> rearm is armed, but ordinary
+    # nonowner polls must neither win nor destroy it while the lease is live.
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
     assert _poll_and_claim_n(
         app, "/v1/trials/trial_00000/manifest", headers=headers, n=3,
-    ) == [True, False, False]
+    ) == [False, False, False]
+    rearm = (
+        tmp_path
+        / "trials"
+        / "trial_00000"
+        / "publish"
+        / SEED_DOLE_REARM_FILENAME
+    )
+    assert rearm.exists(), "live-lease polls destroyed the pending rearm"
 
 
 def test_manifest_no_rearm_on_fresh_iter_republish(tmp_path: Path) -> None:
@@ -1084,25 +1095,33 @@ def test_seed_dole_gate_rearm_concurrent_single_winner(tmp_path: Path) -> None:
     """Concurrent claim+rearm must yield exactly one True (PR #209 race fix)."""
     from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME, _SeedDoleGate
 
-    gate = _SeedDoleGate()
-    assert asyncio.run(gate.claim("t", 40)) is True
+    now = [1000.0]
+    gate = _SeedDoleGate(lease_seconds=10, clock=lambda: now[0])
+    token = asyncio.run(gate.claim_token("t", 40, claim_id="original"))
+    assert token
     pub = tmp_path / "publish"
     pub.mkdir()
     (pub / SEED_DOLE_REARM_FILENAME).write_text(
-        json.dumps({"training_iteration": 40}), encoding="utf-8",
+        json.dumps({"training_iteration": 40, "grant_token": token}), encoding="utf-8",
     )
+    now[0] += 11
 
-    async def _burst() -> list[bool]:
+    async def _burst(round_id: int) -> list[bool]:
         return list(
             await asyncio.gather(
-                *[gate.claim("t", 40, publish_dir=pub) for _ in range(32)]
+                *[
+                    gate.claim(
+                        "t", 40, publish_dir=pub, claim_id=f"contender-{round_id}-{i}",
+                    )
+                    for i in range(32)
+                ]
             )
         )
 
-    wins = sum(asyncio.run(_burst()))
+    wins = sum(asyncio.run(_burst(1)))
     assert wins == 1
     # File consumed; further claims stay closed.
-    assert sum(asyncio.run(_burst())) == 0
+    assert sum(asyncio.run(_burst(2))) == 0
 
 
 # ── opening_fen_list_path live reload (no restart needed) ────────────────────
@@ -1192,7 +1211,7 @@ def test_the_seed_dole_gate_is_read_before_the_manifest_is_written(
     import chess_anti_engine.tune.distributed_runtime as dr
 
     order: list[str] = []
-    real_gate = dr._seed_dole_gate_claims_iteration
+    real_gate = dr._seed_dole_rearm_payload
     real_write = dr.atomic_write_text
 
     def _spy_gate(**kw):
@@ -1204,7 +1223,7 @@ def test_the_seed_dole_gate_is_read_before_the_manifest_is_written(
             order.append("manifest")
         return real_write(path, text, **kw)
 
-    monkeypatch.setattr(dr, "_seed_dole_gate_claims_iteration", _spy_gate)
+    monkeypatch.setattr(dr, "_seed_dole_rearm_payload", _spy_gate)
     monkeypatch.setattr(dr, "atomic_write_text", _spy_write)
 
     _dole_publish(tmp_path, gate_iteration=7, iteration=7)
@@ -1258,7 +1277,10 @@ def test_a_claim_already_on_disk_still_arms_the_resume_rearm(tmp_path: Path) -> 
     """
     rearm = _dole_publish(tmp_path, gate_iteration=7, iteration=7)
     assert rearm.exists(), "the resume rearm no longer fires (audit L5)"
-    assert json.loads(rearm.read_text(encoding="utf-8")) == {"training_iteration": 7}
+    assert json.loads(rearm.read_text(encoding="utf-8")) == {
+        "grant_token": "generation-7",
+        "training_iteration": 7,
+    }
 
 
 def test_the_hoisted_gate_read_keeps_the_stale_and_absent_cases_closed(
@@ -1297,11 +1319,27 @@ def _dole_publish(
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\n", encoding="utf-8",
     )
     gate_path = tmp_path / "seed_dole_gate.json"
+    winners_path = gate_path.with_suffix(gate_path.suffix + ".winners.json")
     if gate_iteration is None:
         gate_path.unlink(missing_ok=True)
+        winners_path.unlink(missing_ok=True)
     else:
         gate_path.write_text(
             json.dumps({"trial_00000": int(gate_iteration)}), encoding="utf-8",
+        )
+        winners_path.write_text(
+            json.dumps(
+                {
+                    "trial_00000": {
+                        "iteration": int(gate_iteration),
+                        "claim_id": "durable-owner",
+                        "revision": "durable-revision",
+                        "grant_token": f"generation-{int(gate_iteration)}",
+                        "lease_expires_at_unix": 0.0,
+                    }
+                }
+            ),
+            encoding="utf-8",
         )
     _publish_distributed_trial_state(
         trainer=_FakeTrainer(),

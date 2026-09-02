@@ -96,10 +96,10 @@ def _iter_compacted_token_matches(compacted_dir: Path, flush_token: str) -> Iter
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
 # A winning seed-dole claim is a LEASED GENERATION, not a permanent boolean.
-# The worker already replays its winning claim on every manifest poll (~30s);
-# that replay is the generation heartbeat. A same-iteration retry may re-open
-# the dole only after this lease expires, which separates a dead claimant from
-# a live claimant that is merely still playing its seeds.
+# Updated workers ACK the token after local queue installation and replay that
+# proof on every manifest poll (~30s); legacy exact-claim replay remains a
+# rollout-compatible heartbeat. A same-iteration retry may re-open the dole
+# only after this lease expires, separating a dead claimant from a live owner.
 SEED_DOLE_LEASE_SECONDS = 180.0
 
 # Why a manifest read produced no manifest. "Absent" is the legitimate
@@ -166,6 +166,7 @@ def _consume_rearm_file(
         return False, REARM_UNREADABLE
 
     quarantine: Path | None = None
+    restore_pending = False
     try:
         try:
             raw = tmp.read_text(encoding="utf-8")
@@ -214,9 +215,14 @@ def _consume_rearm_file(
                 )
                 return False, REARM_TOKEN_MISMATCH
             if not rearm_allowed:
-                _log.info(
-                    "seed-dole rearm SKIPPED as ACTIVE: %siteration=%d "
-                    "generation=%s still has a live claim lease",
+                # This is a deferral, not a rejection. The request was written
+                # precisely so it can reopen this generation once the lease
+                # expires; deleting it here makes that future decision
+                # impossible if another worker polls during the live window.
+                restore_pending = True
+                _log.warning(
+                    "seed-dole rearm DEFERRED as ACTIVE: %siteration=%d "
+                    "generation=%s still has a live claim lease; request retained",
                     who, int(training_iteration), expected[:12],
                 )
                 return False, REARM_ACTIVE
@@ -237,6 +243,26 @@ def _consume_rearm_file(
                     "seed-dole rearm quarantine failed (%s): %s: %s — removing",
                     who, type(exc).__name__, exc,
                 )
+                with contextlib.suppress(OSError):
+                    tmp.unlink(missing_ok=True)
+        elif restore_pending:
+            restored_or_superseded = False
+            try:
+                # Do not overwrite a newer request published after our claim
+                # rename. A hard link provides the missing no-replace rename
+                # primitive atomically because both names share one directory.
+                os.link(tmp, path)
+            except FileExistsError:
+                # A newer publisher already installed the path; keep that one.
+                restored_or_superseded = True
+            except OSError as exc:
+                _log.warning(
+                    "seed-dole rearm restore failed (%s): %s: %s — request kept at %s",
+                    who, type(exc).__name__, exc, tmp,
+                )
+            else:
+                restored_or_superseded = True
+            if restored_or_superseded:
                 with contextlib.suppress(OSError):
                     tmp.unlink(missing_ok=True)
         else:
@@ -898,7 +924,7 @@ class _SeedDoleGate:
         migrated = False
         now = float(self._clock())
         for winner in self._winners.values():
-            if isinstance(winner, dict) and "lease_expires_at_unix" not in winner:
+            if "lease_expires_at_unix" not in winner:
                 winner["lease_expires_at_unix"] = now + self._lease_seconds
                 migrated = True
         if migrated:
@@ -1024,12 +1050,14 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
+        ack_capable: bool = False,
     ) -> bool:
         """Boolean form of :meth:`claim_seq`, for callers that only need won/lost."""
         token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
+            ack_capable=ack_capable,
         )
         return bool(token)
 
@@ -1042,12 +1070,14 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
+        ack_capable: bool = False,
     ) -> str:
         """Token-only form of :meth:`claim_result`."""
         token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
+            ack_capable=ack_capable,
         )
         return token
 
@@ -1061,16 +1091,16 @@ class _SeedDoleGate:
         claim_id: str | None = None,
         manifest_revision: str | None = None,
         ack_grant_token: str | None = None,
+        ack_capable: bool = False,
     ) -> tuple[str, bool]:
         """Claim one leased generation; return ``(grant_token, newly_issued)``.
 
-        The opaque grant token is the generation id. The winning claim's
-        idempotent replay is also its heartbeat: every replay extends a durable
-        lease. A same-iteration rearm is generation-bound and is honored only
-        after that lease expires. ``ack_grant_token`` acknowledges that the
-        worker actually applied this exact generation to its local dole queue;
-        it is deliberately NOT a completion claim and never by itself prevents
-        recovery after claimant death.
+        The opaque grant token is the generation id. A legacy winning claim's
+        idempotent replay is its heartbeat; an ACK-capable worker must prove it
+        installed the generation before a replay extends the durable lease. A
+        same-iteration rearm is generation-bound and honored only after that
+        lease expires. ``ack_grant_token`` is deliberately NOT a completion
+        claim and never by itself prevents recovery after claimant death.
         """
         from starlette.concurrency import run_in_threadpool
         claim_id = str(claim_id or "") or f"anon-{secrets.token_hex(8)}"
@@ -1093,14 +1123,14 @@ class _SeedDoleGate:
                 and _as_int(winner.get("iteration"), -1) == int(training_iteration)
                 and ack == current_token
             )
-            # Two proofs can heartbeat one generation: exact replay of the
-            # original claim (backward compatible), or possession of the opaque
-            # grant token after the worker applied it. The token proof is what
-            # survives a same-iteration manifest republish that changes revision
-            # and therefore rotates claim_id. Without it, the live worker becomes
-            # indistinguishable from a dead claimant at exactly the retry boundary
-            # this protocol exists to make safe.
-            if (_matches(winner) or ack_owns_generation) and not allow_rearm:
+            exact_replay = _matches(winner)
+            # Updated workers explicitly advertise ACK support. For them, exact
+            # replay still recovers a dropped grant response, but only proof that
+            # the generation reached the local queues may extend the lease.
+            # Legacy workers cannot provide that proof, so preserve their old
+            # exact-replay heartbeat during rollout.
+            heartbeat = ack_owns_generation or (exact_replay and not ack_capable)
+            if heartbeat and not allow_rearm:
                 assert isinstance(winner, dict)
                 before = dict(winner)
                 now = float(self._clock())
@@ -1153,6 +1183,12 @@ class _SeedDoleGate:
                         trial_key=trial_key,
                     ),
                 )
+            if exact_replay and ack_capable and not rearm:
+                # Return the durable result so a lost response/local transient
+                # remains retryable, but do not turn an uninstalled generation
+                # into an immortal lease. If a matching expired rearm exists,
+                # the branch below replaces it instead.
+                return current_token, False
             if rearm:
                 self._winners.pop(trial_key, None)
             last = int(self._last_iter.get(trial_key, -1))
@@ -4344,6 +4380,8 @@ def create_app(
                 },
             )
 
+        ack_capable = payload.get("supports_seed_dole_ack") is True
+
         trial_key = str(_normalize_trial_id(trial_id) or "")
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
@@ -4355,6 +4393,7 @@ def create_app(
             claim_id=claim_id,
             manifest_revision=revision,
             ack_grant_token=ack_grant_token,
+            ack_capable=ack_capable,
         )
         if grant_token == SEED_DOLE_PERSIST_FAILED:
             # 503, not a 200 "already_claimed": the dole is not spent, the
