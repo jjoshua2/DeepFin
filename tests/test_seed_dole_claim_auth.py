@@ -335,6 +335,68 @@ def test_identical_same_iteration_republish_preserves_an_acked_live_generation(
     assert rearm_path.exists(), "the live generation's recovery request was destroyed"
 
 
+def test_paused_claim_accepts_only_an_installed_generation_ack(tmp_path: Path) -> None:
+    app = _setup(tmp_path, iteration=21)
+    headers = _manifest_poll_headers(worker_id="w")
+
+    async def _run() -> tuple[dict, dict]:
+        async with await _client(app) as client:
+            manifest = (await client.get(MANIFEST, headers=headers)).json()
+            first = await client.post(
+                CLAIM,
+                json={
+                    "claim_id": "worker-A",
+                    "manifest_revision": manifest["manifest_revision"],
+                    "supports_seed_dole_ack": True,
+                },
+                auth=("u", "p"),
+                headers=headers,
+            )
+            first.raise_for_status()
+
+            manifest_path = (
+                tmp_path
+                / "trials"
+                / "trial_00000"
+                / "publish"
+                / "manifest.json"
+            )
+            paused = json.loads(manifest_path.read_text(encoding="utf-8"))
+            paused.setdefault("recommended_worker", {})["pause_selfplay"] = True
+            manifest_path.write_text(json.dumps(paused), encoding="utf-8")
+
+            paused_manifest = (await client.get(MANIFEST, headers=headers)).json()
+            ack = await client.post(
+                CLAIM,
+                json={
+                    "claim_id": "worker-A",
+                    "manifest_revision": paused_manifest["manifest_revision"],
+                    "supports_seed_dole_ack": True,
+                    "ack_grant_token": first.json()["grant_token"],
+                    "ack_only": True,
+                },
+                auth=("u", "p"),
+                headers=headers,
+            )
+            ack.raise_for_status()
+            return first.json(), ack.json()
+
+    first, ack = asyncio.run(_run())
+    assert first["granted"] is True
+    assert ack == {
+        "granted": False,
+        "acknowledged": True,
+        "reason_code": "acknowledged",
+        "manifest_revision": first["manifest_revision"],
+    }
+    winners = json.loads(
+        (tmp_path / "seed_dole_gate.json.winners.json").read_text(encoding="utf-8")
+    )
+    record = winners["trial_00000"]
+    assert record["grant_token"] == first["grant_token"]
+    assert record["acknowledged_at_unix"] > 0
+
+
 def _uvicorn_effective_level(logger_name: str) -> int:
     """Effective level of `logger_name` under uvicorn's real config.
 

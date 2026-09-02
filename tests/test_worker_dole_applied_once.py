@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import chess_anti_engine.worker as worker_module
 from tests.test_worker_model_update import (
     _DOLE_FEN_A,
     _DOLE_FEN_B,
@@ -178,6 +181,31 @@ def test_a_failed_fen_load_does_not_mark_the_grant_applied(tmp_path: Path) -> No
     session._maybe_ingest_dole_flag(_manifest())
     assert session._applied_dole_token == {}
     assert session._live_dole_queue == []
+
+
+def test_a_paused_worker_sends_an_ack_only_heartbeat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeRequests()
+    session = _session(tmp_path, fake)
+    manifest = _manifest()
+    scope = session._dole_scope(manifest)
+    session._applied_dole_token[scope] = "A-tok1"
+    manifest["recommended_worker"]["pause_selfplay"] = True
+    now = [100.0]
+    monkeypatch.setattr(worker_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(worker_module.time, "monotonic", lambda: now[0])
+
+    assert session._check_pause_selfplay(manifest) is True
+    assert len(fake.posts) == 1
+    assert fake.posts[0]["ack_grant_token"] == "A-tok1"
+    assert fake.posts[0]["ack_only"] is True
+
+    assert session._check_pause_selfplay(manifest) is True
+    assert len(fake.posts) == 1, "one-second pause polling spammed durable ACK writes"
+    now[0] += 31.0
+    assert session._check_pause_selfplay(manifest) is True
+    assert len(fake.posts) == 2, "pause ACK did not renew on the normal poll cadence"
 
 
 def test_a_new_iteration_applies_again(tmp_path: Path) -> None:

@@ -21,6 +21,9 @@ a generation identity; this protocol makes that generation leased and ACKed.
   `ack_grant_token=G` on later claims. ACK is idempotent and fenced by token
   equality. Possession of G is also the liveness proof across a same-iteration
   manifest republish, where revision and claim_id may both change.
+* A paused worker sends the same proof with `ack_only=true`. The server may
+  renew that installed generation while paused but cannot issue a new dose,
+  including if pause clears between the manifest GET and claim POST.
 * Trainable rearm writes `{training_iteration, grant_token}`. Under the same
   gate lock, the server retains it while that generation is active and consumes
   it only when the token is still current and its lease expired; then exactly
@@ -43,8 +46,10 @@ token and let the server mark the generation complete from those receipts.
 
 Under the gate lock: exact owner replay/ACK -> durable lease renewal -> judge a
 pending rearm -> otherwise consider a new claimant. At an expiry boundary,
-either the old owner renews first and rearm is discarded as ACTIVE, or another
-caller consumes the expired token-matching rearm and creates G+1. Both cannot
+either the old owner renews first and rearm is retained/deferred as ACTIVE, or
+another caller prepares the expired token-matching rearm and creates G+1. The
+rearm remains a durable transaction marker until G+1 is persisted, so a crash
+or failed winner-sidecar write cannot strand the iteration. Both callers cannot
 win.
 
 ## Failure policy
@@ -55,6 +60,8 @@ win.
   extending an ACK-capable worker's lease, so a retained rearm can recover after
   expiry instead of letting one broken worker hold the dose forever.
 * Server restart: winner and lease are durable.
+* Replacement persistence failure: the prepared `.consuming` rearm marker is
+  recovered on the next claim or server restart and retried.
 * Pre-lease winner on upgrade: one full lease grace window before rearm.
 * Missing/corrupt winner sidecar: fail closed for rearm rather than double-dose.
 * Network partition longer than the lease: standard lease semantics; recovery

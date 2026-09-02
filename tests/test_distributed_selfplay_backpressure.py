@@ -1251,9 +1251,21 @@ def test_a_claim_landing_after_the_publish_cannot_arm_the_rearm(
         out = real_write(path, text, **kw)
         if Path(path).name == "manifest.json":
   # A worker polls the brand-new manifest and wins claim(7); the server
-  # persists the gate. Sub-millisecond in production, deterministic here.
-            (tmp_path / "seed_dole_gate.json").write_text(
+  # persists both gate files. Sub-millisecond in production, deterministic here.
+            gate_path = tmp_path / "seed_dole_gate.json"
+            gate_path.write_text(
                 json.dumps({"trial_00000": 7}), encoding="utf-8",
+            )
+            gate_path.with_suffix(gate_path.suffix + ".winners.json").write_text(
+                json.dumps(
+                    {
+                        "trial_00000": {
+                            "iteration": 7,
+                            "grant_token": "generation-7",
+                        }
+                    }
+                ),
+                encoding="utf-8",
             )
         return out
 

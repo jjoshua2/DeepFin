@@ -134,6 +134,7 @@ REARM_STALE = "stale"
 REARM_BAD = "bad"
 REARM_UNREADABLE = "unreadable"
 REARM_ACTIVE = "active"
+REARM_READY = "ready"
 REARM_TOKEN_MISMATCH = "token_mismatch"
 
 
@@ -144,6 +145,8 @@ def _consume_rearm_file(
     trial_key: str = "",
     expected_grant_token: str | None = None,
     rearm_allowed: bool = True,
+    retain_matched: bool = False,
+    log_active: bool = True,
 ) -> tuple[bool, str]:
     """Consume a rearm file once; return ``(matched, outcome)``.
 
@@ -157,7 +160,20 @@ def _consume_rearm_file(
     try:
         path.rename(tmp)
     except FileNotFoundError:
-        return False, REARM_ABSENT
+        # A crash may leave the claimed request at ``.consuming``. Treat that
+        # name as the durable transaction marker rather than silently losing
+        # the recovery request forever.
+        try:
+            tmp.stat()
+        except FileNotFoundError:
+            return False, REARM_ABSENT
+        except OSError as exc:
+            _log.warning(
+                "seed-dole rearm UNREADABLE (%srecovery marker): %s: %s — dole "
+                "NOT rearmed for iteration %d",
+                who, type(exc).__name__, exc, int(training_iteration),
+            )
+            return False, REARM_UNREADABLE
     except OSError as exc:
         _log.warning(
             "seed-dole rearm UNREADABLE (%sclaim failed): %s: %s — dole NOT rearmed "
@@ -167,6 +183,7 @@ def _consume_rearm_file(
 
     quarantine: Path | None = None
     restore_pending = False
+    keep_claimed = False
     try:
         try:
             raw = tmp.read_text(encoding="utf-8")
@@ -220,12 +237,20 @@ def _consume_rearm_file(
                 # expires; deleting it here makes that future decision
                 # impossible if another worker polls during the live window.
                 restore_pending = True
-                _log.warning(
-                    "seed-dole rearm DEFERRED as ACTIVE: %siteration=%d "
-                    "generation=%s still has a live claim lease; request retained",
-                    who, int(training_iteration), expected[:12],
-                )
+                if log_active:
+                    _log.warning(
+                        "seed-dole rearm DEFERRED as ACTIVE: %siteration=%d "
+                        "generation=%s still has a live claim lease; request retained",
+                        who, int(training_iteration), expected[:12],
+                    )
                 return False, REARM_ACTIVE
+
+            if retain_matched:
+                # A replacement is not committed yet. Keep this claimed name
+                # durable until the new winner sidecar is safely persisted;
+                # after a crash or failed write the next claim resumes here.
+                keep_claimed = True
+                return True, REARM_READY
 
         _log.info(
             "seed-dole rearm CONSUMED: %siteration=%d%s — this generation is "
@@ -245,6 +270,8 @@ def _consume_rearm_file(
                 )
                 with contextlib.suppress(OSError):
                     tmp.unlink(missing_ok=True)
+        elif keep_claimed:
+            pass
         elif restore_pending:
             restored_or_superseded = False
             try:
@@ -848,6 +875,7 @@ class _SeedDoleGate:
         self.rearm_consumed = 0
         self.rearm_skipped = 0
         self.rearm_bad = 0
+        self._active_rearm_warnings: set[tuple[str, int, str]] = set()
         # Idempotency record for the winner of each trial's current iteration.
         #
         # ⚑ A SIDECAR, not a key inside the state file. That file's loader does
@@ -977,7 +1005,7 @@ class _SeedDoleGate:
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
-        *, trial_key: str = "",
+        *, trial_key: str = "", retain_matched: bool = False,
     ) -> bool:
         """Consume a generation-bound rearm; caller MUST hold ``self._lock``."""
         if publish_dir is None:
@@ -995,13 +1023,27 @@ class _SeedDoleGate:
                 except (TypeError, ValueError):
                     lease_expires = 0.0
                 allowed = bool(expected) and float(self._clock()) >= lease_expires
+        active_key = (
+            (trial_key, int(training_iteration), expected)
+            if expected
+            else None
+        )
         matched, outcome = _consume_rearm_file(
             Path(publish_dir) / SEED_DOLE_REARM_FILENAME,
             training_iteration,
             trial_key=trial_key,
             expected_grant_token=expected,
             rearm_allowed=allowed,
+            retain_matched=bool(retain_matched and generation_bound),
+            log_active=(
+                active_key is None or active_key not in self._active_rearm_warnings
+            ),
         )
+        if active_key is not None:
+            if outcome == REARM_ACTIVE:
+                self._active_rearm_warnings.add(active_key)
+            else:
+                self._active_rearm_warnings.discard(active_key)
         if outcome == REARM_CONSUMED:
             self.rearm_consumed += 1
         elif outcome in (REARM_STALE, REARM_ACTIVE, REARM_TOKEN_MISMATCH):
@@ -1009,6 +1051,34 @@ class _SeedDoleGate:
         elif outcome in (REARM_BAD, REARM_UNREADABLE):
             self.rearm_bad += 1
         return matched
+
+    def _commit_rearm_unlocked(
+        self,
+        publish_dir: Path,
+        training_iteration: int,
+        *,
+        trial_key: str,
+        grant_token: str,
+    ) -> None:
+        """Finalize a prepared rearm after its replacement is durable."""
+        path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
+        marker = path.with_suffix(path.suffix + ".consuming")
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            # Safe to leave behind: the new winner is already durable, and the
+            # next claim will recover this marker and discard its stale token.
+            _log.warning(
+                "seed-dole rearm commit cleanup failed (trial=%s): %s: %s — "
+                "stale marker kept at %s",
+                trial_key or "<default>", type(exc).__name__, exc, marker,
+            )
+        self.rearm_consumed += 1
+        _log.info(
+            "seed-dole rearm CONSUMED: trial=%s iteration=%d generation=%s — "
+            "replacement generation is durable",
+            trial_key or "<default>", int(training_iteration), grant_token[:12],
+        )
 
     def counters(self) -> dict[str, int]:
         """Cumulative rearm outcomes since process start.
@@ -1092,6 +1162,7 @@ class _SeedDoleGate:
         manifest_revision: str | None = None,
         ack_grant_token: str | None = None,
         ack_capable: bool = False,
+        renew_only: bool = False,
     ) -> tuple[str, bool]:
         """Claim one leased generation; return ``(grant_token, newly_issued)``.
 
@@ -1129,7 +1200,9 @@ class _SeedDoleGate:
             # the generation reached the local queues may extend the lease.
             # Legacy workers cannot provide that proof, so preserve their old
             # exact-replay heartbeat during rollout.
-            heartbeat = ack_owns_generation or (exact_replay and not ack_capable)
+            heartbeat = ack_owns_generation or (
+                exact_replay and not ack_capable and not renew_only
+            )
             if heartbeat and not allow_rearm:
                 assert isinstance(winner, dict)
                 before = dict(winner)
@@ -1173,7 +1246,15 @@ class _SeedDoleGate:
                         trial_key or "<default>", int(training_iteration), ack[:12], current_token[:12],
                     )
 
+            # Pause-state heartbeats may renew an installed generation but
+            # must never consume rearm or issue a new dose, even if the live
+            # pause flag clears between the worker's GET and this POST.
+            if renew_only:
+                return "", False
+
             rearm = bool(allow_rearm)
+            prepared_rearm = False
+            rearm_generation = current_token
             if publish_dir is not None:
                 rearm = await run_in_threadpool(
                     functools.partial(
@@ -1181,7 +1262,14 @@ class _SeedDoleGate:
                         publish_dir,
                         training_iteration,
                         trial_key=trial_key,
+                        retain_matched=True,
                     ),
+                )
+                prepared_rearm = bool(
+                    rearm
+                    and current_token
+                    and int(self._last_iter.get(trial_key, -1))
+                    == int(training_iteration)
                 )
             if exact_replay and ack_capable and not rearm:
                 # Return the durable result so a lost response/local transient
@@ -1189,15 +1277,16 @@ class _SeedDoleGate:
                 # into an immortal lease. If a matching expired rearm exists,
                 # the branch below replaces it instead.
                 return current_token, False
+            previous = self._winners.get(trial_key)
+            stored_last = int(self._last_iter.get(trial_key, -1))
             if rearm:
                 self._winners.pop(trial_key, None)
-            last = int(self._last_iter.get(trial_key, -1))
+            last = stored_last
             if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
                 token = secrets.token_hex(16)
-                previous = self._winners.get(trial_key)
                 self._winners[trial_key] = {
                     "iteration": int(training_iteration),
                     "claim_id": str(claim_id),
@@ -1210,9 +1299,21 @@ class _SeedDoleGate:
                         self._winners.pop(trial_key, None)
                     else:
                         self._winners[trial_key] = previous
+                    if rearm:
+                        self._last_iter[trial_key] = stored_last
                     return SEED_DOLE_PERSIST_FAILED, False
                 self._last_iter[trial_key] = int(training_iteration)
                 await run_in_threadpool(self._persist_gate)
+                if prepared_rearm and publish_dir is not None:
+                    await run_in_threadpool(
+                        functools.partial(
+                            self._commit_rearm_unlocked,
+                            publish_dir,
+                            training_iteration,
+                            trial_key=trial_key,
+                            grant_token=rearm_generation,
+                        ),
+                    )
                 return token, True
             return "", False
 
@@ -4310,8 +4411,6 @@ def create_app(
             return {"granted": False, "reason_code": "revision_mismatch", "manifest_revision": revision}
 
         live_decline = _dole_live_decline(reader)
-        if live_decline is not None:
-            return {"granted": False, "reason_code": live_decline, "manifest_revision": revision}
 
         # ⚑⚑ A CLAIM WITHOUT AN ID IS REFUSED BEFORE IT CAN TOUCH THE GATE.
         # Two reasons, and the first is a security hole: with no id there is
@@ -4381,11 +4480,19 @@ def create_app(
             )
 
         ack_capable = payload.get("supports_seed_dole_ack") is True
+        ack_only = payload.get("ack_only") is True
+        if live_decline is not None and (not ack_only or not ack_grant_token):
+            return {
+                "granted": False,
+                "reason_code": live_decline,
+                "manifest_revision": revision,
+            }
 
         trial_key = str(_normalize_trial_id(trial_id) or "")
         # Rearm file (if any) is consumed inside claim under the gate lock so
-        # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
-        # polls return above and never reach claim — they cannot burn rearm.
+        # concurrent multi-worker polls cannot double-dole. Arena/dole-off polls
+        # return above. Paused polls reach the gate only in ACK-only mode: they
+        # may renew an installed owner but cannot burn rearm or issue a grant.
         grant_token, newly_issued = await seed_dole_gate.claim_result(
             trial_key,
             iteration,
@@ -4394,6 +4501,7 @@ def create_app(
             manifest_revision=revision,
             ack_grant_token=ack_grant_token,
             ack_capable=ack_capable,
+            renew_only=ack_only,
         )
         if grant_token == SEED_DOLE_PERSIST_FAILED:
             # 503, not a 200 "already_claimed": the dole is not spent, the
@@ -4403,6 +4511,15 @@ def create_app(
                 detail="seed dole state could not be persisted; retry",
                 headers={"Retry-After": "5"},
             )
+        if ack_only:
+            return {
+                "granted": False,
+                "acknowledged": bool(grant_token),
+                "reason_code": (
+                    "acknowledged" if grant_token else (live_decline or "stale_ack")
+                ),
+                "manifest_revision": revision,
+            }
         granted = bool(grant_token)
         # THE observation that proves the dole took effect. Everything upstream
         # of this line is a reason to decline, and each of those returns a

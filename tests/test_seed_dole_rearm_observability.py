@@ -135,6 +135,9 @@ def test_claim_carries_the_trial_key_into_the_rearm_log(
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub, claim_id="winner")) is True
+        assert asyncio.run(
+            gate.claim("trial_00007", 5, publish_dir=pub, claim_id="nonowner")
+        ) is False
 
     active = [m for m in _messages(caplog, logging.WARNING) if "rearm DEFERRED as ACTIVE" in m]
     assert len(active) == 1, active

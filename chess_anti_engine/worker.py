@@ -1104,6 +1104,7 @@ class WorkerSession:
         # rewrites `self.leased_trial_id` in place), so a single global mark
         # would carry trial A's state into trial B.
         self._applied_dole_token: dict[str, str] = {}
+        self._paused_dole_heartbeat_at: dict[str, float] = {}
         self._live_dole_queue: list[str] | None = None
         self._pending_sf_refute: list[str] = []
         self._live_sf_refute_queue: list[str] | None = None
@@ -2016,7 +2017,7 @@ class WorkerSession:
             return True
         return bool(manifest.get("dole_fen_seeds"))
 
-    def _claim_seed_dole(self, manifest: dict) -> str:
+    def _claim_seed_dole(self, manifest: dict, *, ack_only: bool = False) -> str:
         """The opaque grant token this worker holds, or "" if it did not win.
 
         ⚑ A TOKEN, NOT A BOOL AND NOT A COUNTER. The server replays an
@@ -2048,6 +2049,8 @@ class WorkerSession:
         """
         endpoint = manifest.get("seed_dole_claim_endpoint")
         if not isinstance(endpoint, str) or not endpoint.strip():
+            if ack_only:
+                return ""
             # Legacy server: it grants on the GET, once. Synthesise an
             # increasing sequence so the applied-once comparison behaves
             # identically to the old "apply whenever the flag is true".
@@ -2077,6 +2080,13 @@ class WorkerSession:
         ack_token = str(getattr(self, "_applied_dole_token", {}).get(scope) or "")
         if ack_token:
             claim_payload["ack_grant_token"] = ack_token
+        if ack_only:
+            if not ack_token:
+                return ""
+            # A paused GET can race with an unpause before this POST. Keep the
+            # request renewal-only so that race can never issue a dose the
+            # paused worker is about to ignore.
+            claim_payload["ack_only"] = True
         try:
             r = self._requests.post(
                 self._server_url_for(endpoint.strip()),
@@ -2111,6 +2121,25 @@ class WorkerSession:
         # A server that grants without a token predates it; synthesise one so
         # the dose is acted on exactly once rather than silently dropped.
         return str(body.get("grant_token") or "") or uuid.uuid4().hex
+
+    def _heartbeat_seed_dole_while_paused(self, manifest: dict) -> None:
+        """Renew an already-installed generation without requesting a dose."""
+        scope = self._dole_scope(manifest)
+        if not str(getattr(self, "_applied_dole_token", {}).get(scope) or ""):
+            return
+        now = time.monotonic()
+        sent_at = getattr(self, "_paused_dole_heartbeat_at", None)
+        if not isinstance(sent_at, dict):
+            sent_at = {}
+            self._paused_dole_heartbeat_at = sent_at
+        interval = max(
+            1.0, min(60.0, float(getattr(self.args, "poll_seconds", 30.0) or 30.0)),
+        )
+        previous = sent_at.get(scope)
+        if previous is not None and now - float(previous) < interval:
+            return
+        sent_at[scope] = now
+        self._claim_seed_dole(manifest, ack_only=True)
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -3310,10 +3339,15 @@ class WorkerSession:
                 self.log.info("selfplay pause cleared by server")
                 self.pause_selfplay_active = False
                 self._hold_selfplay = False
+                getattr(self, "_paused_dole_heartbeat_at", {}).clear()
             return False
         if not self.pause_selfplay_active:
             self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
             self.pause_selfplay_active = True
+        # Pausing suppresses the normal dole-ingest path, but an already
+        # installed generation still needs its lease heartbeat. ACK-only keeps
+        # that owner live without allowing this paused poll to receive a dose.
+        self._heartbeat_seed_dole_while_paused(manifest)
   # While hold-on-pause is active the play_batch hold loop paces retries and
   # the tier-2 mtime check must keep running to catch the unpause manifest
   # promptly — a full poll_seconds sleep here would starve it and idle the

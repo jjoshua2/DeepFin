@@ -6,7 +6,14 @@ import asyncio
 import json
 from pathlib import Path
 
-from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME, _SeedDoleGate
+import pytest
+
+import chess_anti_engine.server.app as server_app
+from chess_anti_engine.server.app import (
+    SEED_DOLE_PERSIST_FAILED,
+    SEED_DOLE_REARM_FILENAME,
+    _SeedDoleGate,
+)
 from chess_anti_engine.tune.distributed_runtime import (
     _seed_dole_generation_for_iteration,
     _seed_dole_rearm_payload,
@@ -96,6 +103,71 @@ def test_active_rearm_survives_nonowner_poll_and_recovers_after_expiry(tmp_path:
     assert after_expiry != first
     assert not rearm.exists()
     assert asyncio.run(gate.claim_token("t", 7, claim_id="D", manifest_revision="r")) == ""
+
+
+def test_rearm_survives_replacement_persist_failure_and_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    state = tmp_path / "seed_dole_gate.json"
+    pub = tmp_path / "publish"
+    gate = _SeedDoleGate(state, lease_seconds=10, clock=clock)
+    first = asyncio.run(gate.claim_token("t", 7, claim_id="A", manifest_revision="r"))
+    clock.advance(11)
+    rearm = _write_rearm(pub, 7, first)
+
+    monkeypatch.setattr(gate, "_persist_winner", lambda: False)
+    failed = asyncio.run(
+        gate.claim_token("t", 7, publish_dir=pub, claim_id="B", manifest_revision="r")
+    )
+    assert failed == SEED_DOLE_PERSIST_FAILED
+    marker = rearm.with_suffix(rearm.suffix + ".consuming")
+    assert marker.exists(), "failed persistence discarded the durable rearm intent"
+    assert gate._winners["t"]["grant_token"] == first
+
+    restarted = _SeedDoleGate(state, lease_seconds=10, clock=clock)
+    replacement = asyncio.run(
+        restarted.claim_token(
+            "t", 7, publish_dir=pub, claim_id="C", manifest_revision="r",
+        )
+    )
+    assert replacement
+    assert replacement != first
+    assert not marker.exists()
+
+
+def test_interrupted_active_restore_recovers_consuming_marker_after_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    pub = tmp_path / "publish"
+    gate = _SeedDoleGate(tmp_path / "seed_dole_gate.json", lease_seconds=10, clock=clock)
+    first = asyncio.run(gate.claim_token("t", 7, claim_id="A", manifest_revision="r"))
+    rearm = _write_rearm(pub, 7, first)
+
+    def _fail_link(_source: object, _destination: object) -> None:
+        raise OSError(5, "simulated interrupted restore")
+
+    monkeypatch.setattr(server_app.os, "link", _fail_link)
+    assert (
+        asyncio.run(
+            gate.claim_token(
+                "t", 7, publish_dir=pub, claim_id="B", manifest_revision="r",
+            )
+        )
+        == ""
+    )
+    marker = rearm.with_suffix(rearm.suffix + ".consuming")
+    assert not rearm.exists()
+    assert marker.exists(), "interrupted restore lost the durable rearm marker"
+
+    clock.advance(11)
+    replacement = asyncio.run(
+        gate.claim_token("t", 7, publish_dir=pub, claim_id="C", manifest_revision="r")
+    )
+    assert replacement
+    assert replacement != first
+    assert not marker.exists()
 
 
 def test_ack_capable_uninstalled_replay_does_not_renew_forever(tmp_path: Path) -> None:
@@ -276,6 +348,55 @@ def test_ack_is_generation_bound_and_durable(tmp_path: Path) -> None:
     replacement = json.loads(sidecar.read_text(encoding="utf-8"))["t"]
     assert replacement["grant_token"] == second
     assert "acknowledged_at_unix" not in replacement
+
+
+def test_ack_only_renews_an_installed_generation_but_cannot_issue_one(
+    tmp_path: Path,
+) -> None:
+    clock = _Clock()
+    pub = tmp_path / "publish"
+    gate = _SeedDoleGate(
+        tmp_path / "seed_dole_gate.json", lease_seconds=10, clock=clock,
+    )
+    first = asyncio.run(
+        gate.claim_token(
+            "t", 7, claim_id="A", manifest_revision="r", ack_capable=True,
+        )
+    )
+    original_expiry = gate._winners["t"]["lease_expires_at_unix"]
+    clock.advance(11)
+    rearm = _write_rearm(pub, 7, first)
+
+    heartbeat = asyncio.run(
+        gate.claim_result(
+            "t",
+            7,
+            publish_dir=pub,
+            claim_id="A",
+            manifest_revision="r",
+            ack_grant_token=first,
+            ack_capable=True,
+            renew_only=True,
+        )
+    )
+    assert heartbeat == (first, False)
+    assert gate._winners["t"]["lease_expires_at_unix"] > original_expiry
+    assert rearm.exists(), "ACK-only renewal consumed the live generation's rearm"
+
+    empty_gate = _SeedDoleGate(tmp_path / "empty.json", lease_seconds=10, clock=clock)
+    refused = asyncio.run(
+        empty_gate.claim_result(
+            "t",
+            7,
+            claim_id="B",
+            manifest_revision="r",
+            ack_grant_token="not-a-generation",
+            ack_capable=True,
+            renew_only=True,
+        )
+    )
+    assert refused == ("", False)
+    assert empty_gate._winners == {}
 
 
 def test_worker_piggybacks_applied_generation_ack(tmp_path: Path) -> None:
