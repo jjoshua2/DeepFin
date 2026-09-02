@@ -94,3 +94,13 @@ def test_soda_forwards_uw_stats_collection() -> None:
     wrapper.set_collect_uw_stats(False)
     wrapper.set_collect_uw_stats(True)
     assert base.collect_calls == [False, True]
+
+
+def test_soda_forwards_adamw_foreach_recoveries_total() -> None:
+  # `Trainer.train_steps` differences this counter off `self.opt`, which in
+  # production may be the wrapper: a missing passthrough reads 0 forever.
+    param = torch.nn.Parameter(torch.zeros(2))
+    base = torch.optim.SGD([{"params": [param]}], lr=1.0)
+    base.adamw_foreach_recoveries_total = 3  # pyright: ignore[reportAttributeAccessIssue]
+    wrapper = SODAWeightDecayWrapper(base)
+    assert wrapper.adamw_foreach_recoveries_total == 3
