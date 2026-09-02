@@ -33,6 +33,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import chess
 import numpy as np
@@ -141,13 +142,20 @@ GAMES: dict[int, tuple[str | None, str, frozenset[int]]] = {
     # In the UNLISTED shard only: a complete game and a torn one.
     80: (None, GAME_D, frozenset()),
     94: (None, GAME_E, frozenset()),
+    # A worker killed before it closed its FIRST shard: represented only by
+    # an unlisted shard holding this complete game.
+    120: (None, GAME_D, frozenset()),
 }
 LISTED_GAMES = (10, 24, 38, 52, 66, 70, 84, 106)
 UNLISTED_COMPLETE_GAME = 80
 UNLISTED_TORN_GAME = 94
-#: Rows of game D given a cold label by the generator: a wedge retry, and a
-#: run block whose table was cleared mid-position.
+WORKER_UNLISTED_ONLY = 4
+UNLISTED_ONLY_GAME = 120
+#: The row of game D whose label the generator searched cold (a wedge retry):
+#: the ONLY per-row cold marker.
 COLD_RETRY_ROW = (52, 1)
+#: A later row of the same worker: its run block says the TT was not carried
+#: because the worker's wedge counter never resets -- NOT a cold label.
 TT_CLEARED_ROW = (52, 3)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -194,12 +202,12 @@ def opening_config(tmp_path: Path) -> OpeningConfig:
     )
 
 
-def true_boards(game_id: int, tmp_path: Path) -> list[chess.Board]:
+def true_boards(game_id: int, tmp_path: Path, *, worker: int = WORKER) -> list[chess.Board]:
     """Position ``i`` (before move ``i``) of the game, each with its live stack."""
     start_override, moves, _ = GAMES[game_id]
     if start_override is None:
         start = sample_starting_board(
-            rng=corpus.book_rng(seed=SEED, worker_id=WORKER, game_id=game_id),
+            rng=corpus.book_rng(seed=SEED, worker_id=worker, game_id=game_id),
             cfg=opening_config(tmp_path),
         ).board
     else:
@@ -248,6 +256,7 @@ def row_nonce(game_id: int, ply: int) -> int:
 
 def row_for(
     game_id: int, ply: int, board: chess.Board, played: str, *, config_sha: str,
+    worker: int = WORKER,
 ) -> dict[str, Any]:
     return {
         "schema": 1,
@@ -258,7 +267,7 @@ def row_for(
         },
         "fen": board.fen(),
         "dedup_key": corpus.dedup_key(board),
-        "worker_id": WORKER,
+        "worker_id": worker,
         "game_id": game_id,
         "ply": ply,
         "stm": "w" if board.turn else "b",
@@ -271,12 +280,12 @@ def row_for(
     }
 
 
-def game_rows(game_id: int, tmp_path: Path) -> list[dict[str, Any]]:
+def game_rows(game_id: int, tmp_path: Path, *, worker: int = WORKER) -> list[dict[str, Any]]:
     _, moves, dropped = GAMES[game_id]
-    boards = true_boards(game_id, tmp_path)
+    boards = true_boards(game_id, tmp_path, worker=worker)
     config_sha = corpus.stamp_sha256(requested_config(tmp_path))
     return [
-        row_for(game_id, ply, boards[ply], uci, config_sha=config_sha)
+        row_for(game_id, ply, boards[ply], uci, config_sha=config_sha, worker=worker)
         for ply, uci in enumerate(moves.split()) if ply not in dropped
     ]
 
@@ -304,6 +313,8 @@ def requested_config(tmp_path: Path) -> dict[str, Any]:
 SHARDS = ("w03-00000.jsonl.zst", "w03-00001.jsonl.zst")
 #: On disk, NOT in the progress inventory -- a paused run's in-flight shard.
 UNLISTED_SHARD = "w03-00002.jsonl.zst"
+UNLISTED_ONLY_SHARD = "w04-00000.jsonl.zst"
+UNLISTED_SHARDS = (UNLISTED_SHARD, UNLISTED_ONLY_SHARD)
 
 
 def build_corpus(tmp_path: Path) -> Path:
@@ -328,6 +339,12 @@ def build_corpus(tmp_path: Path) -> Path:
     write_shard(
         in_dir / UNLISTED_SHARD,
         [*game_rows(UNLISTED_COMPLETE_GAME, tmp_path), *game_rows(UNLISTED_TORN_GAME, tmp_path)[:4]],
+    )
+    # Worker 4 closed no shard: its only shard is unlisted and holds one
+    # complete game (the torn tail lost everything after it).
+    write_shard(
+        in_dir / UNLISTED_ONLY_SHARD,
+        game_rows(UNLISTED_ONLY_GAME, tmp_path, worker=WORKER_UNLISTED_ONLY),
     )
     with open(in_dir / "w03.progress.jsonl", "w", encoding="utf-8") as progress:
         for name, rows in shard_rows.items():
@@ -461,11 +478,19 @@ def row_map(out_dir: Path) -> dict[tuple[int, int], str]:
 # ── the run under test ───────────────────────────────────────────────────────
 
 
+def pinned(tmp_path: Path) -> Any:
+    """Production mode pins the PRODUCTION book by hash; the fixture's book
+    stands in for it through this one explicit seam.  Every test that runs
+    production mode on the fixture says so by using it."""
+    return mock.patch.object(repair, "PRODUCTION_BOOK_SHA256", repair.sha256_of(book_path(tmp_path)))
+
+
 def run_repair(tmp_path: Path, **extra: Any) -> dict[str, Any]:
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out"
     engine = ScriptedEngine(multipv=1)
-    manifest = repair.run(args_for(in_dir, out_dir, **extra), searcher_factory=fake_factory(engine))
+    with pinned(tmp_path):
+        manifest = repair.run(args_for(in_dir, out_dir, **extra), searcher_factory=fake_factory(engine))
     written = {
         (int(r["game_id"]), int(r["ply"])): r
         for shard in SHARDS
@@ -488,41 +513,95 @@ def run_repair(tmp_path: Path, **extra: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def repaired(tmp_path: Path) -> dict[str, Any]:
-    """The DEFAULT run: labels preserved, rows tagged."""
+    """The DEFAULT run -- PRODUCTION MODE: labels preserved, rows tagged."""
     return run_repair(tmp_path)
 
 
 @pytest.fixture
 def relabeled(tmp_path: Path) -> dict[str, Any]:
-    """The parked R2 path, switched on explicitly."""
-    return run_repair(tmp_path, relabel=repair.RELABEL_WINDOW)
+    """The parked R2 path, switched on explicitly (audit mode only)."""
+    return run_repair(tmp_path, audit_mode=True, relabel=repair.RELABEL_WINDOW)
 
 
-def test_a_partial_repair_is_not_a_corpus_unless_the_operator_says_so(tmp_path: Path) -> None:
-    """G1: a --shards slice writes no summary.json (the deriver refuses the
-    directory); with --write-summary-for-partial it is marked run_finished
-    false and names the slice."""
+def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not(tmp_path: Path) -> None:
+    """The completeness contract: a production-mode repair covers the whole
+    recorded inventory with nothing refused or skipped, so ``summary.json``
+    says ``run_finished: true`` (the deriver's ``corpus_complete``) and no
+    partial block; an ``--audit-mode --shards`` slice says ``false``, names
+    the slice, and both records say ``production: false``."""
     in_dir = build_corpus(tmp_path)
-    out_dir = tmp_path / "out_partial"
-    manifest = repair.run(
-        args_for(in_dir, out_dir, shards="0"), searcher_factory=fake_factory(ScriptedEngine()),
-    )
-    assert [s["path"] for s in manifest["shards"]] == [SHARDS[0]]
-    assert not (out_dir / corpus.SUMMARY_NAME).exists()
-    with pytest.raises(derive.CorpusIntegrityError):
-        derive.read_corpus_record(out_dir)
-    out_dir2 = tmp_path / "out_partial_marked"
-    repair.run(
-        args_for(in_dir, out_dir2, shards="0", write_summary_for_partial=True),
-        searcher_factory=fake_factory(ScriptedEngine()),
-    )
+    out_dir = tmp_path / "out_production"
+    with pinned(tmp_path):
+        manifest = repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(ScriptedEngine()))
+    assert manifest["production"] is True
+    summary = json.loads((out_dir / corpus.SUMMARY_NAME).read_text())
+    assert summary["run_finished"] is True
+    assert summary["production"] is True
+    assert "partial_repair" not in summary
+    record = derive.read_corpus_record(out_dir)
+    assert record.facts["run_finished"] is True
+    assert record.complete is True
+
+    out_dir2 = tmp_path / "out_slice"
+    with pinned(tmp_path):
+        sliced = repair.run(
+            args_for(in_dir, out_dir2, audit_mode=True, shards="0"),
+            searcher_factory=fake_factory(ScriptedEngine()),
+        )
+    assert sliced["production"] is False
+    assert [s["path"] for s in sliced["shards"]] == [SHARDS[0]]
     summary = json.loads((out_dir2 / corpus.SUMMARY_NAME).read_text())
     assert summary["run_finished"] is False
+    assert summary["production"] is False
     assert summary["partial_repair"] == {
         "workers": [WORKER], "shards": [0], "listed_input_shards": 2, "repaired_shards": 1,
     }
-    full = json.loads((tmp_path / "out_full" / corpus.SUMMARY_NAME).read_text()) if (tmp_path / "out_full").exists() else None
-    assert full is None
+
+
+@pytest.mark.parametrize(
+    ("flag", "extra"),
+    [
+        ("--shards", {"shards": "0"}),
+        ("--workers", {"workers": WORKER}),
+        ("--book", {"book": "BOOK"}),
+        ("--relabel", {"relabel": repair.RELABEL_WINDOW}),
+        ("--report-json", {"report_json": "REPORT"}),
+        ("--book-sha256", {"book_sha256": "0" * 64}),
+    ],
+)
+def test_production_mode_refuses_each_optional_flag_by_name(
+    tmp_path: Path, flag: str, extra: dict[str, Any],
+) -> None:
+    """One refusal per optional flag, before anything is read or written; the
+    same flag is accepted under --audit-mode (the other tests run them)."""
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    extra = {
+        k: {"BOOK": str(book_path(tmp_path)), "REPORT": str(tmp_path / "report.json")}.get(v, v)
+        for k, v in extra.items()
+    }
+    with pinned(tmp_path), pytest.raises(repair.RepairError, match=f"{flag}.*--audit-mode"):
+        repair.run(args_for(in_dir, out_dir, **extra), searcher_factory=fake_factory(ScriptedEngine()))
+    assert not out_dir.exists()
+
+
+def test_production_mode_requires_the_pinned_production_book(tmp_path: Path) -> None:
+    """The fixture's book is not the production book: unpatched, production
+    mode refuses it naming the pin; a --book-sha256 EQUAL to the pin is not
+    an override and is accepted (the book still has to hash to it)."""
+    in_dir = build_corpus(tmp_path)
+    assert repair.sha256_of(book_path(tmp_path)) != repair.PRODUCTION_BOOK_SHA256
+    with pytest.raises(repair.RepairError, match="production_pin.*" + repair.PRODUCTION_BOOK_SHA256):
+        repair.run(args_for(in_dir, tmp_path / "out"), searcher_factory=fake_factory(ScriptedEngine()))
+    assert not (tmp_path / "out").exists()
+    with pinned(tmp_path):
+        manifest = repair.run(
+            args_for(in_dir, tmp_path / "out", book_sha256=repair.PRODUCTION_BOOK_SHA256),
+            searcher_factory=fake_factory(ScriptedEngine()),
+        )
+    assert manifest["book"]["expected_from"] == "--book-sha256"
+    assert manifest["book"]["matches_production_pin"] is True
+    assert manifest["book"]["production_pin"]["historical_hash"] is None
 
 
 def banked_rows() -> list[tuple[int, int]]:
@@ -603,10 +682,14 @@ def test_labels_are_copied_byte_for_byte_and_rows_are_tagged_and_keyed(repaired:
             elif name != "schema":
                 assert json.dumps(row[name], sort_keys=True) == json.dumps(value, sort_keys=True), (label, name)
         assert set(row) - set(source) == added, label
-        if key in (COLD_RETRY_ROW, TT_CLEARED_ROW):
+        if key == COLD_RETRY_ROW:
             assert row["label_regime"] == repair.LABEL_REGIME_COLD_BLIND, label
         else:
+            # TT_CLEARED_ROW included: the run block's per-worker flag is
+            # carried verbatim and is NOT read as a per-row cold marker.
             assert row["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND, label
+        if key == TT_CLEARED_ROW:
+            assert row["run"][corpus.KEY_TT_CARRIED] is False, label
         assert row["repair"]["label"] == repair.LABEL_ORIGINAL, label
         live = repaired["truth"][key[0]][key[1]]
         assert row["input_key"] == corpus.row_key(live), label
@@ -628,10 +711,10 @@ def test_labels_are_copied_byte_for_byte_and_rows_are_tagged_and_keyed(repaired:
     assert manifest["tags"]["rep_in_frames8"] == tag_hits["rep_in_frames8"]
     assert manifest["relabel"]["mode"] == repair.RELABEL_OFF
     assert manifest["classes"].get(repair.CLASS_RELABELED, 0) == 0
-    assert manifest["label_regime"] == repair.LABEL_REGIME_CARRIED_BLIND
+    assert "label_regime" not in manifest  # the counts are the record
     assert manifest["label_regimes"] == {
-        repair.LABEL_REGIME_CARRIED_BLIND: manifest["rows_out"] - 2,
-        repair.LABEL_REGIME_COLD_BLIND: 2,
+        repair.LABEL_REGIME_CARRIED_BLIND: manifest["rows_out"] - 1,
+        repair.LABEL_REGIME_COLD_BLIND: 1,
     }
     assert manifest["engine"] is None
     assert manifest[repair.KEY_HISTORY_REP_FIX] is True
@@ -777,7 +860,7 @@ def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(relabeled
         else:
             assert row["repair"]["label"] == repair.LABEL_ORIGINAL
             assert row["label_regime"] == (
-                repair.LABEL_REGIME_COLD_BLIND if key in (COLD_RETRY_ROW, TT_CLEARED_ROW)
+                repair.LABEL_REGIME_COLD_BLIND if key == COLD_RETRY_ROW
                 else repair.LABEL_REGIME_CARRIED_BLIND
             )
             assert json.dumps(row["phases"], sort_keys=True) == json.dumps(
@@ -796,17 +879,20 @@ def test_only_flagged_rows_are_relabeled_and_each_under_its_own_window(relabeled
 
 def test_the_relabel_modes_select_by_the_matching_tag(tmp_path: Path) -> None:
     in_dir = build_corpus(tmp_path)
-    off = repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
+    with pinned(tmp_path):
+        off = repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
     tags = off["tags"]
     assert 0 < tags["rep_in_segment"] <= tags["rep_in_banked_window"]
     assert repair.CLASS_RELABELED not in off["classes"]
-    window = repair.run(
-        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="banked_window"),
-    )
+    with pinned(tmp_path):
+        window = repair.run(args_for(
+            in_dir, None, audit_only=True, bench_encode_rows=0, audit_mode=True, relabel="banked_window",
+        ))
     assert window["classes"][repair.CLASS_RELABELED] == tags["rep_in_banked_window"]
-    segment = repair.run(
-        args_for(in_dir, None, audit_only=True, bench_encode_rows=0, relabel="segment"),
-    )
+    with pinned(tmp_path):
+        segment = repair.run(args_for(
+            in_dir, None, audit_only=True, bench_encode_rows=0, audit_mode=True, relabel="segment",
+        ))
     assert segment["classes"][repair.CLASS_RELABELED] == tags["rep_in_segment"]
 
 
@@ -842,19 +928,28 @@ def test_the_provenance_manifest_carries_the_input_sha_and_the_counts(repaired: 
     book = Path(requested_config(repaired["tmp_path"])["book"])
     assert manifest["book"]["sha256"] == repair.sha256_of(book)
     assert manifest["book"]["size"] == book.stat().st_size
-    # The unlisted shard was skipped BY NAME, counted, and reported.
-    assert manifest["input"]["unlisted_shards_skipped"] == [UNLISTED_SHARD]
+    assert manifest["book"]["expected_from"] == "production_pin"
+    assert manifest["book"]["production_pin"]["sha256"] == repair.sha256_of(book)  # the seam
+    assert manifest["production"] is True
+    # Both unlisted shards were skipped BY NAME, counted, and reported --
+    # worker 4's too, although no worker process ran for it.
+    assert manifest["input"]["unlisted_shards_skipped"] == list(UNLISTED_SHARDS)
+    assert manifest["input"]["workers"] == [WORKER]
     assert not (repaired["out_dir"] / UNLISTED_SHARD).exists()
-    (entry,) = manifest["input"]["unlisted_shards"]
-    assert entry == {
-        "path": UNLISTED_SHARD, "decodable_rows": len(GAME_D.split()) + 4,
-        "decodable_games": 2, "damage": None, "salvaged": False,
-    }
-    assert manifest["input"]["salvage_unlisted_complete_games"] is False
+    assert not (repaired["out_dir"] / UNLISTED_ONLY_SHARD).exists()
+    assert manifest["input"]["unlisted_shards"] == [
+        {
+            "path": UNLISTED_SHARD, "decodable_rows": len(GAME_D.split()) + 4,
+            "decodable_games": 2, "damage": None,
+        },
+        {
+            "path": UNLISTED_ONLY_SHARD, "decodable_rows": len(GAME_D.split()),
+            "decodable_games": 1, "damage": None,
+        },
+    ]
     # The inventory's claim per shard is recorded beside what was read.
     for shard in manifest["shards"]:
         assert shard["rows_claimed"] == shard["rows_in"]
-        assert shard["salvaged_from_unlisted"] is False
     assert {s["path"] for s in manifest["shards"]} == set(SHARDS)
     # The input shards are untouched.
     for name in (*SHARDS, UNLISTED_SHARD):
@@ -864,7 +959,8 @@ def test_the_provenance_manifest_carries_the_input_sha_and_the_counts(repaired: 
 def test_audit_only_writes_nothing_and_runs_no_engine(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     in_dir = build_corpus(tmp_path)
     before = sorted(p.name for p in in_dir.iterdir())
-    assert repair.main(["--in", str(in_dir), "--audit-only", "--bench-encode-rows", "5"]) == 0
+    with pinned(tmp_path):
+        assert repair.main(["--in", str(in_dir), "--audit-only", "--bench-encode-rows", "5"]) == 0
     assert sorted(p.name for p in in_dir.iterdir()) == before
     assert not (tmp_path / "out").exists()
     out = capsys.readouterr().out
@@ -878,7 +974,7 @@ def test_a_different_engine_build_is_refused_before_anything_is_written(tmp_path
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out"
     with pytest.raises(repair.RepairError, match="hashes to"):
-        repair.run(args_for(in_dir, out_dir, engine="/bin/true", relabel="banked_window"))
+        repair.run(args_for(in_dir, out_dir, audit_mode=True, engine="/bin/true", relabel="banked_window"))
     assert not out_dir.exists() or not any(out_dir.iterdir())
 
 
@@ -889,7 +985,7 @@ def test_a_manifest_without_an_engine_sha_cannot_relabel(tmp_path: Path) -> None
     del manifest["engine"]["sha256"]
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(repair.RepairError, match="no engine sha256"):
-        repair.run(args_for(in_dir, tmp_path / "out", engine="/bin/true", relabel="banked_window"))
+        repair.run(args_for(in_dir, tmp_path / "out", audit_mode=True, engine="/bin/true", relabel="banked_window"))
 
 
 def test_a_manifest_whose_stamp_does_not_hash_its_config_is_refused(tmp_path: Path) -> None:
@@ -904,8 +1000,10 @@ def test_a_manifest_whose_stamp_does_not_hash_its_config_is_refused(tmp_path: Pa
 
 def test_a_different_book_is_refused_by_its_hash(tmp_path: Path) -> None:
     in_dir = build_corpus(tmp_path)
-    with pytest.raises(repair.RepairError, match="--book-sha256"):
-        repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0, book_sha256="0" * 64))
+    with pytest.raises(repair.RepairError, match=r"hashes to .* not the expected 0{64} \(--book-sha256"):
+        repair.run(args_for(
+            in_dir, None, audit_only=True, bench_encode_rows=0, audit_mode=True, book_sha256="0" * 64,
+        ))
 
 
 def test_a_relative_book_path_resolves_against_the_repo_root_or_says_so(tmp_path: Path) -> None:
@@ -928,7 +1026,7 @@ def test_a_populated_output_directory_is_refused(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     (out_dir / "stale.txt").write_text("x")
-    with pytest.raises(FileExistsError):
+    with pinned(tmp_path), pytest.raises(FileExistsError):
         repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(ScriptedEngine()))
 
 
@@ -940,13 +1038,20 @@ def test_the_cli_process_hashes_input_keys_in_the_derivers_regime(tmp_path: Path
     in_dir = build_corpus(tmp_path)
     out_dir = tmp_path / "out_cli"
     env = {**os.environ, "PYTHONPATH": ".", "CUDA_VISIBLE_DEVICES": ""}
+    # --audit-mode only because the fixture's book is not the production
+    # pin (the CLI has no seam for that, by design); the regime handling
+    # under test is the same in both modes.
     proc = subprocess.run(
-        [sys.executable, "scripts/repair_corpus_history.py", "--in", str(in_dir), "--out", str(out_dir)],
+        [
+            sys.executable, "scripts/repair_corpus_history.py", "--in", str(in_dir), "--out", str(out_dir),
+            "--audit-mode", "--book-sha256", repair.sha256_of(book_path(tmp_path)),
+        ],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=600, check=False,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     manifest = json.loads((out_dir / repair.REPAIR_MANIFEST_NAME).read_text())
     assert manifest[corpus.KEY_HISTORY_REP_FIX] is True
+    assert manifest["production"] is False
     rows = [r for shard in SHARDS for r in read_rows(out_dir / shard)]
     assert all(r["run"][corpus.KEY_HISTORY_REP_FIX] is True for r in rows)
     assert all(r["schema"] == corpus.ROW_SCHEMA == 3 for r in rows)
@@ -1037,31 +1142,56 @@ def test_a_listed_shard_whose_rows_disagree_with_the_inventory_is_refused(tmp_pa
     rows = read_rows(in_dir / SHARDS[1])
     (in_dir / SHARDS[1]).unlink()
     write_shard(in_dir / SHARDS[1], rows[:-1])  # truncated at a line boundary
-    with pytest.raises(repair.RepairError, match="claims"):
+    with pinned(tmp_path), pytest.raises(repair.RepairError, match="claims"):
         repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
 
 
-def test_unlisted_shards_are_salvaged_only_on_request_and_minus_the_torn_game(tmp_path: Path) -> None:
-    result = run_repair(tmp_path, salvage_unlisted_complete_games=True)
-    manifest = result["manifest"]
-    assert manifest["input"]["salvage_unlisted_complete_games"] is True
-    assert manifest["input"]["unlisted_shards_skipped"] == []
-    (entry,) = manifest["input"]["unlisted_shards"]
-    assert entry["salvaged"] is True
-    assert entry["torn_game_dropped"] == UNLISTED_TORN_GAME
-    assert entry["torn_game_rows_dropped"] == 4
-    salvaged = read_rows(result["out_dir"] / UNLISTED_SHARD)
-    assert {r["game_id"] for r in salvaged} == {UNLISTED_COMPLETE_GAME}
-    assert len(salvaged) == len(GAME_D.split())
-    truth = true_boards(UNLISTED_COMPLETE_GAME, tmp_path)
-    for row in salvaged:
-        live = truth[row["ply"]]
-        assert np.array_equal(derived_planes(derive.board_from_row(row)), live_planes(live))
-        assert row["input_key"] == corpus.row_key(live)
-    shard = next(s for s in manifest["shards"] if s["path"] == UNLISTED_SHARD)
-    assert shard["salvaged_from_unlisted"] is True
-    assert shard["rows_claimed"] is None
-    assert shard["torn_game_dropped"] == UNLISTED_TORN_GAME
+def test_unlisted_shards_are_recorded_and_never_repaired_in_audit_mode_either(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    with pinned(tmp_path):
+        manifest = repair.run(
+            args_for(in_dir, out_dir, audit_mode=True, workers=WORKER),
+            searcher_factory=fake_factory(ScriptedEngine()),
+        )
+    assert manifest["production"] is False
+    assert manifest["input"]["workers"] == [WORKER]
+    assert manifest["input"]["unlisted_shards_skipped"] == list(UNLISTED_SHARDS)
+    assert [e["path"] for e in manifest["input"]["unlisted_shards"]] == list(UNLISTED_SHARDS)
+    assert sorted(p.name for p in out_dir.glob("*.jsonl.zst")) == sorted(SHARDS)
+
+
+def test_a_listed_shard_with_an_appended_row_is_refused(tmp_path: Path) -> None:
+    """The inventory's claim is held as an EQUALITY: a shard that grew past
+    its progress record is as unclaimed as one that shrank."""
+    in_dir = build_corpus(tmp_path)
+    rows = read_rows(in_dir / SHARDS[1])
+    (in_dir / SHARDS[1]).unlink()
+    write_shard(in_dir / SHARDS[1], [*rows, {**rows[-1], "ply": rows[-1]["ply"] + 1}])
+    with pinned(tmp_path), pytest.raises(repair.RepairError, match="claims"):
+        repair.run(args_for(in_dir, None, audit_only=True, bench_encode_rows=0))
+
+
+def test_a_report_path_inside_a_corpus_or_an_existing_file_is_refused(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    with pytest.raises(repair.RepairError, match="inside the output"):
+        repair.run(args_for(in_dir, out_dir, audit_mode=True, report_json=str(out_dir / corpus.SUMMARY_NAME)))
+    assert not out_dir.exists()  # refused before anything was written
+    with pytest.raises(repair.RepairError, match="inside the input"):
+        repair.run(args_for(in_dir, out_dir, audit_mode=True, report_json=str(in_dir / corpus.MANIFEST_NAME)))
+    taken = tmp_path / "report.json"
+    taken.write_text("{}")
+    with pytest.raises(repair.RepairError, match="already exists"):
+        repair.run(args_for(in_dir, out_dir, audit_mode=True, report_json=str(taken)))
+    assert taken.read_text() == "{}"
+    report = tmp_path / "fresh_report.json"
+    with pinned(tmp_path):
+        manifest = repair.run(
+            args_for(in_dir, out_dir, audit_mode=True, report_json=str(report)),
+            searcher_factory=fake_factory(ScriptedEngine()),
+        )
+    assert json.loads(report.read_text())["rows_out"] == manifest["rows_out"]
 
 
 @pytest.mark.parametrize(
