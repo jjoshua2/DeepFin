@@ -537,6 +537,10 @@ def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not
     summary = json.loads((out_dir / corpus.SUMMARY_NAME).read_text())
     assert summary["run_finished"] is True
     assert summary["production"] is True
+    assert summary["staircase_gate"] == {
+        "policy": corpus.STAIRCASE_POLICY_FIXED,
+        "adaptive": False,
+    }
     assert "partial_repair" not in summary
     record = derive.read_corpus_record(out_dir)
     assert record.facts["run_finished"] is True
@@ -1320,6 +1324,55 @@ def test_a_window_that_cannot_reproduce_its_row_is_refused_at_write_time() -> No
             {"fen": board.fen(), "game_id": 0, "ply": 1, "run": {corpus.KEY_TT_CARRIED: True}},
             bad, phases=None,
         )
+
+
+def test_relabeling_replaces_the_gate_beside_the_replacement_phases() -> None:
+    corpus.apply_history_rep_fix()
+    board = chess.Board()
+    board.push_uci("e2e4")
+    history = corpus.history_for(board)
+    repaired = repair.RowRepair(
+        row_class=repair.CLASS_REPAIRED,
+        board=board,
+        history=history,
+        history_kind=repair.HISTORY_CHAINED,
+        tags=repair.RepeatTags(),
+    )
+    old_gate = {
+        **corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_G10),
+        "margin_cp": 50.0,
+        "extended": False,
+        "reason": "margin_above_threshold",
+    }
+    new_gate = {
+        **corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_G10),
+        "margin_cp": 5.0,
+        "extended": True,
+        "reason": "margin_at_or_below_threshold",
+    }
+    row = {
+        "fen": board.fen(),
+        "game_id": 0,
+        "ply": 1,
+        "run": {corpus.KEY_TT_CARRIED: True},
+        "staircase_gate": old_gate,
+    }
+
+    adaptive = repair.repaired_row(
+        row,
+        repaired,
+        phases=[],
+        staircase_gate=new_gate,
+    )
+    fixed = repair.repaired_row(
+        row,
+        repaired,
+        phases=[],
+        staircase_gate=None,
+    )
+
+    assert adaptive["staircase_gate"] == new_gate
+    assert "staircase_gate" not in fixed
 
 
 def test_could_have_double_stepped_reads_the_position_not_the_move() -> None:

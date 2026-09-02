@@ -311,13 +311,18 @@ class InlineExecutor:
 
 
 def searcher_for(
-    engine: ScriptedEngine, *, staircase: str = corpus.DEFAULT_STAIRCASE, **attrs: Any,
+    engine: ScriptedEngine,
+    *,
+    staircase: str = corpus.DEFAULT_STAIRCASE,
+    staircase_policy: str = corpus.STAIRCASE_POLICY_FIXED,
+    **attrs: Any,
 ) -> corpus.StaircaseSearcher:
     return corpus.StaircaseSearcher(
         engine=uci_double(engine, **attrs),
         staircase=corpus.parse_staircase(staircase),
         cp_slope=gen.NNUE_CP_SLOPE,
         cp_draw_width=gen.NNUE_CP_DRAW_WIDTH,
+        staircase_policy=staircase_policy,
     )
 
 
@@ -336,6 +341,7 @@ def worker_spec(tmp_path: Path, **overrides: Any) -> corpus.WorkerSpec:
         "sf_search_timeout_s": 4.0,
         "syzygy_path": "/nonexistent/syzygy",
         "staircase": corpus.DEFAULT_STAIRCASE,
+        "staircase_policy": corpus.STAIRCASE_POLICY_FIXED,
         "seed": 7,
         "dedup_cache_max": corpus.DEFAULT_DEDUP_CACHE_MAX,
         "temp_plies": 20,
@@ -376,7 +382,11 @@ def play(
     fen: str, tmp_path: Path, *, engine: ScriptedEngine, **spec_overrides: Any,
 ) -> tuple[corpus.GameOutcome, corpus.StaircaseSearcher, corpus.DedupStats]:
     spec = worker_spec(tmp_path, **spec_overrides)
-    searcher = searcher_for(engine, staircase=spec.staircase)
+    searcher = searcher_for(
+        engine,
+        staircase=spec.staircase,
+        staircase_policy=spec.staircase_policy,
+    )
     dedup = corpus.DedupStats()
     outcome = corpus.play_game(
         spec=spec, searcher=searcher,
@@ -400,6 +410,32 @@ def test_the_default_staircase_is_the_three_rung_scout() -> None:
 def test_a_two_rung_staircase_parses() -> None:
     phases = corpus.parse_staircase("all:9,16:11")
     assert [(p.width, p.depth) for p in phases] == [(None, 9), (16, 11)]
+
+
+def test_g10_is_a_named_exact_shape_not_a_generic_threshold_knob() -> None:
+    phases = corpus.parse_staircase(corpus.G10_STAIRCASE)
+    assert corpus.validate_staircase_policy(
+        corpus.STAIRCASE_POLICY_G10,
+        phases,
+    ) == corpus.STAIRCASE_POLICY_G10
+    assert corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_G10) == {
+        "policy": "g10",
+        "adaptive": True,
+        "decision_after_phase": 1,
+        "decision_depth": 10,
+        "metric": "effective_cp_rank1_minus_rank2",
+        "extend_when": "margin_cp<=threshold_cp",
+        "threshold_cp": 10.0,
+        "no_margin_action": "stop",
+        "extended_phase": 2,
+        "extended_width": 4,
+        "extended_depth": 12,
+    }
+    with pytest.raises(ValueError, match="validated only"):
+        corpus.validate_staircase_policy(
+            corpus.STAIRCASE_POLICY_G10,
+            corpus.parse_staircase(corpus.DEFAULT_STAIRCASE),
+        )
 
 
 @pytest.mark.parametrize(
@@ -666,6 +702,109 @@ def test_every_rung_runs_and_narrows_through_searchmoves() -> None:
     assert search.phases[0].searchmoves is None
     assert search.phases[1].searchmoves is not None
     assert len(search.phases[1].searchmoves) == 16
+
+
+def test_g10_stops_after_d10_when_the_top_two_margin_is_wide() -> None:
+    engine = ScriptedEngine(preferred=("e2e4",))
+    searcher = searcher_for(
+        engine,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    )
+
+    search = searcher.search_position(chess.Board())
+
+    assert [phase.depth_requested for phase in search.phases] == [9, 10]
+    assert len(engine.go_lines) == 2
+    assert engine.go_lines[0] == "go depth 9"
+    assert engine.go_lines[1].startswith("go depth 10 searchmoves ")
+    assert all("depth 12" not in line for line in engine.go_lines)
+    assert search.staircase_gate is not None
+    assert search.staircase_gate.extended is False
+    assert search.staircase_gate.margin_cp is not None
+    assert search.staircase_gate.margin_cp > corpus.G10_MARGIN_CP
+    assert search.staircase_gate.reason == "margin_above_threshold"
+    assert searcher.stats.staircase_gate_stopped == 1
+
+
+def test_g10_extends_at_or_below_the_frozen_margin() -> None:
+    class BoundaryEngine(ScriptedEngine):
+        def score_of(self, uci: str, *, depth: int) -> int:
+            del depth
+            return {"e2e4": 100, "d2d4": 90}.get(uci, -1_000)
+
+    # The d10 top two are exactly 10 cp apart: the inclusive boundary extends.
+    engine = BoundaryEngine()
+    searcher = searcher_for(
+        engine,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    )
+
+    search = searcher.search_position(chess.Board())
+
+    assert [phase.depth_requested for phase in search.phases] == [9, 10, 12]
+    assert engine.go_lines[2].startswith("go depth 12 searchmoves ")
+    assert search.staircase_gate is not None
+    assert search.staircase_gate.extended is True
+    assert search.staircase_gate.margin_cp == corpus.G10_MARGIN_CP
+    assert search.staircase_gate.reason == "margin_at_or_below_threshold"
+    assert searcher.stats.staircase_gate_extended == 1
+
+
+def test_g10_stops_when_there_is_no_second_move_to_compare() -> None:
+    board = chess.Board("7k/8/6K1/8/8/8/8/7R b - - 0 1")
+    assert [move.uci() for move in board.legal_moves] == ["h8g8"]
+    engine = ScriptedEngine()
+    searcher = searcher_for(
+        engine,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    )
+
+    search = searcher.search_position(board)
+
+    assert len(search.phases) == 2
+    assert search.staircase_gate is not None
+    assert search.staircase_gate.margin_cp is None
+    assert search.staircase_gate.extended is False
+    assert search.staircase_gate.reason == "fewer_than_two_moves"
+    assert search.staircase_gate.decision_depth_observed == 10
+    assert searcher.stats.staircase_gate_forced_stops == 1
+
+
+def test_g10_never_calls_an_earlier_complete_block_d10() -> None:
+    engine = ScriptedEngine(
+        preferred=("e2e4", "d2d4"),
+        final_depth_offset=2,
+    )
+    searcher = searcher_for(
+        engine,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    )
+
+    search = searcher.search_position(chess.Board())
+
+    assert [phase.depth_requested for phase in search.phases] == [9, 10]
+    assert max(block.depth for block in search.phases[-1].parse.blocks) == 8
+    assert search.staircase_gate is not None
+    assert search.staircase_gate.margin_cp is None
+    assert search.staircase_gate.extended is False
+    assert search.staircase_gate.reason == "decision_block_incomplete"
+    assert search.staircase_gate.decision_depth_observed == 8
+    assert searcher.stats.staircase_gate_forced_stops == 1
+    assert len(engine.go_lines) == 2
+
+
+def test_the_g10_shape_remains_fixed_without_the_named_policy() -> None:
+    engine = ScriptedEngine(preferred=("e2e4",))
+    searcher = searcher_for(engine, staircase=corpus.G10_STAIRCASE)
+
+    search = searcher.search_position(chess.Board())
+
+    assert len(search.phases) == 3
+    assert search.staircase_gate is None
 
 
 def test_a_narrow_position_clamps_every_rung_to_its_legal_moves() -> None:
@@ -1972,6 +2111,31 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     assert json.loads(json.dumps(row, sort_keys=True)) == row
 
 
+def test_a_g10_row_banks_the_decision_that_controls_its_phase_count(
+    tmp_path: Path,
+) -> None:
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    outcome, searcher, _ = play(
+        MATE_GAME_FEN,
+        tmp_path,
+        engine=engine,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    )
+
+    assert outcome.rows
+    for row in outcome.rows:
+        gate = row["staircase_gate"]
+        assert gate["policy"] == corpus.STAIRCASE_POLICY_G10
+        assert gate["threshold_cp"] == corpus.G10_MARGIN_CP
+        assert gate["metric"] == "effective_cp_rank1_minus_rank2"
+        assert gate["extended"] is False
+        assert gate["margin_cp"] > gate["threshold_cp"]
+        assert gate["reason"] == "margin_above_threshold"
+        assert len(row["phases"]) == 2
+    assert searcher.stats.staircase_gate_evaluations == len(outcome.rows)
+
+
 # ── the banked move window ───────────────────────────────────────────────────
 
 
@@ -2379,6 +2543,27 @@ def test_the_config_stamp_hash_moves_with_every_knob() -> None:
         corpus.config_stamp(changed, sf_binary="/bin/sf"),
     )
     assert corpus.stamp_sha256(stamp) == corpus.stamp_sha256(dict(stamp))
+    g10 = parser.parse_args([
+        "--out-dir", "/tmp/x", "--games", "1",
+        "--staircase", corpus.G10_STAIRCASE,
+        "--staircase-policy", corpus.STAIRCASE_POLICY_G10,
+    ])
+    g10_stamp = corpus.config_stamp(g10, sf_binary="/bin/sf")
+    assert g10_stamp["staircase_policy"] == corpus.STAIRCASE_POLICY_G10
+    assert corpus.stamp_sha256(stamp) != corpus.stamp_sha256(g10_stamp)
+
+
+def test_g10_with_the_wrong_staircase_is_refused_before_output_exists(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "run"
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(out), "--games", "1",
+        "--staircase-policy", corpus.STAIRCASE_POLICY_G10,
+    ])
+    with pytest.raises(ValueError, match="validated only"):
+        corpus.run(args)
+    assert not out.exists()
 
 
 def test_the_summary_merges_workers_without_losing_a_counter() -> None:
@@ -2408,6 +2593,10 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "search": {
                 "positions_searched": 8, "searches": 24, "search_s": 4.0,
                 "anomalies": {"re_emissions": 1, "duplicate_iteration_flushes": 2},
+                "staircase_gate": {
+                    "evaluations": 0, "extended": 0, "stopped": 0,
+                    "forced_stops": 0,
+                },
                 "nodes_by_phase": {
                     "0": {"n": 8, "total": 80, "min": 5, "max": 15,
                           "median_est_reservoir": 9.5,
@@ -2454,6 +2643,10 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "search": {
                 "positions_searched": 4, "searches": 12, "search_s": 2.0,
                 "anomalies": {"re_emissions": 0, "bound_lines": 3},
+                "staircase_gate": {
+                    "evaluations": 0, "extended": 0, "stopped": 0,
+                    "forced_stops": 0,
+                },
                 "nodes_by_phase": {
                     "0": {"n": 4, "total": 20, "min": 2, "max": 9,
                           "median_est_reservoir": 4.0,
@@ -2568,6 +2761,26 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
         "re_emissions": 1, "bound_lines": 3, "duplicate_iteration_flushes": 2,
     }
     assert summary["search"]["s_per_position"] == pytest.approx(0.5)
+    assert summary["search"]["staircase_gate"] == {
+        "evaluations": 0, "extended": 0, "stopped": 0, "forced_stops": 0,
+    }
+    assert "staircase policy=fixed" in corpus.format_summary(summary)
+    adaptive = {
+        **summary,
+        "staircase_gate": corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_G10),
+        "search": {
+            **summary["search"],
+            "staircase_gate": {
+                "evaluations": 12,
+                "extended": 7,
+                "stopped": 5,
+                "forced_stops": 1,
+            },
+        },
+    }
+    assert "staircase policy=g10 extended=7/12 stopped=5 forced_stops=1" in (
+        corpus.format_summary(adaptive)
+    )
     nodes = summary["search"]["nodes_by_phase"]["0"]
     assert (nodes["n"], nodes["total"], nodes["min"], nodes["max"]) == (12, 100, 2, 15)
     assert nodes["log2_buckets"] == {"3": 11, "4": 1}
@@ -2636,6 +2849,104 @@ def test_a_worker_writes_shards_and_reports_its_own_realized_config(
     ]
     assert len(rows) == 2
     assert [row["result"] for row in rows] == [-1.0, 1.0]
+
+
+def test_the_g10_policy_reaches_the_worker_and_the_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(
+        corpus,
+        "StockfishUCI",
+        lambda *_args, **_kwargs: uci_double(engine),
+    )
+    monkeypatch.setattr(
+        corpus,
+        "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(
+        out_dir,
+        staircase=corpus.G10_STAIRCASE,
+        staircase_policy=corpus.STAIRCASE_POLICY_G10,
+    ))
+
+    assert result["failed"] is None
+    assert result["realized"]["staircase"] == corpus.G10_STAIRCASE
+    assert result["realized"]["staircase_policy"] == corpus.STAIRCASE_POLICY_G10
+    assert result["realized"]["staircase_gate"]["threshold_cp"] == 10.0
+    assert result["search"]["staircase_gate"] == {
+        "evaluations": 2,
+        "extended": 0,
+        "stopped": 2,
+        "forced_stops": 0,
+    }
+    rows = [
+        row for shard in result["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+    assert len(rows) == 2
+    assert all(row["staircase_gate"]["extended"] is False for row in rows)
+    assert all(len(row["phases"]) == 2 for row in rows)
+
+
+def test_the_cli_run_banks_and_reports_the_g10_policy_end_to_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(
+        corpus,
+        "StockfishUCI",
+        lambda *_args, **_kwargs: uci_double(engine),
+    )
+    monkeypatch.setattr(
+        corpus,
+        "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    monkeypatch.setattr(
+        corpus,
+        "refuse_unopenable_syzygy",
+        lambda _path: ("scripted",),
+    )
+    monkeypatch.setattr(
+        corpus.audit_targets,
+        "engine_identity",
+        lambda _path: "ScriptedEngine",
+    )
+    out_dir = tmp_path / "run"
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(out_dir),
+        "--games", "1",
+        "--workers", "1",
+        "--stockfish", "/bin/true",
+        "--syzygy-path", "/nonexistent",
+        "--staircase", corpus.G10_STAIRCASE,
+        "--staircase-policy", corpus.STAIRCASE_POLICY_G10,
+        "--max-plies", "2",
+        "--nice", "0",
+    ])
+
+    summary = corpus.run(args)
+    manifest = json.loads(
+        (out_dir / corpus.MANIFEST_NAME).read_text(encoding="utf-8"),
+    )
+    rows = [
+        row for shard in summary["shards"] for row in read_shard(Path(shard["path"]))
+    ]
+
+    assert summary["config_requested"]["staircase_policy"] == "g10"
+    assert summary["staircase_gate"] == corpus.staircase_gate_stamp("g10")
+    assert manifest["staircase_gate"] == summary["staircase_gate"]
+    assert summary["config_realized_by_worker"]["0"]["staircase_policy"] == "g10"
+    assert summary["search"]["staircase_gate"]["evaluations"] == len(rows) == 2
+    assert all(row["staircase_gate"]["policy"] == "g10" for row in rows)
+    assert all(row["staircase_gate"]["decision_depth_observed"] == 10 for row in rows)
+    assert all(len(row["phases"]) == 2 for row in rows)
 
 
 def test_a_wedged_engine_is_replaced_and_the_position_retried(
@@ -2793,6 +3104,10 @@ def test_a_whole_run_writes_a_summary_and_refuses_a_second_pass(
     assert manifest["config_sha256"] == summary["config_sha256"]
     assert manifest["config_requested"] == summary["config_requested"]
     assert manifest["staircase_parsed"] == summary["staircase_parsed"]
+    assert manifest["staircase_gate"] == summary["staircase_gate"] == {
+        "policy": corpus.STAIRCASE_POLICY_FIXED,
+        "adaptive": False,
+    }
     on_disk = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert on_disk["config_sha256"] == summary["config_sha256"]
     rows = [
@@ -4072,6 +4387,25 @@ def test_the_resume_gate_compares_the_manifests_own_keys_not_a_fresh_sha(
         "sf_search_timeout_s": 8.0,
     }
     corpus.refuse_resume_config_drift(manifest, requested=requested)
+
+    # A missing newly introduced key is ordinarily no old claim, but the
+    # pre-G10 meaning is knowable: every old staircase was fixed.  Resuming an
+    # old exact-shape fixed corpus under G10 must not mix the two labelers.
+    corpus.refuse_resume_config_drift(
+        manifest,
+        requested={
+            **requested,
+            "staircase_policy": corpus.STAIRCASE_POLICY_FIXED,
+        },
+    )
+    with pytest.raises(ValueError, match="pre-policy default"):
+        corpus.refuse_resume_config_drift(
+            manifest,
+            requested={
+                **requested,
+                "staircase_policy": corpus.STAIRCASE_POLICY_G10,
+            },
+        )
 
     with pytest.raises(ValueError, match="seed: 7 -> 9"):
         corpus.refuse_resume_config_drift(

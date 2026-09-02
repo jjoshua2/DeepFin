@@ -2097,8 +2097,29 @@ def test_summary_passes_through_the_corpus_identity(tmp_path: Path) -> None:
     assert summary["corpus"]["row_schema"] == corpus.ROW_SCHEMA
     assert summary["corpus"][corpus.KEY_TT_CARRIED] == [True]
     assert summary["corpus"]["staircase_parsed"] == STAIRCASE
+    assert summary["corpus"]["staircase_gate"] == {
+        "policy": corpus.STAIRCASE_POLICY_FIXED,
+        "adaptive": False,
+    }
     assert summary["schema"] == derive.DERIVE_SCHEMA
     assert not math.isnan(summary["realized"]["temp_recovered_from_emitted_policy"]["mean"])
+
+
+def test_g10_provenance_survives_both_corpus_record_paths(tmp_path: Path) -> None:
+    complete = one_row_corpus(tmp_path)
+    gate = corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_G10)
+    for name in (corpus.MANIFEST_NAME, corpus.SUMMARY_NAME):
+        path = complete / name
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["staircase_gate"] = gate
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    partial = strip_summary(complete, tmp_path)
+
+    from_summary = run_derive(complete, tmp_path / "from_summary", "uniform-d9")
+    from_partial = run_derive(partial, tmp_path / "from_partial", "uniform-d9")
+
+    assert from_summary["corpus"]["staircase_gate"] == gate
+    assert from_partial["corpus"]["staircase_gate"] == gate
 
 
 # ── the corpus's two records: summary vs manifest+progress ───────────────────

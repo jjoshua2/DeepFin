@@ -298,6 +298,7 @@ class RepairSpec:
     seed: int
     opening: OpeningConfig
     staircase: str
+    staircase_policy: str
     cp_slope: float
     cp_draw_width: float
     sf_binary: str
@@ -1125,7 +1126,11 @@ def top1_of_phases(phases: Sequence[Mapping[str, Any]]) -> tuple[str | None, flo
 
 
 def repaired_row(
-    row: Mapping[str, Any], repair: RowRepair, *, phases: Sequence[Mapping[str, Any]] | None,
+    row: Mapping[str, Any],
+    repair: RowRepair,
+    *,
+    phases: Sequence[Mapping[str, Any]] | None,
+    staircase_gate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The schema-2 row: the input row, the window, the provenance block."""
     if repair.history is None or repair.history_kind is None:
@@ -1159,6 +1164,13 @@ def repaired_row(
     }
     if phases is not None:
         out["phases"] = list(phases)
+        # A re-label replaces one search observation with another.  The gate
+        # controlled how many replacement phases ran, so carrying the old
+        # row's decision beside the new phases would be false provenance.
+        if staircase_gate is None:
+            out.pop("staircase_gate", None)
+        else:
+            out["staircase_gate"] = dict(staircase_gate)
     # ⚑ Asserted on the ROW, not on the object it was built from: this is the
     # check the deriver will repeat, on the bytes about to be written.
     replayed = chess.Board(str(out["history_root_fen"]))
@@ -1181,6 +1193,10 @@ SearcherFactory = Callable[[corpus.SearchStats], corpus.StaircaseSearcher]
 
 def default_searcher_factory(spec: RepairSpec) -> SearcherFactory:
     staircase = corpus.parse_staircase(spec.staircase)
+    staircase_policy = corpus.validate_staircase_policy(
+        spec.staircase_policy,
+        staircase,
+    )
 
     def spawn(stats: corpus.SearchStats) -> corpus.StaircaseSearcher:
         return corpus.StaircaseSearcher(
@@ -1198,6 +1214,7 @@ def default_searcher_factory(spec: RepairSpec) -> SearcherFactory:
             cp_draw_width=spec.cp_draw_width,
             stats=stats,
             search_timeout_s=float(spec.sf_search_timeout_s),
+            staircase_policy=staircase_policy,
         )
 
     return spawn
@@ -1328,6 +1345,7 @@ def repair_worker(
                 tally.reconstruct_s += time.perf_counter() - t0
                 row_class = repair.row_class
                 phases: list[dict[str, Any]] | None = None
+                staircase_gate: dict[str, Any] | None = None
                 if repair.board is not None and repair.history is not None:
                     if encode is not None and tally.encode_rows < spec.bench_encode_rows:
                         t0 = time.perf_counter()
@@ -1346,7 +1364,13 @@ def repair_worker(
                                 lease = corpus.EngineLease(
                                     searcher_factory or default_searcher_factory(spec),
                                 )
-                            phases, row_class = _relabel(lease, row, repair, tally, audit)
+                            phases, staircase_gate, row_class = _relabel(
+                                lease,
+                                row,
+                                repair,
+                                tally,
+                                audit,
+                            )
                     if not row_class.startswith(QUARANTINE_PREFIX):
                         tally.root_reasons[repair.history.reason] += 1
                         tally.history_plies[str(repair.history.plies)] += 1
@@ -1360,7 +1384,12 @@ def repair_worker(
                         "ply": int(row["ply"]), "class": row_class,
                     })
                 if writer is not None and not row_class.startswith(QUARANTINE_PREFIX):
-                    writer.write(repaired_row(row, repair, phases=phases))
+                    writer.write(repaired_row(
+                        row,
+                        repair,
+                        phases=phases,
+                        staircase_gate=staircase_gate,
+                    ))
             if rows_in != claimed:
                 # ⚑ The inventory's claim is compared, not merely carried: a
                 # shard truncated at a line boundary decodes cleanly and
@@ -1400,7 +1429,7 @@ def repair_worker(
 def _relabel(
     lease: corpus.EngineLease, row: Mapping[str, Any], repair: RowRepair,
     tally: WorkerTally, audit: TextIO,
-) -> tuple[list[dict[str, Any]] | None, str]:
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None, str]:
     """R2 for one flagged row: a cold search under the row's own window."""
     if repair.board is None or repair.history is None:
         raise RepairError("a quarantined row reached the re-label step")
@@ -1410,7 +1439,7 @@ def _relabel(
         search = lease.search_position(repair.board)
     except StockfishTimeoutError:
         tally.relabel_timeouts += 1
-        return None, QUARANTINE_PREFIX + REASON_RELABEL_TIMEOUT
+        return None, None, QUARANTINE_PREFIX + REASON_RELABEL_TIMEOUT
     elapsed = time.perf_counter() - started
     # The searcher builds its own window from the same board; it must be the
     # one being banked.  ⚑ The reason is compared only on an anchored board:
@@ -1427,6 +1456,10 @@ def _relabel(
             f"differs from the banked one ({search.history} vs {repair.history})",
         )
     phases = [p.as_row() for p in search.phases]
+    staircase_gate = (
+        search.staircase_gate.as_row()
+        if search.staircase_gate is not None else None
+    )
     old_move, old_cp = top1_of_phases(row.get("phases", []))
     new_move, new_cp = top1_of_phases(phases)
     tally.relabeled += 1
@@ -1441,8 +1474,9 @@ def _relabel(
         "old_top1": old_move, "old_cp": old_cp, "new_top1": new_move, "new_cp": new_cp,
         "top1_changed": old_move != new_move, "search_s": elapsed,
         "cold_tt_retry": bool(lease.cold_tt_retry_last),
+        "staircase_gate": staircase_gate,
     }, sort_keys=True) + "\n")
-    return phases, CLASS_RELABELED
+    return phases, staircase_gate, CLASS_RELABELED
 
 
 # -- the run ------------------------------------------------------------------------
@@ -1611,6 +1645,10 @@ def build_records(
         "config_requested": manifest.get("config_requested"),
         "config_sha256": manifest.get("config_sha256"),
         "staircase_parsed": manifest.get("staircase_parsed"),
+        "staircase_gate": manifest.get(
+            "staircase_gate",
+            corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_FIXED),
+        ),
         "config_realized_by_worker": {},
         "engine": {
             **(manifest.get("engine") or {}),
@@ -1713,6 +1751,9 @@ def build_spec(
         seed=int(requested["seed"]),
         opening=opening_config_from_manifest(requested, book_override=args.book),
         staircase=str(requested["staircase"]),
+        staircase_policy=str(
+            requested.get("staircase_policy", corpus.STAIRCASE_POLICY_FIXED),
+        ),
         cp_slope=float(requested["cp_slope"]),
         cp_draw_width=float(requested["cp_draw_width"]),
         sf_binary=sf_binary,
