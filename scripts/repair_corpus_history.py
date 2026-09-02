@@ -188,18 +188,23 @@ LABEL_REGIME_CARRIED_BLIND = "carried_tt_history_blind"
 LABEL_REGIME_COLD_BLIND = "cold_tt_history_blind"
 LABEL_REGIME_COLD_HISTORY = "cold_tt_history_aware"
 
-#: ⚑ THE ENCODER REGIME ``input_key`` IS HASHED UNDER, stamped in the manifest
-#: and in every row's ``run`` block under the deriver's own key name.  The C
-#: play-path encoder (``corpus.row_key`` -> ``encode_cboard``) reads a
-#: PROCESS-GLOBAL flag, ``history_rep_fix``: off, its repetition planes only
-#: see partners inside the kept hash window; on, a per-slot flag recorded at
-#: push time with full look-back.  Production and the deriver run FIXED, so a
-#: key hashed in a fresh process that never applied the flag disagrees with
-#: the deriver on every row whose repeat partner sits more than the window
-#: back (measured 2026-09-01 on run03 w03 100-102: 77/24,590 rows), and the
-#: deriver refuses the corpus.  ``run`` applies it before any board exists.
-KEY_HISTORY_REP_FIX = "history_rep_fix"
-HISTORY_REP_FIX = True
+#: ⚑ THE ENCODER REGIME ``input_key`` IS HASHED UNDER, stamped in the manifest,
+#: the summary and every row's ``run`` block under the GENERATOR's key name --
+#: the one the deriver refuses by.  The C play-path encoder (``corpus.row_key``
+#: -> ``encode_cboard``) reads a PROCESS-GLOBAL flag, ``history_rep_fix``: off,
+#: its repetition planes only see partners inside the kept hash window; on, a
+#: per-slot flag recorded at push time with full look-back.  Production and
+#: the deriver run FIXED, so a key hashed in a fresh process that never
+#: applied the flag disagrees with the deriver on every row whose repeat
+#: partner sits more than the window back (measured 2026-09-01 on run03 w03
+#: 100-102: 77/24,590 rows), and the deriver refuses the corpus.  ``run``
+#: applies it through the generator's own ``apply_history_rep_fix`` before any
+#: board exists, EVERY worker applies it again on entry (the pool forks, so
+#: the parent's C global is inherited -- applied anyway, so a spawn context
+#: would not silently un-fix it), and ``corpus.row_key`` itself refuses to
+#: hash under any other regime.  The stamp is read off the REALIZED flag.
+KEY_HISTORY_REP_FIX = corpus.KEY_HISTORY_REP_FIX
+HISTORY_REP_FIX = corpus.HISTORY_REP_FIX
 
 
 #: Where a manifest's RELATIVE book path is resolved from (the generator was
@@ -238,6 +243,9 @@ class RepairSpec:
     #: (``derive.read_corpus_record``) -- never a glob, so a paused run's
     #: in-flight or abandoned last shard is not repaired.
     listed_shards: tuple[tuple[str, int], ...] = ()
+    #: The deriver's inventory reading this repair was cut from.
+    progress_files: tuple[str, ...] = ()
+    progress_torn_tail_files: tuple[str, ...] = ()
     #: Shard files on disk that the inventory does not list (a paused run's
     #: in-flight shards).  Counted per worker; repaired only under
     #: ``salvage_unlisted``, and then minus their torn last game.
@@ -289,57 +297,28 @@ def opening_config_from_manifest(
 
 def corpus_inventory(
     in_dir: Path,
-) -> tuple[tuple[tuple[str, int], ...], tuple[str, ...], str]:
-    """``(listed (shard name, rows claimed), unlisted shard names on disk, record mode)``.
+) -> tuple[tuple[tuple[str, int], ...], tuple[str, ...], derive.ProgressInventory]:
+    """``(listed (shard name, rows claimed), unlisted shard names on disk, the
+    deriver's inventory)``.
 
-    The corpus's OWN inventory, the way ``derive.read_corpus_record`` reads it:
-    ``summary.json``'s shard list when the run ended, else every shard the
-    ``w*.progress.jsonl`` files claim (through the generator's own
-    ``read_worker_progress``, so a torn tail is tolerated exactly as there and
-    any other damage refuses).  ⚑ Not ``read_corpus_record`` itself: on this
-    branch its manifest path goes through ``load_resume_manifest``, which
-    refuses a row-schema-1 manifest outright -- the legacy corpora this tool
-    exists for.  Whatever is on disk but unlisted (a paused run's in-flight
-    shard, a killed run's abandoned one) is reported and never repaired.
+    ⚑ THE DERIVER'S OWN READER, ``derive.read_progress_inventory``: the shards
+    the ``w*.progress.jsonl`` files claim, with the rows each record claims
+    (the number every listed shard is held to in ``repair_worker``), the
+    progress files whose final line was torn, and whatever is on disk that no
+    record lists (a paused run's in-flight shard, a killed run's abandoned
+    one) -- reported, and repaired only under
+    ``--salvage-unlisted-complete-games``.  Every legacy corpus this tool
+    exists for is manifest + progress files (none ended with a
+    ``summary.json``), and the deriver reads them the same way.
     """
-    on_disk = sorted(
-        p.name for p in in_dir.iterdir() if shard_worker_id(p.name) is not None
+    try:
+        inventory = derive.read_progress_inventory(in_dir)
+    except derive.CorpusIntegrityError as exc:
+        raise RepairError(f"{in_dir}: {exc}") from exc
+    listed = tuple(
+        (path.name, int(rows)) for path, rows in zip(inventory.shards, inventory.shard_rows)
     )
-    summary_path = in_dir / corpus.SUMMARY_NAME
-    if summary_path.exists():
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        listed = [
-            (Path(str(e["path"])).name, int(e["rows"])) for e in summary.get("shards", [])
-        ]
-        mode = "summary"
-    else:
-        listed = []
-        progress_paths = sorted(in_dir.glob(derive.PROGRESS_GLOB))
-        if not progress_paths:
-            raise RepairError(
-                f"{in_dir} has neither {corpus.SUMMARY_NAME} nor {derive.PROGRESS_GLOB}; "
-                "without an inventory nothing says which shards the corpus claims",
-            )
-        for progress_path in progress_paths:
-            try:
-                records, _torn = corpus.read_worker_progress(progress_path)
-            except ValueError as exc:
-                raise RepairError(f"{progress_path.name} is damaged: {exc}") from exc
-            for record in records:
-                if record.get("path") is None:
-                    continue  # a game-completion record, not a shard
-                listed.append((Path(str(record["path"])).name, int(record["rows"])))
-        mode = "manifest+progress"
-    names = [name for name, _ in listed]
-    if len(set(names)) != len(names):
-        raise RepairError(f"{in_dir}'s inventory lists a shard twice")
-    missing = sorted(set(names) - set(on_disk))
-    if missing:
-        raise RepairError(
-            f"{in_dir}'s inventory lists shards that are not on disk: {missing[:5]}",
-        )
-    unlisted = tuple(name for name in on_disk if name not in set(names))
-    return tuple(listed), unlisted, mode
+    return listed, tuple(inventory.unlisted_on_disk), inventory
 
 
 def shard_worker_id(name: str) -> int | None:
@@ -924,7 +903,7 @@ def repaired_row(
     run_block = row.get("run")
     if not isinstance(run_block, Mapping):
         raise RepairError(f"game {row.get('game_id')} ply {row.get('ply')}: no run block")
-    out["run"] = {**run_block, KEY_HISTORY_REP_FIX: rep_fix.current()}
+    out["run"] = {**run_block, KEY_HISTORY_REP_FIX: bool(rep_fix.current())}
     out["repair"] = {
         "source_schema": SOURCE_SCHEMA,
         "history": repair.history_kind,
@@ -1065,13 +1044,11 @@ def repair_worker(
 ) -> dict[str, Any]:
     """One worker's shards, in order.  Returns the tally ``main`` merges."""
     tally = WorkerTally()
-    if rep_fix.current() is not HISTORY_REP_FIX:
-        # ⚑ Read off the flag, in the process that will hash: a worker that
-        # forked before `run` applied it would key every far repetition wrong.
-        raise RepairError(
-            f"history_rep_fix is {rep_fix.current()!r} in worker {worker_id}; the "
-            f"input_key must be hashed under {HISTORY_REP_FIX} (the deriver's regime)",
-        )
+    # ⚑ In the process that will hash, whatever start method the pool used:
+    # applied here, then REQUIRED (the generator's own precondition, the one
+    # `corpus.row_key` re-checks on every call).
+    corpus.apply_history_rep_fix()
+    corpus.require_history_rep_fix()
     shards: list[tuple[Path, int | None, bool]] = [
         (path, rows, False)
         for path, rows in worker_shards(spec.in_dir, worker_id, spec.shard_indices, spec.listed_shards)
@@ -1321,6 +1298,9 @@ def build_records(
             "shards": None if spec.shard_indices is None else list(spec.shard_indices),
             "workers": [int(r["worker_id"]) for r in results],
             "listed_shards": len(spec.listed_shards),
+            "rows_claimed": sum(rows for _, rows in spec.listed_shards),
+            "progress_files": list(spec.progress_files),
+            "progress_torn_tail_files": list(spec.progress_torn_tail_files),
             # On disk but not in the corpus's own inventory (a paused run's
             # in-flight shard): never repaired by default; under
             # --salvage-unlisted-complete-games their complete games are.
@@ -1339,7 +1319,7 @@ def build_records(
             "id_name": engine_id_name, "threads": 1, "hash_mb": spec.sf_hash_mb,
             "ucinewgame_per_row": True, "staircase": spec.staircase,
         },
-        KEY_HISTORY_REP_FIX: rep_fix.current(),
+        KEY_HISTORY_REP_FIX: bool(rep_fix.current()),
         "label_regimes": merge_counters(results, "label_regimes"),
         "book": {
             "path": spec.opening.opening_book_path,
@@ -1426,7 +1406,7 @@ def build_records(
             **(manifest.get("engine") or {}),
             **({} if spec.relabel == RELABEL_OFF else {"relabel_id_name": engine_id_name}),
         },
-        KEY_HISTORY_REP_FIX: rep_fix.current(),
+        KEY_HISTORY_REP_FIX: bool(rep_fix.current()),
         "banked_rows_min_piece_count": manifest.get("banked_rows_min_piece_count", corpus.MIN_BANKED_PIECES),
         "adjudication_max_piece_count": manifest.get("adjudication_max_piece_count", corpus.ADJUDICATION_MAX_PIECES),
         "history_plies_histogram": repair_manifest["history_plies_histogram"],
@@ -1488,6 +1468,7 @@ def format_report(repair_manifest: Mapping[str, Any]) -> str:
 def build_spec(
     args: argparse.Namespace, manifest: Mapping[str, Any], *,
     listed_shards: Sequence[tuple[str, int]], unlisted_shards: Sequence[str] = (),
+    progress_files: Sequence[str] = (), progress_torn_tail_files: Sequence[str] = (),
     verify_engine: bool = True,
 ) -> RepairSpec:
     """The spec, with the engine and tablebases verified unless a test injects a searcher."""
@@ -1534,6 +1515,8 @@ def build_spec(
         shard_indices=parse_shard_range(args.shards),
         bench_encode_rows=int(args.bench_encode_rows),
         listed_shards=tuple(listed_shards),
+        progress_files=tuple(progress_files),
+        progress_torn_tail_files=tuple(progress_torn_tail_files),
         unlisted_shards=tuple(unlisted_shards),
         salvage_unlisted=bool(args.salvage_unlisted_complete_games),
         partial=bool(args.shards) or bool(args.workers),
@@ -1548,11 +1531,10 @@ def run(
     """The whole repair.  ``searcher_factory`` is the test seam: a scripted
     engine in place of Stockfish, which also skips the binary's sha256 and
     tablebase checks (there is no binary) and runs in-process."""
-    # ⚑ FIRST, before the book warm and before any CBoard exists (forked
-    # workers inherit it): see KEY_HISTORY_REP_FIX.
-    rep_fix.apply(HISTORY_REP_FIX)
-    if rep_fix.current() is not HISTORY_REP_FIX:
-        raise RepairError("history_rep_fix could not be applied; the encoder build predates it")
+    # ⚑ FIRST, before the book warm and before any CBoard exists: the
+    # generator's own regime switch and its precondition (KEY_HISTORY_REP_FIX).
+    corpus.apply_history_rep_fix()
+    corpus.require_history_rep_fix()
     in_dir = Path(args.in_dir)
     manifest_path = in_dir / corpus.MANIFEST_NAME
     if not manifest_path.exists():
@@ -1573,11 +1555,15 @@ def run(
             f"{recomputed!r}; the record of what produced the rows has been altered",
         )
     manifest_sha = sha256_of(manifest_path)
-    # ⚑ The corpus's OWN inventory, through the deriver's reader: summary.json
-    # when the run ended, else manifest + progress files.  Whatever is on disk
-    # but unlisted is skipped by name and reported.
-    listed, unlisted, inventory_mode = corpus_inventory(in_dir)
-    _LOG.info("inventory (%s): %d listed shards, %d unlisted", inventory_mode, len(listed), len(unlisted))
+    # ⚑ The corpus's OWN inventory, through the deriver's reader (manifest +
+    # progress files).  Whatever is on disk but unlisted is skipped by name
+    # and reported.
+    listed, unlisted, inventory = corpus_inventory(in_dir)
+    _LOG.info(
+        "inventory (%d progress files, %d torn tails): %d listed shards claiming "
+        "%d rows, %d unlisted", len(inventory.progress_files),
+        len(inventory.torn_tail_files), len(listed), inventory.rows_claimed, len(unlisted),
+    )
     if unlisted:
         _LOG.warning(
             "%d shard(s) on disk are not in the corpus inventory and will NOT be "
@@ -1585,6 +1571,8 @@ def run(
         )
     spec = build_spec(
         args, manifest, listed_shards=listed, unlisted_shards=unlisted,
+        progress_files=tuple(inventory.progress_files),
+        progress_torn_tail_files=tuple(inventory.torn_tail_files),
         verify_engine=searcher_factory is None,
     )
     workers = [int(w) for w in args.workers] if args.workers else worker_ids_in(listed)

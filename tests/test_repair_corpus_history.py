@@ -946,9 +946,21 @@ def test_the_cli_process_hashes_input_keys_in_the_derivers_regime(tmp_path: Path
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     manifest = json.loads((out_dir / repair.REPAIR_MANIFEST_NAME).read_text())
-    assert manifest[repair.KEY_HISTORY_REP_FIX] is True
+    assert manifest[corpus.KEY_HISTORY_REP_FIX] is True
     rows = [r for shard in SHARDS for r in read_rows(out_dir / shard)]
-    assert all(r["run"][repair.KEY_HISTORY_REP_FIX] is True for r in rows)
+    assert all(r["run"][corpus.KEY_HISTORY_REP_FIX] is True for r in rows)
+    assert all(r["schema"] == corpus.ROW_SCHEMA == 3 for r in rows)
+    # The record the deriver refuses BY NAME: present, and the deriver's own
+    # regime.  A stamp of the other regime is refused before any row is read.
+    summary_path = out_dir / corpus.SUMMARY_NAME
+    summary = json.loads(summary_path.read_text())
+    assert summary["row_schema"] == corpus.ROW_SCHEMA
+    assert summary[corpus.KEY_HISTORY_REP_FIX] is True
+    assert derive.read_corpus_record(out_dir).facts[corpus.KEY_HISTORY_REP_FIX] is True
+    summary_path.write_text(json.dumps({**summary, corpus.KEY_HISTORY_REP_FIX: False}))
+    with pytest.raises(derive.CorpusIntegrityError, match=corpus.KEY_HISTORY_REP_FIX):
+        derive.read_corpus_record(out_dir)
+    summary_path.write_text(json.dumps(summary))
     derived = derive.derive(
         corpus_dir=out_dir, out_dir=tmp_path / "derived_cli",
         options=derive.DeriveOptions(
@@ -957,14 +969,24 @@ def test_the_cli_process_hashes_input_keys_in_the_derivers_regime(tmp_path: Path
         ),
     )
     assert derived["realized"]["input_key_verified"] == manifest["rows_out"] == len(rows)
+    # ⚑ The take-effect gate itself, on the count it just published.
+    derive.enforce_input_key_take_effect(derive.DeriveStats(
+        row_schema_counts={corpus.ROW_SCHEMA: len(rows)}, input_key_verified=len(rows),
+    ))
+    with pytest.raises(derive.CorpusIntegrityError, match="input_key_verified"):
+        derive.enforce_input_key_take_effect(derive.DeriveStats(
+            row_schema_counts={corpus.ROW_SCHEMA: len(rows)}, input_key_verified=len(rows) - 1,
+        ))
 
 
 def test_game_f_is_keyed_differently_under_the_unfixed_regime(tmp_path: Path) -> None:
     """The fixture is not vacuous: with the flag OFF in a FRESH interpreter,
-    game F's rows with a repetition then an irreversible move inside their 8
-    frames hash to different ``input_key``s -- the disagreement the CLI test
-    would surface through the deriver.  Only ``row_key`` diverges;
-    ``search_key`` (python zobrist over the segment) is regime-free."""
+    the C play-path tensor of game F's rows with a repetition then an
+    irreversible move inside their 8 frames hashes to different
+    ``input_key``s -- the disagreement the CLI test would surface through the
+    deriver.  Only the tensor key diverges; ``search_key`` (python zobrist
+    over the segment) is regime-free.  And in that regime ``corpus.row_key``
+    -- the only key the repair writes -- REFUSES rather than mis-hashes."""
     boards = true_boards(70, tmp_path)
     rep_fix.apply(True)
     fixed = [corpus.row_key(b) for b in boards[9:]]
@@ -973,22 +995,36 @@ def test_game_f_is_keyed_differently_under_the_unfixed_regime(tmp_path: Path) ->
         "import sys, json, chess\n"
         "from chess_anti_engine.encoding import rep_fix\n"
         "rep_fix.apply(False)\n"
+        "from chess_anti_engine.encoding._lc0_ext import CBoard\n"
+        "from chess_anti_engine.encoding.cboard_encode import encode_cboard\n"
         "from scripts import gen_sf_rooted_corpus as corpus\n"
         f"book = {BOOK_LINE!r}.split(); moves = {GAME_F!r}.split()\n"
         "b = chess.Board()\n"
         "for u in book: b.push_uci(u)\n"
         "keys = []\n"
+        "def unfixed_key(board):\n"
+        "    return corpus.input_tensor_key(encode_cboard(CBoard.from_board(board),"
+        " input_history_encoding=corpus.INPUT_HISTORY_ENCODING,"
+        " input_extra_features=corpus.INPUT_EXTRA_FEATURES))\n"
         "for i, u in enumerate(moves):\n"
         "    b.push_uci(u)\n"
-        "    if i + 1 >= 9: keys.append([corpus.row_key(b), corpus.search_key(b)])\n"
-        "print(json.dumps(keys))\n"
+        "    if i + 1 >= 9: keys.append([unfixed_key(b), corpus.search_key(b)])\n"
+        "try:\n"
+        "    corpus.row_key(b)\n"
+        "except RuntimeError as exc:\n"
+        "    refused = 'history_rep_fix' in str(exc)\n"
+        "else:\n"
+        "    refused = False\n"
+        "print(json.dumps({'keys': keys, 'refused': refused}))\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True,
         env={**os.environ, "PYTHONPATH": ".", "CUDA_VISIBLE_DEVICES": ""}, timeout=300, check=False,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
-    unfixed = json.loads(proc.stdout.strip().splitlines()[-1])
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["refused"] is True
+    unfixed = payload["keys"]
     assert len(unfixed) == len(fixed)
     differing = [9 + i for i, (row, _search) in enumerate(unfixed) if row != fixed[i]]
     # Plies 17..23: the frames hold the repetition AND the d2d3 pawn move.
@@ -1047,6 +1083,7 @@ def test_the_bridge_counts_paths_and_never_picks_one(
 
 
 def test_a_window_that_cannot_reproduce_its_row_is_refused_at_write_time() -> None:
+    corpus.apply_history_rep_fix()  # `repaired_row` keys the board; the key requires the regime
     board = chess.Board()
     board.push_uci("e2e4")
     history = corpus.history_for(board)
