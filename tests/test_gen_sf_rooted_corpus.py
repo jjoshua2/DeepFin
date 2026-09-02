@@ -1352,16 +1352,32 @@ def fixed_key(moves: str) -> str:
 
 
 def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) -> None:
-    """⚑⚑ THE SUBPROCESS GATE.  A fresh interpreter (C default: UNFIXED) runs
-    the generator through ``corpus.run`` on the three regime-sensitive
-    positions with a scripted engine, then the deriver over the whole output
-    with ``enforce_input_key_take_effect`` armed.  No fixture applies the flag
-    in a subprocess: only the generator's own ``apply_history_rep_fix`` can
-    make every banked ``input_key`` the deriver's hash here, and each of the
-    three is also checked by value against the FIXED key computed in this
-    process and against the UNFIXED key from a third interpreter -- so the
-    gate is one that can fail.  Mutant: that call made a no-op -> ``row_key``
-    refuses, the run dies, this test fails.
+    """⚑⚑ THE SUBPROCESS GATE, THROUGH THE REAL POOL.  A fresh interpreter (C
+    default: UNFIXED) runs the generator through ``corpus.run`` with
+    ``--workers 2`` -- the production ``spawn`` pool, so ``run_worker`` runs in
+    CHILD interpreters that inherit no C global and no monkeypatch -- on the
+    three regime-sensitive positions with a scripted engine, then the deriver
+    over the whole output with ``enforce_input_key_take_effect`` armed.  No
+    fixture applies the flag anywhere here: only ``run_worker``'s own
+    ``apply_history_rep_fix`` can make every banked ``input_key`` the
+    deriver's hash, and each of the three is also checked by value against
+    the FIXED key computed in this process and the UNFIXED key from a third
+    interpreter -- so the gate is one that can fail.
+
+    ⚑ The seams are applied at the DRIVER's module level, not under its main
+    guard: a spawned child re-imports the parent's ``__main__`` as
+    ``__mp_main__`` (module body runs, main guard does not), which is exactly
+    what re-applies the scripted engine and the dealt openings in each child.
+    Every other ``--workers 2`` test in this file swaps the pool for an inline
+    executor, and every direct ``run_worker`` test runs under this file's
+    autouse ``production_rep_fix`` fixture, so this is the one test that can
+    see a worker that forgot the call (Fable, round 3 delta: the mutant
+    "drop ``apply_history_rep_fix()`` from ``run_worker``" survived the whole
+    suite before it existed).  Mutant: that line dropped -> ``row_key``
+    raises in the child, the run dies, this test fails.  ⚑ Dropping the call
+    from ``run()`` alone is an EQUIVALENT mutant: ``run`` builds no CBoard
+    before dispatch, and the in-process single-worker branch calls
+    ``run_worker`` too.
     """
     lines = [
         f"{chess.STARTING_FEN} | {' '.join(route.split()[:plies])}"
@@ -1377,38 +1393,47 @@ def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) 
         "from tests.test_gen_sf_rooted_corpus import (\n"
         "    SMOKE_SYZYGY, ScriptedEngine, fen_list_opening, uci_double,\n"
         ")\n"
-        "root = Path(sys.argv[1])\n"
+        "# MODULE LEVEL: re-executed by every spawned worker (__mp_main__).\n"
+        f"root = Path({str(tmp_path)!r})\n"
         f"lines = {lines!r}\n"
         "mp = pytest.MonkeyPatch()\n"
         "mp.setattr(corpus, 'StockfishUCI', lambda *_a, **_kw: uci_double(ScriptedEngine()))\n"
         "mp.setattr(corpus, 'build_opening_config',\n"
         "           lambda _spec: fen_list_opening(lines, root / 'seeds.txt'))\n"
-        "# The production sampler draws WITH replacement; deal the three lines\n"
-        "# round-robin so every game gets its own (one worker plays in order).\n"
-        "real_sample = corpus.sample_starting_board\n"
-        "dealt = iter(lines)\n"
+        "# The production sampler draws WITH replacement; deal line game_id %\n"
+        "# len(lines) so every game gets its own whichever worker plays it.\n"
+        "real_rng, real_sample = corpus.book_rng, corpus.sample_starting_board\n"
+        "class Dealt:  # numpy Generators take no attributes: wrap one\n"
+        "    def __init__(self, rng, line): self.rng, self.dealt_line = rng, line\n"
+        "    def __getattr__(self, name): return getattr(self.rng, name)\n"
+        "def dealing_rng(*, seed, worker_id, game_id):\n"
+        "    rng = real_rng(seed=seed, worker_id=worker_id, game_id=game_id)\n"
+        "    return Dealt(rng, lines[int(game_id) % len(lines)])\n"
+        "mp.setattr(corpus, 'book_rng', dealing_rng)\n"
         "mp.setattr(corpus, 'sample_starting_board', lambda *, rng, cfg: real_sample(\n"
-        "    rng=rng, cfg=fen_list_opening([next(dealt)], root / f'seed{rng.random()}.txt')))\n"
+        "    rng=rng, cfg=fen_list_opening([rng.dealt_line], root / f'seed{rng.random()}.txt')))\n"
         "# The deriver drops result-less rows before it verifies them, and a\n"
         "# ply-capped scripted game has no result: stamp a draw so every row\n"
         "# reaches the input_key check. A test seam, not a generator setting.\n"
         "mp.setattr(corpus, 'result_from_pov', lambda _r, *, white_to_move: 0.0)\n"
-        "out = root / 'corpus'\n"
-        "summary = corpus.run(corpus.build_parser().parse_args([\n"
-        "    '--out-dir', str(out), '--games', str(len(lines)), '--workers', '1',\n"
-        "    '--syzygy-path', str(SMOKE_SYZYGY or corpus.REPO_ROOT),\n"
-        "    '--temp-high', '0.01', '--temp-low', '0.01', '--nice', '0', '--max-plies', '1',\n"
-        "]))\n"
-        "rows = [{'fen': r['fen'], 'input_key': r['input_key'],\n"
-        "         'stamp': r['run'][corpus.KEY_HISTORY_REP_FIX]}\n"
-        "        for p in sorted(out.glob('w*.jsonl.zst')) for r in derive.iter_corpus_rows(p)]\n"
-        "rc = derive.main(['--corpus', str(out), '--out', str(root / 'derived'),\n"
-        "                  '--scheme', 'uniform-d9', '--temp', '1.0'])\n"
-        "d = json.loads((root / 'derived' / derive.SUMMARY_NAME).read_text())\n"
-        "print(json.dumps({'rc': rc, 'rows': rows, 'banked': summary['rows'],\n"
-        "                  'stamp': summary[corpus.KEY_HISTORY_REP_FIX],\n"
-        "                  'verified': d['realized']['input_key_verified'],\n"
-        "                  'written': d['realized']['rows_written']}))\n",
+        "if __name__ == '__main__':\n"
+        "    out = root / 'corpus'\n"
+        "    summary = corpus.run(corpus.build_parser().parse_args([\n"
+        "        '--out-dir', str(out), '--games', str(len(lines)), '--workers', '2',\n"
+        "        '--syzygy-path', str(SMOKE_SYZYGY or corpus.REPO_ROOT),\n"
+        "        '--temp-high', '0.01', '--temp-low', '0.01', '--nice', '0', '--max-plies', '1',\n"
+        "    ]))\n"
+        "    rows = [{'fen': r['fen'], 'input_key': r['input_key'], 'worker': p.name[:3],\n"
+        "             'stamp': r['run'][corpus.KEY_HISTORY_REP_FIX]}\n"
+        "            for p in sorted(out.glob('w*.jsonl.zst')) for r in derive.iter_corpus_rows(p)]\n"
+        "    rc = derive.main(['--corpus', str(out), '--out', str(root / 'derived'),\n"
+        "                      '--scheme', 'uniform-d9', '--temp', '1.0'])\n"
+        "    d = json.loads((root / 'derived' / derive.SUMMARY_NAME).read_text())\n"
+        "    print(json.dumps({'rc': rc, 'rows': rows, 'banked': summary['rows'],\n"
+        "                      'workers': len(summary['config_realized_by_worker']),\n"
+        "                      'stamp': summary[corpus.KEY_HISTORY_REP_FIX],\n"
+        "                      'verified': d['realized']['input_key_verified'],\n"
+        "                      'written': d['realized']['rows_written']}))\n",
         encoding="utf-8",
     )
     proc = subprocess.run(
@@ -1420,6 +1445,10 @@ def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) 
     result = json.loads(proc.stdout.strip().splitlines()[-1])
     assert result["rc"] == 0
     assert result["stamp"] is True
+    assert result["workers"] == 2, "the real spawn pool, not the in-process branch"
+    assert {row["worker"] for row in result["rows"]} == {"w00", "w01"}, (
+        "both children banked rows"
+    )
     assert result["banked"] == len(lines)
     assert result["verified"] == result["written"] == len(lines)
     keyed = {row["fen"]: row for row in result["rows"]}

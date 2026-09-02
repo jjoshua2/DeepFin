@@ -730,7 +730,7 @@ def purity_receipt_problems(
 
 def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
-    allow_mixed_history: bool = False,
+    allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -819,6 +819,11 @@ def preflight(
     # leak, and it has its own explicit opt-in.
     for message in history_identity_problems(
         shard_dirs, allow_mixed_history=allow_mixed_history,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
+    # ⚑ Same shape: a partial corpus is not a leak either.
+    for message in partial_corpus_problems(
+        shard_dirs, allow_partial_corpus=allow_partial_corpus,
     ):
         raise SystemExit(f"REFUSING TO LAUNCH — {message}")
     for message in baked_value_blend_problems(cfg, shard_dirs):
@@ -1011,6 +1016,75 @@ def history_identity_problems(
         f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
         "corpora derived before the stamps existed are the bare-FEN shape.)",
     ]
+
+
+#: A derived shard written before the deriver stamped completeness: every
+#: such shard came from a summary-record derivation, which was the only kind
+#: that existed, so absent reads as WHOLE.  ⚑ Stated, because it is the
+#: permissive default: a pre-stamp partial derivation cannot be told from a
+#: whole one here, and only the deriver's own summary of that run can.
+UNSTAMPED_CORPUS_COMPLETE = True
+
+
+def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """``{shard: its corpus_* stamps}`` for every shard stamped INCOMPLETE."""
+    incomplete: dict[str, dict[str, Any]] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            if bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE)):
+                continue
+            incomplete[f"{Path(shard_dir).name}/{path.name}"] = {
+                "run_finished_claim": attrs.get("corpus_run_finished_claim"),
+                "shards_adopted": attrs.get("corpus_shards_adopted"),
+                "rows_claimed": attrs.get("corpus_rows_claimed"),
+                "rows_derived": attrs.get("corpus_rows_derived"),
+            }
+    return incomplete
+
+
+def partial_corpus_problems(
+    shard_dirs: Sequence[Path], *, allow_partial_corpus: bool,
+) -> list[str]:
+    """⚑⚑ A derived shard from a corpus that was NOT WHOLE (#498 rebase).
+
+    ``derive_corpus_targets.py`` stamps ``corpus_complete: false`` (with the
+    corpus's shard/row counts) on every shard it derives from a
+    ``manifest+progress`` read or from a ``summary.json`` that says
+    ``run_finished: false`` -- a repair run with ``--shards``/``--workers``
+    writes exactly that.  Arm B must train on the exact 5.5M champion rows; a
+    subset that launched without a word is the failure this refuses.
+    ``--allow-partial-corpus`` is the explicit opt-in, recorded in the summary.
+    """
+    incomplete = read_partial_corpus_stamps(shard_dirs)
+    if not incomplete or allow_partial_corpus:
+        return []
+    listed = "; ".join(
+        f"{where} (run_finished_claim={s['run_finished_claim']!r}, "
+        f"shards_adopted={s['shards_adopted']}, rows_claimed={s['rows_claimed']}, "
+        f"rows_derived={s['rows_derived']})"
+        for where, s in sorted(incomplete.items())
+    )
+    return [
+        f"--shards holds {len(incomplete)} shard(s) derived from a PARTIAL "
+        f"corpus (corpus_complete: false): {listed}. The generator's record "
+        "was a manifest+progress read or a summary stating run_finished: "
+        "false, so these rows are a subset of a corpus nobody finished. Derive "
+        "the finished corpus, or pass --allow-partial-corpus to train on the "
+        "subset deliberately (recorded in summary.json under "
+        "corpus.partial_corpus).",
+    ]
+
+
+def partial_corpus_record(
+    incomplete: Mapping[str, Mapping[str, Any]], *, allow_partial_corpus: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the partial-corpus reader saw."""
+    return {
+        "incomplete_shards": {k: dict(v) for k, v in sorted(incomplete.items())},
+        "partial": bool(incomplete),
+        "allow_partial_corpus": bool(allow_partial_corpus),
+    }
 
 
 def history_identity_record(
@@ -1631,6 +1705,13 @@ def main(argv: list[str] | None = None) -> int:
              "recorded in summary.json under corpus.history_identity.",
     )
     parser.add_argument(
+        "--allow-partial-corpus", action="store_true",
+        help="let --shards hold shards the deriver stamped corpus_complete: "
+             "false (derived from a manifest+progress read or a summary with "
+             "run_finished: false); recorded in summary.json under "
+             "corpus.partial_corpus.",
+    )
+    parser.add_argument(
         "--allow-leak", action="store_true",
         help="⚑ downgrade the LAUNCH guards (0c, 0d, 1 and 2) to a banner so the "
              "run reaches the REALIZED per-step guard and that guard can be "
@@ -1721,10 +1802,15 @@ def main(argv: list[str] | None = None) -> int:
     coverage = preflight(
         cfg, shard_dirs, allow_leak=bool(args.allow_leak),
         allow_mixed_history=bool(args.allow_mixed_history),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
     )
     history_identity = history_identity_record(
         read_history_stamps(shard_dirs),
         allow_mixed_history=bool(args.allow_mixed_history),
+    )
+    partial_corpus = partial_corpus_record(
+        read_partial_corpus_stamps(shard_dirs),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
     )
 
     receipt: dict[str, Any] | None = None
@@ -2131,6 +2217,7 @@ def main(argv: list[str] | None = None) -> int:
             # ⚑ What the history-identity reader saw (round 2, Grok D3): a
             # run launched with --allow-mixed-history says so here.
             "history_identity": history_identity,
+            "partial_corpus": partial_corpus,
         },
         "purity_receipt": (
             None if receipt is None or receipt_path is None else {

@@ -288,8 +288,13 @@ def write_corpus(
     drop_shard_from_summary: bool = False,
     complete: bool = True,
     row_schema: int = corpus.ROW_SCHEMA,
+    run_finished: bool | None = None,
 ) -> Path:
     """A corpus directory, written by the GENERATOR'S OWN writer.
+
+    ``run_finished`` is what the summary STATES (``None``: no key, the legacy
+    summary shape); ``False`` is what a repair run writes for a corpus it did
+    not finish.
 
     ``complete=True`` is a run that finished: ``manifest.json`` (banked at
     launch), the per-worker ``w00.progress.jsonl`` ``ShardWriter`` appends to as
@@ -334,6 +339,7 @@ def write_corpus(
         "staircase_parsed": staircase if staircase is not None else STAIRCASE,
         "shards": [] if drop_shard_from_summary else list(writer.shards),
         "banked_rows_min_piece_count": corpus.MIN_BANKED_PIECES,
+        **({} if run_finished is None else {"run_finished": bool(run_finished)}),
     }
     (out / corpus.SUMMARY_NAME).write_text(
         json.dumps(summary, indent=2), encoding="utf-8",
@@ -1285,6 +1291,110 @@ def test_a_shard_mixed_within_itself_is_refused_at_launch_unless_allowed(
         launcher.preflight(real_control_config(), [out], allow_leak=True)
 
 
+def test_a_partial_corpus_is_stamped_on_its_shards(tmp_path: Path) -> None:
+    """⚑ #498 rebase finding: a repair run with ``--shards``/``--workers``
+    writes ``summary.json`` with ``run_finished: false``, and the deriver read
+    "summary exists" as "complete" and derived it SILENTLY -- the derived
+    shards carried no sign the corpus was partial, so a trainer that must see
+    the exact champion rows could consume a subset unseen.
+
+    Three corpora: a summary stating ``false`` (partial), a summary with no
+    claim (whole -- the legacy shape), and ``manifest+progress`` (partial by
+    definition).  The stamp is read off the derived SHARD, the launcher
+    refuses on it (not softened by ``--allow-leak``), and
+    ``--allow-partial-corpus`` records it instead (the next test).
+    """
+
+    def derived(name: str, **corpus_kwargs: Any) -> tuple[Path, dict[str, Any]]:
+        src = write_corpus(
+            tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY,
+            name=f"c_{name}", **corpus_kwargs,
+        )
+        out = tmp_path / name
+        return out, run_derive(src, out, "uniform-d9")
+
+    partial, partial_summary = derived("partial", run_finished=False)
+    whole, whole_summary = derived("whole")
+    live, live_summary = derived("live", complete=False)
+
+    assert partial_summary["corpus"]["corpus_complete"] is False
+    assert partial_summary["corpus"]["corpus_record"] == derive.CORPUS_RECORD_SUMMARY
+    detail = partial_summary["corpus"]["corpus_record_detail"]
+    assert detail["run_finished"] is False
+    assert detail["run_finished_claim"] is False
+    assert detail["corpus_complete"] is False
+    assert whole_summary["corpus"]["corpus_complete"] is True
+    assert whole_summary["corpus"]["corpus_record_detail"]["run_finished_claim"] is None
+    assert live_summary["corpus"]["corpus_complete"] is False
+    assert live_summary["corpus"]["corpus_record"] == derive.CORPUS_RECORD_PARTIAL
+
+    (partial_attrs,) = shard_attrs(partial)
+    assert partial_attrs["corpus_complete"] is False
+    assert partial_attrs["corpus_run_finished_claim"] is False
+    assert partial_attrs["corpus_shards_adopted"] == 1
+    assert partial_attrs["corpus_rows_claimed"] == 1
+    assert partial_attrs["corpus_rows_derived"] == 1
+    (whole_attrs,) = shard_attrs(whole)
+    assert whole_attrs["corpus_complete"] is True
+    assert whole_attrs["corpus_run_finished_claim"] is None
+    (live_attrs,) = shard_attrs(live)
+    assert live_attrs["corpus_complete"] is False
+    assert live_attrs["corpus_run_finished_claim"] is None
+
+
+def test_a_partial_corpus_shard_is_refused_at_launch_unless_allowed(
+    tmp_path: Path,
+) -> None:
+    """The launcher half, on REAL derived shards: ``read_partial_corpus_stamps``
+    reads the stamp the deriver wrote, ``preflight`` refuses on it (not
+    softened by ``--allow-leak``), ``--allow-partial-corpus`` records it.
+    ⚑ Its own test so that "stamp dropped from the shard" fails HERE, at the
+    launcher, and not only at the attrs assertion above."""
+    import scripts.lc0_control_train as launcher
+
+    def derived(name: str, **corpus_kwargs: Any) -> Path:
+        src = write_corpus(
+            tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY,
+            name=f"c_{name}", **corpus_kwargs,
+        )
+        out = tmp_path / name
+        run_derive(src, out, "uniform-d9")
+        return out
+
+    partial = derived("partial", run_finished=False)
+    whole = derived("whole")
+    live = derived("live", complete=False)
+
+    assert launcher.read_partial_corpus_stamps([whole]) == {}
+    stamps = launcher.read_partial_corpus_stamps([partial, live])
+    assert set(stamps) == {"partial/shard_000000.zarr", "live/shard_000000.zarr"}
+    assert stamps["partial/shard_000000.zarr"] == {
+        "run_finished_claim": False, "shards_adopted": 1,
+        "rows_claimed": 1, "rows_derived": 1,
+    }
+    assert launcher.partial_corpus_problems([whole], allow_partial_corpus=False) == []
+    (problem,) = launcher.partial_corpus_problems([partial], allow_partial_corpus=False)
+    assert "PARTIAL corpus" in problem
+    assert "run_finished_claim=False" in problem
+    assert "rows_claimed=1" in problem
+    assert launcher.partial_corpus_problems([partial], allow_partial_corpus=True) == []
+    assert launcher.partial_corpus_record(stamps, allow_partial_corpus=True) == {
+        "incomplete_shards": {
+            "live/shard_000000.zarr": stamps["live/shard_000000.zarr"],
+            "partial/shard_000000.zarr": stamps["partial/shard_000000.zarr"],
+        },
+        "partial": True, "allow_partial_corpus": True,
+    }
+    # REACHABILITY: preflight refuses, --allow-leak does not soften it, and the
+    # opt-in is the only way through.
+    with pytest.raises(SystemExit, match="PARTIAL corpus"):
+        launcher.preflight(real_control_config(), [partial], allow_leak=True)
+    launcher.preflight(
+        real_control_config(), [partial], allow_leak=False, allow_partial_corpus=True,
+    )
+    launcher.preflight(real_control_config(), [whole], allow_leak=False)
+
+
 def test_a_keyless_window_row_cannot_take_the_bare_fen_path() -> None:
     """⚑ Grok P2-A (round 3): the dispatch is EXACT, at every consumer.
 
@@ -1857,6 +1967,12 @@ def test_manifest_and_progress_derive_what_the_summary_derives(
     a, meta_a = read_rows(tmp_path / "a")
     b, meta_b = read_rows(tmp_path / "b")
     assert len(a) == len(b) == len(rows)
+    # ⚑ THE ONE STAMP THE RECORD IS ALLOWED TO CHANGE: a manifest+progress
+    # read is a partial corpus by definition, and the shard says so
+    # (`corpus_complete`), so the launcher can refuse it. Everything else
+    # on the shard must be byte-identical.
+    assert meta_a.pop("corpus_complete") is True
+    assert meta_b.pop("corpus_complete") is False
     assert meta_a == meta_b
     by_a = {int(s.game_id): s for s in a}
     by_b = {int(s.game_id): s for s in b}

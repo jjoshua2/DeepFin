@@ -2978,11 +2978,16 @@ class TargetDeriver:
 
         # ⚑ THE LAST NON-FATAL RAISE FIRST. `_value_view` can raise
         # `EnvelopeMiss`, which the caller may TOLERATE (the row is dropped and
-        # counted). Every per-row counter below it must therefore run after
+        # counted). Every IDENTITY counter below it must therefore run after
         # it, or a dropped row is in `row_schema_counts`,
         # `history_window_empty_rows` and `input_key_verified` while
         # `rows_written` excludes it -- and `zero_history` on the shard could
         # then read True on a history-aware corpus (Fable, round 2 delta).
+        # ⚑ Four counters ABOVE this line still see a dropped row, on purpose:
+        # `phases_per_row`, `nodes_floor_hits`, `support_checks`
+        # (`_check_support`) and the temp/floor recovery counters
+        # (`_note_recovery`). They are provenance histograms of what was READ,
+        # not of what was emitted, and no stamp is derived from them.
         value_values = self._value_view(bank, values)
         q_wdl = self.wdl_of(
             float(value_values.effective_cp[value_values.best_index]),
@@ -3312,7 +3317,10 @@ class TargetDeriver:
         """The row's SCHEMA and window reason, counted once per EMITTED row.
 
         ⚑ Emitted, not derived: called after the last tolerated raise in
-        ``derive_row``, so a row the envelope drops is never in these counts.
+        ``derive_row``, so a row the envelope drops is never in THESE counts
+        (nor in ``input_key_verified``).  The provenance histograms above that
+        raise -- ``phases_per_row``, ``nodes_floor_hits``, ``support_checks``,
+        the recovery counters -- still count it; see ``derive_row``.
         """
         stats = self.stats
         schema = row_schema_of(row)
@@ -3515,11 +3523,31 @@ class CorpusRecord:
     #: Shard files on disk that the snapshot does not name: every live worker's
     #: in-flight shard, plus anything a kill left unlisted.  Counted, not read.
     unlisted_on_disk: tuple[str, ...]
+    #: What ``summary.json`` STATES in ``run_finished`` (``None``: it states
+    #: nothing -- a legacy summary, or no summary at all).  ⚑ A summary can
+    #: say ``false``: a repair run with ``--shards``/``--workers`` writes one
+    #: for a corpus it did not finish, and before this field the deriver read
+    #: "summary exists" as "complete" and derived it silently (#498 rebase).
+    run_finished: bool | None = None
 
     @property
     def complete(self) -> bool:
-        """Whether the record itself claims the run FINISHED."""
+        """Whether the RECORD is the finished kind (``summary.json``).
+
+        ⚑ The record kind, not the corpus's completeness: a summary that says
+        ``run_finished: false`` is still the summary record (its realized
+        stamps are real).  :attr:`corpus_complete` is the corpus's claim.
+        """
         return self.mode == CORPUS_RECORD_SUMMARY
+
+    @property
+    def corpus_complete(self) -> bool:
+        """Whether the corpus is WHOLE: the summary record, and it does not
+        say ``run_finished: false``.  A legacy summary without the key is
+        whole (the generator's own ``summary_run_finished`` contract: silence
+        is not "no"); ``manifest+progress`` is a partial read by definition.
+        """
+        return self.complete and self.run_finished is not False
 
     def detail(self) -> dict[str, Any]:
         """The stamp that makes a partial derivation visibly partial."""
@@ -3530,7 +3558,9 @@ class CorpusRecord:
                 else f"{corpus.MANIFEST_NAME} + {len(self.progress_files)} "
                      f"{PROGRESS_GLOB}"
             ),
-            "run_finished": self.complete,
+            "run_finished": self.corpus_complete,
+            "run_finished_claim": self.run_finished,
+            "corpus_complete": self.corpus_complete,
             "shards_adopted": len(self.shards),
             "rows_claimed_by_inventory": self.rows_claimed,
             "progress_files_read": list(self.progress_files),
@@ -3581,6 +3611,7 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
             progress_files=(),
             torn_tail_files=(),
             unlisted_on_disk=(),
+            run_finished=corpus.summary_run_finished(summary),
         )
     return read_partial_corpus_record(corpus_dir)
 
@@ -4738,6 +4769,18 @@ def _stamp_realized_row_schema(
         # `history_window_empty_rows` to `rows_written`, a second definition
         # on a second denominator (Fable, round 2 delta).
         "zero_history": stats.history_slots_nonzero_max <= 1,
+        # ⚑ WHOLE OR PARTIAL, on the shard. A repair run's summary can say
+        # `run_finished: false` and a manifest+progress read is partial by
+        # definition; either way the derived shards are a SUBSET of a corpus,
+        # and a trainer that must see exactly the whole one (arm B's 5.5M
+        # champion rows) has to be able to tell from the shard alone. The
+        # launcher refuses a `corpus_complete: false` shard unless
+        # --allow-partial-corpus (#498 rebase finding).
+        "corpus_complete": corpus_record.corpus_complete,
+        "corpus_run_finished_claim": corpus_record.run_finished,
+        "corpus_shards_adopted": len(corpus_record.shards),
+        "corpus_rows_claimed": int(corpus_record.rows_claimed),
+        "corpus_rows_derived": int(stats.rows_written),
     }
     for entry in written:
         group = zarr.open_group(str(out_dir / str(entry["path"])), mode="a")
@@ -4832,6 +4875,9 @@ def build_summary(
             # say which one it was would be indistinguishable from a whole one.
             "corpus_record": corpus_record.mode,
             "corpus_record_detail": corpus_record.detail(),
+            # ⚑ FIRST-CLASS: the summary record with `run_finished: false` is
+            # a partial corpus too, and the detail block alone buried that.
+            "corpus_complete": corpus_record.corpus_complete,
             "config_sha256": facts.get("config_sha256"),
             # ⚑ A manifest has no top-level run_id; both records carry it inside
             # config_requested, and the summary's own top-level copy is read
