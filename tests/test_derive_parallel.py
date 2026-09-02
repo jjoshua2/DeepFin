@@ -57,7 +57,11 @@ from tests.test_derive_corpus_targets import (
     FEN_W,
     corpus_row,
     full_width_phase,
+    history_row,
     ramp,
+    real_control_config,
+    shard_attrs,
+    write_corpus,
     write_manifest,
 )
 
@@ -1197,7 +1201,7 @@ def test_the_spill_round_trip_check_sees_a_dtype_change(tmp_path: Path) -> None:
         for index in range(2)
     ]
     with pytest.raises(ValueError, match="contains NaN"):
-        derive._write_spill_chunk(derive._spill_path(tmp_path, 0, 0), samples)
+        derive._write_spill_chunk(derive._spill_path(tmp_path, 0, 0), samples, schemas=[1] * len(samples))
 
 
 def test_the_merge_rules_do_not_name_a_field_twice() -> None:
@@ -1629,3 +1633,67 @@ def test_a_value_depth_outside_the_envelope_is_refused_on_the_parallel_path_too(
     corpus_dir = write_split_corpus(tmp_path, rows, [6, 6])
     with pytest.raises(derive.CorpusIntegrityError, match="value-depth 12"):
         run(corpus_dir, tmp_path / "par", "--value-depth", "12", "--workers", "2")
+
+
+# ── history identity at commit, on the parallel path ─────────────────────────
+
+
+def test_the_parallel_path_commits_each_shards_identity_and_a_dead_run_never_reads_as_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑⚑ Operator ruling (#497 round 3), the PARALLEL half: every shard the
+    repack commits carries its own history identity, computed from the rows
+    the spill sidecars carried through, and equals the sequential shard's.
+    The run then dies before the final pass and the launcher must never read
+    a committed shard as schema-1 zero-history.
+    """
+    import zarr
+
+    import scripts.lc0_control_train as launcher
+
+    rows = [history_row(game_id=g, ply=0) for g in range(5)]
+    src = write_corpus(tmp_path, rows, row_schema=derive.ROW_SCHEMA_HISTORY)
+    sequential, parallel = both_ways(tmp_path, src, workers=2, rows_per_shard=2)
+    seq_attrs = shard_attrs(sequential)
+    par_attrs = shard_attrs(parallel)
+    assert len(seq_attrs) == len(par_attrs) == 3
+    for seq, par in zip(seq_attrs, par_attrs):
+        assert par["derive_identity_format"] == derive.DERIVE_IDENTITY_FORMAT
+        assert par["derive_state"] == derive.DERIVE_STATE_COMMITTED
+        assert par["derive_corpus_row_schema"] == 3
+        assert par["zero_history"] is False
+        assert par["derive_run_finalized"] is True
+        for key in (*launcher.IDENTITY_KEYS, "corpus_complete", "corpus_rows_derived",
+                    "derive_run_row_schema", "derive_run_zero_history"):
+            assert par[key] == seq[key], key
+    assert [a["derive_corpus_row_schema_counts"] for a in par_attrs] == [{"3": 2}, {"3": 2}, {"3": 1}]
+    # No spill sidecar survives the run.
+    assert not list(parallel.rglob("*.schemas.json"))
+
+    def dies_after_the_repack(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("simulated death between the repack and the final pass")
+
+    monkeypatch.setattr(derive, "_stamp_realized_row_schema", dies_after_the_repack)
+    dead = tmp_path / "dead"
+    with pytest.raises(RuntimeError, match="between the repack and the final pass"):
+        run(src, dead, "--workers", "2", rows_per_shard=2)
+    dead_attrs = shard_attrs(dead)
+    assert len(dead_attrs) == 3
+    for attrs in dead_attrs:
+        assert attrs["derive_state"] == derive.DERIVE_STATE_COMMITTED
+        assert attrs["derive_corpus_row_schema"] == 3
+        assert attrs["zero_history"] is False
+        assert attrs["derive_run_finalized"] is False
+        assert "corpus_rows_derived" not in attrs
+    stamps = launcher.read_history_stamps([dead])
+    assert stamps.row_schemas.keys() == {"3"}
+    assert stamps.zero_history.keys() == {False}
+    assert stamps.unidentified == {}
+    with pytest.raises(SystemExit, match="PARTIAL corpus"):
+        launcher.preflight(real_control_config(), [dead], allow_leak=True)
+    # A marked shard stripped of its identity: refused by name, never legacy.
+    (first, *_rest) = sorted(dead.glob('shard_*.zarr'))
+    del zarr.open_group(str(first), mode="a").attrs["zero_history"]
+    stripped = launcher.read_history_stamps([dead])
+    assert set(stripped.unidentified) == {f"dead/{first.name}"}
+    assert "1" not in stripped.row_schemas

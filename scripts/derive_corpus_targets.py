@@ -412,6 +412,7 @@ import argparse
 import gzip
 import io
 import json
+import os
 import math
 import multiprocessing as mp
 import re
@@ -2927,6 +2928,9 @@ class DerivedRow:
 
     sample: ReplaySample
     facts: RowValueFacts
+    #: The corpus row's schema (``row_schema_of``), carried to the shard writer
+    #: so each shard can stamp its OWN identity at commit.
+    row_schema: int
 
 
 class TargetDeriver:
@@ -3070,6 +3074,7 @@ class TargetDeriver:
         return DerivedRow(
             sample=sample,
             facts=self._value_facts(row, bank, q_wdl=q_wdl, z_index=z_index),
+            row_schema=row_schema_of(row),
         )
 
     def _value_view(self, bank: RowBank, values: MoveValues) -> MoveValues:
@@ -4177,9 +4182,11 @@ def derive(
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[dict[str, Any]] = []
     pending: list[ReplaySample] = []
+    pending_schemas: list[int] = []
     shard_index = 0
     tt_carried: set[bool] = set()
     grouper = GameGrouper(deriver) if options.needs_game else None
+    identity = CommitIdentity.of(record)
 
     def emit(batch: GameBatch | None) -> None:
         """Take a batch's rows into ``pending`` and cut full shards off it.
@@ -4191,20 +4198,27 @@ def derive(
         241-row-oversized shard, and two arms of the value round would then
         differ in their shard layout as well as in their targets.
         """
-        nonlocal pending, shard_index
+        nonlocal pending, pending_schemas, shard_index
         if batch is None or not batch.rows:
             return
-        pending.extend(apply_value_scheme(
+        produced = apply_value_scheme(
             batch.rows,
             options=options,
             stats=deriver.stats,
             banked_tail_ply=batch.banked_tail_ply,
-        ))
+        )
+        pending.extend(produced)
+        pending_schemas.extend(_row_schemas_of(batch.rows, produced))
         while len(pending) >= options.rows_per_shard:
             chunk = pending[: options.rows_per_shard]
-            written.append(_flush(out_dir, shard_index, chunk, options, rng, corpus_sha))
+            chunk_schemas = pending_schemas[: options.rows_per_shard]
+            written.append(_flush(
+                out_dir, shard_index, chunk, options, rng, corpus_sha,
+                schemas=chunk_schemas, identity=identity,
+            ))
             deriver.stats.rows_written += len(chunk)
             pending = pending[options.rows_per_shard :]
+            pending_schemas = pending_schemas[options.rows_per_shard :]
             shard_index += 1
 
     for path in shards:
@@ -4265,7 +4279,10 @@ def derive(
             options.limit and deriver.stats.rows_read >= options.limit,
         )))
     if pending:
-        written.append(_flush(out_dir, shard_index, pending, options, rng, corpus_sha))
+        written.append(_flush(
+            out_dir, shard_index, pending, options, rng, corpus_sha,
+            schemas=pending_schemas, identity=identity,
+        ))
         deriver.stats.rows_written += len(pending)
     if not written:
         raise CorpusIntegrityError(
@@ -4657,6 +4674,92 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
     return bool(run[corpus.KEY_TT_CARRIED])
 
 
+@dataclass(frozen=True)
+class CommitIdentity:
+    """The run-level facts every shard must carry AT COMMIT, known before the
+    first row is derived: the corpus's own completeness claim and inventory.
+    Everything else on the shard's identity is shard-local and computed from
+    the rows being written (``_shard_identity``)."""
+
+    corpus_complete: bool
+    corpus_run_finished_claim: bool | None
+    corpus_shards_adopted: int
+    corpus_rows_claimed: int
+    corpus_record_row_schema: int
+
+    @classmethod
+    def of(cls, record: CorpusRecord) -> CommitIdentity:
+        return cls(
+            corpus_complete=record.corpus_complete,
+            corpus_run_finished_claim=record.run_finished,
+            corpus_shards_adopted=len(record.shards),
+            corpus_rows_claimed=int(record.rows_claimed),
+            corpus_record_row_schema=int(record.facts["row_schema"]),
+        )
+
+
+def _row_schemas_of(rows: Sequence[DerivedRow], produced: Sequence[ReplaySample]) -> list[int]:
+    """The row schemas aligned with ``produced``.  ⚑ ``apply_value_scheme`` is
+    1:1 and order-preserving; checked here rather than assumed, because a
+    misaligned schema list would stamp the wrong identity on a shard."""
+    if len(rows) != len(produced):
+        raise CorpusIntegrityError(
+            f"apply_value_scheme returned {len(produced)} samples for "
+            f"{len(rows)} derived rows; the per-row schemas cannot be aligned",
+        )
+    return [int(row.row_schema) for row in rows]
+
+
+def _shard_identity(
+    arrs: Mapping[str, np.ndarray], schemas: Sequence[int], identity: CommitIdentity,
+) -> dict[str, Any]:
+    """⚑⚑ THE SHARD'S OWN HISTORY IDENTITY, from the rows being written.
+
+    Operator ruling (#497 round 3): identity is stamped AT COMMIT, never
+    supplied by an end-of-run pass.  A shard flushed while the derivation was
+    still running, or before it died, used to carry no identity at all and
+    the launcher read that absence as legacy schema-1 zero-history -- a
+    history-aware shard admitted as a valid legacy one.  So every key the
+    launcher decides on is computed HERE from this shard's rows and planes:
+
+    * ``derive_corpus_row_schema`` / ``_counts`` -- from the per-row schemas
+      the deriver carried with the samples;
+    * ``zero_history`` -- MEASURED off ``x``: no row in this shard fills more
+      than history slot 0 (``history_slots_filled``), not a counter that
+      could default;
+    * the regime, the format marker, the committed state, the run-level
+      finalization flag (``False`` until the end pass), and the corpus's
+      completeness claim and inventory.
+    """
+    x = np.asarray(arrs["x"])
+    if x.shape[0] != len(schemas):
+        raise CorpusIntegrityError(
+            f"shard holds {x.shape[0]} rows and {len(schemas)} row schemas; "
+            "the identity cannot be stamped from a misaligned list",
+        )
+    counts: dict[str, int] = {}
+    for schema in schemas:
+        counts[str(int(schema))] = counts.get(str(int(schema)), 0) + 1
+    filled_max = max((history_slots_filled(np.asarray(row)) for row in x), default=0)
+    return {
+        "derive_identity_format": DERIVE_IDENTITY_FORMAT,
+        "derive_state": DERIVE_STATE_COMMITTED,
+        "derive_run_finalized": False,
+        "derive_corpus_row_schema": (
+            int(next(iter(counts))) if len(counts) == 1 else ROW_SCHEMA_MIXED
+        ),
+        "derive_corpus_row_schema_counts": dict(sorted(counts.items())),
+        "derive_corpus_record_row_schema": identity.corpus_record_row_schema,
+        "zero_history": filled_max <= 1,
+        "history_slots_nonzero_max": int(filled_max),
+        "derive_history_rep_fix": HISTORY_REP_FIX,
+        "corpus_complete": identity.corpus_complete,
+        "corpus_run_finished_claim": identity.corpus_run_finished_claim,
+        "corpus_shards_adopted": identity.corpus_shards_adopted,
+        "corpus_rows_claimed": identity.corpus_rows_claimed,
+    }
+
+
 def _flush(
     out_dir: Path,
     index: int,
@@ -4664,6 +4767,9 @@ def _flush(
     options: DeriveOptions,
     rng: np.random.Generator,
     corpus_sha: str,
+    *,
+    schemas: Sequence[int],
+    identity: CommitIdentity,
 ) -> dict[str, Any]:
     """Write one shard.  ``--seed`` permutes the rows inside it and nothing else.
 
@@ -4676,6 +4782,7 @@ def _flush(
     order = rng.permutation(len(samples))
     return _flush_ordered(
         out_dir, index, [samples[int(i)] for i in order], options, corpus_sha,
+        schemas=[int(schemas[int(i)]) for i in order], identity=identity,
     )
 
 
@@ -4685,6 +4792,9 @@ def _flush_ordered(
     ordered: list[ReplaySample],
     options: DeriveOptions,
     corpus_sha: str,
+    *,
+    schemas: Sequence[int],
+    identity: CommitIdentity,
 ) -> dict[str, Any]:
     """Write one shard whose row ORDER has already been decided.
 
@@ -4697,9 +4807,17 @@ def _flush_ordered(
     differ from a sequential one without any check noticing.
     """
     path = local_shard_path(out_dir, index)
+    # ⚑ WRITTEN UNDER A NAME NO READER GLOBS, stamped, verified, THEN renamed
+    # into place: the shard becomes externally visible as committed in one
+    # `os.replace`, already carrying its identity. A death anywhere before
+    # the rename leaves a `.writing` directory that `iter_shard_paths` (and
+    # the launcher) never sees.
+    writing = path.with_name(path.name + _WRITING_SUFFIX)
+    if writing.exists():
+        shutil.rmtree(writing)
     arrs = samples_to_arrays(ordered)
     save_local_shard_arrays(
-        path,
+        writing,
         arrs=arrs,
         meta=ShardMeta(
             run_id=SHARD_RUN_ID,
@@ -4710,8 +4828,12 @@ def _flush_ordered(
             positions=len(ordered),
         ),
     )
-    _stamp_shard_attrs(path, options, corpus_sha)
-    _verify_value_column_on_disk(path, arrs)
+    _stamp_shard_attrs(writing, options, corpus_sha)
+    zarr.open_group(str(writing), mode="a").attrs.update(
+        _shard_identity(arrs, schemas, identity),
+    )
+    _verify_value_column_on_disk(writing, arrs)
+    os.replace(writing, path)
     return {"path": path.name, "rows": len(ordered)}
 
 
@@ -4757,8 +4879,20 @@ def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> 
 #: shape.  A string on purpose: a reader that does ``int(attrs[...])`` on a
 #: mixed shard fails loudly instead of adopting one half's number.
 ROW_SCHEMA_MIXED = "mixed"
-#: ``derive_corpus_row_schema`` between a shard's write and its finalization.
-DERIVE_IN_PROGRESS = "in_progress"
+#: ⚑ THE SHARD-IDENTITY FORMAT MARKER (operator ruling, #497 round 3).  Every
+#: shard this deriver COMMITS carries ``derive_identity_format`` and, in the
+#: same commit, its own history identity (``derive_corpus_row_schema``,
+#: ``derive_corpus_row_schema_counts``, ``zero_history``, the regime) and its
+#: state.  The launcher reads a shard with this marker and a missing identity
+#: as a FAULT, by name; only a shard with NO marker is a genuine legacy
+#: (pre-#497, bare-FEN) derivation.  Bump when the identity contract changes.
+DERIVE_IDENTITY_FORMAT = 1
+#: ``derive_state`` of a committed shard.  There is no other value on disk: a
+#: shard is written under a ``.writing`` name, stamped, verified and only then
+#: renamed into place, so an unrenamed one is invisible to every glob.
+DERIVE_STATE_COMMITTED = "committed"
+#: Suffix of a shard directory that is not yet committed.
+_WRITING_SUFFIX = ".writing"
 
 
 def zero_history_reading(stats: DeriveStats) -> bool:
@@ -4816,12 +4950,16 @@ def _stamp_realized_row_schema(
       is visible on the shard;
     * ``zero_history`` -- :func:`zero_history_reading`: off the PLANES, no
       emitted row filled more than history slot 0, and refused rather than
-      defaulted when the slot histogram does not cover every emitted row;
-    * ``derive_in_progress`` -- ``False`` here; ``True`` from the moment the
-      shard is written until this finalizes it (Codex P1, thread on the
-      write site): a derivation that dies between the flush and this call
-      leaves shards the launcher refuses by name instead of reading their
-      absent identity as bare-FEN.
+      defaulted when the slot histogram does not cover every emitted row.
+
+    ⚑ SUPERSEDED IN PART (operator ruling, #497 round 3): the four keys above
+    are now stamped PER SHARD AT COMMIT by :func:`_shard_identity`, from that
+    shard's own rows and planes, and this pass only ADDS the run-level facts
+    (``derive_run_*``, ``corpus_rows_derived``, ``derive_run_finalized``) and
+    cross-checks the committed identity against the run's counters.  A
+    derivation that dies before this pass leaves shards that are fully
+    identified and marked ``derive_run_finalized: false`` -- which the
+    launcher treats as a PARTIAL corpus, never as legacy.
 
     Written after the last shard on BOTH the sequential and the parallel path,
     from the same merged stats, so the two paths' ``.zattrs`` stay identical.
@@ -4829,32 +4967,51 @@ def _stamp_realized_row_schema(
     counts = {
         str(k): int(v) for k, v in sorted(stats.row_schema_counts.items())
     }
+    run_zero_history = zero_history_reading(stats)
+    # ⚑ THE RUN-LEVEL FACTS, ADDED. The identity itself was stamped by
+    # `_shard_identity` when each shard was committed, and this pass may not
+    # supply or overwrite it -- it CROSS-CHECKS it: the per-shard counts must
+    # sum to the run's, and the per-shard plane readings must agree with the
+    # run's. A disagreement is a writer fault and stops the run.
     attrs = {
-        "derive_corpus_row_schema": realized_row_schema(stats),
-        "derive_corpus_row_schema_counts": counts,
-        "derive_corpus_record_row_schema": int(corpus_record.facts["row_schema"]),
-        # ⚑ ONE definition, the SUMMARY's, off the planes: no emitted row
-        # filled more than history slot 0. The first cut compared
-        # `history_window_empty_rows` to `rows_written`, a second definition
-        # on a second denominator (Fable, round 2 delta).
-        "zero_history": zero_history_reading(stats),
-        "derive_in_progress": False,
-        # ⚑ WHOLE OR PARTIAL, on the shard. A repair run's summary can say
-        # `run_finished: false` and a manifest+progress read is partial by
-        # definition; either way the derived shards are a SUBSET of a corpus,
-        # and a trainer that must see exactly the whole one (arm B's 5.5M
-        # champion rows) has to be able to tell from the shard alone. The
-        # launcher refuses a `corpus_complete: false` shard unless
-        # --allow-partial-corpus (#498 rebase finding).
-        "corpus_complete": corpus_record.corpus_complete,
-        "corpus_run_finished_claim": corpus_record.run_finished,
-        "corpus_shards_adopted": len(corpus_record.shards),
-        "corpus_rows_claimed": int(corpus_record.rows_claimed),
+        "derive_run_finalized": True,
+        "derive_run_row_schema": realized_row_schema(stats),
+        "derive_run_row_schema_counts": counts,
+        "derive_run_zero_history": run_zero_history,
         "corpus_rows_derived": int(stats.rows_written),
     }
+    summed: dict[str, int] = {}
+    shard_zero: list[bool] = []
     for entry in written:
         group = zarr.open_group(str(out_dir / str(entry["path"])), mode="a")
+        committed = dict(group.attrs)
+        if committed.get("derive_state") != DERIVE_STATE_COMMITTED:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: derive_state {committed.get('derive_state')!r} "
+                "at finalization; every shard is committed with its identity",
+            )
+        record_schema = int(corpus_record.facts["row_schema"])
+        if int(committed.get("derive_corpus_record_row_schema", -1)) != record_schema:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: committed with corpus record row schema "
+                f"{committed.get('derive_corpus_record_row_schema')!r}, the "
+                f"record says {record_schema}",
+            )
+        for schema, n in dict(committed.get("derive_corpus_row_schema_counts", {})).items():
+            summed[str(schema)] = summed.get(str(schema), 0) + int(n)
+        shard_zero.append(bool(committed["zero_history"]))
         group.attrs.update(attrs)
+    if written and summed != counts:
+        raise CorpusIntegrityError(
+            f"the committed shards' row-schema counts {summed} do not sum to "
+            f"the run's {counts}; a shard was stamped from the wrong rows",
+        )
+    if written and all(shard_zero) != run_zero_history:
+        raise CorpusIntegrityError(
+            f"the committed shards read zero_history {shard_zero} but the run's "
+            f"reading is {run_zero_history}; the per-shard plane reading and "
+            "the run's disagree",
+        )
     return attrs
 
 
@@ -4871,13 +5028,6 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
     """
     group = zarr.open_group(str(path), mode="a")
     group.attrs.update({
-        # ⚑ PROVISIONAL IDENTITY, from the first byte (Codex P1). Until
-        # `_stamp_realized_row_schema` finalizes it the shard holds planes
-        # whose history identity is not yet stamped, and an absent stamp
-        # reads as bare-FEN at the launcher -- the dangerous direction. Both
-        # keys are refused there by name; the finalizer overwrites both.
-        "derive_in_progress": True,
-        "derive_corpus_row_schema": DERIVE_IN_PROGRESS,
         "derive_schema": derive_schema_for(options.value_scheme),
         "derive_scheme": options.scheme.canonical,
         "derive_scheme_params": options.scheme.params(),
@@ -5990,7 +6140,17 @@ def _same_column(before: np.ndarray, after: np.ndarray) -> bool:
     )
 
 
-def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
+def _schemas_path(chunk_path: Path) -> Path:
+    """The per-row schema sidecar of a spill chunk.  ⚑ A SIDECAR, not a column:
+    the shard schema has no per-row provenance field, and ``ShardMeta`` refuses
+    unknown keys, so the schemas ride beside the chunk under the same index and
+    are sliced with the same ``[lo, hi)`` the repack takes from the rows."""
+    return chunk_path.with_name(chunk_path.name + ".schemas.json")
+
+
+def _write_spill_chunk(
+    path: Path, samples: list[ReplaySample], *, schemas: Sequence[int],
+) -> None:
     """Bank one run of surviving rows, and PROVE the banking is lossless.
 
     ⚑⚑ THE ROUND TRIP IS CHECKED HERE, ON EVERY CHUNK, and it is the whole
@@ -6015,6 +6175,10 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
     ⚑ COMPARED BY :func:`_same_column`, NOT ``np.array_equal`` -- see there for
     what that buys and for the reviewer premise it declines.
     """
+    if len(schemas) != len(samples):
+        raise ParallelDeriveError(
+            f"{path.name}: {len(schemas)} row schemas for {len(samples)} rows",
+        )
     want = samples_to_arrays(samples)
     save_local_shard_arrays(
         path,
@@ -6027,6 +6191,9 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
             policy_size=COMPACT_POLICY_SIZE,
             positions=len(samples),
         ),
+    )
+    _schemas_path(path).write_text(
+        json.dumps([int(s) for s in schemas]), encoding="utf-8",
     )
     stored, _ = load_shard_arrays(path, lazy=False)
     got = samples_to_arrays(arrays_to_samples(dict(stored)))
@@ -6063,6 +6230,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         carry_in = _carry_in_key(task.shards, span.lo)
 
     buffered: list[ReplaySample] = []
+    buffered_schemas: list[int] = []
     chunk_rows: list[int] = []
     survivors = 0
     tt_carried: set[bool] = set()
@@ -6073,9 +6241,10 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     # overflow predicate and the next worker's skip predicate both name it.
     range_end_key: tuple[int, int] | None = None
 
-    def cut(rows: list[ReplaySample]) -> None:
+    def cut(rows: list[ReplaySample], schemas: list[int]) -> None:
         _write_spill_chunk(
             _spill_path(task.spill_dir, task.index, len(chunk_rows)), rows,
+            schemas=schemas,
         )
         chunk_rows.append(len(rows))
         bank.drain()
@@ -6091,10 +6260,12 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             banked_tail_ply=batch.banked_tail_ply,
         )
         buffered.extend(produced)
+        buffered_schemas.extend(_row_schemas_of(batch.rows, produced))
         survivors += len(produced)
         while len(buffered) >= options.spill_chunk_rows:
-            cut(buffered[:options.spill_chunk_rows])
+            cut(buffered[:options.spill_chunk_rows], buffered_schemas[:options.spill_chunk_rows])
             del buffered[:options.spill_chunk_rows]
+            del buffered_schemas[:options.spill_chunk_rows]
 
     stop = False
     for shard_index in range(span.lo, task.shards_in_play):
@@ -6180,7 +6351,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         # game did, flushes ``False`` -- the game ended, the budget did not.
         emit(grouper.flush(cut_by_limit=bool(limit and max_gidx + 1 >= limit)))
     if buffered:
-        cut(list(buffered))
+        cut(list(buffered), list(buffered_schemas))
         buffered.clear()
 
     bank.drain()
@@ -6224,6 +6395,7 @@ class _RepackTask:
     corpus_sha: str
     out_dir: Path
     spill_dir: Path
+    identity: CommitIdentity
 
 
 def _slice_arrays(arrs: dict[str, Any], lo: int, hi: int) -> dict[str, np.ndarray]:
@@ -6243,11 +6415,18 @@ def _slice_arrays(arrs: dict[str, Any], lo: int, hi: int) -> dict[str, np.ndarra
 def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     """Rebuild one output shard's rows and write it through the sequential writer."""
     samples: list[ReplaySample] = []
+    schemas: list[int] = []
     for part in task.slices:
-        arrs, _ = load_shard_arrays(
-            _spill_path(task.spill_dir, part.worker, part.chunk), lazy=False,
-        )
+        chunk_path = _spill_path(task.spill_dir, part.worker, part.chunk)
+        arrs, _ = load_shard_arrays(chunk_path, lazy=False)
         samples.extend(arrays_to_samples(_slice_arrays(dict(arrs), part.lo, part.hi)))
+        chunk_schemas = json.loads(_schemas_path(chunk_path).read_text(encoding="utf-8"))
+        schemas.extend(int(s) for s in chunk_schemas[part.lo:part.hi])
+    if len(schemas) != len(samples):
+        raise ParallelDeriveError(
+            f"shard {task.index}: the repack assembled {len(samples)} rows and "
+            f"{len(schemas)} row schemas from the spill sidecars",
+        )
     order = np.asarray(task.order)
     if order.shape != (len(samples),):
         raise ParallelDeriveError(
@@ -6258,6 +6437,7 @@ def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     ordered = [samples[int(i)] for i in order]
     return _flush_ordered(
         task.out_dir, task.index, ordered, task.options, task.corpus_sha,
+        schemas=[schemas[int(i)] for i in order], identity=task.identity,
     )
 
 
@@ -6676,6 +6856,7 @@ def derive_parallel(
                 corpus_sha=corpus_sha,
                 out_dir=out_dir,
                 spill_dir=spill_dir,
+                identity=CommitIdentity.of(record),
             )
             for index, plan in enumerate(plans)
         ]

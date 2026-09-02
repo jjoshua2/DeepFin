@@ -191,7 +191,7 @@ def test_the_history_identity_is_read_back_off_the_written_summary(
     summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
     assert summary["corpus"]["history_identity"] == {
         "row_schemas": ["1", "3"], "zero_history": [False, True],
-        "mixed_within": [], "in_progress": [], "mixed": True,
+        "mixed_within": [], "unidentified": [], "mixed": True,
         "allow_mixed_history": True,
     }
 
@@ -226,7 +226,7 @@ def test_a_partial_corpus_stamp_is_read_back_off_the_written_summary(
     assert summary["corpus"]["partial_corpus"] == {
         "incomplete_shards": {"rows/shard_000000.zarr": {
             "run_finished_claim": False, "shards_adopted": 3,
-            "rows_claimed": 300, "rows_derived": 16,
+            "rows_claimed": 300, "rows_derived": 16, "derive_run_finalized": None,
         }},
         "partial": True, "allow_partial_corpus": True,
     }

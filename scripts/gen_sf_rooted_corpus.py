@@ -1907,6 +1907,10 @@ class ShardWriter:
         #: missing a tallied key is a writer fault, not a zero.
         self.tally_keys = tuple(str(key) for key in tally_keys)
         self._tallies: dict[str, Counter[str]] = self._fresh_tallies()
+        #: Cache-only events of the games pending in the CURRENT record,
+        #: committed with it (``cache_events``) and dropped with an abandoned
+        #: shard, exactly like the rows -- a resume replays those games.
+        self._pending_cache_events: list[dict[str, Any]] = []
 
     def _fresh_tallies(self) -> dict[str, Counter[str]]:
         return {key: Counter() for key in self.tally_keys}
@@ -1939,6 +1943,11 @@ class ShardWriter:
         self._uncommitted += 1
         for key in self.tally_keys:
             self._tallies[key][str(row[key])] += 1
+
+    def note_cache_events(self, events: Sequence[Mapping[str, Any]]) -> None:
+        """Bank a game's cache-only events beside its rows.  ⚑ BEFORE
+        ``end_game``, like the rows: they are committed with the record."""
+        self._pending_cache_events.extend(dict(e) for e in events)
 
     def end_game(self, game_id: int) -> None:
         """Record ``game_id`` as banked in full, and rotate if the shard is due.
@@ -1974,6 +1983,8 @@ class ShardWriter:
     def close(self) -> None:
         games = sorted(self._pending_games)
         self._pending_games = []
+        cache_events = self._pending_cache_events
+        self._pending_cache_events = []
         if self._text is None:
             if games:
                 # ⚑ A COMPLETION RECORD, NOT A SHARD: `path` is null because
@@ -1982,6 +1993,7 @@ class ShardWriter:
                 # must name files that exist.
                 self._append_progress({
                     "path": None, "rows": 0, "codec": self.codec, "games": games,
+                    "cache_events": cache_events,
                 })
             return
         self._text.close()
@@ -1997,6 +2009,7 @@ class ShardWriter:
             "tallies": {
                 key: dict(counter) for key, counter in self._tallies.items()
             },
+            "cache_events": cache_events,
         }
         self._tallies = self._fresh_tallies()
         if self._uncommitted:
@@ -2291,6 +2304,11 @@ class ResumeState:
     #: Progress lines that carried no ``games`` list and whose game ids were
     #: therefore DERIVED by reading the shard (the pre-``end_game`` format).
     legacy_lines: int
+    #: Cache-only events (a search that banked NO row: a label-only miss on a
+    #: seen tensor, or a sub-``MIN_BANKED_PIECES`` position) replayed from the
+    #: progress records, so the re-warmed cache holds every entry the killed
+    #: session's cache held, in the same FIFO order.
+    cache_events_rewarmed: int = 0
 
     @classmethod
     def fresh(cls) -> ResumeState:
@@ -2305,6 +2323,60 @@ class ResumeState:
             dedup_rewarmed=0,
             legacy_lines=0,
         )
+
+
+def cache_event(
+    *, game_id: int, ply: int, search_key: str, input_key: str,
+    remember_input: bool, values: SelectionValues,
+) -> dict[str, Any]:
+    """⚑⚑ A SEARCH THAT BANKED NO ROW, recorded so a resume can rebuild it.
+
+    Two plies search and then bank nothing: a seen tensor whose label was not
+    cached (the row is suppressed, the values are cached under the new
+    ``search_key``), and a sub-``MIN_BANKED_PIECES`` position (values cached,
+    tensor remembered, no row).  Both leave state in the worker's cache that
+    ``resume_worker_state`` could not rebuild from banked rows -- so a killed
+    and resumed worker searched where the uninterrupted one served, and under
+    the carried TT that moves finite-depth values, the seeded move and every
+    row after it (Codex P2, operator ruling #497 round 3).  The event carries
+    exactly what the live visit put in the cache, and the record it is
+    committed with (``ShardWriter.close``) is the shard's own, so the FIFO
+    order is reproduced by merging rows and events on ``(game_id, ply)``.
+    """
+    return {
+        "game_id": int(game_id),
+        "ply": int(ply),
+        "search_key": str(search_key),
+        "input_key": str(input_key),
+        "remember_input": bool(remember_input),
+        "values": {
+            "moves": list(values.moves),
+            # float32 -> python float -> JSON -> float32 is exact.
+            "effective_cp": [float(cp) for cp in values.effective_cp],
+        },
+    }
+
+
+def selection_values_from_event(event: Mapping[str, Any]) -> SelectionValues:
+    """The cached object a cache event recorded, rebuilt exactly."""
+    values = event["values"]
+    return SelectionValues(
+        moves=tuple(sys.intern(str(m)) for m in values["moves"]),
+        effective_cp=np.asarray(values["effective_cp"], dtype=np.float32),
+    )
+
+
+def _apply_cache_event(cache: DedupCache, event: Mapping[str, Any]) -> None:
+    """Replay one event in the order the live session performed it."""
+    key = str(event["search_key"])
+    if cache.get(key) is None:
+        cache.put(key, selection_values_from_event(event))
+    if bool(event.get("remember_input")):
+        cache.remember_input(str(event["input_key"]))
+
+
+def _event_key(event: Mapping[str, Any]) -> tuple[int, int]:
+    return int(event["game_id"]), int(event["ply"])
 
 
 def resume_worker_state(
@@ -2355,8 +2427,15 @@ def resume_worker_state(
     highest = -1
     legacy = 0
     rewarmed = 0
+    events_rewarmed = 0
     for record in records:
         raw_path = record["path"]
+        # ⚑ The cache-only events committed WITH this record, in the live
+        # order. A pre-events record has none, and its label-only entries are
+        # lost exactly as they always were (documented, and counted as zero).
+        events = sorted(
+            (dict(e) for e in record.get("cache_events", [])), key=_event_key,
+        )
         if raw_path is None:
             # A completion record: games, no file.  It must carry them -- a
             # null path with no games names nothing at all.
@@ -2366,6 +2445,9 @@ def resume_worker_state(
                     "no games list; it indexes neither a shard nor a game",
                 )
             completed.update(int(game) for game in record["games"])
+            for event in events:
+                _apply_cache_event(cache, event)
+                events_rewarmed += 1
             continue
         # By NAME, not by the stored string: the corpus directory may have been
         # moved or spelled differently between sessions, and the file the
@@ -2395,11 +2477,19 @@ def resume_worker_state(
         if "tallies" in record:
             adopted["tallies"] = dict(record["tallies"])
         derived: set[int] = set()
+        pending_events = list(events)
         # ONE pass over the shard: it re-warms the cache, and it is also where
         # a legacy line's game ids come from.
         for row in iter_shard_rows(path):
             derived.add(int(row["game_id"]))
             require_current_row_schema(row)
+            # ⚑ EVENTS BEFORE THE ROW THEY PRECEDE: rows are banked in play
+            # order, so merging on (game_id, ply) restores the exact FIFO
+            # sequence the killed session's cache saw.
+            row_at = (int(row["game_id"]), int(row["ply"]))
+            while pending_events and _event_key(pending_events[0]) < row_at:
+                _apply_cache_event(cache, pending_events.pop(0))
+                events_rewarmed += 1
             # ⚑ BOTH KEYS, in the order the live session filled them: the
             # values under the row's `search_key`, and the row's `input_key`
             # into the seen-input set. A re-warm that restored only the values
@@ -2412,6 +2502,9 @@ def resume_worker_state(
                 cache.put(key, selection_values_from_row(row))
                 rewarmed += 1
             cache.remember_input(str(row["input_key"]))
+        for event in pending_events:
+            _apply_cache_event(cache, event)
+            events_rewarmed += 1
         if "games" in record:
             adopted["games"] = [int(game) for game in record["games"]]
         else:
@@ -2441,6 +2534,7 @@ def resume_worker_state(
         progress_repair=repair,
         dedup_rewarmed=rewarmed,
         legacy_lines=legacy,
+        cache_events_rewarmed=events_rewarmed,
     )
 
 
@@ -2567,6 +2661,8 @@ class GameOutcome:
     #: game keeps playing; the count is disclosed rather than absorbed, because
     #: it is the one path on which a small-material game reaches the ply cap.
     adjudication_unavailable: int
+    #: Searches that banked no row but left cache state (``cache_event``).
+    cache_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _adjudicate(board: chess.Board, syzygy_path: str) -> dict[str, Any] | None:
@@ -2613,6 +2709,7 @@ def play_game(
     )
     board = start.board
     rows: list[dict[str, Any]] = []
+    cache_events: list[dict[str, Any]] = []
     adjudication: dict[str, Any] | None = None
     result_pgn: str | None = None
     termination = "unfinished"
@@ -2660,6 +2757,7 @@ def play_game(
             dedup.search_key_hits += 1
         if not new_input:
             dedup.row_key_hits += 1
+        searched = False
         if cached is not None and not new_input:
             dedup.hits[phase] += 1
             values = cached
@@ -2675,6 +2773,7 @@ def play_game(
                 # cap), and the WORKER plays on instead of dying with it.
                 termination = "engine_wedge"
                 break
+            searched = True
             dedup.first_seen[phase] += 1
             dedup.searches += 1
             if cached is not None:
@@ -2774,6 +2873,14 @@ def play_game(
                 "adjudication": None,
             })
             dedup.rows_banked += 1
+        elif searched:
+            # ⚑ A SEARCH WITH NO ROW: the cache changed and nothing banked
+            # says so. Recorded so a resume can rebuild the entry -- see
+            # `cache_event`.
+            cache_events.append(cache_event(
+                game_id=game_id, ply=ply, search_key=label_key,
+                input_key=input_key, remember_input=new_input, values=values,
+            ))
 
         board.push(chess.Move.from_uci(played))
         ply += 1
@@ -2790,6 +2897,7 @@ def play_game(
         adjudication=adjudication,
         opening_source=start.source,
         adjudication_unavailable=unavailable,
+        cache_events=cache_events,
     )
 
 
@@ -2888,6 +2996,7 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "shards_abandoned": [],
         "games_completed_prior": 0,
         "dedup_rewarmed": 0,
+        "dedup_cache_events_rewarmed": 0,
         "dedup_rewarmed_resident": 0,
         "resumed": bool(spec.resume),
         "resume_partials_deleted": [],
@@ -2984,6 +3093,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             )
             for row in outcome.rows:
                 writer.write(row)
+            writer.note_cache_events(outcome.cache_events)
             # ⚑ AFTER the last row and BEFORE the next game: this is the
             # commit point of the whole resume protocol. A kill between the
             # last `write` and here leaves the shard unlisted, so the game is
@@ -3061,6 +3171,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "shards_abandoned": list(writer.abandoned),
         "games_completed_prior": len(resume.completed_games),
         "dedup_rewarmed": resume.dedup_rewarmed,
+        "dedup_cache_events_rewarmed": resume.cache_events_rewarmed,
         # ⚑ The same claim READ OFF THE CACHE the worker then played through,
         # measured the instant the re-warm finished. A re-warm that counted its
         # puts and handed them to a cache the game loop never sees would report

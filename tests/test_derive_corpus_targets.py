@@ -1159,63 +1159,101 @@ def test_zero_history_refuses_an_unread_slot_histogram() -> None:
     assert derive.zero_history_reading(stats) is False
 
 
-def test_a_shard_is_provisional_until_finalized_and_the_launcher_refuses_it(
+def test_history_identity_is_on_the_shard_at_commit_and_a_dead_run_never_reads_as_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """⚑ Codex P1 (thread on the write site): a derivation that dies after
-    flushing shards but before ``_stamp_realized_row_schema`` left shards
-    with history-aware planes and NO identity stamp, which the launcher
-    read as bare-FEN.  Now every shard is written ``derive_in_progress:
-    true`` with the provisional ``"in_progress"`` row-schema stamp, the
-    finalizer overwrites both, and the launcher refuses the provisional
-    state by name under EVERY flag.
+    """⚑⚑ OPERATOR RULING (#497 round 3): identity AT SHARD COMMIT.
+
+    The first cut stamped ``derive_corpus_row_schema`` / ``zero_history`` /
+    ``corpus_complete`` in an end-of-run pass, and the launcher read an
+    UNSTAMPED shard as legacy schema-1 zero-history -- so a schema-3 shard
+    flushed before a crash was admitted as a valid legacy shard.  Failure
+    fixture: derive schema-3 rows, let the run die between the flush and the
+    final pass, feed the shard to ``read_history_stamps`` / ``preflight``: it
+    must NEVER read as schema-1 zero-history.  Mutant: the per-shard commit
+    stamp deleted -> this fails.
     """
     import scripts.lc0_control_train as launcher
 
-    assert launcher.DERIVE_IN_PROGRESS == derive.DERIVE_IN_PROGRESS
-    src = write_corpus(tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY)
+    assert launcher.DERIVE_STATE_COMMITTED == derive.DERIVE_STATE_COMMITTED
+    rows = [history_row(game_id=g, ply=0) for g in range(3)]
+    src = write_corpus(tmp_path, rows, row_schema=derive.ROW_SCHEMA_HISTORY)
 
     def dies_after_the_flush(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError("simulated death between flush and finalize")
+        raise RuntimeError("simulated death between flush and the final pass")
 
     monkeypatch.setattr(derive, "_stamp_realized_row_schema", dies_after_the_flush)
-    with pytest.raises(RuntimeError, match="between flush and finalize"):
-        run_derive(src, tmp_path / "dead", "uniform-d9")
-    (attrs,) = shard_attrs(tmp_path / "dead")
-    assert attrs["derive_in_progress"] is True
-    assert attrs["derive_corpus_row_schema"] == derive.DERIVE_IN_PROGRESS
-    assert "zero_history" not in attrs
+    with pytest.raises(RuntimeError, match="between flush and the final pass"):
+        run_derive(src, tmp_path / "dead", "uniform-d9", "--rows-per-shard", "2")
+    attrs_by_shard = shard_attrs(tmp_path / "dead")
+    assert len(attrs_by_shard) == 2, "one full shard and the tail, both committed"
+    for attrs in attrs_by_shard:
+        assert attrs["derive_identity_format"] == derive.DERIVE_IDENTITY_FORMAT
+        assert attrs["derive_state"] == derive.DERIVE_STATE_COMMITTED
+        assert attrs["derive_corpus_row_schema"] == 3
+        assert attrs["zero_history"] is False
+        assert attrs["derive_history_rep_fix"] is True
+        assert attrs["derive_run_finalized"] is False
+        assert attrs["corpus_complete"] is True
+        assert "corpus_rows_derived" not in attrs, "a run-level fact, added by the final pass"
+    assert [a["derive_corpus_row_schema_counts"] for a in attrs_by_shard] == [{"3": 2}, {"3": 1}]
+    assert not list((tmp_path / "dead").glob("*.writing")), "nothing half-written is visible"
 
     stamps = launcher.read_history_stamps([tmp_path / "dead"])
-    assert stamps.in_progress.keys() == {"dead/shard_000000.zarr"}
-    assert launcher.read_history_stamps([tmp_path / "dead"]).mixed is False
+    assert stamps.row_schemas.keys() == {"3"}, "NEVER schema 1"
+    assert stamps.zero_history.keys() == {False}, "NEVER zero-history"
+    assert stamps.unidentified == {}
+    assert launcher.history_identity_problems([tmp_path / "dead"], allow_mixed_history=False) == []
+    # ... and the dead run IS a partial corpus: refused unless opted in.
+    (problem,) = launcher.partial_corpus_problems([tmp_path / "dead"], allow_partial_corpus=False)
+    assert "derive_run_finalized=False" in problem
+    with pytest.raises(SystemExit, match="PARTIAL corpus"):
+        launcher.preflight(real_control_config(), [tmp_path / "dead"], allow_leak=True)
+    launcher.preflight(
+        real_control_config(), [tmp_path / "dead"], allow_leak=False, allow_partial_corpus=True,
+    )
+    # Beside a genuine bare-FEN directory it is a MIX, as it must be.
+    legacy = corpus_row(
+        fen=FEN_W, phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0", schema=1,
+    )
+    zero = tmp_path / "zero"
+    monkeypatch.undo()
+    run_derive(write_corpus(tmp_path, [legacy], row_schema=1, name="c1"), zero, "uniform-d9")
+    assert launcher.history_identity_problems([zero, tmp_path / "dead"], allow_mixed_history=False)
+
+    # A format-marked shard STRIPPED of its identity is a fault, not legacy:
+    # refused by name under every flag.
+    for path in iter_shard_paths(tmp_path / "dead"):
+        group = zarr.open_group(str(path), mode="a")
+        del group.attrs["derive_corpus_row_schema"]
+        del group.attrs["zero_history"]
+    stripped = launcher.read_history_stamps([tmp_path / "dead"])
+    assert set(stripped.unidentified) == {"dead/shard_000000.zarr", "dead/shard_000001.zarr"}
+    assert "1" not in stripped.row_schemas, "a stripped marked shard never reads as legacy"
     for allow in (False, True):
-        (problem,) = launcher.history_identity_problems(
-            [tmp_path / "dead"], allow_mixed_history=allow,
-        )
-        assert "IN PROGRESS" in problem
-        assert "No flag admits them" in problem
-    assert launcher.history_identity_record(stamps, allow_mixed_history=True)[
-        "in_progress"
-    ] == ["dead/shard_000000.zarr"]
-    with pytest.raises(SystemExit, match="IN PROGRESS"):
+        problems = launcher.history_identity_problems([tmp_path / "dead"], allow_mixed_history=allow)
+        assert any("MISSING or not committed" in p for p in problems)
+    assert launcher.history_identity_record(stripped, allow_mixed_history=True)["unidentified"] == [
+        "dead/shard_000000.zarr", "dead/shard_000001.zarr",
+    ]
+    with pytest.raises(SystemExit, match="MISSING or not committed"):
         launcher.preflight(
             real_control_config(), [tmp_path / "dead"], allow_leak=True,
             allow_mixed_history=True, allow_partial_corpus=True,
         )
 
-    # The finalizer clears the provisional state, and only then is the
-    # shard admissible.
-    monkeypatch.undo()
-    run_derive(src, tmp_path / "done", "uniform-d9")
-    (attrs,) = shard_attrs(tmp_path / "done")
-    assert attrs["derive_in_progress"] is False
-    assert attrs["derive_corpus_row_schema"] == 3
-    assert attrs["zero_history"] is False
-    assert launcher.read_history_stamps([tmp_path / "done"]).in_progress == {}
-    assert launcher.history_identity_problems(
-        [tmp_path / "done"], allow_mixed_history=False,
-    ) == []
+    # The finished run: the final pass ADDS the run-level facts and the shard
+    # keeps the identity it was committed with.
+    run_derive(src, tmp_path / "done", "uniform-d9", "--rows-per-shard", "2")
+    for attrs in shard_attrs(tmp_path / "done"):
+        assert attrs["derive_run_finalized"] is True
+        assert attrs["derive_corpus_row_schema"] == 3
+        assert attrs["derive_run_row_schema"] == 3
+        assert attrs["derive_run_row_schema_counts"] == {"3": 3}
+        assert attrs["derive_run_zero_history"] is False
+        assert attrs["corpus_rows_derived"] == 3
+    assert launcher.partial_corpus_problems([tmp_path / "done"], allow_partial_corpus=False) == []
 
 
 def test_an_envelope_dropped_row_is_in_no_per_row_count(tmp_path: Path) -> None:
@@ -1353,15 +1391,19 @@ def test_mixed_history_shards_are_refused_at_launch_unless_allowed(
     ) == []
     assert launcher.history_identity_record(stamps, allow_mixed_history=True) == {
         "row_schemas": ["1", "3"], "zero_history": [False, True],
-        "mixed_within": [], "in_progress": [], "mixed": True,
+        "mixed_within": [], "unidentified": [], "mixed": True,
         "allow_mixed_history": True,
     }
     # An UNSTAMPED shard (pre-#497 deriver) reads as the bare-FEN shape, so a
-    # legacy directory and a zero-history one are one identity ...
+    # legacy directory and a zero-history one are one identity ... ⚑ A genuine
+    # legacy shard carries NO `derive_identity_format` either; a marked shard
+    # stripped of its identity is a fault the reader refuses by name
+    # (`test_history_identity_is_on_the_shard_at_commit_...`).
     for path in iter_shard_paths(zero_dir):
         group = zarr.open_group(str(path), mode="a")
-        del group.attrs["derive_corpus_row_schema"]
-        del group.attrs["zero_history"]
+        for key in ("derive_identity_format", *launcher.IDENTITY_KEYS,
+                    "derive_run_finalized", "corpus_complete"):
+            group.attrs.pop(key, None)
     assert launcher.read_history_stamps([zero_dir]).row_schemas.keys() == {"1"}
     assert launcher.history_identity_problems(
         [zero_dir, hist_dir], allow_mixed_history=False,
@@ -1435,9 +1477,15 @@ def test_a_partial_corpus_is_stamped_on_its_shards(tmp_path: Path) -> None:
     ``--allow-partial-corpus`` records it instead (the next test).
     """
 
+    # ⚑ CLAIMED != DERIVED, on purpose (delta reviewer): every other fixture
+    # here is a 1-row corpus, on which `corpus_rows_derived` stamped from
+    # `rows_claimed` is indistinguishable from the real count. The second
+    # row has no result, so the inventory claims 2 and the run derives 1.
+    unresolved = history_row(game_id=1, result=None)
+
     def derived(name: str, **corpus_kwargs: Any) -> tuple[Path, dict[str, Any]]:
         src = write_corpus(
-            tmp_path, [history_row()], row_schema=derive.ROW_SCHEMA_HISTORY,
+            tmp_path, [history_row(), unresolved], row_schema=derive.ROW_SCHEMA_HISTORY,
             name=f"c_{name}", **corpus_kwargs,
         )
         out = tmp_path / name
@@ -1462,8 +1510,9 @@ def test_a_partial_corpus_is_stamped_on_its_shards(tmp_path: Path) -> None:
     assert partial_attrs["corpus_complete"] is False
     assert partial_attrs["corpus_run_finished_claim"] is False
     assert partial_attrs["corpus_shards_adopted"] == 1
-    assert partial_attrs["corpus_rows_claimed"] == 1
+    assert partial_attrs["corpus_rows_claimed"] == 2
     assert partial_attrs["corpus_rows_derived"] == 1
+    assert partial_summary["realized"]["rows_written"] == 1
     (whole_attrs,) = shard_attrs(whole)
     assert whole_attrs["corpus_complete"] is True
     assert whole_attrs["corpus_run_finished_claim"] is None
@@ -1500,13 +1549,13 @@ def test_a_partial_corpus_shard_is_refused_at_launch_unless_allowed(
     assert set(stamps) == {"partial/shard_000000.zarr", "live/shard_000000.zarr"}
     assert stamps["partial/shard_000000.zarr"] == {
         "run_finished_claim": False, "shards_adopted": 1,
-        "rows_claimed": 1, "rows_derived": 1,
+        "rows_claimed": 1, "rows_derived": 1, "derive_run_finalized": True,
     }
     assert launcher.partial_corpus_problems([whole], allow_partial_corpus=False) == []
     (problem,) = launcher.partial_corpus_problems([partial], allow_partial_corpus=False)
     assert "PARTIAL corpus" in problem
     assert "run_finished_claim=False" in problem
-    assert "rows_claimed=1" in problem
+    assert "rows_claimed=1, rows_derived=1" in problem
     assert launcher.partial_corpus_problems([partial], allow_partial_corpus=True) == []
     assert launcher.partial_corpus_record(stamps, allow_partial_corpus=True) == {
         "incomplete_shards": {

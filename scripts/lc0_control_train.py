@@ -928,10 +928,17 @@ def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
 #: still refusing to mix them with a history-aware one.
 UNSTAMPED_CORPUS_ROW_SCHEMA = 1
 UNSTAMPED_ZERO_HISTORY = True
-#: ``derive_corpus_targets.DERIVE_IN_PROGRESS``, duplicated for the same reason
-#: the ``DERIVE_SCHEMA*`` constants above are (no deriver import here) and
-#: pinned by ``tests/test_derive_corpus_targets.py``.
-DERIVE_IN_PROGRESS = "in_progress"
+#: ``derive_corpus_targets.DERIVE_STATE_COMMITTED``, duplicated for the same
+#: reason the ``DERIVE_SCHEMA*`` constants above are (no deriver import here)
+#: and pinned by ``tests/test_derive_corpus_targets.py``.
+DERIVE_STATE_COMMITTED = "committed"
+#: The keys a shard carrying ``derive_identity_format`` MUST have: the deriver
+#: stamps them in the same commit as the rows (``_shard_identity``), so a
+#: format-marked shard missing one is a fault, never a legacy shard.
+IDENTITY_KEYS = (
+    "derive_corpus_row_schema", "derive_corpus_row_schema_counts", "zero_history",
+    "derive_history_rep_fix", "derive_state",
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -945,11 +952,12 @@ class ShardHistoryStamps:
     #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
     #: ``derive_corpus_row_schema_counts`` naming more than one schema.
     mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
-    #: Shards the deriver wrote but never FINALIZED (``derive_in_progress``
-    #: true, or the provisional ``"in_progress"`` row-schema stamp): a
-    #: derivation that is still running or died after the flush.  ⚑ No
-    #: opt-in admits these -- their identity is not unknown, it is unwritten.
-    in_progress: dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Shards that carry the deriver's ``derive_identity_format`` marker and
+    #: yet lack part of their identity, or are not in the committed state.
+    #: ⚑ "Missing means legacy" applies ONLY to shards with no marker: every
+    #: pre-marker derivation was bare-FEN.  A marked shard with a missing
+    #: identity is a fault, and no opt-in admits it.
+    unidentified: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @property
     def mixed(self) -> bool:
@@ -972,17 +980,21 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
     row_schemas: dict[str, str] = {}
     zero_history: dict[bool, str] = {}
     mixed_within: dict[str, str] = {}
-    in_progress: dict[str, str] = {}
+    unidentified: dict[str, str] = {}
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
             where = f"{Path(shard_dir).name}/{path.name}"
+            if attrs.get("derive_identity_format") is not None:
+                missing = [key for key in IDENTITY_KEYS if key not in attrs]
+                state = attrs.get("derive_state")
+                if missing or state != DERIVE_STATE_COMMITTED:
+                    unidentified[where] = (
+                        f"derive_identity_format={attrs.get('derive_identity_format')!r}, "
+                        f"missing {missing}, derive_state={state!r}"
+                    )
+                    continue
             schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
-            if attrs.get("derive_in_progress") is True or schema == DERIVE_IN_PROGRESS:
-                in_progress[where] = (
-                    f"derive_in_progress={attrs.get('derive_in_progress')!r}, "
-                    f"derive_corpus_row_schema={schema!r}"
-                )
             row_schemas.setdefault(schema, where)
             zero_history.setdefault(
                 bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
@@ -995,7 +1007,7 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
                 )
     return ShardHistoryStamps(
         row_schemas=row_schemas, zero_history=zero_history, mixed_within=mixed_within,
-        in_progress=in_progress,
+        unidentified=unidentified,
     )
 
 
@@ -1015,15 +1027,15 @@ def history_identity_problems(
     """
     stamps = read_history_stamps(shard_dirs)
     problems: list[str] = []
-    if stamps.in_progress:
-        listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.in_progress.items()))
+    if stamps.unidentified:
+        listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.unidentified.items()))
         problems.append(
-            f"--shards holds {len(stamps.in_progress)} shard(s) whose derivation "
-            f"is IN PROGRESS or died before finalizing them: {listed}. Their "
-            "history identity was never stamped (the deriver writes a "
-            "provisional stamp at flush and finalizes it after the last row), "
-            "so nothing says what planes they hold. No flag admits them: "
-            "finish or rerun the derivation.",
+            f"--shards holds {len(stamps.unidentified)} shard(s) written by the "
+            f"identity-stamping deriver whose history identity is MISSING or "
+            f"not committed: {listed}. The deriver stamps every identity key in "
+            "the same commit as the rows, so this is a damaged or hand-edited "
+            "shard, not a legacy one, and nothing says what planes it holds. "
+            "No flag admits it: rerun the derivation.",
         )
     if not stamps.mixed or allow_mixed_history:
         return problems
@@ -1060,13 +1072,20 @@ def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
-            if bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE)):
+            corpus_whole = bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE))
+            # ⚑ A derivation that died (or is still running) after committing
+            # this shard is a PARTIAL derived corpus too: the shard's own
+            # identity is complete, but the set of shards is not the run's.
+            finalized = attrs.get("derive_run_finalized")
+            run_whole = finalized is not False
+            if corpus_whole and run_whole:
                 continue
             incomplete[f"{Path(shard_dir).name}/{path.name}"] = {
                 "run_finished_claim": attrs.get("corpus_run_finished_claim"),
                 "shards_adopted": attrs.get("corpus_shards_adopted"),
                 "rows_claimed": attrs.get("corpus_rows_claimed"),
                 "rows_derived": attrs.get("corpus_rows_derived"),
+                "derive_run_finalized": finalized,
             }
     return incomplete
 
@@ -1090,17 +1109,19 @@ def partial_corpus_problems(
     listed = "; ".join(
         f"{where} (run_finished_claim={s['run_finished_claim']!r}, "
         f"shards_adopted={s['shards_adopted']}, rows_claimed={s['rows_claimed']}, "
-        f"rows_derived={s['rows_derived']})"
+        f"rows_derived={s['rows_derived']}, "
+        f"derive_run_finalized={s['derive_run_finalized']!r})"
         for where, s in sorted(incomplete.items())
     )
     return [
-        f"--shards holds {len(incomplete)} shard(s) derived from a PARTIAL "
-        f"corpus (corpus_complete: false): {listed}. The generator's record "
-        "was a manifest+progress read or a summary stating run_finished: "
-        "false, so these rows are a subset of a corpus nobody finished. Derive "
-        "the finished corpus, or pass --allow-partial-corpus to train on the "
-        "subset deliberately (recorded in summary.json under "
-        "corpus.partial_corpus).",
+        f"--shards holds {len(incomplete)} shard(s) that are a PARTIAL corpus "
+        f"(corpus_complete: false, or derive_run_finalized: false): {listed}. "
+        "Either the generator's record was a manifest+progress read or a "
+        "summary stating run_finished: false, or the derivation that committed "
+        "the shard never finalized (still running, or died) -- so these rows "
+        "are a subset of a corpus nobody finished. Derive the finished corpus, "
+        "or pass --allow-partial-corpus to train on the subset deliberately "
+        "(recorded in summary.json under corpus.partial_corpus).",
     ]
 
 
@@ -1123,7 +1144,7 @@ def history_identity_record(
         "row_schemas": sorted(stamps.row_schemas),
         "zero_history": sorted(stamps.zero_history),
         "mixed_within": sorted(stamps.mixed_within),
-        "in_progress": sorted(stamps.in_progress),
+        "unidentified": sorted(stamps.unidentified),
         "mixed": stamps.mixed,
         "allow_mixed_history": bool(allow_mixed_history),
     }

@@ -3471,6 +3471,138 @@ def test_a_resumed_worker_re_warms_its_dedup_cache_from_its_own_shards(
     assert second["search"]["positions_searched"] == 0
 
 
+class StatefulEngine(ScriptedEngine):
+    """A scripted engine whose values depend on how many searches it has
+    answered -- the stand-in for Stockfish's carried TT: a RE-search of a
+    position is not a replay of the first search, so a resumed worker that
+    searches where the uninterrupted one served produces different values,
+    a different seeded move, and different rows after it."""
+
+    def score_of(self, uci: str, *, depth: int) -> int:
+        del depth  # the base signature's; this fake ranks by search count only
+        return hashed_cp(f"{uci}#{self.go_count}")
+
+
+def deal_openings_by_game(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lines: Sequence[str],
+) -> None:
+    """Game ``g`` opens on ``lines[g % len(lines)]``, whichever session plays it."""
+    real_rng, real_sample = corpus.book_rng, corpus.sample_starting_board
+
+    class Dealt:
+        def __init__(self, rng: Any, line: str) -> None:
+            self.rng, self.dealt_line = rng, line
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.rng, name)
+
+    def dealing_rng(*, seed: int, worker_id: int, game_id: int) -> Any:
+        rng = real_rng(seed=seed, worker_id=worker_id, game_id=game_id)
+        return Dealt(rng, lines[int(game_id) % len(lines)])
+
+    monkeypatch.setattr(corpus, "book_rng", dealing_rng)
+    monkeypatch.setattr(
+        corpus, "sample_starting_board",
+        lambda *, rng, cfg: real_sample(
+            rng=rng, cfg=fen_list_opening([rng.dealt_line], tmp_path / f"seed{rng.random()}.txt"),
+        ),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_list_opening(list(lines), tmp_path / "seeds.txt"),
+    )
+
+
+def banked_rows(out_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(out_dir.glob("w*-*.jsonl.*")):
+        rows.extend(corpus.iter_shard_rows(path))
+    return sorted(rows, key=lambda r: (int(r["game_id"]), int(r["ply"])))
+
+
+@pytest.mark.parametrize("max_plies", [1, 2])
+def test_a_label_only_cache_entry_survives_a_resume_and_the_resumed_run_equals_the_uninterrupted_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_plies: int,
+) -> None:
+    """⚑⚑ Codex P2 / operator ruling (#497 round 3): resume equivalence must
+    not depend on unbanked cache state.
+
+    Game 1 reaches game 0's tensor by a route with an older repeat (T4): a
+    seen ``input_key``, a new ``search_key`` -- it SEARCHES, caches the
+    values under the new label, banks no row.  That entry lived only in RAM.
+    Run A plays games 0-3 uninterrupted; run B is stopped right after game 1
+    (the label-only entry just created) and resumed for games 2-3.  Game 2
+    takes game 1's route again: A serves it from the label-only entry; a
+    resume that could not rebuild the entry would SEARCH it -- and under a
+    stateful engine (the carried TT) the re-search gives other values, another
+    seeded move and other rows after it.  B must equal A: every hit/miss
+    decision, every chosen move, every row and value.  Mutant: the events
+    not committed with the record -> B searches, the rows diverge, this fails.
+
+    ⚑ Two ply caps, two replay paths: at 2 plies game 1 banks its ply-1 row
+    AFTER the event, so the event is merged in ahead of a row; at 1 ply game
+    1 banks nothing and the event trails the record's last row.  A rewarm
+    that replayed only one of the two passed the other (measured: the
+    tail-replay mutant survived the 2-ply case alone).
+    """
+    lines = [
+        f"{chess.STARTING_FEN} | {T4_ROUTE_NO_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_OLD_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_OLD_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_NO_REPEAT}",
+    ]
+    deal_openings_by_game(monkeypatch, tmp_path, lines)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(StatefulEngine()),
+    )
+    overrides: dict[str, Any] = {
+        "staircase": RESUME_STAIRCASE, "max_plies": max_plies, "shard_rows": 100,
+    }
+    out_a = tmp_path / "a"
+    out_a.mkdir()
+    a = corpus.run_worker(worker_spec(out_a, game_ids=(0, 1, 2, 3), **overrides))
+    assert a["failed"] is None
+    assert a["dedup"]["search_key_miss_on_seen_input"] == 1, "game 1's label-only search"
+
+    out_b = tmp_path / "b"
+    out_b.mkdir()
+    stopped = corpus.run_worker(worker_spec(out_b, game_ids=(0, 1), **overrides))
+    assert stopped["failed"] is None
+    assert stopped["dedup"]["search_key_miss_on_seen_input"] == 1
+    # The entry is ON DISK, committed with game 1's record.
+    records = [
+        json.loads(line) for line in
+        (out_b / corpus.progress_name(0)).read_text(encoding="utf-8").splitlines()
+    ]
+    events = [e for r in records for e in r.get("cache_events", [])]
+    assert [(e["game_id"], e["ply"], e["remember_input"]) for e in events] == [(1, 0, False)]
+    assert events[0]["search_key"] == corpus.search_key(board_after(T4_ROUTE_OLD_REPEAT))
+    assert events[0]["input_key"] == corpus.row_key(board_after(T4_ROUTE_OLD_REPEAT))
+
+    resumed = corpus.run_worker(
+        worker_spec(out_b, game_ids=(0, 1, 2, 3), resume=True, **overrides),
+    )
+    assert resumed["failed"] is None
+    assert resumed["dedup_cache_events_rewarmed"] == 1
+    assert resumed["games"] == 2
+    # Every decision after the resume is the one A made: game 2's label is
+    # SERVED (no search), and so is everything after it.
+    assert resumed["search"]["positions_searched"] == 0
+    assert resumed["dedup"]["search_key_miss_on_seen_input"] == 0
+    assert (
+        resumed["dedup"]["dup_hits"] + stopped["dedup"]["dup_hits"]
+        == a["dedup"]["dup_hits"]
+    )
+    assert (
+        resumed["search"]["positions_searched"] + stopped["search"]["positions_searched"]
+        == a["search"]["positions_searched"]
+    )
+    rows_a, rows_b = banked_rows(out_a), banked_rows(out_b)
+    assert [(r["game_id"], r["ply"]) for r in rows_a] == [(r["game_id"], r["ply"]) for r in rows_b]
+    assert rows_a == rows_b, "same rows, same played moves, same values"
+    assert a["rows"] == stopped["rows"] + resumed["rows"]
+
+
 def test_a_zero_work_resume_reports_the_corpus_windows_it_adopted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3591,8 +3723,10 @@ def test_a_game_that_banked_no_rows_is_still_never_replayed(
     assert [
         line for line in read_progress(out_dir, 0) if line["path"] is None
     ] == [
-        {"path": None, "rows": 0, "codec": second["codec"], "games": [1]},
-        {"path": None, "rows": 0, "codec": third["codec"], "games": [2]},
+        {"path": None, "rows": 0, "codec": second["codec"], "games": [1],
+         "cache_events": []},
+        {"path": None, "rows": 0, "codec": third["codec"], "games": [2],
+         "cache_events": []},
     ]
 
 
