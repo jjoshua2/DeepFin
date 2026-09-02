@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Any, cast
 
 import pytest
 import torch
@@ -29,6 +30,7 @@ from torch import Tensor
 from chess_anti_engine.train import aurora as aurora_module
 from chess_anti_engine.train.aurora import (
     AuroraWithAuxAdam,
+    OptimizerStepFailed,
     _adamw_update_foreach,
     _adamw_update_one,
 )
@@ -456,17 +458,14 @@ def test_a_failed_step_does_not_advance_the_step_counter(
 ) -> None:
     """A step that dies in the batched update must not leave `step` incremented.
 
-    ⚑ `Trainer.train_steps` catches a `RuntimeError` whose message contains
-    "CUDA" and RETRIES the whole step up to three times, so an optimizer step
-    is NOT the unrecoverable event it looks like. The batched path raises after
-    the scan has visited every parameter, where the loop raised part-way
-    through -- so a counter committed during the scan would advance the bias
-    correction of an ENTIRE group whose moments never moved, and the retry is
-    recorded as a success, so nothing downstream would report it.
-
-    The invariant asserted is the one that matters to the retry: a step that
-    failed before any tensor was mutated must be indistinguishable from a step
-    that never ran.
+    The batched path raises after the scan has visited every parameter, where
+    the loop raised part-way through -- so a counter committed during the scan
+    would advance the bias correction of an ENTIRE group whose moments never
+    moved. `Trainer.train_steps` no longer retries an optimizer-phase failure
+    (it ends the trial as `OptimizerStepFailed`, P2-3 below), so the invariant
+    asserted is what makes the post-mortem state readable: a step that failed
+    before any tensor was mutated is indistinguishable from a step that never
+    ran, and a second `opt.step()` from there is one clean step.
     """
     base = _make_params()
     opt_params = _clone_params(base)
@@ -665,14 +664,16 @@ def test_a_failure_inside_an_in_place_moment_kernel_is_not_recovered(
 ) -> None:
     """The honest residue, pinned rather than papered over.
 
-    A retryable error raised by an IN-PLACE kernel (here the `exp_avg_sq`
+    A CUDA error raised by an IN-PLACE kernel (here the `exp_avg_sq`
     accumulate, the last one before the allocation) is not the allocation
-    case: the recovery hook does not fire, the error propagates with its
-    "CUDA" message intact, `step` is NOT committed, and the parameters and
-    `exp_avg` HAVE been mutated. A trainer retry then re-applies the
-    weight-decay multiply and the `exp_avg` decay on top of that. This test
-    asserts that exact double-applied state, so the day it changes the change
-    is a deliberate one.
+    case: the recovery hook does not fire, the error propagates (as
+    `OptimizerStepFailed`) with its "CUDA" message intact, `step` is NOT
+    committed, and the parameters and `exp_avg` HAVE been mutated. A second
+    `opt.step()` from there -- what the trainer's CUDA retry USED to do, and
+    the reason P2-3 below makes it not retry -- re-applies the weight-decay
+    multiply and the `exp_avg` decay on top of that. This test asserts that
+    exact double-applied state, so the day it changes the change is a
+    deliberate one.
     """
     calls = _raise_cuda_once(monkeypatch, "_foreach_addcmul_")
     weight_decay = 0.03
@@ -879,8 +880,6 @@ def test_train_steps_carries_adamw_stats_onto_the_step_metrics(
     fields exist on `TrainMetrics` to receive it. Read from the CONSUMER's
     metrics object, not the optimizer's. With the allowlist emptied the same
     row must flip to foreach 0 / loop N."""
-    from typing import Any, cast
-
     from chess_anti_engine.train import trainer as trainer_module
     from chess_anti_engine.train.trainer import Trainer
 
@@ -974,8 +973,6 @@ def test_train_steps_sums_recoveries_over_the_window_not_the_last_step(
     non-final step of a multi-step window used to publish 0 on the row. The
     injected `_foreach_sqrt` failure fires on the FIRST of three steps; the
     row must still read it."""
-    from typing import Any, cast
-
     from chess_anti_engine.train import trainer as trainer_module
     from chess_anti_engine.train.trainer import Trainer
 
@@ -1087,3 +1084,234 @@ def test_the_base_loop_had_the_same_retry_residue_param_major(
     _reference_adamw_loop(params, state, lr=_LR, weight_decay=weight_decay)
     steps = [int(state[p]["step"]) for p in params]  # pyright: ignore[reportArgumentType]
     assert steps == [2, 2, 2, 1, 1, 1], "double-stepped through k, single-stepped after"
+
+
+# --- P2-3: optimizer-step failures are not retryable --------------------------
+#
+# The ledger prereg (2026-09-02 02:20Z, follow-up to #495): a failure INSIDE
+# `opt.step()` must END `Trainer.train_steps` as `OptimizerStepFailed`, with
+# `transient_cuda_retry_batches` never incremented and the step counter not
+# advanced -- while a CUDA failure BEFORE the optimizer step (forward/backward)
+# still retries. Every test here reads the retry from its consumer side:
+# `_TrainBatchIterator.add_retry_batches` is the one call the retry branch makes
+# besides the counter, so a spy on it that stays empty is "the retry did not
+# fire" measured at the branch, not inferred from the exception type.
+
+
+def _boundary_trainer(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, list[int]]:
+    """A `Trainer` on the production optimizer with the forward/backward faked
+    and the retry branch's `torch.cuda` calls neutralized (no device here, and
+    a mutant that re-enables the retry must read as the SPY firing, not as a
+    CUDA-less `synchronize()` raising something else). Returns the trainer and
+    the list of `add_retry_batches` counts the retry branch handed the
+    iterator."""
+    from chess_anti_engine.train import trainer as trainer_module
+    from chess_anti_engine.train.trainer import Trainer
+
+    torch.manual_seed(4242)
+    trainer = Trainer(
+        _MatrixAndHeadModel(),
+        device="cpu", lr=1e-3, optimizer="aurora", use_amp=False,
+        log_dir=cast(Any, tmp_path), tb_log_interval=1000, prefetch_batches=False,
+    )
+    every_param = list(trainer.model.parameters())
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, Tensor]:
+        del out, batch, kwargs
+        total = cast(Tensor, sum((t * t).sum() for t in every_param))
+        losses: dict[str, Tensor] = {"total": total}
+        losses.update(dict.fromkeys(
+            (
+                "policy_ce", "soft_policy_ce", "future_policy_ce", "wdl_ce", "sf_move_ce",
+                "sf_eval_ce", "categorical_ce", "volatility", "sf_volatility", "moves_left",
+            ),
+            total.detach(),
+        ))
+        return losses
+
+    monkeypatch.setattr(trainer_module, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+
+    def fake_batches(buf: Any, **kwargs: Any):
+        del buf, kwargs
+        while True:
+            yield {"x": torch.zeros((1, 4, 8, 8))}
+
+    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_batches)
+    monkeypatch.setattr(trainer_module.torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(trainer_module.torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(trainer_module.time, "sleep", lambda _seconds: None)
+
+    retries: list[int] = []
+    real_add = trainer_module._TrainBatchIterator.add_retry_batches
+
+    def spy_add(self: Any, count: int) -> None:
+        retries.append(int(count))
+        real_add(self, count)
+
+    monkeypatch.setattr(trainer_module._TrainBatchIterator, "add_retry_batches", spy_add)
+    return trainer, retries
+
+
+def _adamw_steps(opt: torch.optim.Optimizer) -> list[int]:
+    return [
+        int(opt.state[p].get("step", 0))
+        for group in opt.param_groups if not group.get("use_aurora")
+        for p in group["params"]
+    ]
+
+
+def test_an_in_place_kernel_failure_on_the_batched_path_does_not_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The residue case of #495 (`..._is_not_recovered` above), driven through
+    `train_steps`: the injected `_foreach_addcmul_` CUDA error ends the call
+    as `OptimizerStepFailed` naming the bucket, carrying the cause; the retry
+    never fires (spy empty, the injection fired exactly once -- a retry would
+    have called the kernel again); nothing is committed."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    calls = _raise_cuda_once(monkeypatch, "_foreach_addcmul_")
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    exc = excinfo.value
+    assert calls == [0], "a retry would have re-run the kernel"
+    assert retries == [], "the retry branch handed the iterator replacement batches"
+    assert isinstance(exc.__cause__, RuntimeError)
+    assert "CUDA out of memory" in str(exc.__cause__)
+    assert "CUDA" in str(exc), "the message must keep the cause's text"
+    assert exc.step_index == 1
+    assert exc.location is not None
+    assert exc.location.startswith("batched AdamW bucket")
+  # The fixture's AdamW tensors sit in different groups, so the dying bucket
+  # is the first one built: one float32 tensor at its first step.
+    assert "(1 tensors, torch.float32, cpu, step 1)" in exc.location
+    assert trainer.step == 0
+    assert _adamw_steps(trainer.opt) == [0] * _adamw_group_sizes(trainer.opt)
+
+
+def test_a_failure_in_the_per_parameter_loop_does_not_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same boundary, the loop path (allowlist emptied so every tensor takes
+    it): the failure is at the first tensor's `addcdiv_`, so the location
+    names a per-parameter-loop tensor and no `step` is committed."""
+    monkeypatch.setattr(aurora_module, "_FOREACH_EXACT_DTYPES", frozenset())
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    real_addcdiv = torch.Tensor.addcdiv_
+    seen: list[int] = []
+
+    def flaky_addcdiv(self: Tensor, *args: object, **kwargs: object) -> Tensor:
+        seen.append(len(seen))
+        if len(seen) == 1:
+            raise RuntimeError("CUDA error: an illegal memory access was encountered")
+        return real_addcdiv(self, *args, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(torch.Tensor, "addcdiv_", flaky_addcdiv)
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    monkeypatch.undo()
+    exc = excinfo.value
+    assert seen == [0], "a retry would have reached `addcdiv_` again"
+    assert retries == []
+    assert isinstance(exc.__cause__, RuntimeError)
+    assert "illegal memory access" in str(exc.__cause__)
+    assert exc.step_index == 1
+    assert exc.location is not None
+    assert "per-parameter loop" in exc.location
+    assert trainer.step == 0
+    assert _adamw_steps(trainer.opt) == [0] * _adamw_group_sizes(trainer.opt)
+
+
+def test_a_non_cuda_failure_inside_the_optimizer_step_does_not_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary is keyed by CLASS, not by the "CUDA" substring: a plain
+    `RuntimeError` from a moment kernel leaves as `OptimizerStepFailed` too."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    real = torch._foreach_addcmul_
+
+    def broken(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("kernel refused the operands")
+
+    monkeypatch.setattr(torch, "_foreach_addcmul_", broken)
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=1)
+    monkeypatch.setattr(torch, "_foreach_addcmul_", real)
+    assert retries == []
+    assert "CUDA" not in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert trainer.step == 0
+
+
+def test_an_untracked_failure_is_wrapped_at_the_trainer_boundary_with_no_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrapper or a foreign optimizer raising straight out of `opt.step()`
+    -- nothing annotated it -- is still `OptimizerStepFailed` at the trainer
+    boundary, with the step index filled in, the cause attached, no location,
+    and no retry. Patched on the INSTANCE, so `AuroraWithAuxAdam.step`'s own
+    wrap is bypassed and only the trainer's is under test."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    injected = RuntimeError("CUDA error: device-side assert triggered")
+
+    def raw_step(closure: object = None) -> None:
+        del closure
+        raise injected
+
+    monkeypatch.setattr(trainer.opt, "step", raw_step)
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    exc = excinfo.value
+    assert retries == []
+    assert exc.__cause__ is injected
+    assert exc.step_index == 1
+    assert exc.location is None
+    assert "CUDA error: device-side assert" in str(exc)
+    assert trainer.step == 0
+
+
+def test_a_cuda_failure_before_the_optimizer_step_still_gets_the_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the prereg: a transient CUDA error raised BEFORE
+    `opt.step()` (here in the matrix grad-norm, after backward) is still
+    retried with a replacement batch, counted on the row, and the window
+    completes."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    real_matrix_norm = trainer._matrix_grad_norm
+    calls: list[int] = []
+
+    def flaky_matrix_norm() -> float:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("CUDA transient test failure")
+        return real_matrix_norm()
+
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", flaky_matrix_norm)
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    assert len(calls) == 3, "one discarded attempt plus two committed steps"
+    assert retries == [1]
+    assert metrics.transient_cuda_retry_batches == 1.0
+    assert metrics.train_steps_done == 2
+    assert trainer.step == 2
+
+
+def test_a_denominator_allocation_failure_is_recovered_without_a_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-optimizer recovery is untouched by the boundary: a `_foreach_sqrt`
+    allocation failure is finished per tensor INSIDE `step`, so nothing reaches
+    the trainer -- no exception, no retry, `adamw_foreach_recoveries == 1`,
+    every step committed."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    calls = _raise_cuda_once(monkeypatch, "_foreach_sqrt")
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    assert calls, "the injection never fired"
+    assert retries == []
+    assert metrics.transient_cuda_retry_batches == 0.0
+    assert metrics.adamw_foreach_recoveries == 1.0
+    assert metrics.train_steps_done == 2
+    assert _adamw_steps(trainer.opt) == [2] * _adamw_group_sizes(trainer.opt)
