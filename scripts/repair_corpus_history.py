@@ -200,8 +200,9 @@ RELABEL_MODES = (RELABEL_OFF, RELABEL_WINDOW, RELABEL_SEGMENT)
 #: FEN, i.e. it never saw the history the row now carries.
 LABEL_REGIME_CARRIED_BLIND = "carried_tt_history_blind"
 #: The generator re-ran this row's search on a FRESH engine after a wedge
-#: (``cold_tt_retry``), or the row's run block says the table was cleared
-#: mid-position: the label is history-blind AND cold.
+#: (``cold_tt_retry``, the per-row marker -- and ONLY that; see
+#: ``label_regime`` for why ``run[tt_carried_across_phases]`` is not read):
+#: the label is history-blind AND cold.
 LABEL_REGIME_COLD_BLIND = "cold_tt_history_blind"
 LABEL_REGIME_COLD_HISTORY = "cold_tt_history_aware"
 
@@ -299,9 +300,16 @@ class RepairSpec:
     #: ``production: false``.  Off (the default) is production mode.
     audit_mode: bool = False
     #: ``--shards``/``--workers`` restricted the input (audit mode only): the
-    #: output is NOT the whole corpus and ``summary.json`` says
-    #: ``run_finished: false`` with a ``partial_repair`` block.
+    #: output is NOT the whole corpus and ``summary.json`` names the slice
+    #: in a ``partial_repair`` block.
     partial: bool = False
+    #: ⚑ WHY this output is not a finished production corpus, one entry per
+    #: audit-mode flag in force.  Non-empty exactly when ``audit_mode``: an
+    #: audit-mode run ALWAYS writes ``run_finished: false`` -- a full-inventory
+    #: ``--audit-mode --relabel`` or ``--book`` run is not a slice, and it is
+    #: still not the corpus -- because ``run_finished`` is the only field
+    #: the deriver reads (``corpus_complete``); ``production`` is for humans.
+    audit_reasons: tuple[str, ...] = ()
     #: One of ``RELABEL_MODES``; ``off`` copies every label byte-for-byte.
     relabel: str = RELABEL_OFF
 
@@ -477,6 +485,15 @@ AUDIT_MODE_ONLY: tuple[tuple[str, Callable[[argparse.Namespace], bool]], ...] = 
     ("--book-sha256 (other than the production pin)",
      lambda a: bool(a.book_sha256) and a.book_sha256.lower() != PRODUCTION_BOOK_SHA256),
 )
+
+
+def audit_reasons_of(args: argparse.Namespace) -> tuple[str, ...]:
+    """Why an ``--audit-mode`` output is not a production corpus: the flag
+    itself, plus every ``AUDIT_MODE_ONLY`` flag in force.  Empty in
+    production mode."""
+    if not args.audit_mode:
+        return ()
+    return ("--audit-mode", *(flag for flag, is_set in AUDIT_MODE_ONLY if is_set(args)))
 
 
 def refuse_in_production(args: argparse.Namespace) -> None:
@@ -1384,6 +1401,7 @@ def build_records(
         # production is the whole recorded inventory, the pinned book, no
         # slicing, no relabel.
         "production": not spec.audit_mode,
+        **({"audit": {"reasons": list(spec.audit_reasons)}} if spec.audit_mode else {}),
         "input": {
             "dir": str(spec.in_dir),
             "manifest_sha256": manifest_sha,
@@ -1462,13 +1480,15 @@ def build_records(
     summary = {
         "schema": corpus.SUMMARY_SCHEMA,
         "row_schema": TARGET_SCHEMA,
-        # ⚑ THE COMPLETENESS CLAIM the deriver turns into `corpus_complete`:
-        # a production repair covers the whole recorded inventory with
-        # nothing refused or skipped, so it is `true`; an audit-mode
-        # --shards/--workers slice is NOT the corpus, says `false` here and
-        # names the slice.
-        "run_finished": not spec.partial,
+        # ⚑ THE COMPLETENESS CLAIM the deriver turns into `corpus_complete`,
+        # and the ONLY field a consumer reads: a production repair covers
+        # the whole recorded inventory with nothing refused or skipped, so it
+        # is `true`; an audit-mode output is NEVER a finished production
+        # corpus -- sliced or not, relabeled or on another book -- so it is
+        # `false`, and `audit.reasons` says why.
+        "run_finished": not spec.audit_mode,
         "production": not spec.audit_mode,
+        **({"audit": {"reasons": list(spec.audit_reasons)}} if spec.audit_mode else {}),
         **({"partial_repair": {
             "workers": [int(r["worker_id"]) for r in results],
             "shards": None if spec.shard_indices is None else list(spec.shard_indices),
@@ -1606,6 +1626,7 @@ def build_spec(
         unlisted_shards=tuple(unlisted_shards),
         audit_mode=bool(args.audit_mode),
         partial=bool(args.shards) or bool(args.workers),
+        audit_reasons=audit_reasons_of(args),
         relabel=relabel,
     )
 

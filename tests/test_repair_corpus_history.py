@@ -553,9 +553,26 @@ def test_a_production_repair_is_a_whole_corpus_and_an_audit_slice_says_it_is_not
     summary = json.loads((out_dir2 / corpus.SUMMARY_NAME).read_text())
     assert summary["run_finished"] is False
     assert summary["production"] is False
+    assert summary["audit"] == {"reasons": ["--audit-mode", "--shards"]}
     assert summary["partial_repair"] == {
         "workers": [WORKER], "shards": [0], "listed_input_shards": 2, "repaired_shards": 1,
     }
+
+    # ⚑ A FULL-INVENTORY audit-mode run is not a slice and is still not the
+    # corpus: `run_finished` -- the only field a consumer reads -- is false.
+    out_dir3 = tmp_path / "out_audit_full"
+    with pinned(tmp_path):
+        full = repair.run(
+            args_for(in_dir, out_dir3, audit_mode=True, relabel=repair.RELABEL_WINDOW),
+            searcher_factory=fake_factory(ScriptedEngine(multipv=1)),
+        )
+    assert full["production"] is False
+    assert full["audit"] == {"reasons": ["--audit-mode", "--relabel"]}
+    summary = json.loads((out_dir3 / corpus.SUMMARY_NAME).read_text())
+    assert summary["run_finished"] is False
+    assert summary["audit"] == {"reasons": ["--audit-mode", "--relabel"]}
+    assert "partial_repair" not in summary
+    assert derive.read_corpus_record(out_dir3).facts["run_finished"] is False
 
 
 @pytest.mark.parametrize(
