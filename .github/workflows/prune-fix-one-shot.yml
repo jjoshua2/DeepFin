@@ -1,0 +1,199 @@
+name: one-shot processed-shard pruning fix
+
+on:
+  push:
+    branches:
+      - fix/prune-active-user-shards
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/prune-active-user-shards
+      - name: Apply pruning fix and regression tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime_path = Path("chess_anti_engine/tune/distributed_runtime.py")
+          text = runtime_path.read_text()
+
+          old_constant = '''_IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
+# Server's post-flush archive dir (``inbox_root / "_compacted"`` in app.py).
+# Unlike per-user upload dirs it is continuously appended while retaining old
+# shards, so its own mtime is always fresh — the mtime-gate fast path below
+# must NOT short-circuit it or its old shards never age out.
+_COMPACTED_DIR_NAME = "_compacted"
+'''
+          new_constant = '''_IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
+'''
+          if text.count(old_constant) != 1:
+              raise SystemExit(f"expected exactly one compacted constant block, found {text.count(old_constant)}")
+          text = text.replace(old_constant, new_constant)
+
+          old_prune = '''    """Delete processed shards older than *max_age_seconds*.
+
+    Returns the number of files deleted. Per-user-dir mtime gate skips
+    walking subtrees whose newest entry is younger than the cutoff —
+    O(n_users) stat calls instead of O(n_total_shards) on long runs.
+    """
+    if max_age_seconds <= 0 or not processed_dir.is_dir():
+        return 0
+    cutoff = time.time() - float(max_age_seconds)
+    deleted = 0
+    try:
+        user_dirs = list(processed_dir.iterdir())
+    except FileNotFoundError:
+        return 0
+    for user_dir in user_dirs:
+        if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
+            continue
+        if user_dir.name == _PENDING_DIR_NAME:
+            continue
+        try:
+  # If the user-dir's own mtime is fresh, every shard inside is
+  # also fresh (mtime is updated on add). Skip the per-shard scan.
+  # The ``_compacted`` archive is exempt: it is continuously appended
+  # while retaining old shards, so its mtime is always fresh and this
+  # short-circuit would leak its aged-out shards forever.
+            if user_dir.name != _COMPACTED_DIR_NAME and user_dir.stat().st_mtime >= cutoff:
+                continue
+            entries = list(user_dir.iterdir())
+        except FileNotFoundError:
+            continue
+'''
+          new_prune = '''    """Delete processed shards older than *max_age_seconds*.
+
+    Returns the number of shard paths deleted. Every processed directory must
+    be inspected: adding a new shard refreshes the parent directory mtime but
+    does not refresh older children, so parent mtime cannot prove that all
+    shards inside are younger than the cutoff.
+    """
+    if max_age_seconds <= 0 or not processed_dir.is_dir():
+        return 0
+    cutoff = time.time() - float(max_age_seconds)
+    deleted = 0
+    try:
+        user_dirs = list(processed_dir.iterdir())
+    except FileNotFoundError:
+        return 0
+    for user_dir in user_dirs:
+        if not user_dir.is_dir() or _is_tmp_shard_name(user_dir.name):
+            continue
+        if user_dir.name == _PENDING_DIR_NAME:
+            continue
+        try:
+            entries = list(user_dir.iterdir())
+        except FileNotFoundError:
+            continue
+'''
+          if text.count(old_prune) != 1:
+              raise SystemExit(f"expected exactly one prune block, found {text.count(old_prune)}")
+          runtime_path.write_text(text.replace(old_prune, new_prune))
+
+          test_path = Path("tests/test_prune_processed_shards.py")
+          test_path.write_text('''"""Regression tests for ``_prune_processed_shards`` aging processed shards.
+
+A processed directory can contain shards of different ages. Adding a new shard
+refreshes the parent directory mtime without touching older children, so the
+parent mtime must never be used as a shortcut for child retention.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+from chess_anti_engine.tune.distributed_runtime import _prune_processed_shards
+
+
+def _make_shard(parent: Path, name: str, mtime: float) -> Path:
+    """Create a minimal zarr-dir shard and stamp it (and its dir) at *mtime*."""
+    shard = parent / name
+    shard.mkdir(parents=True)
+    (shard / ".zarray").write_text("{}")
+    for f in shard.rglob("*"):
+        os.utime(f, (mtime, mtime))
+    os.utime(shard, (mtime, mtime))
+    return shard
+
+
+def test_compacted_old_shards_aged_out_despite_fresh_dir_mtime(tmp_path: Path) -> None:
+    proc = tmp_path / "processed"
+    comp = proc / "_compacted"
+    comp.mkdir(parents=True)
+
+    now = time.time()
+    old = now - 3 * 86400.0
+    fresh = now - 60.0
+    old_shard = _make_shard(comp, "shard_old.zarr", old)
+    fresh_shard = _make_shard(comp, "shard_fresh.zarr", fresh)
+
+    # Simulate continuous append: the _compacted dir's own mtime is current.
+    os.utime(comp, None)
+    assert comp.stat().st_mtime >= now - 5
+
+    deleted = _prune_processed_shards(processed_dir=proc, max_age_seconds=86400.0)
+
+    assert deleted == 1
+    assert not old_shard.exists()
+    assert fresh_shard.exists()
+
+
+def test_active_user_dir_prunes_old_child_despite_fresh_parent_mtime(tmp_path: Path) -> None:
+    """A newly-arrived shard must not hide older shards from retention."""
+    proc = tmp_path / "processed"
+    user = proc / "alice"
+    user.mkdir(parents=True)
+
+    now = time.time()
+    old = now - 3 * 86400.0
+    fresh = now - 60.0
+    old_shard = _make_shard(user, "shard_old.zarr", old)
+    fresh_shard = _make_shard(user, "shard_fresh.zarr", fresh)
+
+    # Simulate an active worker adding a fresh shard. The parent is current even
+    # though the old child retained its original mtime.
+    os.utime(user, None)
+    assert user.stat().st_mtime >= now - 5
+
+    deleted = _prune_processed_shards(processed_dir=proc, max_age_seconds=86400.0)
+
+    assert deleted == 1
+    assert not old_shard.exists()
+    assert fresh_shard.exists()
+
+
+def test_per_user_dir_stale_shards_deleted_when_dir_is_stale(tmp_path: Path) -> None:
+    proc = tmp_path / "processed"
+    user = proc / "alice"
+    user.mkdir(parents=True)
+
+    old = time.time() - 3 * 86400.0
+    old_shard = _make_shard(user, "shard_old.zarr", old)
+    os.utime(user, (old, old))
+
+    deleted = _prune_processed_shards(processed_dir=proc, max_age_seconds=86400.0)
+
+    assert deleted == 1
+    assert not old_shard.exists()
+''')
+          PY
+      - name: Focused test
+        run: python -m pytest -q tests/test_prune_processed_shards.py
+      - name: Commit final patch and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/prune-fix-one-shot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chess_anti_engine/tune/distributed_runtime.py tests/test_prune_processed_shards.py .github/workflows/prune-fix-one-shot.yml
+          git commit -m "fix: prune stale shards from active user dirs"
+          git push origin HEAD:fix/prune-active-user-shards
