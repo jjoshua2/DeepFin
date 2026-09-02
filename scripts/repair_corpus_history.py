@@ -86,6 +86,14 @@ look backward, so a row is repaired as soon as it is read), and each worker
 process owns one engine for its re-labels.  The opening book is warmed ONCE in
 the parent (~70 s for the production book) and inherited across the fork.
 
+ACCEPTED BUT INERT IN PRODUCTION MODE.  ``--audit-only`` is accepted (it
+writes nothing and runs no engine: the dry run of the production repair).
+``--engine``, ``--syzygy-path``, ``--sf-hash-mb`` and ``--sf-search-timeout-s``
+configure the re-label engine and are INERT under the enforced ``--relabel
+off``; ``--bench-encode-rows`` is inert without ``--audit-only``.  Any of them
+given is listed in the manifest's ``inert_flags_given`` so the record says
+what was asked for and did nothing.  ``--procs`` is not inert (parallelism).
+
 Usage::
 
     PYTHONPATH=. python3 scripts/repair_corpus_history.py \\
@@ -240,11 +248,24 @@ PRODUCTION_BOOK_NAME = (
 PRODUCTION_BOOK_SHA256 = "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
 PRODUCTION_BOOK_SIZE = 9_663_653
 PRODUCTION_BOOK_PROVENANCE: dict[str, Any] = {
-    "historical_hash": None,
+    # ⚑ An INDEPENDENT, worker-verified digest from three months before run02:
+    # the live selfplay server publishes this same book
+    # (`configs/pbt2_small.yaml` `opening_book_path_2`), and
+    # `chess_anti_engine/worker_assets.py` verifies the sha256 on download
+    # and embeds it in the cache file name.  That cached copy is `cmp`
+    # identical to the production file.
+    "historical_hash": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+    "historical_hash_source": (
+        "runs/pbt2_small/server/worker_cache/opening2_70d0dfa50a6b1191f1db702a093a"
+        "4911b7433c612a30599517c2c2d92f0cea7c_" + PRODUCTION_BOOK_NAME
+        + " (worker-verified download, ctime 2026-05-28 17:54:28 local, "
+        "9,663,653 bytes, cmp-identical to the production file)"
+    ),
     "hash_measured": "2026-09-02",
     "evidence": [
-        "file mtime 2026-05-28 17:31 local, unchanged since; every legacy run "
-        "started later (run02 2026-08-28, run03 08-30, run04 08-31, run05 09-01)",
+        "production file ctime 2026-05-28 17:31:27 local (stat %z -- unlike mtime, "
+        "not settable by touch), unchanged since; every legacy run started later "
+        "(run02 2026-08-28, run03 08-30, run04 08-31, run05 09-01)",
         "functional: the resampled book reproduces the banked ply-0 FEN of every "
         "audited game (505/505 on the calibration audit, 158/158 on the run03 "
         "w03 100-102 + 207 slice)",
@@ -310,6 +331,9 @@ class RepairSpec:
     #: still not the corpus -- because ``run_finished`` is the only field
     #: the deriver reads (``corpus_complete``); ``production`` is for humans.
     audit_reasons: tuple[str, ...] = ()
+    #: CLI flags given that are inert in this run (engine knobs under
+    #: ``--relabel off``; ``--bench-encode-rows`` without ``--audit-only``).
+    inert_flags_given: tuple[str, ...] = ()
     #: One of ``RELABEL_MODES``; ``off`` copies every label byte-for-byte.
     relabel: str = RELABEL_OFF
 
@@ -380,6 +404,25 @@ def shard_worker_id(name: str) -> int | None:
     return int(head) if head.isdigit() else None
 
 
+def parse_listed_shard_name(name: str) -> tuple[int, int]:
+    """``(worker_id, index)`` of a LISTED shard name, or a refusal BY NAME.
+
+    ⚑ A listed shard is claimed by the inventory; a name this tool cannot
+    place (no ``wNN-`` worker id, no rotation index) must not be skipped --
+    skipping it would repair a subset of what the corpus claims and still
+    stamp the output whole.  Refused here, and held again at the end of a
+    production run by the rows/shards totals."""
+    worker_id = shard_worker_id(name)
+    index = corpus.shard_index_of(name)
+    if worker_id is None or index is None:
+        raise RepairError(
+            f"listed shard {name!r} does not parse as wNN-IIIII.jsonl.zst; the "
+            "inventory claims it and this tool cannot place it, so nothing is "
+            "repaired",
+        )
+    return worker_id, index
+
+
 def worker_shards(
     in_dir: Path, worker_id: int, indices: Sequence[int] | None,
     listed: Sequence[tuple[str, int]],
@@ -395,13 +438,27 @@ def worker_shards(
     """
     found: list[tuple[int, Path, int]] = []
     for name, rows in listed:
-        if shard_worker_id(name) != int(worker_id):
+        shard_worker, index = parse_listed_shard_name(name)
+        if shard_worker != int(worker_id):
             continue
-        index = corpus.shard_index_of(name)
-        if index is None or (indices is not None and index not in indices):
+        if indices is not None and index not in indices:
             continue
         found.append((index, in_dir / name, int(rows)))
     return [(path, rows) for _, path, rows in sorted(found)]
+
+
+def refuse_out_dir_inside_input(in_dir: Path, out_dir: Path) -> None:
+    """``--out`` at or below ``--in`` would write the repair INTO the source
+    corpus (``run03/repaired`` beside its shards) -- the one promise this tool
+    makes about the input is that it is never modified.  Refused BY NAME
+    before anything is created."""
+    resolved_in = in_dir.resolve()
+    resolved_out = out_dir.resolve()
+    if resolved_in in (resolved_out, *resolved_out.parents):
+        raise RepairError(
+            f"--out {out_dir} lies inside the input corpus {in_dir}; the input is "
+            "never modified, so the output goes elsewhere",
+        )
 
 
 def refuse_report_path_inside(
@@ -454,8 +511,28 @@ def verify_book(book_path_s: str, book_sha256_arg: str | None) -> dict[str, Any]
 
 
 def worker_ids_in(names: Sequence[str]) -> list[int]:
-    ids = {shard_worker_id(name) for name in names}
-    return sorted(i for i in ids if i is not None)
+    """Every worker with a LISTED shard; an unparseable listed name refuses."""
+    return sorted({parse_listed_shard_name(name)[0] for name in names})
+
+
+def enforce_whole_inventory(
+    results: Sequence[Mapping[str, Any]], inventory: derive.ProgressInventory,
+) -> None:
+    """⚑ PRODUCTION MODE'S OWN TAKE-EFFECT GATE: what the workers repaired IS
+    the inventory -- every listed shard, every claimed row -- checked off the
+    workers' returned tallies against the deriver's reading, not off what
+    was planned.  A shard dropped anywhere between the inventory and a
+    worker (a filter, a name, a bug) would otherwise be recorded beside the
+    inventory totals and still stamped ``run_finished: true``."""
+    rows_in = sum(int(r["rows_in"]) for r in results)
+    shards = sum(len(r["shards"]) for r in results)
+    if rows_in != inventory.rows_claimed or shards != len(inventory.shards):
+        raise RepairError(
+            f"production repair covered {shards} shard(s) / {rows_in} rows but the "
+            f"inventory lists {len(inventory.shards)} shard(s) claiming "
+            f"{inventory.rows_claimed} rows; a production output must be the whole "
+            "recorded corpus, so nothing is written",
+        )
 
 
 def unlisted_entry(shard: Path) -> dict[str, Any]:
@@ -465,12 +542,8 @@ def unlisted_entry(shard: Path) -> dict[str, Any]:
     (``ShardWriter.end_game``), so what a kill tears is the zstd/JSON TAIL;
     nothing in the shard says whether its last decodable game is whole, and
     the corpus does not claim any of it, so none of it is repaired."""
-    decodable, damage = iter_decodable_rows(shard)
-    return {
-        "path": shard.name, "decodable_rows": len(decodable),
-        "decodable_games": len({int(r["game_id"]) for r in decodable}),
-        "damage": damage,
-    }
+    rows, games, damage = scan_decodable_rows(shard)
+    return {"path": shard.name, "decodable_rows": rows, "decodable_games": games, "damage": damage}
 
 
 #: ⚑ THE OPTIONAL SURFACE, refused by name in production mode.  One row per
@@ -485,6 +558,27 @@ AUDIT_MODE_ONLY: tuple[tuple[str, Callable[[argparse.Namespace], bool]], ...] = 
     ("--book-sha256 (other than the production pin)",
      lambda a: bool(a.book_sha256) and a.book_sha256.lower() != PRODUCTION_BOOK_SHA256),
 )
+
+
+#: The engine knobs: inert unless a re-label runs.
+ENGINE_FLAGS: tuple[tuple[str, str], ...] = (
+    ("--engine", "engine"), ("--syzygy-path", "syzygy_path"),
+    ("--sf-hash-mb", "sf_hash_mb"), ("--sf-search-timeout-s", "sf_search_timeout_s"),
+)
+
+
+def inert_flags_given(args: argparse.Namespace, *, relabel: str) -> tuple[str, ...]:
+    """Which given flags do nothing in this run, by name, for the manifest."""
+    inert: list[str] = []
+    if relabel == RELABEL_OFF:
+        inert.extend(
+            flag for flag, attr in ENGINE_FLAGS
+            if getattr(args, attr) is not None
+            and not (attr == "sf_search_timeout_s" and getattr(args, attr) == DEFAULT_SF_SEARCH_TIMEOUT_S)
+        )
+    if not args.audit_only and int(args.bench_encode_rows) != DEFAULT_BENCH_ENCODE_ROWS:
+        inert.append("--bench-encode-rows")
+    return tuple(inert)
 
 
 def audit_reasons_of(args: argparse.Namespace) -> tuple[str, ...]:
@@ -512,21 +606,26 @@ def refuse_in_production(args: argparse.Namespace) -> None:
             )
 
 
-def iter_decodable_rows(path: Path) -> tuple[list[dict[str, Any]], str | None]:
-    """Every row of a shard up to the first damage, and what the damage was.
+def scan_decodable_rows(path: Path) -> tuple[int, int, str | None]:
+    """``(rows, games, damage)`` of a shard up to its first damage, STREAMED:
+    the count and the game-id set are kept, never the decoded rows (an
+    in-flight shard can hold up to a rotation's worth of search payloads).
 
     For an UNLISTED shard only: a listed shard is claimed whole and any damage
     in it is a refusal, never a truncation.
     """
-    rows: list[dict[str, Any]] = []
+    rows = 0
+    games: set[int] = set()
     stream = corpus.iter_shard_rows(path)
     while True:
         try:
-            rows.append(next(stream))
+            row = next(stream)
         except StopIteration:
-            return rows, None
+            return rows, len(games), None
         except Exception as exc:  # zstd frame errors and torn JSON lines alike
-            return rows, f"{type(exc).__name__}: {str(exc)[:200]}"
+            return rows, len(games), f"{type(exc).__name__}: {str(exc)[:200]}"
+        rows += 1
+        games.add(int(row["game_id"]))
 
 
 def parse_shard_range(spec: str | None) -> tuple[int, ...] | None:
@@ -1402,6 +1501,8 @@ def build_records(
         # slicing, no relabel.
         "production": not spec.audit_mode,
         **({"audit": {"reasons": list(spec.audit_reasons)}} if spec.audit_mode else {}),
+        # Flags that were given and did nothing (see the module docstring).
+        "inert_flags_given": list(spec.inert_flags_given),
         "input": {
             "dir": str(spec.in_dir),
             "manifest_sha256": manifest_sha,
@@ -1627,6 +1728,7 @@ def build_spec(
         audit_mode=bool(args.audit_mode),
         partial=bool(args.shards) or bool(args.workers),
         audit_reasons=audit_reasons_of(args),
+        inert_flags_given=inert_flags_given(args, relabel=relabel),
         relabel=relabel,
     )
 
@@ -1688,6 +1790,7 @@ def run(
     report_path = refuse_report_path_inside(args.report_json, in_dir, spec.out_dir)
     book = verify_book(str(spec.opening.opening_book_path), args.book_sha256)
     if spec.out_dir is not None:
+        refuse_out_dir_inside_input(in_dir, spec.out_dir)
         spec.out_dir.mkdir(parents=True, exist_ok=True)
         corpus.refuse_populated_dir(spec.out_dir)
         (spec.out_dir / PROVENANCE_DIR).mkdir()
@@ -1713,6 +1816,8 @@ def run(
             futures = {pool.submit(repair_worker, spec, w): w for w in workers}
             results.extend(future.result() for future in as_completed(futures))
     results.sort(key=lambda r: int(r["worker_id"]))
+    if not spec.audit_mode:
+        enforce_whole_inventory(results, inventory)
     repair_manifest, summary = build_records(
         spec=spec, manifest=manifest, manifest_sha=manifest_sha, results=results,
         started_utc=started_utc, wall_s=time.perf_counter() - started,

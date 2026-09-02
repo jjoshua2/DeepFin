@@ -618,7 +618,10 @@ def test_production_mode_requires_the_pinned_production_book(tmp_path: Path) -> 
         )
     assert manifest["book"]["expected_from"] == "--book-sha256"
     assert manifest["book"]["matches_production_pin"] is True
-    assert manifest["book"]["production_pin"]["historical_hash"] is None
+    # ⚑ The pin has an INDEPENDENT record: the worker-verified download the
+    # live server's cache keeps under the digest, three months before run02.
+    assert manifest["book"]["production_pin"]["historical_hash"] == repair.PRODUCTION_BOOK_SHA256
+    assert "worker-verified" in manifest["book"]["production_pin"]["historical_hash_source"]
 
 
 def banked_rows() -> list[tuple[int, int]]:
@@ -1172,10 +1175,75 @@ def test_unlisted_shards_are_recorded_and_never_repaired_in_audit_mode_either(tm
             searcher_factory=fake_factory(ScriptedEngine()),
         )
     assert manifest["production"] is False
+    assert manifest["audit"] == {"reasons": ["--audit-mode", "--workers"]}
+    summary = json.loads((out_dir / corpus.SUMMARY_NAME).read_text())
+    assert summary["run_finished"] is False
+    assert summary["audit"] == {"reasons": ["--audit-mode", "--workers"]}
+    assert summary["partial_repair"]["workers"] == [WORKER]
     assert manifest["input"]["workers"] == [WORKER]
     assert manifest["input"]["unlisted_shards_skipped"] == list(UNLISTED_SHARDS)
     assert [e["path"] for e in manifest["input"]["unlisted_shards"]] == list(UNLISTED_SHARDS)
     assert sorted(p.name for p in out_dir.glob("*.jsonl.zst")) == sorted(SHARDS)
+
+
+def list_extra_shard(in_dir: Path, tmp_path: Path, name: str) -> None:
+    """A LISTED shard the tool cannot place by name (5 rows of game D)."""
+    rows = game_rows(52, tmp_path)[:5]
+    write_shard(in_dir / name, rows)
+    with open(in_dir / "w03.progress.jsonl", "a", encoding="utf-8") as progress:
+        progress.write(json.dumps({
+            "path": str(in_dir / name), "rows": len(rows), "codec": "zstd", "games": [52],
+        }) + "\n")
+
+
+def test_a_listed_shard_whose_name_does_not_parse_is_refused_by_name(tmp_path: Path) -> None:
+    """Layer 1: the inventory claims `w03-extra.jsonl.zst`; skipping it would
+    repair a subset and stamp the output whole.  Audit mode too -- this
+    layer does not depend on the production totals gate."""
+    in_dir = build_corpus(tmp_path)
+    list_extra_shard(in_dir, tmp_path, "w03-extra.jsonl.zst")
+    for extra in ({}, {"audit_mode": True, "workers": WORKER}):
+        out_dir = tmp_path / f"out_{len(extra)}"
+        with pinned(tmp_path), pytest.raises(repair.RepairError, match=r"w03-extra\.jsonl\.zst.*does not parse"):
+            repair.run(args_for(in_dir, out_dir, **extra), searcher_factory=fake_factory(ScriptedEngine()))
+        assert not (out_dir / corpus.SUMMARY_NAME).exists()
+
+
+def test_production_mode_holds_the_workers_output_to_the_whole_inventory(tmp_path: Path) -> None:
+    """Layer 2: whatever drops a listed shard between the inventory and a
+    worker, the totals the workers RETURN are held to the deriver's reading
+    before any record is written (here `worker_shards` is made to drop one)."""
+    in_dir = build_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    real = repair.worker_shards
+
+    def dropping(*args: Any, **kwargs: Any) -> list[tuple[Path, int]]:
+        return real(*args, **kwargs)[:-1]
+
+    with pinned(tmp_path), mock.patch.object(repair, "worker_shards", dropping), \
+            pytest.raises(repair.RepairError, match="inventory lists 2 shard"):
+        repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(ScriptedEngine()))
+    assert not (out_dir / corpus.SUMMARY_NAME).exists()
+    assert not (out_dir / repair.REPAIR_MANIFEST_NAME).exists()
+
+
+def test_an_output_directory_inside_the_input_corpus_is_refused(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    before = sorted(p.name for p in in_dir.iterdir())
+    for out_dir in (in_dir / "repaired", in_dir):
+        with pinned(tmp_path), pytest.raises(repair.RepairError, match="inside the input corpus"):
+            repair.run(args_for(in_dir, out_dir), searcher_factory=fake_factory(ScriptedEngine()))
+    assert sorted(p.name for p in in_dir.iterdir()) == before
+
+
+def test_the_manifest_names_the_flags_that_were_given_and_did_nothing(tmp_path: Path) -> None:
+    in_dir = build_corpus(tmp_path)
+    with pinned(tmp_path):
+        manifest = repair.run(
+            args_for(in_dir, tmp_path / "out", sf_hash_mb=16, bench_encode_rows=3),
+            searcher_factory=fake_factory(ScriptedEngine()),
+        )
+    assert manifest["inert_flags_given"] == ["--sf-hash-mb", "--bench-encode-rows"]
 
 
 def test_a_listed_shard_with_an_appended_row_is_refused(tmp_path: Path) -> None:
