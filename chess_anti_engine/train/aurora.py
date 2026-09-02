@@ -517,9 +517,95 @@ class _DenominatorAllocationFailed(RuntimeError):
     failure inside it leaves its inputs untouched, and everything after it
     only needs one denominator at a time. `step` catches this and finishes the
     bucket per tensor. The message is the original error's, so if the recovery
-    itself fails and this propagates, `Trainer.train_steps`' "CUDA" retry test
-    still sees what it would have seen.
+    itself fails and this propagates it does so as an `OptimizerStepFailed`
+    whose text still names the allocation that started it.
     """
+
+
+class OptimizerStepFailed(RuntimeError):
+    """An exception escaped `AuroraWithAuxAdam.step` (or any `opt.step()` the
+    trainer drives) after the optimizer may have mutated state.
+
+    ⚑ `Trainer.train_steps` retries a step whose `RuntimeError` mentions
+    "CUDA" with a replacement batch. That is sound for a failure in the
+    forward/backward, which leaves the moments untouched. It is NOT sound for a
+    failure inside the optimizer step: an in-place moment kernel that dies
+    mid-bucket, or the per-parameter loop dying at tensor k, leaves moments
+    and parameters partially advanced with `step` unchanged, and the retry
+    then double-applies the decay and the accumulate on top of that while the
+    counter says one clean step (measured on both paths in PR #495 --
+    `test_a_failure_inside_an_in_place_moment_kernel_is_not_recovered`,
+    `test_the_base_loop_had_the_same_retry_residue_param_major`). So the
+    optimizer's failures are re-raised as this class, which the retry does not
+    catch: the trial dies loudly instead of continuing on corrupted state. The
+    one in-optimizer recovery (`_DenominatorAllocationFailed`) completes
+    INSIDE `step` and never reaches this.
+
+    `__cause__` is the original exception and `message` is its class and text,
+    so `str()` still says "CUDA" when the cause did. `step_index` is the
+    1-based index of the optimizer step that failed (filled in by the trainer,
+    whose counter it is) and `location` names the group / tensor / bucket the
+    optimizer was on when it died, or is None when the failure came from
+    somewhere the optimizer does not track (a wrapper, a foreign optimizer).
+
+    ⚑ `__str__` is rendered from the attributes at the time it is CALLED, not
+    from a string fixed at construction: the optimizer raises without knowing
+    the step index and the trainer fills it in afterwards, and what Ray prints
+    for a dead trial is `str(exc)` -- an index held only on an attribute would
+    never reach the failure output.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        step_index: int | None = None,
+        location: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.step_index = step_index
+        self.location = location
+
+    def __str__(self) -> str:
+        step = f"optimizer step {self.step_index}" if self.step_index is not None else "optimizer step"
+        return f"{step} failed at {self.location or 'an untracked point'}: {self.message}"
+
+
+_StepCursor = tuple[str, int, int, object]
+
+
+def _describe_step_cursor(cursor: _StepCursor | None) -> str | None:
+    """Render the optimizer's position at the moment of a failure.
+
+    The cursor is a cheap tuple written as the loops advance (kind, group
+    index, item index, tensor-or-bucket); it is formatted only here, on the
+    failure path, so the healthy step pays a tuple store per parameter and no
+    string work.
+    """
+    if cursor is None:
+        return None
+    kind, group_index, item_index, item = cursor
+    if kind == "adamw_foreach":
+        assert isinstance(item, tuple)
+        params, _grads, _exp_avgs, _exp_avg_sqs, states = item
+        first = params[0]
+        step = int(states[0].get("step", 0)) + 1 if states else 0
+        return (
+            f"batched AdamW bucket {item_index} of group {group_index} "
+            f"({len(params)} tensors, {first.dtype}, {first.device}, step {step})"
+        )
+    assert isinstance(item, Tensor)
+    label = {
+        "aurora": "Aurora matrix parameter",
+        "adamw_scan": "AdamW parameter (scan)",
+        "adamw_loop": "AdamW parameter (per-parameter loop)",
+        "adamw_foreach_recovery": "AdamW parameter (per-tensor recovery of a batched bucket)",
+    }[kind]
+    return (
+        f"{label} {item_index} of group {group_index} "
+        f"(shape {tuple(item.shape)}, {item.dtype}, {item.device})"
+    )
 
 
 def _adamw_update_foreach(
@@ -563,16 +649,18 @@ def _adamw_update_foreach(
   # denominator per tensor -- 165.6 MiB for the production 142-tensor group),
   # so an allocator `RuntimeError` fires HERE, after every moment in the bucket
   # has been decayed and accumulated and before any parameter has moved (the
-  # weight-decay `mul_` at the top excepted, when it is on). `Trainer.train_steps`
-  # retries a step whose error mentions "CUDA" and records the retry as clean,
-  # so left alone that retry would decay/accumulate the whole bucket's moments a
-  # SECOND time with the replacement batch's gradients -- the old loop had the
+  # weight-decay `mul_` at the top excepted, when it is on). Left alone, that
+  # would end the trial with a whole bucket's moments decayed/accumulated and no
+  # parameter stepped (`Trainer.train_steps` used to RETRY such a step and record
+  # it as clean, double-applying the moments; it now re-raises an optimizer-phase
+  # failure as `OptimizerStepFailed` above its retry) -- the old loop had the
   # same shape bounded to the one tensor it was on; batching widens it to the
   # bucket. Rather than reorder the kernels (a kernel change, which would need
   # its own phase-0b identity run), the failure is typed and `step` finishes the
   # bucket per tensor from the moments it already has: same ops, one
   # denominator at a time, bitwise the loop's result. Failures inside the
-  # in-place kernels are NOT recoverable this way and propagate unchanged.
+  # in-place kernels are NOT recoverable this way and propagate as
+  # `OptimizerStepFailed`, which the trainer does not retry.
     try:
         denoms = torch._foreach_sqrt(exp_avg_sqs)
     except RuntimeError as exc:
@@ -645,6 +733,9 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # the per-tensor completion has succeeded -- a completion that dies is
   # not a recovery.
         self.adamw_foreach_recoveries_total = 0
+  # Where `_step_groups` is, for `OptimizerStepFailed.location`; see
+  # `_describe_step_cursor`.
+        self._step_cursor: _StepCursor | None = None
         self._collect_uw_stats = True
         self._collect_polar_stats = False
         self._use_update_graphs = bool(aurora_cuda_graphs)
@@ -721,18 +812,43 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             self._update_graphs[key] = captured
         return captured(update)
 
-    @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Run the closure (if any) and one update of every group.
+
+        Everything that escapes `_step_groups` is re-raised as
+        `OptimizerStepFailed` (see that class) with the group / tensor / bucket
+        the optimizer was on. The closure runs OUTSIDE that boundary: a failure
+        in the forward/backward it evaluates is exactly the case the trainer's
+        retry is sound for. Production passes no closure.
+        """
         loss = None
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
+        try:
+            self._step_groups()
+        except OptimizerStepFailed:
+            raise
+        except Exception as exc:
+            raise OptimizerStepFailed(
+                f"{type(exc).__name__}: {exc}",
+                location=_describe_step_cursor(self._step_cursor),
+            ) from exc
+        finally:
+  # ⚑ Cleared on EVERY exit, not just at entry: the cursor holds the last
+  # bucket, whose `grad.detach()` views keep that group's grad storages
+  # alive across the next forward/backward (review measured 20 grads /
+  # 40 KB on a toy inventory). The failure path has already rendered it.
+            self._step_cursor = None
+        return loss
 
+    @torch.no_grad()
+    def _step_groups(self) -> None:
         adamw_foreach_buckets = 0
         adamw_foreach_params = 0
         adamw_loop_params = 0
         adamw_foreach_recoveries = 0
-        for group in self.param_groups:
+        for group_index, group in enumerate(self.param_groups):
             lr = float(group["lr"])
             weight_decay = float(group.get("weight_decay", 0.0))
             use_aurora = bool(group.get("use_aurora", False))
@@ -740,7 +856,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             if use_aurora:
                 uw_ratios: list[Tensor] = []
                 uw_scales: list[Tensor] = []
-                pending_updates: list[tuple[Tensor, Tensor]] = []
+                pending_updates: list[tuple[int, Tensor, Tensor]] = []
                 finite_checks: list[Tensor] = []
                 momentum = float(group.get("aurora_momentum", 0.95))
                 nesterov = bool(group.get("aurora_nesterov", True))
@@ -761,9 +877,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # average that moves when the group's composition does.
                 polar_samples: dict[str, tuple[float, float]] = {}
                 polar_errors = 0
-                for param in group["params"]:
+                for param_index, param in enumerate(group["params"]):
                     if param.grad is None:
                         continue
+                    self._step_cursor = ("aurora", group_index, param_index, param)
                     grad = param.grad.detach()
                     if grad.is_sparse:
                         raise RuntimeError("Aurora does not support sparse gradients")
@@ -845,13 +962,26 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                                 )
                     if self._coalesce_finite_checks:
                         finite_checks.append(torch.isfinite(update).all())
-                        pending_updates.append((param, update))
+                        pending_updates.append((param_index, param, update))
                     else:
                         param.add_(update, alpha=-lr)
                 if self._coalesce_finite_checks and finite_checks:
                     if not torch.stack(finite_checks).all():
+  # The cursor is still on the LAST parameter of the scan; the offender is
+  # whichever check came back False. Found on the failure path only -- one
+  # sync per entry here costs nothing against a dying trial, and blaming
+  # the final tensor for an earlier one's NaN would send the post-mortem to
+  # the wrong matrix.
+                        for (param_index, param, _update), ok in zip(pending_updates, finite_checks):
+                            if not bool(ok):
+                                self._step_cursor = ("aurora", group_index, param_index, param)
+                                break
                         raise RuntimeError("Aurora produced a non-finite matrix update")
-                    for param, update in pending_updates:
+  # `param_index` is the position in `group["params"]`, carried rather than
+  # re-enumerated: `pending_updates` is dense (no-grad params skipped), so a
+  # fresh enumerate would name a different tensor than the scan above.
+                    for param_index, param, update in pending_updates:
+                        self._step_cursor = ("aurora", group_index, param_index, param)
                         param.add_(update, alpha=-lr)
                 if collect_uw_stats:
                     self.last_uw_stats = _uw_stats(
@@ -885,30 +1015,31 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     list[dict[str, object]],
                 ],
             ] = {}
-            for param in params:
+            for param_index, param in enumerate(params):
                 if param.grad is None:
                     continue
+                self._step_cursor = ("adamw_scan", group_index, param_index, param)
                 grad = param.grad.detach()
                 if grad.is_sparse:
                     raise RuntimeError("Aurora AdamW fallback does not support sparse gradients")
 
                 state = self.state[param]
   # ⚑ `step` is COMPUTED here and COMMITTED only once the update that uses it
-  # has run. `Trainer.train_steps` catches a `RuntimeError` whose message
-  # contains "CUDA" and RETRIES the whole step up to three times
-  # (`trainer.py`), so an optimizer step is not the unrecoverable event it
-  # looks like -- and the batched path raises AFTER the scan has visited every
-  # parameter, where the old loop raised part-way through. Writing the counter
-  # during the scan would hand the retry a whole group of parameters whose
-  # bias corrections had advanced without their moments, and the retry is
-  # recorded as a successful step, so nothing downstream would ever say so.
+  # has run, so a tensor's recorded step is true for that tensor: committed
+  # means fully updated. The batched path raises AFTER the scan has visited
+  # every parameter, where the old loop raised part-way through, and a counter
+  # written during the scan would advance the bias correction of an ENTIRE
+  # group whose moments never moved. A failed step now ends the trial as
+  # `OptimizerStepFailed` rather than being retried (see that class), so this
+  # ordering is what makes the post-mortem state readable, not what makes a
+  # retry safe -- nothing does.
   #
   # The moment BUFFERS are still committed during the scan, and that is
   # correct rather than an oversight: lazily created `exp_avg`/`exp_avg_sq`
-  # are zeros, which is exactly the state a retry should find. This bounds
-  # the damage of a failed step; it does not make one atomic (a bucket that
-  # dies mid-chain has already mutated some tensors), and no cheap version of
-  # it does.
+  # are zeros, which is exactly the state a step that never ran would have.
+  # This bounds the damage of a failed step; it does not make one atomic (a
+  # bucket that dies mid-chain has already mutated some tensors), and no
+  # cheap version of it does.
                 step = int(state.get("step", 0)) + 1
 
                 exp_avg = state.get("exp_avg")
@@ -935,6 +1066,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                     bucket[4].append(state)
                     continue
 
+                self._step_cursor = ("adamw_loop", group_index, param_index, param)
                 _adamw_update_one(
                     param, grad, exp_avg, exp_avg_sq,
                     step=step, lr=lr, weight_decay=weight_decay,
@@ -948,9 +1080,10 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # a parameter's update reads only its own four tensors, all of which the scan
   # leaves alone. It is NOT safe if two entries alias, which `allow_batching`
   # is what rules out.
-            for (_device, _dtype, step), bucket in buckets.items():
+            for bucket_index, ((_device, _dtype, step), bucket) in enumerate(buckets.items()):
                 adamw_foreach_buckets += 1
                 adamw_foreach_params += len(bucket[0])
+                self._step_cursor = ("adamw_foreach", group_index, bucket_index, bucket)
                 try:
                     _adamw_update_foreach(
                         bucket[0], bucket[1], bucket[2], bucket[3],
@@ -964,19 +1097,22 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # `step` the moment IT is complete -- so if this loop dies too, every
   # tensor's recorded step is true for that tensor: the ones it reached are
   # fully updated and committed, the ones it did not are moments-mutated
-  # and uncommitted, and the error propagates to the trainer's retry, which
-  # then double-applies exactly those. That residue is stated, not hidden:
-  # `adamw_foreach_recoveries` counts the recoveries that completed, and the
-  # warning below names the bucket.
+  # and uncommitted, and the error propagates as `OptimizerStepFailed`
+  # naming that tensor, which the trainer does NOT retry.
+  # `adamw_foreach_recoveries` counts only the recoveries that completed,
+  # and the warning below names the bucket.
                     logging.getLogger(__name__).warning(
                         "batched AdamW denominator allocation failed on a %d-tensor "
                         "bucket at step %d (%s); finishing the bucket per tensor "
                         "from its already-updated moments",
                         len(bucket[0]), step, exc,
                     )
-                    for param, exp_avg, exp_avg_sq, state in zip(
+                    for tensor_index, (param, exp_avg, exp_avg_sq, state) in enumerate(zip(
                         bucket[0], bucket[2], bucket[3], bucket[4],
-                    ):
+                    )):
+                        self._step_cursor = (
+                            "adamw_foreach_recovery", group_index, tensor_index, param,
+                        )
                         _adamw_finish_one(
                             param, exp_avg, exp_avg_sq,
                             step=step, lr=lr, beta1=beta1, beta2=beta2, eps=eps,
@@ -994,4 +1130,3 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             "adamw_loop_params": float(adamw_loop_params),
             "adamw_foreach_recoveries": float(adamw_foreach_recoveries),
         }
-        return loss
