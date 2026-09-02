@@ -83,6 +83,18 @@ _SHARD_LOAD_WARN_INTERVAL_S = 60.0
 # why raising this number is not free on a box that is also running selfplay.
 _REFRESH_LOAD_WORKERS = 4
 
+# Each refresh loads four shards concurrently above.  Within each shard, zarr
+# fields are independent, and the worker-thread path has Blosc's own threads
+# disabled by numcodecs.  Eight ordered field decoders per shard therefore use
+# at most 4 x 8 = 32 decode tasks on the production host while preserving both
+# the shard submission order and each shard's `_SHARD_FIELDS` order.
+#
+# Scheduling-only module constant for the same reason as
+# `_REFRESH_LOAD_WORKERS`: this cannot change a draw, so it is not a replay
+# recipe knob.  `load_shard_arrays` remains serial by default for every caller
+# outside this replay-refresh path.
+_REFRESH_ARRAY_LOAD_WORKERS = 8
+
 # How often the shard-validation memo reports its hit rate. Throttled because
 # production runs `refresh_interval` as low as 1.
 _VALIDATION_MEMO_LOG_INTERVAL_S = 300.0
@@ -1563,7 +1575,12 @@ class DiskReplayBuffer:
             with self._validation_memo_lock:
                 already_validated = self._validated_shards.get(key) == before
         try:
-            arrs, _ = load_shard_arrays(sp, lazy=False, validate=not already_validated)
+            arrs, _ = load_shard_arrays(
+                sp,
+                lazy=False,
+                validate=not already_validated,
+                eager_workers=_REFRESH_ARRAY_LOAD_WORKERS,
+            )
         except Exception as exc:
             self._note_shard_load_failure(sp, exc, context=context)
             return None

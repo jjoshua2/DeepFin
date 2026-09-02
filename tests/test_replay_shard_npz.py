@@ -211,6 +211,28 @@ def test_local_zarr_shard_roundtrip(tmp_path):
     assert eager_arrs["policy_target"].shape == (2, 4672)
 
 
+def test_parallel_eager_zarr_decode_is_byte_identical(tmp_path):
+    samples = [_sample(), _sample()]
+    arrs = samples_to_arrays(samples)
+    path = save_local_shard_arrays(
+        local_shard_path(tmp_path / "replay", 7),
+        arrs=arrs,
+        meta=ShardMeta(username="parallel", positions=len(samples)),
+    )
+
+    serial, serial_meta = load_shard_arrays(
+        path, lazy=False, eager_workers=1,
+    )
+    parallel, parallel_meta = load_shard_arrays(
+        path, lazy=False, eager_workers=8,
+    )
+
+    assert parallel_meta == serial_meta
+    assert list(parallel) == list(serial), "field insertion order must not move"
+    for name in serial:
+        assert np.array_equal(parallel[name], serial[name]), name
+
+
 def test_zarr_shard_roundtrips_input_history_encoding_metadata(tmp_path):
     samples = [_sample(), _sample()]
     arrs = samples_to_arrays(samples)

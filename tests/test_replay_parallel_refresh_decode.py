@@ -187,6 +187,32 @@ def test_parallel_refresh_decode_is_byte_identical_to_serial(
             assert np.array_equal(a[key], b[key]), f"chunk {i}: {key} differs"
 
 
+def test_refresh_wires_the_ordered_array_decode_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write_window(tmp_path)
+    buf = _buffer(shard_dir)
+    paths = list(buf._shard_paths)
+    real_load = db.load_shard_arrays
+    realized: list[int] = []
+
+    def _record(*args: Any, **kwargs: Any) -> Any:
+        realized.append(int(kwargs["eager_workers"]))
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(db, "_REFRESH_ARRAY_LOAD_WORKERS", 8)
+    monkeypatch.setattr(db, "load_shard_arrays", _record)
+    _on_worker_thread(
+        buf._load_refresh_chunks,
+        shard_paths=paths,
+        refresh_shards=REFRESH_SHARDS,
+        rng=np.random.default_rng(13),
+    )
+
+    assert realized
+    assert set(realized) == {8}
+
+
 def test_completion_order_does_not_leak_into_the_pool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

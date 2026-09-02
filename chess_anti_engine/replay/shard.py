@@ -6,6 +6,7 @@ import os
 import secrets
 import shutil
 import tarfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from collections.abc import Callable
@@ -1841,11 +1842,44 @@ def save_local_shard_arrays(
     return p
 
 
+def _materialize_zarr_arrays(
+    proxies: dict[str, Any], *, workers: int,
+) -> dict[str, np.ndarray]:
+    """Decode independent zarr fields concurrently, preserving field order.
+
+    Zarr materializes each field independently.  The replay refresh already
+    calls this function off the main thread, where numcodecs deliberately
+    disables Blosc's internal thread pool.  A small ordered outer pool restores
+    field-level parallelism without changing the bytes or the insertion order
+    of the returned mapping.
+
+    ``workers=1`` is the exact historical path and remains the public default.
+    The replay buffer opts into a measured worker count; other callers keep
+    their existing scheduling and Blosc behaviour.
+    """
+    items = list(proxies.items())
+    n_workers = min(max(1, int(workers)), len(items))
+    if n_workers <= 1:
+        return {name: np.asarray(value) for name, value in items}
+
+    with ThreadPoolExecutor(
+        max_workers=n_workers,
+        thread_name_prefix="replay-zarr-array",
+    ) as pool:
+        futures = [pool.submit(np.asarray, value) for _, value in items]
+        values = [future.result() for future in futures]
+    return {
+        name: value
+        for (name, _), value in zip(items, values, strict=True)
+    }
+
+
 def load_shard_arrays(
     path: str | Path,
     *,
     lazy: bool = False,
     validate: bool = True,
+    eager_workers: int = 1,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a shard's arrays + meta, dispatching on suffix.
 
@@ -1906,7 +1940,7 @@ def load_shard_arrays(
         _attach_policy_metadata(arrs, meta)
         validate_array_declarations(arrs)
         return arrs, meta
-    arrs = {name: np.asarray(value) for name, value in proxies.items()}
+    arrs = _materialize_zarr_arrays(proxies, workers=eager_workers)
     _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
     if validate:
