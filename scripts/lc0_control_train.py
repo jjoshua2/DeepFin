@@ -939,6 +939,29 @@ IDENTITY_KEYS = (
     "derive_corpus_row_schema", "derive_corpus_row_schema_counts", "zero_history",
     "derive_history_rep_fix", "derive_state",
 )
+#: The completeness keys the same commit writes.  ⚑ REQUIRED too (Grok/Fable
+#: round 5): a marked shard missing ``derive_run_finalized`` was read as
+#: finished through the ``corpus_complete`` default -- the fail-open shape.
+COMPLETENESS_KEYS = (
+    "derive_run_finalized", "corpus_complete", "corpus_run_finished_claim",
+    "corpus_shards_adopted", "corpus_rows_claimed",
+)
+REQUIRED_MARKED_KEYS = (*IDENTITY_KEYS, *COMPLETENESS_KEYS)
+
+
+def marked_shard_problem(attrs: Mapping[str, Any]) -> str | None:
+    """Why a format-marked shard cannot be read, or ``None`` (unmarked, or
+    whole).  ONE reader for both the history and the completeness gates."""
+    if attrs.get("derive_identity_format") is None:
+        return None
+    missing = [key for key in REQUIRED_MARKED_KEYS if key not in attrs]
+    state = attrs.get("derive_state")
+    if missing or state != DERIVE_STATE_COMMITTED:
+        return (
+            f"derive_identity_format={attrs.get('derive_identity_format')!r}, "
+            f"missing {missing}, derive_state={state!r}"
+        )
+    return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -985,15 +1008,10 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
             where = f"{Path(shard_dir).name}/{path.name}"
-            if attrs.get("derive_identity_format") is not None:
-                missing = [key for key in IDENTITY_KEYS if key not in attrs]
-                state = attrs.get("derive_state")
-                if missing or state != DERIVE_STATE_COMMITTED:
-                    unidentified[where] = (
-                        f"derive_identity_format={attrs.get('derive_identity_format')!r}, "
-                        f"missing {missing}, derive_state={state!r}"
-                    )
-                    continue
+            problem = marked_shard_problem(attrs)
+            if problem is not None:
+                unidentified[where] = problem
+                continue
             schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
             row_schemas.setdefault(schema, where)
             zero_history.setdefault(
@@ -1072,6 +1090,10 @@ def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str
     for shard_dir in shard_dirs:
         for path in iter_shard_paths(Path(shard_dir)):
             attrs = zarr.open_group(str(path), mode="r").attrs
+            if marked_shard_problem(attrs) is not None:
+                # Refused by name in `history_identity_problems`; never read
+                # here through a default.
+                continue
             corpus_whole = bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE))
             # ⚑ A derivation that died (or is still running) after committing
             # this shard is a PARTIAL derived corpus too: the shard's own

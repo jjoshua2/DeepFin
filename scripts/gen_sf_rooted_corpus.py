@@ -164,11 +164,19 @@ protocol that only works on a polite exit is a protocol that does not work.
   same rows it would have in one uninterrupted run.
 * THE DEDUP CACHE IS RE-WARMED from this worker's own listed shards before the
   first game, because a cold cache would re-search (and re-bank) positions the
-  killed session had already banked.  ⚑ It re-warms from BANKED ROWS, so the
-  one thing it cannot restore is a position that was searched and deliberately
-  not banked (below ``MIN_BANKED_PIECES``, on the rare unadjudicable path).
-  Those recur as a fresh search, which is disclosed here rather than papered
-  over; ``dedup_rewarmed`` in the summary is the count that DID come back.
+  killed session had already banked.  ⚑ It re-warms from BANKED ROWS **and
+  from the cache-only events committed beside them**: a search that banked no
+  row (a seen tensor under a new ``search_key``; a sub-``MIN_BANKED_PIECES``
+  position) is recorded as a ``cache_event`` in the same progress record as
+  the game's rows, and the resume replays rows and events strictly in the
+  worker's ``seq`` order, so the re-warmed cache holds exactly what the
+  killed session's cache held, in the same FIFO order.  ``dedup_rewarmed`` and
+  ``dedup_cache_events_rewarmed`` in the summary are the two counts.  The
+  residual is the in-flight shard the kill caught mid-write: its record was
+  never committed, its rows and events are gone together, and its games are
+  replayed whole -- a re-search, never a different corpus.  A progress record
+  that names games but carries no ``cache_events`` predates this contract and
+  is REFUSED on resume rather than adopted as "zero events".
 * A resume must not change any generation-affecting setting: the requested
   config is re-stamped and its sha256 compared against the manifest's, and a
   mismatch is refused before a single game is played.  ``--workers`` is in the
@@ -2309,6 +2317,10 @@ class ResumeState:
     #: progress records, so the re-warmed cache holds every entry the killed
     #: session's cache held, in the same FIFO order.
     cache_events_rewarmed: int = 0
+    #: Where this worker's ``seq`` counter continues: one above the highest
+    #: ``seq`` re-warmed, so a resumed session's rows and events sort after
+    #: everything the killed session committed.
+    next_seq: int = 0
 
     @classmethod
     def fresh(cls) -> ResumeState:
@@ -2325,8 +2337,26 @@ class ResumeState:
         )
 
 
+class WorkerSeq:
+    """⚑ ONE MONOTONIC COUNTER PER WORKER, stamped on every row and every cache
+    event at the moment the cache changes.  The resume replays rows and events
+    strictly by it.  ``(game_id, ply)`` is NOT the live order: a worker plays
+    its game ids in the order it was dealt them, and under a resume that
+    order is the spec's, not ascending -- so a cache bounded by FIFO would
+    come back with a different resident set (measured: ``game_ids=(2, 0)``
+    with ``dedup_cache_max=1``)."""
+
+    def __init__(self, start: int = 0) -> None:
+        self.value = int(start)
+
+    def next(self) -> int:
+        current = self.value
+        self.value += 1
+        return current
+
+
 def cache_event(
-    *, game_id: int, ply: int, search_key: str, input_key: str,
+    *, seq: int, game_id: int, ply: int, search_key: str, input_key: str,
     remember_input: bool, values: SelectionValues,
 ) -> dict[str, Any]:
     """⚑⚑ A SEARCH THAT BANKED NO ROW, recorded so a resume can rebuild it.
@@ -2344,6 +2374,7 @@ def cache_event(
     order is reproduced by merging rows and events on ``(game_id, ply)``.
     """
     return {
+        "seq": int(seq),
         "game_id": int(game_id),
         "ply": int(ply),
         "search_key": str(search_key),
@@ -2375,8 +2406,15 @@ def _apply_cache_event(cache: DedupCache, event: Mapping[str, Any]) -> None:
         cache.remember_input(str(event["input_key"]))
 
 
-def _event_key(event: Mapping[str, Any]) -> tuple[int, int]:
-    return int(event["game_id"]), int(event["ply"])
+def _seq_of(entry: Mapping[str, Any], *, what: str, worker_id: int) -> int:
+    """The ``seq`` a row or event was committed under -- REQUIRED, by name."""
+    if "seq" not in entry:
+        raise ValueError(
+            f"{progress_name(worker_id)}: a {what} carries no seq (game "
+            f"{entry.get('game_id')!r} ply {entry.get('ply')!r}); the resume "
+            "replays the cache strictly in seq order and cannot place it",
+        )
+    return int(entry["seq"])
 
 
 def resume_worker_state(
@@ -2428,14 +2466,27 @@ def resume_worker_state(
     legacy = 0
     rewarmed = 0
     events_rewarmed = 0
+    next_seq = 0
     for record in records:
         raw_path = record["path"]
-        # ⚑ The cache-only events committed WITH this record, in the live
-        # order. A pre-events record has none, and its label-only entries are
-        # lost exactly as they always were (documented, and counted as zero).
+        # ⚑ FAIL CLOSED (Grok/Fable round 5): a games-bearing record with no
+        # `cache_events` key predates the contract, and adopting it as "zero
+        # events" is the accepted-then-ignored shape -- its label-only entries
+        # would silently be gone. Schema 3 never produced an accepted corpus,
+        # so there is nothing to carry: refused by name.
+        if "games" in record and "cache_events" not in record:
+            raise ValueError(
+                f"{progress_name(worker_id)} holds a record for games "
+                f"{record['games']} with no cache_events; it was written before "
+                "cache-only searches were committed with the record, and a "
+                "resume cannot rebuild the cache it left. Use a new --out-dir.",
+            )
         events = sorted(
-            (dict(e) for e in record.get("cache_events", [])), key=_event_key,
+            (dict(e) for e in record.get("cache_events", [])),
+            key=lambda e: _seq_of(e, what="cache event", worker_id=worker_id),
         )
+        for event in events:
+            next_seq = max(next_seq, _seq_of(event, what="cache event", worker_id=worker_id) + 1)
         if raw_path is None:
             # A completion record: games, no file.  It must carry them -- a
             # null path with no games names nothing at all.
@@ -2483,11 +2534,14 @@ def resume_worker_state(
         for row in iter_shard_rows(path):
             derived.add(int(row["game_id"]))
             require_current_row_schema(row)
-            # ⚑ EVENTS BEFORE THE ROW THEY PRECEDE: rows are banked in play
-            # order, so merging on (game_id, ply) restores the exact FIFO
-            # sequence the killed session's cache saw.
-            row_at = (int(row["game_id"]), int(row["ply"]))
-            while pending_events and _event_key(pending_events[0]) < row_at:
+            # ⚑ STRICTLY BY seq: every event committed before this row is
+            # replayed first, so the FIFO sequence is the one the killed
+            # session's cache saw whatever order the games were dealt in.
+            row_seq = _seq_of(row, what="row", worker_id=worker_id)
+            next_seq = max(next_seq, row_seq + 1)
+            while pending_events and _seq_of(
+                pending_events[0], what="cache event", worker_id=worker_id,
+            ) < row_seq:
                 _apply_cache_event(cache, pending_events.pop(0))
                 events_rewarmed += 1
             # ⚑ BOTH KEYS, in the order the live session filled them: the
@@ -2535,6 +2589,7 @@ def resume_worker_state(
         dedup_rewarmed=rewarmed,
         legacy_lines=legacy,
         cache_events_rewarmed=events_rewarmed,
+        next_seq=next_seq,
     )
 
 
@@ -2698,6 +2753,7 @@ def play_game(
     cache: DedupCache,
     dedup: DedupStats,
     progress: WorkerProgress,
+    seq: WorkerSeq,
 ) -> GameOutcome:
     """One game: sample an opening, then search-select-push until it ends."""
     searcher.new_game()
@@ -2758,6 +2814,9 @@ def play_game(
         if not new_input:
             dedup.row_key_hits += 1
         searched = False
+        # Assigned at the search; a served ply never reads it (rows and
+        # events are only built on the searched branch).
+        seq_no = -1
         if cached is not None and not new_input:
             dedup.hits[phase] += 1
             values = cached
@@ -2774,6 +2833,9 @@ def play_game(
                 termination = "engine_wedge"
                 break
             searched = True
+            # The cache changes at THIS search: rows and events both carry
+            # the number, and the resume replays them by it.
+            seq_no = seq.next()
             dedup.first_seen[phase] += 1
             dedup.searches += 1
             if cached is not None:
@@ -2848,6 +2910,7 @@ def play_game(
                 "worker_id": spec.worker_id,
                 "game_id": game_id,
                 "ply": ply,
+                "seq": seq_no,
                 "stm": "w" if board.turn == chess.WHITE else "b",
                 **history.as_row_fields(),
                 "piece_count": piece_count,
@@ -2878,7 +2941,7 @@ def play_game(
             # says so. Recorded so a resume can rebuild the entry -- see
             # `cache_event`.
             cache_events.append(cache_event(
-                game_id=game_id, ply=ply, search_key=label_key,
+                seq=seq_no, game_id=game_id, ply=ply, search_key=label_key,
                 input_key=input_key, remember_input=new_input, values=values,
             ))
 
@@ -3074,6 +3137,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     searcher = EngineLease(spawn_searcher)
     opening_cfg = build_opening_config(spec)
     dedup = DedupStats()
+    seq = WorkerSeq(resume.next_seq)
     progress = WorkerProgress()
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
@@ -3090,6 +3154,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
                 game_id=game_id, cache=cache, dedup=dedup, progress=progress,
+                seq=seq,
             )
             for row in outcome.rows:
                 writer.write(row)
@@ -3578,6 +3643,14 @@ def build_summary(
             str(r["worker_id"]): int(r["games_completed_prior"]) for r in results
         },
         "dedup_rewarmed": sum(int(r["dedup_rewarmed"]) for r in results),
+        # ⚑ ITS OWN COLUMN (Grok round 5): computed per worker and then
+        # dropped here was the accepted-then-ignored shape.
+        "dedup_cache_events_rewarmed": sum(
+            int(r["dedup_cache_events_rewarmed"]) for r in results
+        ),
+        "dedup_cache_events_rewarmed_by_worker": {
+            str(r["worker_id"]): int(r["dedup_cache_events_rewarmed"]) for r in results
+        },
         "dedup_rewarmed_resident_by_worker": {
             str(r["worker_id"]): int(r["dedup_rewarmed_resident"]) for r in results
         },
@@ -3715,7 +3788,9 @@ def format_summary(summary: dict[str, Any]) -> str:
         lines.insert(0, (
             f"RESUMED: {summary['games_completed_prior']} games and "
             f"{summary['rows_prior']} rows adopted from the killed session, "
-            f"{summary['dedup_rewarmed']} dedup entries re-warmed; this "
+            f"{summary['dedup_rewarmed']} dedup entries and "
+            f"{summary['dedup_cache_events_rewarmed']} cache-only events "
+            "re-warmed; this "
             f"session played {summary['games_this_session']} games / "
             f"{summary['rows_this_session']} rows"
         ))

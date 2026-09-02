@@ -383,7 +383,7 @@ def play(
         opening_cfg=fen_opening(fen, tmp_path),
         game_id=spec.game_ids[0],
         cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
-        dedup=dedup, progress=corpus.WorkerProgress(),
+        dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     return outcome, searcher, dedup
 
@@ -1079,11 +1079,11 @@ def test_an_evicted_position_is_re_searched_and_re_banked(tmp_path: Path) -> Non
 
     first = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     second = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert [row["dedup_key"] for row in second.rows] == [
@@ -1112,7 +1112,7 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
 
     first = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     go_lines_after_first = len(engine.go_lines)
     searched_after_first = searcher.stats.positions
@@ -1120,7 +1120,7 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
 
     second = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert len(first.rows) == 2
@@ -1183,6 +1183,7 @@ class SeededGames:
         self.searcher = searcher_for(self.engine, staircase=self.spec.staircase)
         self.cache = corpus.DedupCache(max_entries=self.spec.dedup_cache_max)
         self.dedup = corpus.DedupStats()
+        self.seq = corpus.WorkerSeq()
         self.games = 0
 
     def play(self, moves: str, *, tag: str) -> corpus.GameOutcome:
@@ -1191,7 +1192,7 @@ class SeededGames:
             spec=self.spec, searcher=self.searcher,
             opening_cfg=fen_list_opening([line], self.tmp_path / f"{tag}.txt"),
             game_id=self.games, cache=self.cache, dedup=self.dedup,
-            progress=corpus.WorkerProgress(),
+            progress=corpus.WorkerProgress(), seq=self.seq,
         )
         self.games += 1
         return outcome
@@ -1942,7 +1943,7 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
 
     assert set(row) == {
         "schema", "run", "fen", "dedup_key", "search_key", "input_key",
-        "worker_id", "game_id", "ply",
+        "worker_id", "game_id", "ply", "seq",
         "stm", "piece_count", "game_phase", "played_move", "selection",
         "phases", "result", "result_pgn", "adjudication",
         "history_root_fen", "history_uci", "history_plies",
@@ -2056,7 +2057,7 @@ def test_the_window_reaches_back_past_the_seven_frames_when_the_clock_allows(
         game_id=0,
         cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
         dedup=corpus.DedupStats(),
-        progress=corpus.WorkerProgress(),
+        progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     windows = [int(row["history_plies"]) for row in outcome.rows]
     assert windows, "no rows banked"
@@ -2415,7 +2416,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             },
             "shards": [{"path": "a", "rows": 5, "codec": "zstd", "games": [0, 2]}],
             "shards_prior": [], "shards_abandoned": [], "games_completed_prior": 0,
-            "dedup_rewarmed": 0, "dedup_rewarmed_resident": 0, "resumed": False,
+            "dedup_rewarmed": 0, "dedup_cache_events_rewarmed": 0,
+            "dedup_rewarmed_resident": 0, "resumed": False,
             "resume_partials_deleted": [], "resume_progress_torn_tail": False,
             "resume_progress_repair": corpus.PROGRESS_ABSENT,
             "resume_legacy_progress_lines": 0,
@@ -2470,7 +2472,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                  "uncommitted_rows": 2},
             ],
             "games_completed_prior": 2,
-            "dedup_rewarmed": 4, "dedup_rewarmed_resident": 4, "resumed": True,
+            "dedup_rewarmed": 4, "dedup_cache_events_rewarmed": 3,
+            "dedup_rewarmed_resident": 4, "resumed": True,
             "resume_partials_deleted": ["w01-00001.jsonl.zst"],
             "resume_progress_torn_tail": True,
             "resume_progress_repair": corpus.PROGRESS_TRUNCATED,
@@ -2500,7 +2503,11 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["games_completed_prior_by_worker"] == {"0": 0, "1": 2}
     assert summary["resumed"] is True
     assert summary["dedup_rewarmed"] == 4
-    assert summary["dedup_rewarmed_resident_by_worker"] == {"0": 0, "1": 4}
+    # ⚑ ITS OWN COLUMN (Grok round 5): the worker computed it and the summary
+    # dropped it. Mutant: dropped again -> KeyError here.
+    assert summary["dedup_cache_events_rewarmed"] == 3
+    assert summary["dedup_cache_events_rewarmed_by_worker"] == {"0": 0, "1": 3}
+    assert "3 cache-only events re-warmed" in corpus.format_summary(summary)
     assert summary["resume_partials_deleted"] == {"1": ["w01-00001.jsonl.zst"]}
     assert summary["resume_progress_torn_tail_workers"] == [1]
     assert summary["resume_progress_repaired"] == {"1": corpus.PROGRESS_TRUNCATED}
@@ -3403,7 +3410,8 @@ def test_the_tail_repair_is_idempotent_and_leaves_whole_lines_alone(
     """
     path = tmp_path / corpus.progress_name(0)
     whole = json.dumps(
-        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+         "cache_events": []},
         sort_keys=True,
     )
 
@@ -3513,6 +3521,46 @@ def deal_openings_by_game(
     )
 
 
+def test_a_games_record_without_cache_events_is_refused_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ FAIL CLOSED (Grok/Fable round 5): a progress record that names games
+    but carries no ``cache_events`` predates the contract; adopting it as
+    "zero events" would silently lose its label-only entries.  Refused by
+    name on both record shapes."""
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+    first = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    assert first["rows"] == 2
+    progress = out_dir / corpus.progress_name(0)
+    records = [json.loads(line) for line in progress.read_text(encoding="utf-8").splitlines()]
+    assert all("cache_events" in r for r in records), "the writer commits the key"
+    for record in records:
+        del record["cache_events"]
+    progress.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"games \[0\] with no cache_events"):
+        corpus.resume_worker_state(
+            out_dir=out_dir, worker_id=0,
+            cache=corpus.DedupCache(max_entries=corpus.DEFAULT_DEDUP_CACHE_MAX),
+        )
+    # A null-path completion record is held to the same rule.
+    progress.write_text(
+        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1]}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"games \[1\] with no cache_events"):
+        corpus.resume_worker_state(
+            out_dir=out_dir, worker_id=0,
+            cache=corpus.DedupCache(max_entries=corpus.DEFAULT_DEDUP_CACHE_MAX),
+        )
+
+
 def banked_rows(out_dir: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted(out_dir.glob("w*-*.jsonl.*")):
@@ -3520,9 +3568,24 @@ def banked_rows(out_dir: Path) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda r: (int(r["game_id"]), int(r["ply"])))
 
 
-@pytest.mark.parametrize("max_plies", [1, 2])
+@pytest.mark.parametrize(
+    ("max_plies", "game_ids", "dedup_cache_max"),
+    [
+        (1, (0, 1, 2, 3), corpus.DEFAULT_DEDUP_CACHE_MAX),
+        (2, (0, 1, 2, 3), corpus.DEFAULT_DEDUP_CACHE_MAX),
+        # ⚑ THE ORDER PROBE (Grok round 5): games dealt DESCENDING with a
+        # one-entry FIFO. Live: game 2 (old-repeat route) searches and banks,
+        # then game 0 (no-repeat route, same tensor) searches label-only and
+        # EVICTS game 2's label -- resident = no_repeat. A replay sorted by
+        # (game_id, ply) would apply game 0's event first and game 2's row
+        # second, leaving old_repeat resident, and game 3 (no-repeat) would
+        # then SEARCH where the live run served. Replay by seq keeps it.
+        (1, (2, 0, 3), 1),
+    ],
+)
 def test_a_label_only_cache_entry_survives_a_resume_and_the_resumed_run_equals_the_uninterrupted_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_plies: int,
+    game_ids: tuple[int, ...], dedup_cache_max: int,
 ) -> None:
     """⚑⚑ Codex P2 / operator ruling (#497 round 3): resume equivalence must
     not depend on unbanked cache state.
@@ -3557,34 +3620,47 @@ def test_a_label_only_cache_entry_survives_a_resume_and_the_resumed_run_equals_t
     )
     overrides: dict[str, Any] = {
         "staircase": RESUME_STAIRCASE, "max_plies": max_plies, "shard_rows": 100,
+        "dedup_cache_max": dedup_cache_max,
     }
+    stop_after = game_ids[:2]
+    label_only_game = game_ids[1]
     out_a = tmp_path / "a"
     out_a.mkdir()
-    a = corpus.run_worker(worker_spec(out_a, game_ids=(0, 1, 2, 3), **overrides))
+    a = corpus.run_worker(worker_spec(out_a, game_ids=game_ids, **overrides))
     assert a["failed"] is None
-    assert a["dedup"]["search_key_miss_on_seen_input"] == 1, "game 1's label-only search"
+    assert a["dedup"]["search_key_miss_on_seen_input"] == 1, "the label-only search"
 
     out_b = tmp_path / "b"
     out_b.mkdir()
-    stopped = corpus.run_worker(worker_spec(out_b, game_ids=(0, 1), **overrides))
+    stopped = corpus.run_worker(worker_spec(out_b, game_ids=stop_after, **overrides))
     assert stopped["failed"] is None
     assert stopped["dedup"]["search_key_miss_on_seen_input"] == 1
-    # The entry is ON DISK, committed with game 1's record.
+    # The entry is ON DISK, committed with the game's record, with its seq.
     records = [
         json.loads(line) for line in
         (out_b / corpus.progress_name(0)).read_text(encoding="utf-8").splitlines()
     ]
     events = [e for r in records for e in r.get("cache_events", [])]
-    assert [(e["game_id"], e["ply"], e["remember_input"]) for e in events] == [(1, 0, False)]
-    assert events[0]["search_key"] == corpus.search_key(board_after(T4_ROUTE_OLD_REPEAT))
-    assert events[0]["input_key"] == corpus.row_key(board_after(T4_ROUTE_OLD_REPEAT))
+    assert [(e["game_id"], e["ply"], e["remember_input"]) for e in events] == [
+        (label_only_game, 0, False),
+    ]
+    # One seq per SEARCH, rows and events together, gapless: the event sits
+    # exactly where the live cache changed.
+    stopped_seqs = sorted(
+        [row["seq"] for row in banked_rows(out_b)] + [e["seq"] for e in events],
+    )
+    assert stopped_seqs == list(range(stopped["search"]["positions_searched"]))
+    label_only_board = board_after(lines[label_only_game % len(lines)].split("| ")[1])
+    assert events[0]["search_key"] == corpus.search_key(label_only_board)
+    assert events[0]["input_key"] == corpus.row_key(label_only_board)
+    assert [row["seq"] for row in banked_rows(out_b)][:1] == [0]
 
     resumed = corpus.run_worker(
-        worker_spec(out_b, game_ids=(0, 1, 2, 3), resume=True, **overrides),
+        worker_spec(out_b, game_ids=game_ids, resume=True, **overrides),
     )
     assert resumed["failed"] is None
     assert resumed["dedup_cache_events_rewarmed"] == 1
-    assert resumed["games"] == 2
+    assert resumed["games"] == len(game_ids) - 2
     # Every decision after the resume is the one A made: game 2's label is
     # SERVED (no search), and so is everything after it.
     assert resumed["search"]["positions_searched"] == 0
@@ -3672,7 +3748,7 @@ def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
     outcome = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=fen_opening(MATE_GAME_FEN, tmp_path),
         game_id=0, cache=cache, dedup=corpus.DedupStats(),
-        progress=corpus.WorkerProgress(),
+        progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert outcome.rows
@@ -3817,7 +3893,8 @@ def test_a_torn_progress_line_anywhere_but_the_tail_is_refused(
     newline was written whole and is not a torn tail.
     """
     path = tmp_path / corpus.progress_name(0)
-    good = json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1]})
+    good = json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1],
+                       "cache_events": []})
     path.write_text(
         '{"path": "w00-000' + "\n" + good + "\n", encoding="utf-8",
     )
@@ -3843,7 +3920,7 @@ def test_a_listed_shard_that_is_gone_refuses_the_resume(tmp_path: Path) -> None:
     (tmp_path / corpus.progress_name(0)).write_text(
         json.dumps({
             "path": str(tmp_path / "w00-00000.jsonl.zst"), "rows": 3,
-            "codec": "zstd", "games": [0],
+            "codec": "zstd", "games": [0], "cache_events": [],
         }) + "\n",
         encoding="utf-8",
     )
@@ -3866,7 +3943,7 @@ def test_a_listed_shard_that_is_truncated_is_refused_by_name(
     then reads ``Expecting property name ... char 4347``.
     """
     whole = {
-        "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "dedup_key": "k",
+        "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "seq": 0, "dedup_key": "k",
         "search_key": "k|", "input_key": "0" * 32,
         "selection": {"value_depth": 1, "value_width": 1},
         "phases": [{"per_depth": [{"depth": 1, "lines": [[1, "e2e4", 0.0, 9]]}]}],
@@ -3878,6 +3955,7 @@ def test_a_listed_shard_that_is_truncated_is_refused_by_name(
     (tmp_path / corpus.progress_name(0)).write_text(
         json.dumps({
             "path": str(shard), "rows": 2, "codec": "gzip", "games": [0],
+            "cache_events": [],
         }) + "\n",
         encoding="utf-8",
     )
@@ -3899,7 +3977,8 @@ def test_a_resume_whose_game_deal_disagrees_with_the_progress_file_is_refused(
     run would report a complete corpus that is missing a game.
     """
     (tmp_path / corpus.progress_name(0)).write_text(
-        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7]}) + "\n",
+        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7],
+                    "cache_events": []}) + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="did not deal it"):
@@ -4089,11 +4168,12 @@ def test_a_manifest_in_another_repetition_regime_is_refused_on_resume(
     "progress_record",
     [
         pytest.param(
-            {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+            {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+         "cache_events": []},
             id="worker_with_a_schema_1_shard",
         ),
         pytest.param(
-            {"path": None, "rows": 0, "codec": "zstd", "games": [0]},
+            {"path": None, "rows": 0, "codec": "zstd", "games": [0], "cache_events": []},
             id="worker_with_only_zero_row_completion_records",
         ),
     ],
@@ -4147,6 +4227,7 @@ def test_a_two_worker_schema_1_resume_is_refused_before_either_worker_exists(
     (out_dir / corpus.progress_name(0)).write_text(
         json.dumps({
             "path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+            "cache_events": [],
         }) + "\n",
         encoding="utf-8",
     )

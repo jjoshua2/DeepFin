@@ -1256,6 +1256,106 @@ def test_history_identity_is_on_the_shard_at_commit_and_a_dead_run_never_reads_a
     assert launcher.partial_corpus_problems([tmp_path / "done"], allow_partial_corpus=False) == []
 
 
+def _history_corpus(tmp_path: Path, rows: int = 3) -> Path:
+    return write_corpus(
+        tmp_path, [history_row(game_id=g, ply=0) for g in range(rows)],
+        row_schema=derive.ROW_SCHEMA_HISTORY,
+    )
+
+
+@pytest.mark.parametrize("disagreement", ["counts", "zero_history"])
+def test_the_end_pass_refuses_a_committed_identity_that_disagrees_and_finalizes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disagreement: str,
+) -> None:
+    """⚑⚑ Grok/Fable round 5: cross-check -> refuse -> ONLY THEN finalize.
+
+    The first cut stamped ``derive_run_finalized: true`` inside the
+    cross-check loop and refused afterwards, so a writer-fault run died
+    leaving shards the launcher read as finished -- and no test could fire
+    the disagreement gate at all.  Here a shard identity is injected that
+    disagrees with the run (the per-shard counts, or the per-shard plane
+    reading), the run must die by name, and EVERY shard must still read
+    ``derive_run_finalized: false``.  Mutants: either cross-check removed ->
+    the run finishes; finalize moved before the checks -> a shard reads true.
+    """
+    real_identity = derive._shard_identity
+
+    def lying_identity(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        attrs = real_identity(*args, **kwargs)
+        if disagreement == "counts":
+            attrs["derive_corpus_row_schema_counts"] = {"3": 99}
+        else:
+            attrs["zero_history"] = True
+        return attrs
+
+    monkeypatch.setattr(derive, "_shard_identity", lying_identity)
+    src = _history_corpus(tmp_path)
+    expected = "do not sum to" if disagreement == "counts" else "plane reading and the run's disagree"
+    with pytest.raises(derive.CorpusIntegrityError, match=expected):
+        run_derive(src, tmp_path / "out", "uniform-d9", "--rows-per-shard", "2")
+    attrs_by_shard = shard_attrs(tmp_path / "out")
+    assert len(attrs_by_shard) == 2
+    for attrs in attrs_by_shard:
+        assert attrs["derive_run_finalized"] is False, "finalized before the refusal"
+        assert "corpus_rows_derived" not in attrs
+    assert not (tmp_path / "out" / derive.SUMMARY_NAME).exists()
+
+
+def test_a_shard_that_fails_its_on_disk_verification_is_never_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Fable round 5: verify on the ``.writing`` dir, THEN rename.  A
+    writer that renamed first and verified second would leave a globbable
+    shard behind its own refusal.  Mutant: the two swapped -> a
+    ``shard_*.zarr`` exists here."""
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise derive.CorpusIntegrityError("simulated value-column mismatch on disk")
+
+    monkeypatch.setattr(derive, "_verify_value_column_on_disk", refuse)
+    src = _history_corpus(tmp_path, rows=1)
+    with pytest.raises(derive.CorpusIntegrityError, match="simulated value-column"):
+        run_derive(src, tmp_path / "out", "uniform-d9")
+    assert not list((tmp_path / "out").glob("shard_*.zarr")), "renamed before verifying"
+    assert list((tmp_path / "out").glob("shard_*.zarr.writing")), "the refused write stays hidden"
+
+
+def test_a_marked_shard_missing_a_completeness_key_is_refused_by_name(
+    tmp_path: Path,
+) -> None:
+    """⚑ Grok/Fable round 5: a format-marked shard with the identity keys and
+    ``derive_state: committed`` but NO ``derive_run_finalized`` was read as
+    finished through the ``corpus_complete`` default.  Every key the commit
+    writes is REQUIRED on a marked shard; a missing one is ``unidentified``,
+    refused under every flag, and never read through a default by the
+    partial-corpus reader either.  Mutant: completeness keys not required.
+    """
+    import scripts.lc0_control_train as launcher
+
+    src = _history_corpus(tmp_path, rows=1)
+    out = tmp_path / "out"
+    run_derive(src, out, "uniform-d9")
+    assert launcher.partial_corpus_problems([out], allow_partial_corpus=False) == []
+    (path,) = iter_shard_paths(out)
+    for key in launcher.COMPLETENESS_KEYS:
+        group = zarr.open_group(str(path), mode="a")
+        saved = group.attrs[key]
+        del group.attrs[key]
+        stamps = launcher.read_history_stamps([out])
+        assert set(stamps.unidentified) == {f"out/{path.name}"}, key
+        assert f"missing ['{key}']" in stamps.unidentified[f"out/{path.name}"]
+        for allow in (False, True):
+            problems = launcher.history_identity_problems([out], allow_mixed_history=allow)
+            assert any("MISSING or not committed" in p for p in problems), key
+        assert launcher.read_partial_corpus_stamps([out]) == {}, "never read through a default"
+        with pytest.raises(SystemExit, match="MISSING or not committed"):
+            launcher.preflight(
+                real_control_config(), [out], allow_leak=True,
+                allow_mixed_history=True, allow_partial_corpus=True,
+            )
+        zarr.open_group(str(path), mode="a").attrs[key] = saved
+    assert launcher.read_history_stamps([out]).unidentified == {}
+
+
 def test_an_envelope_dropped_row_is_in_no_per_row_count(tmp_path: Path) -> None:
     """⚑ Fable (round 2 delta): one ``zero_history`` definition, one denominator.
 

@@ -4982,8 +4982,13 @@ def _stamp_realized_row_schema(
     }
     summed: dict[str, int] = {}
     shard_zero: list[bool] = []
+    # ⚑ ORDER: cross-check -> refuse -> ONLY THEN finalize (Grok/Fable round
+    # 5). The first cut stamped `derive_run_finalized: true` inside this loop
+    # and refused afterwards, so a writer-fault run died leaving shards the
+    # launcher read as finished. Nothing is written until every shard has
+    # passed every check below.
     for entry in written:
-        group = zarr.open_group(str(out_dir / str(entry["path"])), mode="a")
+        group = zarr.open_group(str(out_dir / str(entry["path"])), mode="r")
         committed = dict(group.attrs)
         if committed.get("derive_state") != DERIVE_STATE_COMMITTED:
             raise CorpusIntegrityError(
@@ -5000,7 +5005,6 @@ def _stamp_realized_row_schema(
         for schema, n in dict(committed.get("derive_corpus_row_schema_counts", {})).items():
             summed[str(schema)] = summed.get(str(schema), 0) + int(n)
         shard_zero.append(bool(committed["zero_history"]))
-        group.attrs.update(attrs)
     if written and summed != counts:
         raise CorpusIntegrityError(
             f"the committed shards' row-schema counts {summed} do not sum to "
@@ -5012,6 +5016,8 @@ def _stamp_realized_row_schema(
             f"reading is {run_zero_history}; the per-shard plane reading and "
             "the run's disagree",
         )
+    for entry in written:
+        zarr.open_group(str(out_dir / str(entry["path"])), mode="a").attrs.update(attrs)
     return attrs
 
 
