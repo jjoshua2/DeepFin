@@ -507,6 +507,10 @@ def test_a_failed_sample_is_counted_and_named_but_an_oom_is_re_raised(
     # second would turn "the run is out of memory" into an incremented integer
     # and let the step proceed. So OOM propagates, everything else is counted
     # WITH its exception class in the log -- a bare counter is not diagnosable.
+    # It propagates THROUGH the trainer's optimizer-step boundary, so it
+    # arrives as `OptimizerStepFailed` with the OOM as its cause and the
+    # Aurora tensor named -- an optimizer-phase failure the CUDA retry must
+    # not take (see `test_aurora_adamw_foreach.py`, P2-3).
     trainer = _make_trainer(tmp_path)
     _stub_losses(trainer, monkeypatch)
     opt = cast(AuroraWithAuxAdam, trainer.opt)
@@ -532,13 +536,16 @@ def test_a_failed_sample_is_counted_and_named_but_an_oom_is_re_raised(
         raise torch.cuda.OutOfMemoryError("CUDA out of memory")
 
     monkeypatch.setattr(aurora_mod, "polar_convergence", boom_oom)
-    with pytest.raises(torch.cuda.OutOfMemoryError):
+    with pytest.raises(aurora_mod.OptimizerStepFailed) as excinfo:
         trainer._run_optimizer_step(
             step_sums=trainer_mod._DeviceLossSums(), step_acc_sums={}, step_opt_stats={},
             buf=cast(Any, None), batch_size=1,
             collect_optimizer_stats=True,
             batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
         )
+    assert isinstance(excinfo.value.__cause__, torch.cuda.OutOfMemoryError)
+    assert excinfo.value.location is not None
+    assert excinfo.value.location.startswith("Aurora matrix parameter")
 
 
 def test_progress_report_carries_the_polar_and_uw_columns() -> None:

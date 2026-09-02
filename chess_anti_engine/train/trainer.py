@@ -87,7 +87,7 @@ from chess_anti_engine.replay.shard import (
     sf_eval_pv_orphan_flags,
 )
 
-from .aurora import AuroraWithAuxAdam
+from .aurora import AuroraWithAuxAdam, OptimizerStepFailed
 from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
@@ -5208,7 +5208,29 @@ class Trainer:
             set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
             if callable(set_collect_polar_stats):
                 set_collect_polar_stats(bool(collect_optimizer_stats))
-            self.opt.step()
+  # ⚑ THE OPTIMIZER-STEP BOUNDARY. Anything that escapes `opt.step()` -- the
+  # Aurora / AdamW paths in `AuroraWithAuxAdam`, a wrapper's post-step work
+  # (`SODAWeightDecayWrapper`), a chained child, a plain torch optimizer --
+  # may have left moments and parameters partially advanced, and
+  # `train_steps`' CUDA retry would double-apply them (PR #495 measured this
+  # on both AdamW paths). So it leaves here as `OptimizerStepFailed`, which
+  # that retry explicitly does not catch, keyed by CLASS at this boundary and
+  # not by the "CUDA" substring: a non-CUDA failure inside the step is just as
+  # unretryable. `AuroraWithAuxAdam` already raises the class with the
+  # tensor / bucket named; this fills in the step index it cannot know, and
+  # wraps everything else with the index alone.
+            failed_step_index = self.step + 1
+            try:
+                self.opt.step()
+            except OptimizerStepFailed as exc:
+                if exc.step_index is None:
+                    exc.step_index = failed_step_index
+                raise
+            except Exception as exc:
+                raise OptimizerStepFailed(
+                    f"inside {type(self.opt).__name__}.step(): {type(exc).__name__}: {exc}",
+                    step_index=failed_step_index,
+                ) from exc
   # Unchanged boundaries: `opt_step_time_s` is still the wall clock of exactly
   # this region, because `optimizer_steps_per_s` in the Ray report divides by
   # it and a redefinition would move that column without moving the run.
@@ -5309,6 +5331,15 @@ class Trainer:
                         timer=phase_timer,
                     )
                     opt_step_time_s += this_opt_time
+  # ⚑ NOT RETRYABLE, and the clause is written out so a reader sees it: the
+  # optimizer has (or may have) partially mutated its moments and parameters
+  # by the time it raises, and a replacement batch on top of that state is
+  # the double application PR #495 measured. Its message still says "CUDA"
+  # when the cause did, so the substring test below would take it. Ordering
+  # is the whole mechanism -- this clause must stay above the `RuntimeError`
+  # one, and `OptimizerStepFailed` IS a `RuntimeError`.
+                except OptimizerStepFailed:
+                    raise
                 except RuntimeError as exc:
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
