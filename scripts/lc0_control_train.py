@@ -730,6 +730,7 @@ def purity_receipt_problems(
 
 def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
+    allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -814,6 +815,17 @@ def preflight(
   # function is what hid the mixing hazard behind the blend's early return.
     for message in value_scheme_identity_problems(shard_dirs):
         fail(message)
+    # ⚑ NOT downgraded by --allow-leak: mixing input histories is not a value
+    # leak, and it has its own explicit opt-in.
+    for message in history_identity_problems(
+        shard_dirs, allow_mixed_history=allow_mixed_history,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
+    # ⚑ Same shape: a partial corpus is not a leak either.
+    for message in partial_corpus_problems(
+        shard_dirs, allow_partial_corpus=allow_partial_corpus,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
     for message in baked_value_blend_problems(cfg, shard_dirs):
         fail(message)
     return {
@@ -907,6 +919,257 @@ def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
                 where,
             )
     return ShardValueStamps(schemes=schemes, schemas=schemas, sources=sources)
+
+
+#: What a derived shard written before the history stamps existed holds: the
+#: deriver of that era reconstructed a bare FEN per row, so its planes are the
+#: zero-history distribution.  ⚑ Absent reads as THIS, deliberately: every
+#: pre-#497 corpus is that shape, and the gate must keep them launchable while
+#: still refusing to mix them with a history-aware one.
+UNSTAMPED_CORPUS_ROW_SCHEMA = 1
+UNSTAMPED_ZERO_HISTORY = True
+#: ``derive_corpus_targets.DERIVE_STATE_COMMITTED``, duplicated for the same
+#: reason the ``DERIVE_SCHEMA*`` constants above are (no deriver import here)
+#: and pinned by ``tests/test_derive_corpus_targets.py``.
+DERIVE_STATE_COMMITTED = "committed"
+#: The keys a shard carrying ``derive_identity_format`` MUST have: the deriver
+#: stamps them in the same commit as the rows (``_shard_identity``), so a
+#: format-marked shard missing one is a fault, never a legacy shard.
+IDENTITY_KEYS = (
+    "derive_corpus_row_schema", "derive_corpus_row_schema_counts", "zero_history",
+    "derive_history_rep_fix", "derive_state",
+)
+#: The completeness keys the same commit writes.  ⚑ REQUIRED too (Grok/Fable
+#: round 5): a marked shard missing ``derive_run_finalized`` was read as
+#: finished through the ``corpus_complete`` default -- the fail-open shape.
+COMPLETENESS_KEYS = (
+    "derive_run_finalized", "corpus_complete", "corpus_run_finished_claim",
+    "corpus_shards_adopted", "corpus_rows_claimed",
+)
+REQUIRED_MARKED_KEYS = (*IDENTITY_KEYS, *COMPLETENESS_KEYS)
+
+
+def marked_shard_problem(attrs: Mapping[str, Any]) -> str | None:
+    """Why a format-marked shard cannot be read, or ``None`` (unmarked, or
+    whole).  ONE reader for both the history and the completeness gates."""
+    if attrs.get("derive_identity_format") is None:
+        return None
+    missing = [key for key in REQUIRED_MARKED_KEYS if key not in attrs]
+    state = attrs.get("derive_state")
+    if missing or state != DERIVE_STATE_COMMITTED:
+        return (
+            f"derive_identity_format={attrs.get('derive_identity_format')!r}, "
+            f"missing {missing}, derive_state={state!r}"
+        )
+    return None
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardHistoryStamps:
+    """What ``--shards`` says about the HISTORY its planes carry."""
+
+    #: ``derive_corpus_row_schema`` (an int, or ``"mixed"``) -> example shard.
+    row_schemas: dict[str, str]
+    #: ``zero_history`` -> example shard.
+    zero_history: dict[bool, str]
+    #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
+    #: ``derive_corpus_row_schema_counts`` naming more than one schema.
+    mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Shards that carry the deriver's ``derive_identity_format`` marker and
+    #: yet lack part of their identity, or are not in the committed state.
+    #: ⚑ "Missing means legacy" applies ONLY to shards with no marker: every
+    #: pre-marker derivation was bare-FEN.  A marked shard with a missing
+    #: identity is a fault, and no opt-in admits it.
+    unidentified: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    @property
+    def mixed(self) -> bool:
+        """⚑ ACROSS directories OR WITHIN a shard (Grok P2-B, round 3).
+
+        The first cut computed this as ``len(keys) > 1`` across shards only,
+        and ``str()`` absorbed the deriver's fail-closed ``"mixed"`` stamp into
+        a single key -- so one derived directory holding schema-1 AND schema-3
+        rows read as one identity and launched.
+        """
+        return (
+            len(self.row_schemas) > 1
+            or len(self.zero_history) > 1
+            or bool(self.mixed_within)
+        )
+
+
+def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
+    """Read every shard's history-identity attrs.  No policy, just the reading."""
+    row_schemas: dict[str, str] = {}
+    zero_history: dict[bool, str] = {}
+    mixed_within: dict[str, str] = {}
+    unidentified: dict[str, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            where = f"{Path(shard_dir).name}/{path.name}"
+            problem = marked_shard_problem(attrs)
+            if problem is not None:
+                unidentified[where] = problem
+                continue
+            schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
+            row_schemas.setdefault(schema, where)
+            zero_history.setdefault(
+                bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
+            )
+            counts = dict(attrs.get("derive_corpus_row_schema_counts", {}) or {})
+            if schema == "mixed" or len(counts) > 1:
+                mixed_within[where] = (
+                    f"derive_corpus_row_schema {schema!r}, counts "
+                    f"{dict(sorted(counts.items()))}"
+                )
+    return ShardHistoryStamps(
+        row_schemas=row_schemas, zero_history=zero_history, mixed_within=mixed_within,
+        unidentified=unidentified,
+    )
+
+
+def history_identity_problems(
+    shard_dirs: Sequence[Path], *, allow_mixed_history: bool,
+) -> list[str]:
+    """⚑⚑ ONE input-history identity across ``--shards`` (Grok D3, round 2).
+
+    ``derive_corpus_targets.py`` stamps ``derive_corpus_row_schema`` and
+    ``zero_history`` on every shard, and until this reader existed nothing READ
+    them: a directory derived from schema-1 bare-FEN rows (slots 1..7 and every
+    repetition plane zero) and one derived from schema-3 windows carry the same
+    ``input_history_encoding`` and the same ``history_rep_fix``, so the replay
+    buffer's own identity merge lets them mix and the net trains on two input
+    distributions no summary names.  ``--allow-mixed-history`` is the explicit
+    opt-in, and the run's summary then records the mix.
+    """
+    stamps = read_history_stamps(shard_dirs)
+    problems: list[str] = []
+    if stamps.unidentified:
+        listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.unidentified.items()))
+        problems.append(
+            f"--shards holds {len(stamps.unidentified)} shard(s) written by the "
+            f"identity-stamping deriver whose history identity is MISSING or "
+            f"not committed: {listed}. The deriver stamps every identity key in "
+            "the same commit as the rows, so this is a damaged or hand-edited "
+            "shard, not a legacy one, and nothing says what planes it holds. "
+            "No flag admits it: rerun the derivation.",
+        )
+    if not stamps.mixed or allow_mixed_history:
+        return problems
+    schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
+    zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
+    within = "".join(
+        f" Mixed WITHIN {w}: {why}." for w, why in sorted(stamps.mixed_within.items())
+    )
+    return [
+        f"--shards mixes input-history identities: derive_corpus_row_schema "
+        f"{{{schemas}}}, zero_history {{{zero}}}.{within} A zero-history shard fills "
+        "history slot 0 only; a history-aware one fills all 8 frames and the "
+        "repetition planes, and the champion flips 46.5% of its top-1 moves "
+        "between the two. One replay buffer would sample both. Train one "
+        "identity at a time, or pass --allow-mixed-history to record the mix "
+        f"deliberately. (An absent stamp reads as row schema "
+        f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
+        "corpora derived before the stamps existed are the bare-FEN shape.)",
+        *problems,
+    ]
+
+
+#: A derived shard written before the deriver stamped completeness: every
+#: such shard came from a summary-record derivation, which was the only kind
+#: that existed, so absent reads as WHOLE.  ⚑ Stated, because it is the
+#: permissive default: a pre-stamp partial derivation cannot be told from a
+#: whole one here, and only the deriver's own summary of that run can.
+UNSTAMPED_CORPUS_COMPLETE = True
+
+
+def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """``{shard: its corpus_* stamps}`` for every shard stamped INCOMPLETE."""
+    incomplete: dict[str, dict[str, Any]] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            if marked_shard_problem(attrs) is not None:
+                # Refused by name in `history_identity_problems`; never read
+                # here through a default.
+                continue
+            corpus_whole = bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE))
+            # ⚑ A derivation that died (or is still running) after committing
+            # this shard is a PARTIAL derived corpus too: the shard's own
+            # identity is complete, but the set of shards is not the run's.
+            finalized = attrs.get("derive_run_finalized")
+            run_whole = finalized is not False
+            if corpus_whole and run_whole:
+                continue
+            incomplete[f"{Path(shard_dir).name}/{path.name}"] = {
+                "run_finished_claim": attrs.get("corpus_run_finished_claim"),
+                "shards_adopted": attrs.get("corpus_shards_adopted"),
+                "rows_claimed": attrs.get("corpus_rows_claimed"),
+                "rows_derived": attrs.get("corpus_rows_derived"),
+                "derive_run_finalized": finalized,
+            }
+    return incomplete
+
+
+def partial_corpus_problems(
+    shard_dirs: Sequence[Path], *, allow_partial_corpus: bool,
+) -> list[str]:
+    """⚑⚑ A derived shard from a corpus that was NOT WHOLE (#498 rebase).
+
+    ``derive_corpus_targets.py`` stamps ``corpus_complete: false`` (with the
+    corpus's shard/row counts) on every shard it derives from a
+    ``manifest+progress`` read or from a ``summary.json`` that says
+    ``run_finished: false`` -- a repair run with ``--shards``/``--workers``
+    writes exactly that.  Arm B must train on the exact 5.5M champion rows; a
+    subset that launched without a word is the failure this refuses.
+    ``--allow-partial-corpus`` is the explicit opt-in, recorded in the summary.
+    """
+    incomplete = read_partial_corpus_stamps(shard_dirs)
+    if not incomplete or allow_partial_corpus:
+        return []
+    listed = "; ".join(
+        f"{where} (run_finished_claim={s['run_finished_claim']!r}, "
+        f"shards_adopted={s['shards_adopted']}, rows_claimed={s['rows_claimed']}, "
+        f"rows_derived={s['rows_derived']}, "
+        f"derive_run_finalized={s['derive_run_finalized']!r})"
+        for where, s in sorted(incomplete.items())
+    )
+    return [
+        f"--shards holds {len(incomplete)} shard(s) that are a PARTIAL corpus "
+        f"(corpus_complete: false, or derive_run_finalized: false): {listed}. "
+        "Either the generator's record was a manifest+progress read or a "
+        "summary stating run_finished: false, or the derivation that committed "
+        "the shard never finalized (still running, or died) -- so these rows "
+        "are a subset of a corpus nobody finished. Derive the finished corpus, "
+        "or pass --allow-partial-corpus to train on the subset deliberately "
+        "(recorded in summary.json under corpus.partial_corpus).",
+    ]
+
+
+def partial_corpus_record(
+    incomplete: Mapping[str, Mapping[str, Any]], *, allow_partial_corpus: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the partial-corpus reader saw."""
+    return {
+        "incomplete_shards": {k: dict(v) for k, v in sorted(incomplete.items())},
+        "partial": bool(incomplete),
+        "allow_partial_corpus": bool(allow_partial_corpus),
+    }
+
+
+def history_identity_record(
+    stamps: ShardHistoryStamps, *, allow_mixed_history: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the reader saw, mixed or not."""
+    return {
+        "row_schemas": sorted(stamps.row_schemas),
+        "zero_history": sorted(stamps.zero_history),
+        "mixed_within": sorted(stamps.mixed_within),
+        "unidentified": sorted(stamps.unidentified),
+        "mixed": stamps.mixed,
+        "allow_mixed_history": bool(allow_mixed_history),
+    }
 
 
 def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
@@ -1508,6 +1771,19 @@ def main(argv: list[str] | None = None) -> int:
         help="skip torch.compile; changes throughput, not the objective",
     )
     parser.add_argument(
+        "--allow-mixed-history", action="store_true",
+        help="let --shards mix zero-history (schema-1-derived) and "
+             "history-aware (schema-3-derived) directories; the mix is then "
+             "recorded in summary.json under corpus.history_identity.",
+    )
+    parser.add_argument(
+        "--allow-partial-corpus", action="store_true",
+        help="let --shards hold shards the deriver stamped corpus_complete: "
+             "false (derived from a manifest+progress read or a summary with "
+             "run_finished: false); recorded in summary.json under "
+             "corpus.partial_corpus.",
+    )
+    parser.add_argument(
         "--allow-leak", action="store_true",
         help="⚑ downgrade the LAUNCH guards (0c, 0d, 1 and 2) to a banner so the "
              "run reaches the REALIZED per-step guard and that guard can be "
@@ -1595,7 +1871,19 @@ def main(argv: list[str] | None = None) -> int:
             "purity receipt (which compares sets) can see it. Name each "
             "directory once.",
         )
-    coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
+    coverage = preflight(
+        cfg, shard_dirs, allow_leak=bool(args.allow_leak),
+        allow_mixed_history=bool(args.allow_mixed_history),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
+    )
+    history_identity = history_identity_record(
+        read_history_stamps(shard_dirs),
+        allow_mixed_history=bool(args.allow_mixed_history),
+    )
+    partial_corpus = partial_corpus_record(
+        read_partial_corpus_stamps(shard_dirs),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
+    )
 
     receipt: dict[str, Any] | None = None
     receipt_path = Path(args.purity_receipt) if args.purity_receipt else None
@@ -1998,6 +2286,10 @@ def main(argv: list[str] | None = None) -> int:
             "shard_dirs": [str(Path(d).resolve()) for d in shard_dirs],
             "staged_shards": staged,
             "label_coverage": coverage,
+            # ⚑ What the history-identity reader saw (round 2, Grok D3): a
+            # run launched with --allow-mixed-history says so here.
+            "history_identity": history_identity,
+            "partial_corpus": partial_corpus,
         },
         "purity_receipt": (
             None if receipt is None or receipt_path is None else {

@@ -25,6 +25,8 @@ import hashlib
 import json
 import math
 import os
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Sequence
@@ -34,9 +36,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import chess
+import chess.polyglot
 import numpy as np
 import pytest
 
+from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from scripts import audit_label_candidates as gate
@@ -45,6 +52,20 @@ from scripts import gen_sf_rooted_corpus as corpus
 from tests.stockfish_binary import find_stockfish
 
 # ── the scripted engine ──────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def production_rep_fix() -> None:
+    """Production's repetition-plane regime, which ``corpus.row_key`` REQUIRES.
+
+    The generator sets it itself at ``run``/``run_worker`` start; a test that
+    drives ``play_game`` or ``row_key`` directly stands in for that call.  The
+    suite-wide hookwrapper in ``conftest.py`` rewinds the flag after each test.
+    ⚑ This is why the in-process tests cannot see a generator that FORGOT the
+    call -- ``test_a_fresh_process_generates_and_derives_under_one_regime``
+    runs the generator in a SUBPROCESS for exactly that reason.
+    """
+    rep_fix.apply(True)
+
 
 #: Score handed to a move named in a fake's preference list.  Far enough above
 #: the hashed scores that q/tau at the test temperature is a landslide.
@@ -149,6 +170,11 @@ class ScriptedEngine:
         self.wedge_on_go: int | None = None
         self.go_count = 0
         self.fen = chess.STARTING_FEN
+        #: The last ``position`` line, split into what it actually said.  Kept
+        #: so a test can assert the WINDOW rather than only the position it
+        #: happens to reconstruct to.
+        self.position_root = chess.STARTING_FEN
+        self.position_moves: tuple[str, ...] = ()
         self._pending: list[str] = []
 
     # -- driver-facing surface --------------------------------------------
@@ -159,7 +185,20 @@ class ScriptedEngine:
         elif cmd.startswith("setoption name MultiPV value "):
             self.multipv = int(cmd.split()[-1])
         elif cmd.startswith("position fen "):
-            self.fen = cmd[len("position fen "):]
+            # ⚑ THE FAKE REPLAYS THE WINDOW, exactly as the engine does.  It
+            # answers `go` from `self.fen`, so a `position fen <root> moves ...`
+            # line that named the wrong root or the wrong moves would produce
+            # PV lines for a DIFFERENT position and every scripted game would
+            # come apart -- rather than the fake quietly scoring the root while
+            # the generator believed it had asked about the leaf.
+            rest = cmd[len("position fen "):]
+            root, _, moves = rest.partition(" moves ")
+            board = chess.Board(root)
+            self.position_root = root
+            self.position_moves = tuple(moves.split())
+            for uci in self.position_moves:
+                board.push(chess.Move.from_uci(uci))
+            self.fen = board.fen()
         elif cmd.startswith("go "):
             self.go_count += 1
             if self.raise_on_go is not None and self.go_count == self.raise_on_go:
@@ -210,6 +249,10 @@ class ScriptedEngine:
     @property
     def go_lines(self) -> list[str]:
         return [c for c in self.commands if c.startswith("go ")]
+
+    @property
+    def position_lines(self) -> list[str]:
+        return [c for c in self.commands if c.startswith("position ")]
 
     @property
     def multipv_lines(self) -> list[str]:
@@ -340,7 +383,7 @@ def play(
         opening_cfg=fen_opening(fen, tmp_path),
         game_id=spec.game_ids[0],
         cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
-        dedup=dedup, progress=corpus.WorkerProgress(),
+        dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     return outcome, searcher, dedup
 
@@ -648,7 +691,8 @@ def test_an_illegal_narrowing_move_is_refused_by_the_drivers_own_validator() -> 
     searcher = searcher_for(engine)
     with pytest.raises(ValueError, match="not legal in this position"):
         searcher.stream(
-            chess.STARTING_FEN, depth=5, multipv=1, searchmoves=["e7e5"],
+            corpus.history_for(chess.Board()),
+            depth=5, multipv=1, searchmoves=["e7e5"],
         )
 
 
@@ -1035,11 +1079,11 @@ def test_an_evicted_position_is_re_searched_and_re_banked(tmp_path: Path) -> Non
 
     first = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     second = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert [row["dedup_key"] for row in second.rows] == [
@@ -1068,7 +1112,7 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
 
     first = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
     go_lines_after_first = len(engine.go_lines)
     searched_after_first = searcher.stats.positions
@@ -1076,7 +1120,7 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
 
     second = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=opening,
-        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(),
+        game_id=0, cache=cache, dedup=dedup, progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert len(first.rows) == 2
@@ -1087,6 +1131,458 @@ def test_a_repeated_position_is_served_from_cache_and_never_re_banked(
     assert sum(dedup.hits.values()) == 2
     # Cache-served selection is the same selection: same plies, same result.
     assert (second.plies, second.result_pgn) == (first.plies, first.result_pgn)
+
+
+# ── the two dedup keys ───────────────────────────────────────────────────────
+#
+# Every route below is a knight shuffle from the standard start, so the
+# halfmove clock never resets and the FEN (with clock) at the end is shared by
+# the pair.  The routes are pre-pushed through the production seed grammar
+# (``<fen> | <uci> ...``) so the game's OWN ply 0 is the position under test and
+# ``max_plies=1`` searches exactly that one position per game.
+
+#: T1: one FEN, one clock, different prior frames.
+T1_ROUTE_A = "g1f3 g8f6 b1c3 b8c6"
+T1_ROUTE_B = "b1c3 b8c6 g1f3 g8f6"
+#: T2: one FEN, one clock; A arrives at a position it has ALREADY occupied
+#: (a 2-fold, 4 plies apart), B arrives there for the first time.
+T2_ROUTE_REPEATED = "g1f3 g8f6 b1c3 b8c6 f3g1 f6g8 g1f3 g8f6"
+T2_ROUTE_DIRECT = "g1h3 g8h6 h3g5 h6g4 g5f3 g4f6 b1c3 b8c6"
+#: T4: identical last 8 positions (so identical tensors) after a prefix that
+#: in D repeats a position (plies 2 and 6) and in E repeats nothing.  The
+#: repeat sits 8+ plies behind the searched position -- outside every encoded
+#: frame, inside the reversible segment the engine reads.
+T4_TAIL = "b1a3 b8c6 f3g1 f6g8 g1f3 c6a5 a3b1 a5c4"
+T4_ROUTE_OLD_REPEAT = f"g1f3 g8f6 b1c3 b8c6 c3b1 c6b8 {T4_TAIL}"
+T4_ROUTE_NO_REPEAT = f"g1f3 b8a6 b1c3 g8f6 c3b1 a6b8 {T4_TAIL}"
+
+
+def board_after(moves: str) -> chess.Board:
+    board = chess.Board()
+    for uci in moves.split():
+        board.push_uci(uci)
+    return board
+
+
+def live_input_key(board: chess.Board) -> str:
+    """The hash of EXACTLY what live search encodes -- spelled here, not imported."""
+    return corpus.input_tensor_key(encode_cboard(
+        CBoard.from_board(board),
+        input_history_encoding="lc0_root_legacy_meta",
+        input_extra_features="v2_threats",
+    ))
+
+
+class SeededGames:
+    """One engine, one cache, one stats object; a game per pre-pushed route."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
+        self.engine = ScriptedEngine()
+        self.spec = worker_spec(tmp_path, max_plies=1)
+        self.searcher = searcher_for(self.engine, staircase=self.spec.staircase)
+        self.cache = corpus.DedupCache(max_entries=self.spec.dedup_cache_max)
+        self.dedup = corpus.DedupStats()
+        self.seq = corpus.WorkerSeq()
+        self.games = 0
+
+    def play(self, moves: str, *, tag: str) -> corpus.GameOutcome:
+        line = f"{chess.STARTING_FEN} | {moves}"
+        outcome = corpus.play_game(
+            spec=self.spec, searcher=self.searcher,
+            opening_cfg=fen_list_opening([line], self.tmp_path / f"{tag}.txt"),
+            game_id=self.games, cache=self.cache, dedup=self.dedup,
+            progress=corpus.WorkerProgress(), seq=self.seq,
+        )
+        self.games += 1
+        return outcome
+
+    @property
+    def go_count(self) -> int:
+        return len(self.engine.go_lines)
+
+    def counters(self) -> dict[str, int]:
+        summary = self.dedup.summary()
+        return {
+            name: summary[name] for name in (
+                "dup_hits", "row_key_hits", "search_key_hits",
+                "search_key_hit_on_new_input", "search_key_miss_on_seen_input",
+                "searches", "rows_banked",
+            )
+        }
+
+
+def test_the_search_key_is_the_dedup_key_plus_the_reversible_segments_repeats() -> None:
+    """The exact string, because it is what the cache is keyed on."""
+    direct = board_after(T2_ROUTE_DIRECT)
+    repeated = board_after(T2_ROUTE_REPEATED)
+    assert direct.fen() == repeated.fen(), "the pair no longer shares a FEN"
+    assert corpus.dedup_key(direct) == corpus.dedup_key(repeated)
+    assert corpus.search_key(direct) == f"{corpus.dedup_key(direct)}|"
+    assert corpus.search_key(repeated) == (
+        f"{corpus.dedup_key(repeated)}|"
+        f"{chess.polyglot.zobrist_hash(repeated):016x}:2"
+    )
+    # The count is CAPPED: a 3-fold and a 4-fold are the same engine state.
+    # (A third cycle also makes every intermediate position a 2-fold, so the
+    # signature holds several entries; the current position's is read by hash.)
+    three = board_after(T2_ROUTE_REPEATED + " f3g1 f6g8 g1f3 g8f6")
+    four = board_after(T2_ROUTE_REPEATED + " f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 g1f3 g8f6")
+    assert three.is_repetition(3)
+    assert four.is_repetition(4)
+    assert f"{chess.polyglot.zobrist_hash(three):016x}:3" in corpus.search_key(three)
+    assert f"{chess.polyglot.zobrist_hash(four):016x}:3" in corpus.search_key(four)
+    assert ":4" not in corpus.search_key(four)
+    # An irreversible move ends the segment: the start position repeated
+    # BEFORE e2e4, and the engine cannot see it, so neither does the key.
+    cut = board_after("g1f3 g8f6 f3g1 f6g8 e2e4")
+    assert cut.halfmove_clock == 0
+    assert corpus.search_key(cut) == f"{corpus.dedup_key(cut)}|"
+
+
+#: ⚑ THE ROUTE WHERE THE TWO REGIMES DISAGREE: two knight cycles (every position
+#: a repeat) then ``e2e4 e7e5``.  The irreversible move clears the hash stack
+#: the UNFIXED encoder rebuilds repetition planes from, so at plies 9-10 the
+#: older frames' repetition planes are set only under the FIXED regime.
+#: Measured in fresh subprocesses (2026-09-01): of 102 positions across seven
+#: routes, exactly these two hash differently.
+REGIME_SENSITIVE_ROUTE = "g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 e2e4 e7e5"
+
+
+def unfixed_key_in_a_fresh_process(moves: str) -> str:
+    """``input_tensor_key`` of the C planes under the UNFIXED regime.
+
+    A fresh interpreter, because the fixed flag cannot be flipped back under a
+    live board in this one (``rep_fix.RepFixFlipError``) -- and because the
+    unfixed regime is the C DEFAULT, which is the whole hazard.
+    """
+    code = (
+        "import chess, sys\n"
+        "from chess_anti_engine.encoding import rep_fix\n"
+        "from chess_anti_engine.encoding._lc0_ext import CBoard\n"
+        "from chess_anti_engine.encoding.cboard_encode import encode_cboard\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "rep_fix.apply(False)\n"
+        "b = chess.Board()\n"
+        f"for u in {moves.split()!r}: b.push_uci(u)\n"
+        "print(corpus.input_tensor_key(encode_cboard(CBoard.from_board(b), "
+        "input_history_encoding=corpus.INPUT_HISTORY_ENCODING, "
+        "input_extra_features=corpus.INPUT_EXTRA_FEATURES)))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=str(corpus.REPO_ROOT), env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT)},
+    )
+    return proc.stdout.strip().splitlines()[-1]
+
+
+def test_the_generator_writes_the_fixed_input_key_where_the_regimes_differ(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ The regime is part of the key (#498 reviewer, blocking).
+
+    The row's ``input_key`` must be the FIXED hash -- the one the deriver's
+    python encoder reproduces -- and not the C default's.
+    """
+    board = board_after(REGIME_SENSITIVE_ROUTE)
+    unfixed = unfixed_key_in_a_fresh_process(REGIME_SENSITIVE_ROUTE)
+    fixed = fixed_key(REGIME_SENSITIVE_ROUTE)
+    assert unfixed != fixed, "the route no longer separates the regimes"
+
+    games = SeededGames(tmp_path)
+    outcome = games.play(REGIME_SENSITIVE_ROUTE, tag="regime")
+    (row,) = outcome.rows
+    assert row["input_key"] == fixed
+    assert row["input_key"] != unfixed
+    assert row["run"][corpus.KEY_HISTORY_REP_FIX] is True
+    assert corpus.row_key(board) == fixed
+
+
+def test_row_key_refuses_a_process_in_the_wrong_regime() -> None:
+    """The precondition is loud: an unset or unfixed flag cannot hash a row."""
+    code = (
+        "import chess\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "try:\n"
+        "    corpus.row_key(chess.Board())\n"
+        "except RuntimeError as exc:\n"
+        "    print('REFUSED', 'history_rep_fix is None' in str(exc))\n"
+        "else:\n"
+        "    print('ACCEPTED')\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True,
+        cwd=str(corpus.REPO_ROOT), env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT)},
+    )
+    assert proc.stdout.strip().splitlines()[-1] == "REFUSED True"
+
+
+def test_the_generators_regime_is_productions() -> None:
+    """``HISTORY_REP_FIX`` is read from the same place production reads it."""
+    import yaml
+
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
+
+    cfg = flatten_run_config_defaults(yaml.safe_load(
+        (corpus.REPO_ROOT / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8"),
+    ))
+    assert corpus.HISTORY_REP_FIX is bool(cfg["history_rep_fix"])
+
+
+#: The other route where the regimes differ (delta reviewer, measured over all
+#: 522 gate positions): the irreversible ``e2e4`` lands INSIDE the 8 frames
+#: after the ``c3b1 c6b8`` repeat, and ``f3g1`` at ply 11 keeps it in the window.
+IRREVERSIBLE_AFTER_LONG_RUN = "g1f3 g8f6 b1c3 b8c6 c3b1 c6b8 b1a3 b8a6 e2e4 e7e5 f3g1"
+#: ``(route, plies)`` -> the board the subprocess gate must key like the deriver:
+#: ``repetition_then_irreversible_in_window[9]`` and
+#: ``irreversible_after_long_run[10]``, plus ``[10]`` of the first.
+REGIME_SENSITIVE_POSITIONS = (
+    (REGIME_SENSITIVE_ROUTE, 9),
+    (REGIME_SENSITIVE_ROUTE, 10),
+    (IRREVERSIBLE_AFTER_LONG_RUN, 10),
+)
+
+
+def fixed_key(moves: str) -> str:
+    """The DERIVER's hash of the position: python encoder, always fixed."""
+    return corpus.input_tensor_key(np.asarray(encode_position(
+        board_after(moves), add_features=True,
+        input_history_encoding=corpus.INPUT_HISTORY_ENCODING,
+        input_extra_features=corpus.INPUT_EXTRA_FEATURES,
+    ), dtype=np.float32))
+
+
+def test_a_fresh_process_generates_and_derives_under_one_regime(tmp_path: Path) -> None:
+    """⚑⚑ THE SUBPROCESS GATE, THROUGH THE REAL POOL.  A fresh interpreter (C
+    default: UNFIXED) runs the generator through ``corpus.run`` with
+    ``--workers 2`` -- the production ``spawn`` pool, so ``run_worker`` runs in
+    CHILD interpreters that inherit no C global and no monkeypatch -- on the
+    three regime-sensitive positions with a scripted engine, then the deriver
+    over the whole output with ``enforce_input_key_take_effect`` armed.  No
+    fixture applies the flag anywhere here: only ``run_worker``'s own
+    ``apply_history_rep_fix`` can make every banked ``input_key`` the
+    deriver's hash, and each of the three is also checked by value against
+    the FIXED key computed in this process and the UNFIXED key from a third
+    interpreter -- so the gate is one that can fail.
+
+    ⚑ The seams are applied at the DRIVER's module level, not under its main
+    guard: a spawned child re-imports the parent's ``__main__`` as
+    ``__mp_main__`` (module body runs, main guard does not), which is exactly
+    what re-applies the scripted engine and the dealt openings in each child.
+    Every other ``--workers 2`` test in this file swaps the pool for an inline
+    executor, and every direct ``run_worker`` test runs under this file's
+    autouse ``production_rep_fix`` fixture, so this is the one test that can
+    see a worker that forgot the call (Fable, round 3 delta: the mutant
+    "drop ``apply_history_rep_fix()`` from ``run_worker``" survived the whole
+    suite before it existed).  Mutant: that line dropped -> ``row_key``
+    raises in the child, the run dies, this test fails.  ⚑ Dropping the call
+    from ``run()`` alone is an EQUIVALENT mutant: ``run`` builds no CBoard
+    before dispatch, and the in-process single-worker branch calls
+    ``run_worker`` too.
+    """
+    lines = [
+        f"{chess.STARTING_FEN} | {' '.join(route.split()[:plies])}"
+        for route, plies in REGIME_SENSITIVE_POSITIONS
+    ]
+    driver = tmp_path / "driver.py"
+    driver.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "import pytest\n"
+        "from scripts import derive_corpus_targets as derive\n"
+        "from scripts import gen_sf_rooted_corpus as corpus\n"
+        "from tests.test_gen_sf_rooted_corpus import (\n"
+        "    SMOKE_SYZYGY, ScriptedEngine, fen_list_opening, uci_double,\n"
+        ")\n"
+        "# MODULE LEVEL: re-executed by every spawned worker (__mp_main__).\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        f"lines = {lines!r}\n"
+        "mp = pytest.MonkeyPatch()\n"
+        "mp.setattr(corpus, 'StockfishUCI', lambda *_a, **_kw: uci_double(ScriptedEngine()))\n"
+        "mp.setattr(corpus, 'build_opening_config',\n"
+        "           lambda _spec: fen_list_opening(lines, root / 'seeds.txt'))\n"
+        "# The production sampler draws WITH replacement; deal line game_id %\n"
+        "# len(lines) so every game gets its own whichever worker plays it.\n"
+        "real_rng, real_sample = corpus.book_rng, corpus.sample_starting_board\n"
+        "class Dealt:  # numpy Generators take no attributes: wrap one\n"
+        "    def __init__(self, rng, line): self.rng, self.dealt_line = rng, line\n"
+        "    def __getattr__(self, name): return getattr(self.rng, name)\n"
+        "def dealing_rng(*, seed, worker_id, game_id):\n"
+        "    rng = real_rng(seed=seed, worker_id=worker_id, game_id=game_id)\n"
+        "    return Dealt(rng, lines[int(game_id) % len(lines)])\n"
+        "mp.setattr(corpus, 'book_rng', dealing_rng)\n"
+        "mp.setattr(corpus, 'sample_starting_board', lambda *, rng, cfg: real_sample(\n"
+        "    rng=rng, cfg=fen_list_opening([rng.dealt_line], root / f'seed{rng.random()}.txt')))\n"
+        "# The deriver drops result-less rows before it verifies them, and a\n"
+        "# ply-capped scripted game has no result: stamp a draw so every row\n"
+        "# reaches the input_key check. A test seam, not a generator setting.\n"
+        "mp.setattr(corpus, 'result_from_pov', lambda _r, *, white_to_move: 0.0)\n"
+        "if __name__ == '__main__':\n"
+        "    out = root / 'corpus'\n"
+        "    summary = corpus.run(corpus.build_parser().parse_args([\n"
+        "        '--out-dir', str(out), '--games', str(len(lines)), '--workers', '2',\n"
+        "        '--syzygy-path', str(SMOKE_SYZYGY or corpus.REPO_ROOT),\n"
+        "        '--temp-high', '0.01', '--temp-low', '0.01', '--nice', '0', '--max-plies', '1',\n"
+        "    ]))\n"
+        "    rows = [{'fen': r['fen'], 'input_key': r['input_key'], 'worker': p.name[:3],\n"
+        "             'stamp': r['run'][corpus.KEY_HISTORY_REP_FIX]}\n"
+        "            for p in sorted(out.glob('w*.jsonl.zst')) for r in derive.iter_corpus_rows(p)]\n"
+        "    rc = derive.main(['--corpus', str(out), '--out', str(root / 'derived'),\n"
+        "                      '--scheme', 'uniform-d9', '--temp', '1.0'])\n"
+        "    d = json.loads((root / 'derived' / derive.SUMMARY_NAME).read_text())\n"
+        "    print(json.dumps({'rc': rc, 'rows': rows, 'banked': summary['rows'],\n"
+        "                      'workers': len(summary['config_realized_by_worker']),\n"
+        "                      'stamp': summary[corpus.KEY_HISTORY_REP_FIX],\n"
+        "                      'verified': d['realized']['input_key_verified'],\n"
+        "                      'written': d['realized']['rows_written']}))\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(driver), str(tmp_path)], capture_output=True, text=True,
+        check=False, cwd=str(corpus.REPO_ROOT),
+        env={**os.environ, "PYTHONPATH": str(corpus.REPO_ROOT), "CUDA_VISIBLE_DEVICES": ""},
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert result["rc"] == 0
+    assert result["stamp"] is True
+    assert result["workers"] == 2, "the real spawn pool, not the in-process branch"
+    assert {row["worker"] for row in result["rows"]} == {"w00", "w01"}, (
+        "both children banked rows"
+    )
+    assert result["banked"] == len(lines)
+    assert result["verified"] == result["written"] == len(lines)
+    keyed = {row["fen"]: row for row in result["rows"]}
+    assert len(keyed) == len(lines)
+    for route, plies in REGIME_SENSITIVE_POSITIONS:
+        moves = " ".join(route.split()[:plies])
+        row = keyed[board_after(moves).fen()]
+        assert row["stamp"] is True
+        unfixed = unfixed_key_in_a_fresh_process(moves)
+        assert row["input_key"] == fixed_key(moves), (route, plies)
+        assert row["input_key"] != unfixed, (route, plies, "route no longer separates")
+
+
+def test_the_row_key_is_the_hash_of_the_tensor_live_play_encodes() -> None:
+    for moves in (T1_ROUTE_A, T1_ROUTE_B, T2_ROUTE_REPEATED, T4_ROUTE_OLD_REPEAT):
+        board = board_after(moves)
+        assert corpus.row_key(board) == live_input_key(board), moves
+    assert corpus.row_key(board_after(T1_ROUTE_A)) != corpus.row_key(
+        board_after(T1_ROUTE_B),
+    ), "two routes with different prior frames hashed alike"
+    assert corpus.row_key(board_after(T1_ROUTE_A)) == corpus.row_key(
+        board_after(T1_ROUTE_A),
+    )
+
+
+def test_t1_two_routes_to_one_fen_with_different_frames_both_bank(
+    tmp_path: Path,
+) -> None:
+    """T1: the second route is a fresh search and a second row, not a hit."""
+    games = SeededGames(tmp_path)
+    first = games.play(T1_ROUTE_A, tag="a")
+    go_after_first = games.go_count
+    second = games.play(T1_ROUTE_B, tag="b")
+
+    assert len(first.rows) == 1
+    assert len(second.rows) == 1
+    a, b = first.rows[0], second.rows[0]
+    assert a["fen"] == b["fen"]
+    assert a["dedup_key"] == b["dedup_key"]
+    assert a["search_key"] == b["search_key"], "no repeat on either route"
+    assert a["input_key"] != b["input_key"], "different frames, one hash"
+    assert a["input_key"] == live_input_key(board_after(T1_ROUTE_A))
+    assert b["input_key"] == live_input_key(board_after(T1_ROUTE_B))
+    assert b["history_uci"] == T1_ROUTE_B.split(), "the row banks ITS route"
+    assert games.go_count == 2 * go_after_first, "the second route was searched"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 0, "search_key_hits": 1,
+        "search_key_hit_on_new_input": 1, "search_key_miss_on_seen_input": 0,
+        "searches": 2, "rows_banked": 2,
+    }
+
+
+def test_t2_a_route_that_repeats_its_position_is_not_served_the_direct_label(
+    tmp_path: Path,
+) -> None:
+    """T2: same FEN, different repetition state -- a fresh search, a new row."""
+    assert board_after(T2_ROUTE_REPEATED).is_repetition(2)
+    assert not board_after(T2_ROUTE_DIRECT).is_repetition(2)
+    games = SeededGames(tmp_path)
+    direct = games.play(T2_ROUTE_DIRECT, tag="direct")
+    go_after_first = games.go_count
+    repeated = games.play(T2_ROUTE_REPEATED, tag="repeated")
+
+    assert len(direct.rows) == 1
+    assert len(repeated.rows) == 1
+    d, r = direct.rows[0], repeated.rows[0]
+    assert d["dedup_key"] == r["dedup_key"]
+    assert d["search_key"] != r["search_key"], "the repeat is in the label key"
+    assert r["search_key"].endswith(":2")
+    assert games.go_count == 2 * go_after_first, "the repeated route was searched"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 0, "search_key_hits": 0,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 0,
+        "searches": 2, "rows_banked": 2,
+    }
+    assert games.cache.get(d["search_key"]) is not games.cache.get(r["search_key"])
+
+
+def test_t3_a_true_duplicate_is_one_row_and_one_search(tmp_path: Path) -> None:
+    """T3: the cache still works -- identical book exit, identical first move."""
+    games = SeededGames(tmp_path)
+    first = games.play(T1_ROUTE_A, tag="same")
+    go_after_first = games.go_count
+    second = games.play(T1_ROUTE_A, tag="same")
+
+    assert len(first.rows) == 1
+    assert second.rows == [], "a duplicate tensor under a cached label banks nothing"
+    assert games.go_count == go_after_first, "served from the cache, no search"
+    assert games.counters() == {
+        "dup_hits": 1, "row_key_hits": 1, "search_key_hits": 1,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 0,
+        "searches": 1, "rows_banked": 1,
+    }
+
+
+def test_t4_an_older_repeat_outside_the_frames_is_searched_and_not_banked(
+    tmp_path: Path,
+) -> None:
+    """T4: same tensor, different engine state -- no row, but no served label either."""
+    old_repeat = board_after(T4_ROUTE_OLD_REPEAT)
+    no_repeat = board_after(T4_ROUTE_NO_REPEAT)
+    # The premise, read off the boards: same FEN and clock, same tensor, and
+    # the repeat in D is a position that is NOT among the last 8.
+    assert old_repeat.fen() == no_repeat.fen()
+    assert corpus.row_key(old_repeat) == corpus.row_key(no_repeat)
+    assert corpus.search_key(old_repeat) != corpus.search_key(no_repeat)
+    assert corpus.search_key(no_repeat).endswith("|")
+    keys = [board_after(" ".join(T4_ROUTE_OLD_REPEAT.split()[:n]))._transposition_key()
+            for n in range(len(T4_ROUTE_OLD_REPEAT.split()) + 1)]
+    repeated_at = [i for i, k in enumerate(keys) if keys.count(k) > 1]
+    assert repeated_at == [2, 6], repeated_at
+    assert len(keys) - 1 - max(repeated_at) >= corpus.HISTORY_WINDOW_PLIES + 1
+
+    games = SeededGames(tmp_path)
+    first = games.play(T4_ROUTE_NO_REPEAT, tag="no_repeat")
+    go_after_first = games.go_count
+    second = games.play(T4_ROUTE_OLD_REPEAT, tag="old_repeat")
+
+    assert len(first.rows) == 1
+    assert second.rows == [], "the tensor is already in the corpus"
+    assert games.go_count == 2 * go_after_first, "the cached label was NOT served"
+    assert games.counters() == {
+        "dup_hits": 0, "row_key_hits": 1, "search_key_hits": 0,
+        "search_key_hit_on_new_input": 0, "search_key_miss_on_seen_input": 1,
+        "searches": 2, "rows_banked": 1,
+    }
+    # ... and the second label is now cached under ITS key, so a third route
+    # with the same engine state and tensor is served.
+    go_after_second = games.go_count
+    third = games.play(T4_ROUTE_OLD_REPEAT, tag="old_repeat")
+    assert third.rows == []
+    assert games.go_count == go_after_second
+    assert games.counters()["dup_hits"] == 1
 
 
 def test_dup_hits_are_split_by_phase_of_game() -> None:
@@ -1446,10 +1942,17 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     row = outcome.rows[0]
 
     assert set(row) == {
-        "schema", "run", "fen", "dedup_key", "worker_id", "game_id", "ply",
+        "schema", "run", "fen", "dedup_key", "search_key", "input_key",
+        "worker_id", "game_id", "ply", "seq",
         "stm", "piece_count", "game_phase", "played_move", "selection",
         "phases", "result", "result_pgn", "adjudication",
+        "history_root_fen", "history_uci", "history_plies",
+        "history_root_reason",
     }
+    assert row["schema"] == 3
+    assert row["search_key"].startswith(row["dedup_key"] + "|")
+    assert len(row["input_key"]) == 32
+    assert int(row["input_key"], 16) >= 0
     assert row["run"][corpus.KEY_TT_CARRIED] is True
     assert row["run"]["config_sha256"] == "0" * 64
     assert row["played_move"] in {m.uci() for m in chess.Board(row["fen"]).legal_moves}
@@ -1467,6 +1970,211 @@ def test_the_row_schema_carries_everything_a_join_needs(tmp_path: Path) -> None:
     # search reported, banked so a re-analysis is a re-read.
     assert len(phase["per_depth"][0]["lines"][0]) == 4
     assert json.loads(json.dumps(row, sort_keys=True)) == row
+
+
+# ── the banked move window ───────────────────────────────────────────────────
+
+
+def test_every_banked_row_carries_the_window_the_engine_was_given(
+    tmp_path: Path,
+) -> None:
+    """⚑⚑ THE TAKE-EFFECT PROOF FOR THE WHOLE SCHEMA, on both halves at once.
+
+    The row's window and the engine's ``position`` line come from ONE object
+    (``PositionSearch.history``), so the assertion that the exact command the
+    window builds is in the transcript is a structural check that the label was
+    computed under the history the row banks -- not two spellings that agree
+    today.
+
+    A bare-FEN start (the blind-spot branch) is used on purpose: its early plies
+    are the short-history case, and its later ones must reach the full 7.
+    """
+    engine = ScriptedEngine()
+    outcome, _, _ = play(chess.STARTING_FEN, tmp_path, engine=engine)
+    assert len(outcome.rows) > 10
+
+    for row in outcome.rows:
+        label = f"ply {row['ply']}"
+        assert row["schema"] == corpus.ROW_SCHEMA, label
+        assert row["history_root_reason"] in {
+            corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
+        }, label
+        assert row["history_plies"] == len(row["history_uci"]), label
+        # A bare-FEN start has an empty stack, so the window can be no longer
+        # than the ply -- and past the 7 frames it must be at least that long.
+        assert row["history_plies"] <= row["ply"], label
+        if row["ply"] >= corpus.HISTORY_WINDOW_PLIES:
+            assert row["history_plies"] >= corpus.HISTORY_WINDOW_PLIES, label
+
+        replayed = chess.Board(row["history_root_fen"])
+        for uci in row["history_uci"]:
+            replayed.push(chess.Move.from_uci(uci))
+        assert replayed.fen() == row["fen"], label
+
+        command = corpus.position_command(corpus.RowHistory(
+            fen=row["fen"],
+            root_fen=row["history_root_fen"],
+            uci=tuple(row["history_uci"]),
+            reason=row["history_root_reason"],
+        ))
+        # One send per staircase rung, and no other position line for this row.
+        assert engine.commands.count(command) == 3, f"{label}: {command}"
+
+    # ⚑ THE OLD FORM IS GONE FROM THE WIRE, not merely joined by a new one.
+    with_moves = [c for c in engine.position_lines if " moves " in c]
+    assert len(with_moves) == len(engine.position_lines) - 3, (
+        "exactly one position (the game's own ply 0, whose window is empty) "
+        "may be sent without moves"
+    )
+    assert max(len(c.split(" moves ")[1].split()) for c in with_moves) >= 7
+
+
+#: A seed line in the production ``<start_fen> | <uci> ...`` grammar: eight
+#: REVERSIBLE king moves, so the board the game starts on already carries a
+#: halfmove clock of 8 and a real move stack.  A "last 7 moves" banker reports
+#: 7 here; the clock-aware one reports 8.
+SEEDED_HISTORY_LINE = (
+    "1n4k1/5ppp/8/8/8/8/5PPP/1N4K1 w - - 0 1 | g1f1 g8f8 f1e1 f8e8 e1d1 e8d8 "
+    "d1c1 d8c8"
+)
+
+
+def test_the_window_reaches_back_past_the_seven_frames_when_the_clock_allows(
+    tmp_path: Path,
+) -> None:
+    """The root is the last irreversible move, NOT ply-7.
+
+    Driven through the production seeding grammar, so the board the first row is
+    banked from arrives with real history on its stack -- the same shape a book
+    opening produces.  A 7-move banker would report a flat 7 for every row here.
+    """
+    engine = ScriptedEngine()
+    spec = worker_spec(tmp_path, max_plies=12)
+    outcome = corpus.play_game(
+        spec=spec,
+        searcher=searcher_for(engine, staircase=spec.staircase),
+        opening_cfg=fen_list_opening([SEEDED_HISTORY_LINE], tmp_path / "seeded.txt"),
+        game_id=0,
+        cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+        dedup=corpus.DedupStats(),
+        progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
+    )
+    windows = [int(row["history_plies"]) for row in outcome.rows]
+    assert windows, "no rows banked"
+    assert max(windows) > corpus.HISTORY_WINDOW_PLIES, windows
+    assert outcome.rows[0]["history_plies"] == 8, outcome.rows[0]
+    reasons = {row["history_root_reason"] for row in outcome.rows}
+    assert corpus.HISTORY_ROOT_GAME_START in reasons, reasons
+
+
+def test_the_worker_summary_counts_the_windows_it_banked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ THE SUMMARY FIELD'S TAKE-EFFECT PROOF, read off the ROWS.
+
+    The histogram is built where the rows are HANDED TO THE WRITER, not where
+    the windows are constructed, so it cannot report a window that was computed
+    and then dropped (a sub-``MIN_BANKED_PIECES`` ply and a dedup-served ply
+    both build one and bank nothing).  ``sum(histogram) == rows`` is what makes
+    that a reading rather than a claim.
+    """
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(ScriptedEngine()),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(chess.STARTING_FEN, tmp_path),
+    )
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,), max_plies=20))
+
+    histogram = result["history_plies_histogram"]
+    assert result["rows"] > 0
+    assert sum(histogram.values()) == result["rows"]
+    assert sum(result["history_root_reasons"].values()) == result["rows"]
+    assert max(int(k) for k in histogram) >= corpus.HISTORY_WINDOW_PLIES
+    assert set(result["history_root_reasons"]) <= {
+        corpus.HISTORY_ROOT_IRREVERSIBLE, corpus.HISTORY_ROOT_GAME_START,
+    }
+
+
+def test_the_window_counters_come_off_committed_shards_not_a_counter_beside_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Codex P2: ``sum(histogram) == rows`` has to hold on the FAILURE path.
+
+    The writer dies on the second row of the first game -- AFTER writing it, so
+    the shard holds rows of a game that never ended and is abandoned unlisted.
+    ``rows`` reads 0 off the inventory; the histograms must read 0 too.  A
+    counter incremented beside ``writer.write`` reads 1 here (the first row's
+    increment happened, the second's raise skipped it) and the summary claims
+    a window for a row the corpus does not hold.
+    """
+    engine = ScriptedEngine(preferred=MATE_GAME_SCRIPT)
+    monkeypatch.setattr(corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(engine))
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_opening(MATE_GAME_FEN, tmp_path),
+    )
+    original_write = corpus.ShardWriter.write
+    writes = {"n": 0}
+
+    def write_then_die(self: corpus.ShardWriter, row: dict[str, Any]) -> None:
+        original_write(self, row)
+        writes["n"] += 1
+        if writes["n"] == 2:
+            raise RuntimeError("disk full after the second row")
+
+    monkeypatch.setattr(corpus.ShardWriter, "write", write_then_die)
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+
+    result = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+
+    assert result["failed"] is not None
+    assert result["failed"]["exception"] == "disk full after the second row"
+    assert result["rows"] == 0
+    assert result["shards"] == []
+    assert result["history_plies_histogram"] == {}
+    assert result["history_root_reasons"] == {}
+    # The rows are not lost silently: the abandoned record discloses them,
+    # tallies included, and a resume deletes the file.
+    (abandoned,) = result["shards_abandoned"]
+    assert abandoned["rows"] == 2
+    assert abandoned["uncommitted_rows"] == 2
+    assert sum(abandoned["tallies"]["history_plies"].values()) == 2
+    assert sum(abandoned["tallies"]["history_root_reason"].values()) == 2
+    # ... and the counters the game loop kept say two rows were HANDED OVER,
+    # which is exactly the number the inventory is allowed to disagree with.
+    assert result["dedup"]["rows_banked"] == 2
+
+
+def test_a_committed_shards_tallies_are_the_rows_it_holds(tmp_path: Path) -> None:
+    """The per-shard tally is committed WITH the shard, on its progress line."""
+    writer = corpus.ShardWriter(
+        out_dir=tmp_path, worker_id=0, shard_rows=2, tally_keys=("history_plies",),
+    )
+    for game, plies in ((0, (3, 7)), (1, (7,))):
+        for n in plies:
+            writer.write({"game_id": game, "history_plies": n})
+        writer.end_game(game)
+    writer.close()
+
+    assert [s["tallies"] for s in writer.shards] == [
+        {"history_plies": {"3": 1, "7": 1}}, {"history_plies": {"7": 1}},
+    ]
+    assert [line["tallies"] for line in read_progress(tmp_path, 0)] == [
+        s["tallies"] for s in writer.shards
+    ]
+    assert corpus.merge_shard_tallies(writer.shards, "history_plies") == {"3": 1, "7": 2}
+    # A row missing a tallied key is a writer fault, never a silent zero.
+    (tmp_path / "other").mkdir()
+    with pytest.raises(KeyError):
+        corpus.ShardWriter(
+            out_dir=tmp_path / "other", worker_id=1, shard_rows=2,
+            tally_keys=("history_plies",),
+        ).write({"game_id": 0})
 
 
 # ── run assembly ─────────────────────────────────────────────────────────────
@@ -1527,9 +2235,9 @@ def test_a_mid_position_clear_voids_the_carried_tt_stamp(
     searcher = searcher_for(engine)
     real_stream = searcher.stream
 
-    def clearing_stream(fen: str, **kw: Any) -> list[str]:
+    def clearing_stream(history: corpus.RowHistory, **kw: Any) -> list[str]:
         searcher.new_game()
-        return real_stream(fen, **kw)
+        return real_stream(history, **kw)
 
     monkeypatch.setattr(searcher, "stream", clearing_stream)
     searcher.search_position(chess.Board())
@@ -1550,9 +2258,9 @@ def test_width_streamed_reports_the_stream_not_the_ask(
     searcher = searcher_for(engine, staircase="3:5")
     real_stream = searcher.stream
 
-    def dropping_stream(fen: str, **kw: Any) -> list[str]:
+    def dropping_stream(history: corpus.RowHistory, **kw: Any) -> list[str]:
         return [
-            line for line in real_stream(fen, **kw)
+            line for line in real_stream(history, **kw)
             if " multipv 3 " not in f" {line} "
         ]
 
@@ -1680,12 +2388,22 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "plies_total": 40,
             "terminations": {"natural": 2}, "adjudications": {"none": 2},
             "opening_sources": {"start": 2}, "adjudication_unavailable_plies": 1,
+            "history_plies_histogram": {"7": 4, "11": 1},
+            "history_root_reasons": {"irreversible": 4, "game_start": 1},
+            "history_plies_histogram_prior": {},
+            "history_root_reasons_prior": {},
+            "history_tallies_unknown_rows_prior": 0,
             "dedup": {
                 "positions_first_seen": 8, "dup_hits": 2,
                 "first_seen_by_phase": {"opening": 8, "middlegame": 0, "endgame": 0},
                 "dup_hits_by_phase": {"opening": 2, "middlegame": 0, "endgame": 0},
                 "dedup_cache_entries": 8, "dedup_cache_evictions": 3,
                 "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 8000,
+                "row_key_hits": 3, "search_key_hits": 3,
+                "search_key_hit_on_new_input": 1,
+                "search_key_miss_on_seen_input": 1, "searches": 8,
+                "rows_banked": 5, "dedup_input_set_entries": 7,
+                "dedup_input_set_evictions": 2,
             },
             "search": {
                 "positions_searched": 8, "searches": 24, "search_s": 4.0,
@@ -1698,7 +2416,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             },
             "shards": [{"path": "a", "rows": 5, "codec": "zstd", "games": [0, 2]}],
             "shards_prior": [], "shards_abandoned": [], "games_completed_prior": 0,
-            "dedup_rewarmed": 0, "dedup_rewarmed_resident": 0, "resumed": False,
+            "dedup_rewarmed": 0, "dedup_cache_events_rewarmed": 0,
+            "dedup_rewarmed_resident": 0, "resumed": False,
             "resume_partials_deleted": [], "resume_progress_torn_tail": False,
             "resume_progress_repair": corpus.PROGRESS_ABSENT,
             "resume_legacy_progress_lines": 0,
@@ -1713,12 +2432,24 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
             "games": 1, "rows": 3, "plies_total": 20,
             "terminations": {"syzygy": 1}, "adjudications": {"syzygy_wdl_2": 1},
             "opening_sources": {"start": 1}, "adjudication_unavailable_plies": 0,
+            "history_plies_histogram": {"7": 3},
+            "history_root_reasons": {"irreversible": 3},
+            # The adopted prior shard's 4 rows: 3 with tallies, 1 whose record
+            # predates them (reported as unknown, never as a bucket).
+            "history_plies_histogram_prior": {"9": 3},
+            "history_root_reasons_prior": {"game_start": 3},
+            "history_tallies_unknown_rows_prior": 1,
             "dedup": {
                 "positions_first_seen": 4, "dup_hits": 0,
                 "first_seen_by_phase": {"opening": 4, "middlegame": 0, "endgame": 0},
                 "dup_hits_by_phase": {"opening": 0, "middlegame": 0, "endgame": 0},
                 "dedup_cache_entries": 4, "dedup_cache_evictions": 0,
                 "dedup_cache_max_entries": 5, "dedup_cache_bytes_est": 4400,
+                "row_key_hits": 0, "search_key_hits": 1,
+                "search_key_hit_on_new_input": 1,
+                "search_key_miss_on_seen_input": 0, "searches": 4,
+                "rows_banked": 3, "dedup_input_set_entries": 4,
+                "dedup_input_set_evictions": 0,
             },
             "search": {
                 "positions_searched": 4, "searches": 12, "search_s": 2.0,
@@ -1741,7 +2472,8 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
                  "uncommitted_rows": 2},
             ],
             "games_completed_prior": 2,
-            "dedup_rewarmed": 4, "dedup_rewarmed_resident": 4, "resumed": True,
+            "dedup_rewarmed": 4, "dedup_cache_events_rewarmed": 3,
+            "dedup_rewarmed_resident": 4, "resumed": True,
             "resume_partials_deleted": ["w01-00001.jsonl.zst"],
             "resume_progress_torn_tail": True,
             "resume_progress_repair": corpus.PROGRESS_TRUNCATED,
@@ -1771,7 +2503,11 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     assert summary["games_completed_prior_by_worker"] == {"0": 0, "1": 2}
     assert summary["resumed"] is True
     assert summary["dedup_rewarmed"] == 4
-    assert summary["dedup_rewarmed_resident_by_worker"] == {"0": 0, "1": 4}
+    # ⚑ ITS OWN COLUMN (Grok round 5): the worker computed it and the summary
+    # dropped it. Mutant: dropped again -> KeyError here.
+    assert summary["dedup_cache_events_rewarmed"] == 3
+    assert summary["dedup_cache_events_rewarmed_by_worker"] == {"0": 0, "1": 3}
+    assert "3 cache-only events re-warmed" in corpus.format_summary(summary)
     assert summary["resume_partials_deleted"] == {"1": ["w01-00001.jsonl.zst"]}
     assert summary["resume_progress_torn_tail_workers"] == [1]
     assert summary["resume_progress_repaired"] == {"1": corpus.PROGRESS_TRUNCATED}
@@ -1784,9 +2520,34 @@ def test_the_summary_merges_workers_without_losing_a_counter() -> None:
     # Prior first, then this session's: the order they were banked in.
     assert [shard["path"] for shard in summary["shards"]] == ["a", "b-prior", "b"]
     assert summary["terminations"] == {"natural": 2, "syzygy": 1}
+    # The window histograms merge like every other per-worker counter; a
+    # merge rule that was never added would read {} here rather than 0s.
+    assert summary["history_plies_histogram_this_session"] == {"7": 7, "11": 1}
+    assert summary["history_root_reasons_this_session"] == {
+        "irreversible": 7, "game_start": 1,
+    }
+    # ⚑ CORPUS level: prior + session, and the invariant the reader holds it
+    # to -- sum(histogram) + unknown == rows (12 = 8 session + 4 prior).
+    assert summary["history_plies_histogram"] == {"7": 7, "11": 1, "9": 3}
+    assert summary["history_root_reasons"] == {
+        "irreversible": 7, "game_start": 4,
+    }
+    assert summary["history_tallies_unknown_rows"] == 1
+    assert (
+        sum(summary["history_plies_histogram"].values())
+        + summary["history_tallies_unknown_rows"]
+    ) == summary["rows"]
     assert summary["adjudication_unavailable_plies"] == 1
     assert summary["dedup"]["dup_hits"] == 2
     assert summary["dedup"]["positions_visited"] == 14
+    # The two-key counters merge as sums, every one of them: a counter the
+    # merge forgot would be absent here, not 0.
+    assert {name: summary["dedup"][name] for name in corpus._DEDUP_SCALAR_COUNTERS} == {
+        "row_key_hits": 3, "search_key_hits": 4,
+        "search_key_hit_on_new_input": 2, "search_key_miss_on_seen_input": 1,
+        "searches": 12, "rows_banked": 8, "dedup_input_set_entries": 11,
+        "dedup_input_set_evictions": 2,
+    }
     # The bound's counters merge as sums; the bound itself is per worker.
     assert summary["dedup"]["dedup_cache_evictions"] == 3
     assert summary["dedup"]["dedup_cache_entries"] == 12
@@ -2169,7 +2930,7 @@ def test_the_search_deadline_bounds_the_go_and_the_handshake_keeps_its_own() -> 
 
     # multipv=4 differs from the engine's current 1, so the stream opens with
     # a setoption/isready handshake before the go.
-    searcher.stream(chess.STARTING_FEN, depth=2, multipv=4)
+    searcher.stream(corpus.history_for(chess.Board()), depth=2, multipv=4)
 
     handshake, search_reads = remaining[0], remaining[1:]
     assert handshake > 100.0, "the readyok wait must run on read_timeout_s"
@@ -2649,7 +3410,8 @@ def test_the_tail_repair_is_idempotent_and_leaves_whole_lines_alone(
     """
     path = tmp_path / corpus.progress_name(0)
     whole = json.dumps(
-        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0]},
+        {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+         "cache_events": []},
         sort_keys=True,
     )
 
@@ -2717,6 +3479,254 @@ def test_a_resumed_worker_re_warms_its_dedup_cache_from_its_own_shards(
     assert second["search"]["positions_searched"] == 0
 
 
+class StatefulEngine(ScriptedEngine):
+    """A scripted engine whose values depend on how many searches it has
+    answered -- the stand-in for Stockfish's carried TT: a RE-search of a
+    position is not a replay of the first search, so a resumed worker that
+    searches where the uninterrupted one served produces different values,
+    a different seeded move, and different rows after it."""
+
+    def score_of(self, uci: str, *, depth: int) -> int:
+        del depth  # the base signature's; this fake ranks by search count only
+        return hashed_cp(f"{uci}#{self.go_count}")
+
+
+def deal_openings_by_game(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lines: Sequence[str],
+) -> None:
+    """Game ``g`` opens on ``lines[g % len(lines)]``, whichever session plays it."""
+    real_rng, real_sample = corpus.book_rng, corpus.sample_starting_board
+
+    class Dealt:
+        def __init__(self, rng: Any, line: str) -> None:
+            self.rng, self.dealt_line = rng, line
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.rng, name)
+
+    def dealing_rng(*, seed: int, worker_id: int, game_id: int) -> Any:
+        rng = real_rng(seed=seed, worker_id=worker_id, game_id=game_id)
+        return Dealt(rng, lines[int(game_id) % len(lines)])
+
+    monkeypatch.setattr(corpus, "book_rng", dealing_rng)
+    monkeypatch.setattr(
+        corpus, "sample_starting_board",
+        lambda *, rng, cfg: real_sample(
+            rng=rng, cfg=fen_list_opening([rng.dealt_line], tmp_path / f"seed{rng.random()}.txt"),
+        ),
+    )
+    monkeypatch.setattr(
+        corpus, "build_opening_config",
+        lambda _spec: fen_list_opening(list(lines), tmp_path / "seeds.txt"),
+    )
+
+
+def test_a_games_record_without_cache_events_is_refused_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ FAIL CLOSED (Grok/Fable round 5): a progress record that names games
+    but carries no ``cache_events`` predates the contract; adopting it as
+    "zero events" would silently lose its label-only entries.  Refused by
+    name on both record shapes."""
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+    first = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    assert first["rows"] == 2
+    progress = out_dir / corpus.progress_name(0)
+    records = [json.loads(line) for line in progress.read_text(encoding="utf-8").splitlines()]
+    assert all("cache_events" in r for r in records), "the writer commits the key"
+    for record in records:
+        del record["cache_events"]
+    progress.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"games \[0\] with no cache_events"):
+        corpus.resume_worker_state(
+            out_dir=out_dir, worker_id=0,
+            cache=corpus.DedupCache(max_entries=corpus.DEFAULT_DEDUP_CACHE_MAX),
+        )
+    # A null-path completion record is held to the same rule.
+    progress.write_text(
+        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1]}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"games \[1\] with no cache_events"):
+        corpus.resume_worker_state(
+            out_dir=out_dir, worker_id=0,
+            cache=corpus.DedupCache(max_entries=corpus.DEFAULT_DEDUP_CACHE_MAX),
+        )
+
+
+def banked_rows(out_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(out_dir.glob("w*-*.jsonl.*")):
+        rows.extend(corpus.iter_shard_rows(path))
+    return sorted(rows, key=lambda r: (int(r["game_id"]), int(r["ply"])))
+
+
+@pytest.mark.parametrize(
+    ("max_plies", "game_ids", "dedup_cache_max"),
+    [
+        (1, (0, 1, 2, 3), corpus.DEFAULT_DEDUP_CACHE_MAX),
+        (2, (0, 1, 2, 3), corpus.DEFAULT_DEDUP_CACHE_MAX),
+        # ⚑ THE ORDER PROBE (Grok round 5): games dealt DESCENDING with a
+        # one-entry FIFO. Live: game 2 (old-repeat route) searches and banks,
+        # then game 0 (no-repeat route, same tensor) searches label-only and
+        # EVICTS game 2's label -- resident = no_repeat. A replay sorted by
+        # (game_id, ply) would apply game 0's event first and game 2's row
+        # second, leaving old_repeat resident, and game 3 (no-repeat) would
+        # then SEARCH where the live run served. Replay by seq keeps it.
+        (1, (2, 0, 3), 1),
+    ],
+)
+def test_a_label_only_cache_entry_survives_a_resume_and_the_resumed_run_equals_the_uninterrupted_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_plies: int,
+    game_ids: tuple[int, ...], dedup_cache_max: int,
+) -> None:
+    """⚑⚑ Codex P2 / operator ruling (#497 round 3): resume equivalence must
+    not depend on unbanked cache state.
+
+    Game 1 reaches game 0's tensor by a route with an older repeat (T4): a
+    seen ``input_key``, a new ``search_key`` -- it SEARCHES, caches the
+    values under the new label, banks no row.  That entry lived only in RAM.
+    Run A plays games 0-3 uninterrupted; run B is stopped right after game 1
+    (the label-only entry just created) and resumed for games 2-3.  Game 2
+    takes game 1's route again: A serves it from the label-only entry; a
+    resume that could not rebuild the entry would SEARCH it -- and under a
+    stateful engine (the carried TT) the re-search gives other values, another
+    seeded move and other rows after it.  B must equal A: every hit/miss
+    decision, every chosen move, every row and value.  Mutant: the events
+    not committed with the record -> B searches, the rows diverge, this fails.
+
+    ⚑ Two ply caps, two replay paths: at 2 plies game 1 banks its ply-1 row
+    AFTER the event, so the event is merged in ahead of a row; at 1 ply game
+    1 banks nothing and the event trails the record's last row.  A rewarm
+    that replayed only one of the two passed the other (measured: the
+    tail-replay mutant survived the 2-ply case alone).
+    """
+    lines = [
+        f"{chess.STARTING_FEN} | {T4_ROUTE_NO_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_OLD_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_OLD_REPEAT}",
+        f"{chess.STARTING_FEN} | {T4_ROUTE_NO_REPEAT}",
+    ]
+    deal_openings_by_game(monkeypatch, tmp_path, lines)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI", lambda *_a, **_kw: uci_double(StatefulEngine()),
+    )
+    overrides: dict[str, Any] = {
+        "staircase": RESUME_STAIRCASE, "max_plies": max_plies, "shard_rows": 100,
+        "dedup_cache_max": dedup_cache_max,
+    }
+    stop_after = game_ids[:2]
+    label_only_game = game_ids[1]
+    out_a = tmp_path / "a"
+    out_a.mkdir()
+    a = corpus.run_worker(worker_spec(out_a, game_ids=game_ids, **overrides))
+    assert a["failed"] is None
+    assert a["dedup"]["search_key_miss_on_seen_input"] == 1, "the label-only search"
+
+    out_b = tmp_path / "b"
+    out_b.mkdir()
+    stopped = corpus.run_worker(worker_spec(out_b, game_ids=stop_after, **overrides))
+    assert stopped["failed"] is None
+    assert stopped["dedup"]["search_key_miss_on_seen_input"] == 1
+    # The entry is ON DISK, committed with the game's record, with its seq.
+    records = [
+        json.loads(line) for line in
+        (out_b / corpus.progress_name(0)).read_text(encoding="utf-8").splitlines()
+    ]
+    events = [e for r in records for e in r.get("cache_events", [])]
+    assert [(e["game_id"], e["ply"], e["remember_input"]) for e in events] == [
+        (label_only_game, 0, False),
+    ]
+    # One seq per SEARCH, rows and events together, gapless: the event sits
+    # exactly where the live cache changed.
+    stopped_seqs = sorted(
+        [row["seq"] for row in banked_rows(out_b)] + [e["seq"] for e in events],
+    )
+    assert stopped_seqs == list(range(stopped["search"]["positions_searched"]))
+    label_only_board = board_after(lines[label_only_game % len(lines)].split("| ")[1])
+    assert events[0]["search_key"] == corpus.search_key(label_only_board)
+    assert events[0]["input_key"] == corpus.row_key(label_only_board)
+    assert [row["seq"] for row in banked_rows(out_b)][:1] == [0]
+
+    resumed = corpus.run_worker(
+        worker_spec(out_b, game_ids=game_ids, resume=True, **overrides),
+    )
+    assert resumed["failed"] is None
+    assert resumed["dedup_cache_events_rewarmed"] == 1
+    assert resumed["games"] == len(game_ids) - 2
+    # Every decision after the resume is the one A made: game 2's label is
+    # SERVED (no search), and so is everything after it.
+    assert resumed["search"]["positions_searched"] == 0
+    assert resumed["dedup"]["search_key_miss_on_seen_input"] == 0
+    assert (
+        resumed["dedup"]["dup_hits"] + stopped["dedup"]["dup_hits"]
+        == a["dedup"]["dup_hits"]
+    )
+    assert (
+        resumed["search"]["positions_searched"] + stopped["search"]["positions_searched"]
+        == a["search"]["positions_searched"]
+    )
+    rows_a, rows_b = banked_rows(out_a), banked_rows(out_b)
+    assert [(r["game_id"], r["ply"]) for r in rows_a] == [(r["game_id"], r["ply"]) for r in rows_b]
+    assert rows_a == rows_b, "same rows, same played moves, same values"
+    assert a["rows"] == stopped["rows"] + resumed["rows"]
+
+
+def test_a_zero_work_resume_reports_the_corpus_windows_it_adopted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Codex P2 (round 2): a resume that plays nothing new still has rows.
+
+    Session 1 banks the corpus; session 2 is dealt the same games, replays
+    none, and its summary must still say what windows the corpus's rows carry
+    -- ``sum(histogram) == rows`` at the CORPUS level, off the tallies the
+    progress records committed with each shard.  Before this round the
+    histograms were session-only, so this summary read ``rows: 2`` beside
+    ``history_plies_histogram: {}``.
+    """
+    out_dir = tmp_path / "corpus"
+    out_dir.mkdir()
+    opening = fen_opening(MATE_GAME_FEN, tmp_path)
+    monkeypatch.setattr(
+        corpus, "StockfishUCI",
+        lambda *_a, **_kw: uci_double(ScriptedEngine(preferred=MATE_GAME_SCRIPT)),
+    )
+    monkeypatch.setattr(corpus, "build_opening_config", lambda _spec: opening)
+
+    first = corpus.run_worker(worker_spec(out_dir, game_ids=(0,)))
+    assert first["rows"] == 2
+    second = corpus.run_worker(worker_spec(out_dir, game_ids=(0,), resume=True))
+    assert second["games"] == 0
+    assert second["rows"] == 0
+    assert second["history_plies_histogram"] == {}, "session-scoped: nothing new"
+    assert second["history_plies_histogram_prior"] == first["history_plies_histogram"]
+    assert second["history_root_reasons_prior"] == first["history_root_reasons"]
+    assert second["history_tallies_unknown_rows_prior"] == 0
+
+    summary = corpus.build_summary(
+        results=[second],
+        requested={"run_id": "t"},
+        config_sha="abc",
+        engine_record={"path": "/bin/sf", "sha256": "d" * 64},
+        engine_id_name="Stockfish test",
+        staircase=corpus.parse_staircase(corpus.DEFAULT_STAIRCASE),
+        started_utc="2026-09-01T00:00:00+00:00",
+        wall_s=1.0,
+    )
+    assert summary["rows"] == 2
+    assert sum(summary["history_plies_histogram"].values()) == summary["rows"]
+    assert sum(summary["history_root_reasons"].values()) == summary["rows"]
+    assert summary["history_plies_histogram_this_session"] == {}
+    assert summary["history_tallies_unknown_rows"] == 0
+
+
 def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
     tmp_path: Path,
 ) -> None:
@@ -2738,13 +3748,14 @@ def test_the_re_warmed_value_vector_is_the_one_the_live_visit_cached(
     outcome = corpus.play_game(
         spec=spec, searcher=searcher, opening_cfg=fen_opening(MATE_GAME_FEN, tmp_path),
         game_id=0, cache=cache, dedup=corpus.DedupStats(),
-        progress=corpus.WorkerProgress(),
+        progress=corpus.WorkerProgress(), seq=corpus.WorkerSeq(),
     )
 
     assert outcome.rows
     for row in outcome.rows:
-        live = cache.get(row["dedup_key"])
+        live = cache.get(row["search_key"])
         assert live is not None
+        assert cache.input_seen(row["input_key"])
         rebuilt = corpus.selection_values_from_row(row)
         assert rebuilt.moves == live.moves
         assert np.array_equal(rebuilt.effective_cp, live.effective_cp)
@@ -2788,8 +3799,10 @@ def test_a_game_that_banked_no_rows_is_still_never_replayed(
     assert [
         line for line in read_progress(out_dir, 0) if line["path"] is None
     ] == [
-        {"path": None, "rows": 0, "codec": second["codec"], "games": [1]},
-        {"path": None, "rows": 0, "codec": third["codec"], "games": [2]},
+        {"path": None, "rows": 0, "codec": second["codec"], "games": [1],
+         "cache_events": []},
+        {"path": None, "rows": 0, "codec": third["codec"], "games": [2],
+         "cache_events": []},
     ]
 
 
@@ -2880,7 +3893,8 @@ def test_a_torn_progress_line_anywhere_but_the_tail_is_refused(
     newline was written whole and is not a torn tail.
     """
     path = tmp_path / corpus.progress_name(0)
-    good = json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1]})
+    good = json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [1],
+                       "cache_events": []})
     path.write_text(
         '{"path": "w00-000' + "\n" + good + "\n", encoding="utf-8",
     )
@@ -2906,7 +3920,7 @@ def test_a_listed_shard_that_is_gone_refuses_the_resume(tmp_path: Path) -> None:
     (tmp_path / corpus.progress_name(0)).write_text(
         json.dumps({
             "path": str(tmp_path / "w00-00000.jsonl.zst"), "rows": 3,
-            "codec": "zstd", "games": [0],
+            "codec": "zstd", "games": [0], "cache_events": [],
         }) + "\n",
         encoding="utf-8",
     )
@@ -2929,7 +3943,8 @@ def test_a_listed_shard_that_is_truncated_is_refused_by_name(
     then reads ``Expecting property name ... char 4347``.
     """
     whole = {
-        "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "dedup_key": "k",
+        "schema": corpus.ROW_SCHEMA, "game_id": 0, "ply": 0, "seq": 0, "dedup_key": "k",
+        "search_key": "k|", "input_key": "0" * 32,
         "selection": {"value_depth": 1, "value_width": 1},
         "phases": [{"per_depth": [{"depth": 1, "lines": [[1, "e2e4", 0.0, 9]]}]}],
     }
@@ -2940,6 +3955,7 @@ def test_a_listed_shard_that_is_truncated_is_refused_by_name(
     (tmp_path / corpus.progress_name(0)).write_text(
         json.dumps({
             "path": str(shard), "rows": 2, "codec": "gzip", "games": [0],
+            "cache_events": [],
         }) + "\n",
         encoding="utf-8",
     )
@@ -2961,7 +3977,8 @@ def test_a_resume_whose_game_deal_disagrees_with_the_progress_file_is_refused(
     run would report a complete corpus that is missing a game.
     """
     (tmp_path / corpus.progress_name(0)).write_text(
-        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7]}) + "\n",
+        json.dumps({"path": None, "rows": 0, "codec": "zstd", "games": [7],
+                    "cache_events": []}) + "\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="did not deal it"):
@@ -3081,12 +4098,160 @@ def resumable_dir(tmp_path: Path) -> Path:
     requested = {"games": 4, "seed": 7, "out_dir": str(out_dir)}
     (out_dir / corpus.MANIFEST_NAME).write_text(
         json.dumps({
+            "row_schema": corpus.ROW_SCHEMA,
+            corpus.KEY_HISTORY_REP_FIX: corpus.HISTORY_REP_FIX,
             "config_requested": requested,
             "config_sha256": corpus.stamp_sha256(requested),
         }),
         encoding="utf-8",
     )
     return out_dir
+
+
+def rewrite_manifest_row_schema(out_dir: Path, row_schema: Any) -> None:
+    """Stamp another row schema on an otherwise self-consistent manifest."""
+    path = out_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["row_schema"] = row_schema
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_a_resume_onto_an_older_row_schema_is_refused_at_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """⚑ Codex P1: the schema gate is the MANIFEST's, before any worker.
+
+    The per-row check in the cache re-warm only fires for a worker that has
+    shards to re-warm from; the gate that protects every worker is this one.
+    """
+    out_dir = resumable_dir(tmp_path)
+    corpus.load_resume_manifest(out_dir)  # the current schema passes
+
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    with pytest.raises(ValueError, match=r"row schema 2 .* schema 3"):
+        corpus.load_resume_manifest(out_dir)
+    rewrite_manifest_row_schema(out_dir, 1)
+    with pytest.raises(ValueError, match=r"row schema 1 .* schema 3"):
+        corpus.load_resume_manifest(out_dir)
+
+    rewrite_manifest_row_schema(out_dir, None)
+    with pytest.raises(ValueError, match="row schema None"):
+        corpus.load_resume_manifest(out_dir)
+
+
+def test_a_schema_2_manifest_is_refused_by_name_on_resume(tmp_path: Path) -> None:
+    """The keyless intermediate shape, named in the refusal (Fable, round 2 delta)."""
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA_HISTORY_WITHOUT_KEYS)
+    with pytest.raises(ValueError, match=r"search_key/input_key.*Regenerate") as excinfo:
+        corpus.load_resume_manifest(out_dir)
+    assert "row schema 2" in str(excinfo.value)
+
+
+def test_a_manifest_in_another_repetition_regime_is_refused_on_resume(
+    tmp_path: Path,
+) -> None:
+    out_dir = resumable_dir(tmp_path)
+    path = out_dir / corpus.MANIFEST_NAME
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest[corpus.KEY_HISTORY_REP_FIX] = False
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="history_rep_fix=False"):
+        corpus.load_resume_manifest(out_dir)
+    del manifest[corpus.KEY_HISTORY_REP_FIX]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="history_rep_fix=None"):
+        corpus.load_resume_manifest(out_dir)
+
+
+@pytest.mark.parametrize(
+    "progress_record",
+    [
+        pytest.param(
+            {"path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+         "cache_events": []},
+            id="worker_with_a_schema_1_shard",
+        ),
+        pytest.param(
+            {"path": None, "rows": 0, "codec": "zstd", "games": [0], "cache_events": []},
+            id="worker_with_only_zero_row_completion_records",
+        ),
+    ],
+)
+def test_a_schema_1_corpus_cannot_be_resumed_by_any_worker_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, progress_record: dict[str, Any],
+) -> None:
+    """⚑⚑ Through ``run``: refused BEFORE a record is archived or a worker starts.
+
+    The second shape is the one the row-level check cannot catch: a worker whose
+    progress file holds nothing but zero-row completion records re-warms no row,
+    so nothing in it ever reads a schema -- and it would append schema-2 rows
+    beside the other workers' schema-1 shards.  The refusal has to come from
+    the manifest, and it has to leave the directory exactly as it found it.
+    """
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    write_summary(out_dir, run_finished=False, failed_workers=[{"worker_id": 0}])
+    (out_dir / corpus.progress_name(0)).write_text(
+        json.dumps(progress_record) + "\n", encoding="utf-8",
+    )
+    before = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+
+    def no_worker(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        raise AssertionError(f"a worker was dispatched onto a refused resume: {spec}")
+
+    monkeypatch.setattr(corpus, "run_worker", no_worker)
+    argv = [
+        "--out-dir", str(out_dir), "--games", "1", "--workers", "1",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
+    ]
+    with pytest.raises(ValueError, match="row schema 2"):
+        corpus.run(corpus.build_parser().parse_args(argv))
+
+    after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+    assert after == before, "a refused resume must not archive or write a byte"
+
+
+def test_a_two_worker_schema_1_resume_is_refused_before_either_worker_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """⚑ Grok B1/B2, the multi-worker shape: one worker has a listed schema-1
+    shard, the other an EMPTY progress file.  Without the manifest gate the
+    first would raise inside its re-warm (outside ``run_worker``'s ``try``, so
+    the parent records a failed slot with nothing in it) and the second would
+    start cold and bank schema-2 rows into the schema-1 corpus.  The refusal
+    has to come before the pool is even built.
+    """
+    out_dir = resumable_dir(tmp_path)
+    rewrite_manifest_row_schema(out_dir, corpus.ROW_SCHEMA - 1)
+    (out_dir / corpus.progress_name(0)).write_text(
+        json.dumps({
+            "path": "w00-00000.jsonl.zst", "rows": 3, "codec": "zstd", "games": [0],
+            "cache_events": [],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (out_dir / corpus.progress_name(1)).write_text("", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+
+    class NoPool:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("a worker pool was built for a refused resume")
+
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", NoPool)
+    monkeypatch.setattr(
+        corpus, "run_worker",
+        lambda spec: (_ for _ in ()).throw(AssertionError(f"worker started: {spec}")),
+    )
+    argv = [
+        "--out-dir", str(out_dir), "--games", "2", "--workers", "2",
+        "--syzygy-path", str(SMOKE_SYZYGY or corpus.REPO_ROOT), "--resume",
+    ]
+    with pytest.raises(ValueError, match="row schema 2"):
+        corpus.run(corpus.build_parser().parse_args(argv))
+
+    after = {p.name: p.read_bytes() for p in out_dir.iterdir()}
+    assert after == before
 
 
 def write_summary(out_dir: Path, **keys: Any) -> Path:
@@ -3492,6 +4657,75 @@ def test_a_resumed_run_summarises_the_whole_corpus_not_the_last_shift(
 
 
 # ── the real engine ──────────────────────────────────────────────────────────
+
+
+#: ⚑ A REAL 3-FOLD, built by shuffling knights.  Black is a whole rook up, so a
+#: draw and a search are numbers nobody can confuse: ``c6b8`` from the position
+#: after these moves completes the THIRD occurrence of the root.
+REPETITION_ROOT = "1n4k1/8/8/8/8/8/r7/1N4K1 w - - 0 1"
+REPETITION_MOVES = "b1c3 b8c6 c3b1 c6b8 b1c3 b8c6 c3b1"
+REPETITION_MOVE = "c6b8"
+
+
+@pytest.mark.skipif(find_stockfish() is None, reason="no Stockfish binary")
+def test_real_stockfish_scores_the_repetition_as_a_draw_only_with_the_window() -> None:
+    """⚑⚑ THE LABEL-PATH TAKE-EFFECT PROOF, against the real engine.
+
+    Same position, same ``searchmoves``, same depth -- only the ``position``
+    line differs.  With the window the engine sees its own repetition and
+    returns the DRAW score; without it the same move is scored as the material
+    count, which for a rook-up side is hundreds of centipawns away.  That gap is
+    the label error the history-blind form was banking.
+
+    ⚑ The blind arm is built as a ``RowHistory`` with an EMPTY move list rather
+    than by calling a removed code path, so both arms run through exactly the
+    same sender and the only difference on the wire is the window.
+    """
+    board = chess.Board(REPETITION_ROOT)
+    for uci in REPETITION_MOVES.split():
+        board.push_uci(uci)
+    after = board.copy(stack=True)
+    after.push_uci(REPETITION_MOVE)
+    assert after.is_repetition(3), "the fixture no longer 3-folds"
+
+    binary = find_stockfish()
+    assert binary is not None
+    engine = StockfishUCI(binary, multipv=1, hash_mb=16, nice=15)
+    try:
+        searcher = corpus.StaircaseSearcher(
+            engine=engine,
+            staircase=corpus.parse_staircase("all:12"),
+            cp_slope=gen.NNUE_CP_SLOPE,
+            cp_draw_width=gen.NNUE_CP_DRAW_WIDTH,
+        )
+        aware = corpus.history_for(board)
+        blind = corpus.RowHistory(
+            fen=aware.fen, root_fen=aware.fen, uci=(),
+            reason=corpus.HISTORY_ROOT_GAME_START,
+        )
+        assert " moves " in corpus.position_command(aware)
+        assert " moves " not in corpus.position_command(blind)
+        scores = {
+            name: score_of_last_block(
+                searcher.stream(
+                    window, depth=12, multipv=1, searchmoves=[REPETITION_MOVE],
+                ),
+            )
+            for name, window in (("aware", aware), ("blind", blind))
+        }
+    finally:
+        engine.close()
+
+    assert scores["aware"] == 0, scores
+    assert scores["blind"] >= 200, scores
+
+
+def score_of_last_block(lines: Sequence[str]) -> int:
+    """The cp of the deepest ``multipv 1`` line in a stream, through the
+    generator's OWN parser rather than a second one."""
+    parse = corpus.parse_depth_blocks(lines, expected_lines=1)
+    block, _ = corpus.deepest_block_with_width(parse.blocks, want=1)
+    return round(block.lines[0].effective_cp)
 
 
 @pytest.mark.skipif(find_stockfish() is None, reason="no Stockfish binary")

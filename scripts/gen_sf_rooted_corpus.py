@@ -35,6 +35,48 @@ so a consumer cannot mistake these for independent searches.  The table IS
 cleared (``ucinewgame``) at the start of every GAME, so one game's tree cannot
 leak into the next -- ``tt_cleared_per_game`` says so.
 
+THE MOVE WINDOW (ROW SCHEMA 2)
+------------------------------
+Every banked row carries the moves that led to it, and the SAME window is what
+the engine is set up with.  Both halves matter and they are one change:
+
+* THE INPUT.  A row that is only a FEN encodes with history slot 0 filled and
+  slots 1..7 -- planes 13..103 -- and every repetition plane ZERO.  That is not
+  a small difference: measured 2026-09-01 (``docs/experiment_ledger.md``, the
+  history-materiality probe) the champion flips **46.5% of its top-1 moves** and
+  loses **+20.2 cp** of regret when its history planes are filled the way play
+  fills them.  A corpus built on the zero-history distribution trains on inputs
+  production never sees.
+* THE LABEL.  ``position fen <fen>`` hands Stockfish a position with no past,
+  so its own repetition and fifty-move detection cannot fire and a drawn-by-
+  repetition line scores as if it were fresh.  ``position fen <root> moves ...``
+  gives it the reversible segment, which is exactly what those rules need.
+
+``history_for`` picks the window; :func:`position_command` is the ONLY place a
+``position`` line is spelled.  See both for the root definition and why it is
+7 plies plus the halfmove clock rather than just 7.
+
+⚑⚑ DEDUP IS TWO KEYS, NOT ONE.  Under schema 2 a position reached by two
+routes can differ in (1) the 8-frame input tensor, (2) the repetition state the
+engine's ``is_draw``/``has_game_cycle`` read, and (3) therefore the right move
+-- so "same FEN" is neither "same row" nor "same label".  ``play_game`` keys
+the two concepts separately (see :func:`search_key` and :func:`row_key`):
+
+* ``search_key`` -- LABEL equivalence: ``dedup_key`` (FEN minus the fullmove
+  number) plus the repetition signature of the reversible segment.  Stockfish
+  consults game history only through repetition counts, so two routes with
+  equal signatures get the same values (0/1200 label changes measured without a
+  repeat, 2026-09-01 calibration).
+* ``row_key`` -- MODEL-INPUT identity: a hash of the encoded 175-plane tensor,
+  banked on the row as ``input_key``.  A route whose tensor is new is SEARCHED
+  and BANKED even when its ``search_key`` is cached (the compact cache cannot
+  supply the ``phases`` a row needs); a route whose tensor was seen banks
+  nothing, and is served from the cache only when its ``search_key`` hits.
+
+Measured on run03/w03 (1,717,460 rows): position-key collisions are 0.015% of
+positions, all in the first 1-2 plies after a shared book exit, so the split is
+a CORRECTNESS guarantee for schema 2 and not a throughput trade.
+
 THE STREAM RULES, MEASURED AGAINST THE REAL BINARY (2026-08-27)
 ---------------------------------------------------------------
 * The FIRST non-bound emission per ``(depth, multipv-rank)`` wins, NEVER the
@@ -122,11 +164,19 @@ protocol that only works on a polite exit is a protocol that does not work.
   same rows it would have in one uninterrupted run.
 * THE DEDUP CACHE IS RE-WARMED from this worker's own listed shards before the
   first game, because a cold cache would re-search (and re-bank) positions the
-  killed session had already banked.  ⚑ It re-warms from BANKED ROWS, so the
-  one thing it cannot restore is a position that was searched and deliberately
-  not banked (below ``MIN_BANKED_PIECES``, on the rare unadjudicable path).
-  Those recur as a fresh search, which is disclosed here rather than papered
-  over; ``dedup_rewarmed`` in the summary is the count that DID come back.
+  killed session had already banked.  ⚑ It re-warms from BANKED ROWS **and
+  from the cache-only events committed beside them**: a search that banked no
+  row (a seen tensor under a new ``search_key``; a sub-``MIN_BANKED_PIECES``
+  position) is recorded as a ``cache_event`` in the same progress record as
+  the game's rows, and the resume replays rows and events strictly in the
+  worker's ``seq`` order, so the re-warmed cache holds exactly what the
+  killed session's cache held, in the same FIFO order.  ``dedup_rewarmed`` and
+  ``dedup_cache_events_rewarmed`` in the summary are the two counts.  The
+  residual is the in-flight shard the kill caught mid-write: its record was
+  never committed, its rows and events are gone together, and its games are
+  replayed whole -- a re-search, never a different corpus.  A progress record
+  that names games but carries no ``cache_events`` predates this contract and
+  is REFUSED on resume rather than adopted as "zero events".
 * A resume must not change any generation-affecting setting: the requested
   config is re-stamped and its sha256 compared against the manifest's, and a
   mismatch is refused before a single game is played.  ``--workers`` is in the
@@ -199,8 +249,12 @@ from pathlib import Path
 from typing import Any
 
 import chess
+import chess.polyglot
 import numpy as np
 
+from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
 from chess_anti_engine.stockfish.uci import (
     StockfishTimeoutError,
@@ -225,7 +279,86 @@ _LOG = logging.getLogger("gen_sf_rooted_corpus")
 #: phases per position, each with every depth block it emitted).  A consumer
 #: that reads a single-search corpus's keys off one of these rows gets a
 #: KeyError rather than a plausible wrong number.
-ROW_SCHEMA = 1
+#:
+#: 2 adds the MOVE HISTORY (``history_root_fen`` / ``history_uci`` /
+#: ``history_plies`` / ``history_root_reason``).  A schema-1 row is a bare FEN,
+#: so a consumer encoding it fills history slot 0 and leaves slots 1..7 and
+#: every repetition plane ZERO -- an input distribution live play never
+#: produces (ledger 2026-09-01: the champion flips 46.5% of its top-1 moves and
+#: loses +20.2 cp of regret when its history planes are filled the way play
+#: fills them).  Schema 2 banks the window that makes a row's encoded input and
+#: its Stockfish label both see what play sees; see :func:`history_for`.
+#:
+#: 3 adds the two dedup keys (``search_key``, ``input_key`` -- see the module
+#: docstring) and the per-shard ``tallies`` on progress records.  ⚑ SCHEMA 2 --
+#: a window WITHOUT those keys -- was never produced outside smoke runs, and it
+#: is REFUSED rather than read: the resume re-warm needs both keys and the
+#: deriver verifies every row against ``input_key``, so a schema-2 corpus can
+#: only be regenerated (or repaired by a tool that adds the keys).  In the
+#: ledger's and the spec's prose "schema 2" names THIS shape; in code it is 3.
+#: ⚑ VERIFIED 2026-09-01: schema 2 never produced an accepted corpus (every
+#: persistent manifest under ``data/nnue_bootstrap`` reads ``row_schema: 1``;
+#: the only schema-2 rows ever written were test fixtures and scratch output),
+#: so it is refused with no compatibility carried.  Schema 1 stays readable by
+#: the deriver; 3 is the only schema this generator writes.
+ROW_SCHEMA = 3
+ROW_SCHEMA_HISTORY_WITHOUT_KEYS = 2
+
+#: How many PREVIOUS positions the encoder keeps (``CBOARD_HISTORY_MAX`` in
+#: ``chess_anti_engine/encoding/_cboard_impl.h``).  The 8 encoded frames are
+#: this many plus the position itself.  Read here rather than imported because
+#: it is a C compile-time constant; ``tests/test_corpus_history_banking.py``
+#: pins the two together.
+HISTORY_WINDOW_PLIES = 7
+
+#: ``history_root_reason``: the window reaches back to the position right after
+#: the last irreversible move (no earlier position can repeat with any frame in
+#: the window, and no earlier move can matter to the engine's own repetition or
+#: fifty-move detection)...
+HISTORY_ROOT_IRREVERSIBLE = "irreversible"
+
+#: ...or the game ran out of stack first, so the window is the whole game.  ⚑
+#: "The game" is the board the worker plays on, whose stack CARRIES the book
+#: moves the opening sampler pushed -- so for a book opening this root is the
+#: standard starting position, not the book exit.  For the blind-spot FEN-list
+#: branch it is that bare FEN.
+HISTORY_ROOT_GAME_START = "game_start"
+
+#: The production input encoding, spelled ONCE for the whole corpus chain.
+#: :func:`row_key` hashes the tensor live play would encode for a position
+#: (``encode_cboard(CBoard.from_board(board), ...)``, the UCI search-root call)
+#: and ``scripts/derive_corpus_targets.py`` re-encodes the reconstructed row
+#: with the SAME two constants -- imported from here, because the deriver
+#: already imports this module and a second spelling is how the two sides drift
+#: apart without any test noticing.  ``tests/test_corpus_history_banking.py``
+#: pins the deriver's python encoder to this C call, plane for plane.
+INPUT_HISTORY_ENCODING = "lc0_root_legacy_meta"
+INPUT_EXTRA_FEATURES = "v2_threats"
+
+#: ⚑⚑ THE REPETITION-PLANE REGIME, and it is part of the input identity.  The C
+#: encoder :func:`row_key` goes through records per-slot repetition flags at
+#: board construction under a PROCESS-GLOBAL flag
+#: (``chess_anti_engine/encoding/rep_fix.py``); its C default is UNFIXED, which
+#: under-reports repetitions older than the hash stack the encoder rebuilds
+#: after an irreversible move.  Production plays FIXED
+#: (``configs/pbt2_small.yaml`` ``history_rep_fix: true`` -- pinned by
+#: ``tests/test_gen_sf_rooted_corpus.py``) and the deriver's python encoder is
+#: always fixed, so an unfixed generator would (a) bank an ``input_key`` the
+#: deriver can never reproduce on any row with a repeat inside the window but
+#: outside the 8 frames (measured 2026-09-01 on run03: 77/24,590 rows) and
+#: (b) fold two rows that differ only in a repetition plane into one.
+#: ``apply_history_rep_fix`` sets it at ``run``/``run_worker`` start, before
+#: any CBoard exists; :func:`row_key` REQUIRES it; the manifest, the summary
+#: and every row's ``run`` block stamp it; the deriver refuses a schema-3
+#: corpus whose stamp is missing or differs from its own regime.
+HISTORY_REP_FIX = True
+KEY_HISTORY_REP_FIX = "history_rep_fix"
+
+#: Repetition counts above this are indistinguishable to the engine (a 3-fold
+#: is a draw whether it is the third or the fifth occurrence), so the signature
+#: caps them here rather than growing a key for a state that cannot change a
+#: label.
+_SEARCH_KEY_REPEAT_CAP = 3
 
 #: Summary schema, versioned separately: the summary gains aggregate keys far
 #: more often than a row changes shape, and bumping the row schema for a new
@@ -706,6 +839,11 @@ class PositionSearch:
     values: tuple[PvLine, ...]
     value_depth: int
     value_full_width: bool
+    #: The move window every rung of this staircase was searched on -- the SAME
+    #: object the bank site writes into the row.  ⚑ REQUIRED, with no default:
+    #: there is exactly one constructor and a defaulted ``None`` would let a
+    #: future one bank a row whose window nobody built.
+    history: RowHistory
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -902,6 +1040,133 @@ class SearchStats:
         }
 
 
+# -- the banked move window ---------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RowHistory:
+    """The move window a row is banked with AND the one its label is searched on.
+
+    ONE object serves both, on purpose.  ``search_position`` builds it, hands it
+    to :func:`position_command` for the engine, and hands the same instance back
+    on the ``PositionSearch`` for the bank site to write out -- so the window in
+    the row is the window the engine saw, structurally, rather than by two call
+    sites agreeing.
+
+    ⚑ ``fen`` is the position's own FEN under python-chess's DEFAULT ep policy,
+    which is what the row's ``fen`` field has always been and what
+    ``_validated_searchmoves`` and ``dedup_key`` read.  ``root_fen`` is written
+    with ``en_passant="fen"`` instead: the default policy PRINTS AN EP SQUARE
+    ONLY WHEN AN EP CAPTURE IS LEGAL, so a root that sits right after a double
+    pawn push with no legal capture would come back from ``chess.Board(...)``
+    with ``ep_square = None`` -- and the encoder's legacy-meta ep plane (110)
+    reads ``ep_square`` RAW, without the legality test.  That is a plane that
+    differs from live play, so the root keeps the pseudo-legal square.
+    """
+
+    #: The position the row is about.
+    fen: str
+    #: The window's first position, ``en_passant="fen"``.
+    root_fen: str
+    #: Root -> row, oldest first.
+    uci: tuple[str, ...]
+    #: ``HISTORY_ROOT_IRREVERSIBLE`` or ``HISTORY_ROOT_GAME_START``.
+    reason: str
+
+    @property
+    def plies(self) -> int:
+        return len(self.uci)
+
+    def as_row_fields(self) -> dict[str, Any]:
+        """The schema-2 keys, spelled once."""
+        return {
+            "history_root_fen": self.root_fen,
+            "history_uci": list(self.uci),
+            "history_plies": self.plies,
+            "history_root_reason": self.reason,
+        }
+
+
+def history_for(board: chess.Board) -> RowHistory:
+    """The window ``board`` is banked and searched with.
+
+    ⚑ THE ROOT DEFINITION, and it is a repetition-state guarantee rather than a
+    convenience.  Let ``P`` be the position ``HISTORY_WINDOW_PLIES`` plies back
+    (or the game's first position if fewer exist).  The root is ``P`` walked
+    back ``halfmove_clock(P)`` further plies -- the first position at or before
+    ``P`` whose halfmove clock is 0, i.e. the one right after the last
+    irreversible move -- or the game's own start if the stack empties first.
+
+    Two things need that much and no more:
+
+    * **The 8 encoded frames.**  Every frame is ``P`` or later.  No position
+      after an irreversible move can equal any position before it (a pawn never
+      un-moves and a captured piece never comes back), so a frame's repetition
+      partners all lie at or after the start of that frame's own reversible
+      run -- and the earliest such run start over all 8 frames is exactly the
+      root.  Anything earlier cannot change a plane; anything later can lose one.
+    * **The engine's own detection for the row's position.**  Its repetition and
+      fifty-move state needs the moves since the last irreversible move, which
+      is a SUFFIX of the same window.
+
+    Bound: ``7 + 100`` plies by the fifty-move rule, so ~100 UCI tokens per row;
+    inside a zstd shard consecutive rows share almost all of that prefix.
+
+    The replay is CHECKED here, not asserted downstream: a row that cannot
+    reproduce its own FEN from its own window is never written.
+    """
+    fen = board.fen()
+    walk = board.copy(stack=True)
+    moves: list[str] = []
+    for _ in range(HISTORY_WINDOW_PLIES):
+        if not walk.move_stack:
+            break
+        moves.append(walk.pop().uci())
+    # ⚑ Read AFTER the first walk: it is P's clock, not the row position's.  An
+    # irreversible move inside the window makes the row's own clock small while
+    # P's is large, and it is P's run that has to be covered.
+    for _ in range(int(walk.halfmove_clock)):
+        if not walk.move_stack:
+            break
+        moves.append(walk.pop().uci())
+    moves.reverse()
+    reason = (
+        HISTORY_ROOT_GAME_START if not walk.move_stack
+        else HISTORY_ROOT_IRREVERSIBLE
+    )
+    history = RowHistory(
+        fen=fen,
+        root_fen=walk.fen(en_passant="fen"),
+        uci=tuple(moves),
+        reason=reason,
+    )
+    replayed = chess.Board(history.root_fen)
+    for uci in history.uci:
+        replayed.push(chess.Move.from_uci(uci))
+    if replayed.fen() != fen:
+        raise RuntimeError(
+            f"the banked window does not reproduce its own position: replaying "
+            f"{list(history.uci)} from {history.root_fen!r} gives "
+            f"{replayed.fen()!r}, not {fen!r}",
+        )
+    return history
+
+
+def position_command(history: RowHistory) -> str:
+    """The ONE ``position`` line every search in this file sends.
+
+    ⚑ ``position fen <root> moves ...`` rather than ``position fen <row>``:
+    with the moves the engine can see its own repetitions and count its own
+    fifty-move clock, so the LABEL is computed under the same history the row's
+    encoded input carries.  A bare-FEN send is history-blind, and a
+    ``position``-sender that spelled its own line would be blind again the next
+    time one is added -- hence one helper and no second speller.
+    """
+    if not history.uci:
+        return f"position fen {history.root_fen}"
+    return f"position fen {history.root_fen} moves {' '.join(history.uci)}"
+
+
 class StaircaseSearcher:
     """One engine, driven through the staircase, position after position.
 
@@ -962,21 +1227,30 @@ class StaircaseSearcher:
 
     def stream(
         self,
-        fen: str,
+        history: RowHistory,
         *,
         depth: int,
         multipv: int,
         searchmoves: Sequence[str] | None = None,
     ) -> list[str]:
-        """Drive one ``go depth`` and return every line before ``bestmove``."""
-        tokens = _validated_searchmoves(fen, searchmoves) if searchmoves else []
+        """Drive one ``go depth`` and return every line before ``bestmove``.
+
+        ⚑ Takes the WINDOW, not a FEN.  The engine is set up with
+        :func:`position_command`, so every rung of every staircase -- including
+        the cold-TT retry, which re-enters here through ``search_position`` --
+        sees the same move history the row banks.  ``searchmoves`` is still
+        validated against the TERMINAL position, which is what the moves name.
+        """
+        tokens = (
+            _validated_searchmoves(history.fen, searchmoves) if searchmoves else []
+        )
         with self.engine._lock, self.engine._protocol_section():
             if int(multipv) != self._engine_multipv:
                 self.engine._send(f"setoption name MultiPV value {int(multipv)}")
                 self.engine._send("isready")
                 self.engine._wait_for("readyok")
                 self._engine_multipv = int(multipv)
-            self.engine._send(f"position fen {fen}")
+            self.engine._send(position_command(history))
             go_cmd = f"go depth {int(depth)}"
             if tokens:
                 # ⚑ LAST PARAMETER ON THE LINE, always: per the UCI spec
@@ -1007,7 +1281,8 @@ class StaircaseSearcher:
 
     def search_position(self, board: chess.Board) -> PositionSearch:
         """Run every rung on ``board`` and pick the selection value vector."""
-        fen = board.fen()
+        history = history_for(board)
+        fen = history.fen
         legal = [move.uci() for move in board.legal_moves]
         if not legal:
             raise RuntimeError(
@@ -1026,7 +1301,7 @@ class StaircaseSearcher:
             # search.  Later phases always name theirs.
             restrict = None if index == 0 else tuple(candidates[:width])
             lines = self.stream(
-                fen, depth=phase.depth, multipv=width, searchmoves=restrict,
+                history, depth=phase.depth, multipv=width, searchmoves=restrict,
             )
             parse = parse_depth_blocks(lines, expected_lines=width)
             block, full = deepest_block_with_width(parse.blocks, want=width)
@@ -1063,6 +1338,7 @@ class StaircaseSearcher:
             values=value_block.lines,
             value_depth=value_block.depth,
             value_full_width=full_width,
+            history=history,
         )
 
     def q_of(self, values: SelectionValues) -> np.ndarray:
@@ -1253,6 +1529,103 @@ def dedup_key(board: chess.Board) -> str:
     return " ".join(board.fen().split(" ")[:5])
 
 
+def search_key(board: chess.Board) -> str:
+    """LABEL equivalence: ``dedup_key`` plus the reversible segment's repeats.
+
+    ⚑ THE MINIMUM SAFE SIGNATURE, and why it is enough: Stockfish consults game
+    history only through ``is_draw``/``has_game_cycle``, and both read
+    REPETITION COUNTS over the positions since the last irreversible move --
+    nothing else about the route.  So two routes whose reversible segments hold
+    the same multiset of repeated positions get the same search, and the
+    2026-09-01 legacy-corpus calibration measured exactly that: 0/1200 label
+    changes between the history-blind and history-aware sends where no repeat
+    sits in the segment, 12.50% top-1 changes where one does.
+
+    The segment is walked back ``halfmove_clock`` plies from the position
+    itself (the game start bounds it), every position's polyglot Zobrist hash
+    is counted, and the hashes seen at least twice are serialised with their
+    counts (capped at ``_SEARCH_KEY_REPEAT_CAP``) in a fixed order.  A route
+    with no repeat serialises to ``<dedup_key>|`` -- the old key with an empty
+    signature -- so the cache still folds every transposition that IS
+    label-equivalent.
+    """
+    counts: Counter[int] = Counter()
+    walk = board.copy(stack=True)
+    counts[chess.polyglot.zobrist_hash(walk)] += 1
+    for _ in range(int(board.halfmove_clock)):
+        if not walk.move_stack:
+            break
+        walk.pop()
+        counts[chess.polyglot.zobrist_hash(walk)] += 1
+    repeats = sorted(
+        (h, min(c, _SEARCH_KEY_REPEAT_CAP)) for h, c in counts.items() if c >= 2
+    )
+    return f"{dedup_key(board)}|{','.join(f'{h:016x}:{c}' for h, c in repeats)}"
+
+
+def input_tensor_key(planes: np.ndarray) -> str:
+    """The identity of one encoded input: blake2b-128 over its float32 bytes.
+
+    Spelled once and called from BOTH ends of the chain: the generator hashes
+    the tensor live play would encode (:func:`row_key`) and the deriver hashes
+    the tensor it reconstructed from the banked window, and a row whose two
+    hashes differ is refused there.  ``float32`` and C order are forced so the
+    bytes are the same whichever encoder produced the array.
+    """
+    return hashlib.blake2b(
+        np.ascontiguousarray(planes, dtype=np.float32).tobytes(), digest_size=16,
+    ).hexdigest()
+
+
+def apply_history_rep_fix() -> None:
+    """Put the process in production's repetition-plane regime.
+
+    Called at the top of ``run`` (the parent: before the engine handshake and
+    before any opening book is warmed) and of ``run_worker`` (each worker is a
+    SPAWNED process, so a C global set in the parent does not reach it).  No
+    CBoard exists in either process before this call -- every one the
+    generator builds is inside :func:`row_key`, after it -- which is what
+    ``boards_discarded=True`` certifies.
+    """
+    rep_fix.apply(HISTORY_REP_FIX, boards_discarded=True)
+
+
+def require_history_rep_fix() -> None:
+    """The precondition :func:`row_key` checks, spelled once and LOUD.
+
+    A wrong or unset regime here would hash planes the deriver cannot
+    reproduce; raising is the only honest response, because the C global is
+    write-only and the planes carry no mark of which regime made them.
+    """
+    if rep_fix.current() is not HISTORY_REP_FIX:
+        raise RuntimeError(
+            f"history_rep_fix is {rep_fix.current()!r} in this process but the "
+            f"corpus is defined under {HISTORY_REP_FIX}; call "
+            "apply_history_rep_fix() before building any board -- the C "
+            "encoder would otherwise hash repetition planes the deriver "
+            "never produces",
+        )
+
+
+def row_key(board: chess.Board) -> str:
+    """MODEL-INPUT identity: the hash of the tensor live play encodes for ``board``.
+
+    ⚑ THE C PLAY PATH, verbatim -- ``encode_cboard(CBoard.from_board(board))``
+    is the call the UCI search makes on its root -- so "same row" means "the
+    net would see the same 175 planes", history frames and repetition planes
+    included, rather than "same FEN".  ~0.35 ms per position beside a search
+    of order 100 ms.  ⚑ Under ``HISTORY_REP_FIX``, checked on every call.
+    """
+    require_history_rep_fix()
+    return input_tensor_key(
+        encode_cboard(
+            CBoard.from_board(board),
+            input_history_encoding=INPUT_HISTORY_ENCODING,
+            input_extra_features=INPUT_EXTRA_FEATURES,
+        ),
+    )
+
+
 def game_phase(*, ply: int, piece_count: int) -> str:
     """Which dedup bucket a position belongs to.  Endgame wins -- see the constants."""
     if int(piece_count) <= ENDGAME_MAX_PIECES:
@@ -1311,6 +1684,14 @@ class DedupCache:
     which is the opposite of where the cheap hits are; FIFO is also one
     ``popitem`` with no per-hit bookkeeping, and a cache read on the hot path
     should not write.
+
+    ⚑ THE VALUES AND THE SEEN-INPUT SET CAN DRIFT APART under eviction (a
+    label evicted while its tensor is still remembered, or the reverse), and
+    that drift can only ever cost a RE-SEARCH or a RE-BANK -- an evicted label
+    is searched again, an evicted tensor is banked again -- never a dropped
+    row and never a label served for the wrong state, because serving requires
+    BOTH keys to hit and banking requires the tensor to be absent (review
+    round 2, Fable F3 / Grok D4: traced, no code change).
     """
 
     def __init__(self, *, max_entries: int) -> None:
@@ -1324,6 +1705,12 @@ class DedupCache:
         self._entries: OrderedDict[str, SelectionValues] = OrderedDict()
         self.evictions = 0
         self._bytes = 0
+        #: The ``row_key``s whose tensor has already been BANKED (or searched
+        #: for a sub-``MIN_BANKED_PIECES`` position), bounded by the same FIFO
+        #: rule as the values so a resume re-warms both from the same shards
+        #: in the same order.  A seen input banks no second row.
+        self._inputs: OrderedDict[str, None] = OrderedDict()
+        self.input_evictions = 0
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -1331,6 +1718,21 @@ class DedupCache:
     def get(self, key: str) -> SelectionValues | None:
         """Serve a position, WITHOUT touching the eviction order (FIFO)."""
         return self._entries.get(key)
+
+    def input_seen(self, key: str) -> bool:
+        """Whether a row with this input tensor has already been banked."""
+        return key in self._inputs
+
+    def remember_input(self, key: str) -> None:
+        """Mark an input tensor as banked.  ⚑ AFTER the search succeeds, never
+        before: a ply whose search wedged banked nothing, and marking it seen
+        would deny the next route to that tensor its row."""
+        if key in self._inputs:
+            return
+        self._inputs[key] = None
+        while len(self._inputs) > self.max_entries:
+            self._inputs.popitem(last=False)
+            self.input_evictions += 1
 
     def put(self, key: str, values: SelectionValues) -> None:
         if key in self._entries:
@@ -1359,6 +1761,8 @@ class DedupCache:
                 "an evicted position that recurs is re-searched and RE-BANKED; "
                 "two rows may share a dedup_key"
             ),
+            "dedup_input_set_entries": len(self._inputs),
+            "dedup_input_set_evictions": self.input_evictions,
         }
 
 
@@ -1472,7 +1876,7 @@ class ShardWriter:
 
     def __init__(
         self, *, out_dir: Path, worker_id: int, shard_rows: int,
-        first_index: int = 0,
+        first_index: int = 0, tally_keys: Sequence[str] = (),
     ) -> None:
         if int(shard_rows) <= 0:
             raise ValueError(
@@ -1505,6 +1909,19 @@ class ShardWriter:
         self._text: Any = None
         self._raw: Any = None
         self._binary: Any = None
+        #: Row fields tallied PER SHARD and committed WITH the shard record
+        #: (``tallies``), so a histogram summed over ``shards`` can never count
+        #: a row that was abandoned with its file.  ⚑ Read by SUBSCRIPT: a row
+        #: missing a tallied key is a writer fault, not a zero.
+        self.tally_keys = tuple(str(key) for key in tally_keys)
+        self._tallies: dict[str, Counter[str]] = self._fresh_tallies()
+        #: Cache-only events of the games pending in the CURRENT record,
+        #: committed with it (``cache_events``) and dropped with an abandoned
+        #: shard, exactly like the rows -- a resume replays those games.
+        self._pending_cache_events: list[dict[str, Any]] = []
+
+    def _fresh_tallies(self) -> dict[str, Counter[str]]:
+        return {key: Counter() for key in self.tally_keys}
 
     def path_for(self, index: int) -> Path:
         return self.out_dir / f"w{self.worker_id:02d}-{index:05d}{self.suffix}"
@@ -1532,6 +1949,13 @@ class ShardWriter:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
         self._rows += 1
         self._uncommitted += 1
+        for key in self.tally_keys:
+            self._tallies[key][str(row[key])] += 1
+
+    def note_cache_events(self, events: Sequence[Mapping[str, Any]]) -> None:
+        """Bank a game's cache-only events beside its rows.  ⚑ BEFORE
+        ``end_game``, like the rows: they are committed with the record."""
+        self._pending_cache_events.extend(dict(e) for e in events)
 
     def end_game(self, game_id: int) -> None:
         """Record ``game_id`` as banked in full, and rotate if the shard is due.
@@ -1567,6 +1991,8 @@ class ShardWriter:
     def close(self) -> None:
         games = sorted(self._pending_games)
         self._pending_games = []
+        cache_events = self._pending_cache_events
+        self._pending_cache_events = []
         if self._text is None:
             if games:
                 # ⚑ A COMPLETION RECORD, NOT A SHARD: `path` is null because
@@ -1575,6 +2001,7 @@ class ShardWriter:
                 # must name files that exist.
                 self._append_progress({
                     "path": None, "rows": 0, "codec": self.codec, "games": games,
+                    "cache_events": cache_events,
                 })
             return
         self._text.close()
@@ -1587,7 +2014,12 @@ class ShardWriter:
             "rows": self._rows,
             "codec": self.codec,
             "games": games,
+            "tallies": {
+                key: dict(counter) for key, counter in self._tallies.items()
+            },
+            "cache_events": cache_events,
         }
+        self._tallies = self._fresh_tallies()
         if self._uncommitted:
             # ⚑⚑ A GAME'S ROWS ARE IN THIS FILE AND THE GAME NEVER ENDED --
             # the worker died between `write` and `end_game` (a disk error, an
@@ -1672,6 +2104,21 @@ def iter_shard_rows(path: Path) -> Iterator[dict[str, Any]]:
                 yield _decode_shard_line(path, number, line)
 
 
+def require_current_row_schema(row: Mapping[str, Any]) -> None:
+    """A resume re-warms ONLY from rows this build wrote the shape of.
+
+    Checked before any key of the row is read: a schema-1 row has no
+    ``search_key``/``input_key``, and a ``KeyError`` on one of those would name
+    the symptom rather than the cause.
+    """
+    if int(row["schema"]) != ROW_SCHEMA:
+        raise ValueError(
+            f"row schema {row['schema']!r} is not {ROW_SCHEMA}; a resume that "
+            "re-warmed its dedup cache from a foreign row shape would serve "
+            "values it cannot read",
+        )
+
+
 def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
     """Rebuild the CACHED value vector from the row that position banked.
 
@@ -1685,12 +2132,7 @@ def selection_values_from_row(row: Mapping[str, Any]) -> SelectionValues:
     approximation.  ``value_width`` is checked rather than trusted: a row shape
     that drifted must fail here, not serve a quietly wrong value vector.
     """
-    if int(row["schema"]) != ROW_SCHEMA:
-        raise ValueError(
-            f"row schema {row['schema']!r} is not {ROW_SCHEMA}; a resume that "
-            "re-warmed its dedup cache from a foreign row shape would serve "
-            "values it cannot read",
-        )
+    require_current_row_schema(row)
     selection = row["selection"]
     depth = int(selection["value_depth"])
     blocks = [
@@ -1870,6 +2312,15 @@ class ResumeState:
     #: Progress lines that carried no ``games`` list and whose game ids were
     #: therefore DERIVED by reading the shard (the pre-``end_game`` format).
     legacy_lines: int
+    #: Cache-only events (a search that banked NO row: a label-only miss on a
+    #: seen tensor, or a sub-``MIN_BANKED_PIECES`` position) replayed from the
+    #: progress records, so the re-warmed cache holds every entry the killed
+    #: session's cache held, in the same FIFO order.
+    cache_events_rewarmed: int = 0
+    #: Where this worker's ``seq`` counter continues: one above the highest
+    #: ``seq`` re-warmed, so a resumed session's rows and events sort after
+    #: everything the killed session committed.
+    next_seq: int = 0
 
     @classmethod
     def fresh(cls) -> ResumeState:
@@ -1884,6 +2335,86 @@ class ResumeState:
             dedup_rewarmed=0,
             legacy_lines=0,
         )
+
+
+class WorkerSeq:
+    """⚑ ONE MONOTONIC COUNTER PER WORKER, stamped on every row and every cache
+    event at the moment the cache changes.  The resume replays rows and events
+    strictly by it.  ``(game_id, ply)`` is NOT the live order: a worker plays
+    its game ids in the order it was dealt them, and under a resume that
+    order is the spec's, not ascending -- so a cache bounded by FIFO would
+    come back with a different resident set (measured: ``game_ids=(2, 0)``
+    with ``dedup_cache_max=1``)."""
+
+    def __init__(self, start: int = 0) -> None:
+        self.value = int(start)
+
+    def next(self) -> int:
+        current = self.value
+        self.value += 1
+        return current
+
+
+def cache_event(
+    *, seq: int, game_id: int, ply: int, search_key: str, input_key: str,
+    remember_input: bool, values: SelectionValues,
+) -> dict[str, Any]:
+    """⚑⚑ A SEARCH THAT BANKED NO ROW, recorded so a resume can rebuild it.
+
+    Two plies search and then bank nothing: a seen tensor whose label was not
+    cached (the row is suppressed, the values are cached under the new
+    ``search_key``), and a sub-``MIN_BANKED_PIECES`` position (values cached,
+    tensor remembered, no row).  Both leave state in the worker's cache that
+    ``resume_worker_state`` could not rebuild from banked rows -- so a killed
+    and resumed worker searched where the uninterrupted one served, and under
+    the carried TT that moves finite-depth values, the seeded move and every
+    row after it (Codex P2, operator ruling #497 round 3).  The event carries
+    exactly what the live visit put in the cache, and the record it is
+    committed with (``ShardWriter.close``) is the shard's own, so the FIFO
+    order is reproduced by merging rows and events on ``(game_id, ply)``.
+    """
+    return {
+        "seq": int(seq),
+        "game_id": int(game_id),
+        "ply": int(ply),
+        "search_key": str(search_key),
+        "input_key": str(input_key),
+        "remember_input": bool(remember_input),
+        "values": {
+            "moves": list(values.moves),
+            # float32 -> python float -> JSON -> float32 is exact.
+            "effective_cp": [float(cp) for cp in values.effective_cp],
+        },
+    }
+
+
+def selection_values_from_event(event: Mapping[str, Any]) -> SelectionValues:
+    """The cached object a cache event recorded, rebuilt exactly."""
+    values = event["values"]
+    return SelectionValues(
+        moves=tuple(sys.intern(str(m)) for m in values["moves"]),
+        effective_cp=np.asarray(values["effective_cp"], dtype=np.float32),
+    )
+
+
+def _apply_cache_event(cache: DedupCache, event: Mapping[str, Any]) -> None:
+    """Replay one event in the order the live session performed it."""
+    key = str(event["search_key"])
+    if cache.get(key) is None:
+        cache.put(key, selection_values_from_event(event))
+    if bool(event.get("remember_input")):
+        cache.remember_input(str(event["input_key"]))
+
+
+def _seq_of(entry: Mapping[str, Any], *, what: str, worker_id: int) -> int:
+    """The ``seq`` a row or event was committed under -- REQUIRED, by name."""
+    if "seq" not in entry:
+        raise ValueError(
+            f"{progress_name(worker_id)}: a {what} carries no seq (game "
+            f"{entry.get('game_id')!r} ply {entry.get('ply')!r}); the resume "
+            "replays the cache strictly in seq order and cannot place it",
+        )
+    return int(entry["seq"])
 
 
 def resume_worker_state(
@@ -1934,8 +2465,28 @@ def resume_worker_state(
     highest = -1
     legacy = 0
     rewarmed = 0
+    events_rewarmed = 0
+    next_seq = 0
     for record in records:
         raw_path = record["path"]
+        # ⚑ FAIL CLOSED (Grok/Fable round 5): a games-bearing record with no
+        # `cache_events` key predates the contract, and adopting it as "zero
+        # events" is the accepted-then-ignored shape -- its label-only entries
+        # would silently be gone. Schema 3 never produced an accepted corpus,
+        # so there is nothing to carry: refused by name.
+        if "games" in record and "cache_events" not in record:
+            raise ValueError(
+                f"{progress_name(worker_id)} holds a record for games "
+                f"{record['games']} with no cache_events; it was written before "
+                "cache-only searches were committed with the record, and a "
+                "resume cannot rebuild the cache it left. Use a new --out-dir.",
+            )
+        events = sorted(
+            (dict(e) for e in record.get("cache_events", [])),
+            key=lambda e: _seq_of(e, what="cache event", worker_id=worker_id),
+        )
+        for event in events:
+            next_seq = max(next_seq, _seq_of(event, what="cache event", worker_id=worker_id) + 1)
         if raw_path is None:
             # A completion record: games, no file.  It must carry them -- a
             # null path with no games names nothing at all.
@@ -1945,6 +2496,9 @@ def resume_worker_state(
                     "no games list; it indexes neither a shard nor a game",
                 )
             completed.update(int(game) for game in record["games"])
+            for event in events:
+                _apply_cache_event(cache, event)
+                events_rewarmed += 1
             continue
         # By NAME, not by the stored string: the corpus directory may have been
         # moved or spelled differently between sessions, and the file the
@@ -1966,15 +2520,45 @@ def resume_worker_state(
             "rows": int(record["rows"]),
             "codec": str(record["codec"]),
         }
+        # ⚑ THE PRIOR SHARD'S TALLIES TRAVEL WITH IT, so the corpus-level
+        # window histograms can be summed over prior + this session and still
+        # equal the corpus-level `rows` (Codex P2, review round 2). A record
+        # without them (a pre-tallies progress line) is counted as UNKNOWN
+        # rows rather than as zero windows.
+        if "tallies" in record:
+            adopted["tallies"] = dict(record["tallies"])
         derived: set[int] = set()
+        pending_events = list(events)
         # ONE pass over the shard: it re-warms the cache, and it is also where
         # a legacy line's game ids come from.
         for row in iter_shard_rows(path):
             derived.add(int(row["game_id"]))
-            key = str(row["dedup_key"])
+            require_current_row_schema(row)
+            # ⚑ STRICTLY BY seq: every event committed before this row is
+            # replayed first, so the FIFO sequence is the one the killed
+            # session's cache saw whatever order the games were dealt in.
+            row_seq = _seq_of(row, what="row", worker_id=worker_id)
+            next_seq = max(next_seq, row_seq + 1)
+            while pending_events and _seq_of(
+                pending_events[0], what="cache event", worker_id=worker_id,
+            ) < row_seq:
+                _apply_cache_event(cache, pending_events.pop(0))
+                events_rewarmed += 1
+            # ⚑ BOTH KEYS, in the order the live session filled them: the
+            # values under the row's `search_key`, and the row's `input_key`
+            # into the seen-input set. A re-warm that restored only the values
+            # would have the resumed session search AND RE-BANK every position
+            # the killed one already banked -- a duplicate row per replayed
+            # transposition, and `test_a_resumed_worker_re_warms_...` reads
+            # `rows == 0` off exactly this.
+            key = str(row["search_key"])
             if cache.get(key) is None:
                 cache.put(key, selection_values_from_row(row))
                 rewarmed += 1
+            cache.remember_input(str(row["input_key"]))
+        for event in pending_events:
+            _apply_cache_event(cache, event)
+            events_rewarmed += 1
         if "games" in record:
             adopted["games"] = [int(game) for game in record["games"]]
         else:
@@ -2004,6 +2588,8 @@ def resume_worker_state(
         progress_repair=repair,
         dedup_rewarmed=rewarmed,
         legacy_lines=legacy,
+        cache_events_rewarmed=events_rewarmed,
+        next_seq=next_seq,
     )
 
 
@@ -2047,10 +2633,38 @@ class WorkerSpec:
 
 @dataclass
 class DedupStats:
-    """First-seen and cache-served counts, split by phase of game."""
+    """Searched and cache-served counts by phase, plus the two-key breakdown.
+
+    Every visited ply is exactly one of ``first_seen`` (it ran a search) or
+    ``hits`` (it was served from the cache with no search).  The scalar
+    counters below say WHY, in terms of the two keys ``play_game`` reads:
+
+    * ``row_key_hits`` -- the input tensor had been banked before; no row.
+    * ``search_key_hits`` -- the ``search_key`` was in the cache, whether or
+      not the ply was served from it.
+    * ``search_key_hit_on_new_input`` -- the label was cached but the tensor
+      was new: searched and banked anyway, because the compact cache cannot
+      supply a row's ``phases``.  The count of rows the old position-keyed
+      dedup would have DROPPED.
+    * ``search_key_miss_on_seen_input`` -- the tensor was banked before but an
+      older repeat outside the frames changed the engine-relevant state:
+      searched, not banked.  The count of labels the old dedup would have
+      SERVED WRONG.
+    * ``searches`` -- every ply that ran a search (``== positions_first_seen``,
+      spelled under the name the ledger uses).
+    * ``rows_banked`` -- rows handed to the game's row list.  ⚑ NOT the
+      committed row count: a row can still be abandoned with its shard, which
+      is why the worker's ``rows`` is read off the inventory instead.
+    """
 
     first_seen: Counter[str] = field(default_factory=Counter)
     hits: Counter[str] = field(default_factory=Counter)
+    row_key_hits: int = 0
+    search_key_hits: int = 0
+    search_key_hit_on_new_input: int = 0
+    search_key_miss_on_seen_input: int = 0
+    searches: int = 0
+    rows_banked: int = 0
 
     def summary(self) -> dict[str, Any]:
         seen = int(sum(self.first_seen.values()))
@@ -2063,6 +2677,12 @@ class DedupStats:
             "dup_rate": (hits / total) if total else math.nan,
             "first_seen_by_phase": {p: int(self.first_seen[p]) for p in GAME_PHASES},
             "dup_hits_by_phase": {p: int(self.hits[p]) for p in GAME_PHASES},
+            "row_key_hits": int(self.row_key_hits),
+            "search_key_hits": int(self.search_key_hits),
+            "search_key_hit_on_new_input": int(self.search_key_hit_on_new_input),
+            "search_key_miss_on_seen_input": int(self.search_key_miss_on_seen_input),
+            "searches": int(self.searches),
+            "rows_banked": int(self.rows_banked),
         }
 
 
@@ -2096,6 +2716,8 @@ class GameOutcome:
     #: game keeps playing; the count is disclosed rather than absorbed, because
     #: it is the one path on which a small-material game reaches the ply cap.
     adjudication_unavailable: int
+    #: Searches that banked no row but left cache state (``cache_event``).
+    cache_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _adjudicate(board: chess.Board, syzygy_path: str) -> dict[str, Any] | None:
@@ -2131,6 +2753,7 @@ def play_game(
     cache: DedupCache,
     dedup: DedupStats,
     progress: WorkerProgress,
+    seq: WorkerSeq,
 ) -> GameOutcome:
     """One game: sample an opening, then search-select-push until it ends."""
     searcher.new_game()
@@ -2142,6 +2765,7 @@ def play_game(
     )
     board = start.board
     rows: list[dict[str, Any]] = []
+    cache_events: list[dict[str, Any]] = []
     adjudication: dict[str, Any] | None = None
     result_pgn: str | None = None
     termination = "unfinished"
@@ -2173,9 +2797,27 @@ def play_game(
             break
 
         key = dedup_key(board)
+        label_key = search_key(board)
+        input_key = row_key(board)
         phase = game_phase(ply=ply, piece_count=piece_count)
-        cached = cache.get(key)
+        # ⚑⚑ TWO KEYS, TWO QUESTIONS (module docstring).  `cached` answers "is
+        # this LABEL known"; `new_input` answers "has this TENSOR been banked".
+        # A new tensor is searched and banked whatever the cache says, because
+        # the compact cache holds two arrays and a row needs the phases; a
+        # seen tensor banks nothing, and is served only when the label matches
+        # too -- an older repeat outside the frames changes what the engine
+        # sees without changing a single plane.
+        cached = cache.get(label_key)
+        new_input = not cache.input_seen(input_key)
         if cached is not None:
+            dedup.search_key_hits += 1
+        if not new_input:
+            dedup.row_key_hits += 1
+        searched = False
+        # Assigned at the search; a served ply never reads it (rows and
+        # events are only built on the searched branch).
+        seq_no = -1
+        if cached is not None and not new_input:
             dedup.hits[phase] += 1
             values = cached
             search: PositionSearch | None = None
@@ -2190,11 +2832,31 @@ def play_game(
                 # cap), and the WORKER plays on instead of dying with it.
                 termination = "engine_wedge"
                 break
+            searched = True
+            # The cache changes at THIS search: rows and events both carry
+            # the number, and the resume replays them by it.
+            seq_no = seq.next()
             dedup.first_seen[phase] += 1
+            dedup.searches += 1
+            if cached is not None:
+                dedup.search_key_hit_on_new_input += 1
+            elif not new_input:
+                dedup.search_key_miss_on_seen_input += 1
             # ⚑ Selection reads the COMPACT object on the first visit too, so a
             # cache-served ply and a first-seen ply cannot disagree about q.
             values = SelectionValues.from_lines(search.values)
-            cache.put(key, values)
+            cache.put(label_key, values)
+            if new_input:
+                # ⚑ After the search, so a wedged ply never marks its tensor
+                # banked.  Remembered whether or not a row follows: a sub-
+                # `MIN_BANKED_PIECES` position can never bank one, and the
+                # next route to it should be served, not re-searched.
+                cache.remember_input(input_key)
+            else:
+                # A seen tensor whose label was NOT cached: the search was
+                # needed for the move, the row is not (its tensor is already
+                # in the corpus under another label).
+                search = None
 
         temp, temp_phase = temperature_for(
             ply,
@@ -2212,6 +2874,18 @@ def play_game(
         played = values.moves[chosen]
 
         if search is not None and piece_count >= MIN_BANKED_PIECES:
+            # ⚑ THE ROW'S WINDOW IS THE SEARCH'S WINDOW, read off the object the
+            # engine was set up from rather than rebuilt here.  Two builders
+            # would be two chances for the banked input and the banked label to
+            # describe different histories, which is the failure this whole
+            # schema exists to remove.
+            history = search.history
+            if history.fen != board.fen():
+                raise RuntimeError(
+                    "the search's window is for a different position than the "
+                    f"one being banked ({history.fen!r} against "
+                    f"{board.fen()!r})",
+                )
             rows.append({
                 "schema": ROW_SCHEMA,
                 # Present ONLY on a row whose search re-ran on a fresh engine
@@ -2223,13 +2897,22 @@ def play_game(
                     "config_sha256": spec.config_sha256,
                     # Observed at write time, same counter as the worker stamp.
                     KEY_TT_CARRIED: searcher.tt_cleared_mid_position == 0,
+                    # The REALIZED regime, read off the flag `row_key` just
+                    # required, not off the constant.
+                    KEY_HISTORY_REP_FIX: bool(rep_fix.current()),
                 },
                 "fen": board.fen(),
+                # `dedup_key` is kept for consumers that join on it; the two
+                # keys the generator actually decides by sit beside it.
                 "dedup_key": key,
+                "search_key": label_key,
+                "input_key": input_key,
                 "worker_id": spec.worker_id,
                 "game_id": game_id,
                 "ply": ply,
+                "seq": seq_no,
                 "stm": "w" if board.turn == chess.WHITE else "b",
+                **history.as_row_fields(),
                 "piece_count": piece_count,
                 "game_phase": phase,
                 "played_move": played,
@@ -2252,6 +2935,15 @@ def play_game(
                 "result_pgn": None,
                 "adjudication": None,
             })
+            dedup.rows_banked += 1
+        elif searched:
+            # ⚑ A SEARCH WITH NO ROW: the cache changed and nothing banked
+            # says so. Recorded so a resume can rebuild the entry -- see
+            # `cache_event`.
+            cache_events.append(cache_event(
+                seq=seq_no, game_id=game_id, ply=ply, search_key=label_key,
+                input_key=input_key, remember_input=new_input, values=values,
+            ))
 
         board.push(chess.Move.from_uci(played))
         ply += 1
@@ -2268,6 +2960,7 @@ def play_game(
         adjudication=adjudication,
         opening_source=start.source,
         adjudication_unavailable=unavailable,
+        cache_events=cache_events,
     )
 
 
@@ -2343,6 +3036,11 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "terminations": {},
         "adjudications": {},
         "opening_sources": {},
+        "history_plies_histogram": {},
+        "history_root_reasons": {},
+        "history_plies_histogram_prior": {},
+        "history_root_reasons_prior": {},
+        "history_tallies_unknown_rows_prior": 0,
         "adjudication_unavailable_plies": 0,
         "dedup": {
             **DedupStats().summary(),
@@ -2361,6 +3059,7 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "shards_abandoned": [],
         "games_completed_prior": 0,
         "dedup_rewarmed": 0,
+        "dedup_cache_events_rewarmed": 0,
         "dedup_rewarmed_resident": 0,
         "resumed": bool(spec.resume),
         "resume_partials_deleted": [],
@@ -2384,6 +3083,8 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     looks healthy.
     """
     nice_realized = apply_nice(spec.nice)
+    # ⚑ FIRST, before the resume re-warm, the opening book and every board.
+    apply_history_rep_fix()
     staircase = parse_staircase(spec.staircase)
 
     def spawn_searcher(stats: SearchStats) -> StaircaseSearcher:
@@ -2427,6 +3128,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     writer = ShardWriter(
         out_dir=spec.out_dir, worker_id=spec.worker_id, shard_rows=spec.shard_rows,
         first_index=resume.next_shard_index,
+        tally_keys=_SHARD_TALLY_KEYS,
     )
     game_ids = tuple(
         game_id for game_id in spec.game_ids
@@ -2435,6 +3137,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     searcher = EngineLease(spawn_searcher)
     opening_cfg = build_opening_config(spec)
     dedup = DedupStats()
+    seq = WorkerSeq(resume.next_seq)
     progress = WorkerProgress()
     terminations: Counter[str] = Counter()
     adjudications: Counter[str] = Counter()
@@ -2451,9 +3154,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
                 game_id=game_id, cache=cache, dedup=dedup, progress=progress,
+                seq=seq,
             )
             for row in outcome.rows:
                 writer.write(row)
+            writer.note_cache_events(outcome.cache_events)
             # ⚑ AFTER the last row and BEFORE the next game: this is the
             # commit point of the whole resume protocol. A kill between the
             # last `write` and here leaves the shard unlisted, so the game is
@@ -2488,6 +3193,15 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     # keep claiming it -- `summary["rows"]` must equal the rows a consumer
     # reaches by iterating `summary["shards"]`, on the failure path too.
     rows_written = sum(int(shard["rows"]) for shard in writer.shards)
+    # ⚑ THE SAME RULE FOR THE WINDOW HISTOGRAMS. Each shard record carries the
+    # tallies of the rows it holds (`ShardWriter.tally_keys`), committed with
+    # the shard and dropped with it, so `sum(histogram) == rows` is an
+    # identity over the inventory rather than a happy-path coincidence -- a
+    # counter kept beside the writer kept counting rows whose shard was then
+    # abandoned unlisted (Codex review of PR #497).
+    history_plies = merge_shard_tallies(writer.shards, "history_plies")
+    history_root_reasons = merge_shard_tallies(writer.shards, "history_root_reason")
+    prior = prior_shard_tallies(resume.shards)
     return {
         "worker_id": spec.worker_id,
         "failed": failure,
@@ -2500,6 +3214,13 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "terminations": dict(terminations),
         "adjudications": dict(adjudications),
         "opening_sources": dict(opening_sources),
+        "history_plies_histogram": dict(history_plies),
+        "history_root_reasons": dict(history_root_reasons),
+        # The adopted shards' tallies, kept apart from this session's so the
+        # merge can publish both a corpus-level and a session-level reading.
+        "history_plies_histogram_prior": prior.history_plies,
+        "history_root_reasons_prior": prior.history_root_reasons,
+        "history_tallies_unknown_rows_prior": prior.unknown_rows,
         "adjudication_unavailable_plies": unavailable,
         "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
@@ -2515,6 +3236,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "shards_abandoned": list(writer.abandoned),
         "games_completed_prior": len(resume.completed_games),
         "dedup_rewarmed": resume.dedup_rewarmed,
+        "dedup_cache_events_rewarmed": resume.cache_events_rewarmed,
         # ⚑ The same claim READ OFF THE CACHE the worker then played through,
         # measured the instant the re-warm finished. A re-warm that counted its
         # puts and handed them to a cache the game loop never sees would report
@@ -2681,6 +3403,75 @@ def merge_counters(results: Sequence[dict[str, Any]], key: str) -> dict[str, int
     return dict(merged)
 
 
+#: The row fields ``ShardWriter`` tallies per committed shard for the worker
+#: summary.  ``history_plies`` feeds ``history_plies_histogram`` and
+#: ``history_root_reason`` feeds ``history_root_reasons``.
+_SHARD_TALLY_KEYS: tuple[str, ...] = ("history_plies", "history_root_reason")
+
+
+def merge_shard_tallies(
+    shards: Sequence[Mapping[str, Any]], key: str,
+) -> dict[str, int]:
+    """One tallied field summed over COMMITTED shard records."""
+    merged: Counter[str] = Counter()
+    for shard in shards:
+        for name, count in shard["tallies"][key].items():
+            merged[str(name)] += int(count)
+    return dict(merged)
+
+
+@dataclass(frozen=True)
+class PriorTallies:
+    """The adopted shards' window tallies, and the rows that carried none."""
+
+    history_plies: dict[str, int]
+    history_root_reasons: dict[str, int]
+    #: Rows in adopted shards whose progress record predates ``tallies``.
+    #: Reported, not folded into a bucket: ``sum(histogram) + unknown == rows``.
+    unknown_rows: int
+
+
+def _carries_tallies(shard: Mapping[str, Any]) -> bool:
+    """Whether a shard record tallies EVERY key the summary reads.
+
+    A record with no ``tallies`` predates them; one whose ``tallies`` lacks a
+    key was written by a writer configured without it.  Both are UNKNOWN rows
+    rather than a zero bucket -- a partial tally is not a smaller histogram.
+    """
+    tallies = shard.get("tallies")
+    return isinstance(tallies, Mapping) and all(k in tallies for k in _SHARD_TALLY_KEYS)
+
+
+def prior_shard_tallies(shards: Sequence[Mapping[str, Any]]) -> PriorTallies:
+    with_tallies = [shard for shard in shards if _carries_tallies(shard)]
+    unknown = sum(int(shard["rows"]) for shard in shards if not _carries_tallies(shard))
+    return PriorTallies(
+        history_plies=merge_shard_tallies(with_tallies, "history_plies"),
+        history_root_reasons=merge_shard_tallies(with_tallies, "history_root_reason"),
+        unknown_rows=unknown,
+    )
+
+
+def merge_counters_across(
+    results: Sequence[dict[str, Any]], *keys: str,
+) -> dict[str, int]:
+    """Several per-worker counters summed into one (prior + this session)."""
+    merged: Counter[str] = Counter()
+    for key in keys:
+        for name, count in merge_counters(results, key).items():
+            merged[name] += count
+    return dict(merged)
+
+
+#: The scalar two-key counters ``DedupStats.summary`` emits, summed by
+#: ``merge_dedup``.  Listed once so the merge cannot silently skip one.
+_DEDUP_SCALAR_COUNTERS: tuple[str, ...] = (
+    "row_key_hits", "search_key_hits", "search_key_hit_on_new_input",
+    "search_key_miss_on_seen_input", "searches", "rows_banked",
+    "dedup_input_set_entries", "dedup_input_set_evictions",
+)
+
+
 def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     seen = sum(int(r["dedup"]["positions_first_seen"]) for r in results)
     hits = sum(int(r["dedup"]["dup_hits"]) for r in results)
@@ -2692,6 +3483,10 @@ def merge_dedup(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "positions_first_seen": seen,
         "dup_hits": hits,
         "dup_rate": (hits / total) if total else math.nan,
+        **{
+            name: sum(int(r["dedup"][name]) for r in results)
+            for name in _DEDUP_SCALAR_COUNTERS
+        },
         "first_seen_by_phase": {
             p: sum(int(r["dedup"]["first_seen_by_phase"][p]) for r in results)
             for p in GAME_PHASES
@@ -2848,6 +3643,14 @@ def build_summary(
             str(r["worker_id"]): int(r["games_completed_prior"]) for r in results
         },
         "dedup_rewarmed": sum(int(r["dedup_rewarmed"]) for r in results),
+        # ⚑ ITS OWN COLUMN (Grok round 5): computed per worker and then
+        # dropped here was the accepted-then-ignored shape.
+        "dedup_cache_events_rewarmed": sum(
+            int(r["dedup_cache_events_rewarmed"]) for r in results
+        ),
+        "dedup_cache_events_rewarmed_by_worker": {
+            str(r["worker_id"]): int(r["dedup_cache_events_rewarmed"]) for r in results
+        },
         "dedup_rewarmed_resident_by_worker": {
             str(r["worker_id"]): int(r["dedup_rewarmed_resident"]) for r in results
         },
@@ -2898,6 +3701,29 @@ def build_summary(
             int(r["adjudication_unavailable_plies"]) for r in results
         ),
         "opening_sources": merge_counters(results, "opening_sources"),
+        # ⚑ The window every banked row of the CORPUS carries -- prior shards'
+        # tallies plus this session's, so `sum(histogram) + unknown == rows`
+        # holds at this level exactly as it does per worker (Codex P2, round
+        # 2: a zero-work resume used to report rows > 0 beside an empty
+        # histogram). The session-only reading keeps the `_this_session`
+        # suffix like every other session-scoped counter here. A corpus whose
+        # rows are all `history_plies: 0` is one the schema bump did not
+        # reach, and this is where that shows.
+        "history_plies_histogram": merge_counters_across(
+            results, "history_plies_histogram", "history_plies_histogram_prior",
+        ),
+        "history_root_reasons": merge_counters_across(
+            results, "history_root_reasons", "history_root_reasons_prior",
+        ),
+        "history_plies_histogram_this_session": merge_counters(
+            results, "history_plies_histogram",
+        ),
+        "history_root_reasons_this_session": merge_counters(
+            results, "history_root_reasons",
+        ),
+        "history_tallies_unknown_rows": sum(
+            int(r["history_tallies_unknown_rows_prior"]) for r in results
+        ),
         # Prior first, then this session's, per worker: the order they were
         # banked in, which is also the order their rows must be re-warmed in.
         "shards": [
@@ -2917,9 +3743,19 @@ def build_summary(
         },
         "engine": {**engine_record, "id_name": engine_id_name},
         "banked_rows_min_piece_count": MIN_BANKED_PIECES,
+        KEY_HISTORY_REP_FIX: HISTORY_REP_FIX,
         "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
         "python": sys.version.split()[0],
     }
+
+
+def _histogram_range(histogram: dict[str, Any]) -> str:
+    """``min..max (n rows)`` for a ``{bucket: count}`` map, or ``"none"``."""
+    if not histogram:
+        return "none"
+    buckets = sorted(int(k) for k in histogram)
+    total = sum(int(v) for v in histogram.values())
+    return f"{buckets[0]}..{buckets[-1]} ({total} rows)"
 
 
 def format_summary(summary: dict[str, Any]) -> str:
@@ -2939,6 +3775,11 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"bytes/entry={dedup['dedup_cache_bytes_per_entry_est']:.0f}",
         f"anomalies={search['anomalies']}",
         f"terminations={summary['terminations']}",
+        # ⚑ `.get` for the same reason `run_finished` uses one below: this
+        # formats summaries loaded off disk, and a schema-1 corpus's summary
+        # has no window to report.
+        f"history roots={summary.get('history_root_reasons', {})} "
+        f"plies={_histogram_range(summary.get('history_plies_histogram', {}))}",
     ]
     if summary["resumed"]:
         # Said out loud, because every line above it is a CORPUS total on a
@@ -2947,7 +3788,9 @@ def format_summary(summary: dict[str, Any]) -> str:
         lines.insert(0, (
             f"RESUMED: {summary['games_completed_prior']} games and "
             f"{summary['rows_prior']} rows adopted from the killed session, "
-            f"{summary['dedup_rewarmed']} dedup entries re-warmed; this "
+            f"{summary['dedup_rewarmed']} dedup entries and "
+            f"{summary['dedup_cache_events_rewarmed']} cache-only events "
+            "re-warmed; this "
             f"session played {summary['games_this_session']} games / "
             f"{summary['rows_this_session']} rows"
         ))
@@ -3003,6 +3846,7 @@ def write_launch_manifest(
         ],
         "engine": {**engine_record, "id_name": engine_id_name},
         "banked_rows_min_piece_count": MIN_BANKED_PIECES,
+        KEY_HISTORY_REP_FIX: HISTORY_REP_FIX,
         "adjudication_max_piece_count": ADJUDICATION_MAX_PIECES,
         "started_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -3141,6 +3985,33 @@ def archive_json_copy_for_resume(json_path: Path | None) -> Path | None:
     return archive
 
 
+def read_launch_manifest(out_dir: Path) -> dict[str, Any]:
+    """The manifest, self-checked -- and NOTHING about whether to resume onto it.
+
+    ⚑ THE READER'S HALF, split out (review round 2): the deriver opens a
+    live/killed corpus through this, and it must be able to open EVERY schema
+    the deriver can dispatch on -- the 54M-row legacy corpora are schema 1 --
+    while the generator's ``--resume`` must refuse the same manifest.  The
+    row-schema gate is a statement about APPENDING to a corpus, so it lives in
+    :func:`load_resume_manifest`; what belongs to every reader is that the
+    record hashes its own ``config_requested``.
+    """
+    manifest_path = out_dir / MANIFEST_NAME
+    if not manifest_path.exists():
+        raise ValueError(f"{manifest_path} does not exist")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stored = str(manifest.get("config_sha256", ""))
+    recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
+    if recomputed != stored:
+        raise ValueError(
+            f"{manifest_path} is inconsistent with itself: config_sha256 is "
+            f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
+            "The record of what produced the banked rows has been altered, and "
+            "anything validated against it would prove nothing.",
+        )
+    return manifest
+
+
 def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
     """The manifest a ``--resume`` continues, or a refusal.
 
@@ -3197,15 +4068,34 @@ def load_resume_manifest(out_dir: Path) -> dict[str, Any]:
                 "true: that run completed and wrote its summary. Nothing to "
                 "resume; use a new --out-dir.",
             )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    stored = str(manifest.get("config_sha256", ""))
-    recomputed = stamp_sha256(dict(manifest.get("config_requested", {})))
-    if recomputed != stored:
+    manifest = read_launch_manifest(out_dir)
+    # ⚑ THE ROW SCHEMA IS A REFUSAL HERE, AT THE MANIFEST, not a KeyError
+    # somewhere inside a worker. The per-row check in the cache re-warm fires
+    # only for a worker that HAS shards; a worker whose progress file holds
+    # nothing but zero-row completion records re-warms nothing, passes, and
+    # appends schema-2 rows beside the other workers' schema-1 shards -- one
+    # corpus, two row shapes, and a manifest that describes only the first.
+    # `run` calls this before it archives any record and before any worker
+    # is dispatched, so a refused resume leaves the directory untouched.
+    banked_schema = manifest.get("row_schema")
+    if banked_schema == ROW_SCHEMA and manifest.get(KEY_HISTORY_REP_FIX) != HISTORY_REP_FIX:
         raise ValueError(
-            f"{manifest_path} is inconsistent with itself: config_sha256 is "
-            f"{stored!r} but its own config_requested hashes to {recomputed!r}. "
-            "The record of what produced the banked rows has been altered, and "
-            "a resume validated against it would prove nothing.",
+            f"--resume was given but {manifest_path} stamps "
+            f"{KEY_HISTORY_REP_FIX}={manifest.get(KEY_HISTORY_REP_FIX)!r} and "
+            f"this build encodes under {HISTORY_REP_FIX}; the banked input_keys "
+            "were hashed in another repetition-plane regime and cannot be "
+            "continued. Use a new --out-dir.",
+        )
+    if banked_schema != ROW_SCHEMA:
+        raise ValueError(
+            f"--resume was given but {manifest_path} was opened under row "
+            f"schema {banked_schema!r} and this build writes schema "
+            f"{ROW_SCHEMA}. A schema-1 row has no window to re-bank; a "
+            f"schema-{ROW_SCHEMA_HISTORY_WITHOUT_KEYS} row is a window without "
+            "search_key/input_key (never produced outside smoke runs) and has "
+            "nothing to re-warm the two-key cache from. Regenerate the corpus "
+            "(or repair it with a tool that adds the keys); use a new "
+            "--out-dir.",
         )
     return manifest
 
@@ -3254,6 +4144,7 @@ def refuse_resume_config_drift(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, fan out, merge and write ``summary.json``."""
+    apply_history_rep_fix()
     staircase = parse_staircase(str(args.staircase))
     if float(args.temp_high) <= 0.0 or float(args.temp_low) <= 0.0:
         raise ValueError(

@@ -161,6 +161,77 @@ def _write_shards(
 # ── lc0_control_train: the realized guard, and whether it is REACHED ──────────
 
 
+def test_the_history_identity_is_read_back_off_the_written_summary(
+    tmp_path: Path,
+) -> None:
+    """⚑ Fable (round 2 delta): ``corpus.history_identity`` off ``summary.json``
+    as ``main`` writes it, not only via ``history_identity_record``.  One
+    directory stamped history-aware (schema 3, ``zero_history: false``) and one
+    unstamped (the bare-FEN reading): refused without the flag, recorded as
+    mixed with it.
+    """
+    import zarr
+
+    zero = _write_shards(tmp_path / "zero", list(range(8)))
+    hist = _write_shards(tmp_path / "hist", list(range(8, 16)))
+    group = zarr.open_group(str(hist / "shard_000000.zarr"), mode="a")
+    group.attrs.update({"derive_corpus_row_schema": 3, "zero_history": False})
+    argv = [
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(zero), str(hist),
+        "--out-dir", str(tmp_path / "run"), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
+    ]
+    with pytest.raises(SystemExit, match="input-history identities"):
+        lc0_control_train.main(argv)
+    assert not (tmp_path / "run" / "summary.json").exists()
+
+    rc = lc0_control_train.main([*argv, "--allow-mixed-history"])
+    assert rc == 0
+    summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["corpus"]["history_identity"] == {
+        "row_schemas": ["1", "3"], "zero_history": [False, True],
+        "mixed_within": [], "unidentified": [], "mixed": True,
+        "allow_mixed_history": True,
+    }
+
+
+def test_a_partial_corpus_stamp_is_read_back_off_the_written_summary(
+    tmp_path: Path,
+) -> None:
+    """``corpus.partial_corpus`` off ``summary.json`` as ``main`` writes it:
+    a shard stamped ``corpus_complete: false`` is refused, and recorded with
+    ``--allow-partial-corpus``."""
+    import zarr
+
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    group = zarr.open_group(str(shards / "shard_000000.zarr"), mode="a")
+    group.attrs.update({
+        "corpus_complete": False, "corpus_run_finished_claim": False,
+        "corpus_shards_adopted": 3, "corpus_rows_claimed": 300, "corpus_rows_derived": 16,
+    })
+    argv = [
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(tmp_path / "run"), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
+    ]
+    with pytest.raises(SystemExit, match="PARTIAL corpus"):
+        lc0_control_train.main(argv)
+    assert not (tmp_path / "run" / "summary.json").exists()
+
+    rc = lc0_control_train.main([*argv, "--allow-partial-corpus"])
+    assert rc == 0
+    summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["corpus"]["partial_corpus"] == {
+        "incomplete_shards": {"rows/shard_000000.zarr": {
+            "run_finished_claim": False, "shards_adopted": 3,
+            "rows_claimed": 300, "rows_derived": 16, "derive_run_finalized": None,
+        }},
+        "partial": True, "allow_partial_corpus": True,
+    }
+
+
 def test_the_control_run_completes_and_writes_a_summary(tmp_path: Path) -> None:
     """Baseline. Without this the failure tests below cannot be told from a
     driver that always exits non-zero."""

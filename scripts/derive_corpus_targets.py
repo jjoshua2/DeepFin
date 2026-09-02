@@ -328,18 +328,32 @@ with no has-flag, so there is no way to emit such a row without inventing an
 outcome for it.  The count is in the summary because dropping them shifts the
 corpus's position mix and a consumer has to be able to see by how much.
 
-⚑⚑ ZERO HISTORY, AND IT IS MEASURED RATHER THAN ASSERTED
---------------------------------------------------------
-A corpus row is a FEN.  It carries ``game_id`` and ``ply``, but rows are banked
-only above ``MIN_BANKED_PIECES`` and only on a dedup MISS, so the plies of one
-game are not contiguous and the move stack cannot be rebuilt from the corpus
-alone.  ``encode_position`` on a ``chess.Board(fen)`` therefore fills history
-slot 0 and leaves slots 1..7 -- planes 13..103 -- ZERO, and every repetition
-plane with them.  That is the same blindness the frozen rulers score under, and
-it is a real difference from both production selfplay rows and the lc0 corpus,
-whose 8 frames are all real.  The summary stamps
-``history_slots_nonzero_max``, measured off the planes this run actually wrote,
-so the claim is a reading and not a comment.
+⚑⚑ HISTORY: SCHEMA 1 HAS NONE, SCHEMA 2 HAS ALL OF IT, AND WHICH ONE THIS RUN
+DERIVED IS MEASURED RATHER THAN ASSERTED
+-----------------------------------------------------------------------------
+**Schema 1** -- the 54M-row legacy corpus.  A row is a FEN.  It carries
+``game_id`` and ``ply``, but rows are banked only above ``MIN_BANKED_PIECES``
+and only on a dedup MISS, so the plies of one game are not contiguous and the
+move stack cannot be rebuilt from the corpus alone.  The encoder on a
+``chess.Board(fen)`` therefore fills history slot 0 and leaves slots 1..7 --
+planes 13..103 -- ZERO, and every repetition plane with them.  That is a real
+difference from both production selfplay rows and the lc0 corpus, whose 8
+frames are all real: measured 2026-09-01, the champion flips **46.5%** of its
+top-1 moves and loses **+20.2 cp** of regret between the two input
+distributions.
+
+**Schema 2** banks ``history_root_fen`` + ``history_uci`` -- the window from
+the last irreversible move (or the game start) to the row's position.
+:func:`board_from_row` replays it, so the board handed to the encoder has the
+same ``_stack`` live play hands it and all 8 frames, both castling states, the
+ep square and every repetition plane come out as they do in play.  ⚑ The replay
+must reproduce the row's own ``fen`` or the run STOPS: a silent fall back to the
+bare FEN would emit zero-history planes under a summary that claims otherwise.
+
+Which one a run derived is a READING, never a setting: ``row_schema_counts``
+off the rows, ``history_slots_filled_histogram`` and ``history_slots_nonzero_max``
+off the planes this run actually wrote, ``history_root_reason_counts`` off the
+windows.  A mixed corpus reports both, per row.
 
 ⚑⚑ TWO CORPUS RECORDS, AND A PARTIAL ONE IS NEVER SILENT
 ---------------------------------------------------------
@@ -398,6 +412,7 @@ import argparse
 import gzip
 import io
 import json
+import os
 import math
 import multiprocessing as mp
 import re
@@ -460,15 +475,55 @@ DERIVE_SCHEMA_BAKED_VALUE = 2
 #: alongside whatever else is named in ``--shards``, and the buffer hard-fails on
 #: mixed encoding identity -- so a per-run knob here would turn a typo into an
 #: unmergeable corpus, and a wrong-but-mergeable value into 146 planes fed to a
-#: 175-plane net.  Changing these is a code edit, deliberately.
-INPUT_HISTORY_ENCODING = "lc0_root_legacy_meta"
-INPUT_EXTRA_FEATURES = "v2_threats"
+#: 175-plane net.  Changing these is a code edit, deliberately -- and it is the
+#: GENERATOR's edit: the two names are imported from there, because the
+#: generator hashes the live-play tensor under them (``corpus.row_key``) and
+#: this tool re-encodes the reconstructed row under the same two and refuses a
+#: row whose hash differs.  Two spellings would be two chances to drift.
+INPUT_HISTORY_ENCODING = corpus.INPUT_HISTORY_ENCODING
+INPUT_EXTRA_FEATURES = corpus.INPUT_EXTRA_FEATURES
 
 #: The rows are encoded by TODAY's encoder, which applies the repetition-plane
 #: fix unconditionally.  Vacuous on a zero-history row (nothing can repeat) and
 #: stamped anyway, because it is replay IDENTITY: the same encoding name with a
 #: different flag is a different plane set and the buffer refuses to mix them.
-HISTORY_REP_FIX = True
+HISTORY_REP_FIX = corpus.HISTORY_REP_FIX
+
+#: Row schemas this tool can decode.  ⚑ NOT ``== corpus.ROW_SCHEMA``: schema 1
+#: is the 54M-row legacy corpus (a bare FEN per row, zero history) and schema 3
+#: banks the move window plus the two dedup keys.  Both are derivable and they
+#: encode DIFFERENTLY, so the set is explicit and the summary reports the mix
+#: (``row_schema_counts``) rather than a reader having to assume it.  ⚑ 2 is
+#: deliberately absent: see ``ROW_SCHEMA_HISTORY_WITHOUT_KEYS``.
+SUPPORTED_ROW_SCHEMAS: frozenset[int] = frozenset({1, 3})
+
+#: The bare-FEN schema.  A row without a ``schema`` key predates the field.
+ROW_SCHEMA_BARE_FEN = 1
+
+#: The schema that banks ``history_root_fen`` / ``history_uci`` AND the keys
+#: this tool verifies every row against (``input_key``).  In the ledger's and
+#: the spec's prose this shape is "schema 2"; in code it is 3.
+ROW_SCHEMA_HISTORY = 3
+
+#: A window WITHOUT ``search_key``/``input_key`` -- the shape one intermediate
+#: build wrote, never produced outside smoke runs.  Refused by name with a
+#: message that says what to do, rather than falling through to a KeyError on
+#: the missing key (review round 2, Fable F2 / Grok B2).  ⚑ VERIFIED
+#: 2026-09-01: schema 2 never produced an accepted corpus -- every persistent
+#: corpus manifest (run02, run02_snap_20260829, run03, run04, run05) reads
+#: ``row_schema: 1`` and no record anywhere stamps 2; the only schema-2 rows
+#: ever written were test fixtures and scratch output.  Refused, no
+#: compatibility carried.  Schema 1 stays READABLE; schema 3 is the only
+#: schema this generator WRITES.
+ROW_SCHEMA_HISTORY_WITHOUT_KEYS = corpus.ROW_SCHEMA_HISTORY_WITHOUT_KEYS
+
+#: WHICH encoder wrote the planes, stamped rather than implied.  Two callable
+#: paths produce this plane set -- ``encode_position`` (python repetition scan,
+#: C plane packing) and ``encode_cboard(CBoard.from_board(...))`` (the call live
+#: search makes on its root) -- and the corpus is only interchangeable with
+#: production rows because a test pins them bit-identical.  See
+#: ``Deriver._encode``.
+ENCODER_NAME = "encode_position"
 
 #: 8192 rows x 175 planes x 64 squares of float16 is ~184 MB on disk, the same
 #: rotation ``lc0_data_to_rows`` uses for the same reason.
@@ -2188,6 +2243,121 @@ def game_value_targets(
     return targets, readings
 
 
+def regime_stamp_problem(stamp: object) -> str | None:
+    """Why ``stamp`` is not this tool's ``history_rep_fix`` regime, or ``None``.
+
+    ⚑ STRICT, not truthy (Grok round 3): ``bool("false")`` is ``True`` and
+    ``bool(1)`` is ``True``, so a truthiness compare read a hand-edited or
+    mis-serialized stamp as the right regime.  Only the boolean equal to
+    ``HISTORY_REP_FIX`` passes; ``None``, the other boolean, and any
+    non-boolean are each refused with their own name.
+    """
+    if stamp is None:
+        return "no stamp"
+    if not isinstance(stamp, bool):
+        return (
+            f"{stamp!r} ({type(stamp).__name__}) is not a boolean and so not a "
+            "regime claim"
+        )
+    if stamp != HISTORY_REP_FIX:
+        return f"{stamp!r} is the other repetition-plane regime"
+    return None
+
+
+def require_row_regime(row: Mapping[str, Any]) -> None:
+    """⚑ ON THE ROW PATH.  A schema-3 row's ``run.history_rep_fix`` must be
+    this tool's regime, or its ``input_key`` was hashed under planes this
+    tool never produces.  Called by ``_verify_input_key`` (every emitted
+    row, whoever the caller is) and by the driver's ``_check_row_identity``
+    (before the row is decoded) -- the first cut checked only in the driver,
+    so ``TargetDeriver.derive_row`` handed a row directly skipped it.
+    """
+    run = row.get("run")
+    stamp = run.get(corpus.KEY_HISTORY_REP_FIX) if isinstance(run, dict) else None
+    problem = regime_stamp_problem(stamp)
+    if problem is not None:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: run block {corpus.KEY_HISTORY_REP_FIX}="
+            f"{stamp!r}: {problem}; this tool encodes under {HISTORY_REP_FIX} "
+            "and the row's input_key cannot be verified",
+        )
+
+
+def row_schema_of(row: Mapping[str, Any]) -> int:
+    """The row's schema, and EXACTLY one of the two this tool derives.
+
+    ⚑ EXACT, NOT ORDERED (Grok P2-A, round 3).  The first cut dispatched on
+    ``schema < ROW_SCHEMA_HISTORY``, which sent a schema-2 row -- a banked
+    window WITHOUT keys -- down the bare-FEN path: no replay, no ``input_key``
+    check, window counted as empty, and the only thing standing between that
+    and a silent mis-derivation was ``_check_row_identity``'s by-name refusal
+    upstream.  Every consumer (``board_from_row``, ``_verify_input_key``,
+    ``_note_row_history``) now asks THIS, so no new caller, bypass or
+    monkeypatch can route a windowed row to the FEN path: 1 is bare FEN, 3 is
+    replay-and-verify, anything else is refused here with its name.
+    """
+    schema = int(row.get("schema", ROW_SCHEMA_BARE_FEN))
+    if schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is a history window "
+            "WITHOUT search_key/input_key (the keyless intermediate, never an "
+            "accepted corpus); it is not a bare-FEN row and cannot be verified "
+            f"as a schema-{ROW_SCHEMA_HISTORY} one. Regenerate under schema "
+            f"{ROW_SCHEMA_HISTORY} or repair with a tool that adds the keys.",
+        )
+    if schema not in SUPPORTED_ROW_SCHEMAS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is not one this tool "
+            f"derives ({ROW_SCHEMA_BARE_FEN}: bare FEN, {ROW_SCHEMA_HISTORY}: "
+            "banked window with keys)",
+        )
+    return schema
+
+
+def board_from_row(row: Mapping[str, Any]) -> chess.Board:
+    """The row's position, WITH the move stack the encoder reads history from.
+
+    Schema 1 has none to give: the row is a bare FEN, ``chess.Board(fen)`` has
+    an empty ``_stack``, and the encoder fills history slot 0 and leaves slots
+    1..7 and every repetition plane zero.  That is the legacy corpus and it is
+    still derivable; the summary reports the mix.
+
+    Schema 2 replays ``history_uci`` from ``history_root_fen``, which gives the
+    board exactly the ``_stack`` live play would have handed the encoder -- the
+    7 previous positions AND the reversible run behind them, which is what
+    python-chess's repetition scan and the C ``hash_stack`` both walk.
+
+    ⚑ THE REPLAY IS VERIFIED, NEVER TRUSTED.  A window that does not reproduce
+    the row's own ``fen`` is a corpus fault, and the only safe response is to
+    stop: a silent fall back to the bare FEN would emit a row whose planes are
+    the zero-history distribution while every stamp in the run says otherwise --
+    accepted, ignored, and invisible.  Both sides of the comparison are
+    python-chess's DEFAULT ``fen()`` (ep printed only when a capture is legal),
+    so the check is like-for-like even though the root itself is banked with
+    ``en_passant="fen"``.
+    """
+    fen = str(row["fen"])
+    if row_schema_of(row) == ROW_SCHEMA_BARE_FEN:
+        return chess.Board(fen)
+    root_fen = str(row["history_root_fen"])
+    try:
+        board = chess.Board(root_fen)
+        for uci in row["history_uci"]:
+            board.push(chess.Move.from_uci(str(uci)))
+    except (ValueError, AssertionError) as exc:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: the banked window does not replay from "
+            f"{root_fen!r}: {exc}",
+        ) from exc
+    if board.fen() != fen:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: replaying {len(list(row['history_uci']))} "
+            f"banked moves from {root_fen!r} gives {board.fen()!r}, not the "
+            f"row's own {fen!r}",
+        )
+    return board
+
+
 def history_slots_filled(planes: np.ndarray) -> int:
     """How many of the 8 history slots carry a piece.  MEASURED, per row.
 
@@ -2314,6 +2484,27 @@ class DeriveStats:
     #: ``{"0": n}`` whether or not the scheme could ever have looked deeper).
     phases_per_row: dict[int, int] = field(default_factory=dict)
     history_slots_nonzero_max: int = 0
+    #: ``{slots filled: rows}``, off the planes.  The max above says the best
+    #: any row managed; this says what the CORPUS is, which is the only way a
+    #: mixed schema-1/schema-2 derivation is visible instead of averaged away.
+    history_slots_filled_histogram: dict[int, int] = field(default_factory=dict)
+    #: ``{history_root_reason: rows}`` off the ROWS.  Empty on a schema-1
+    #: corpus, which is itself the reading.
+    history_root_reason_counts: dict[str, int] = field(default_factory=dict)
+    #: ``{row schema: rows}``, so "mixed" is a number rather than a guess.
+    row_schema_counts: dict[int, int] = field(default_factory=dict)
+    #: Rows whose banked window is EMPTY -- every schema-1 row, and a schema-3
+    #: row at a bare-FEN game's own ply 0.  Off the ROW (``history_plies``),
+    #: not off the planes.  ⚑ NOT what ``zero_history`` is read from: that
+    #: stamp is :func:`zero_history_reading`, off the planes' slot histogram,
+    #: on every emitted row; this counter is a cross-reading of the rows.
+    history_window_empty_rows: int = 0
+    #: ⚑ THE PER-ROW TAKE-EFFECT PROOF OF THE WHOLE CHAIN.  Every schema-2 row
+    #: banks ``input_key``, the hash of the tensor LIVE PLAY encoded for that
+    #: position when the generator visited it; this counts the rows whose
+    #: RECONSTRUCTED tensor hashed to the same value.  Must equal the schema-2
+    #: row count, and a row that disagrees stops the run.
+    input_key_verified: int = 0
     repetition_planes_nonzero_rows: int = 0
     temp_recovered_n: int = 0
     temp_recovered_min: float = math.inf
@@ -2567,6 +2758,17 @@ class DeriveStats:
                 str(k): v for k, v in sorted(self.phases_per_row.items())
             },
             "history_slots_nonzero_max": self.history_slots_nonzero_max,
+            "history_slots_filled_histogram": {
+                str(k): v for k, v in sorted(self.history_slots_filled_histogram.items())
+            },
+            "history_root_reason_counts": dict(
+                sorted(self.history_root_reason_counts.items()),
+            ),
+            "row_schema_counts": {
+                str(k): v for k, v in sorted(self.row_schema_counts.items())
+            },
+            "history_window_empty_rows": self.history_window_empty_rows,
+            "input_key_verified": self.input_key_verified,
             "repetition_planes_nonzero_rows": self.repetition_planes_nonzero_rows,
             "temp_recovered_from_emitted_policy": self._reading(
                 self.temp_recovered_n,
@@ -2726,6 +2928,9 @@ class DerivedRow:
 
     sample: ReplaySample
     facts: RowValueFacts
+    #: The corpus row's schema (``row_schema_of``), carried to the shard writer
+    #: so each shard can stamp its OWN identity at commit.
+    row_schema: int
 
 
 class TargetDeriver:
@@ -2816,17 +3021,31 @@ class TargetDeriver:
             policy[index] = float(prob)
             legal_mask[index] = 1
 
-        planes = self._encode(board)
-        self._note_shapes(planes, policy, probs, values)
-
+        # ⚑ THE LAST NON-FATAL RAISE FIRST. `_value_view` can raise
+        # `EnvelopeMiss`, which the caller may TOLERATE (the row is dropped and
+        # counted). Every IDENTITY counter below it must therefore run after
+        # it, or a dropped row is in `row_schema_counts`,
+        # `history_window_empty_rows` and `input_key_verified` while
+        # `rows_written` excludes it -- and `zero_history` on the shard could
+        # then read True on a history-aware corpus (Fable, round 2 delta).
+        # ⚑ Four counters ABOVE this line still see a dropped row, on purpose:
+        # `phases_per_row`, `nodes_floor_hits`, `support_checks`
+        # (`_check_support`) and the temp/floor recovery counters
+        # (`_note_recovery`). They are provenance histograms of what was READ,
+        # not of what was emitted, and no stamp is derived from them.
         value_values = self._value_view(bank, values)
         q_wdl = self.wdl_of(
             float(value_values.effective_cp[value_values.best_index]),
         )
+        z_index = wdl_target_from_result(float(row["result"]))
+
+        planes = self._encode(board)
+        self._verify_input_key(row, planes)
+        self._note_shapes(planes, policy, probs, values)
+        self._note_row_history(row)
         self.stats.note_value_depth(
             int(value_values.depth_by_move[value_values.best_index]),
         )
-        z_index = wdl_target_from_result(float(row["result"]))
         sample = ReplaySample(
             x=planes,
             policy_target=policy.astype(np.float32),
@@ -2855,6 +3074,7 @@ class TargetDeriver:
         return DerivedRow(
             sample=sample,
             facts=self._value_facts(row, bank, q_wdl=q_wdl, z_index=z_index),
+            row_schema=row_schema_of(row),
         )
 
     def _value_view(self, bank: RowBank, values: MoveValues) -> MoveValues:
@@ -3039,7 +3259,7 @@ class TargetDeriver:
         disagreement means the fields a consumer would filter on describe a
         different position from the one it would encode.
         """
-        board = chess.Board(str(row["fen"]))
+        board = board_from_row(row)
         stm = "w" if board.turn == chess.WHITE else "b"
         if stm != str(row["stm"]):
             raise CorpusIntegrityError(
@@ -3081,6 +3301,23 @@ class TargetDeriver:
         self.stats.support_checks += 1
 
     def _encode(self, board: chess.Board) -> np.ndarray:
+        """The row's planes.
+
+        ⚑ ``encode_position`` and NOT the C ``encode_cboard`` live-play path --
+        and that is a MEASURED equality rather than an assumption.
+        ``tests/test_corpus_history_banking.py`` asserts the complete
+        (175, 8, 8) tensor is bit-identical between this call and
+        ``encode_cboard(CBoard.from_board(board), ...)`` -- the exact call live
+        search makes on its root -- over every case the schema has to survive
+        (short histories, castling, ep including the pseudo-legal-only kind,
+        irreversible moves inside the window, 2- and 3-fold repetitions
+        including one whose earlier occurrence is more than 7 plies back).  The
+        two paths differ in WHERE repetition is computed (python
+        ``_check_repetitions`` here, the C per-slot flags there), which is
+        exactly why the equality is pinned by a test instead of argued from the
+        source.  ``ENCODER_NAME`` is stamped in the summary so a run says which
+        one it used.
+        """
         return np.asarray(
             encode_position(
                 board,
@@ -3090,6 +3327,60 @@ class TargetDeriver:
             ),
             dtype=np.float32,
         )
+
+    def _verify_input_key(self, row: Mapping[str, Any], planes: np.ndarray) -> None:
+        """⚑⚑ THE ROW'S OWN PROOF that the reconstruction reached the encoder.
+
+        A schema-2 row carries ``input_key``, the hash of the tensor LIVE PLAY
+        encoded for this position when the generator visited it (the C
+        ``encode_cboard(CBoard.from_board(...))`` call).  The planes just
+        produced from the banked window, through THIS tool's python encoder,
+        must hash to the same value -- one hash function
+        (``corpus.input_tensor_key``), two encoders, every row.  A disagreement
+        is a corpus fault (a window that replays to the right FEN but a
+        different history, an encoder that drifted from the C path) and the
+        run stops rather than emit a plausible tensor nothing vouches for.
+        """
+        if row_schema_of(row) == ROW_SCHEMA_BARE_FEN:
+            return
+        require_row_regime(row)
+        if "input_key" not in row:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)}: a schema-{ROW_SCHEMA_HISTORY} row with no "
+                "input_key; the generator banks one on every row, so this row "
+                "was not written by it",
+            )
+        want = str(row["input_key"])
+        got = corpus.input_tensor_key(planes)
+        if got != want:
+            raise CorpusIntegrityError(
+                f"{_row_label(row)}: the reconstructed input hashes to {got}, "
+                f"not the banked input_key {want}; the planes this row would "
+                "train on are not the planes live play encoded for it",
+            )
+        self.stats.input_key_verified += 1
+
+    def _note_row_history(self, row: Mapping[str, Any]) -> None:
+        """The row's SCHEMA and window reason, counted once per EMITTED row.
+
+        ⚑ Emitted, not derived: called after the last tolerated raise in
+        ``derive_row``, so a row the envelope drops is never in THESE counts
+        (nor in ``input_key_verified``).  The provenance histograms above that
+        raise -- ``phases_per_row``, ``nodes_floor_hits``, ``support_checks``,
+        the recovery counters -- still count it; see ``derive_row``.
+        """
+        stats = self.stats
+        schema = row_schema_of(row)
+        stats.row_schema_counts[schema] = stats.row_schema_counts.get(schema, 0) + 1
+        window = 0 if schema == ROW_SCHEMA_BARE_FEN else int(row["history_plies"])
+        if window == 0:
+            stats.history_window_empty_rows += 1
+        reason = row.get("history_root_reason")
+        if reason is not None:
+            key = str(reason)
+            stats.history_root_reason_counts[key] = (
+                stats.history_root_reason_counts.get(key, 0) + 1
+            )
 
     def _note_shapes(
         self,
@@ -3124,8 +3415,10 @@ class TargetDeriver:
             else min(stats.policy_support_min, support)
         )
         stats.policy_support_max = max(stats.policy_support_max, support)
-        stats.history_slots_nonzero_max = max(
-            stats.history_slots_nonzero_max, history_slots_filled(planes),
+        filled = history_slots_filled(planes)
+        stats.history_slots_nonzero_max = max(stats.history_slots_nonzero_max, filled)
+        stats.history_slots_filled_histogram[filled] = (
+            stats.history_slots_filled_histogram.get(filled, 0) + 1
         )
         rep_planes = planes[
             [slot * _PLANES_PER_SLOT + _PIECE_PLANES_PER_SLOT
@@ -3147,7 +3440,7 @@ class TargetDeriver:
 # -- driving ------------------------------------------------------------------
 
 
-def _row_label(row: dict[str, Any]) -> str:
+def _row_label(row: Mapping[str, Any]) -> str:
     return f"game {row.get('game_id')} ply {row.get('ply')}"
 
 
@@ -3165,14 +3458,54 @@ def read_corpus_summary(corpus_dir: Path) -> dict[str, Any]:
 
 
 def _check_row_schema(facts: Mapping[str, Any], *, source: Path) -> None:
-    """Both records stamp ``row_schema``, and both are checked the same way."""
+    """Both records stamp ``row_schema``, and both are checked the same way.
+
+    ⚑ Against ``SUPPORTED_ROW_SCHEMAS``, not against this build's
+    ``corpus.ROW_SCHEMA``.  The staircase block keys -- which are all this tool
+    reads out of a row besides the position -- are unchanged between 1 and 2;
+    what schema 2 ADDS is the move window, and :func:`board_from_row` is what
+    branches on it.  Pinning to the newest schema instead would make a
+    generator-side bump un-derive 54M banked rows for no reason.
+    """
     row_schema = int(facts.get("row_schema", -1))
-    if row_schema != corpus.ROW_SCHEMA:
+    if row_schema == ROW_SCHEMA_HISTORY:
+        # ⚑ THE REGIME, BY NAME. A schema-3 corpus hashed every input_key
+        # under the generator's repetition-plane regime; this tool encodes
+        # under HISTORY_REP_FIX, and a corpus made under the other one (or
+        # one that does not say) would fail the per-row verification on its
+        # first repeat-outside-the-frames row -- a true refusal with a
+        # misleading message. Refused here, at the record, with the cause.
+        stamp = facts.get(corpus.KEY_HISTORY_REP_FIX)
+        if stamp is None:
+            raise CorpusIntegrityError(
+                f"corpus row schema {row_schema} (read from {source.name}) "
+                f"carries no {corpus.KEY_HISTORY_REP_FIX} stamp; a schema-"
+                f"{ROW_SCHEMA_HISTORY} record names the repetition-plane regime "
+                "its input_keys were hashed under, and without it nothing says "
+                "whether this tool can reproduce them",
+            )
+        problem = regime_stamp_problem(stamp)
+        if problem is not None:
+            raise CorpusIntegrityError(
+                f"corpus {corpus.KEY_HISTORY_REP_FIX} is {stamp!r} (read from "
+                f"{source.name}): {problem}; this tool encodes under "
+                f"{HISTORY_REP_FIX} and the banked input_keys cannot be "
+                "reproduced under it",
+            )
+    if row_schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
         raise CorpusIntegrityError(
-            f"corpus row schema {row_schema} != this build's "
-            f"{corpus.ROW_SCHEMA} (read from {source.name}); the block keys "
-            "this tool reads are not promised to mean the same thing across a "
-            "schema bump",
+            f"corpus row schema {row_schema} (read from {source.name}) is a "
+            "history window WITHOUT input_key/search_key -- a shape never "
+            "produced outside smoke runs, and one this tool cannot verify row "
+            "by row. Regenerate the corpus under schema "
+            f"{ROW_SCHEMA_HISTORY}, or repair it with a tool that adds the keys.",
+        )
+    if row_schema not in SUPPORTED_ROW_SCHEMAS:
+        raise CorpusIntegrityError(
+            f"corpus row schema {row_schema} is not one of "
+            f"{sorted(SUPPORTED_ROW_SCHEMAS)} (read from {source.name}); the "
+            "block keys this tool reads are not promised to mean the same "
+            "thing across a schema bump",
         )
 
 
@@ -3237,11 +3570,31 @@ class CorpusRecord:
     #: Shard files on disk that the snapshot does not name: every live worker's
     #: in-flight shard, plus anything a kill left unlisted.  Counted, not read.
     unlisted_on_disk: tuple[str, ...]
+    #: What ``summary.json`` STATES in ``run_finished`` (``None``: it states
+    #: nothing -- a legacy summary, or no summary at all).  ⚑ A summary can
+    #: say ``false``: a repair run with ``--shards``/``--workers`` writes one
+    #: for a corpus it did not finish, and before this field the deriver read
+    #: "summary exists" as "complete" and derived it silently (#498 rebase).
+    run_finished: bool | None = None
 
     @property
     def complete(self) -> bool:
-        """Whether the record itself claims the run FINISHED."""
+        """Whether the RECORD is the finished kind (``summary.json``).
+
+        ⚑ The record kind, not the corpus's completeness: a summary that says
+        ``run_finished: false`` is still the summary record (its realized
+        stamps are real).  :attr:`corpus_complete` is the corpus's claim.
+        """
         return self.mode == CORPUS_RECORD_SUMMARY
+
+    @property
+    def corpus_complete(self) -> bool:
+        """Whether the corpus is WHOLE: the summary record, and it does not
+        say ``run_finished: false``.  A legacy summary without the key is
+        whole (the generator's own ``summary_run_finished`` contract: silence
+        is not "no"); ``manifest+progress`` is a partial read by definition.
+        """
+        return self.complete and self.run_finished is not False
 
     def detail(self) -> dict[str, Any]:
         """The stamp that makes a partial derivation visibly partial."""
@@ -3252,7 +3605,9 @@ class CorpusRecord:
                 else f"{corpus.MANIFEST_NAME} + {len(self.progress_files)} "
                      f"{PROGRESS_GLOB}"
             ),
-            "run_finished": self.complete,
+            "run_finished": self.corpus_complete,
+            "run_finished_claim": self.run_finished,
+            "corpus_complete": self.corpus_complete,
             "shards_adopted": len(self.shards),
             "rows_claimed_by_inventory": self.rows_claimed,
             "progress_files_read": list(self.progress_files),
@@ -3303,6 +3658,7 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
             progress_files=(),
             torn_tail_files=(),
             unlisted_on_disk=(),
+            run_finished=corpus.summary_run_finished(summary),
         )
     return read_partial_corpus_record(corpus_dir)
 
@@ -3310,7 +3666,7 @@ def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
 def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
     """``manifest.json`` + ``w*.progress.jsonl``: a corpus that has not ended.
 
-    ⚑ THE INTEGRITY CHECK IS THE GENERATOR'S OWN.  ``load_resume_manifest``
+    ⚑ THE INTEGRITY CHECK IS THE GENERATOR'S OWN.  ``read_launch_manifest``
     already refuses a manifest whose ``config_sha256`` does not hash its own
     ``config_requested``, and that refusal is exactly the one this path needs:
     the cp map, the staircase and the row-identity join key all come out of that
@@ -3338,14 +3694,70 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
             f"its run has written {corpus.SUMMARY_NAME}.",
         )
     try:
-        # ⚑ IMPORTED, not mirrored: this is the generator's own refusal.
-        manifest: dict[str, Any] = corpus.load_resume_manifest(corpus_dir)
+        # ⚑ IMPORTED, not mirrored: this is the generator's own refusal. And
+        # the READER's half only -- `load_resume_manifest` also refuses any
+        # manifest whose row schema this build would not APPEND to, which is
+        # right for a resume and wrong here: the legacy schema-1 corpora are
+        # exactly what this tool must keep opening (review round 2, #498).
+        # Row-schema dispatch is per row (`_check_row_identity`) plus the
+        # record check below.
+        manifest: dict[str, Any] = corpus.read_launch_manifest(corpus_dir)
     except ValueError as exc:
         raise CorpusIntegrityError(
             f"{manifest_path} cannot be trusted as this corpus's record: {exc}",
         ) from exc
     _check_row_schema(manifest, source=manifest_path)
 
+    inventory = read_progress_inventory(corpus_dir)
+    if not inventory.shards:
+        raise CorpusIntegrityError(
+            f"{corpus_dir}'s progress files name no shards at all (only "
+            "game-completion records). No CLOSED shard exists yet, so there is "
+            "nothing to derive from.",
+        )
+    return CorpusRecord(
+        mode=CORPUS_RECORD_PARTIAL,
+        facts=manifest,
+        shards=inventory.shards,
+        rows_claimed=inventory.rows_claimed,
+        shard_rows=inventory.shard_rows,
+        progress_files=inventory.progress_files,
+        torn_tail_files=inventory.torn_tail_files,
+        unlisted_on_disk=inventory.unlisted_on_disk,
+    )
+
+
+@dataclass(frozen=True)
+class ProgressInventory:
+    """⚑ THE CANONICAL READING of ``w*.progress.jsonl``: which shards are
+    COMPLETE (listed by a progress record, present on disk) and which shard
+    files are IN FLIGHT (on disk, listed by nothing -- a worker is appending
+    to them, or a kill caught them mid-write).  Importable so every consumer
+    (this tool, ``scripts/lc0_control_train.py``'s launch guards, the legacy
+    repair of #498) reads the inventory through ONE function rather than
+    re-implementing the progress-record grammar (review round 2, gate B).
+    """
+
+    #: The complete shards, in name order, resolved BESIDE the progress file.
+    shards: tuple[Path, ...]
+    #: The rows each progress record claims, aligned with ``shards``.
+    shard_rows: tuple[int, ...]
+    rows_claimed: int
+    progress_files: tuple[str, ...]
+    torn_tail_files: tuple[str, ...]
+    #: Shard files on disk that no record lists: the in-flight ones.
+    unlisted_on_disk: tuple[str, ...]
+
+
+def read_progress_inventory(corpus_dir: Path) -> ProgressInventory:
+    """Read every worker's progress file once; see :class:`ProgressInventory`.
+
+    Refuses (``CorpusIntegrityError``) a progress file damaged anywhere but its
+    torn final line, a shard listed twice across workers, and a listed shard
+    missing from disk.  Does NOT refuse an inventory with zero complete shards:
+    that is a reading (a run that has not closed a shard yet), and the caller
+    decides whether it can work with it.
+    """
     progress_paths = sorted(corpus_dir.glob(PROGRESS_GLOB))
     if not progress_paths:
         raise CorpusIntegrityError(
@@ -3403,22 +3815,14 @@ def read_partial_corpus_record(corpus_dir: Path) -> CorpusRecord:
             claimed_rows[name] = int(record["rows"])
             rows_claimed += int(record["rows"])
 
-    if not listed:
-        raise CorpusIntegrityError(
-            f"{corpus_dir}'s progress files name no shards at all (only "
-            "game-completion records). No CLOSED shard exists yet, so there is "
-            "nothing to derive from.",
-        )
     unlisted = tuple(
         path.name for path in corpus_shard_paths(corpus_dir)
         if path.name not in listed
     )
-    return CorpusRecord(
-        mode=CORPUS_RECORD_PARTIAL,
-        facts=manifest,
+    return ProgressInventory(
         shards=tuple(listed[name] for name in sorted(listed)),
-        rows_claimed=rows_claimed,
         shard_rows=tuple(claimed_rows[name] for name in sorted(listed)),
+        rows_claimed=rows_claimed,
         progress_files=tuple(path.name for path in progress_paths),
         torn_tail_files=tuple(torn),
         unlisted_on_disk=unlisted,
@@ -3559,6 +3963,26 @@ def enforce_take_effect(options: DeriveOptions, stats: DeriveStats) -> None:
             )
     enforce_value_depth_take_effect(options, stats)
     enforce_value_scheme_take_effect(options, stats)
+    enforce_input_key_take_effect(stats)
+
+
+def enforce_input_key_take_effect(stats: DeriveStats) -> None:
+    """⚑ Every history row was VERIFIED against its ``input_key`` -- checked.
+
+    ``input_key_verified`` is published in the summary, and a published count
+    nobody compares is the accepted-then-ignored shape (Grok D5, review round
+    2): a build that stopped calling ``_verify_input_key`` would derive a clean
+    corpus, stamp ``input_key_verified: 0`` and pass.  So the count is held to
+    the number of ``ROW_SCHEMA_HISTORY`` rows here, before the summary exists.
+    """
+    expected = int(stats.row_schema_counts.get(ROW_SCHEMA_HISTORY, 0))
+    if stats.input_key_verified != expected:
+        raise CorpusIntegrityError(
+            f"input_key_verified is {stats.input_key_verified} but the run "
+            f"derived {expected} schema-{ROW_SCHEMA_HISTORY} row(s); the per-row "
+            "input verification did not run on every history row, so nothing "
+            "vouches for the planes these shards hold.",
+        )
 
 
 def enforce_value_depth_take_effect(
@@ -3758,9 +4182,11 @@ def derive(
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[dict[str, Any]] = []
     pending: list[ReplaySample] = []
+    pending_schemas: list[int] = []
     shard_index = 0
     tt_carried: set[bool] = set()
     grouper = GameGrouper(deriver) if options.needs_game else None
+    identity = CommitIdentity.of(record)
 
     def emit(batch: GameBatch | None) -> None:
         """Take a batch's rows into ``pending`` and cut full shards off it.
@@ -3772,20 +4198,27 @@ def derive(
         241-row-oversized shard, and two arms of the value round would then
         differ in their shard layout as well as in their targets.
         """
-        nonlocal pending, shard_index
+        nonlocal pending, pending_schemas, shard_index
         if batch is None or not batch.rows:
             return
-        pending.extend(apply_value_scheme(
+        produced = apply_value_scheme(
             batch.rows,
             options=options,
             stats=deriver.stats,
             banked_tail_ply=batch.banked_tail_ply,
-        ))
+        )
+        pending.extend(produced)
+        pending_schemas.extend(_row_schemas_of(batch.rows, produced))
         while len(pending) >= options.rows_per_shard:
             chunk = pending[: options.rows_per_shard]
-            written.append(_flush(out_dir, shard_index, chunk, options, rng, corpus_sha))
+            chunk_schemas = pending_schemas[: options.rows_per_shard]
+            written.append(_flush(
+                out_dir, shard_index, chunk, options, rng, corpus_sha,
+                schemas=chunk_schemas, identity=identity,
+            ))
             deriver.stats.rows_written += len(chunk)
             pending = pending[options.rows_per_shard :]
+            pending_schemas = pending_schemas[options.rows_per_shard :]
             shard_index += 1
 
     for path in shards:
@@ -3846,7 +4279,10 @@ def derive(
             options.limit and deriver.stats.rows_read >= options.limit,
         )))
     if pending:
-        written.append(_flush(out_dir, shard_index, pending, options, rng, corpus_sha))
+        written.append(_flush(
+            out_dir, shard_index, pending, options, rng, corpus_sha,
+            schemas=pending_schemas, identity=identity,
+        ))
         deriver.stats.rows_written += len(pending)
     if not written:
         raise CorpusIntegrityError(
@@ -3856,6 +4292,7 @@ def derive(
         )
 
     enforce_take_effect(options, deriver.stats)
+    _stamp_realized_row_schema(out_dir, written, deriver.stats, record)
     out = build_summary(
         options=options,
         stats=deriver.stats,
@@ -4208,9 +4645,16 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
     by hand.
     """
     schema = int(row.get("schema", -1))
-    if schema != corpus.ROW_SCHEMA:
+    if schema == ROW_SCHEMA_HISTORY_WITHOUT_KEYS:
         raise CorpusIntegrityError(
-            f"{_row_label(row)}: row schema {schema} != {corpus.ROW_SCHEMA}",
+            f"{_row_label(row)}: row schema {schema} is a history window "
+            "WITHOUT input_key/search_key -- never produced outside smoke "
+            f"runs. Regenerate under schema {ROW_SCHEMA_HISTORY} or repair.",
+        )
+    if schema not in SUPPORTED_ROW_SCHEMAS:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: row schema {schema} is not one of "
+            f"{sorted(SUPPORTED_ROW_SCHEMAS)}",
         )
     run = row.get("run")
     if not isinstance(run, dict) or corpus.KEY_TT_CARRIED not in run:
@@ -4219,6 +4663,8 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
             f"{corpus.KEY_TT_CARRIED}; the derived shards could not disclose "
             "whether these searches shared a transposition table",
         )
+    if schema == ROW_SCHEMA_HISTORY:
+        require_row_regime(row)
     row_sha = str(run["config_sha256"])
     if corpus_sha and row_sha != corpus_sha:
         raise CorpusIntegrityError(
@@ -4228,6 +4674,92 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
     return bool(run[corpus.KEY_TT_CARRIED])
 
 
+@dataclass(frozen=True)
+class CommitIdentity:
+    """The run-level facts every shard must carry AT COMMIT, known before the
+    first row is derived: the corpus's own completeness claim and inventory.
+    Everything else on the shard's identity is shard-local and computed from
+    the rows being written (``_shard_identity``)."""
+
+    corpus_complete: bool
+    corpus_run_finished_claim: bool | None
+    corpus_shards_adopted: int
+    corpus_rows_claimed: int
+    corpus_record_row_schema: int
+
+    @classmethod
+    def of(cls, record: CorpusRecord) -> CommitIdentity:
+        return cls(
+            corpus_complete=record.corpus_complete,
+            corpus_run_finished_claim=record.run_finished,
+            corpus_shards_adopted=len(record.shards),
+            corpus_rows_claimed=int(record.rows_claimed),
+            corpus_record_row_schema=int(record.facts["row_schema"]),
+        )
+
+
+def _row_schemas_of(rows: Sequence[DerivedRow], produced: Sequence[ReplaySample]) -> list[int]:
+    """The row schemas aligned with ``produced``.  ⚑ ``apply_value_scheme`` is
+    1:1 and order-preserving; checked here rather than assumed, because a
+    misaligned schema list would stamp the wrong identity on a shard."""
+    if len(rows) != len(produced):
+        raise CorpusIntegrityError(
+            f"apply_value_scheme returned {len(produced)} samples for "
+            f"{len(rows)} derived rows; the per-row schemas cannot be aligned",
+        )
+    return [int(row.row_schema) for row in rows]
+
+
+def _shard_identity(
+    arrs: Mapping[str, np.ndarray], schemas: Sequence[int], identity: CommitIdentity,
+) -> dict[str, Any]:
+    """⚑⚑ THE SHARD'S OWN HISTORY IDENTITY, from the rows being written.
+
+    Operator ruling (#497 round 3): identity is stamped AT COMMIT, never
+    supplied by an end-of-run pass.  A shard flushed while the derivation was
+    still running, or before it died, used to carry no identity at all and
+    the launcher read that absence as legacy schema-1 zero-history -- a
+    history-aware shard admitted as a valid legacy one.  So every key the
+    launcher decides on is computed HERE from this shard's rows and planes:
+
+    * ``derive_corpus_row_schema`` / ``_counts`` -- from the per-row schemas
+      the deriver carried with the samples;
+    * ``zero_history`` -- MEASURED off ``x``: no row in this shard fills more
+      than history slot 0 (``history_slots_filled``), not a counter that
+      could default;
+    * the regime, the format marker, the committed state, the run-level
+      finalization flag (``False`` until the end pass), and the corpus's
+      completeness claim and inventory.
+    """
+    x = np.asarray(arrs["x"])
+    if x.shape[0] != len(schemas):
+        raise CorpusIntegrityError(
+            f"shard holds {x.shape[0]} rows and {len(schemas)} row schemas; "
+            "the identity cannot be stamped from a misaligned list",
+        )
+    counts: dict[str, int] = {}
+    for schema in schemas:
+        counts[str(int(schema))] = counts.get(str(int(schema)), 0) + 1
+    filled_max = max((history_slots_filled(np.asarray(row)) for row in x), default=0)
+    return {
+        "derive_identity_format": DERIVE_IDENTITY_FORMAT,
+        "derive_state": DERIVE_STATE_COMMITTED,
+        "derive_run_finalized": False,
+        "derive_corpus_row_schema": (
+            int(next(iter(counts))) if len(counts) == 1 else ROW_SCHEMA_MIXED
+        ),
+        "derive_corpus_row_schema_counts": dict(sorted(counts.items())),
+        "derive_corpus_record_row_schema": identity.corpus_record_row_schema,
+        "zero_history": filled_max <= 1,
+        "history_slots_nonzero_max": int(filled_max),
+        "derive_history_rep_fix": HISTORY_REP_FIX,
+        "corpus_complete": identity.corpus_complete,
+        "corpus_run_finished_claim": identity.corpus_run_finished_claim,
+        "corpus_shards_adopted": identity.corpus_shards_adopted,
+        "corpus_rows_claimed": identity.corpus_rows_claimed,
+    }
+
+
 def _flush(
     out_dir: Path,
     index: int,
@@ -4235,6 +4767,9 @@ def _flush(
     options: DeriveOptions,
     rng: np.random.Generator,
     corpus_sha: str,
+    *,
+    schemas: Sequence[int],
+    identity: CommitIdentity,
 ) -> dict[str, Any]:
     """Write one shard.  ``--seed`` permutes the rows inside it and nothing else.
 
@@ -4247,6 +4782,7 @@ def _flush(
     order = rng.permutation(len(samples))
     return _flush_ordered(
         out_dir, index, [samples[int(i)] for i in order], options, corpus_sha,
+        schemas=[int(schemas[int(i)]) for i in order], identity=identity,
     )
 
 
@@ -4256,6 +4792,9 @@ def _flush_ordered(
     ordered: list[ReplaySample],
     options: DeriveOptions,
     corpus_sha: str,
+    *,
+    schemas: Sequence[int],
+    identity: CommitIdentity,
 ) -> dict[str, Any]:
     """Write one shard whose row ORDER has already been decided.
 
@@ -4268,9 +4807,17 @@ def _flush_ordered(
     differ from a sequential one without any check noticing.
     """
     path = local_shard_path(out_dir, index)
+    # ⚑ WRITTEN UNDER A NAME NO READER GLOBS, stamped, verified, THEN renamed
+    # into place: the shard becomes externally visible as committed in one
+    # `os.replace`, already carrying its identity. A death anywhere before
+    # the rename leaves a `.writing` directory that `iter_shard_paths` (and
+    # the launcher) never sees.
+    writing = path.with_name(path.name + _WRITING_SUFFIX)
+    if writing.exists():
+        shutil.rmtree(writing)
     arrs = samples_to_arrays(ordered)
     save_local_shard_arrays(
-        path,
+        writing,
         arrs=arrs,
         meta=ShardMeta(
             run_id=SHARD_RUN_ID,
@@ -4281,8 +4828,12 @@ def _flush_ordered(
             positions=len(ordered),
         ),
     )
-    _stamp_shard_attrs(path, options, corpus_sha)
-    _verify_value_column_on_disk(path, arrs)
+    _stamp_shard_attrs(writing, options, corpus_sha)
+    zarr.open_group(str(writing), mode="a").attrs.update(
+        _shard_identity(arrs, schemas, identity),
+    )
+    _verify_value_column_on_disk(writing, arrs)
+    os.replace(writing, path)
     return {"path": path.name, "rows": len(ordered)}
 
 
@@ -4324,6 +4875,152 @@ def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> 
             )
 
 
+#: The realized row schema of a derivation whose rows came in more than one
+#: shape.  A string on purpose: a reader that does ``int(attrs[...])`` on a
+#: mixed shard fails loudly instead of adopting one half's number.
+ROW_SCHEMA_MIXED = "mixed"
+#: ⚑ THE SHARD-IDENTITY FORMAT MARKER (operator ruling, #497 round 3).  Every
+#: shard this deriver COMMITS carries ``derive_identity_format`` and, in the
+#: same commit, its own history identity (``derive_corpus_row_schema``,
+#: ``derive_corpus_row_schema_counts``, ``zero_history``, the regime) and its
+#: state.  The launcher reads a shard with this marker and a missing identity
+#: as a FAULT, by name; only a shard with NO marker is a genuine legacy
+#: (pre-#497, bare-FEN) derivation.  Bump when the identity contract changes.
+DERIVE_IDENTITY_FORMAT = 1
+#: ``derive_state`` of a committed shard.  There is no other value on disk: a
+#: shard is written under a ``.writing`` name, stamped, verified and only then
+#: renamed into place, so an unrenamed one is invisible to every glob.
+DERIVE_STATE_COMMITTED = "committed"
+#: Suffix of a shard directory that is not yet committed.
+_WRITING_SUFFIX = ".writing"
+
+
+def zero_history_reading(stats: DeriveStats) -> bool:
+    """⚑ THE ONE ``zero_history`` READING, and it FAILS CLOSED (Grok round 3).
+
+    Off the planes: no emitted row filled more than history slot 0.  The
+    first cut read ``history_slots_nonzero_max <= 1`` -- a counter that
+    STARTS at 0, so a run whose slot reading never fired (``_note_shapes``
+    skipped, a refactor that moved it) stamped a history-aware corpus
+    ``zero_history: true``, exactly the answer that lets the launcher mix it
+    with bare-FEN shards.  Now the slot histogram must account for EVERY
+    emitted row before a reading is given; a histogram that does not is a
+    refusal by name, never a default.
+    """
+    noted = sum(stats.history_slots_filled_histogram.values())
+    if noted != stats.rows_written:
+        raise CorpusIntegrityError(
+            f"zero_history cannot be stamped: the history-slot reading fired "
+            f"on {noted} row(s) but {stats.rows_written} were written; a "
+            "shard stamped from an unread histogram would claim the bare-FEN "
+            "identity by default",
+        )
+    if not stats.history_slots_filled_histogram:
+        return True
+    return max(stats.history_slots_filled_histogram) <= 1
+
+
+def realized_row_schema(stats: DeriveStats) -> int | str:
+    """The schema the ROWS had: one integer, or ``"mixed"`` with the counts beside."""
+    schemas = sorted(stats.row_schema_counts)
+    if len(schemas) == 1:
+        return int(schemas[0])
+    return ROW_SCHEMA_MIXED
+
+
+def _stamp_realized_row_schema(
+    out_dir: Path, written: Sequence[Mapping[str, Any]], stats: DeriveStats,
+    corpus_record: CorpusRecord,
+) -> dict[str, Any]:
+    """Put what the rows WERE on every shard, once every row has been counted.
+
+    ⚑ THE SOURCE SCHEMA, READ OFF THE ROWS, and not this build's constant.  A
+    derived shard is routinely read on its own, far from its run summary, and
+    ``ShardMeta`` stamps only the encoding name and the rep-fix flag -- so
+    without these keys a shard of zero-history schema-1 derivations and a shard
+    of full-history schema-2 ones are indistinguishable at ingest and the replay
+    buffer would mix them silently (Fable review note 6, Codex P2).
+
+    * ``derive_corpus_row_schema`` -- the one schema every row had, or
+      ``"mixed"``;
+    * ``derive_corpus_row_schema_counts`` -- ``{schema: rows}``, so "mixed" is
+      a number;
+    * ``derive_corpus_record_row_schema`` -- what the corpus's own record
+      (summary or manifest) claimed, kept beside the reading so a disagreement
+      is visible on the shard;
+    * ``zero_history`` -- :func:`zero_history_reading`: off the PLANES, no
+      emitted row filled more than history slot 0, and refused rather than
+      defaulted when the slot histogram does not cover every emitted row.
+
+    ⚑ SUPERSEDED IN PART (operator ruling, #497 round 3): the four keys above
+    are now stamped PER SHARD AT COMMIT by :func:`_shard_identity`, from that
+    shard's own rows and planes, and this pass only ADDS the run-level facts
+    (``derive_run_*``, ``corpus_rows_derived``, ``derive_run_finalized``) and
+    cross-checks the committed identity against the run's counters.  A
+    derivation that dies before this pass leaves shards that are fully
+    identified and marked ``derive_run_finalized: false`` -- which the
+    launcher treats as a PARTIAL corpus, never as legacy.
+
+    Written after the last shard on BOTH the sequential and the parallel path,
+    from the same merged stats, so the two paths' ``.zattrs`` stay identical.
+    """
+    counts = {
+        str(k): int(v) for k, v in sorted(stats.row_schema_counts.items())
+    }
+    run_zero_history = zero_history_reading(stats)
+    # ⚑ THE RUN-LEVEL FACTS, ADDED. The identity itself was stamped by
+    # `_shard_identity` when each shard was committed, and this pass may not
+    # supply or overwrite it -- it CROSS-CHECKS it: the per-shard counts must
+    # sum to the run's, and the per-shard plane readings must agree with the
+    # run's. A disagreement is a writer fault and stops the run.
+    attrs = {
+        "derive_run_finalized": True,
+        "derive_run_row_schema": realized_row_schema(stats),
+        "derive_run_row_schema_counts": counts,
+        "derive_run_zero_history": run_zero_history,
+        "corpus_rows_derived": int(stats.rows_written),
+    }
+    summed: dict[str, int] = {}
+    shard_zero: list[bool] = []
+    # ⚑ ORDER: cross-check -> refuse -> ONLY THEN finalize (Grok/Fable round
+    # 5). The first cut stamped `derive_run_finalized: true` inside this loop
+    # and refused afterwards, so a writer-fault run died leaving shards the
+    # launcher read as finished. Nothing is written until every shard has
+    # passed every check below.
+    for entry in written:
+        group = zarr.open_group(str(out_dir / str(entry["path"])), mode="r")
+        committed = dict(group.attrs)
+        if committed.get("derive_state") != DERIVE_STATE_COMMITTED:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: derive_state {committed.get('derive_state')!r} "
+                "at finalization; every shard is committed with its identity",
+            )
+        record_schema = int(corpus_record.facts["row_schema"])
+        if int(committed.get("derive_corpus_record_row_schema", -1)) != record_schema:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: committed with corpus record row schema "
+                f"{committed.get('derive_corpus_record_row_schema')!r}, the "
+                f"record says {record_schema}",
+            )
+        for schema, n in dict(committed.get("derive_corpus_row_schema_counts", {})).items():
+            summed[str(schema)] = summed.get(str(schema), 0) + int(n)
+        shard_zero.append(bool(committed["zero_history"]))
+    if written and summed != counts:
+        raise CorpusIntegrityError(
+            f"the committed shards' row-schema counts {summed} do not sum to "
+            f"the run's {counts}; a shard was stamped from the wrong rows",
+        )
+    if written and all(shard_zero) != run_zero_history:
+        raise CorpusIntegrityError(
+            f"the committed shards read zero_history {shard_zero} but the run's "
+            f"reading is {run_zero_history}; the per-shard plane reading and "
+            "the run's disagree",
+        )
+    for entry in written:
+        zarr.open_group(str(out_dir / str(entry["path"])), mode="a").attrs.update(attrs)
+    return attrs
+
+
 def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> None:
     """Put the scheme, its parameters and the code schema ON the shard.
 
@@ -4350,7 +5047,12 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
         "derive_cp_slope": float(options.cp_slope),
         "derive_cp_draw_width": float(options.cp_draw_width),
         "derive_corpus_config_sha256": corpus_sha,
-        "derive_corpus_row_schema": corpus.ROW_SCHEMA,
+        # ⚑ NO row-schema key HERE. It used to stamp this build's
+        # `corpus.ROW_SCHEMA`, which claimed history-aware inputs on a shard
+        # derived from schema-1 bare-FEN rows (Codex review of PR #497). The
+        # realized schema is a READING off the rows, known only once every row
+        # is counted, so `_stamp_realized_row_schema` writes it at the end of
+        # the run -- and a shard without it is a run that died before then.
         # ⚑ ON THE SHARD, for the same reason `derive_floor` is: four arms of
         # the value round share a --scheme, a --temp and a --floor and differ
         # ONLY in what search_wdl holds. Without these two keys their shards are
@@ -4406,6 +5108,9 @@ def build_summary(
             # say which one it was would be indistinguishable from a whole one.
             "corpus_record": corpus_record.mode,
             "corpus_record_detail": corpus_record.detail(),
+            # ⚑ FIRST-CLASS: the summary record with `run_finished: false` is
+            # a partial corpus too, and the detail block alone buried that.
+            "corpus_complete": corpus_record.corpus_complete,
             "config_sha256": facts.get("config_sha256"),
             # ⚑ A manifest has no top-level run_id; both records carry it inside
             # config_requested, and the summary's own top-level copy is read
@@ -4413,7 +5118,11 @@ def build_summary(
             "run_id": facts.get(
                 "run_id", (facts.get("config_requested") or {}).get("run_id"),
             ),
-            "row_schema": corpus.ROW_SCHEMA,
+            # ⚑ THE RECORD'S stamp, and beside it what the ROWS were. The first
+            # cut wrote this build's `corpus.ROW_SCHEMA` here, which read 2 on
+            # a schema-1 corpus (Fable review, finding 1).
+            "row_schema": int(facts["row_schema"]),
+            "row_schema_realized": realized_row_schema(stats),
             "staircase_parsed": facts.get("staircase_parsed"),
             # Passed THROUGH, from the rows themselves rather than the summary:
             # a consumer must not mistake these for independent searches.
@@ -4455,11 +5164,20 @@ def build_summary(
             "input_extra_features": INPUT_EXTRA_FEATURES,
             "history_rep_fix": HISTORY_REP_FIX,
             "history_frames_total": _HISTORY_SLOTS,
-            "zero_history": stats.history_slots_nonzero_max <= 1,
+            "encoder": ENCODER_NAME,
+            # ⚑ A READING OFF THE PLANES, not a property of the schema. A
+            # schema-2 corpus whose windows were dropped somewhere between the
+            # generator and here reads `true` and says so. Same reading as the
+            # shard stamp, and it refuses rather than defaults.
+            "zero_history": zero_history_reading(stats),
             "why_zero_history": (
-                "a corpus row is a FEN; banked plies are non-contiguous "
-                "(dedup misses above MIN_BANKED_PIECES only) so the move stack "
-                "cannot be rebuilt, and encode_position fills slot 0 only"
+                "row schema 1: a row is a bare FEN, chess.Board(fen) has an "
+                "empty move stack, and the encoder fills history slot 0 only "
+                "-- slots 1..7 (planes 13..103) and every repetition plane stay "
+                "ZERO. Row schema 2 banks history_root_fen + history_uci and "
+                "board_from_row replays them, so the 8 frames are the frames "
+                "live play encodes; see row_schema_counts and "
+                "history_slots_filled_histogram for which this run derived"
             ),
         },
         "policy": {
@@ -4809,7 +5527,9 @@ def format_summary(out: dict[str, Any]) -> str:
         _value_scheme_line(out),
         f"x planes={realized['x_planes']} policy width={realized['policy_width']} "
         f"support {realized['policy_support_min']}..{realized['policy_support_max']} "
-        f"history slots filled<={realized['history_slots_nonzero_max']}",
+        f"history slots filled<={realized['history_slots_nonzero_max']} "
+        f"{realized.get('history_slots_filled_histogram', {})} "
+        f"row schemas={realized.get('row_schema_counts', {})}",
         f"shards={len(out['shards'])}",
     ]
     return "\n".join(lines)
@@ -5015,6 +5735,8 @@ _SUM_FIELDS: tuple[str, ...] = (
     "deep_tier_moves",
     "base_tier_moves",
     "value_depth_moved_rows",
+    "history_window_empty_rows",
+    "input_key_verified",
     "repetition_planes_nonzero_rows",
     "temp_recovery_skipped_saturated",
     "floor_recovery_skipped_few_values",
@@ -5042,7 +5764,8 @@ _MAX_FIELDS: tuple[str, ...] = (
 #: ``{bucket: count}`` histograms, merged key by key.
 _DICT_SUM_FIELDS: tuple[str, ...] = (
     "depth_histogram", "values_by_phase", "phases_per_row",
-    "value_depth_histogram",
+    "value_depth_histogram", "history_slots_filled_histogram",
+    "history_root_reason_counts", "row_schema_counts",
 )
 
 #: Assigned (not accumulated) per row, so every row writes the same value and a
@@ -5423,7 +6146,17 @@ def _same_column(before: np.ndarray, after: np.ndarray) -> bool:
     )
 
 
-def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
+def _schemas_path(chunk_path: Path) -> Path:
+    """The per-row schema sidecar of a spill chunk.  ⚑ A SIDECAR, not a column:
+    the shard schema has no per-row provenance field, and ``ShardMeta`` refuses
+    unknown keys, so the schemas ride beside the chunk under the same index and
+    are sliced with the same ``[lo, hi)`` the repack takes from the rows."""
+    return chunk_path.with_name(chunk_path.name + ".schemas.json")
+
+
+def _write_spill_chunk(
+    path: Path, samples: list[ReplaySample], *, schemas: Sequence[int],
+) -> None:
     """Bank one run of surviving rows, and PROVE the banking is lossless.
 
     ⚑⚑ THE ROUND TRIP IS CHECKED HERE, ON EVERY CHUNK, and it is the whole
@@ -5448,6 +6181,10 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
     ⚑ COMPARED BY :func:`_same_column`, NOT ``np.array_equal`` -- see there for
     what that buys and for the reviewer premise it declines.
     """
+    if len(schemas) != len(samples):
+        raise ParallelDeriveError(
+            f"{path.name}: {len(schemas)} row schemas for {len(samples)} rows",
+        )
     want = samples_to_arrays(samples)
     save_local_shard_arrays(
         path,
@@ -5460,6 +6197,9 @@ def _write_spill_chunk(path: Path, samples: list[ReplaySample]) -> None:
             policy_size=COMPACT_POLICY_SIZE,
             positions=len(samples),
         ),
+    )
+    _schemas_path(path).write_text(
+        json.dumps([int(s) for s in schemas]), encoding="utf-8",
     )
     stored, _ = load_shard_arrays(path, lazy=False)
     got = samples_to_arrays(arrays_to_samples(dict(stored)))
@@ -5496,6 +6236,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         carry_in = _carry_in_key(task.shards, span.lo)
 
     buffered: list[ReplaySample] = []
+    buffered_schemas: list[int] = []
     chunk_rows: list[int] = []
     survivors = 0
     tt_carried: set[bool] = set()
@@ -5506,9 +6247,10 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     # overflow predicate and the next worker's skip predicate both name it.
     range_end_key: tuple[int, int] | None = None
 
-    def cut(rows: list[ReplaySample]) -> None:
+    def cut(rows: list[ReplaySample], schemas: list[int]) -> None:
         _write_spill_chunk(
             _spill_path(task.spill_dir, task.index, len(chunk_rows)), rows,
+            schemas=schemas,
         )
         chunk_rows.append(len(rows))
         bank.drain()
@@ -5524,10 +6266,12 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             banked_tail_ply=batch.banked_tail_ply,
         )
         buffered.extend(produced)
+        buffered_schemas.extend(_row_schemas_of(batch.rows, produced))
         survivors += len(produced)
         while len(buffered) >= options.spill_chunk_rows:
-            cut(buffered[:options.spill_chunk_rows])
+            cut(buffered[:options.spill_chunk_rows], buffered_schemas[:options.spill_chunk_rows])
             del buffered[:options.spill_chunk_rows]
+            del buffered_schemas[:options.spill_chunk_rows]
 
     stop = False
     for shard_index in range(span.lo, task.shards_in_play):
@@ -5613,7 +6357,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         # game did, flushes ``False`` -- the game ended, the budget did not.
         emit(grouper.flush(cut_by_limit=bool(limit and max_gidx + 1 >= limit)))
     if buffered:
-        cut(list(buffered))
+        cut(list(buffered), list(buffered_schemas))
         buffered.clear()
 
     bank.drain()
@@ -5657,6 +6401,7 @@ class _RepackTask:
     corpus_sha: str
     out_dir: Path
     spill_dir: Path
+    identity: CommitIdentity
 
 
 def _slice_arrays(arrs: dict[str, Any], lo: int, hi: int) -> dict[str, np.ndarray]:
@@ -5676,11 +6421,18 @@ def _slice_arrays(arrs: dict[str, Any], lo: int, hi: int) -> dict[str, np.ndarra
 def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     """Rebuild one output shard's rows and write it through the sequential writer."""
     samples: list[ReplaySample] = []
+    schemas: list[int] = []
     for part in task.slices:
-        arrs, _ = load_shard_arrays(
-            _spill_path(task.spill_dir, part.worker, part.chunk), lazy=False,
-        )
+        chunk_path = _spill_path(task.spill_dir, part.worker, part.chunk)
+        arrs, _ = load_shard_arrays(chunk_path, lazy=False)
         samples.extend(arrays_to_samples(_slice_arrays(dict(arrs), part.lo, part.hi)))
+        chunk_schemas = json.loads(_schemas_path(chunk_path).read_text(encoding="utf-8"))
+        schemas.extend(int(s) for s in chunk_schemas[part.lo:part.hi])
+    if len(schemas) != len(samples):
+        raise ParallelDeriveError(
+            f"shard {task.index}: the repack assembled {len(samples)} rows and "
+            f"{len(schemas)} row schemas from the spill sidecars",
+        )
     order = np.asarray(task.order)
     if order.shape != (len(samples),):
         raise ParallelDeriveError(
@@ -5691,6 +6443,7 @@ def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     ordered = [samples[int(i)] for i in order]
     return _flush_ordered(
         task.out_dir, task.index, ordered, task.options, task.corpus_sha,
+        schemas=[schemas[int(i)] for i in order], identity=task.identity,
     )
 
 
@@ -6109,6 +6862,7 @@ def derive_parallel(
                 corpus_sha=corpus_sha,
                 out_dir=out_dir,
                 spill_dir=spill_dir,
+                identity=CommitIdentity.of(record),
             )
             for index, plan in enumerate(plans)
         ]
@@ -6118,6 +6872,7 @@ def derive_parallel(
     stats.rows_written = _check_rows_written(written, survivors)
 
     enforce_take_effect(options, stats)
+    _stamp_realized_row_schema(out_dir, written, stats, record)
     out = build_summary(
         options=options,
         stats=stats,
