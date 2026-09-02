@@ -131,11 +131,6 @@ def _trial_server_dirs(*, server_root: Path, trial_id: str) -> dict[str, Path]:
 _is_tmp_shard_name = is_tmp_shard_name
 _PENDING_DIR_NAME = PENDING_DIR_NAME
 _IN_FLIGHT_DIR_NAME = IN_FLIGHT_DIR_NAME
-# Server's post-flush archive dir (``inbox_root / "_compacted"`` in app.py).
-# Unlike per-user upload dirs it is continuously appended while retaining old
-# shards, so its own mtime is always fresh — the mtime-gate fast path below
-# must NOT short-circuit it or its old shards never age out.
-_COMPACTED_DIR_NAME = "_compacted"
 
 
 def _iter_shard_paths_nested(root: Path) -> list[Path]:
@@ -219,9 +214,10 @@ def _prune_processed_shards(
 ) -> int:
     """Delete processed shards older than *max_age_seconds*.
 
-    Returns the number of files deleted. Per-user-dir mtime gate skips
-    walking subtrees whose newest entry is younger than the cutoff —
-    O(n_users) stat calls instead of O(n_total_shards) on long runs.
+    Returns the number of shard paths deleted. Every processed directory must
+    be inspected: adding a new shard refreshes the parent directory mtime but
+    does not refresh older children, so parent mtime cannot prove that all
+    shards inside are younger than the cutoff.
     """
     if max_age_seconds <= 0 or not processed_dir.is_dir():
         return 0
@@ -237,13 +233,6 @@ def _prune_processed_shards(
         if user_dir.name == _PENDING_DIR_NAME:
             continue
         try:
-  # If the user-dir's own mtime is fresh, every shard inside is
-  # also fresh (mtime is updated on add). Skip the per-shard scan.
-  # The ``_compacted`` archive is exempt: it is continuously appended
-  # while retaining old shards, so its mtime is always fresh and this
-  # short-circuit would leak its aged-out shards forever.
-            if user_dir.name != _COMPACTED_DIR_NAME and user_dir.stat().st_mtime >= cutoff:
-                continue
             entries = list(user_dir.iterdir())
         except FileNotFoundError:
             continue
