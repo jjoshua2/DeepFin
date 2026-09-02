@@ -812,7 +812,6 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         if closure is not None:
             with torch.enable_grad():
                 loss = closure()
-        self._step_cursor = None
         try:
             self._step_groups()
         except OptimizerStepFailed:
@@ -824,6 +823,12 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                 f"{type(exc).__name__}: {exc}",
                 location=location,
             ) from exc
+        finally:
+  # ⚑ Cleared on EVERY exit, not just at entry: the cursor holds the last
+  # bucket, whose `grad.detach()` views keep that group's grad storages
+  # alive across the next forward/backward (review measured 20 grads /
+  # 40 KB on a toy inventory). The failure path has already rendered it.
+            self._step_cursor = None
         return loss
 
     @torch.no_grad()
@@ -840,7 +845,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             if use_aurora:
                 uw_ratios: list[Tensor] = []
                 uw_scales: list[Tensor] = []
-                pending_updates: list[tuple[Tensor, Tensor]] = []
+                pending_updates: list[tuple[int, Tensor, Tensor]] = []
                 finite_checks: list[Tensor] = []
                 momentum = float(group.get("aurora_momentum", 0.95))
                 nesterov = bool(group.get("aurora_nesterov", True))
@@ -946,13 +951,16 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                                 )
                     if self._coalesce_finite_checks:
                         finite_checks.append(torch.isfinite(update).all())
-                        pending_updates.append((param, update))
+                        pending_updates.append((param_index, param, update))
                     else:
                         param.add_(update, alpha=-lr)
                 if self._coalesce_finite_checks and finite_checks:
                     if not torch.stack(finite_checks).all():
                         raise RuntimeError("Aurora produced a non-finite matrix update")
-                    for param_index, (param, update) in enumerate(pending_updates):
+  # `param_index` is the position in `group["params"]`, carried rather than
+  # re-enumerated: `pending_updates` is dense (no-grad params skipped), so a
+  # fresh enumerate would name a different tensor than the scan above.
+                    for param_index, param, update in pending_updates:
                         self._step_cursor = ("aurora", group_index, param_index, param)
                         param.add_(update, alpha=-lr)
                 if collect_uw_stats:

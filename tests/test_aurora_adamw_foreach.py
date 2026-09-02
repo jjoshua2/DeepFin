@@ -1273,6 +1273,63 @@ def test_an_untracked_failure_is_wrapped_at_the_trainer_boundary_with_no_retry(
     assert trainer.step == 0
 
 
+def test_a_non_runtime_error_from_the_optimizer_is_wrapped_with_no_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review MA: the trainer boundary is `except Exception`, not
+    `except RuntimeError`. A `ValueError` raised straight out of the instance
+    `step` -- no CUDA text, not a RuntimeError, so neither the retry nor a
+    RuntimeError-only wrap would touch it -- still leaves as
+    `OptimizerStepFailed` with the cause attached and the index filled."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    injected = ValueError("param group 3 has no lr")
+
+    def raw_step(closure: object = None) -> None:
+        del closure
+        raise injected
+
+    monkeypatch.setattr(trainer.opt, "step", raw_step)
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    exc = excinfo.value
+    assert retries == []
+    assert exc.__cause__ is injected
+    assert exc.step_index == 1
+    assert exc.location is None
+    assert trainer.step == 0
+
+
+def test_the_step_cursor_is_cleared_after_a_healthy_step_and_after_a_failure() -> None:
+    """Review MD: a cursor left holding the last bucket keeps that group's
+    grad views alive across the next forward/backward. Cleared on every exit
+    of `step`, healthy or not."""
+    params = _make_params()
+    opt = AuroraWithAuxAdam(
+        [{"params": params, "lr": _LR, "weight_decay": 0.03, "use_aurora": False}],
+    )
+    for param, grad in zip(params, _grads_for_step(params, 0)):
+        param.grad = None if grad is None else grad.clone()
+    opt.step()
+    assert opt._step_cursor is None
+
+    real = torch._foreach_addcmul_
+
+    def broken(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("CUDA error: injected")
+
+    torch._foreach_addcmul_ = broken
+    try:
+        for param, grad in zip(params, _grads_for_step(params, 1)):
+            param.grad = None if grad is None else grad.clone()
+        with pytest.raises(OptimizerStepFailed) as excinfo:
+            opt.step()
+    finally:
+        torch._foreach_addcmul_ = real
+    assert excinfo.value.location is not None
+    assert opt._step_cursor is None
+
+
 def test_a_cuda_failure_before_the_optimizer_step_still_gets_the_retry(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
