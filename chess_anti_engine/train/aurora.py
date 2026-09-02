@@ -638,16 +638,18 @@ def _adamw_update_foreach(
   # denominator per tensor -- 165.6 MiB for the production 142-tensor group),
   # so an allocator `RuntimeError` fires HERE, after every moment in the bucket
   # has been decayed and accumulated and before any parameter has moved (the
-  # weight-decay `mul_` at the top excepted, when it is on). `Trainer.train_steps`
-  # retries a step whose error mentions "CUDA" and records the retry as clean,
-  # so left alone that retry would decay/accumulate the whole bucket's moments a
-  # SECOND time with the replacement batch's gradients -- the old loop had the
+  # weight-decay `mul_` at the top excepted, when it is on). Left alone, that
+  # would end the trial with a whole bucket's moments decayed/accumulated and no
+  # parameter stepped (`Trainer.train_steps` used to RETRY such a step and record
+  # it as clean, double-applying the moments; it now re-raises an optimizer-phase
+  # failure as `OptimizerStepFailed` above its retry) -- the old loop had the
   # same shape bounded to the one tensor it was on; batching widens it to the
   # bucket. Rather than reorder the kernels (a kernel change, which would need
   # its own phase-0b identity run), the failure is typed and `step` finishes the
   # bucket per tensor from the moments it already has: same ops, one
   # denominator at a time, bitwise the loop's result. Failures inside the
-  # in-place kernels are NOT recoverable this way and propagate unchanged.
+  # in-place kernels are NOT recoverable this way and propagate as
+  # `OptimizerStepFailed`, which the trainer does not retry.
     try:
         denoms = torch._foreach_sqrt(exp_avg_sqs)
     except RuntimeError as exc:

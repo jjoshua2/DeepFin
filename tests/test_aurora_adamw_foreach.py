@@ -697,7 +697,8 @@ def test_a_failure_inside_an_in_place_moment_kernel_is_not_recovered(
         assert torch.equal(opt.state[param]["exp_avg"], grad * (1.0 - _BETA1))
         assert torch.equal(opt.state[param]["exp_avg_sq"], torch.zeros_like(grad))
 
-  # The retry, as `Trainer.train_steps` would run it: a fresh batch.
+  # The retry, as `Trainer.train_steps` USED to run it (it no longer does;
+  # P2-3 below): a fresh batch straight into `opt.step()`.
     second_grads = _grads_for_step(opt_params, 1)
     for param, grad in zip(opt_params, second_grads):
         param.grad = None if grad is None else grad.clone()
@@ -1026,16 +1027,19 @@ def test_train_steps_sums_recoveries_over_the_window_not_the_last_step(
 def test_the_base_loop_had_the_same_retry_residue_param_major(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex P1 on the retry: the residue a mid-step CUDA error leaves for the
-    trainer's retry is not new in this PR -- the frozen per-parameter loop at
-    the PR base has the same CLASS of hazard, param-major instead of op-major.
+    """Codex P1 on the retry (PR #495): the residue a mid-step CUDA error
+    left for the trainer's then-existing retry was not new in that PR -- the
+    frozen per-parameter loop at its base had the same CLASS of hazard,
+    param-major instead of op-major. The trainer no longer retries an
+    optimizer-phase failure (P2-3 below); this pins the residue that decision
+    rests on, driving the reference loop directly.
 
     Inject a retryable error into the k-th tensor's `addcdiv_`. The base loop
     commits `step` BEFORE the tensor's ops, so it leaves: tensors < k fully
     stepped and committed; tensor k decayed, moments updated, `step` committed,
-    parameter NOT updated; tensors > k untouched. The trainer's retry then
-    double-steps everything at or below k and single-steps the rest, recorded
-    as one clean step. The PR's batched chain changes the SHAPE of that residue
+    parameter NOT updated; tensors > k untouched. A retry from there
+    double-steps everything at or below k and single-steps the rest, and the
+    old trainer recorded it as one clean step. The batched chain changes the SHAPE of that residue
     (whole bucket at one op) and, unlike the base, does NOT commit `step`
     before the update; it does not introduce the class.
     """
@@ -1077,7 +1081,7 @@ def test_the_base_loop_had_the_same_retry_residue_param_major(
             assert torch.equal(param.detach(), base[index].detach())
             assert param not in state
 
-  # The retry, as the trainer runs it: a replacement batch, one more loop.
+  # The retry, as the trainer used to run it: a replacement batch, one more loop.
     second = _grads_for_step(params, 1)
     for param, grad in zip(params, second):
         param.grad = None if grad is None else grad.clone()
