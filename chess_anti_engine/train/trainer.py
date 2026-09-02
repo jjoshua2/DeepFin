@@ -5228,8 +5228,7 @@ class Trainer:
                 raise
             except Exception as exc:
                 raise OptimizerStepFailed(
-                    f"optimizer step {failed_step_index} failed inside "
-                    f"{type(self.opt).__name__}.step(): {type(exc).__name__}: {exc}",
+                    f"inside {type(self.opt).__name__}.step(): {type(exc).__name__}: {exc}",
                     step_index=failed_step_index,
                 ) from exc
   # Unchanged boundaries: `opt_step_time_s` is still the wall clock of exactly

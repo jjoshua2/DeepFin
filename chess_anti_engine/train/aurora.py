@@ -541,12 +541,18 @@ class OptimizerStepFailed(RuntimeError):
     one in-optimizer recovery (`_DenominatorAllocationFailed`) completes
     INSIDE `step` and never reaches this.
 
-    `__cause__` is the original exception; `str()` keeps its text, so the
-    message still says "CUDA" when the cause did. `step_index` is the 1-based
-    index of the optimizer step that failed (filled in by the trainer, whose
-    counter it is) and `location` names the group / tensor / bucket the
+    `__cause__` is the original exception and `message` is its class and text,
+    so `str()` still says "CUDA" when the cause did. `step_index` is the
+    1-based index of the optimizer step that failed (filled in by the trainer,
+    whose counter it is) and `location` names the group / tensor / bucket the
     optimizer was on when it died, or is None when the failure came from
     somewhere the optimizer does not track (a wrapper, a foreign optimizer).
+
+    ⚑ `__str__` is rendered from the attributes at the time it is CALLED, not
+    from a string fixed at construction: the optimizer raises without knowing
+    the step index and the trainer fills it in afterwards, and what Ray prints
+    for a dead trial is `str(exc)` -- an index held only on an attribute would
+    never reach the failure output.
     """
 
     def __init__(
@@ -557,8 +563,13 @@ class OptimizerStepFailed(RuntimeError):
         location: str | None = None,
     ) -> None:
         super().__init__(message)
+        self.message = message
         self.step_index = step_index
         self.location = location
+
+    def __str__(self) -> str:
+        step = f"optimizer step {self.step_index}" if self.step_index is not None else "optimizer step"
+        return f"{step} failed at {self.location or 'an untracked point'}: {self.message}"
 
 
 _StepCursor = tuple[str, int, int, object]
@@ -819,11 +830,9 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         except OptimizerStepFailed:
             raise
         except Exception as exc:
-            location = _describe_step_cursor(self._step_cursor)
             raise OptimizerStepFailed(
-                f"optimizer step failed at {location or 'an untracked point'}: "
                 f"{type(exc).__name__}: {exc}",
-                location=location,
+                location=_describe_step_cursor(self._step_cursor),
             ) from exc
         finally:
   # ⚑ Cleared on EVERY exit, not just at entry: the cursor holds the last
@@ -958,6 +967,15 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         param.add_(update, alpha=-lr)
                 if self._coalesce_finite_checks and finite_checks:
                     if not torch.stack(finite_checks).all():
+  # The cursor is still on the LAST parameter of the scan; the offender is
+  # whichever check came back False. Found on the failure path only -- one
+  # sync per entry here costs nothing against a dying trial, and blaming
+  # the final tensor for an earlier one's NaN would send the post-mortem to
+  # the wrong matrix.
+                        for (param_index, param, _update), ok in zip(pending_updates, finite_checks):
+                            if not bool(ok):
+                                self._step_cursor = ("aurora", group_index, param_index, param)
+                                break
                         raise RuntimeError("Aurora produced a non-finite matrix update")
   # `param_index` is the position in `group["params"]`, carried rather than
   # re-enumerated: `pending_updates` is dense (no-grad params skipped), so a

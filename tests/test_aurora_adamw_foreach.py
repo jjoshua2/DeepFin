@@ -1334,6 +1334,63 @@ def test_the_step_cursor_is_cleared_after_a_healthy_step_and_after_a_failure() -
     assert opt._step_cursor is None
 
 
+def test_the_step_index_the_trainer_fills_in_reaches_the_rendered_message(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Codex P3: Ray prints `str(exc)`. The optimizer raises without the step
+    index and the trainer fills it in by attribute afterwards, so `__str__`
+    must render from the attributes at call time -- a message fixed at
+    construction would never carry the index to the failure output."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    calls = _raise_cuda_once(monkeypatch, "_foreach_addcmul_")
+    with pytest.raises(OptimizerStepFailed) as excinfo:
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+    exc = excinfo.value
+    assert calls == [0]
+    assert retries == []
+    text = str(exc)
+    assert text.startswith("optimizer step 1 failed at batched AdamW bucket 0 of group 2")
+    assert "RuntimeError: CUDA out of memory" in text
+  # Rendered at call time: the attribute IS the text.
+    exc.step_index = 77
+    assert str(exc).startswith("optimizer step 77 failed at ")
+  # And the optimizer alone, before the trainer touched it, renders no index.
+    fresh = OptimizerStepFailed("RuntimeError: x", location="somewhere")
+    assert str(fresh) == "optimizer step failed at somewhere: RuntimeError: x"
+
+
+def test_a_coalesced_finite_check_failure_names_the_offending_aurora_parameter() -> None:
+    """Codex P2: with coalesced finite checks the cursor sits on the LAST
+    Aurora parameter of the scan when the aggregate check raises. Two matrix
+    parameters, the FIRST one's update made non-finite: the location must
+    name parameter 0, not parameter 1."""
+    params = [
+        torch.nn.Parameter(torch.randn(8, 8)),
+        torch.nn.Parameter(torch.randn(8, 8)),
+    ]
+    for param in params:
+        param.grad = torch.randn_like(param)
+    opt = AuroraWithAuxAdam(
+        [{"params": params, "lr": _LR, "weight_decay": 0.0, "use_aurora": True}],
+        aurora_cuda_graphs=False,
+    )
+    assert opt._coalesce_finite_checks, "the default path is the one under test"
+    real_update = opt._aurora_update_for_param
+
+    def poisoned(param: Tensor, update: Tensor, **kwargs: Any) -> Tensor:
+        out = real_update(param, update, **kwargs)
+        return torch.full_like(out, float("nan")) if param is params[0] else out
+
+    opt._aurora_update_for_param = poisoned
+    with pytest.raises(OptimizerStepFailed, match="non-finite") as excinfo:
+        opt.step()
+    assert excinfo.value.location == (
+        "Aurora matrix parameter 0 of group 0 (shape (8, 8), torch.float32, cpu)"
+    )
+  # Nothing applied: the coalesced path holds every update until all pass.
+    assert all(p.grad is not None for p in params)
+
+
 def test_a_cuda_failure_before_the_optimizer_step_still_gets_the_retry(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
