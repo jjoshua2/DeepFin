@@ -196,6 +196,21 @@ def require_canonical(boards: list[chess.Board]) -> None:
         )
 
 
+def require_complete_cluster_scan(skipped_layout: dict[str, int]) -> None:
+    """Refuse cluster ids when any shard could hide a dependency edge."""
+    if not skipped_layout:
+        return
+    detail = ", ".join(
+        f"{layout}={count}" for layout, count in sorted(skipped_layout.items())
+    )
+    raise SystemExit(
+        "cannot produce complete game_cluster_id values after skipping replay "
+        f"shards with unscannable/wrong layouts ({detail}); use a uniform "
+        "snapshot or extend the scanner to recover candidate-game edges from "
+        "every layout",
+    )
+
+
 def _shard_layout(group: dict[str, Any]) -> tuple[str, int] | None:
     """(history encoding, plane count) of a shard, or None when it has no `x`."""
     if "x" not in group:
@@ -344,6 +359,13 @@ def main() -> None:
                 flush=True,
             )
     scan_seconds = time.time() - t0
+    # The selected history rows must use the frozen production layout, but the
+    # bootstrap component graph needs every possible audit-row/source-game
+    # edge. A skipped shard can duplicate one audit position and connect its
+    # unseen game to another audit row, so successful matches in the accepted
+    # subset do not make cluster ids complete. Fail before emitting an artifact
+    # that downstream code could mistake for statistically independent data.
+    require_complete_cluster_scan(skipped_layout)
     game_cluster_id, has_game_cluster_id = candidate_game_components(
         candidate_games,
         candidate_missing_game_id=candidate_missing_game_id,

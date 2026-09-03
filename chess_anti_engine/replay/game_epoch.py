@@ -38,7 +38,7 @@ from typing import Any
 import numpy as np
 
 from .disk_buffer import _concat_sparse_batches
-from .shard import densify_chunk, iter_shard_paths, load_shard_arrays
+from .shard import iter_shard_paths, load_shard_arrays
 
 
 DEFAULT_PLAN_WORKERS = 16
@@ -1009,20 +1009,22 @@ class GameAwareEpochBuffer:
             register(records[offset:offset + max(1, workers)])
 
     def _gather(self, selected: list[tuple[int, int]]) -> dict[str, np.ndarray]:
+        # load_shard_arrays allowlists the persisted dense _SHARD_FIELDS schema.
+        # Padded-sparse policies are private to DiskReplayBuffer's in-memory
+        # shuffle pool and cannot reach this path; densifying here would create
+        # an allocation that the metadata plan neither declares nor needs.
         by_chunk: dict[int, list[int]] = {}
         for chunk_id, row_index in selected:
             by_chunk.setdefault(int(chunk_id), []).append(int(row_index))
-        dense_parts: list[dict[str, np.ndarray]] = []
+        parts: list[dict[str, np.ndarray]] = []
         for chunk_id, indices in by_chunk.items():
             chunk = self._chunks[chunk_id]
-            sparse = _slice_epoch_arrays(
-                chunk.arrays, np.asarray(indices, dtype=np.int64),
+            parts.append(
+                _slice_epoch_arrays(
+                    chunk.arrays, np.asarray(indices, dtype=np.int64),
+                ),
             )
-            policy_size = int(np.asarray(
-                sparse.get("_policy_size", sparse["policy_target"].shape[1]),
-            ).item())
-            dense_parts.append(densify_chunk(sparse, policy_size=policy_size))
-        return _concat_sparse_batches(dense_parts)
+        return _concat_sparse_batches(parts)
 
     def sample_batch_arrays(
         self, batch_size: int, *, wdl_balance: bool = True,

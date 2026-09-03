@@ -24,6 +24,7 @@ emitted by `scripts/verify_audit_history_transform.py`). Tests never read
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -626,6 +627,51 @@ def test_require_canonical_accepts_the_real_audit_shape() -> None:
     import scripts.match_audit_rows as mar
 
     mar.require_canonical([chess.Board(f) for f in FENS])
+
+
+def test_cluster_scan_refuses_any_skipped_layout() -> None:
+    import scripts.match_audit_rows as mar
+
+    mar.require_complete_cluster_scan({})
+    with pytest.raises(SystemExit, match="cannot produce complete game_cluster_id"):
+        mar.require_complete_cluster_scan({"legacy/146p": 2, "no-x": 1})
+
+
+def test_match_audit_rows_skipped_layout_cannot_emit_cluster_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.match_audit_rows as mar
+
+    audit_path = tmp_path / "audit.jsonl"
+    audit_path.write_text(
+        json.dumps({
+            "key": mar.position_key(chess.Board()),
+            "fen": chess.STARTING_FEN,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "shard_000000.zarr").mkdir(parents=True)
+    out_path = tmp_path / "matched.npz"
+
+    monkeypatch.setattr(
+        mar,
+        "load_shard_arrays",
+        lambda _path, lazy: ({
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float16),
+            "_input_history_encoding": np.asarray("legacy"),
+        }, {}),
+    )
+    monkeypatch.setattr("sys.argv", [
+        "match_audit_rows.py",
+        "--audit-set", str(audit_path),
+        "--snapshot", str(snapshot),
+        "--out", str(out_path),
+    ])
+
+    with pytest.raises(SystemExit, match="cannot produce complete game_cluster_id"):
+        mar.main()
+    assert not out_path.exists()
 
 
 def test_board_fingerprint_separates_distinct_positions() -> None:
