@@ -643,7 +643,7 @@ def main() -> None:
         )
 
     model = load_model_from_checkpoint(
-        args.checkpoint,
+        checkpoint_path,
         device=args.device,
         require_complete=not args.methodology_smoke,
     )

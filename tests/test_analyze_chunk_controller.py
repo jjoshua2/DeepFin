@@ -245,6 +245,7 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert '"checkpoint_params"' in source
     assert source.index("initial_input_artifacts =") < source.index("load_audit_set(")
     assert source.index("initial_input_artifacts =") < source.index("MatchedAuditRows(")
+    assert "load_model_from_checkpoint(\n        checkpoint_path," in source
     assert module_source.index(
         "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
     ) < module_source.index("from chess_anti_engine.eval.audit import")
