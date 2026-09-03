@@ -73078,3 +73078,46 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - **Fail-closed amended launch**: `scratchpad/scale20m_g10/admit_train_36960.sh` first reruns every original summary and per-shard identity gate, replacing only the forecast interval with exact `rows_written == 18,910,484`; it refuses an existing output/start marker or any scripts/config drift from verified code `7032f252f`. Exact train command: `PYTHONPATH=. python3 -m scripts.lc0_control_train --config configs/lc0_positive_control.yaml --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --out-dir /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m --steps 36960 --seed 0 --allow-invalid-control --train-window-steps 88`. Post-gates require 36,960 realized steps, MID 18,480, seed 0, 61,444,448 unique parameters, unmixed schema-3 repaired history, non-partial corpus and both checkpoints. G10 remains live at nice 19; no arena may overlap training.
 
 **2026-09-02 21:00Z — 18.91M / 36,960-STEP TRAIN LAUNCHED from pushed amendment `ec7183bb2`; live, unread.** The amended audit passed exact 18,910,484 rows and all 2,309 per-shard identities before `train36960.started` was created. Preflight then confirmed 18,910,484/18,910,484 search-WDL coverage, all three architecture/trainer/replay pins, 2,309 staged shards and 61,444,448 trainable parameters. Detached session `scale20m-train36960`, driver/log `scratchpad/scale20m_g10/{admit_train_36960.sh,train36960_driver.log}`, output `runs/armB/qtemp_0.0005_hist_20m`; G10 remains live at nice 19. First two 88-step windows completed without error: warm/compile **82.221 s** (batch wait 43.641 s), first steady **63.256 s / 1.391 steps/s** (batch wait **43.007 s / 68.0%**). Initial 418-window remainder projects approximately 7.3 h if cadence holds. No scientific result has been read; arena remains barred during training.
+
+## 2026-09-03 — additive four-worker G10 companion
+
+**21:19:56Z PREREG — scale aggregate G10 generation from 12 to 16
+Stockfish workers without mutating the live run; no companion process or output
+directory exists at this line.** The primary `run06_g10` manifest freezes
+`workers=12`, and the generator deliberately refuses a resume with a changed
+worker count because worker allocation and RNG/dedup streams depend on it.
+Therefore the primary stays byte-for-byte untouched and a separate companion
+bank supplies the additional four lanes.
+
+- **Frozen companion configuration.** Generate 130,000 games into
+  `data/nnue_bootstrap/run07_g10_companion4` with four workers, seed 20260903,
+  run ID `nnue_bootstrap_run07_g10_companion4`, and the same verified G10 code,
+  Stockfish binary, `all:9,8:10,4:12` staircase, adaptive `g10` policy,
+  temperature schedule, 400-ply limit, 8,192-row shards, 2M per-worker dedup
+  cap, 64 MiB hash, timeouts, six-man Syzygy paths, cp-to-WDL mapping, and
+  production opening-book settings as `run06_g10`. Stockfish remains nice 19;
+  the trainer and interactive/system work retain normal-priority CPU service.
+- **Sizing and expected payoff.** At freeze time the primary's 707 closed
+  records held 5,870,314 rows from 29,904 games after 1.073 days: 5.472M
+  rows/day and 196.305 rows/game. Its measured remaining projection to 100M was
+  17.26 days. The companion targets about 25.52M rows at that realized yield;
+  ideal aggregate linear scaling projects the combined closed-shard inventory
+  reaching 100M in about 12.9 days, roughly 4.3 days earlier. This is a planning
+  estimate, not a throughput result; bank actual per-run and aggregate rates.
+- **Corpus identity and eventual 100M freeze.** The companion is additive data,
+  not an experimental arm and not a continuation of run06. Keep its manifest,
+  progress files, run ID, seed, game IDs, and shards separate. At the final
+  threshold, snapshot each run's closed-shard inventory independently using
+  the existing manifest+progress reader; never copy a live in-flight shard or
+  merge raw files under one manifest. Derivation/training must treat game
+  identity as `(source corpus, game_id)` so the two local game-ID namespaces do
+  not alias. Freeze the exact selected inventories and row count before the
+  one-pass no-replacement training schedule is planned.
+- **Operational gates.** Launch only if at least 150 GiB remains free (measured
+  626.3 GiB), the output/ops paths are absent, the verified G10 scripts/configs
+  still match commit `7032f252f`, all 12 primary Stockfish workers remain live,
+  and the active GPU trainer remains untouched. The companion driver owns its
+  own done/fail sentinels and is resumable only with these exact four-worker
+  settings. Stop and preserve resumable shards if free disk falls below 150
+  GiB, a worker fails, or a traceback appears. Its failure must not signal,
+  stop, or reconfigure the primary run.
