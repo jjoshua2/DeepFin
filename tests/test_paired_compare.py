@@ -42,6 +42,26 @@ def test_cluster_bootstrap_resamples_games_not_correlated_rows() -> None:
     assert game_hi >= 10.0
 
 
+def test_cluster_bootstrap_refuses_one_independent_game(tmp_path) -> None:
+    from scripts.paired_compare import load_dump, report
+
+    deltas = np.array([1.0, 2.0, 3.0])
+    clusters = np.array(["only-game"] * 3)
+    with pytest.raises(ValueError, match="at least two clusters"):
+        paired_cluster_bootstrap_ci(deltas, clusters)
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": f"p{i}", "value": float(i + 1), "game_id": 7}
+        for i in range(3)
+    ]), cluster_key="game_id")
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": f"p{i}", "value": 0.0, "game_id": 7}
+        for i in range(3)
+    ]), cluster_key="game_id")
+    with pytest.raises(SystemExit, match="cannot estimate variance"):
+        report(a, b, label_a="A", label_b="B", n_boot=100, cluster_key="game_id")
+
+
 def test_cluster_key_is_required_on_every_joinable_row(tmp_path) -> None:
     from scripts.paired_compare import load_dump
 

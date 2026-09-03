@@ -190,6 +190,10 @@ def main() -> None:
     n = len(positions)
     if not n:
         raise SystemExit("no positions left after min-pieces and matched-row filters")
+    # Resolve the cluster identity before loading a checkpoint. game_id() is
+    # fail-closed on legacy/masked artifacts, so a bad index cannot spend the
+    # GPU pass and then emit zero-filled game clusters.
+    game_ids = [matched.game_id(p.key) for p in positions]
     print(f"[set] n={n} (min_pieces>={args.min_pieces}, matched-only; "
           f"{matched.n_matched}/{matched.n_audit_rows} rows matched)")
 
@@ -227,7 +231,7 @@ def main() -> None:
         "value_batch": args.value_batch,
         "arm_encoding": {a: ARM_ENCODING[a] for a in arms},
         "key": [p.key for p in positions],
-        "game_id": [int(matched.game_id(p.key)) for p in positions],
+        "game_id": game_ids,
         "phase": [int(p.phase) for p in positions],
     }
     arms_out: dict[str, dict[str, object]] = {}

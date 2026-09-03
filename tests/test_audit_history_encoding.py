@@ -565,6 +565,44 @@ def test_score_audit_v2_refuses_an_arm_with_no_encoding() -> None:
         sa._require_encoding("v1_stm")
 
 
+def test_score_audit_v2_preflights_game_ids_before_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.score_audit_v2 as sa
+
+    class _Matched:
+        path = tmp_path / "matched.npz"
+        n_matched = 1
+        n_audit_rows = 1
+
+        def __contains__(self, key: object) -> bool:
+            return str(key) == "k"
+
+        def game_id(self, key: str) -> int:
+            assert key == "k"
+            raise SystemExit("no explicit game_id")
+
+    class _Position:
+        key = "k"
+        fen = chess.STARTING_FEN
+
+    def _model_must_not_load(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("masked game_id reached checkpoint loading")
+
+    monkeypatch.setattr(sa, "MatchedAuditRows", lambda _path: _Matched())
+    monkeypatch.setattr(sa, "load_audit_set", lambda _path: [_Position()])
+    monkeypatch.setattr(sa, "load_model_from_checkpoint", _model_must_not_load)
+    monkeypatch.setattr("sys.argv", [
+        "score_audit_v2.py", "--checkpoint", "unused.pt", "--label", "test",
+        "--audit-set", str(tmp_path / "audit.jsonl"),
+        "--matched-rows", str(tmp_path / "matched.npz"),
+        "--out", str(tmp_path / "out.json"), "--device", "cpu",
+    ])
+
+    with pytest.raises(SystemExit, match="no explicit game_id"):
+        sa.main()
+
+
 # ---------------------------------------------------------------------------
 # 6. match_audit_rows.require_canonical
 # ---------------------------------------------------------------------------

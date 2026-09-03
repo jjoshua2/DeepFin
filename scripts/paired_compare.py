@@ -99,8 +99,8 @@ def paired_cluster_bootstrap_ci(
     if deltas.shape != clusters.shape:
         raise ValueError("deltas and clusters must have the same shape")
     unique, inverse = np.unique(clusters, return_inverse=True)
-    if not len(unique):
-        raise ValueError("cluster bootstrap needs at least one cluster")
+    if len(unique) < 2:
+        raise ValueError("cluster bootstrap needs at least two clusters")
     sums = np.bincount(inverse, weights=deltas)
     counts = np.bincount(inverse)
     rng = np.random.default_rng(seed)
@@ -987,6 +987,13 @@ def report(
                 "describe the same clustered sample."
             )
         clusters = np.array([a.clusters[key] for key in common])
+        n_clusters = len(np.unique(clusters))
+        if n_clusters < 2:
+            raise SystemExit(
+                f"--cluster-key {cluster_key!r} produced only {n_clusters} "
+                "independent cluster; a bootstrap cannot estimate variance "
+                "or a significance verdict from one cluster"
+            )
         lo, hi = paired_cluster_bootstrap_ci(d, clusters, n_boot=n_boot)
         ci_label = f"95% {cluster_key}-cluster CI"
     else:
@@ -1022,8 +1029,15 @@ def report(
         if clusters is None:
             plo, phi = paired_bootstrap_ci(d[m], n_boot=n_boot)
         else:
+            phase_clusters = clusters[m]
+            phase_cluster_count = len(np.unique(phase_clusters))
+            if phase_cluster_count < 2:
+                print(f"  {name:11s} n={int(m.sum()):5d} "
+                      f"delta {d[m].mean():+.2f} "
+                      f"[CI unavailable: {phase_cluster_count} cluster]")
+                continue
             plo, phi = paired_cluster_bootstrap_ci(
-                d[m], clusters[m], n_boot=n_boot,
+                d[m], phase_clusters, n_boot=n_boot,
             )
         print(f"  {name:11s} n={int(m.sum()):5d} delta {d[m].mean():+.2f} "
               f"[{plo:+.2f} .. {phi:+.2f}]")

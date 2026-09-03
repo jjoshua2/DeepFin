@@ -187,6 +187,7 @@ def main() -> None:
     src_shard = ["" for _ in range(n)]
     src_row = np.full(n, -1, dtype=np.int64)
     src_game = np.full(n, -1, dtype=np.int64)
+    src_has_game = np.zeros(n, dtype=bool)
     src_ply = np.full(n, -1, dtype=np.int64)
     src_selfplay = np.full(n, -1, dtype=np.int64)
     dup_count = np.zeros(n, dtype=np.int64)
@@ -222,7 +223,9 @@ def main() -> None:
                     np.asarray(group[name][:]).reshape(-1)
                     if name in group else None
                 )
-                for name in ("game_id", "ply_index", "is_selfplay")
+                for name in (
+                    "game_id", "has_game_id", "ply_index", "is_selfplay",
+                )
             }
             decoded: dict[int, str | None] = {}
             for r in sorted({r for r, _ in cand}):
@@ -241,8 +244,16 @@ def main() -> None:
                 x_stored[ai] = xfull[r]
                 src_shard[ai] = path.name
                 src_row[ai] = r
+                game = cols["game_id"]
+                has_game = cols["has_game_id"]
+                if (
+                    game is not None
+                    and has_game is not None
+                    and bool(has_game[r])
+                ):
+                    src_game[ai] = int(game[r])
+                    src_has_game[ai] = True
                 for name, target in (
-                    ("game_id", src_game),
                     ("ply_index", src_ply),
                     ("is_selfplay", src_selfplay),
                 ):
@@ -314,6 +325,7 @@ def main() -> None:
         "audit_rows": n,
         "matched": int(found.sum()),
         "unmatched": int((~found).sum()),
+        "matched_rows_with_game_id": int(np.count_nonzero(found & src_has_game)),
         "shards_scanned": len(shards),
         "shards_skipped_wrong_layout": skipped_layout,
         "fingerprint_candidate_pairs": fp_hits,
@@ -352,7 +364,8 @@ def main() -> None:
         key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
         source=np.array([int(r["source"]) for r in audit]),
         src_shard=np.array(src_shard), src_row=src_row,
-        game_id=src_game, ply_index=src_ply, is_selfplay=src_selfplay,
+        game_id=src_game, has_game_id=src_has_game,
+        ply_index=src_ply, is_selfplay=src_selfplay,
         dup_count=dup_count,
         per_plane_nonzero_fen_only=per_plane_fen,
         per_plane_nonzero_stored=per_plane_stored,
