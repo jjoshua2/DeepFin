@@ -479,6 +479,7 @@ def test_sparse_ce_compact_logits_over_full_shard():
 
 def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
     from chess_anti_engine.train.losses import compute_loss
+    from chess_anti_engine.train.trainer import _EXACT_MASKED_METRIC_FIELDS
 
     logits, sparse_batch, params, dense = _sparse_ce_batch(
         use_logistic=False, smooth=0.01,
@@ -509,6 +510,19 @@ def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
         if k in ("sf_move_ce", "total"):
             continue
         assert torch.equal(base[k], flagged[k]), f"{k} changed under sparse CE"
+
+    # Sparse-only rows widen the final sf_move mask inside compute_loss.  The
+    # exact pooling denominator must use that realized mask, not the original
+    # all-zero dense-target flag; rows 0 and 1 are valid, row 2 is not.
+    sparse_only_batch = {**batch, "has_sf_policy": torch.zeros(n)}
+    sparse_only = compute_loss(
+        outputs,
+        sparse_only_batch,
+        sf_sparse_params=params,
+        report_exact_masked_sums=True,
+    )
+    _, exact_weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
+    assert float(sparse_only[exact_weight_key]) == 2.0
 
 
 def test_mirror_batch_arrays_mirrors_sparse_rows():

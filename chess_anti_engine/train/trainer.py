@@ -1998,6 +1998,45 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
     "wdl_terminal_outcome_rows": "wdl_terminal_outcome_rows",
 }
 
+# Exact-epoch-only masked diagnostics.  ``compute_loss`` emits these internal
+# numerator/denominator pairs only when the exact training path asks for them;
+# legacy training and holdout eval keep their established estimator.  The
+# ordinary whole-objective ``loss`` and unmasked ``channel_balance`` remain
+# weighted by realized batch rows through ``mean_weight``.
+_EXACT_MASKED_METRIC_FIELDS: dict[str, tuple[str, str]] = {
+    field: (f"_exact_{field}_sum", f"_exact_{field}_weight")
+    for field in (
+        "policy_loss",
+        "soft_policy_loss",
+        "future_policy_loss",
+        "wdl_loss",
+        "blended_wdl_loss",
+        "wdl_onehot_loss",
+        "sf_move_loss",
+        "sf_eval_loss",
+        "categorical_loss",
+        "volatility_loss",
+        "sf_volatility_loss",
+        "moves_left_loss",
+        "policy_loss_selfplay",
+        "policy_loss_curriculum",
+        "wdl_loss_selfplay",
+        "wdl_loss_curriculum",
+        "policy_loss_phase_open",
+        "policy_loss_phase_mid",
+        "policy_loss_phase_end",
+        "wdl_loss_phase_open",
+        "wdl_loss_phase_mid",
+        "wdl_loss_phase_end",
+        "frac_is_selfplay",
+        "frac_tagged",
+        "soft_mask_kept_frac",
+        "sf_search_agree_frac",
+        "sf_search_disagree_sf_low_frac",
+        "sf_search_disagree_sf_high_frac",
+    )
+}
+
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
 # ``_raw_count_metric_kwargs``. They are already SUMS over the batch's rows, so
 # they accumulate unweighted; every other scalar is a per-batch MEAN and must be
@@ -2007,7 +2046,8 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
 # the ratio.
 _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
     [key for pair in _RATIO_METRIC_FIELDS.values() for key in pair]
-    + list(_RAW_COUNT_METRIC_FIELDS.values()),
+    + list(_RAW_COUNT_METRIC_FIELDS.values())
+    + [key for pair in _EXACT_MASKED_METRIC_FIELDS.values() for key in pair],
 )
 
 
@@ -2196,6 +2236,17 @@ def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
             continue
         den = float(sums[den_key])
         out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
+    return out
+
+
+def _exact_masked_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Pool exact-epoch masked means by their own eligible observations."""
+    out: dict[str, float] = {}
+    for field, (sum_key, weight_key) in _EXACT_MASKED_METRIC_FIELDS.items():
+        if sum_key not in sums or weight_key not in sums:
+            continue
+        weight = float(sums[weight_key])
+        out[field] = float(sums[sum_key]) / weight if weight > 0.0 else 0.0
     return out
 
 
@@ -4393,6 +4444,52 @@ class Trainer:
                     )
                 yield self._host_batch_to_tensors(host_batch)
 
+    def _iter_training_batches(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """Training batches, serialized when exact replay owns a hard cap."""
+        if not bool(getattr(buf, "exact_without_replacement", False)):
+            if coverage is None:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                )
+            else:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                    coverage=coverage,
+                )
+            return
+
+        # The exact planner prices one materialized host batch at a time.  The
+        # ordinary prefetch path retains batch N while assembling N+1, so exact
+        # training deliberately gives up that overlap to keep the cap hard.
+        for _ in range(max(0, int(count))):
+            host_batch = self._sample_batch_host(
+                buf,
+                batch_size=batch_size,
+                mirror_prob=mirror_prob,
+                coverage=coverage,
+            )
+            device_batch = self._host_batch_to_tensors(host_batch)
+            del host_batch
+            yield device_batch
+            # A suspended generator retains its locals.  Drop the yielded
+            # mapping before constructing the next host batch; on CPU its
+            # tensors may alias the NumPy storage directly.
+            del device_batch
+
     def _full_pass_host_batch(
         self, buf: ReplayBuffer, *, start: int, stop: int,
         coverage: _SfRebuildCoverageAccumulator | None = None,
@@ -5102,7 +5199,7 @@ class Trainer:
         step_samples_seen = 0
         batches = batch_iter
         if batches is None:
-            batches = self._iter_prefetched_batches(
+            batches = self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
@@ -5126,7 +5223,14 @@ class Trainer:
                     _rel = batch.get("relations")
   # kwarg only when present: TinyNet's forward has no relations param.
                     out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
-                    losses = compute_loss(out, batch, **self._loss_kwargs)
+                    losses = compute_loss(
+                        out,
+                        batch,
+                        report_exact_masked_sums=bool(
+                            getattr(buf, "exact_without_replacement", False)
+                        ),
+                        **self._loss_kwargs,
+                    )
                     balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
@@ -5172,6 +5276,12 @@ class Trainer:
                     step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
             step_n_micro += 1
+            # Release the consumed tensor mapping before ``next(batches)`` asks
+            # the exact sampler to materialize another host batch.  Assignment
+            # evaluates its RHS first, so merely reusing the name on the next
+            # loop iteration would otherwise keep this batch alive throughout
+            # construction of its successor.
+            del batch, out, losses, loss, _rel
 
         step_opt_stats["samples_seen"] = float(step_samples_seen)
 
@@ -5349,7 +5459,7 @@ class Trainer:
         requested_steps = int(steps)
         effective_cycle_steps = max(1, requested_steps)
         batch_iter = _TrainBatchIterator(
-            lambda count: self._iter_prefetched_batches(
+            lambda count: self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
@@ -5586,6 +5696,11 @@ class Trainer:
                 ),
             },
         )
+        if bool(getattr(buf, "exact_without_replacement", False)):
+            metrics = dataclasses.replace(
+                metrics,
+                **_exact_masked_metric_kwargs(sums),
+            )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")

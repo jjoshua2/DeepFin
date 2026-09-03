@@ -654,13 +654,19 @@ def test_match_audit_rows_skipped_layout_cannot_emit_cluster_artifact(
     (snapshot / "shard_000000.zarr").mkdir(parents=True)
     out_path = tmp_path / "matched.npz"
 
+    def fake_load_shard_arrays(
+        _path: Path, *, lazy: bool,
+    ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+        del lazy
+        return ({
+            "x": np.zeros((1, 146, 8, 8), dtype=np.float16),
+            "_input_history_encoding": np.asarray("legacy"),
+        }, {})
+
     monkeypatch.setattr(
         mar,
         "load_shard_arrays",
-        lambda _path, lazy: ({
-            "x": np.zeros((1, 146, 8, 8), dtype=np.float16),
-            "_input_history_encoding": np.asarray("legacy"),
-        }, {}),
+        fake_load_shard_arrays,
     )
     monkeypatch.setattr("sys.argv", [
         "match_audit_rows.py",
@@ -693,7 +699,12 @@ def test_candidate_game_components_join_rows_through_every_possible_game() -> No
     import scripts.match_audit_rows as mar
 
     cluster, has_cluster = mar.candidate_game_components(
-        [{10, 20}, {20}, {30}, set()],
+        [
+            {("source-a", 10), ("source-a", 20)},
+            {("source-a", 20)},
+            {("source-b", 10)},
+            set(),
+        ],
         candidate_missing_game_id=np.array([False, False, False, False]),
         found=np.array([True, True, True, False]),
     )
@@ -706,10 +717,93 @@ def test_candidate_game_component_refuses_an_unidentified_possible_origin() -> N
     import scripts.match_audit_rows as mar
 
     cluster, has_cluster = mar.candidate_game_components(
-        [{10}, {10}],
+        [{("source-a", 10)}, {("source-a", 10)}],
         candidate_missing_game_id=np.array([True, False]),
         found=np.array([True, True]),
     )
 
     assert cluster.tolist() == [0, 0]
     assert has_cluster.tolist() == [False, True]
+
+
+def test_source_game_key_resolves_flat_snapshot_symlinks(tmp_path: Path) -> None:
+    import scripts.match_audit_rows as mar
+
+    source_a = tmp_path / "conversion-a"
+    source_b = tmp_path / "conversion-b"
+    snapshot = tmp_path / "snapshot"
+    for directory in (source_a, source_b, snapshot):
+        directory.mkdir()
+    shard_a = source_a / "shard_000000.zarr"
+    shard_b = source_b / "shard_000000.zarr"
+    shard_a.mkdir()
+    shard_b.mkdir()
+    link_a = snapshot / "source_a_shard.zarr"
+    link_b = snapshot / "source_b_shard.zarr"
+    link_a.symlink_to(shard_a)
+    link_b.symlink_to(shard_b)
+
+    assert mar.source_game_key(link_a, 0) == (str(source_a), 0)
+    assert mar.source_game_key(link_b, 0) == (str(source_b), 0)
+    assert mar.source_game_key(link_a, 0) != mar.source_game_key(link_b, 0)
+
+
+def test_match_audit_rows_namespaces_games_in_flat_symlink_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.match_audit_rows as mar
+
+    audit_path = tmp_path / "audit.jsonl"
+    records = [{
+        "key": mar.position_key(chess.Board(fen)),
+        "fen": fen,
+        "phase": 0,
+        "source": 0,
+    } for fen in FENS[:3]]
+    audit_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "snapshot"
+    source_a = tmp_path / "conversion-a"
+    source_b = tmp_path / "conversion-b"
+    for directory in (snapshot, source_a, source_b):
+        directory.mkdir()
+    targets = [
+        source_a / "shard_000000.zarr",
+        source_a / "shard_000001.zarr",
+        source_b / "shard_000000.zarr",
+    ]
+    rows_by_target: dict[Path, dict[str, np.ndarray]] = {}
+    for idx, (target, fen) in enumerate(zip(targets, FENS[:3], strict=True)):
+        target.mkdir()
+        (snapshot / f"staged_{idx}.zarr").symlink_to(target)
+        rows_by_target[target] = {
+            "x": encode_cboard(
+                CBoard.from_board(chess.Board(fen)), **ENC_KWARGS,
+            )[None].astype(np.float16),
+            "_input_history_encoding": np.asarray(STORED_HISTORY_ENCODING),
+            "game_id": np.asarray([0], dtype=np.int64),
+            "has_game_id": np.asarray([1], dtype=np.uint8),
+        }
+
+    def fake_load_staged(
+        path: Path, *, lazy: bool,
+    ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+        del lazy
+        return rows_by_target[path.resolve()], {}
+
+    monkeypatch.setattr(mar, "load_shard_arrays", fake_load_staged)
+    out_path = tmp_path / "matched.npz"
+    monkeypatch.setattr("sys.argv", [
+        "match_audit_rows.py",
+        "--audit-set", str(audit_path),
+        "--snapshot", str(snapshot),
+        "--out", str(out_path),
+    ])
+
+    mar.main()
+
+    with np.load(out_path, allow_pickle=False) as matched:
+        assert matched["game_cluster_id"].tolist() == [0, 0, 2]
+        assert matched["has_game_cluster_id"].tolist() == [True, True, True]

@@ -102,8 +102,22 @@ _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
 _HISTORY_PLANES = slice(13, 104)
 
 
+GameKey = tuple[str, int]
+
+
+def source_game_key(shard_path: Path, game_id: int) -> GameKey:
+    """Corpus-wide identity for a conversion-local game id.
+
+    Snapshot directories may be flat symlink farms over several independent
+    ``lc0_data_to_rows`` outputs, each of which starts ``game_id`` at zero.
+    Resolve the shard first so equal integers from different conversion source
+    directories cannot create a false bootstrap-cluster edge.
+    """
+    return str(shard_path.resolve().parent), int(game_id)
+
+
 def candidate_game_components(
-    candidate_games: list[set[int]],
+    candidate_games: list[set[GameKey]],
     *,
     candidate_missing_game_id: np.ndarray,
     found: np.ndarray,
@@ -139,12 +153,12 @@ def candidate_game_components(
         else:
             parent[ra] = rb
 
-    first_row_for_game: dict[int, int] = {}
+    first_row_for_game: dict[GameKey, int] = {}
     for row, games in enumerate(candidate_games):
         if not found_arr[row]:
             continue
         for game in sorted(games):
-            previous = first_row_for_game.setdefault(int(game), row)
+            previous = first_row_for_game.setdefault(game, row)
             union(row, previous)
 
     cluster_id = np.full(n, -1, dtype=np.int64)
@@ -273,7 +287,7 @@ def main() -> None:
     src_ply = np.full(n, -1, dtype=np.int64)
     src_selfplay = np.full(n, -1, dtype=np.int64)
     dup_count = np.zeros(n, dtype=np.int64)
-    candidate_games: list[set[int]] = [set() for _ in range(n)]
+    candidate_games: list[set[GameKey]] = [set() for _ in range(n)]
     candidate_missing_game_id = np.zeros(n, dtype=bool)
 
     t0 = time.time()
@@ -329,7 +343,7 @@ def main() -> None:
                     and has_game is not None
                     and bool(has_game[r])
                 ):
-                    candidate_games[ai].add(int(game[r]))
+                    candidate_games[ai].add(source_game_key(path, int(game[r])))
                 else:
                     candidate_missing_game_id[ai] = True
                 if found[ai]:

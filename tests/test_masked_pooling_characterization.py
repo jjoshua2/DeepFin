@@ -34,11 +34,14 @@ over `masked_mean` alone would stay green through the pooling fix.
 from __future__ import annotations
 
 import torch
+import pytest
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.losses import compute_loss, masked_mean, masked_sum_and_count
 from chess_anti_engine.train.trainer import (
+    _EXACT_MASKED_METRIC_FIELDS,
     _RATIO_METRIC_FIELDS,
+    _exact_masked_metric_kwargs,
     _loss_sums_to_metric_kwargs,
 )
 
@@ -153,3 +156,66 @@ def test_only_the_sf_p0_heads_are_pooled_as_ratios_of_sums() -> None:
     # The heads this file says are STILL wrong (per-batch means) must stay wrong
     # here, or the characterization has silently stopped characterizing.
     assert "m_sf_volatility" not in _RATIO_METRIC_FIELDS
+
+
+def test_exact_epoch_masked_metrics_pool_by_eligible_rows_only() -> None:
+    sum_key, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_volatility_loss"]
+    sums = {
+        # Batch A: mean 5 over one eligible row. Batch B: mean 1 over two.
+        sum_key: 5.0 * 1.0 + 1.0 * 2.0,
+        weight_key: 1.0 + 2.0,
+        # The legacy scalar remains present and deliberately keeps its old
+        # estimator; the exact-only override replaces just the exact row.
+        "sf_volatility": 5.0 + 1.0,
+    }
+
+    assert _loss_sums_to_metric_kwargs(sums, 2.0)["sf_volatility_loss"] == 3.0
+    assert _exact_masked_metric_kwargs(sums)["sf_volatility_loss"] == 7.0 / 3.0
+
+
+def test_exact_epoch_emits_masked_pairs_without_changing_legacy_outputs() -> None:
+    legacy = compute_loss(_outputs(4), _batch(4, covered=True))
+    exact = compute_loss(
+        _outputs(4),
+        _batch(4, covered=True),
+        report_exact_masked_sums=True,
+    )
+    missing = compute_loss(
+        _outputs(4),
+        _batch(4, covered=False),
+        report_exact_masked_sums=True,
+    )
+    sum_key, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_volatility_loss"]
+
+    assert not any(key.startswith("_exact_") for key in legacy)
+    assert float(exact[weight_key]) == 4.0
+    assert float(exact[sum_key]) == float(exact["sf_volatility"]) * 4.0
+    assert float(missing[weight_key]) == 0.0
+    assert float(missing[sum_key]) == 0.0
+
+
+def test_exact_epoch_reconstructs_fractional_mask_numerator_before_pooling() -> None:
+    batch = _batch(1, covered=True)
+    batch["sf_wdl"] = torch.tensor([[0.125, 0.75, 0.125]])
+    batch["has_sf_wdl"] = torch.ones(1)
+    outputs = _outputs(1)
+    outputs["sf_eval"] = torch.tensor([[1.0, -0.5, 0.25]])
+    losses = compute_loss(
+        outputs,
+        batch,
+        sf_wdl_conf_power=1.0,
+        report_exact_masked_sums=True,
+    )
+    sum_key, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_eval_loss"]
+    sums = {
+        sum_key: float(losses[sum_key]),
+        weight_key: float(losses[weight_key]),
+    }
+
+    assert float(losses[weight_key]) == pytest.approx(0.25)
+    # masked_mean clamps a sub-unit denominator to 1.0, so the returned mean
+    # already is the numerator. Re-multiplying by 0.25 would attenuate twice.
+    assert float(losses[sum_key]) == pytest.approx(float(losses["sf_eval_ce"]))
+    assert _exact_masked_metric_kwargs(sums)["sf_eval_loss"] == pytest.approx(
+        float(losses["sf_eval_ce"]) / 0.25,
+    )
