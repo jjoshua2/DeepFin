@@ -262,6 +262,12 @@ def _output_lock_path(output_path: Path) -> Path:
     return output_path.with_name(f".{output_path.name}.lock")
 
 
+def _is_reserved_output_lock_path(path: Path) -> bool:
+    """Whether ``path`` can be another output's adjacent lock file."""
+    name = path.name
+    return name.startswith(".") and name.endswith(".lock") and len(name) > len("..lock")
+
+
 def _acquire_output_lock(output_path: Path) -> IO[bytes]:
     """Reserve a bank/manifest pair against another producer process."""
     lock_path = _output_lock_path(output_path)
@@ -323,9 +329,14 @@ def _require_safe_output_paths(
     protected_directories: list[Path],
 ) -> None:
     """Refuse destructive aliases before ``--overwrite`` can reach an input."""
-    outputs = {
+    destinations = {
         output_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
+    }
+    if any(_is_reserved_output_lock_path(path) for path in destinations):
+        raise SystemExit("--out or its manifest must not use the output-lock namespace")
+    outputs = {
+        *destinations,
         _output_lock_path(output_path).expanduser().resolve(),
         _output_lock_path(meta_path).expanduser().resolve(),
     }
@@ -705,16 +716,32 @@ def main() -> None:
         ):
             raise SystemExit(
                 "decision-grade trajectory bank lacks an unambiguous "
-                f"(source_dir, shard, game_id) cluster for audit key {pos.key!r}"
+                f"(source_dir, game_id) cluster and source shard for audit key {pos.key!r}"
             )
         game_ids[pos.key] = gid
         source_dirs[pos.key] = source_dir
         source_shards[pos.key] = source_shard
+        # DiskReplayBuffer flushes fixed-size prefixes, so one add_many(game)
+        # call can straddle a shard boundary. The shard identifies the row's
+        # origin but cannot be part of the statistical game cluster.
         group_ids[pos.key] = (
             None
             if gid is None or not source_dir or not source_shard
-            else "\0".join((source_dir, source_shard, str(gid)))
+            else "\0".join((source_dir, str(gid)))
         )
+
+    output_locks: tuple[IO[bytes], ...] = ()
+    if args.write_preregistration is None:
+        # Reserve collection destinations before importing/loading the CUDA model.
+        # Plan generation writes a distinct tracked artifact and is intentionally exempt.
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        output_locks = _acquire_output_locks(args.out, meta_path)
+        if not args.overwrite and (args.out.exists() or meta_path.exists()):
+            for output_lock in reversed(output_locks):
+                output_lock.close()
+            raise SystemExit(
+                f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite"
+            )
 
     provenance = {
         "schema": _SCHEMA,
@@ -723,7 +750,7 @@ def main() -> None:
         "clock_conditioning_available": False,
         "root_position_history": "fen_only_from_audit_fen",
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
-        "game_group_kind": "source_dir:shard:game_id",
+        "game_group_kind": "source_dir:game_id",
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": int(_ABORT_MIN_STABLE_CHUNKS),
@@ -1208,10 +1235,6 @@ def main() -> None:
             "collection does not match its tracked preregistration: "
             + "; ".join(preregistration_failures)
         )
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    output_locks = _acquire_output_locks(args.out, meta_path)
-    if not args.overwrite and (args.out.exists() or meta_path.exists()):
-        raise SystemExit(f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite")
     warmup_nodes = max(256, int(args.chunk_sims))
     try:
         warmup_result = worker.run(

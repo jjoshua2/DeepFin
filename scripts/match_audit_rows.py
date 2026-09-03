@@ -168,6 +168,25 @@ def _game_ids_and_presence(
     return game_ids, raw_presence.astype(bool, copy=False)
 
 
+def _source_game_cluster_is_ambiguous(
+    *,
+    existing_has_game: bool,
+    existing_game: int,
+    candidate_has_game: bool,
+    candidate_game: int,
+) -> bool:
+    """Whether two copies of one position disagree on source-game identity.
+
+    Shard identity is deliberately absent: fixed-size replay flushing can split
+    one completed game's rows across adjacent shards.
+    """
+    return (
+        not existing_has_game
+        or not candidate_has_game
+        or candidate_game != existing_game
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -275,11 +294,11 @@ def main() -> None:
                         int(game_values[r])
                         if candidate_has_game and game_values is not None else -1
                     )
-                    if (
-                        not candidate_has_game
-                        or not bool(src_has_game[ai])
-                        or path.name != src_shard[ai]
-                        or candidate_game != int(src_game[ai])
+                    if _source_game_cluster_is_ambiguous(
+                        existing_has_game=bool(src_has_game[ai]),
+                        existing_game=int(src_game[ai]),
+                        candidate_has_game=candidate_has_game,
+                        candidate_game=candidate_game,
                     ):
                         src_cluster_ambiguous[ai] = 1
                     continue

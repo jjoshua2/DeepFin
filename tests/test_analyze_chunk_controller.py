@@ -18,6 +18,7 @@ from scripts.analyze_chunk_controller import (
     Transition,
     _complexity_continue,
     _rollout_selected_indices,
+    _source_group,
     _stage_counts,
     _require_bootstrap_resolution,
     _require_safe_output_path,
@@ -232,16 +233,23 @@ def test_grouped_folds_never_split_a_game() -> None:
 
 
 def test_source_scoped_groups_do_not_collide() -> None:
-    shard_a = "\0".join(("/same", "a.zarr", "7"))
-    shard_b = "\0".join(("/same", "b.zarr", "7"))
-    groups = [shard_a, shard_a, shard_b, shard_b]
+    source_a = "\0".join(("/first", "7"))
+    source_b = "\0".join(("/second", "7"))
+    groups = [source_a, source_a, source_b, source_b]
     folds = grouped_folds(groups, 2)
     membership = {
         groups[int(index)]: fold_number
         for fold_number, fold in enumerate(folds)
         for index in fold
     }
-    assert membership[shard_a] != membership[shard_b]
+    assert membership[source_a] != membership[source_b]
+
+
+def test_source_game_group_unifies_one_game_split_across_shards() -> None:
+    first = {"source_dir": "/snapshot", "shard": "a.zarr", "game_id": 7}
+    second = {"source_dir": "/snapshot", "shard": "b.zarr", "game_id": 7}
+
+    assert _source_group(first) == _source_group(second) == "/snapshot\0" + "7"
 
 
 def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> None:
@@ -268,6 +276,9 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert '"checkpoint_params"' in source
     assert source.index("initial_input_artifacts =") < source.index("load_audit_set(")
     assert source.index("initial_input_artifacts =") < source.index("MatchedAuditRows(")
+    assert source.index("output_locks = _acquire_output_locks") < source.index(
+        "model = load_model_from_checkpoint("
+    )
     assert "load_model_from_checkpoint(\n        checkpoint_path," in source
     assert module_source.index(
         "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
@@ -403,7 +414,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "schema": "deepfin.chunk_trajectory.v3",
             "key": position_key(board), "source_dir": "/snapshot", "shard": "s0.zarr",
             "fen": board.fen(),
-            "game_id": 3, "group_id": "/snapshot\0s0.zarr\0" + "3",
+            "game_id": 3, "group_id": "/snapshot\0" + "3",
             "chunk": chunk, "nodes": chunk * 50,
             "elapsed_ms": float(chunk), "regret_cp": regret_cp,
             "regret_score": regret_score, "regret_vs_final_cp": 0.0,
@@ -448,7 +459,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
         "root_position_history": "fen_only_from_audit_fen",
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
-        "game_group_kind": "source_dir:shard:game_id",
+        "game_group_kind": "source_dir:game_id",
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": 2,
@@ -981,10 +992,9 @@ def test_loader_requires_trajectory_identity_and_labels_to_stay_fixed(
     meta = _write_bank(bank, correct_gap=True)
     rows = [json.loads(line) for line in bank.read_text().splitlines()]
     rows[-1][field] = value
-    if field in {"shard", "game_id"}:
+    if field == "game_id":
         rows[-1]["group_id"] = "\0".join((
             str(rows[-1]["source_dir"]),
-            str(rows[-1]["shard"]),
             str(rows[-1]["game_id"]),
         ))
     if field == "deep_reference_move_cp":
@@ -1053,7 +1063,7 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
         row.update({
             "key": position_key(other_board), "fen": other_board.fen(),
             "game_id": 4,
-            "group_id": "\0".join(("/snapshot", "s0.zarr", "4")),
+            "group_id": "\0".join(("/snapshot", "4")),
             "chunk": chunk, "nodes": chunk * 50, "elapsed_ms": float(chunk),
             "root_actions": [other_action], "root_visits": [chunk * 50],
             "root_visit_shares": [1.0], "root_child_q": [0.1],
@@ -1614,6 +1624,16 @@ def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> No
     retry = _acquire_output_locks(meta, Path(str(meta) + ".meta.json"))
     for handle in reversed(retry):
         handle.close()
+
+
+def test_producer_output_rejects_the_lock_file_namespace(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="output-lock namespace"):
+        _require_safe_output_paths(
+            tmp_path / ".bank.jsonl.lock",
+            tmp_path / "out.meta.json",
+            protected_files=[],
+            protected_directories=[],
+        )
 
 
 def test_publish_output_detects_replacement_before_manifest(

@@ -466,6 +466,29 @@ def test_match_audit_rows_preserves_legacy_unmasked_game_ids() -> None:
     assert present.tolist() == [True, True]
 
 
+def test_match_audit_rows_unifies_the_same_game_across_shards() -> None:
+    from scripts.match_audit_rows import _source_game_cluster_is_ambiguous
+
+    assert not _source_game_cluster_is_ambiguous(
+        existing_has_game=True,
+        existing_game=41,
+        candidate_has_game=True,
+        candidate_game=41,
+    )
+    assert _source_game_cluster_is_ambiguous(
+        existing_has_game=True,
+        existing_game=41,
+        candidate_has_game=True,
+        candidate_game=42,
+    )
+    assert _source_game_cluster_is_ambiguous(
+        existing_has_game=True,
+        existing_game=41,
+        candidate_has_game=False,
+        candidate_game=-1,
+    )
+
+
 def test_matched_rows_requires_presence_mask_for_decision_grade_only(
     tmp_path: Path,
 ) -> None:

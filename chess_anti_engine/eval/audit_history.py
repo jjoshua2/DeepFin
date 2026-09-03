@@ -336,7 +336,7 @@ class MatchedAuditRows:
         return value or None
 
     def source_cluster_is_unique(self, key: str) -> bool:
-        """Whether every matched occurrence has the same shard/game cluster."""
+        """Whether every matched occurrence has the same source-game cluster."""
         i = self._row(key)
         return (
             self._source_cluster_ambiguous is not None

@@ -691,6 +691,7 @@ def _emitted_visit_gap(row: dict[str, Any]) -> float | None:
 
 
 def _source_group(row: dict[str, Any]) -> str | None:
+    """Return the game cluster; one buffered game may span adjacent shards."""
     source_dir = row.get("source_dir")
     shard = row.get("shard")
     game_id = row.get("game_id")
@@ -700,7 +701,7 @@ def _source_group(row: dict[str, Any]) -> str | None:
         or not _nonnegative_int(game_id)
     ):
         return None
-    return "\0".join((source_dir, shard, str(game_id)))
+    return "\0".join((source_dir, str(game_id)))
 
 
 def _active_search_values_valid(active_path: str, values: Any) -> bool:
@@ -750,7 +751,7 @@ def _validate_decision_grade_row(
         raise ValueError(f"{key}: position key disagrees with root FEN")
     group = _source_group(row)
     if group is None or row.get("group_id") != group:
-        raise ValueError(f"{key}: group_id is not (source_dir, shard, game_id)")
+        raise ValueError(f"{key}: group_id is not (source_dir, game_id)")
     if not _positive_int(row.get("chunk")) or not _positive_int(row.get("nodes")):
         raise ValueError(f"{key}: chunk and nodes must be positive integers")
     if (
@@ -1044,7 +1045,7 @@ def _require_manifest(
         or warmup.get("tablebase_counters_reset_after") is not True
     ):
         failures.append("production search warmup was not completed and isolated")
-    if manifest.get("game_group_kind") != "source_dir:shard:game_id":
+    if manifest.get("game_group_kind") != "source_dir:game_id":
         failures.append(f"game_group_kind={manifest.get('game_group_kind')!r}")
     if manifest.get("root_position_history") != "fen_only_from_audit_fen":
         failures.append(f"root_position_history={manifest.get('root_position_history')!r}")
@@ -1628,7 +1629,7 @@ def load_transitions(
                 group_id = f"smoke:{game_id}"
             elif not methodology_smoke and group_id != expected_group:
                 raise ValueError(
-                    f"{key}: group_id is not (source_dir, shard, game_id)"
+                    f"{key}: group_id is not (source_dir, game_id)"
                 )
             if upper.get("group_id", group_id) != group_id:
                 raise ValueError(f"{key}: source-scoped game group changes within trajectory")
