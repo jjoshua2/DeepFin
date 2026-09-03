@@ -73337,3 +73337,29 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 **2026-09-03 04:45Z — AUDIT-ALGORITHM STAMP AMENDMENT, before any corpus labeling/materialization/training and before reading v7.** The v6 calculation is the corrected scientific result, but its receipt names only scope and alpha, so a materializer cannot distinguish it mechanically from the pre-correction v5 receipt. Require treatment algorithm stamp `stored-top-set-only-v1` in both audit receipt and materialized corpus, making v5/v6 fail closed. Re-run the identical corrected audit as `audit_top_ties_a100_v7.json` solely to carry that stamp; no data, arithmetic, bootstrap, gate or candidate changed. Only v7 may admit materialization.
 
 **2026-09-03 04:47Z — STAMPED v7 AUDIT READOUT: PASS and numerically identical to v6.** Treatment now reads `{scope: top-max-ties, alpha: 1.0, algorithm: stored-top-set-only-v1}`; every scientific field and every per-position record is identical to v6. Immutable admission receipt `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v7.json`, SHA-256 `d4dec48b77c628364dd08963682b610451326fcd9932e1397f0a81fc67bf4003`. This is the only receipt accepted by the planned mix command.
+
+**2026-09-03 04:54Z — BT4 a100 PIPELINE QUEUED BEHIND THE COMPLETE TWO-SEED SAMPLER A/B; no overlap and no scientific readout by the driver.**
+
+- Detached driver `scratchpad/bt4_policy_mix/a100_pipeline.sh` first waits for
+  `scratchpad/scale20m_g10/after_train_pipeline.done`, refuses its fail sentinel,
+  and then waits for an empty GPU process list. It pins experiment-code commit
+  `a81836bc1c88325a1646891143f5a425995badac`, source derive-summary SHA-256
+  `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`,
+  and v7 receipt SHA-256
+  `d4dec48b77c628364dd08963682b610451326fcd9932e1397f0a81fc67bf4003`.
+  The 12 G10 Stockfish workers remain independent at nice 19.
+- Sequence: resume-safe one-eval BT4 sidecar using true history and at most 16
+  ONNX host threads (`BLOSC_NTHREADS=4`) -> storage-exact a100 materialization
+  -> admission check for 18,910,484 rows / 2,309 shards / CUDA provider / exact
+  algorithm and receipt / zero changed unique-Max rows -> the frozen 36,960-step
+  seed-0 replacement candidate -> the deciding matched-sims arena. The arena
+  adds `--no-rolling` so the preregistered **1,000 games** means exactly 1,000
+  rather than permitting an early sequential stop; all other arena settings
+  remain frozen. Every stage has its own log/done sentinel and any failure
+  stops the chain with `a100_pipeline.fail`.
+- The driver banks outputs only. It does not parse the arena into a carry/kill
+  decision or update the ledger. Context matched-time and common-holdout scores
+  remain post-arena obligations. Current sampler-arm cadence projects the BT4
+  label stage no earlier than roughly 11:30Z; its prior measured raw-inference
+  rate projects about 1.6 GPU-hours for the 18.91M sidecar, after which
+  materialization and candidate training determine the later ETA.
