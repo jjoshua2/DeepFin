@@ -5124,6 +5124,10 @@ def build_summary(
             "row_schema": int(facts["row_schema"]),
             "row_schema_realized": realized_row_schema(stats),
             "staircase_parsed": facts.get("staircase_parsed"),
+            "staircase_gate": facts.get(
+                "staircase_gate",
+                corpus.staircase_gate_stamp(corpus.STAIRCASE_POLICY_FIXED),
+            ),
             # Passed THROUGH, from the rows themselves rather than the summary:
             # a consumer must not mistake these for independent searches.
             corpus.KEY_TT_CARRIED: sorted(tt_carried),
