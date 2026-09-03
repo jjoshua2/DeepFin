@@ -846,6 +846,8 @@ def _require_manifest(
         failures.append(f"game_group_kind={manifest.get('game_group_kind')!r}")
     if manifest.get("root_position_history") != "fen_only_from_audit_fen":
         failures.append(f"root_position_history={manifest.get('root_position_history')!r}")
+    if manifest.get("root_tree_state") != "fresh_per_position_no_cross_move_reuse":
+        failures.append(f"root_tree_state={manifest.get('root_tree_state')!r}")
     if manifest.get("complexity_predicate") != {
         "kind": "clock_free_visit_gap_and_stability",
         "minimum_stable_chunks": _COMPLEXITY_STABLE_CHUNKS,
@@ -1487,8 +1489,9 @@ def load_transitions(
         "decision_grade": decision_grade and not methodology_smoke,
         "methodology_smoke": methodology_smoke,
         "metric": metric,
-        "analysis_scope": "fixed_node_horizons_only",
+        "analysis_scope": "fresh_tree_fixed_node_horizons_only",
         "clock_conditioning_tested": False,
+        "cross_move_tree_reuse_tested": False,
         "manifest": manifest,
     }
     return transitions, info
@@ -2221,8 +2224,9 @@ def analyze(
             "M1_p95_and_p99_regret_not_worse_than_M0": True,
         },
         "statistical_gate_passed": advance,
-        "scope": "fixed_node_horizons_only",
+        "scope": "fresh_tree_fixed_node_horizons_only",
         "clock_controller_authorized": False,
+        "cross_move_tree_reuse_tested": False,
         "reachable_rollout_capture_M0": capture_m0,
         "reachable_rollout_capture_M1": capture_m1,
         "M1_minus_M0_oracle_capture": capture_gain,
@@ -2235,6 +2239,15 @@ def analyze(
         "stage_conditional_diagnostics": horizons,
         "cv_diagnostics": {"M0": m0_diagnostics, "M1": m1_diagnostics},
     }
+
+
+def _evidence_verdict(*, decision_grade: bool, statistical_gate_passed: bool) -> str:
+    """Name only the next experiment authorized by this deliberately narrow bank."""
+    if not decision_grade:
+        return "METHODOLOGY_SMOKE_ONLY"
+    if statistical_gate_passed:
+        return "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
+    return "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
 
 
 def main() -> None:
@@ -2305,11 +2318,9 @@ def main() -> None:
     )
     decision_grade = bool(info["decision_grade"] and analyzer["decision_grade"])
     result["evidence_decision_grade"] = decision_grade
-    result["verdict"] = (
-        "ADVANCE_TO_CLOCK_BANK"
-        if decision_grade and result["statistical_gate_passed"]
-        else "KILL_BUDGET_CONTEXT" if decision_grade
-        else "METHODOLOGY_SMOKE_ONLY"
+    result["verdict"] = _evidence_verdict(
+        decision_grade=decision_grade,
+        statistical_gate_passed=bool(result["statistical_gate_passed"]),
     )
     payload = {"input": info, "analyzer": analyzer, "analysis": result}
     rendered = json.dumps(payload, indent=2, sort_keys=True)

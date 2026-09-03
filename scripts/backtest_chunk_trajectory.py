@@ -24,17 +24,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import math
 import os
 import platform
+import stat
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 # These binaries are imported indirectly by the project modules below. Capture
 # their on-disk identity first, then prove after import that the mapped module's
@@ -217,6 +219,44 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             tmp_path.unlink()
 
 
+def _output_lock_path(output_path: Path) -> Path:
+    return output_path.with_name(f".{output_path.name}.lock")
+
+
+def _acquire_output_lock(output_path: Path) -> IO[bytes]:
+    """Reserve a bank/manifest pair against another producer process."""
+    lock_path = _output_lock_path(output_path)
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NONBLOCK
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise SystemExit(f"cannot safely open output lock {lock_path}: {exc}") from exc
+    handle = os.fdopen(descriptor, "a+b")
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise SystemExit(f"output lock is not a regular file: {lock_path}")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise SystemExit(f"another producer holds the output lock: {lock_path}") from exc
+    except BaseException:
+        handle.close()
+        raise
+    return handle
+
+
+def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
+    """Publish exactly the private bytes whose identity the manifest records."""
+    private = _artifact(tmp_path, require_file=True)
+    expected = {**private, "path": str(output_path.expanduser().resolve())}
+    os.replace(tmp_path, output_path)
+    published = _artifact(output_path, require_file=True)
+    if _artifact_identity(published) != _artifact_identity(expected):
+        raise RuntimeError("published trajectory bank differs from its private output")
+    return published
+
+
 def _require_safe_output_paths(
     output_path: Path,
     meta_path: Path,
@@ -225,7 +265,11 @@ def _require_safe_output_paths(
     protected_directories: list[Path],
 ) -> None:
     """Refuse destructive aliases before ``--overwrite`` can reach an input."""
-    outputs = {output_path.expanduser().resolve(), meta_path.expanduser().resolve()}
+    outputs = {
+        output_path.expanduser().resolve(),
+        meta_path.expanduser().resolve(),
+        _output_lock_path(output_path).expanduser().resolve(),
+    }
     repo_root = Path(__file__).resolve().parents[1]
     if any(repo_controlled_output(output, repo_root) for output in outputs):
         raise SystemExit(
@@ -407,6 +451,10 @@ def main() -> None:
         ],
         protected_directories=syzygy_directories,
     )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    output_lock = _acquire_output_lock(args.out)
+    if not args.overwrite and (args.out.exists() or meta_path.exists()):
+        raise SystemExit(f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite")
 
     if args.chunk_sims <= 0 or args.max_chunks < 2 or args.max_positions < 0:
         raise SystemExit("--chunk-sims must be >0, --max-chunks >=2, --max-positions >=0")
@@ -476,9 +524,6 @@ def main() -> None:
             "--walkers >1 selects production walker PUCT; these classic-Gumbel "
             "overrides would be inert: " + ", ".join(inert_overrides)
         )
-    if not args.overwrite and (args.out.exists() or meta_path.exists()):
-        raise SystemExit(f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite")
-
     positions = _stratified(load_audit_set(args.audit_set), int(args.max_positions))
     matched: MatchedAuditRows | None = None
     if matched_path.exists():
@@ -546,6 +591,7 @@ def main() -> None:
         "analysis_scope": "fixed_node_horizons_only",
         "clock_conditioning_available": False,
         "root_position_history": "fen_only_from_audit_fen",
+        "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:shard:game_id",
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
@@ -1021,7 +1067,6 @@ def main() -> None:
             return None, -1
         return (uci, ucis.index(uci)) if uci in ucis else (uci, -1)
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = args.out.with_name(f".{args.out.name}.tmp-{os.getpid()}")
     n_rows = 0
     completed_positions = 0
@@ -1258,7 +1303,7 @@ def main() -> None:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
-        os.replace(tmp_path, args.out)
+        published_output_artifact = _publish_output(tmp_path, args.out)
     finally:
         worker.close()
         if tmp_path.exists():
@@ -1337,7 +1382,7 @@ def main() -> None:
             "kind": "callback_instrumented_wall_time",
             "usable_for_controller_or_cost_analysis": False,
         },
-        "output": _artifact(args.out, require_file=True),
+        "output": published_output_artifact,
         "requested_search": {
             "device": str(args.device), "chunk_sims": int(args.chunk_sims),
             "max_chunks": int(args.max_chunks), "walkers": int(args.walkers),
@@ -1386,6 +1431,7 @@ def main() -> None:
         },
     }
     _write_json_atomic(meta_path, manifest)
+    output_lock.close()
 
     print(f"[traj] wrote {n_rows} rows -> {args.out}")
     print(f"[traj] provenance -> {meta_path}")

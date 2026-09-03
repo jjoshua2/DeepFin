@@ -30,6 +30,8 @@ from scripts.analyze_chunk_controller import (
     load_transitions,
 )
 from scripts.backtest_chunk_trajectory import (
+    _acquire_output_lock,
+    _publish_output,
     _require_safe_output_paths,
     _require_search_take_effect,
     _validate_registry_search_values,
@@ -424,6 +426,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "usable_for_controller_or_cost_analysis": False,
         },
         "root_position_history": "fen_only_from_audit_fen",
+        "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:shard:game_id",
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
@@ -641,6 +644,19 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     transitions, info = load_transitions(bank)
     assert transitions[0].state["visit_gap"] == pytest.approx(-0.2)
     assert info["decision_grade"] is True
+    assert info["analysis_scope"] == "fresh_tree_fixed_node_horizons_only"
+    assert info["cross_move_tree_reuse_tested"] is False
+
+
+def test_loader_requires_fresh_tree_scope_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["root_tree_state"] = "production_reused_tree"
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="root_tree_state"):
+        load_transitions(bank)
 
 
 def test_loader_exposes_missing_drift_and_churn_to_M0(tmp_path: Path) -> None:
@@ -1437,6 +1453,39 @@ def test_producer_output_cannot_overwrite_an_imported_tracked_source(
         )
 
 
+def test_producer_output_lock_serializes_the_bank_manifest_pair(tmp_path: Path) -> None:
+    output = tmp_path / "bank.jsonl"
+    first = _acquire_output_lock(output)
+    try:
+        with pytest.raises(SystemExit, match="another producer"):
+            _acquire_output_lock(output)
+    finally:
+        first.close()
+
+    retry = _acquire_output_lock(output)
+    retry.close()
+
+
+def test_publish_output_detects_replacement_before_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    private = tmp_path / ".bank.tmp"
+    output = tmp_path / "bank.jsonl"
+    private.write_text("producer bytes\n")
+    real_replace = producer.os.replace
+
+    def replacing_publish(source: Path, destination: Path) -> None:
+        real_replace(source, destination)
+        destination.write_text("other producer bytes\n")
+
+    monkeypatch.setattr(producer.os, "replace", replacing_publish)
+
+    with pytest.raises(RuntimeError, match="differs from its private output"):
+        _publish_output(private, output)
+
+
 def test_producer_applies_shared_uci_search_ranges() -> None:
     _validate_registry_search_values(
         "walker_puct", {"chunk_sims": 32, "c_puct": 1.75},
@@ -1452,6 +1501,20 @@ def test_decision_grade_requires_enough_bootstrap_samples() -> None:
     _require_bootstrap_resolution(1000, methodology_smoke=False)
     with pytest.raises(ValueError, match="at least 1000"):
         _require_bootstrap_resolution(999, methodology_smoke=False)
+
+
+def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
+    from scripts.analyze_chunk_controller import _evidence_verdict
+
+    assert _evidence_verdict(
+        decision_grade=True, statistical_gate_passed=True,
+    ) == "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
+    assert _evidence_verdict(
+        decision_grade=True, statistical_gate_passed=False,
+    ) == "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
+    assert _evidence_verdict(
+        decision_grade=False, statistical_gate_passed=True,
+    ) == "METHODOLOGY_SMOKE_ONLY"
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(
