@@ -2086,6 +2086,7 @@ def main(argv: list[str] | None = None) -> int:
             plan_workers=int(args.epoch_plan_workers),
             load_workers=int(args.epoch_load_workers),
             max_working_set_bytes=epoch_max_working_set_bytes,
+            objective_mask_counter=trainer.exact_objective_mask_counter,
         )
         accum_steps = int(trainer.accum_steps)
         if accum_steps != 1:
@@ -2337,7 +2338,8 @@ def main(argv: list[str] | None = None) -> int:
             # each head's masked numerator reached the optimizer rather than
             # merely what sizes the sampler returned.
             "loss_normalization": (
-                "sum(weighted_masked_numerators)/batch_size"
+                "sum(weighted_masked_numerator*corpus_rows/"
+                "objective_mask_weight)/batch_size"
             ),
         }
         if not sampling_receipt["complete"]:

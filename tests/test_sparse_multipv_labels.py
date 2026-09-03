@@ -438,7 +438,10 @@ def _sparse_ce_batch(
 def test_sparse_ce_matches_dense_soft_ce(use_logistic, smooth):
     """Same-width case: sparse CE must equal soft CE against the dense target."""
     from chess_anti_engine.train.losses import soft_cross_entropy
-    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+    from chess_anti_engine.train.sparse_sf_ce import (
+        sparse_sf_policy_availability,
+        sparse_sf_policy_ce,
+    )
 
     logits, batch, params, dense = _sparse_ce_batch(
         use_logistic=use_logistic, smooth=smooth,
@@ -447,7 +450,14 @@ def test_sparse_ce_matches_dense_soft_ce(use_logistic, smooth):
     sparse_ce, ok = sparse_sf_policy_ce(
         logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
     )
+    availability = sparse_sf_policy_availability(
+        batch,
+        params=params,
+        legal_aligned=batch["sf_legal_mask"],
+        dst_width=int(logits.shape[-1]),
+    )
     assert ok.tolist() == [1.0, 1.0, 0.0]
+    assert torch.equal(availability, ok)
     torch.testing.assert_close(sparse_ce[:2], dense_ce[:2], atol=1e-5, rtol=1e-5)
     assert float(sparse_ce[2]) == 0.0
 
@@ -478,7 +488,7 @@ def test_sparse_ce_compact_logits_over_full_shard():
 
 
 def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
-    from chess_anti_engine.train.losses import compute_loss
+    from chess_anti_engine.train.losses import EXACT_OBJECTIVE_NAMES, compute_loss
     from chess_anti_engine.train.trainer import _EXACT_MASKED_METRIC_FIELDS
 
     logits, sparse_batch, params, dense = _sparse_ce_batch(
@@ -530,11 +540,16 @@ def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
         w_sf_volatility=0.0,
         w_moves_left=0.0,
         report_exact_masked_sums=True,
+        exact_corpus_rows=3,
+        exact_objective_mask_weights={
+            **dict.fromkeys(EXACT_OBJECTIVE_NAMES, 3.0),
+            "sf_move": 2.0,
+        },
     )
     _, exact_weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
     assert float(sparse_only[exact_weight_key]) == 2.0
     assert float(sparse_only["total"]) == pytest.approx(
-        float(sparse_only["sf_move_ce"]) * 2.0 / 3.0,
+        float(sparse_only["sf_move_ce"]),
     )
 
 

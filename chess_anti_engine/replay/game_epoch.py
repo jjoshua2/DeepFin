@@ -16,8 +16,10 @@ from one game in the same optimizer batch.
 * the complete schedule is planned before training, so the launcher can refuse
   a step budget which would truncate the epoch or wrap into a second one.
 
-Only the lightweight ``game_id`` columns are read during planning. Full
-training arrays are decoded once, just before their rows become eligible;
+Only the lightweight ``game_id`` and objective-eligibility columns are read
+while planning (wide targets remain lazy unless a future supported mask needs
+them). Full training arrays are decoded once, just before their rows become
+eligible;
 consumed portions of long-lived shards are compacted away. The planner models
 eager shard residency, batch assembly, and compaction copy spikes against a
 hard byte cap, refusing an over-budget corpus before training. This keeps I/O
@@ -27,11 +29,12 @@ an arbitrary skewed corpus.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +92,7 @@ class _ShardGames:
     row_bytes: int
     scalar_bytes: int
     row_field_bytes: tuple[tuple[str, int], ...]
+    objective_mask_weights: tuple[tuple[str, float], ...] = ()
 
     @property
     def decoded_bytes(self) -> int:
@@ -118,12 +122,13 @@ class GameEpochPlan:
     mirror_augmentation: bool
     mirror_working_set_batch_copies: int
     validated_load_payload_copies: int
+    objective_mask_weights: tuple[tuple[str, float], ...]
     plan_sha256: str
     load_counts: np.ndarray = field(repr=False)
     batch_rows: np.ndarray = field(repr=False)
     resident_bytes_after_batch: np.ndarray = field(repr=False)
 
-    def as_dict(self) -> dict[str, int | str | bool]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "mode": "game_epoch",
             "rows_planned": int(self.rows),
@@ -151,6 +156,9 @@ class GameEpochPlan:
             "validated_load_payload_copies": int(
                 self.validated_load_payload_copies
             ),
+            "objective_mask_weights": {
+                name: float(weight) for name, weight in self.objective_mask_weights
+            },
             "plan_sha256": self.plan_sha256,
         }
 
@@ -449,6 +457,45 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
     return namespaced
 
 
+ObjectiveMaskCounter = Callable[[Mapping[str, Any]], Mapping[str, float]]
+
+
+def _attach_objective_mask_weights(
+    records: Sequence[_ShardGames], counter: ObjectiveMaskCounter | None,
+) -> list[_ShardGames]:
+    """Bank each shard's exact objective populations from lazy arrays.
+
+    The callback belongs to the trainer because it owns target rebuilding and
+    loss-mask semantics.  This module owns the freeze: it records the counts in
+    the plan and re-runs the same callback after eager decode so a shard edit
+    cannot leave the optimizer using stale corpus denominators.
+    """
+    if counter is None:
+        return list(records)
+    expected_names: tuple[str, ...] | None = None
+    out: list[_ShardGames] = []
+    for record in records:
+        arrs, _ = load_shard_arrays(record.path, lazy=True)
+        raw = counter(arrs)
+        weights = tuple((str(name), float(value)) for name, value in raw.items())
+        names = tuple(name for name, _ in weights)
+        if expected_names is None:
+            expected_names = names
+        elif names != expected_names:
+            raise ValueError(
+                f"{record.path} objective census returned keys {names}, expected "
+                f"{expected_names}",
+            )
+        for name, value in weights:
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"{record.path} objective census returned invalid "
+                    f"{name}={value!r}",
+                )
+        out.append(replace(record, objective_mask_weights=weights))
+    return out
+
+
 def _update_choice_hash(digest: Any, chosen_games: np.ndarray) -> None:
     digest.update(struct.pack("<I", int(chosen_games.shape[0])))
     digest.update(np.asarray(chosen_games, dtype="<i8").tobytes(order="C"))
@@ -676,6 +723,25 @@ def _plan_epoch(
     if rows <= 0:
         raise ValueError("game-aware epoch corpus holds no rows")
     sources = {str(record.path.resolve().parent) for record in shuffled}
+    objective_names = tuple(
+        name for name, _ in shuffled[0].objective_mask_weights
+    )
+    for record in shuffled[1:]:
+        names = tuple(name for name, _ in record.objective_mask_weights)
+        if names != objective_names:
+            raise ValueError(
+                f"{record.path} objective census keys {names} do not match "
+                f"{objective_names}",
+            )
+    objective_mask_weights = tuple(
+        (
+            name,
+            math.fsum(
+                dict(record.objective_mask_weights)[name] for record in shuffled
+            ),
+        )
+        for name in objective_names
+    )
     remaining = _game_totals(shuffled)
     buckets = _remaining_buckets(remaining)
     batch_array = _balanced_batch_rows(
@@ -688,6 +754,11 @@ def _plan_epoch(
     resident_bytes_after_batch: list[int] = []
     digest = hashlib.sha256()
     digest.update(struct.pack("<qqq", int(seed), int(batch_size), int(rows)))
+    for name, weight in objective_mask_weights:
+        encoded = name.encode("utf-8")
+        digest.update(struct.pack("<I", len(encoded)))
+        digest.update(encoded)
+        digest.update(struct.pack("<d", float(weight)))
 
     consumed = 0
     resident_bytes = 0
@@ -873,6 +944,7 @@ def _plan_epoch(
             MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0
         ),
         validated_load_payload_copies=VALIDATED_LOAD_PAYLOAD_COPIES,
+        objective_mask_weights=objective_mask_weights,
         plan_sha256=digest.hexdigest(),
         load_counts=load_array,
         batch_rows=batch_array,
@@ -901,6 +973,7 @@ class GameAwareEpochBuffer:
         plan_workers: int = DEFAULT_PLAN_WORKERS,
         load_workers: int = DEFAULT_LOAD_WORKERS,
         max_working_set_bytes: int = DEFAULT_MAX_WORKING_SET_BYTES,
+        objective_mask_counter: ObjectiveMaskCounter | None = None,
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
@@ -940,6 +1013,7 @@ class GameAwareEpochBuffer:
                 "exact-epoch corpus mixes policy widths "
                 f"{policy_sizes}; normalize the corpus before training",
             )
+        records = _attach_objective_mask_weights(records, objective_mask_counter)
         effective_load_workers = max(1, int(load_workers))
         self.plan, self._records = _plan_epoch(
             records,
@@ -957,6 +1031,7 @@ class GameAwareEpochBuffer:
         self._plan_workers = max(1, int(plan_workers))
         self._load_workers = effective_load_workers
         self._max_working_set_bytes = int(max_working_set_bytes)
+        self._objective_mask_counter = objective_mask_counter
         self._choice_rng = _seeded_rng(seed, 1)
         self._row_rng = _seeded_rng(seed, 2)
         # Public rng is consumed by Trainer's mirror augmentation. Keeping it
@@ -982,6 +1057,11 @@ class GameAwareEpochBuffer:
         self._realized_digest.update(
             struct.pack("<qqq", int(seed), int(batch_size), int(self.plan.rows)),
         )
+        for name, weight in self.plan.objective_mask_weights:
+            encoded = name.encode("utf-8")
+            self._realized_digest.update(struct.pack("<I", len(encoded)))
+            self._realized_digest.update(encoded)
+            self._realized_digest.update(struct.pack("<d", float(weight)))
         self._max_same_game_repeats = 0
         self._closed = False
 
@@ -991,6 +1071,20 @@ class GameAwareEpochBuffer:
     @property
     def num_batches(self) -> int:
         return int(self.plan.batches)
+
+    @property
+    def exact_corpus_rows(self) -> int:
+        return int(self.plan.rows)
+
+    @property
+    def exact_objective_mask_weights(self) -> dict[str, float]:
+        weights = dict(self.plan.objective_mask_weights)
+        if not weights:
+            raise RuntimeError(
+                "exact epoch has no objective-mask census; construct it with "
+                "the trainer's objective_mask_counter",
+            )
+        return weights
 
     @staticmethod
     def _arrays_nbytes(arrs: dict[str, np.ndarray]) -> int:
@@ -1046,6 +1140,16 @@ class GameAwareEpochBuffer:
                 f"and materialized {actual_bytes}; the corpus declarations "
                 "changed after the epoch was planned",
             )
+        if self._objective_mask_counter is not None:
+            actual_weights = tuple(
+                (str(name), float(value))
+                for name, value in self._objective_mask_counter(arrs).items()
+            )
+            if actual_weights != record.objective_mask_weights:
+                raise RuntimeError(
+                    f"{record.path} objective-mask populations changed after "
+                    "the epoch was planned",
+                )
         return {name: np.asarray(value) for name, value in arrs.items()}
 
     def _add_loaded_chunk(
@@ -1061,6 +1165,17 @@ class GameAwareEpochBuffer:
         ):
             raise RuntimeError(
                 "a shard's game identity changed between planning and full decode",
+            )
+        actual_game_ids, actual_game_counts = np.unique(
+            raw_game_ids, return_counts=True,
+        )
+        if (
+            not np.array_equal(actual_game_ids, record.game_ids)
+            or not np.array_equal(actual_game_counts, record.game_counts)
+        ):
+            raise RuntimeError(
+                "a shard's per-game row counts changed between planning and "
+                "full decode",
             )
         positions = np.searchsorted(record.game_ids, raw_game_ids)
         if (

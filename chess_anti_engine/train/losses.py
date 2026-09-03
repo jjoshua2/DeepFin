@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -88,6 +89,26 @@ _PIECE_PLANE_COUNT = 12
 # these get row-count columns: `selfplay`/`curriculum` split on a boolean flag
 # whose balance is already reported by `frac_is_selfplay` / `frac_tagged`.
 _PHASE_BUCKET_SUFFIXES = ("phase_open", "phase_mid", "phase_end")
+
+# Stable order shared with the exact-epoch census.  These names identify the
+# optimizer terms, not reporting columns: floor and shape deliberately share
+# an eligibility mask but remain separate configured heads.
+EXACT_OBJECTIVE_NAMES: tuple[str, ...] = (
+    "policy",
+    "soft_policy",
+    "future_policy",
+    "sf_own",
+    "sf_own_regret",
+    "wdl",
+    "sf_move",
+    "sf_eval",
+    "categorical",
+    "volatility",
+    "sf_volatility",
+    "moves_left",
+    "sf_policy_floor",
+    "sf_shape",
+)
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -2534,6 +2555,8 @@ def compute_loss(
     sf_policy_floor: SfPolicyFloorParams | None = None,
     sf_shape: SfShapeParams | None = None,
     report_exact_masked_sums: bool = False,
+    exact_corpus_rows: int | None = None,
+    exact_objective_mask_weights: Mapping[str, float] | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
 
@@ -3332,27 +3355,31 @@ def compute_loss(
   # The DIAGNOSTIC columns are computed either way, above and in the returned
   # dict below, so switching a weight on is never the first time anyone sees
   # what its term does.
-    weighted_terms: tuple[tuple[float, torch.Tensor, torch.Tensor], ...] = (
-        (float(w_policy), m_policy, pol_base),
-        (float(w_soft), m_soft, soft_base),
-        (float(w_future), m_future, future_base),
-        (float(w_sf_own), m_sf_own, sf_p0_base),
-        (float(w_sf_own_regret), m_sf_own_regret, sf_p0_regret_base),
-        (float(w_wdl), m_blended_wdl, net_mask),
-        (float(w_sf_move), m_sf_move, sf_move_base),
-        (float(w_sf_eval), m_sf_eval, m_sf_eval_mask),
-        (float(w_categorical), m_cat, categorical_base),
-        (float(w_volatility), m_vol, volatility_base),
-        (float(w_sf_volatility), m_sf_vol, sf_volatility_base),
-        (float(w_moves_left), m_ml, moves_left_base),
-        (float(floor_params.w), m_sf_policy_floor, sf_p0_regret_base),
-        (float(shape_params.w), m_sf_shape, sf_p0_regret_base),
+    weighted_terms: tuple[
+        tuple[str, float, torch.Tensor, torch.Tensor], ...
+    ] = (
+        ("policy", float(w_policy), m_policy, pol_base),
+        ("soft_policy", float(w_soft), m_soft, soft_base),
+        ("future_policy", float(w_future), m_future, future_base),
+        ("sf_own", float(w_sf_own), m_sf_own, sf_p0_base),
+        ("sf_own_regret", float(w_sf_own_regret), m_sf_own_regret, sf_p0_regret_base),
+        ("wdl", float(w_wdl), m_blended_wdl, net_mask),
+        ("sf_move", float(w_sf_move), m_sf_move, sf_move_base),
+        ("sf_eval", float(w_sf_eval), m_sf_eval, m_sf_eval_mask),
+        ("categorical", float(w_categorical), m_cat, categorical_base),
+        ("volatility", float(w_volatility), m_vol, volatility_base),
+        ("sf_volatility", float(w_sf_volatility), m_sf_vol, sf_volatility_base),
+        ("moves_left", float(w_moves_left), m_ml, moves_left_base),
+        ("sf_policy_floor", float(floor_params.w), m_sf_policy_floor, sf_p0_regret_base),
+        ("sf_shape", float(shape_params.w), m_sf_shape, sf_p0_regret_base),
     )
+    if tuple(name for name, _, _, _ in weighted_terms) != EXACT_OBJECTIVE_NAMES:
+        raise AssertionError("exact objective names drifted from weighted terms")
   # Folded LEFT in declaration order, so with every weight non-zero this performs
   # the same sequence of float32 additions as the flat `a + b + c + ...`
   # expression it replaces: `total` is bit-identical there, not merely close.
     total: torch.Tensor | None = None
-    for w, term, _mask in weighted_terms:
+    for _name, w, term, _mask in weighted_terms:
         if w == 0.0:
             continue
         total = w * term if total is None else total + w * term
@@ -3375,7 +3402,7 @@ def compute_loss(
   # comparison, so only the isfinite reduction touches the GPU, and only for the
   # terms that are actually off.
     disarmed_nonfinite_terms = torch.zeros((), device=m_policy.device, dtype=torch.float32)
-    for w, term, _mask in weighted_terms:
+    for _name, w, term, _mask in weighted_terms:
         if w == 0.0:
             disarmed_nonfinite_terms = disarmed_nonfinite_terms + (
                 ~torch.isfinite(term.detach())
@@ -3391,20 +3418,64 @@ def compute_loss(
         # masked mean over a different population, so scaling their already-
         # combined mean by physical batch rows is wrong: a head with one
         # eligible row would change weight merely because unrelated rows share
-        # its batch. Recover every term's masked numerator and normalize the
-        # combined objective by physical rows. Trainer's existing n/B ragged
-        # factor then leaves every eligible contribution at numerator/B.
+        # its batch. Recover every term's masked numerator, restore its
+        # corpus-wide masked-mean normalization below, and normalize the
+        # combined objective by physical rows before Trainer applies n/B.
+        if exact_corpus_rows is None or int(exact_corpus_rows) <= 0:
+            raise ValueError(
+                "exact loss normalization requires a positive exact_corpus_rows",
+            )
+        if exact_objective_mask_weights is None:
+            raise ValueError(
+                "exact loss normalization requires preflighted objective-mask "
+                "weights",
+            )
+        supplied_names = tuple(exact_objective_mask_weights)
+        if supplied_names != EXACT_OBJECTIVE_NAMES:
+            raise ValueError(
+                "exact objective-mask weights have keys/order "
+                f"{supplied_names}, expected {EXACT_OBJECTIVE_NAMES}",
+            )
+        global_weights_list = [
+            float(exact_objective_mask_weights[name])
+            for name in EXACT_OBJECTIVE_NAMES
+        ]
+        if any(
+            not math.isfinite(value) or value < 0.0
+            for value in global_weights_list
+        ):
+            raise ValueError(
+                "exact objective-mask weights must be finite and non-negative",
+            )
         objective_weights = torch.stack([
-            mask.to(torch.float32) for _, _, mask in weighted_terms
+            mask.to(torch.float32) for _, _, _, mask in weighted_terms
         ]).sum(dim=1)
         objective_numerators = torch.stack([
-            term.to(torch.float32) for _, term, _ in weighted_terms
+            term.to(torch.float32) for _, _, term, _ in weighted_terms
         ]) * objective_weights.clamp_min(1.0)
+        # Preserve the configured meaning of every masked head: globally its
+        # term is still w * (sum eligible loss / eligible weight).  N/K turns
+        # that global masked mean into per-corpus-row units; division by this
+        # physical batch's n and Trainer's existing n/B ragged factor then give
+        # each eligible contribution coefficient N/(K*B), independent of which
+        # other rows happened to share its batch.  K=0 remains an exact zero
+        # term because no batch can then carry a non-zero numerator.
+        # Form the ratio in host float64 before creating the fp32 device
+        # constants. Production corpora exceed 2**24 rows, so casting N and K
+        # separately to fp32 before division needlessly loses integer bits.
+        global_normalizers = objective_weights.new_tensor(
+            [
+                float(int(exact_corpus_rows)) / weight if weight > 0.0 else 0.0
+                for weight in global_weights_list
+            ],
+        )
         exact_total: torch.Tensor | None = None
-        for idx, (w, _, _) in enumerate(weighted_terms):
+        for idx, (_name, w, _, _) in enumerate(weighted_terms):
             if w == 0.0:
                 continue
-            contribution = w * objective_numerators[idx]
+            contribution = (
+                w * objective_numerators[idx] * global_normalizers[idx]
+            )
             exact_total = (
                 contribution
                 if exact_total is None else exact_total + contribution

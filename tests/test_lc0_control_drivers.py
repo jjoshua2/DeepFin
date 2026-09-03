@@ -981,7 +981,8 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
         "seeded_shuffle_within_shard_game_segments"
     )
     assert summary["sampling"]["loss_normalization"] == (
-        "sum(weighted_masked_numerators)/batch_size"
+        "sum(weighted_masked_numerator*corpus_rows/"
+        "objective_mask_weight)/batch_size"
     )
     windows = summary["train_window_metrics"]
     assert [window["window_index"] for window in windows] == [1, 2]

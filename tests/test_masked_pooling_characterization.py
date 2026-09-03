@@ -33,17 +33,105 @@ over `masked_mean` alone would stay green through the pooling fix.
 
 from __future__ import annotations
 
-import torch
+from types import SimpleNamespace
+from typing import Any, cast
+
+import numpy as np
 import pytest
+import torch
 
 from chess_anti_engine.moves import POLICY_SIZE
-from chess_anti_engine.train.losses import compute_loss, masked_mean, masked_sum_and_count
+from chess_anti_engine.train.losses import (
+    EXACT_OBJECTIVE_NAMES,
+    compute_loss,
+    masked_mean,
+    masked_sum_and_count,
+)
 from chess_anti_engine.train.trainer import (
+    Trainer,
     _EXACT_MASKED_METRIC_FIELDS,
     _RATIO_METRIC_FIELDS,
     _exact_masked_metric_kwargs,
     _loss_sums_to_metric_kwargs,
 )
+
+
+def test_exact_objective_census_matches_all_optimizer_masks() -> None:
+    arrays = {
+        "x": np.zeros((3, 1, 1, 1), dtype=np.float32),
+        "is_network_turn": np.asarray([1, 1, 0], dtype=bool),
+        "has_policy": np.asarray([1, 0, 1], dtype=np.float32),
+        "has_policy_soft": np.asarray([1, 1, 1], dtype=np.float32),
+        "has_future": np.asarray([0, 1, 1], dtype=np.float32),
+        "has_sf_p0": np.asarray([1, 0, 1], dtype=np.float32),
+        "sf_p0_policy_target": np.zeros((3, 2), dtype=np.float32),
+        "has_sf_p0_regret": np.asarray([0, 1, 1], dtype=np.float32),
+        "sf_p0_regret": np.zeros((3, 2), dtype=np.float32),
+        "has_sf_policy": np.asarray([1, 1, 1], dtype=np.float32),
+        "has_sf_wdl": np.asarray([1, 0, 1], dtype=np.float32),
+        "sf_wdl": np.full((3, 3), 1.0 / 3.0, dtype=np.float32),
+        "wdl_target": np.asarray([0, 1, 2], dtype=np.int64),
+        "has_categorical": np.asarray([0, 1, 1], dtype=np.float32),
+        "has_volatility": np.asarray([1, 0, 1], dtype=np.float32),
+        "has_sf_volatility": np.asarray([0, 1, 1], dtype=np.float32),
+        "has_moves_left": np.asarray([1, 1, 0], dtype=np.float32),
+    }
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=2),
+        soft_policy_min_tv=0.0,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=False,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=1.0,
+        sf_wdl_temperature=1.0,
+    )
+
+    got = Trainer.exact_objective_mask_counter(cast(Any, trainer), arrays)
+
+    assert tuple(got) == EXACT_OBJECTIVE_NAMES
+    assert got == {
+        "policy": 1.0,
+        "soft_policy": 2.0,
+        "future_policy": 1.0,
+        "sf_own": 1.0,
+        "sf_own_regret": 1.0,
+        "wdl": 2.0,
+        "sf_move": 2.0,
+        "sf_eval": 1.0,
+        "categorical": 1.0,
+        "volatility": 1.0,
+        "sf_volatility": 1.0,
+        "moves_left": 2.0,
+        "sf_policy_floor": 1.0,
+        "sf_shape": 1.0,
+    }
+
+
+def test_exact_objective_census_uses_the_real_soft_tv_population() -> None:
+    arrays = {
+        "x": np.zeros((2, 1, 1, 1), dtype=np.float32),
+        "policy_target": np.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32),
+        "policy_soft_target": np.asarray(
+            [[1.0, 0.0], [0.0, 1.0]], dtype=np.float32,
+        ),
+        "has_policy_soft": np.ones(2, dtype=np.float32),
+        "wdl_target": np.zeros(2, dtype=np.int64),
+    }
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=2),
+        soft_policy_min_tv=0.5,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=False,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=1.0,
+        sf_wdl_temperature=1.0,
+    )
+
+    got = Trainer.exact_objective_mask_counter(cast(Any, trainer), arrays)
+
+    assert got["soft_policy"] == 1.0
 
 
 def test_masked_mean_publishes_zero_for_an_empty_bucket() -> None:
@@ -174,16 +262,21 @@ def test_exact_epoch_masked_metrics_pool_by_eligible_rows_only() -> None:
 
 
 def test_exact_epoch_emits_masked_pairs_without_changing_legacy_outputs() -> None:
+    normalization = dict.fromkeys(EXACT_OBJECTIVE_NAMES, 4.0)
     legacy = compute_loss(_outputs(4), _batch(4, covered=True))
     exact = compute_loss(
         _outputs(4),
         _batch(4, covered=True),
         report_exact_masked_sums=True,
+        exact_corpus_rows=4,
+        exact_objective_mask_weights=normalization,
     )
     missing = compute_loss(
         _outputs(4),
         _batch(4, covered=False),
         report_exact_masked_sums=True,
+        exact_corpus_rows=4,
+        exact_objective_mask_weights=normalization,
     )
     sum_key, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_volatility_loss"]
 
@@ -215,6 +308,11 @@ def test_exact_epoch_reconstructs_fractional_mask_numerator_before_pooling() -> 
         w_moves_left=0.0,
         sf_wdl_conf_power=1.0,
         report_exact_masked_sums=True,
+        exact_corpus_rows=1,
+        exact_objective_mask_weights={
+            **dict.fromkeys(EXACT_OBJECTIVE_NAMES, 1.0),
+            "sf_eval": 0.25,
+        },
     )
     sum_key, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_eval_loss"]
     sums = {
@@ -226,7 +324,9 @@ def test_exact_epoch_reconstructs_fractional_mask_numerator_before_pooling() -> 
     # masked_mean clamps a sub-unit denominator to 1.0, so the returned mean
     # already is the numerator. Re-multiplying by 0.25 would attenuate twice.
     assert float(losses[sum_key]) == pytest.approx(float(losses["sf_eval_ce"]))
-    assert float(losses["total"]) == pytest.approx(float(losses[sum_key]))
+    assert float(losses["total"]) == pytest.approx(
+        float(losses[sum_key]) / 0.25,
+    )
     assert _exact_masked_metric_kwargs(sums)["sf_eval_loss"] == pytest.approx(
         float(losses["sf_eval_ce"]) / 0.25,
     )
@@ -258,6 +358,14 @@ def test_exact_epoch_ragged_batches_keep_eligible_gradient_weight_constant() -> 
             w_sf_volatility=0.0,
             w_moves_left=0.0,
             report_exact_masked_sums=exact,
+            exact_corpus_rows=3 if exact else None,
+            exact_objective_mask_weights=(
+                {
+                    **dict.fromkeys(EXACT_OBJECTIVE_NAMES, 3.0),
+                    "policy": 2.0,
+                }
+                if exact else None
+            ),
         )
         (losses["total"] * rows / requested_batch_rows).backward()
         assert logits.grad is not None
@@ -270,3 +378,65 @@ def test_exact_epoch_ragged_batches_keep_eligible_gradient_weight_constant() -> 
 
     assert full == pytest.approx(ragged)
     assert legacy_full == pytest.approx(2.0 * legacy_ragged)
+
+
+def test_exact_epoch_preserves_each_heads_global_masked_mean_scale() -> None:
+    policy_logits = torch.tensor(
+        [[2.0, -1.0], [0.5, -0.5], [-1.0, 1.5]],
+    )
+    future_logits = torch.tensor(
+        [[-0.5, 1.0], [1.0, -0.5], [0.25, -0.25]],
+    )
+    policy_t = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
+    future_t = torch.tensor([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
+    has_future = torch.tensor([1.0, 0.0, 0.0])
+
+    def run(row_slice: slice, *, exact: bool) -> torch.Tensor:
+        batch = {
+            "x": torch.zeros((policy_logits[row_slice].shape[0], 1, 1, 1)),
+            "policy_t": policy_t[row_slice],
+            "wdl_t": torch.zeros(
+                policy_logits[row_slice].shape[0], dtype=torch.int64,
+            ),
+            "has_policy": torch.ones(policy_logits[row_slice].shape[0]),
+            "future_policy_t": future_t[row_slice],
+            "has_future": has_future[row_slice],
+        }
+        losses = compute_loss(
+            {
+                "policy_own": policy_logits[row_slice],
+                "policy_future": future_logits[row_slice],
+                "wdl": torch.zeros((policy_logits[row_slice].shape[0], 3)),
+            },
+            batch,
+            w_policy=1.0,
+            w_soft=0.0,
+            w_future=1.0,
+            w_wdl=0.0,
+            w_sf_move=0.0,
+            w_sf_eval=0.0,
+            w_categorical=0.0,
+            w_volatility=0.0,
+            w_sf_volatility=0.0,
+            w_moves_left=0.0,
+            report_exact_masked_sums=exact,
+            exact_corpus_rows=3 if exact else None,
+            exact_objective_mask_weights=(
+                {
+                    **dict.fromkeys(EXACT_OBJECTIVE_NAMES, 3.0),
+                    "future_policy": 1.0,
+                }
+                if exact else None
+            ),
+        )
+        return losses["total"]
+
+    configured_full_corpus_objective = run(slice(0, 3), exact=False)
+    ragged_epoch_objective = (
+        run(slice(0, 2), exact=True) * (2.0 / 3.0)
+        + run(slice(2, 3), exact=True) * (1.0 / 3.0)
+    )
+
+    torch.testing.assert_close(
+        ragged_epoch_objective, configured_full_corpus_objective,
+    )

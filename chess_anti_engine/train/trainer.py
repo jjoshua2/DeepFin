@@ -71,6 +71,7 @@ from chess_anti_engine.train.target_builder import (
     SfTargetParams,
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
+    rebuild_sf_wdl_batch,
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves import torch_maps
@@ -91,11 +92,15 @@ from .aurora import AuroraWithAuxAdam, OptimizerStepFailed
 from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
+    EXACT_OBJECTIVE_NAMES,
     SfPolicyFloorParams,
     SfShapeParams,
+    align_policy_mask,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    _compute_sf_wdl_mask,
+    _normalize_sf_wdl_probs,
     normalize_value_blend_fracs,
     policy_target_temp_active,
     resolve_sf_regret_gate_keys,
@@ -105,6 +110,7 @@ from .losses import (
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
+from .sparse_sf_ce import sparse_sf_policy_availability
 from .muon import MuonWithAuxAdam
 from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
@@ -4267,6 +4273,196 @@ class Trainer:
             **extras,
         )
 
+    def exact_objective_mask_counter(
+        self, arrays: Mapping[str, Any],
+    ) -> Mapping[str, float]:
+        """Count corpus-wide optimizer-mask weights for an exact epoch.
+
+        The sampler calls this first on lazy zarr arrays and again on each
+        eagerly decoded shard. Work is row-chunked and normally reads only the
+        scalar flags plus the three-value SF WDL field when its fractional mask
+        is configured; input planes are never decoded. Dense policy targets are
+        read only when the configured soft-TV mask actually needs them.
+
+        Optional TV and sparse-policy masks reuse the same target transforms as
+        ``compute_loss``. Their chunks are deliberately small so exactness does
+        not turn preflight into a second eager replay-buffer load.
+        """
+        x = arrays.get("x")
+        if x is None or getattr(x, "shape", None) is None:
+            raise ValueError("exact objective census requires the shard x shape")
+        rows = int(x.shape[0])
+        totals = dict.fromkeys(EXACT_OBJECTIVE_NAMES, 0.0)
+        dynamic_wide_mask = (
+            float(self.soft_policy_min_tv) > 0.0
+            or bool(self.sf_policy_sparse_ce)
+        )
+        chunk_rows = 512 if dynamic_wide_mask else 65_536
+        model = getattr(self.model, "_orig_mod", self.model)
+        model_policy_width = int(getattr(model, "policy_size", POLICY_SIZE))
+
+        def _slice(
+            name: str, start: int, stop: int, *, default: float = 0.0,
+        ) -> torch.Tensor:
+            value = arrays.get(name)
+            if value is None:
+                return torch.full((stop - start,), default, dtype=torch.float32)
+            return torch.as_tensor(
+                np.asarray(value[start:stop]), dtype=torch.float32,
+            ).reshape(-1)
+
+        for start in range(0, rows, chunk_rows):
+            stop = min(rows, start + chunk_rows)
+            net = _slice("is_network_turn", start, stop, default=1.0)
+            has_policy = _slice("has_policy", start, stop, default=1.0)
+            has_soft = _slice("has_policy_soft", start, stop)
+            has_future = _slice("has_future", start, stop)
+            has_sf_p0 = _slice("has_sf_p0", start, stop)
+            has_sf_p0_regret = _slice("has_sf_p0_regret", start, stop)
+            has_sf_policy = _slice(
+                "has_sf_policy" if "has_sf_policy" in arrays else "has_sf_move",
+                start,
+                stop,
+            )
+            has_cat = _slice("has_categorical", start, stop)
+            has_vol = _slice("has_volatility", start, stop)
+            has_sf_vol = _slice("has_sf_volatility", start, stop)
+            has_moves_left = _slice("has_moves_left", start, stop)
+            has_sf_wdl = _slice("has_sf_wdl", start, stop)
+
+            if (
+                float(self.soft_policy_min_tv) > 0.0
+                and "policy_soft_target" in arrays
+            ):
+                hard_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                soft_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_soft_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                shaped_hard = retemper_main_policy_target(
+                    hard_target, temp=float(self.policy_target_temp),
+                )
+                tv = 0.5 * (shaped_hard - soft_target).abs().sum(dim=-1)
+                has_soft = has_soft * (
+                    tv >= float(self.soft_policy_min_tv)
+                ).to(has_soft.dtype)
+
+            if bool(self.rebuild_sf_targets):
+                # Same unconditional cross-ply invalidation as
+                # rebuild_sf_targets_in_arrays.
+                has_sf_p0 = torch.zeros_like(has_sf_p0)
+                has_sf_vol = torch.zeros_like(has_sf_vol)
+
+            conf_power = max(0.0, float(self.sf_wdl_conf_power))
+            draw_scale = max(0.0, float(self.sf_wdl_draw_scale))
+            sf_wdl_raw = arrays.get("sf_wdl") if conf_power > 0.0 else None
+            sf_wdl = None
+            if sf_wdl_raw is not None:
+                sf_wdl_array = np.array(
+                    sf_wdl_raw[start:stop], copy=bool(self.rebuild_sf_targets),
+                )
+                if (
+                    bool(self.rebuild_sf_targets)
+                    and "has_sf_label_meta" in arrays
+                    and "sf_label_meta" in arrays
+                ):
+                    has_meta = np.asarray(
+                        arrays["has_sf_label_meta"][start:stop], dtype=bool,
+                    )
+                    if bool(has_meta.any()):
+                        rebuilt_wdl, ok_wdl = rebuild_sf_wdl_batch(
+                            np.asarray(
+                                arrays["sf_label_meta"][start:stop],
+                            )[has_meta],
+                            self.sf_target_params,
+                        )
+                        write = np.flatnonzero(has_meta)[ok_wdl]
+                        sf_wdl_array[write] = rebuilt_wdl[ok_wdl]
+                sf_wdl = torch.as_tensor(sf_wdl_array, dtype=torch.float32)
+            wdl_target = (
+                _slice("wdl_target", start, stop)
+                if draw_scale != 1.0 else torch.zeros_like(net)
+            )
+            sf_eval_mask = _compute_sf_wdl_mask(
+                net_mask=net,
+                has_sf_wdl=has_sf_wdl,
+                sf_wdl_probs=_normalize_sf_wdl_probs(
+                    sf_wdl, temperature=float(self.sf_wdl_temperature),
+                ),
+                wdl_target=wdl_target,
+                conf_power=conf_power,
+                draw_scale=draw_scale,
+            )
+            if (
+                bool(self.sf_policy_sparse_ce)
+                and bool(getattr(model, "enable_policy_sf_head", True))
+            ):
+                sparse_keys = (
+                    "sf_multipv_raw",
+                    "has_sf_multipv_raw",
+                    "sf_legal_mask",
+                    "has_sf_legal_mask",
+                    "sf_move_index",
+                    "has_sf_move",
+                )
+                sparse_batch = {
+                    name: torch.as_tensor(np.asarray(arrays[name][start:stop]))
+                    for name in sparse_keys
+                    if name in arrays
+                }
+                legal = sparse_batch.get("sf_legal_mask")
+                if legal is not None:
+                    sparse_available = sparse_sf_policy_availability(
+                        sparse_batch,
+                        params=self.sf_target_params,
+                        legal_aligned=align_policy_mask(
+                            legal, model_policy_width,
+                        ),
+                        dst_width=model_policy_width,
+                    )
+                    has_sf_policy = torch.maximum(
+                        has_sf_policy, sparse_available.to(torch.float32),
+                    )
+            no_rows = torch.zeros_like(net)
+            sf_p0_mask = (
+                net * has_sf_p0
+                if "sf_p0_policy_target" in arrays else no_rows
+            )
+            sf_p0_regret_mask = (
+                net * has_sf_p0_regret
+                if "sf_p0_regret" in arrays else no_rows
+            )
+            masks = {
+                "policy": net * has_policy,
+                "soft_policy": net * has_soft,
+                "future_policy": net * has_future,
+                "sf_own": sf_p0_mask,
+                "sf_own_regret": sf_p0_regret_mask,
+                "wdl": net,
+                "sf_move": net * has_sf_policy,
+                "sf_eval": sf_eval_mask,
+                "categorical": net * has_cat,
+                "volatility": net * has_vol,
+                "sf_volatility": net * has_sf_vol,
+                "moves_left": net * has_moves_left,
+                "sf_policy_floor": sf_p0_regret_mask,
+                "sf_shape": sf_p0_regret_mask,
+            }
+            if tuple(masks) != EXACT_OBJECTIVE_NAMES:
+                raise AssertionError("objective census names drifted from loss terms")
+            for name, mask in masks.items():
+                totals[name] += float(mask.to(torch.float64).sum().item())
+        return totals
+
     def _prepare_host_arrays(
         self,
         arrs: dict[str, np.ndarray],
@@ -5217,6 +5413,9 @@ class Trainer:
             # so ``n_micro * requested batch_size`` is not generally true.
             realized_batch_rows = int(batch["x"].shape[0])
             step_samples_seen += realized_batch_rows
+            exact_epoch = bool(
+                getattr(buf, "exact_without_replacement", False)
+            )
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
@@ -5226,8 +5425,14 @@ class Trainer:
                     losses = compute_loss(
                         out,
                         batch,
-                        report_exact_masked_sums=bool(
-                            getattr(buf, "exact_without_replacement", False)
+                        report_exact_masked_sums=exact_epoch,
+                        exact_corpus_rows=(
+                            getattr(buf, "exact_corpus_rows", None)
+                            if exact_epoch else None
+                        ),
+                        exact_objective_mask_weights=(
+                            getattr(buf, "exact_objective_mask_weights", None)
+                            if exact_epoch else None
                         ),
                         **self._loss_kwargs,
                     )
@@ -5244,7 +5449,7 @@ class Trainer:
                     # ordinary replacement replay keeps its historical scale.
                     exact_row_scale = (
                         float(realized_batch_rows) / float(batch_size)
-                        if bool(getattr(buf, "exact_without_replacement", False))
+                        if exact_epoch
                         else 1.0
                     )
                     loss = (
@@ -5265,7 +5470,7 @@ class Trainer:
                 total_scale=float(self.accum_steps),
                 mean_weight=(
                     float(realized_batch_rows)
-                    if bool(getattr(buf, "exact_without_replacement", False))
+                    if exact_epoch
                     else 1.0
                 ),
             )

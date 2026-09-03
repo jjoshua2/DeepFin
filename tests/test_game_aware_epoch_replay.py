@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -77,6 +78,9 @@ def _open(
     history_rep_fix: bool = False,
     mirror_augmentation: bool = False,
     max_working_set_bytes: int | None = None,
+    objective_mask_counter: (
+        Callable[[Mapping[str, Any]], Mapping[str, float]] | None
+    ) = None,
 ) -> GameAwareEpochBuffer:
     kwargs = {}
     if max_working_set_bytes is not None:
@@ -91,6 +95,7 @@ def _open(
         mirror_augmentation=mirror_augmentation,
         plan_workers=2,
         load_workers=load_workers,
+        objective_mask_counter=objective_mask_counter,
         **kwargs,
     )
 
@@ -845,6 +850,50 @@ def test_input_history_identity_is_banked_and_rechecked_at_decode(
     shard.attrs["input_history_encoding"] = "lc0_root"
     with pytest.raises(RuntimeError, match="changed input history identity"):
         buf.sample_batch_arrays(1)
+
+
+def test_game_multiplicities_are_rechecked_after_planning(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (0, 1), (1, 2), (1, 3)]],
+    )
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+
+    # Keep the same rows, schema and set of ids while moving one row from game
+    # 0 to game 1.  Membership-only validation accepts this but the planned
+    # per-game deadlines no longer describe the decoded shard.
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["game_id"][:] = np.asarray([0, 1, 1, 1], dtype=np.int64)
+
+    with pytest.raises(RuntimeError, match="per-game row counts changed"):
+        buf.sample_batch_arrays(2)
+
+
+def test_objective_census_is_banked_and_rechecked_at_decode(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1), (2, 2)]],
+    )
+
+    def counter(arrays: Mapping[str, Any]) -> Mapping[str, float]:
+        has_policy = arrays["has_policy"]
+        return {
+            "policy": float(np.asarray(has_policy[:], dtype=np.float64).sum()),
+        }
+
+    buf = _open(
+        shard_dir,
+        batch_size=3,
+        load_workers=1,
+        objective_mask_counter=counter,
+    )
+    assert buf.exact_objective_mask_weights == {"policy": 3.0}
+    assert buf.plan.as_dict()["objective_mask_weights"] == {"policy": 3.0}
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["has_policy"][0] = False
+    with pytest.raises(RuntimeError, match="objective-mask populations changed"):
+        buf.sample_batch_arrays(3)
 
 
 def test_mixed_policy_width_corpus_is_refused_before_any_decode(
