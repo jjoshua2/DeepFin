@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
 from chess_anti_engine.replay import game_epoch as game_epoch_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
@@ -41,10 +42,15 @@ def _write(
     shards: Sequence[Sequence[tuple[int | None, int]]],
     *,
     planes: int = 146,
+    input_history_encoding: str | None = None,
+    history_rep_fix: bool = False,
 ) -> Path:
     shard_dir.mkdir(parents=True, exist_ok=True)
     for index, rows in enumerate(shards):
         samples = [_sample(game=game, row=row, planes=planes) for game, row in rows]
+        for sample in samples:
+            sample.input_history_encoding = input_history_encoding
+            sample.history_rep_fix = bool(history_rep_fix)
         save_local_shard_arrays(
             shard_dir / f"shard_{index:06d}.zarr",
             arrs=samples_to_arrays(samples),
@@ -52,6 +58,8 @@ def _write(
                 positions=len(samples),
                 policy_encoding="lc0_1858",
                 policy_size=COMPACT_POLICY_SIZE,
+                input_history_encoding=input_history_encoding,
+                history_rep_fix=bool(history_rep_fix),
             ),
         )
     return shard_dir
@@ -62,7 +70,10 @@ def _open(
     *,
     seed: int = 7,
     batch_size: int = 4,
+    input_planes: int = 146,
     load_workers: int = 2,
+    input_history_encoding: str = "legacy",
+    history_rep_fix: bool = False,
     mirror_augmentation: bool = False,
     max_working_set_bytes: int | None = None,
 ) -> GameAwareEpochBuffer:
@@ -73,7 +84,9 @@ def _open(
         shard_dir=shard_dir,
         batch_size=batch_size,
         seed=seed,
-        input_planes=146,
+        input_planes=input_planes,
+        input_history_encoding=input_history_encoding,
+        history_rep_fix=history_rep_fix,
         mirror_augmentation=mirror_augmentation,
         plan_workers=2,
         load_workers=load_workers,
@@ -326,6 +339,34 @@ def test_duplicate_only_prefix_is_skipped_for_diversity_and_refill_is_bounded(
     assert int(receipt["peak_working_set_bytes"]) <= tight_limit
 
 
+def test_parallel_validation_groups_retain_prior_group_payloads(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game)] for game in range(8)],
+    )
+    probe = _open(shard_dir, batch_size=4, load_workers=2)
+    decoded = int(probe._records[0].decoded_bytes)
+    expected_peak = int(
+        2 * decoded
+        + game_epoch_module.VALIDATED_LOAD_PAYLOAD_COPIES * 2 * decoded
+    )
+
+    assert int(probe.plan.load_counts[0]) == 4
+    assert probe.plan.load_workers == 2
+    assert probe.plan.peak_working_set_bytes == expected_peak
+    bounded = _open(
+        shard_dir,
+        batch_size=4,
+        load_workers=2,
+        max_working_set_bytes=expected_peak,
+    )
+    _drain(bounded)
+    assert bounded.receipt()["peak_working_set_bytes"] == expected_peak
+    assert bounded.receipt()["complete"] is True
+
+
 def test_skewed_long_game_corpus_is_refused_by_memory_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -423,7 +464,7 @@ def test_epoch_slice_returns_each_single_take_allocation(
     assert not np.shares_memory(sliced["_policy_size"], arrays["_policy_size"])
 
 
-def test_single_shard_materialization_obeys_exact_modeled_peak(
+def test_single_shard_validation_scratch_obeys_exact_modeled_peak(
     tmp_path: Path,
 ) -> None:
     shard_dir = _write(
@@ -433,14 +474,18 @@ def test_single_shard_materialization_obeys_exact_modeled_peak(
     probe = _open(shard_dir, batch_size=4)
     record = probe._records[0]
     batch_bytes = int(4 * record.row_bytes + record.scalar_bytes)
-    exact_peak = int(record.decoded_bytes + batch_bytes)
+    payload_only_peak = int(record.decoded_bytes + batch_bytes)
+    exact_peak = int(
+        game_epoch_module.VALIDATED_LOAD_PAYLOAD_COPIES * record.decoded_bytes
+    )
 
     assert probe.plan.peak_working_set_bytes == exact_peak
-    with pytest.raises(ValueError, match="batch 0 materialization"):
+    assert exact_peak > payload_only_peak
+    with pytest.raises(ValueError, match="batch 0 validated load"):
         _open(
             shard_dir,
             batch_size=4,
-            max_working_set_bytes=exact_peak - 1,
+            max_working_set_bytes=payload_only_peak,
         )
     bounded = _open(
         shard_dir, batch_size=4, max_working_set_bytes=exact_peak,
@@ -449,12 +494,17 @@ def test_single_shard_materialization_obeys_exact_modeled_peak(
 
     assert [len(batch) for batch in batches] == [4, 4]
     assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["validated_load_payload_copies"] == 5
     assert bounded.receipt()["complete"] is True
 
 
 def test_tight_cap_keeps_multichunk_compaction_in_lockstep_with_plan(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Isolate the compaction decision from the independently tested validation
+    # reserve, which intentionally dominates these two large shard loads.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
     shards = [
         [(0, ply) for ply in range(100)] + [(1, 10_000)],
         [(2, 20_000 + ply) for ply in range(100)] + [(3, 30_000)],
@@ -597,6 +647,8 @@ def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> No
             batch_size=4,
             seed=0,
             input_planes=146,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
             mirror_augmentation=False,
             plan_workers=1,
             load_workers=1,
@@ -607,6 +659,8 @@ def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> No
         batch_size=4,
         seed=0,
         input_planes=175,
+        input_history_encoding="legacy",
+        history_rep_fix=False,
         mirror_augmentation=False,
         plan_workers=1,
         load_workers=1,
@@ -646,10 +700,97 @@ def test_mixed_input_plane_corpus_is_refused_before_any_decode(
             batch_size=2,
             seed=0,
             input_planes=175,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
             mirror_augmentation=False,
             plan_workers=1,
             load_workers=1,
         )
+
+
+@pytest.mark.parametrize(
+    ("second_encoding", "second_rep_fix", "error"),
+    [
+        ("lc0_root", True, "input_history_encoding"),
+        ("lc0_root_legacy_meta", False, "history_rep_fix"),
+    ],
+)
+def test_mixed_input_history_identity_is_refused_before_any_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    second_encoding: str,
+    second_rep_fix: bool,
+    error: str,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0)]],
+        planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    second = _sample(game=1, row=1, planes=175)
+    second.input_history_encoding = second_encoding
+    second.history_rep_fix = second_rep_fix
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays([second]),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+            input_history_encoding=second_encoding,
+            history_rep_fix=second_rep_fix,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("history mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match=error):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=1,
+            seed=0,
+            input_planes=175,
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=True,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+def test_input_history_identity_is_banked_and_rechecked_at_decode(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0)]],
+        planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    buf = _open(
+        shard_dir,
+        batch_size=1,
+        input_planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    assert buf.plan.input_history_encoding == "lc0_root_legacy_meta"
+    assert buf.plan.history_rep_fix is True
+    receipt = buf.receipt()
+    assert receipt["input_history_encoding"] == "lc0_root_legacy_meta"
+    assert receipt["history_rep_fix"] is True
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard.attrs["input_history_encoding"] = "lc0_root"
+    with pytest.raises(RuntimeError, match="changed input history identity"):
+        buf.sample_batch_arrays(1)
 
 
 def test_mixed_policy_width_corpus_is_refused_before_any_decode(
@@ -687,6 +828,8 @@ def test_mixed_policy_width_corpus_is_refused_before_any_decode(
             batch_size=2,
             seed=0,
             input_planes=175,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
             mirror_augmentation=False,
             plan_workers=1,
             load_workers=1,

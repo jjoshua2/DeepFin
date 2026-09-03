@@ -37,8 +37,15 @@ from typing import Any
 
 import numpy as np
 
+from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
+
 from .disk_buffer import _concat_sparse_batches
-from .shard import iter_shard_paths, load_shard_arrays
+from .shard import (
+    HISTORY_REP_FIX_ARRAY_KEY,
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    iter_shard_paths,
+    load_shard_arrays,
+)
 
 
 DEFAULT_PLAN_WORKERS = 16
@@ -56,6 +63,13 @@ DEFAULT_MAX_WORKING_SET_BYTES = 8 * 1024**3
 # allowance that dominates the row mask/index scratch for a valid chess input.
 # The planner charges this only when mirroring is enabled.
 MIRROR_AUGMENTATION_BATCH_COPIES = 7
+# ``load_shard_arrays(..., validate=True)`` owns the decoded payload while its
+# content checks create a full boolean comparison/finite temporary, an active-
+# row copy for optional distributions, and row-sized reduction/index scratch.
+# Five payloads conservatively cover the retained arrays plus those temporaries
+# for a valid chess shard. Apply the bound to every shard validated concurrently
+# so ``load_workers`` cannot make the runtime peak larger than the preflight.
+VALIDATED_LOAD_PAYLOAD_COPIES = 5
 
 
 @dataclass(frozen=True)
@@ -64,6 +78,8 @@ class _ShardGames:
     rows: int
     input_planes: int
     policy_size: int
+    input_history_encoding: str
+    history_rep_fix: bool
     # Raw ids are only unique within one conversion output.  The driver can
     # stage several independently converted directories, each of which starts
     # numbering games at zero, so scheduling uses the namespaced keys.
@@ -93,11 +109,15 @@ class GameEpochPlan:
     game_count: int
     batch_size: int
     policy_size: int
+    input_history_encoding: str
+    history_rep_fix: bool
     seed: int
+    load_workers: int
     max_working_set_bytes: int
     peak_working_set_bytes: int
     mirror_augmentation: bool
     mirror_working_set_batch_copies: int
+    validated_load_payload_copies: int
     plan_sha256: str
     load_counts: np.ndarray = field(repr=False)
     batch_rows: np.ndarray = field(repr=False)
@@ -118,12 +138,18 @@ class GameEpochPlan:
             "row_order": "seeded_shuffle_within_shard_game_segments",
             "batch_size": int(self.batch_size),
             "policy_size": int(self.policy_size),
+            "input_history_encoding": self.input_history_encoding,
+            "history_rep_fix": bool(self.history_rep_fix),
             "seed": int(self.seed),
+            "load_workers_planned": int(self.load_workers),
             "max_working_set_bytes": int(self.max_working_set_bytes),
             "peak_working_set_bytes_planned": int(self.peak_working_set_bytes),
             "mirror_augmentation": bool(self.mirror_augmentation),
             "mirror_working_set_batch_copies": int(
                 self.mirror_working_set_batch_copies
+            ),
+            "validated_load_payload_copies": int(
+                self.validated_load_payload_copies
             ),
             "plan_sha256": self.plan_sha256,
         }
@@ -263,8 +289,41 @@ def _slice_epoch_arrays(
     }
 
 
+def _input_history_identity(
+    arrs: dict[str, Any], *, path: Path,
+) -> tuple[str, bool]:
+    raw_encoding = arrs.get(INPUT_HISTORY_ENCODING_ARRAY_KEY)
+    if raw_encoding is None:
+        encodings = {normalize_lc0_history_encoding(None)}
+    else:
+        values = np.asarray(raw_encoding).reshape(-1)
+        encodings = {
+            normalize_lc0_history_encoding(str(value)) for value in values
+        }
+    if len(encodings) != 1:
+        raise ValueError(
+            f"{path} mixes input history encodings {sorted(encodings)}",
+        )
+
+    raw_fix = np.asarray(
+        arrs.get(HISTORY_REP_FIX_ARRAY_KEY, np.asarray("false")),
+    ).reshape(-1)
+    fixes: set[bool] = set()
+    for value in raw_fix.tolist():
+        text = str(value).strip().lower()
+        if text not in {"true", "false"}:
+            raise ValueError(f"{path} carries invalid history_rep_fix={value!r}")
+        fixes.add(text == "true")
+    if len(fixes) != 1:
+        raise ValueError(f"{path} mixes history_rep_fix values")
+    return next(iter(encodings)), next(iter(fixes))
+
+
 def _scan_shard(path: Path) -> _ShardGames:
     arrs, _ = load_shard_arrays(path, lazy=True)
+    input_history_encoding, history_rep_fix = _input_history_identity(
+        arrs, path=path,
+    )
     if "x" not in arrs:
         raise ValueError(f"{path} carries no x array")
     x_shape = tuple(int(dim) for dim in arrs["x"].shape)
@@ -289,6 +348,8 @@ def _scan_shard(path: Path) -> _ShardGames:
             rows=0,
             input_planes=input_planes,
             policy_size=policy_size,
+            input_history_encoding=input_history_encoding,
+            history_rep_fix=history_rep_fix,
             game_ids=np.empty(0, dtype=np.int64),
             game_keys=np.empty(0, dtype=np.int64),
             game_counts=np.empty(0, dtype=np.int64),
@@ -326,6 +387,8 @@ def _scan_shard(path: Path) -> _ShardGames:
         rows=rows,
         input_planes=input_planes,
         policy_size=policy_size,
+        input_history_encoding=input_history_encoding,
+        history_rep_fix=history_rep_fix,
         game_ids=np.asarray(games, dtype=np.int64),
         game_keys=np.asarray(games, dtype=np.int64),
         game_counts=np.asarray(counts, dtype=np.int64),
@@ -373,6 +436,8 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
                 rows=record.rows,
                 input_planes=record.input_planes,
                 policy_size=record.policy_size,
+                input_history_encoding=record.input_history_encoding,
+                history_rep_fix=record.history_rep_fix,
                 game_ids=record.game_ids,
                 game_keys=np.asarray(keys, dtype=np.int64),
                 game_counts=record.game_counts,
@@ -583,6 +648,7 @@ def _plan_epoch(
     *,
     batch_size: int,
     seed: int,
+    load_workers: int,
     max_working_set_bytes: int,
     mirror_augmentation: bool,
 ) -> tuple[GameEpochPlan, list[_ShardGames]]:
@@ -593,6 +659,8 @@ def _plan_epoch(
             "max_working_set_bytes must be positive, got "
             f"{max_working_set_bytes}",
         )
+    if load_workers <= 0:
+        raise ValueError(f"load_workers must be positive, got {load_workers}")
     if not records:
         raise ValueError("game-aware epoch corpus holds no shards")
 
@@ -637,6 +705,8 @@ def _plan_epoch(
         batches_left = int(batch_array.shape[0] - batch_index)
         forced = set(buckets.get(batches_left, set()))
         loaded = 0
+        loaded_records: list[_ShardGames] = []
+        resident_before_refill = int(resident_bytes)
         while (
             len(active) < int(batch_rows)
             or not forced.issubset(active)
@@ -655,6 +725,7 @@ def _plan_epoch(
             chunk_id = int(next_shard)
             next_shard += 1
             loaded += 1
+            loaded_records.append(record)
             resolved = str(record.path.resolve()).encode("utf-8")
             digest.update(struct.pack("<I", len(resolved)))
             digest.update(resolved)
@@ -671,7 +742,22 @@ def _plan_epoch(
                 record=record, remaining=int(record.rows), capacity=int(record.rows),
             )
             resident_bytes += int(record.decoded_bytes)
-            observe(resident_bytes, f"batch {batch_index} refill")
+
+        # The eager loader validates up to ``load_workers`` shards in parallel.
+        # Price each runtime group while retaining all groups already loaded;
+        # this is the same grouping and ordering used by ``_load_next``.
+        validation_resident = resident_before_refill
+        for offset in range(0, len(loaded_records), int(load_workers)):
+            group = loaded_records[offset:offset + int(load_workers)]
+            group_bytes = sum(record.decoded_bytes for record in group)
+            observe(
+                validation_resident
+                + VALIDATED_LOAD_PAYLOAD_COPIES * group_bytes,
+                f"batch {batch_index} validated load",
+            )
+            validation_resident += group_bytes
+        if validation_resident != resident_bytes:
+            raise RuntimeError("validated-load plan diverged from refill residency")
 
         if len(active) < int(batch_rows) or not forced.issubset(active):
             raise RuntimeError(
@@ -776,13 +862,17 @@ def _plan_epoch(
         game_count=len(_game_totals(shuffled)),
         batch_size=int(batch_size),
         policy_size=int(shuffled[0].policy_size),
+        input_history_encoding=shuffled[0].input_history_encoding,
+        history_rep_fix=bool(shuffled[0].history_rep_fix),
         seed=int(seed),
+        load_workers=int(load_workers),
         max_working_set_bytes=int(max_working_set_bytes),
         peak_working_set_bytes=int(peak_working_set_bytes),
         mirror_augmentation=bool(mirror_augmentation),
         mirror_working_set_batch_copies=(
             MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0
         ),
+        validated_load_payload_copies=VALIDATED_LOAD_PAYLOAD_COPIES,
         plan_sha256=digest.hexdigest(),
         load_counts=load_array,
         batch_rows=batch_array,
@@ -805,6 +895,8 @@ class GameAwareEpochBuffer:
         batch_size: int,
         seed: int,
         input_planes: int | None,
+        input_history_encoding: str,
+        history_rep_fix: bool,
         mirror_augmentation: bool,
         plan_workers: int = DEFAULT_PLAN_WORKERS,
         load_workers: int = DEFAULT_LOAD_WORKERS,
@@ -812,6 +904,10 @@ class GameAwareEpochBuffer:
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
+        required_history_encoding = normalize_lc0_history_encoding(
+            input_history_encoding,
+        )
+        required_history_rep_fix = bool(history_rep_fix)
         required_input_planes = (
             None if input_planes is None else int(input_planes)
         )
@@ -823,24 +919,43 @@ class GameAwareEpochBuffer:
                         f"the exact-epoch trainer requires {required_input_planes}; "
                         "this mode does not begin training on a mixed corpus",
                     )
+        for record in records:
+            if record.input_history_encoding != required_history_encoding:
+                raise ValueError(
+                    f"{record.path} carries input_history_encoding="
+                    f"{record.input_history_encoding!r}, the exact-epoch trainer "
+                    f"requires {required_history_encoding!r}; this mode does not "
+                    "begin training on a semantically mixed input corpus",
+                )
+            if record.history_rep_fix != required_history_rep_fix:
+                raise ValueError(
+                    f"{record.path} carries history_rep_fix="
+                    f"{record.history_rep_fix}, the exact-epoch trainer requires "
+                    f"{required_history_rep_fix}; this mode does not begin "
+                    "training on a semantically mixed input corpus",
+                )
         policy_sizes = sorted({record.policy_size for record in records})
         if len(policy_sizes) > 1:
             raise ValueError(
                 "exact-epoch corpus mixes policy widths "
                 f"{policy_sizes}; normalize the corpus before training",
             )
+        effective_load_workers = max(1, int(load_workers))
         self.plan, self._records = _plan_epoch(
             records,
             batch_size=int(batch_size),
             seed=int(seed),
+            load_workers=effective_load_workers,
             max_working_set_bytes=int(max_working_set_bytes),
             mirror_augmentation=bool(mirror_augmentation),
         )
         self._batch_size = int(batch_size)
         self._input_planes = required_input_planes
+        self._input_history_encoding = required_history_encoding
+        self._history_rep_fix = required_history_rep_fix
         self._mirror_augmentation = bool(mirror_augmentation)
         self._plan_workers = max(1, int(plan_workers))
-        self._load_workers = max(1, int(load_workers))
+        self._load_workers = effective_load_workers
         self._max_working_set_bytes = int(max_working_set_bytes)
         self._choice_rng = _seeded_rng(seed, 1)
         self._row_rng = _seeded_rng(seed, 2)
@@ -912,6 +1027,17 @@ class GameAwareEpochBuffer:
                 f"{record.path} planned policy width {record.policy_size} and "
                 f"decoded width {actual_policy_size}; the corpus changed after "
                 "the epoch was planned",
+            )
+        actual_history_encoding, actual_history_rep_fix = _input_history_identity(
+            arrs, path=record.path,
+        )
+        if (
+            actual_history_encoding != record.input_history_encoding
+            or actual_history_rep_fix != record.history_rep_fix
+        ):
+            raise RuntimeError(
+                f"{record.path} changed input history identity after the epoch "
+                "was planned",
             )
         actual_bytes = self._arrays_nbytes(arrs)
         if actual_bytes != record.decoded_bytes:
@@ -1050,11 +1176,6 @@ class GameAwareEpochBuffer:
                 f"{len(self._records) - self._next_shard} left",
             )
         records = self._records[self._next_shard:stop]
-        refill_bytes = sum(record.decoded_bytes for record in records)
-        self._observe_working_set(
-            self._resident_bytes + refill_bytes,
-            phase=f"batch {self._batch_index} refill",
-        )
         self._next_shard = stop
         workers = min(self._load_workers, len(records))
 
@@ -1079,7 +1200,14 @@ class GameAwareEpochBuffer:
         # be registered at once; already registered chunks can then compact as
         # their rows are consumed.
         for offset in range(0, len(records), max(1, workers)):
-            register(records[offset:offset + max(1, workers)])
+            group = records[offset:offset + max(1, workers)]
+            group_bytes = sum(record.decoded_bytes for record in group)
+            self._observe_working_set(
+                self._resident_bytes
+                + VALIDATED_LOAD_PAYLOAD_COPIES * group_bytes,
+                phase=f"batch {self._batch_index} validated load",
+            )
+            register(group)
 
     def _gather(self, selected: list[tuple[int, int]]) -> dict[str, np.ndarray]:
         # load_shard_arrays allowlists the persisted dense _SHARD_FIELDS schema.

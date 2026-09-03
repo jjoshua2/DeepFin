@@ -73003,15 +73003,16 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   full CPU drain used every one of 409,600 rows, zero same-game repeats,
   **11,661 rows/s / 43.9 ms per batch**, and 6.9 GiB process peak; compaction
   bounded live decoded storage at 228,917 rows rather than retaining the whole
-  corpus. After the resident-budget review fix, the complete 18,910,484-row
-  metadata plan was rerun: max refill **13 shards**, all 2,309 shards accounted
-  for, planned sampler working-set peak **5,785,112,996 bytes (5.39 GiB)** under
-  the explicit 8 GiB cap, plan
+  corpus. After the resident-budget and eager-validation-scratch review fixes,
+  the complete 18,910,484-row metadata plan was rerun: max refill **13 shards**,
+  all 2,309 shards accounted for, planned sampler working-set peak
+  **7,324,639,036 bytes (6.82 GiB)** under the explicit 8 GiB cap, plan
   `1e4ae2c0249d9ef82ce26fc349cc744e08dbea5c5874382e0da56fba957c33a6`
-  (156.4 s beside other work). The byte cap covers sampler-owned decoded array
-  payload, batch assembly, and compaction scratch; the earlier 6.9 GiB number
-  is whole-process RSS and is therefore not the same measurement. These are
-  plumbing observations, not the learning verdict.
+  (143.8 s beside other work). The byte cap covers sampler-owned decoded array
+  payload, concurrent eager-validation temporaries, batch assembly, and
+  compaction scratch; the earlier 6.9 GiB number is whole-process RSS and is
+  therefore not the same measurement. These are plumbing observations, not
+  the learning verdict.
 - **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
   6.** At the next clean GPU boundary, train both samplers from scratch on the
   frozen 4,894,143-row real-history corpus for the same **9,559 optimizer

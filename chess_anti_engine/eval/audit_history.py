@@ -71,7 +71,7 @@ _STORED_LAYOUT: Final[dict[str, str]] = {
     "input_history_encoding": STORED_HISTORY_ENCODING,
     "input_extra_features": STORED_EXTRA_FEATURES,
 }
-GAME_CLUSTER_KIND: Final[str] = "candidate_game_connected_component_v1"
+GAME_CLUSTER_KIND: Final[str] = "candidate_game_connected_component_v2"
 
 # lc0 root layout: 8 slots x 13 planes (6 us, 6 them, 1 repetition), then the
 # metadata block at 104 (4 castling planes, then the colour flag at 108).

@@ -2080,6 +2080,8 @@ def main(argv: list[str] | None = None) -> int:
             input_planes=(
                 None if epoch_input_planes is None else int(epoch_input_planes)
             ),
+            input_history_encoding=model_cfg.input_history_encoding,
+            history_rep_fix=bool(model_cfg.history_rep_fix),
             mirror_augmentation=float(trainer.mirror_prob) > 0.0,
             plan_workers=int(args.epoch_plan_workers),
             load_workers=int(args.epoch_load_workers),
@@ -2120,6 +2122,8 @@ def main(argv: list[str] | None = None) -> int:
             "sampling_mode": "game_epoch",
             "applied": {
                 "input_planes": epoch_input_planes,
+                "input_history_encoding": buf.plan.input_history_encoding,
+                "history_rep_fix": bool(buf.plan.history_rep_fix),
                 "batch_size": batch_size,
                 "policy_size": int(buf.plan.policy_size),
                 "seed": int(args.seed),
@@ -2129,6 +2133,9 @@ def main(argv: list[str] | None = None) -> int:
                 "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
                 "mirror_working_set_batch_copies": int(
                     buf.plan.mirror_working_set_batch_copies
+                ),
+                "validated_load_payload_copies": int(
+                    buf.plan.validated_load_payload_copies
                 ),
             },
             # Guard 0d still compares the historical replay signature so this

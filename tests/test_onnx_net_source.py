@@ -772,7 +772,7 @@ def test_value_regret_main_scores_the_onnx_net(
         has_game_id=np.ones(2, dtype=bool),
         game_cluster_id=np.array([7, 11], dtype=np.int64),
         has_game_cluster_id=np.ones(2, dtype=bool),
-        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
@@ -815,6 +815,31 @@ def test_value_regret_main_scores_the_onnx_net(
                                         f"[in=planes policy=policy wdl=wdl]"}
 
 
+def test_matched_rows_refuses_stale_game_cluster_semantics(
+    tmp_path: Path,
+) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    matched = tmp_path / "stale_clusters.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((1, 175, 8, 8), dtype=np.float16),
+        found=np.ones(1, dtype=bool),
+        key=np.array(["a"]),
+        game_id=np.array([17], dtype=np.int64),
+        has_game_id=np.ones(1, dtype=bool),
+        game_cluster_id=np.array([7], dtype=np.int64),
+        has_game_cluster_id=np.ones(1, dtype=bool),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
+
+    with pytest.raises(SystemExit, match="rebuild it before using clustered evidence"):
+        MatchedAuditRows(matched)
+
+
 def test_value_regret_cluster_dump_refuses_a_masked_game_cluster_id(
     echo_onnx: Path,
     mini_audit_set: Path,
@@ -835,7 +860,7 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_cluster_id(
         has_game_id=np.array([True, False]),
         game_cluster_id=np.array([7, -1], dtype=np.int64),
         has_game_cluster_id=np.array([True, False]),
-        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
@@ -873,7 +898,7 @@ def test_stored_value_regret_preflights_game_clusters_before_scoring(
         has_game_id=np.array([True, False]),
         game_cluster_id=np.array([7, -1], dtype=np.int64),
         has_game_cluster_id=np.array([True, False]),
-        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
