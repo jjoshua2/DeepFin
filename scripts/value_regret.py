@@ -463,7 +463,9 @@ def main() -> None:
                     f"positions, e.g. {missing[:3]}; a clustered dump cannot "
                     "silently omit or row-bootstrap them"
                 )
-            missing_game = [pos.key for pos in positions if matched.game_id(pos.key) < 0]
+            missing_game = [
+                pos.key for pos in positions if not matched.has_game_id(pos.key)
+            ]
             if missing_game:
                 raise SystemExit(
                     f"--matched-rows has no game_id for {len(missing_game)} "
