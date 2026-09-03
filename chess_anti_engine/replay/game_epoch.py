@@ -148,6 +148,17 @@ def _scan_shard(path: Path) -> _ShardGames:
     if "x" not in arrs:
         raise ValueError(f"{path} carries no x array")
     rows = int(arrs["x"].shape[0])
+    if rows == 0:
+        # A quarantine index reservation is intentionally rowless. Optional
+        # per-row columns are pruned when it is written, so recognize the
+        # marker before requiring game identity that no row could consume.
+        return _ShardGames(
+            path=path,
+            rows=0,
+            game_ids=np.empty(0, dtype=np.int64),
+            game_keys=np.empty(0, dtype=np.int64),
+            game_counts=np.empty(0, dtype=np.int64),
+        )
     if "game_id" not in arrs or "has_game_id" not in arrs:
         raise ValueError(
             f"{path} carries {rows} rows but no game_id/has_game_id columns; "
@@ -190,6 +201,13 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
             # map preserves submission order; filesystem timing cannot change
             # the namespace assignment, seeded permutation, or plan hash.
             records = list(pool.map(_scan_shard, paths))
+
+    # ``quarantine_desync_shards.py`` deliberately leaves a valid zero-row
+    # zarr at the highest quarantined index so the writable replay counter
+    # cannot reuse that id.  It is a reservation, not corpus data.  Keeping it
+    # in the schedule reaches ``_add_loaded_chunk`` with no game key to index;
+    # excluding it here also keeps plan shard/source counts about data shards.
+    records = [record for record in records if record.rows > 0]
 
     # `lc0_data_to_rows convert` numbers games from zero on every invocation.
     # `stage_shards` can combine several conversion outputs, so the raw int64

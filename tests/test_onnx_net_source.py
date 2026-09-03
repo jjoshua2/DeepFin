@@ -762,6 +762,17 @@ def test_value_regret_main_scores_the_onnx_net(
         raise AssertionError("value_regret --onnx loaded a checkpoint")
 
     dump = tmp_path / "per_position.jsonl"
+    matched = tmp_path / "matched_rows.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((2, 175, 8, 8), dtype=np.float16),
+        found=np.ones(2, dtype=bool),
+        key=np.array(["a", "b"]),
+        game_id=np.array([17, 23], dtype=np.int64),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
     monkeypatch.setattr(model_loader, "load_model_from_checkpoint", _boom)
     monkeypatch.setattr("sys.argv", [
         "value_regret.py",
@@ -770,6 +781,7 @@ def test_value_regret_main_scores_the_onnx_net(
         "--device", "cpu",
         "--batch-size", "8",
         "--min-pieces", "0",
+        "--matched-rows", str(matched),
         "--dump-per-position", str(dump),
     ])
     value_regret.main()
@@ -794,6 +806,7 @@ def test_value_regret_main_scores_the_onnx_net(
 
     rows = list(iter_data_rows(dump))
     assert len(rows) == 2
+    assert [r["game_id"] for r in rows] == [17, 23]
     assert {r["net"] for r in rows} == {f"onnx:{echo_onnx} "
                                         f"[in=planes policy=policy wdl=wdl]"}
 

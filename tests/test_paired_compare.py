@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from scripts.paired_compare import paired_bootstrap_ci
+from scripts.paired_compare import paired_bootstrap_ci, paired_cluster_bootstrap_ci
 
 
 def test_bootstrap_ci_covers_known_shift() -> None:
@@ -25,6 +25,50 @@ def test_bootstrap_ci_null_is_not_significant() -> None:
     deltas = rng.normal(loc=0.0, scale=5.0, size=2000)
     lo, hi = paired_bootstrap_ci(deltas, n_boot=4000, seed=2)
     assert lo < 0 < hi
+
+
+def test_cluster_bootstrap_resamples_games_not_correlated_rows() -> None:
+    # The 100 repeated rows from each game are one observation, not 100.
+    deltas = np.repeat(np.array([-10.0, 10.0]), 100)
+    clusters = np.repeat(np.array(["game-a", "game-b"]), 100)
+
+    row_lo, row_hi = paired_bootstrap_ci(deltas, n_boot=4000, seed=7)
+    game_lo, game_hi = paired_cluster_bootstrap_ci(
+        deltas, clusters, n_boot=4000, seed=7,
+    )
+
+    assert (row_lo, row_hi) == pytest.approx((-1.4, 1.4), abs=0.5)
+    assert game_lo <= -10.0
+    assert game_hi >= 10.0
+
+
+def test_cluster_key_is_required_on_every_joinable_row(tmp_path) -> None:
+    from scripts.paired_compare import load_dump
+
+    path = _write_jsonl(tmp_path / "missing-cluster.jsonl", [
+        {"fen": "a", "value": 1.0, "game_id": 1},
+        {"fen": "b", "value": 2.0},
+    ])
+
+    with pytest.raises(SystemExit, match="silently fall back"):
+        load_dump(path, cluster_key="game_id")
+
+
+def test_cluster_assignment_must_match_between_arms(tmp_path) -> None:
+    from scripts.paired_compare import load_dump, report
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "p", "value": 1.0, "game_id": 7},
+    ]), cluster_key="game_id")
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": "p", "value": 2.0, "game_id": 8},
+    ]), cluster_key="game_id")
+
+    with pytest.raises(SystemExit, match="disagrees between the two dumps"):
+        report(
+            a, b, label_a="A", label_b="B", n_boot=100,
+            cluster_key="game_id",
+        )
 
 
 def test_load_dump_audit_shape(tmp_path) -> None:

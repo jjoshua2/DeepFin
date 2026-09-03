@@ -73006,16 +73006,20 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
         PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_replacement --steps 9559 --batch-size 512 --sampling-mode replacement --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
         PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_game_epoch --steps 0 --batch-size 512 --sampling-mode game_epoch --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
       done
+      PYTHONPATH=. python3 scripts/match_audit_rows.py --audit-set data/audit_set_v1.jsonl --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats --out scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz
       for seed in 0 1; do for mode in replacement game_epoch; do
-        PYTHONPATH=. python3 scripts/value_regret.py --checkpoint runs/game_epoch_ab/s${seed}_${mode}/checkpoint.pt --max-positions 4000 --batch-size 128 --gpu-mem-fraction 0.15 --dump-per-position scratchpad/game_epoch_ab/s${seed}_${mode}.jsonl
+        PYTHONPATH=. python3 scripts/value_regret.py --checkpoint runs/game_epoch_ab/s${seed}_${mode}/checkpoint.pt --max-positions 4000 --min-pieces 0 --batch-size 128 --gpu-mem-fraction 0.15 --matched-rows scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz --dump-per-position scratchpad/game_epoch_ab/s${seed}_${mode}.jsonl
       done; done
       for seed in 0 1; do
-        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --require-n 4000
+        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --cluster-key game_id --require-n 4000
       done
 
+  The matched-row artifact contributes source `game_id` only; scoring remains
+  the preregistered FEN-only ruler. `--min-pieces 0` makes the stated full-set
+  n=4,000 executable rather than applying the tool's 7-man exclusion default.
   Sign is `game_epoch - replacement`, so negative regret is better.
   **SUCCESS:** the arithmetic mean of the two paired mean deltas is ≤ 0 cp and
-  neither seed's paired 95% CI lies wholly above 0. **KILL:** mean delta > 0 cp
+  neither seed's paired game-cluster 95% CI lies wholly above 0. **KILL:** mean delta > 0 cp
   or either seed significantly regresses. A split-sign result that does not
   trigger KILL is MIXED, not permission to use the sampler for 100M.
 - **Operational gate (not a second learning yardstick).** Both exact summaries

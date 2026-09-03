@@ -12,6 +12,7 @@ from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
     ShardMeta,
+    load_shard_arrays,
     samples_to_arrays,
     save_local_shard_arrays,
 )
@@ -257,6 +258,34 @@ def test_partially_missing_game_identity_is_refused_during_plan(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="without game_id"):
         _open(shard_dir)
+
+
+def test_zero_row_index_reservation_is_not_scheduled(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1), (2, 2), (3, 3)]],
+    )
+    arrs, _ = load_shard_arrays(shard_dir / "shard_000000.zarr")
+    rows = int(arrs["x"].shape[0])
+    empty = {
+        name: (
+            np.asarray(value)[:0]
+            if np.asarray(value).ndim >= 1
+            and np.asarray(value).shape[0] == rows
+            else np.asarray(value)
+        )
+        for name, value in arrs.items()
+    }
+    save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=empty)
+
+    buf = _open(shard_dir, batch_size=4)
+
+    batches = _drain(buf)
+
+    assert len(batches) == 1
+    assert sorted(batches[0]) == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    assert buf.plan.shard_count == 1
+    assert buf.receipt()["complete"] is True
 
 
 def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> None:
