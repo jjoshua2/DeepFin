@@ -26,6 +26,13 @@ THE STAIRCASE
   with UCI ``searchmoves``, MultiPV 16, ``go depth 11``.
 * phase 3 -- the top 4 of those, MultiPV 4, ``go depth 13``.
 
+``--staircase-policy g10 --staircase "all:9,8:10,4:12"`` names the frozen,
+independently validated adaptive labeler.  It always runs the first two rungs,
+then runs ``4:12`` exactly when d10's rank-1 minus rank-2 effective-cp margin
+is at most 10 cp.  The decision and margin are banked on every row; the
+manifest and summary carry the frozen rule.  The policy refuses every other
+staircase instead of turning one validated threshold into an unmeasured knob.
+
 ⚑ THE TRANSPOSITION TABLE IS CARRIED ACROSS THE PHASES ON PURPOSE, and that is
 disclosed rather than assumed.  Scout-then-narrow is the DEPLOYABLE scheme: the
 deep phases are cheap precisely because the shallow one warmed the table, and a
@@ -386,6 +393,15 @@ SUMMARY_NAME = "summary.json"
 UNFINISHED_ARCHIVE_TEMPLATE = "{stem}.unfinished_{index:02d}{suffix}"
 
 DEFAULT_STAIRCASE = "all:9,16:11,4:13"
+STAIRCASE_POLICY_FIXED = "fixed"
+STAIRCASE_POLICY_G10 = "g10"
+STAIRCASE_POLICIES: tuple[str, ...] = (
+    STAIRCASE_POLICY_FIXED,
+    STAIRCASE_POLICY_G10,
+)
+G10_STAIRCASE = "all:9,8:10,4:12"
+G10_DECISION_DEPTH = 10
+G10_MARGIN_CP = 10.0
 DEFAULT_TEMP_PLIES = 20
 DEFAULT_TEMP_HIGH = 1.0
 DEFAULT_TEMP_LOW = 0.3
@@ -584,6 +600,54 @@ def parse_staircase(spec: str) -> tuple[StaircasePhase, ...]:
 def format_staircase(phases: Sequence[StaircasePhase]) -> str:
     """The canonical spelling of a parsed staircase, for the realized stamp."""
     return ",".join(f"{p.width_label}:{p.depth}" for p in phases)
+
+
+def validate_staircase_policy(
+    policy: str,
+    phases: Sequence[StaircasePhase],
+) -> str:
+    """Return a valid named policy or refuse an unvalidated combination.
+
+    G10 is a measured intervention, not a generic threshold knob: its 10 cp
+    threshold was selected on one bank and independently validated on another
+    for exactly ``all:9,8:10,4:12``.  Accepting another staircase under the
+    same name would stamp untested work as the validated labeler.
+    """
+    name = str(policy)
+    if name not in STAIRCASE_POLICIES:
+        raise ValueError(
+            f"--staircase-policy {name!r} is not one of "
+            f"{', '.join(STAIRCASE_POLICIES)}",
+        )
+    staircase = format_staircase(phases)
+    if name == STAIRCASE_POLICY_G10 and staircase != G10_STAIRCASE:
+        raise ValueError(
+            f"--staircase-policy {STAIRCASE_POLICY_G10!r} is validated only "
+            f"with --staircase {G10_STAIRCASE!r}, got {staircase!r}",
+        )
+    return name
+
+
+def staircase_gate_stamp(policy: str) -> dict[str, Any]:
+    """The run-level meaning of the policy, including its frozen threshold."""
+    name = str(policy)
+    if name == STAIRCASE_POLICY_G10:
+        return {
+            "policy": STAIRCASE_POLICY_G10,
+            "adaptive": True,
+            "decision_after_phase": 1,
+            "decision_depth": G10_DECISION_DEPTH,
+            "metric": "effective_cp_rank1_minus_rank2",
+            "extend_when": "margin_cp<=threshold_cp",
+            "threshold_cp": G10_MARGIN_CP,
+            "no_margin_action": "stop",
+            "extended_phase": 2,
+            "extended_width": 4,
+            "extended_depth": 12,
+        }
+    if name == STAIRCASE_POLICY_FIXED:
+        return {"policy": STAIRCASE_POLICY_FIXED, "adaptive": False}
+    raise ValueError(f"unknown staircase policy {name!r}")
 
 
 # -- the info stream ----------------------------------------------------------
@@ -828,10 +892,31 @@ class PhaseResult:
 
 
 @dataclass(frozen=True)
+class StaircaseGateDecision:
+    """The live G10 decision banked beside the phases it controlled."""
+
+    margin_cp: float | None
+    extended: bool
+    reason: str
+    decision_depth_observed: int
+
+    def as_row(self) -> dict[str, Any]:
+        return {
+            **staircase_gate_stamp(STAIRCASE_POLICY_G10),
+            "margin_cp": self.margin_cp,
+            "extended": self.extended,
+            "reason": self.reason,
+            "decision_depth_observed": self.decision_depth_observed,
+        }
+
+
+@dataclass(frozen=True)
 class PositionSearch:
     """Everything one position's staircase produced."""
 
     phases: tuple[PhaseResult, ...]
+    #: Present exactly when an adaptive policy evaluated the final rung.
+    staircase_gate: StaircaseGateDecision | None
     #: The value vector move selection runs on: the deepest FULL-WIDTH phase-1
     #: block, in rank order, from the ROOT MOVER's seat (a rooted MultiPV list
     #: already reports each root move from the mover's POV, so nothing is
@@ -988,6 +1073,10 @@ class SearchStats:
     duplicate_iteration_flushes: int = 0
     incomplete_final_blocks: int = 0
     selection_not_full_width: int = 0
+    staircase_gate_evaluations: int = 0
+    staircase_gate_extended: int = 0
+    staircase_gate_stopped: int = 0
+    staircase_gate_forced_stops: int = 0
     #: TT-hygiene counters live HERE, not on the searcher, because a wedged
     #: engine is replaced mid-run (see EngineLease) and a fresh searcher must
     #: not zero the observations the realized stamp is built from.
@@ -1014,6 +1103,15 @@ class SearchStats:
             self.nodes_by_phase[phase.index] = samples
         samples.add(phase.nodes_total)
 
+    def add_gate(self, decision: StaircaseGateDecision) -> None:
+        self.staircase_gate_evaluations += 1
+        if decision.extended:
+            self.staircase_gate_extended += 1
+        else:
+            self.staircase_gate_stopped += 1
+        if decision.margin_cp is None:
+            self.staircase_gate_forced_stops += 1
+
     def summary(self) -> dict[str, Any]:
         return {
             "positions_searched": self.positions,
@@ -1033,6 +1131,12 @@ class SearchStats:
                 "selection_not_full_width": self.selection_not_full_width,
             },
             "engine_respawns": self.engine_respawns,
+            "staircase_gate": {
+                "evaluations": self.staircase_gate_evaluations,
+                "extended": self.staircase_gate_extended,
+                "stopped": self.staircase_gate_stopped,
+                "forced_stops": self.staircase_gate_forced_stops,
+            },
             "nodes_by_phase": {
                 str(idx): samples.summary()
                 for idx, samples in sorted(self.nodes_by_phase.items())
@@ -1189,9 +1293,14 @@ class StaircaseSearcher:
         cp_draw_width: float,
         stats: SearchStats | None = None,
         search_timeout_s: float = DEFAULT_SF_SEARCH_TIMEOUT_S,
+        staircase_policy: str = STAIRCASE_POLICY_FIXED,
     ) -> None:
         self.engine = engine
         self.staircase = tuple(staircase)
+        self.staircase_policy = validate_staircase_policy(
+            staircase_policy,
+            self.staircase,
+        )
         self.cp_slope = float(cp_slope)
         self.cp_draw_width = float(cp_draw_width)
         # The per-``go`` explosion tripwire; the engine's own read_timeout_s
@@ -1294,7 +1403,52 @@ class StaircaseSearcher:
         clears_at_entry = self.new_game_calls
         results: list[PhaseResult] = []
         candidates: list[str] = legal
+        gate_decision: StaircaseGateDecision | None = None
         for index, phase in enumerate(self.staircase):
+            if (
+                self.staircase_policy == STAIRCASE_POLICY_G10
+                and index == len(self.staircase) - 1
+            ):
+                previous = results[-1]
+                previous_block, full = deepest_block_with_width(
+                    previous.parse.blocks,
+                    want=previous.width_realized,
+                )
+                if (
+                    previous_block.depth != G10_DECISION_DEPTH
+                    or not full
+                    or not previous_block.complete
+                ):
+                    gate_decision = StaircaseGateDecision(
+                        margin_cp=None,
+                        extended=False,
+                        reason="decision_block_incomplete",
+                        decision_depth_observed=previous_block.depth,
+                    )
+                elif len(previous_block.lines) < 2:
+                    gate_decision = StaircaseGateDecision(
+                        margin_cp=None,
+                        extended=False,
+                        reason="fewer_than_two_moves",
+                        decision_depth_observed=previous_block.depth,
+                    )
+                else:
+                    margin_cp = float(
+                        previous_block.lines[0].effective_cp
+                        - previous_block.lines[1].effective_cp,
+                    )
+                    extended = margin_cp <= G10_MARGIN_CP
+                    gate_decision = StaircaseGateDecision(
+                        margin_cp=margin_cp,
+                        extended=extended,
+                        reason=(
+                            "margin_at_or_below_threshold"
+                            if extended else "margin_above_threshold"
+                        ),
+                        decision_depth_observed=previous_block.depth,
+                    )
+                if not gate_decision.extended:
+                    break
             width = phase.width_for(len(candidates))
             # Phase 0 searches the full move list, so it names no `searchmoves`
             # and its `go` line is byte-identical to an unrestricted rooted
@@ -1321,6 +1475,8 @@ class StaircaseSearcher:
             candidates = [pv.move for pv in block.lines]
         self.stats.search_s += time.perf_counter() - started
         self.stats.positions += 1
+        if gate_decision is not None:
+            self.stats.add_gate(gate_decision)
         if self.new_game_calls != clears_at_entry:
             self.stats.tt_cleared_mid_position += 1
 
@@ -1335,6 +1491,7 @@ class StaircaseSearcher:
             self.stats.selection_not_full_width += 1
         return PositionSearch(
             phases=tuple(results),
+            staircase_gate=gate_decision,
             values=value_block.lines,
             value_depth=value_block.depth,
             value_full_width=full_width,
@@ -1367,6 +1524,8 @@ class StaircaseSearcher:
             "sf_search_timeout_s": self.search_timeout_s,
             "sf_multipv_current": self._engine_multipv,
             "staircase": format_staircase(self.staircase),
+            "staircase_policy": self.staircase_policy,
+            "staircase_gate": staircase_gate_stamp(self.staircase_policy),
             "cp_slope": self.cp_slope,
             "cp_draw_width": self.cp_draw_width,
             # Observed, not asserted: the first hardcoded `True` here survived
@@ -2609,6 +2768,7 @@ class WorkerSpec:
     sf_search_timeout_s: float
     syzygy_path: str
     staircase: str
+    staircase_policy: str
     seed: int
     dedup_cache_max: int
     temp_plies: int
@@ -2929,6 +3089,10 @@ def play_game(
                         _STREAM_SELECT, int(ply),
                     ],
                 },
+                **(
+                    {"staircase_gate": search.staircase_gate.as_row()}
+                    if search.staircase_gate is not None else {}
+                ),
                 "phases": [p.as_row() for p in search.phases],
                 # Backfilled below, at game end.
                 "result": None,
@@ -3086,6 +3250,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     # ⚑ FIRST, before the resume re-warm, the opening book and every board.
     apply_history_rep_fix()
     staircase = parse_staircase(spec.staircase)
+    staircase_policy = validate_staircase_policy(spec.staircase_policy, staircase)
 
     def spawn_searcher(stats: SearchStats) -> StaircaseSearcher:
         return StaircaseSearcher(
@@ -3103,6 +3268,7 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             cp_draw_width=spec.cp_draw_width,
             stats=stats,
             search_timeout_s=float(spec.sf_search_timeout_s),
+            staircase_policy=staircase_policy,
         )
 
     cache = DedupCache(max_entries=int(spec.dedup_cache_max))
@@ -3366,6 +3532,7 @@ def config_stamp(args: argparse.Namespace, *, sf_binary: str) -> dict[str, Any]:
         "games": int(args.games),
         "workers": int(args.workers),
         "staircase": str(args.staircase),
+        "staircase_policy": str(args.staircase_policy),
         "seed": int(args.seed),
         "temp_plies": int(args.temp_plies),
         "temp_high": float(args.temp_high),
@@ -3578,6 +3745,12 @@ def merge_search(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "search_s": search_s,
         "s_per_position": (search_s / positions) if positions else math.nan,
         "anomalies": dict(anomalies),
+        "staircase_gate": {
+            name: sum(
+                int(r["search"]["staircase_gate"][name]) for r in results
+            )
+            for name in ("evaluations", "extended", "stopped", "forced_stops")
+        },
         "nodes_by_phase": nodes,
     }
 
@@ -3735,6 +3908,9 @@ def build_summary(
         "staircase_parsed": [
             {"width": p.width_label, "depth": p.depth} for p in staircase
         ],
+        "staircase_gate": staircase_gate_stamp(
+            str(requested.get("staircase_policy", STAIRCASE_POLICY_FIXED)),
+        ),
         # ⚑ REALIZED, one entry per worker, every field read off the live engine
         # (or off this process) rather than echoed from the flags -- see
         # `StaircaseSearcher.realized`.
@@ -3761,6 +3937,19 @@ def _histogram_range(histogram: dict[str, Any]) -> str:
 def format_summary(summary: dict[str, Any]) -> str:
     dedup = summary["dedup"]
     search = summary["search"]
+    gate_rule = summary.get(
+        "staircase_gate",
+        staircase_gate_stamp(STAIRCASE_POLICY_FIXED),
+    )
+    gate_counts = search.get("staircase_gate", {})
+    gate_line = f"staircase policy={gate_rule['policy']}"
+    if gate_rule.get("adaptive"):
+        gate_line += (
+            f" extended={int(gate_counts.get('extended', 0))}/"
+            f"{int(gate_counts.get('evaluations', 0))} "
+            f"stopped={int(gate_counts.get('stopped', 0))} "
+            f"forced_stops={int(gate_counts.get('forced_stops', 0))}"
+        )
     lines = [
         f"games={summary['games']} rows={summary['rows']} "
         f"plies={summary['plies_total']}",
@@ -3773,6 +3962,7 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"dedup cache entries={dedup['dedup_cache_entries']} "
         f"evictions={dedup['dedup_cache_evictions']} "
         f"bytes/entry={dedup['dedup_cache_bytes_per_entry_est']:.0f}",
+        gate_line,
         f"anomalies={search['anomalies']}",
         f"terminations={summary['terminations']}",
         # ⚑ `.get` for the same reason `run_finished` uses one below: this
@@ -3844,6 +4034,9 @@ def write_launch_manifest(
         "staircase_parsed": [
             {"width": p.width_label, "depth": p.depth} for p in staircase
         ],
+        "staircase_gate": staircase_gate_stamp(
+            str(requested.get("staircase_policy", STAIRCASE_POLICY_FIXED)),
+        ),
         "engine": {**engine_record, "id_name": engine_id_name},
         "banked_rows_min_piece_count": MIN_BANKED_PIECES,
         KEY_HISTORY_REP_FIX: HISTORY_REP_FIX,
@@ -4120,6 +4313,21 @@ def refuse_resume_config_drift(
     """
     stamped = dict(manifest.get("config_requested", {}))
     drifted: list[str] = []
+    # Before this knob existed every staircase was fixed.  The generic rule
+    # below correctly treats a newly added key as "no old claim", but this key
+    # has a knowable historical meaning: allowing an old fixed
+    # all:9,8:10,4:12 run to resume under G10 would mix fixed and adaptive rows
+    # while retaining the old config hash and top-level fixed stamp.
+    if "staircase_policy" not in stamped:
+        current_policy = str(requested.get(
+            "staircase_policy",
+            STAIRCASE_POLICY_FIXED,
+        ))
+        if current_policy != STAIRCASE_POLICY_FIXED:
+            drifted.append(
+                f"staircase_policy: manifest {STAIRCASE_POLICY_FIXED!r} "
+                f"(the pre-policy default) -> {current_policy!r}",
+            )
     for key, banked in sorted(stamped.items()):
         if key not in requested:
             drifted.append(f"{key}: manifest {banked!r}, this run does not stamp it")
@@ -4146,6 +4354,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, fan out, merge and write ``summary.json``."""
     apply_history_rep_fix()
     staircase = parse_staircase(str(args.staircase))
+    staircase_policy = validate_staircase_policy(
+        str(args.staircase_policy),
+        staircase,
+    )
     if float(args.temp_high) <= 0.0 or float(args.temp_low) <= 0.0:
         raise ValueError(
             f"--temp-high/--temp-low must be positive, got "
@@ -4246,6 +4458,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             sf_search_timeout_s=float(args.sf_search_timeout),
             syzygy_path=syzygy_path,
             staircase=format_staircase(staircase),
+            staircase_policy=staircase_policy,
             seed=int(args.seed),
             dedup_cache_max=int(args.dedup_cache_max),
             temp_plies=int(args.temp_plies),
@@ -4357,6 +4570,19 @@ def build_parser() -> argparse.ArgumentParser:
              f"{DEFAULT_STAIRCASE!r}). Width {WIDTH_ALL!r} means one PV per "
              "legal move. Widths must strictly descend and depths strictly "
              "ascend.",
+    )
+    p.add_argument(
+        "--staircase-policy",
+        choices=STAIRCASE_POLICIES,
+        default=STAIRCASE_POLICY_FIXED,
+        help=(
+            f"how the parsed staircase is executed (default "
+            f"{STAIRCASE_POLICY_FIXED!r}). {STAIRCASE_POLICY_G10!r} is the "
+            f"independently validated {G10_STAIRCASE!r} labeler: after d10, "
+            f"run the final 4:d12 rung only when the top-two effective-cp "
+            f"margin is <= {G10_MARGIN_CP:g}. It is refused with every other "
+            "--staircase rather than generalized silently."
+        ),
     )
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument(
