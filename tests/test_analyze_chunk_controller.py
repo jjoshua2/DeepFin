@@ -11,6 +11,8 @@ import pytest
 
 from scripts.analyze_chunk_controller import (
     Transition,
+    _require_bootstrap_resolution,
+    _require_safe_output_path,
     _update_stability,
     cluster_bootstrap_delta,
     evaluate_horizon,
@@ -143,6 +145,8 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert "DirectGPUEvaluator" in source
     assert "ThreadSafeGPUDispatcher" in source
     assert "BatchCoalescingDispatcher" in source
+    assert "SyzygyProbe" in source
+    assert "mcts_extension" in source
     assert "realized_search_values" in source
     assert "_require_search_take_effect" in source
 
@@ -214,12 +218,20 @@ def test_cluster_bootstrap_is_deterministic() -> None:
     ]
     m0 = np.asarray([row.gain * 0.2 for row in rows])
     m1 = np.asarray([row.gain for row in rows])
+    del m0, m1
+    alpha_profile = {100: 1.0, 150: 1.0}
 
     first = cluster_bootstrap_delta(
-        rows, m0, m1, allocation_fraction=0.5, samples=50, seed=7,
+        rows,
+        m0_alpha_profile=alpha_profile,
+        m1_alpha_profile=alpha_profile,
+        allocation_fraction=0.5, samples=50, seed=7,
     )
     second = cluster_bootstrap_delta(
-        rows, m0, m1, allocation_fraction=0.5, samples=50, seed=7,
+        rows,
+        m0_alpha_profile=alpha_profile,
+        m1_alpha_profile=alpha_profile,
+        allocation_fraction=0.5, samples=50, seed=7,
     )
     assert first == second
 
@@ -237,7 +249,8 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "emitted_action": 1, "uci": "a2a3", "bestmove_flip": False,
             "stable_chunks": chunk - 1, "visit_entropy": 0.6, "q_gap": None,
             "complexity_predicate_continue": True,
-            "q_drift": None, "visit_churn": None, "root_q": 0.0,
+            "q_drift": None if chunk == 1 else 0.0,
+            "visit_churn": None if chunk == 1 else 0.0, "root_q": 0.0,
             "phase": 1, "piece_count": 10, "legal_move_count": 5,
         })
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
@@ -251,6 +264,11 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "clock_conditioning_available": False,
         "root_position_history": "fen_only_from_audit_fen",
         "game_group_kind": "source_dir:shard:game_id",
+        "complexity_predicate": {
+            "kind": "clock_free_visit_gap_and_stability",
+            "minimum_stable_chunks": 2,
+            "minimum_visit_gap": 0.25,
+        },
         "producer_git_sha": "a" * 40,
         "producer_git_dirty": False,
         "producer_script": {
@@ -265,31 +283,58 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "matched_rows": {
             "path": "/matched.npz", "size": 1, "mtime_ns": 1, "sha256": "d" * 64,
         },
+        "mcts_extension": {
+            "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
+            "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
+        },
+        "syzygy": {
+            "path": "/tb/a:/tb/b",
+            "directories": [
+                {"path": "/tb/a", "rtbw_count": 1, "rtbz_count": 1,
+                 "total_bytes": 1, "inventory_sha256": "f" * 64},
+                {"path": "/tb/b", "rtbw_count": 1, "rtbz_count": 1,
+                 "total_bytes": 1, "inventory_sha256": "1" * 64},
+            ],
+        },
         "row_count": 2,
         "chunk_count": 2,
         "position_count": 1,
         "requested_position_count": 1,
         "excluded_position_count": 0,
         "requested_search": {
-            "active_path": "walker_puct", "walkers": 2, "chunk_sims": 50,
+            "device": "cuda", "active_path": "walker_puct",
+            "walkers": 2, "chunk_sims": 50,
             "active_parameters": {
                 "c_puct": 1.75, "cpuct_factor": 3.89, "cpuct_base": 38739.0,
                 "fpu_reduction": 0.33, "vloss_weight": 3,
-                "minibatch_size": 0,
+                "walker_gather": 1, "policy_temp": 1.0,
             },
-            "evaluator_stack": (
+        },
+        "requested_evaluator": {
+            "stack": (
                 "BatchCoalescingDispatcher("
                 "ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
             ),
-            "max_batch": 256,
-            "leaf_gather": 1,
-            "compact_bf16": False,
+            "direct_max_batch": 256, "outer_max_batch": 256, "n_slots": 2,
+            "input_bf16": False, "legal_bf16": False,
+        },
+        "realized_evaluator": {
+            "stack": (
+                "BatchCoalescingDispatcher("
+                "ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
+            ),
+            "direct_max_batch": 256, "outer_max_batch": 256, "n_slots": 2,
+            "input_bf16": False, "legal_bf16": False,
         },
         "realized_search": {
             "concurrency_mode": "walker_puct", "concurrency_workers": 2,
             "chunk_sims": 50, "c_puct": 1.75, "cpuct_factor": 3.89,
             "cpuct_base": 38739.0, "fpu_reduction": 0.33,
-            "vloss_weight": 3, "minibatch_size": 0,
+            "vloss_weight": 3, "walker_gather": 1, "policy_temp": 1.0,
+        },
+        "realized_tablebase": {
+            "installed": True, "cursed_as_draw": True,
+            "n_wdl": 510, "n_dtz": 510, "max_pieces": 6,
         },
         "output": {"sha256": digest, "size": path.stat().st_size},
     }))
@@ -357,18 +402,124 @@ def test_loader_rejects_requested_parameter_that_did_not_take_effect(
         load_transitions(bank)
 
 
+def test_loader_rejects_unrealized_walker_gather(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["requested_search"]["active_parameters"]["walker_gather"] = 999
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="realized active parameters"):
+        load_transitions(bank)
+
+
+def test_loader_requires_realized_syzygy_and_native_binary(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["realized_tablebase"]["installed"] = False
+    manifest["mcts_extension"]["sha256"] = "not-a-hash"
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=r"MCTS.*Syzygy|Syzygy.*MCTS"):
+        load_transitions(bank)
+
+
+def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[-1]["source_dir"] = "/other"
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="group_id is not"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_nonfinite_or_nonnumeric_regret(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[-1]["regret_score"] = "bad"
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="regret_score must be a finite number"):
+        load_transitions(bank)
+
+
+def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    _require_safe_output_path(bank, meta, tmp_path / "report.json")
+    with pytest.raises(ValueError, match="must not overwrite"):
+        _require_safe_output_path(bank, meta, bank)
+    with pytest.raises(ValueError, match="must not overwrite"):
+        _require_safe_output_path(bank, meta, meta)
+
+
+def test_decision_grade_requires_enough_bootstrap_samples() -> None:
+    _require_bootstrap_resolution(1, methodology_smoke=True)
+    _require_bootstrap_resolution(1000, methodology_smoke=False)
+    with pytest.raises(ValueError, match="at least 1000"):
+        _require_bootstrap_resolution(999, methodology_smoke=False)
+
+
+def test_cluster_bootstrap_refits_models_inside_resamples(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    rows = [
+        _transition(
+            f"{game}-{horizon}", game, horizon, (game - 5) / horizon,
+            current=game % 2 == 0,
+        )
+        for game in range(12)
+        for horizon in (100, 150)
+    ]
+    original = controller._fit_ridge
+    calls = 0
+
+    def counted_fit(x: np.ndarray, y: np.ndarray, alpha: float):
+        nonlocal calls
+        calls += 1
+        return original(x, y, alpha)
+
+    monkeypatch.setattr(controller, "_fit_ridge", counted_fit)
+    controller.cluster_bootstrap_delta(
+        rows,
+        m0_alpha_profile={100: 1.0, 150: 1.0},
+        m1_alpha_profile={100: 1.0, 150: 1.0},
+        allocation_fraction=0.5,
+        samples=5,
+        seed=11,
+    )
+
+    assert calls >= 4, "each usable replicate must refit both models"
+
+
 def test_bootstrap_fails_closed_when_oracle_headroom_is_undefined() -> None:
     rows = [
         _transition(f"{game}-{horizon}", game, horizon, 0.0, current=True)
         for game in range(6)
         for horizon in (100, 150)
     ]
-    scores = np.zeros(len(rows))
-
     result = cluster_bootstrap_delta(
         rows,
-        scores,
-        scores,
+        m0_alpha_profile={100: 1.0, 150: 1.0},
+        m1_alpha_profile={100: 1.0, 150: 1.0},
         allocation_fraction=0.5,
         samples=25,
         seed=3,

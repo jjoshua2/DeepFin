@@ -36,16 +36,18 @@ import numpy as np
 
 _SCHEMA = "deepfin.chunk_trajectory.v2"
 _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
-_LEGACY_SMOKE_VISIT_GAP = 0.25
-_LEGACY_SMOKE_STABLE_CHUNKS = 2
+_COMPLEXITY_VISIT_GAP = 0.25
+_COMPLEXITY_STABLE_CHUNKS = 2
+_MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
 _ACTIVE_PARAMETER_KEYS = {
     "walker_puct": {
         "c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction",
-        "vloss_weight", "minibatch_size",
+        "vloss_weight", "walker_gather", "policy_temp",
     },
     "gumbel": {
         "c_scale", "c_visit", "c_visit_root", "c_scale_root",
-        "q_visit_exp_root", "topk", "vloss_weight", "minibatch_size",
+        "q_visit_exp_root", "topk", "policy_temp", "halving_div",
+        "root_noise_scale", "vloss_weight", "minibatch_size",
     },
 }
 
@@ -94,12 +96,89 @@ def _write_json_atomic(path: Path, rendered: str) -> None:
             tmp_path.unlink()
 
 
+def _require_safe_output_path(
+    input_path: Path, meta_path: Path, output_path: Path | None,
+) -> None:
+    if output_path is None:
+        return
+    output = output_path.expanduser().resolve()
+    protected = {input_path.expanduser().resolve(), meta_path.expanduser().resolve()}
+    if output in protected:
+        raise ValueError("--out must not overwrite the input bank or its manifest")
+
+
+def _require_bootstrap_resolution(samples: int, methodology_smoke: bool) -> None:
+    if not methodology_smoke and samples < _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES:
+        raise ValueError(
+            "decision-grade analysis requires at least "
+            f"{_MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES} bootstrap samples; "
+            "use --methodology-smoke only for a smaller pipeline check"
+        )
+
+
 def _finite(value: Any, default: float = 0.0) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def _strict_finite(row: dict[str, Any], name: str) -> float:
+    value = row.get(name)
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{row.get('key')}: {name} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{row.get('key')}: {name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{row.get('key')}: {name} must be a finite number")
+    return number
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value.lower())
+    )
+
+
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _artifact_provenance_complete(artifact: Any) -> bool:
+    return bool(
+        isinstance(artifact, dict)
+        and isinstance(artifact.get("path"), str)
+        and artifact.get("path")
+        and _positive_int(artifact.get("size"))
+        and _nonnegative_int(artifact.get("mtime_ns"))
+        and _valid_sha256(artifact.get("sha256"))
+    )
+
+
+def _compatible_native_extension(artifact: Any) -> bool:
+    if not isinstance(artifact, dict):
+        return False
+    abi = artifact.get("abi_version")
+    required = artifact.get("required_abi_version")
+    if (
+        not isinstance(abi, int) or isinstance(abi, bool) or abi <= 0
+        or not isinstance(required, int) or isinstance(required, bool) or required <= 0
+    ):
+        return False
+    return (
+        _artifact_provenance_complete(artifact)
+        and str(artifact.get("path", "")).endswith((".so", ".pyd"))
+        and abi >= required
+    )
 
 
 def _update_stability(
@@ -135,6 +214,75 @@ def _emitted_visit_gap(row: dict[str, Any]) -> float | None:
         raise ValueError(f"{row.get('key')}: invalid root visit shares")
     others = np.delete(values, index)
     return float(values[index] - (others.max() if others.size else 0.0))
+
+
+def _source_group(row: dict[str, Any]) -> str | None:
+    source_dir = row.get("source_dir")
+    shard = row.get("shard")
+    game_id = row.get("game_id")
+    if (
+        not isinstance(source_dir, str) or not source_dir
+        or not isinstance(shard, str) or not shard
+        or not _nonnegative_int(game_id)
+    ):
+        return None
+    return "\0".join((source_dir, shard, str(game_id)))
+
+
+def _validate_decision_grade_row(row: dict[str, Any], line_number: int) -> None:
+    key = row.get("key")
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"line {line_number}: position key is missing")
+    group = _source_group(row)
+    if group is None or row.get("group_id") != group:
+        raise ValueError(f"{key}: group_id is not (source_dir, shard, game_id)")
+    if not _positive_int(row.get("chunk")) or not _positive_int(row.get("nodes")):
+        raise ValueError(f"{key}: chunk and nodes must be positive integers")
+    for name in (
+        "regret_score", "visit_gap", "visit_entropy", "root_q",
+    ):
+        _strict_finite(row, name)
+    for name in ("piece_count", "legal_move_count"):
+        if not _positive_int(row.get(name)):
+            raise ValueError(f"{key}: {name} must be a positive integer")
+    phase = row.get("phase")
+    if not isinstance(phase, int) or isinstance(phase, bool) or phase not in (0, 1, 2):
+        raise ValueError(f"{key}: phase must be 0, 1, or 2")
+    if not _nonnegative_int(row.get("stable_chunks")):
+        raise ValueError(f"{key}: stable_chunks must be a non-negative integer")
+    if not isinstance(row.get("bestmove_flip"), bool):
+        raise ValueError(f"{key}: bestmove_flip must be boolean")
+    if not isinstance(row.get("complexity_predicate_continue"), bool):
+        raise ValueError(f"{key}: complexity predicate must be boolean")
+    if not isinstance(row.get("emitted_action"), int) or isinstance(
+        row.get("emitted_action"), bool,
+    ):
+        raise ValueError(f"{key}: emitted_action must be an integer")
+    if not isinstance(row.get("uci"), str) or not row.get("uci"):
+        raise ValueError(f"{key}: emitted UCI move is missing")
+    q_gap = row.get("q_gap")
+    if q_gap is not None:
+        _strict_finite(row, "q_gap")
+    for name in ("q_drift", "visit_churn"):
+        value = row.get(name)
+        if value is None and row["chunk"] == 1:
+            continue
+        _strict_finite(row, name)
+    actions = row.get("root_actions")
+    shares = row.get("root_visit_shares")
+    if (
+        not isinstance(actions, list) or not actions
+        or any(not isinstance(action, int) or isinstance(action, bool) for action in actions)
+        or len(set(actions)) != len(actions)
+        or not isinstance(shares, list) or len(shares) != len(actions)
+    ):
+        raise ValueError(f"{key}: malformed root action/share arrays")
+    values = np.asarray(shares, dtype=np.float64)
+    if (
+        not np.isfinite(values).all() or (values < 0.0).any()
+        or not math.isclose(float(values.sum()), 1.0, rel_tol=1e-8, abs_tol=1e-10)
+    ):
+        raise ValueError(f"{key}: root visit shares must be finite probabilities")
 
 
 def _require_manifest(
@@ -173,24 +321,43 @@ def _require_manifest(
         failures.append("producer_git_sha is not a full commit id")
     if manifest.get("producer_git_dirty") is not False:
         failures.append("producer checkout was dirty")
-    for name in ("producer_script", "checkpoint", "audit_set", "matched_rows"):
-        artifact = manifest.get(name)
-        artifact_sha = artifact.get("sha256") if isinstance(artifact, dict) else None
-        if (
-            not isinstance(artifact, dict)
-            or not isinstance(artifact.get("path"), str)
-            or not isinstance(artifact.get("size"), int)
-            or int(artifact.get("size", -1)) <= 0
-            or not isinstance(artifact.get("mtime_ns"), int)
-            or not isinstance(artifact_sha, str)
-            or len(artifact_sha) != 64
-            or any(char not in "0123456789abcdef" for char in artifact_sha.lower())
-        ):
-            failures.append(f"{name} artifact provenance is incomplete")
+    failures.extend(
+        f"{name} artifact provenance is incomplete"
+        for name in ("producer_script", "checkpoint", "audit_set", "matched_rows")
+        if not _artifact_provenance_complete(manifest.get(name))
+    )
+    mcts_extension = manifest.get("mcts_extension")
+    if not _compatible_native_extension(mcts_extension):
+        failures.append("native MCTS extension provenance is incomplete")
     if manifest.get("game_group_kind") != "source_dir:shard:game_id":
         failures.append(f"game_group_kind={manifest.get('game_group_kind')!r}")
     if manifest.get("root_position_history") != "fen_only_from_audit_fen":
         failures.append(f"root_position_history={manifest.get('root_position_history')!r}")
+    if manifest.get("complexity_predicate") != {
+        "kind": "clock_free_visit_gap_and_stability",
+        "minimum_stable_chunks": _COMPLEXITY_STABLE_CHUNKS,
+        "minimum_visit_gap": _COMPLEXITY_VISIT_GAP,
+    }:
+        failures.append("clock-free complexity predicate provenance is incomplete")
+    syzygy = manifest.get("syzygy")
+    directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
+    if (
+        not isinstance(syzygy, dict)
+        or not isinstance(syzygy.get("path"), str)
+        or not syzygy.get("path")
+        or not isinstance(directories, list)
+        or len(directories) < 2
+        or any(
+            not isinstance(directory, dict)
+            or not isinstance(directory.get("path"), str)
+            or not _positive_int(directory.get("rtbw_count"))
+            or not _positive_int(directory.get("rtbz_count"))
+            or not _positive_int(directory.get("total_bytes"))
+            or not _valid_sha256(directory.get("inventory_sha256"))
+            for directory in (directories or [])
+        )
+    ):
+        failures.append("production Syzygy provenance is incomplete")
     requested = manifest.get("requested_search")
     realized = manifest.get("realized_search")
     if not isinstance(requested, dict) or not isinstance(realized, dict):
@@ -198,30 +365,51 @@ def _require_manifest(
     else:
         active_path = requested.get("active_path")
         active = requested.get("active_parameters")
-        expected_stack = (
-            "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
-            if active_path == "walker_puct"
-            else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
-        )
         expected_keys = _ACTIVE_PARAMETER_KEYS.get(str(active_path))
         mismatch = (
             active_path != realized.get("concurrency_mode")
             or requested.get("walkers") != realized.get("concurrency_workers")
             or requested.get("chunk_sims") != realized.get("chunk_sims")
+            or not str(requested.get("device", "")).startswith("cuda")
             or not isinstance(active, dict)
             or expected_keys is None
             or set(active) != expected_keys
-            or requested.get("evaluator_stack") != expected_stack
-            or not isinstance(requested.get("max_batch"), int)
-            or int(requested.get("max_batch", 0)) <= 0
-            or not isinstance(requested.get("leaf_gather"), int)
-            or int(requested.get("leaf_gather", 0)) <= 0
-            or not isinstance(requested.get("compact_bf16"), bool)
         )
         if isinstance(active, dict):
             mismatch = mismatch or any(realized.get(name) != value for name, value in active.items())
         if mismatch:
             failures.append("requested search does not match realized active parameters")
+    requested_evaluator = manifest.get("requested_evaluator")
+    realized_evaluator = manifest.get("realized_evaluator")
+    expected_stack = (
+        "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
+        if isinstance(requested, dict) and requested.get("active_path") == "walker_puct"
+        else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
+    )
+    if (
+        not isinstance(requested_evaluator, dict)
+        or not isinstance(realized_evaluator, dict)
+        or requested_evaluator != realized_evaluator
+        or realized_evaluator.get("stack") != expected_stack
+        or not _positive_int(realized_evaluator.get("direct_max_batch"))
+        or realized_evaluator.get("outer_max_batch")
+        != realized_evaluator.get("direct_max_batch")
+        or realized_evaluator.get("n_slots") != 2
+        or not isinstance(realized_evaluator.get("input_bf16"), bool)
+        or not isinstance(realized_evaluator.get("legal_bf16"), bool)
+    ):
+        failures.append("requested evaluator does not match realized evaluator stack")
+    realized_tablebase = manifest.get("realized_tablebase")
+    if (
+        not isinstance(realized_tablebase, dict)
+        or realized_tablebase.get("installed") is not True
+        or realized_tablebase.get("cursed_as_draw") is not True
+        or not _positive_int(realized_tablebase.get("n_wdl"))
+        or not _positive_int(realized_tablebase.get("n_dtz"))
+        or not isinstance(realized_tablebase.get("max_pieces"), int)
+        or int(realized_tablebase.get("max_pieces", 0)) < 6
+    ):
+        failures.append("production Syzygy probe was not realized")
     row_count = manifest.get("row_count")
     chunk_count = manifest.get("chunk_count")
     position_count = manifest.get("position_count")
@@ -267,6 +455,8 @@ def load_transitions(
         row = json.loads(line)
         if not methodology_smoke and row.get("schema") != _SCHEMA:
             raise ValueError(f"line {line_number}: missing {_SCHEMA} row schema")
+        if not methodology_smoke:
+            _validate_decision_grade_row(row, line_number)
         rows.append(row)
     if not rows:
         raise ValueError("trajectory bank is empty")
@@ -321,12 +511,7 @@ def load_transitions(
                     raise ValueError(f"{key}: source game_id is missing")
                 game_id = int(hashlib.sha256(key.encode()).hexdigest()[:15], 16)
             group_id = lower.get("group_id")
-            source_dir = lower.get("source_dir")
-            shard = lower.get("shard")
-            expected_group = (
-                "\0".join((str(source_dir), str(shard), str(game_id)))
-                if source_dir and shard and game_id is not None else None
-            )
+            expected_group = _source_group(lower)
             if group_id is None:
                 if not methodology_smoke:
                     raise ValueError(f"{key}: source-scoped game group is missing")
@@ -337,8 +522,14 @@ def load_transitions(
                 )
             if upper.get("group_id", group_id) != group_id:
                 raise ValueError(f"{key}: source-scoped game group changes within trajectory")
-            lo_regret = _finite(lower.get(metric))
-            hi_regret = _finite(upper.get(metric))
+            lo_regret = (
+                _strict_finite(lower, metric)
+                if not methodology_smoke else _finite(lower.get(metric))
+            )
+            hi_regret = (
+                _strict_finite(upper, metric)
+                if not methodology_smoke else _finite(upper.get(metric))
+            )
             lo_nodes, hi_nodes = int(lower["nodes"]), int(upper["nodes"])
             if hi_nodes <= lo_nodes:
                 raise ValueError(f"{key}: node horizons are not strictly increasing")
@@ -364,9 +555,15 @@ def load_transitions(
                 complexity_continue = lower.get("current_gate_continue")
                 if complexity_continue is None:
                     complexity_continue = not (
-                        stable >= _LEGACY_SMOKE_STABLE_CHUNKS
-                        and observed_gap >= _LEGACY_SMOKE_VISIT_GAP
+                        stable >= _COMPLEXITY_STABLE_CHUNKS
+                        and observed_gap >= _COMPLEXITY_VISIT_GAP
                     )
+            expected_continue = not (
+                stable >= _COMPLEXITY_STABLE_CHUNKS
+                and observed_gap >= _COMPLEXITY_VISIT_GAP
+            )
+            if not methodology_smoke and complexity_continue is not expected_continue:
+                raise ValueError(f"{key}: complexity predicate disagrees with search state")
             transitions.append(Transition(
                 key=key,
                 group_id=str(group_id),
@@ -657,12 +854,62 @@ def _weighted_capture_delta(
     return numerator / weight if weight else None
 
 
+def _frozen_alpha_profile(diagnostics: Sequence[dict[str, Any]]) -> dict[int, float]:
+    """Freeze one modal nested-CV alpha per horizon before resampling."""
+    values: dict[int, list[float]] = defaultdict(list)
+    for row in diagnostics:
+        values[int(row["horizon"])].append(float(row["alpha"]))
+    profile: dict[int, float] = {}
+    for horizon, alphas in values.items():
+        counts = {alpha: alphas.count(alpha) for alpha in set(alphas)}
+        profile[horizon] = min(counts, key=lambda alpha: (-counts[alpha], alpha))
+    return profile
+
+
+def _refit_oob_predictions(
+    transitions: Sequence[Transition],
+    train_indices: np.ndarray,
+    test_indices: np.ndarray,
+    *,
+    model: str,
+    alpha_profile: dict[int, float],
+) -> np.ndarray:
+    """Fit on a cluster bootstrap draw and predict its untouched OOB games."""
+    predictions = np.full(len(test_indices), np.nan, dtype=np.float64)
+    for horizon in sorted({transitions[index].horizon for index in test_indices}):
+        target_local = np.flatnonzero([
+            transitions[index].horizon == horizon for index in test_indices
+        ])
+        train = np.asarray([
+            index for index in train_indices
+            if transitions[index].horizon != horizon
+        ], dtype=np.int64)
+        if len(train) < 2 or not len(target_local) or horizon not in alpha_profile:
+            raise ValueError("bootstrap replicate cannot fit every held horizon")
+        train_rows = [transitions[int(index)] for index in train]
+        test_rows = [transitions[int(test_indices[int(index)])] for index in target_local]
+        fitted = _fit_ridge(
+            _design(train_rows, model),
+            np.asarray([row.gain for row in train_rows], dtype=np.float64),
+            alpha_profile[horizon],
+        )
+        predictions[target_local] = fitted.predict(_design(test_rows, model))
+    if not np.isfinite(predictions).all():
+        raise ValueError("bootstrap replicate left OOB rows unpredicted")
+    return predictions
+
+
 def cluster_bootstrap_delta(
-    transitions: Sequence[Transition], m0: np.ndarray, m1: np.ndarray,
-    *, allocation_fraction: float, samples: int, seed: int,
+    transitions: Sequence[Transition],
+    *,
+    m0_alpha_profile: dict[int, float],
+    m1_alpha_profile: dict[int, float],
+    allocation_fraction: float,
+    samples: int,
+    seed: int,
     min_oracle_headroom: float = 0.0,
 ) -> dict[str, float | int | None]:
-    """Game-cluster bootstrap of M1-minus-M0 oracle capture."""
+    """Refitted game-cluster bootstrap with untouched out-of-bag evaluation."""
     groups = sorted({row.group_id for row in transitions})
     by_group = {
         group: np.flatnonzero([row.group_id == group for row in transitions])
@@ -672,11 +919,26 @@ def cluster_bootstrap_delta(
     values: list[float] = []
     for _ in range(samples):
         drawn = rng.choice(groups, size=len(groups), replace=True)
-        indices = np.concatenate([by_group[str(group)] for group in drawn])
-        rows = [transitions[index] for index in indices]
+        drawn_set = {str(group) for group in drawn}
+        oob_groups = [group for group in groups if group not in drawn_set]
+        if len(oob_groups) < 2:
+            continue
+        train_indices = np.concatenate([by_group[str(group)] for group in drawn])
+        test_indices = np.concatenate([by_group[group] for group in oob_groups])
+        rows = [transitions[index] for index in test_indices]
+        try:
+            m0 = _refit_oob_predictions(
+                transitions, train_indices, test_indices,
+                model="M0", alpha_profile=m0_alpha_profile,
+            )
+            m1 = _refit_oob_predictions(
+                transitions, train_indices, test_indices,
+                model="M1", alpha_profile=m1_alpha_profile,
+            )
+        except (ValueError, np.linalg.LinAlgError):
+            continue
         delta = _weighted_capture_delta(
-            rows, m0[indices], m1[indices], allocation_fraction,
-            min_oracle_headroom,
+            rows, m0, m1, allocation_fraction, min_oracle_headroom,
         )
         if delta is not None and math.isfinite(delta):
             values.append(delta)
@@ -754,8 +1016,13 @@ def analyze(
         mean_m1 - mean_m0
         if mean_m0 is not None and mean_m1 is not None else None
     )
+    m0_alpha_profile = _frozen_alpha_profile(m0_diagnostics)
+    m1_alpha_profile = _frozen_alpha_profile(m1_diagnostics)
     bootstrap = cluster_bootstrap_delta(
-        transitions, m0, m1, allocation_fraction=allocation_fraction,
+        transitions,
+        m0_alpha_profile=m0_alpha_profile,
+        m1_alpha_profile=m1_alpha_profile,
+        allocation_fraction=allocation_fraction,
         samples=bootstrap_samples, seed=seed,
         min_oracle_headroom=min_oracle_headroom,
     )
@@ -773,7 +1040,8 @@ def analyze(
             "minimum_M1_minus_M0_oracle_capture": min_capture_gain,
             "minimum_oracle_over_random_headroom_mean": min_oracle_headroom,
             "M1_minus_M0_positive_on_every_held_horizon": True,
-            "game_cluster_bootstrap_lower_95_above_zero": True,
+            "refitted_OOB_game_cluster_bootstrap_lower_95_above_zero": True,
+            "bootstrap_samples": bootstrap_samples,
             "minimum_bootstrap_valid_fraction": min_bootstrap_valid_fraction,
             "M1_p95_and_p99_regret_not_worse_than_M0": True,
         },
@@ -786,7 +1054,11 @@ def analyze(
         "every_horizon_eligible": every_horizon_eligible,
         "every_horizon_positive": every_horizon_positive,
         "tail_rule_passed": tail_ok,
-        "bootstrap_M1_minus_M0": bootstrap,
+        "bootstrap_refit_oob_M1_minus_M0": bootstrap,
+        "bootstrap_frozen_alpha_profiles": {
+            "M0": m0_alpha_profile,
+            "M1": m1_alpha_profile,
+        },
         "horizons": horizons,
         "cv_diagnostics": {"M0": m0_diagnostics, "M1": m1_diagnostics},
     }
@@ -827,8 +1099,14 @@ def main() -> None:
             "--allocation-fraction in (0,1), non-negative gain/headroom gates, "
             "and --min-bootstrap-valid-fraction in (0,1]"
         )
+    actual_meta = args.meta or Path(str(args.input_path) + ".meta.json")
+    try:
+        _require_bootstrap_resolution(args.bootstrap_samples, args.methodology_smoke)
+        _require_safe_output_path(args.input_path, actual_meta, args.out)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     transitions, info = load_transitions(
-        args.input_path, meta_path=args.meta, methodology_smoke=args.methodology_smoke,
+        args.input_path, meta_path=actual_meta, methodology_smoke=args.methodology_smoke,
     )
     result = analyze(
         transitions,

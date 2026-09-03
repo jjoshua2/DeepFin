@@ -51,6 +51,7 @@ from chess_anti_engine.uci.search import (
     _ABORT_VISIT_GAP_MARGIN,
     _visit_gap,
 )
+from chess_anti_engine.utils.syzygy import default_syzygy_path, require_tablebases
 from scripts.analyze_chunk_controller import _update_stability
 from scripts.backtest_time_value import _score, _stratified
 
@@ -108,6 +109,38 @@ def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
     return out
 
 
+def _tablebase_inventory(path_value: str) -> dict[str, Any]:
+    """Cheap, durable identity for the large production tablebase directories."""
+    directories: list[dict[str, Any]] = []
+    for raw_directory in path_value.split(os.pathsep):
+        directory = Path(raw_directory.strip()).expanduser().resolve()
+        digest = hashlib.sha256()
+        counts = {"rtbw": 0, "rtbz": 0}
+        total_bytes = 0
+        files = sorted(
+            entry for entry in directory.iterdir()
+            if entry.is_file() and entry.suffix in (".rtbw", ".rtbz")
+        )
+        for entry in files:
+            stat = entry.stat()
+            counts[entry.suffix[1:]] += 1
+            total_bytes += int(stat.st_size)
+            digest.update(entry.name.encode())
+            digest.update(b"\0")
+            digest.update(str(stat.st_size).encode())
+            digest.update(b"\0")
+            digest.update(str(stat.st_mtime_ns).encode())
+            digest.update(b"\n")
+        directories.append({
+            "path": str(directory),
+            "rtbw_count": counts["rtbw"],
+            "rtbz_count": counts["rtbz"],
+            "total_bytes": total_bytes,
+            "inventory_sha256": digest.hexdigest(),
+        })
+    return {"path": path_value, "directories": directories}
+
+
 def _checkpoint_file(path: Path) -> Path:
     resolved = path.expanduser().resolve()
     candidate = resolved / "trainer.pt" if resolved.is_dir() else resolved
@@ -155,6 +188,16 @@ def _require_search_take_effect(
         raise RuntimeError("search-path take-effect check failed: " + "; ".join(failures))
 
 
+def _evaluator_stack_name(evaluator: Any) -> str:
+    """Read the wrapper chain from the objects that will actually evaluate leaves."""
+    name = type(evaluator).__name__
+    if name == "BatchCoalescingDispatcher":
+        return f"{name}({_evaluator_stack_name(evaluator._inner)})"
+    if name == "ThreadSafeGPUDispatcher":
+        return f"{name}({_evaluator_stack_name(evaluator._eval)})"
+    return name
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="backtest_chunk_trajectory")
     ap.add_argument("--checkpoint", required=True)
@@ -194,6 +237,10 @@ def main() -> None:
         help="audit-to-game index (default: <audit-set>.matched_rows.npz)",
     )
     ap.add_argument(
+        "--syzygy-path", default=default_syzygy_path(),
+        help="production Syzygy directory pair; required for decision-grade banks",
+    )
+    ap.add_argument(
         "--methodology-smoke", action="store_true",
         help="allow missing game groups; output is stamped non-decision-grade",
     )
@@ -205,6 +252,13 @@ def main() -> None:
         raise SystemExit("--chunk-sims must be >0, --max-chunks >=2, --max-positions >=0")
     if args.walkers <= 0:
         raise SystemExit("--walkers must be >0")
+    if not args.methodology_smoke and not str(args.device).startswith("cuda"):
+        raise SystemExit("decision-grade trajectory banks require the production CUDA path")
+    if args.syzygy_path or not args.methodology_smoke:
+        try:
+            require_tablebases(args.syzygy_path, what="trajectory --syzygy-path")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     gumbel_defaults = {
         "c_scale": float(PLAY_SEARCH_DEFAULTS["c_scale"]),
         "c_visit": float(PLAY_SEARCH_DEFAULTS["c_visit"]),
@@ -280,6 +334,11 @@ def main() -> None:
         "clock_conditioning_available": False,
         "root_position_history": "fen_only_from_audit_fen",
         "game_group_kind": "source_dir:shard:game_id",
+        "complexity_predicate": {
+            "kind": "clock_free_visit_gap_and_stability",
+            "minimum_stable_chunks": int(_ABORT_MIN_STABLE_CHUNKS),
+            "minimum_visit_gap": float(_ABORT_VISIT_GAP_MARGIN),
+        },
         "producer_git_sha": producer_git_sha,
         "producer_git_dirty": producer_git_dirty,
         "producer_script": _artifact(Path(__file__), require_file=True),
@@ -287,6 +346,9 @@ def main() -> None:
         "audit_set": _artifact(args.audit_set, require_file=True),
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.exists() else None
+        ),
+        "syzygy": (
+            _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
         ),
     }
 
@@ -298,6 +360,9 @@ def main() -> None:
         ThreadSafeGPUDispatcher,
     )
     from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts import _mcts_tree as mcts_extension
+    from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI
+    from chess_anti_engine.tablebase import SyzygyProbe
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
     from chess_anti_engine.uci.search import SearchWorker
     from chess_anti_engine.uci.time_manager import Deadline
@@ -308,6 +373,7 @@ def main() -> None:
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
     use_rel = bool(getattr(model, "use_dynamic_relations", False))
+    engine_options = EngineOptions()
     cfg = GumbelConfig(
         simulations=int(args.chunk_sims), add_noise=False, temperature=0.0,
         input_history_encoding=hist, input_extra_features=extra, policy_encoding=pol_enc,
@@ -315,12 +381,13 @@ def main() -> None:
         c_scale=float(args.c_scale), c_visit=float(args.c_visit),
         c_visit_root=float(args.c_visit_root),
         c_scale_root=float(args.c_scale_root), q_visit_exp_root=float(args.q_visit_exp_root),
+        policy_temp=float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
+        halving_div=int(engine_options.halving_div),
         c_puct=float(PLAY_PUCT_DEFAULTS["c_puct"]),
         cpuct_factor=float(PLAY_PUCT_DEFAULTS["cpuct_factor"]),
         cpuct_base=float(PLAY_PUCT_DEFAULTS["cpuct_base"]),
         fpu_reduction=float(PLAY_PUCT_DEFAULTS["fpu_reduction"]),
     )
-    engine_options = EngineOptions()
     compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
     direct = DirectGPUEvaluator(
         model,
@@ -343,13 +410,17 @@ def main() -> None:
     )
     worker.set_max_tree_mb(int(engine_options.hash_mb))
     worker.set_minibatch_size(int(PLAY_SEARCH_TARGET_BATCH))
+    worker.set_root_noise_scale(float(engine_options.root_noise_scale))
+    tb_probe = SyzygyProbe(str(args.syzygy_path)) if args.syzygy_path else None
+    worker.set_tb_probe(tb_probe)
     concurrency_mode, concurrency_workers = worker.concurrency_profile()
     expected_mode = "walker_puct" if int(args.walkers) > 1 else "gumbel"
     active_parameters: dict[str, float | int | bool] = (
         {
             **{name: float(value) for name, value in PLAY_PUCT_DEFAULTS.items()},
             "vloss_weight": int(PLAY_SEARCH_VLOSS_WEIGHT),
-            "minibatch_size": int(PLAY_SEARCH_TARGET_BATCH),
+            "walker_gather": int(engine_options.leaf_gather),
+            "policy_temp": float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
         }
         if concurrency_mode == "walker_puct"
         else {
@@ -359,6 +430,9 @@ def main() -> None:
             "c_scale_root": float(args.c_scale_root),
             "q_visit_exp_root": float(args.q_visit_exp_root),
             "topk": int(args.gumbel_topk),
+            "policy_temp": float(PLAY_SEARCH_DEFAULTS["policy_temp"]),
+            "halving_div": int(engine_options.halving_div),
+            "root_noise_scale": float(engine_options.root_noise_scale),
             "vloss_weight": int(PLAY_SEARCH_VLOSS_WEIGHT),
             "minibatch_size": int(PLAY_SEARCH_TARGET_BATCH),
         }
@@ -368,6 +442,37 @@ def main() -> None:
         "concurrency_mode": concurrency_mode,
         "concurrency_workers": concurrency_workers,
     }
+    if concurrency_mode == "walker_puct":
+        walker_pool = getattr(worker, "_walker_pool", None)
+        pool_config = getattr(walker_pool, "_cfg", None)
+        realized_search["walker_gather"] = int(getattr(pool_config, "gather", 0))
+    expected_evaluator_stack = (
+        "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
+        if int(args.walkers) > 1
+        else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
+    )
+    realized_evaluator = {
+        "stack": _evaluator_stack_name(evaluator),
+        "direct_max_batch": int(direct._max_batch),
+        "outer_max_batch": int(getattr(evaluator, "_max_batch", thread_safe.max_batch)),
+        "n_slots": int(direct.n_slots),
+        "input_bf16": bool(direct.supports_input_bf16_bits),
+        "legal_bf16": bool(direct.supports_legal_bf16),
+    }
+    expected_evaluator = {
+        "stack": expected_evaluator_stack,
+        "direct_max_batch": int(engine_options.max_batch),
+        "outer_max_batch": int(engine_options.max_batch),
+        "n_slots": 2,
+        "input_bf16": compact_bf16,
+        "legal_bf16": compact_bf16,
+    }
+    if realized_evaluator != expected_evaluator:
+        worker.close()
+        raise RuntimeError(
+            "evaluator take-effect check failed: requested "
+            f"{expected_evaluator!r}, realized {realized_evaluator!r}"
+        )
     try:
         _require_search_take_effect(
             expected_mode=expected_mode,
@@ -539,16 +644,22 @@ def main() -> None:
             "max_chunks": int(args.max_chunks), "walkers": int(args.walkers),
             "active_path": concurrency_mode,
             "active_parameters": active_parameters,
-            "evaluator_stack": (
-                "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
-                if int(args.walkers) > 1
-                else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
-            ),
-            "max_batch": int(engine_options.max_batch),
-            "leaf_gather": int(engine_options.leaf_gather),
-            "compact_bf16": compact_bf16,
         },
         "realized_search": realized_search,
+        "requested_evaluator": expected_evaluator,
+        "realized_evaluator": realized_evaluator,
+        "realized_tablebase": {
+            "installed": tb_probe is not None,
+            "cursed_as_draw": True,
+            "n_wdl": int(tb_probe.n_wdl) if tb_probe is not None else 0,
+            "n_dtz": int(tb_probe.n_dtz) if tb_probe is not None else 0,
+            "max_pieces": int(tb_probe.max_pieces) if tb_probe is not None else 0,
+        },
+        "mcts_extension": {
+            **_artifact(Path(mcts_extension.__file__), require_file=True),
+            "abi_version": int(getattr(mcts_extension, "ABI_VERSION", 0)),
+            "required_abi_version": int(_REQUIRED_MCTS_ABI),
+        },
     }
     _write_json_atomic(meta_path, manifest)
 
