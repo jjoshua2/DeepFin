@@ -994,6 +994,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     realized_replay = summary["realized_replay_after_guard"]
     assert realized_replay["sampling_mode"] == "game_epoch"
     assert realized_replay["applied"]["batch_size"] == 4
+    assert realized_replay["applied"]["policy_size"] == COMPACT_POLICY_SIZE
     assert realized_replay["applied"]["input_planes"] == PLANES
     assert realized_replay["applied"]["max_working_set_bytes"] == (
         lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES

@@ -126,9 +126,11 @@ def candidate_game_components(
 
     A position can match several stored games. Unioning audit rows through
     every candidate game guarantees that two positions sampled from the same
-    source game cannot be assigned to different bootstrap clusters. A row is
-    usable only when every exact match supplied an authoritative game id;
-    otherwise an unobserved edge could still connect two reported clusters.
+    source game cannot be assigned to different bootstrap clusters. If any
+    exact match lacks an authoritative game id, no reported component is
+    usable: that unidentified game could also contain a different audit row
+    and therefore hide an edge anywhere in the graph. Global invalidation is
+    intentionally conservative and remains safe after downstream row filters.
     """
     n = len(candidate_games)
     found_arr = np.asarray(found, dtype=bool)
@@ -165,8 +167,9 @@ def candidate_game_components(
     for row, games in enumerate(candidate_games):
         if found_arr[row] and games:
             cluster_id[row] = root(row)
+    graph_identity_complete = not bool(np.any(found_arr & missing_arr))
     has_cluster = np.asarray([
-        bool(found_arr[row] and games and not missing_arr[row])
+        bool(graph_identity_complete and found_arr[row] and games)
         for row, games in enumerate(candidate_games)
     ], dtype=bool)
     return cluster_id, has_cluster

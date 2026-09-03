@@ -713,17 +713,24 @@ def test_candidate_game_components_join_rows_through_every_possible_game() -> No
     assert has_cluster.tolist() == [True, True, True, False]
 
 
-def test_candidate_game_component_refuses_an_unidentified_possible_origin() -> None:
+def test_unidentified_possible_origin_invalidates_the_complete_graph() -> None:
     import scripts.match_audit_rows as mar
 
     cluster, has_cluster = mar.candidate_game_components(
-        [{("source-a", 10)}, {("source-a", 10)}],
-        candidate_missing_game_id=np.array([True, False]),
-        found=np.array([True, True]),
+        [
+            {("source-a", 10)},
+            {("source-a", 10)},
+            {("source-b", 20)},
+        ],
+        candidate_missing_game_id=np.array([True, False, False]),
+        found=np.array([True, True, True]),
     )
 
-    assert cluster.tolist() == [0, 0]
-    assert has_cluster.tolist() == [False, True]
+    assert cluster.tolist() == [0, 0, 2]
+    # The unidentified game containing row 0 could also contain some filtered
+    # audit row outside row 0's currently visible component. No surviving row
+    # can honestly claim a complete dependency graph.
+    assert has_cluster.tolist() == [False, False, False]
 
 
 def test_source_game_key_resolves_flat_snapshot_symlinks(tmp_path: Path) -> None:

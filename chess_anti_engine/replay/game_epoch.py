@@ -63,6 +63,7 @@ class _ShardGames:
     path: Path
     rows: int
     input_planes: int
+    policy_size: int
     # Raw ids are only unique within one conversion output.  The driver can
     # stage several independently converted directories, each of which starts
     # numbering games at zero, so scheduling uses the namespaced keys.
@@ -91,6 +92,7 @@ class GameEpochPlan:
     source_count: int
     game_count: int
     batch_size: int
+    policy_size: int
     seed: int
     max_working_set_bytes: int
     peak_working_set_bytes: int
@@ -115,6 +117,7 @@ class GameEpochPlan:
             "game_identity": "resolved_shard_parent+game_id",
             "row_order": "seeded_shuffle_within_shard_game_segments",
             "batch_size": int(self.batch_size),
+            "policy_size": int(self.policy_size),
             "seed": int(self.seed),
             "max_working_set_bytes": int(self.max_working_set_bytes),
             "peak_working_set_bytes_planned": int(self.peak_working_set_bytes),
@@ -269,6 +272,14 @@ def _scan_shard(path: Path) -> _ShardGames:
         raise ValueError(f"{path} x shape {x_shape} has no input-plane axis")
     rows = int(x_shape[0])
     input_planes = int(x_shape[1])
+    if "policy_target" not in arrs:
+        raise ValueError(f"{path} carries no policy_target array")
+    policy_shape = tuple(int(dim) for dim in arrs["policy_target"].shape)
+    if len(policy_shape) != 2 or policy_shape[0] != rows:
+        raise ValueError(
+            f"{path} policy_target shape {policy_shape} does not match {rows} rows",
+        )
+    policy_size = int(policy_shape[1])
     if rows == 0:
         # A quarantine index reservation is intentionally rowless. Optional
         # per-row columns are pruned when it is written, so recognize the
@@ -277,6 +288,7 @@ def _scan_shard(path: Path) -> _ShardGames:
             path=path,
             rows=0,
             input_planes=input_planes,
+            policy_size=policy_size,
             game_ids=np.empty(0, dtype=np.int64),
             game_keys=np.empty(0, dtype=np.int64),
             game_counts=np.empty(0, dtype=np.int64),
@@ -313,6 +325,7 @@ def _scan_shard(path: Path) -> _ShardGames:
         path=path,
         rows=rows,
         input_planes=input_planes,
+        policy_size=policy_size,
         game_ids=np.asarray(games, dtype=np.int64),
         game_keys=np.asarray(games, dtype=np.int64),
         game_counts=np.asarray(counts, dtype=np.int64),
@@ -359,6 +372,7 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
                 path=record.path,
                 rows=record.rows,
                 input_planes=record.input_planes,
+                policy_size=record.policy_size,
                 game_ids=record.game_ids,
                 game_keys=np.asarray(keys, dtype=np.int64),
                 game_counts=record.game_counts,
@@ -761,6 +775,7 @@ def _plan_epoch(
         source_count=len(sources),
         game_count=len(_game_totals(shuffled)),
         batch_size=int(batch_size),
+        policy_size=int(shuffled[0].policy_size),
         seed=int(seed),
         max_working_set_bytes=int(max_working_set_bytes),
         peak_working_set_bytes=int(peak_working_set_bytes),
@@ -808,6 +823,12 @@ class GameAwareEpochBuffer:
                         f"the exact-epoch trainer requires {required_input_planes}; "
                         "this mode does not begin training on a mixed corpus",
                     )
+        policy_sizes = sorted({record.policy_size for record in records})
+        if len(policy_sizes) > 1:
+            raise ValueError(
+                "exact-epoch corpus mixes policy widths "
+                f"{policy_sizes}; normalize the corpus before training",
+            )
         self.plan, self._records = _plan_epoch(
             records,
             batch_size=int(batch_size),
@@ -884,6 +905,13 @@ class GameAwareEpochBuffer:
                 f"{record.path} carries {int(arrs['x'].shape[1])} input planes, "
                 f"the exact-epoch trainer requires {self._input_planes}; this "
                 "mode does not silently pad or reinterpret a static corpus",
+            )
+        actual_policy_size = int(arrs["policy_target"].shape[1])
+        if actual_policy_size != record.policy_size:
+            raise RuntimeError(
+                f"{record.path} planned policy width {record.policy_size} and "
+                f"decoded width {actual_policy_size}; the corpus changed after "
+                "the epoch was planned",
             )
         actual_bytes = self._arrays_nbytes(arrs)
         if actual_bytes != record.decoded_bytes:

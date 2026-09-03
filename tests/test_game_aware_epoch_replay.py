@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.replay import game_epoch as game_epoch_module
-from chess_anti_engine.moves import COMPACT_POLICY_SIZE
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
@@ -641,6 +641,47 @@ def test_mixed_input_plane_corpus_is_refused_before_any_decode(
 
     monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
     with pytest.raises(ValueError, match="carries 146 input planes"):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=2,
+            seed=0,
+            input_planes=175,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+def test_mixed_policy_width_corpus_is_refused_before_any_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1)]],
+        planes=175,
+    )
+    full = _sample(game=2, row=2, planes=175)
+    full.policy_target = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    full.policy_target[2] = 1.0
+    full.legal_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    full.legal_mask[2] = 1
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays([full]),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="az_4672",
+            policy_size=POLICY_SIZE,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("policy mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match=r"mixes policy widths \[1858, 4672\]"):
         GameAwareEpochBuffer(
             shard_dir=shard_dir,
             batch_size=2,

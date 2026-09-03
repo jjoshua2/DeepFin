@@ -2121,6 +2121,7 @@ def main(argv: list[str] | None = None) -> int:
             "applied": {
                 "input_planes": epoch_input_planes,
                 "batch_size": batch_size,
+                "policy_size": int(buf.plan.policy_size),
                 "seed": int(args.seed),
                 "plan_workers": int(args.epoch_plan_workers),
                 "load_workers": int(args.epoch_load_workers),
