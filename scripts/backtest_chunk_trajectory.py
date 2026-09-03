@@ -19,7 +19,8 @@ deployed controller. Slower (single board), so run a few hundred positions.
 
 Usage:
   PYTHONPATH=. python3 scripts/backtest_chunk_trajectory.py --checkpoint <ckpt> \\
-    --device cuda --chunk-sims 2048 --max-chunks 8 --max-positions 200
+    --preregistration <tracked-plan.json> --device cuda --chunk-sims 2048 \
+    --max-chunks 8 --max-positions 200
 """
 from __future__ import annotations
 
@@ -75,6 +76,9 @@ from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path, requi
 from scripts.analyze_chunk_controller import (
     _canonical_cuda_device_string,
     _complexity_continue,
+    _git_file_at_commit,
+    _preregistration_payload,
+    _preregistered_design_failures,
     _score,
     _update_stability,
 )
@@ -144,6 +148,39 @@ def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
         name: artifact.get(name)
         for name in ("path", "size", "mtime_ns", "device", "inode", "sha256")
     }
+
+
+def _read_tracked_preregistration(
+    path: Path, producer_git_sha: str,
+) -> tuple[dict[str, Any], str]:
+    """Read one stable preregistration that is committed at the producer SHA."""
+    repo_root = Path(__file__).resolve().parents[1]
+    resolved = path.expanduser().resolve()
+    try:
+        relative_path = resolved.relative_to(repo_root).as_posix()
+    except ValueError as exc:
+        raise SystemExit("--preregistration must be a tracked file inside the repo") from exc
+    before = _artifact(resolved, require_file=True)
+    try:
+        document_bytes = resolved.read_bytes()
+    except OSError as exc:
+        raise SystemExit(f"cannot read --preregistration {resolved}: {exc}") from exc
+    after = _artifact(resolved, require_file=True)
+    if (
+        _artifact_identity(before) != _artifact_identity(after)
+        or before.get("size") != len(document_bytes)
+        or before.get("sha256") != hashlib.sha256(document_bytes).hexdigest()
+    ):
+        raise SystemExit("--preregistration changed while it was being read")
+    if _git_file_at_commit(producer_git_sha, relative_path) != document_bytes:
+        raise SystemExit(
+            "--preregistration must be tracked verbatim by the clean producer commit"
+        )
+    try:
+        document = document_bytes.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise SystemExit("--preregistration must be valid UTF-8 JSON") from exc
+    return {**before, "repo_relative_path": relative_path}, document
 
 
 def _tablebase_inventory(path_value: str) -> dict[str, Any]:
@@ -246,6 +283,25 @@ def _acquire_output_lock(output_path: Path) -> IO[bytes]:
     return handle
 
 
+def _acquire_output_locks(
+    output_path: Path, meta_path: Path,
+) -> tuple[IO[bytes], ...]:
+    """Reserve every destination in a bank/manifest pair in canonical order."""
+    handles: list[IO[bytes]] = []
+    try:
+        for target in sorted(
+            {output_path.expanduser().resolve(), meta_path.expanduser().resolve()},
+            key=str,
+        ):
+            # Keep partial progress so a later lock failure can release it.
+            handles.append(_acquire_output_lock(target))  # noqa: PERF401
+    except BaseException:
+        for handle in reversed(handles):
+            handle.close()
+        raise
+    return tuple(handles)
+
+
 def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     """Publish exactly the private bytes whose identity the manifest records."""
     private = _artifact(tmp_path, require_file=True)
@@ -269,6 +325,7 @@ def _require_safe_output_paths(
         output_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
         _output_lock_path(output_path).expanduser().resolve(),
+        _output_lock_path(meta_path).expanduser().resolve(),
     }
     repo_root = Path(__file__).resolve().parents[1]
     if any(repo_controlled_output(output, repo_root) for output in outputs):
@@ -286,6 +343,37 @@ def _require_safe_output_paths(
             except ValueError:
                 continue
             raise SystemExit("--out or its manifest must not be inside a Syzygy directory")
+
+
+def _write_preregistration_plan(
+    output_path: Path,
+    payload: dict[str, Any],
+    *,
+    protected_files: list[Path],
+    protected_directories: list[Path],
+) -> Path:
+    """Create a new untracked in-repo plan without replacing any evidence input."""
+    repo_root = Path(__file__).resolve().parents[1]
+    output = output_path.expanduser().resolve()
+    try:
+        output.relative_to(repo_root)
+    except ValueError as exc:
+        raise SystemExit("--write-preregistration must be inside the repository") from exc
+    if output.exists():
+        raise SystemExit(f"refusing to overwrite preregistration plan {output}")
+    if repo_controlled_output(output, repo_root):
+        raise SystemExit("--write-preregistration must target a new untracked file")
+    if output in {path.expanduser().resolve() for path in protected_files}:
+        raise SystemExit("--write-preregistration aliases a consumed input artifact")
+    for directory in protected_directories:
+        try:
+            output.relative_to(directory.expanduser().resolve())
+        except ValueError:
+            continue
+        raise SystemExit("--write-preregistration must not be inside a Syzygy directory")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(output, payload)
+    return output
 
 
 def _validate_registry_search_values(
@@ -365,6 +453,18 @@ def _find_direct_evaluator(evaluator: Any) -> Any:
 def main() -> None:
     ap = argparse.ArgumentParser(prog="backtest_chunk_trajectory")
     ap.add_argument("--checkpoint", required=True)
+    ap.add_argument(
+        "--preregistration", type=Path, default=None,
+        help=(
+            "tracked JSON freezing input hashes, panel size, full search shape, "
+            "Syzygy inventory, and canonical analyzer rule; required unless "
+            "--methodology-smoke"
+        ),
+    )
+    ap.add_argument(
+        "--write-preregistration", type=Path, default=None,
+        help="write the realized pre-search contract and exit; commit it before collection",
+    )
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--audit-set", type=Path, default=Path("data/audit_set_v1.jsonl"))
     ap.add_argument("--chunk-sims", type=int, default=2048)
@@ -431,6 +531,28 @@ def main() -> None:
             "decision-grade trajectory banks require a clean producer checkout; "
             "commit or stash changes, or pass --methodology-smoke"
         )
+    if args.preregistration is not None and args.write_preregistration is not None:
+        raise SystemExit(
+            "--preregistration and --write-preregistration are mutually exclusive"
+        )
+    if (
+        args.preregistration is None
+        and args.write_preregistration is None
+        and not args.methodology_smoke
+    ):
+        raise SystemExit(
+            "decision-grade trajectory banks require a tracked --preregistration"
+        )
+    preregistration_path = (
+        args.preregistration.expanduser().resolve()
+        if args.preregistration is not None else None
+    )
+    preregistration_artifact: dict[str, Any] | None = None
+    preregistration_document: str | None = None
+    if preregistration_path is not None:
+        preregistration_artifact, preregistration_document = (
+            _read_tracked_preregistration(preregistration_path, producer_git_sha)
+        )
     initial_input_artifacts = {
         "producer_script": _artifact(Path(__file__), require_file=True),
         "checkpoint": _artifact(checkpoint_path, require_file=True),
@@ -438,6 +560,7 @@ def main() -> None:
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.is_file() else None
         ),
+        "preregistration": preregistration_artifact,
     }
     syzygy_directories = (
         [Path(part.strip()) for part in str(args.syzygy_path).split(SEPARATOR)]
@@ -448,14 +571,10 @@ def main() -> None:
         meta_path,
         protected_files=[
             args.audit_set, matched_path, checkpoint_path, Path(__file__),
+            *([preregistration_path] if preregistration_path is not None else []),
         ],
         protected_directories=syzygy_directories,
     )
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    output_lock = _acquire_output_lock(args.out)
-    if not args.overwrite and (args.out.exists() or meta_path.exists()):
-        raise SystemExit(f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite")
-
     if args.chunk_sims <= 0 or args.max_chunks < 2 or args.max_positions < 0:
         raise SystemExit("--chunk-sims must be >0, --max-chunks >=2, --max-positions >=0")
     if not args.methodology_smoke and args.max_chunks < _MIN_DECISION_GRADE_CHUNKS:
@@ -605,6 +724,8 @@ def main() -> None:
         "checkpoint": initial_input_artifacts["checkpoint"],
         "audit_set": initial_input_artifacts["audit_set"],
         "matched_rows": initial_input_artifacts["matched_rows"],
+        "preregistration": initial_input_artifacts["preregistration"],
+        "preregistration_document": preregistration_document,
         "syzygy": syzygy_inventory,
     }
 
@@ -678,6 +799,7 @@ def main() -> None:
             Path(mcts_extension.__file__),
             Path(lc0_extension.__file__),
             *([checkpoint_params_path] if checkpoint_params_path is not None else []),
+            *([preregistration_path] if preregistration_path is not None else []),
         ],
         protected_directories=syzygy_directories,
     )
@@ -866,6 +988,14 @@ def main() -> None:
             "minibatch_size": int(PLAY_SEARCH_TARGET_BATCH),
         }
     )
+    requested_search = {
+        "device": str(args.device),
+        "chunk_sims": int(args.chunk_sims),
+        "max_chunks": int(args.max_chunks),
+        "walkers": int(args.walkers),
+        "active_path": concurrency_mode,
+        "active_parameters": active_parameters,
+    }
     _validate_registry_search_values(
         concurrency_mode,
         {"chunk_sims": int(args.chunk_sims), **active_parameters},
@@ -1023,6 +1153,53 @@ def main() -> None:
     except RuntimeError:
         worker.close()
         raise
+    compile_contract = {
+        "enabled": compile_mode is not None,
+        "mode": compile_mode,
+        "cache_dir": str(Path(args.compile_cache_dir).expanduser().resolve()),
+        "torchinductor_cache_dir": os.environ.get("TORCHINDUCTOR_CACHE_DIR"),
+        "triton_cache_dir": os.environ.get("TRITON_CACHE_DIR"),
+    }
+    preregistration_manifest = {
+        **provenance,
+        "requested_max_positions": int(args.max_positions),
+        "requested_search": requested_search,
+        "requested_model_search_contract": expected_model_search_contract,
+        "requested_evaluator": expected_evaluator,
+        "compile": compile_contract,
+    }
+    if args.write_preregistration is not None:
+        written = _write_preregistration_plan(
+            args.write_preregistration,
+            _preregistration_payload(preregistration_manifest),
+            protected_files=[
+                args.audit_set,
+                matched_path,
+                checkpoint_path,
+                Path(__file__),
+                Path(mcts_extension.__file__),
+                Path(lc0_extension.__file__),
+                *([checkpoint_params_path] if checkpoint_params_path is not None else []),
+            ],
+            protected_directories=syzygy_directories,
+        )
+        worker.close()
+        print(f"[traj] wrote preregistration plan -> {written}")
+        print("[traj] commit the plan, then rerun with --preregistration")
+        return
+    preregistration_failures = _preregistered_design_failures(
+        preregistration_manifest
+    )
+    if preregistration_failures and not args.methodology_smoke:
+        worker.close()
+        raise SystemExit(
+            "collection does not match its tracked preregistration: "
+            + "; ".join(preregistration_failures)
+        )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    output_locks = _acquire_output_locks(args.out, meta_path)
+    if not args.overwrite and (args.out.exists() or meta_path.exists()):
+        raise SystemExit(f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite")
     warmup_nodes = max(256, int(args.chunk_sims))
     try:
         warmup_result = worker.run(
@@ -1245,8 +1422,6 @@ def main() -> None:
                         abort_last_best,
                         stable_chunks,
                         emitted_action=int(s["emitted_action"]),
-                        visit_gap=float(s["visit_gap"]),
-                        action_count=len(s["actions"]),
                     )
                     qdrift = abs(float(s["root_q"]) - float(prev["root_q"])) if prev else None
                     churn = None
@@ -1318,6 +1493,7 @@ def main() -> None:
         "checkpoint_params": provenance["checkpoint_params"],
         "audit_set": provenance["audit_set"],
         "matched_rows": provenance["matched_rows"],
+        "preregistration": provenance["preregistration"],
         "mcts_extension": loaded_mcts_artifact,
         "lc0_extension": loaded_lc0_artifact,
     }
@@ -1331,6 +1507,10 @@ def main() -> None:
         ),
         "audit_set": _artifact_if_file(args.audit_set),
         "matched_rows": _artifact_if_file(matched_path),
+        "preregistration": (
+            _artifact_if_file(preregistration_path)
+            if preregistration_path is not None else None
+        ),
         "mcts_extension": _artifact_if_file(Path(mcts_extension.__file__)),
         "lc0_extension": _artifact_if_file(Path(lc0_extension.__file__)),
     }
@@ -1365,6 +1545,7 @@ def main() -> None:
         **provenance,
         "decision_grade": bool(
             not args.methodology_smoke
+            and not preregistration_failures
             and incomplete_exclusions == 0
             and completed_positions > 0
             and artifact_stability["passed"]
@@ -1373,6 +1554,7 @@ def main() -> None:
         "row_count": n_rows,
         "position_count": completed_positions,
         "requested_position_count": len(positions),
+        "requested_max_positions": int(args.max_positions),
         "excluded_position_count": len(excluded_positions),
         "excluded_positions": excluded_positions,
         "incomplete_exclusion_count": incomplete_exclusions,
@@ -1383,25 +1565,14 @@ def main() -> None:
             "usable_for_controller_or_cost_analysis": False,
         },
         "output": published_output_artifact,
-        "requested_search": {
-            "device": str(args.device), "chunk_sims": int(args.chunk_sims),
-            "max_chunks": int(args.max_chunks), "walkers": int(args.walkers),
-            "active_path": concurrency_mode,
-            "active_parameters": active_parameters,
-        },
+        "requested_search": requested_search,
         "realized_search": realized_search,
         "requested_model_search_contract": expected_model_search_contract,
         "realized_model_search_contract": realized_model_search_contract,
         "requested_evaluator": expected_evaluator,
         "realized_evaluator": realized_evaluator,
         "runtime": runtime,
-        "compile": {
-            "enabled": compile_mode is not None,
-            "mode": compile_mode,
-            "cache_dir": str(Path(args.compile_cache_dir).expanduser().resolve()),
-            "torchinductor_cache_dir": os.environ.get("TORCHINDUCTOR_CACHE_DIR"),
-            "triton_cache_dir": os.environ.get("TRITON_CACHE_DIR"),
-        },
+        "compile": compile_contract,
         "search_warmup": search_warmup,
         "artifact_stability": artifact_stability,
         "realized_tablebase": realized_tablebase,
@@ -1431,7 +1602,8 @@ def main() -> None:
         },
     }
     _write_json_atomic(meta_path, manifest)
-    output_lock.close()
+    for output_lock in reversed(output_locks):
+        output_lock.close()
 
     print(f"[traj] wrote {n_rows} rows -> {args.out}")
     print(f"[traj] provenance -> {meta_path}")

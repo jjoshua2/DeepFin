@@ -32,7 +32,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from itertools import pairwise
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import chess
@@ -68,6 +68,7 @@ _CANONICAL_ALLOCATION_FRACTION = 0.2
 _CANONICAL_MIN_CAPTURE_GAIN = 0.05
 _CANONICAL_MIN_ORACLE_HEADROOM = 1e-4
 _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION = 0.95
+_PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
 _NATIVE_MODULES = [
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
@@ -222,7 +223,7 @@ def _require_safe_output_path(
     if manifest is not None:
         for name in (
             "producer_script", "checkpoint", "checkpoint_params", "audit_set",
-            "matched_rows", "mcts_extension", "lc0_extension",
+            "matched_rows", "preregistration", "mcts_extension", "lc0_extension",
         ):
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
@@ -265,6 +266,19 @@ def _is_canonical_decision_rule(
         and min_oracle_headroom == _CANONICAL_MIN_ORACLE_HEADROOM
         and min_bootstrap_valid_fraction == _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION
     )
+
+
+def _canonical_analysis_contract() -> dict[str, int | float]:
+    """Exact analysis knobs that a decision-grade collection must freeze."""
+    return {
+        "folds": _CANONICAL_FOLDS,
+        "bootstrap_samples": _CANONICAL_BOOTSTRAP_SAMPLES,
+        "seed": _CANONICAL_SEED,
+        "allocation_fraction": _CANONICAL_ALLOCATION_FRACTION,
+        "min_capture_gain": _CANONICAL_MIN_CAPTURE_GAIN,
+        "min_oracle_headroom": _CANONICAL_MIN_ORACLE_HEADROOM,
+        "min_bootstrap_valid_fraction": _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION,
+    }
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -327,6 +341,167 @@ def _artifact_provenance_complete(artifact: Any) -> bool:
         and _nonnegative_int(artifact.get("mtime_ns"))
         and _valid_sha256(artifact.get("sha256"))
     )
+
+
+def _git_file_at_commit(commit: str, relative_path: str) -> bytes | None:
+    """Read a tracked file exactly as it existed in ``commit``."""
+    relative = PurePosixPath(relative_path)
+    if (
+        len(commit) != 40
+        or any(char not in "0123456789abcdef" for char in commit.lower())
+        or not relative_path
+        or relative.is_absolute()
+        or ":" in relative_path
+        or any(part in ("", ".", "..") for part in relative.parts)
+    ):
+        return None
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{commit}:{relative.as_posix()}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _preregistration_is_only_source_change(
+    source_sha: str, producer_sha: str, relative_path: str,
+) -> bool:
+    """Prove the collection commit only adds the generated plan to its source SHA."""
+    if _git_file_at_commit(source_sha, relative_path) is not None:
+        return False
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        ancestor = subprocess.run(
+            ["git", "-C", str(repo_root), "merge-base", "--is-ancestor",
+             source_sha, producer_sha],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        changed = subprocess.run(
+            ["git", "-C", str(repo_root), "diff", "--name-only", "-z",
+             f"{source_sha}..{producer_sha}", "--"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return bool(
+        ancestor.returncode == 0
+        and changed.returncode == 0
+        and changed.stdout == relative_path.encode() + b"\0"
+    )
+
+
+def _strict_json_object(document: str) -> dict[str, Any]:
+    """Parse a JSON object while rejecting duplicate keys."""
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    value = json.loads(document, object_pairs_hook=no_duplicates)
+    if not isinstance(value, dict):
+        raise ValueError("preregistration must be a JSON object")
+    return value
+
+
+def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Build the exact producer and analysis contract a plan must contain."""
+    def artifact_sha(name: str) -> Any:
+        value = manifest.get(name)
+        return value.get("sha256") if isinstance(value, dict) else None
+
+    compile_info = manifest.get("compile")
+    return {
+        "schema": _PREREGISTRATION_SCHEMA,
+        "producer": {
+            "source_git_sha": manifest.get("producer_git_sha"),
+            "checkpoint_sha256": artifact_sha("checkpoint"),
+            "checkpoint_params_sha256": artifact_sha("checkpoint_params"),
+            "audit_set_sha256": artifact_sha("audit_set"),
+            "matched_rows_sha256": artifact_sha("matched_rows"),
+            "max_positions": manifest.get("requested_max_positions"),
+            "requested_search": manifest.get("requested_search"),
+            "requested_model_search_contract": manifest.get(
+                "requested_model_search_contract"
+            ),
+            "requested_evaluator": manifest.get("requested_evaluator"),
+            "compile": {
+                "enabled": (
+                    compile_info.get("enabled")
+                    if isinstance(compile_info, dict) else None
+                ),
+                "mode": (
+                    compile_info.get("mode")
+                    if isinstance(compile_info, dict) else None
+                ),
+            },
+            "syzygy": manifest.get("syzygy"),
+        },
+        "analysis": _canonical_analysis_contract(),
+    }
+
+
+def _preregistered_design_failures(manifest: dict[str, Any]) -> list[str]:
+    """Authenticate and compare the frozen producer plus analyzer contract."""
+    artifact = manifest.get("preregistration")
+    document = manifest.get("preregistration_document")
+    producer_sha = manifest.get("producer_git_sha")
+    if not _artifact_provenance_complete(artifact) or not isinstance(artifact, dict):
+        return ["preregistration artifact provenance is incomplete"]
+    relative_path = artifact.get("repo_relative_path")
+    if not isinstance(document, str) or not isinstance(relative_path, str):
+        return ["preregistration document or tracked path is missing"]
+    try:
+        document_bytes = document.encode("utf-8", errors="strict")
+    except UnicodeError:
+        return ["preregistration document is not valid UTF-8"]
+    if (
+        artifact.get("size") != len(document_bytes)
+        or artifact.get("sha256") != hashlib.sha256(document_bytes).hexdigest()
+    ):
+        return ["preregistration document does not match its artifact identity"]
+    if (
+        not isinstance(producer_sha, str)
+        or _git_file_at_commit(producer_sha, relative_path) != document_bytes
+    ):
+        return ["preregistration was not tracked verbatim by the producer commit"]
+    try:
+        payload = _strict_json_object(document)
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return [f"preregistration document is invalid: {exc}"]
+
+    payload_producer = payload.get("producer")
+    source_sha = (
+        payload_producer.get("source_git_sha")
+        if isinstance(payload_producer, dict) else None
+    )
+    if (
+        not isinstance(source_sha, str)
+        or not _preregistration_is_only_source_change(
+            source_sha, producer_sha, relative_path,
+        )
+    ):
+        return [
+            "producer commit is not the source snapshot plus only its preregistration"
+        ]
+    expected = _preregistration_payload(manifest)
+    expected_producer = expected.get("producer")
+    if isinstance(expected_producer, dict):
+        expected_producer["source_git_sha"] = source_sha
+    if payload != expected:
+        return ["realized collection does not match the preregistered design"]
+    return []
 
 
 def _compatible_native_extension(artifact: Any) -> bool:
@@ -474,12 +649,8 @@ def _update_stability(
     stable_chunks: int,
     *,
     emitted_action: int,
-    visit_gap: float,
-    action_count: int,
 ) -> tuple[int, int]:
-    """Mirror the visit-gated streak update in ``SearchWorker._abort_ready``."""
-    if visit_gap <= 0.0 and action_count != 1:
-        return last_best, 0
+    """Mirror the emitted-move streak update in ``SearchWorker._move_is_decided``."""
     if emitted_action == last_best:
         return last_best, stable_chunks + 1
     return emitted_action, 0
@@ -788,10 +959,10 @@ def _require_manifest(
     *,
     input_bytes: bytes | None = None,
     meta_bytes: bytes | None = None,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], bool, bool]:
     if meta_bytes is None and not meta_path.is_file():
         if methodology_smoke:
-            return {}, False
+            return {}, False, False
         raise ValueError(
             f"decision-grade analysis requires {meta_path}; pass --methodology-smoke "
             "only to exercise the estimator on a legacy bank"
@@ -829,6 +1000,8 @@ def _require_manifest(
         failures.append("producer_git_sha is not a full commit id")
     if manifest.get("producer_git_dirty") is not False:
         failures.append("producer checkout was dirty")
+    preregistration_failures = _preregistered_design_failures(manifest)
+    failures.extend(preregistration_failures)
     failures.extend(
         f"{name} artifact provenance is incomplete"
         for name in ("producer_script", "checkpoint", "audit_set", "matched_rows")
@@ -1088,6 +1261,7 @@ def _require_manifest(
     chunk_count = manifest.get("chunk_count")
     position_count = manifest.get("position_count")
     requested_positions = manifest.get("requested_position_count")
+    requested_max_positions = manifest.get("requested_max_positions")
     excluded_positions = manifest.get("excluded_position_count")
     excluded_details = manifest.get("excluded_positions")
     counts_are_ints = (
@@ -1095,6 +1269,7 @@ def _require_manifest(
         and _positive_int(chunk_count)
         and _positive_int(position_count)
         and _positive_int(requested_positions)
+        and _positive_int(requested_max_positions)
         and _nonnegative_int(excluded_positions)
     )
     if not counts_are_ints:
@@ -1104,10 +1279,12 @@ def _require_manifest(
         assert isinstance(chunk_count, int)
         assert isinstance(position_count, int)
         assert isinstance(requested_positions, int)
+        assert isinstance(requested_max_positions, int)
         assert isinstance(excluded_positions, int)
         if (
             row_count != chunk_count * position_count
             or requested_positions != position_count + excluded_positions
+            or requested_positions > requested_max_positions
             or manifest.get("incomplete_exclusion_count") != 0
             or not isinstance(excluded_details, list)
             or len(excluded_details) != excluded_positions
@@ -1138,7 +1315,7 @@ def _require_manifest(
     if (failures or not decision_grade) and not methodology_smoke:
         detail = ", ".join(failures) if failures else "manifest is non-decision-grade"
         raise ValueError(f"trajectory provenance is not decision-grade: {detail}")
-    return manifest, decision_grade
+    return manifest, decision_grade, not preregistration_failures
 
 
 def _recomputed_trajectory_state(
@@ -1190,8 +1367,6 @@ def _recomputed_trajectory_state(
                 last_best,
                 stable,
                 emitted_action=int(row["emitted_action"]),
-                visit_gap=observed_gap,
-                action_count=len(row["root_actions"]),
             )
         recorded_stable = row.get("stable_chunks")
         if recorded_stable is not None and int(recorded_stable) != stable:
@@ -1359,7 +1534,7 @@ def load_transitions(
     # in which the manifest can attest to bytes other than those analyzed.
     input_bytes = input_path.read_bytes()
     meta_bytes = actual_meta.read_bytes() if actual_meta.is_file() else None
-    manifest, decision_grade = _require_manifest(
+    manifest, decision_grade, preregistered_design = _require_manifest(
         input_path,
         actual_meta,
         methodology_smoke,
@@ -1511,6 +1686,7 @@ def load_transitions(
         )
     info = {
         "decision_grade": decision_grade and not methodology_smoke,
+        "preregistered_design": preregistered_design and not methodology_smoke,
         "methodology_smoke": methodology_smoke,
         "metric": metric,
         "analysis_scope": "fresh_tree_fixed_node_horizons_only",
@@ -2351,10 +2527,19 @@ def main() -> None:
     analyzer = _analyzer_provenance(
         analyzer_start_artifact, analyzer_start_git_sha, analyzer_start_git_dirty,
     )
-    evidence_inputs_decision_grade = bool(
-        info["decision_grade"] and analyzer["decision_grade"]
+    manifest_producer_sha = (
+        manifest.get("producer_git_sha") if isinstance(manifest, dict) else None
     )
-    canonical_rule = _is_canonical_decision_rule(
+    analyzer_matches_producer_commit = bool(
+        analyzer["git_sha"] == manifest_producer_sha
+        and analyzer["final_git_sha"] == manifest_producer_sha
+    )
+    evidence_inputs_decision_grade = bool(
+        info["decision_grade"]
+        and analyzer["decision_grade"]
+        and analyzer_matches_producer_commit
+    )
+    canonical_analysis_rule = _is_canonical_decision_rule(
         n_folds=args.folds,
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
@@ -2363,8 +2548,11 @@ def main() -> None:
         min_oracle_headroom=args.min_oracle_headroom,
         min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
     )
+    canonical_rule = bool(canonical_analysis_rule and info["preregistered_design"])
     decision_grade = evidence_inputs_decision_grade and canonical_rule
+    result["canonical_analysis_rule"] = canonical_analysis_rule
     result["canonical_preregistered_rule"] = canonical_rule
+    result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
     result["evidence_decision_grade"] = decision_grade
     result["verdict"] = _evidence_verdict(
         evidence_inputs_decision_grade=evidence_inputs_decision_grade,

@@ -5,6 +5,7 @@ import inspect
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import chess
 import numpy as np
@@ -12,6 +13,7 @@ import pytest
 
 from chess_anti_engine.eval.audit import legal_full_indices, phase_bucket, position_key
 from chess_anti_engine.moves import move_to_index
+from scripts import analyze_chunk_controller as controller_module
 from scripts.analyze_chunk_controller import (
     Transition,
     _complexity_continue,
@@ -31,11 +33,29 @@ from scripts.analyze_chunk_controller import (
 )
 from scripts.backtest_chunk_trajectory import (
     _acquire_output_lock,
+    _acquire_output_locks,
     _publish_output,
     _require_safe_output_paths,
     _require_search_take_effect,
     _validate_registry_search_values,
 )
+
+
+_TEST_GIT_FILES: dict[str, bytes] = {}
+
+
+@pytest.fixture(autouse=True)
+def _authenticate_test_preregistration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        controller_module,
+        "_git_file_at_commit",
+        lambda _commit, relative_path: _TEST_GIT_FILES.get(relative_path),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_preregistration_is_only_source_change",
+        lambda _source, _producer, _relative_path: True,
+    )
 
 
 def _state(value: float = 0.0, *, gap: float = 0.1, stable: float = 0.0) -> dict[str, float]:
@@ -274,19 +294,19 @@ def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
         )
 
 
-def test_stability_streak_resets_while_gumbel_survivor_trails_visits() -> None:
+def test_stability_streak_tracks_emitted_move_even_when_it_trails_visits() -> None:
     last, stable = _update_stability(
-        -1, 0, emitted_action=11, visit_gap=0.2, action_count=3,
+        -1, 0, emitted_action=11,
     )
     assert (last, stable) == (11, 0)
     last, stable = _update_stability(
-        last, stable, emitted_action=11, visit_gap=-0.1, action_count=3,
-    )
-    assert (last, stable) == (11, 0)
-    last, stable = _update_stability(
-        last, stable, emitted_action=11, visit_gap=0.3, action_count=3,
+        last, stable, emitted_action=11,
     )
     assert (last, stable) == (11, 1)
+    last, stable = _update_stability(
+        last, stable, emitted_action=11,
+    )
+    assert (last, stable) == (11, 2)
 
 
 def test_stable_single_legal_move_is_decided_without_root_visits() -> None:
@@ -401,7 +421,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "root_action_reference_listed": action_listed,
             "emitted_action": emitted, "uci": "a2a3", "bestmove_flip": False,
             "pv_actions": [emitted], "pv_uci": ["a2a3"],
-            "stable_chunks": 0, "visit_entropy": entropy, "q_gap": -0.1,
+            "stable_chunks": chunk - 1, "visit_entropy": entropy, "q_gap": -0.1,
             "complexity_predicate_continue": True,
             "q_drift": None if chunk == 1 else 0.0,
             "visit_churn": None if chunk == 1 else 0.0, "root_q": 0.0,
@@ -415,7 +435,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     meta = Path(str(path) + ".meta.json")
-    meta.write_text(json.dumps({
+    manifest: dict[str, Any] = {
         "schema": "deepfin.chunk_trajectory.v3",
         "complete": True,
         "decision_grade": True,
@@ -495,6 +515,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "chunk_count": 4,
         "position_count": 1,
         "requested_position_count": 1,
+        "requested_max_positions": 2,
         "excluded_position_count": 0,
         "excluded_positions": [],
         "incomplete_exclusion_count": 0,
@@ -595,7 +616,49 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             },
         },
         "output": {"sha256": digest, "size": path.stat().st_size},
-    }))
+    }
+    preregistration = {
+        "schema": "deepfin.chunk_controller_preregistration.v1",
+        "producer": {
+            "source_git_sha": "9" * 40,
+            "checkpoint_sha256": manifest["checkpoint"]["sha256"],
+            "checkpoint_params_sha256": None,
+            "audit_set_sha256": manifest["audit_set"]["sha256"],
+            "matched_rows_sha256": manifest["matched_rows"]["sha256"],
+            "max_positions": manifest["requested_max_positions"],
+            "requested_search": manifest["requested_search"],
+            "requested_model_search_contract": manifest[
+                "requested_model_search_contract"
+            ],
+            "requested_evaluator": manifest["requested_evaluator"],
+            "compile": {
+                "enabled": manifest["compile"]["enabled"],
+                "mode": manifest["compile"]["mode"],
+            },
+            "syzygy": manifest["syzygy"],
+        },
+        "analysis": {
+            "folds": 5,
+            "bootstrap_samples": 2000,
+            "seed": 0,
+            "allocation_fraction": 0.2,
+            "min_capture_gain": 0.05,
+            "min_oracle_headroom": 1e-4,
+            "min_bootstrap_valid_fraction": 0.95,
+        },
+    }
+    document = json.dumps(preregistration, sort_keys=True, separators=(",", ":")) + "\n"
+    relative_path = "tests/fixtures/chunk_controller_preregistration.json"
+    manifest["preregistration"] = {
+        "path": "/repo/" + relative_path,
+        "repo_relative_path": relative_path,
+        "size": len(document.encode()),
+        "mtime_ns": 1,
+        "sha256": hashlib.sha256(document.encode()).hexdigest(),
+    }
+    manifest["preregistration_document"] = document
+    _TEST_GIT_FILES[relative_path] = document.encode()
+    meta.write_text(json.dumps(manifest))
     return meta
 
 
@@ -644,8 +707,40 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     transitions, info = load_transitions(bank)
     assert transitions[0].state["visit_gap"] == pytest.approx(-0.2)
     assert info["decision_grade"] is True
+    assert info["preregistered_design"] is True
     assert info["analysis_scope"] == "fresh_tree_fixed_node_horizons_only"
     assert info["cross_move_tree_reuse_tested"] is False
+
+
+def test_loader_rejects_a_collection_outside_the_preregistered_design(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["requested_max_positions"] = 3
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="does not match the preregistered design"):
+        load_transitions(bank)
+
+
+def test_loader_authenticates_preregistration_against_the_producer_commit(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    payload = json.loads(manifest["preregistration_document"])
+    payload["analysis"]["seed"] = 1
+    document = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    manifest["preregistration_document"] = document
+    manifest["preregistration"]["size"] = len(document.encode())
+    manifest["preregistration"]["sha256"] = hashlib.sha256(document.encode()).hexdigest()
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="not tracked verbatim"):
+        load_transitions(bank)
 
 
 def test_loader_requires_fresh_tree_scope_provenance(tmp_path: Path) -> None:
@@ -1370,10 +1465,15 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
         _require_safe_output_path(bank, meta, meta)
     manifest = {
         "checkpoint": {"path": str(checkpoint)},
+        "preregistration": {"path": str(tmp_path / "preregister.json")},
         "syzygy": {"directories": [{"path": str(tablebases)}]},
     }
     with pytest.raises(ValueError, match="consumed input artifact"):
         _require_safe_output_path(bank, meta, checkpoint, manifest=manifest)
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(
+            bank, meta, tmp_path / "preregister.json", manifest=manifest,
+        )
     with pytest.raises(ValueError, match="Syzygy"):
         _require_safe_output_path(
             bank, meta, tablebases / "report.json", manifest=manifest,
@@ -1464,6 +1564,22 @@ def test_producer_output_lock_serializes_the_bank_manifest_pair(tmp_path: Path) 
 
     retry = _acquire_output_lock(output)
     retry.close()
+
+
+def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> None:
+    output = tmp_path / "bank.jsonl"
+    meta = Path(str(output) + ".meta.json")
+    first = _acquire_output_locks(output, meta)
+    try:
+        with pytest.raises(SystemExit, match="another producer holds"):
+            _acquire_output_locks(meta, Path(str(meta) + ".meta.json"))
+    finally:
+        for handle in reversed(first):
+            handle.close()
+
+    retry = _acquire_output_locks(meta, Path(str(meta) + ".meta.json"))
+    for handle in reversed(retry):
+        handle.close()
 
 
 def test_publish_output_detects_replacement_before_manifest(
