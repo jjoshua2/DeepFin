@@ -45,7 +45,7 @@ from chess_anti_engine.eval.audit import (
     phase_bucket,
     position_key,
 )
-from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
+from chess_anti_engine.mcts import search_options as search_options_module
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
@@ -70,6 +70,7 @@ _CANONICAL_MIN_CAPTURE_GAIN = 0.05
 _CANONICAL_MIN_ORACLE_HEADROOM = 1e-4
 _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION = 0.95
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
+SEARCH_OPTIONS = search_options_module.SEARCH_OPTIONS
 _NATIVE_MODULES = [
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
@@ -161,14 +162,62 @@ def _artifact_snapshot(path: Path) -> dict[str, Any]:
 
 
 def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
-    """Snapshot the analyzer and its separately imported local helpers."""
-    return {
-        "analyzer": _artifact_snapshot(Path(__file__)),
-        "reachable_oracle": _artifact_snapshot(
-            Path(solve_reachable_oracle.__code__.co_filename)
+    """Snapshot every loaded project Python module used by the analyzer."""
+    source_paths = {
+        "analyzer": Path(__file__),
+        "chess_anti_engine.encoding.encode": Path(input_plane_count.__code__.co_filename),
+        "chess_anti_engine.eval.audit": Path(phase_bucket.__code__.co_filename),
+        "chess_anti_engine.mcts.search_options": Path(
+            str(search_options_module.__file__)
         ),
-        "output_guard": _artifact_snapshot(Path(repo_controlled_output.__code__.co_filename)),
+        "chess_anti_engine.moves.encode": Path(index_to_move_strict.__code__.co_filename),
+        "scripts.reachable_oracle": Path(solve_reachable_oracle.__code__.co_filename),
+        "scripts.repo_output_guard": Path(repo_controlled_output.__code__.co_filename),
     }
+    for module_name, module in sorted(sys.modules.items()):
+        if not (
+            module_name == "chess_anti_engine"
+            or module_name.startswith("chess_anti_engine.")
+            or module_name in ("scripts.reachable_oracle", "scripts.repo_output_guard")
+        ):
+            continue
+        module_file = getattr(module, "__file__", None)
+        if isinstance(module_file, str) and Path(module_file).suffix == ".py":
+            source_paths[module_name] = Path(module_file)
+    return {
+        name: _artifact_snapshot(path)
+        for name, path in sorted(source_paths.items())
+    }
+
+
+def _source_revision_bindings(
+    sources: dict[str, dict[str, Any]], git_sha: str,
+) -> dict[str, dict[str, Any]]:
+    """Bind loaded project sources to tracked bytes in the reported revision."""
+    repo_root = Path(__file__).resolve().parents[1]
+    bindings: dict[str, dict[str, Any]] = {}
+    for name, artifact in sources.items():
+        raw_path = artifact.get("path")
+        relative_path: str | None = None
+        if isinstance(raw_path, str):
+            try:
+                relative_path = Path(raw_path).resolve().relative_to(repo_root).as_posix()
+            except (OSError, ValueError):
+                pass
+        committed = (
+            _git_file_at_commit(git_sha, relative_path)
+            if relative_path is not None else None
+        )
+        matches = bool(
+            committed is not None
+            and artifact.get("size") == len(committed)
+            and artifact.get("sha256") == hashlib.sha256(committed).hexdigest()
+        )
+        bindings[name] = {
+            "repo_relative_path": relative_path,
+            "matches_reported_git_revision": matches,
+        }
+    return bindings
 
 
 def _analyzer_provenance(
@@ -178,8 +227,13 @@ def _analyzer_provenance(
 ) -> dict[str, Any]:
     end_sources = _analyzer_source_artifacts()
     end_git_sha, end_git_dirty = _git_state()
+    source_bindings = _source_revision_bindings(start_sources, start_git_sha)
+    sources_match_git_revision = bool(source_bindings) and all(
+        row["matches_reported_git_revision"] for row in source_bindings.values()
+    )
     stable = (
         start_sources == end_sources
+        and sources_match_git_revision
         and len(start_git_sha) == 40
         and all(char in "0123456789abcdef" for char in start_git_sha.lower())
         and end_git_sha == start_git_sha
@@ -195,6 +249,8 @@ def _analyzer_provenance(
         "script": start_sources["analyzer"],
         "sources": start_sources,
         "sources_stable": start_sources == end_sources,
+        "source_revision_bindings": source_bindings,
+        "sources_match_git_revision": sources_match_git_revision,
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
         "python_executable": str(Path(sys.executable).resolve()),

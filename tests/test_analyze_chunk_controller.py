@@ -1914,24 +1914,55 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
 ) -> None:
     from scripts import analyze_chunk_controller as controller
 
-    artifact = {
-        "path": "/analyzer.py", "size": 1, "mtime_ns": 1, "sha256": "a" * 64,
-    }
-    sources = {
-        "analyzer": artifact,
-        "reachable_oracle": artifact,
-        "output_guard": artifact,
-    }
+    repo_root = Path(controller.__file__).resolve().parents[1]
+    sources = controller._analyzer_source_artifacts()
     monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
     monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller,
+        "_git_file_at_commit",
+        lambda _commit, relative_path: (repo_root / relative_path).read_bytes(),
+    )
 
     clean = controller._analyzer_provenance(sources, "b" * 40, False)
     dirty = controller._analyzer_provenance(sources, "b" * 40, True)
 
     assert clean["decision_grade"] is True
+    assert clean["sources_match_git_revision"] is True
     assert clean["numpy_version"]
     assert clean["python_chess_version"]
     assert dirty["decision_grade"] is False
+
+
+def test_analyzer_provenance_rejects_helper_from_another_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    repo_root = Path(controller.__file__).resolve().parents[1]
+    sources = controller._analyzer_source_artifacts()
+    foreign_oracle = tmp_path / "reachable_oracle.py"
+    foreign_oracle.write_bytes(
+        Path(controller.solve_reachable_oracle.__code__.co_filename).read_bytes()
+    )
+    sources["scripts.reachable_oracle"] = controller._artifact_snapshot(foreign_oracle)
+    monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
+    monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller,
+        "_git_file_at_commit",
+        lambda _commit, relative_path: (repo_root / relative_path).read_bytes(),
+    )
+
+    provenance = controller._analyzer_provenance(sources, "b" * 40, False)
+
+    assert provenance["sources_stable"] is True
+    assert provenance["sources_match_git_revision"] is False
+    assert provenance["decision_grade"] is False
+    assert provenance["source_revision_bindings"]["scripts.reachable_oracle"] == {
+        "repo_relative_path": None,
+        "matches_reported_git_revision": False,
+    }
 
 
 def test_analyzer_revision_is_authenticated_independently_of_bank_producer() -> None:
