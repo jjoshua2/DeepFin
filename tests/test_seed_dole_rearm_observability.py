@@ -129,15 +129,20 @@ def test_claim_carries_the_trial_key_into_the_rearm_log(
     """
     pub = _pub(tmp_path)
     gate = _SeedDoleGate()
-    assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub)) is True
-    _write_rearm(pub, json.dumps({"training_iteration": 5}))
+    token = asyncio.run(gate.claim_token("trial_00007", 5, publish_dir=pub, claim_id="winner"))
+    assert token
+    _write_rearm(pub, json.dumps({"training_iteration": 5, "grant_token": token}))
 
-    with caplog.at_level(logging.INFO, logger=_LOGGER):
-        assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub)) is True
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub, claim_id="winner")) is True
+        assert asyncio.run(
+            gate.claim("trial_00007", 5, publish_dir=pub, claim_id="nonowner")
+        ) is False
 
-    consumed = [m for m in _messages(caplog, logging.INFO) if "rearm CONSUMED" in m]
-    assert len(consumed) == 1, consumed
-    assert "trial=trial_00007" in consumed[0], consumed[0]
+    active = [m for m in _messages(caplog, logging.WARNING) if "rearm DEFERRED as ACTIVE" in m]
+    assert len(active) == 1, active
+    assert "trial=trial_00007" in active[0], active[0]
+    assert (pub / SEED_DOLE_REARM_FILENAME).exists(), "an active rearm was not retained"
 
 
 def test_stale_rearm_does_not_lose_a_later_dole(tmp_path: Path) -> None:

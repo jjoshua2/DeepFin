@@ -95,6 +95,13 @@ def _iter_compacted_token_matches(compacted_dir: Path, flush_token: str) -> Iter
 # so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
+# A winning seed-dole claim is a LEASED GENERATION, not a permanent boolean.
+# Updated workers ACK the token after local queue installation and replay that
+# proof on every manifest poll (~30s); legacy exact-claim replay remains a
+# rollout-compatible heartbeat. A same-iteration retry may re-open the dole
+# only after this lease expires, separating a dead claimant from a live owner.
+SEED_DOLE_LEASE_SECONDS = 180.0
+
 # Why a manifest read produced no manifest. "Absent" is the legitimate
 # pre-first-publish state; "unreadable" means the file is there and corrupt.
 # The worker-compat gate admits on the first and refuses to decide on the
@@ -126,32 +133,48 @@ REARM_CONSUMED = "consumed"
 REARM_STALE = "stale"
 REARM_BAD = "bad"
 REARM_UNREADABLE = "unreadable"
+REARM_ACTIVE = "active"
+REARM_READY = "ready"
+REARM_TOKEN_MISMATCH = "token_mismatch"
 
 
 def _consume_rearm_file(
-    path: Path, training_iteration: int, *, trial_key: str = "",
+    path: Path,
+    training_iteration: int,
+    *,
+    trial_key: str = "",
+    expected_grant_token: str | None = None,
+    rearm_allowed: bool = True,
+    retain_matched: bool = False,
+    log_active: bool = True,
 ) -> tuple[bool, str]:
     """Consume a rearm file once; return ``(matched, outcome)``.
 
-    The file is claimed by rename so two concurrent consumers cannot both act
-    on it, then removed — EXCEPT when it could not be parsed, in which case it
-    is quarantined as ``seed_dole_rearm.json.bad-<unix>`` instead of being
-    destroyed. A malformed rearm is the one case where the bytes are the only
-    evidence of what went wrong, and the previous code deleted them in a
-    ``finally`` on every path.
-
-    Every outcome is logged. Before this, all four non-match paths were a bare
-    ``return False`` with a suppressed unlink, so "the dole never fired" and
-    "the dole fired normally" produced byte-identical (empty) evidence.
+    ``expected_grant_token is None`` preserves the standalone/legacy helper
+    semantics. The served gate always supplies the current generation token:
+    a tokenless or stale-generation rearm can then never roll back a newer
+    winner, and a matching generation is reopened only after its lease expires.
     """
     who = f"trial={trial_key} " if trial_key else ""
     tmp = path.with_suffix(path.suffix + ".consuming")
     try:
         path.rename(tmp)
     except FileNotFoundError:
-        return False, REARM_ABSENT
+        # A crash may leave the claimed request at ``.consuming``. Treat that
+        # name as the durable transaction marker rather than silently losing
+        # the recovery request forever.
+        try:
+            tmp.stat()
+        except FileNotFoundError:
+            return False, REARM_ABSENT
+        except OSError as exc:
+            _log.warning(
+                "seed-dole rearm UNREADABLE (%srecovery marker): %s: %s — dole "
+                "NOT rearmed for iteration %d",
+                who, type(exc).__name__, exc, int(training_iteration),
+            )
+            return False, REARM_UNREADABLE
     except OSError as exc:
-        # Previously indistinguishable from "no rearm present".
         _log.warning(
             "seed-dole rearm UNREADABLE (%sclaim failed): %s: %s — dole NOT rearmed "
             "for iteration %d", who, type(exc).__name__, exc, int(training_iteration),
@@ -159,11 +182,14 @@ def _consume_rearm_file(
         return False, REARM_UNREADABLE
 
     quarantine: Path | None = None
+    restore_pending = False
+    keep_claimed = False
     try:
         try:
             raw = tmp.read_text(encoding="utf-8")
             data = json.loads(raw) if raw.strip() else {}
             want = int(data.get("training_iteration", -1))
+            file_token = str(data.get("grant_token") or "")
         except Exception as exc:
             quarantine = path.with_suffix(path.suffix + f".bad-{int(time.time())}")
             _log.warning(
@@ -172,23 +198,67 @@ def _consume_rearm_file(
                 who, type(exc).__name__, exc, int(training_iteration), quarantine,
             )
             return False, REARM_BAD
-        if want == int(training_iteration):
-            _log.info(
-                "seed-dole rearm CONSUMED: %siteration=%d — this iteration's seed "
-                "dole is re-opened for the next poll to win",
-                who, int(training_iteration),
+
+        if want != int(training_iteration):
+            _log.warning(
+                "seed-dole rearm SKIPPED as stale: %sfile iteration=%d, poll "
+                "iteration=%d — rearm discarded (a later iteration still claims "
+                "normally)", who, want, int(training_iteration),
             )
-            return True, REARM_CONSUMED
-        # Not a loss of the dole: `claim` still grants a LATER iteration through
-        # the normal `training_iteration > last` path, so only the re-arm of the
-        # file's own (older) iteration is dropped. Logged because the trainable
-        # wrote it expecting it to fire.
-        _log.warning(
-            "seed-dole rearm SKIPPED as stale: %sfile iteration=%d, poll "
-            "iteration=%d — rearm discarded (a later iteration still claims "
-            "normally)", who, want, int(training_iteration),
+            return False, REARM_STALE
+
+        if expected_grant_token is not None:
+            expected = str(expected_grant_token or "")
+            if not expected:
+                _log.warning(
+                    "seed-dole rearm SKIPPED: %siteration=%d has no durable "
+                    "generation token; refusing an unbound rollback",
+                    who, int(training_iteration),
+                )
+                return False, REARM_TOKEN_MISMATCH
+            if not file_token:
+                quarantine = path.with_suffix(path.suffix + f".bad-{int(time.time())}")
+                _log.warning(
+                    "seed-dole rearm MALFORMED: %siteration=%d is missing "
+                    "grant_token; refusing tokenless rollback; file kept at %s",
+                    who, int(training_iteration), quarantine,
+                )
+                return False, REARM_BAD
+            if file_token != expected:
+                _log.warning(
+                    "seed-dole rearm SKIPPED generation mismatch: %siteration=%d "
+                    "file_generation=%s current_generation=%s",
+                    who, int(training_iteration), file_token[:12], expected[:12],
+                )
+                return False, REARM_TOKEN_MISMATCH
+            if not rearm_allowed:
+                # This is a deferral, not a rejection. The request was written
+                # precisely so it can reopen this generation once the lease
+                # expires; deleting it here makes that future decision
+                # impossible if another worker polls during the live window.
+                restore_pending = True
+                if log_active:
+                    _log.warning(
+                        "seed-dole rearm DEFERRED as ACTIVE: %siteration=%d "
+                        "generation=%s still has a live claim lease; request retained",
+                        who, int(training_iteration), expected[:12],
+                    )
+                return False, REARM_ACTIVE
+
+            if retain_matched:
+                # A replacement is not committed yet. Keep this claimed name
+                # durable until the new winner sidecar is safely persisted;
+                # after a crash or failed write the next claim resumes here.
+                keep_claimed = True
+                return True, REARM_READY
+
+        _log.info(
+            "seed-dole rearm CONSUMED: %siteration=%d%s — this generation is "
+            "re-opened for the next poll to win",
+            who, int(training_iteration),
+            f" generation={file_token[:12]}" if file_token else "",
         )
-        return False, REARM_STALE
+        return True, REARM_CONSUMED
     finally:
         if quarantine is not None:
             try:
@@ -198,6 +268,28 @@ def _consume_rearm_file(
                     "seed-dole rearm quarantine failed (%s): %s: %s — removing",
                     who, type(exc).__name__, exc,
                 )
+                with contextlib.suppress(OSError):
+                    tmp.unlink(missing_ok=True)
+        elif keep_claimed:
+            pass
+        elif restore_pending:
+            restored_or_superseded = False
+            try:
+                # Do not overwrite a newer request published after our claim
+                # rename. A hard link provides the missing no-replace rename
+                # primitive atomically because both names share one directory.
+                os.link(tmp, path)
+            except FileExistsError:
+                # A newer publisher already installed the path; keep that one.
+                restored_or_superseded = True
+            except OSError as exc:
+                _log.warning(
+                    "seed-dole rearm restore failed (%s): %s: %s — request kept at %s",
+                    who, type(exc).__name__, exc, tmp,
+                )
+            else:
+                restored_or_superseded = True
+            if restored_or_superseded:
                 with contextlib.suppress(OSError):
                     tmp.unlink(missing_ok=True)
         else:
@@ -754,8 +846,16 @@ class _SeedDoleGate:
     as the claim decision so concurrent polls still yield exactly one winner.
     """
 
-    def __init__(self, state_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        state_path: Path | None = None,
+        *,
+        lease_seconds: float = SEED_DOLE_LEASE_SECONDS,
+        clock: Any = time.time,
+    ) -> None:
         self._state_path = state_path
+        self._lease_seconds = max(1.0, float(lease_seconds))
+        self._clock = clock
         # ⚑ CREATED LAZILY, IN THE LOOP THAT FIRST USES IT. An `asyncio.Lock`
         # binds to a running loop, and constructing it here binds it to
         # whatever loop happened to be running when the gate was made -- or to
@@ -775,6 +875,7 @@ class _SeedDoleGate:
         self.rearm_consumed = 0
         self.rearm_skipped = 0
         self.rearm_bad = 0
+        self._active_rearm_warnings: set[tuple[str, int, str]] = set()
         # Idempotency record for the winner of each trial's current iteration.
         #
         # ⚑ A SIDECAR, not a key inside the state file. That file's loader does
@@ -844,6 +945,19 @@ class _SeedDoleGate:
             if won > int(self._last_iter.get(trial_key, -1)):
                 self._last_iter[trial_key] = won
 
+        # Upgrade from the pre-lease winner schema conservatively. An old
+        # winner may still be alive, so give it one full lease window to replay
+        # before any retry can rearm it. Persist the grace so a second server
+        # restart cannot erase the protection.
+        migrated = False
+        now = float(self._clock())
+        for winner in self._winners.values():
+            if "lease_expires_at_unix" not in winner:
+                winner["lease_expires_at_unix"] = now + self._lease_seconds
+                migrated = True
+        if migrated:
+            self._persist_winner()
+
     def _winners_path(self) -> Path | None:
         if self._state_path is None:
             return None
@@ -891,29 +1005,80 @@ class _SeedDoleGate:
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
-        *, trial_key: str = "",
+        *, trial_key: str = "", retain_matched: bool = False,
     ) -> bool:
-        """Consume rearm file; caller MUST hold ``self._lock``.
-
-        Delegates to the module-level :func:`_consume_rearm_file` — the same
-        implementation :func:`consume_seed_dole_rearm` uses — and tallies the
-        outcome. The two used to be separate copies of the same body and could
-        drift apart silently.
-        """
+        """Consume a generation-bound rearm; caller MUST hold ``self._lock``."""
         if publish_dir is None:
             return False
+        winner = self._winners.get(trial_key)
+        generation_bound = int(self._last_iter.get(trial_key, -1)) == int(training_iteration)
+        expected: str | None = None
+        allowed = True
+        if generation_bound:
+            expected = ""
+            if isinstance(winner, dict) and _as_int(winner.get("iteration"), -1) == int(training_iteration):
+                expected = str(winner.get("grant_token") or "")
+                try:
+                    lease_expires = float(winner.get("lease_expires_at_unix") or 0.0)
+                except (TypeError, ValueError):
+                    lease_expires = 0.0
+                allowed = bool(expected) and float(self._clock()) >= lease_expires
+        active_key = (
+            (trial_key, int(training_iteration), expected)
+            if expected
+            else None
+        )
         matched, outcome = _consume_rearm_file(
             Path(publish_dir) / SEED_DOLE_REARM_FILENAME,
             training_iteration,
             trial_key=trial_key,
+            expected_grant_token=expected,
+            rearm_allowed=allowed,
+            retain_matched=bool(retain_matched and generation_bound),
+            log_active=(
+                active_key is None or active_key not in self._active_rearm_warnings
+            ),
         )
+        if active_key is not None:
+            if outcome == REARM_ACTIVE:
+                self._active_rearm_warnings.add(active_key)
+            else:
+                self._active_rearm_warnings.discard(active_key)
         if outcome == REARM_CONSUMED:
             self.rearm_consumed += 1
-        elif outcome == REARM_STALE:
+        elif outcome in (REARM_STALE, REARM_ACTIVE, REARM_TOKEN_MISMATCH):
             self.rearm_skipped += 1
         elif outcome in (REARM_BAD, REARM_UNREADABLE):
             self.rearm_bad += 1
         return matched
+
+    def _commit_rearm_unlocked(
+        self,
+        publish_dir: Path,
+        training_iteration: int,
+        *,
+        trial_key: str,
+        grant_token: str,
+    ) -> None:
+        """Finalize a prepared rearm after its replacement is durable."""
+        path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
+        marker = path.with_suffix(path.suffix + ".consuming")
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            # Safe to leave behind: the new winner is already durable, and the
+            # next claim will recover this marker and discard its stale token.
+            _log.warning(
+                "seed-dole rearm commit cleanup failed (trial=%s): %s: %s — "
+                "stale marker kept at %s",
+                trial_key or "<default>", type(exc).__name__, exc, marker,
+            )
+        self.rearm_consumed += 1
+        _log.info(
+            "seed-dole rearm CONSUMED: trial=%s iteration=%d generation=%s — "
+            "replacement generation is durable",
+            trial_key or "<default>", int(training_iteration), grant_token[:12],
+        )
 
     def counters(self) -> dict[str, int]:
         """Cumulative rearm outcomes since process start.
@@ -955,12 +1120,14 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
+        ack_capable: bool = False,
     ) -> bool:
         """Boolean form of :meth:`claim_seq`, for callers that only need won/lost."""
         token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
+            ack_capable=ack_capable,
         )
         return bool(token)
 
@@ -973,12 +1140,14 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
+        ack_capable: bool = False,
     ) -> str:
         """Token-only form of :meth:`claim_result`."""
         token, _new = await self.claim_result(
             trial_key, training_iteration, publish_dir=publish_dir,
             allow_rearm=allow_rearm, claim_id=claim_id,
             manifest_revision=manifest_revision,
+            ack_capable=ack_capable,
         )
         return token
 
@@ -991,167 +1160,160 @@ class _SeedDoleGate:
         allow_rearm: bool = False,
         claim_id: str | None = None,
         manifest_revision: str | None = None,
+        ack_grant_token: str | None = None,
+        ack_capable: bool = False,
+        renew_only: bool = False,
     ) -> tuple[str, bool]:
-        """Claim the dole; return (grant_token, newly_issued).
+        """Claim one leased generation; return ``(grant_token, newly_issued)``.
 
-        `grant_token` is "" when not granted, and otherwise an OPAQUE id for
-        one dose: replayed unchanged for a retry, fresh for a rearm.
-
-        ⚑⚑ OPAQUE AND COMPARED BY EQUALITY, NOT A MONOTONE COUNTER. This was a
-        per-trial integer, and that encoded an ORDERING assumption the storage
-        cannot honour. The worker's question is "is this the dose I already
-        applied?", which is equality; making it "is this newer than what I
-        applied?" imported a dependency on the counter never restarting.
-
-        It restarts. `_grant_seq` was rebuilt only from the winner sidecar, and
-        sidecar loss is explicitly TOLERATED (the gate keeps serving). MEASURED:
-        issue five grants for trial T, delete only `*.winners.json`, reload --
-        the durable gate still reads iteration 10, but the counter is back to
-        0, so iteration 11 issues seq 1. A long-running worker holding applied
-        seq 5 then silently SKIPS the next five legitimate doses. Sidecar loss
-        went from "lose replay for an already-spent iteration" to "suppress
-        several future doses". An opaque token cannot regress that way: a fresh
-        one is simply != the applied one, whatever the storage did.
-
-        `newly_issued` distinguishes a fresh grant from a REPLAY -- both return
-        the same token, and only the first is worth logging. Without it the
-        `seed dole GRANTED` line fires on every ~30s poll of the winning
-        worker, since the winner deliberately keeps asking.
-
-        ⚑ The TOKEN, not a bool, is the worker-facing answer. A replay of an
-        already-won claim returns the SAME token, so the worker can tell "this
-        is the dose I already applied" from "this is a new dose" -- which a
-        bool, or an (iteration, revision) pair, cannot express.
-
-        When a matching rearm file is present in ``publish_dir`` (or
-        ``allow_rearm=True`` for tests) AND this exact iteration is already
-        claimed, roll the gate back one step so a single new winner can take
-        the batch. Rearm consumption and the claim decision share one lock so
-        concurrent multi-worker polls cannot double-dole.
+        The opaque grant token is the generation id. A legacy winning claim's
+        idempotent replay is its heartbeat; an ACK-capable worker must prove it
+        installed the generation before a replay extends the durable lease. A
+        same-iteration rearm is generation-bound and honored only after that
+        lease expires. ``ack_grant_token`` is deliberately NOT a completion
+        claim and never by itself prevents recovery after claimant death.
         """
-        # A9: this runs on `/v1/lease_trial`, which every worker polls, and
-        # the body does rename + read_text + unlink + write_text + replace.
-        # Those are blocking FS calls, and they were on the event-loop thread
-        # inside an `async def`: the busiest route on the server stalled the
-        # loop for a filesystem round-trip on every poll.
-        #
-        # ⚑ THE LOCK STAYS AN `asyncio.Lock`, AND IT STAYS OUT HERE. Both FS
-        # steps are pushed into the threadpool INDIVIDUALLY, from inside the
-        # `async with`, rather than moving the whole body into one thread
-        # function. Moving the body would mean acquiring an `asyncio.Lock`
-        # from a worker thread, which is not merely awkward -- `asyncio.Lock`
-        # is not thread-safe and has no blocking acquire, so it cannot be
-        # held across a thread boundary at all. Awaiting inside the `async
-        # with` keeps the critical section exactly as wide as it was: the
-        # rearm consumption and the claim decision are still one section, so
-        # concurrent multi-worker polls still cannot double-dole. The only
-        # change is which thread does the syscalls.
-        # Imported here, not at module scope: this module guards its
-        # fastapi imports inside `create_app` so it stays importable in the
-        # lite `[worker]` install, and starlette arrives with fastapi. A
-        # module-level import would silently take that property away.
         from starlette.concurrency import run_in_threadpool
-
-        # ⚑⚑ NEVER LET `claim_id is None` REACH THE DECISION LOGIC. It used to
-        # skip the replay check AND the winner write while still minting a
-        # token, advancing `_last_iter` and persisting the gate -- so a claim
-        # with no id BURNED the iteration and left nothing to replay. MEASURED:
-        # any account holder POSTing `{"manifest_revision": R}` with no
-        # claim_id spent the dose and the real worker was then refused. That is
-        # the one-shot DoS this whole change removes, reopened behind a
-        # credential.
-        #
-        # Synthesising one here means every grant takes the SAME path -- stage,
-        # persist, commit -- so there is no second code path for a caller to
-        # land on and none for the tests to accidentally certify instead.
         claim_id = str(claim_id or "") or f"anon-{secrets.token_hex(8)}"
+        ack = str(ack_grant_token or "")
+
+        def _matches(winner: Any) -> bool:
+            return (
+                isinstance(winner, dict)
+                and _as_int(winner.get("iteration"), -1) == int(training_iteration)
+                and str(winner.get("claim_id") or "") == str(claim_id)
+                and str(winner.get("revision") or "") == str(manifest_revision or "")
+            )
 
         async with self._loop_lock():
+            winner = self._winners.get(trial_key)
+            current_token = str(winner.get("grant_token") or "") if isinstance(winner, dict) else ""
+            ack_owns_generation = bool(
+                ack
+                and isinstance(winner, dict)
+                and _as_int(winner.get("iteration"), -1) == int(training_iteration)
+                and ack == current_token
+            )
+            exact_replay = _matches(winner)
+            # Updated workers explicitly advertise ACK support. For them, exact
+            # replay still recovers a dropped grant response, but only proof that
+            # the generation reached the local queues may extend the lease.
+            # Legacy workers cannot provide that proof, so preserve their old
+            # exact-replay heartbeat during rollout.
+            heartbeat = ack_owns_generation or (
+                exact_replay and not ack_capable and not renew_only
+            )
+            if heartbeat and not allow_rearm:
+                assert isinstance(winner, dict)
+                before = dict(winner)
+                now = float(self._clock())
+                token = current_token
+                winner["lease_expires_at_unix"] = now + self._lease_seconds
+                if ack:
+                    if ack == token:
+                        if not winner.get("acknowledged_at_unix"):
+                            winner["acknowledged_at_unix"] = now
+                            _log.warning(
+                                "seed dole ACK: trial=%s iteration=%d generation=%s",
+                                trial_key or "<default>", int(training_iteration), token[:12],
+                            )
+                    else:
+                        _log.warning(
+                            "seed dole ACK ignored as stale: trial=%s iteration=%d "
+                            "ack_generation=%s current_generation=%s",
+                            trial_key or "<default>", int(training_iteration), ack[:12], token[:12],
+                        )
+                if not await run_in_threadpool(self._persist_winner):
+                    self._winners[trial_key] = before
+                    return SEED_DOLE_PERSIST_FAILED, False
+                if publish_dir is not None:
+                    await run_in_threadpool(
+                        functools.partial(
+                            self._consume_rearm_unlocked,
+                            publish_dir,
+                            training_iteration,
+                            trial_key=trial_key,
+                        ),
+                    )
+                return token, False
+
+            if ack and isinstance(winner, dict):
+                current_token = str(winner.get("grant_token") or "")
+                if ack != current_token:
+                    _log.warning(
+                        "seed dole ACK ignored as stale: trial=%s iteration=%d "
+                        "ack_generation=%s current_generation=%s",
+                        trial_key or "<default>", int(training_iteration), ack[:12], current_token[:12],
+                    )
+
+            # Pause-state heartbeats may renew an installed generation but
+            # must never consume rearm or issue a new dose, even if the live
+            # pause flag clears between the worker's GET and this POST.
+            if renew_only:
+                return "", False
+
             rearm = bool(allow_rearm)
+            prepared_rearm = False
+            rearm_generation = current_token
             if publish_dir is not None:
-                # File wins over the kwarg when both are set; under the lock so
-                # rename + claim decision is one critical section.
                 rearm = await run_in_threadpool(
                     functools.partial(
                         self._consume_rearm_unlocked,
                         publish_dir,
                         training_iteration,
                         trial_key=trial_key,
+                        retain_matched=True,
                     ),
                 )
-            # ⚑ IDEMPOTENT REPLAY, and it has to come BEFORE the monotonic test.
-            # The grant is persisted server-side and only THEN sent, so a dropped
-            # response leaves the server believing the dole was handed out while the
-            # worker never learned it won. Without this, the retry hits `iteration >
-            # last` as False and the single seed opportunity for that iteration is
-            # silently lost -- the exact "server thinks seeding happened, it didn't"
-            # failure this whole change is about, reintroduced by the extra round
-            # trip the change itself adds.
-            #
-            # Keyed on ALL THREE of iteration, revision and claim_id: a different
-            # worker (different claim_id) must still lose, and the same worker
-            # replaying against a DIFFERENT manifest revision is not the same
-            # request and must not inherit the win.
-            # ⚑⚑ A REARM RETIRES THE OLD WINNER. A same-iteration republish
-            # deliberately re-opens the gate for one more dose. If the previous
-            # winner's record survived that, its replay would match here and
-            # short-circuit -- handing back the OLD grant_token, so the worker
-            # would see "same dose I already applied" and skip the legitimately
-            # rearmed batch. The rearm is a new opportunity; the old win must
-            # stop being replayable at that point.
+                prepared_rearm = bool(
+                    rearm
+                    and current_token
+                    and int(self._last_iter.get(trial_key, -1))
+                    == int(training_iteration)
+                )
+            if exact_replay and ack_capable and not rearm:
+                # Return the durable result so a lost response/local transient
+                # remains retryable, but do not turn an uninstalled generation
+                # into an immortal lease. If a matching expired rearm exists,
+                # the branch below replaces it instead.
+                return current_token, False
+            previous = self._winners.get(trial_key)
+            stored_last = int(self._last_iter.get(trial_key, -1))
             if rearm:
                 self._winners.pop(trial_key, None)
-
-            w = self._winners.get(trial_key)
-            if (
-                isinstance(w, dict)
-                # ⚑ As lenient as the loader that wrote this. A sidecar whose
-                # `iteration` is not int-parseable would otherwise raise
-                # inside the handler and 500 EVERY claim for that trial,
-                # forever, with the worker seeing only "rejected with HTTP
-                # 500". The startup reconciliation already guards the
-                # identical `int()`; this one did not.
-                and _as_int(w.get("iteration"), -1) == int(training_iteration)
-                and str(w.get("claim_id") or "") == str(claim_id)
-                and str(w.get("revision") or "") == str(manifest_revision or "")
-            ):
-                return str(w.get("grant_token") or ""), False
-
-            last = int(self._last_iter.get(trial_key, -1))
+            last = stored_last
             if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
-                # ⚑ A FRESH OPAQUE TOKEN PER GENUINE GRANT, AND IT IS WHAT THE
-                # WORKER KEYS ON. `(iteration, manifest_revision)` is NOT a
-                # sufficient identity for one dose: MEASURED, an identical
-                # same-iteration republish produces a BYTE-IDENTICAL manifest
-                # and therefore the same revision, so a worker keying on that
-                # pair would suppress the rearmed dose it is supposed to play.
-                # A replay returns the stored token and a rearm mints a new one,
-                # which is exactly the distinction "have I already applied this"
-                # requires -- by EQUALITY, never by ordering.
                 token = secrets.token_hex(16)
-                # ⚑ Stage, persist, and only THEN commit in memory. If the
-                # sidecar write fails we must not acknowledge -- and we must
-                # not leave a non-durable winner behind that a later replay
-                # could shortcut on. Restoring the previous record is what
-                # guarantees that.
-                previous = self._winners.get(trial_key)
                 self._winners[trial_key] = {
                     "iteration": int(training_iteration),
                     "claim_id": str(claim_id),
                     "revision": str(manifest_revision or ""),
                     "grant_token": token,
+                    "lease_expires_at_unix": float(self._clock()) + self._lease_seconds,
                 }
                 if not await run_in_threadpool(self._persist_winner):
                     if previous is None:
                         self._winners.pop(trial_key, None)
                     else:
                         self._winners[trial_key] = previous
+                    if rearm:
+                        self._last_iter[trial_key] = stored_last
                     return SEED_DOLE_PERSIST_FAILED, False
                 self._last_iter[trial_key] = int(training_iteration)
                 await run_in_threadpool(self._persist_gate)
+                if prepared_rearm and publish_dir is not None:
+                    await run_in_threadpool(
+                        functools.partial(
+                            self._commit_rearm_unlocked,
+                            publish_dir,
+                            training_iteration,
+                            trial_key=trial_key,
+                            grant_token=rearm_generation,
+                        ),
+                    )
                 return token, True
             return "", False
 
@@ -4249,8 +4411,6 @@ def create_app(
             return {"granted": False, "reason_code": "revision_mismatch", "manifest_revision": revision}
 
         live_decline = _dole_live_decline(reader)
-        if live_decline is not None:
-            return {"granted": False, "reason_code": live_decline, "manifest_revision": revision}
 
         # ⚑⚑ A CLAIM WITHOUT AN ID IS REFUSED BEFORE IT CAN TOUCH THE GATE.
         # Two reasons, and the first is a security hole: with no id there is
@@ -4308,16 +4468,40 @@ def create_app(
                 },
             )
 
+        ack_grant_token = str(payload.get("ack_grant_token") or "").strip()
+        if len(ack_grant_token) > 128:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "granted": False,
+                    "reason_code": "ack_grant_token_too_long",
+                    "manifest_revision": revision,
+                },
+            )
+
+        ack_capable = payload.get("supports_seed_dole_ack") is True
+        ack_only = payload.get("ack_only") is True
+        if live_decline is not None and (not ack_only or not ack_grant_token):
+            return {
+                "granted": False,
+                "reason_code": live_decline,
+                "manifest_revision": revision,
+            }
+
         trial_key = str(_normalize_trial_id(trial_id) or "")
         # Rearm file (if any) is consumed inside claim under the gate lock so
-        # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
-        # polls return above and never reach claim — they cannot burn rearm.
+        # concurrent multi-worker polls cannot double-dole. Arena/dole-off polls
+        # return above. Paused polls reach the gate only in ACK-only mode: they
+        # may renew an installed owner but cannot burn rearm or issue a grant.
         grant_token, newly_issued = await seed_dole_gate.claim_result(
             trial_key,
             iteration,
             publish_dir=_publish_root(trial_id),
             claim_id=claim_id,
             manifest_revision=revision,
+            ack_grant_token=ack_grant_token,
+            ack_capable=ack_capable,
+            renew_only=ack_only,
         )
         if grant_token == SEED_DOLE_PERSIST_FAILED:
             # 503, not a 200 "already_claimed": the dole is not spent, the
@@ -4327,6 +4511,15 @@ def create_app(
                 detail="seed dole state could not be persisted; retry",
                 headers={"Retry-After": "5"},
             )
+        if ack_only:
+            return {
+                "granted": False,
+                "acknowledged": bool(grant_token),
+                "reason_code": (
+                    "acknowledged" if grant_token else (live_decline or "stale_ack")
+                ),
+                "manifest_revision": revision,
+            }
         granted = bool(grant_token)
         # THE observation that proves the dole took effect. Everything upstream
         # of this line is a reason to decline, and each of those returns a

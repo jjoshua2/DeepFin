@@ -273,35 +273,33 @@ def test_every_dole_field_the_worker_reads_is_bound_by_the_revision(tmp_path: Pa
         assert revision() == base, f"restoring {key} did not restore the revision"
 
 
-def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
+def test_identical_same_iteration_republish_preserves_an_acked_live_generation(
     tmp_path: Path,
 ) -> None:
-    """⚑⚑ THE REAL REARM PATH, NOT A SYNTHETIC REVISION CHANGE.
+    """Exercise the real rearm path with an installed generation ACK.
 
-    The server deliberately supports republishing the SAME iteration after a
-    claim and re-opening the gate for one more dose. An earlier version of the
-    worker keyed "already applied" on `(training_iteration, manifest_revision)`
-    and short-circuited before even asking.
-
-    MEASURED, which is why this test uses the real publisher rather than
-    invented `rev-a`/`rev-b`: an identical republish produces a BYTE-IDENTICAL
-    manifest, so the revision is UNCHANGED. That pair therefore cannot
-    distinguish a rearmed dose from the one already played, and the worker
-    would silently skip every rearm -- with all the server-side rearm tests
-    still green, because the server's behaviour was never the problem.
-
-    The distinguishing value is the server's opaque `grant_token`.
+    An identical republish produces a byte-identical revision and writes a
+    generation-bound rearm. The installed worker's token proves it is still the
+    live owner, so the server must return the same token and retain the rearm
+    for recovery after lease expiry rather than double-dose immediately.
     """
     app = _setup(tmp_path, iteration=20)
     fen_path = tmp_path / "blindspot.txt"
 
-    async def poll_and_claim() -> dict:
+    async def poll_and_claim(*, ack: str = "") -> dict:
         async with await _client(app) as client:
             headers = _manifest_poll_headers(worker_id="w")
             manifest = (await client.get(MANIFEST, headers=headers)).json()
+            payload = {
+                "claim_id": "worker-A",
+                "manifest_revision": manifest["manifest_revision"],
+                "supports_seed_dole_ack": True,
+            }
+            if ack:
+                payload["ack_grant_token"] = ack
             r = await client.post(
                 CLAIM,
-                json={"claim_id": "worker-A", "manifest_revision": manifest["manifest_revision"]},
+                json=payload,
                 auth=("u", "p"), headers=headers,
             )
             r.raise_for_status()
@@ -311,23 +309,92 @@ def test_an_identical_same_iteration_republish_still_delivers_a_second_dose(
     assert first["granted"] is True
     assert first["grant_token"]
 
-    # The winner re-asking without a republish must get the SAME sequence back.
+    # A dropped-response retry gets the same token before the worker can ACK.
     replay = asyncio.run(poll_and_claim())
     assert replay["grant_token"] == first["grant_token"], "a replay looked like a new dose"
 
-    # Now the real rearm: republish the SAME iteration with the SAME config.
+    # Now the real rearm: republish the same iteration with the same config.
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
-    rearmed = asyncio.run(poll_and_claim())
+    rearmed = asyncio.run(poll_and_claim(ack=str(first["grant_token"])))
 
     assert rearmed["revision"] == first["revision"], (
         "the premise of this test no longer holds -- an identical republish now "
         "changes the revision, so re-check whether grant_token is still needed"
     )
     assert rearmed["granted"] is True
-    assert rearmed["grant_token"] != first["grant_token"], (
-        "an identical same-iteration republish reused the grant token, so the worker "
-        "cannot tell the rearmed dose from the one it already played"
+    assert rearmed["grant_token"] == first["grant_token"], (
+        "an ACKed live generation was replaced during an identical republish"
     )
+    rearm_path = (
+        tmp_path
+        / "trials"
+        / "trial_00000"
+        / "publish"
+        / "seed_dole_rearm.json"
+    )
+    assert rearm_path.exists(), "the live generation's recovery request was destroyed"
+
+
+def test_paused_claim_accepts_only_an_installed_generation_ack(tmp_path: Path) -> None:
+    app = _setup(tmp_path, iteration=21)
+    headers = _manifest_poll_headers(worker_id="w")
+
+    async def _run() -> tuple[dict, dict]:
+        async with await _client(app) as client:
+            manifest = (await client.get(MANIFEST, headers=headers)).json()
+            first = await client.post(
+                CLAIM,
+                json={
+                    "claim_id": "worker-A",
+                    "manifest_revision": manifest["manifest_revision"],
+                    "supports_seed_dole_ack": True,
+                },
+                auth=("u", "p"),
+                headers=headers,
+            )
+            first.raise_for_status()
+
+            manifest_path = (
+                tmp_path
+                / "trials"
+                / "trial_00000"
+                / "publish"
+                / "manifest.json"
+            )
+            paused = json.loads(manifest_path.read_text(encoding="utf-8"))
+            paused.setdefault("recommended_worker", {})["pause_selfplay"] = True
+            manifest_path.write_text(json.dumps(paused), encoding="utf-8")
+
+            paused_manifest = (await client.get(MANIFEST, headers=headers)).json()
+            ack = await client.post(
+                CLAIM,
+                json={
+                    "claim_id": "worker-A",
+                    "manifest_revision": paused_manifest["manifest_revision"],
+                    "supports_seed_dole_ack": True,
+                    "ack_grant_token": first.json()["grant_token"],
+                    "ack_only": True,
+                },
+                auth=("u", "p"),
+                headers=headers,
+            )
+            ack.raise_for_status()
+            return first.json(), ack.json()
+
+    first, ack = asyncio.run(_run())
+    assert first["granted"] is True
+    assert ack == {
+        "granted": False,
+        "acknowledged": True,
+        "reason_code": "acknowledged",
+        "manifest_revision": first["manifest_revision"],
+    }
+    winners = json.loads(
+        (tmp_path / "seed_dole_gate.json.winners.json").read_text(encoding="utf-8")
+    )
+    record = winners["trial_00000"]
+    assert record["grant_token"] == first["grant_token"]
+    assert record["acknowledged_at_unix"] > 0
 
 
 def _uvicorn_effective_level(logger_name: str) -> int:
