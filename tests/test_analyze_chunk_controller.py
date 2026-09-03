@@ -260,6 +260,7 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert "realized_search_values" in source
     assert "_require_search_take_effect" in source
     assert "if int(args.walkers) == 1:" in source
+    assert "args.walkers != _PRODUCTION_WALKERS" in source
     assert "worker.set_minibatch_size" in source
     assert "allow_terminal_shortcuts=True" in source
     assert '"root_child_q"' in source
@@ -294,19 +295,19 @@ def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
         )
 
 
-def test_stability_streak_tracks_emitted_move_even_when_it_trails_visits() -> None:
+def test_stability_streak_resets_while_gumbel_survivor_trails_visits() -> None:
     last, stable = _update_stability(
-        -1, 0, emitted_action=11,
+        -1, 0, emitted_action=11, visit_gap=0.2, action_count=3,
     )
     assert (last, stable) == (11, 0)
     last, stable = _update_stability(
-        last, stable, emitted_action=11,
+        last, stable, emitted_action=11, visit_gap=-0.1, action_count=3,
+    )
+    assert (last, stable) == (11, 0)
+    last, stable = _update_stability(
+        last, stable, emitted_action=11, visit_gap=0.3, action_count=3,
     )
     assert (last, stable) == (11, 1)
-    last, stable = _update_stability(
-        last, stable, emitted_action=11,
-    )
-    assert (last, stable) == (11, 2)
 
 
 def test_stable_single_legal_move_is_decided_without_root_visits() -> None:
@@ -421,7 +422,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "root_action_reference_listed": action_listed,
             "emitted_action": emitted, "uci": "a2a3", "bestmove_flip": False,
             "pv_actions": [emitted], "pv_uci": ["a2a3"],
-            "stable_chunks": chunk - 1, "visit_entropy": entropy, "q_gap": -0.1,
+            "stable_chunks": 0, "visit_entropy": entropy, "q_gap": -0.1,
             "complexity_predicate_continue": True,
             "q_drift": None if chunk == 1 else 0.0,
             "visit_churn": None if chunk == 1 else 0.0, "root_q": 0.0,
@@ -818,6 +819,39 @@ def test_loader_rejects_invalid_requested_search_shape(
     if field in {"chunk_sims", "walkers"}:
         realized_field = "chunk_sims" if field == "chunk_sims" else "concurrency_workers"
         manifest["realized_search"][realized_field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="requested search"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_classic_gumbel_as_decision_grade(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["requested_search"].update({
+        "active_path": "gumbel",
+        "walkers": 1,
+        "active_parameters": {
+            "c_scale": 0.1,
+            "c_visit": 50.0,
+            "c_visit_root": 50.0,
+            "c_scale_root": 1.0,
+            "q_visit_exp_root": 1.0,
+            "topk": 16,
+            "policy_temp": 1.0,
+            "halving_div": 2,
+            "root_noise_scale": 1.0,
+            "vloss_weight": 3,
+            "minibatch_size": 32,
+        },
+    })
+    manifest["realized_search"] = {
+        **manifest["requested_search"]["active_parameters"],
+        "concurrency_mode": "gumbel",
+        "concurrency_workers": 1,
+        "chunk_sims": manifest["requested_search"]["chunk_sims"],
+    }
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="requested search"):

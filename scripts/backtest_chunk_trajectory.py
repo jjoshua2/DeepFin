@@ -2,10 +2,11 @@
 """Per-chunk search trajectory on the REAL accumulating tree, for the time-management
 predictor: at chunk k, can we predict whether more chunks change/improve the move?
 
-Runs the production SearchWorker path (walker PUCT at the shipped Threads=2 default;
-classic Gumbel only when explicitly requested with --walkers 1) one position at a time
-with abort disabled. It snapshots root state after every chunk via the run() on_chunk
-hook — the node-horizon states the clock-free complexity predicate sees. Each row carries
+Runs the production SearchWorker path (walker PUCT at the shipped Threads=2 default)
+one position at a time with abort disabled. Methodology-smoke runs may explicitly select
+classic Gumbel with ``--walkers 1``, but those banks are never decision-grade. It
+snapshots root state after every chunk via the run() on_chunk hook — the node-horizon
+states the clock-free complexity predicate sees. Each row carries
 the chosen move + its
 deep-SF regret, plus the STATIC settledness (visit-gap, entropy, q-gap) and the DYNAMIC
 "is the search still moving" signals (bestmove_flip / q_drift / visit_churn vs the
@@ -74,6 +75,7 @@ from chess_anti_engine.uci.search import (
 )
 from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path, require_tablebases
 from scripts.analyze_chunk_controller import (
+    _PRODUCTION_WALKERS,
     _canonical_cuda_device_string,
     _complexity_continue,
     _git_file_at_commit,
@@ -584,6 +586,16 @@ def main() -> None:
         )
     if not 1 <= args.walkers <= 64:
         raise SystemExit("--walkers must be inside the production Threads range [1, 64]")
+    if int(EngineOptions().threads) != _PRODUCTION_WALKERS:
+        raise SystemExit(
+            "controller analyzer production-walker constant no longer matches "
+            "EngineOptions.threads"
+        )
+    if not args.methodology_smoke and args.walkers != _PRODUCTION_WALKERS:
+        raise SystemExit(
+            "decision-grade trajectory banks require the shipped production "
+            f"Threads={_PRODUCTION_WALKERS} walker-PUCT path"
+        )
     if not args.methodology_smoke and args.max_positions == 0:
         raise SystemExit("decision-grade trajectory banks require --max-positions >0")
     if not args.methodology_smoke and not (
@@ -1422,6 +1434,8 @@ def main() -> None:
                         abort_last_best,
                         stable_chunks,
                         emitted_action=int(s["emitted_action"]),
+                        visit_gap=float(s["visit_gap"]),
+                        action_count=len(s["actions"]),
                     )
                     qdrift = abs(float(s["root_q"]) - float(prev["root_q"])) if prev else None
                     churn = None

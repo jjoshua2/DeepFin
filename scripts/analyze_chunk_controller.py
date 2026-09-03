@@ -60,6 +60,7 @@ _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
+_PRODUCTION_WALKERS = 2
 _MIN_DECISION_GRADE_CHUNKS = 4
 _CANONICAL_FOLDS = 5
 _CANONICAL_BOOTSTRAP_SAMPLES = 2000
@@ -649,8 +650,12 @@ def _update_stability(
     stable_chunks: int,
     *,
     emitted_action: int,
+    visit_gap: float,
+    action_count: int,
 ) -> tuple[int, int]:
-    """Mirror the emitted-move streak update in ``SearchWorker._move_is_decided``."""
+    """Mirror the full stability path through ``SearchWorker._abort_ready``."""
+    if visit_gap <= 0.0 and action_count != 1:
+        return last_best, 0
     if emitted_action == last_best:
         return last_best, stable_chunks + 1
     return emitted_action, 0
@@ -1106,19 +1111,17 @@ def _require_manifest(
         expected_keys = _ACTIVE_PARAMETER_KEYS.get(str(active_path))
         mismatch = (
             active_path != realized.get("concurrency_mode")
+            or active_path != "walker_puct"
             or requested.get("walkers") != realized.get("concurrency_workers")
+            or requested.get("walkers") != _PRODUCTION_WALKERS
             or requested.get("chunk_sims") != realized.get("chunk_sims")
-                or not _positive_int(requested.get("max_chunks"))
-                or int(requested.get("max_chunks", 0)) < _MIN_DECISION_GRADE_CHUNKS
+            or not _positive_int(requested.get("max_chunks"))
+            or int(requested.get("max_chunks", 0)) < _MIN_DECISION_GRADE_CHUNKS
             or requested.get("max_chunks") != manifest.get("chunk_count")
             or not _positive_int(requested.get("chunk_sims"))
             or not 32 <= int(requested.get("chunk_sims", 0)) <= 1_048_576
             or not _positive_int(requested.get("walkers"))
             or not 1 <= int(requested.get("walkers", 0)) <= 64
-            or (
-                active_path == "walker_puct" and int(requested.get("walkers", 0)) <= 1
-            )
-            or (active_path == "gumbel" and requested.get("walkers") != 1)
             or not (
                 requested.get("device") == "cuda"
                 or _canonical_cuda_device_string(requested.get("device"))
@@ -1367,6 +1370,8 @@ def _recomputed_trajectory_state(
                 last_best,
                 stable,
                 emitted_action=int(row["emitted_action"]),
+                visit_gap=observed_gap,
+                action_count=len(row["root_actions"]),
             )
         recorded_stable = row.get("stable_chunks")
         if recorded_stable is not None and int(recorded_stable) != stable:
