@@ -73363,3 +73363,25 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   label stage no earlier than roughly 11:30Z; its prior measured raw-inference
   rate projects about 1.6 GPU-hours for the 18.91M sidecar, after which
   materialization and candidate training determine the later ETA.
+
+**2026-09-03 13:08Z — OPERATIONAL RECOVERY: sampler A/B failed closed; release the idle GPU to the already-preregistered independent BT4 pipeline.**
+
+- Seed-0 replacement completed all 9,559 steps and its checkpoint/summary are
+  preserved. Seed-0 `game_epoch` failed after its first 88-step window at
+  batch 147: planned resident decoded bytes `3039549040` disagreed with
+  retained bytes `3039352998`. The partial candidate has no final checkpoint
+  or summary and is inadmissible. The remaining sampler arms and deciding
+  audits never ran; therefore there is **no sampler verdict**. Preserve all
+  failure logs and artifacts. Do not resume the partial candidate: a repaired
+  exact-epoch arm must restart from seed 0 under one reviewed code revision so
+  its plan and weights remain reproducible.
+- The original BT4 watcher observed the sampler failure sentinel at 05:38Z and
+  correctly exited before creating a sidecar, mixed corpus, run, or arena
+  bank. Because the BT4 target-only experiment uses the frozen 18.91M corpus
+  and replacement sampler, it has no scientific dependency on a successful
+  `game_epoch` readout. Re-arm that same frozen BT4 pipeline at the now-clean
+  GPU boundary with distinct recovery log/sentinels, retaining the failed
+  watcher's sentinel as provenance. Commands, code/source/receipt hashes,
+  treatment, training recipe, admission gates, and deciding yardstick remain
+  byte-for-byte unchanged; only the obsolete upstream-wait gate is bypassed.
+  The 12 nice-19 G10 workers continue independently.
