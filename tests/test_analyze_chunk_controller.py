@@ -1506,13 +1506,16 @@ def test_decision_grade_requires_enough_bootstrap_samples() -> None:
 def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
     from scripts.analyze_chunk_controller import _evidence_verdict, _is_canonical_decision_rule
 
-    canonical = {
-        "n_folds": 5, "bootstrap_samples": 2000, "seed": 0,
-        "allocation_fraction": 0.2, "min_capture_gain": 0.05,
-        "min_oracle_headroom": 1e-4, "min_bootstrap_valid_fraction": 0.95,
-    }
-    assert _is_canonical_decision_rule(**canonical) is True
-    assert _is_canonical_decision_rule(**{**canonical, "seed": 1}) is False
+    assert _is_canonical_decision_rule(
+        n_folds=5, bootstrap_samples=2000, seed=0,
+        allocation_fraction=0.2, min_capture_gain=0.05,
+        min_oracle_headroom=1e-4, min_bootstrap_valid_fraction=0.95,
+    ) is True
+    assert _is_canonical_decision_rule(
+        n_folds=5, bootstrap_samples=2000, seed=1,
+        allocation_fraction=0.2, min_capture_gain=0.05,
+        min_oracle_headroom=1e-4, min_bootstrap_valid_fraction=0.95,
+    ) is False
 
     assert _evidence_verdict(
         evidence_inputs_decision_grade=True,
