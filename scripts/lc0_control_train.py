@@ -2052,6 +2052,14 @@ def main(argv: list[str] | None = None) -> int:
     replay_kwargs = apply_control_deviations(replay_kwargs_signature(cfg))
     realized_replay: dict[str, Any]
     if args.sampling_mode == "game_epoch":
+        accum_steps = int(trainer.accum_steps)
+        if accum_steps != 1:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --sampling-mode game_epoch currently "
+                "requires Trainer.accum_steps=1 so its one-row-per-game rule "
+                "covers the complete optimizer batch, not merely each "
+                f"microbatch; realized accum_steps={accum_steps}.",
+            )
         if int(args.epoch_plan_workers) <= 0 or int(args.epoch_load_workers) <= 0:
             raise SystemExit(
                 "REFUSING TO LAUNCH — --epoch-plan-workers and "
@@ -2089,14 +2097,6 @@ def main(argv: list[str] | None = None) -> int:
             max_working_set_bytes=epoch_max_working_set_bytes,
             objective_mask_counter=trainer.exact_objective_mask_counter,
         )
-        accum_steps = int(trainer.accum_steps)
-        if accum_steps != 1:
-            raise SystemExit(
-                "REFUSING TO LAUNCH — --sampling-mode game_epoch currently "
-                "requires Trainer.accum_steps=1 so its one-row-per-game rule "
-                "covers the complete optimizer batch, not merely each "
-                f"microbatch; realized accum_steps={accum_steps}.",
-            )
         epoch_steps = buf.num_batches
         if int(args.steps) == 0:
             args.steps = epoch_steps

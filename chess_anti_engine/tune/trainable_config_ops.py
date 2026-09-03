@@ -1451,9 +1451,10 @@ def _sync_trainer_weights(
             "sf_p0_policy_target / sf_volatility_target are MASKED (their "
             "sources live on other shard rows) so has_sf_p0_frac reads 0. The "
             "frozen full-pass holdout is NOT rebuilt. Proof of effect is "
-            "sf_rebuild_policy_frac in progress.csv, not this line; that "
-            "column sitting BELOW sf_rebuild_wdl_frac means desynced Stockfish "
-            "labels in the window, not rows the rebuild could not reach.",
+            "sf_rebuild_policy_frac in progress.csv, not this line. Do not "
+            "compare it with sf_rebuild_wdl_frac as a health signal: supported "
+            "sparse-policy rows rebuild WDL without a dense policy write; use "
+            "sf_labelled_no_multipv_frac for Stockfish label health.",
             want_rebuild, was_rebuild, want_params,
         )
 

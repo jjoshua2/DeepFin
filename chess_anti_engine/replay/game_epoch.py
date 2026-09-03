@@ -50,6 +50,7 @@ from .shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     iter_shard_paths,
     load_shard_arrays,
+    validate_active_optional_values_present,
 )
 
 
@@ -444,6 +445,7 @@ def _scan_shard(path: Path) -> _ShardGames:
             row_field_bytes=(),
             content_sha256=content_sha256,
         )
+    validate_active_optional_values_present(arrs)
     if "game_id" not in arrs or "has_game_id" not in arrs:
         raise ValueError(
             f"{path} carries {rows} rows but no game_id/has_game_id columns; "
@@ -487,16 +489,29 @@ def _scan_shard(path: Path) -> _ShardGames:
 
 
 def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
-    n_workers = max(1, min(int(workers), len(paths)))
+    resolved_paths: list[Path] = []
+    staged_for_resolved: dict[Path, Path] = {}
+    for staged_path in paths:
+        resolved_path = staged_path.resolve(strict=True)
+        previous = staged_for_resolved.get(resolved_path)
+        if previous is not None:
+            raise ValueError(
+                "exact-epoch corpus contains duplicate resolved shard paths: "
+                f"{previous} and {staged_path} both resolve to {resolved_path}",
+            )
+        staged_for_resolved[resolved_path] = staged_path
+        resolved_paths.append(resolved_path)
+
+    n_workers = max(1, min(int(workers), len(resolved_paths)))
     if n_workers <= 1:
-        records = [_scan_shard(path) for path in paths]
+        records = [_scan_shard(path) for path in resolved_paths]
     else:
         with ThreadPoolExecutor(
             max_workers=n_workers, thread_name_prefix="game-epoch-plan",
         ) as pool:
             # map preserves submission order; filesystem timing cannot change
             # the namespace assignment, seeded permutation, or plan hash.
-            records = list(pool.map(_scan_shard, paths))
+            records = list(pool.map(_scan_shard, resolved_paths))
 
     # ``quarantine_desync_shards.py`` deliberately leaves a valid zero-row
     # zarr at the highest quarantined index so the writable replay counter

@@ -764,6 +764,47 @@ def test_game_ids_are_namespaced_across_independent_conversion_outputs(
     assert buf.receipt()["same_game_repeats_max"] == 0
 
 
+def test_duplicate_resolved_shard_is_refused_before_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write(tmp_path / "source", [[(0, 0), (1, 1)]])
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    target = source / "shard_000000.zarr"
+    (staged / "shard_000000.zarr").symlink_to(target)
+    (staged / "shard_000001.zarr").symlink_to(target)
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_scan_shard",
+        lambda _path: pytest.fail("duplicates must be rejected before shard scans"),
+    )
+
+    with pytest.raises(ValueError, match="duplicate resolved shard paths"):
+        _open(staged, batch_size=2)
+
+
+def test_active_orphaned_optional_field_is_refused_during_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard.create_dataset(
+        "has_moves_left",
+        data=np.array([1, 0], dtype=np.uint8),
+        overwrite=True,
+    )
+    monkeypatch.setattr(
+        GameAwareEpochBuffer,
+        "_load_one",
+        lambda *_args, **_kwargs: pytest.fail(
+            "active orphan fields must be rejected before training",
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"has_moves_left.*moves_left"):
+        _open(shard_dir, batch_size=2)
+
+
 def test_partially_missing_game_identity_is_refused_during_plan(tmp_path: Path) -> None:
     shard_dir = _write(tmp_path / "replay", [[(0, 0), (None, 1), (1, 2)]])
 

@@ -1568,12 +1568,10 @@ class TrainMetrics:
   # is `has_sf_wdl` rows — the same population the offline gate
   # `eval/value_optimism.py::sf_multipv_missing_rate` divides by.
   #
-  # It reads the batch's own `has_` vectors and consults NO flag, which is the
-  # whole point: the pre-existing signal (`sf_rebuild_policy_frac` below
-  # `sf_rebuild_wdl_frac`) is definitionally the same measurement but only
-  # exists while `rebuild_sf_targets` is on, and that key defaults False and
-  # is in no config file — so it read 0.0, indistinguishable from healthy,
-  # through three separate desync episodes spanning 25 days.
+  # It reads the batch's own `has_` vectors and consults NO flag. A former
+  # dense-only heuristic compared the two rebuild coverage fractions, but
+  # supported sparse-policy rows legitimately separate them. This metric is
+  # the format-independent label-health contract.
   #
   # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
   # same denominator as a share of all batch rows. (The RATE's own denominator
@@ -1664,18 +1662,11 @@ class TrainMetrics:
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION SIGNAL, not a coverage
-  # cost. Both fracs divide by ALL rows in the rebuilt batch, and every healthy
-  # labelled row carries `sf_label_meta` AND `sf_multipv_raw`, so the two are
-  # EQUAL on clean data and their difference is the count of rows that lost
-  # their whole MultiPV block, over ALL BATCH ROWS. That is the desync
-  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`) and a
-  # LOWER BOUND on contamination — a desynced engine strips the block on only
-  # ~59% of the labels it poisons, so divide by ~0.59 for the true share.
-  # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
-  # episode. Measured through this very accumulator: 0.000000 on clean live
-  # shards, 0.192 over the 122 quarantined 2026-08-01 (0.207 of LABELLED rows
-  # there; do not mix the two denominators). ⚑ Reads 0.0 when
+  # Policy counts dense targets actually rewritten. WDL also counts supported
+  # sparse-policy rows, so a gap is expected for healthy mixed-format corpora
+  # and must not be used as a contamination signal. Use the always-on
+  # sf_labelled_no_multipv_frac plus its checked denominator for label health.
+  # ⚑ Both rebuild fields read 0.0 when
   # `rebuild_sf_targets` is off, which is the default and is not in any config
   # — see target_builder's metric_kwargs before treating it as a live alarm.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
@@ -3220,10 +3211,9 @@ class Trainer:
   # window instead of waiting ~18h for it to turn over. On healthy data that is
   # ALL of them: every labelled row is written with sf_multipv_raw, so the
   # rebuild reaches 100% of the SF-labelled window and there is no mixture of
-  # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
-  # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
-  # (a LOWER bound on it: docs/target_rebuildability.md), not a structural cost
-  # of the rebuild.
+  # two target regimes. sf_rebuild_policy_frac reports dense targets actually
+  # rewritten; sparse-policy rows can legitimately appear only in the WDL
+  # coverage. sf_labelled_no_multipv_frac is the label-health detector.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -5063,10 +5053,10 @@ class Trainer:
         the edit (~18h for a 1.5M-row window to turn over at the current ingest
         rate). On healthy data that is every one of them — a labelled row is
         written with ``sf_multipv_raw`` — so the window does NOT become a
-        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
-        realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
-        Stockfish rows, not a bound on what the rebuild can reach — and it
-        UNDERCOUNTS them, since only ~59% of poisoned rows lose the block.
+        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports
+        dense targets actually rewritten. It may legitimately fall below
+        ``sf_rebuild_wdl_frac`` when sparse-policy rows are present; use the
+        always-on ``sf_labelled_no_multipv_frac`` label-health detector.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as

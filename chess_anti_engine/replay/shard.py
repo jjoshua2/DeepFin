@@ -8,7 +8,7 @@ import shutil
 import tarfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -1395,6 +1395,32 @@ def validate_array_declarations(
                 )
 
 
+def validate_active_optional_values_present(arrs: Mapping[str, Any]) -> None:
+    """Reject active optional flags whose promised value array is absent.
+
+    Declaration validation must remain metadata-only because upload callers
+    apply their size limits only after the lazy loader returns. Exact-epoch
+    planning needs the stronger content check before training, so scan orphan
+    flags here in bounded slices instead of materializing a whole vector.
+    """
+    max_scan_rows = 65_536
+    for spec in _OPTIONAL_FIELD_SPECS:
+        if spec.flag not in arrs or spec.arr in arrs:
+            continue
+        flag = arrs[spec.flag]
+        rows = int(_shape_of(flag)[0])
+        raw_chunks = getattr(flag, "chunks", ())
+        chunk_rows = (
+            int(raw_chunks[0])
+            if isinstance(raw_chunks, tuple) and raw_chunks
+            else max_scan_rows
+        )
+        step = max(1, min(max_scan_rows, chunk_rows))
+        for start in range(0, rows, step):
+            if bool(np.any(np.asarray(flag[start : start + step]) != 0)):
+                raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")
+
+
 def shard_meta_violations(meta: dict[str, Any], *, positions: int) -> list[str]:
     """Internal-consistency check on a shard's counter metadata.
 
@@ -1554,6 +1580,7 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
         raise ValueError("wdl_target out of range")
 
     n = int(x.shape[0])
+    validate_active_optional_values_present(arrs)
     for value_name, flag_name in POLICY_INDEX_FIELDS:
         if value_name not in arrs:
             continue
@@ -1573,13 +1600,11 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
     for spec in _OPTIONAL_FIELD_SPECS:
         flag_present = spec.flag in arrs
         value_present = spec.arr in arrs
-        active = False
 
         if flag_present:
             flag = np.asarray(arrs[spec.flag])
             if flag.ndim != 1 or flag.shape[0] != n:
                 raise ValueError(f"{spec.flag} must be (N,) matching x")
-            active = bool(np.any(flag != 0))
 
         if value_present:
             value = np.asarray(arrs[spec.arr])
@@ -1605,10 +1630,6 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
                     row_sums = active_value.sum(axis=tuple(range(1, active_value.ndim)), dtype=np.float32)
                     if (row_sums <= 0).any():
                         raise ValueError(f"{spec.arr} active rows have non-positive sum")
-
-        if active and not value_present:
-            raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")
-
 
 def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     validate_arrays(arrs)

@@ -27,10 +27,11 @@ from that sample (the coverage figures, and the 12.6 % / 22.6 % / 95.6 %
 population shares quoted further down) is measured on contaminated data and
 should be treated as indicative only.
 
-## Coverage over labelled rows is TOTAL — and the shortfall column is a desync alarm
+## Raw-label coverage is total; rebuild coverage is objective-specific
 
 **⚠ CORRECTED 2026-08-01. This section previously claimed a structural 5.38 %
-coverage gap. There is no such gap: the floor is exactly zero.** The old figure
+raw-label gap. Healthy writer data has no such gap: the floor is exactly zero.**
+The old figure
 came from a 10-shard sample (18 307 rows, 956 labelled rows without
 `sf_multipv_raw`) drawn on 2026-07-27 — which was itself a Stockfish-desync
 episode day. Of the 260 possible 10-consecutive-shard windows written that day,
@@ -40,9 +41,10 @@ raw / 952 missing / **0.0534**). The sample was the anomaly, not the norm.
 
 The selfplay writer stamps `sf_multipv_raw` and `sf_label_meta` on a labelled
 row **together** (`selfplay/stockfish_turn.py::_stamp_sparse_sf_labels`), so
-every SF-labelled row carries raw and the rebuild reaches **100 % of the
-SF-labelled window**. An `SfTargetParams` change is a clean swap, not a mixture
-of two target regimes.
+every SF-labelled row carries raw. WDL rebuilding therefore reaches **100 % of
+the SF-labelled window**. Dense policy rebuilding reaches the dense-policy
+subset; supported sparse-only rows consume the same raw label through sparse
+CE and intentionally receive no dense target write.
 
 Both causes this document previously offered are refuted:
 
@@ -72,48 +74,21 @@ by file identity and bucketed by the day each shard was *written*):
 * The desync is fixed by PR #297 and the contaminated live shards were
   quarantined 2026-08-01 (122 shards), so new data reads zero.
 
-**⚑ Read `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac` as CONTAMINATION,
-not as cost.** Both columns divide by **all rows in the rebuilt batch**, and a
-healthy labelled row always sets both presence flags, so on clean data they are
-**equal** and their difference is the **fully-stripped-label share of the
-batch**: 0.000000 on clean days, **0.192** over the quarantined shards. Do not
-read a gap as "the rebuild could not reach those rows".
+**⚑ Do not compare `sf_rebuild_policy_frac` with
+`sf_rebuild_wdl_frac` as a contamination signal.** Policy coverage counts
+dense `sf_policy_target` rows actually rewritten. WDL coverage also includes
+supported sparse-policy rows, which intentionally remain on sparse CE and
+receive no dense policy write. A healthy sparse-only row therefore opens the
+gap. Use `sf_labelled_no_multipv_frac` with `sf_multipv_checked_frac` for the
+format-independent contamination signal.
 
-Three qualifications, all of which the name hides:
-
-* **It is a LOWER BOUND, not the poisoned share.** The difference counts only
-  rows that lost their *whole* MultiPV block. A desynced engine poisons every
-  label it touches but strips the block on only **~59 %** of them
-  (`scripts/quarantine_desync_shards.py`; also `_SF_NO_LEGAL_PV_WARN_RATE`'s
-  0.074 = 0.125 × 0.59 for one engine in eight), so **~41 % of poisoned rows
-  read clean here**. Divide by ~0.59 — about **1.7×** — for the true share: the
-  quarantined set's 0.192 implies ~0.33 of batch rows actually poisoned. The
-  same point without the constant: the worst shard of the 07-27 episode still
-  has 47 % of its labelled rows carrying a MultiPV block.
-* **Denominator.** All batch rows, not labelled rows. To read the gap against
-  the labelled population, divide by `sf_rebuild_wdl_frac`: on the quarantined
-  set 0.191973 / 0.925347 = **0.207** of labelled rows. Both numbers are
-  correct and they measure different populations — mixing them is how "5.4 %"
-  and "0.92" ended up in this document describing different things.
-* **A latent non-desync way for the gap to open.** `policy_frac` counts
-  *successful rebuilds*, not the presence flag, and `ok` depends on
-  `SfTargetParams`: with `sf_wdl_use_cp_logistic` False a PV entry is scoreable
-  only if it carries native WDL; with it True, cp/mate entries count too. One
-  clean row with both flags set reads gap **+0.0000** at True and **+1.0000** at
-  False. Latent today — 2,750,435 stored PV entries on the live window, **zero**
-  without native WDL, because `stockfish/uci.py:269` hardcodes
-  `UCI_ShowWDL true` — but that knob is the `SfTargetParams` dataclass default
-  (production yaml sets it `true`) and one of the five params this rebuild
-  exists to sweep. **A sweep of it would turn the "detector" into a readout of
-  the sweep.**
-
-### ⚑⚑ The detector is disconnected in production
+### ⚑⚑ Rebuild coverage is disconnected while the flag is off
 
 `rebuild_sf_targets` defaults to `False` and **appears in no config file**, so
 all five columns read exactly `0.0` today — byte-identical to a perfectly
 healthy window. **A zero here is not a pass, and this pair must not go on an
-operator dashboard as "watch for a gap".** As shipped it is a free cross-check
-that exists only while a rebuild experiment is running.
+operator dashboard as "watch for a gap".** The pair is rebuild coverage only
+and exists only while a rebuild experiment is running.
 
 The always-on detectors are the ones to watch instead:
 
@@ -158,19 +133,11 @@ flag is training-affecting (it masks the `w_sf_own` and `w_sf_volatility` legs)
 and needs its own ledger entry with a pre-committed kill threshold. The
 unconditional column above is the reason it is no longer necessary.
 
-⚑ **The two share a fingerprint but not a denominator.** Over the quarantined
-122, `sf_labelled_no_multipv_frac` = 0.207461 while
-`sf_rebuild_policy_frac − sf_rebuild_wdl_frac` = 0.191973, because the rebuild
-pair divides by every row of the batch and the new column divides by the
-SF-labelled rows (0.191973 / 0.925347 = 0.207). They are the same rows counted
-against two populations; quoting one against the other's denominator is how
-"5.4 %" survived here for five days.
-
 Five `progress.csv` columns report what actually happened, per iteration:
 
 | column | meaning |
 |---|---|
-| `sf_rebuild_policy_frac` | rows whose `sf_policy_target` was rebuilt / rows in the batch |
+| `sf_rebuild_policy_frac` | rows whose dense `sf_policy_target` was actually rewritten / rows in the batch |
 | `sf_rebuild_wdl_frac` | rows whose `sf_wdl` was rebuilt / rows in the batch |
 | `sf_rebuild_masked_frac` | **rows** that lost ≥1 cross-ply target / rows in the batch |
 | `sf_rebuild_masked_p0_frac` | rows whose `has_sf_p0` was set **before** the mask / rows in the batch |
@@ -452,29 +419,15 @@ the replay window in one iteration and takes the `w_sf_own` /
 `docs/experiment_ledger.md` entry with ONE deciding yardstick as an exact
 command and a pre-committed kill threshold **before** launch, and the yardstick
 has to be an external one (see "What the pin does NOT cover"). Proof it took
-effect: `sf_rebuild_policy_frac` > 0 on the first new row of `progress.csv`.
+effect is a non-zero applicable coverage column on the first new row of
+`progress.csv`: `sf_rebuild_wdl_frac` when metadata-backed WDL rows exist, or
+`sf_rebuild_policy_frac` when dense-policy rows exist.
 
-**Expect `sf_rebuild_policy_frac` ≈ `sf_rebuild_wdl_frac` ≈ the SF-labelled
-fraction of the batch (0.996-0.997 on the current live window), and expect the
-two to be EQUAL.** ⚠ This
-paragraph previously told operators to expect **0.92** and to read that as
-definitional rather than as a regression. That was wrong, and it is exactly the
-reading that would have made a live desync invisible: the 0.919 came from
-16,822 / 18,307 on the contaminated 07-27 sample, where the missing 5.4 % were
-poisoned rows. The denominator being all batch rows *is* deliberate — it makes
-the column a fraction of the training batch, which is what "how much of what I
-trained on was re-pointed" asks — but on healthy data every SF-labelled row
-rebuilds, so `policy_frac` and `wdl_frac` land on the same number.
-
-**A gap between them is the alarm — while the flag is on.** `wdl_frac −
-policy_frac` is the share of batch rows that lost their whole MultiPV block; it
-reads 0.000000 on clean data and 0.192 over the shards quarantined 2026-08-01,
-and it is a **lower bound** on contamination (multiply by ~1.7; see the
-qualifications in "Coverage over labelled rows is TOTAL"). Treat any sustained
-non-zero value as a desync incident and check the worker logs for the `sf label
-health` line. With `rebuild_sf_targets` off — the default, and its state in
-every config today — this reads 0.0 regardless of the data, so it is a check to
-run *during a rebuild experiment*, not a standing monitor.
+**Expect `sf_rebuild_wdl_frac` to follow the SF-labelled fraction of the batch.
+Expect `sf_rebuild_policy_frac` to follow only its dense-policy subset, so it
+may be lower on a healthy mixed or sparse-only corpus.** Both denominators are
+all batch rows. Use `sf_labelled_no_multipv_frac` and
+`sf_multipv_checked_frac`, not the rebuild-coverage gap, for label health.
 
 **The deploying restart will ROTATE `progress.csv`.** The rebuild reports
 **five** `sf_rebuild_*` keys, each with a `test_` twin — ten columns in all.
@@ -494,13 +447,11 @@ rotations — but it is visible at the restart and must not be read as data loss
 `sf_wdl_cp_slope`, `sf_wdl_cp_draw_width` — plus the categorical-blend family
 under its own flag. Those move from "wait ~18 h for window turnover" to
 "applies to **the whole SF-labelled window** at the next iteration", per
-"Coverage over labelled rows is TOTAL" above. Rows with no SF label are
+"Raw-label coverage is total" above. Rows with no SF label are
 untouched because they have no SF target to re-point, so a verdict may be
-written as a clean swap over the labelled population — but confirm it per
-iteration from `sf_rebuild_policy_frac == sf_rebuild_wdl_frac`, rather than
-assuming it. (That check only reads while the flag is on, which during such an
-experiment it is — it is not a standing monitor; see the disconnected-detector
-section above.)
+written as a clean swap over each objective's eligible population. Confirm WDL
+coverage from `sf_rebuild_wdl_frac`, dense-policy coverage from
+`sf_rebuild_policy_frac`, and label health from the always-on presence pair.
 
 Note the interaction, and its price: the SF param keys are also **worker reco
 keys** — all five of them (`WorkerSession._RECO_RESTART_KEYS`,

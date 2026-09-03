@@ -1153,11 +1153,10 @@ def _train_metrics_dict(metrics) -> dict:
         # Terminal-proximal outcome transfer -- see the defaults table above.
         "wdl_terminal_outcome_frac": float(metrics.wdl_terminal_outcome_frac),
         "wdl_terminal_outcome_rows": float(metrics.wdl_terminal_outcome_rows),
-        # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
-        # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
-        # batch rows and a healthy labelled row always carries both fields, so
-        # the difference is the fully-stripped-label share of the batch — a
-        # LOWER bound on contamination (~59% of poisoned rows lose the block).
+        # Rebuild coverage. Policy counts dense targets actually rewritten;
+        # WDL also counts supported sparse-policy rows, so their gap is not a
+        # health signal. Use sf_labelled_no_multipv_frac plus its checked
+        # denominator for Stockfish desynchronization detection.
         # ⚑ All five read 0.0 while `rebuild_sf_targets` is off, which is the
         # default and is in no config, so a zero here is NOT evidence of health;
         # see target_builder.py::SfRebuildCoverage.metric_kwargs for the

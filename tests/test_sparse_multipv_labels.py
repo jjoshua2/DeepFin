@@ -357,6 +357,32 @@ def test_rebuild_keeps_union_zero_filled_sparse_rows_out_of_dense_objective():
     assert float(out["sf_policy_target"][1].sum()) == 0.0
 
 
+def test_rebuild_reports_sparse_only_policy_as_not_rewritten():
+    width = 64
+    raw = np.full((1, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (3, 40, 0, 700, 200)
+    legal = np.zeros((1, width), np.uint8)
+    legal[0, [3, 5]] = 1
+    arrs = {
+        "policy_target": np.eye(1, width, dtype=np.float16),
+        "sf_legal_mask": legal,
+        "sf_multipv_raw": raw,
+        "has_sf_multipv_raw": np.ones(1, np.uint8),
+        "sf_wdl": np.zeros((1, 3), np.float16),
+        "sf_label_meta": np.zeros((1, 6), np.int32),
+        "has_sf_label_meta": np.ones(1, np.uint8),
+    }
+
+    out, coverage = rebuild_sf_targets_in_arrays(
+        arrs, params=SfTargetParams(sf_policy_temp=0.012),
+    )
+
+    assert coverage.policy_rebuilt == 0
+    assert coverage.wdl_rebuilt == 1
+    assert "sf_policy_target" not in out
+
+
 def test_trainer_default_is_bitwise_unchanged(monkeypatch):
     """rebuild_sf_targets=False must never call the rebuilder, and the
     sampled batch must be byte-identical to the pre-flag pipeline."""

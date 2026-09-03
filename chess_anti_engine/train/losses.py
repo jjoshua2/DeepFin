@@ -196,10 +196,10 @@ def sf_multipv_presence_counts(
 
     Unconditional by construction: it reads two ``has_`` vectors that every
     collated batch either carries or does not, and consults no flag. The
-    tripwire it replaces (``sf_rebuild_policy_frac`` minus
-    ``sf_rebuild_wdl_frac``) is definitionally the same signal but is gated
-    behind ``rebuild_sf_targets``, which defaults False and is in no config
-    file — so it has read 0.0 through three separate desync episodes.
+    Earlier dense-only data treated the rebuild policy/WDL coverage gap as the
+    same signal, but supported sparse-policy rows legitimately open that gap.
+    This unconditional presence check is now the sole in-loop label-health
+    contract and does not depend on ``rebuild_sf_targets``.
     """
     has_raw = batch.get("has_sf_multipv_raw")
     if has_raw is None:

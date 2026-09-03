@@ -1057,6 +1057,13 @@ def test_game_epoch_driver_refuses_gradient_accumulation(
         "preflight_trainer",
         lambda _cfg, *, allow_leak: "test override for sampler guard",
     )
+    monkeypatch.setattr(
+        lc0_control_train,
+        "GameAwareEpochBuffer",
+        lambda **_kwargs: pytest.fail(
+            "gradient accumulation must be rejected before epoch planning",
+        ),
+    )
 
     with pytest.raises(SystemExit, match=r"requires Trainer\.accum_steps=1"):
         lc0_control_train.main([
