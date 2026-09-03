@@ -1143,7 +1143,7 @@ def _boundary_trainer(
         while True:
             yield {"x": torch.zeros((1, 4, 8, 8))}
 
-    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_batches)
+    monkeypatch.setattr(trainer, "_iter_training_batches", fake_batches)
     monkeypatch.setattr(trainer_module.torch.cuda, "synchronize", lambda: None)
     monkeypatch.setattr(trainer_module.torch.cuda, "empty_cache", lambda: None)
     monkeypatch.setattr(trainer_module.time, "sleep", lambda _seconds: None)

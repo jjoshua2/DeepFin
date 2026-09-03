@@ -570,7 +570,7 @@ def test_exact_without_replacement_aborts_instead_of_discarding_rows(
     monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
     monkeypatch.setattr(
         trainer,
-        "_iter_prefetched_batches",
+        "_iter_training_batches",
         lambda *_args, **_kwargs: iter([{"x": torch.zeros((2, 4, 8, 8))}]),
     )
 
@@ -706,7 +706,7 @@ def test_exact_window_loss_is_weighted_by_realized_rows(
     monkeypatch.setattr(trainer.opt, "step", lambda: None)
     monkeypatch.setattr(
         trainer,
-        "_iter_prefetched_batches",
+        "_iter_training_batches",
         lambda *_args, **_kwargs: iter(batches),
     )
 
