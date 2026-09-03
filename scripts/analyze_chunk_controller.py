@@ -61,6 +61,13 @@ _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
 _MIN_DECISION_GRADE_CHUNKS = 4
+_CANONICAL_FOLDS = 5
+_CANONICAL_BOOTSTRAP_SAMPLES = 2000
+_CANONICAL_SEED = 0
+_CANONICAL_ALLOCATION_FRACTION = 0.2
+_CANONICAL_MIN_CAPTURE_GAIN = 0.05
+_CANONICAL_MIN_ORACLE_HEADROOM = 1e-4
+_CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION = 0.95
 _NATIVE_MODULES = [
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
@@ -241,6 +248,23 @@ def _require_bootstrap_resolution(samples: int, methodology_smoke: bool) -> None
             f"{_MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES} bootstrap samples; "
             "use --methodology-smoke only for a smaller pipeline check"
         )
+
+
+def _is_canonical_decision_rule(
+    *, n_folds: int, bootstrap_samples: int, seed: int,
+    allocation_fraction: float, min_capture_gain: float,
+    min_oracle_headroom: float, min_bootstrap_valid_fraction: float,
+) -> bool:
+    """Whether a rule exactly matches the frozen decision-grade preregistration."""
+    return bool(
+        n_folds == _CANONICAL_FOLDS
+        and bootstrap_samples == _CANONICAL_BOOTSTRAP_SAMPLES
+        and seed == _CANONICAL_SEED
+        and allocation_fraction == _CANONICAL_ALLOCATION_FRACTION
+        and min_capture_gain == _CANONICAL_MIN_CAPTURE_GAIN
+        and min_oracle_headroom == _CANONICAL_MIN_ORACLE_HEADROOM
+        and min_bootstrap_valid_fraction == _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION
+    )
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -2205,7 +2229,7 @@ def analyze(
         and tail_ok
     )
     return {
-        "preregistered_rule": {
+        "evaluated_rule": {
             "grouped_cv_folds": n_folds,
             "bootstrap_seed": seed,
             "allocation_fraction": allocation_fraction,
@@ -2241,10 +2265,15 @@ def analyze(
     }
 
 
-def _evidence_verdict(*, decision_grade: bool, statistical_gate_passed: bool) -> str:
+def _evidence_verdict(
+    *, evidence_inputs_decision_grade: bool, canonical_preregistered_rule: bool,
+    statistical_gate_passed: bool,
+) -> str:
     """Name only the next experiment authorized by this deliberately narrow bank."""
-    if not decision_grade:
+    if not evidence_inputs_decision_grade:
         return "METHODOLOGY_SMOKE_ONLY"
+    if not canonical_preregistered_rule:
+        return "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
     if statistical_gate_passed:
         return "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
     return "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
@@ -2255,20 +2284,26 @@ def main() -> None:
     parser.add_argument("--in", dest="input_path", type=Path, required=True)
     parser.add_argument("--meta", type=Path, default=None)
     parser.add_argument("--methodology-smoke", action="store_true")
-    parser.add_argument("--folds", type=int, default=5)
-    parser.add_argument("--bootstrap-samples", type=int, default=2000)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--allocation-fraction", type=float, default=0.2)
+    parser.add_argument("--folds", type=int, default=_CANONICAL_FOLDS)
     parser.add_argument(
-        "--min-capture-gain", type=float, default=0.05,
+        "--bootstrap-samples", type=int, default=_CANONICAL_BOOTSTRAP_SAMPLES,
+    )
+    parser.add_argument("--seed", type=int, default=_CANONICAL_SEED)
+    parser.add_argument(
+        "--allocation-fraction", type=float,
+        default=_CANONICAL_ALLOCATION_FRACTION,
+    )
+    parser.add_argument(
+        "--min-capture-gain", type=float, default=_CANONICAL_MIN_CAPTURE_GAIN,
         help="minimum M1-minus-M0 fraction of oracle-over-random headroom",
     )
     parser.add_argument(
-        "--min-oracle-headroom", type=float, default=1e-4,
+        "--min-oracle-headroom", type=float, default=_CANONICAL_MIN_ORACLE_HEADROOM,
         help="minimum per-row oracle-over-random regret headroom at every horizon",
     )
     parser.add_argument(
-        "--min-bootstrap-valid-fraction", type=float, default=0.95,
+        "--min-bootstrap-valid-fraction", type=float,
+        default=_CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION,
         help="minimum fraction of cluster replicates with eligible headroom",
     )
     parser.add_argument("--out", type=Path, default=None)
@@ -2316,10 +2351,24 @@ def main() -> None:
     analyzer = _analyzer_provenance(
         analyzer_start_artifact, analyzer_start_git_sha, analyzer_start_git_dirty,
     )
-    decision_grade = bool(info["decision_grade"] and analyzer["decision_grade"])
+    evidence_inputs_decision_grade = bool(
+        info["decision_grade"] and analyzer["decision_grade"]
+    )
+    canonical_rule = _is_canonical_decision_rule(
+        n_folds=args.folds,
+        bootstrap_samples=args.bootstrap_samples,
+        seed=args.seed,
+        allocation_fraction=args.allocation_fraction,
+        min_capture_gain=args.min_capture_gain,
+        min_oracle_headroom=args.min_oracle_headroom,
+        min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
+    )
+    decision_grade = evidence_inputs_decision_grade and canonical_rule
+    result["canonical_preregistered_rule"] = canonical_rule
     result["evidence_decision_grade"] = decision_grade
     result["verdict"] = _evidence_verdict(
-        decision_grade=decision_grade,
+        evidence_inputs_decision_grade=evidence_inputs_decision_grade,
+        canonical_preregistered_rule=canonical_rule,
         statistical_gate_passed=bool(result["statistical_gate_passed"]),
     )
     payload = {"input": info, "analyzer": analyzer, "analysis": result}

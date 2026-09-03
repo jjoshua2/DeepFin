@@ -1504,17 +1504,36 @@ def test_decision_grade_requires_enough_bootstrap_samples() -> None:
 
 
 def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
-    from scripts.analyze_chunk_controller import _evidence_verdict
+    from scripts.analyze_chunk_controller import _evidence_verdict, _is_canonical_decision_rule
+
+    canonical = {
+        "n_folds": 5, "bootstrap_samples": 2000, "seed": 0,
+        "allocation_fraction": 0.2, "min_capture_gain": 0.05,
+        "min_oracle_headroom": 1e-4, "min_bootstrap_valid_fraction": 0.95,
+    }
+    assert _is_canonical_decision_rule(**canonical) is True
+    assert _is_canonical_decision_rule(**{**canonical, "seed": 1}) is False
 
     assert _evidence_verdict(
-        decision_grade=True, statistical_gate_passed=True,
+        evidence_inputs_decision_grade=True,
+        canonical_preregistered_rule=True,
+        statistical_gate_passed=True,
     ) == "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
     assert _evidence_verdict(
-        decision_grade=True, statistical_gate_passed=False,
+        evidence_inputs_decision_grade=True,
+        canonical_preregistered_rule=True,
+        statistical_gate_passed=False,
     ) == "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
     assert _evidence_verdict(
-        decision_grade=False, statistical_gate_passed=True,
+        evidence_inputs_decision_grade=False,
+        canonical_preregistered_rule=True,
+        statistical_gate_passed=True,
     ) == "METHODOLOGY_SMOKE_ONLY"
+    assert _evidence_verdict(
+        evidence_inputs_decision_grade=True,
+        canonical_preregistered_rule=False,
+        statistical_gate_passed=True,
+    ) == "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(
@@ -1575,8 +1594,8 @@ def test_analyze_cannot_advance_with_an_undersampled_interval(
     )
 
     assert positive["statistical_gate_passed"] is True
-    assert positive["preregistered_rule"]["grouped_cv_folds"] == 2
-    assert positive["preregistered_rule"]["bootstrap_seed"] == 0
+    assert positive["evaluated_rule"]["grouped_cv_folds"] == 2
+    assert positive["evaluated_rule"]["bootstrap_seed"] == 0
     assert "verdict" not in positive
 
 
