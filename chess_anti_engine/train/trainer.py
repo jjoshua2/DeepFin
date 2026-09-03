@@ -277,6 +277,7 @@ class _DeviceLossSums:
         *,
         total_override: torch.Tensor | None = None,
         total_scale: float = 1.0,
+        mean_weight: float = 1.0,
     ) -> None:
         """One microbatch's scalars, with ``_extract_loss_scalars``' semantics.
 
@@ -311,6 +312,19 @@ class _DeviceLossSums:
         vec = torch.stack(scalars).detach().to(torch.float64)
         if total_at >= 0 and float(total_scale) != 1.0:
             vec[total_at] = vec[total_at] * float(total_scale)
+        if float(mean_weight) != 1.0:
+            # Raw numerator/denominator/count scalars are already row sums.
+            # Every other value is a batch mean and needs a row-count weight
+            # before pooling ragged exact batches. One vector multiply keeps
+            # this to a single dispatch on the exact-epoch-only path.
+            raw_keys = _RAW_SUM_LOSS_KEYS | {
+                "disarmed_nonfinite_terms", "blend_unclaimed_nonfinite_rows",
+            }
+            weights = vec.new_tensor([
+                1.0 if key in raw_keys else float(mean_weight)
+                for key in losses
+            ])
+            vec = vec * weights
         self._accumulate(names, vec)
 
     def merge(self, other: _DeviceLossSums) -> None:
@@ -5104,7 +5118,8 @@ class Trainer:
             # Count what the buffer actually returned: an exact finite epoch
             # deliberately spreads a remainder over near-full ragged batches,
             # so ``n_micro * requested batch_size`` is not generally true.
-            step_samples_seen += int(batch["x"].shape[0])
+            realized_batch_rows = int(batch["x"].shape[0])
+            step_samples_seen += realized_batch_rows
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
@@ -5116,7 +5131,21 @@ class Trainer:
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
                         losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                    loss = losses["total"] / self.accum_steps
+                    # ``compute_loss`` returns a row mean. An exact finite
+                    # epoch can contain ragged batches because one game may
+                    # contribute at most one row per batch. Without this
+                    # factor, a row in a half-sized batch has twice the
+                    # optimizer weight of a row in a full batch. Preserve a
+                    # constant 1/requested_batch_size coefficient per row;
+                    # ordinary replacement replay keeps its historical scale.
+                    exact_row_scale = (
+                        float(realized_batch_rows) / float(batch_size)
+                        if bool(getattr(buf, "exact_without_replacement", False))
+                        else 1.0
+                    )
+                    loss = (
+                        losses["total"] * exact_row_scale / self.accum_steps
+                    )
             with phases.phase("bwd_s"):
                 loss.backward()
 
@@ -5126,8 +5155,15 @@ class Trainer:
   # `_DeviceLossSums`. The window pays one transfer, in `train_steps`.
             step_sums.add_losses(
                 losses,
-                total_override=loss,
+                # Metrics remain the unscaled per-row loss. The row-fraction
+                # factor above is optimizer normalization, not a ruler change.
+                total_override=losses["total"] / self.accum_steps,
                 total_scale=float(self.accum_steps),
+                mean_weight=(
+                    float(realized_batch_rows)
+                    if bool(getattr(buf, "exact_without_replacement", False))
+                    else 1.0
+                ),
             )
 
             with torch.no_grad():
@@ -5416,9 +5452,15 @@ class Trainer:
                     if step_loss is None:
                         self.writer.add_scalar("train/loss", 0.0, self.step)
                     else:
-                        pending_step_loss.append(
-                            (int(self.step), step_loss / float(max(1, step_n_micro))),
+                        step_loss_denominator = (
+                            int(step_opt_stats.get("samples_seen", 0.0))
+                            if bool(getattr(buf, "exact_without_replacement", False))
+                            else step_n_micro
                         )
+                        pending_step_loss.append((
+                            int(self.step),
+                            step_loss / float(max(1, step_loss_denominator)),
+                        ))
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
@@ -5513,8 +5555,13 @@ class Trainer:
                 "is still a shard defect -- +-inf and NaN both count here.",
                 blend_unclaimed, n_micro,
             )
+        metric_denominator = (
+            train_samples_seen
+            if bool(getattr(buf, "exact_without_replacement", False))
+            else n_micro
+        )
         metrics = self._build_metrics(
-            sums, acc_sums, float(max(1, n_micro)),
+            sums, acc_sums, float(max(1, metric_denominator)),
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),

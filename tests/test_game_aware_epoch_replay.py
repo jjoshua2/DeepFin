@@ -214,6 +214,61 @@ def test_long_games_are_deadline_scheduled_and_the_remainder_is_spread(
     assert buf.plan.min_batch_rows == 3
 
 
+def test_deadline_forced_game_is_loaded_directly_not_through_unrelated_prefix(
+    tmp_path: Path,
+) -> None:
+    # Seed 3 initially puts shard 0 last in the six-shard permutation. Game 0
+    # has one row due in every batch, so a sequential-prefix implementation
+    # decodes the entire corpus before it can return batch 0.
+    shards = [
+        [(0, 0), (0, 1), (0, 2)],
+        [(1, 10)],
+        [(2, 20)],
+        [(3, 30)],
+        [(4, 40)],
+        [(5, 50)],
+    ]
+    buf = _open(_write(tmp_path / "replay", shards), seed=3, batch_size=3)
+
+    first = buf.sample_batch_arrays(3)
+
+    assert 0 in np.asarray(first["game_id"], dtype=np.int64)
+    assert int(buf.plan.load_counts[0]) == 3
+    assert int(buf.receipt()["peak_decoded_rows"]) == 5
+    assert int(buf.receipt()["peak_decoded_rows"]) < buf.plan.rows
+
+
+def test_multiple_deadline_games_are_brought_forward_and_plan_still_closes(
+    tmp_path: Path,
+) -> None:
+    shards = [
+        [(0, 0), (0, 1), (0, 2)],
+        [(1, 10), (1, 11), (1, 12)],
+        [(2, 20)],
+        [(3, 30)],
+        [(4, 40)],
+        [(5, 50)],
+    ]
+    buf = _open(_write(tmp_path / "replay", shards), seed=3, batch_size=4)
+
+    first = buf.sample_batch_arrays(4)
+
+    assert {0, 1}.issubset(set(np.asarray(first["game_id"], dtype=np.int64)))
+    assert int(buf.plan.load_counts[0]) == 4
+    assert int(buf.receipt()["peak_decoded_rows"]) == 8
+    remaining = []
+    for _ in range(buf.num_batches - 1):
+        arrays = buf.sample_batch_arrays(buf.plan.batch_size)
+        remaining.append(list(zip(
+            np.asarray(arrays["game_id"], dtype=np.int64).tolist(),
+            np.asarray(arrays["ply_index"], dtype=np.int64).tolist(),
+            strict=True,
+        )))
+    assert sum(len(batch) for batch in remaining) + len(first["x"]) == buf.plan.rows
+    assert buf.receipt()["realized_sha256"] == buf.plan.plan_sha256
+    assert buf.receipt()["complete"] is True
+
+
 def test_consumed_rows_are_compacted_out_of_long_lived_shards(tmp_path: Path) -> None:
     rows = [(game, game * 100 + ply) for game in range(10) for ply in range(10)]
     buf = _open(_write(tmp_path / "replay", [rows]), batch_size=5)

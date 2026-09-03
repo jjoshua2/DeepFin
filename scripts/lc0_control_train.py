@@ -2288,7 +2288,14 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("compute_loss was never called — no step ran")
 
     if isinstance(buf, GameAwareEpochBuffer):
-        sampling_receipt = buf.receipt()
+        sampling_receipt = {
+            **buf.receipt(),
+            # Applied by Trainer._run_optimizer_step on every exact batch and
+            # banked here, after the epoch completed, so the artifact says how
+            # ragged row means reached the optimizer rather than merely what
+            # sizes the sampler returned.
+            "loss_normalization": "row_mean*realized_rows/batch_size",
+        }
         if not sampling_receipt["complete"]:
             if mid.saved_at_step is not None:
                 mid_ckpt.unlink(missing_ok=True)

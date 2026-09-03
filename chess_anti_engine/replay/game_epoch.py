@@ -339,9 +339,31 @@ def _balanced_batch_rows(*, rows: int, batch_size: int, max_game_rows: int) -> n
     return sizes
 
 
+def _move_due_shard_next(
+    records: list[_ShardGames], *, start: int, missing_games: set[int],
+) -> None:
+    """Put the next shard for a deadline-forced game at ``start``.
+
+    The initial seeded permutation is still the tie-break order.  We depart
+    from it only when a game must be decoded for the current batch: walking
+    through the intervening prefix would materialize unrelated shards merely
+    to reach a known location.  Moving that shard forward keeps the realized
+    order deterministic while preserving the loader's bounded-memory contract.
+    """
+    if not missing_games:
+        return
+    due = min(missing_games)
+    for index in range(int(start), len(records)):
+        if np.any(records[index].game_keys == due):
+            if index != int(start):
+                records.insert(int(start), records.pop(index))
+            return
+    raise RuntimeError(f"deadline-forced game {due} has no remaining shard")
+
+
 def _plan_epoch(
     records: Sequence[_ShardGames], *, batch_size: int, seed: int,
-) -> GameEpochPlan:
+) -> tuple[GameEpochPlan, list[_ShardGames]]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
     if not records:
@@ -378,6 +400,15 @@ def _plan_epoch(
             len(active) < int(batch_rows)
             or not forced.issubset(active)
         ) and next_shard < len(shuffled):
+            # A due game's next segment may sit late in the seeded order. Its
+            # location is already known from the metadata scan, so bring that
+            # shard directly to the load frontier instead of decoding every
+            # unrelated shard in front of it.
+            _move_due_shard_next(
+                shuffled,
+                start=next_shard,
+                missing_games=forced.difference(active),
+            )
             record = shuffled[next_shard]
             next_shard += 1
             loaded += 1
@@ -426,7 +457,7 @@ def _plan_epoch(
     load_array = np.asarray(load_counts, dtype=np.int32)
     full = int(np.count_nonzero(batch_array == int(batch_size)))
     ragged = int(batch_array.shape[0] - full)
-    return GameEpochPlan(
+    plan = GameEpochPlan(
         rows=int(rows),
         batches=int(batch_array.shape[0]),
         full_batches=full,
@@ -441,6 +472,7 @@ def _plan_epoch(
         load_counts=load_array,
         batch_rows=batch_array,
     )
+    return plan, shuffled
 
 
 class GameAwareEpochBuffer:
@@ -460,10 +492,9 @@ class GameAwareEpochBuffer:
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
-        path_rng = _seeded_rng(seed, 0)
-        order = path_rng.permutation(len(records))
-        self._records = [records[int(index)] for index in order]
-        self.plan = _plan_epoch(records, batch_size=int(batch_size), seed=int(seed))
+        self.plan, self._records = _plan_epoch(
+            records, batch_size=int(batch_size), seed=int(seed),
+        )
         self._batch_size = int(batch_size)
         self._input_planes = None if input_planes is None else int(input_planes)
         self._plan_workers = max(1, int(plan_workers))
@@ -613,19 +644,29 @@ class GameAwareEpochBuffer:
         records = self._records[self._next_shard:stop]
         self._next_shard = stop
         workers = min(self._load_workers, len(records))
-        if workers <= 1:
-            loaded = [self._load_one(record) for record in records]
-        else:
-            with ThreadPoolExecutor(
-                max_workers=workers, thread_name_prefix="game-epoch-load",
-            ) as pool:
-                loaded = list(pool.map(self._load_one, records))
-        for record, arrs in zip(records, loaded, strict=True):
-            resolved = str(record.path.resolve()).encode("utf-8")
-            self._realized_digest.update(struct.pack("<I", len(resolved)))
-            self._realized_digest.update(resolved)
-            self._realized_digest.update(struct.pack("<q", int(record.rows)))
-            self._add_loaded_chunk(record, arrs)
+
+        def register(batch_records: Sequence[_ShardGames]) -> None:
+            if len(batch_records) == 1:
+                loaded = [self._load_one(batch_records[0])]
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(workers, len(batch_records)),
+                    thread_name_prefix="game-epoch-load",
+                ) as pool:
+                    loaded = list(pool.map(self._load_one, batch_records))
+            for record, arrs in zip(batch_records, loaded, strict=True):
+                resolved = str(record.path.resolve()).encode("utf-8")
+                self._realized_digest.update(struct.pack("<I", len(resolved)))
+                self._realized_digest.update(resolved)
+                self._realized_digest.update(struct.pack("<q", int(record.rows)))
+                self._add_loaded_chunk(record, arrs)
+
+        # Do not materialize an arbitrarily long load prefix into one Python
+        # list.  At most ``load_workers`` newly decoded shards are waiting to
+        # be registered at once; already registered chunks can then compact as
+        # their rows are consumed.
+        for offset in range(0, len(records), max(1, workers)):
+            register(records[offset:offset + max(1, workers)])
 
     def _gather(self, selected: list[tuple[int, int]]) -> dict[str, np.ndarray]:
         by_chunk: dict[int, list[int]] = {}

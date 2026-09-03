@@ -73011,11 +73011,20 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
         PYTHONPATH=. python3 scripts/value_regret.py --checkpoint runs/game_epoch_ab/s${seed}_${mode}/checkpoint.pt --max-positions 4000 --min-pieces 0 --batch-size 128 --gpu-mem-fraction 0.15 --matched-rows scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz --dump-per-position scratchpad/game_epoch_ab/s${seed}_${mode}.jsonl
       done; done
       for seed in 0 1; do
-        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --cluster-key game_id --require-n 4000
+        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --cluster-key game_cluster_id --require-n 4000
       done
 
-  The matched-row artifact contributes source `game_id` only; scoring remains
-  the preregistered FEN-only ruler. `--min-pieces 0` makes the stated full-set
+  The matched-row artifact contributes only a conservative source-game
+  component: because the frozen manifest discarded its sampled-row provenance,
+  every exact source-game candidate for a repeated position participates in a
+  connected component, rather than treating the arbitrary first history match
+  as its game. The real 1,463-shard preflight matched 4,000/4,000 rows, found
+  28 positions with multiple candidate games and produced 775 complete
+  components with no unidentified candidate. A deterministic replay of the
+  original frozen-set sampler independently recovered 775 true games, with
+  zero true games split and zero distinct true games over-merged by these
+  components. Scoring remains the preregistered FEN-only ruler.
+  `--min-pieces 0` makes the stated full-set
   n=4,000 executable rather than applying the tool's 7-man exclusion default.
   Sign is `game_epoch - replacement`, so negative regret is better.
   **SUCCESS:** the arithmetic mean of the two paired mean deltas is ≤ 0 cp and
@@ -73035,7 +73044,9 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - **Confounds/revert.** The samplers necessarily see different row sequences;
   that is the intervention. Batch sizes are 511/512 in the exact arm versus
   512 in replacement; the one-row spread is the price of avoiding a single
-  overweighted remainder update and is banked in the receipt. No live state or
+  overweighted remainder update; each exact update is scaled by its realized
+  row count / 512, so every row retains the same nominal loss coefficient.
+  No live state or
   corpus is modified. Revert is to omit `--sampling-mode game_epoch` (the
   default remains `replacement`); no replay rollback is needed because this is
   an offline finite-corpus driver.

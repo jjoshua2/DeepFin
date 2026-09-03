@@ -334,8 +334,9 @@ def main() -> None:
                          "the two in one table, trend or threshold.")
     ap.add_argument("--matched-rows", type=Path, default=None,
                     help="matched-rows index for --input-encoding stored, or "
-                         "with --dump-per-position to attach source game_id for "
-                         "a clustered paired bootstrap. Stored-mode default: "
+                         "with --dump-per-position to attach conservative "
+                         "game_cluster_id for a clustered paired bootstrap. "
+                         "Stored-mode default: "
                          "<audit-set>.matched_rows.npz. Built by "
                          "scripts/match_audit_rows.py; not checked in.")
     ap.add_argument("--pos-chunk", type=int, default=128,
@@ -392,7 +393,7 @@ def main() -> None:
         and args.dump_per_position is None
     ):
         raise SystemExit(
-            "--matched-rows with fen_only supplies game_id to "
+            "--matched-rows with fen_only supplies game_cluster_id to "
             "--dump-per-position; without a dump it would be accepted but "
             "ignored"
         )
@@ -463,26 +464,30 @@ def main() -> None:
                     f"positions, e.g. {missing[:3]}; a clustered dump cannot "
                     "silently omit or row-bootstrap them"
                 )
-    dump_game_ids: dict[str, int] = {}
+    dump_game_clusters: dict[str, int] = {}
     if matched is not None and args.dump_per_position:
-        # Both encodings attach game_id when a matched index is present. Do
-        # this before value_1ply_regret: discovering a masked/legacy fill only
-        # after the GPU pass would waste the complete scoring run.
-        missing_game = [
-            pos.key for pos in positions if not matched.has_game_id(pos.key)
+        # Both encodings attach the conservative source-game component when a
+        # matched index is present. Do this before value_1ply_regret:
+        # discovering a masked/legacy fill only after the GPU pass would waste
+        # the complete scoring run.
+        missing_cluster = [
+            pos.key for pos in positions
+            if not matched.has_game_cluster_id(pos.key)
         ]
-        if missing_game:
+        if missing_cluster:
             raise SystemExit(
-                f"--matched-rows has no game_id for {len(missing_game)} "
-                f"scored positions, e.g. {missing_game[:3]}; source-game "
-                "cluster resampling is unavailable"
+                f"--matched-rows has no game_cluster_id for "
+                f"{len(missing_cluster)} scored positions, e.g. "
+                f"{missing_cluster[:3]}; source-game cluster resampling is "
+                "unavailable"
             )
-        dump_game_ids = {
-            pos.key: matched.game_id(pos.key) for pos in positions
+        dump_game_clusters = {
+            pos.key: matched.game_cluster_id(pos.key) for pos in positions
         }
-        n_games = len(set(dump_game_ids.values()))
+        n_clusters = len(set(dump_game_clusters.values()))
         print(f"[value-regret] cluster index: {matched.path} supplies "
-              f"game_id for {len(positions)} positions across {n_games} games")
+              f"game_cluster_id for {len(positions)} positions across "
+              f"{n_clusters} conservative source-game components")
     print(f"[value-regret] {tag} {len(positions)} positions from {args.audit_set}")
     overall, per_phase, per_position = value_1ply_regret(
         net=net, positions=positions, device=args.device,
@@ -510,8 +515,8 @@ def main() -> None:
                     "fen": pos.fen, "phase": int(pos.phase),
                     "value": None if np.isnan(r) else float(r),
                     **(
-                        {"game_id": int(dump_game_ids[pos.key])}
-                        if dump_game_ids else {}
+                        {"game_cluster_id": int(dump_game_clusters[pos.key])}
+                        if dump_game_clusters else {}
                     ),
                     # A dump is a report: it must carry the ruler it was made
                     # with, or a downstream paired compare can silently join

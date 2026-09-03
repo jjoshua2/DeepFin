@@ -50,7 +50,8 @@ Two flags exist for PRE-REGISTERED readouts and are off by default:
   --require-n N     refuse unless the join yields exactly N paired positions,
                     so a truncated or partially-labelled dump cannot deliver a
                     quotable verdict at a resolution nobody registered.
-  --cluster-key K   resample source clusters (normally ``game_id``), not rows,
+  --cluster-key K   resample source clusters (for matched audit dumps,
+                    ``game_cluster_id``), not rows,
                     so several audit positions from one game do not masquerade
                     as independent evidence.
 """
@@ -1072,7 +1073,7 @@ def main() -> None:
                          "were pre-committed at a stated n.")
     ap.add_argument("--cluster-key", default=None, metavar="FIELD",
                     help="resample whole source clusters instead of individual "
-                         "rows (for the audit matched-row dumps: 'game_id'). "
+                         "rows (for matched audit dumps: 'game_cluster_id'). "
                          "Every paired row must carry the field on both sides.")
     args = ap.parse_args()
     if args.cluster_key is not None and args.mcnemar_at is not None:

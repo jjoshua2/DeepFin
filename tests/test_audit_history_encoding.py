@@ -565,7 +565,7 @@ def test_score_audit_v2_refuses_an_arm_with_no_encoding() -> None:
         sa._require_encoding("v1_stm")
 
 
-def test_score_audit_v2_preflights_game_ids_before_model_load(
+def test_score_audit_v2_preflights_game_clusters_before_model_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import scripts.score_audit_v2 as sa
@@ -578,16 +578,16 @@ def test_score_audit_v2_preflights_game_ids_before_model_load(
         def __contains__(self, key: object) -> bool:
             return str(key) == "k"
 
-        def game_id(self, key: str) -> int:
+        def game_cluster_id(self, key: str) -> int:
             assert key == "k"
-            raise SystemExit("no explicit game_id")
+            raise SystemExit("no complete game_cluster_id")
 
     class _Position:
         key = "k"
         fen = chess.STARTING_FEN
 
     def _model_must_not_load(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("masked game_id reached checkpoint loading")
+        raise AssertionError("masked game cluster reached checkpoint loading")
 
     monkeypatch.setattr(sa, "MatchedAuditRows", lambda _path: _Matched())
     monkeypatch.setattr(sa, "load_audit_set", lambda _path: [_Position()])
@@ -599,7 +599,7 @@ def test_score_audit_v2_preflights_game_ids_before_model_load(
         "--out", str(tmp_path / "out.json"), "--device", "cpu",
     ])
 
-    with pytest.raises(SystemExit, match="no explicit game_id"):
+    with pytest.raises(SystemExit, match="no complete game_cluster_id"):
         sa.main()
 
 
@@ -641,3 +641,29 @@ def test_board_fingerprint_separates_distinct_positions() -> None:
         mar.board_fingerprint(chess.Board(BLACK_TO_MOVE_FENS[0].replace("4P3", "8")
                                           .replace("PPPP1PPP", "PPPPPPPP")))
     )
+
+
+def test_candidate_game_components_join_rows_through_every_possible_game() -> None:
+    import scripts.match_audit_rows as mar
+
+    cluster, has_cluster = mar.candidate_game_components(
+        [{10, 20}, {20}, {30}, set()],
+        candidate_missing_game_id=np.array([False, False, False, False]),
+        found=np.array([True, True, True, False]),
+    )
+
+    assert cluster.tolist() == [0, 0, 2, -1]
+    assert has_cluster.tolist() == [True, True, True, False]
+
+
+def test_candidate_game_component_refuses_an_unidentified_possible_origin() -> None:
+    import scripts.match_audit_rows as mar
+
+    cluster, has_cluster = mar.candidate_game_components(
+        [{10}, {10}],
+        candidate_missing_game_id=np.array([True, False]),
+        found=np.array([True, True]),
+    )
+
+    assert cluster.tolist() == [0, 0]
+    assert has_cluster.tolist() == [False, True]

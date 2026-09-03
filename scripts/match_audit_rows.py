@@ -53,7 +53,17 @@ over 1463 shards, 4000/4000 matched in 24 s:
     (112..174, 0.013, downstream of those).
   - history-plane occupancy before vs after the fill (0.0 -> 0.713)
   - duplicate multiplicity (the same position can occur in several games;
-    first match in shard-name order wins, deterministically — mean 1.010, max 3)
+    first match in shard-name order supplies the stored input, deterministically
+    — mean 1.010, max 3)
+
+The first matching row is NOT used as the bootstrap cluster identity. The
+original manifest discarded row provenance, so for each audit position the
+index records every source game in which it could have originated and takes
+connected components of the audit-position/source-game bipartite graph. Two
+rows that could be siblings therefore always share ``game_cluster_id``. This
+is conservative when a position occurs in multiple games, but it cannot split
+dependent rows merely because the deterministic history join chose different
+first matches.
 
 Usage:
 
@@ -77,6 +87,7 @@ from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.eval.audit import decode_board_from_planes, position_key
 from chess_anti_engine.eval.audit_history import (
+    GAME_CLUSTER_KIND,
     STORED_EXTRA_FEATURES,
     STORED_HISTORY_ENCODING,
     STORED_PLANES,
@@ -89,6 +100,62 @@ _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
 # The 7 non-current lc0 history frames: 0% occupied FEN-only, ~71% occupied
 # from a stored row. This block IS audit-v2.
 _HISTORY_PLANES = slice(13, 104)
+
+
+def candidate_game_components(
+    candidate_games: list[set[int]],
+    *,
+    candidate_missing_game_id: np.ndarray,
+    found: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Conservative cluster ids for an audit-position/source-game graph.
+
+    A position can match several stored games. Unioning audit rows through
+    every candidate game guarantees that two positions sampled from the same
+    source game cannot be assigned to different bootstrap clusters. A row is
+    usable only when every exact match supplied an authoritative game id;
+    otherwise an unobserved edge could still connect two reported clusters.
+    """
+    n = len(candidate_games)
+    found_arr = np.asarray(found, dtype=bool)
+    missing_arr = np.asarray(candidate_missing_game_id, dtype=bool)
+    if found_arr.shape != (n,) or missing_arr.shape != (n,):
+        raise ValueError("candidate-game masks must match the audit row count")
+
+    parent = list(range(n))
+
+    def root(row: int) -> int:
+        while parent[row] != row:
+            parent[row] = parent[parent[row]]
+            row = parent[row]
+        return row
+
+    def union(a: int, b: int) -> None:
+        ra, rb = root(a), root(b)
+        if ra == rb:
+            return
+        if ra < rb:
+            parent[rb] = ra
+        else:
+            parent[ra] = rb
+
+    first_row_for_game: dict[int, int] = {}
+    for row, games in enumerate(candidate_games):
+        if not found_arr[row]:
+            continue
+        for game in sorted(games):
+            previous = first_row_for_game.setdefault(int(game), row)
+            union(row, previous)
+
+    cluster_id = np.full(n, -1, dtype=np.int64)
+    for row, games in enumerate(candidate_games):
+        if found_arr[row] and games:
+            cluster_id[row] = root(row)
+    has_cluster = np.asarray([
+        bool(found_arr[row] and games and not missing_arr[row])
+        for row, games in enumerate(candidate_games)
+    ], dtype=bool)
+    return cluster_id, has_cluster
 
 
 def board_fingerprint(board: chess.Board) -> bytes:
@@ -191,6 +258,8 @@ def main() -> None:
     src_ply = np.full(n, -1, dtype=np.int64)
     src_selfplay = np.full(n, -1, dtype=np.int64)
     dup_count = np.zeros(n, dtype=np.int64)
+    candidate_games: list[set[int]] = [set() for _ in range(n)]
+    candidate_missing_game_id = np.zeros(n, dtype=bool)
 
     t0 = time.time()
     fp_hits = 0
@@ -238,14 +307,22 @@ def main() -> None:
                 if decoded[r] != keys[ai]:
                     continue
                 dup_count[ai] += 1
+                game = cols["game_id"]
+                has_game = cols["has_game_id"]
+                if (
+                    game is not None
+                    and has_game is not None
+                    and bool(has_game[r])
+                ):
+                    candidate_games[ai].add(int(game[r]))
+                else:
+                    candidate_missing_game_id[ai] = True
                 if found[ai]:
                     continue
                 found[ai] = True
                 x_stored[ai] = xfull[r]
                 src_shard[ai] = path.name
                 src_row[ai] = r
-                game = cols["game_id"]
-                has_game = cols["has_game_id"]
                 if (
                     game is not None
                     and has_game is not None
@@ -267,6 +344,11 @@ def main() -> None:
                 flush=True,
             )
     scan_seconds = time.time() - t0
+    game_cluster_id, has_game_cluster_id = candidate_game_components(
+        candidate_games,
+        candidate_missing_game_id=candidate_missing_game_id,
+        found=found,
+    )
 
     # ---- verification: canonicalisation preserved, history actually filled ----
     x_fen_only = np.stack([
@@ -325,7 +407,22 @@ def main() -> None:
         "audit_rows": n,
         "matched": int(found.sum()),
         "unmatched": int((~found).sum()),
-        "matched_rows_with_game_id": int(np.count_nonzero(found & src_has_game)),
+        "matched_rows_with_selected_source_game_id": int(
+            np.count_nonzero(found & src_has_game)
+        ),
+        "matched_rows_with_game_cluster_id": int(
+            np.count_nonzero(found & has_game_cluster_id)
+        ),
+        "game_cluster_kind": GAME_CLUSTER_KIND,
+        "game_clusters": int(np.unique(
+            game_cluster_id[has_game_cluster_id]
+        ).shape[0]),
+        "positions_with_multiple_candidate_games": int(sum(
+            len(games) > 1 for games in candidate_games
+        )),
+        "positions_with_unidentified_candidate_game": int(
+            np.count_nonzero(found & candidate_missing_game_id)
+        ),
         "shards_scanned": len(shards),
         "shards_skipped_wrong_layout": skipped_layout,
         "fingerprint_candidate_pairs": fp_hits,
@@ -364,7 +461,13 @@ def main() -> None:
         key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
         source=np.array([int(r["source"]) for r in audit]),
         src_shard=np.array(src_shard), src_row=src_row,
+        # The selected source row identifies the history-bearing x_stored row.
+        # It is not safe as a bootstrap cluster when a position has several
+        # source matches, so the conservative component is stored separately.
         game_id=src_game, has_game_id=src_has_game,
+        game_cluster_id=game_cluster_id,
+        has_game_cluster_id=has_game_cluster_id,
+        game_cluster_kind=np.array([GAME_CLUSTER_KIND]),
         ply_index=src_ply, is_selfplay=src_selfplay,
         dup_count=dup_count,
         per_plane_nonzero_fen_only=per_plane_fen,

@@ -770,6 +770,9 @@ def test_value_regret_main_scores_the_onnx_net(
         key=np.array(["a", "b"]),
         game_id=np.array([17, 23], dtype=np.int64),
         has_game_id=np.ones(2, dtype=bool),
+        game_cluster_id=np.array([7, 11], dtype=np.int64),
+        has_game_cluster_id=np.ones(2, dtype=bool),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
@@ -807,12 +810,12 @@ def test_value_regret_main_scores_the_onnx_net(
 
     rows = list(iter_data_rows(dump))
     assert len(rows) == 2
-    assert [r["game_id"] for r in rows] == [17, 23]
+    assert [r["game_cluster_id"] for r in rows] == [7, 11]
     assert {r["net"] for r in rows} == {f"onnx:{echo_onnx} "
                                         f"[in=planes policy=policy wdl=wdl]"}
 
 
-def test_value_regret_cluster_dump_refuses_a_masked_game_id(
+def test_value_regret_cluster_dump_refuses_a_masked_game_cluster_id(
     echo_onnx: Path,
     mini_audit_set: Path,
     tmp_path: Path,
@@ -830,15 +833,18 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_id(
         key=np.array(["a", "b"]),
         game_id=np.array([17, 0], dtype=np.int64),
         has_game_id=np.array([True, False]),
+        game_cluster_id=np.array([7, -1], dtype=np.int64),
+        has_game_cluster_id=np.array([True, False]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
     )
     index = MatchedAuditRows(matched)
-    assert index.has_game_id("a") is True
-    assert index.has_game_id("b") is False
-    with pytest.raises(SystemExit, match="no explicit game_id"):
-        index.game_id("b")
+    assert index.has_game_cluster_id("a") is True
+    assert index.has_game_cluster_id("b") is False
+    with pytest.raises(SystemExit, match="no complete game_cluster_id"):
+        index.game_cluster_id("b")
     monkeypatch.setattr("sys.argv", [
         "value_regret.py", "--onnx", str(echo_onnx),
         "--audit-set", str(mini_audit_set), "--device", "cpu",
@@ -846,11 +852,11 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_id(
         "--dump-per-position", str(tmp_path / "dump.jsonl"),
     ])
 
-    with pytest.raises(SystemExit, match="has no game_id for 1 scored positions"):
+    with pytest.raises(SystemExit, match="has no game_cluster_id for 1 scored positions"):
         value_regret.main()
 
 
-def test_stored_value_regret_preflights_game_ids_before_scoring(
+def test_stored_value_regret_preflights_game_clusters_before_scoring(
     mini_audit_set: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -865,13 +871,16 @@ def test_stored_value_regret_preflights_game_ids_before_scoring(
         key=np.array(["a", "b"]),
         game_id=np.array([17, 0], dtype=np.int64),
         has_game_id=np.array([True, False]),
+        game_cluster_id=np.array([7, -1], dtype=np.int64),
+        has_game_cluster_id=np.array([True, False]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
         input_history_encoding=np.array(["lc0_root_legacy_meta"]),
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
     )
 
     def _scoring_must_not_start(**_kwargs: object) -> None:
-        raise AssertionError("masked game_id reached the expensive scoring pass")
+        raise AssertionError("masked game cluster reached the expensive scoring pass")
 
     monkeypatch.setattr(value_regret, "value_1ply_regret", _scoring_must_not_start)
     monkeypatch.setattr("sys.argv", [
@@ -882,7 +891,7 @@ def test_stored_value_regret_preflights_game_ids_before_scoring(
         "--dump-per-position", str(tmp_path / "dump.jsonl"),
     ])
 
-    with pytest.raises(SystemExit, match="has no game_id for 1 scored positions"):
+    with pytest.raises(SystemExit, match="has no game_cluster_id for 1 scored positions"):
         value_regret.main()
 
 

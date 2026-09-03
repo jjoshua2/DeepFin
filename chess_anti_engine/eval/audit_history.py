@@ -71,6 +71,7 @@ _STORED_LAYOUT: Final[dict[str, str]] = {
     "input_history_encoding": STORED_HISTORY_ENCODING,
     "input_extra_features": STORED_EXTRA_FEATURES,
 }
+GAME_CLUSTER_KIND: Final[str] = "candidate_game_connected_component_v1"
 
 # lc0 root layout: 8 slots x 13 planes (6 us, 6 them, 1 repetition), then the
 # metadata block at 104 (4 castling planes, then the colour flag at 108).
@@ -278,10 +279,38 @@ class MatchedAuditRows:
             if "has_game_id" in data
             else np.zeros(found.shape, dtype=bool)
         )
+        self._game_cluster_id = (
+            np.asarray(data["game_cluster_id"], dtype=np.int64)
+            if "game_cluster_id" in data
+            else np.full(found.shape, -1, dtype=np.int64)
+        )
+        self._has_game_cluster_id = (
+            np.asarray(data["has_game_cluster_id"], dtype=bool)
+            if "has_game_cluster_id" in data
+            else np.zeros(found.shape, dtype=bool)
+        )
+        self.game_cluster_kind = _npz_str(data, "game_cluster_kind")
         if self._game_id.shape != found.shape or self._has_game_id.shape != found.shape:
             raise SystemExit(
                 f"matched-rows index {self.path} has inconsistent game_id, "
                 "has_game_id, and found shapes"
+            )
+        if (
+            self._game_cluster_id.shape != found.shape
+            or self._has_game_cluster_id.shape != found.shape
+        ):
+            raise SystemExit(
+                f"matched-rows index {self.path} has inconsistent "
+                "game_cluster_id, has_game_cluster_id, and found shapes"
+            )
+        if (
+            np.any(self._has_game_cluster_id)
+            and self.game_cluster_kind != GAME_CLUSTER_KIND
+        ):
+            raise SystemExit(
+                f"matched-rows index {self.path} declares game_cluster_kind="
+                f"{self.game_cluster_kind!r}, expected {GAME_CLUSTER_KIND!r}; "
+                "rebuild it before using clustered evidence"
             )
         all_keys = [str(k) for k in data["key"]]
         self._index: dict[str, int] = {
@@ -301,13 +330,14 @@ class MatchedAuditRows:
         return np.asarray(self._stored[self._row(key)], dtype=np.float32)
 
     def game_id(self, key: str) -> int:
-        """Source game of the recovered row, for game-CLUSTERED resampling.
+        """Source game of the selected stored-history row; NOT a cluster id.
 
-        Audit positions from the same game are not independent draws; a
-        bootstrap that resamples positions rather than games understates its
-        own CI. This accessor is deliberately fail-closed: the value array's
-        fill is not evidence that the optional field was present, and making
-        every caller remember a separate mask check recreates that hazard.
+        For a position with several exact source matches this is merely the
+        deterministic first row whose ``x`` was retained, not necessarily the
+        game sampled into the frozen audit manifest. It is kept for artifact
+        provenance only. Statistical callers must use ``game_cluster_id``.
+        This accessor is deliberately fail-closed: the value array's fill is
+        not evidence that the optional field was present.
         """
         row = self._row(key)
         if not self._has_game_id[row]:
@@ -319,8 +349,29 @@ class MatchedAuditRows:
         return int(self._game_id[row])
 
     def has_game_id(self, key: str) -> bool:
-        """Whether the source shard explicitly supplied this row's game ID."""
+        """Whether the selected stored-history row supplied its source game."""
         return bool(self._has_game_id[self._row(key)])
+
+    def game_cluster_id(self, key: str) -> int:
+        """Conservative source-game component for clustered resampling.
+
+        The frozen audit manifest did not retain its sampled row provenance.
+        ``match_audit_rows.py`` therefore joins every candidate source game and
+        clusters connected positions together instead of pretending the first
+        history match is the sampled source. Legacy artifacts fail closed.
+        """
+        row = self._row(key)
+        if not self._has_game_cluster_id[row]:
+            raise SystemExit(
+                f"matched-rows index {self.path} has no complete "
+                f"game_cluster_id for {key!r}; rebuild it with the current "
+                "match_audit_rows.py before using game-clustered evidence"
+            )
+        return int(self._game_cluster_id[row])
+
+    def has_game_cluster_id(self, key: str) -> bool:
+        """Whether every candidate source row was placed in a component."""
+        return bool(self._has_game_cluster_id[self._row(key)])
 
     def _row(self, key: str) -> int:
         i = self._index.get(str(key))
