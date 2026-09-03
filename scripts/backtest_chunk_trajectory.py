@@ -252,7 +252,7 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         with tmp_path.open("x") as fh:
             json.dump(payload, fh, indent=2, sort_keys=True)
             fh.write("\n")
-        os.replace(tmp_path, path)
+        _publish_no_replace(tmp_path, path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -304,11 +304,37 @@ def _acquire_output_locks(
     return tuple(handles)
 
 
+def _require_new_output_pair(
+    output_path: Path, meta_path: Path, *, overwrite: bool,
+) -> None:
+    """Keep completed trajectory evidence immutable once either half exists."""
+    if overwrite:
+        raise SystemExit(
+            "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
+        )
+    if output_path.exists() or meta_path.exists():
+        raise SystemExit(
+            f"refusing to replace immutable evidence at {output_path} or {meta_path}; "
+            "choose a new versioned --out"
+        )
+
+
+def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
+    """Atomically publish a same-filesystem staged file without clobbering."""
+    try:
+        os.link(tmp_path, output_path)
+    except FileExistsError as exc:
+        raise RuntimeError(
+            f"refusing to replace immutable evidence at {output_path}"
+        ) from exc
+    tmp_path.unlink()
+
+
 def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     """Publish exactly the private bytes whose identity the manifest records."""
     private = _artifact(tmp_path, require_file=True)
     expected = {**private, "path": str(output_path.expanduser().resolve())}
-    os.replace(tmp_path, output_path)
+    _publish_no_replace(tmp_path, output_path)
     published = _artifact(output_path, require_file=True)
     if _artifact_identity(published) != _artifact_identity(expected):
         raise RuntimeError("published trajectory bank differs from its private output")
@@ -736,12 +762,14 @@ def main() -> None:
         # Plan generation writes a distinct tracked artifact and is intentionally exempt.
         args.out.parent.mkdir(parents=True, exist_ok=True)
         output_locks = _acquire_output_locks(args.out, meta_path)
-        if not args.overwrite and (args.out.exists() or meta_path.exists()):
+        try:
+            _require_new_output_pair(
+                args.out, meta_path, overwrite=bool(args.overwrite),
+            )
+        except BaseException:
             for output_lock in reversed(output_locks):
                 output_lock.close()
-            raise SystemExit(
-                f"refusing to overwrite {args.out} or {meta_path}; pass --overwrite"
-            )
+            raise
 
     provenance = {
         "schema": _SCHEMA,

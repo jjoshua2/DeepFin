@@ -36,6 +36,7 @@ from scripts.backtest_chunk_trajectory import (
     _acquire_output_lock,
     _acquire_output_locks,
     _publish_output,
+    _require_new_output_pair,
     _require_safe_output_paths,
     _require_search_take_effect,
     _validate_registry_search_values,
@@ -1626,6 +1627,28 @@ def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> No
         handle.close()
 
 
+def test_producer_never_overwrites_frozen_evidence_pair(tmp_path: Path) -> None:
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    output.write_text("old bank\n")
+    meta.write_text("old manifest\n")
+
+    with pytest.raises(SystemExit, match="immutable evidence"):
+        _require_new_output_pair(output, meta, overwrite=False)
+    with pytest.raises(SystemExit, match="overwrite is disabled"):
+        _require_new_output_pair(output, meta, overwrite=True)
+
+    assert output.read_text() == "old bank\n"
+    assert meta.read_text() == "old manifest\n"
+
+
+def test_producer_accepts_a_new_evidence_pair_path(tmp_path: Path) -> None:
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+
+    _require_new_output_pair(output, meta, overwrite=False)
+
+
 @pytest.mark.parametrize(
     "name",
     [".bank.jsonl.lock", ".bank.jsonl.tmp-12345", "..tmp-bank.tmp-12345"],
@@ -1689,16 +1712,45 @@ def test_publish_output_detects_replacement_before_manifest(
     private = tmp_path / ".bank.tmp"
     output = tmp_path / "bank.jsonl"
     private.write_text("producer bytes\n")
-    real_replace = producer.os.replace
+    real_link = producer.os.link
 
     def replacing_publish(source: Path, destination: Path) -> None:
-        real_replace(source, destination)
+        real_link(source, destination)
         destination.write_text("other producer bytes\n")
 
-    monkeypatch.setattr(producer.os, "replace", replacing_publish)
+    monkeypatch.setattr(producer.os, "link", replacing_publish)
 
     with pytest.raises(RuntimeError, match="differs from its private output"):
         _publish_output(private, output)
+
+
+def test_publish_output_never_clobbers_a_destination_that_appeared(
+    tmp_path: Path,
+) -> None:
+    private = tmp_path / ".bank.tmp"
+    output = tmp_path / "bank.jsonl"
+    private.write_text("new bank\n")
+    output.write_text("existing bank\n")
+
+    with pytest.raises(RuntimeError, match="immutable evidence"):
+        _publish_output(private, output)
+
+    assert output.read_text() == "existing bank\n"
+    assert private.read_text() == "new bank\n"
+
+
+def test_manifest_publication_never_clobbers_an_existing_manifest(
+    tmp_path: Path,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    manifest = tmp_path / "bank.jsonl.meta.json"
+    manifest.write_text("old manifest\n")
+
+    with pytest.raises(RuntimeError, match="immutable evidence"):
+        producer._write_json_atomic(manifest, {"new": True})
+
+    assert manifest.read_text() == "old manifest\n"
 
 
 def test_producer_applies_shared_uci_search_ranges() -> None:
@@ -1865,16 +1917,34 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
     artifact = {
         "path": "/analyzer.py", "size": 1, "mtime_ns": 1, "sha256": "a" * 64,
     }
-    monkeypatch.setattr(controller, "_artifact_snapshot", lambda _path: artifact)
+    sources = {
+        "analyzer": artifact,
+        "reachable_oracle": artifact,
+        "output_guard": artifact,
+    }
+    monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
     monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
 
-    clean = controller._analyzer_provenance(artifact, "b" * 40, False)
-    dirty = controller._analyzer_provenance(artifact, "b" * 40, True)
+    clean = controller._analyzer_provenance(sources, "b" * 40, False)
+    dirty = controller._analyzer_provenance(sources, "b" * 40, True)
 
     assert clean["decision_grade"] is True
     assert clean["numpy_version"]
     assert clean["python_chess_version"]
     assert dirty["decision_grade"] is False
+
+
+def test_analyzer_revision_is_authenticated_independently_of_bank_producer() -> None:
+    analyzer = {
+        "decision_grade": True,
+        "git_sha": "b" * 40,
+        "sources": {"analyzer": {"sha256": "c" * 64}},
+    }
+
+    assert controller_module._decision_grade_evidence_inputs(
+        bank_decision_grade=True,
+        analyzer_provenance=analyzer,
+    ) is True
 
 
 def test_walker_manifest_omits_gumbel_only_minibatch_setting(tmp_path: Path) -> None:

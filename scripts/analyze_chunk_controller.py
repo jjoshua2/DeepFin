@@ -160,13 +160,26 @@ def _artifact_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
+    """Snapshot the analyzer and its separately imported local helpers."""
+    return {
+        "analyzer": _artifact_snapshot(Path(__file__)),
+        "reachable_oracle": _artifact_snapshot(
+            Path(solve_reachable_oracle.__code__.co_filename)
+        ),
+        "output_guard": _artifact_snapshot(Path(repo_controlled_output.__code__.co_filename)),
+    }
+
+
 def _analyzer_provenance(
-    start_artifact: dict[str, Any], start_git_sha: str, start_git_dirty: bool,
+    start_sources: dict[str, dict[str, Any]],
+    start_git_sha: str,
+    start_git_dirty: bool,
 ) -> dict[str, Any]:
-    end_artifact = _artifact_snapshot(Path(__file__))
+    end_sources = _analyzer_source_artifacts()
     end_git_sha, end_git_dirty = _git_state()
     stable = (
-        start_artifact == end_artifact
+        start_sources == end_sources
         and len(start_git_sha) == 40
         and all(char in "0123456789abcdef" for char in start_git_sha.lower())
         and end_git_sha == start_git_sha
@@ -179,8 +192,9 @@ def _analyzer_provenance(
         "git_dirty": start_git_dirty,
         "final_git_sha": end_git_sha,
         "final_git_dirty": end_git_dirty,
-        "script": start_artifact,
-        "script_stable": start_artifact == end_artifact,
+        "script": start_sources["analyzer"],
+        "sources": start_sources,
+        "sources_stable": start_sources == end_sources,
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
         "python_executable": str(Path(sys.executable).resolve()),
@@ -2463,6 +2477,16 @@ def _evidence_verdict(
     return "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
 
 
+def _decision_grade_evidence_inputs(
+    *, bank_decision_grade: Any, analyzer_provenance: dict[str, Any],
+) -> bool:
+    """Authenticate frozen observations and estimator revision independently."""
+    return bool(
+        bank_decision_grade
+        and analyzer_provenance.get("decision_grade") is True
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="analyze_chunk_controller")
     parser.add_argument("--in", dest="input_path", type=Path, required=True)
@@ -2492,7 +2516,7 @@ def main() -> None:
     )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-    analyzer_start_artifact = _artifact_snapshot(Path(__file__))
+    analyzer_start_sources = _analyzer_source_artifacts()
     analyzer_start_git_sha, analyzer_start_git_dirty = _git_state()
     if (
         args.folds < 2 or args.bootstrap_samples < 1
@@ -2533,7 +2557,7 @@ def main() -> None:
         min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
     )
     analyzer = _analyzer_provenance(
-        analyzer_start_artifact, analyzer_start_git_sha, analyzer_start_git_dirty,
+        analyzer_start_sources, analyzer_start_git_sha, analyzer_start_git_dirty,
     )
     manifest_producer_sha = (
         manifest.get("producer_git_sha") if isinstance(manifest, dict) else None
@@ -2542,10 +2566,9 @@ def main() -> None:
         analyzer["git_sha"] == manifest_producer_sha
         and analyzer["final_git_sha"] == manifest_producer_sha
     )
-    evidence_inputs_decision_grade = bool(
-        info["decision_grade"]
-        and analyzer["decision_grade"]
-        and analyzer_matches_producer_commit
+    evidence_inputs_decision_grade = _decision_grade_evidence_inputs(
+        bank_decision_grade=info["decision_grade"],
+        analyzer_provenance=analyzer,
     )
     canonical_analysis_rule = _is_canonical_decision_rule(
         n_folds=args.folds,
