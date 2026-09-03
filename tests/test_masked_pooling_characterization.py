@@ -203,6 +203,16 @@ def test_exact_epoch_reconstructs_fractional_mask_numerator_before_pooling() -> 
     losses = compute_loss(
         outputs,
         batch,
+        w_policy=0.0,
+        w_soft=0.0,
+        w_future=0.0,
+        w_wdl=0.0,
+        w_sf_move=0.0,
+        w_sf_eval=1.0,
+        w_categorical=0.0,
+        w_volatility=0.0,
+        w_sf_volatility=0.0,
+        w_moves_left=0.0,
         sf_wdl_conf_power=1.0,
         report_exact_masked_sums=True,
     )
@@ -216,6 +226,47 @@ def test_exact_epoch_reconstructs_fractional_mask_numerator_before_pooling() -> 
     # masked_mean clamps a sub-unit denominator to 1.0, so the returned mean
     # already is the numerator. Re-multiplying by 0.25 would attenuate twice.
     assert float(losses[sum_key]) == pytest.approx(float(losses["sf_eval_ce"]))
+    assert float(losses["total"]) == pytest.approx(float(losses[sum_key]))
     assert _exact_masked_metric_kwargs(sums)["sf_eval_loss"] == pytest.approx(
         float(losses["sf_eval_ce"]) / 0.25,
     )
+
+
+def test_exact_epoch_ragged_batches_keep_eligible_gradient_weight_constant() -> None:
+    requested_batch_rows = 2
+
+    def eligible_gradient(rows: int, *, exact: bool) -> float:
+        logits = torch.zeros((rows, POLICY_SIZE), requires_grad=True)
+        policy_t = torch.zeros((rows, POLICY_SIZE))
+        policy_t[:, 0] = 1.0
+        batch = {
+            "x": torch.zeros((rows, 1, 8, 8)),
+            "policy_t": policy_t,
+            "wdl_t": torch.zeros((rows,), dtype=torch.int64),
+            "has_policy": torch.tensor([1.0, *([0.0] * (rows - 1))]),
+        }
+        losses = compute_loss(
+            {"policy_own": logits, "wdl": torch.zeros((rows, 3))},
+            batch,
+            w_soft=0.0,
+            w_future=0.0,
+            w_wdl=0.0,
+            w_sf_move=0.0,
+            w_sf_eval=0.0,
+            w_categorical=0.0,
+            w_volatility=0.0,
+            w_sf_volatility=0.0,
+            w_moves_left=0.0,
+            report_exact_masked_sums=exact,
+        )
+        (losses["total"] * rows / requested_batch_rows).backward()
+        assert logits.grad is not None
+        return float(logits.grad[0, 0])
+
+    full = eligible_gradient(2, exact=True)
+    ragged = eligible_gradient(1, exact=True)
+    legacy_full = eligible_gradient(2, exact=False)
+    legacy_ragged = eligible_gradient(1, exact=False)
+
+    assert full == pytest.approx(ragged)
+    assert legacy_full == pytest.approx(2.0 * legacy_ragged)

@@ -63,6 +63,7 @@ def _open(
     seed: int = 7,
     batch_size: int = 4,
     load_workers: int = 2,
+    mirror_augmentation: bool = False,
     max_working_set_bytes: int | None = None,
 ) -> GameAwareEpochBuffer:
     kwargs = {}
@@ -73,6 +74,7 @@ def _open(
         batch_size=batch_size,
         seed=seed,
         input_planes=146,
+        mirror_augmentation=mirror_augmentation,
         plan_workers=2,
         load_workers=load_workers,
         **kwargs,
@@ -589,24 +591,84 @@ def test_zero_row_index_reservation_is_not_scheduled(tmp_path: Path) -> None:
 def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> None:
     rows = [(game, game) for game in range(5)]
     shard_dir = _write(tmp_path / "replay", [rows], planes=175)
-    wrong_planes = GameAwareEpochBuffer(
-        shard_dir=shard_dir,
-        batch_size=4,
-        seed=0,
-        input_planes=146,
-        plan_workers=1,
-        load_workers=1,
-    )
     with pytest.raises(ValueError, match="carries 175 input planes"):
-        wrong_planes.sample_batch_arrays(4)
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=4,
+            seed=0,
+            input_planes=146,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
 
     correct = GameAwareEpochBuffer(
         shard_dir=shard_dir,
         batch_size=4,
         seed=0,
         input_planes=175,
+        mirror_augmentation=False,
         plan_workers=1,
         load_workers=1,
     )
     with pytest.raises(ValueError, match="planned for batch_size=4"):
         correct.sample_batch_arrays(3)
+
+
+def test_mixed_input_plane_corpus_is_refused_before_any_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1)]],
+        planes=175,
+    )
+    legacy = [_sample(game=2, row=2, planes=146)]
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays(legacy),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("plane mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match="carries 146 input planes"):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=2,
+            seed=0,
+            input_planes=175,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+def test_mirror_augmentation_is_preflighted_in_working_set(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(4)]],
+    )
+    plain = _open(shard_dir, batch_size=4, mirror_augmentation=False)
+    mirrored = _open(shard_dir, batch_size=4, mirror_augmentation=True)
+
+    assert mirrored.plan.peak_working_set_bytes > plain.plan.peak_working_set_bytes
+    assert mirrored.plan.plan_sha256 == plain.plan.plan_sha256
+    assert mirrored.plan.mirror_augmentation is True
+    assert mirrored.plan.mirror_working_set_batch_copies == 7
+    too_small = mirrored.plan.peak_working_set_bytes - 1
+    with pytest.raises(ValueError, match="materialization"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            mirror_augmentation=True,
+            max_working_set_bytes=too_small,
+        )

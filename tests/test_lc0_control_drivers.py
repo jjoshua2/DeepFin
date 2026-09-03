@@ -976,7 +976,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
         "seeded_shuffle_within_shard_game_segments"
     )
     assert summary["sampling"]["loss_normalization"] == (
-        "row_mean*realized_rows/batch_size"
+        "sum(weighted_masked_numerators)/batch_size"
     )
     windows = summary["train_window_metrics"]
     assert [window["window_index"] for window in windows] == [1, 2]
@@ -998,6 +998,8 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert realized_replay["applied"]["max_working_set_bytes"] == (
         lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
     )
+    assert realized_replay["applied"]["mirror_augmentation"] is True
+    assert realized_replay["applied"]["mirror_working_set_batch_copies"] == 7
     assert "shuffle_cap" not in realized_replay["applied"]
     assert "shuffle_cap" in realized_replay["ignored_disk_replay_kwargs"]
     assert summary["valid_control"] is False

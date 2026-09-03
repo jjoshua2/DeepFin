@@ -48,12 +48,21 @@ DEFAULT_LOAD_WORKERS = 4
 # the training hosts while making the eager working set an explicit,
 # preflighted contract instead of an accidental function of corpus ordering.
 DEFAULT_MAX_WORKING_SET_BYTES = 8 * 1024**3
+# ``maybe_mirror_batch_arrays`` retains the gathered batch, accumulates owned
+# copies of every mirrored field, and can hold several selected-row permutation
+# temporaries for the current field. Seven complete batch payloads is a
+# conservative upper bound for the original, the completed output, three
+# simultaneous relation-permutation temporaries, and a final full-payload
+# allowance that dominates the row mask/index scratch for a valid chess input.
+# The planner charges this only when mirroring is enabled.
+MIRROR_AUGMENTATION_BATCH_COPIES = 7
 
 
 @dataclass(frozen=True)
 class _ShardGames:
     path: Path
     rows: int
+    input_planes: int
     # Raw ids are only unique within one conversion output.  The driver can
     # stage several independently converted directories, each of which starts
     # numbering games at zero, so scheduling uses the namespaced keys.
@@ -85,12 +94,14 @@ class GameEpochPlan:
     seed: int
     max_working_set_bytes: int
     peak_working_set_bytes: int
+    mirror_augmentation: bool
+    mirror_working_set_batch_copies: int
     plan_sha256: str
     load_counts: np.ndarray = field(repr=False)
     batch_rows: np.ndarray = field(repr=False)
     resident_bytes_after_batch: np.ndarray = field(repr=False)
 
-    def as_dict(self) -> dict[str, int | str]:
+    def as_dict(self) -> dict[str, int | str | bool]:
         return {
             "mode": "game_epoch",
             "rows_planned": int(self.rows),
@@ -107,6 +118,10 @@ class GameEpochPlan:
             "seed": int(self.seed),
             "max_working_set_bytes": int(self.max_working_set_bytes),
             "peak_working_set_bytes_planned": int(self.peak_working_set_bytes),
+            "mirror_augmentation": bool(self.mirror_augmentation),
+            "mirror_working_set_batch_copies": int(
+                self.mirror_working_set_batch_copies
+            ),
             "plan_sha256": self.plan_sha256,
         }
 
@@ -249,7 +264,11 @@ def _scan_shard(path: Path) -> _ShardGames:
     arrs, _ = load_shard_arrays(path, lazy=True)
     if "x" not in arrs:
         raise ValueError(f"{path} carries no x array")
-    rows = int(arrs["x"].shape[0])
+    x_shape = tuple(int(dim) for dim in arrs["x"].shape)
+    if len(x_shape) < 2:
+        raise ValueError(f"{path} x shape {x_shape} has no input-plane axis")
+    rows = int(x_shape[0])
+    input_planes = int(x_shape[1])
     if rows == 0:
         # A quarantine index reservation is intentionally rowless. Optional
         # per-row columns are pruned when it is written, so recognize the
@@ -257,6 +276,7 @@ def _scan_shard(path: Path) -> _ShardGames:
         return _ShardGames(
             path=path,
             rows=0,
+            input_planes=input_planes,
             game_ids=np.empty(0, dtype=np.int64),
             game_keys=np.empty(0, dtype=np.int64),
             game_counts=np.empty(0, dtype=np.int64),
@@ -292,6 +312,7 @@ def _scan_shard(path: Path) -> _ShardGames:
     return _ShardGames(
         path=path,
         rows=rows,
+        input_planes=input_planes,
         game_ids=np.asarray(games, dtype=np.int64),
         game_keys=np.asarray(games, dtype=np.int64),
         game_counts=np.asarray(counts, dtype=np.int64),
@@ -337,6 +358,7 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
             _ShardGames(
                 path=record.path,
                 rows=record.rows,
+                input_planes=record.input_planes,
                 game_ids=record.game_ids,
                 game_keys=np.asarray(keys, dtype=np.int64),
                 game_counts=record.game_counts,
@@ -548,6 +570,7 @@ def _plan_epoch(
     batch_size: int,
     seed: int,
     max_working_set_bytes: int,
+    mirror_augmentation: bool,
 ) -> tuple[GameEpochPlan, list[_ShardGames]]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -671,8 +694,12 @@ def _plan_epoch(
             records=[chunks[chunk_id].record for chunk_id in touched_chunks],
         )
         assembly_copies = 1 if len(touched_chunks) == 1 else 2
+        working_copies = max(
+            assembly_copies,
+            MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0,
+        )
         observe(
-            resident_bytes + assembly_copies * batch_bytes,
+            resident_bytes + working_copies * batch_bytes,
             f"batch {batch_index} materialization",
         )
 
@@ -737,6 +764,10 @@ def _plan_epoch(
         seed=int(seed),
         max_working_set_bytes=int(max_working_set_bytes),
         peak_working_set_bytes=int(peak_working_set_bytes),
+        mirror_augmentation=bool(mirror_augmentation),
+        mirror_working_set_batch_copies=(
+            MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0
+        ),
         plan_sha256=digest.hexdigest(),
         load_counts=load_array,
         batch_rows=batch_array,
@@ -759,20 +790,34 @@ class GameAwareEpochBuffer:
         batch_size: int,
         seed: int,
         input_planes: int | None,
+        mirror_augmentation: bool,
         plan_workers: int = DEFAULT_PLAN_WORKERS,
         load_workers: int = DEFAULT_LOAD_WORKERS,
         max_working_set_bytes: int = DEFAULT_MAX_WORKING_SET_BYTES,
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
+        required_input_planes = (
+            None if input_planes is None else int(input_planes)
+        )
+        if required_input_planes is not None:
+            for record in records:
+                if record.input_planes != required_input_planes:
+                    raise ValueError(
+                        f"{record.path} carries {record.input_planes} input planes, "
+                        f"the exact-epoch trainer requires {required_input_planes}; "
+                        "this mode does not begin training on a mixed corpus",
+                    )
         self.plan, self._records = _plan_epoch(
             records,
             batch_size=int(batch_size),
             seed=int(seed),
             max_working_set_bytes=int(max_working_set_bytes),
+            mirror_augmentation=bool(mirror_augmentation),
         )
         self._batch_size = int(batch_size)
-        self._input_planes = None if input_planes is None else int(input_planes)
+        self._input_planes = required_input_planes
+        self._mirror_augmentation = bool(mirror_augmentation)
         self._plan_workers = max(1, int(plan_workers))
         self._load_workers = max(1, int(load_workers))
         self._max_working_set_bytes = int(max_working_set_bytes)
@@ -1089,8 +1134,13 @@ class GameAwareEpochBuffer:
             records=[self._chunks[chunk_id].record for chunk_id in touched_chunks],
         )
         assembly_copies = 1 if len(touched_chunks) == 1 else 2
+        working_copies = max(
+            assembly_copies,
+            MIRROR_AUGMENTATION_BATCH_COPIES
+            if self._mirror_augmentation else 0,
+        )
         self._observe_working_set(
-            self._resident_bytes + assembly_copies * planned_batch_bytes,
+            self._resident_bytes + working_copies * planned_batch_bytes,
             phase=f"batch {self._batch_index} materialization",
         )
         batch = self._gather(selected)

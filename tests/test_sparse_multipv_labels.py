@@ -519,10 +519,23 @@ def test_compute_loss_sparse_flag_only_touches_sf_move_ce():
         outputs,
         sparse_only_batch,
         sf_sparse_params=params,
+        w_policy=0.0,
+        w_soft=0.0,
+        w_future=0.0,
+        w_wdl=0.0,
+        w_sf_move=1.0,
+        w_sf_eval=0.0,
+        w_categorical=0.0,
+        w_volatility=0.0,
+        w_sf_volatility=0.0,
+        w_moves_left=0.0,
         report_exact_masked_sums=True,
     )
     _, exact_weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
     assert float(sparse_only[exact_weight_key]) == 2.0
+    assert float(sparse_only["total"]) == pytest.approx(
+        float(sparse_only["sf_move_ce"]) * 2.0 / 3.0,
+    )
 
 
 def test_mirror_batch_arrays_mirrors_sparse_rows():

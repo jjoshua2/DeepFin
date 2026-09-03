@@ -2080,6 +2080,7 @@ def main(argv: list[str] | None = None) -> int:
             input_planes=(
                 None if epoch_input_planes is None else int(epoch_input_planes)
             ),
+            mirror_augmentation=float(trainer.mirror_prob) > 0.0,
             plan_workers=int(args.epoch_plan_workers),
             load_workers=int(args.epoch_load_workers),
             max_working_set_bytes=epoch_max_working_set_bytes,
@@ -2124,6 +2125,10 @@ def main(argv: list[str] | None = None) -> int:
                 "plan_workers": int(args.epoch_plan_workers),
                 "load_workers": int(args.epoch_load_workers),
                 "max_working_set_bytes": epoch_max_working_set_bytes,
+                "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
+                "mirror_working_set_batch_copies": int(
+                    buf.plan.mirror_working_set_batch_copies
+                ),
             },
             # Guard 0d still compares the historical replay signature so this
             # intervention cannot masquerade as that control. These settings
@@ -2321,9 +2326,11 @@ def main(argv: list[str] | None = None) -> int:
             **buf.receipt(),
             # Applied by Trainer._run_optimizer_step on every exact batch and
             # banked here, after the epoch completed, so the artifact says how
-            # ragged row means reached the optimizer rather than merely what
-            # sizes the sampler returned.
-            "loss_normalization": "row_mean*realized_rows/batch_size",
+            # each head's masked numerator reached the optimizer rather than
+            # merely what sizes the sampler returned.
+            "loss_normalization": (
+                "sum(weighted_masked_numerators)/batch_size"
+            ),
         }
         if not sampling_receipt["complete"]:
             if mid.saved_at_step is not None:
