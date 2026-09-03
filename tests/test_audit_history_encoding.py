@@ -369,6 +369,25 @@ def test_value_regret_stored_requires_the_index() -> None:
         )
 
 
+def test_matched_rows_exposes_source_shard_for_cluster_identity(tmp_path: Path) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    path = tmp_path / "matched.npz"
+    np.savez(
+        path,
+        x_stored=np.zeros((1, 175, 8, 8), dtype=np.float16),
+        game_id=np.asarray([7], dtype=np.int64),
+        found=np.asarray([True]),
+        key=np.asarray(["k"]),
+        src_shard=np.asarray(["shard_000123.zarr"]),
+    )
+
+    matched = MatchedAuditRows(path)
+
+    assert matched.game_id("k") == 7
+    assert matched.source_shard("k") == "shard_000123.zarr"
+
+
 # ---------------------------------------------------------------------------
 # 4. audit_targets: row (a) is the only row the flag moves
 # ---------------------------------------------------------------------------

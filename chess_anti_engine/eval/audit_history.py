@@ -268,6 +268,10 @@ class MatchedAuditRows:
         stored_key = "x_stored" if "x_stored" in data else "x_v2"
         self._stored = data[stored_key]
         self._game_id = np.asarray(data["game_id"], dtype=np.int64)
+        self._source_shard = (
+            np.asarray(data["src_shard"], dtype=str)
+            if "src_shard" in data else None
+        )
         found = np.asarray(data["found"], dtype=bool)
         all_keys = [str(k) for k in data["key"]]
         self._index: dict[str, int] = {
@@ -294,6 +298,13 @@ class MatchedAuditRows:
         own CI. -1 when the shard did not carry `game_id`.
         """
         return int(self._game_id[self._row(key)])
+
+    def source_shard(self, key: str) -> str | None:
+        """Snapshot shard containing ``key``, or None for a legacy index."""
+        if self._source_shard is None:
+            return None
+        value = str(self._source_shard[self._row(key)]).strip()
+        return value or None
 
     def _row(self, key: str) -> int:
         i = self._index.get(str(key))
