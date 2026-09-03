@@ -761,15 +761,20 @@ def _validate_decision_grade_row(
 
 def _require_manifest(
     input_path: Path, meta_path: Path, methodology_smoke: bool,
+    *,
+    input_bytes: bytes | None = None,
+    meta_bytes: bytes | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    if not meta_path.is_file():
+    if meta_bytes is None and not meta_path.is_file():
         if methodology_smoke:
             return {}, False
         raise ValueError(
             f"decision-grade analysis requires {meta_path}; pass --methodology-smoke "
             "only to exercise the estimator on a legacy bank"
         )
-    manifest = json.loads(meta_path.read_text())
+    consumed_input = input_path.read_bytes() if input_bytes is None else input_bytes
+    consumed_meta = meta_path.read_bytes() if meta_bytes is None else meta_bytes
+    manifest = json.loads(consumed_meta)
     failures: list[str] = []
     if manifest.get("schema") != _SCHEMA:
         failures.append(f"schema={manifest.get('schema')!r}")
@@ -787,8 +792,8 @@ def _require_manifest(
     output = manifest.get("output")
     if (
         not isinstance(output, dict)
-        or output.get("sha256") != _sha256(input_path)
-        or output.get("size") != input_path.stat().st_size
+        or output.get("sha256") != hashlib.sha256(consumed_input).hexdigest()
+        or output.get("size") != len(consumed_input)
     ):
         failures.append("input digest does not match manifest")
     producer_sha = manifest.get("producer_git_sha")
@@ -1323,7 +1328,18 @@ def load_transitions(
 ) -> tuple[list[Transition], dict[str, Any]]:
     """Load, validate, and convert trajectory rows to adjacent-chunk decisions."""
     actual_meta = meta_path or Path(str(input_path) + ".meta.json")
-    manifest, decision_grade = _require_manifest(input_path, actual_meta, methodology_smoke)
+    # Authenticate and parse the same immutable byte buffers. Reading the
+    # paths independently for hashing and parsing leaves a replacement window
+    # in which the manifest can attest to bytes other than those analyzed.
+    input_bytes = input_path.read_bytes()
+    meta_bytes = actual_meta.read_bytes() if actual_meta.is_file() else None
+    manifest, decision_grade = _require_manifest(
+        input_path,
+        actual_meta,
+        methodology_smoke,
+        input_bytes=input_bytes,
+        meta_bytes=meta_bytes,
+    )
     requested_search = manifest.get("requested_search", {})
     require_full_root_support = (
         not methodology_smoke
@@ -1331,7 +1347,7 @@ def load_transitions(
         and requested_search.get("active_path") == "walker_puct"
     )
     rows: list[dict[str, Any]] = []
-    for line_number, line in enumerate(input_path.read_text().splitlines(), start=1):
+    for line_number, line in enumerate(input_bytes.decode("utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         row = json.loads(line)
@@ -1811,12 +1827,14 @@ def _reachable_stage_diagnostics(
     transitions: Sequence[Transition],
     horizons: Sequence[int],
     stage_counts: Sequence[int],
+    oracle_selected: np.ndarray,
     m0_selected: np.ndarray,
     m1_selected: np.ndarray,
     *,
     n_positions: int,
 ) -> list[dict[str, Any]]:
     """Compare signed gains at each decision rung under reachable policies."""
+    oracle_set = {int(index) for index in oracle_selected}
     m0_set = {int(index) for index in m0_selected}
     m1_set = {int(index) for index in m1_selected}
     diagnostics: list[dict[str, Any]] = []
@@ -1830,13 +1848,24 @@ def _reachable_stage_diagnostics(
         m1_gain = math.fsum(
             transitions[index].gain for index in stage_indices if index in m1_set
         )
+        oracle_gain = math.fsum(
+            transitions[index].gain for index in stage_indices if index in oracle_set
+        )
+        random_gain = (
+            int(count) / n_positions
+            * math.fsum(transitions[index].gain for index in stage_indices)
+        )
+        headroom = (oracle_gain - random_gain) / n_positions
         diagnostics.append({
             "horizon": horizon,
             "selected": int(count),
             "M0_signed_gain": m0_gain,
             "M1_signed_gain": m1_gain,
+            "random_expected_signed_gain": random_gain,
+            "oracle_signed_gain": oracle_gain,
+            "oracle_over_random_headroom_mean": headroom,
             "M1_minus_M0_signed_gain_mean": (m1_gain - m0_gain) / n_positions,
-            "eligible": int(count) > 0,
+            "eligible": int(count) > 0 and headroom > 0.0,
         })
     return diagnostics
 
@@ -1869,7 +1898,7 @@ def evaluate_reachable_rollout(
         transitions, np.zeros(len(transitions)), counts, complexity=True,
     )
     reachable_stages = _reachable_stage_diagnostics(
-        transitions, horizons, counts, m0_selected, m1_selected,
+        transitions, horizons, counts, oracle_selected, m0_selected, m1_selected,
         n_positions=len(keys),
     )
     policies = {
@@ -1987,7 +2016,12 @@ def _minimum_reachable_rung_gain_delta(
     if (
         headroom < min_oracle_headroom
         or not stages
-        or any(not stage["eligible"] for stage in stages)
+        or any(
+            not stage["eligible"]
+            or float(stage["oracle_over_random_headroom_mean"])
+            < min_oracle_headroom
+            for stage in stages
+        )
     ):
         return None
     return min(float(stage["M1_minus_M0_signed_gain_mean"]) for stage in stages)
@@ -2141,6 +2175,8 @@ def analyze(
         rollout["reachable_stage_diagnostics"]
         and all(
             stage["eligible"]
+            and float(stage["oracle_over_random_headroom_mean"])
+            >= min_oracle_headroom
             and float(stage["M1_minus_M0_signed_gain_mean"]) > 0.0
             for stage in rollout["reachable_stage_diagnostics"]
         )

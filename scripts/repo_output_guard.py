@@ -54,7 +54,7 @@ def repo_controlled_output(path: Path, repo_root: Path) -> bool:
         except ValueError:
             continue
         try:
-            tracked = subprocess.run(
+            result = subprocess.run(
                 [
                     "git", "-C", str(root), "ls-files", "--error-unmatch",
                     "--", str(relative),
@@ -62,11 +62,15 @@ def repo_controlled_output(path: Path, repo_root: Path) -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
-            ).returncode == 0
+            )
         except OSError:
             # If Git cannot prove that an in-repository destination is safe,
             # fail closed instead of allowing a destructive overwrite.
-            tracked = True
-        if tracked:
+            return True
+        if result.returncode == 0:
+            return True
+        if result.returncode != 1:
+            # Exit 1 is the documented no-match result. Fatal Git failures
+            # must not silently turn the destructive-write guard off.
             return True
     return False

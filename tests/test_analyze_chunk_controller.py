@@ -159,6 +159,30 @@ def test_reachable_rollout_uses_exact_nested_oracle_not_relaxed_bound() -> None:
     assert result["policies"]["oracle"]["signed_gain"] == 100.0
 
 
+def test_reachable_gate_requires_oracle_headroom_at_every_rung() -> None:
+    from scripts.analyze_chunk_controller import _minimum_reachable_rung_gain_delta
+
+    rows = [
+        _transition("early", 1, 100, 100.0, current=True),
+        _transition("early", 1, 150, -100.0, current=True),
+        _transition("late", 2, 100, 0.0, current=True),
+        _transition("late", 2, 150, 100.0, current=True),
+    ]
+    scores = np.zeros(len(rows), dtype=np.float64)
+
+    result = evaluate_reachable_rollout(
+        rows, scores, scores, allocation_fraction=0.5,
+    )
+
+    assert result["oracle_over_random_headroom_mean"] == 25.0
+    assert result["reachable_stage_diagnostics"][0][
+        "oracle_over_random_headroom_mean"
+    ] == -25.0
+    assert _minimum_reachable_rung_gain_delta(
+        rows, scores, scores, 0.5, min_oracle_headroom=1.0,
+    ) is None
+
+
 def test_held_horizon_cv_excludes_horizon_and_source_game() -> None:
     rows = [
         _transition(str(game), game, horizon, game / 10, current=game % 2 == 0)
@@ -1381,6 +1405,23 @@ def test_output_guards_reject_linked_worktree_git_metadata(tmp_path: Path) -> No
             )
 
 
+def test_output_guard_fails_closed_on_fatal_git_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from scripts import repo_output_guard as guard
+
+    monkeypatch.setattr(guard, "git_control_paths", lambda _root: ())
+    monkeypatch.setattr(
+        guard.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=128),
+    )
+
+    assert guard.repo_controlled_output(tmp_path / "report.json", tmp_path) is True
+
+
 def test_producer_output_cannot_overwrite_an_imported_tracked_source(
     tmp_path: Path,
 ) -> None:
@@ -1594,6 +1635,31 @@ def test_loader_requires_stable_consumed_artifacts_and_checkout(
 
     with pytest.raises(ValueError, match="changed during collection"):
         load_transitions(bank)
+
+
+def test_loader_authenticates_and_parses_one_bank_buffer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    original_read_bytes = Path.read_bytes
+    reads: dict[Path, int] = {}
+
+    def racing_read_bytes(path: Path) -> bytes:
+        resolved = path.resolve()
+        reads[resolved] = reads.get(resolved, 0) + 1
+        payload = original_read_bytes(path)
+        if resolved == bank.resolve():
+            path.write_text('{"replacement": true}\n')
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", racing_read_bytes)
+
+    transitions, _ = load_transitions(bank)
+
+    assert len(transitions) == 3
+    assert reads[bank.resolve()] == 1
+    assert reads[meta.resolve()] == 1
 
 
 def test_loader_requires_loaded_cboard_native_provenance(tmp_path: Path) -> None:
