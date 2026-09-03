@@ -14,6 +14,7 @@ from scripts.analyze_chunk_controller import (
     _require_bootstrap_resolution,
     _require_safe_output_path,
     _update_stability,
+    analyze,
     cluster_bootstrap_delta,
     evaluate_horizon,
     grouped_folds,
@@ -147,8 +148,12 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert "BatchCoalescingDispatcher" in source
     assert "SyzygyProbe" in source
     assert "mcts_extension" in source
+    assert "_make_evaluator_factory" in source
+    assert "compile_mode=compile_mode" in source
     assert "realized_search_values" in source
     assert "_require_search_take_effect" in source
+    assert "if int(args.walkers) == 1:" in source
+    assert "worker.set_minibatch_size" in source
 
 
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
@@ -216,22 +221,13 @@ def test_cluster_bootstrap_is_deterministic() -> None:
         for game in range(6)
         for horizon in (100, 150)
     ]
-    m0 = np.asarray([row.gain * 0.2 for row in rows])
-    m1 = np.asarray([row.gain for row in rows])
-    del m0, m1
-    alpha_profile = {100: 1.0, 150: 1.0}
-
     first = cluster_bootstrap_delta(
         rows,
-        m0_alpha_profile=alpha_profile,
-        m1_alpha_profile=alpha_profile,
-        allocation_fraction=0.5, samples=50, seed=7,
+        allocation_fraction=0.5, samples=20, seed=7, n_folds=3,
     )
     second = cluster_bootstrap_delta(
         rows,
-        m0_alpha_profile=alpha_profile,
-        m1_alpha_profile=alpha_profile,
-        allocation_fraction=0.5, samples=50, seed=7,
+        allocation_fraction=0.5, samples=20, seed=7, n_folds=3,
     )
     assert first == second
 
@@ -286,13 +282,16 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "mcts_extension": {
             "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
             "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
+            "gss_halving_rev": 3,
         },
         "syzygy": {
             "path": "/tb/a:/tb/b",
+            "rtbw_count": 875,
+            "rtbz_count": 510,
             "directories": [
                 {"path": "/tb/a", "rtbw_count": 1, "rtbz_count": 1,
                  "total_bytes": 1, "inventory_sha256": "f" * 64},
-                {"path": "/tb/b", "rtbw_count": 1, "rtbz_count": 1,
+                {"path": "/tb/b", "rtbw_count": 874, "rtbz_count": 509,
                  "total_bytes": 1, "inventory_sha256": "1" * 64},
             ],
         },
@@ -317,6 +316,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             ),
             "direct_max_batch": 256, "outer_max_batch": 256, "n_slots": 2,
             "input_bf16": False, "legal_bf16": False,
+            "compiled": True, "model_wrapper_type": "OptimizedModule",
         },
         "realized_evaluator": {
             "stack": (
@@ -325,6 +325,11 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             ),
             "direct_max_batch": 256, "outer_max_batch": 256, "n_slots": 2,
             "input_bf16": False, "legal_bf16": False,
+            "compiled": True, "model_wrapper_type": "OptimizedModule",
+        },
+        "compile": {
+            "enabled": True, "mode": "max-autotune", "cache_dir": "/cache",
+            "torchinductor_cache_dir": "/cache/torch", "triton_cache_dir": "/cache/triton",
         },
         "realized_search": {
             "concurrency_mode": "walker_puct", "concurrency_workers": 2,
@@ -425,6 +430,31 @@ def test_loader_requires_realized_syzygy_and_native_binary(tmp_path: Path) -> No
         load_transitions(bank)
 
 
+def test_loader_rejects_partial_syzygy_inventory(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["syzygy"]["directories"][1]["rtbw_count"] = 1
+    manifest["syzygy"]["directories"][1]["rtbz_count"] = 1
+    manifest["syzygy"]["rtbw_count"] = 2
+    manifest["syzygy"]["rtbz_count"] = 2
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
+        load_transitions(bank)
+
+
+def test_loader_requires_native_halving_semantic_revision(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["mcts_extension"].pop("gss_halving_rev")
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="native MCTS extension"):
+        load_transitions(bank)
+
+
 def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
@@ -442,11 +472,28 @@ def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -
         load_transitions(bank)
 
 
-def test_loader_rejects_nonfinite_or_nonnumeric_regret(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("regret_score", "bad"),
+        ("regret_score", float("nan")),
+        ("regret_score", float("inf")),
+        ("regret_score", float("-inf")),
+        ("root_q", "bad"),
+        ("visit_entropy", float("nan")),
+        ("q_gap", float("nan")),
+        ("q_drift", float("inf")),
+        ("visit_churn", float("-inf")),
+    ],
+)
+def test_loader_rejects_nonfinite_or_nonnumeric_decision_fields(
+    tmp_path: Path, field: str, value: object,
+) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     rows = [json.loads(line) for line in bank.read_text().splitlines()]
-    rows[-1]["regret_score"] = "bad"
+    target = rows[-1] if field == "regret_score" else rows[0]
+    target[field] = value
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
     manifest["output"] = {
@@ -455,7 +502,7 @@ def test_loader_rejects_nonfinite_or_nonnumeric_regret(tmp_path: Path) -> None:
     }
     meta.write_text(json.dumps(manifest))
 
-    with pytest.raises(ValueError, match="regret_score must be a finite number"):
+    with pytest.raises(ValueError, match=rf"{field} must be a finite number"):
         load_transitions(bank)
 
 
@@ -476,6 +523,99 @@ def test_decision_grade_requires_enough_bootstrap_samples() -> None:
         _require_bootstrap_resolution(999, methodology_smoke=False)
 
 
+def test_analyze_cannot_advance_with_an_undersampled_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    rows = [
+        _transition(f"a-{horizon}", 1, horizon, -1.0, current=False)
+        for horizon in (100, 150)
+    ] + [
+        _transition(f"b-{horizon}", 2, horizon, 1.0, current=True)
+        for horizon in (100, 150)
+    ]
+    m0 = np.zeros(len(rows), dtype=np.float64)
+    m1 = np.asarray([row.gain for row in rows], dtype=np.float64)
+
+    def fake_predictions(
+        transitions: list[Transition], model: str, *, n_folds: int = 5,
+    ) -> tuple[np.ndarray, list[dict[str, object]]]:
+        del transitions, n_folds
+        return (m0 if model == "M0" else m1), []
+
+    monkeypatch.setattr(controller, "held_horizon_predictions", fake_predictions)
+    monkeypatch.setattr(
+        controller,
+        "cluster_bootstrap_delta",
+        lambda *_args, **_kwargs: {
+            "requested_samples": 1, "valid_samples": 1, "valid_fraction": 1.0,
+            "mean": 1.0, "lower_95": 1.0, "upper_95": 1.0,
+        },
+    )
+
+    result = analyze(
+        rows,
+        n_folds=2,
+        bootstrap_samples=1,
+        seed=0,
+        allocation_fraction=0.5,
+        min_capture_gain=0.0,
+        min_oracle_headroom=0.0,
+        min_bootstrap_valid_fraction=0.5,
+    )
+
+    assert result["bootstrap_resolution_passed"] is False
+    assert result["verdict"] == "KILL_BUDGET_CONTEXT"
+
+
+def test_walker_manifest_omits_gumbel_only_minibatch_setting(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+
+    assert "minibatch_size" not in manifest["requested_search"]["active_parameters"]
+    assert "walker_gather" in manifest["requested_search"]["active_parameters"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("stack", "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"),
+        ("direct_max_batch", 999),
+        ("input_bf16", True),
+    ],
+)
+def test_requested_only_evaluator_changes_fail_closed(
+    tmp_path: Path, field: str, value: object,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["requested_evaluator"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="realized evaluator"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("enabled", False), ("mode", "reduce-overhead"), ("cache_dir", "")],
+)
+def test_loader_requires_production_compile_manifest(
+    tmp_path: Path, field: str, value: object,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["compile"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="realized evaluator"):
+        load_transitions(bank)
+
+
 def test_cluster_bootstrap_refits_models_inside_resamples(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -491,23 +631,34 @@ def test_cluster_bootstrap_refits_models_inside_resamples(
     ]
     original = controller._fit_ridge
     calls = 0
+    alpha_calls = 0
 
     def counted_fit(x: np.ndarray, y: np.ndarray, alpha: float):
         nonlocal calls
         calls += 1
         return original(x, y, alpha)
 
+    original_inner_alpha = controller._inner_alpha
+
+    def counted_inner_alpha(
+        transitions: list[Transition], model: str, n_folds: int,
+    ) -> float:
+        nonlocal alpha_calls
+        alpha_calls += 1
+        return original_inner_alpha(transitions, model, n_folds)
+
     monkeypatch.setattr(controller, "_fit_ridge", counted_fit)
+    monkeypatch.setattr(controller, "_inner_alpha", counted_inner_alpha)
     controller.cluster_bootstrap_delta(
         rows,
-        m0_alpha_profile={100: 1.0, 150: 1.0},
-        m1_alpha_profile={100: 1.0, 150: 1.0},
         allocation_fraction=0.5,
         samples=5,
         seed=11,
+        n_folds=3,
     )
 
     assert calls >= 4, "each usable replicate must refit both models"
+    assert alpha_calls >= 4, "each usable replicate must reselect alpha in-bag"
 
 
 def test_bootstrap_fails_closed_when_oracle_headroom_is_undefined() -> None:
@@ -518,11 +669,10 @@ def test_bootstrap_fails_closed_when_oracle_headroom_is_undefined() -> None:
     ]
     result = cluster_bootstrap_delta(
         rows,
-        m0_alpha_profile={100: 1.0, 150: 1.0},
-        m1_alpha_profile={100: 1.0, 150: 1.0},
         allocation_fraction=0.5,
         samples=25,
         seed=3,
+        n_folds=3,
         min_oracle_headroom=1e-4,
     )
 

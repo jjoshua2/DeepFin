@@ -56,6 +56,9 @@ from scripts.analyze_chunk_controller import _update_stability
 from scripts.backtest_time_value import _score, _stratified
 
 _SCHEMA = "deepfin.chunk_trajectory.v2"
+_PRODUCTION_WDL_FILES = 875
+_PRODUCTION_DTZ_FILES = 510
+_PRODUCTION_GSS_HALVING_REV = 3
 
 
 def _entropy(shares: np.ndarray) -> float:
@@ -138,7 +141,12 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
             "total_bytes": total_bytes,
             "inventory_sha256": digest.hexdigest(),
         })
-    return {"path": path_value, "directories": directories}
+    return {
+        "path": path_value,
+        "directories": directories,
+        "rtbw_count": sum(int(row["rtbw_count"]) for row in directories),
+        "rtbz_count": sum(int(row["rtbz_count"]) for row in directories),
+    }
 
 
 def _checkpoint_file(path: Path) -> Path:
@@ -191,11 +199,26 @@ def _require_search_take_effect(
 def _evaluator_stack_name(evaluator: Any) -> str:
     """Read the wrapper chain from the objects that will actually evaluate leaves."""
     name = type(evaluator).__name__
-    if name == "BatchCoalescingDispatcher":
+    if name in ("BatchCoalescingDispatcher", "CUDAOwnerDispatcher"):
         return f"{name}({_evaluator_stack_name(evaluator._inner)})"
     if name == "ThreadSafeGPUDispatcher":
         return f"{name}({_evaluator_stack_name(evaluator._eval)})"
     return name
+
+
+def _find_direct_evaluator(evaluator: Any) -> Any:
+    current = evaluator
+    while type(current).__name__ != "DirectGPUEvaluator":
+        if hasattr(current, "_inner"):
+            current = current._inner
+        elif hasattr(current, "_eval"):
+            current = current._eval
+        else:
+            raise RuntimeError(
+                "production evaluator stack has no DirectGPUEvaluator: "
+                f"{_evaluator_stack_name(evaluator)}"
+            )
+    return current
 
 
 def main() -> None:
@@ -240,6 +263,16 @@ def main() -> None:
         "--syzygy-path", default=default_syzygy_path(),
         help="production Syzygy directory pair; required for decision-grade banks",
     )
+    ap.add_argument("--compile", dest="compile", action="store_true")
+    ap.add_argument("--no-compile", dest="compile", action="store_false")
+    ap.set_defaults(compile=True)
+    ap.add_argument("--compile-mode", default="max-autotune")
+    ap.add_argument(
+        "--compile-cache-dir",
+        default=os.environ.get(
+            "DEEPFIN_COMPILE_CACHE", os.path.expanduser("~/.cache/deepfin/worker_cache"),
+        ),
+    )
     ap.add_argument(
         "--methodology-smoke", action="store_true",
         help="allow missing game groups; output is stamped non-decision-grade",
@@ -254,11 +287,34 @@ def main() -> None:
         raise SystemExit("--walkers must be >0")
     if not args.methodology_smoke and not str(args.device).startswith("cuda"):
         raise SystemExit("decision-grade trajectory banks require the production CUDA path")
+    if not args.methodology_smoke and (
+        not args.compile or args.compile_mode != "max-autotune"
+    ):
+        raise SystemExit(
+            "decision-grade trajectory banks require production "
+            "torch.compile mode max-autotune"
+        )
     if args.syzygy_path or not args.methodology_smoke:
         try:
             require_tablebases(args.syzygy_path, what="trajectory --syzygy-path")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+    syzygy_inventory = (
+        _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
+    )
+    if (
+        not args.methodology_smoke
+        and (
+            not isinstance(syzygy_inventory, dict)
+            or int(syzygy_inventory["rtbw_count"]) < _PRODUCTION_WDL_FILES
+            or int(syzygy_inventory["rtbz_count"]) < _PRODUCTION_DTZ_FILES
+        )
+    ):
+        raise SystemExit(
+            "decision-grade trajectory banks require the complete production "
+            f"Syzygy pair ({_PRODUCTION_WDL_FILES} WDL and "
+            f"{_PRODUCTION_DTZ_FILES} DTZ files)"
+        )
     gumbel_defaults = {
         "c_scale": float(PLAY_SEARCH_DEFAULTS["c_scale"]),
         "c_visit": float(PLAY_SEARCH_DEFAULTS["c_visit"]),
@@ -347,25 +403,28 @@ def main() -> None:
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.exists() else None
         ),
-        "syzygy": (
-            _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
-        ),
+        "syzygy": syzygy_inventory,
     }
 
     import torch
 
-    from chess_anti_engine.inference import DirectGPUEvaluator
-    from chess_anti_engine.inference_dispatcher import (
-        BatchCoalescingDispatcher,
-        ThreadSafeGPUDispatcher,
-    )
     from chess_anti_engine.mcts.gumbel import GumbelConfig
     from chess_anti_engine.mcts import _mcts_tree as mcts_extension
     from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI
     from chess_anti_engine.tablebase import SyzygyProbe
+    from chess_anti_engine.uci.__main__ import _make_evaluator_factory
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
     from chess_anti_engine.uci.search import SearchWorker
     from chess_anti_engine.uci.time_manager import Deadline
+    from chess_anti_engine.worker import _configure_shared_compile_cache
+
+    loaded_halving_rev = int(getattr(mcts_extension, "GSS_HALVING_REV", 0))
+    if not args.methodology_smoke and loaded_halving_rev != _PRODUCTION_GSS_HALVING_REV:
+        raise SystemExit(
+            "decision-grade trajectory banks require MCTS "
+            f"GSS_HALVING_REV={_PRODUCTION_GSS_HALVING_REV}, loaded "
+            f"{loaded_halving_rev} from {mcts_extension.__file__}"
+        )
 
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
@@ -388,20 +447,18 @@ def main() -> None:
         cpuct_base=float(PLAY_PUCT_DEFAULTS["cpuct_base"]),
         fpu_reduction=float(PLAY_PUCT_DEFAULTS["fpu_reduction"]),
     )
+    compile_mode = str(args.compile_mode) if args.compile else None
+    if compile_mode is not None:
+        _configure_shared_compile_cache(
+            cache_dir=Path(args.compile_cache_dir).expanduser(),
+        )
+    evaluator_factory = _make_evaluator_factory(
+        [model], (str(args.device),), True, int(args.walkers),
+        int(engine_options.leaf_gather), compile_mode=compile_mode,
+    )
+    evaluator = evaluator_factory(int(engine_options.max_batch))
+    direct = _find_direct_evaluator(evaluator)
     compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
-    direct = DirectGPUEvaluator(
-        model,
-        device=args.device,
-        max_batch=int(engine_options.max_batch),
-        n_slots=2,
-        input_bf16=compact_bf16,
-        legal_bf16=compact_bf16,
-    )
-    thread_safe = ThreadSafeGPUDispatcher(direct)
-    evaluator = (
-        BatchCoalescingDispatcher(thread_safe, max_batch=int(engine_options.max_batch))
-        if int(args.walkers) > 1 else thread_safe
-    )
     worker = SearchWorker(
         evaluator, device=args.device,
         gumbel_cfg=cfg, chunk_sims=int(args.chunk_sims), n_walkers=int(args.walkers),
@@ -409,10 +466,24 @@ def main() -> None:
         walker_gather=int(engine_options.leaf_gather),
     )
     worker.set_max_tree_mb(int(engine_options.hash_mb))
-    worker.set_minibatch_size(int(PLAY_SEARCH_TARGET_BATCH))
+    if int(args.walkers) == 1:
+        worker.set_minibatch_size(int(PLAY_SEARCH_TARGET_BATCH))
     worker.set_root_noise_scale(float(engine_options.root_noise_scale))
     tb_probe = SyzygyProbe(str(args.syzygy_path)) if args.syzygy_path else None
     worker.set_tb_probe(tb_probe)
+    installed_tb_probe = getattr(worker, "_tb_probe", None)
+    if installed_tb_probe is not tb_probe:
+        worker.close()
+        raise RuntimeError("tablebase take-effect check failed")
+    realized_tablebase = {
+        "installed": installed_tb_probe is not None,
+        "cursed_as_draw": bool(
+            getattr(installed_tb_probe, "_cursed_as_draw", False)
+        ),
+        "n_wdl": int(getattr(installed_tb_probe, "n_wdl", 0)),
+        "n_dtz": int(getattr(installed_tb_probe, "n_dtz", 0)),
+        "max_pieces": int(getattr(installed_tb_probe, "max_pieces", 0)),
+    }
     concurrency_mode, concurrency_workers = worker.concurrency_profile()
     expected_mode = "walker_puct" if int(args.walkers) > 1 else "gumbel"
     active_parameters: dict[str, float | int | bool] = (
@@ -449,15 +520,21 @@ def main() -> None:
     expected_evaluator_stack = (
         "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
         if int(args.walkers) > 1
-        else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
+        else (
+            "CUDAOwnerDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
+            if compile_mode is not None
+            else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
+        )
     )
     realized_evaluator = {
         "stack": _evaluator_stack_name(evaluator),
         "direct_max_batch": int(direct._max_batch),
-        "outer_max_batch": int(getattr(evaluator, "_max_batch", thread_safe.max_batch)),
+        "outer_max_batch": int(getattr(evaluator, "_max_batch", direct._max_batch)),
         "n_slots": int(direct.n_slots),
         "input_bf16": bool(direct.supports_input_bf16_bits),
         "legal_bf16": bool(direct.supports_legal_bf16),
+        "compiled": hasattr(direct.model, "_orig_mod"),
+        "model_wrapper_type": type(direct.model).__name__,
     }
     expected_evaluator = {
         "stack": expected_evaluator_stack,
@@ -466,6 +543,8 @@ def main() -> None:
         "n_slots": 2,
         "input_bf16": compact_bf16,
         "legal_bf16": compact_bf16,
+        "compiled": compile_mode is not None,
+        "model_wrapper_type": "OptimizedModule" if compile_mode is not None else type(model).__name__,
     }
     if realized_evaluator != expected_evaluator:
         worker.close()
@@ -530,7 +609,8 @@ def main() -> None:
                         if tot > 0 else visits.astype(np.float64)
                     )
                     ngap = _visit_gap(actions, visits, int(best))
-                    rq, qg = 0.0, float("nan")
+                    rq = 0.0
+                    qg: float | None = None
                     tree, rid = worker._tree, worker._root_id
                     if tree is not None and rid is not None:
                         rq = float(tree.node_q(rid))
@@ -538,7 +618,12 @@ def main() -> None:
                         if ca.size >= 2 and best in ca.tolist():
                             bm = ca == best
                             oth = cq[~bm]
-                            qg = float(cq[bm].max() - oth.max()) if oth.size else float("inf")
+                            if oth.size:
+                                qg = float(cq[bm].max() - oth.max())
+                                if not math.isfinite(qg):
+                                    raise RuntimeError(
+                                        "search returned a non-finite calculated q_gap"
+                                    )
                     regret_cp = float(_r[li]) if li >= 0 else float(_r.max())
                     _s.append({
                         "nodes": total_nodes, "elapsed_ms": (time.perf_counter() - _t0) * 1000.0,
@@ -600,10 +685,7 @@ def main() -> None:
                         "emitted_action": s["emitted_action"], "uci": s["uci"],
                         "regret_cp": s["regret_cp"], "regret_score": s["regret_score"],
                         "visit_gap": s["visit_gap"], "visit_entropy": s["visit_entropy"],
-                        "q_gap": (
-                            None if isinstance(s["q_gap"], float) and math.isnan(s["q_gap"])
-                            else s["q_gap"]
-                        ),
+                        "q_gap": s["q_gap"],
                         "root_q": s["root_q"], "root_actions": s["actions"],
                         "root_visit_shares": [s["shares"][a] for a in s["actions"]],
                         "bestmove_flip": flip, "stable_chunks": stable_chunks,
@@ -648,17 +730,19 @@ def main() -> None:
         "realized_search": realized_search,
         "requested_evaluator": expected_evaluator,
         "realized_evaluator": realized_evaluator,
-        "realized_tablebase": {
-            "installed": tb_probe is not None,
-            "cursed_as_draw": True,
-            "n_wdl": int(tb_probe.n_wdl) if tb_probe is not None else 0,
-            "n_dtz": int(tb_probe.n_dtz) if tb_probe is not None else 0,
-            "max_pieces": int(tb_probe.max_pieces) if tb_probe is not None else 0,
+        "compile": {
+            "enabled": compile_mode is not None,
+            "mode": compile_mode,
+            "cache_dir": str(Path(args.compile_cache_dir).expanduser().resolve()),
+            "torchinductor_cache_dir": os.environ.get("TORCHINDUCTOR_CACHE_DIR"),
+            "triton_cache_dir": os.environ.get("TRITON_CACHE_DIR"),
         },
+        "realized_tablebase": realized_tablebase,
         "mcts_extension": {
             **_artifact(Path(mcts_extension.__file__), require_file=True),
             "abi_version": int(getattr(mcts_extension, "ABI_VERSION", 0)),
             "required_abi_version": int(_REQUIRED_MCTS_ABI),
+            "gss_halving_rev": loaded_halving_rev,
         },
     }
     _write_json_atomic(meta_path, manifest)

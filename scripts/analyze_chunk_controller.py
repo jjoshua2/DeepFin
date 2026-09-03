@@ -39,6 +39,9 @@ _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 _COMPLEXITY_VISIT_GAP = 0.25
 _COMPLEXITY_STABLE_CHUNKS = 2
 _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
+_PRODUCTION_WDL_FILES = 875
+_PRODUCTION_DTZ_FILES = 510
+_PRODUCTION_GSS_HALVING_REV = 3
 _ACTIVE_PARAMETER_KEYS = {
     "walker_puct": {
         "c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction",
@@ -169,6 +172,7 @@ def _compatible_native_extension(artifact: Any) -> bool:
         return False
     abi = artifact.get("abi_version")
     required = artifact.get("required_abi_version")
+    halving_rev = artifact.get("gss_halving_rev")
     if (
         not isinstance(abi, int) or isinstance(abi, bool) or abi <= 0
         or not isinstance(required, int) or isinstance(required, bool) or required <= 0
@@ -178,7 +182,18 @@ def _compatible_native_extension(artifact: Any) -> bool:
         _artifact_provenance_complete(artifact)
         and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and abi >= required
+        and halving_rev == _PRODUCTION_GSS_HALVING_REV
     )
+
+
+def _sum_manifest_ints(rows: Any, field: str) -> int:
+    if (
+        not isinstance(rows, list)
+        or any(not isinstance(row, dict) for row in rows)
+        or any(not _nonnegative_int(row.get(field)) for row in rows)
+    ):
+        return -1
+    return sum(int(row[field]) for row in rows)
 
 
 def _update_stability(
@@ -341,12 +356,20 @@ def _require_manifest(
         failures.append("clock-free complexity predicate provenance is incomplete")
     syzygy = manifest.get("syzygy")
     directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
+    directory_wdl_count = _sum_manifest_ints(directories, "rtbw_count")
+    directory_dtz_count = _sum_manifest_ints(directories, "rtbz_count")
     if (
         not isinstance(syzygy, dict)
         or not isinstance(syzygy.get("path"), str)
         or not syzygy.get("path")
         or not isinstance(directories, list)
         or len(directories) < 2
+        or not isinstance(syzygy.get("rtbw_count"), int)
+        or int(syzygy.get("rtbw_count", 0)) < _PRODUCTION_WDL_FILES
+        or syzygy.get("rtbw_count") != directory_wdl_count
+        or not isinstance(syzygy.get("rtbz_count"), int)
+        or int(syzygy.get("rtbz_count", 0)) < _PRODUCTION_DTZ_FILES
+        or syzygy.get("rtbz_count") != directory_dtz_count
         or any(
             not isinstance(directory, dict)
             or not isinstance(directory.get("path"), str)
@@ -381,13 +404,26 @@ def _require_manifest(
             failures.append("requested search does not match realized active parameters")
     requested_evaluator = manifest.get("requested_evaluator")
     realized_evaluator = manifest.get("realized_evaluator")
+    compile_info = manifest.get("compile")
+    compile_valid = (
+        isinstance(compile_info, dict)
+        and compile_info.get("enabled") is True
+        and compile_info.get("mode") == "max-autotune"
+        and isinstance(compile_info.get("cache_dir"), str)
+        and bool(compile_info.get("cache_dir"))
+        and isinstance(compile_info.get("torchinductor_cache_dir"), str)
+        and bool(compile_info.get("torchinductor_cache_dir"))
+        and isinstance(compile_info.get("triton_cache_dir"), str)
+        and bool(compile_info.get("triton_cache_dir"))
+    )
     expected_stack = (
         "BatchCoalescingDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
         if isinstance(requested, dict) and requested.get("active_path") == "walker_puct"
-        else "ThreadSafeGPUDispatcher(DirectGPUEvaluator)"
+        else "CUDAOwnerDispatcher(ThreadSafeGPUDispatcher(DirectGPUEvaluator))"
     )
     if (
-        not isinstance(requested_evaluator, dict)
+        not compile_valid
+        or not isinstance(requested_evaluator, dict)
         or not isinstance(realized_evaluator, dict)
         or requested_evaluator != realized_evaluator
         or realized_evaluator.get("stack") != expected_stack
@@ -397,6 +433,8 @@ def _require_manifest(
         or realized_evaluator.get("n_slots") != 2
         or not isinstance(realized_evaluator.get("input_bf16"), bool)
         or not isinstance(realized_evaluator.get("legal_bf16"), bool)
+        or realized_evaluator.get("compiled") is not True
+        or realized_evaluator.get("model_wrapper_type") != "OptimizedModule"
     ):
         failures.append("requested evaluator does not match realized evaluator stack")
     realized_tablebase = manifest.get("realized_tablebase")
@@ -404,8 +442,10 @@ def _require_manifest(
         not isinstance(realized_tablebase, dict)
         or realized_tablebase.get("installed") is not True
         or realized_tablebase.get("cursed_as_draw") is not True
-        or not _positive_int(realized_tablebase.get("n_wdl"))
-        or not _positive_int(realized_tablebase.get("n_dtz"))
+        or not isinstance(realized_tablebase.get("n_wdl"), int)
+        or int(realized_tablebase.get("n_wdl", 0)) < 510
+        or not isinstance(realized_tablebase.get("n_dtz"), int)
+        or int(realized_tablebase.get("n_dtz", 0)) < 510
         or not isinstance(realized_tablebase.get("max_pieces"), int)
         or int(realized_tablebase.get("max_pieces", 0)) < 6
     ):
@@ -854,27 +894,15 @@ def _weighted_capture_delta(
     return numerator / weight if weight else None
 
 
-def _frozen_alpha_profile(diagnostics: Sequence[dict[str, Any]]) -> dict[int, float]:
-    """Freeze one modal nested-CV alpha per horizon before resampling."""
-    values: dict[int, list[float]] = defaultdict(list)
-    for row in diagnostics:
-        values[int(row["horizon"])].append(float(row["alpha"]))
-    profile: dict[int, float] = {}
-    for horizon, alphas in values.items():
-        counts = {alpha: alphas.count(alpha) for alpha in set(alphas)}
-        profile[horizon] = min(counts, key=lambda alpha: (-counts[alpha], alpha))
-    return profile
-
-
 def _refit_oob_predictions(
     transitions: Sequence[Transition],
     train_indices: np.ndarray,
     test_indices: np.ndarray,
     *,
     model: str,
-    alpha_profile: dict[int, float],
+    n_folds: int,
 ) -> np.ndarray:
-    """Fit on a cluster bootstrap draw and predict its untouched OOB games."""
+    """Select alpha and fit on one draw; predict only its untouched OOB games."""
     predictions = np.full(len(test_indices), np.nan, dtype=np.float64)
     for horizon in sorted({transitions[index].horizon for index in test_indices}):
         target_local = np.flatnonzero([
@@ -884,14 +912,15 @@ def _refit_oob_predictions(
             index for index in train_indices
             if transitions[index].horizon != horizon
         ], dtype=np.int64)
-        if len(train) < 2 or not len(target_local) or horizon not in alpha_profile:
+        if len(train) < 2 or not len(target_local):
             raise ValueError("bootstrap replicate cannot fit every held horizon")
         train_rows = [transitions[int(index)] for index in train]
         test_rows = [transitions[int(test_indices[int(index)])] for index in target_local]
+        alpha = _inner_alpha(train_rows, model, n_folds)
         fitted = _fit_ridge(
             _design(train_rows, model),
             np.asarray([row.gain for row in train_rows], dtype=np.float64),
-            alpha_profile[horizon],
+            alpha,
         )
         predictions[target_local] = fitted.predict(_design(test_rows, model))
     if not np.isfinite(predictions).all():
@@ -902,11 +931,10 @@ def _refit_oob_predictions(
 def cluster_bootstrap_delta(
     transitions: Sequence[Transition],
     *,
-    m0_alpha_profile: dict[int, float],
-    m1_alpha_profile: dict[int, float],
     allocation_fraction: float,
     samples: int,
     seed: int,
+    n_folds: int = 5,
     min_oracle_headroom: float = 0.0,
 ) -> dict[str, float | int | None]:
     """Refitted game-cluster bootstrap with untouched out-of-bag evaluation."""
@@ -929,11 +957,11 @@ def cluster_bootstrap_delta(
         try:
             m0 = _refit_oob_predictions(
                 transitions, train_indices, test_indices,
-                model="M0", alpha_profile=m0_alpha_profile,
+                model="M0", n_folds=n_folds,
             )
             m1 = _refit_oob_predictions(
                 transitions, train_indices, test_indices,
-                model="M1", alpha_profile=m1_alpha_profile,
+                model="M1", n_folds=n_folds,
             )
         except (ValueError, np.linalg.LinAlgError):
             continue
@@ -1016,20 +1044,20 @@ def analyze(
         mean_m1 - mean_m0
         if mean_m0 is not None and mean_m1 is not None else None
     )
-    m0_alpha_profile = _frozen_alpha_profile(m0_diagnostics)
-    m1_alpha_profile = _frozen_alpha_profile(m1_diagnostics)
     bootstrap = cluster_bootstrap_delta(
         transitions,
-        m0_alpha_profile=m0_alpha_profile,
-        m1_alpha_profile=m1_alpha_profile,
         allocation_fraction=allocation_fraction,
-        samples=bootstrap_samples, seed=seed,
+        samples=bootstrap_samples, seed=seed, n_folds=n_folds,
         min_oracle_headroom=min_oracle_headroom,
+    )
+    bootstrap_resolution_ok = (
+        bootstrap_samples >= _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES
     )
     advance = bool(
         capture_gain is not None
         and capture_gain >= min_capture_gain
         and every_horizon_eligible and every_horizon_positive
+        and bootstrap_resolution_ok
         and float(bootstrap["valid_fraction"] or 0.0) >= min_bootstrap_valid_fraction
         and bootstrap["lower_95"] is not None and float(bootstrap["lower_95"]) > 0.0
         and tail_ok
@@ -1042,6 +1070,9 @@ def analyze(
             "M1_minus_M0_positive_on_every_held_horizon": True,
             "refitted_OOB_game_cluster_bootstrap_lower_95_above_zero": True,
             "bootstrap_samples": bootstrap_samples,
+            "minimum_decision_grade_bootstrap_samples": (
+                _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES
+            ),
             "minimum_bootstrap_valid_fraction": min_bootstrap_valid_fraction,
             "M1_p95_and_p99_regret_not_worse_than_M0": True,
         },
@@ -1054,11 +1085,8 @@ def analyze(
         "every_horizon_eligible": every_horizon_eligible,
         "every_horizon_positive": every_horizon_positive,
         "tail_rule_passed": tail_ok,
+        "bootstrap_resolution_passed": bootstrap_resolution_ok,
         "bootstrap_refit_oob_M1_minus_M0": bootstrap,
-        "bootstrap_frozen_alpha_profiles": {
-            "M0": m0_alpha_profile,
-            "M1": m1_alpha_profile,
-        },
         "horizons": horizons,
         "cv_diagnostics": {"M0": m0_diagnostics, "M1": m1_diagnostics},
     }
