@@ -850,6 +850,42 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_id(
         value_regret.main()
 
 
+def test_stored_value_regret_preflights_game_ids_before_scoring(
+    mini_audit_set: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import value_regret
+
+    matched = tmp_path / "stored_masked_game_id.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((2, 175, 8, 8), dtype=np.float16),
+        found=np.ones(2, dtype=bool),
+        key=np.array(["a", "b"]),
+        game_id=np.array([17, 0], dtype=np.int64),
+        has_game_id=np.array([True, False]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
+
+    def _scoring_must_not_start(**_kwargs: object) -> None:
+        raise AssertionError("masked game_id reached the expensive scoring pass")
+
+    monkeypatch.setattr(value_regret, "value_1ply_regret", _scoring_must_not_start)
+    monkeypatch.setattr("sys.argv", [
+        "value_regret.py", "--checkpoint", "unused.pt",
+        "--audit-set", str(mini_audit_set), "--device", "cpu",
+        "--input-encoding", "stored", "--min-pieces", "0",
+        "--matched-rows", str(matched),
+        "--dump-per-position", str(tmp_path / "dump.jsonl"),
+    ])
+
+    with pytest.raises(SystemExit, match="has no game_id for 1 scored positions"):
+        value_regret.main()
+
+
 def test_value_regret_main_refuses_a_missing_net(
     mini_audit_set: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
