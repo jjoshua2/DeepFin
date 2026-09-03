@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from chess_anti_engine.replay import game_epoch as game_epoch_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
@@ -56,14 +57,25 @@ def _write(
     return shard_dir
 
 
-def _open(shard_dir: Path, *, seed: int = 7, batch_size: int = 4) -> GameAwareEpochBuffer:
+def _open(
+    shard_dir: Path,
+    *,
+    seed: int = 7,
+    batch_size: int = 4,
+    load_workers: int = 2,
+    max_working_set_bytes: int | None = None,
+) -> GameAwareEpochBuffer:
+    kwargs = {}
+    if max_working_set_bytes is not None:
+        kwargs["max_working_set_bytes"] = int(max_working_set_bytes)
     return GameAwareEpochBuffer(
         shard_dir=shard_dir,
         batch_size=batch_size,
         seed=seed,
         input_planes=146,
         plan_workers=2,
-        load_workers=2,
+        load_workers=load_workers,
+        **kwargs,
     )
 
 
@@ -267,6 +279,237 @@ def test_multiple_deadline_games_are_brought_forward_and_plan_still_closes(
     assert sum(len(batch) for batch in remaining) + len(first["x"]) == buf.plan.rows
     assert buf.receipt()["realized_sha256"] == buf.plan.plan_sha256
     assert buf.receipt()["complete"] is True
+
+
+def test_duplicate_only_prefix_is_skipped_for_diversity_and_refill_is_bounded(
+    tmp_path: Path,
+) -> None:
+    # Seed 3's first 21 paths all carry the same deadline-forced game. The 63
+    # remaining one-row shards each introduce a singleton. A prefix walk loads
+    # 24 full shards to build batch 0; progress ordering needs exactly four.
+    seed = 3
+    shard_count = 84
+    path_order = np.random.default_rng(
+        np.random.SeedSequence([seed, 0]),
+    ).permutation(shard_count)
+    duplicate_paths = {int(index) for index in path_order[:21]}
+    next_game = 1
+    shards: list[list[tuple[int, int]]] = []
+    for index in range(shard_count):
+        if index in duplicate_paths:
+            shards.append([(0, index)])
+        else:
+            shards.append([(next_game, 1_000 + index)])
+            next_game += 1
+
+    shard_dir = _write(tmp_path / "replay", shards)
+    probe = _open(shard_dir, seed=seed, batch_size=4, load_workers=4)
+
+    assert int(probe.plan.load_counts[0]) == 4
+    assert int(probe.plan.load_counts.max(initial=0)) <= 4
+    tight_limit = int(probe.plan.peak_working_set_bytes)
+    bounded = _open(
+        shard_dir,
+        seed=seed,
+        batch_size=4,
+        load_workers=4,
+        max_working_set_bytes=tight_limit,
+    )
+    batches = _drain(bounded)
+
+    assert sum(len(batch) for batch in batches) == shard_count
+    receipt = bounded.receipt()
+    assert receipt["complete"] is True
+    assert receipt["realized_sha256"] == bounded.plan.plan_sha256
+    assert int(receipt["peak_working_set_bytes"]) <= tight_limit
+
+
+def test_skewed_long_game_corpus_is_refused_by_memory_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each refill is already only one shard, yet seven unserved rows from the
+    # cross-shard long game accumulate per early batch. This is the case a
+    # per-refill load-count bound alone cannot make safe.
+    shards = [
+        [(0, index * 100 + ply) for ply in range(8)]
+        + [(index + 1, 10_000 + index)]
+        for index in range(20)
+    ]
+    shard_dir = _write(tmp_path / "replay", shards)
+    probe = _open(shard_dir, seed=3, batch_size=2)
+    largest_shard = max(record.decoded_bytes for record in probe._records)
+    low_limit = int(largest_shard * 4)
+
+    assert int(probe.plan.load_counts.max(initial=0)) <= 2
+    assert int(probe.plan.peak_working_set_bytes) > low_limit
+    full_decodes = 0
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        nonlocal full_decodes
+        full_decodes += 1
+        raise AssertionError("memory refusal must precede full shard decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match="working-set preflight"):
+        _open(
+            shard_dir,
+            seed=3,
+            batch_size=2,
+            load_workers=4,
+            max_working_set_bytes=low_limit,
+        )
+    assert full_decodes == 0
+
+
+def test_single_shard_larger_than_memory_cap_is_refused_before_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(4)]],
+    )
+    probe = _open(shard_dir, batch_size=4)
+    limit = int(probe._records[0].decoded_bytes - 1)
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("oversized shard must fail during metadata planning")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match="working-set preflight"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            load_workers=4,
+            max_working_set_bytes=limit,
+        )
+
+
+def test_epoch_slice_returns_each_single_take_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = {
+        "x": np.arange(24, dtype=np.float32).reshape(6, 4),
+        "game_id": np.arange(6, dtype=np.int64),
+        "_policy_size": np.asarray(1858, dtype=np.int64),
+    }
+    allocated: dict[int, np.ndarray] = {}
+    original_take = np.take
+
+    def tracked_take(
+        value: np.ndarray, indices: np.ndarray, *, axis: int,
+    ) -> np.ndarray:
+        result = original_take(value, indices, axis=axis)
+        allocated[id(value)] = result
+        return result
+
+    monkeypatch.setattr(game_epoch_module.np, "take", tracked_take)
+    sliced = game_epoch_module._slice_epoch_arrays(
+        arrays, np.asarray([4, 1, 3], dtype=np.int64),
+    )
+
+    # The object allocated by np.take is the returned field itself. Wrapping
+    # advanced indexing in np.array(copy=True) would return a second object and
+    # transiently consume twice the batch/compaction bytes priced by the plan.
+    assert sliced["x"] is allocated[id(arrays["x"])]
+    assert sliced["game_id"] is allocated[id(arrays["game_id"])]
+    assert sliced["x"].flags.owndata
+    assert not np.shares_memory(sliced["x"], arrays["x"])
+    assert not np.shares_memory(sliced["_policy_size"], arrays["_policy_size"])
+
+
+def test_single_shard_materialization_obeys_exact_modeled_peak(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(8)]],
+    )
+    probe = _open(shard_dir, batch_size=4)
+    record = probe._records[0]
+    batch_bytes = int(4 * record.row_bytes + record.scalar_bytes)
+    exact_peak = int(record.decoded_bytes + batch_bytes)
+
+    assert probe.plan.peak_working_set_bytes == exact_peak
+    with pytest.raises(ValueError, match="batch 0 materialization"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            max_working_set_bytes=exact_peak - 1,
+        )
+    bounded = _open(
+        shard_dir, batch_size=4, max_working_set_bytes=exact_peak,
+    )
+    batches = _drain(bounded)
+
+    assert [len(batch) for batch in batches] == [4, 4]
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["complete"] is True
+
+
+def test_tight_cap_keeps_multichunk_compaction_in_lockstep_with_plan(
+    tmp_path: Path,
+) -> None:
+    shards = [
+        [(0, ply) for ply in range(100)] + [(1, 10_000)],
+        [(2, 20_000 + ply) for ply in range(100)] + [(3, 30_000)],
+    ]
+    shard_dir = _write(tmp_path / "replay", shards)
+    probe = _open(shard_dir, seed=3, batch_size=2)
+    record = probe._records[0]
+    planned_batch_bytes = int(2 * record.row_bytes + 2 * record.scalar_bytes)
+    first_compaction_peak = int(
+        2 * record.decoded_bytes
+        + planned_batch_bytes
+        + 25 * np.dtype(np.int64).itemsize
+        + record.scalar_bytes
+        + 25 * record.row_bytes
+    )
+    assert probe.plan.peak_working_set_bytes == first_compaction_peak
+    exact = _open(
+        shard_dir,
+        seed=3,
+        batch_size=2,
+        max_working_set_bytes=first_compaction_peak,
+    )
+    _drain(exact)
+    assert exact.receipt()["peak_working_set_bytes"] == first_compaction_peak
+    assert exact.receipt()["complete"] is True
+
+    # One byte below the first optional compaction peak makes the planner skip
+    # it at batch 75. The realized multi-chunk batch is slightly smaller than
+    # its conservative per-shard scalar budget; using that smaller value at
+    # runtime would compact anyway and immediately diverge from preflight.
+    limit = first_compaction_peak - 1
+    bounded = _open(
+        shard_dir,
+        seed=3,
+        batch_size=2,
+        max_working_set_bytes=limit,
+    )
+    actual_batch_bytes = 0
+    for batch_index in range(77):
+        batch = bounded.sample_batch_arrays(2)
+        if batch_index == 75:
+            actual_batch_bytes = bounded._arrays_nbytes(batch)
+            assert actual_batch_bytes < planned_batch_bytes
+            assert bounded._resident_bytes == 2 * record.decoded_bytes
+        assert bounded._resident_bytes == int(
+            bounded.plan.resident_bytes_after_batch[batch_index],
+        )
+
+    assert actual_batch_bytes > 0
+    assert bounded._resident_bytes < 2 * record.decoded_bytes
+    for _ in range(bounded.num_batches - 77):
+        bounded.sample_batch_arrays(2)
+    assert bounded.receipt()["peak_working_set_bytes"] == (
+        bounded.plan.peak_working_set_bytes
+    )
+    assert int(bounded.receipt()["peak_working_set_bytes"]) <= limit
+    assert bounded.receipt()["complete"] is True
 
 
 def test_consumed_rows_are_compacted_out_of_long_lived_shards(tmp_path: Path) -> None:

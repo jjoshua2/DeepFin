@@ -185,6 +185,7 @@ from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.replay.game_epoch import (
     DEFAULT_LOAD_WORKERS as GAME_EPOCH_LOAD_WORKERS,
+    DEFAULT_MAX_WORKING_SET_BYTES as GAME_EPOCH_MAX_WORKING_SET_BYTES,
     DEFAULT_PLAN_WORKERS as GAME_EPOCH_PLAN_WORKERS,
     GameAwareEpochBuffer,
 )
@@ -1815,6 +1816,14 @@ def main(argv: list[str] | None = None) -> int:
              f"bounded active pool (default {GAME_EPOCH_LOAD_WORKERS}).",
     )
     parser.add_argument(
+        "--epoch-max-working-set-gib",
+        type=float,
+        default=GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3),
+        help="hard preflight/runtime cap for eager decoded shards, one batch "
+             "assembly, and compaction scratch under game_epoch "
+             f"(default {GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3):g} GiB).",
+    )
+    parser.add_argument(
         "--batch-size", type=int, default=0,
         help="0 = config batch_size. ⚑ Any other value changes the examples per "
              "step and the gradient-noise regime, and is recorded in "
@@ -2047,6 +2056,22 @@ def main(argv: list[str] | None = None) -> int:
                 "REFUSING TO LAUNCH — --epoch-plan-workers and "
                 "--epoch-load-workers must both be positive",
             )
+        if (
+            not np.isfinite(float(args.epoch_max_working_set_gib))
+            or float(args.epoch_max_working_set_gib) <= 0.0
+        ):
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-max-working-set-gib must be "
+                "finite and positive",
+            )
+        epoch_max_working_set_bytes = int(
+            float(args.epoch_max_working_set_gib) * 1024**3
+        )
+        if epoch_max_working_set_bytes <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-max-working-set-gib resolves "
+                "to fewer than one byte",
+            )
         epoch_input_planes = replay_kwargs.get("input_planes")
         buf: Any = GameAwareEpochBuffer(
             shard_dir=out_dir / "staged_shards",
@@ -2057,6 +2082,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             plan_workers=int(args.epoch_plan_workers),
             load_workers=int(args.epoch_load_workers),
+            max_working_set_bytes=epoch_max_working_set_bytes,
         )
         accum_steps = int(trainer.accum_steps)
         if accum_steps != 1:
@@ -2085,6 +2111,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{buf.plan.game_count} games, {buf.plan.batches} batches "
             f"({buf.plan.full_batches} full, min {buf.plan.min_batch_rows} rows), "
             f"{staged} shard(s), "
+            f"working-set peak {buf.plan.peak_working_set_bytes / 1024**3:.2f}/"
+            f"{buf.plan.max_working_set_bytes / 1024**3:.2f} GiB, "
             f"plan={buf.plan.plan_sha256}",
         )
         realized_replay = {
@@ -2095,6 +2123,7 @@ def main(argv: list[str] | None = None) -> int:
                 "seed": int(args.seed),
                 "plan_workers": int(args.epoch_plan_workers),
                 "load_workers": int(args.epoch_load_workers),
+                "max_working_set_bytes": epoch_max_working_set_bytes,
             },
             # Guard 0d still compares the historical replay signature so this
             # intervention cannot masquerade as that control. These settings

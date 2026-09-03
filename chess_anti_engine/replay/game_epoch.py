@@ -18,9 +18,11 @@ from one game in the same optimizer batch.
 
 Only the lightweight ``game_id`` columns are read during planning. Full
 training arrays are decoded once, just before their rows become eligible;
-consumed portions of long-lived shards are compacted away. This keeps I/O
-sequential at shard granularity and memory bounded instead of turning a
-globally shuffled epoch into 512 random zarr reads per batch.
+consumed portions of long-lived shards are compacted away. The planner models
+eager shard residency, batch assembly, and compaction copy spikes against a
+hard byte cap, refusing an over-budget corpus before training. This keeps I/O
+sequential at shard granularity without claiming the parent process can absorb
+an arbitrary skewed corpus.
 """
 from __future__ import annotations
 
@@ -35,12 +37,17 @@ from typing import Any
 
 import numpy as np
 
-from .disk_buffer import _concat_sparse_batches, _slice_array_batch
+from .disk_buffer import _concat_sparse_batches
 from .shard import densify_chunk, iter_shard_paths, load_shard_arrays
 
 
 DEFAULT_PLAN_WORKERS = 16
 DEFAULT_LOAD_WORKERS = 4
+# Full replay shards contain dense board and policy tensors, so a row-count
+# bound is not a memory bound.  Eight GiB leaves useful decode parallelism on
+# the training hosts while making the eager working set an explicit,
+# preflighted contract instead of an accidental function of corpus ordering.
+DEFAULT_MAX_WORKING_SET_BYTES = 8 * 1024**3
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,13 @@ class _ShardGames:
     game_ids: np.ndarray
     game_keys: np.ndarray
     game_counts: np.ndarray
+    row_bytes: int
+    scalar_bytes: int
+    row_field_bytes: tuple[tuple[str, int], ...]
+
+    @property
+    def decoded_bytes(self) -> int:
+        return int(self.scalar_bytes + self.rows * self.row_bytes)
 
 
 @dataclass(frozen=True)
@@ -69,9 +83,12 @@ class GameEpochPlan:
     game_count: int
     batch_size: int
     seed: int
+    max_working_set_bytes: int
+    peak_working_set_bytes: int
     plan_sha256: str
     load_counts: np.ndarray = field(repr=False)
     batch_rows: np.ndarray = field(repr=False)
+    resident_bytes_after_batch: np.ndarray = field(repr=False)
 
     def as_dict(self) -> dict[str, int | str]:
         return {
@@ -88,6 +105,8 @@ class GameEpochPlan:
             "row_order": "seeded_shuffle_within_shard_game_segments",
             "batch_size": int(self.batch_size),
             "seed": int(self.seed),
+            "max_working_set_bytes": int(self.max_working_set_bytes),
+            "peak_working_set_bytes_planned": int(self.peak_working_set_bytes),
             "plan_sha256": self.plan_sha256,
         }
 
@@ -134,13 +153,96 @@ class _GameRows:
 
 @dataclass
 class _LoadedChunk:
+    record: _ShardGames
     arrays: dict[str, np.ndarray]
     remaining: int
     capacity: int
 
+    @property
+    def resident_bytes(self) -> int:
+        return int(self.record.scalar_bytes + self.capacity * self.record.row_bytes)
+
+
+@dataclass
+class _PlanSegment:
+    chunk_id: int
+    remaining: int
+
+
+@dataclass
+class _PlanChunk:
+    record: _ShardGames
+    remaining: int
+    capacity: int
+
+    @property
+    def resident_bytes(self) -> int:
+        return int(self.record.scalar_bytes + self.capacity * self.record.row_bytes)
+
 
 def _seeded_rng(seed: int, stream: int) -> np.random.Generator:
     return np.random.default_rng(np.random.SeedSequence([int(seed), int(stream)]))
+
+
+def _declared_storage_bytes(
+    arrs: dict[str, Any], *, rows: int,
+) -> tuple[int, int, tuple[tuple[str, int], ...]]:
+    """Return per-row, scalar, and per-field eager allocation sizes.
+
+    Zarr exposes shape and dtype without decoding a chunk.  Keeping this
+    calculation on declarations lets the constructor price the exact eager
+    working set before any full training array is materialized.
+    """
+    row_fields: list[tuple[str, int]] = []
+    scalar_bytes = 0
+    for name, value in arrs.items():
+        raw_shape = getattr(value, "shape", None)
+        shape = tuple(int(dim) for dim in (
+            np.shape(value) if raw_shape is None else raw_shape
+        ))
+        raw_dtype = getattr(value, "dtype", None)
+        dtype = np.dtype(np.asarray(value).dtype if raw_dtype is None else raw_dtype)
+        declared = int(dtype.itemsize)
+        for dim in shape:
+            declared *= int(dim)
+        if shape and int(shape[0]) == int(rows):
+            if rows <= 0 or declared % int(rows):
+                raise ValueError(
+                    f"{name} has a row shape that cannot be priced exactly",
+                )
+            row_fields.append((str(name), declared // int(rows)))
+        elif not shape:
+            scalar_bytes += declared
+        else:
+            raise ValueError(
+                f"{name} shape {shape} is neither scalar nor row-aligned to {rows}",
+            )
+    return (
+        sum(width for _, width in row_fields),
+        int(scalar_bytes),
+        tuple(row_fields),
+    )
+
+
+def _slice_epoch_arrays(
+    arrs: dict[str, np.ndarray], indices: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Copy selected rows once, with no advanced-indexing double allocation.
+
+    ``np.array(value[indices], copy=True)`` allocates once for advanced
+    indexing and then copies that result again. The working-set preflight
+    prices one output allocation, so use ``np.take`` to allocate that owned,
+    contiguous result directly.
+    """
+    ii = np.asarray(indices, dtype=np.int64).reshape(-1)
+    return {
+        name: (
+            np.array(value, copy=True)
+            if np.asarray(value).ndim == 0
+            else np.take(np.asarray(value), ii, axis=0)
+        )
+        for name, value in arrs.items()
+    }
 
 
 def _scan_shard(path: Path) -> _ShardGames:
@@ -158,6 +260,9 @@ def _scan_shard(path: Path) -> _ShardGames:
             game_ids=np.empty(0, dtype=np.int64),
             game_keys=np.empty(0, dtype=np.int64),
             game_counts=np.empty(0, dtype=np.int64),
+            row_bytes=0,
+            scalar_bytes=0,
+            row_field_bytes=(),
         )
     if "game_id" not in arrs or "has_game_id" not in arrs:
         raise ValueError(
@@ -181,12 +286,18 @@ def _scan_shard(path: Path) -> _ShardGames:
             f"{path} game_id shape {game_id.shape}, expected ({rows},)",
         )
     games, counts = np.unique(game_id, return_counts=True)
+    row_bytes, scalar_bytes, row_field_bytes = _declared_storage_bytes(
+        arrs, rows=rows,
+    )
     return _ShardGames(
         path=path,
         rows=rows,
         game_ids=np.asarray(games, dtype=np.int64),
         game_keys=np.asarray(games, dtype=np.int64),
         game_counts=np.asarray(counts, dtype=np.int64),
+        row_bytes=row_bytes,
+        scalar_bytes=scalar_bytes,
+        row_field_bytes=row_field_bytes,
     )
 
 
@@ -229,6 +340,9 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
                 game_ids=record.game_ids,
                 game_keys=np.asarray(keys, dtype=np.int64),
                 game_counts=record.game_counts,
+                row_bytes=record.row_bytes,
+                scalar_bytes=record.scalar_bytes,
+                row_field_bytes=record.row_field_bytes,
             ),
         )
     return namespaced
@@ -339,33 +453,109 @@ def _balanced_batch_rows(*, rows: int, batch_size: int, max_game_rows: int) -> n
     return sizes
 
 
-def _move_due_shard_next(
-    records: list[_ShardGames], *, start: int, missing_games: set[int],
+def _move_progress_shard_next(
+    records: list[_ShardGames],
+    *,
+    start: int,
+    missing_forced: set[int],
+    active_games: set[int],
 ) -> None:
-    """Put the next shard for a deadline-forced game at ``start``.
+    """Put the next forced or diversity-contributing shard at ``start``.
 
     The initial seeded permutation is still the tie-break order.  We depart
     from it only when a game must be decoded for the current batch: walking
     through the intervening prefix would materialize unrelated shards merely
-    to reach a known location.  Moving that shard forward keeps the realized
-    order deterministic while preserving the loader's bounded-memory contract.
+    to reach a known location. Forced games take priority. Otherwise the first
+    pending shard that introduces a new active game moves to the frontier.
+    Thus every refill shard makes progress toward the batch's distinct-game
+    requirement and a refill cannot exceed the batch size.
     """
-    if not missing_games:
-        return
-    due = min(missing_games)
+    due = min(missing_forced) if missing_forced else None
     for index in range(int(start), len(records)):
-        if np.any(records[index].game_keys == due):
+        games = records[index].game_keys
+        contributes = (
+            np.any(games == due)
+            if due is not None
+            else any(int(game) not in active_games for game in games.tolist())
+        )
+        if contributes:
             if index != int(start):
                 records.insert(int(start), records.pop(index))
             return
-    raise RuntimeError(f"deadline-forced game {due} has no remaining shard")
+    if due is not None:
+        raise RuntimeError(f"deadline-forced game {due} has no remaining shard")
+    raise RuntimeError("no remaining shard can increase active-game diversity")
+
+
+def _append_plan_segments(
+    active_segments: dict[int, deque[_PlanSegment]],
+    *,
+    record: _ShardGames,
+    chunk_id: int,
+) -> None:
+    for game, count in zip(
+        record.game_keys.tolist(), record.game_counts.tolist(), strict=True,
+    ):
+        active_segments.setdefault(int(game), deque()).append(
+            _PlanSegment(chunk_id=int(chunk_id), remaining=int(count)),
+        )
+
+
+def _pop_plan_segment(
+    active_segments: dict[int, deque[_PlanSegment]], game: int,
+) -> int:
+    segments = active_segments[int(game)]
+    while segments and segments[0].remaining == 0:
+        segments.popleft()
+    if not segments:
+        raise RuntimeError(f"planned game {game} has no row segment")
+    segment = segments[0]
+    segment.remaining -= 1
+    chunk_id = int(segment.chunk_id)
+    if segment.remaining == 0:
+        segments.popleft()
+    if not segments:
+        del active_segments[int(game)]
+    return chunk_id
+
+
+def _batch_bytes_for_records(
+    *, take: int, records: Sequence[_ShardGames],
+) -> int:
+    row_fields: dict[str, int] = {}
+    scalar_bytes = 0
+    for record in records:
+        for name, width in record.row_field_bytes:
+            row_fields[name] = max(row_fields.get(name, 0), int(width))
+        # Scalar metadata is tiny and copied once per selected shard before
+        # concat. Pricing one full scalar block per chunk is conservative.
+        scalar_bytes += int(record.scalar_bytes)
+    return int(int(take) * sum(row_fields.values()) + scalar_bytes)
+
+
+def _budget_error(*, needed: int, limit: int, phase: str) -> ValueError:
+    return ValueError(
+        "game-aware epoch working-set preflight exceeds its configured limit "
+        f"during {phase}: needs {needed} bytes, limit is {limit} bytes. "
+        "Raise max_working_set_bytes only after confirming host headroom, or "
+        "repack the corpus so long games do not strand rows across many shards.",
+    )
 
 
 def _plan_epoch(
-    records: Sequence[_ShardGames], *, batch_size: int, seed: int,
+    records: Sequence[_ShardGames],
+    *,
+    batch_size: int,
+    seed: int,
+    max_working_set_bytes: int,
 ) -> tuple[GameEpochPlan, list[_ShardGames]]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if max_working_set_bytes <= 0:
+        raise ValueError(
+            "max_working_set_bytes must be positive, got "
+            f"{max_working_set_bytes}",
+        )
     if not records:
         raise ValueError("game-aware epoch corpus holds no shards")
 
@@ -374,6 +564,8 @@ def _plan_epoch(
     shuffled = [records[int(index)] for index in order]
     choice_rng = _seeded_rng(seed, 1)
     active: dict[int, int] = {}
+    active_segments: dict[int, deque[_PlanSegment]] = {}
+    chunks: dict[int, _PlanChunk] = {}
     next_shard = 0
     rows = sum(record.rows for record in shuffled)
     if rows <= 0:
@@ -388,28 +580,42 @@ def _plan_epoch(
     )
 
     load_counts: list[int] = []
+    resident_bytes_after_batch: list[int] = []
     digest = hashlib.sha256()
     digest.update(struct.pack("<qqq", int(seed), int(batch_size), int(rows)))
 
     consumed = 0
+    resident_bytes = 0
+    peak_working_set_bytes = 0
+
+    def observe(needed: int, phase: str) -> None:
+        nonlocal peak_working_set_bytes
+        peak_working_set_bytes = max(peak_working_set_bytes, int(needed))
+        if int(needed) > int(max_working_set_bytes):
+            raise _budget_error(
+                needed=int(needed), limit=int(max_working_set_bytes), phase=phase,
+            )
+
     for batch_index, batch_rows in enumerate(batch_array.tolist()):
         batches_left = int(batch_array.shape[0] - batch_index)
-        forced = buckets.get(batches_left, set())
+        forced = set(buckets.get(batches_left, set()))
         loaded = 0
         while (
             len(active) < int(batch_rows)
             or not forced.issubset(active)
         ) and next_shard < len(shuffled):
-            # A due game's next segment may sit late in the seeded order. Its
-            # location is already known from the metadata scan, so bring that
-            # shard directly to the load frontier instead of decoding every
-            # unrelated shard in front of it.
-            _move_due_shard_next(
+            # Metadata already says which pending shard can make this refill
+            # useful. Bring a due game first, otherwise the earliest shard
+            # introducing a new active game. A repeated-game prefix must not
+            # become an arbitrarily large eager allocation.
+            _move_progress_shard_next(
                 shuffled,
                 start=next_shard,
-                missing_games=forced.difference(active),
+                missing_forced=forced.difference(active),
+                active_games=set(active),
             )
             record = shuffled[next_shard]
+            chunk_id = int(next_shard)
             next_shard += 1
             loaded += 1
             resolved = str(record.path.resolve()).encode("utf-8")
@@ -421,12 +627,25 @@ def _plan_epoch(
             ):
                 key = int(game)
                 active[key] = active.get(key, 0) + int(count)
+            _append_plan_segments(
+                active_segments, record=record, chunk_id=chunk_id,
+            )
+            chunks[chunk_id] = _PlanChunk(
+                record=record, remaining=int(record.rows), capacity=int(record.rows),
+            )
+            resident_bytes += int(record.decoded_bytes)
+            observe(resident_bytes, f"batch {batch_index} refill")
 
         if len(active) < int(batch_rows) or not forced.issubset(active):
             raise RuntimeError(
                 f"epoch plan cannot fill batch {batch_index} ({batch_rows} rows) "
                 f"after {consumed}/{rows} rows; {len(active)} decoded games, "
                 f"{len(forced.difference(active))} due games unavailable",
+            )
+        if loaded > int(batch_rows):
+            raise RuntimeError(
+                f"batch {batch_index} loaded {loaded} shards for "
+                f"{batch_rows} rows; a refill shard made no diversity progress",
             )
         chosen = _choose_games(
             active,
@@ -436,22 +655,70 @@ def _plan_epoch(
             forced=forced,
         )
         _update_choice_hash(digest, chosen)
+        touched_chunks: set[int] = set()
         for game in chosen.tolist():
             key = int(game)
+            chunk_id = _pop_plan_segment(active_segments, key)
+            touched_chunks.add(chunk_id)
+            chunks[chunk_id].remaining -= 1
             left = active[key] - 1
             if left:
                 active[key] = left
             else:
                 del active[key]
+        batch_bytes = _batch_bytes_for_records(
+            take=int(batch_rows),
+            records=[chunks[chunk_id].record for chunk_id in touched_chunks],
+        )
+        assembly_copies = 1 if len(touched_chunks) == 1 else 2
+        observe(
+            resident_bytes + assembly_copies * batch_bytes,
+            f"batch {batch_index} materialization",
+        )
+
         _consume_games(chosen, remaining, buckets)
+        for chunk_id in sorted(touched_chunks):
+            chunk = chunks[chunk_id]
+            if chunk.remaining == 0:
+                resident_bytes -= chunk.resident_bytes
+                del chunks[chunk_id]
+                continue
+            if chunk.remaining * 4 > chunk.capacity:
+                continue
+            compacted_bytes = int(
+                chunk.record.scalar_bytes
+                + chunk.remaining * chunk.record.row_bytes
+            )
+            # Slicing allocates the compacted copy while the old arrays and
+            # returned batch are still live. Compaction is optional; skip it
+            # if its copy spike would violate the same runtime budget.
+            keep_bytes = int(chunk.remaining * np.dtype(np.int64).itemsize)
+            compact_peak = (
+                resident_bytes + batch_bytes + keep_bytes + compacted_bytes
+            )
+            if compact_peak > int(max_working_set_bytes):
+                continue
+            observe(compact_peak, f"batch {batch_index} compaction")
+            resident_bytes -= chunk.resident_bytes - compacted_bytes
+            chunk.capacity = int(chunk.remaining)
         load_counts.append(loaded)
+        resident_bytes_after_batch.append(int(resident_bytes))
         consumed += int(batch_rows)
 
-    if active or remaining or buckets or next_shard != len(shuffled):
+    if (
+        active
+        or active_segments
+        or chunks
+        or resident_bytes
+        or remaining
+        or buckets
+        or next_shard != len(shuffled)
+    ):
         raise RuntimeError(
             f"epoch plan consumed {consumed}/{rows} rows but ended with "
             f"{len(active)} active games, {len(remaining)} unfinished games, "
-            f"and {len(shuffled) - next_shard} unloaded shards",
+            f"{len(chunks)} resident chunks, and "
+            f"{len(shuffled) - next_shard} unloaded shards",
         )
 
     load_array = np.asarray(load_counts, dtype=np.int32)
@@ -468,9 +735,14 @@ def _plan_epoch(
         game_count=len(_game_totals(shuffled)),
         batch_size=int(batch_size),
         seed=int(seed),
+        max_working_set_bytes=int(max_working_set_bytes),
+        peak_working_set_bytes=int(peak_working_set_bytes),
         plan_sha256=digest.hexdigest(),
         load_counts=load_array,
         batch_rows=batch_array,
+        resident_bytes_after_batch=np.asarray(
+            resident_bytes_after_batch, dtype=np.int64,
+        ),
     )
     return plan, shuffled
 
@@ -489,16 +761,21 @@ class GameAwareEpochBuffer:
         input_planes: int | None,
         plan_workers: int = DEFAULT_PLAN_WORKERS,
         load_workers: int = DEFAULT_LOAD_WORKERS,
+        max_working_set_bytes: int = DEFAULT_MAX_WORKING_SET_BYTES,
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
         self.plan, self._records = _plan_epoch(
-            records, batch_size=int(batch_size), seed=int(seed),
+            records,
+            batch_size=int(batch_size),
+            seed=int(seed),
+            max_working_set_bytes=int(max_working_set_bytes),
         )
         self._batch_size = int(batch_size)
         self._input_planes = None if input_planes is None else int(input_planes)
         self._plan_workers = max(1, int(plan_workers))
         self._load_workers = max(1, int(load_workers))
+        self._max_working_set_bytes = int(max_working_set_bytes)
         self._choice_rng = _seeded_rng(seed, 1)
         self._row_rng = _seeded_rng(seed, 2)
         # Public rng is consumed by Trainer's mirror augmentation. Keeping it
@@ -515,8 +792,11 @@ class GameAwareEpochBuffer:
         self._remaining = _game_totals(self._records)
         self._remaining_buckets = _remaining_buckets(self._remaining)
         self._resident_rows = 0
+        self._resident_bytes = 0
         self._peak_resident_rows = 0
         self._peak_resident_chunks = 0
+        self._peak_resident_bytes = 0
+        self._peak_working_set_bytes = 0
         self._realized_digest = hashlib.sha256()
         self._realized_digest.update(
             struct.pack("<qqq", int(seed), int(batch_size), int(self.plan.rows)),
@@ -531,6 +811,21 @@ class GameAwareEpochBuffer:
     def num_batches(self) -> int:
         return int(self.plan.batches)
 
+    @staticmethod
+    def _arrays_nbytes(arrs: dict[str, np.ndarray]) -> int:
+        return int(sum(np.asarray(value).nbytes for value in arrs.values()))
+
+    def _observe_working_set(self, needed: int, *, phase: str) -> None:
+        self._peak_working_set_bytes = max(
+            self._peak_working_set_bytes, int(needed),
+        )
+        if int(needed) > self._max_working_set_bytes:
+            raise RuntimeError(
+                "game-aware epoch exceeded its preflighted working-set limit "
+                f"during {phase}: needs {needed} bytes, limit is "
+                f"{self._max_working_set_bytes} bytes",
+            )
+
     def _load_one(self, record: _ShardGames) -> dict[str, np.ndarray]:
         arrs, _ = load_shard_arrays(record.path, lazy=False, validate=True)
         rows = int(arrs["x"].shape[0])
@@ -544,6 +839,13 @@ class GameAwareEpochBuffer:
                 f"{record.path} carries {int(arrs['x'].shape[1])} input planes, "
                 f"the exact-epoch trainer requires {self._input_planes}; this "
                 "mode does not silently pad or reinterpret a static corpus",
+            )
+        actual_bytes = self._arrays_nbytes(arrs)
+        if actual_bytes != record.decoded_bytes:
+            raise RuntimeError(
+                f"{record.path} planned {record.decoded_bytes} decoded bytes "
+                f"and materialized {actual_bytes}; the corpus declarations "
+                "changed after the epoch was planned",
             )
         return {name: np.asarray(value) for name, value in arrs.items()}
 
@@ -577,11 +879,15 @@ class GameAwareEpochBuffer:
         chunk_id = self._next_chunk_id
         self._next_chunk_id += 1
         self._chunks[chunk_id] = _LoadedChunk(
-            arrays=arrs, remaining=rows, capacity=rows,
+            record=record, arrays=arrs, remaining=rows, capacity=rows,
         )
         self._resident_rows += rows
+        self._resident_bytes += int(record.decoded_bytes)
         self._peak_resident_rows = max(self._peak_resident_rows, self._resident_rows)
         self._peak_resident_chunks = max(self._peak_resident_chunks, len(self._chunks))
+        self._peak_resident_bytes = max(
+            self._peak_resident_bytes, self._resident_bytes,
+        )
 
         order = np.argsort(game_keys, kind="stable")
         sorted_games = game_keys[order]
@@ -594,7 +900,7 @@ class GameAwareEpochBuffer:
             state = self._active.setdefault(game, _GameRows())
             state.append(_Segment(chunk_id=chunk_id, indices=indices))
 
-    def _compact_chunk(self, chunk_id: int) -> None:
+    def _compact_chunk(self, chunk_id: int, *, batch_budget_bytes: int) -> None:
         """Release consumed rows from a long-lived shard allocation.
 
         A single long game can keep an otherwise exhausted 8k-row shard alive
@@ -617,11 +923,39 @@ class GameAwareEpochBuffer:
                 f"chunk {chunk_id} tracks {chunk.remaining} rows but its game "
                 "segments disagree",
             )
+        old_capacity = chunk.capacity
+        old_bytes = chunk.resident_bytes
+        compacted_bytes = int(
+            chunk.record.scalar_bytes + chunk.remaining * chunk.record.row_bytes
+        )
+        keep_bytes = int(chunk.remaining * np.dtype(np.int64).itemsize)
+        # The selection vector and sliced arrays exist alongside the old chunk
+        # and returned batch until assignment. Drive this optional decision
+        # with the planner's conservative batch budget, not the smaller
+        # realized batch, so the simulated and runtime capacities cannot
+        # diverge near the cap.
+        compact_peak = (
+            self._resident_bytes
+            + int(batch_budget_bytes)
+            + keep_bytes
+            + compacted_bytes
+        )
+        if compact_peak > self._max_working_set_bytes:
+            return
+        self._observe_working_set(compact_peak, phase=f"chunk {chunk_id} compaction")
         keep = np.concatenate([
             segment.indices[segment.cursor:] for segment in segments
         ])
-        old_capacity = chunk.capacity
-        chunk.arrays = _slice_array_batch(chunk.arrays, keep)
+        if int(keep.nbytes) != keep_bytes:
+            raise RuntimeError(
+                f"chunk {chunk_id} compaction index bytes differ from its plan",
+            )
+        compacted = _slice_epoch_arrays(chunk.arrays, keep)
+        if self._arrays_nbytes(compacted) != compacted_bytes:
+            raise RuntimeError(
+                f"chunk {chunk_id} compaction byte count differs from its plan",
+            )
+        chunk.arrays = compacted
         cursor = 0
         for segment in segments:
             stop = cursor + segment.remaining
@@ -630,6 +964,7 @@ class GameAwareEpochBuffer:
             cursor = stop
         chunk.capacity = chunk.remaining
         self._resident_rows -= old_capacity - chunk.capacity
+        self._resident_bytes -= old_bytes - compacted_bytes
 
     def _load_next(self, count: int) -> None:
         n = int(count)
@@ -642,6 +977,11 @@ class GameAwareEpochBuffer:
                 f"{len(self._records) - self._next_shard} left",
             )
         records = self._records[self._next_shard:stop]
+        refill_bytes = sum(record.decoded_bytes for record in records)
+        self._observe_working_set(
+            self._resident_bytes + refill_bytes,
+            phase=f"batch {self._batch_index} refill",
+        )
         self._next_shard = stop
         workers = min(self._load_workers, len(records))
 
@@ -675,7 +1015,7 @@ class GameAwareEpochBuffer:
         dense_parts: list[dict[str, np.ndarray]] = []
         for chunk_id, indices in by_chunk.items():
             chunk = self._chunks[chunk_id]
-            sparse = _slice_array_batch(
+            sparse = _slice_epoch_arrays(
                 chunk.arrays, np.asarray(indices, dtype=np.int64),
             )
             policy_size = int(np.asarray(
@@ -742,6 +1082,15 @@ class GameAwareEpochBuffer:
                 del self._active[key]
         _consume_games(chosen, self._remaining, self._remaining_buckets)
 
+        planned_batch_bytes = _batch_bytes_for_records(
+            take=take,
+            records=[self._chunks[chunk_id].record for chunk_id in touched_chunks],
+        )
+        assembly_copies = 1 if len(touched_chunks) == 1 else 2
+        self._observe_working_set(
+            self._resident_bytes + assembly_copies * planned_batch_bytes,
+            phase=f"batch {self._batch_index} materialization",
+        )
         batch = self._gather(selected)
         realized_rows = int(np.asarray(batch["x"]).shape[0])
         if realized_rows != take:
@@ -749,12 +1098,30 @@ class GameAwareEpochBuffer:
                 f"planned batch {self._batch_index} selected {take} rows but "
                 f"the materialized batch carries {realized_rows}",
             )
-        for chunk_id in touched_chunks:
+        batch_bytes = self._arrays_nbytes(batch)
+        if batch_bytes > planned_batch_bytes:
+            raise RuntimeError(
+                f"batch {self._batch_index} planned {planned_batch_bytes} "
+                f"materialized bytes but produced {batch_bytes}",
+            )
+        for chunk_id in sorted(touched_chunks):
             if self._chunks[chunk_id].remaining == 0:
+                self._resident_bytes -= self._chunks[chunk_id].resident_bytes
                 self._resident_rows -= self._chunks[chunk_id].capacity
                 del self._chunks[chunk_id]
             else:
-                self._compact_chunk(chunk_id)
+                self._compact_chunk(
+                    chunk_id, batch_budget_bytes=planned_batch_bytes,
+                )
+
+        planned_resident_bytes = int(
+            self.plan.resident_bytes_after_batch[self._batch_index],
+        )
+        if self._resident_bytes != planned_resident_bytes:
+            raise RuntimeError(
+                f"batch {self._batch_index} planned {planned_resident_bytes} "
+                f"resident decoded bytes but retained {self._resident_bytes}",
+            )
 
         self._batch_index += 1
         self._rows_yielded += take
@@ -770,6 +1137,10 @@ class GameAwareEpochBuffer:
                 problems.append(f"{len(self._remaining)} games still unfinished")
             if self._chunks:
                 problems.append(f"{len(self._chunks)} decoded shards still hold rows")
+            if self._resident_bytes:
+                problems.append(
+                    f"{self._resident_bytes} decoded payload bytes still resident",
+                )
             if self._next_shard != len(self._records):
                 problems.append(
                     f"loaded {self._next_shard}/{len(self._records)} shards",
@@ -790,6 +1161,7 @@ class GameAwareEpochBuffer:
             and not self._remaining
             and not self._remaining_buckets
             and not self._chunks
+            and self._resident_bytes == 0
             and self._next_shard == len(self._records)
             and self._realized_digest.hexdigest() == self.plan.plan_sha256
         )
@@ -802,7 +1174,10 @@ class GameAwareEpochBuffer:
             "same_game_repeats_max": int(self._max_same_game_repeats),
             "peak_decoded_rows": int(self._peak_resident_rows),
             "peak_decoded_shards": int(self._peak_resident_chunks),
+            "peak_decoded_bytes": int(self._peak_resident_bytes),
+            "peak_working_set_bytes": int(self._peak_working_set_bytes),
             "decoded_rows_resident": int(self._resident_rows),
+            "decoded_bytes_resident": int(self._resident_bytes),
             "realized_sha256": self._realized_digest.hexdigest(),
             "complete": bool(complete),
         }
@@ -814,3 +1189,4 @@ class GameAwareEpochBuffer:
         self._remaining.clear()
         self._remaining_buckets.clear()
         self._resident_rows = 0
+        self._resident_bytes = 0

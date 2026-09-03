@@ -72977,6 +72977,13 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   `same_game_repeats_max = 0`. Each decoded shard segment's position order uses
   an RNG stream separate from trainer augmentation; games split at a fixed shard
   boundary drain those independently shuffled segments in shard-load order.
+  Planning moves the earliest shard that supplies a missing forced game or new
+  active-game diversity to the load frontier, so duplicate-only prefixes cannot
+  create an unbounded refill. That refill bound is not sufficient for long-game
+  rows stranded across many shards, so metadata planning also simulates eager
+  decoded bytes, batch assembly, and compaction copy spikes. The preregistered
+  **8 GiB hard working-set cap** refuses an over-budget schedule before the
+  first full shard decode or optimizer step and is enforced again at runtime.
   Independent conversion outputs namespace their
   source-local `game_id` by resolved shard parent. The launcher requires
   `accum_steps = 1`, making the scheduler's batch the complete optimizer batch
@@ -72996,7 +73003,15 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   full CPU drain used every one of 409,600 rows, zero same-game repeats,
   **11,661 rows/s / 43.9 ms per batch**, and 6.9 GiB process peak; compaction
   bounded live decoded storage at 228,917 rows rather than retaining the whole
-  corpus. These are plumbing observations, not the learning verdict.
+  corpus. After the resident-budget review fix, the complete 18,910,484-row
+  metadata plan was rerun: max refill **13 shards**, all 2,309 shards accounted
+  for, planned sampler working-set peak **5,785,112,996 bytes (5.39 GiB)** under
+  the explicit 8 GiB cap, plan
+  `1e4ae2c0249d9ef82ce26fc349cc744e08dbea5c5874382e0da56fba957c33a6`
+  (156.4 s beside other work). The byte cap covers sampler-owned decoded array
+  payload, batch assembly, and compaction scratch; the earlier 6.9 GiB number
+  is whole-process RSS and is therefore not the same measurement. These are
+  plumbing observations, not the learning verdict.
 - **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
   6.** At the next clean GPU boundary, train both samplers from scratch on the
   frozen 4,894,143-row real-history corpus for the same **9,559 optimizer
@@ -73004,7 +73019,7 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 
       for seed in 0 1; do
         PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_replacement --steps 9559 --batch-size 512 --sampling-mode replacement --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
-        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_game_epoch --steps 0 --batch-size 512 --sampling-mode game_epoch --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
+        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_game_epoch --steps 0 --batch-size 512 --sampling-mode game_epoch --epoch-max-working-set-gib 8 --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
       done
       PYTHONPATH=. python3 scripts/match_audit_rows.py --audit-set data/audit_set_v1.jsonl --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats --out scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz
       for seed in 0 1; do for mode in replacement game_epoch; do
@@ -73033,7 +73048,8 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   trigger KILL is MIXED, not permission to use the sampler for 100M.
 - **Operational gate (not a second learning yardstick).** Both exact summaries
   must say `complete: true`, planned hash = realized hash, all 4,894,143 rows
-  realized, and zero same-game repeats. Using the already-emitted pipeline
+  realized, zero same-game repeats, and both planned and realized
+  `peak_working_set_bytes` at or below the banked 8 GiB cap. Using the already-emitted pipeline
   timers over the same 9,559 steps, candidate median steps/s must be at least
   0.90× its same-seed replacement control; otherwise optimize the loader before
   the 100M run even if the learning verdict succeeds. Bank and read every

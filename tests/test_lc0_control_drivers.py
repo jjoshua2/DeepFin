@@ -962,6 +962,15 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert summary["sampling"]["min_batch_rows_planned"] == 3
     assert summary["sampling"]["same_game_repeats_max"] == 0
     assert summary["sampling"]["complete"] is True
+    assert summary["sampling"]["max_working_set_bytes"] == (
+        lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
+    )
+    assert summary["sampling"]["peak_working_set_bytes"] <= summary["sampling"][
+        "peak_working_set_bytes_planned"
+    ]
+    assert summary["sampling"]["peak_working_set_bytes_planned"] <= summary[
+        "sampling"
+    ]["max_working_set_bytes"]
     assert summary["sampling"]["plan_sha256"] == summary["sampling"]["realized_sha256"]
     assert summary["sampling"]["row_order"] == (
         "seeded_shuffle_within_shard_game_segments"
@@ -986,6 +995,9 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert realized_replay["sampling_mode"] == "game_epoch"
     assert realized_replay["applied"]["batch_size"] == 4
     assert realized_replay["applied"]["input_planes"] == PLANES
+    assert realized_replay["applied"]["max_working_set_bytes"] == (
+        lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
+    )
     assert "shuffle_cap" not in realized_replay["applied"]
     assert "shuffle_cap" in realized_replay["ignored_disk_replay_kwargs"]
     assert summary["valid_control"] is False
