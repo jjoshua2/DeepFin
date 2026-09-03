@@ -2876,18 +2876,22 @@ def compute_loss(
 
   # SF move prediction: target and legal mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
-    # Treat the legacy best-move flag as a row-level fallback. A key-level
-    # fallback changes meaning when mixed-schema chunks are union-concatenated:
-    # the dense chunk makes has_sf_policy present, while missing rows are
-    # zero-filled. Row-stable semantics keep the objective independent of
-    # which other shard happened to contribute to this batch.
-    has_sf_policy = torch.maximum(
-        _get_mask(batch, "has_sf_policy").to(torch.float32),
-        has_sf_move.to(torch.float32),
-    )
-
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")
+    has_sf_policy = _get_mask(batch, "has_sf_policy").to(torch.float32)
+    if sf_policy_target is not None:
+        # ``has_sf_move`` predates the dense SF-policy mask, so it remains a
+        # fallback only when this row carries an actual dense distribution.
+        # Mixed-schema concatenation zero-fills a missing target; treating the
+        # best-move flag alone as eligibility would add that targetless row to
+        # the denominator while its soft CE contributes exactly zero.
+        dense_target_present = (
+            sf_policy_target.to(torch.float32).sum(dim=-1) > 0.0
+        ).to(torch.float32)
+        has_sf_policy = torch.maximum(
+            has_sf_policy,
+            has_sf_move.to(torch.float32) * dense_target_present,
+        )
     if sf_pol_logits is None:
         # Deliberately tolerant: partial models (offline rigs, exported subsets)
         # rely on "absent optional head -> zero loss". The `enable_policy_sf_head:

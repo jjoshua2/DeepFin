@@ -4282,7 +4282,8 @@ class Trainer:
         eagerly decoded shard. Work is row-chunked and normally reads only the
         scalar flags plus the three-value SF WDL field when its fractional mask
         is configured; input planes are never decoded. Dense policy targets are
-        read only when the configured soft-TV mask actually needs them.
+        also read when a legacy best-move fallback candidate lacks the modern
+        dense-target mask.
 
         Optional TV and sparse-policy masks reuse the same target transforms as
         ``compute_loss``. Their chunks are deliberately small so exactness does
@@ -4296,6 +4297,10 @@ class Trainer:
         dynamic_wide_mask = (
             float(self.soft_policy_min_tv) > 0.0
             or bool(self.sf_policy_sparse_ce)
+            or (
+                "sf_policy_target" in arrays
+                and "has_sf_move" in arrays
+            )
         )
         chunk_rows = 512 if dynamic_wide_mask else 65_536
         model = getattr(self.model, "_orig_mod", self.model)
@@ -4319,10 +4324,26 @@ class Trainer:
             has_future = _slice("has_future", start, stop)
             has_sf_p0 = _slice("has_sf_p0", start, stop)
             has_sf_p0_regret = _slice("has_sf_p0_regret", start, stop)
-            has_sf_policy = torch.maximum(
-                _slice("has_sf_policy", start, stop),
-                _slice("has_sf_move", start, stop),
+            has_sf_policy = _slice("has_sf_policy", start, stop)
+            has_sf_move = _slice("has_sf_move", start, stop)
+            dense_fallback_candidates = (
+                (has_sf_policy <= 0.0) & (has_sf_move > 0.0)
             )
+            if (
+                bool(dense_fallback_candidates.any())
+                and "sf_policy_target" in arrays
+            ):
+                dense_target = torch.as_tensor(
+                    np.asarray(arrays["sf_policy_target"][start:stop]),
+                    dtype=torch.float32,
+                )
+                dense_target_present = (
+                    dense_target.sum(dim=-1) > 0.0
+                ).to(torch.float32)
+                has_sf_policy = torch.maximum(
+                    has_sf_policy,
+                    has_sf_move * dense_target_present,
+                )
             has_cat = _slice("has_categorical", start, stop)
             has_vol = _slice("has_volatility", start, stop)
             has_sf_vol = _slice("has_sf_volatility", start, stop)
@@ -5443,12 +5464,12 @@ class Trainer:
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
                         losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                    # ``compute_loss`` returns a row mean. An exact finite
-                    # epoch can contain ragged batches because one game may
-                    # contribute at most one row per batch. Without this
-                    # factor, a row in a half-sized batch has twice the
-                    # optimizer weight of a row in a full batch. Preserve a
-                    # constant 1/requested_batch_size coefficient per row;
+                    # ``compute_loss`` returns a row mean. Exact preflight
+                    # refuses a long game that would force extra undersized
+                    # optimizer steps; every accepted schedule is at least 99%
+                    # full (the production plan is 511/512). Preserve a constant
+                    # 1/requested_batch_size gradient
+                    # coefficient per row before Aurora/AdamW transforms it;
                     # ordinary replacement replay keeps its historical scale.
                     exact_row_scale = (
                         float(realized_batch_rows) / float(batch_size)

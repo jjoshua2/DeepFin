@@ -603,16 +603,22 @@ def rebuild_sf_targets_in_arrays(
 ) -> tuple[dict[str, np.ndarray], SfRebuildCoverage]:
     """Recompute ``sf_policy_target`` / ``sf_wdl`` in a sampled batch dict.
 
-    Only rows carrying sparse labels are rebuilt; rows without them keep their
-    stored targets. Returns ``(arrs, coverage)`` — ``arrs`` mutated in place on
-    fresh copies of the touched fields.
+    Only rows carrying sparse labels and pre-rebuild dense-policy eligibility
+    are rebuilt; rows without them keep their stored targets. This row-level gate
+    is load-bearing for mixed-schema batches: union concatenation may create a
+    zero-filled ``sf_policy_target`` field for a sparse-only row, and rebuilding
+    that row would make dense-objective eligibility depend on which other shard
+    happened to share its batch. Returns ``(arrs, coverage)`` — ``arrs`` mutated
+    in place on fresh copies of the touched fields.
 
-    Coverage over SF-LABELLED rows is TOTAL on healthy data — every labelled
-    row is written with ``sf_multipv_raw`` — so a params change is a clean swap
-    over the labelled window, not a mixture of two target regimes. The caller
-    still reports coverage, because a shortfall is the alarm: see
-    ``SfRebuildCoverage.metric_kwargs``. (Coverage over ALL rows is ~97 %, the
-    SF-labelled fraction; the un-labelled rows have no SF target to rebuild.)
+    Coverage over DENSE SF-labelled rows is total on healthy dense-recording
+    data — every such row is written with ``sf_multipv_raw`` — so a params
+    change is a clean swap over that dense-labelled window, not a mixture of two
+    target regimes. Sparse-only rows remain on sparse CE and are intentionally
+    outside ``policy_rebuilt``. The caller still reports coverage, because an
+    unexpected shortfall is the alarm: see ``SfRebuildCoverage.metric_kwargs``.
+    (With dense recording enabled, coverage over ALL rows is ~97 %, the
+    SF-labelled fraction; unlabelled rows have no SF target to rebuild.)
 
     Fully vectorized: ~13 ms per 512-row batch at policy width 1858 on the
     host prefetch thread, against a ~90 ms/step training budget (was ~275 ms
@@ -651,29 +657,49 @@ def rebuild_sf_targets_in_arrays(
     has_raw = np.asarray(arrs.get("has_sf_multipv_raw", ()), dtype=bool)
     if has_raw.size and has_raw.any() and "sf_multipv_raw" in arrs and "sf_policy_target" in arrs:
         pol = np.array(arrs["sf_policy_target"], copy=True)
+        # Preserve the row's pre-concatenation objective provenance. Modern
+        # shards carry ``has_sf_policy``; positive stored mass also admits
+        # legacy dense shards whose mask predates that field. Crucially,
+        # ``has_sf_move`` alone is not enough: sparse-only shards carry it too,
+        # and a union-created zero target must remain zero after rebuilding.
+        has_dense = np.asarray(
+            arrs.get("has_sf_policy", np.zeros(has_raw.shape, dtype=bool)),
+            dtype=bool,
+        )
+        stored_dense = np.asarray(
+            pol.sum(axis=1, dtype=np.float32) > 0.0,
+            dtype=bool,
+        )
+        rebuild_rows = has_raw & (has_dense | stored_dense)
         policy_size = int(pol.shape[1])
         legal_dense = arrs.get("sf_legal_mask")
-        legal_rows = None if legal_dense is None else np.asarray(legal_dense)[has_raw]
-        rebuilt, ok = rebuild_sf_policy_targets_batch(
-            np.asarray(arrs["sf_multipv_raw"])[has_raw],
-            legal_dense=legal_rows,
-            policy_size=policy_size,
-            params=params,
-        )
-        rows_idx = np.flatnonzero(has_raw)
-        # No astype before the write: fancy-index assignment casts f32 to the
-        # stored dtype (fp16 in shards) element-by-element with the same
-        # rounding astype uses, so a pre-cast only materialises an extra
-        # (B, width) temporary (~0.9 ms + 1.9 MB/batch measured) for a
-        # bit-identical result (test_rebuild_in_arrays_writeback_matches_astype).
-        if bool(ok.all()):
-            # Common case: every labelled row rebuilt. Skip the `[ok]` gather,
-            # which at policy width 1858 is a full copy of the output.
-            pol[rows_idx] = rebuilt
-        else:
-            pol[rows_idx[ok]] = rebuilt[ok]
+        if bool(rebuild_rows.any()):
+            legal_rows = (
+                None
+                if legal_dense is None
+                else np.asarray(legal_dense)[rebuild_rows]
+            )
+            rebuilt, ok = rebuild_sf_policy_targets_batch(
+                np.asarray(arrs["sf_multipv_raw"])[rebuild_rows],
+                legal_dense=legal_rows,
+                policy_size=policy_size,
+                params=params,
+            )
+            rows_idx = np.flatnonzero(rebuild_rows)
+            # No astype before the write: fancy-index assignment casts f32 to
+            # the stored dtype (fp16 in shards) element-by-element with the
+            # same rounding astype uses, so a pre-cast only materialises an
+            # extra (B, width) temporary (~0.9 ms + 1.9 MB/batch measured) for
+            # a bit-identical result
+            # (test_rebuild_in_arrays_writeback_matches_astype).
+            if bool(ok.all()):
+                # Common case: every dense labelled row rebuilt. Skip the
+                # `[ok]` gather, which at policy width 1858 is a full copy.
+                pol[rows_idx] = rebuilt
+            else:
+                pol[rows_idx[ok]] = rebuilt[ok]
+            n_policy = int(np.count_nonzero(ok))
         arrs["sf_policy_target"] = pol
-        n_policy = int(np.count_nonzero(ok))
 
     has_meta = np.asarray(arrs.get("has_sf_label_meta", ()), dtype=bool)
     if has_meta.size and has_meta.any() and "sf_label_meta" in arrs and "sf_wdl" in arrs:

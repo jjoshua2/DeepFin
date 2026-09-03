@@ -300,6 +300,7 @@ def test_arrays_rebuild_only_touches_sparse_rows():
     raw[0, 1] = (200, -10, 0, 500, 300)
     arrs = {
         "sf_policy_target": pol,
+        "has_sf_policy": np.array([1, 1], np.uint8),
         "sf_legal_mask": legal,
         "sf_multipv_raw": raw,
         "has_sf_multipv_raw": np.array([1, 0], np.uint8),
@@ -312,6 +313,48 @@ def test_arrays_rebuild_only_touches_sparse_rows():
     assert float(out["sf_policy_target"][0].astype(np.float32).sum()) == pytest.approx(1.0, abs=1e-3)
     assert not np.array_equal(out["sf_policy_target"][0], pol[0])  # rebuilt
     np.testing.assert_array_equal(out["sf_policy_target"][1], before_row1)  # untouched
+
+
+def test_rebuild_keeps_union_zero_filled_sparse_rows_out_of_dense_objective():
+    """Batch composition cannot promote a sparse-only row into dense CE."""
+    from chess_anti_engine.replay.disk_buffer import _concat_sparse_batches
+
+    width = 64
+    raw = np.full((1, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (3, 40, 0, 700, 200)
+    legal = np.zeros((1, width), np.uint8)
+    legal[0, [3, 5]] = 1
+    base = {
+        "x": np.zeros((1, 1, 1, 1), np.float16),
+        "policy_target": np.eye(1, width, dtype=np.float16),
+        "wdl_target": np.zeros(1, np.int8),
+        "priority": np.ones(1, np.float32),
+        "has_policy": np.ones(1, np.uint8),
+        "sf_legal_mask": legal,
+        "sf_multipv_raw": raw,
+        "has_sf_multipv_raw": np.ones(1, np.uint8),
+        "sf_move_index": np.array([3], np.int32),
+        "has_sf_move": np.ones(1, np.uint8),
+    }
+    dense_target = np.zeros((1, width), np.float16)
+    dense_target[0, 5] = 1.0
+    dense = {
+        **base,
+        "sf_policy_target": dense_target,
+        "has_sf_policy": np.ones(1, np.uint8),
+    }
+    sparse_only = {key: np.array(value, copy=True) for key, value in base.items()}
+    merged = _concat_sparse_batches([dense, sparse_only])
+
+    assert merged["sf_policy_target"].sum(axis=1).tolist() == [1.0, 0.0]
+    out, coverage = rebuild_sf_targets_in_arrays(
+        merged, params=SfTargetParams(sf_policy_temp=0.012),
+    )
+
+    assert coverage.policy_rebuilt == 1
+    assert float(out["sf_policy_target"][0].sum()) == pytest.approx(1.0, abs=1e-3)
+    assert float(out["sf_policy_target"][1].sum()) == 0.0
 
 
 def test_trainer_default_is_bitwise_unchanged(monkeypatch):
@@ -1049,8 +1092,11 @@ def _cross_ply_arrs(n: int = 4, width: int = 64) -> dict[str, np.ndarray]:
     raw[:, 1] = (5, -20, 0, 400, 300)
     legal = np.zeros((n, width), np.uint8)
     legal[:, [3, 5, 9]] = 1
+    stored_policy = np.zeros((n, width), np.float16)
+    stored_policy[:, 9] = 1.0
     return {
-        "sf_policy_target": np.zeros((n, width), np.float16),
+        "sf_policy_target": stored_policy,
+        "has_sf_policy": np.ones((n,), np.uint8),
         "sf_legal_mask": legal,
         "sf_multipv_raw": raw,
         "has_sf_multipv_raw": np.ones((n,), np.uint8),

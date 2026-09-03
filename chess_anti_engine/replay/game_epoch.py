@@ -55,6 +55,7 @@ from .shard import (
 
 DEFAULT_PLAN_WORKERS = 16
 DEFAULT_LOAD_WORKERS = 4
+MIN_OPTIMIZER_BATCH_FILL_RATIO = 0.99
 # Full replay shards contain dense board and policy tensors, so a row-count
 # bound is not a memory bound.  Eight GiB leaves useful decode parallelism on
 # the training hosts while making the eager working set an explicit,
@@ -151,6 +152,9 @@ class GameEpochPlan:
             "full_batches_planned": int(self.full_batches),
             "ragged_batches_planned": int(self.ragged_batches),
             "min_batch_rows_planned": int(self.min_batch_rows),
+            "min_optimizer_batch_fill_ratio": (
+                MIN_OPTIMIZER_BATCH_FILL_RATIO
+            ),
             "shards": int(self.shard_count),
             "sources": int(self.source_count),
             "games": int(self.game_count),
@@ -680,14 +684,36 @@ def _consume_games(
 
 def _balanced_batch_rows(*, rows: int, batch_size: int, max_game_rows: int) -> np.ndarray:
     # At most one position from a game can enter a batch, so a game with M rows
-    # requires at least M batches.  Apart from that constraint, ceil(N/B)
-    # batches suffice.  Spreading the remainder across every batch avoids a
-    # final 1-row optimizer update when N % B == 1.
-    batches = max(
-        int(max_game_rows),
-        (int(rows) + int(batch_size) - 1) // int(batch_size),
-    )
+    # requires at least M batches. If that exceeds ceil(N/B), the uniqueness
+    # constraint would create extra, materially undersized optimizer steps.
+    # Loss scaling cannot repair those under Aurora/AdamW: normalized moments
+    # largely cancel a uniform gradient scale while momentum and decoupled
+    # decay still advance once per step. Refuse that corpus instead. Spreading
+    # the remainder makes sizes differ by at most one, but that alone is not
+    # sufficient: for a small corpus it can make every update equally tiny.
+    # The production plan bottoms out at 511/512; a relative floor keeps the
+    # same guarantee meaningful for every supported batch size.
+    batches = (int(rows) + int(batch_size) - 1) // int(batch_size)
+    if int(max_game_rows) > batches:
+        raise ValueError(
+            "exact game-aware sampling would need "
+            f"{int(max_game_rows)} batches for one game's rows, but "
+            f"ceil({int(rows)}/{int(batch_size)})={batches}; refusing "
+            "materially undersized Aurora/AdamW updates. Reduce batch_size or "
+            "cap that game's retained rows.",
+        )
     base, larger = divmod(int(rows), batches)
+    min_fill_ratio = float(base) / float(batch_size)
+    if min_fill_ratio < MIN_OPTIMIZER_BATCH_FILL_RATIO:
+        raise ValueError(
+            "exact game-aware sampling would distribute "
+            f"{int(rows)} rows as {batches} optimizer batches with only "
+            f"{base}-{base + int(larger > 0)} rows each, versus requested "
+            f"batch_size={int(batch_size)} ({min_fill_ratio:.3%} minimum fill); "
+            "refusing materially undersized Aurora/AdamW updates below the "
+            f"{MIN_OPTIMIZER_BATCH_FILL_RATIO:.0%} floor. Use a smaller "
+            "batch_size or a larger corpus.",
+        )
     sizes = np.full((batches,), base, dtype=np.int32)
     sizes[:larger] += 1
     if np.any(sizes <= 0) or np.any(sizes > int(batch_size)):

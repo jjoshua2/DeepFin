@@ -118,7 +118,7 @@ def test_exact_epoch_uses_every_row_once_and_never_repeats_a_game_in_batch(
 ) -> None:
     expected = [(game, row) for game in range(7) for row in range(game * 3, game * 3 + 3)]
     shard_dir = _write(tmp_path / "replay", [expected[:9], expected[9:16], expected[16:]])
-    buf = _open(shard_dir)
+    buf = _open(shard_dir, batch_size=3)
 
     batches = _drain(buf)
 
@@ -145,7 +145,7 @@ def test_exact_epoch_uses_every_row_once_and_never_repeats_a_game_in_batch(
     assert int(receipt["peak_decoded_shards"]) <= 3
     assert receipt["decoded_rows_resident"] == 0
     with pytest.raises(StopIteration, match="exhausted"):
-        buf.sample_batch_arrays(4)
+        buf.sample_batch_arrays(3)
 
 
 def test_schedule_is_seed_deterministic_and_augmentation_rng_cannot_move_it(
@@ -199,11 +199,11 @@ def test_positions_are_shuffled_within_each_shard_game_segment(
 def test_cross_shard_game_order_reports_its_segment_local_shuffle_contract(
     tmp_path: Path,
 ) -> None:
-    first_segment = [(0, ply) for ply in range(8)]
-    second_segment = [(0, 100 + ply) for ply in range(8)]
+    first_segment = [(0, ply) for ply in range(4)]
+    second_segment = [(0, 100 + ply) for ply in range(4)]
     # Singleton games give every batch enough independent rows while game 0
     # crosses the same fixed row-count boundary used by the converter.
-    fillers = [(game, 1_000 + game) for game in range(1, 17)]
+    fillers = [(game, 1_000 + game) for game in range(1, 25)]
     buf = _open(
         _write(tmp_path / "replay", [first_segment, second_segment + fillers]),
         seed=7,
@@ -224,30 +224,67 @@ def test_cross_shard_game_order_reports_its_segment_local_shuffle_contract(
     )
 
 
-def test_tail_is_ragged_instead_of_reusing_a_game_to_fill_it(tmp_path: Path) -> None:
+def test_long_game_cannot_force_extra_undersized_optimizer_steps(
+    tmp_path: Path,
+) -> None:
     rows = [(0, ply) for ply in range(6)] + [(1, 100 + ply) for ply in range(2)]
-    buf = _open(_write(tmp_path / "replay", [rows]), batch_size=4)
+    shard_dir = _write(tmp_path / "replay", [rows])
 
-    batches = _drain(buf)
+    with pytest.raises(
+        ValueError,
+        match=r"need 6 batches.*ceil\(8/4\)=2.*undersized Aurora/AdamW",
+    ):
+        _open(shard_dir, batch_size=4)
 
-    assert [len(batch) for batch in batches] == [2, 2, 1, 1, 1, 1]
-    assert all(len({game for game, _ in batch}) == len(batch) for batch in batches)
-    assert buf.plan.ragged_batches == len(batches)
+
+def test_evenly_undersized_optimizer_steps_are_refused() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"513 rows as 2 optimizer batches.*50\.000% minimum fill.*99% floor",
+    ):
+        game_epoch_module._balanced_batch_rows(
+            rows=513, batch_size=512, max_game_rows=2,
+        )
 
 
-def test_long_games_are_deadline_scheduled_and_the_remainder_is_spread(
+def test_single_undersized_optimizer_step_is_refused() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"1 rows as 1 optimizer batches.*0\.195% minimum fill.*99% floor",
+    ):
+        game_epoch_module._balanced_batch_rows(
+            rows=1, batch_size=512, max_game_rows=1,
+        )
+
+
+def test_production_batch_shape_clears_the_optimizer_fill_floor() -> None:
+    sizes = game_epoch_module._balanced_batch_rows(
+        rows=18_910_484,
+        batch_size=512,
+        max_game_rows=1,
+    )
+
+    assert sizes.shape == (36_935,)
+    assert int(np.count_nonzero(sizes == 512)) == 36_699
+    assert int(np.count_nonzero(sizes == 511)) == 236
+    assert float(sizes.min()) / 512.0 >= (
+        game_epoch_module.MIN_OPTIMIZER_BATCH_FILL_RATIO
+    )
+
+
+def test_long_games_are_deadline_scheduled_with_full_batches(
     tmp_path: Path,
 ) -> None:
     rows = [(0, ply) for ply in range(4)] + [
-        (game, 100 + game) for game in range(1, 10)
+        (game, 100 + game) for game in range(1, 13)
     ]
     buf = _open(_write(tmp_path / "replay", [rows]), batch_size=4)
 
     batches = _drain(buf)
 
-    assert [len(batch) for batch in batches] == [4, 3, 3, 3]
+    assert [len(batch) for batch in batches] == [4, 4, 4, 4]
     assert all(0 in {game for game, _ in batch} for batch in batches)
-    assert buf.plan.min_batch_rows == 3
+    assert buf.plan.min_batch_rows == 4
 
 
 def test_deadline_forced_game_is_loaded_directly_not_through_unrelated_prefix(
@@ -258,7 +295,7 @@ def test_deadline_forced_game_is_loaded_directly_not_through_unrelated_prefix(
     # decodes the entire corpus before it can return batch 0.
     shards = [
         [(0, 0), (0, 1), (0, 2)],
-        [(1, 10)],
+        [(1, 10), (6, 60)],
         [(2, 20)],
         [(3, 30)],
         [(4, 40)],
@@ -280,8 +317,8 @@ def test_multiple_deadline_games_are_brought_forward_and_plan_still_closes(
     shards = [
         [(0, 0), (0, 1), (0, 2)],
         [(1, 10), (1, 11), (1, 12)],
-        [(2, 20)],
-        [(3, 30)],
+        [(2, 20), (6, 60)],
+        [(3, 30), (7, 70)],
         [(4, 40)],
         [(5, 50)],
     ]
@@ -290,7 +327,7 @@ def test_multiple_deadline_games_are_brought_forward_and_plan_still_closes(
     first = buf.sample_batch_arrays(4)
 
     assert {0, 1}.issubset(set(np.asarray(first["game_id"], dtype=np.int64)))
-    assert int(buf.plan.load_counts[0]) == 4
+    assert int(buf.plan.load_counts[0]) == 3
     assert int(buf.receipt()["peak_decoded_rows"]) == 8
     remaining = []
     for _ in range(buf.num_batches - 1):
@@ -433,43 +470,21 @@ def test_multichunk_assembly_skips_unstored_fields_at_its_exact_cap(
     assert bounded.receipt()["complete"] is True
 
 
-def test_skewed_long_game_corpus_is_refused_by_memory_preflight(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+def test_skewed_long_game_corpus_is_refused_before_memory_preflight(
+    tmp_path: Path,
 ) -> None:
-    # Each refill is already only one shard, yet seven unserved rows from the
-    # cross-shard long game accumulate per early batch. This is the case a
-    # per-refill load-count bound alone cannot make safe.
     shards = [
         [(0, index * 100 + ply) for ply in range(8)]
         + [(index + 1, 10_000 + index)]
         for index in range(20)
     ]
     shard_dir = _write(tmp_path / "replay", shards)
-    probe = _open(shard_dir, seed=3, batch_size=2)
-    largest_shard = max(record.decoded_bytes for record in probe._records)
-    low_limit = int(largest_shard * 4)
 
-    assert int(probe.plan.load_counts.max(initial=0)) <= 2
-    assert int(probe.plan.peak_working_set_bytes) > low_limit
-    full_decodes = 0
-
-    def unexpected_decode(
-        _self: GameAwareEpochBuffer, _record: object,
-    ) -> dict[str, np.ndarray]:
-        nonlocal full_decodes
-        full_decodes += 1
-        raise AssertionError("memory refusal must precede full shard decode")
-
-    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
-    with pytest.raises(ValueError, match="working-set preflight"):
-        _open(
-            shard_dir,
-            seed=3,
-            batch_size=2,
-            load_workers=4,
-            max_working_set_bytes=low_limit,
-        )
-    assert full_decodes == 0
+    with pytest.raises(
+        ValueError,
+        match=r"need 160 batches.*ceil\(180/2\)=90.*undersized Aurora/AdamW",
+    ):
+        _open(shard_dir, seed=3, batch_size=2, load_workers=4)
 
 
 def test_single_shard_larger_than_memory_cap_is_refused_before_decode(
@@ -785,7 +800,7 @@ def test_zero_row_index_reservation_is_not_scheduled(tmp_path: Path) -> None:
 
 
 def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> None:
-    rows = [(game, game) for game in range(5)]
+    rows = [(game, game) for game in range(4)]
     shard_dir = _write(tmp_path / "replay", [rows], planes=175)
     with pytest.raises(ValueError, match="carries 175 input planes"):
         GameAwareEpochBuffer(

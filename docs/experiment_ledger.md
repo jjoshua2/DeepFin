@@ -72979,8 +72979,15 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   boundary drain those independently shuffled segments in shard-load order.
   Planning moves the earliest shard that supplies a missing forced game or new
   active-game diversity to the load frontier, so duplicate-only prefixes cannot
-  create an unbounded refill. That refill bound is not sufficient for long-game
-  rows stranded across many shards, so metadata planning also simulates eager
+  create an unbounded refill. A corpus is refused when one game's row count
+  exceeds `ceil(corpus_rows / batch_size)`: the extra tiny optimizer updates
+  this would force cannot be repaired by multiplying the loss under
+  Aurora/AdamW, whose normalized moments and decoupled decay still advance per
+  step. Accepted corpora must additionally spread into updates whose minimum
+  fill is at least **99%** (the production plan is 511/512); merely making
+  equally undersized updates is not a substitute for optimizer-level
+  weighting. That refill bound is not sufficient
+  for long-game rows stranded across many shards, so metadata planning simulates eager
   decoded bytes, batch assembly, and compaction copy spikes. The preregistered
   **8 GiB hard working-set cap** refuses an over-budget schedule before the
   first full shard decode or optimizer step and is enforced again at runtime.

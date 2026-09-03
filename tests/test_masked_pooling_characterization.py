@@ -158,7 +158,7 @@ def test_exact_objective_census_applies_fractional_draw_scaling() -> None:
     assert got["sf_eval"] == 1.5
 
 
-def test_exact_sf_move_mask_is_stable_after_mixed_schema_union() -> None:
+def test_exact_sf_move_mask_excludes_targetless_mixed_schema_rows() -> None:
     trainer = SimpleNamespace(
         model=SimpleNamespace(policy_size=POLICY_SIZE),
         soft_policy_min_tv=0.0,
@@ -191,8 +191,9 @@ def test_exact_sf_move_mask_is_stable_after_mixed_schema_union() -> None:
         name: sum(shard[name] for shard in shard_censuses)
         for name in EXACT_OBJECTIVE_NAMES
     }
-    # Union concatenation materializes a zero has_sf_policy value for the
-    # sparse-only row while its row-level has_sf_move fallback remains set.
+    # Union concatenation materializes a zero has_sf_policy value and a zero
+    # dense target for the sparse-only row. Its best-move flag alone must not
+    # enlarge the dense objective's denominator when sparse CE is disabled.
     batch = _batch(2, covered=False)
     batch["has_sf_policy"] = torch.tensor([1.0, 0.0])
     batch["has_sf_move"] = torch.ones(2)
@@ -211,8 +212,124 @@ def test_exact_sf_move_mask_is_stable_after_mixed_schema_union() -> None:
     )
     _, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
 
-    assert census["sf_move"] == 2.0
-    assert float(losses[weight_key]) == 2.0
+    assert census["sf_move"] == 1.0
+    assert float(losses[weight_key]) == 1.0
+
+
+def test_exact_sf_move_mask_stays_stable_through_mixed_schema_rebuild() -> None:
+    from chess_anti_engine.replay.disk_buffer import _concat_sparse_batches
+    from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_RAW_MAX
+    from chess_anti_engine.train.target_builder import (
+        SfTargetParams,
+        rebuild_sf_targets_in_arrays,
+    )
+
+    params = SfTargetParams(sf_policy_temp=0.012)
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=POLICY_SIZE),
+        soft_policy_min_tv=0.0,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=True,
+        sf_target_params=params,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=1.0,
+        sf_wdl_temperature=1.0,
+    )
+    raw = np.full((1, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (3, 40, 0, 700, 200)
+    common = {
+        "x": np.zeros((1, 1, 1, 1), np.float16),
+        "policy_target": np.eye(1, POLICY_SIZE, dtype=np.float16),
+        "wdl_target": np.zeros(1, np.int8),
+        "priority": np.ones(1, np.float32),
+        "has_policy": np.ones(1, np.uint8),
+        "sf_multipv_raw": raw,
+        "has_sf_multipv_raw": np.ones(1, np.uint8),
+        "sf_move_index": np.array([3], np.int32),
+        "has_sf_move": np.ones(1, np.uint8),
+    }
+    dense_target = np.zeros((1, POLICY_SIZE), np.float16)
+    dense_target[0, 5] = 1.0
+    dense = {
+        **common,
+        "sf_policy_target": dense_target,
+        "has_sf_policy": np.ones(1, np.uint8),
+    }
+    sparse_only = {
+        key: np.array(value, copy=True) for key, value in common.items()
+    }
+    shard_censuses = [
+        Trainer.exact_objective_mask_counter(cast(Any, trainer), shard)
+        for shard in (dense, sparse_only)
+    ]
+    census = {
+        name: sum(shard[name] for shard in shard_censuses)
+        for name in EXACT_OBJECTIVE_NAMES
+    }
+    merged = _concat_sparse_batches([dense, sparse_only])
+    rebuilt, coverage = rebuild_sf_targets_in_arrays(merged, params=params)
+
+    batch = _batch(2, covered=False)
+    batch["has_sf_policy"] = torch.as_tensor(rebuilt["has_sf_policy"])
+    batch["has_sf_move"] = torch.as_tensor(rebuilt["has_sf_move"])
+    batch["sf_policy_t"] = torch.as_tensor(rebuilt["sf_policy_target"])
+    outputs = _outputs(2)
+    outputs["policy_sf"] = torch.randn((2, POLICY_SIZE))
+    losses = compute_loss(
+        outputs,
+        batch,
+        report_exact_masked_sums=True,
+        exact_corpus_rows=2,
+        exact_objective_mask_weights=census,
+    )
+    _, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
+
+    assert coverage.policy_rebuilt == 1
+    assert census["sf_move"] == 1.0
+    assert float(rebuilt["sf_policy_target"][1].sum()) == 0.0
+    assert float(losses[weight_key]) == 1.0
+
+
+def test_exact_sf_move_mask_keeps_legacy_dense_target_fallback() -> None:
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=POLICY_SIZE),
+        soft_policy_min_tv=0.0,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=False,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=1.0,
+        sf_wdl_temperature=1.0,
+    )
+    target = np.eye(1, POLICY_SIZE, dtype=np.float32)
+    census = Trainer.exact_objective_mask_counter(
+        cast(Any, trainer),
+        {
+            "x": np.zeros((1, 1, 1, 1), dtype=np.float32),
+            "sf_policy_target": target,
+            "has_sf_move": np.ones(1, dtype=np.float32),
+        },
+    )
+    batch = _batch(1, covered=False)
+    batch.pop("has_sf_policy", None)
+    batch["has_sf_move"] = torch.ones(1)
+    batch["sf_policy_t"] = torch.as_tensor(target)
+    outputs = _outputs(1)
+    outputs["policy_sf"] = torch.randn((1, POLICY_SIZE))
+
+    losses = compute_loss(
+        outputs,
+        batch,
+        report_exact_masked_sums=True,
+        exact_corpus_rows=1,
+        exact_objective_mask_weights=census,
+    )
+    _, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
+
+    assert census["sf_move"] == 1.0
+    assert float(losses[weight_key]) == 1.0
 
 
 def test_masked_mean_publishes_zero_for_an_empty_bucket() -> None:

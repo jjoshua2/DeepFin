@@ -936,7 +936,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     tmp_path: Path,
 ) -> None:
     game_rows = [(0, ply) for ply in range(4)] + [
-        (game, 100 + game) for game in range(1, 10)
+        (game, 100 + game) for game in range(1, 13)
     ]
     shards = _write_game_rows(tmp_path / "rows", game_rows)
     out = tmp_path / "epoch_run"
@@ -955,11 +955,12 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert summary["steps"] == 4
     assert summary["steps_realized"] == 4
     assert summary["sampling"]["mode"] == "game_epoch"
-    assert summary["sampling"]["rows_planned"] == 13
-    assert summary["sampling"]["rows_realized"] == 13
+    assert summary["sampling"]["rows_planned"] == 16
+    assert summary["sampling"]["rows_realized"] == 16
     assert summary["sampling"]["batches_planned"] == 4
     assert summary["sampling"]["batches_realized"] == 4
-    assert summary["sampling"]["min_batch_rows_planned"] == 3
+    assert summary["sampling"]["min_batch_rows_planned"] == 4
+    assert summary["sampling"]["min_optimizer_batch_fill_ratio"] == 0.99
     assert summary["sampling"]["same_game_repeats_max"] == 0
     assert summary["sampling"]["input_history_encoding"] == (
         "lc0_root_legacy_meta"
@@ -990,7 +991,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert [window["steps_requested"] for window in windows] == [2, 2]
     assert [window["steps_cumulative"] for window in windows] == [2, 4]
     assert [window["train_steps_done"] for window in windows] == [2, 2]
-    assert [window["train_samples_seen"] for window in windows] == [7, 6]
+    assert [window["train_samples_seen"] for window in windows] == [8, 8]
     assert all(
         window["train_steps_done"] / window["train_time_s"] > 0.0
         for window in windows
@@ -1012,6 +1013,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert realized_replay["applied"]["max_working_set_bytes"] == (
         lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
     )
+    assert realized_replay["applied"]["min_optimizer_batch_fill_ratio"] == 0.99
     assert realized_replay["applied"]["mirror_augmentation"] is True
     assert realized_replay["applied"]["mirror_working_set_batch_copies"] == 7
     assert "shuffle_cap" not in realized_replay["applied"]
@@ -1074,7 +1076,7 @@ def test_game_epoch_failure_after_midpoint_removes_the_partial_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     game_rows = [(0, ply) for ply in range(4)] + [
-        (game, 100 + game) for game in range(1, 10)
+        (game, 100 + game) for game in range(1, 13)
     ]
     shards = _write_game_rows(tmp_path / "rows", game_rows)
     out = tmp_path / "failed_epoch"

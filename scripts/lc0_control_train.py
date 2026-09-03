@@ -187,6 +187,7 @@ from chess_anti_engine.replay.game_epoch import (
     DEFAULT_LOAD_WORKERS as GAME_EPOCH_LOAD_WORKERS,
     DEFAULT_MAX_WORKING_SET_BYTES as GAME_EPOCH_MAX_WORKING_SET_BYTES,
     DEFAULT_PLAN_WORKERS as GAME_EPOCH_PLAN_WORKERS,
+    MIN_OPTIMIZER_BATCH_FILL_RATIO as GAME_EPOCH_MIN_BATCH_FILL_RATIO,
     GameAwareEpochBuffer,
 )
 from chess_anti_engine.replay.shard import iter_shard_paths
@@ -2131,6 +2132,9 @@ def main(argv: list[str] | None = None) -> int:
                 "plan_workers": int(args.epoch_plan_workers),
                 "load_workers": int(args.epoch_load_workers),
                 "max_working_set_bytes": epoch_max_working_set_bytes,
+                "min_optimizer_batch_fill_ratio": (
+                    GAME_EPOCH_MIN_BATCH_FILL_RATIO
+                ),
                 "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
                 "mirror_working_set_batch_copies": int(
                     buf.plan.mirror_working_set_batch_copies
