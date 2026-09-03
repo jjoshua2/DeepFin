@@ -48,7 +48,7 @@ from chess_anti_engine.eval.audit import (
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
 from scripts.reachable_oracle import solve_reachable_oracle
-from scripts.repo_output_guard import repo_controlled_output
+from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 _SCHEMA = "deepfin.chunk_trajectory.v3"
 _CP_TO_SCORE_C = 300.0
@@ -213,6 +213,8 @@ def _require_safe_output_path(
     if output_path is None:
         return
     output = output_path.expanduser().resolve()
+    if reserved_output_path(output):
+        raise ValueError("--out must not use the output lock/staging namespace")
     protected = {
         input_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),

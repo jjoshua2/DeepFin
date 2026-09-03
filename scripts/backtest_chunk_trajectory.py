@@ -48,7 +48,7 @@ import numpy as np
 
 from scripts.native_import_guard import artifact as _artifact
 from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS
-from scripts.repo_output_guard import repo_controlled_output
+from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 from chess_anti_engine.eval.audit import legal_full_indices, load_audit_set, move_regrets
 from chess_anti_engine.eval.audit_history import MatchedAuditRows, default_matched_rows_path
@@ -262,12 +262,6 @@ def _output_lock_path(output_path: Path) -> Path:
     return output_path.with_name(f".{output_path.name}.lock")
 
 
-def _is_reserved_output_lock_path(path: Path) -> bool:
-    """Whether ``path`` can be another output's adjacent lock file."""
-    name = path.name
-    return name.startswith(".") and name.endswith(".lock") and len(name) > len("..lock")
-
-
 def _acquire_output_lock(output_path: Path) -> IO[bytes]:
     """Reserve a bank/manifest pair against another producer process."""
     lock_path = _output_lock_path(output_path)
@@ -333,8 +327,10 @@ def _require_safe_output_paths(
         output_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
     }
-    if any(_is_reserved_output_lock_path(path) for path in destinations):
-        raise SystemExit("--out or its manifest must not use the output-lock namespace")
+    if any(reserved_output_path(path) for path in destinations):
+        raise SystemExit(
+            "--out or its manifest must not use the output lock/staging namespace"
+        )
     outputs = {
         *destinations,
         _output_lock_path(output_path).expanduser().resolve(),
@@ -374,6 +370,10 @@ def _write_preregistration_plan(
         raise SystemExit("--write-preregistration must be inside the repository") from exc
     if output.exists():
         raise SystemExit(f"refusing to overwrite preregistration plan {output}")
+    if reserved_output_path(output):
+        raise SystemExit(
+            "--write-preregistration must not use the output lock/staging namespace"
+        )
     if repo_controlled_output(output, repo_root):
         raise SystemExit("--write-preregistration must target a new untracked file")
     if output in {path.expanduser().resolve() for path in protected_files}:

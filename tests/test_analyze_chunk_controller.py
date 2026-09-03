@@ -1626,14 +1626,25 @@ def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> No
         handle.close()
 
 
-def test_producer_output_rejects_the_lock_file_namespace(tmp_path: Path) -> None:
-    with pytest.raises(SystemExit, match="output-lock namespace"):
+@pytest.mark.parametrize("name", [".bank.jsonl.lock", ".bank.jsonl.tmp-12345"])
+def test_producer_output_rejects_internal_output_namespaces(
+    tmp_path: Path, name: str,
+) -> None:
+    with pytest.raises(SystemExit, match="lock/staging namespace"):
         _require_safe_output_paths(
-            tmp_path / ".bank.jsonl.lock",
+            tmp_path / name,
             tmp_path / "out.meta.json",
             protected_files=[],
             protected_directories=[],
         )
+
+
+def test_analyzer_output_cannot_replace_producer_staging_file(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+
+    with pytest.raises(ValueError, match="lock/staging namespace"):
+        _require_safe_output_path(bank, meta, tmp_path / ".bank.jsonl.tmp-12345")
 
 
 def test_publish_output_detects_replacement_before_manifest(

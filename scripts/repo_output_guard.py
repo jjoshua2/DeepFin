@@ -6,6 +6,19 @@ import subprocess
 from pathlib import Path
 
 
+def reserved_output_path(path: Path) -> bool:
+    """Whether a basename belongs to the adjacent lock/staging namespace."""
+    name = path.name
+    lock_name = (
+        name.startswith(".")
+        and name.endswith(".lock")
+        and len(name) > len("..lock")
+    )
+    staging_marker = name.find(".tmp-", 1)
+    staging_name = name.startswith(".") and staging_marker > 1
+    return lock_name or staging_name
+
+
 def _git_path(repo_root: Path, flag: str) -> Path | None:
     try:
         value = subprocess.check_output(
