@@ -1819,8 +1819,8 @@ def main(argv: list[str] | None = None) -> int:
         "--epoch-max-working-set-gib",
         type=float,
         default=GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3),
-        help="hard preflight/runtime cap for eager decoded shards, one batch "
-             "assembly, and compaction scratch under game_epoch "
+        help="hard preflight/runtime cap for eager decoded shards, batch "
+             "preparation plus pinned transfer, and compaction scratch under game_epoch "
              f"(default {GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3):g} GiB).",
     )
     parser.add_argument(
@@ -2134,6 +2134,9 @@ def main(argv: list[str] | None = None) -> int:
                 "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
                 "mirror_working_set_batch_copies": int(
                     buf.plan.mirror_working_set_batch_copies
+                ),
+                "collation_working_set_batch_copies": int(
+                    buf.plan.collation_working_set_batch_copies
                 ),
                 "validated_load_payload_copies": int(
                     buf.plan.validated_load_payload_copies

@@ -966,6 +966,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     )
     assert summary["sampling"]["history_rep_fix"] is True
     assert summary["sampling"]["validated_load_payload_copies"] == 5
+    assert summary["sampling"]["collation_working_set_batch_copies"] == 3
     assert summary["sampling"]["complete"] is True
     assert summary["sampling"]["max_working_set_bytes"] == (
         lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
@@ -1007,6 +1008,7 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     )
     assert realized_replay["applied"]["history_rep_fix"] is True
     assert realized_replay["applied"]["validated_load_payload_copies"] == 5
+    assert realized_replay["applied"]["collation_working_set_batch_copies"] == 3
     assert realized_replay["applied"]["max_working_set_bytes"] == (
         lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
     )

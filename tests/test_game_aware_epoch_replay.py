@@ -15,11 +15,14 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
+    SF_EVAL_PV_CHECKED_FIELD,
+    SF_EVAL_PV_ORPHAN_FIELD,
     ShardMeta,
     load_shard_arrays,
     samples_to_arrays,
     save_local_shard_arrays,
 )
+from chess_anti_engine.train.trainer import Trainer, _SfRebuildCoverageAccumulator
 
 
 def _sample(*, game: int | None, row: int, planes: int = 146) -> ReplaySample:
@@ -347,7 +350,11 @@ def test_duplicate_only_prefix_is_skipped_for_diversity_and_refill_is_bounded(
 
 def test_parallel_validation_groups_retain_prior_group_payloads(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Isolate the validated-load grouping from the separately covered host
+    # preparation/collation reserve.
+    monkeypatch.setattr(game_epoch_module, "COLLATION_BATCH_COPIES", 1)
     shard_dir = _write(
         tmp_path / "replay",
         [[(game, game)] for game in range(8)],
@@ -555,6 +562,86 @@ def test_single_shard_validation_scratch_obeys_exact_modeled_peak(
     assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
     assert bounded.receipt()["validated_load_payload_copies"] == 5
     assert bounded.receipt()["complete"] is True
+
+
+def test_single_chunk_host_pipeline_copies_are_preflighted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Isolate the post-gather host pipeline from the separately covered eager
+    # validation reserve. One source chunk still needs room for trainer-derived
+    # arrays and the accumulating pinned copy made by CUDA collation.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(8)]],
+    )
+    probe = _open(shard_dir, batch_size=4, load_workers=1)
+    record = probe._records[0]
+    batch_bytes = int(4 * record.row_bytes + record.scalar_bytes)
+    one_copy_peak = int(record.decoded_bytes + batch_bytes)
+    exact_peak = int(
+        record.decoded_bytes
+        + game_epoch_module.COLLATION_BATCH_COPIES * batch_bytes
+    )
+
+    assert game_epoch_module.COLLATION_BATCH_COPIES == 3
+    assert exact_peak > one_copy_peak
+    assert probe.plan.peak_working_set_bytes == exact_peak
+    assert probe.plan.collation_working_set_batch_copies == 3
+    with pytest.raises(ValueError, match="batch 0 materialization"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            load_workers=1,
+            max_working_set_bytes=exact_peak - 1,
+        )
+    bounded = _open(
+        shard_dir,
+        batch_size=4,
+        load_workers=1,
+        max_working_set_bytes=exact_peak,
+    )
+
+    _drain(bounded)
+
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["collation_working_set_batch_copies"] == 3
+    assert bounded.receipt()["complete"] is True
+
+
+def test_host_pipeline_reserve_covers_trainer_derived_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    rows = [(game, game) for game in range(16)]
+    shard_dir = _write(tmp_path / "replay", [rows])
+    buf = _open(shard_dir, batch_size=8, load_workers=1)
+    record = buf._records[0]
+    planned_batch_bytes = int(8 * record.row_bytes + record.scalar_bytes)
+    arrays = buf.sample_batch_arrays(8)
+    sampled_bytes = buf._arrays_nbytes(arrays)
+
+    trainer = object.__new__(Trainer)
+    trainer._sf_rebuild_coverage = _SfRebuildCoverageAccumulator()
+    trainer.rebuild_sf_targets = False
+    trainer.rebuild_categorical_target = False
+    trainer.sf_policy_sparse_ce = False
+    trainer._input_history_encoding = "legacy"
+    prepared = trainer._prepare_host_arrays(
+        arrays, rng=np.random.default_rng(0), mirror_prob=0.0,
+    )
+    prepared_bytes = buf._arrays_nbytes(prepared)
+
+    assert SF_EVAL_PV_ORPHAN_FIELD in prepared
+    assert SF_EVAL_PV_CHECKED_FIELD in prepared
+    assert sampled_bytes == planned_batch_bytes
+    assert prepared_bytes == sampled_bytes + 2 * 8 * np.dtype(np.float32).itemsize
+    assert 2 * prepared_bytes > 2 * planned_batch_bytes
+    assert 2 * prepared_bytes <= (
+        game_epoch_module.COLLATION_BATCH_COPIES * planned_batch_bytes
+    )
 
 
 def test_tight_cap_keeps_multichunk_compaction_in_lockstep_with_plan(
@@ -825,6 +912,7 @@ def test_mixed_input_history_identity_is_refused_before_any_decode(
 
 def test_input_history_identity_is_banked_and_rechecked_at_decode(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shard_dir = _write(
         tmp_path / "replay",
@@ -848,11 +936,131 @@ def test_input_history_identity_is_banked_and_rechecked_at_decode(
 
     shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
     shard.attrs["input_history_encoding"] = "lc0_root"
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
     with pytest.raises(RuntimeError, match="changed input history identity"):
         buf.sample_batch_arrays(1)
 
 
-def test_game_multiplicities_are_rechecked_after_planning(tmp_path: Path) -> None:
+def test_shard_content_fingerprint_rejects_same_schema_rewrite(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+    assert len(buf.plan.corpus_sha256) == 64
+    assert buf.receipt()["corpus_identity"] == game_epoch_module.CORPUS_IDENTITY
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["x"][0, 0, 0, 0] = np.float16(7.0)
+
+    with pytest.raises(RuntimeError, match="before full decode"):
+        buf.sample_batch_arrays(2)
+    assert buf.receipt()["complete"] is False
+
+
+def test_shard_content_fingerprint_freezes_staging_symlink_target(
+    tmp_path: Path,
+) -> None:
+    first = _write(tmp_path / "source_a", [[(0, 10), (1, 11)]])
+    second = _write(tmp_path / "source_b", [[(0, 20), (1, 21)]])
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    link = staged / "shard_000000.zarr"
+    link.symlink_to(first / "shard_000000.zarr")
+    buf = _open(staged, batch_size=2, load_workers=1)
+
+    link.unlink()
+    link.symlink_to(second / "shard_000000.zarr")
+    batch = buf.sample_batch_arrays(2)
+
+    assert sorted(np.asarray(batch["ply_index"]).tolist()) == [10, 11]
+    assert buf.receipt()["complete"] is True
+
+
+def test_shard_content_fingerprint_rejects_mutation_during_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+    original_load = game_epoch_module.load_shard_arrays
+
+    def mutating_load(*args: Any, **kwargs: Any) -> Any:
+        loaded = original_load(*args, **kwargs)
+        if kwargs.get("lazy") is False:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["policy_target"][0, 0] = np.float16(0.5)
+        return loaded
+
+    monkeypatch.setattr(
+        game_epoch_module, "load_shard_arrays", mutating_load,
+    )
+
+    with pytest.raises(RuntimeError, match="during exact-epoch full decode"):
+        buf.sample_batch_arrays(2)
+
+
+def test_shard_content_fingerprint_brackets_objective_census(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    mutated = False
+
+    def mutating_counter(arrays: Mapping[str, Any]) -> Mapping[str, float]:
+        nonlocal mutated
+        if not mutated:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["x"][0, 0, 0, 0] = np.float16(7.0)
+            mutated = True
+        return {"policy": float(arrays["x"].shape[0])}
+
+    with pytest.raises(ValueError, match=r"content changed during.*preflight"):
+        _open(
+            shard_dir,
+            batch_size=2,
+            load_workers=1,
+            objective_mask_counter=mutating_counter,
+        )
+
+
+def test_shard_content_fingerprint_brackets_lazy_metadata_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    original_load = game_epoch_module.load_shard_arrays
+    mutated = False
+
+    def mutating_load(*args: Any, **kwargs: Any) -> Any:
+        nonlocal mutated
+        loaded = original_load(*args, **kwargs)
+        if kwargs.get("lazy") is True and not mutated:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["x"][0, 0, 0, 0] = np.float16(7.0)
+            mutated = True
+        return loaded
+
+    monkeypatch.setattr(
+        game_epoch_module, "load_shard_arrays", mutating_load,
+    )
+
+    with pytest.raises(ValueError, match=r"content changed during.*preflight"):
+        _open(shard_dir, batch_size=2, load_workers=1)
+
+
+def test_game_multiplicities_are_rechecked_after_planning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     shard_dir = _write(
         tmp_path / "replay",
         [[(0, 0), (0, 1), (1, 2), (1, 3)]],
@@ -864,12 +1072,20 @@ def test_game_multiplicities_are_rechecked_after_planning(tmp_path: Path) -> Non
     # per-game deadlines no longer describe the decoded shard.
     shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
     shard["game_id"][:] = np.asarray([0, 1, 1, 1], dtype=np.int64)
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
 
     with pytest.raises(RuntimeError, match="per-game row counts changed"):
         buf.sample_batch_arrays(2)
 
 
-def test_objective_census_is_banked_and_rechecked_at_decode(tmp_path: Path) -> None:
+def test_objective_census_is_banked_and_rechecked_at_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     shard_dir = _write(
         tmp_path / "replay",
         [[(0, 0), (1, 1), (2, 2)]],
@@ -892,6 +1108,11 @@ def test_objective_census_is_banked_and_rechecked_at_decode(tmp_path: Path) -> N
 
     shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
     shard["has_policy"][0] = False
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
     with pytest.raises(RuntimeError, match="objective-mask populations changed"):
         buf.sample_batch_arrays(3)
 

@@ -16,10 +16,11 @@ from one game in the same optimizer batch.
 * the complete schedule is planned before training, so the launcher can refuse
   a step budget which would truncate the epoch or wrap into a second one.
 
-Only the lightweight ``game_id`` and objective-eligibility columns are read
-while planning (wide targets remain lazy unless a future supported mask needs
-them). Full training arrays are decoded once, just before their rows become
-eligible;
+Only the lightweight ``game_id`` and objective-eligibility columns are decoded
+while planning (wide targets remain lazy unless a supported mask needs them),
+but every compressed shard file is streamed into a content fingerprint that is
+rechecked around full decode. Full training arrays are decoded once, just
+before their rows become eligible;
 consumed portions of long-lived shards are compacted away. The planner models
 eager shard residency, batch assembly, and compaction copy spikes against a
 hard byte cap, refusing an over-budget corpus before training. This keeps I/O
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import struct
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -66,6 +68,13 @@ DEFAULT_MAX_WORKING_SET_BYTES = 8 * 1024**3
 # allowance that dominates the row mask/index scratch for a valid chess input.
 # The planner charges this only when mirroring is enabled.
 MIRROR_AUGMENTATION_BATCH_COPIES = 7
+# Host preparation can add or rebuild fields after sampling, then CUDA
+# collation pins each NumPy field before its nonblocking transfer. Three copies
+# of the persisted batch conservatively cover the prepared mapping plus its
+# accumulating pinned copy and one full-payload allowance for those derived
+# arrays. Charge this on CPU too: exact plans are device-agnostic and
+# conservative refusal is preferable to a device-dependent hard-cap claim.
+COLLATION_BATCH_COPIES = 3
 # ``load_shard_arrays(..., validate=True)`` owns the decoded payload while its
 # content checks create a full boolean comparison/finite temporary, an active-
 # row copy for optional distributions, and row-sized reduction/index scratch.
@@ -73,6 +82,9 @@ MIRROR_AUGMENTATION_BATCH_COPIES = 7
 # for a valid chess shard. Apply the bound to every shard validated concurrently
 # so ``load_workers`` cannot make the runtime peak larger than the preflight.
 VALIDATED_LOAD_PAYLOAD_COPIES = 5
+CORPUS_IDENTITY = (
+    "sha256(resolved shard paths + per-shard sha256(sorted relative paths + sizes + bytes))"
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +104,7 @@ class _ShardGames:
     row_bytes: int
     scalar_bytes: int
     row_field_bytes: tuple[tuple[str, int], ...]
+    content_sha256: str
     objective_mask_weights: tuple[tuple[str, float], ...] = ()
 
     @property
@@ -121,7 +134,9 @@ class GameEpochPlan:
     peak_working_set_bytes: int
     mirror_augmentation: bool
     mirror_working_set_batch_copies: int
+    collation_working_set_batch_copies: int
     validated_load_payload_copies: int
+    corpus_sha256: str
     objective_mask_weights: tuple[tuple[str, float], ...]
     plan_sha256: str
     load_counts: np.ndarray = field(repr=False)
@@ -153,9 +168,14 @@ class GameEpochPlan:
             "mirror_working_set_batch_copies": int(
                 self.mirror_working_set_batch_copies
             ),
+            "collation_working_set_batch_copies": int(
+                self.collation_working_set_batch_copies
+            ),
             "validated_load_payload_copies": int(
                 self.validated_load_payload_copies
             ),
+            "corpus_identity": CORPUS_IDENTITY,
+            "corpus_sha256": self.corpus_sha256,
             "objective_mask_weights": {
                 name: float(weight) for name, weight in self.objective_mask_weights
             },
@@ -234,6 +254,56 @@ class _PlanChunk:
 
 def _seeded_rng(seed: int, stream: int) -> np.random.Generator:
     return np.random.default_rng(np.random.SeedSequence([int(seed), int(stream)]))
+
+
+def _shard_content_sha256(path: Path) -> str:
+    """Stream a deterministic digest over a Zarr tree's names and bytes."""
+    root = path.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError(f"exact-epoch shard is not a directory: {path}")
+    digest = hashlib.sha256()
+    files_seen = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            file_path = Path(dirpath) / filename
+            relative = file_path.relative_to(root).as_posix().encode(
+                "utf-8", errors="surrogateescape",
+            )
+            before = file_path.stat()
+            digest.update(struct.pack("<I", len(relative)))
+            digest.update(relative)
+            digest.update(struct.pack("<Q", int(before.st_size)))
+            bytes_read = 0
+            with file_path.open("rb") as handle:
+                while block := handle.read(1024 * 1024):
+                    bytes_read += len(block)
+                    digest.update(block)
+                after = os.fstat(handle.fileno())
+            if (
+                bytes_read != int(before.st_size)
+                or int(after.st_size) != int(before.st_size)
+                or int(after.st_mtime_ns) != int(before.st_mtime_ns)
+                or int(after.st_ctime_ns) != int(before.st_ctime_ns)
+            ):
+                raise RuntimeError(
+                    f"{path} changed while its exact-epoch content was hashed",
+                )
+            files_seen += 1
+    if files_seen == 0:
+        raise ValueError(f"exact-epoch shard contains no files: {path}")
+    return digest.hexdigest()
+
+
+def _corpus_sha256(records: Sequence[_ShardGames]) -> str:
+    """Aggregate per-shard content identities independently of epoch seed."""
+    digest = hashlib.sha256()
+    for record in sorted(records, key=lambda item: str(item.path.resolve())):
+        resolved = str(record.path.resolve()).encode("utf-8")
+        digest.update(struct.pack("<I", len(resolved)))
+        digest.update(resolved)
+        digest.update(bytes.fromhex(record.content_sha256))
+    return digest.hexdigest()
 
 
 def _declared_storage_bytes(
@@ -328,6 +398,10 @@ def _input_history_identity(
 
 
 def _scan_shard(path: Path) -> _ShardGames:
+    # Freeze a staging symlink's target along with its bytes. Re-resolving the
+    # link later could otherwise move an exact plan to another source tree.
+    path = path.resolve(strict=True)
+    content_sha256 = _shard_content_sha256(path)
     arrs, _ = load_shard_arrays(path, lazy=True)
     input_history_encoding, history_rep_fix = _input_history_identity(
         arrs, path=path,
@@ -364,6 +438,7 @@ def _scan_shard(path: Path) -> _ShardGames:
             row_bytes=0,
             scalar_bytes=0,
             row_field_bytes=(),
+            content_sha256=content_sha256,
         )
     if "game_id" not in arrs or "has_game_id" not in arrs:
         raise ValueError(
@@ -403,6 +478,7 @@ def _scan_shard(path: Path) -> _ShardGames:
         row_bytes=row_bytes,
         scalar_bytes=scalar_bytes,
         row_field_bytes=row_field_bytes,
+        content_sha256=content_sha256,
     )
 
 
@@ -452,6 +528,7 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
                 row_bytes=record.row_bytes,
                 scalar_bytes=record.scalar_bytes,
                 row_field_bytes=record.row_field_bytes,
+                content_sha256=record.content_sha256,
             ),
         )
     return namespaced
@@ -461,38 +538,58 @@ ObjectiveMaskCounter = Callable[[Mapping[str, Any]], Mapping[str, float]]
 
 
 def _attach_objective_mask_weights(
-    records: Sequence[_ShardGames], counter: ObjectiveMaskCounter | None,
+    records: Sequence[_ShardGames],
+    counter: ObjectiveMaskCounter | None,
+    workers: int,
 ) -> list[_ShardGames]:
-    """Bank each shard's exact objective populations from lazy arrays.
+    """Bank each shard's exact objective populations and freeze its content.
 
     The callback belongs to the trainer because it owns target rebuilding and
     loss-mask semantics.  This module owns the freeze: it records the counts in
     the plan and re-runs the same callback after eager decode so a shard edit
     cannot leave the optimizer using stale corpus denominators.
     """
-    if counter is None:
-        return list(records)
     expected_names: tuple[str, ...] | None = None
     out: list[_ShardGames] = []
     for record in records:
-        arrs, _ = load_shard_arrays(record.path, lazy=True)
-        raw = counter(arrs)
-        weights = tuple((str(name), float(value)) for name, value in raw.items())
-        names = tuple(name for name, _ in weights)
-        if expected_names is None:
-            expected_names = names
-        elif names != expected_names:
-            raise ValueError(
-                f"{record.path} objective census returned keys {names}, expected "
-                f"{expected_names}",
+        weights: tuple[tuple[str, float], ...] = ()
+        if counter is not None:
+            arrs, _ = load_shard_arrays(record.path, lazy=True)
+            raw = counter(arrs)
+            weights = tuple(
+                (str(name), float(value)) for name, value in raw.items()
             )
-        for name, value in weights:
-            if not math.isfinite(value) or value < 0.0:
+            names = tuple(name for name, _ in weights)
+            if expected_names is None:
+                expected_names = names
+            elif names != expected_names:
                 raise ValueError(
-                    f"{record.path} objective census returned invalid "
-                    f"{name}={value!r}",
+                    f"{record.path} objective census returned keys {names}, "
+                    f"expected {expected_names}",
                 )
+            for name, value in weights:
+                if not math.isfinite(value) or value < 0.0:
+                    raise ValueError(
+                        f"{record.path} objective census returned invalid "
+                        f"{name}={value!r}",
+                    )
         out.append(replace(record, objective_mask_weights=weights))
+
+    n_workers = max(1, min(int(workers), len(out)))
+    if n_workers <= 1:
+        after_hashes = [_shard_content_sha256(record.path) for record in out]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=n_workers, thread_name_prefix="game-epoch-fingerprint",
+        ) as pool:
+            after_hashes = list(pool.map(
+                _shard_content_sha256, (record.path for record in out),
+            ))
+    for record, after_sha256 in zip(out, after_hashes, strict=True):
+        if after_sha256 != record.content_sha256:
+            raise ValueError(
+                f"{record.path} content changed during exact-epoch preflight",
+            )
     return out
 
 
@@ -723,6 +820,7 @@ def _plan_epoch(
     if rows <= 0:
         raise ValueError("game-aware epoch corpus holds no rows")
     sources = {str(record.path.resolve().parent) for record in shuffled}
+    corpus_sha256 = _corpus_sha256(records)
     objective_names = tuple(
         name for name, _ in shuffled[0].objective_mask_weights
     )
@@ -754,6 +852,7 @@ def _plan_epoch(
     resident_bytes_after_batch: list[int] = []
     digest = hashlib.sha256()
     digest.update(struct.pack("<qqq", int(seed), int(batch_size), int(rows)))
+    digest.update(bytes.fromhex(corpus_sha256))
     for name, weight in objective_mask_weights:
         encoded = name.encode("utf-8")
         digest.update(struct.pack("<I", len(encoded)))
@@ -801,6 +900,7 @@ def _plan_epoch(
             digest.update(struct.pack("<I", len(resolved)))
             digest.update(resolved)
             digest.update(struct.pack("<q", int(record.rows)))
+            digest.update(bytes.fromhex(record.content_sha256))
             for game, count in zip(
                 record.game_keys.tolist(), record.game_counts.tolist(), strict=True,
             ):
@@ -867,6 +967,7 @@ def _plan_epoch(
         assembly_copies = 1 if len(touched_chunks) == 1 else 2
         working_copies = max(
             assembly_copies,
+            COLLATION_BATCH_COPIES,
             MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0,
         )
         observe(
@@ -943,7 +1044,9 @@ def _plan_epoch(
         mirror_working_set_batch_copies=(
             MIRROR_AUGMENTATION_BATCH_COPIES if mirror_augmentation else 0
         ),
+        collation_working_set_batch_copies=COLLATION_BATCH_COPIES,
         validated_load_payload_copies=VALIDATED_LOAD_PAYLOAD_COPIES,
+        corpus_sha256=corpus_sha256,
         objective_mask_weights=objective_mask_weights,
         plan_sha256=digest.hexdigest(),
         load_counts=load_array,
@@ -1013,7 +1116,9 @@ class GameAwareEpochBuffer:
                 "exact-epoch corpus mixes policy widths "
                 f"{policy_sizes}; normalize the corpus before training",
             )
-        records = _attach_objective_mask_weights(records, objective_mask_counter)
+        records = _attach_objective_mask_weights(
+            records, objective_mask_counter, int(plan_workers),
+        )
         effective_load_workers = max(1, int(load_workers))
         self.plan, self._records = _plan_epoch(
             records,
@@ -1057,6 +1162,7 @@ class GameAwareEpochBuffer:
         self._realized_digest.update(
             struct.pack("<qqq", int(seed), int(batch_size), int(self.plan.rows)),
         )
+        self._realized_digest.update(bytes.fromhex(self.plan.corpus_sha256))
         for name, weight in self.plan.objective_mask_weights:
             encoded = name.encode("utf-8")
             self._realized_digest.update(struct.pack("<I", len(encoded)))
@@ -1102,7 +1208,18 @@ class GameAwareEpochBuffer:
             )
 
     def _load_one(self, record: _ShardGames) -> dict[str, np.ndarray]:
+        before_sha256 = _shard_content_sha256(record.path)
+        if before_sha256 != record.content_sha256:
+            raise RuntimeError(
+                f"{record.path} content changed after exact-epoch preflight "
+                "and before full decode",
+            )
         arrs, _ = load_shard_arrays(record.path, lazy=False, validate=True)
+        after_sha256 = _shard_content_sha256(record.path)
+        if after_sha256 != record.content_sha256:
+            raise RuntimeError(
+                f"{record.path} content changed during exact-epoch full decode",
+            )
         rows = int(arrs["x"].shape[0])
         if rows != record.rows:
             raise RuntimeError(
@@ -1308,6 +1425,7 @@ class GameAwareEpochBuffer:
                 self._realized_digest.update(struct.pack("<I", len(resolved)))
                 self._realized_digest.update(resolved)
                 self._realized_digest.update(struct.pack("<q", int(record.rows)))
+                self._realized_digest.update(bytes.fromhex(record.content_sha256))
                 self._add_loaded_chunk(record, arrs)
 
         # Do not materialize an arbitrarily long load prefix into one Python
@@ -1407,6 +1525,7 @@ class GameAwareEpochBuffer:
         assembly_copies = 1 if len(touched_chunks) == 1 else 2
         working_copies = max(
             assembly_copies,
+            COLLATION_BATCH_COPIES,
             MIRROR_AUGMENTATION_BATCH_COPIES
             if self._mirror_augmentation else 0,
         )

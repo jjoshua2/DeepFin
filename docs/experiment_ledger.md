@@ -73018,8 +73018,20 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   planned peak, and produced plan
   `c3ce750c2a5e57abf276db9c4a61d414b6574d7d27e7fd0e33265ddcd68de7ad`.
   Its banked objective-mask weights are policy = WDL = 18,910,484 and zero for
-  every optional head, matching this staged corpus. These are plumbing
-  observations, not the learning verdict.
+  every optional head, matching this staged corpus. That census-only identity
+  was itself superseded after review required a byte-level corpus identity and
+  host-preparation/pinned-transfer headroom: the full preflight streamed all
+  671,766 compressed Zarr files twice, took 20:38.94 (1,101,304 KiB process max
+  RSS), and banked corpus
+  `15d17b464ca459ec23f24a161b5ac03b3061b97f8c5cd779eef10b236d46c40c`
+  with plan
+  `8897d21ae3c7b74b9793ae81fae3aefe1a388d105a6c62eb0464e9ae95a97fb1`.
+  Every structural/objective count and the 7,324,639,036-byte planned peak were
+  unchanged; the corpus's seven-copy mirror allowance dominates the new
+  three-copy host-pipeline floor. The 20.6-minute result makes the added
+  one-time launch I/O cost explicit rather than presenting the earlier
+  metadata-only timing as current. These are plumbing observations, not the
+  learning verdict.
 - **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
   6.** At the next clean GPU boundary, train both samplers from scratch on the
   frozen 4,894,143-row real-history corpus for the same **9,559 optimizer
