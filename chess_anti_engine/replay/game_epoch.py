@@ -11,8 +11,8 @@ from one game in the same optimizer batch.
 * every stored row is returned exactly once;
 * a batch contains at most one row for each semantic game (source directory +
   its source-local ``game_id``);
-* shard order, game choice, and within-game row order are deterministic from
-  the seed; and
+* shard order, game choice, and each shard-local game segment's row order are
+  deterministic from the seed; and
 * the complete schedule is planned before training, so the launcher can refuse
   a step budget which would truncate the epoch or wrap into a second one.
 
@@ -85,6 +85,7 @@ class GameEpochPlan:
             "sources": int(self.source_count),
             "games": int(self.game_count),
             "game_identity": "resolved_shard_parent+game_id",
+            "row_order": "seeded_shuffle_within_shard_game_segments",
             "batch_size": int(self.batch_size),
             "seed": int(self.seed),
             "plan_sha256": self.plan_sha256,

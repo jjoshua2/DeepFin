@@ -1547,6 +1547,18 @@ def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
     ]
 
 
+def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
+    """JSON-safe scalar fields from one ``Trainer.train_steps`` window."""
+    return {
+        field.name: getattr(metrics, field.name)
+        for field in dataclasses.fields(type(metrics))
+        if isinstance(
+            getattr(metrics, field.name),
+            (int, float, bool, type(None)),
+        )
+    }
+
+
 def print_realized(capture: _LossCapture, metrics: Any) -> None:
     """The realized-vs-configured table, head losses, and head denominators."""
     readout = capture.worst
@@ -2200,6 +2212,7 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    train_window_metrics: list[dict[str, Any]] = []
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
@@ -2250,6 +2263,12 @@ def main(argv: list[str] | None = None) -> int:
                 steps=this_window,
             )
             steps_done += this_window
+            train_window_metrics.append({
+                "window_index": int(window_index + 1),
+                "steps_requested": int(this_window),
+                "steps_cumulative": int(steps_done),
+                **_scalar_metric_record(metrics),
+            })
             if n_windows > 1:
                 # flush=True is load-bearing: stdout redirected to a file is
                 # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
@@ -2467,11 +2486,12 @@ def main(argv: list[str] | None = None) -> int:
         "compute_loss_calls": capture.calls,
         "realized": dict(readout.as_table()),
         "realized_categorical": dict(capture.worst_categorical.as_table()),
-        "metrics": {
-            f.name: getattr(metrics, f.name)
-            for f in dataclasses.fields(type(metrics))
-            if isinstance(getattr(metrics, f.name), (int, float, bool, type(None)))
-        },
+        # ``metrics`` remains the end-of-run/final-window compatibility view.
+        # The preregistered throughput gate needs the median over EVERY window,
+        # so bank the complete per-window series in the run-owned artifact too;
+        # stdout and the shared default TensorBoard directory are not receipts.
+        "metrics": _scalar_metric_record(metrics),
+        "train_window_metrics": train_window_metrics,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if mid.saved_at_step is not None:

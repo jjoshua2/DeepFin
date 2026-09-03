@@ -72965,16 +72965,19 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - **Hypothesis.** Frozen supervised corpora should not use the rolling replay
   sampler's replacement draws: at one nominal exposure they leave about 36.8%
   of rows unseen, repeat others, and admit several correlated plies from one
-  game into one batch. The candidate independently shuffles each game's row
-  order, samples at most one row per game per batch, replaces exhausted games,
-  preserves the corpus's natural WDL distribution, and refuses any step budget
-  that does not consume the complete planned epoch. `replacement` remains the
-  default so the in-flight 20M run and historical controls are untouched.
+  game into one batch. The candidate independently shuffles each shard-local
+  segment of a game's rows, samples at most one row per game per batch, replaces
+  exhausted games, preserves the corpus's natural WDL distribution, and refuses
+  any step budget that does not consume the complete planned epoch.
+  `replacement` remains the default so the in-flight 20M run and historical
+  controls are untouched.
 - **Mechanism/negative controls.** The plan and realized schedule carry
   independently accumulated SHA-256 receipts; completion additionally requires
   all planned rows, games, decoded chunks and shards to close exactly, with
-  `same_game_repeats_max = 0`. Position order uses an RNG stream separate from
-  trainer augmentation. Independent conversion outputs namespace their
+  `same_game_repeats_max = 0`. Each decoded shard segment's position order uses
+  an RNG stream separate from trainer augmentation; games split at a fixed shard
+  boundary drain those independently shuffled segments in shard-load order.
+  Independent conversion outputs namespace their
   source-local `game_id` by resolved shard parent. The launcher requires
   `accum_steps = 1`, making the scheduler's batch the complete optimizer batch
   covered by that uniqueness invariant. CUDA retry and discarded non-finite
@@ -73020,10 +73023,11 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   realized, and zero same-game repeats. Using the already-emitted pipeline
   timers over the same 9,559 steps, candidate median steps/s must be at least
   0.90× its same-seed replacement control; otherwise optimize the loader before
-  the 100M run even if the learning verdict succeeds. Bank per-window timer
-  rows, not only total wall time. The currently running 20M replacement job is
-  useful operational context but is **not** one of these preregistered paired
-  arms.
+  the 100M run even if the learning verdict succeeds. Bank and read every
+  `summary.json.train_window_metrics` row, not only total wall time or the
+  final-window compatibility view in `summary.json.metrics`. The currently
+  running 20M replacement job is useful operational context but is **not** one
+  of these preregistered paired arms.
 - **Confounds/revert.** The samplers necessarily see different row sequences;
   that is the intervention. Batch sizes are 511/512 in the exact arm versus
   512 in replacement; the one-row spread is the price of avoiding a single

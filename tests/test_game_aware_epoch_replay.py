@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -132,7 +133,7 @@ def test_schedule_is_seed_deterministic_and_augmentation_rng_cannot_move_it(
     assert changed.plan.plan_sha256 != first.plan.plan_sha256
 
 
-def test_positions_are_shuffled_within_each_game_not_dealt_by_ply_round(
+def test_positions_are_shuffled_within_each_shard_game_segment(
     tmp_path: Path,
 ) -> None:
     """Mutation target: deleting `_row_rng.shuffle(indices)` makes every
@@ -156,6 +157,34 @@ def test_positions_are_shuffled_within_each_game_not_dealt_by_ply_round(
         sequence != sorted(sequence) for sequence in by_game.values()
     )
     assert non_monotonic >= 14, by_game
+
+
+def test_cross_shard_game_order_reports_its_segment_local_shuffle_contract(
+    tmp_path: Path,
+) -> None:
+    first_segment = [(0, ply) for ply in range(8)]
+    second_segment = [(0, 100 + ply) for ply in range(8)]
+    # Singleton games give every batch enough independent rows while game 0
+    # crosses the same fixed row-count boundary used by the converter.
+    fillers = [(game, 1_000 + game) for game in range(1, 17)]
+    buf = _open(
+        _write(tmp_path / "replay", [first_segment, second_segment + fillers]),
+        seed=7,
+        batch_size=4,
+    )
+
+    batches = _drain(buf)
+    game_zero_rows = [
+        row for batch in batches for game, row in batch if game == 0
+    ]
+    segment_ids = [int(row >= 100) for row in game_zero_rows]
+
+    # Rows are shuffled inside each loaded segment, but the bounded sequential
+    # loader deliberately does not turn a split game into random shard reads.
+    assert sum(a != b for a, b in pairwise(segment_ids)) == 1
+    assert buf.receipt()["row_order"] == (
+        "seeded_shuffle_within_shard_game_segments"
+    )
 
 
 def test_tail_is_ragged_instead_of_reusing_a_game_to_fill_it(tmp_path: Path) -> None:

@@ -945,7 +945,8 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
         "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
         "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
         "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
-        "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+        "--epoch-load-workers", "2", "--train-window-steps", "2",
+        "--device", "cpu", "--no-compile",
         "--allow-arch-drift", "--allow-invalid-control",
     ])
 
@@ -962,6 +963,22 @@ def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
     assert summary["sampling"]["same_game_repeats_max"] == 0
     assert summary["sampling"]["complete"] is True
     assert summary["sampling"]["plan_sha256"] == summary["sampling"]["realized_sha256"]
+    assert summary["sampling"]["row_order"] == (
+        "seeded_shuffle_within_shard_game_segments"
+    )
+    windows = summary["train_window_metrics"]
+    assert [window["window_index"] for window in windows] == [1, 2]
+    assert [window["steps_requested"] for window in windows] == [2, 2]
+    assert [window["steps_cumulative"] for window in windows] == [2, 4]
+    assert [window["train_steps_done"] for window in windows] == [2, 2]
+    assert [window["train_samples_seen"] for window in windows] == [7, 6]
+    assert all(
+        window["train_steps_done"] / window["train_time_s"] > 0.0
+        for window in windows
+    )
+    assert summary["metrics"]["train_samples_seen"] == windows[-1][
+        "train_samples_seen"
+    ]
     realized_replay = summary["realized_replay_after_guard"]
     assert realized_replay["sampling_mode"] == "game_epoch"
     assert realized_replay["applied"]["batch_size"] == 4
