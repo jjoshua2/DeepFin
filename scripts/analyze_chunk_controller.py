@@ -32,7 +32,10 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+import chess
 import numpy as np
+
+from chess_anti_engine.moves import index_to_move
 
 _SCHEMA = "deepfin.chunk_trajectory.v2"
 _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
@@ -41,6 +44,7 @@ _COMPLEXITY_STABLE_CHUNKS = 2
 _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
+_PRODUCTION_TB_COMPONENTS = ((365, 365), (510, 145))
 _PRODUCTION_GSS_HALVING_REV = 3
 _ACTIVE_PARAMETER_KEYS = {
     "walker_puct": {
@@ -196,6 +200,17 @@ def _sum_manifest_ints(rows: Any, field: str) -> int:
     return sum(int(row[field]) for row in rows)
 
 
+def _tablebase_component_counts(rows: Any) -> tuple[tuple[int, int], ...]:
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        return ()
+    try:
+        return tuple(sorted(
+            (int(row["rtbw_count"]), int(row["rtbz_count"])) for row in rows
+        ))
+    except (KeyError, TypeError, ValueError):
+        return ()
+
+
 def _update_stability(
     last_best: int,
     stable_chunks: int,
@@ -210,6 +225,16 @@ def _update_stability(
     if emitted_action == last_best:
         return last_best, stable_chunks + 1
     return emitted_action, 0
+
+
+def _complexity_continue(
+    *, stable_chunks: int, visit_gap: float, action_count: int,
+) -> bool:
+    """Mirror the clock-free stability branch, including forced moves."""
+    return not (
+        stable_chunks >= _COMPLEXITY_STABLE_CHUNKS
+        and (action_count == 1 or visit_gap >= _COMPLEXITY_VISIT_GAP)
+    )
 
 
 def _emitted_visit_gap(row: dict[str, Any]) -> float | None:
@@ -248,18 +273,33 @@ def _validate_decision_grade_row(row: dict[str, Any], line_number: int) -> None:
     key = row.get("key")
     if not isinstance(key, str) or not key:
         raise ValueError(f"line {line_number}: position key is missing")
+    fen = row.get("fen")
+    if not isinstance(fen, str) or not fen:
+        raise ValueError(f"{key}: root FEN is missing")
+    try:
+        board = chess.Board(fen)
+    except ValueError as exc:
+        raise ValueError(f"{key}: root FEN is invalid") from exc
     group = _source_group(row)
     if group is None or row.get("group_id") != group:
         raise ValueError(f"{key}: group_id is not (source_dir, shard, game_id)")
     if not _positive_int(row.get("chunk")) or not _positive_int(row.get("nodes")):
         raise ValueError(f"{key}: chunk and nodes must be positive integers")
     for name in (
-        "regret_score", "visit_gap", "visit_entropy", "root_q",
+        "elapsed_ms", "regret_cp", "regret_score", "regret_vs_final_cp",
+        "visit_gap", "visit_entropy", "root_q",
     ):
         _strict_finite(row, name)
+    if float(row["elapsed_ms"]) < 0.0:
+        raise ValueError(f"{key}: elapsed_ms must be non-negative")
     for name in ("piece_count", "legal_move_count"):
         if not _positive_int(row.get(name)):
             raise ValueError(f"{key}: {name} must be a positive integer")
+    if (
+        row["piece_count"] != chess.popcount(board.occupied)
+        or row["legal_move_count"] != board.legal_moves.count()
+    ):
+        raise ValueError(f"{key}: board morphology disagrees with root FEN")
     phase = row.get("phase")
     if not isinstance(phase, int) or isinstance(phase, bool) or phase not in (0, 1, 2):
         raise ValueError(f"{key}: phase must be 0, 1, or 2")
@@ -267,6 +307,8 @@ def _validate_decision_grade_row(row: dict[str, Any], line_number: int) -> None:
         raise ValueError(f"{key}: stable_chunks must be a non-negative integer")
     if not isinstance(row.get("bestmove_flip"), bool):
         raise ValueError(f"{key}: bestmove_flip must be boolean")
+    if not isinstance(row.get("changes_to_final"), bool):
+        raise ValueError(f"{key}: changes_to_final must be boolean")
     if not isinstance(row.get("complexity_predicate_continue"), bool):
         raise ValueError(f"{key}: complexity predicate must be boolean")
     if not isinstance(row.get("emitted_action"), int) or isinstance(
@@ -284,20 +326,67 @@ def _validate_decision_grade_row(row: dict[str, Any], line_number: int) -> None:
             continue
         _strict_finite(row, name)
     actions = row.get("root_actions")
+    visits = row.get("root_visits")
     shares = row.get("root_visit_shares")
+    child_q = row.get("root_child_q")
     if (
         not isinstance(actions, list) or not actions
         or any(not isinstance(action, int) or isinstance(action, bool) for action in actions)
         or len(set(actions)) != len(actions)
+        or not isinstance(visits, list) or len(visits) != len(actions)
+        or any(not _nonnegative_int(visit) for visit in visits)
         or not isinstance(shares, list) or len(shares) != len(actions)
+        or not isinstance(child_q, list) or len(child_q) != len(actions)
     ):
-        raise ValueError(f"{key}: malformed root action/share arrays")
+        raise ValueError(f"{key}: malformed root action/visit/share/Q arrays")
     values = np.asarray(shares, dtype=np.float64)
+    q_values = np.asarray(child_q, dtype=np.float64)
+    visit_values = np.asarray(visits, dtype=np.float64)
+    visit_total = float(visit_values.sum())
+    expected_shares = (
+        visit_values / visit_total if visit_total > 0.0 else np.zeros_like(visit_values)
+    )
     if (
         not np.isfinite(values).all() or (values < 0.0).any()
-        or not math.isclose(float(values.sum()), 1.0, rel_tol=1e-8, abs_tol=1e-10)
+        or (visit_total <= 0.0 and len(actions) != 1)
+        or not np.allclose(values, expected_shares, rtol=1e-10, atol=1e-12)
     ):
-        raise ValueError(f"{key}: root visit shares must be finite probabilities")
+        raise ValueError(f"{key}: root visit shares disagree with integer visits")
+    if not np.isfinite(q_values).all():
+        raise ValueError(f"{key}: root child Q values must be finite")
+    try:
+        legal_root_actions = {
+            action
+            for action in actions
+            if index_to_move(action, board) in board.legal_moves
+        }
+    except (IndexError, KeyError, ValueError) as exc:
+        raise ValueError(f"{key}: root action cannot be decoded") from exc
+    if len(legal_root_actions) != len(actions):
+        raise ValueError(f"{key}: root action is illegal for the recorded FEN")
+    pv_actions = row.get("pv_actions")
+    pv_uci = row.get("pv_uci")
+    if (
+        not isinstance(pv_actions, list) or not pv_actions
+        or any(
+            not isinstance(action, int) or isinstance(action, bool)
+            for action in pv_actions
+        )
+        or not isinstance(pv_uci, list) or len(pv_uci) != len(pv_actions)
+        or any(not isinstance(move, str) or not move for move in pv_uci)
+        or pv_actions[0] != row.get("emitted_action")
+        or pv_uci[0] != row.get("uci")
+    ):
+        raise ValueError(f"{key}: malformed emitted-move PV provenance")
+    pv_board = board.copy(stack=False)
+    for action, uci in zip(pv_actions, pv_uci):
+        try:
+            move = index_to_move(action, pv_board)
+        except (IndexError, KeyError, ValueError) as exc:
+            raise ValueError(f"{key}: PV action cannot be decoded") from exc
+        if move not in pv_board.legal_moves or move.uci() != uci:
+            raise ValueError(f"{key}: PV action/UCI is illegal for the recorded FEN")
+        pv_board.push(move)
 
 
 def _require_manifest(
@@ -341,6 +430,12 @@ def _require_manifest(
         for name in ("producer_script", "checkpoint", "audit_set", "matched_rows")
         if not _artifact_provenance_complete(manifest.get(name))
     )
+    checkpoint_params = manifest.get("checkpoint_params")
+    if "checkpoint_params" not in manifest or (
+        checkpoint_params is not None
+        and not _artifact_provenance_complete(checkpoint_params)
+    ):
+        failures.append("checkpoint architecture provenance is incomplete")
     mcts_extension = manifest.get("mcts_extension")
     if not _compatible_native_extension(mcts_extension):
         failures.append("native MCTS extension provenance is incomplete")
@@ -352,18 +447,34 @@ def _require_manifest(
         "kind": "clock_free_visit_gap_and_stability",
         "minimum_stable_chunks": _COMPLEXITY_STABLE_CHUNKS,
         "minimum_visit_gap": _COMPLEXITY_VISIT_GAP,
+        "single_legal_move_is_decided": True,
     }:
         failures.append("clock-free complexity predicate provenance is incomplete")
     syzygy = manifest.get("syzygy")
     directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
     directory_wdl_count = _sum_manifest_ints(directories, "rtbw_count")
     directory_dtz_count = _sum_manifest_ints(directories, "rtbz_count")
+    syzygy_paths = (
+        tuple(
+            str(Path(value.strip()).expanduser().resolve())
+            for value in syzygy["path"].split(os.pathsep)
+        )
+        if isinstance(syzygy, dict) and isinstance(syzygy.get("path"), str)
+        else ()
+    )
+    directory_paths = (
+        tuple(str(row.get("path", "")) for row in directories)
+        if isinstance(directories, list) and all(isinstance(row, dict) for row in directories)
+        else ()
+    )
     if (
         not isinstance(syzygy, dict)
         or not isinstance(syzygy.get("path"), str)
         or not syzygy.get("path")
         or not isinstance(directories, list)
         or len(directories) < 2
+        or syzygy_paths != directory_paths
+        or _tablebase_component_counts(directories) != _PRODUCTION_TB_COMPONENTS
         or not isinstance(syzygy.get("rtbw_count"), int)
         or int(syzygy.get("rtbw_count", 0)) < _PRODUCTION_WDL_FILES
         or syzygy.get("rtbw_count") != directory_wdl_count
@@ -438,10 +549,15 @@ def _require_manifest(
     ):
         failures.append("requested evaluator does not match realized evaluator stack")
     realized_tablebase = manifest.get("realized_tablebase")
+    leaf_probe_expected = (
+        isinstance(requested, dict) and requested.get("active_path") == "gumbel"
+    )
     if (
         not isinstance(realized_tablebase, dict)
         or realized_tablebase.get("installed") is not True
         or realized_tablebase.get("cursed_as_draw") is not True
+        or realized_tablebase.get("root_probe_active") is not True
+        or realized_tablebase.get("leaf_probe_active") is not leaf_probe_expected
         or not isinstance(realized_tablebase.get("n_wdl"), int)
         or int(realized_tablebase.get("n_wdl", 0)) < 510
         or not isinstance(realized_tablebase.get("n_dtz"), int)
@@ -455,10 +571,14 @@ def _require_manifest(
     position_count = manifest.get("position_count")
     requested_positions = manifest.get("requested_position_count")
     excluded_positions = manifest.get("excluded_position_count")
-    counts_are_ints = all(isinstance(value, int) for value in (
-        row_count, chunk_count, position_count,
-        requested_positions, excluded_positions,
-    ))
+    excluded_details = manifest.get("excluded_positions")
+    counts_are_ints = (
+        _positive_int(row_count)
+        and _positive_int(chunk_count)
+        and _positive_int(position_count)
+        and _positive_int(requested_positions)
+        and _nonnegative_int(excluded_positions)
+    )
     if not counts_are_ints:
         failures.append("row/position/chunk accounting is inconsistent")
     else:
@@ -470,6 +590,20 @@ def _require_manifest(
         if (
             row_count != chunk_count * position_count
             or requested_positions != position_count + excluded_positions
+            or not isinstance(excluded_details, list)
+            or len(excluded_details) != excluded_positions
+            or any(
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("key"), str)
+                or not entry.get("key")
+                or not _nonnegative_int(entry.get("chunks_observed"))
+                or entry.get("chunks_required") != chunk_count
+                or not isinstance(entry.get("reason"), str)
+                or not entry.get("reason")
+                for entry in (excluded_details or [])
+            )
+            or len({entry["key"] for entry in (excluded_details or [])})
+            != len(excluded_details or [])
         ):
             failures.append("row/position/chunk accounting is inconsistent")
     decision_grade = manifest.get("decision_grade") is True and not failures
@@ -477,6 +611,139 @@ def _require_manifest(
         detail = ", ".join(failures) if failures else "manifest is non-decision-grade"
         raise ValueError(f"trajectory provenance is not decision-grade: {detail}")
     return manifest, decision_grade
+
+
+def _recomputed_trajectory_state(
+    trajectory: Sequence[dict[str, Any]],
+    *,
+    methodology_smoke: bool,
+) -> list[tuple[float, int]]:
+    """Recompute the production stability/gap predicate for every row."""
+    last_best = -1
+    stable = 0
+    states: list[tuple[float, int]] = []
+    final = trajectory[-1]
+    for index, row in enumerate(trajectory):
+        key = str(row.get("key"))
+        observed_gap = _emitted_visit_gap(row)
+        if observed_gap is None:
+            if not methodology_smoke:
+                raise ValueError(f"{key}: emitted-action visit provenance is missing")
+            observed_gap = _finite(row.get("visit_gap"))
+            if index == 0 or bool(row.get("bestmove_flip")):
+                stable = 0
+            else:
+                stable += 1
+        elif not math.isclose(
+            observed_gap,
+            _finite(row.get("visit_gap")),
+            rel_tol=1e-10,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(f"{key}: visit_gap is not the emitted action's gap")
+        else:
+            last_best, stable = _update_stability(
+                last_best,
+                stable,
+                emitted_action=int(row["emitted_action"]),
+                visit_gap=observed_gap,
+                action_count=len(row["root_actions"]),
+            )
+        recorded_stable = row.get("stable_chunks")
+        if recorded_stable is not None and int(recorded_stable) != stable:
+            raise ValueError(f"{key}: stable_chunks disagrees with emitted move history")
+        expected_continue = _complexity_continue(
+            stable_chunks=stable,
+            visit_gap=observed_gap,
+            action_count=len(row.get("root_actions", [])),
+        )
+        if (
+            not methodology_smoke
+            and row.get("complexity_predicate_continue") is not expected_continue
+        ):
+            raise ValueError(f"{key}: complexity predicate disagrees with search state")
+        if not methodology_smoke:
+            if row["fen"] != trajectory[0]["fen"]:
+                raise ValueError(f"{key}: root FEN changes within trajectory")
+            shares = np.asarray(row["root_visit_shares"], dtype=np.float64)
+            positive_shares = shares[shares > 0.0]
+            expected_entropy = (
+                float(-(positive_shares * np.log(positive_shares)).sum())
+                if positive_shares.size else 0.0
+            )
+            if not math.isclose(
+                float(row["visit_entropy"]),
+                expected_entropy,
+                rel_tol=1e-10,
+                abs_tol=1e-12,
+            ):
+                raise ValueError(f"{key}: visit_entropy disagrees with raw visits")
+            action_index = row["root_actions"].index(row["emitted_action"])
+            child_q = [float(value) for value in row["root_child_q"]]
+            expected_q_gap = None
+            if len(child_q) >= 2:
+                other_q = child_q[:action_index] + child_q[action_index + 1:]
+                expected_q_gap = child_q[action_index] - max(other_q)
+            recorded_q_gap = row.get("q_gap")
+            q_gap_matches = expected_q_gap is None and recorded_q_gap is None
+            if expected_q_gap is not None and recorded_q_gap is not None:
+                q_gap_matches = math.isclose(
+                    float(recorded_q_gap), expected_q_gap,
+                    rel_tol=1e-10, abs_tol=1e-12,
+                )
+            if not q_gap_matches:
+                raise ValueError(f"{key}: q_gap disagrees with raw child Q values")
+            previous = trajectory[index - 1] if index > 0 else None
+            expected_flip = bool(
+                previous is not None
+                and row["emitted_action"] != previous["emitted_action"]
+            )
+            if row["bestmove_flip"] is not expected_flip:
+                raise ValueError(f"{key}: bestmove_flip disagrees with raw actions")
+            expected_q_drift = (
+                None if previous is None
+                else abs(float(row["root_q"]) - float(previous["root_q"]))
+            )
+            if expected_q_drift is None:
+                if row.get("q_drift") is not None:
+                    raise ValueError(f"{key}: first-chunk q_drift must be null")
+            elif not math.isclose(
+                float(row["q_drift"]), expected_q_drift,
+                rel_tol=1e-10, abs_tol=1e-12,
+            ):
+                raise ValueError(f"{key}: q_drift disagrees with raw root Q")
+            if previous is None:
+                if row.get("visit_churn") is not None:
+                    raise ValueError(f"{key}: first-chunk visit_churn must be null")
+            else:
+                current_shares = dict(zip(row["root_actions"], shares.tolist()))
+                previous_shares = dict(zip(
+                    previous["root_actions"], previous["root_visit_shares"],
+                ))
+                expected_churn = 0.5 * sum(
+                    abs(
+                        current_shares.get(action, 0.0)
+                        - float(previous_shares.get(action, 0.0))
+                    )
+                    for action in current_shares.keys() | previous_shares.keys()
+                )
+                if not math.isclose(
+                    float(row["visit_churn"]), expected_churn,
+                    rel_tol=1e-10, abs_tol=1e-12,
+                ):
+                    raise ValueError(f"{key}: visit_churn disagrees with raw visits")
+            if row["changes_to_final"] is not (row["uci"] != final["uci"]):
+                raise ValueError(f"{key}: changes_to_final disagrees with final move")
+            expected_final_regret = float(row["regret_cp"]) - float(final["regret_cp"])
+            if not math.isclose(
+                float(row["regret_vs_final_cp"]), expected_final_regret,
+                rel_tol=1e-10, abs_tol=1e-12,
+            ):
+                raise ValueError(f"{key}: regret_vs_final_cp disagrees with final row")
+            if previous is not None and float(row["elapsed_ms"]) < float(previous["elapsed_ms"]):
+                raise ValueError(f"{key}: elapsed_ms decreases within trajectory")
+        states.append((observed_gap, stable))
+    return states
 
 
 def load_transitions(
@@ -507,6 +774,15 @@ def load_transitions(
     by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_key[str(row["key"])].append(row)
+    if not methodology_smoke and len(by_key) != manifest.get("position_count"):
+        raise ValueError("unique trajectory count disagrees with manifest position_count")
+    excluded_keys = {
+        str(entry["key"])
+        for entry in manifest.get("excluded_positions", [])
+        if isinstance(entry, dict) and "key" in entry
+    }
+    if not methodology_smoke and excluded_keys.intersection(by_key):
+        raise ValueError("a trajectory is both completed and excluded")
     transitions: list[Transition] = []
     has_score_regret = all("regret_score" in row for row in rows)
     if not has_score_regret and not methodology_smoke:
@@ -515,36 +791,29 @@ def load_transitions(
     for key, trajectory in sorted(by_key.items()):
         trajectory.sort(key=lambda row: int(row["chunk"]))
         chunks = [int(row["chunk"]) for row in trajectory]
-        if chunks != list(range(1, len(trajectory) + 1)) or len(trajectory) < 2:
-            raise ValueError(f"{key}: chunks must be consecutive from 1 with at least two rows")
-        last_best = -1
-        stable = 0
-        for index, (lower, upper) in enumerate(pairwise(trajectory)):
-            observed_gap = _emitted_visit_gap(lower)
-            if observed_gap is None:
-                if not methodology_smoke:
-                    raise ValueError(f"{key}: emitted-action visit provenance is missing")
-                observed_gap = _finite(lower.get("visit_gap"))
-                if index == 0 or bool(lower.get("bestmove_flip")):
-                    stable = 0
-                else:
-                    stable += 1
-            elif not math.isclose(
-                observed_gap, _finite(lower.get("visit_gap")), rel_tol=1e-10, abs_tol=1e-12,
+        expected_chunk_count = manifest.get("chunk_count")
+        if (
+            chunks != list(range(1, len(trajectory) + 1))
+            or len(trajectory) < 2
+            or (not methodology_smoke and len(trajectory) != expected_chunk_count)
+        ):
+            raise ValueError(
+                f"{key}: chunks must match the complete consecutive manifest horizon"
+            )
+        if not methodology_smoke:
+            requested_search = manifest["requested_search"]
+            chunk_sims = int(requested_search["chunk_sims"])
+            if any(
+                int(row["nodes"]) != int(row["chunk"]) * chunk_sims
+                for row in trajectory
             ):
-                raise ValueError(f"{key}: visit_gap is not the emitted action's gap")
-            else:
-                actions = lower["root_actions"]
-                last_best, stable = _update_stability(
-                    last_best,
-                    stable,
-                    emitted_action=int(lower["emitted_action"]),
-                    visit_gap=observed_gap,
-                    action_count=len(actions),
-                )
-            recorded_stable = lower.get("stable_chunks")
-            if recorded_stable is not None and int(recorded_stable) != stable:
-                raise ValueError(f"{key}: stable_chunks disagrees with emitted move history")
+                raise ValueError(f"{key}: node horizons disagree with fixed chunk size")
+        recomputed_states = _recomputed_trajectory_state(
+            trajectory,
+            methodology_smoke=methodology_smoke,
+        )
+        for index, (lower, upper) in enumerate(pairwise(trajectory)):
+            observed_gap, stable = recomputed_states[index]
             game_id = lower.get("game_id")
             if game_id is None or int(game_id) < 0:
                 if not methodology_smoke:
@@ -594,16 +863,11 @@ def load_transitions(
                     raise ValueError(f"{key}: clock-free complexity predicate is missing")
                 complexity_continue = lower.get("current_gate_continue")
                 if complexity_continue is None:
-                    complexity_continue = not (
-                        stable >= _COMPLEXITY_STABLE_CHUNKS
-                        and observed_gap >= _COMPLEXITY_VISIT_GAP
+                    complexity_continue = _complexity_continue(
+                        stable_chunks=stable,
+                        visit_gap=observed_gap,
+                        action_count=len(lower.get("root_actions", [])),
                     )
-            expected_continue = not (
-                stable >= _COMPLEXITY_STABLE_CHUNKS
-                and observed_gap >= _COMPLEXITY_VISIT_GAP
-            )
-            if not methodology_smoke and complexity_continue is not expected_continue:
-                raise ValueError(f"{key}: complexity predicate disagrees with search state")
             transitions.append(Transition(
                 key=key,
                 group_id=str(group_id),

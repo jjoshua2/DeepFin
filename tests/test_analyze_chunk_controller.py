@@ -6,11 +6,14 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.moves import move_to_index
 from scripts.analyze_chunk_controller import (
     Transition,
+    _complexity_continue,
     _require_bootstrap_resolution,
     _require_safe_output_path,
     _update_stability,
@@ -154,6 +157,10 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert "_require_search_take_effect" in source
     assert "if int(args.walkers) == 1:" in source
     assert "worker.set_minibatch_size" in source
+    assert "allow_terminal_shortcuts=True" in source
+    assert '"root_child_q"' in source
+    assert '"pv_actions"' in source
+    assert '"checkpoint_params"' in source
 
 
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
@@ -190,6 +197,15 @@ def test_stability_streak_resets_while_gumbel_survivor_trails_visits() -> None:
         last, stable, emitted_action=11, visit_gap=0.3, action_count=3,
     )
     assert (last, stable) == (11, 1)
+
+
+def test_stable_single_legal_move_is_decided_without_root_visits() -> None:
+    assert not _complexity_continue(
+        stable_chunks=2, visit_gap=0.0, action_count=1,
+    )
+    assert _complexity_continue(
+        stable_chunks=1, visit_gap=0.0, action_count=1,
+    )
 
 
 def test_budget_interactions_improve_held_horizon_prediction() -> None:
@@ -233,21 +249,34 @@ def test_cluster_bootstrap_is_deterministic() -> None:
 
 
 def _write_bank(path: Path, *, correct_gap: bool) -> Path:
+    board = chess.Board()
+    actions = [
+        int(move_to_index(chess.Move.from_uci(uci), board))
+        for uci in ("a2a3", "b2b3")
+    ]
+    entropy = float(-(0.4 * np.log(0.4) + 0.6 * np.log(0.6)))
     rows = []
-    for chunk, regret in ((1, 0.2), (2, 0.1)):
+    for chunk, regret, regret_cp in ((1, 0.2, 20.0), (2, 0.1, 10.0)):
         rows.append({
             "schema": "deepfin.chunk_trajectory.v2",
             "key": "k", "source_dir": "/snapshot", "shard": "s0.zarr",
+            "fen": board.fen(),
             "game_id": 3, "group_id": "/snapshot\0s0.zarr\0" + "3",
             "chunk": chunk, "nodes": chunk * 50,
-            "regret_score": regret, "visit_gap": -0.2 if correct_gap else 0.2,
-            "root_actions": [1, 2], "root_visit_shares": [0.4, 0.6],
-            "emitted_action": 1, "uci": "a2a3", "bestmove_flip": False,
-            "stable_chunks": chunk - 1, "visit_entropy": 0.6, "q_gap": None,
+            "elapsed_ms": float(chunk), "regret_cp": regret_cp,
+            "regret_score": regret, "regret_vs_final_cp": regret_cp - 10.0,
+            "visit_gap": -0.2 if correct_gap else 0.2,
+            "root_actions": actions, "root_visits": [20, 30],
+            "root_visit_shares": [0.4, 0.6],
+            "root_child_q": [0.1, 0.2],
+            "emitted_action": actions[0], "uci": "a2a3", "bestmove_flip": False,
+            "pv_actions": [actions[0]], "pv_uci": ["a2a3"],
+            "stable_chunks": 0, "visit_entropy": entropy, "q_gap": -0.1,
             "complexity_predicate_continue": True,
             "q_drift": None if chunk == 1 else 0.0,
             "visit_churn": None if chunk == 1 else 0.0, "root_q": 0.0,
-            "phase": 1, "piece_count": 10, "legal_move_count": 5,
+            "changes_to_final": False,
+            "phase": 1, "piece_count": 32, "legal_move_count": 20,
         })
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -264,6 +293,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": 2,
             "minimum_visit_gap": 0.25,
+            "single_legal_move_is_decided": True,
         },
         "producer_git_sha": "a" * 40,
         "producer_git_dirty": False,
@@ -273,6 +303,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "checkpoint": {
             "path": "/trainer.pt", "size": 1, "mtime_ns": 1, "sha256": "b" * 64,
         },
+        "checkpoint_params": None,
         "audit_set": {
             "path": "/audit.jsonl", "size": 1, "mtime_ns": 1, "sha256": "c" * 64,
         },
@@ -289,9 +320,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "rtbw_count": 875,
             "rtbz_count": 510,
             "directories": [
-                {"path": "/tb/a", "rtbw_count": 1, "rtbz_count": 1,
+                {"path": "/tb/a", "rtbw_count": 510, "rtbz_count": 145,
                  "total_bytes": 1, "inventory_sha256": "f" * 64},
-                {"path": "/tb/b", "rtbw_count": 874, "rtbz_count": 509,
+                {"path": "/tb/b", "rtbw_count": 365, "rtbz_count": 365,
                  "total_bytes": 1, "inventory_sha256": "1" * 64},
             ],
         },
@@ -300,6 +331,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "position_count": 1,
         "requested_position_count": 1,
         "excluded_position_count": 0,
+        "excluded_positions": [],
         "requested_search": {
             "device": "cuda", "active_path": "walker_puct",
             "walkers": 2, "chunk_sims": 50,
@@ -340,6 +372,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "realized_tablebase": {
             "installed": True, "cursed_as_draw": True,
             "n_wdl": 510, "n_dtz": 510, "max_pieces": 6,
+            "root_probe_active": True, "leaf_probe_active": False,
         },
         "output": {"sha256": digest, "size": path.stat().st_size},
     }))
@@ -430,14 +463,29 @@ def test_loader_requires_realized_syzygy_and_native_binary(tmp_path: Path) -> No
         load_transitions(bank)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("root_probe_active", False), ("leaf_probe_active", True)],
+)
+def test_loader_records_actual_walker_tablebase_semantics(
+    tmp_path: Path, field: str, value: bool,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["realized_tablebase"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy probe"):
+        load_transitions(bank)
+
+
 def test_loader_rejects_partial_syzygy_inventory(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     manifest = json.loads(meta.read_text())
-    manifest["syzygy"]["directories"][1]["rtbw_count"] = 1
-    manifest["syzygy"]["directories"][1]["rtbz_count"] = 1
-    manifest["syzygy"]["rtbw_count"] = 2
-    manifest["syzygy"]["rtbz_count"] = 2
+    manifest["syzygy"]["directories"][0]["rtbw_count"] = 500
+    manifest["syzygy"]["directories"][1]["rtbw_count"] = 375
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="production Syzygy provenance"):
@@ -455,6 +503,17 @@ def test_loader_requires_native_halving_semantic_revision(tmp_path: Path) -> Non
         load_transitions(bank)
 
 
+def test_loader_requires_resolved_checkpoint_params_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest.pop("checkpoint_params")
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="checkpoint architecture provenance"):
+        load_transitions(bank)
+
+
 def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
@@ -469,6 +528,130 @@ def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="group_id is not"):
+        load_transitions(bank)
+
+
+def test_loader_validates_final_row_stability_semantics(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[-1]["stable_chunks"] = 1
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="stable_chunks disagrees"):
+        load_transitions(bank)
+
+
+def test_loader_requires_manifest_position_count_unique_trajectories(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows.extend(json.loads(json.dumps(row)) for row in rows[:])
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest.update({"row_count": 4, "position_count": 2, "requested_position_count": 2})
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="unique trajectory count"):
+        load_transitions(bank)
+
+
+def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    original = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows = [original[0]]
+    for chunk, template in enumerate((original[0], original[1], original[1]), start=1):
+        row = json.loads(json.dumps(template))
+        row.update({
+            "key": "other", "game_id": 4,
+            "group_id": "\0".join(("/snapshot", "s0.zarr", "4")),
+            "chunk": chunk, "nodes": chunk * 50, "elapsed_ms": float(chunk),
+        })
+        rows.append(row)
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest.update({"row_count": 4, "position_count": 2, "requested_position_count": 2})
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="complete consecutive manifest horizon"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("root_child_q", [0.1, float("nan")], "root child Q"),
+        ("pv_actions", [0], "PV provenance"),
+        ("pv_uci", ["b2b3"], "PV provenance"),
+    ],
+)
+def test_loader_requires_reusable_root_q_and_pv_observations(
+    tmp_path: Path, field: str, value: object, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[-1][field] = value
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=match):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("row_index", "field", "value", "match"),
+    [
+        (0, "visit_entropy", 0.1, "visit_entropy disagrees"),
+        (0, "q_gap", 0.0, "q_gap disagrees"),
+        (1, "bestmove_flip", True, "bestmove_flip disagrees"),
+        (1, "q_drift", 0.1, "q_drift disagrees"),
+        (1, "visit_churn", 0.1, "visit_churn disagrees"),
+        (0, "changes_to_final", True, "changes_to_final disagrees"),
+        (0, "regret_vs_final_cp", 99.0, "regret_vs_final_cp disagrees"),
+        (0, "root_visits", [10, 40], "shares disagree"),
+    ],
+)
+def test_loader_recomputes_derived_trajectory_fields(
+    tmp_path: Path, row_index: int, field: str, value: object, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[row_index][field] = value
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=match):
         load_transitions(bank)
 
 

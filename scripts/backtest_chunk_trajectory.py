@@ -49,15 +49,18 @@ from chess_anti_engine.uci.engine import EngineOptions
 from chess_anti_engine.uci.search import (
     _ABORT_MIN_STABLE_CHUNKS,
     _ABORT_VISIT_GAP_MARGIN,
+    _pv_from_root_action,
+    _uci_pv,
     _visit_gap,
 )
 from chess_anti_engine.utils.syzygy import default_syzygy_path, require_tablebases
-from scripts.analyze_chunk_controller import _update_stability
+from scripts.analyze_chunk_controller import _complexity_continue, _update_stability
 from scripts.backtest_time_value import _score, _stratified
 
 _SCHEMA = "deepfin.chunk_trajectory.v2"
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
+_PRODUCTION_TB_COMPONENTS = ((365, 365), (510, 145))
 _PRODUCTION_GSS_HALVING_REV = 3
 
 
@@ -302,12 +305,20 @@ def main() -> None:
     syzygy_inventory = (
         _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
     )
+    syzygy_components = (
+        tuple(sorted(
+            (int(row["rtbw_count"]), int(row["rtbz_count"]))
+            for row in syzygy_inventory["directories"]
+        ))
+        if isinstance(syzygy_inventory, dict) else ()
+    )
     if (
         not args.methodology_smoke
         and (
             not isinstance(syzygy_inventory, dict)
             or int(syzygy_inventory["rtbw_count"]) < _PRODUCTION_WDL_FILES
             or int(syzygy_inventory["rtbz_count"]) < _PRODUCTION_DTZ_FILES
+            or syzygy_components != _PRODUCTION_TB_COMPONENTS
         )
     ):
         raise SystemExit(
@@ -394,6 +405,7 @@ def main() -> None:
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": int(_ABORT_MIN_STABLE_CHUNKS),
             "minimum_visit_gap": float(_ABORT_VISIT_GAP_MARGIN),
+            "single_legal_move_is_decided": True,
         },
         "producer_git_sha": producer_git_sha,
         "producer_git_dirty": producer_git_dirty,
@@ -413,11 +425,19 @@ def main() -> None:
     from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI
     from chess_anti_engine.tablebase import SyzygyProbe
     from chess_anti_engine.uci.__main__ import _make_evaluator_factory
-    from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+    from chess_anti_engine.uci.model_loader import (
+        _find_params_json,
+        load_model_from_checkpoint,
+    )
     from chess_anti_engine.uci.search import SearchWorker
     from chess_anti_engine.uci.time_manager import Deadline
     from chess_anti_engine.worker import _configure_shared_compile_cache
 
+    checkpoint_params_path = _find_params_json(checkpoint_path)
+    provenance["checkpoint_params"] = (
+        _artifact(checkpoint_params_path, require_file=True)
+        if checkpoint_params_path is not None else None
+    )
     loaded_halving_rev = int(getattr(mcts_extension, "GSS_HALVING_REV", 0))
     if not args.methodology_smoke and loaded_halving_rev != _PRODUCTION_GSS_HALVING_REV:
         raise SystemExit(
@@ -475,6 +495,7 @@ def main() -> None:
     if installed_tb_probe is not tb_probe:
         worker.close()
         raise RuntimeError("tablebase take-effect check failed")
+    concurrency_mode, concurrency_workers = worker.concurrency_profile()
     realized_tablebase = {
         "installed": installed_tb_probe is not None,
         "cursed_as_draw": bool(
@@ -483,8 +504,11 @@ def main() -> None:
         "n_wdl": int(getattr(installed_tb_probe, "n_wdl", 0)),
         "n_dtz": int(getattr(installed_tb_probe, "n_dtz", 0)),
         "max_pieces": int(getattr(installed_tb_probe, "max_pieces", 0)),
+        "root_probe_active": installed_tb_probe is not None,
+        "leaf_probe_active": (
+            installed_tb_probe is not None and concurrency_mode == "gumbel"
+        ),
     }
-    concurrency_mode, concurrency_workers = worker.concurrency_profile()
     expected_mode = "walker_puct" if int(args.walkers) > 1 else "gumbel"
     active_parameters: dict[str, float | int | bool] = (
         {
@@ -611,19 +635,42 @@ def main() -> None:
                     ngap = _visit_gap(actions, visits, int(best))
                     rq = 0.0
                     qg: float | None = None
+                    child_q: list[float] = []
+                    pv_actions: list[int] = []
+                    pv_uci: list[str] = []
                     tree, rid = worker._tree, worker._root_id
                     if tree is not None and rid is not None:
                         rq = float(tree.node_q(rid))
                         ca, _cv, cq = tree.get_children_q(rid, rq)
-                        if ca.size >= 2 and best in ca.tolist():
-                            bm = ca == best
-                            oth = cq[~bm]
-                            if oth.size:
-                                qg = float(cq[bm].max() - oth.max())
-                                if not math.isfinite(qg):
-                                    raise RuntimeError(
-                                        "search returned a non-finite calculated q_gap"
-                                    )
+                        q_by_action = {
+                            int(action): float(q)
+                            for action, q in zip(ca.tolist(), cq.tolist())
+                        }
+                        if any(int(action) not in q_by_action for action in actions):
+                            raise RuntimeError(
+                                "search omitted a root action from child-Q readback"
+                            )
+                        child_q = [q_by_action[int(action)] for action in actions]
+                        if not math.isfinite(rq) or not all(map(math.isfinite, child_q)):
+                            raise RuntimeError("search returned a non-finite root Q")
+                        if len(child_q) >= 2:
+                            best_index = [int(action) for action in actions].index(int(best))
+                            other_q = child_q[:best_index] + child_q[best_index + 1:]
+                            qg = child_q[best_index] - max(other_q)
+                            if not math.isfinite(qg):
+                                raise RuntimeError(
+                                    "search returned a non-finite calculated q_gap"
+                                )
+                        pv_actions = _pv_from_root_action(tree, rid, int(best))
+                        pv_uci = list(_uci_pv(_b, pv_actions))
+                    if (
+                        len(child_q) != len(actions)
+                        or not pv_actions
+                        or len(pv_uci) != len(pv_actions)
+                    ):
+                        raise RuntimeError(
+                            "search did not expose complete root Q/PV observations"
+                        )
                     regret_cp = float(_r[li]) if li >= 0 else float(_r.max())
                     _s.append({
                         "nodes": total_nodes, "elapsed_ms": (time.perf_counter() - _t0) * 1000.0,
@@ -633,20 +680,28 @@ def main() -> None:
                         "visit_gap": ngap, "visit_entropy": _entropy(shares),
                         "q_gap": qg, "root_q": rq,
                         "actions": [int(a) for a in actions],
+                        "visits": [int(v) for v in visits],
                         "shares": {int(a): float(s) for a, s in zip(actions, shares)},
+                        "child_q": child_q,
+                        "pv_actions": pv_actions,
+                        "pv_uci": pv_uci,
                     })
 
-                worker.run(
+                search_result = worker.run(
                     board, stop_event=threading.Event(), deadline=Deadline(deadline_ms=None),
                     max_nodes=int(args.max_chunks) * int(args.chunk_sims), optimum_ms=None,
-                    allow_terminal_shortcuts=False, on_chunk=on_chunk,
+                    allow_terminal_shortcuts=True, on_chunk=on_chunk,
                 )
                 if len(snaps) != int(args.max_chunks):
                     excluded_positions.append({
                         "key": pos.key,
                         "chunks_observed": len(snaps),
                         "chunks_required": int(args.max_chunks),
-                        "reason": "incomplete_or_terminal_search",
+                        "reason": (
+                            "production_terminal_shortcut"
+                            if not snaps and int(search_result.nodes) <= 1
+                            else "incomplete_search"
+                        ),
                     })
                     continue
                 final_uci = snaps[-1]["uci"]
@@ -674,6 +729,7 @@ def main() -> None:
                     row = {
                         "schema": _SCHEMA,
                         "key": pos.key,
+                        "fen": pos.fen,
                         "source_dir": source_dirs[pos.key],
                         "shard": source_shards[pos.key],
                         "game_id": game_ids[pos.key],
@@ -687,11 +743,15 @@ def main() -> None:
                         "visit_gap": s["visit_gap"], "visit_entropy": s["visit_entropy"],
                         "q_gap": s["q_gap"],
                         "root_q": s["root_q"], "root_actions": s["actions"],
+                        "root_visits": s["visits"],
                         "root_visit_shares": [s["shares"][a] for a in s["actions"]],
+                        "root_child_q": s["child_q"],
+                        "pv_actions": s["pv_actions"], "pv_uci": s["pv_uci"],
                         "bestmove_flip": flip, "stable_chunks": stable_chunks,
-                        "complexity_predicate_continue": not (
-                            stable_chunks >= _ABORT_MIN_STABLE_CHUNKS
-                            and float(s["visit_gap"]) >= _ABORT_VISIT_GAP_MARGIN
+                        "complexity_predicate_continue": _complexity_continue(
+                            stable_chunks=stable_chunks,
+                            visit_gap=float(s["visit_gap"]),
+                            action_count=len(s["actions"]),
                         ),
                         "q_drift": qdrift, "visit_churn": churn,
                         "changes_to_final": bool(s["uci"] != final_uci),
