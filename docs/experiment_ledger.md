@@ -73385,3 +73385,32 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   treatment, training recipe, admission gates, and deciding yardstick remain
   byte-for-byte unchanged; only the obsolete upstream-wait gate is bypassed.
   The 12 nice-19 G10 workers continue independently.
+
+**2026-09-03 13:11Z — 20M DECIDING ARENA READOUT: SUCCESS by a wide margin.**
+
+- The immutable bank contains exactly 400 games / 200 complete opening pairs.
+  Candidate 18.91M-row one-view net versus B_ext produced pentanomial counts
+  `WW=75, WD_DW=68, DD_WL=45, LD_DL=9, LL=3`, score 0.7538, and **+194.3 Elo
+  [95% CI +164.5, +227.0]**. This clears the preregistered success thresholds
+  of Elo at least +100 and CI lower bound above +50. Verdict: **WORKED;
+  continue scaling and use G10 as the next corpus family.** Raw observations
+  remain in `scratchpad/scale20m_g10/arena_armB20m_vs_Bext.games.jsonl`.
+- Scope remains exactly the preregistered one: this is a production-choice
+  result, not a clean row-scaling coefficient, because scale and source corpus
+  changed together. The training-shape arena also used its documented flat
+  root-noise setting. Neither caveat changes the fixed pass-rule verdict.
+
+**2026-09-03 13:11Z — QUEUE repaired sampler A/B after the BT4 pipeline reaches either terminal state; no sampler optimizer step launched here.**
+
+- PR #502 is merged at `a9615efef7a5d1380289e39c313315f57f087938` with
+  test, lint, and pext-sliders checks green. Restart the complete two-seed A/B
+  from scratch under that one revision in new roots
+  `runs/game_epoch_ab_a9615efe` and `scratchpad/game_epoch_ab_a9615efe`.
+  Rerun replacement as well as exact-epoch: the preserved b4af seed-0 control
+  is useful failure context but is not paired evidence against materially
+  revised exact-epoch/trainer code.
+- The detached recovery driver waits for BT4's recovery **done or fail**
+  sentinel and an empty GPU, then runs the already-preregistered four arms and
+  exact matched-row value-regret commands. A BT4 failure releases rather than
+  strands the independent sampler queue. All original learning and operational
+  thresholds remain unchanged; the driver banks results and makes no verdict.
