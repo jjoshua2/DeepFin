@@ -8,7 +8,7 @@ import shutil
 import tarfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -217,16 +217,15 @@ _SHARD_FIELDS: tuple[str, ...] = (
 )
 
 
-# Stored fields whose "missing" default is NOT zeros. Both are required fields,
-# and for both the zero value is a MEANINGFUL, wrong one: `has_policy = 0` drops
-# the row from the main policy loss and its accuracy stats with nothing counting
-# the drop, and `priority = 0` makes the row unsamplable under priority draws.
-# Any code path that synthesizes a missing field with a bare `np.zeros` is a
-# silent-corruption site for exactly these two names -- see `_gather_rows` in
-# replay/disk_buffer.py, which refuses rather than guesses. Kept honest by
+# Stored fields whose "missing" default is NOT zeros. The two required fields
+# (`has_policy`, `priority`) are refused when chunks disagree about presence;
+# the optional legacy-default `is_network_turn` is safely synthesized as true.
+# A bare `np.zeros` silently changes training semantics for all three. Kept honest by
 # tests/test_replay_field_defaults.py, which re-derives it from
 # `zeros_for_storage_field` itself.
-NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({"priority", "has_policy"})
+NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({
+    "priority", "has_policy", "is_network_turn",
+})
 
 
 def zeros_for_storage_field(
@@ -253,6 +252,11 @@ def zeros_for_storage_field(
     if name == "priority":
         return np.ones((n,), dtype=np.float32)
     if name == "has_policy":
+        return np.ones((n,), dtype=np.uint8)
+    if name == "is_network_turn":
+        # Legacy shards predate the explicit turn tag and contain only network
+        # turns. This must match compute_loss's absent-key default even when a
+        # mixed-schema concatenation makes the key present for the whole batch.
         return np.ones((n,), dtype=np.uint8)
     for spec in _OPTIONAL_FIELD_SPECS:
         if name == spec.flag:
@@ -1391,6 +1395,32 @@ def validate_array_declarations(
                 )
 
 
+def validate_active_optional_values_present(arrs: Mapping[str, Any]) -> None:
+    """Reject active optional flags whose promised value array is absent.
+
+    Declaration validation must remain metadata-only because upload callers
+    apply their size limits only after the lazy loader returns. Exact-epoch
+    planning needs the stronger content check before training, so scan orphan
+    flags here in bounded slices instead of materializing a whole vector.
+    """
+    max_scan_rows = 65_536
+    for spec in _OPTIONAL_FIELD_SPECS:
+        if spec.flag not in arrs or spec.arr in arrs:
+            continue
+        flag = arrs[spec.flag]
+        rows = int(_shape_of(flag)[0])
+        raw_chunks = getattr(flag, "chunks", ())
+        chunk_rows = (
+            int(raw_chunks[0])
+            if isinstance(raw_chunks, tuple) and raw_chunks
+            else max_scan_rows
+        )
+        step = max(1, min(max_scan_rows, chunk_rows))
+        for start in range(0, rows, step):
+            if bool(np.any(np.asarray(flag[start : start + step]) != 0)):
+                raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")
+
+
 def shard_meta_violations(meta: dict[str, Any], *, positions: int) -> list[str]:
     """Internal-consistency check on a shard's counter metadata.
 
@@ -1550,6 +1580,7 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
         raise ValueError("wdl_target out of range")
 
     n = int(x.shape[0])
+    validate_active_optional_values_present(arrs)
     for value_name, flag_name in POLICY_INDEX_FIELDS:
         if value_name not in arrs:
             continue
@@ -1569,13 +1600,11 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
     for spec in _OPTIONAL_FIELD_SPECS:
         flag_present = spec.flag in arrs
         value_present = spec.arr in arrs
-        active = False
 
         if flag_present:
             flag = np.asarray(arrs[spec.flag])
             if flag.ndim != 1 or flag.shape[0] != n:
                 raise ValueError(f"{spec.flag} must be (N,) matching x")
-            active = bool(np.any(flag != 0))
 
         if value_present:
             value = np.asarray(arrs[spec.arr])
@@ -1601,10 +1630,6 @@ def validate_arrays(arrs: dict[str, np.ndarray]) -> None:
                     row_sums = active_value.sum(axis=tuple(range(1, active_value.ndim)), dtype=np.float32)
                     if (row_sums <= 0).any():
                         raise ValueError(f"{spec.arr} active rows have non-positive sum")
-
-        if active and not value_present:
-            raise ValueError(f"{spec.flag} is set but {spec.arr} is missing")
-
 
 def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     validate_arrays(arrs)

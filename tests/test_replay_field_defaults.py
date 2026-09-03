@@ -3,8 +3,8 @@
 Three separate silent-corruption sites in the 2026-08-03 train/data audit share
 one root: code that synthesizes a MISSING stored field with a bare `np.zeros`,
 or that reads as if a field pair were optional when it is not. The schema's own
-`zeros_for_storage_field` disagrees with `np.zeros` for exactly two names, and
-for both of them zero is a meaningful wrong value rather than an empty one.
+`zeros_for_storage_field` disagrees with `np.zeros` for a small explicit set,
+and for every member zero is a meaningful wrong value rather than an empty one.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.replay import disk_buffer as db
+from chess_anti_engine.replay.buffer import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import (
     _OPTIONAL_FIELD_SPECS,
     _SHARD_FIELDS,
@@ -68,7 +69,7 @@ def test_shard_field_order_emits_value_array_before_its_flag() -> None:
 @pytest.mark.parametrize(
     ("field", "silent_damage"),
     [
-        # Both members of NONZERO_DEFAULT_STORAGE_FIELDS, because they fail
+        # Both required members of NONZERO_DEFAULT_STORAGE_FIELDS, because they fail
         # DIFFERENTLY downstream and a guard that covers one is not a guard.
         ("has_policy", "rows dropped from the policy loss and its accuracy stats"),
         ("priority", "rows made unsamplable under a priority draw"),
@@ -113,6 +114,40 @@ def test_gather_rows_is_unaffected_when_every_chunk_carries_the_field(tmp_path) 
     assert out["has_policy"].shape == (2,)
     assert np.all(out["has_policy"] == 1)
     assert out["priority"].shape == (2,)
+
+
+def test_gather_rows_preserves_legacy_network_turn_default(tmp_path) -> None:
+    buf = db.DiskReplayBuffer(
+        100,
+        shard_dir=tmp_path / "replay",
+        rng=np.random.default_rng(0),
+        read_only=False,
+        shuffle_cap=100,
+        shard_size=100,
+    )
+    tagged = _arrays(4)
+    tagged["is_network_turn"] = np.zeros(4, dtype=np.uint8)
+    tagged["has_is_network_turn"] = np.ones(4, dtype=np.uint8)
+    legacy = _arrays(4)
+    buf._append_shuffle_arrays(tagged)
+    buf._append_shuffle_arrays(legacy)
+
+    out = buf._gather_rows(np.array([0, 5], dtype=np.int64))
+
+    assert out["is_network_turn"].tolist() == [0, 1]
+
+
+def test_array_gather_preserves_legacy_network_turn_default() -> None:
+    buf = ArrayReplayBuffer(100, rng=np.random.default_rng(0))
+    tagged = _arrays(4)
+    tagged["is_network_turn"] = np.zeros(4, dtype=np.uint8)
+    tagged["has_is_network_turn"] = np.ones(4, dtype=np.uint8)
+    buf.add_many_arrays(tagged)
+    buf.add_many_arrays(_arrays(4))
+
+    out = buf._gather_rows(np.array([0, 5], dtype=np.int64))
+
+    assert out["is_network_turn"].tolist() == [0, 1]
 
 
 def test_prune_storage_arrays_refuses_a_set_flag_with_no_value_array() -> None:

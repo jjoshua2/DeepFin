@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from chess_anti_engine.replay.shard import POLICY_ENCODING_ARRAY_KEY, validate_array_declarations, validate_arrays
+from chess_anti_engine.replay.shard import (
+    POLICY_ENCODING_ARRAY_KEY,
+    validate_active_optional_values_present,
+    validate_array_declarations,
+    validate_arrays,
+)
 
 
 class _DeclaredArray:
@@ -84,6 +89,7 @@ def test_validate_declarations_rejects_huge_lazy_shard_without_materializing():
         "x": _DeclaredArray((100_001, 146, 8, 8), np.dtype(np.float16)),
         "policy_target": _DeclaredArray((100_001, 4672), np.dtype(np.float16)),
         "wdl_target": _DeclaredArray((100_001,), np.dtype(np.int8)),
+        "has_moves_left": _DeclaredArray((100_001,), np.dtype(np.uint8)),
     }
 
     with pytest.raises(ValueError, match="too many positions"):
@@ -107,6 +113,21 @@ def test_validate_rejects_present_optional_flag_without_value():
 
     with pytest.raises(ValueError, match=r"has_sf_wdl.*sf_wdl"):
         validate_arrays(arrs)
+
+
+def test_validate_active_optional_values_rejects_flag_without_value():
+    arrs = _minimal_valid_arrays()
+    arrs["has_moves_left"] = np.array([1, 0], dtype=np.uint8)
+
+    with pytest.raises(ValueError, match=r"has_moves_left.*moves_left"):
+        validate_active_optional_values_present(arrs)
+
+
+def test_validate_active_optional_values_allows_inactive_flag_without_value():
+    arrs = _minimal_valid_arrays()
+    arrs["has_moves_left"] = np.zeros(2, dtype=np.uint8)
+
+    validate_active_optional_values_present(arrs)
 
 
 def test_validate_rejects_optional_value_shape_mismatch():

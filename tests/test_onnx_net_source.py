@@ -762,6 +762,21 @@ def test_value_regret_main_scores_the_onnx_net(
         raise AssertionError("value_regret --onnx loaded a checkpoint")
 
     dump = tmp_path / "per_position.jsonl"
+    matched = tmp_path / "matched_rows.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((2, 175, 8, 8), dtype=np.float16),
+        found=np.ones(2, dtype=bool),
+        key=np.array(["a", "b"]),
+        game_id=np.array([17, 23], dtype=np.int64),
+        has_game_id=np.ones(2, dtype=bool),
+        game_cluster_id=np.array([7, 11], dtype=np.int64),
+        has_game_cluster_id=np.ones(2, dtype=bool),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
     monkeypatch.setattr(model_loader, "load_model_from_checkpoint", _boom)
     monkeypatch.setattr("sys.argv", [
         "value_regret.py",
@@ -770,6 +785,7 @@ def test_value_regret_main_scores_the_onnx_net(
         "--device", "cpu",
         "--batch-size", "8",
         "--min-pieces", "0",
+        "--matched-rows", str(matched),
         "--dump-per-position", str(dump),
     ])
     value_regret.main()
@@ -794,8 +810,114 @@ def test_value_regret_main_scores_the_onnx_net(
 
     rows = list(iter_data_rows(dump))
     assert len(rows) == 2
+    assert [r["game_cluster_id"] for r in rows] == [7, 11]
     assert {r["net"] for r in rows} == {f"onnx:{echo_onnx} "
                                         f"[in=planes policy=policy wdl=wdl]"}
+
+
+def test_matched_rows_refuses_stale_game_cluster_semantics(
+    tmp_path: Path,
+) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    matched = tmp_path / "stale_clusters.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((1, 175, 8, 8), dtype=np.float16),
+        found=np.ones(1, dtype=bool),
+        key=np.array(["a"]),
+        game_id=np.array([17], dtype=np.int64),
+        has_game_id=np.ones(1, dtype=bool),
+        game_cluster_id=np.array([7], dtype=np.int64),
+        has_game_cluster_id=np.ones(1, dtype=bool),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v1"]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
+
+    with pytest.raises(SystemExit, match="rebuild it before using clustered evidence"):
+        MatchedAuditRows(matched)
+
+
+def test_value_regret_cluster_dump_refuses_a_masked_game_cluster_id(
+    echo_onnx: Path,
+    mini_audit_set: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The optional column's zero fill is not evidence for real game zero."""
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+    from scripts import value_regret
+
+    matched = tmp_path / "masked_game_id.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((2, 175, 8, 8), dtype=np.float16),
+        found=np.ones(2, dtype=bool),
+        key=np.array(["a", "b"]),
+        game_id=np.array([17, 0], dtype=np.int64),
+        has_game_id=np.array([True, False]),
+        game_cluster_id=np.array([7, -1], dtype=np.int64),
+        has_game_cluster_id=np.array([True, False]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
+    index = MatchedAuditRows(matched)
+    assert index.has_game_cluster_id("a") is True
+    assert index.has_game_cluster_id("b") is False
+    with pytest.raises(SystemExit, match="no complete game_cluster_id"):
+        index.game_cluster_id("b")
+    monkeypatch.setattr("sys.argv", [
+        "value_regret.py", "--onnx", str(echo_onnx),
+        "--audit-set", str(mini_audit_set), "--device", "cpu",
+        "--min-pieces", "0", "--matched-rows", str(matched),
+        "--dump-per-position", str(tmp_path / "dump.jsonl"),
+    ])
+
+    with pytest.raises(SystemExit, match="has no game_cluster_id for 1 scored positions"):
+        value_regret.main()
+
+
+def test_stored_value_regret_preflights_game_clusters_before_scoring(
+    mini_audit_set: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import value_regret
+
+    matched = tmp_path / "stored_masked_game_id.npz"
+    np.savez_compressed(
+        matched,
+        x_stored=np.zeros((2, 175, 8, 8), dtype=np.float16),
+        found=np.ones(2, dtype=bool),
+        key=np.array(["a", "b"]),
+        game_id=np.array([17, 0], dtype=np.int64),
+        has_game_id=np.array([True, False]),
+        game_cluster_id=np.array([7, -1], dtype=np.int64),
+        has_game_cluster_id=np.array([True, False]),
+        game_cluster_kind=np.array(["candidate_game_connected_component_v2"]),
+        input_history_encoding=np.array(["lc0_root_legacy_meta"]),
+        input_extra_features=np.array(["v2_threats"]),
+        snapshot=np.array(["test-snapshot"]),
+    )
+
+    def _scoring_must_not_start(**_kwargs: object) -> None:
+        raise AssertionError("masked game cluster reached the expensive scoring pass")
+
+    monkeypatch.setattr(value_regret, "value_1ply_regret", _scoring_must_not_start)
+    monkeypatch.setattr("sys.argv", [
+        "value_regret.py", "--checkpoint", "unused.pt",
+        "--audit-set", str(mini_audit_set), "--device", "cpu",
+        "--input-encoding", "stored", "--min-pieces", "0",
+        "--matched-rows", str(matched),
+        "--dump-per-position", str(tmp_path / "dump.jsonl"),
+    ])
+
+    with pytest.raises(SystemExit, match="has no game_cluster_id for 1 scored positions"):
+        value_regret.main()
 
 
 def test_value_regret_main_refuses_a_missing_net(

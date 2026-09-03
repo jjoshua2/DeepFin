@@ -496,6 +496,75 @@ def test_a_negative_zero_first_value_keeps_the_host_folds_positive_zero() -> Non
     assert math.copysign(1.0, flat[0]) == 1.0, "sign of zero differs from the host fold"
 
 
+def test_exact_train_steps_pools_masked_metrics_by_eligible_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins the exact callsite, raw accumulation, and post-build override."""
+    sum_key, weight_key = trainer_mod._EXACT_MASKED_METRIC_FIELDS[
+        "sf_volatility_loss"
+    ]
+
+    class ExactBuffer:
+        exact_without_replacement = True
+
+    def run(exact: bool) -> trainer_mod.TrainMetrics:
+        trainer = _make_trainer(tmp_path / ("exact" if exact else "replacement"))
+        param = next(trainer.model.parameters())
+        calls = 0
+        means = (5.0, 1.0)
+        eligible = (1.0, 2.0)
+        totals = (10.0, 2.0)
+        batches = (
+            {"x": torch.zeros((4, 4, 8, 8))},
+            {"x": torch.zeros((2, 4, 8, 8))},
+        )
+
+        def fake_compute_loss(
+            out: Any, batch: Any, **kwargs: Any,
+        ) -> dict[str, torch.Tensor]:
+            nonlocal calls
+            del out, batch
+            report_exact = bool(kwargs.pop("report_exact_masked_sums"))
+            assert report_exact is exact
+            idx = calls
+            calls += 1
+            zero = param.sum() * 0.0
+            result = {
+                "total": zero + totals[idx],
+                **dict.fromkeys(_ZERO_LOSS_KEYS, zero),
+                "sf_volatility": zero + means[idx],
+            }
+            if report_exact:
+                result[sum_key] = zero + means[idx] * eligible[idx]
+                result[weight_key] = zero + eligible[idx]
+            return result
+
+        monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+        monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+        monkeypatch.setattr(
+            trainer,
+            "_iter_training_batches",
+            lambda *_args, **_kwargs: iter(batches),
+        )
+        monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: 0.0)
+        monkeypatch.setattr(trainer, "_zclip_step", lambda **_kwargs: (0.0, None))
+        monkeypatch.setattr(trainer.opt, "step", lambda: None)
+
+        return trainer.train_steps(
+            cast(Any, ExactBuffer() if exact else None),
+            batch_size=4,
+            steps=2,
+        )
+
+    exact_metrics = run(True)
+    replacement_metrics = run(False)
+
+    assert exact_metrics.sf_volatility_loss == 7.0 / 3.0
+    assert exact_metrics.loss == 44.0 / 6.0
+    assert replacement_metrics.sf_volatility_loss == 3.0
+    assert replacement_metrics.loss == 6.0
+
+
 def test_the_pipeline_timing_keys_reach_the_ray_report_row() -> None:
     """A field that lands only in TensorBoard is this repo's signature defect;
     the Ray progress row is enumerated by hand, so pin every timing key there."""
@@ -532,4 +601,3 @@ def test_the_pipeline_timing_values_round_trip_into_the_ray_report_row() -> None
 
     wrong = {key: (row.get(key), spans[key]) for key in keys if row.get(key) != spans[key]}
     assert not wrong, f"Ray row does not carry the TrainMetrics span: {wrong}"
-

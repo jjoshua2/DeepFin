@@ -2,11 +2,10 @@
 
 `sf_labelled_no_multipv_frac` is the share of SF-LABELLED rows in the trained
 batch that carry no `sf_multipv_raw` block — the Stockfish UCI desync
-fingerprint, whose value on healthy data is exactly 0.000000. Its predecessor
-(`sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`) measures the same thing
-but only while `rebuild_sf_targets` is on, and that key defaults False and is in
-no config file, so it read 0.0 — indistinguishable from healthy — through three
-desync episodes spanning 25 days.
+fingerprint, whose value on healthy data is exactly 0.000000. A former
+dense-only heuristic compared the policy and WDL rebuild fractions, but
+supported sparse-policy rows legitimately separate them. This detector is
+unconditional and remains valid for both dense and sparse policy formats.
 
 What these tests are for, in order of what they would catch:
 
@@ -262,9 +261,7 @@ def test_adding_the_presence_flag_does_not_move_the_loss():
 
 
 def test_the_metric_is_not_gated_on_rebuild_sf_targets():
-    """The predecessor's whole failure: `sf_rebuild_policy_frac` exists only
-    while the rebuild runs. This column must read the same value with the flag
-    off and on."""
+    """Label health must read identically with the rebuild flag off and on."""
     arrs = _arrs(has_sf_wdl=[1, 1, 1, 1, 1, 1, 1, 1], has_raw=[1, 0, 0, 1, 1, 1, 1, 1])
     readings = []
     for enabled in (False, True):

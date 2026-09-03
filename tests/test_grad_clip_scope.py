@@ -551,3 +551,168 @@ def test_train_steps_surfaces_the_skip_rate(
 
     assert metrics.grad_nonfinite_skip_rate == pytest.approx(1.0)
     assert metrics.grad_norm_samples == 2
+
+
+def test_exact_without_replacement_aborts_instead_of_discarding_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        return {"total": (matrix_param * matrix_param).sum() * float("inf")}
+
+    class ExactBufferMarker:
+        exact_without_replacement = True
+
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(
+        trainer,
+        "_iter_training_batches",
+        lambda *_args, **_kwargs: iter([{"x": torch.zeros((2, 4, 8, 8))}]),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot discard a non-finite-gradient"):
+        trainer.train_steps(cast(Any, ExactBufferMarker()), batch_size=2, steps=1)
+
+    assert trainer.step == 0
+
+
+def test_train_samples_seen_uses_realized_ragged_batch_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        zero = torch.zeros(())
+        return {
+            "total": (matrix_param * matrix_param).sum(),
+            **dict.fromkeys(trainer_mod._LOSS_KEY_TO_METRIC_FIELD, zero),
+        }
+
+    batches = [
+        {"x": torch.zeros((2, 4, 8, 8))},
+        {"x": torch.zeros((1, 4, 8, 8))},
+    ]
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(
+        trainer,
+        "_iter_prefetched_batches",
+        lambda *_args, **_kwargs: iter(batches),
+    )
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=2, steps=2)
+
+    assert metrics.train_samples_seen == 3
+
+
+def test_exact_ragged_batch_scales_gradient_by_realized_row_fraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+    unscaled_loss = matrix_param.sum()
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        return {"total": unscaled_loss}
+
+    class ExactBufferMarker:
+        exact_without_replacement = True
+
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: 0.0)
+    monkeypatch.setattr(trainer, "_zclip_step", lambda **_kwargs: (0.0, None))
+    monkeypatch.setattr(trainer.opt, "step", lambda: None)
+    step_sums = trainer_mod._DeviceLossSums()
+
+    trainer._run_optimizer_step(
+        step_sums=step_sums,
+        step_acc_sums={},
+        step_opt_stats={},
+        buf=cast(Any, ExactBufferMarker()),
+        batch_size=2,
+        batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}]),
+    )
+
+    assert matrix_param.grad is not None
+    assert torch.all(matrix_param.grad == 0.5)
+    # Training telemetry stores the row-weighted sum; the window divides it by
+    # realized rows rather than averaging ragged batch means equally.
+    assert step_sums.tensor("loss") == unscaled_loss.detach().to(torch.float64)
+
+
+def test_replacement_batch_keeps_historical_unscaled_gradient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        return {"total": matrix_param.sum()}
+
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: 0.0)
+    monkeypatch.setattr(trainer, "_zclip_step", lambda **_kwargs: (0.0, None))
+    monkeypatch.setattr(trainer.opt, "step", lambda: None)
+
+    trainer._run_optimizer_step(
+        step_sums=trainer_mod._DeviceLossSums(),
+        step_acc_sums={},
+        step_opt_stats={},
+        buf=cast(Any, object()),
+        batch_size=2,
+        batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}]),
+    )
+
+    assert matrix_param.grad is not None
+    assert torch.all(matrix_param.grad == 1.0)
+
+
+def test_exact_window_loss_is_weighted_by_realized_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    matrix_param = trainer._matrix_clip_params[0]
+    base = float(matrix_param.detach().sum())
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, kwargs
+        zero = torch.zeros(())
+        return {
+            "total": matrix_param.sum() * batch["x"].mean(),
+            **dict.fromkeys(trainer_mod._LOSS_KEY_TO_METRIC_FIELD, zero),
+        }
+
+    class ExactBufferMarker:
+        exact_without_replacement = True
+
+    batches = [
+        {"x": torch.ones((2, 4, 8, 8))},
+        {"x": torch.full((1, 4, 8, 8), 3.0)},
+    ]
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", lambda: 0.0)
+    monkeypatch.setattr(trainer, "_zclip_step", lambda **_kwargs: (0.0, None))
+    monkeypatch.setattr(trainer.opt, "step", lambda: None)
+    monkeypatch.setattr(
+        trainer,
+        "_iter_training_batches",
+        lambda *_args, **_kwargs: iter(batches),
+    )
+
+    metrics = trainer.train_steps(
+        cast(Any, ExactBufferMarker()), batch_size=2, steps=2,
+    )
+
+    assert metrics.loss == pytest.approx(base * (2.0 + 3.0) / 3.0)
+    assert metrics.loss != pytest.approx(base * (1.0 + 3.0) / 2.0)

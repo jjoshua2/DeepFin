@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, cast
 
@@ -128,6 +129,61 @@ def test_train_batch_iterator_prefetches_across_optimizer_boundary(
     assert worker_threads
     assert all(thread is not threading.current_thread() for thread in worker_threads)
     assert all(not thread.is_alive() for thread in worker_threads)
+
+
+def test_exact_epoch_batches_do_not_overlap_host_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact planner's one-batch memory allowance must remain a hard cap."""
+    trainer = _make_trainer(tmp_path, prefetch_batches=True)
+    sample_index = 0
+    sample_threads: list[threading.Thread] = []
+    host_batch_refs: list[weakref.ReferenceType[np.ndarray]] = []
+
+    class ExactBuffer:
+        exact_without_replacement = True
+
+    def fake_sample_batch_host(
+        _buf: Any,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        **_kw: Any,
+    ) -> dict[str, np.ndarray]:
+        nonlocal sample_index
+        del batch_size, mirror_prob
+        assert all(ref() is None for ref in host_batch_refs)
+        index = sample_index
+        sample_index += 1
+        sample_threads.append(threading.current_thread())
+        array = np.asarray([index], dtype=np.float32)
+        relations = np.asarray([[index]], dtype=np.float32)
+        host_batch_refs.extend((weakref.ref(array), weakref.ref(relations)))
+        return {"x": array, "relations": relations}
+
+    monkeypatch.setattr(trainer, "_sample_batch_host", fake_sample_batch_host)
+    monkeypatch.setattr(
+        trainer,
+        "_host_batch_to_tensors",
+        lambda batch: {
+            key: torch.from_numpy(value) for key, value in batch.items()
+        },
+    )
+    batches = trainer._iter_training_batches(
+        cast(Any, ExactBuffer()),
+        batch_size=1,
+        mirror_prob=0.0,
+        count=2,
+    )
+
+    first = next(batches)
+    assert float(first["x"].item()) == 0.0
+    assert sample_index == 1
+    assert sample_threads == [threading.current_thread()]
+    del first
+    assert float(next(batches)["x"].item()) == 1.0
+    assert sample_threads == [threading.current_thread(), threading.current_thread()]
 
 
 def test_train_steps_extends_prefetch_exactly_for_cuda_retry(

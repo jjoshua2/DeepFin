@@ -72881,7 +72881,7 @@ The sign reverses between τ lanes; the Round-3 "d11+ DEAD" line was a τ.02-lan
 - Hypothesis: the champion's rows trained on ZERO history while play fills 8 frames (`3db96659a`: 46.5% top-1 flips, +20.2 cp OOD penalty). Retraining the SAME rows with their true history repaired (schema 3, labels unchanged) either recovers strength (history was a bottleneck) or does not (history was a correctness bug only). Prereg: "LEGACY REPAIR PREREG v2" PRIMARY causal arm (:72322) + §5 ARM-B PIVOT (:72707) — decision table and co-requirements pinned there, unchanged here.
 - ONE deciding yardstick — stage 3: `arena_standard.py --mode matched_sims --search-shape training --sims 100 --games 400 --no-rolling --games-out …` B (`runs/armB/qtemp_0.0005_hist/checkpoint.pt`, 9,680 steps, seed 0) vs A (`runs/nnue_ladder_20260829/qtemp_0.0005/checkpoint.pt`). Pre-committed: **< +75 or CI LB ≤ −30 ⇒ correctness fix, position-source ablation, NO 20M · +75..+200 ⇒ ablation BEFORE scaling · ≥ +200 AND CI LB > +100 ⇒ re-anchor vs g1586 and lc0-LAST2x, then decide 20M.** Co-requirements: (a) probe `reg_hist` B−A < 0 with the game-cluster 95% CI excluding 0; (b) B's |Δregret(hist − FEN)| CI includes 0 or ≤ +3 cp. Without BOTH, an arena "recovery" is NOT accepted as a history effect.
 - Stages: 0 preconditions (repair stamps, shard-listing equality vs `read_progress_inventory`, quarantine walk over the first 5.5M rows, code vintage by feature) → 1 derive `--scheme uniform-d9 --temp 0.0005 --limit 5500000 --seed 0 --workers 7` with take-effect gates (`input_key_verified == rows_written`, `history_slots_nonzero_max == 8`, every shard `.zattrs` `zero_history: false` / `corpus_complete: true` / `derive_corpus_row_schema: 3`; REFUSE unless `rows_written == 4,894,143`) → 2 train `lc0_control_train.py --config configs/lc0_positive_control.yaml --steps 9680 --seed 0 --allow-invalid-control` (NO `--allow-mixed-history` / `--allow-partial-corpus`: the history preflight must PASS) → 3 arena → 4 history probe + `value_regret.py` + stage-5 BT4 → 5 print the table ("NO DECISION TAKEN BY THIS SCRIPT").
-- Code: detached worktree `/home/josh/projects/chess-armB` at `ffde0f6ef` (`ARMB_CODE_WT`) with the four production `.so` copied in (source-identical, above); arena from `/home/josh/projects/chess-ladderarena` (`12d010d2c`, as every ladder h2h). GPU idle until stage 2; nothing else on the GPU during stages 2-4.
+- Code: detached worktree `~/projects/chess-armB` at `ffde0f6ef` (`ARMB_CODE_WT`) with the four production `.so` copied in (source-identical, above); arena from `~/projects/chess-ladderarena` (`12d010d2c`, as every ladder h2h). GPU idle until stage 2; nothing else on the GPU during stages 2-4.
 - Confounds: (1) deriver `--workers 7` vs the champion's sequential derivation — content-identical by the deriver's contract, and stage 1 refuses on any row-count drift; (2) trainer code vintage `ffde0f6ef` (post #495 foreach AdamW, #499, #497) vs the champion's `956eff877` — #495 proved bitwise-identical on 10/10 real-gradient steps (phase-0b), #499 touches only the failure path, #497 IS the treatment; the trainer-recipe pin in `lc0_control_train.py` refuses loudly on any recipe drift at stage 2; (3) 1,204 repaired shards vs the champion's `manifest+progress (run_finished=False)` record — row order is the deriver's name-sorted enumeration both times, equality checked in stage 0.
 - Readout the same session as stage 5, judged by the table above only. Expected wall: derive ~35 min, train ~3 h 45, arena ~30 min, probes ~40 min.
 
@@ -72889,7 +72889,7 @@ The sign reverses between τ lanes; the Round-3 "d11+ DEAD" line was a τ.02-lan
 **2026-09-02 07:05Z — R1 REPAIR COMPLETE (production mode) · ARM B stage 0 PASS · stage 1 PASS (one driver key corrected) · stages 2-5 LAUNCHED on the GPU**
 
 - **Repair verdict — COMPLETE, whole inventory, zero quarantines.** `repair_corpus_history.py` on `ffde0f6ef`, 05:19:58Z → 05:52:34Z (32.6 min, 8 procs, 1,534 rows/s/core): rows in 9,863,168 = out 9,863,168, games 51,321, class `repaired` 100.000%, `quarantined` 0. `summary.json`: `run_finished: true`, `production: true`, `row_schema: 3`, `history_rep_fix: true`. `repair_manifest.json`: `audit_only: false`, `production: true`, `relabel.mode: off` (0 rows), `input.dir = data/nnue_bootstrap/run02_snap_20260829`, `input.manifest_sha256 78ee0246…`, `rows_claimed 9,863,168`, `listed_shards 1,204`, 28 unlisted in-flight shards recorded and skipped, 28 row-map files. Book: `sha256 70d0dfa5…` (9,663,653 B), `matches_production_pin: true`, `expected_from: production_pin`, and the pin block carries `historical_hash 70d0dfa5…` with `historical_hash_source` = the worker-cache `opening2_<sha>_…` download (ctime 2026-05-28 17:54:28, cmp-identical) plus the functional evidence (505/505 and 158/158 ply-0 FENs reproduced). History kinds: chained 9,354,192 · chained+book 505,827 · chained+book+bridged 2,810 · chained+bridged 339; book games exact 50,996, bridged_from_start 325. Label regimes: `carried_tt_history_blind` 9,851,816 · `cold_tt_history_blind` 11,352 (the per-row `cold_tt_retry` correction, 0.115%). Tags: `rep_in_frames8` 71,588 (0.726%), `rep_in_segment` 160,710 (1.629%), `cur_position_repeat_count≥2` 22,091 (0.224%). Labels byte-for-byte (no relabel). Output `data/nnue_bootstrap/run02_snap_20260829_s3`; log `scratchpad/armB/repair_run02_snap.log`.
-- **Stage 0 PASS (05:53Z, 21 s)**: code `ffde0f6ef` in the detached worktree `/home/josh/projects/chess-armB`; arena code `12d010d2c`; reference checkpoints sha256 `85aed8b7…` (A, `qtemp_0.0005`) and `c9173b5d…` (`qtemp_0.0005_ext`); both anchors present. Repaired-corpus gates PASS; row-identity gates PASS: source `read_progress_inventory` (1,204 listed, torn []) vs repaired `read_corpus_record` (record=summary, 1,204) — **shard list + order IDENTICAL**; row maps walked 9,863,168 rows, non-repaired total 0, inside the first 5,500,000: 0. `ARMB_ALLOW_ROW_SHIFT` not used. Output `scratchpad/armB/driver_stage0.out`.
+- **Stage 0 PASS (05:53Z, 21 s)**: code `ffde0f6ef` in the detached worktree `~/projects/chess-armB`; arena code `12d010d2c`; reference checkpoints sha256 `85aed8b7…` (A, `qtemp_0.0005`) and `c9173b5d…` (`qtemp_0.0005_ext`); both anchors present. Repaired-corpus gates PASS; row-identity gates PASS: source `read_progress_inventory` (1,204 listed, torn []) vs repaired `read_corpus_record` (record=summary, 1,204) — **shard list + order IDENTICAL**; row maps walked 9,863,168 rows, non-repaired total 0, inside the first 5,500,000: 0. `ARMB_ALLOW_ROW_SHIFT` not used. Output `scratchpad/armB/driver_stage0.out`.
 - ⚑ **Ops hazard, twice**: the harness stopped two background wrappers mid-run (05:53Z–06:08Z window and again ~06:24Z); the first took the deriver down with it (only a `spill` scratch dir remained — removed, 3.2 G). Relaunched with `setsid nohup` so the job is not a child of the wrapper; the deriver then survived the second wrapper stop. Every long arm-B stage now runs detached and is watched by sentinel-file polling, never by the wrapper's own exit.
 - **Stage 1 PASS (derive 06:08:40Z → ~06:27Z, 7 workers at ~92-100% CPU each, then the ordered shard write)**: `rows_read 5,500,000 → rows_written 4,894,143` (dropped no-result 605,857), **delta vs the champion +0**; `history_slots_nonzero_max 8`, `history_slots_filled {'8': 4,894,143}` (the champion's derivation read `<=1`), `input_key_verified 4,894,143 == rows_written`, `row_schema_counts {'3': 4,894,143}`, `history_root_reason_counts {'irreversible': all}`, base/value depths {9}; summary `corpus.corpus_complete true`, `corpus_record "summary"`, `input.zero_history false`, `input.history_rep_fix true`; scheme uniform-d9, temp 0.0005, seed 0, limit 5,500,000. Every one of the 598 shard `.zattrs`: `zero_history false`, `corpus_complete true`, `derive_run_finalized true`, `derive_state "committed"`, `corpus_run_finished_claim true`, `derive_identity_format 1`, `derive_corpus_row_schema 3` (tabulated over all 598: one tuple, 598 shards). Deriver log tail: temp recovered from the emitted policy n=4,398,653 min 0.000488 max 0.000501 (closed-form two-move), x planes 175, policy width 1858. Output `data/nnue_derived/armB/qtemp_0.0005_hist`, log `scratchpad/armB/derive_armB.log`.
   - ⚑ **Driver correction (NOT a gate loosening)**: the driver's per-shard check was written against a pre-final #497 head and required `derive_in_progress is False`; the merged deriver never writes that key (its P1 fix stamps `derive_state`/`derive_run_finalized` per shard at commit), so the first stage-1 run REFUSED with "598/598 shards carry a wrong history/complete stamp" while every substantive gate passed. The check now requires exactly the merged launcher's `REQUIRED_MARKED_KEYS` contract (`lc0_control_train.py` IDENTITY_KEYS + COMPLETENESS_KEYS): `zero_history false`, `corpus_complete true`, `derive_run_finalized true`, `derive_state committed`, `corpus_run_finished_claim true`, `derive_identity_format 1`, `derive_corpus_row_schema 3` — strictly more keys than before. An explicit `ARMB_STAGE1_GATES_ONLY=1` re-ran the gates on the finished derivation (default behaviour unchanged: an existing derived dir still refuses; nothing was re-derived). Gate output `scratchpad/armB/driver_stage1_gates.out`.
@@ -72922,7 +72922,7 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - ONE deciding yardstick: paired arena **B_ext vs A_ext, 400 games**, matched_sims 100, training shape, `--no-rolling`, banked. Pre-committed, same cuts as §5: **≥ +200 with CI LB > +100 = the history effect holds at matched 19,360 steps; +75..+200 = holds but shrinks (report, no scaling claim from it); < +75 or CI LB ≤ −30 = the gain does NOT survive the second pass — a repeat-pass artifact must then be suspected before any 20M point.** Anchors for context only (200 games each, floor-saturated as above): B_ext vs lc0-LAST2x, B_ext vs g1586.
 - Confounds: none new (same rows, same derived shards, same code, same seed; only the donor differs, as for A_ext). Expected wall: train ~1 h 31, arenas ~35 min.
 
-- **CORRECTION to the B_ext launch line (09:00Z)**: `--init-from` is NOT on the merged branch (`lc0_control_train.py` on ffde0f6ef rejects it: "unrecognized arguments"); it lives only on `feat/lc0-continuation` (956eff877, worktree `/home/josh/chess-438-merge-review`), which is exactly the code A_ext was trained with. The ext leg therefore trains from 956eff877 — the faithful mirror of A_ext, and a code vintage whose optimizer #495 proved bitwise-identical — while its arenas run from `chess-ladderarena` (that worktree's `DO_NOT_RUN_ARENAS.md`: pre-evaluator-hoist code OOMs arenas; training is unaffected). First attempt failed at argparse in 4 s (`ext_train.fail`, sentinel removed); relaunched 08:59:56Z, preflight: init-from step 9,680, sha256 `4ed7bc8c…`, all three pins match. Confound added: B_ext's second pass runs on 956eff877, B's first on ffde0f6ef; A's two passes both on 956eff877.
+- **CORRECTION to the B_ext launch line (09:00Z)**: `--init-from` is NOT on the merged branch (`lc0_control_train.py` on ffde0f6ef rejects it: "unrecognized arguments"); it lives only on `feat/lc0-continuation` (956eff877, worktree `~/chess-438-merge-review`), which is exactly the code A_ext was trained with. The ext leg therefore trains from 956eff877 — the faithful mirror of A_ext, and a code vintage whose optimizer #495 proved bitwise-identical — while its arenas run from `chess-ladderarena` (that worktree's `DO_NOT_RUN_ARENAS.md`: pre-evaluator-hoist code OOMs arenas; training is unaffected). First attempt failed at argparse in 4 s (`ext_train.fail`, sentinel removed); relaunched 08:59:56Z, preflight: init-from step 9,680, sha256 `4ed7bc8c…`, all three pins match. Confound added: B_ext's second pass runs on 956eff877, B's first on ffde0f6ef; A's two passes both on 956eff877.
 
 
 **2026-09-02 11:40Z — ⚑⚑ B_ext VERDICT: B_ext vs A_ext = +358.8 Elo [+318.6, +407.8] (400 games) — the history effect HOLDS at matched 19,360 steps (top row). Anchors: vs lc0-LAST2x −619 (A_ext) → −443 (B) → −301 (B_ext); vs production still at the floor. GPU idle. 20M decision framed below — NOT launched.**
@@ -72960,3 +72960,136 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - **Readout (pre-committed)**: each arm's d12 label (top-4 rung) and d10 label (middle rung) vs T80 top-1, paired against the banked `all10_cold` (58.16), `fw12` (60.09) and `stair13` (60.82), game-cluster bootstrap 2000× seed 20260902; cost per arm (median / p90 / p99 / max, >2 s, >8 s) and wedges. **Rule**: a variant PASSES if its d12 label is within 1 pp of `fw12` (≥ 59.1) AND its paired gain over `all10_cold` has a CI excluding 0 AND its median cost ≤ 1.5× `all:10` (≤ 0.47 s); among passing variants the recommendation is the CHEAPEST; if none passes, the choice stays between the current staircase and plain `all:10` as recorded above. Josh decides the restart either way.
 
 
+**2026-09-02 21:53Z — GAME-AWARE EXACT-EPOCH SAMPLER (PREREG; CODE ONLY, DEFAULT OFF, UNREAD): use every row once without placing two positions from one game in an optimizer batch.**
+
+- **Hypothesis.** Frozen supervised corpora should not use the rolling replay
+  sampler's replacement draws: at one nominal exposure they leave about 36.8%
+  of rows unseen, repeat others, and admit several correlated plies from one
+  game into one batch. The candidate independently shuffles each shard-local
+  segment of a game's rows, samples at most one row per game per batch, replaces
+  exhausted games, preserves the corpus's natural WDL distribution, and refuses
+  any step budget that does not consume the complete planned epoch.
+  `replacement` remains the default so the in-flight 20M run and historical
+  controls are untouched.
+- **Mechanism/negative controls.** The plan and realized schedule carry
+  independently accumulated SHA-256 receipts; completion additionally requires
+  all planned rows, games, decoded chunks and shards to close exactly, with
+  `same_game_repeats_max = 0`. Each decoded shard segment's position order uses
+  an RNG stream separate from trainer augmentation; games split at a fixed shard
+  boundary drain those independently shuffled segments in shard-load order.
+  Planning moves the earliest shard that supplies a missing forced game or new
+  active-game diversity to the load frontier, so duplicate-only prefixes cannot
+  create an unbounded refill. A corpus is refused when one game's row count
+  exceeds `ceil(corpus_rows / batch_size)`: the extra tiny optimizer updates
+  this would force cannot be repaired by multiplying the loss under
+  Aurora/AdamW, whose normalized moments and decoupled decay still advance per
+  step. Accepted corpora must additionally spread into updates whose minimum
+  fill is at least **99%** (the production plan is 511/512); merely making
+  equally undersized updates is not a substitute for optimizer-level
+  weighting. That refill bound is not sufficient
+  for long-game rows stranded across many shards, so metadata planning simulates eager
+  decoded bytes, batch assembly, and compaction copy spikes. The preregistered
+  **8 GiB hard working-set cap** refuses an over-budget schedule before the
+  first full shard decode or optimizer step and is enforced again at runtime.
+  Independent conversion outputs namespace their
+  source-local `game_id` by resolved shard parent. The launcher requires
+  `accum_steps = 1`, making the scheduler's batch the complete optimizer batch
+  covered by that uniqueness invariant. CUDA retry and discarded non-finite
+  updates are fail-closed: replacing or skipping an already-consumed
+  exact-epoch batch would leave rows unused, so the run must restart from its
+  deterministic seed and any partial MID checkpoint is removed.
+- **Pre-training structural/cost screen (banked this session, no GPU).** On the
+  frozen 20M corpus at
+  `runs/armB/qtemp_0.0005_hist_20m/staged_shards`: **18,910,484 rows / 97,968
+  games / 2,309 shards → 36,935 batches**, 36,699×512 + 236×511, minimum 511.
+  The first naïve replacement-on-exhaustion plan was rejected before launch:
+  37,171 batches, 334 undersized tail batches, last 20 all size 1. The
+  deadline-aware plan removes that overweighted tail. Metadata planning with
+  16 threads took 134.8 s beside the active GPU/Stockfish jobs (96.2 s scan +
+  38.6 s schedule); this is one-time launch work. A production-shaped 50-shard
+  full CPU drain used every one of 409,600 rows, zero same-game repeats,
+  **11,661 rows/s / 43.9 ms per batch**, and 6.9 GiB process peak; compaction
+  bounded live decoded storage at 228,917 rows rather than retaining the whole
+  corpus. After the resident-budget and eager-validation-scratch review fixes,
+  the complete 18,910,484-row metadata plan was rerun: max refill **13 shards**,
+  all 2,309 shards accounted for, planned sampler working-set peak
+  **7,324,639,036 bytes (6.82 GiB)** under the explicit 8 GiB cap, plan
+  `1e4ae2c0249d9ef82ce26fc349cc744e08dbea5c5874382e0da56fba957c33a6`
+  (143.8 s beside other work). The byte cap covers sampler-owned decoded array
+  payload, concurrent eager-validation temporaries, batch assembly, and
+  compaction scratch; the earlier 6.9 GiB number is whole-process RSS and is
+  therefore not the same measurement. That pre-normalization hash was
+  superseded when the exact per-head objective census became part of the plan
+  identity: the full 18,910,484-row preflight reran in 163.3 s (1,087,584 KiB
+  process max RSS), preserved every structural count and the 7,324,639,036-byte
+  planned peak, and produced plan
+  `c3ce750c2a5e57abf276db9c4a61d414b6574d7d27e7fd0e33265ddcd68de7ad`.
+  Its banked objective-mask weights are policy = WDL = 18,910,484 and zero for
+  every optional head, matching this staged corpus. That census-only identity
+  was itself superseded after review required a byte-level corpus identity and
+  host-preparation/pinned-transfer headroom: the full preflight streamed all
+  671,766 compressed Zarr files twice, took 20:38.94 (1,101,304 KiB process max
+  RSS), and banked corpus
+  `15d17b464ca459ec23f24a161b5ac03b3061b97f8c5cd779eef10b236d46c40c`
+  with plan
+  `8897d21ae3c7b74b9793ae81fae3aefe1a388d105a6c62eb0464e9ae95a97fb1`.
+  Every structural/objective count and the 7,324,639,036-byte planned peak were
+  unchanged; the corpus's seven-copy mirror allowance dominates the new
+  three-copy host-pipeline floor. The 20.6-minute result makes the added
+  one-time launch I/O cost explicit rather than presenting the earlier
+  metadata-only timing as current. These are plumbing observations, not the
+  learning verdict.
+- **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
+  6.** At the next clean GPU boundary, train both samplers from scratch on the
+  frozen 4,894,143-row real-history corpus for the same **9,559 optimizer
+  steps** (the candidate's exact plan), same config and seed within each pair:
+
+      for seed in 0 1; do
+        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_replacement --steps 9559 --batch-size 512 --sampling-mode replacement --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
+        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_game_epoch --steps 0 --batch-size 512 --sampling-mode game_epoch --epoch-max-working-set-gib 8 --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
+      done
+      PYTHONPATH=. python3 scripts/match_audit_rows.py --audit-set data/audit_set_v1.jsonl --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats --out scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz
+      for seed in 0 1; do for mode in replacement game_epoch; do
+        PYTHONPATH=. python3 scripts/value_regret.py --checkpoint runs/game_epoch_ab/s${seed}_${mode}/checkpoint.pt --max-positions 4000 --min-pieces 0 --batch-size 128 --gpu-mem-fraction 0.15 --matched-rows scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz --dump-per-position scratchpad/game_epoch_ab/s${seed}_${mode}.jsonl
+      done; done
+      for seed in 0 1; do
+        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --cluster-key game_cluster_id --require-n 4000
+      done
+
+  The matched-row artifact contributes only a conservative source-game
+  component: because the frozen manifest discarded its sampled-row provenance,
+  every exact source-game candidate for a repeated position participates in a
+  connected component, rather than treating the arbitrary first history match
+  as its game. The real 1,463-shard preflight matched 4,000/4,000 rows, found
+  28 positions with multiple candidate games and produced 775 complete
+  components with no unidentified candidate. A deterministic replay of the
+  original frozen-set sampler independently recovered 775 true games, with
+  zero true games split and zero distinct true games over-merged by these
+  components. Scoring remains the preregistered FEN-only ruler.
+  `--min-pieces 0` makes the stated full-set
+  n=4,000 executable rather than applying the tool's 7-man exclusion default.
+  Sign is `game_epoch - replacement`, so negative regret is better.
+  **SUCCESS:** the arithmetic mean of the two paired mean deltas is ≤ 0 cp and
+  neither seed's paired game-cluster 95% CI lies wholly above 0. **KILL:** mean delta > 0 cp
+  or either seed significantly regresses. A split-sign result that does not
+  trigger KILL is MIXED, not permission to use the sampler for 100M.
+- **Operational gate (not a second learning yardstick).** Both exact summaries
+  must say `complete: true`, planned hash = realized hash, all 4,894,143 rows
+  realized, zero same-game repeats, and both planned and realized
+  `peak_working_set_bytes` at or below the banked 8 GiB cap. Using the already-emitted pipeline
+  timers over the same 9,559 steps, candidate median steps/s must be at least
+  0.90× its same-seed replacement control; otherwise optimize the loader before
+  the 100M run even if the learning verdict succeeds. Bank and read every
+  `summary.json.train_window_metrics` row, not only total wall time or the
+  final-window compatibility view in `summary.json.metrics`. The currently
+  running 20M replacement job is useful operational context but is **not** one
+  of these preregistered paired arms.
+- **Confounds/revert.** The samplers necessarily see different row sequences;
+  that is the intervention. Batch sizes are 511/512 in the exact arm versus
+  512 in replacement; the one-row spread is the price of avoiding a single
+  overweighted remainder update; each exact update is scaled by its realized
+  row count / 512, so every row retains the same nominal loss coefficient.
+  No live state or
+  corpus is modified. Revert is to omit `--sampling-mode game_epoch` (the
+  default remains `replacement`); no replay rollback is needed because this is
+  an offline finite-corpus driver.

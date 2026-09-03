@@ -352,6 +352,13 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
 
     out: dict[str, np.ndarray] = {}
     for name in _ARRAY_FIELD_ORDER:
+        present = any(name in chunk for chunk in chunks)
+        # A uniformly absent optional field has no information to merge. Skip
+        # it before synthesizing per-chunk zeros: building those arrays and a
+        # concatenated throwaway can transiently consume two full field
+        # payloads (notably another complete x tensor for x_lc0_root).
+        if not present and name not in _REQUIRED_STORAGE_FIELDS:
+            continue
         parts: list[np.ndarray] = []
         for chunk in chunks:
             n, chunk_policy_size, chunk_x_planes = _batch_dims(chunk)
@@ -368,16 +375,7 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                     )
                 )
         merged = np.concatenate(parts, axis=0)
-  # Keep required fields explicit; drop optional fields that are uniformly absent.
-  # (There used to be a second branch here retaining a uniformly-absent VALUE
-  # array when its `has_*` flag had already been written to `out`. It could
-  # never fire: `_ARRAY_FIELD_ORDER` is `_SHARD_FIELDS`, which emits `spec.arr`
-  # BEFORE `spec.flag` for every pair, so a value name is always decided while
-  # its own flag is still unwritten. It read as a safety net holding nothing;
-  # the ordering it depended on is now pinned by
-  # tests/test_replay_field_defaults.py.)
-        if any(name in chunk for chunk in chunks) or name in _REQUIRED_STORAGE_FIELDS:
-            out[name] = merged
+        out[name] = merged
     for name in _SCALAR_METADATA_FIELDS:
         values: list[str | None] = []
         for chunk in chunks:
@@ -2003,7 +2001,7 @@ class DiskReplayBuffer:
   # The allocation below is `np.zeros` over the UNION of the selected chunks'
   # keys, so a field one chunk carries and another lacks arrives as zeros for
   # the second chunk's rows. For every optional field that is the schema's own
-  # default (absent flag == 0, absent target == zeros) and harmless. For the two
+  # default (absent flag == 0, absent target == zeros) and harmless. For required
   # fields whose schema default is NOT zeros it is silent corruption in the
   # direction that cannot be seen: `has_policy = 0` deletes those rows from the
   # main policy loss and its accuracy stats, and `policy_loss` then reports the
@@ -2012,8 +2010,11 @@ class DiskReplayBuffer:
   # producer path emits them) -- this exists so that if it ever becomes
   # reachable the run stops instead of quietly training on fewer rows than it
   # reports. Cost: two `in` scans over the selected chunks, not the ~60 keys.
+  # Optional non-zero defaults are initialized from the schema below instead.
         if len(selected) > 1:
             for name in sorted(NONZERO_DEFAULT_STORAGE_FIELDS):
+                if name not in _REQUIRED_STORAGE_FIELDS:
+                    continue
                 present = sum(1 for dense_rows, _ in selected if name in dense_rows)
                 if 0 < present < len(selected):
                     raise ValueError(
@@ -2025,6 +2026,8 @@ class DiskReplayBuffer:
         for k in sorted(all_keys):
             if k in proto:
                 out[k] = np.zeros((n_out, *proto[k].shape[1:]), dtype=proto[k].dtype)
+                if k in NONZERO_DEFAULT_STORAGE_FIELDS:
+                    out[k].fill(1)
         for dense_rows, mask in selected:
             for name, value in dense_rows.items():
                 if name in out:

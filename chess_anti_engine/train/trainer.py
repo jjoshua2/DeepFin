@@ -71,6 +71,7 @@ from chess_anti_engine.train.target_builder import (
     SfTargetParams,
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
+    rebuild_sf_wdl_batch,
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves import torch_maps
@@ -91,11 +92,15 @@ from .aurora import AuroraWithAuxAdam, OptimizerStepFailed
 from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
+    EXACT_OBJECTIVE_NAMES,
     SfPolicyFloorParams,
     SfShapeParams,
+    align_policy_mask,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    _compute_sf_wdl_mask,
+    _normalize_sf_wdl_probs,
     normalize_value_blend_fracs,
     policy_target_temp_active,
     resolve_sf_regret_gate_keys,
@@ -105,6 +110,7 @@ from .losses import (
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
+from .sparse_sf_ce import sparse_sf_policy_availability
 from .muon import MuonWithAuxAdam
 from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
@@ -277,6 +283,7 @@ class _DeviceLossSums:
         *,
         total_override: torch.Tensor | None = None,
         total_scale: float = 1.0,
+        mean_weight: float = 1.0,
     ) -> None:
         """One microbatch's scalars, with ``_extract_loss_scalars``' semantics.
 
@@ -311,6 +318,19 @@ class _DeviceLossSums:
         vec = torch.stack(scalars).detach().to(torch.float64)
         if total_at >= 0 and float(total_scale) != 1.0:
             vec[total_at] = vec[total_at] * float(total_scale)
+        if float(mean_weight) != 1.0:
+            # Raw numerator/denominator/count scalars are already row sums.
+            # Every other value is a batch mean and needs a row-count weight
+            # before pooling ragged exact batches. One vector multiply keeps
+            # this to a single dispatch on the exact-epoch-only path.
+            raw_keys = _RAW_SUM_LOSS_KEYS | {
+                "disarmed_nonfinite_terms", "blend_unclaimed_nonfinite_rows",
+            }
+            weights = vec.new_tensor([
+                1.0 if key in raw_keys else float(mean_weight)
+                for key in losses
+            ])
+            vec = vec * weights
         self._accumulate(names, vec)
 
     def merge(self, other: _DeviceLossSums) -> None:
@@ -1548,12 +1568,10 @@ class TrainMetrics:
   # is `has_sf_wdl` rows — the same population the offline gate
   # `eval/value_optimism.py::sf_multipv_missing_rate` divides by.
   #
-  # It reads the batch's own `has_` vectors and consults NO flag, which is the
-  # whole point: the pre-existing signal (`sf_rebuild_policy_frac` below
-  # `sf_rebuild_wdl_frac`) is definitionally the same measurement but only
-  # exists while `rebuild_sf_targets` is on, and that key defaults False and
-  # is in no config file — so it read 0.0, indistinguishable from healthy,
-  # through three separate desync episodes spanning 25 days.
+  # It reads the batch's own `has_` vectors and consults NO flag. A former
+  # dense-only heuristic compared the two rebuild coverage fractions, but
+  # supported sparse-policy rows legitimately separate them. This metric is
+  # the format-independent label-health contract.
   #
   # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
   # same denominator as a share of all batch rows. (The RATE's own denominator
@@ -1644,18 +1662,11 @@ class TrainMetrics:
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION SIGNAL, not a coverage
-  # cost. Both fracs divide by ALL rows in the rebuilt batch, and every healthy
-  # labelled row carries `sf_label_meta` AND `sf_multipv_raw`, so the two are
-  # EQUAL on clean data and their difference is the count of rows that lost
-  # their whole MultiPV block, over ALL BATCH ROWS. That is the desync
-  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`) and a
-  # LOWER BOUND on contamination — a desynced engine strips the block on only
-  # ~59% of the labels it poisons, so divide by ~0.59 for the true share.
-  # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
-  # episode. Measured through this very accumulator: 0.000000 on clean live
-  # shards, 0.192 over the 122 quarantined 2026-08-01 (0.207 of LABELLED rows
-  # there; do not mix the two denominators). ⚑ Reads 0.0 when
+  # Policy counts dense targets actually rewritten. WDL also counts supported
+  # sparse-policy rows, so a gap is expected for healthy mixed-format corpora
+  # and must not be used as a contamination signal. Use the always-on
+  # sf_labelled_no_multipv_frac plus its checked denominator for label health.
+  # ⚑ Both rebuild fields read 0.0 when
   # `rebuild_sf_targets` is off, which is the default and is not in any config
   # — see target_builder's metric_kwargs before treating it as a live alarm.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
@@ -1984,6 +1995,45 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
     "wdl_terminal_outcome_rows": "wdl_terminal_outcome_rows",
 }
 
+# Exact-epoch-only masked diagnostics.  ``compute_loss`` emits these internal
+# numerator/denominator pairs only when the exact training path asks for them;
+# legacy training and holdout eval keep their established estimator.  The
+# ordinary whole-objective ``loss`` and unmasked ``channel_balance`` remain
+# weighted by realized batch rows through ``mean_weight``.
+_EXACT_MASKED_METRIC_FIELDS: dict[str, tuple[str, str]] = {
+    field: (f"_exact_{field}_sum", f"_exact_{field}_weight")
+    for field in (
+        "policy_loss",
+        "soft_policy_loss",
+        "future_policy_loss",
+        "wdl_loss",
+        "blended_wdl_loss",
+        "wdl_onehot_loss",
+        "sf_move_loss",
+        "sf_eval_loss",
+        "categorical_loss",
+        "volatility_loss",
+        "sf_volatility_loss",
+        "moves_left_loss",
+        "policy_loss_selfplay",
+        "policy_loss_curriculum",
+        "wdl_loss_selfplay",
+        "wdl_loss_curriculum",
+        "policy_loss_phase_open",
+        "policy_loss_phase_mid",
+        "policy_loss_phase_end",
+        "wdl_loss_phase_open",
+        "wdl_loss_phase_mid",
+        "wdl_loss_phase_end",
+        "frac_is_selfplay",
+        "frac_tagged",
+        "soft_mask_kept_frac",
+        "sf_search_agree_frac",
+        "sf_search_disagree_sf_low_frac",
+        "sf_search_disagree_sf_high_frac",
+    )
+}
+
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
 # ``_raw_count_metric_kwargs``. They are already SUMS over the batch's rows, so
 # they accumulate unweighted; every other scalar is a per-batch MEAN and must be
@@ -1993,7 +2043,8 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
 # the ratio.
 _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
     [key for pair in _RATIO_METRIC_FIELDS.values() for key in pair]
-    + list(_RAW_COUNT_METRIC_FIELDS.values()),
+    + list(_RAW_COUNT_METRIC_FIELDS.values())
+    + [key for pair in _EXACT_MASKED_METRIC_FIELDS.values() for key in pair],
 )
 
 
@@ -2182,6 +2233,17 @@ def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
             continue
         den = float(sums[den_key])
         out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
+    return out
+
+
+def _exact_masked_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Pool exact-epoch masked means by their own eligible observations."""
+    out: dict[str, float] = {}
+    for field, (sum_key, weight_key) in _EXACT_MASKED_METRIC_FIELDS.items():
+        if sum_key not in sums or weight_key not in sums:
+            continue
+        weight = float(sums[weight_key])
+        out[field] = float(sums[sum_key]) / weight if weight > 0.0 else 0.0
     return out
 
 
@@ -3149,10 +3211,9 @@ class Trainer:
   # window instead of waiting ~18h for it to turn over. On healthy data that is
   # ALL of them: every labelled row is written with sf_multipv_raw, so the
   # rebuild reaches 100% of the SF-labelled window and there is no mixture of
-  # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
-  # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
-  # (a LOWER bound on it: docs/target_rebuildability.md), not a structural cost
-  # of the rebuild.
+  # two target regimes. sf_rebuild_policy_frac reports dense targets actually
+  # rewritten; sparse-policy rows can legitimately appear only in the WDL
+  # coverage. sf_labelled_no_multipv_frac is the label-health detector.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -4202,6 +4263,220 @@ class Trainer:
             **extras,
         )
 
+    def exact_objective_mask_counter(
+        self, arrays: Mapping[str, Any],
+    ) -> Mapping[str, float]:
+        """Count corpus-wide optimizer-mask weights for an exact epoch.
+
+        The sampler calls this first on lazy zarr arrays and again on each
+        eagerly decoded shard. Work is row-chunked and normally reads only the
+        scalar flags plus the three-value SF WDL field when its fractional mask
+        is configured; input planes are never decoded. Dense policy targets are
+        also read when a legacy best-move fallback candidate lacks the modern
+        dense-target mask.
+
+        Optional TV and sparse-policy masks reuse the same target transforms as
+        ``compute_loss``. Their chunks are deliberately small so exactness does
+        not turn preflight into a second eager replay-buffer load.
+        """
+        x = arrays.get("x")
+        if x is None or getattr(x, "shape", None) is None:
+            raise ValueError("exact objective census requires the shard x shape")
+        rows = int(x.shape[0])
+        totals = dict.fromkeys(EXACT_OBJECTIVE_NAMES, 0.0)
+        dynamic_wide_mask = (
+            float(self.soft_policy_min_tv) > 0.0
+            or bool(self.sf_policy_sparse_ce)
+            or (
+                "sf_policy_target" in arrays
+                and "has_sf_move" in arrays
+            )
+        )
+        chunk_rows = 512 if dynamic_wide_mask else 65_536
+        model = getattr(self.model, "_orig_mod", self.model)
+        model_policy_width = int(getattr(model, "policy_size", POLICY_SIZE))
+
+        def _slice(
+            name: str, start: int, stop: int, *, default: float = 0.0,
+        ) -> torch.Tensor:
+            value = arrays.get(name)
+            if value is None:
+                return torch.full((stop - start,), default, dtype=torch.float32)
+            return torch.as_tensor(
+                np.asarray(value[start:stop]), dtype=torch.float32,
+            ).reshape(-1)
+
+        for start in range(0, rows, chunk_rows):
+            stop = min(rows, start + chunk_rows)
+            net = _slice("is_network_turn", start, stop, default=1.0)
+            has_policy = _slice("has_policy", start, stop, default=1.0)
+            has_soft = _slice("has_policy_soft", start, stop)
+            has_future = _slice("has_future", start, stop)
+            has_sf_p0 = _slice("has_sf_p0", start, stop)
+            has_sf_p0_regret = _slice("has_sf_p0_regret", start, stop)
+            has_sf_policy = _slice("has_sf_policy", start, stop)
+            has_sf_move = _slice("has_sf_move", start, stop)
+            dense_fallback_candidates = (
+                (has_sf_policy <= 0.0) & (has_sf_move > 0.0)
+            )
+            if (
+                bool(dense_fallback_candidates.any())
+                and "sf_policy_target" in arrays
+            ):
+                dense_target = torch.as_tensor(
+                    np.asarray(arrays["sf_policy_target"][start:stop]),
+                    dtype=torch.float32,
+                )
+                dense_target_present = (
+                    dense_target.sum(dim=-1) > 0.0
+                ).to(torch.float32)
+                has_sf_policy = torch.maximum(
+                    has_sf_policy,
+                    has_sf_move * dense_target_present,
+                )
+            has_cat = _slice("has_categorical", start, stop)
+            has_vol = _slice("has_volatility", start, stop)
+            has_sf_vol = _slice("has_sf_volatility", start, stop)
+            has_moves_left = _slice("has_moves_left", start, stop)
+            has_sf_wdl = _slice("has_sf_wdl", start, stop)
+
+            if (
+                float(self.soft_policy_min_tv) > 0.0
+                and "policy_soft_target" in arrays
+            ):
+                hard_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                soft_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_soft_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                shaped_hard = retemper_main_policy_target(
+                    hard_target, temp=float(self.policy_target_temp),
+                )
+                tv = 0.5 * (shaped_hard - soft_target).abs().sum(dim=-1)
+                has_soft = has_soft * (
+                    tv >= float(self.soft_policy_min_tv)
+                ).to(has_soft.dtype)
+
+            if bool(self.rebuild_sf_targets):
+                # Same unconditional cross-ply invalidation as
+                # rebuild_sf_targets_in_arrays.
+                has_sf_p0 = torch.zeros_like(has_sf_p0)
+                has_sf_vol = torch.zeros_like(has_sf_vol)
+
+            conf_power = max(0.0, float(self.sf_wdl_conf_power))
+            draw_scale = max(0.0, float(self.sf_wdl_draw_scale))
+            sf_wdl_raw = (
+                arrays.get("sf_wdl")
+                if conf_power > 0.0 or draw_scale != 1.0
+                else None
+            )
+            sf_wdl = None
+            if sf_wdl_raw is not None:
+                sf_wdl_array = np.array(
+                    sf_wdl_raw[start:stop], copy=bool(self.rebuild_sf_targets),
+                )
+                if (
+                    bool(self.rebuild_sf_targets)
+                    and "has_sf_label_meta" in arrays
+                    and "sf_label_meta" in arrays
+                ):
+                    has_meta = np.asarray(
+                        arrays["has_sf_label_meta"][start:stop], dtype=bool,
+                    )
+                    if bool(has_meta.any()):
+                        rebuilt_wdl, ok_wdl = rebuild_sf_wdl_batch(
+                            np.asarray(
+                                arrays["sf_label_meta"][start:stop],
+                            )[has_meta],
+                            self.sf_target_params,
+                        )
+                        write = np.flatnonzero(has_meta)[ok_wdl]
+                        sf_wdl_array[write] = rebuilt_wdl[ok_wdl]
+                sf_wdl = torch.as_tensor(sf_wdl_array, dtype=torch.float32)
+            wdl_target = (
+                _slice("wdl_target", start, stop)
+                if draw_scale != 1.0 else torch.zeros_like(net)
+            )
+            sf_eval_mask = _compute_sf_wdl_mask(
+                net_mask=net,
+                has_sf_wdl=has_sf_wdl,
+                sf_wdl_probs=_normalize_sf_wdl_probs(
+                    sf_wdl, temperature=float(self.sf_wdl_temperature),
+                ),
+                wdl_target=wdl_target,
+                conf_power=conf_power,
+                draw_scale=draw_scale,
+            )
+            if (
+                bool(self.sf_policy_sparse_ce)
+                and bool(getattr(model, "enable_policy_sf_head", True))
+            ):
+                sparse_keys = (
+                    "sf_multipv_raw",
+                    "has_sf_multipv_raw",
+                    "sf_legal_mask",
+                    "has_sf_legal_mask",
+                    "sf_move_index",
+                    "has_sf_move",
+                )
+                sparse_batch = {
+                    name: torch.as_tensor(np.asarray(arrays[name][start:stop]))
+                    for name in sparse_keys
+                    if name in arrays
+                }
+                legal = sparse_batch.get("sf_legal_mask")
+                if legal is not None:
+                    sparse_available = sparse_sf_policy_availability(
+                        sparse_batch,
+                        params=self.sf_target_params,
+                        legal_aligned=align_policy_mask(
+                            legal, model_policy_width,
+                        ),
+                        dst_width=model_policy_width,
+                    )
+                    has_sf_policy = torch.maximum(
+                        has_sf_policy, sparse_available.to(torch.float32),
+                    )
+            no_rows = torch.zeros_like(net)
+            sf_p0_mask = (
+                net * has_sf_p0
+                if "sf_p0_policy_target" in arrays else no_rows
+            )
+            sf_p0_regret_mask = (
+                net * has_sf_p0_regret
+                if "sf_p0_regret" in arrays else no_rows
+            )
+            masks = {
+                "policy": net * has_policy,
+                "soft_policy": net * has_soft,
+                "future_policy": net * has_future,
+                "sf_own": sf_p0_mask,
+                "sf_own_regret": sf_p0_regret_mask,
+                "wdl": net,
+                "sf_move": net * has_sf_policy,
+                "sf_eval": sf_eval_mask,
+                "categorical": net * has_cat,
+                "volatility": net * has_vol,
+                "sf_volatility": net * has_sf_vol,
+                "moves_left": net * has_moves_left,
+                "sf_policy_floor": sf_p0_regret_mask,
+                "sf_shape": sf_p0_regret_mask,
+            }
+            if tuple(masks) != EXACT_OBJECTIVE_NAMES:
+                raise AssertionError("objective census names drifted from loss terms")
+            for name, mask in masks.items():
+                totals[name] += float(mask.to(torch.float64).sum().item())
+        return totals
+
     def _prepare_host_arrays(
         self,
         arrs: dict[str, np.ndarray],
@@ -4378,6 +4653,52 @@ class Trainer:
                         coverage=coverage,
                     )
                 yield self._host_batch_to_tensors(host_batch)
+
+    def _iter_training_batches(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """Training batches, serialized when exact replay owns a hard cap."""
+        if not bool(getattr(buf, "exact_without_replacement", False)):
+            if coverage is None:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                )
+            else:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                    coverage=coverage,
+                )
+            return
+
+        # The exact planner prices one materialized host batch at a time.  The
+        # ordinary prefetch path retains batch N while assembling N+1, so exact
+        # training deliberately gives up that overlap to keep the cap hard.
+        for _ in range(max(0, int(count))):
+            host_batch = self._sample_batch_host(
+                buf,
+                batch_size=batch_size,
+                mirror_prob=mirror_prob,
+                coverage=coverage,
+            )
+            device_batch = self._host_batch_to_tensors(host_batch)
+            del host_batch
+            yield device_batch
+            # A suspended generator retains its locals.  Drop the yielded
+            # mapping before constructing the next host batch; on CPU its
+            # tensors may alias the NumPy storage directly.
+            del device_batch
 
     def _full_pass_host_batch(
         self, buf: ReplayBuffer, *, start: int, stop: int,
@@ -4732,10 +5053,10 @@ class Trainer:
         the edit (~18h for a 1.5M-row window to turn over at the current ingest
         rate). On healthy data that is every one of them — a labelled row is
         written with ``sf_multipv_raw`` — so the window does NOT become a
-        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
-        realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
-        Stockfish rows, not a bound on what the rebuild can reach — and it
-        UNDERCOUNTS them, since only ~59% of poisoned rows lose the block.
+        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports
+        dense targets actually rewritten. It may legitimately fall below
+        ``sf_rebuild_wdl_frac`` when sparse-policy rows are present; use the
+        always-on ``sf_labelled_no_multipv_frac`` label-health detector.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as
@@ -5085,9 +5406,10 @@ class Trainer:
         phases = timer if timer is not None else _PipelinePhaseTimer(device="cpu")
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
+        step_samples_seen = 0
         batches = batch_iter
         if batches is None:
-            batches = self._iter_prefetched_batches(
+            batches = self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
@@ -5099,18 +5421,54 @@ class Trainer:
   # H2D issue. Deliberately no GPU twin -- see `_PIPELINE_PHASE_GPU_KEY`.
             with phases.phase("batch_prefetch_wait_s"):
                 batch = next(batches)
+            # Shape metadata is available without a device synchronization.
+            # Count what the buffer actually returned: an exact finite epoch
+            # deliberately spreads a remainder over near-full ragged batches,
+            # so ``n_micro * requested batch_size`` is not generally true.
+            realized_batch_rows = int(batch["x"].shape[0])
+            step_samples_seen += realized_batch_rows
+            exact_epoch = bool(
+                getattr(buf, "exact_without_replacement", False)
+            )
             with phases.phase("fwd_loss_s"):
                 self._apply_feature_group_dropout(batch["x"])
                 with self._amp_context():
                     _rel = batch.get("relations")
   # kwarg only when present: TinyNet's forward has no relations param.
                     out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
-                    losses = compute_loss(out, batch, **self._loss_kwargs)
+                    losses = compute_loss(
+                        out,
+                        batch,
+                        report_exact_masked_sums=exact_epoch,
+                        exact_corpus_rows=(
+                            getattr(buf, "exact_corpus_rows", None)
+                            if exact_epoch else None
+                        ),
+                        exact_objective_mask_weights=(
+                            getattr(buf, "exact_objective_mask_weights", None)
+                            if exact_epoch else None
+                        ),
+                        **self._loss_kwargs,
+                    )
                     balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
                     if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
                         losses["channel_balance"] = balance_loss
                         losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                    loss = losses["total"] / self.accum_steps
+                    # ``compute_loss`` returns a row mean. Exact preflight
+                    # refuses a long game that would force extra undersized
+                    # optimizer steps; every accepted schedule is at least 99%
+                    # full (the production plan is 511/512). Preserve a constant
+                    # 1/requested_batch_size gradient
+                    # coefficient per row before Aurora/AdamW transforms it;
+                    # ordinary replacement replay keeps its historical scale.
+                    exact_row_scale = (
+                        float(realized_batch_rows) / float(batch_size)
+                        if exact_epoch
+                        else 1.0
+                    )
+                    loss = (
+                        losses["total"] * exact_row_scale / self.accum_steps
+                    )
             with phases.phase("bwd_s"):
                 loss.backward()
 
@@ -5120,8 +5478,15 @@ class Trainer:
   # `_DeviceLossSums`. The window pays one transfer, in `train_steps`.
             step_sums.add_losses(
                 losses,
-                total_override=loss,
+                # Metrics remain the unscaled per-row loss. The row-fraction
+                # factor above is optimizer normalization, not a ruler change.
+                total_override=losses["total"] / self.accum_steps,
                 total_scale=float(self.accum_steps),
+                mean_weight=(
+                    float(realized_batch_rows)
+                    if exact_epoch
+                    else 1.0
+                ),
             )
 
             with torch.no_grad():
@@ -5130,6 +5495,14 @@ class Trainer:
                     step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
             step_n_micro += 1
+            # Release the consumed tensor mapping before ``next(batches)`` asks
+            # the exact sampler to materialize another host batch.  Assignment
+            # evaluates its RHS first, so merely reusing the name on the next
+            # loop iteration would otherwise keep this batch alive throughout
+            # construction of its successor.
+            del batch, out, losses, loss, _rel
+
+        step_opt_stats["samples_seen"] = float(step_samples_seen)
 
   # Collect on EVERY step, not just tb_log_interval ones: the stats are
   # pure Python arithmetic over floats zclip already materialized, and a
@@ -5180,6 +5553,12 @@ class Trainer:
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
+            if bool(getattr(buf, "exact_without_replacement", False)):
+                raise RuntimeError(
+                    "exact without-replacement training cannot discard a "
+                    "non-finite-gradient update after consuming its rows; "
+                    "restart the deterministic epoch after correcting the fault",
+                )
             if update_lr:
                 self._update_lr()
             return step_n_micro, 0.0
@@ -5278,6 +5657,7 @@ class Trainer:
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
+        train_samples_seen = 0
   # Committed only on a successful step, so a retried CUDA-error attempt
   # can't double-count (same discipline as step_sums).
         grad_norms: list[float] = []
@@ -5298,7 +5678,7 @@ class Trainer:
         requested_steps = int(steps)
         effective_cycle_steps = max(1, requested_steps)
         batch_iter = _TrainBatchIterator(
-            lambda count: self._iter_prefetched_batches(
+            lambda count: self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
@@ -5341,6 +5721,17 @@ class Trainer:
                 except OptimizerStepFailed:
                     raise
                 except RuntimeError as exc:
+                    # An exact finite-corpus epoch cannot replace a consumed
+                    # batch without silently leaving those rows unused.  The
+                    # rolling replay sampler is allowed to retry from a fresh
+                    # draw; a without-replacement sampler must fail closed so
+                    # the whole epoch can be restarted from its deterministic
+                    # seed.  This check is deliberately before the generic
+                    # CUDA retry branch -- otherwise the first fault advances
+                    # the one-shot iterator and the run can still report a
+                    # complete step count over an incomplete corpus.
+                    if bool(getattr(buf, "exact_without_replacement", False)):
+                        raise
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
                     _retry_batches = batch_iter.consumed - consumed_before_attempt
@@ -5362,6 +5753,7 @@ class Trainer:
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
                 n_micro += step_n_micro
+                train_samples_seen += int(step_opt_stats.get("samples_seen", 0.0))
                 if "grad_norm" in step_opt_stats:
                     grad_norms.append(step_opt_stats["grad_norm"])
                     for flag in clip_counts:
@@ -5389,9 +5781,15 @@ class Trainer:
                     if step_loss is None:
                         self.writer.add_scalar("train/loss", 0.0, self.step)
                     else:
-                        pending_step_loss.append(
-                            (int(self.step), step_loss / float(max(1, step_n_micro))),
+                        step_loss_denominator = (
+                            int(step_opt_stats.get("samples_seen", 0.0))
+                            if bool(getattr(buf, "exact_without_replacement", False))
+                            else step_n_micro
                         )
+                        pending_step_loss.append((
+                            int(self.step),
+                            step_loss / float(max(1, step_loss_denominator)),
+                        ))
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
@@ -5451,7 +5849,6 @@ class Trainer:
             f"gpu_events={'on' if phase_timer.cuda else 'off'}",
             flush=True,
         )
-        train_samples_seen = int(n_micro * batch_size)
   # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
   # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
   # and never trips the non-finite-GRADIENT guard in `_run_optimizer_step`: it
@@ -5487,8 +5884,13 @@ class Trainer:
                 "is still a shard defect -- +-inf and NaN both count here.",
                 blend_unclaimed, n_micro,
             )
+        metric_denominator = (
+            train_samples_seen
+            if bool(getattr(buf, "exact_without_replacement", False))
+            else n_micro
+        )
         metrics = self._build_metrics(
-            sums, acc_sums, float(max(1, n_micro)),
+            sums, acc_sums, float(max(1, metric_denominator)),
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
@@ -5513,6 +5915,11 @@ class Trainer:
                 ),
             },
         )
+        if bool(getattr(buf, "exact_without_replacement", False)):
+            metrics = dataclasses.replace(
+                metrics,
+                **_exact_masked_metric_kwargs(sums),
+            )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")

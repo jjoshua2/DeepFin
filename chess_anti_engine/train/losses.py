@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -89,6 +90,26 @@ _PIECE_PLANE_COUNT = 12
 # whose balance is already reported by `frac_is_selfplay` / `frac_tagged`.
 _PHASE_BUCKET_SUFFIXES = ("phase_open", "phase_mid", "phase_end")
 
+# Stable order shared with the exact-epoch census.  These names identify the
+# optimizer terms, not reporting columns: floor and shape deliberately share
+# an eligibility mask but remain separate configured heads.
+EXACT_OBJECTIVE_NAMES: tuple[str, ...] = (
+    "policy",
+    "soft_policy",
+    "future_policy",
+    "sf_own",
+    "sf_own_regret",
+    "wdl",
+    "sf_move",
+    "sf_eval",
+    "categorical",
+    "volatility",
+    "sf_volatility",
+    "moves_left",
+    "sf_policy_floor",
+    "sf_shape",
+)
+
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Mean of x over mask==1 entries. mask is broadcastable to x."""
@@ -175,10 +196,10 @@ def sf_multipv_presence_counts(
 
     Unconditional by construction: it reads two ``has_`` vectors that every
     collated batch either carries or does not, and consults no flag. The
-    tripwire it replaces (``sf_rebuild_policy_frac`` minus
-    ``sf_rebuild_wdl_frac``) is definitionally the same signal but is gated
-    behind ``rebuild_sf_targets``, which defaults False and is in no config
-    file — so it has read 0.0 through three separate desync episodes.
+    Earlier dense-only data treated the rebuild policy/WDL coverage gap as the
+    same signal, but supported sparse-policy rows legitimately open that gap.
+    This unconditional presence check is now the sole in-loop label-health
+    contract and does not depend on ``rebuild_sf_targets``.
     """
     has_raw = batch.get("has_sf_multipv_raw")
     if has_raw is None:
@@ -2533,6 +2554,9 @@ def compute_loss(
     sf_sparse_params: SfTargetParams | None = None,
     sf_policy_floor: SfPolicyFloorParams | None = None,
     sf_shape: SfShapeParams | None = None,
+    report_exact_masked_sums: bool = False,
+    exact_corpus_rows: int | None = None,
+    exact_objective_mask_weights: Mapping[str, float] | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compute multi-head training loss.
 
@@ -2626,6 +2650,7 @@ def compute_loss(
     pol_support = matched_support_entropy_stats(base_probs, pol_target, base_legal)
 
     has_soft = _get_mask(batch, "has_policy_soft")
+    has_soft_before_keep = has_soft
     soft_logits = outputs.get("policy_soft", base_policy_logits)
     soft_target = batch.get("policy_soft_t")
     soft_ce = (
@@ -2851,10 +2876,22 @@ def compute_loss(
 
   # SF move prediction: target and legal mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
-    has_sf_policy = _get_mask(batch, "has_sf_policy") if "has_sf_policy" in batch else has_sf_move
-
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")
+    has_sf_policy = _get_mask(batch, "has_sf_policy").to(torch.float32)
+    if sf_policy_target is not None:
+        # ``has_sf_move`` predates the dense SF-policy mask, so it remains a
+        # fallback only when this row carries an actual dense distribution.
+        # Mixed-schema concatenation zero-fills a missing target; treating the
+        # best-move flag alone as eligibility would add that targetless row to
+        # the denominator while its soft CE contributes exactly zero.
+        dense_target_present = (
+            sf_policy_target.to(torch.float32).sum(dim=-1) > 0.0
+        ).to(torch.float32)
+        has_sf_policy = torch.maximum(
+            has_sf_policy,
+            has_sf_move.to(torch.float32) * dense_target_present,
+        )
     if sf_pol_logits is None:
         # Deliberately tolerant: partial models (offline rigs, exported subsets)
         # rely on "absent optional head -> zero loss". The `enable_policy_sf_head:
@@ -2947,7 +2984,8 @@ def compute_loss(
         agree = ((sf_sig * sr_sig) > 0).float() * joint
         dis_sf_low = ((sf_sig < 0) & (sr_sig > 0)).float() * joint
         dis_sf_high = ((sf_sig > 0) & (sr_sig < 0)).float() * joint
-        joint_count = joint.sum().clamp_min(1.0)
+        sf_search_joint_rows = joint.sum()
+        joint_count = sf_search_joint_rows.clamp_min(1.0)
         sf_search_agree_frac = (agree.sum() / joint_count).detach()
         sf_search_disagree_sf_low_frac = (dis_sf_low.sum() / joint_count).detach()
         sf_search_disagree_sf_high_frac = (dis_sf_high.sum() / joint_count).detach()
@@ -2955,6 +2993,7 @@ def compute_loss(
         dis_sf_low = torch.zeros_like(sf_available)
         dis_sf_high = torch.zeros_like(sf_available)
         zero_scalar = torch.zeros((), device=sf_available.device)
+        joint = torch.zeros_like(sf_available)
         sf_search_agree_frac = zero_scalar
         sf_search_disagree_sf_low_frac = zero_scalar
         sf_search_disagree_sf_high_frac = zero_scalar
@@ -3109,11 +3148,18 @@ def compute_loss(
     )
 
   # Precompute the per-sample base mask for each head so the downstream
-  # split reductions don't recompute `net_mask * has_X` once per bucket.
+    # split reductions don't recompute `net_mask * has_X` once per bucket.
     pol_base = net_mask * has_policy
+    soft_base = net_mask * has_soft
+    future_base = net_mask * has_future
+    sf_move_base = net_mask * has_sf_policy
+    categorical_base = net_mask * has_cat
+    volatility_base = net_mask * has_vol
+    sf_volatility_base = net_mask * has_sf_vol
+    moves_left_base = net_mask * has_moves_left
     m_policy = masked_mean(pol_ce, pol_base)
-    m_soft = masked_mean(soft_ce, net_mask * has_soft)
-    m_future = masked_mean(future_ce, net_mask * has_future)
+    m_soft = masked_mean(soft_ce, soft_base)
+    m_future = masked_mean(future_ce, future_base)
   # A row only counts as eligible if the TARGET is actually in the batch, not
   # merely because the shard set the `has_` flag: with the target absent the
   # loss tensor is `zero_loss` and the term trains nothing, so counting those
@@ -3252,12 +3298,12 @@ def compute_loss(
     batch_rows = net_mask.new_full((), float(net_mask.shape[0]))
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
-    m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
+    m_sf_move = masked_mean(sf_move_ce, sf_move_base)
     m_sf_eval = masked_mean(sf_eval_ce, m_sf_eval_mask)
-    m_cat = masked_mean(cat_ce, net_mask * has_cat)
-    m_vol = masked_mean(vol_loss, net_mask * has_vol)
-    m_sf_vol = masked_mean(sf_vol_loss, net_mask * has_sf_vol)
-    m_ml = masked_mean(ml_loss, net_mask * has_moves_left)
+    m_cat = masked_mean(cat_ce, categorical_base)
+    m_vol = masked_mean(vol_loss, volatility_base)
+    m_sf_vol = masked_mean(sf_vol_loss, sf_volatility_base)
+    m_ml = masked_mean(ml_loss, moves_left_base)
 
   # Gated on `has_is_selfplay` so legacy shards without the tag are excluded
   # from the split (they won't contribute to either selfplay_ or curriculum_ keys).
@@ -3272,11 +3318,14 @@ def compute_loss(
   # which made `wdl_loss_selfplay` / `_open` / ... track a term no gradient
   # ever came from.
     split_losses: dict[str, torch.Tensor] = {}
+    split_weight_masks: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
         policy_bucket_mask = pol_base * m
         split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, policy_bucket_mask)
         wdl_bucket_mask = net_mask * m
         split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, wdl_bucket_mask)
+        split_weight_masks[f"policy_loss_{suffix}"] = policy_bucket_mask
+        split_weight_masks[f"wdl_loss_{suffix}"] = wdl_bucket_mask
   # The DENOMINATORS of the two lines above, as raw row counts. Without them a
   # bucket cannot be told apart from a good one: `masked_mean` clamps its
   # denominator to 1.0, so a bucket holding zero rows reports 0.0, which reads
@@ -3318,27 +3367,31 @@ def compute_loss(
   # The DIAGNOSTIC columns are computed either way, above and in the returned
   # dict below, so switching a weight on is never the first time anyone sees
   # what its term does.
-    weighted_terms: tuple[tuple[float, torch.Tensor], ...] = (
-        (float(w_policy), m_policy),
-        (float(w_soft), m_soft),
-        (float(w_future), m_future),
-        (float(w_sf_own), m_sf_own),
-        (float(w_sf_own_regret), m_sf_own_regret),
-        (float(w_wdl), m_blended_wdl),
-        (float(w_sf_move), m_sf_move),
-        (float(w_sf_eval), m_sf_eval),
-        (float(w_categorical), m_cat),
-        (float(w_volatility), m_vol),
-        (float(w_sf_volatility), m_sf_vol),
-        (float(w_moves_left), m_ml),
-        (float(floor_params.w), m_sf_policy_floor),
-        (float(shape_params.w), m_sf_shape),
+    weighted_terms: tuple[
+        tuple[str, float, torch.Tensor, torch.Tensor], ...
+    ] = (
+        ("policy", float(w_policy), m_policy, pol_base),
+        ("soft_policy", float(w_soft), m_soft, soft_base),
+        ("future_policy", float(w_future), m_future, future_base),
+        ("sf_own", float(w_sf_own), m_sf_own, sf_p0_base),
+        ("sf_own_regret", float(w_sf_own_regret), m_sf_own_regret, sf_p0_regret_base),
+        ("wdl", float(w_wdl), m_blended_wdl, net_mask),
+        ("sf_move", float(w_sf_move), m_sf_move, sf_move_base),
+        ("sf_eval", float(w_sf_eval), m_sf_eval, m_sf_eval_mask),
+        ("categorical", float(w_categorical), m_cat, categorical_base),
+        ("volatility", float(w_volatility), m_vol, volatility_base),
+        ("sf_volatility", float(w_sf_volatility), m_sf_vol, sf_volatility_base),
+        ("moves_left", float(w_moves_left), m_ml, moves_left_base),
+        ("sf_policy_floor", float(floor_params.w), m_sf_policy_floor, sf_p0_regret_base),
+        ("sf_shape", float(shape_params.w), m_sf_shape, sf_p0_regret_base),
     )
+    if tuple(name for name, _, _, _ in weighted_terms) != EXACT_OBJECTIVE_NAMES:
+        raise AssertionError("exact objective names drifted from weighted terms")
   # Folded LEFT in declaration order, so with every weight non-zero this performs
   # the same sequence of float32 additions as the flat `a + b + c + ...`
   # expression it replaces: `total` is bit-identical there, not merely close.
     total: torch.Tensor | None = None
-    for w, term in weighted_terms:
+    for _name, w, term, _mask in weighted_terms:
         if w == 0.0:
             continue
         total = w * term if total is None else total + w * term
@@ -3361,18 +3414,152 @@ def compute_loss(
   # comparison, so only the isfinite reduction touches the GPU, and only for the
   # terms that are actually off.
     disarmed_nonfinite_terms = torch.zeros((), device=m_policy.device, dtype=torch.float32)
-    for w, term in weighted_terms:
+    for _name, w, term, _mask in weighted_terms:
         if w == 0.0:
             disarmed_nonfinite_terms = disarmed_nonfinite_terms + (
                 ~torch.isfinite(term.detach())
             ).to(torch.float32)
+
+    frac_is_selfplay = masked_mean(is_sp_bool, has_is_sp)
+    frac_tagged = masked_mean(has_is_sp, net_mask)
+
+    exact_masked_sums: dict[str, torch.Tensor] = {}
+    if bool(report_exact_masked_sums):
+        # In an exact epoch, a physical row must retain the same optimizer
+        # coefficient when the final batches are ragged. Each objective is a
+        # masked mean over a different population, so scaling their already-
+        # combined mean by physical batch rows is wrong: a head with one
+        # eligible row would change weight merely because unrelated rows share
+        # its batch. Recover every term's masked numerator, restore its
+        # corpus-wide masked-mean normalization below, and normalize the
+        # combined objective by physical rows before Trainer applies n/B.
+        if exact_corpus_rows is None or int(exact_corpus_rows) <= 0:
+            raise ValueError(
+                "exact loss normalization requires a positive exact_corpus_rows",
+            )
+        if exact_objective_mask_weights is None:
+            raise ValueError(
+                "exact loss normalization requires preflighted objective-mask "
+                "weights",
+            )
+        supplied_names = tuple(exact_objective_mask_weights)
+        if supplied_names != EXACT_OBJECTIVE_NAMES:
+            raise ValueError(
+                "exact objective-mask weights have keys/order "
+                f"{supplied_names}, expected {EXACT_OBJECTIVE_NAMES}",
+            )
+        global_weights_list = [
+            float(exact_objective_mask_weights[name])
+            for name in EXACT_OBJECTIVE_NAMES
+        ]
+        if any(
+            not math.isfinite(value) or value < 0.0
+            for value in global_weights_list
+        ):
+            raise ValueError(
+                "exact objective-mask weights must be finite and non-negative",
+            )
+        objective_weights = torch.stack([
+            mask.to(torch.float32) for _, _, _, mask in weighted_terms
+        ]).sum(dim=1)
+        objective_numerators = torch.stack([
+            term.to(torch.float32) for _, _, term, _ in weighted_terms
+        ]) * objective_weights.clamp_min(1.0)
+        # Preserve the configured meaning of every masked head: globally its
+        # term is still w * (sum eligible loss / eligible weight).  N/K turns
+        # that global masked mean into per-corpus-row units; division by this
+        # physical batch's n and Trainer's existing n/B ragged factor then give
+        # each eligible contribution coefficient N/(K*B), independent of which
+        # other rows happened to share its batch.  K=0 remains an exact zero
+        # term because no batch can then carry a non-zero numerator.
+        # Form the ratio in host float64 before creating the fp32 device
+        # constants. Production corpora exceed 2**24 rows, so casting N and K
+        # separately to fp32 before division needlessly loses integer bits.
+        global_normalizers = objective_weights.new_tensor(
+            [
+                float(int(exact_corpus_rows)) / weight if weight > 0.0 else 0.0
+                for weight in global_weights_list
+            ],
+        )
+        exact_total: torch.Tensor | None = None
+        for idx, (_name, w, _, _) in enumerate(weighted_terms):
+            if w == 0.0:
+                continue
+            contribution = (
+                w * objective_numerators[idx] * global_normalizers[idx]
+            )
+            exact_total = (
+                contribution
+                if exact_total is None else exact_total + contribution
+            )
+        if exact_total is None:
+            exact_total = torch.zeros_like(m_policy)
+        total = exact_total / float(max(1, int(net_mask.shape[0])))
+
+        # Exact epochs pool every masked diagnostic by the observations behind
+        # it.  Keep this channel internal: legacy training/eval deliberately
+        # retains its restart-gated historical estimator, while exact mode has
+        # no historical rows whose meaning could be silently changed.
+        soft_pre_mask = net_mask * has_soft_before_keep
+        soft_kept_weight_mask = (
+            soft_pre_mask
+            if float(soft_policy_min_tv) > 0.0 and soft_target is not None
+            else torch.ones_like(net_mask)
+        )
+        specs: list[tuple[str, torch.Tensor, torch.Tensor]] = [
+            ("policy_loss", m_policy, pol_base),
+            ("soft_policy_loss", m_soft, soft_base),
+            ("future_policy_loss", m_future, future_base),
+            ("wdl_loss", m_blended_wdl, net_mask),
+            ("blended_wdl_loss", m_blended_wdl, net_mask),
+            ("wdl_onehot_loss", m_wdl_onehot, net_mask),
+            ("sf_move_loss", m_sf_move, sf_move_base),
+            ("sf_eval_loss", m_sf_eval, m_sf_eval_mask),
+            ("categorical_loss", m_cat, categorical_base),
+            ("volatility_loss", m_vol, volatility_base),
+            ("sf_volatility_loss", m_sf_vol, sf_volatility_base),
+            ("moves_left_loss", m_ml, moves_left_base),
+            ("frac_is_selfplay", frac_is_selfplay, has_is_sp),
+            ("frac_tagged", frac_tagged, net_mask),
+            ("soft_mask_kept_frac", soft_mask_kept_frac, soft_kept_weight_mask),
+            ("sf_search_agree_frac", sf_search_agree_frac, joint),
+            (
+                "sf_search_disagree_sf_low_frac",
+                sf_search_disagree_sf_low_frac,
+                joint,
+            ),
+            (
+                "sf_search_disagree_sf_high_frac",
+                sf_search_disagree_sf_high_frac,
+                joint,
+            ),
+            *(
+                (field, split_losses[field], mask)
+                for field, mask in split_weight_masks.items()
+            ),
+        ]
+        # One batched reduction, not one GPU launch per diagnostic.  Every mask
+        # is row-shaped; stacking them makes the exact-only instrumentation a
+        # fixed three vector kernels instead of ~30 tiny reductions.
+        weights = torch.stack([
+            mask.to(torch.float32) for _, _, mask in specs
+        ]).sum(dim=1)
+        # ``masked_mean`` clamps its divisor to 1.0.  Binary masks normally
+        # have integer weight, but the confidence-weighted sf_eval mask can sum
+        # to (0, 1); undo the exact divisor it used, not the unclamped weight.
+        weighted_means = torch.stack([
+            mean.to(torch.float32) for _, mean, _ in specs
+        ]) * weights.clamp_min(1.0)
+        for idx, (field, _, _) in enumerate(specs):
+            exact_masked_sums[f"_exact_{field}_sum"] = weighted_means[idx]
+            exact_masked_sums[f"_exact_{field}_weight"] = weights[idx]
 
   # Reported value-loss names (docs/rl_loop_audit.md I7):
   #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
   #     `wdl_ce` is the name people reach for (it becomes the `wdl_loss`
   #     column), `blended_wdl_ce` is kept because existing readers use it.
   #   wdl_onehot_ce -> the hard one-hot diagnostic, never in `total`.
-    return {
+    result = {
         "total": total,
   # How many loss components were BOTH weighted off and non-finite. Zero on
   # every healthy batch; > 0 means a NaN exists that the zero-weight guard is
@@ -3491,8 +3678,8 @@ def compute_loss(
         "sf_volatility": m_sf_vol,
         "moves_left": m_ml,
         **split_losses,
-        "frac_is_selfplay": masked_mean(is_sp_bool, has_is_sp),
-        "frac_tagged": masked_mean(has_is_sp, net_mask),
+        "frac_is_selfplay": frac_is_selfplay,
+        "frac_tagged": frac_tagged,
   # Terminal-proximal outcome transfer (see the blend site above). Emitted as
   # a SUM + a row COUNT, not as per-batch means, for the same reason as the
   # sf_p0 pair: the trainer accumulates them over every microbatch and divides
@@ -3503,7 +3690,9 @@ def compute_loss(
         "sf_search_agree_frac": sf_search_agree_frac,
         "sf_search_disagree_sf_low_frac": sf_search_disagree_sf_low_frac,
         "sf_search_disagree_sf_high_frac": sf_search_disagree_sf_high_frac,
+        **exact_masked_sums,
     }
+    return result
 
 
 def wdl_calibration_stats(

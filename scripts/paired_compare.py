@@ -50,6 +50,10 @@ Two flags exist for PRE-REGISTERED readouts and are off by default:
   --require-n N     refuse unless the join yields exactly N paired positions,
                     so a truncated or partially-labelled dump cannot deliver a
                     quotable verdict at a resolution nobody registered.
+  --cluster-key K   resample source clusters (for matched audit dumps,
+                    ``game_cluster_id``), not rows,
+                    so several audit positions from one game do not masquerade
+                    as independent evidence.
 """
 from __future__ import annotations
 
@@ -84,6 +88,25 @@ def paired_bootstrap_ci(
     n = deltas.shape[0]
     idx = rng.integers(0, n, size=(n_boot, n))
     means = deltas[idx].mean(axis=1)
+    lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return float(lo), float(hi)
+
+
+def paired_cluster_bootstrap_ci(
+    deltas: np.ndarray, clusters: np.ndarray, *, n_boot: int = 10_000,
+    alpha: float = 0.05, seed: int = 0,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI for a paired mean, resampling whole clusters."""
+    if deltas.shape != clusters.shape:
+        raise ValueError("deltas and clusters must have the same shape")
+    unique, inverse = np.unique(clusters, return_inverse=True)
+    if len(unique) < 2:
+        raise ValueError("cluster bootstrap needs at least two clusters")
+    sums = np.bincount(inverse, weights=deltas)
+    counts = np.bincount(inverse)
+    rng = np.random.default_rng(seed)
+    sampled = rng.integers(0, len(unique), size=(n_boot, len(unique)))
+    means = sums[sampled].sum(axis=1) / counts[sampled].sum(axis=1)
     lo, hi = np.percentile(means, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     return float(lo), float(hi)
 
@@ -290,11 +313,14 @@ class Dump(NamedTuple):
     # The dump's provenance HEADER, verbatim. Empty when the dump predates
     # stamping. Compared across the pair by `require_same_stamp`.
     stamp: dict[str, Any]
+    # Join key -> source-cluster identity. Populated only when load_dump was
+    # given --cluster-key; kept separate so existing row-level reads are exact.
+    clusters: dict[str, str]
 
 
 def load_dump(
     path: str, *, join_key: str = "fen", field: str = "value",
-    mcnemar_at: float | None = None,
+    mcnemar_at: float | None = None, cluster_key: str | None = None,
 ) -> Dump:
     """Index one per-position dump by its join key.
 
@@ -320,6 +346,7 @@ def load_dump(
     index and so cannot trip it.
     """
     rows: dict[str, tuple[float, str]] = {}
+    clusters: dict[str, str] = {}
     duplicates: list[str] = []
     unusable = 0
     stamp: dict[str, Any] = {}
@@ -462,6 +489,20 @@ def load_dump(
             if key in rows:
                 duplicates.append(key)
                 continue
+            if cluster_key is not None:
+                cluster = get_field(r, cluster_key)
+                if (
+                    isinstance(cluster, bool)
+                    or not isinstance(cluster, (int, str))
+                    or (isinstance(cluster, str) and not cluster)
+                ):
+                    raise SystemExit(
+                        f"{path}: line {lineno} has joinable metric {field!r} "
+                        f"but no non-empty integer/string --cluster-key "
+                        f"{cluster_key!r} (found {cluster!r}). Refusing to "
+                        "silently fall back to a row bootstrap."
+                    )
+                clusters[key] = json.dumps(cluster, sort_keys=True)
             rows[key] = (float(v), phase_label(r.get("phase", "?")))
     if stamp:
         # ⚑ THE STAMP BINDS TO LINE 1 ONLY, so without this a header lifted
@@ -493,7 +534,7 @@ def load_dump(
             f"key — de-duplicate the dump (or pass the right --join-key) and "
             f"re-run. Refusing rather than silently dropping them."
         )
-    return Dump(rows, unusable, provenance, stamp)
+    return Dump(rows, unusable, provenance, stamp, clusters)
 
 
 # Stamps that identify WHICH RULER produced a dump. A change to any of them
@@ -881,7 +922,13 @@ def require_paired_n(n_common: int, want: int | None, *, label_a: str, label_b: 
 def report(
     a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int,
     mcnemar_at: float | None = None, require_n: int | None = None,
+    cluster_key: str | None = None,
 ) -> None:
+    if cluster_key is not None and mcnemar_at is not None:
+        raise SystemExit(
+            "clustered bootstrap cannot be combined with row-level McNemar; "
+            "drop --mcnemar-at or implement a clustered binary test"
+        )
     common = sorted(set(a.rows) & set(b.rows))
     if not common:
   # Report `unusable` here too, in the same per-side shape as the success
@@ -921,7 +968,38 @@ def report(
     ph = np.array([a.rows[k][1] for k in common])
     d = va - vb
 
-    lo, hi = paired_bootstrap_ci(d, n_boot=n_boot)
+    clusters: np.ndarray | None = None
+    if cluster_key is not None:
+        missing_a = [key for key in common if key not in a.clusters]
+        missing_b = [key for key in common if key not in b.clusters]
+        if missing_a or missing_b:
+            raise SystemExit(
+                f"--cluster-key {cluster_key!r} is incomplete on paired rows "
+                f"(A missing {len(missing_a)}, B missing {len(missing_b)}). "
+                "Refusing to silently fall back to a row bootstrap."
+            )
+        mismatched = [key for key in common if a.clusters[key] != b.clusters[key]]
+        if mismatched:
+            key = mismatched[0]
+            raise SystemExit(
+                f"--cluster-key {cluster_key!r} disagrees between the two "
+                f"dumps for {len(mismatched)} paired rows, e.g. {key!r}: "
+                f"A={a.clusters[key]}, B={b.clusters[key]}. The arms do not "
+                "describe the same clustered sample."
+            )
+        clusters = np.array([a.clusters[key] for key in common])
+        n_clusters = len(np.unique(clusters))
+        if n_clusters < 2:
+            raise SystemExit(
+                f"--cluster-key {cluster_key!r} produced only {n_clusters} "
+                "independent cluster; a bootstrap cannot estimate variance "
+                "or a significance verdict from one cluster"
+            )
+        lo, hi = paired_cluster_bootstrap_ci(d, clusters, n_boot=n_boot)
+        ci_label = f"95% {cluster_key}-cluster CI"
+    else:
+        lo, hi = paired_bootstrap_ci(d, n_boot=n_boot)
+        ci_label = "95% CI"
     frac_a = float((d < 0).mean())
     frac_b = float((d > 0).mean())
   # Per side, and never as one summed `dropped`. The old single number was
@@ -932,13 +1010,16 @@ def report(
   # lost position. Per side, every figure is checkable against the input files
   # and `rows = unusable + indexed`, `indexed = paired + unmatched`.
     print(f"paired positions: {len(common)}")
+    if clusters is not None:
+        print(f"paired clusters ({cluster_key}): {len(np.unique(clusters))}")
     print(f"  A: {len(a.rows) + a.unusable} rows, {a.unusable} unusable, "
           f"{len(a.rows) - len(common)} unmatched"
           f"   B: {len(b.rows) + b.unusable} rows, {b.unusable} unusable, "
           f"{len(b.rows) - len(common)} unmatched")
     print(f"A = {label_a}: mean {va.mean():.2f}")
     print(f"B = {label_b}: mean {vb.mean():.2f}")
-    print(f"paired delta (A-B): {d.mean():+.2f}  [95% CI {lo:+.2f} .. {hi:+.2f}]")
+    print(f"paired delta (A-B): {d.mean():+.2f}  "
+          f"[{ci_label} {lo:+.2f} .. {hi:+.2f}]")
     verdict = "A better" if hi < 0 else ("B better" if lo > 0 else "NOT significant")
     print(f"verdict at 95%: {verdict}   "
           f"(A better {frac_a:.1%} / B better {frac_b:.1%} / tied {1 - frac_a - frac_b:.1%})")
@@ -946,7 +1027,19 @@ def report(
         m = ph == name
         if m.sum() < 30:
             continue
-        plo, phi = paired_bootstrap_ci(d[m], n_boot=n_boot)
+        if clusters is None:
+            plo, phi = paired_bootstrap_ci(d[m], n_boot=n_boot)
+        else:
+            phase_clusters = clusters[m]
+            phase_cluster_count = len(np.unique(phase_clusters))
+            if phase_cluster_count < 2:
+                print(f"  {name:11s} n={int(m.sum()):5d} "
+                      f"delta {d[m].mean():+.2f} "
+                      f"[CI unavailable: {phase_cluster_count} cluster]")
+                continue
+            plo, phi = paired_cluster_bootstrap_ci(
+                d[m], phase_clusters, n_boot=n_boot,
+            )
         print(f"  {name:11s} n={int(m.sum()):5d} delta {d[m].mean():+.2f} "
               f"[{plo:+.2f} .. {phi:+.2f}]")
     if mcnemar_at is not None:
@@ -978,11 +1071,17 @@ def main() -> None:
                     help="refuse unless the join yields exactly N paired "
                          "positions. Pass it on any readout whose thresholds "
                          "were pre-committed at a stated n.")
+    ap.add_argument("--cluster-key", default=None, metavar="FIELD",
+                    help="resample whole source clusters instead of individual "
+                         "rows (for matched audit dumps: 'game_cluster_id'). "
+                         "Every paired row must carry the field on both sides.")
     args = ap.parse_args()
+    if args.cluster_key is not None and args.mcnemar_at is not None:
+        ap.error("--cluster-key cannot be combined with row-level --mcnemar-at")
     dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field,
-                       mcnemar_at=args.mcnemar_at)
+                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key)
     dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field,
-                       mcnemar_at=args.mcnemar_at)
+                       mcnemar_at=args.mcnemar_at, cluster_key=args.cluster_key)
     label_a = args.label_a or args.dump_a
     label_b = args.label_b or args.dump_b
     require_same_ruler(
@@ -992,6 +1091,7 @@ def main() -> None:
     report(
         dump_a, dump_b, label_a=label_a, label_b=label_b, n_boot=args.n_boot,
         mcnemar_at=args.mcnemar_at, require_n=args.require_n,
+        cluster_key=args.cluster_key,
     )
 
 
