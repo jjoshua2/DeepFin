@@ -9,6 +9,7 @@ import pytest
 import zarr
 
 from chess_anti_engine.replay import game_epoch as game_epoch_module
+from chess_anti_engine.replay import disk_buffer as disk_buffer_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
@@ -364,6 +365,59 @@ def test_parallel_validation_groups_retain_prior_group_payloads(
     )
     _drain(bounded)
     assert bounded.receipt()["peak_working_set_bytes"] == expected_peak
+    assert bounded.receipt()["complete"] is True
+
+
+def test_multichunk_assembly_skips_unstored_fields_at_its_exact_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0)], [(1, 1)]])
+    # Isolate the no-mirror assembly peak from the separately covered eager
+    # validation reserve. Two touched chunks require the two-copy assembly
+    # allowance: selected parts plus the concatenated result.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    original_default = disk_buffer_module.zeros_for_storage_field
+
+    def no_unstored_x_default(
+        name: str,
+        *,
+        n: int,
+        x_planes: int,
+        policy_size: int,
+        categorical_bins: int,
+    ) -> np.ndarray:
+        if name == "x_lc0_root":
+            raise AssertionError("uniformly absent x_lc0_root was allocated")
+        return original_default(
+            name,
+            n=n,
+            x_planes=x_planes,
+            policy_size=policy_size,
+            categorical_bins=categorical_bins,
+        )
+
+    monkeypatch.setattr(
+        disk_buffer_module, "zeros_for_storage_field", no_unstored_x_default,
+    )
+    probe = _open(shard_dir, batch_size=2, load_workers=2)
+    exact_peak = int(probe.plan.peak_working_set_bytes)
+    with pytest.raises(ValueError, match="batch 0 materialization"):
+        _open(
+            shard_dir,
+            batch_size=2,
+            load_workers=2,
+            max_working_set_bytes=exact_peak - 1,
+        )
+
+    bounded = _open(
+        shard_dir,
+        batch_size=2,
+        load_workers=2,
+        max_working_set_bytes=exact_peak,
+    )
+    assert _drain(bounded) == [[(0, 0), (1, 1)]]
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
     assert bounded.receipt()["complete"] is True
 
 

@@ -352,6 +352,13 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
 
     out: dict[str, np.ndarray] = {}
     for name in _ARRAY_FIELD_ORDER:
+        present = any(name in chunk for chunk in chunks)
+        # A uniformly absent optional field has no information to merge. Skip
+        # it before synthesizing per-chunk zeros: building those arrays and a
+        # concatenated throwaway can transiently consume two full field
+        # payloads (notably another complete x tensor for x_lc0_root).
+        if not present and name not in _REQUIRED_STORAGE_FIELDS:
+            continue
         parts: list[np.ndarray] = []
         for chunk in chunks:
             n, chunk_policy_size, chunk_x_planes = _batch_dims(chunk)
@@ -368,16 +375,7 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                     )
                 )
         merged = np.concatenate(parts, axis=0)
-  # Keep required fields explicit; drop optional fields that are uniformly absent.
-  # (There used to be a second branch here retaining a uniformly-absent VALUE
-  # array when its `has_*` flag had already been written to `out`. It could
-  # never fire: `_ARRAY_FIELD_ORDER` is `_SHARD_FIELDS`, which emits `spec.arr`
-  # BEFORE `spec.flag` for every pair, so a value name is always decided while
-  # its own flag is still unwritten. It read as a safety net holding nothing;
-  # the ordering it depended on is now pinned by
-  # tests/test_replay_field_defaults.py.)
-        if any(name in chunk for chunk in chunks) or name in _REQUIRED_STORAGE_FIELDS:
-            out[name] = merged
+        out[name] = merged
     for name in _SCALAR_METADATA_FIELDS:
         values: list[str | None] = []
         for chunk in chunks:
