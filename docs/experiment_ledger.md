@@ -73121,3 +73121,19 @@ bank supplies the additional four lanes.
   settings. Stop and preserve resumable shards if free disk falls below 150
   GiB, a worker fails, or a traceback appears. Its failure must not signal,
   stop, or reconfigure the primary run.
+
+**21:23:44Z LAUNCHED — four-worker companion from pushed prereg
+`6399caed3`; live and monitored.** Detached session `g10-companion4` runs the
+frozen 130,000-game command above under a fail-closed driver; independent
+session `g10-companion4-monitor` records process/file/disk growth and may stop
+only this companion on the preregistered disk/error conditions. Operational
+artifacts are under `scratchpad/scale25m_g10_companion4/`; corpus output is
+`data/nnue_bootstrap/run07_g10_companion4`. Preflight verified the commit and
+G10 code/config identity, 12 live primary Stockfish processes, 626 GiB free,
+and an absent output/sentinel set before launch. At 21:26Z all four worker and
+Stockfish pairs were live at nice 19, bringing the exact Stockfish count to 16;
+four distinct in-flight shards were growing, with no traceback, failed/alert
+sentinel, or primary-run interruption. The concurrent BT4 trainer continued
+through windows 99--101 in its existing approximately 53--58 s/window band.
+The 12.9-day aggregate 100M projection remains a preregistered linear planning
+estimate until closed companion shards provide a measured rate.
