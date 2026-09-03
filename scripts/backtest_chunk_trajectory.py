@@ -36,8 +36,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+# These binaries are imported indirectly by the project modules below. Capture
+# their on-disk identity first, then prove after import that the mapped module's
+# path and bytes still match this snapshot.
 import chess
 import numpy as np
+
+from scripts.native_import_guard import artifact as _artifact
+from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS
+from scripts.repo_output_guard import repo_controlled_output
 
 from chess_anti_engine.eval.audit import legal_full_indices, load_audit_set, move_regrets
 from chess_anti_engine.eval.audit_history import MatchedAuditRows, default_matched_rows_path
@@ -63,7 +70,12 @@ from chess_anti_engine.uci.search import (
     _visit_gap,
 )
 from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path, require_tablebases
-from scripts.analyze_chunk_controller import _complexity_continue, _score, _update_stability
+from scripts.analyze_chunk_controller import (
+    _canonical_cuda_device_string,
+    _complexity_continue,
+    _score,
+    _update_stability,
+)
 from scripts.backtest_time_value import _stratified
 from scripts.check_c_extensions_fresh import check_extensions
 
@@ -92,14 +104,6 @@ def _strict_uci_pv(board: chess.Board, pv_actions: list[int]) -> list[str]:
     return moves
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for block in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _git_state() -> tuple[str, bool]:
     repo_root = Path(__file__).resolve().parents[1]
     try:
@@ -121,23 +125,6 @@ def _git_state() -> tuple[str, bool]:
         return "unknown", True
 
 
-def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
-    resolved = path.expanduser().resolve()
-    if require_file and not resolved.is_file():
-        raise SystemExit(f"decision-grade provenance requires a regular file: {resolved}")
-    if not resolved.exists():
-        raise SystemExit(f"artifact does not exist: {resolved}")
-    stat = resolved.stat()
-    out: dict[str, Any] = {
-        "path": str(resolved),
-        "size": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
-    }
-    if resolved.is_file():
-        out["sha256"] = _sha256(resolved)
-    return out
-
-
 def _artifact_if_file(path: Path) -> dict[str, Any] | None:
     """Best-effort end-of-run snapshot; disappearance is evidence, not an abort."""
     try:
@@ -153,7 +140,7 @@ def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
         return None
     return {
         name: artifact.get(name)
-        for name in ("path", "size", "mtime_ns", "sha256")
+        for name in ("path", "size", "mtime_ns", "device", "inode", "sha256")
     }
 
 
@@ -239,6 +226,11 @@ def _require_safe_output_paths(
 ) -> None:
     """Refuse destructive aliases before ``--overwrite`` can reach an input."""
     outputs = {output_path.expanduser().resolve(), meta_path.expanduser().resolve()}
+    repo_root = Path(__file__).resolve().parents[1]
+    if any(repo_controlled_output(output, repo_root) for output in outputs):
+        raise SystemExit(
+            "--out or its manifest must not overwrite a tracked or repository-control path"
+        )
     inputs = {path.expanduser().resolve() for path in protected_files}
     if outputs & inputs:
         raise SystemExit("--out or its manifest aliases a consumed input artifact")
@@ -389,6 +381,20 @@ def main() -> None:
     meta_path = Path(str(args.out) + ".meta.json")
     matched_path = args.matched_rows or default_matched_rows_path(args.audit_set)
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
+    producer_git_sha, producer_git_dirty = _git_state()
+    if producer_git_dirty and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade trajectory banks require a clean producer checkout; "
+            "commit or stash changes, or pass --methodology-smoke"
+        )
+    initial_input_artifacts = {
+        "producer_script": _artifact(Path(__file__), require_file=True),
+        "checkpoint": _artifact(checkpoint_path, require_file=True),
+        "audit_set": _artifact(args.audit_set, require_file=True),
+        "matched_rows": (
+            _artifact(matched_path, require_file=True) if matched_path.is_file() else None
+        ),
+    }
     syzygy_directories = (
         [Path(part.strip()) for part in str(args.syzygy_path).split(SEPARATOR)]
         if args.syzygy_path else []
@@ -413,7 +419,9 @@ def main() -> None:
         raise SystemExit("--walkers must be inside the production Threads range [1, 64]")
     if not args.methodology_smoke and args.max_positions == 0:
         raise SystemExit("decision-grade trajectory banks require --max-positions >0")
-    if not args.methodology_smoke and not str(args.device).startswith("cuda"):
+    if not args.methodology_smoke and not (
+        args.device == "cuda" or _canonical_cuda_device_string(args.device)
+    ):
         raise SystemExit("decision-grade trajectory banks require the production CUDA path")
     if not args.methodology_smoke and (
         not args.compile or args.compile_mode != "max-autotune"
@@ -482,6 +490,20 @@ def main() -> None:
             "build it with scripts/match_audit_rows.py, or pass --methodology-smoke "
             "for a non-decision-grade pipeline check"
         )
+    post_load_artifacts = {
+        "audit_set": _artifact_if_file(args.audit_set),
+        "matched_rows": _artifact_if_file(matched_path),
+    }
+    input_load_changes = sorted(
+        name for name in ("audit_set", "matched_rows")
+        if _artifact_identity(initial_input_artifacts[name])
+        != _artifact_identity(post_load_artifacts[name])
+    )
+    if input_load_changes and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade inputs changed while being loaded: "
+            + ", ".join(input_load_changes)
+        )
     game_ids: dict[str, int | None] = {}
     source_dirs: dict[str, str | None] = {}
     source_shards: dict[str, str | None] = {}
@@ -518,12 +540,6 @@ def main() -> None:
             else "\0".join((source_dir, source_shard, str(gid)))
         )
 
-    producer_git_sha, producer_git_dirty = _git_state()
-    if producer_git_dirty and not args.methodology_smoke:
-        raise SystemExit(
-            "decision-grade trajectory banks require a clean producer checkout; "
-            "commit or stash changes, or pass --methodology-smoke"
-        )
     provenance = {
         "schema": _SCHEMA,
         "decision_grade": not args.methodology_smoke,
@@ -539,12 +555,10 @@ def main() -> None:
         },
         "producer_git_sha": producer_git_sha,
         "producer_git_dirty": producer_git_dirty,
-        "producer_script": _artifact(Path(__file__), require_file=True),
-        "checkpoint": _artifact(checkpoint_path, require_file=True),
-        "audit_set": _artifact(args.audit_set, require_file=True),
-        "matched_rows": (
-            _artifact(matched_path, require_file=True) if matched_path.exists() else None
-        ),
+        "producer_script": initial_input_artifacts["producer_script"],
+        "checkpoint": initial_input_artifacts["checkpoint"],
+        "audit_set": initial_input_artifacts["audit_set"],
+        "matched_rows": initial_input_artifacts["matched_rows"],
         "syzygy": syzygy_inventory,
     }
 
@@ -580,11 +594,27 @@ def main() -> None:
     mcts_module = "chess_anti_engine.mcts._mcts_tree"
     lc0_module = "chess_anti_engine.encoding._lc0_ext"
     native_modules = [lc0_module, mcts_module]
+    native_import_changes = sorted(
+        module for module, loaded in (
+            (lc0_module, loaded_lc0_artifact),
+            (mcts_module, loaded_mcts_artifact),
+        )
+        if _artifact_identity(PREIMPORT_NATIVE_ARTIFACTS[module])
+        != _artifact_identity(loaded)
+    )
     extension_issues = check_extensions(
         Path(__file__).resolve().parents[1],
         min_gcc_major=15,
         require_production_recipe=True,
         modules=native_modules,
+        loaded_paths={
+            lc0_module: Path(lc0_extension.__file__),
+            mcts_module: Path(mcts_extension.__file__),
+        },
+    )
+    extension_issues.extend(
+        f"{module} changed between pre-import snapshot and loaded-path readback"
+        for module in native_import_changes
     )
     if extension_issues and not args.methodology_smoke:
         raise SystemExit(
@@ -618,6 +648,27 @@ def main() -> None:
         require_complete=not args.methodology_smoke,
     )
     model.eval()
+    post_checkpoint_params_path = _find_params_json(checkpoint_path)
+    post_model_load_artifacts = {
+        "checkpoint": _artifact_if_file(checkpoint_path),
+        "checkpoint_params": (
+            _artifact_if_file(post_checkpoint_params_path)
+            if post_checkpoint_params_path is not None else None
+        ),
+    }
+    checkpoint_load_changes = sorted(
+        name for name, before in (
+            ("checkpoint", provenance["checkpoint"]),
+            ("checkpoint_params", provenance["checkpoint_params"]),
+        )
+        if _artifact_identity(before)
+        != _artifact_identity(post_model_load_artifacts[name])
+    )
+    if checkpoint_load_changes and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade checkpoint inputs changed while being loaded: "
+            + ", ".join(checkpoint_load_changes)
+        )
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -1238,12 +1289,19 @@ def main() -> None:
         "mcts_extension": _artifact_if_file(Path(mcts_extension.__file__)),
         "lc0_extension": _artifact_if_file(Path(lc0_extension.__file__)),
     }
-    changed_artifacts = sorted(
-        name for name, frozen in frozen_artifacts.items()
-        if _artifact_identity(frozen) != _artifact_identity(current_artifacts[name])
-    )
+    changed_artifacts = sorted({
+        *input_load_changes,
+        *checkpoint_load_changes,
+        *(f"native_import:{module}" for module in native_import_changes),
+        *(
+            name for name, frozen in frozen_artifacts.items()
+            if _artifact_identity(frozen) != _artifact_identity(current_artifacts[name])
+        ),
+    })
     try:
-        current_syzygy_inventory = _tablebase_inventory(str(args.syzygy_path))
+        current_syzygy_inventory = (
+            _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
+        )
     except OSError:
         current_syzygy_inventory = None
     if current_syzygy_inventory != provenance["syzygy"]:
@@ -1251,6 +1309,7 @@ def main() -> None:
     final_git_sha, final_git_dirty = _git_state()
     if final_git_sha != producer_git_sha or final_git_dirty:
         changed_artifacts.append("producer_checkout")
+    changed_artifacts = sorted(set(changed_artifacts))
     artifact_stability = {
         "passed": not changed_artifacts,
         "changed": changed_artifacts,

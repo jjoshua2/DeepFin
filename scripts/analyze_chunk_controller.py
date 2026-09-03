@@ -48,6 +48,7 @@ from chess_anti_engine.eval.audit import (
 from chess_anti_engine.mcts.search_options import SEARCH_OPTIONS
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
 from scripts.reachable_oracle import solve_reachable_oracle
+from scripts.repo_output_guard import repo_controlled_output
 
 _SCHEMA = "deepfin.chunk_trajectory.v3"
 _CP_TO_SCORE_C = 300.0
@@ -207,7 +208,10 @@ def _require_safe_output_path(
         input_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
         Path(__file__).resolve(),
+        Path(solve_reachable_oracle.__code__.co_filename).resolve(),
     }
+    if repo_controlled_output(output_path, Path(__file__).resolve().parents[1]):
+        raise ValueError("--out must not overwrite a tracked or repository-control path")
     if manifest is not None:
         for name in (
             "producer_script", "checkpoint", "checkpoint_params", "audit_set",
@@ -281,6 +285,13 @@ def _canonical_cuda_device_string(value: Any) -> bool:
         return False
     suffix = value.removeprefix("cuda:")
     return suffix.isdigit() and str(int(suffix)) == suffix
+
+
+def _cuda_device_matches_resolved(raw: Any, resolved: Any) -> bool:
+    return bool(
+        _canonical_cuda_device_string(resolved)
+        and (raw == "cuda" or raw == resolved)
+    )
 
 
 def _artifact_provenance_complete(artifact: Any) -> bool:
@@ -650,7 +661,10 @@ def _validate_decision_grade_row(
         visit_values / visit_total if visit_total > 0.0 else np.zeros_like(visit_values)
     )
     unvisited_forced_gumbel = bool(
-        not require_full_root_support and len(actions) == 1 and visit_total == 0.0
+        not require_full_root_support
+        and board.legal_moves.count() == 1
+        and len(actions) == 1
+        and visit_total == 0.0
     )
     if (
         not np.isfinite(values).all() or (values < 0.0).any()
@@ -901,7 +915,10 @@ def _require_manifest(
                 active_path == "walker_puct" and int(requested.get("walkers", 0)) <= 1
             )
             or (active_path == "gumbel" and requested.get("walkers") != 1)
-            or not str(requested.get("device", "")).startswith("cuda")
+            or not (
+                requested.get("device") == "cuda"
+                or _canonical_cuda_device_string(requested.get("device"))
+            )
             or not _active_search_values_valid(str(active_path), active)
             or expected_keys is None
             or not isinstance(active, dict)
@@ -975,14 +992,21 @@ def _require_manifest(
         or not _positive_int(runtime.get("cudnn_version"))
         or not isinstance(requested, dict)
         or runtime.get("requested_device") != requested.get("device")
-        or not isinstance(runtime.get("evaluator_device"), str)
         or not isinstance(runtime.get("model_parameter_devices"), list)
         or not runtime.get("model_parameter_devices")
+        or not _canonical_cuda_device_string(runtime.get("resolved_requested_device"))
+        or not _cuda_device_matches_resolved(
+            runtime.get("requested_device"), runtime.get("resolved_requested_device"),
+        )
+        or not _cuda_device_matches_resolved(
+            runtime.get("evaluator_device"), runtime.get("resolved_evaluator_device"),
+        )
         or any(
-            not isinstance(device, str) or not device.startswith("cuda")
+            not _cuda_device_matches_resolved(
+                device, runtime.get("resolved_requested_device"),
+            )
             for device in runtime.get("model_parameter_devices", [])
         )
-        or not _canonical_cuda_device_string(runtime.get("resolved_requested_device"))
         or runtime.get("resolved_evaluator_device")
         != runtime.get("resolved_requested_device")
         or not isinstance(runtime.get("resolved_model_parameter_devices"), list)
@@ -2254,6 +2278,12 @@ def main() -> None:
     payload = {"input": info, "analyzer": analyzer, "analysis": result}
     rendered = json.dumps(payload, indent=2, sort_keys=True)
     if args.out is not None:
+        _require_safe_output_path(
+            args.input_path,
+            actual_meta,
+            args.out,
+            manifest=manifest if isinstance(manifest, dict) else None,
+        )
         args.out.parent.mkdir(parents=True, exist_ok=True)
         _write_json_atomic(args.out, rendered)
     print(rendered)

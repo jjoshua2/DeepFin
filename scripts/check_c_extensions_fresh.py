@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,6 +127,7 @@ def check_extensions(
     min_gcc_major: int | None = None,
     require_production_recipe: bool = False,
     modules: Collection[str] | None = None,
+    loaded_paths: Mapping[str, Path] | None = None,
 ) -> list[str]:
     """Return actionable freshness problems for in-place C extensions."""
     issues: list[str] = []
@@ -137,6 +138,11 @@ def check_extensions(
             f"unknown extension module requested: {module}"
             for module in sorted(selected - known)
         )
+    if loaded_paths is not None:
+        issues.extend(
+            f"unknown loaded extension module: {module}"
+            for module in sorted(set(loaded_paths) - known)
+        )
     for spec in EXTENSION_SPECS:
         if selected is not None and spec.module not in selected:
             continue
@@ -144,6 +150,15 @@ def check_extensions(
         if output is None:
             issues.append(f"{spec.module} is missing")
             continue
+        if loaded_paths is not None:
+            loaded = loaded_paths.get(spec.module)
+            if loaded is None:
+                issues.append(f"{spec.module} loaded path was not provided")
+            elif loaded.expanduser().resolve() != output.resolve():
+                issues.append(
+                    f"{spec.module} loaded from {loaded.expanduser().resolve()} but "
+                    f"freshness inspected {output.resolve()}"
+                )
         if min_gcc_major is not None:
             compiler_major = _gcc_major(output)
             if compiler_major is None:

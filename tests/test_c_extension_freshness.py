@@ -85,6 +85,22 @@ def test_check_extensions_rejects_unknown_module_filter(tmp_path: Path) -> None:
     ]
 
 
+def test_check_extensions_binds_freshness_to_loaded_binary_path(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    module = "chess_anti_engine.mcts._mcts_tree"
+    inspected = _extension_output(tmp_path, module).resolve()
+    other = (tmp_path / "other-worktree/_mcts_tree.so").resolve()
+
+    issues = check_extensions(
+        tmp_path, modules={module}, loaded_paths={module: other},
+    )
+
+    assert issues == [
+        f"{module} loaded from {other} but freshness inspected {inspected}"
+    ]
+
+
 def test_check_extensions_reports_missing_outputs(tmp_path: Path):
     _write_all_sources(tmp_path)
 

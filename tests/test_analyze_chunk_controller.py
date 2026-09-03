@@ -202,6 +202,7 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     from scripts import backtest_chunk_trajectory as producer
 
     source = inspect.getsource(producer.main)
+    module_source = inspect.getsource(producer)
     assert "LocalModelEvaluator" not in source
     assert "DirectGPUEvaluator" in source
     assert "ThreadSafeGPUDispatcher" in source
@@ -218,6 +219,11 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert '"root_child_q"' in source
     assert '"pv_actions"' in source
     assert '"checkpoint_params"' in source
+    assert source.index("initial_input_artifacts =") < source.index("load_audit_set(")
+    assert source.index("initial_input_artifacts =") < source.index("MatchedAuditRows(")
+    assert module_source.index(
+        "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
+    ) < module_source.index("from chess_anti_engine.eval.audit import")
 
 
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
@@ -1083,6 +1089,63 @@ def test_loader_requires_root_visits_to_account_for_completed_nodes(tmp_path: Pa
         load_transitions(bank)
 
 
+def test_gumbel_zero_visit_exception_requires_a_truly_forced_position(
+    tmp_path: Path,
+) -> None:
+    from scripts.analyze_chunk_controller import _validate_decision_grade_row
+
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    row = json.loads(bank.read_text().splitlines()[0])
+    emitted_index = row["root_actions"].index(row["emitted_action"])
+    for field in (
+        "root_actions", "root_child_q", "root_action_regret_cp",
+        "root_action_reference_cp", "root_action_reference_listed",
+    ):
+        row[field] = [row[field][emitted_index]]
+    row["root_visits"] = [0]
+    row["root_visit_shares"] = [0.0]
+    row["root_child_q_observed"] = [False]
+    row["visit_gap"] = 0.0
+    row["visit_entropy"] = 0.0
+    row["q_gap"] = None
+
+    with pytest.raises(ValueError, match="completed nodes"):
+        _validate_decision_grade_row(row, 1, require_full_root_support=False)
+
+
+def test_gumbel_zero_visit_exception_accepts_a_truly_forced_position(
+    tmp_path: Path,
+) -> None:
+    from scripts.analyze_chunk_controller import _validate_decision_grade_row
+
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    row = json.loads(bank.read_text().splitlines()[0])
+    board = chess.Board(
+        "rn3bnr/ppp1k2p/5pp1/Pb1pp3/1P3PPq/B7/N1PPP1BP/R2QK1NR w KQ - 4 14"
+    )
+    move = next(iter(board.legal_moves))
+    assert board.legal_moves.count() == 1
+    action = int(move_to_index(move, board))
+    row.update({
+        "key": position_key(board), "fen": board.fen(),
+        "phase": phase_bucket(chess.popcount(board.occupied)),
+        "piece_count": chess.popcount(board.occupied), "legal_move_count": 1,
+        "root_actions": [action], "root_visits": [0], "root_visit_shares": [0.0],
+        "root_child_q": [0.0], "root_child_q_observed": [False],
+        "root_action_regret_cp": [0.0], "root_action_reference_cp": [90.0],
+        "root_action_reference_listed": [True],
+        "deep_reference_best_cp": 90.0, "deep_reference_move_cp": {move.uci(): 90.0},
+        "regret_cp": 0.0, "regret_score": 0.0, "regret_vs_final_cp": 0.0,
+        "emitted_action": action, "uci": move.uci(), "pv_actions": [action],
+        "pv_uci": [move.uci()], "visit_gap": 0.0, "visit_entropy": 0.0,
+        "q_gap": None, "root_q": 0.0,
+    })
+
+    _validate_decision_grade_row(row, 1, require_full_root_support=False)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
@@ -1291,6 +1354,44 @@ def test_producer_output_paths_cannot_replace_inputs_or_tablebases(
         _require_safe_output_paths(
             tablebases / "bank.jsonl", tmp_path / "out.meta.json",
             protected_files=[audit], protected_directories=[tablebases],
+        )
+
+
+def test_output_guards_reject_linked_worktree_git_metadata(tmp_path: Path) -> None:
+    from scripts.repo_output_guard import git_control_paths
+
+    repo_root = Path(__file__).resolve().parents[1]
+    git_directories = [path for path in git_control_paths(repo_root) if path.is_dir()]
+    assert git_directories
+
+    for git_directory in git_directories:
+        target = git_directory / "HEAD"
+        with pytest.raises(ValueError, match="repository-control"):
+            _require_safe_output_path(
+                tmp_path / "bank.jsonl",
+                tmp_path / "bank.jsonl.meta.json",
+                target,
+            )
+        with pytest.raises(SystemExit, match="repository-control"):
+            _require_safe_output_paths(
+                target,
+                tmp_path / "out.meta.json",
+                protected_files=[],
+                protected_directories=[],
+            )
+
+
+def test_producer_output_cannot_overwrite_an_imported_tracked_source(
+    tmp_path: Path,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    with pytest.raises(SystemExit, match="tracked or repository-control"):
+        _require_safe_output_paths(
+            Path(controller.__file__),
+            tmp_path / "out.meta.json",
+            protected_files=[],
+            protected_directories=[],
         )
 
 
@@ -1517,11 +1618,38 @@ def test_analyzer_output_cannot_alias_loaded_cboard_extension(tmp_path: Path) ->
         )
 
 
+def test_analyzer_output_cannot_overwrite_imported_oracle_source(tmp_path: Path) -> None:
+    from scripts import reachable_oracle
+
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+
+    with pytest.raises(ValueError, match="tracked or repository-control"):
+        _require_safe_output_path(
+            bank, meta, Path(reachable_oracle.__file__), manifest=manifest,
+        )
+
+
 def test_loader_requires_exact_resolved_cuda_device_identity(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     manifest = json.loads(meta.read_text())
     manifest["runtime"]["resolved_model_parameter_devices"] = ["cuda:1"]
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="CUDA runtime/device provenance"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_raw_devices_that_contradict_resolved_identity(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["runtime"]["evaluator_device"] = "cuda:1"
+    manifest["runtime"]["model_parameter_devices"] = ["cuda:1"]
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="CUDA runtime/device provenance"):
