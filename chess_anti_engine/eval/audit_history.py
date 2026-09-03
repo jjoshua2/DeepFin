@@ -305,10 +305,18 @@ class MatchedAuditRows:
 
         Audit positions from the same game are not independent draws; a
         bootstrap that resamples positions rather than games understates its
-        own CI. Call :meth:`has_game_id` first; the value array's fill is not
-        evidence that the optional field was present.
+        own CI. This accessor is deliberately fail-closed: the value array's
+        fill is not evidence that the optional field was present, and making
+        every caller remember a separate mask check recreates that hazard.
         """
-        return int(self._game_id[self._row(key)])
+        row = self._row(key)
+        if not self._has_game_id[row]:
+            raise SystemExit(
+                f"matched-rows index {self.path} has no explicit game_id for "
+                f"{key!r}; rebuild it with the current match_audit_rows.py "
+                "before using game-clustered evidence"
+            )
+        return int(self._game_id[row])
 
     def has_game_id(self, key: str) -> bool:
         """Whether the source shard explicitly supplied this row's game ID."""

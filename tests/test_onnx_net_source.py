@@ -819,6 +819,7 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The optional column's zero fill is not evidence for real game zero."""
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
     from scripts import value_regret
 
     matched = tmp_path / "masked_game_id.npz"
@@ -833,6 +834,11 @@ def test_value_regret_cluster_dump_refuses_a_masked_game_id(
         input_extra_features=np.array(["v2_threats"]),
         snapshot=np.array(["test-snapshot"]),
     )
+    index = MatchedAuditRows(matched)
+    assert index.has_game_id("a") is True
+    assert index.has_game_id("b") is False
+    with pytest.raises(SystemExit, match="no explicit game_id"):
+        index.game_id("b")
     monkeypatch.setattr("sys.argv", [
         "value_regret.py", "--onnx", str(echo_onnx),
         "--audit-set", str(mini_audit_set), "--device", "cpu",
