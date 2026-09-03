@@ -134,6 +134,87 @@ def test_exact_objective_census_uses_the_real_soft_tv_population() -> None:
     assert got["soft_policy"] == 1.0
 
 
+def test_exact_objective_census_applies_fractional_draw_scaling() -> None:
+    arrays = {
+        "x": np.zeros((2, 1, 1, 1), dtype=np.float32),
+        "is_network_turn": np.ones(2, dtype=bool),
+        "has_sf_wdl": np.ones(2, dtype=np.float32),
+        "sf_wdl": np.full((2, 3), 1.0 / 3.0, dtype=np.float32),
+        "wdl_target": np.asarray([0, 1], dtype=np.int64),
+    }
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=2),
+        soft_policy_min_tv=0.0,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=False,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=0.5,
+        sf_wdl_temperature=1.0,
+    )
+
+    got = Trainer.exact_objective_mask_counter(cast(Any, trainer), arrays)
+
+    assert got["sf_eval"] == 1.5
+
+
+def test_exact_sf_move_mask_is_stable_after_mixed_schema_union() -> None:
+    trainer = SimpleNamespace(
+        model=SimpleNamespace(policy_size=POLICY_SIZE),
+        soft_policy_min_tv=0.0,
+        policy_target_temp=1.0,
+        sf_policy_sparse_ce=False,
+        rebuild_sf_targets=False,
+        sf_wdl_conf_power=0.0,
+        sf_wdl_draw_scale=1.0,
+        sf_wdl_temperature=1.0,
+    )
+    shard_censuses = [
+        Trainer.exact_objective_mask_counter(
+            cast(Any, trainer),
+            {
+                "x": np.zeros((1, 1, 1, 1), dtype=np.float32),
+                "sf_policy_target": np.eye(1, POLICY_SIZE, dtype=np.float32),
+                "has_sf_policy": np.ones(1, dtype=np.float32),
+            },
+        ),
+        Trainer.exact_objective_mask_counter(
+            cast(Any, trainer),
+            {
+                "x": np.zeros((1, 1, 1, 1), dtype=np.float32),
+                "sf_move_index": np.zeros(1, dtype=np.int32),
+                "has_sf_move": np.ones(1, dtype=np.float32),
+            },
+        ),
+    ]
+    census = {
+        name: sum(shard[name] for shard in shard_censuses)
+        for name in EXACT_OBJECTIVE_NAMES
+    }
+    # Union concatenation materializes a zero has_sf_policy value for the
+    # sparse-only row while its row-level has_sf_move fallback remains set.
+    batch = _batch(2, covered=False)
+    batch["has_sf_policy"] = torch.tensor([1.0, 0.0])
+    batch["has_sf_move"] = torch.ones(2)
+    batch["sf_policy_t"] = torch.stack(
+        (batch["policy_t"][0], torch.zeros_like(batch["policy_t"][1])),
+    )
+    outputs = _outputs(2)
+    outputs["policy_sf"] = torch.randn((2, POLICY_SIZE))
+
+    losses = compute_loss(
+        outputs,
+        batch,
+        report_exact_masked_sums=True,
+        exact_corpus_rows=2,
+        exact_objective_mask_weights=census,
+    )
+    _, weight_key = _EXACT_MASKED_METRIC_FIELDS["sf_move_loss"]
+
+    assert census["sf_move"] == 2.0
+    assert float(losses[weight_key]) == 2.0
+
+
 def test_masked_mean_publishes_zero_for_an_empty_bucket() -> None:
     x = torch.tensor([3.0, 4.0, 5.0])
     empty = torch.zeros(3)

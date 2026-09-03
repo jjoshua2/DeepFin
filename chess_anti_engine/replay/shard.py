@@ -217,16 +217,15 @@ _SHARD_FIELDS: tuple[str, ...] = (
 )
 
 
-# Stored fields whose "missing" default is NOT zeros. Both are required fields,
-# and for both the zero value is a MEANINGFUL, wrong one: `has_policy = 0` drops
-# the row from the main policy loss and its accuracy stats with nothing counting
-# the drop, and `priority = 0` makes the row unsamplable under priority draws.
-# Any code path that synthesizes a missing field with a bare `np.zeros` is a
-# silent-corruption site for exactly these two names -- see `_gather_rows` in
-# replay/disk_buffer.py, which refuses rather than guesses. Kept honest by
+# Stored fields whose "missing" default is NOT zeros. The two required fields
+# (`has_policy`, `priority`) are refused when chunks disagree about presence;
+# the optional legacy-default `is_network_turn` is safely synthesized as true.
+# A bare `np.zeros` silently changes training semantics for all three. Kept honest by
 # tests/test_replay_field_defaults.py, which re-derives it from
 # `zeros_for_storage_field` itself.
-NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({"priority", "has_policy"})
+NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({
+    "priority", "has_policy", "is_network_turn",
+})
 
 
 def zeros_for_storage_field(
@@ -253,6 +252,11 @@ def zeros_for_storage_field(
     if name == "priority":
         return np.ones((n,), dtype=np.float32)
     if name == "has_policy":
+        return np.ones((n,), dtype=np.uint8)
+    if name == "is_network_turn":
+        # Legacy shards predate the explicit turn tag and contain only network
+        # turns. This must match compute_loss's absent-key default even when a
+        # mixed-schema concatenation makes the key present for the whole batch.
         return np.ones((n,), dtype=np.uint8)
     for spec in _OPTIONAL_FIELD_SPECS:
         if name == spec.flag:

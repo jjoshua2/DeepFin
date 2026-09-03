@@ -4319,10 +4319,9 @@ class Trainer:
             has_future = _slice("has_future", start, stop)
             has_sf_p0 = _slice("has_sf_p0", start, stop)
             has_sf_p0_regret = _slice("has_sf_p0_regret", start, stop)
-            has_sf_policy = _slice(
-                "has_sf_policy" if "has_sf_policy" in arrays else "has_sf_move",
-                start,
-                stop,
+            has_sf_policy = torch.maximum(
+                _slice("has_sf_policy", start, stop),
+                _slice("has_sf_move", start, stop),
             )
             has_cat = _slice("has_categorical", start, stop)
             has_vol = _slice("has_volatility", start, stop)
@@ -4364,7 +4363,11 @@ class Trainer:
 
             conf_power = max(0.0, float(self.sf_wdl_conf_power))
             draw_scale = max(0.0, float(self.sf_wdl_draw_scale))
-            sf_wdl_raw = arrays.get("sf_wdl") if conf_power > 0.0 else None
+            sf_wdl_raw = (
+                arrays.get("sf_wdl")
+                if conf_power > 0.0 or draw_scale != 1.0
+                else None
+            )
             sf_wdl = None
             if sf_wdl_raw is not None:
                 sf_wdl_array = np.array(

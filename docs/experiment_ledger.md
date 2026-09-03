@@ -73011,8 +73011,15 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   (143.8 s beside other work). The byte cap covers sampler-owned decoded array
   payload, concurrent eager-validation temporaries, batch assembly, and
   compaction scratch; the earlier 6.9 GiB number is whole-process RSS and is
-  therefore not the same measurement. These are plumbing observations, not
-  the learning verdict.
+  therefore not the same measurement. That pre-normalization hash was
+  superseded when the exact per-head objective census became part of the plan
+  identity: the full 18,910,484-row preflight reran in 163.3 s (1,087,584 KiB
+  process max RSS), preserved every structural count and the 7,324,639,036-byte
+  planned peak, and produced plan
+  `c3ce750c2a5e57abf276db9c4a61d414b6574d7d27e7fd0e33265ddcd68de7ad`.
+  Its banked objective-mask weights are policy = WDL = 18,910,484 and zero for
+  every optional head, matching this staged corpus. These are plumbing
+  observations, not the learning verdict.
 - **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
   6.** At the next clean GPU boundary, train both samplers from scratch on the
   frozen 4,894,143-row real-history corpus for the same **9,559 optimizer

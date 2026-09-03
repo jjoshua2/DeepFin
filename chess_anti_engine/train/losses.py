@@ -2876,7 +2876,15 @@ def compute_loss(
 
   # SF move prediction: target and legal mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
-    has_sf_policy = _get_mask(batch, "has_sf_policy") if "has_sf_policy" in batch else has_sf_move
+    # Treat the legacy best-move flag as a row-level fallback. A key-level
+    # fallback changes meaning when mixed-schema chunks are union-concatenated:
+    # the dense chunk makes has_sf_policy present, while missing rows are
+    # zero-filled. Row-stable semantics keep the objective independent of
+    # which other shard happened to contribute to this batch.
+    has_sf_policy = torch.maximum(
+        _get_mask(batch, "has_sf_policy").to(torch.float32),
+        has_sf_move.to(torch.float32),
+    )
 
     sf_pol_logits = outputs.get("policy_sf")
     sf_policy_target = batch.get("sf_policy_t")

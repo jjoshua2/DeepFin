@@ -2001,7 +2001,7 @@ class DiskReplayBuffer:
   # The allocation below is `np.zeros` over the UNION of the selected chunks'
   # keys, so a field one chunk carries and another lacks arrives as zeros for
   # the second chunk's rows. For every optional field that is the schema's own
-  # default (absent flag == 0, absent target == zeros) and harmless. For the two
+  # default (absent flag == 0, absent target == zeros) and harmless. For required
   # fields whose schema default is NOT zeros it is silent corruption in the
   # direction that cannot be seen: `has_policy = 0` deletes those rows from the
   # main policy loss and its accuracy stats, and `policy_loss` then reports the
@@ -2010,8 +2010,11 @@ class DiskReplayBuffer:
   # producer path emits them) -- this exists so that if it ever becomes
   # reachable the run stops instead of quietly training on fewer rows than it
   # reports. Cost: two `in` scans over the selected chunks, not the ~60 keys.
+  # Optional non-zero defaults are initialized from the schema below instead.
         if len(selected) > 1:
             for name in sorted(NONZERO_DEFAULT_STORAGE_FIELDS):
+                if name not in _REQUIRED_STORAGE_FIELDS:
+                    continue
                 present = sum(1 for dense_rows, _ in selected if name in dense_rows)
                 if 0 < present < len(selected):
                     raise ValueError(
@@ -2023,6 +2026,8 @@ class DiskReplayBuffer:
         for k in sorted(all_keys):
             if k in proto:
                 out[k] = np.zeros((n_out, *proto[k].shape[1:]), dtype=proto[k].dtype)
+                if k in NONZERO_DEFAULT_STORAGE_FIELDS:
+                    out[k].fill(1)
         for dense_rows, mask in selected:
             for name, value in dense_rows.items():
                 if name in out:

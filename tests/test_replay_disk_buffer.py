@@ -65,6 +65,16 @@ def test_concat_skips_uniformly_absent_optional_fields_before_allocating(
     assert out["x"].shape[0] == 5
 
 
+def test_concat_preserves_legacy_network_turn_default_per_chunk() -> None:
+    tagged = _arrays(4672)
+    tagged["is_network_turn"] = np.zeros(1, dtype=np.uint8)
+    legacy = _arrays(4672)
+
+    out = _concat_sparse_batches([tagged, legacy])
+
+    assert out["is_network_turn"].tolist() == [0, 1]
+
+
 def test_take_write_prefix_preserves_scalar_chunk_fields(tmp_path) -> None:
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(
