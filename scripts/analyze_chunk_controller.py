@@ -212,9 +212,9 @@ def _require_safe_output_path(
 ) -> None:
     if output_path is None:
         return
-    output = output_path.expanduser().resolve()
-    if reserved_output_path(output):
+    if reserved_output_path(output_path):
         raise ValueError("--out must not use the output lock/staging namespace")
+    output = output_path.expanduser().resolve()
     protected = {
         input_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),

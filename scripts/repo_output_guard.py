@@ -6,17 +6,24 @@ import subprocess
 from pathlib import Path
 
 
-def reserved_output_path(path: Path) -> bool:
-    """Whether a basename belongs to the adjacent lock/staging namespace."""
-    name = path.name
+def _reserved_output_name(name: str) -> bool:
     lock_name = (
         name.startswith(".")
         and name.endswith(".lock")
         and len(name) > len("..lock")
     )
-    staging_marker = name.find(".tmp-", 1)
+    # Use the final marker: a legitimate hidden output can itself begin
+    # ``.tmp-`` and its staging name then contains an earlier marker at index 1.
+    staging_marker = name.rfind(".tmp-")
     staging_name = name.startswith(".") and staging_marker > 1
     return lock_name or staging_name
+
+
+def reserved_output_path(path: Path) -> bool:
+    """Whether a lexical or resolved basename is an internal output name."""
+    expanded = path.expanduser()
+    names = {expanded.absolute().name, expanded.resolve().name}
+    return any(_reserved_output_name(name) for name in names)
 
 
 def _git_path(repo_root: Path, flag: str) -> Path | None:

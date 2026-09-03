@@ -327,7 +327,7 @@ def _require_safe_output_paths(
         output_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
     }
-    if any(reserved_output_path(path) for path in destinations):
+    if any(reserved_output_path(path) for path in (output_path, meta_path)):
         raise SystemExit(
             "--out or its manifest must not use the output lock/staging namespace"
         )
@@ -363,6 +363,10 @@ def _write_preregistration_plan(
 ) -> Path:
     """Create a new untracked in-repo plan without replacing any evidence input."""
     repo_root = Path(__file__).resolve().parents[1]
+    if reserved_output_path(output_path):
+        raise SystemExit(
+            "--write-preregistration must not use the output lock/staging namespace"
+        )
     output = output_path.expanduser().resolve()
     try:
         output.relative_to(repo_root)
@@ -370,10 +374,6 @@ def _write_preregistration_plan(
         raise SystemExit("--write-preregistration must be inside the repository") from exc
     if output.exists():
         raise SystemExit(f"refusing to overwrite preregistration plan {output}")
-    if reserved_output_path(output):
-        raise SystemExit(
-            "--write-preregistration must not use the output lock/staging namespace"
-        )
     if repo_controlled_output(output, repo_root):
         raise SystemExit("--write-preregistration must target a new untracked file")
     if output in {path.expanduser().resolve() for path in protected_files}:

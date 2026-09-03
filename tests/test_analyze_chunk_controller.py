@@ -1626,7 +1626,10 @@ def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> No
         handle.close()
 
 
-@pytest.mark.parametrize("name", [".bank.jsonl.lock", ".bank.jsonl.tmp-12345"])
+@pytest.mark.parametrize(
+    "name",
+    [".bank.jsonl.lock", ".bank.jsonl.tmp-12345", "..tmp-bank.tmp-12345"],
+)
 def test_producer_output_rejects_internal_output_namespaces(
     tmp_path: Path, name: str,
 ) -> None:
@@ -1645,6 +1648,37 @@ def test_analyzer_output_cannot_replace_producer_staging_file(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="lock/staging namespace"):
         _require_safe_output_path(bank, meta, tmp_path / ".bank.jsonl.tmp-12345")
+
+
+def test_hidden_output_staging_name_is_reserved(tmp_path: Path) -> None:
+    from scripts.repo_output_guard import reserved_output_path
+
+    output = tmp_path / ".tmp-bank"
+    staging = output.with_name(f".{output.name}.tmp-12345")
+
+    assert staging.name == "..tmp-bank.tmp-12345"
+    assert reserved_output_path(staging)
+
+
+def test_internal_namespace_guard_checks_symlink_lexical_name(tmp_path: Path) -> None:
+    target = tmp_path / "ordinary-name"
+    target.write_text("existing\n")
+    alias = tmp_path / ".bank.jsonl.tmp-12345"
+    alias.symlink_to(target)
+
+    with pytest.raises(SystemExit, match="lock/staging namespace"):
+        _require_safe_output_paths(
+            alias,
+            tmp_path / "out.meta.json",
+            protected_files=[],
+            protected_directories=[],
+        )
+    with pytest.raises(ValueError, match="lock/staging namespace"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            alias,
+        )
 
 
 def test_publish_output_detects_replacement_before_manifest(
