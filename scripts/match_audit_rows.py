@@ -141,6 +141,33 @@ def _shard_layout(group: dict[str, Any]) -> tuple[str, int] | None:
     return hist, int(arr.shape[1])
 
 
+def _game_ids_and_presence(
+    group: dict[str, Any], *, source: Path,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Return source game ids and the rows on which they are meaningful.
+
+    Replay's optional-field loader can expose a dense, zero-filled ``game_id``
+    array while ``has_game_id`` is false. The value array alone therefore
+    cannot establish provenance. Legacy shards that predate presence masks are
+    different: they only stored ``game_id`` when that column was real, so keep
+    that layout readable and treat its rows as present.
+    """
+    if "game_id" not in group:
+        return None, None
+    game_ids = np.asarray(group["game_id"][:]).reshape(-1)
+    if "has_game_id" not in group:
+        return game_ids, np.ones(game_ids.shape, dtype=bool)
+    raw_presence = np.asarray(group["has_game_id"][:]).reshape(-1)
+    if raw_presence.shape != game_ids.shape:
+        raise ValueError(
+            f"{source}: has_game_id shape {raw_presence.shape} does not match "
+            f"game_id shape {game_ids.shape}"
+        )
+    if np.any((raw_presence != 0) & (raw_presence != 1)):
+        raise ValueError(f"{source}: has_game_id is not binary")
+    return game_ids, raw_presence.astype(bool, copy=False)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -187,6 +214,8 @@ def main() -> None:
     src_shard = ["" for _ in range(n)]
     src_row = np.full(n, -1, dtype=np.int64)
     src_game = np.full(n, -1, dtype=np.int64)
+    src_has_game = np.zeros(n, dtype=np.uint8)
+    src_cluster_ambiguous = np.zeros(n, dtype=np.uint8)
     src_ply = np.full(n, -1, dtype=np.int64)
     src_selfplay = np.full(n, -1, dtype=np.int64)
     dup_count = np.zeros(n, dtype=np.int64)
@@ -217,10 +246,13 @@ def main() -> None:
         if cand:
             fp_hits += len(cand)
             xfull = np.asarray(arr[:], dtype=np.float16)
+            game_values, game_presence = _game_ids_and_presence(group, source=path)
             cols = {
                 name: (
-                    np.asarray(group[name][:]).reshape(-1)
-                    if name in group else None
+                    game_values if name == "game_id" else (
+                        np.asarray(group[name][:]).reshape(-1)
+                        if name in group else None
+                    )
                 )
                 for name in ("game_id", "ply_index", "is_selfplay")
             }
@@ -236,6 +268,20 @@ def main() -> None:
                     continue
                 dup_count[ai] += 1
                 if found[ai]:
+                    candidate_has_game = bool(
+                        game_presence is not None and game_presence[r]
+                    )
+                    candidate_game = (
+                        int(game_values[r])
+                        if candidate_has_game and game_values is not None else -1
+                    )
+                    if (
+                        not candidate_has_game
+                        or not bool(src_has_game[ai])
+                        or path.name != src_shard[ai]
+                        or candidate_game != int(src_game[ai])
+                    ):
+                        src_cluster_ambiguous[ai] = 1
                     continue
                 found[ai] = True
                 x_stored[ai] = xfull[r]
@@ -248,7 +294,13 @@ def main() -> None:
                 ):
                     col = cols[name]
                     if col is not None:
+                        if name == "game_id" and (
+                            game_presence is None or not bool(game_presence[r])
+                        ):
+                            continue
                         target[ai] = int(col[r])
+                        if name == "game_id":
+                            src_has_game[ai] = 1
         if (si + 1) % 200 == 0 or si + 1 == len(shards):
             print(
                 f"[scan] {si + 1}/{len(shards)} shards, matched "
@@ -352,7 +404,9 @@ def main() -> None:
         key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
         source=np.array([int(r["source"]) for r in audit]),
         src_shard=np.array(src_shard), src_row=src_row,
-        game_id=src_game, ply_index=src_ply, is_selfplay=src_selfplay,
+        game_id=src_game, has_game_id=src_has_game,
+        source_cluster_ambiguous=src_cluster_ambiguous,
+        ply_index=src_ply, is_selfplay=src_selfplay,
         dup_count=dup_count,
         per_plane_nonzero_fen_only=per_plane_fen,
         per_plane_nonzero_stored=per_plane_stored,

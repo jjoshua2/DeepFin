@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -125,10 +126,20 @@ def check_extensions(
     *,
     min_gcc_major: int | None = None,
     require_production_recipe: bool = False,
+    modules: Collection[str] | None = None,
 ) -> list[str]:
     """Return actionable freshness problems for in-place C extensions."""
     issues: list[str] = []
+    selected = set(modules) if modules is not None else None
+    known = {spec.module for spec in EXTENSION_SPECS}
+    if selected is not None:
+        issues.extend(
+            f"unknown extension module requested: {module}"
+            for module in sorted(selected - known)
+        )
     for spec in EXTENSION_SPECS:
+        if selected is not None and spec.module not in selected:
+            continue
         output = _first_existing(_extension_outputs(root, spec.module))
         if output is None:
             issues.append(f"{spec.module} is missing")

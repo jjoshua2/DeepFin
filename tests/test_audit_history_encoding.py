@@ -377,6 +377,8 @@ def test_matched_rows_exposes_source_shard_for_cluster_identity(tmp_path: Path) 
         path,
         x_stored=np.zeros((1, 175, 8, 8), dtype=np.float16),
         game_id=np.asarray([7], dtype=np.int64),
+        has_game_id=np.asarray([1], dtype=np.uint8),
+        source_cluster_ambiguous=np.asarray([0], dtype=np.uint8),
         found=np.asarray([True]),
         key=np.asarray(["k"]),
         src_shard=np.asarray(["shard_000123.zarr"]),
@@ -385,7 +387,153 @@ def test_matched_rows_exposes_source_shard_for_cluster_identity(tmp_path: Path) 
     matched = MatchedAuditRows(path)
 
     assert matched.game_id("k") == 7
+    assert matched.has_game_id("k")
     assert matched.source_shard("k") == "shard_000123.zarr"
+    assert matched.source_cluster_is_unique("k")
+
+
+def test_matched_rows_reports_ambiguous_source_cluster(tmp_path: Path) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    path = tmp_path / "matched.npz"
+    np.savez(
+        path,
+        x_stored=np.zeros((1, 175, 8, 8), dtype=np.float16),
+        game_id=np.asarray([7], dtype=np.int64),
+        has_game_id=np.asarray([1], dtype=np.uint8),
+        source_cluster_ambiguous=np.asarray([1], dtype=np.uint8),
+        found=np.asarray([True]),
+        key=np.asarray(["k"]),
+        src_shard=np.asarray(["shard_000123.zarr"]),
+    )
+
+    matched = MatchedAuditRows(path)
+
+    matched.require_index_layout(require_game_ids=True)
+    assert not matched.source_cluster_is_unique("k")
+
+
+def test_matched_rows_ignores_zero_filled_game_id_when_presence_is_false(
+    tmp_path: Path,
+) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    path = tmp_path / "matched.npz"
+    np.savez(
+        path,
+        x_stored=np.zeros((1, STORED_PLANES, 8, 8), dtype=np.float16),
+        game_id=np.asarray([0], dtype=np.int64),
+        has_game_id=np.asarray([0], dtype=np.uint8),
+        source_cluster_ambiguous=np.asarray([0], dtype=np.uint8),
+        found=np.asarray([True]),
+        key=np.asarray(["k"]),
+    )
+
+    matched = MatchedAuditRows(path)
+
+    assert not matched.has_game_id("k")
+    assert matched.game_id("k") is None
+    matched.require_index_layout(require_game_ids=True)
+
+
+def test_match_audit_rows_honours_source_game_id_presence_mask() -> None:
+    from scripts.match_audit_rows import _game_ids_and_presence
+
+    values, present = _game_ids_and_presence(
+        {
+            "game_id": np.asarray([0, 41], dtype=np.int64),
+            "has_game_id": np.asarray([0, 1], dtype=np.uint8),
+        },
+        source=Path("source.zarr"),
+    )
+
+    assert values is not None
+    assert present is not None
+    assert values.tolist() == [0, 41]
+    assert present.tolist() == [False, True]
+
+
+def test_match_audit_rows_preserves_legacy_unmasked_game_ids() -> None:
+    from scripts.match_audit_rows import _game_ids_and_presence
+
+    values, present = _game_ids_and_presence(
+        {"game_id": np.asarray([0, 41], dtype=np.int64)},
+        source=Path("legacy.zarr"),
+    )
+
+    assert values is not None
+    assert present is not None
+    assert present.tolist() == [True, True]
+
+
+def test_matched_rows_requires_presence_mask_for_decision_grade_only(
+    tmp_path: Path,
+) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    path = tmp_path / "legacy.npz"
+    np.savez(
+        path,
+        x_stored=np.zeros((1, STORED_PLANES, 8, 8), dtype=np.float16),
+        game_id=np.asarray([-1], dtype=np.int64),
+        found=np.asarray([True]),
+        key=np.asarray(["k"]),
+    )
+
+    matched = MatchedAuditRows(path)
+
+    # Legacy audit-v2 rulers remain reproducible: their score never used this
+    # optional clustering identity.
+    matched.require_index_layout()
+    assert matched.has_game_id("k")
+    assert matched.game_id("k") == -1
+    with pytest.raises(SystemExit, match="has_game_id presence mask"):
+        matched.require_index_layout(require_game_ids=True)
+
+
+@pytest.mark.parametrize(
+    ("mask", "ambiguity", "message"),
+    [
+        (
+            np.asarray([[1]], dtype=np.uint8),
+            np.asarray([0], dtype=np.uint8),
+            "malformed has_game_id shape",
+        ),
+        (
+            np.asarray([2], dtype=np.uint8),
+            np.asarray([0], dtype=np.uint8),
+            "non-binary has_game_id",
+        ),
+        (
+            np.asarray([1], dtype=np.uint8),
+            np.asarray([[0]], dtype=np.uint8),
+            "malformed source_cluster_ambiguous shape",
+        ),
+        (
+            np.asarray([1], dtype=np.uint8),
+            np.asarray([2], dtype=np.uint8),
+            "non-binary source_cluster_ambiguous",
+        ),
+    ],
+)
+def test_matched_rows_validates_decision_grade_game_presence_mask(
+    tmp_path: Path, mask: np.ndarray, ambiguity: np.ndarray, message: str,
+) -> None:
+    from chess_anti_engine.eval.audit_history import MatchedAuditRows
+
+    path = tmp_path / "matched.npz"
+    np.savez(
+        path,
+        x_stored=np.zeros((1, STORED_PLANES, 8, 8), dtype=np.float16),
+        game_id=np.asarray([7], dtype=np.int64),
+        has_game_id=mask,
+        source_cluster_ambiguous=ambiguity,
+        found=np.asarray([True]),
+        key=np.asarray(["k"]),
+    )
+
+    with pytest.raises(SystemExit, match=message):
+        MatchedAuditRows(path).require_index_layout(require_game_ids=True)
 
 
 # ---------------------------------------------------------------------------

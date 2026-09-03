@@ -268,6 +268,18 @@ class MatchedAuditRows:
         stored_key = "x_stored" if "x_stored" in data else "x_v2"
         self._stored = data[stored_key]
         self._game_id = np.asarray(data["game_id"], dtype=np.int64)
+        # Current matched-row indexes carry the replay field's per-row
+        # presence mask.  Older audit-v2 indexes predate that column; keep
+        # them readable for the published rulers, but let decision-grade
+        # consumers explicitly require the new evidence below.
+        self._has_game_id = (
+            np.asarray(data["has_game_id"])
+            if "has_game_id" in data else None
+        )
+        self._source_cluster_ambiguous = (
+            np.asarray(data["source_cluster_ambiguous"])
+            if "source_cluster_ambiguous" in data else None
+        )
         self._source_shard = (
             np.asarray(data["src_shard"], dtype=str)
             if "src_shard" in data else None
@@ -290,14 +302,31 @@ class MatchedAuditRows:
         """The (175, 8, 8) float32 stored production row for `key`."""
         return np.asarray(self._stored[self._row(key)], dtype=np.float32)
 
-    def game_id(self, key: str) -> int:
+    def has_game_id(self, key: str) -> bool:
+        """Whether the recovered replay row actually carried ``game_id``.
+
+        A missing mask denotes a legacy matched-row index.  Such indexes are
+        kept readable because their historical audit scores did not use game
+        clustering; callers making a decision from cluster identities must
+        use ``require_index_layout(require_game_ids=True)`` first.
+        """
+        i = self._row(key)
+        return self._has_game_id is None or bool(self._has_game_id[i])
+
+    def game_id(self, key: str) -> int | None:
         """Source game of the recovered row, for game-CLUSTERED resampling.
 
         Audit positions from the same game are not independent draws; a
         bootstrap that resamples positions rather than games understates its
-        own CI. -1 when the shard did not carry `game_id`.
+        own CI. ``None`` when a current index records that the source row did
+        not carry the optional ``game_id`` field. Legacy indexes without a
+        presence mask retain their recorded integer (including the historical
+        ``-1`` sentinel) until a decision-grade caller rejects the layout.
         """
-        return int(self._game_id[self._row(key)])
+        i = self._row(key)
+        if self._has_game_id is not None and not bool(self._has_game_id[i]):
+            return None
+        return int(self._game_id[i])
 
     def source_shard(self, key: str) -> str | None:
         """Snapshot shard containing ``key``, or None for a legacy index."""
@@ -306,18 +335,29 @@ class MatchedAuditRows:
         value = str(self._source_shard[self._row(key)]).strip()
         return value or None
 
+    def source_cluster_is_unique(self, key: str) -> bool:
+        """Whether every matched occurrence has the same shard/game cluster."""
+        i = self._row(key)
+        return (
+            self._source_cluster_ambiguous is not None
+            and not bool(self._source_cluster_ambiguous[i])
+        )
+
     def _row(self, key: str) -> int:
         i = self._index.get(str(key))
         if i is None:
             raise KeyError(f"no stored row matched audit position {key!r}")
         return i
 
-    def require_index_layout(self) -> None:
+    def require_index_layout(self, *, require_game_ids: bool = False) -> None:
         """Fail loudly when the INDEX was not built from the stored layout.
 
         Needs no model, so every caller can run it — including
         `scripts/audit_targets.py`, which loads its checkpoint deeper in the
-        call stack than it loads the index.
+        call stack than it loads the index. Decision-grade consumers that use
+        game-clustered inference must pass ``require_game_ids=True``; ordinary
+        audit-v2 scoring remains able to reproduce legacy indexes whose score
+        never depended on the optional replay game id.
         """
         want = _STORED_LAYOUT
         recorded = {
@@ -329,16 +369,57 @@ class MatchedAuditRows:
                 f"[audit-v2] NOTE: {self.path.name} predates encoding provenance; "
                 f"assuming {want} (the only layout match_audit_rows.py writes)"
             )
-            return
-        mismatch = {
-            k: recorded[k] for k in want
-            if recorded[k] is not None and recorded[k] != want[k]
-        }
-        if mismatch:
-            raise SystemExit(
-                f"matched-rows index {self.path} was built from {mismatch}, "
-                f"which is not the production stored layout {want}"
-            )
+        else:
+            mismatch = {
+                k: recorded[k] for k in want
+                if recorded[k] is not None and recorded[k] != want[k]
+            }
+            if mismatch:
+                raise SystemExit(
+                    f"matched-rows index {self.path} was built from {mismatch}, "
+                    f"which is not the production stored layout {want}"
+                )
+        if require_game_ids:
+            if self._has_game_id is None:
+                raise SystemExit(
+                    f"decision-grade game clustering requires {self.path} to "
+                    "carry the per-row has_game_id presence mask; rebuild it "
+                    "with scripts/match_audit_rows.py"
+                )
+            if self._source_cluster_ambiguous is None:
+                raise SystemExit(
+                    f"decision-grade game clustering requires {self.path} to "
+                    "carry source_cluster_ambiguous; rebuild it with "
+                    "scripts/match_audit_rows.py"
+                )
+            raw = np.asarray(self._has_game_id)
+            if raw.shape != self._game_id.shape or raw.ndim != 1:
+                raise SystemExit(
+                    f"matched-rows index {self.path} has malformed has_game_id "
+                    f"shape {raw.shape}; expected {self._game_id.shape}"
+                )
+            if np.any((raw != 0) & (raw != 1)):
+                raise SystemExit(
+                    f"matched-rows index {self.path} has non-binary has_game_id values"
+                )
+            active = raw.astype(bool, copy=False)
+            if np.any(self._game_id[active] < 0):
+                raise SystemExit(
+                    f"matched-rows index {self.path} has negative game_id values "
+                    "marked present"
+                )
+            ambiguity = np.asarray(self._source_cluster_ambiguous)
+            if ambiguity.shape != self._game_id.shape or ambiguity.ndim != 1:
+                raise SystemExit(
+                    f"matched-rows index {self.path} has malformed "
+                    f"source_cluster_ambiguous shape {ambiguity.shape}; "
+                    f"expected {self._game_id.shape}"
+                )
+            if np.any((ambiguity != 0) & (ambiguity != 1)):
+                raise SystemExit(
+                    f"matched-rows index {self.path} has non-binary "
+                    "source_cluster_ambiguous values"
+                )
 
     def require_model_compatible(self, enc_kwargs: dict[str, str]) -> None:
         """Fail loudly when the checkpoint's encoding is not the stored one.

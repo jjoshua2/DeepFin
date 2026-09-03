@@ -227,7 +227,10 @@ def main() -> None:
         "value_batch": args.value_batch,
         "arm_encoding": {a: ARM_ENCODING[a] for a in arms},
         "key": [p.key for p in positions],
-        "game_id": [int(matched.game_id(p.key)) for p in positions],
+        "game_id": [
+            int(game_id) if (game_id := matched.game_id(p.key)) is not None else -1
+            for p in positions
+        ],
         "phase": [int(p.phase) for p in positions],
     }
     arms_out: dict[str, dict[str, object]] = {}

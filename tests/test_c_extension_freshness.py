@@ -79,6 +79,12 @@ def test_check_extensions_accepts_fresh_outputs(tmp_path: Path):
     assert check_extensions(tmp_path) == []
 
 
+def test_check_extensions_rejects_unknown_module_filter(tmp_path: Path) -> None:
+    assert check_extensions(tmp_path, modules={"misspelled.module"}) == [
+        "unknown extension module requested: misspelled.module"
+    ]
+
+
 def test_check_extensions_reports_missing_outputs(tmp_path: Path):
     _write_all_sources(tmp_path)
 

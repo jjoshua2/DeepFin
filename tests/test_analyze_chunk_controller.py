@@ -10,21 +10,30 @@ import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.eval.audit import legal_full_indices, phase_bucket, position_key
 from chess_anti_engine.moves import move_to_index
 from scripts.analyze_chunk_controller import (
     Transition,
     _complexity_continue,
+    _rollout_selected_indices,
+    _stage_counts,
     _require_bootstrap_resolution,
     _require_safe_output_path,
+    _score,
     _update_stability,
     analyze,
     cluster_bootstrap_delta,
     evaluate_horizon,
+    evaluate_reachable_rollout,
     grouped_folds,
     held_horizon_predictions,
     load_transitions,
 )
-from scripts.backtest_chunk_trajectory import _require_search_take_effect
+from scripts.backtest_chunk_trajectory import (
+    _require_safe_output_paths,
+    _require_search_take_effect,
+    _validate_registry_search_values,
+)
 
 
 def _state(value: float = 0.0, *, gap: float = 0.1, stable: float = 0.0) -> dict[str, float]:
@@ -36,7 +45,9 @@ def _state(value: float = 0.0, *, gap: float = 0.1, stable: float = 0.0) -> dict
         "bestmove_flip": 0.0,
         "stable_chunks": stable,
         "q_drift": value,
+        "q_drift_missing": 0.0,
         "visit_churn": 0.1,
+        "visit_churn_missing": 0.0,
         "root_q": value,
         "phase": 1.0,
         "piece_count": 20.0,
@@ -58,6 +69,7 @@ def _transition(
         key=key,
         group_id=f"selfplay:{game}",
         horizon=horizon,
+        hard_horizon=256,
         cost=50,
         gain=gain,
         regret_before=max(gain, 0.0) + 1.0,
@@ -102,9 +114,54 @@ def test_complexity_predicate_selects_boolean_continues_at_natural_spend() -> No
     assert result["policies"]["complexity_predicate"]["signed_gain"] == pytest.approx(2.0)
 
 
+def test_reachable_rollout_never_allows_a_stopped_position_to_reenter() -> None:
+    rows = [
+        _transition(key, game, horizon, 100.0 if key == "d" and horizon > 100 else 0.0,
+                    current=True)
+        for game, key in enumerate(("a", "b", "c", "d"))
+        for horizon in (100, 150, 200)
+    ]
+    scores = np.asarray([
+        (-100.0 if row.key == "d" and row.horizon == 100 else 100.0)
+        if row.key == "d" else float(-ord(row.key[0]))
+        for row in rows
+    ])
+    counts = _stage_counts(4, 3, 0.5)
+    assert counts == [3, 2, 1]
+    selected = _rollout_selected_indices(rows, scores, counts)
+    assert not any(rows[int(index)].key == "d" for index in selected)
+
+    result = evaluate_reachable_rollout(
+        rows, scores, scores, allocation_fraction=0.5,
+    )
+    assert result["selection_semantics"] == "nested_prefix_no_reentry"
+    assert result["policies"]["M1"]["signed_gain"] == 0.0
+    assert result["relaxed_oracle_signed_gain"] == 200.0
+
+
+def test_reachable_rollout_uses_exact_nested_oracle_not_relaxed_bound() -> None:
+    rows = [
+        _transition("early", 1, 100, 100.0, current=True),
+        _transition("early", 1, 150, 0.0, current=True),
+        _transition("late", 2, 100, 0.0, current=True),
+        _transition("late", 2, 150, 100.0, current=True),
+    ]
+
+    result = evaluate_reachable_rollout(
+        rows, np.zeros(4), np.zeros(4), allocation_fraction=0.5,
+    )
+
+    assert result["stage_continue_counts"] == [1, 1]
+    assert result["oracle_semantics"] == "exact_nested_stop_depth_assignment"
+    assert result["reachable_oracle_signed_gain"] == 100.0
+    assert result["relaxed_oracle_signed_gain"] == 200.0
+    assert result["relaxation_gap"] == 100.0
+    assert result["policies"]["oracle"]["signed_gain"] == 100.0
+
+
 def test_held_horizon_cv_excludes_horizon_and_source_game() -> None:
     rows = [
-        _transition(f"{game}-{horizon}", game, horizon, game / 10, current=game % 2 == 0)
+        _transition(str(game), game, horizon, game / 10, current=game % 2 == 0)
         for game in range(8)
         for horizon in (100, 150, 200)
     ]
@@ -208,6 +265,12 @@ def test_stable_single_legal_move_is_decided_without_root_visits() -> None:
     )
 
 
+def test_expected_score_is_stable_for_forced_mate_scale_cp() -> None:
+    assert _score(-100_000.0) >= 0.0
+    assert _score(100_000.0) <= 1.0
+    assert _score(-100_000.0) < _score(0.0) < _score(100_000.0)
+
+
 def test_budget_interactions_improve_held_horizon_prediction() -> None:
     rows: list[Transition] = []
     for game in range(20):
@@ -216,7 +279,7 @@ def test_budget_interactions_improve_held_horizon_prediction() -> None:
             remaining_fraction = 50.0 / horizon
             gain = (value - 0.5) * (remaining_fraction - 0.3)
             row = _transition(
-                f"{game}-{horizon}", game, horizon, gain,
+                str(game), game, horizon, gain,
                 current=game % 2 == 0, value=value,
             )
             state = dict(row.state)
@@ -232,7 +295,7 @@ def test_budget_interactions_improve_held_horizon_prediction() -> None:
 
 def test_cluster_bootstrap_is_deterministic() -> None:
     rows = [
-        _transition(f"{game}-{horizon}", game, horizon, (game - 2) / horizon,
+        _transition(str(game), game, horizon, (game - 2) / horizon,
                     current=game % 2 == 0)
         for game in range(6)
         for horizon in (100, 150)
@@ -250,43 +313,85 @@ def test_cluster_bootstrap_is_deterministic() -> None:
 
 def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     board = chess.Board()
-    actions = [
-        int(move_to_index(chess.Move.from_uci(uci), board))
-        for uci in ("a2a3", "b2b3")
-    ]
+    _ucis, legal_actions = legal_full_indices(board)
+    actions = [int(action) for action in legal_actions]
+    emitted = int(move_to_index(chess.Move.from_uci("a2a3"), board))
+    alternative = int(move_to_index(chess.Move.from_uci("b2b3"), board))
+    reference_best = int(move_to_index(chess.Move.from_uci("e2e4"), board))
+    emitted_index = actions.index(emitted)
+    alternative_index = actions.index(alternative)
+    visits = [0] * len(actions)
+    visits[emitted_index] = 20
+    visits[alternative_index] = 30
+    shares = [float(visit) / 50.0 for visit in visits]
+    child_q = [0.2] * len(actions)
+    child_q[emitted_index] = 0.1
+    child_q_observed = [visit > 0 for visit in visits]
+    action_regret = [20.0] * len(actions)
+    action_regret[emitted_index] = 10.0
+    action_regret[actions.index(reference_best)] = 0.0
+    action_reference = [80.0] * len(actions)
+    action_reference[emitted_index] = 90.0
+    action_reference[actions.index(reference_best)] = 100.0
+    action_listed = [False] * len(actions)
+    action_listed[emitted_index] = True
+    action_listed[alternative_index] = True
+    action_listed[actions.index(reference_best)] = True
     entropy = float(-(0.4 * np.log(0.4) + 0.6 * np.log(0.6)))
-    rows = []
-    for chunk, regret, regret_cp in ((1, 0.2, 20.0), (2, 0.1, 10.0)):
-        rows.append({
-            "schema": "deepfin.chunk_trajectory.v2",
-            "key": "k", "source_dir": "/snapshot", "shard": "s0.zarr",
+    best_cp = 100.0
+    regret_cp = 10.0
+    regret_score = (
+        1.0 / (1.0 + 10.0 ** (-best_cp / 300.0))
+        - 1.0 / (1.0 + 10.0 ** (-(best_cp - regret_cp) / 300.0))
+    )
+    rows = [
+        {
+            "schema": "deepfin.chunk_trajectory.v3",
+            "key": position_key(board), "source_dir": "/snapshot", "shard": "s0.zarr",
             "fen": board.fen(),
             "game_id": 3, "group_id": "/snapshot\0s0.zarr\0" + "3",
             "chunk": chunk, "nodes": chunk * 50,
             "elapsed_ms": float(chunk), "regret_cp": regret_cp,
-            "regret_score": regret, "regret_vs_final_cp": regret_cp - 10.0,
+            "regret_score": regret_score, "regret_vs_final_cp": 0.0,
+            "deep_reference_best_cp": best_cp,
+            "deep_reference_move_cp": {
+                "e2e4": 100.0, "a2a3": 90.0, "b2b3": 80.0,
+            },
             "visit_gap": -0.2 if correct_gap else 0.2,
-            "root_actions": actions, "root_visits": [20, 30],
-            "root_visit_shares": [0.4, 0.6],
-            "root_child_q": [0.1, 0.2],
-            "emitted_action": actions[0], "uci": "a2a3", "bestmove_flip": False,
-            "pv_actions": [actions[0]], "pv_uci": ["a2a3"],
+            "root_actions": actions,
+            "root_visits": [visit * chunk for visit in visits],
+            "root_visit_shares": shares,
+            "root_child_q": child_q,
+            "root_child_q_observed": child_q_observed,
+            "root_action_regret_cp": action_regret,
+            "root_action_reference_cp": action_reference,
+            "root_action_reference_listed": action_listed,
+            "emitted_action": emitted, "uci": "a2a3", "bestmove_flip": False,
+            "pv_actions": [emitted], "pv_uci": ["a2a3"],
             "stable_chunks": 0, "visit_entropy": entropy, "q_gap": -0.1,
             "complexity_predicate_continue": True,
             "q_drift": None if chunk == 1 else 0.0,
             "visit_churn": None if chunk == 1 else 0.0, "root_q": 0.0,
             "changes_to_final": False,
-            "phase": 1, "piece_count": 32, "legal_move_count": 20,
-        })
+            "phase": phase_bucket(32), "source": 0,
+            "piece_count": 32, "legal_move_count": 20,
+            "tb_probes": 0, "tb_hits": 0,
+        }
+        for chunk in (1, 2, 3, 4)
+    ]
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     meta = Path(str(path) + ".meta.json")
     meta.write_text(json.dumps({
-        "schema": "deepfin.chunk_trajectory.v2",
+        "schema": "deepfin.chunk_trajectory.v3",
         "complete": True,
         "decision_grade": True,
         "analysis_scope": "fixed_node_horizons_only",
         "clock_conditioning_available": False,
+        "elapsed_measurement": {
+            "kind": "callback_instrumented_wall_time",
+            "usable_for_controller_or_cost_analysis": False,
+        },
         "root_position_history": "fen_only_from_audit_fen",
         "game_group_kind": "source_dir:shard:game_id",
         "complexity_predicate": {
@@ -314,32 +419,85 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
             "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
             "gss_halving_rev": 3,
+            "freshness_check": {
+                "modules": [
+                    "chess_anti_engine.encoding._lc0_ext",
+                    "chess_anti_engine.mcts._mcts_tree",
+                ],
+                "minimum_gcc_major": 15,
+                "production_recipe_required": True,
+                "passed": True, "issues": [],
+            },
+        },
+        "lc0_extension": {
+            "path": "/_lc0_ext.so", "size": 1, "mtime_ns": 1,
+            "sha256": "2" * 64, "cboard_encode_full": True,
+            "freshness_check": {
+                "modules": [
+                    "chess_anti_engine.encoding._lc0_ext",
+                    "chess_anti_engine.mcts._mcts_tree",
+                ],
+                "minimum_gcc_major": 15,
+                "production_recipe_required": True,
+                "passed": True, "issues": [],
+            },
+        },
+        "artifact_stability": {
+            "passed": True, "changed": [], "final_git_sha": "a" * 40,
+            "final_git_dirty": False,
         },
         "syzygy": {
-            "path": "/tb/a:/tb/b",
+            "path": "/tb/syzygy_3-4-5:/tb/syzygy_6",
             "rtbw_count": 875,
             "rtbz_count": 510,
             "directories": [
-                {"path": "/tb/a", "rtbw_count": 510, "rtbz_count": 145,
+                {"path": "/tb/syzygy_3-4-5", "rtbw_count": 510, "rtbz_count": 145,
                  "total_bytes": 1, "inventory_sha256": "f" * 64},
-                {"path": "/tb/b", "rtbw_count": 365, "rtbz_count": 365,
+                {"path": "/tb/syzygy_6", "rtbw_count": 365, "rtbz_count": 365,
                  "total_bytes": 1, "inventory_sha256": "1" * 64},
             ],
         },
-        "row_count": 2,
-        "chunk_count": 2,
+        "row_count": 4,
+        "chunk_count": 4,
         "position_count": 1,
         "requested_position_count": 1,
         "excluded_position_count": 0,
         "excluded_positions": [],
+        "incomplete_exclusion_count": 0,
         "requested_search": {
             "device": "cuda", "active_path": "walker_puct",
-            "walkers": 2, "chunk_sims": 50,
+            "walkers": 2, "chunk_sims": 50, "max_chunks": 4,
             "active_parameters": {
                 "c_puct": 1.75, "cpuct_factor": 3.89, "cpuct_base": 38739.0,
                 "fpu_reduction": 0.33, "vloss_weight": 3,
-                "walker_gather": 1, "policy_temp": 1.0,
+                "walker_gather": 1,
             },
+        },
+        "requested_model_search_contract": {
+            "model_input_history_encoding": "legacy",
+            "model_input_extra_features": "v1",
+            "model_policy_encoding": "lc0_1858",
+            "model_compute_relations": False,
+            "search_input_history_encoding": "legacy",
+            "search_input_extra_features": "v1",
+            "search_policy_encoding": "lc0_1858",
+            "search_compute_relations": False,
+            "evaluator_input_planes": 146,
+            "walker_input_planes": 146,
+            "walker_compute_relations": False,
+        },
+        "realized_model_search_contract": {
+            "model_input_history_encoding": "legacy",
+            "model_input_extra_features": "v1",
+            "model_policy_encoding": "lc0_1858",
+            "model_compute_relations": False,
+            "search_input_history_encoding": "legacy",
+            "search_input_extra_features": "v1",
+            "search_policy_encoding": "lc0_1858",
+            "search_compute_relations": False,
+            "evaluator_input_planes": 146,
+            "walker_input_planes": 146,
+            "walker_compute_relations": False,
         },
         "requested_evaluator": {
             "stack": (
@@ -363,20 +521,58 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "enabled": True, "mode": "max-autotune", "cache_dir": "/cache",
             "torchinductor_cache_dir": "/cache/torch", "triton_cache_dir": "/cache/triton",
         },
+        "runtime": {
+            "python_version": "3.10", "python_implementation": "CPython",
+            "python_executable": "/usr/bin/python3", "numpy_version": "2.x",
+            "python_chess_version": "1.x", "platform": "Linux-test",
+            "machine": "x86_64",
+            "torch_version": "2.x", "torch_cuda_version": "13.0",
+            "cudnn_version": 90000, "nvidia_driver_version": "600.1",
+            "requested_device": "cuda", "evaluator_device": "cuda",
+            "model_parameter_devices": ["cuda:0"],
+            "resolved_requested_device": "cuda:0",
+            "resolved_evaluator_device": "cuda:0",
+            "resolved_model_parameter_devices": ["cuda:0"],
+            "cuda_device_name": "test GPU", "cuda_device_capability": [12, 0],
+        },
         "realized_search": {
             "concurrency_mode": "walker_puct", "concurrency_workers": 2,
             "chunk_sims": 50, "c_puct": 1.75, "cpuct_factor": 3.89,
             "cpuct_base": 38739.0, "fpu_reduction": 0.33,
-            "vloss_weight": 3, "walker_gather": 1, "policy_temp": 1.0,
+            "vloss_weight": 3, "walker_gather": 1,
+        },
+        "search_warmup": {
+            "completed": True, "requested_nodes": 256, "realized_nodes": 256,
+            "excluded_from_timing": True, "tree_reset_after": True,
+            "tablebase_counters_reset_after": True,
         },
         "realized_tablebase": {
             "installed": True, "cursed_as_draw": True,
             "n_wdl": 510, "n_dtz": 510, "max_pieces": 6,
             "root_probe_active": True, "leaf_probe_active": False,
+            "positive_control": {
+                "fen": "7k/8/8/8/8/8/8/KQ6 w - - 0 1",
+                "probes": 1, "hits": 1, "apply_return": 1, "passed": True,
+            },
+            "root_shortcut_positive_control": {
+                "fen": "7k/8/8/8/8/8/8/KQ6 w - - 0 1",
+                "bestmove_uci": "b1b7", "nodes": 1, "tbhits": 1,
+                "root_declined": None, "tree_created": False, "passed": True,
+            },
         },
         "output": {"sha256": digest, "size": path.stat().st_size},
     }))
     return meta
+
+
+def _rewrite_bank(bank: Path, meta: Path, rows: list[dict[str, object]]) -> None:
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
 
 
 def test_loader_refuses_leader_gap_for_nonleading_emitted_action(tmp_path: Path) -> None:
@@ -416,6 +612,21 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     assert info["decision_grade"] is True
 
 
+def test_loader_exposes_missing_drift_and_churn_to_M0(tmp_path: Path) -> None:
+    from scripts.analyze_chunk_controller import _design
+
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+
+    transitions, _ = load_transitions(bank)
+
+    assert transitions[0].state["q_drift_missing"] == 1.0
+    assert transitions[0].state["visit_churn_missing"] == 1.0
+    assert transitions[1].state["q_drift_missing"] == 0.0
+    assert transitions[1].state["visit_churn_missing"] == 0.0
+    assert _design(transitions, "M0")[0].tolist() != _design(transitions, "M0")[1].tolist()
+
+
 def test_loader_rejects_dirty_or_incomplete_producer_provenance(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
@@ -448,6 +659,26 @@ def test_loader_rejects_unrealized_walker_gather(tmp_path: Path) -> None:
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="realized active parameters"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("max_chunks", 3), ("chunk_sims", 31), ("walkers", 1)],
+)
+def test_loader_rejects_invalid_requested_search_shape(
+    tmp_path: Path, field: str, value: int,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["requested_search"][field] = value
+    if field in {"chunk_sims", "walkers"}:
+        realized_field = "chunk_sims" if field == "chunk_sims" else "concurrency_workers"
+        manifest["realized_search"][realized_field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="requested search"):
         load_transitions(bank)
 
 
@@ -503,6 +734,31 @@ def test_loader_requires_native_halving_semantic_revision(tmp_path: Path) -> Non
         load_transitions(bank)
 
 
+@pytest.mark.parametrize(
+    ("section", "field", "value", "match"),
+    [
+        ("search_warmup", "completed", False, "search warmup"),
+        ("search_warmup", "realized_nodes", 0, "search warmup"),
+        (
+            "elapsed_measurement", "usable_for_controller_or_cost_analysis", True,
+            "elapsed-time instrumentation",
+        ),
+        ("mcts_extension", "freshness_check", {}, "native MCTS extension"),
+    ],
+)
+def test_loader_requires_warmup_timing_and_native_freshness_provenance(
+    tmp_path: Path, section: str, field: str, value: object, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest[section][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=match):
+        load_transitions(bank)
+
+
 def test_loader_requires_resolved_checkpoint_params_provenance(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
@@ -528,6 +784,41 @@ def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="group_id is not"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("shard", "other.zarr"),
+        ("game_id", 99),
+        (
+            "deep_reference_move_cp",
+            {"e2e4": 100.0, "a2a3": 90.0, "b2b3": 80.0, "c2c3": 80.0},
+        ),
+    ],
+)
+def test_loader_requires_trajectory_identity_and_labels_to_stay_fixed(
+    tmp_path: Path, field: str, value: object,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[-1][field] = value
+    if field in {"shard", "game_id"}:
+        rows[-1]["group_id"] = "\0".join((
+            str(rows[-1]["source_dir"]),
+            str(rows[-1]["shard"]),
+            str(rows[-1]["game_id"]),
+        ))
+    if field == "deep_reference_move_cp":
+        board = chess.Board(str(rows[-1]["fen"]))
+        newly_listed = int(move_to_index(chess.Move.from_uci("c2c3"), board))
+        listed_index = rows[-1]["root_actions"].index(newly_listed)
+        rows[-1]["root_action_reference_listed"][listed_index] = True
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="trajectory-invariant fields change"):
         load_transitions(bank)
 
 
@@ -557,7 +848,7 @@ def test_loader_requires_manifest_position_count_unique_trajectories(
     rows.extend(json.loads(json.dumps(row)) for row in rows[:])
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
-    manifest.update({"row_count": 4, "position_count": 2, "requested_position_count": 2})
+    manifest.update({"row_count": 8, "position_count": 2, "requested_position_count": 2})
     manifest["output"] = {
         "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
         "size": bank.stat().st_size,
@@ -574,18 +865,44 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     original = [json.loads(line) for line in bank.read_text().splitlines()]
-    rows = [original[0]]
-    for chunk, template in enumerate((original[0], original[1], original[1]), start=1):
+    rows = [json.loads(json.dumps(row)) for row in original]
+    rows[-1] = json.loads(json.dumps(original[2]))
+    other_board = chess.Board(
+        "rn3bnr/ppp1k2p/5pp1/Pb1pp3/1P3PPq/B7/N1PPP1BP/R2QK1NR w KQ - 4 14"
+    )
+    other_move = next(iter(other_board.legal_moves))
+    other_action = int(move_to_index(other_move, other_board))
+    for chunk, template in enumerate(original, start=1):
         row = json.loads(json.dumps(template))
         row.update({
-            "key": "other", "game_id": 4,
+            "key": position_key(other_board), "fen": other_board.fen(),
+            "game_id": 4,
             "group_id": "\0".join(("/snapshot", "s0.zarr", "4")),
             "chunk": chunk, "nodes": chunk * 50, "elapsed_ms": float(chunk),
+            "root_actions": [other_action], "root_visits": [chunk * 50],
+            "root_visit_shares": [1.0], "root_child_q": [0.1],
+            "root_child_q_observed": [True],
+            "root_action_regret_cp": [0.0],
+            "root_action_reference_cp": [90.0],
+            "root_action_reference_listed": [True],
+            "deep_reference_best_cp": 90.0,
+            "deep_reference_move_cp": {other_move.uci(): 90.0},
+            "regret_cp": 0.0, "regret_score": 0.0,
+            "emitted_action": other_action, "uci": other_move.uci(),
+            "pv_actions": [other_action], "pv_uci": [other_move.uci()],
+            "visit_gap": 1.0, "visit_entropy": 0.0, "q_gap": None,
+            "stable_chunks": chunk - 1,
+            "complexity_predicate_continue": chunk < 3,
+            "q_drift": None if chunk == 1 else 0.0,
+            "visit_churn": None if chunk == 1 else 0.0,
+            "phase": phase_bucket(chess.popcount(other_board.occupied)),
+            "piece_count": chess.popcount(other_board.occupied),
+            "legal_move_count": 1,
         })
         rows.append(row)
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
-    manifest.update({"row_count": 4, "position_count": 2, "requested_position_count": 2})
+    manifest.update({"row_count": 8, "position_count": 2, "requested_position_count": 2})
     manifest["output"] = {
         "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
         "size": bank.stat().st_size,
@@ -596,10 +913,62 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
         load_transitions(bank)
 
 
+def test_loader_accepts_production_forced_move_stability_semantics(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    original = [json.loads(line) for line in bank.read_text().splitlines()]
+    forced_board = chess.Board(
+        "rn3bnr/ppp1k2p/5pp1/Pb1pp3/1P3PPq/B7/N1PPP1BP/R2QK1NR w KQ - 4 14"
+    )
+    forced_move = next(iter(forced_board.legal_moves))
+    assert forced_board.legal_moves.count() == 1
+    forced_action = int(move_to_index(forced_move, forced_board))
+    rows = []
+    for chunk in (1, 2, 3, 4):
+        row = json.loads(json.dumps(original[min(chunk - 1, 1)]))
+        row.update({
+            "key": position_key(forced_board), "fen": forced_board.fen(),
+            "chunk": chunk, "nodes": chunk * 50, "elapsed_ms": float(chunk),
+            "root_actions": [forced_action],
+            "root_visits": [chunk * 50], "root_visit_shares": [1.0],
+            "root_child_q": [0.1], "root_child_q_observed": [True],
+            "root_action_regret_cp": [0.0],
+            "root_action_reference_cp": [90.0],
+            "root_action_reference_listed": [True],
+            "deep_reference_best_cp": 90.0,
+            "deep_reference_move_cp": {forced_move.uci(): 90.0},
+            "regret_cp": 0.0, "regret_score": 0.0,
+            "emitted_action": forced_action, "uci": forced_move.uci(),
+            "pv_actions": [forced_action], "pv_uci": [forced_move.uci()],
+            "visit_gap": 1.0, "visit_entropy": 0.0, "q_gap": None,
+            "stable_chunks": chunk - 1,
+            "complexity_predicate_continue": chunk < 3,
+            "phase": phase_bucket(chess.popcount(forced_board.occupied)),
+            "piece_count": chess.popcount(forced_board.occupied),
+            "legal_move_count": 1,
+        })
+        rows.append(row)
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest.update({"row_count": 4, "chunk_count": 4})
+    manifest["requested_search"]["max_chunks"] = 4
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    transitions, _ = load_transitions(bank)
+
+    assert len(transitions) == 3
+    assert transitions[-1].complexity_continue is False
+
+
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
         ("root_child_q", [0.1, float("nan")], "root child Q"),
+        ("root_action_regret_cp", [10.0, float("nan")], "root action regrets"),
         ("pv_actions", [0], "PV provenance"),
         ("pv_uci", ["b2b3"], "PV provenance"),
     ],
@@ -610,6 +979,11 @@ def test_loader_requires_reusable_root_q_and_pv_observations(
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    if field in ("root_child_q", "root_action_regret_cp"):
+        assert isinstance(value, list)
+        expanded = list(rows[-1][field])
+        expanded[-1] = value[-1]
+        value = expanded
     rows[-1][field] = value
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
@@ -623,10 +997,168 @@ def test_loader_requires_reusable_root_q_and_pv_observations(
         load_transitions(bank)
 
 
+@pytest.mark.parametrize("location", ["root", "later_pv"])
+def test_loader_strictly_rejects_undecodable_native_actions(
+    tmp_path: Path, location: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    if location == "root":
+        rows[-1]["root_actions"][1] = 99_999
+    else:
+        rows[-1]["pv_actions"].append(99_999)
+        rows[-1]["pv_uci"].append("a7a6")
+    bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    manifest = json.loads(meta.read_text())
+    manifest["output"] = {
+        "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
+        "size": bank.stat().st_size,
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="action cannot be decoded"):
+        load_transitions(bank)
+
+
+def test_loader_requires_full_walker_root_support(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    for row in rows:
+        zero_index = row["root_visits"].index(0)
+        for field in (
+            "root_actions", "root_visits", "root_visit_shares", "root_child_q",
+            "root_child_q_observed", "root_action_regret_cp",
+            "root_action_reference_cp", "root_action_reference_listed",
+        ):
+            row[field].pop(zero_index)
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="every legal action"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_decreasing_accumulated_root_visits(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    row = rows[1]
+    nonzero = [i for i, visit in enumerate(row["root_visits"]) if visit > 0]
+    emitted_index = row["root_actions"].index(row["emitted_action"])
+    other_index = next(index for index in nonzero if index != emitted_index)
+    row["root_visits"][emitted_index] = 19
+    row["root_visits"][other_index] = 81
+    row["root_visit_shares"][emitted_index] = 0.19
+    row["root_visit_shares"][other_index] = 0.81
+    row["visit_gap"] = -0.62
+    row["visit_entropy"] = float(-(0.19 * np.log(0.19) + 0.81 * np.log(0.81)))
+    row["visit_churn"] = 0.21
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="root visits decrease"):
+        load_transitions(bank)
+
+
+def test_loader_requires_root_visits_to_account_for_completed_nodes(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    row = rows[-1]
+    nonzero = [i for i, visit in enumerate(row["root_visits"]) if visit > 0]
+    row["root_visits"][nonzero[0]] -= 1
+    total = sum(row["root_visits"])
+    row["root_visit_shares"] = [visit / total for visit in row["root_visits"]]
+    emitted_index = row["root_actions"].index(row["emitted_action"])
+    alternatives = [
+        share for index, share in enumerate(row["root_visit_shares"])
+        if index != emitted_index
+    ]
+    row["visit_gap"] = row["root_visit_shares"][emitted_index] - max(alternatives)
+    positive = np.asarray([s for s in row["root_visit_shares"] if s > 0.0])
+    row["visit_entropy"] = float(-(positive * np.log(positive)).sum())
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="completed nodes"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("key", "invented", "position key disagrees"),
+        ("phase", 1, "phase disagrees"),
+        ("source", 7, "source must be"),
+    ],
+)
+def test_loader_recomputes_position_identity_and_domains(
+    tmp_path: Path, field: str, value: object, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[0][field] = value
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match=match):
+        load_transitions(bank)
+
+
+def test_loader_disqualifies_incomplete_search_exclusions(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest.update({
+        "requested_position_count": 2,
+        "excluded_position_count": 1,
+        "incomplete_exclusion_count": 1,
+        "excluded_positions": [{
+            "key": "missing",
+            "chunks_observed": 1,
+            "chunks_required": 4,
+            "reason": "incomplete_search",
+            "search_result": {
+                "nodes": 50, "tbhits": 0, "root_declined": "declined",
+                "score_mate": None, "board_game_over": False,
+            },
+        }],
+    })
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="accounting is inconsistent"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_multinode_terminal_shortcut_exclusion(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest.update({
+        "requested_position_count": 2,
+        "excluded_position_count": 1,
+        "excluded_positions": [{
+            "key": "missing",
+            "chunks_observed": 0,
+            "chunks_required": 4,
+            "reason": "production_terminal_shortcut",
+            "search_result": {
+                "nodes": 2, "tbhits": 0, "root_declined": None,
+                "score_mate": 1, "board_game_over": False,
+            },
+        }],
+    })
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="accounting is inconsistent"):
+        load_transitions(bank)
+
+
 @pytest.mark.parametrize(
     ("row_index", "field", "value", "match"),
     [
         (0, "visit_entropy", 0.1, "visit_entropy disagrees"),
+        (0, "regret_cp", 11.0, "regret_cp disagrees"),
+        (0, "regret_score", 0.5, "regret_score disagrees"),
         (0, "q_gap", 0.0, "q_gap disagrees"),
         (1, "bestmove_flip", True, "bestmove_flip disagrees"),
         (1, "q_drift", 0.1, "q_drift disagrees"),
@@ -642,6 +1174,13 @@ def test_loader_recomputes_derived_trajectory_fields(
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
     rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    if field == "root_visits":
+        assert isinstance(value, list)
+        assert len(value) == 2
+        expanded = list(rows[row_index][field])
+        nonzero = [i for i, visit in enumerate(expanded) if visit > 0]
+        expanded[nonzero[0]], expanded[nonzero[1]] = value
+        value = expanded
     rows[row_index][field] = value
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
@@ -689,14 +1228,80 @@ def test_loader_rejects_nonfinite_or_nonnumeric_decision_fields(
         load_transitions(bank)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("regret_cp", -1.0, "audit regret domain"),
+        ("regret_score", 1.1, r"outside \[0, 1\]"),
+        ("visit_gap", 1.1, r"outside \[-1, 1\]"),
+        ("root_q", -1.1, r"outside \[-1, 1\]"),
+        ("q_gap", 2.1, r"outside \[-2, 2\]"),
+        ("q_drift", 2.1, r"outside \[0, 2\]"),
+        ("visit_churn", 1.1, r"outside \[0, 1\]"),
+    ],
+)
+def test_loader_rejects_finite_values_outside_metric_domains(
+    tmp_path: Path, field: str, value: float, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    target = rows[-1] if field in {"q_drift", "visit_churn"} else rows[0]
+    target[field] = value
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match=match):
+        load_transitions(bank)
+
+
 def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = tmp_path / "bank.jsonl.meta.json"
+    checkpoint = tmp_path / "trainer.pt"
+    tablebases = tmp_path / "syzygy_6"
     _require_safe_output_path(bank, meta, tmp_path / "report.json")
     with pytest.raises(ValueError, match="must not overwrite"):
         _require_safe_output_path(bank, meta, bank)
     with pytest.raises(ValueError, match="must not overwrite"):
         _require_safe_output_path(bank, meta, meta)
+    manifest = {
+        "checkpoint": {"path": str(checkpoint)},
+        "syzygy": {"directories": [{"path": str(tablebases)}]},
+    }
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(bank, meta, checkpoint, manifest=manifest)
+    with pytest.raises(ValueError, match="Syzygy"):
+        _require_safe_output_path(
+            bank, meta, tablebases / "report.json", manifest=manifest,
+        )
+
+
+def test_producer_output_paths_cannot_replace_inputs_or_tablebases(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "audit.jsonl"
+    tablebases = tmp_path / "tb"
+    tablebases.mkdir()
+    with pytest.raises(SystemExit, match="aliases"):
+        _require_safe_output_paths(
+            audit, tmp_path / "out.meta.json",
+            protected_files=[audit], protected_directories=[tablebases],
+        )
+    with pytest.raises(SystemExit, match="Syzygy"):
+        _require_safe_output_paths(
+            tablebases / "bank.jsonl", tmp_path / "out.meta.json",
+            protected_files=[audit], protected_directories=[tablebases],
+        )
+
+
+def test_producer_applies_shared_uci_search_ranges() -> None:
+    _validate_registry_search_values(
+        "walker_puct", {"chunk_sims": 32, "c_puct": 1.75},
+    )
+    with pytest.raises(SystemExit, match="chunk_sims"):
+        _validate_registry_search_values(
+            "walker_puct", {"chunk_sims": 1, "c_puct": 1.75},
+        )
 
 
 def test_decision_grade_requires_enough_bootstrap_samples() -> None:
@@ -712,10 +1317,10 @@ def test_analyze_cannot_advance_with_an_undersampled_interval(
     from scripts import analyze_chunk_controller as controller
 
     rows = [
-        _transition(f"a-{horizon}", 1, horizon, -1.0, current=False)
+        _transition("a", 1, horizon, -1.0, current=False)
         for horizon in (100, 150)
     ] + [
-        _transition(f"b-{horizon}", 2, horizon, 1.0, current=True)
+        _transition("b", 2, horizon, 1.0, current=True)
         for horizon in (100, 150)
     ]
     m0 = np.zeros(len(rows), dtype=np.float64)
@@ -749,7 +1354,84 @@ def test_analyze_cannot_advance_with_an_undersampled_interval(
     )
 
     assert result["bootstrap_resolution_passed"] is False
-    assert result["verdict"] == "KILL_BUDGET_CONTEXT"
+    assert result["statistical_gate_passed"] is False
+    assert "verdict" not in result
+
+    positive = analyze(
+        rows,
+        n_folds=2,
+        bootstrap_samples=1000,
+        seed=0,
+        allocation_fraction=0.5,
+        min_capture_gain=0.0,
+        min_oracle_headroom=0.0,
+        min_bootstrap_valid_fraction=0.5,
+    )
+
+    assert positive["statistical_gate_passed"] is True
+    assert positive["preregistered_rule"]["grouped_cv_folds"] == 2
+    assert positive["preregistered_rule"]["bootstrap_seed"] == 0
+    assert "verdict" not in positive
+
+
+def test_analyze_requires_M1_improvement_at_every_reachable_rung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    rows = [
+        _transition("a", 1, 100, 0.0, current=False),
+        _transition("a", 1, 150, 0.0, current=False),
+        _transition("b", 2, 100, 10.0, current=True),
+        _transition("b", 2, 150, -1.0, current=True),
+    ]
+    m0 = np.zeros(len(rows), dtype=np.float64)
+    m1 = np.asarray([0.0, 0.0, 10.0, -1.0], dtype=np.float64)
+
+    monkeypatch.setattr(
+        controller,
+        "held_horizon_predictions",
+        lambda _rows, model, *, n_folds=5: (m0 if model == "M0" else m1, []),
+    )
+    monkeypatch.setattr(
+        controller,
+        "cluster_bootstrap_delta",
+        lambda *_args, **_kwargs: {
+            "requested_samples": 1000, "valid_samples": 1000,
+            "valid_fraction": 1.0, "mean": 1.0, "lower_95": 1.0,
+            "upper_95": 1.0,
+        },
+    )
+
+    result = analyze(
+        rows, n_folds=2, bootstrap_samples=1000, seed=4,
+        allocation_fraction=0.5, min_capture_gain=0.0,
+        min_oracle_headroom=0.0, min_bootstrap_valid_fraction=0.5,
+    )
+
+    assert result["M1_minus_M0_oracle_capture"] > 0.0
+    assert result["reachable_stage_rule_passed"] is False
+    assert result["statistical_gate_passed"] is False
+
+
+def test_analyzer_provenance_requires_a_stable_clean_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    artifact = {
+        "path": "/analyzer.py", "size": 1, "mtime_ns": 1, "sha256": "a" * 64,
+    }
+    monkeypatch.setattr(controller, "_artifact_snapshot", lambda _path: artifact)
+    monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
+
+    clean = controller._analyzer_provenance(artifact, "b" * 40, False)
+    dirty = controller._analyzer_provenance(artifact, "b" * 40, True)
+
+    assert clean["decision_grade"] is True
+    assert clean["numpy_version"]
+    assert clean["python_chess_version"]
+    assert dirty["decision_grade"] is False
 
 
 def test_walker_manifest_omits_gumbel_only_minibatch_setting(tmp_path: Path) -> None:
@@ -782,6 +1464,70 @@ def test_requested_only_evaluator_changes_fail_closed(
         load_transitions(bank)
 
 
+def test_loader_rejects_internally_contradictory_model_search_contract(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    for name in ("requested_model_search_contract", "realized_model_search_contract"):
+        manifest[name]["model_input_history_encoding"] = "lc0_root"
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="model/search encoding contract"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("passed", False), ("changed", ["checkpoint"]), ("final_git_dirty", True)],
+)
+def test_loader_requires_stable_consumed_artifacts_and_checkout(
+    tmp_path: Path, field: str, value: object,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["artifact_stability"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="changed during collection"):
+        load_transitions(bank)
+
+
+def test_loader_requires_loaded_cboard_native_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["lc0_extension"]["cboard_encode_full"] = False
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="CBoard encoding extension"):
+        load_transitions(bank)
+
+
+def test_analyzer_output_cannot_alias_loaded_cboard_extension(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(
+            bank, meta, Path("/_lc0_ext.so"), manifest=manifest,
+        )
+
+
+def test_loader_requires_exact_resolved_cuda_device_identity(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["runtime"]["resolved_model_parameter_devices"] = ["cuda:1"]
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="CUDA runtime/device provenance"):
+        load_transitions(bank)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("enabled", False), ("mode", "reduce-overhead"), ("cache_dir", "")],
@@ -806,7 +1552,7 @@ def test_cluster_bootstrap_refits_models_inside_resamples(
 
     rows = [
         _transition(
-            f"{game}-{horizon}", game, horizon, (game - 5) / horizon,
+            str(game), game, horizon, (game - 5) / horizon,
             current=game % 2 == 0,
         )
         for game in range(12)
@@ -846,7 +1592,7 @@ def test_cluster_bootstrap_refits_models_inside_resamples(
 
 def test_bootstrap_fails_closed_when_oracle_headroom_is_undefined() -> None:
     rows = [
-        _transition(f"{game}-{horizon}", game, horizon, 0.0, current=True)
+        _transition(str(game), game, horizon, 0.0, current=True)
         for game in range(6)
         for horizon in (100, 150)
     ]
