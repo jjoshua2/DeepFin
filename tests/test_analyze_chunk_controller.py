@@ -1700,6 +1700,32 @@ def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path
     assert not pending_meta.exists()
 
 
+def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("new bank\n")
+    pending_meta.write_text("existing pending manifest\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+
+    with pytest.raises(FileExistsError):
+        producer._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    assert pending_output.read_text() == "new bank\n"
+    assert pending_meta.read_text() == "existing pending manifest\n"
+    assert not output.exists()
+    assert not meta.exists()
+
+
 def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 

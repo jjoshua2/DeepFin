@@ -261,11 +261,18 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
     """Durably stage JSON at a private path before publishing an evidence pair."""
-    with path.open("x") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-        fh.write("\n")
-        fh.flush()
-        os.fsync(fh.fileno())
+    created = False
+    try:
+        with path.open("x") as fh:
+            created = True
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except BaseException:
+        if created and path.exists():
+            path.unlink()
+        raise
 
 
 def _output_lock_path(output_path: Path) -> Path:
@@ -425,12 +432,7 @@ def _publish_evidence_pair(
     manifest: dict[str, Any],
 ) -> None:
     """Prepare both artifacts before publishing either; retain recovery state."""
-    try:
-        _write_json_staged(pending_meta, manifest)
-    except BaseException:
-        if pending_meta.exists():
-            pending_meta.unlink()
-        raise
+    _write_json_staged(pending_meta, manifest)
     published = _publish_output(pending_output, output_path)
     if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
         raise RuntimeError("published trajectory bank differs from its manifest")
