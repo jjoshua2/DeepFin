@@ -232,7 +232,7 @@ class EncodedEvalCache:
         xb = _coerce_encoded_batch(x)
         bsz = int(xb.shape[0])
         if bsz == 0:
-            return self._inner.evaluate_encoded(xb)
+            return self._inner.evaluate_encoded(xb, relations=relations)
 
         ns = _namespace(
             self._encoding_source, transport="dense", relations=relations is not None,
