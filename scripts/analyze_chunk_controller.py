@@ -21,6 +21,10 @@ This tool deliberately tests fixed NODE horizons only.  Trajectory banks do
 not contain real game clocks, soft budgets, or time-forfeit observations, so a
 positive result can justify collecting a clock bank but cannot justify a
 clock-conditioned production controller.
+
+Decision-grade provenance requires direct execution as
+``PYTHONPATH=. python3 scripts/analyze_chunk_controller.py``. Module-mode execution
+preloads ``scripts/__init__.py`` before the entrypoint can snapshot project sources.
 """
 # ruff: noqa: E402  # Provenance snapshot must precede non-stdlib imports.
 from __future__ import annotations
@@ -34,6 +38,7 @@ import platform
 import stat
 import subprocess
 import sys
+import types
 from collections import defaultdict
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -199,6 +204,51 @@ def _preimport_python_source_snapshot() -> dict[str, Any]:
 
 
 _PREIMPORT_PYTHON_SOURCES = _preimport_python_source_snapshot()
+
+
+def _install_authenticated_source_only_import(
+    snapshot: Mapping[str, Any],
+) -> Any:
+    """Compile the import guard's authenticated source, never its cached bytecode."""
+    module_name = "scripts.source_only_import"
+    relative_path = "scripts/source_only_import.py"
+    expected_files = snapshot.get("files")
+    expected = (
+        expected_files.get(relative_path)
+        if isinstance(expected_files, dict) else None
+    )
+    if not isinstance(expected, dict) or not isinstance(expected.get("sha256"), str):
+        raise ImportError("source-only import guard is absent from pre-import snapshot")
+    existing = sys.modules.get(module_name)
+    if existing is None:
+        source_path = Path(str(snapshot["repo_root"])) / relative_path
+        source = source_path.read_bytes()
+        digest = hashlib.sha256(source).hexdigest()
+        if digest != expected["sha256"]:
+            raise ImportError("source-only import guard changed after pre-import snapshot")
+        module = types.ModuleType(module_name)
+        module.__file__ = str(source_path.resolve())
+        module.__package__ = "scripts"
+        sys.modules[module_name] = module
+        try:
+            exec(
+                compile(source, str(source_path), "exec", dont_inherit=True),
+                module.__dict__,
+            )
+        except BaseException:
+            sys.modules.pop(module_name, None)
+            raise
+        setattr(module, "BOOTSTRAP_SOURCE_SHA256", digest)
+    else:
+        module = existing
+        if getattr(module, "BOOTSTRAP_SOURCE_SHA256", None) != expected["sha256"]:
+            raise ImportError("existing source-only import guard is not authenticated")
+    return module.install(snapshot)
+
+
+_SOURCE_ONLY_IMPORT_GUARD = _install_authenticated_source_only_import(
+    _PREIMPORT_PYTHON_SOURCES
+)
 
 
 def _preimport_python_surface_status(
@@ -610,6 +660,22 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
                 )
             )
         )
+        source_record = _SOURCE_ONLY_IMPORT_GUARD.verified_modules.get(name)
+        artifact["source_only_import_verified"] = bool(
+            name == "analyzer"
+            or (
+                relative_path is not None
+                and _SOURCE_ONLY_IMPORT_GUARD.module_verified(name, relative_path)
+            )
+        )
+        artifact["source_execution"] = (
+            "entrypoint_trust_boundary"
+            if name == "analyzer"
+            else (
+                source_record.get("execution")
+                if isinstance(source_record, dict) else None
+            )
+        )
         artifacts[name] = artifact
     return artifacts
 
@@ -638,11 +704,15 @@ def _source_revision_bindings(
             and artifact.get("sha256") == hashlib.sha256(committed).hexdigest()
         )
         matches_preimport = artifact.get("matches_preimport_snapshot") is True
+        source_only_verified = artifact.get("source_only_import_verified") is True
         bindings[name] = {
             "repo_relative_path": relative_path,
             "matches_reported_git_revision": matches_revision,
             "matches_preimport_snapshot": matches_preimport,
-            "passed": bool(matches_revision and matches_preimport),
+            "source_only_import_verified": source_only_verified,
+            "passed": bool(
+                matches_revision and matches_preimport and source_only_verified
+            ),
         }
     return bindings
 
@@ -661,6 +731,22 @@ def _analyzer_provenance(
         else _preimport_python_surface_status(_PREIMPORT_PYTHON_SOURCES)
     )
     end_preimport = _preimport_python_surface_status(_PREIMPORT_PYTHON_SOURCES)
+    source_only_import = _SOURCE_ONLY_IMPORT_GUARD.status()
+    source_only_import_passed = bool(
+        source_only_import.get("schema") == "deepfin.source_only_import.v1"
+        and source_only_import.get("active") is True
+        and source_only_import.get("git_sha") == start_git_sha
+        and source_only_import.get("tracked_python_surface_sha256")
+        == _PREIMPORT_PYTHON_SOURCES.get("tracked_python_surface_sha256")
+        and source_only_import.get("project_scope")
+        == ["chess_anti_engine", "scripts"]
+        and source_only_import.get("execution")
+        == "compile_authenticated_source_bytes"
+        and source_only_import.get("bytecode_cache_reads") is False
+        and source_only_import.get("native_extension_loading")
+        == "unchanged_pathfinder_loader"
+        and source_only_import.get("failures") == []
+    )
     source_bindings = _source_revision_bindings(start_sources, start_git_sha)
     sources_match_git_revision = bool(source_bindings) and all(
         row["passed"] for row in source_bindings.values()
@@ -670,6 +756,7 @@ def _analyzer_provenance(
         and _PREIMPORT_PYTHON_SOURCES.get("git_sha") == start_git_sha
         and start_preimport.get("passed") is True
         and end_preimport.get("passed") is True
+        and source_only_import_passed
         and start_sources == end_sources
         and sources_match_git_revision
         and len(start_git_sha) == 40
@@ -693,6 +780,7 @@ def _analyzer_provenance(
             **_PREIMPORT_PYTHON_SOURCES,
             "start_check": start_preimport,
             "post_run_check": end_preimport,
+            "source_only_import": source_only_import,
         },
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
@@ -1346,6 +1434,7 @@ def _producer_source_matches_revision(
         or artifact.get("repo_relative_path") != relative_path
         or artifact.get("matches_producer_git_revision") is not True
         or artifact.get("matches_preimport_snapshot") is not True
+        or artifact.get("source_only_import_verified") is not True
         or not isinstance(producer_git_sha, str)
     ):
         return False
@@ -1466,6 +1555,23 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
     ):
         return False
     files = proof["files"]
+    source_only = proof.get("source_only_import")
+    if (
+        not isinstance(source_only, dict)
+        or source_only.get("schema") != "deepfin.source_only_import.v1"
+        or source_only.get("active") is not True
+        or source_only.get("git_sha") != producer_sha
+        or source_only.get("tracked_python_surface_sha256")
+        != proof.get("tracked_python_surface_sha256")
+        or source_only.get("project_scope") != ["chess_anti_engine", "scripts"]
+        or source_only.get("execution") != "compile_authenticated_source_bytes"
+        or source_only.get("bytecode_cache_reads") is not False
+        or source_only.get("native_extension_loading")
+        != "unchanged_pathfinder_loader"
+        or source_only.get("failures") != []
+        or not isinstance(source_only.get("verified_modules"), dict)
+    ):
+        return False
     tree = _git_python_tree_at_commit(producer_sha)
     if (
         not files
@@ -1501,6 +1607,20 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
     ).encode("utf-8")).hexdigest()
     if surface_digest != proof.get("tracked_python_surface_sha256"):
         return False
+    for module, row in source_only["verified_modules"].items():
+        if (
+            not isinstance(module, str)
+            or not isinstance(row, dict)
+            or not isinstance(row.get("repo_relative_path"), str)
+            or row["repo_relative_path"] not in files
+            or row.get("sha256") != files[row["repo_relative_path"]].get("sha256")
+            or row.get("execution") not in (
+                "compiled_authenticated_source_bytes",
+                "compiled_authenticated_bootstrap_source_bytes",
+            )
+            or row.get("bytecode_cache_read") is not False
+        ):
+            return False
     for check_name in ("start_check", "post_import_check", "post_run_check"):
         check = proof.get(check_name)
         if (

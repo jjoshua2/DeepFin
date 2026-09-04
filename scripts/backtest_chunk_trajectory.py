@@ -22,6 +22,9 @@ Usage:
   PYTHONPATH=. python3 scripts/backtest_chunk_trajectory.py --checkpoint <ckpt> \\
     --preregistration <tracked-plan.json> --device cuda --chunk-sims 2048 \
     --max-chunks 8 --max-positions 200
+
+Decision-grade provenance requires this direct script form. ``python -m scripts...``
+executes ``scripts/__init__.py`` before the entrypoint can snapshot project sources.
 """
 # ruff: noqa: E402  # Provenance snapshot must precede non-stdlib imports.
 from __future__ import annotations
@@ -37,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from collections import Counter, deque
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -199,6 +203,51 @@ def _preimport_python_source_snapshot() -> dict[str, Any]:
 
 
 _PREIMPORT_PYTHON_SOURCES = _preimport_python_source_snapshot()
+
+
+def _install_authenticated_source_only_import(
+    snapshot: Mapping[str, Any],
+) -> Any:
+    """Compile the import guard's authenticated source, never its cached bytecode."""
+    module_name = "scripts.source_only_import"
+    relative_path = "scripts/source_only_import.py"
+    expected_files = snapshot.get("files")
+    expected = (
+        expected_files.get(relative_path)
+        if isinstance(expected_files, dict) else None
+    )
+    if not isinstance(expected, dict) or not isinstance(expected.get("sha256"), str):
+        raise ImportError("source-only import guard is absent from pre-import snapshot")
+    existing = sys.modules.get(module_name)
+    if existing is None:
+        source_path = Path(str(snapshot["repo_root"])) / relative_path
+        source = source_path.read_bytes()
+        digest = hashlib.sha256(source).hexdigest()
+        if digest != expected["sha256"]:
+            raise ImportError("source-only import guard changed after pre-import snapshot")
+        module = types.ModuleType(module_name)
+        module.__file__ = str(source_path.resolve())
+        module.__package__ = "scripts"
+        sys.modules[module_name] = module
+        try:
+            exec(
+                compile(source, str(source_path), "exec", dont_inherit=True),
+                module.__dict__,
+            )
+        except BaseException:
+            sys.modules.pop(module_name, None)
+            raise
+        setattr(module, "BOOTSTRAP_SOURCE_SHA256", digest)
+    else:
+        module = existing
+        if getattr(module, "BOOTSTRAP_SOURCE_SHA256", None) != expected["sha256"]:
+            raise ImportError("existing source-only import guard is not authenticated")
+    return module.install(snapshot)
+
+
+_SOURCE_ONLY_IMPORT_GUARD = _install_authenticated_source_only_import(
+    _PREIMPORT_PYTHON_SOURCES
+)
 
 
 def _preimport_python_surface_status(
@@ -739,13 +788,31 @@ def _producer_python_source_artifacts(
             and artifact.get("inode") == preimport.get("inode")
             and artifact.get("sha256") == preimport.get("sha256")
         )
+        source_record = _SOURCE_ONLY_IMPORT_GUARD.verified_modules.get(name)
+        source_only_execution = (
+            "entrypoint_trust_boundary"
+            if name == "producer_script"
+            else (
+                source_record.get("execution")
+                if isinstance(source_record, dict) else None
+            )
+        )
+        source_only_verified = bool(
+            name == "producer_script"
+            or (
+                relative_path is not None
+                and _SOURCE_ONLY_IMPORT_GUARD.module_verified(name, relative_path)
+            )
+        )
         artifacts[name] = {
             **artifact,
             "repo_relative_path": relative_path,
             "matches_producer_git_revision": matches_commit,
             "matches_preimport_snapshot": matches_preimport,
+            "source_only_import_verified": source_only_verified,
+            "source_execution": source_only_execution,
         }
-        if not matches_commit or not matches_preimport:
+        if not matches_commit or not matches_preimport or not source_only_verified:
             unbound.append(name)
     if require_tracked and unbound:
         raise SystemExit(
@@ -1548,6 +1615,7 @@ def _main() -> None:
         "python_preimport": {
             **_PREIMPORT_PYTHON_SOURCES,
             "start_check": preimport_start_status,
+            "source_only_import": _SOURCE_ONLY_IMPORT_GUARD.status(),
         },
         "producer_script": initial_input_artifacts["producer_script"],
         "publication_helper": initial_input_artifacts["publication_helper"],
@@ -1587,6 +1655,9 @@ def _main() -> None:
         _PREIMPORT_PYTHON_SOURCES
     )
     provenance["python_preimport"]["post_import_check"] = python_post_import_status
+    provenance["python_preimport"][
+        "source_only_import"
+    ] = _SOURCE_ONLY_IMPORT_GUARD.status()
     if (
         not args.methodology_smoke
         and python_post_import_status.get("passed") is not True
@@ -2542,6 +2613,9 @@ def _main() -> None:
         _PREIMPORT_PYTHON_SOURCES
     )
     provenance["python_preimport"]["post_run_check"] = python_post_run_status
+    provenance["python_preimport"][
+        "source_only_import"
+    ] = _SOURCE_ONLY_IMPORT_GUARD.status()
     if python_post_run_status.get("passed") is not True:
         changed_artifacts.append("python_preimport_surface")
     origin_snapshot = matched_origin_verification.get("snapshot_inventory")

@@ -5,6 +5,8 @@ import importlib
 import inspect
 import json
 import os
+import py_compile
+import shutil
 import subprocess
 import sys
 from contextlib import nullcontext
@@ -488,11 +490,197 @@ def test_python_preimport_snapshots_precede_project_and_third_party_imports() ->
     producer_source = inspect.getsource(producer)
     analyzer_source = inspect.getsource(controller_module)
     marker = "_PREIMPORT_PYTHON_SOURCES = _preimport_python_source_snapshot()"
+    guard_marker = "_SOURCE_ONLY_IMPORT_GUARD = _install_authenticated_source_only_import("
     assert producer_source.index(marker) < producer_source.index(
         "from scripts import chunk_trajectory_publication"
     )
     assert producer_source.index(marker) < producer_source.index("import chess\n")
+    assert producer_source.index(guard_marker) < producer_source.index(
+        "from scripts import chunk_trajectory_publication"
+    )
     assert analyzer_source.index(marker) < analyzer_source.index("import chess\n")
+    assert analyzer_source.index(guard_marker) < analyzer_source.index("import chess\n")
+
+
+def _clone_clean_guard_checkout(tmp_path: Path, *, native: bool) -> Path:
+    source_root = Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "guard-checkout"
+    subprocess.run(
+        ["git", "clone", "-q", "--shared", str(source_root), str(checkout)],
+        check=True,
+    )
+    if native:
+        for module_name in controller_module._NATIVE_MODULES:
+            module = importlib.import_module(module_name)
+            source = Path(str(module.__file__)).resolve()
+            relative = Path(*module_name.split(".")[:-1]) / source.name
+            destination = checkout / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+    assert subprocess.check_output(
+        ["git", "-C", str(checkout), "status", "--porcelain"], text=True,
+    ) == ""
+    return checkout
+
+
+def _install_same_size_timestamp_pyc(
+    checkout: Path, relative_path: str, marker: Path,
+) -> None:
+    source = checkout / relative_path
+    good = source.read_bytes()
+    original_stat = source.stat()
+    payload = (
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('bad bytecode executed')\n"
+    ).encode()
+    assert len(payload) < len(good)
+    bad = payload + b"#" * (len(good) - len(payload))
+    source.write_bytes(bad)
+    os.utime(
+        source,
+        ns=(int(original_stat.st_atime_ns), int(original_stat.st_mtime_ns)),
+    )
+    py_compile.compile(str(source), doraise=True)
+    source.write_bytes(good)
+    os.utime(
+        source,
+        ns=(int(original_stat.st_atime_ns), int(original_stat.st_mtime_ns)),
+    )
+    assert source.stat().st_size == original_stat.st_size
+    assert source.stat().st_mtime_ns == original_stat.st_mtime_ns
+    assert subprocess.check_output(
+        ["git", "-C", str(checkout), "status", "--porcelain"], text=True,
+    ) == ""
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "dependency", "dependency_module", "analyzer"),
+    [
+        (
+            "scripts/analyze_chunk_controller.py",
+            "scripts/reachable_oracle.py",
+            "scripts.reachable_oracle",
+            True,
+        ),
+        (
+            "scripts/backtest_chunk_trajectory.py",
+            "scripts/chunk_trajectory_publication.py",
+            "scripts.chunk_trajectory_publication",
+            False,
+        ),
+    ],
+)
+def test_entrypoint_ignores_valid_timestamp_pyc_and_keeps_valid_provenance(
+    tmp_path: Path,
+    entrypoint: str,
+    dependency: str,
+    dependency_module: str,
+    analyzer: bool,
+) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=True)
+    marker = tmp_path / "bad-pyc-executed"
+    _install_same_size_timestamp_pyc(checkout, dependency, marker)
+
+    # Establish that the cache is valid and would execute under the ordinary loader.
+    subprocess.run(
+        [sys.executable, "-c", f"import {dependency_module}"],
+        cwd=checkout,
+        check=True,
+    )
+    assert marker.read_text() == "bad bytecode executed"
+    marker.unlink()
+
+    if analyzer:
+        probe = "\n".join((
+            "import json, runpy",
+            f"ns = runpy.run_path({entrypoint!r}, run_name='guard_probe')",
+            "sources = ns['_analyzer_source_artifacts']()",
+            "sha, dirty = ns['_git_state']()",
+            "status = ns['_preimport_python_surface_status'](ns['_PREIMPORT_PYTHON_SOURCES'])",
+            "proof = ns['_analyzer_provenance'](sources, sha, dirty, preimport_start_status=status)",
+            f"module = {dependency_module!r}",
+            "loader = proof['python_preimport']['source_only_import']",
+            "print(json.dumps({'decision_grade': proof['decision_grade'], "
+            "'preimport': proof['python_preimport']['passed'], "
+            "'surface': status['passed'], "
+            "'source_only': sources[module]['source_only_import_verified'], "
+            "'execution': loader['verified_modules'][module]['execution'], "
+            "'bytecode_reads': loader['bytecode_cache_reads'], "
+            "'failures': loader['failures']}))",
+        ))
+    else:
+        probe = "\n".join((
+            "import json, runpy",
+            f"ns = runpy.run_path({entrypoint!r}, run_name='guard_probe')",
+            "status = ns['_preimport_python_surface_status'](ns['_PREIMPORT_PYTHON_SOURCES'])",
+            f"module = {dependency_module!r}",
+            "loader = ns['_SOURCE_ONLY_IMPORT_GUARD'].status()",
+            "print(json.dumps({'preimport': ns['_PREIMPORT_PYTHON_SOURCES']['passed'], "
+            "'surface': status['passed'], "
+            "'source_only': ns['_SOURCE_ONLY_IMPORT_GUARD'].module_verified("
+            "module, 'scripts/chunk_trajectory_publication.py'), "
+            "'execution': loader['verified_modules'][module]['execution'], "
+            "'bytecode_reads': loader['bytecode_cache_reads'], "
+            "'failures': loader['failures']}))",
+        ))
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    observed = json.loads(completed.stdout)
+    assert not marker.exists()
+    assert observed == {
+        **({"decision_grade": True} if analyzer else {}),
+        "preimport": True,
+        "surface": True,
+        "source_only": True,
+        "execution": "compiled_authenticated_source_bytes",
+        "bytecode_reads": False,
+        "failures": [],
+    }
+
+
+def test_recovery_source_guard_needs_no_native_extensions(tmp_path: Path) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=False)
+    output = tmp_path / "recovered.jsonl"
+    meta = Path(str(output) + ".meta.json")
+    pending_output = output.with_name(f".{output.name}.tmp-pending")
+    pending_meta = meta.with_name(f".{meta.name}.tmp-pending")
+    pending_output.write_text("completed bank\n")
+    file_stat = pending_output.stat()
+    manifest = {
+        "schema": "deepfin.chunk_trajectory.v4",
+        "complete": True,
+        "output": {
+            "path": str(output.resolve()),
+            "size": file_stat.st_size,
+            "mtime_ns": file_stat.st_mtime_ns,
+            "device": file_stat.st_dev,
+            "inode": file_stat.st_ino,
+            "sha256": hashlib.sha256(pending_output.read_bytes()).hexdigest(),
+        },
+    }
+    pending_meta.write_text(json.dumps(manifest))
+
+    completed = subprocess.run(
+        [
+            sys.executable, "scripts/backtest_chunk_trajectory.py",
+            "--recover-publication", "--out", str(output),
+        ],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "recovered evidence pair" in completed.stdout
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
 
 
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
@@ -1028,6 +1216,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
         "scripts.repo_output_guard": "scripts/repo_output_guard.py",
         "scripts.match_audit_rows": "scripts/match_audit_rows.py",
+        "scripts.source_only_import": "scripts/source_only_import.py",
         "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
         "chess_anti_engine.mcts.search_options": (
             "chess_anti_engine/mcts/search_options.py"
@@ -1046,6 +1235,15 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "repo_relative_path": relative_path,
             "matches_producer_git_revision": True,
             "matches_preimport_snapshot": True,
+            "source_only_import_verified": True,
+            "source_execution": (
+                "entrypoint_trust_boundary"
+                if name == "producer_script" else (
+                    "compiled_authenticated_bootstrap_source_bytes"
+                    if name == "scripts.source_only_import"
+                    else "compiled_authenticated_source_bytes"
+                )
+            ),
             "size": len(source),
             "mtime_ns": 1,
             "sha256": hashlib.sha256(source).hexdigest(),
@@ -1123,6 +1321,31 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "start_check": dict(python_check),
         "post_import_check": dict(python_check),
         "post_run_check": dict(python_check),
+        "source_only_import": {
+            "schema": "deepfin.source_only_import.v1",
+            "active": True,
+            "git_sha": "a" * 40,
+            "tracked_python_surface_sha256": surface_digest,
+            "project_scope": ["chess_anti_engine", "scripts"],
+            "execution": "compile_authenticated_source_bytes",
+            "bytecode_cache_reads": False,
+            "native_extension_loading": "unchanged_pathfinder_loader",
+            "verified_modules": {
+                name: {
+                    "repo_relative_path": relative_path,
+                    "sha256": python_preimport_files[relative_path]["sha256"],
+                    "execution": (
+                        "compiled_authenticated_bootstrap_source_bytes"
+                        if name == "scripts.source_only_import"
+                        else "compiled_authenticated_source_bytes"
+                    ),
+                    "bytecode_cache_read": False,
+                }
+                for name, relative_path in producer_source_paths.items()
+                if name != "producer_script"
+            },
+            "failures": [],
+        },
     }
     manifest: dict[str, Any] = {
         "schema": "deepfin.chunk_trajectory.v4",
@@ -2023,6 +2246,19 @@ def test_loader_rejects_invalid_producer_preimport_proof(
     meta = _write_bank(bank, correct_gap=True)
     manifest = json.loads(meta.read_text())
     manifest["python_preimport"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="pre-import Python source provenance"):
+        load_transitions(bank, meta_path=meta)
+
+
+def test_loader_rejects_bytecode_enabled_producer_import_proof(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["python_preimport"]["source_only_import"][
+        "bytecode_cache_reads"
+    ] = True
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="pre-import Python source provenance"):
@@ -4003,6 +4239,13 @@ def test_real_producer_source_inventory_round_trips_through_analyzer(
 
     monkeypatch.setattr(producer, "_producer_git_file_at_commit", tracked_bytes)
     monkeypatch.setattr(controller_module, "_git_file_at_commit", tracked_bytes)
+    monkeypatch.setattr(
+        producer, "_SOURCE_ONLY_IMPORT_GUARD",
+        SimpleNamespace(
+            verified_modules={},
+            module_verified=lambda _name, _relative: True,
+        ),
+    )
 
     sources = producer._producer_python_source_artifacts(
         "a" * 40, require_tracked=True,
@@ -4519,6 +4762,7 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
     sources = controller._analyzer_source_artifacts()
     for artifact in sources.values():
         artifact["matches_preimport_snapshot"] = True
+        artifact["source_only_import_verified"] = True
     monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
     monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
     monkeypatch.setattr(
@@ -4528,6 +4772,20 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
     monkeypatch.setattr(
         controller, "_preimport_python_surface_status",
         lambda _snapshot: {"passed": True, "changed": [], "git_sha": "b" * 40},
+    )
+    monkeypatch.setattr(
+        controller, "_SOURCE_ONLY_IMPORT_GUARD",
+        SimpleNamespace(status=lambda: {
+            "schema": "deepfin.source_only_import.v1",
+            "active": True,
+            "git_sha": "b" * 40,
+            "tracked_python_surface_sha256": None,
+            "project_scope": ["chess_anti_engine", "scripts"],
+            "execution": "compile_authenticated_source_bytes",
+            "bytecode_cache_reads": False,
+            "native_extension_loading": "unchanged_pathfinder_loader",
+            "failures": [],
+        }),
     )
     monkeypatch.setattr(
         controller,
@@ -4554,6 +4812,7 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     sources = controller._analyzer_source_artifacts()
     for artifact in sources.values():
         artifact["matches_preimport_snapshot"] = True
+        artifact["source_only_import_verified"] = True
     foreign_oracle = tmp_path / "reachable_oracle.py"
     foreign_oracle.write_bytes(
         Path(controller.solve_reachable_oracle.__code__.co_filename).read_bytes()
@@ -4570,6 +4829,20 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
         lambda _snapshot: {"passed": True, "changed": [], "git_sha": "b" * 40},
     )
     monkeypatch.setattr(
+        controller, "_SOURCE_ONLY_IMPORT_GUARD",
+        SimpleNamespace(status=lambda: {
+            "schema": "deepfin.source_only_import.v1",
+            "active": True,
+            "git_sha": "b" * 40,
+            "tracked_python_surface_sha256": None,
+            "project_scope": ["chess_anti_engine", "scripts"],
+            "execution": "compile_authenticated_source_bytes",
+            "bytecode_cache_reads": False,
+            "native_extension_loading": "unchanged_pathfinder_loader",
+            "failures": [],
+        }),
+    )
+    monkeypatch.setattr(
         controller,
         "_git_file_at_commit",
         lambda _commit, relative_path: (repo_root / relative_path).read_bytes(),
@@ -4584,6 +4857,7 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
         "repo_relative_path": None,
         "matches_reported_git_revision": False,
         "matches_preimport_snapshot": False,
+        "source_only_import_verified": False,
         "passed": False,
     }
 
