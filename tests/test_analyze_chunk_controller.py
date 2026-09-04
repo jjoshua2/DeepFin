@@ -5395,6 +5395,116 @@ def test_normal_pair_retains_requested_manifest_through_publication(
     assert output.read_text() == "completed bank\n"
     assert json.loads(pending_meta.read_text()) == {**manifest, "tampered": True}
     assert not meta.exists()
+    invalid = publication._invalid_manifest_path(meta)
+    assert json.loads(invalid.read_text())["invalid"] is True
+
+    monkeypatch.setattr(publication, "_publish_no_replace", real_publish)
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == {**manifest, "tampered": True}
+
+
+def test_manifest_quarantine_uses_retained_parent_during_decoy_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    moved_parent = tmp_path / "moved-evidence"
+    parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    real_publish = publication._publish_no_replace
+
+    def install_parent_decoy(
+        tmp: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        if tmp == pending_meta:
+            parent.rename(moved_parent)
+            parent.mkdir()
+            pending_meta.write_text(json.dumps({**manifest, "tampered": True}))
+        real_publish(tmp, destination, **kwargs)
+
+    monkeypatch.setattr(publication, "_publish_no_replace", install_parent_decoy)
+    with pytest.raises(SystemExit, match="containing directory changed"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    invalid_name = publication._invalid_manifest_path(meta).name
+    assert (moved_parent / invalid_name).exists()
+    for child in parent.iterdir():
+        child.unlink()
+    parent.rmdir()
+    moved_parent.rename(parent)
+    monkeypatch.setattr(publication, "_publish_no_replace", real_publish)
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert not meta.exists()
+    assert publication._pending_manifest_path(meta).exists()
+
+
+def test_manifest_quarantine_rejects_decoy_only_success_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    moved_parent = tmp_path / "moved-evidence"
+    parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    real_stage = publication._write_json_staged
+
+    def stage_then_install_decoy(path: Path, payload: dict[str, Any]) -> None:
+        real_stage(path, payload)
+        if path == pending_meta:
+            parent.rename(moved_parent)
+            parent.mkdir()
+            (moved_parent / pending_output.name).rename(parent / pending_output.name)
+            (moved_parent / pending_meta.name).rename(parent / pending_meta.name)
+
+    monkeypatch.setattr(publication, "_write_json_staged", stage_then_install_decoy)
+    with pytest.raises(SystemExit, match="containing directory changed"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    invalid_name = publication._invalid_manifest_path(meta).name
+    assert (moved_parent / invalid_name).exists()
+    assert output.exists()
+    assert meta.exists()
+    for child in parent.iterdir():
+        child.unlink()
+    parent.rmdir()
+    moved_parent.rename(parent)
+    monkeypatch.setattr(publication, "_write_json_staged", real_stage)
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert not output.exists()
+    assert not meta.exists()
 
 
 def test_final_manifest_recovery_rejects_an_extra_hard_link(tmp_path: Path) -> None:
@@ -6014,6 +6124,16 @@ def test_final_manifest_recovery_retains_authenticated_manifest_through_cleanup(
     assert pending_meta.samefile(meta)
     assert meta.stat().st_nlink == 2
     assert output.read_text() == "completed bank\n"
+    invalid = publication._invalid_manifest_path(meta)
+    assert json.loads(invalid.read_text())["invalid"] is True
+
+    monkeypatch.setattr(publication, "_unlink_durable", real_unlink)
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert json.loads(meta.read_text()) == attacker_manifest
+    assert pending_meta.samefile(meta)
+    assert meta.stat().st_nlink == 2
 
 
 def test_final_manifest_recovery_rejects_bank_that_differs_from_manifest(
@@ -6157,6 +6277,7 @@ def test_final_manifest_cleanup_sync_failure_leaves_valid_pair_immutable(
 
 def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
+    from scripts import chunk_trajectory_publication as publication
 
     output = tmp_path / "bank.jsonl"
     meta = tmp_path / "bank.jsonl.meta.json"
@@ -6174,6 +6295,15 @@ def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path)
         producer._publish_evidence_pair(
             pending_output, output, pending_meta, meta, manifest,
         )
+
+    assert pending_output.read_text() == "new bank\n"
+    assert pending_meta.read_text() == "existing pending manifest\n"
+    assert not output.exists()
+    assert not meta.exists()
+    assert publication._invalid_manifest_path(meta).exists()
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        producer._require_new_output_pair(output, meta, overwrite=False)
 
     assert pending_output.read_text() == "new bank\n"
     assert pending_meta.read_text() == "existing pending manifest\n"
@@ -7610,7 +7740,12 @@ def test_producer_requires_driver_provenance_before_decision_grade_search() -> N
 
 @pytest.mark.parametrize(
     "name",
-    [".bank.jsonl.lock", ".bank.jsonl.tmp-12345", "..tmp-bank.tmp-12345"],
+    [
+        ".bank.jsonl.lock",
+        ".bank.jsonl.tmp-12345",
+        "..tmp-bank.tmp-12345",
+        ".bank.meta.json.invalid-recovery",
+    ],
 )
 def test_producer_output_rejects_internal_output_namespaces(
     tmp_path: Path, name: str,

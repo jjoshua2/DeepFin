@@ -16,7 +16,12 @@ def _reserved_output_name(name: str) -> bool:
     # ``.tmp-`` and its staging name then contains an earlier marker at index 1.
     staging_marker = name.rfind(".tmp-")
     staging_name = name.startswith(".") and staging_marker > 1
-    return lock_name or staging_name
+    invalid_recovery_name = (
+        name.startswith(".")
+        and name.endswith(".invalid-recovery")
+        and len(name) > len("..invalid-recovery")
+    )
+    return lock_name or staging_name or invalid_recovery_name
 
 
 def reserved_output_path(path: Path) -> bool:

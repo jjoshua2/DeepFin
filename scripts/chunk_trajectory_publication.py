@@ -309,6 +309,68 @@ def _pending_manifest_path(meta_path: Path) -> Path:
     return meta_path.with_name(f".{meta_path.name}.tmp-pending")
 
 
+def _invalid_manifest_path(meta_path: Path) -> Path:
+    return meta_path.with_name(f".{meta_path.name}.invalid-recovery")
+
+
+@contextmanager
+def _retained_parent(path: Path) -> Generator[int, None, None]:
+    """Keep one authenticated containing directory open across an operation."""
+    parent_fd = _open_parent(path)
+    try:
+        _require_parent(path, parent_fd)
+        yield parent_fd
+    finally:
+        os.close(parent_fd)
+
+
+def _mark_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
+    """Durably quarantine a version whose manifest integrity check failed."""
+    marker = _invalid_manifest_path(meta_path)
+    descriptor = -1
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        try:
+            descriptor = os.open(marker.name, flags, 0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+            os.fsync(parent_fd)
+            return
+        with os.fdopen(descriptor, "w") as fh:
+            descriptor = -1
+            json.dump(
+                {
+                    "schema": "deepfin.chunk_trajectory.invalid_recovery.v1",
+                    "invalid": True,
+                },
+                fh,
+                sort_keys=True,
+            )
+            fh.write("\n")
+            fh.flush()
+            _require_entry(marker, parent_fd, fh.fileno(), links=1)
+            os.fsync(fh.fileno())
+            os.fsync(parent_fd)
+            _require_entry(marker, parent_fd, fh.fileno(), links=1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+@contextmanager
+def _quarantine_manifest_recovery_on_integrity_failure(
+    meta_path: Path, *, parent_fd: int,
+) -> Generator[None, None, None]:
+    """Make a detected manifest rejection persist across later retries."""
+    try:
+        yield
+        _require_parent(meta_path, parent_fd)
+    except (FileExistsError, SystemExit, RuntimeError):
+        _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+        raise
+
+
 def _acquire_output_lock(output_path: Path) -> IO[bytes]:
     """Reserve a bank/manifest pair against another producer process."""
     lock_path = _output_lock_path(output_path)
@@ -354,6 +416,11 @@ def _require_new_output_pair(
     output_path: Path, meta_path: Path, *, overwrite: bool,
 ) -> bool:
     """Resume a prepared pair, or require a completely new immutable destination."""
+    if os.path.lexists(_invalid_manifest_path(meta_path)):
+        raise SystemExit(
+            f"manifest recovery was invalidated for {output_path}; "
+            "choose a new versioned --out"
+        )
     if overwrite:
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
@@ -366,9 +433,15 @@ def _require_new_output_pair(
         and not os.path.lexists(pending_output)
         and pending_meta.exists()
     ):
-        with _anchored_file(
-            meta_path, meta_path, durable=True, links=None,
-        ) as final_manifest:
+        with (
+            _retained_parent(meta_path) as manifest_parent_fd,
+            _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ),
+            _anchored_file(
+                meta_path, meta_path, durable=True, links=None,
+            ) as final_manifest,
+        ):
             try:
                 pending_stat = os.stat(
                     pending_meta.name,
@@ -425,7 +498,13 @@ def _require_new_output_pair(
                     raise SystemExit("published evidence manifest changed during recovery")
         return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
-        with _durably_read_pending_manifest(pending_meta) as (manifest, source):
+        with (
+            _retained_parent(meta_path) as manifest_parent_fd,
+            _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ),
+            _durably_read_pending_manifest(pending_meta) as (manifest, source),
+        ):
             if pending_output.exists():
                 with _matching_output(
                     output_path, output_path, manifest, expected_links=2,
@@ -468,7 +547,13 @@ def _require_new_output_pair(
         and pending_output.exists()
         and pending_meta.exists()
     ):
-        with _durably_read_pending_manifest(pending_meta) as (manifest, source):
+        with (
+            _retained_parent(meta_path) as manifest_parent_fd,
+            _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ),
+            _durably_read_pending_manifest(pending_meta) as (manifest, source),
+        ):
             _require_output_matches_manifest(
                 pending_output, output_path, manifest, expected_links=1,
             )
@@ -787,31 +872,40 @@ def _publish_evidence_pair(
     manifest: dict[str, Any],
 ) -> None:
     """Prepare both artifacts before publishing either; retain recovery state."""
-    _write_json_staged(pending_meta, manifest)
-    with _durably_read_pending_manifest(pending_meta) as (
-        staged_manifest,
-        pending_manifest,
+    with (
+        _retained_parent(meta_path) as manifest_parent_fd,
+        _quarantine_manifest_recovery_on_integrity_failure(
+            meta_path, parent_fd=manifest_parent_fd,
+        ),
     ):
-        if staged_manifest != manifest:
-            raise SystemExit("staged evidence manifest differs from requested manifest")
-        published = _publish_output(
-            pending_output,
-            output_path,
-            expected_artifact=manifest.get("output"),
-        )
-        if _publication_artifact_identity(published) != _publication_artifact_identity(
-            manifest.get("output")
+        _write_json_staged(pending_meta, manifest)
+        with _durably_read_pending_manifest(pending_meta) as (
+            staged_manifest,
+            pending_manifest,
         ):
-            raise RuntimeError("published trajectory bank differs from its manifest")
-        with _matching_output(
-            output_path, output_path, manifest, expected_links=1,
-        ) as final_bank:
-            _publish_no_replace(
-                pending_meta,
-                meta_path,
-                source=pending_manifest,
-                guards=((final_bank, 1),),
+            if staged_manifest != manifest:
+                raise SystemExit(
+                    "staged evidence manifest differs from requested manifest"
+                )
+            published = _publish_output(
+                pending_output,
+                output_path,
+                expected_artifact=manifest.get("output"),
             )
+            if (
+                _publication_artifact_identity(published)
+                != _publication_artifact_identity(manifest.get("output"))
+            ):
+                raise RuntimeError("published trajectory bank differs from its manifest")
+            with _matching_output(
+                output_path, output_path, manifest, expected_links=1,
+            ) as final_bank:
+                _publish_no_replace(
+                    pending_meta,
+                    meta_path,
+                    source=pending_manifest,
+                    guards=((final_bank, 1),),
+                )
 
 
 def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
@@ -856,12 +950,15 @@ def _require_safe_output_paths(
         raise SystemExit(
             "--out or its manifest must not use the output lock/staging namespace"
         )
+    invalid_manifest = _invalid_manifest_path(meta_path).expanduser()
     outputs = {
         *destinations,
         _output_lock_path(output_path).expanduser().resolve(),
         _output_lock_path(meta_path).expanduser().resolve(),
         _pending_output_path(output_path).expanduser().resolve(),
         _pending_manifest_path(meta_path).expanduser().resolve(),
+        invalid_manifest.absolute(),
+        invalid_manifest.resolve(),
     }
     root = repo_root or Path(__file__).resolve().parents[1]
     if any(repo_controlled_output(output, root) for output in outputs):
