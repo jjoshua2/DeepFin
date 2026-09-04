@@ -759,9 +759,9 @@ def _mark_manifest_namespace_invalid(meta_path: Path, *, parent_fd: int) -> None
         current_parent_fd = -1
         try:
             current_parent_fd = _open_parent(meta_path)
-            if _identity(os.fstat(current_parent_fd)) != _identity(
-                os.fstat(parent_fd)
-            ):
+            if retained_failure is not None or _identity(
+                os.fstat(current_parent_fd)
+            ) != _identity(os.fstat(parent_fd)):
                 _mark_manifest_recovery_invalid(
                     meta_path, parent_fd=current_parent_fd,
                 )

@@ -6556,6 +6556,50 @@ def test_namespace_quarantine_attempts_current_alias_after_retained_error(
     assert json.loads((parent / meta.name).read_text())["attacker"] is True
 
 
+def test_namespace_quarantine_retries_failed_marker_on_same_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    pending_meta.write_text(json.dumps({**manifest, "attacker": True}))
+    invalid = publication._invalid_manifest_path(meta)
+    parent_fd = os.open(
+        meta.parent,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+    )
+    real_open = publication.os.open
+    failures = 0
+
+    def fail_first_four_marker_creates(
+        path: Any, flags: int, *args: Any, **kwargs: Any,
+    ) -> int:
+        nonlocal failures
+        if path == invalid.name and flags & os.O_CREAT and failures < 4:
+            failures += 1
+            raise OSError(errno.EIO, "marker create failed")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "open", fail_first_four_marker_creates)
+    try:
+        with pytest.raises(RuntimeError, match="cannot retain invalid-recovery marker"):
+            publication._mark_manifest_namespace_invalid(
+                meta, parent_fd=parent_fd,
+            )
+    finally:
+        os.close(parent_fd)
+
+    monkeypatch.setattr(publication.os, "open", real_open)
+    assert failures == 4
+    assert invalid.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert pending_output.exists()
+    assert not output.exists()
+
+
 def test_namespace_quarantine_retries_current_alias_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
