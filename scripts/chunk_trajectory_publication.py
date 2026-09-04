@@ -449,6 +449,8 @@ def _entry_name_exists(path: Path) -> bool:
     except OSError as exc:
         if exc.errno == errno.ENOENT:
             return False
+        if exc.errno in {errno.ENOTDIR, errno.ELOOP}:
+            raise SystemExit(f"cannot inspect evidence state name: {path}") from exc
         raise
     return True
 
@@ -457,6 +459,10 @@ def _require_new_output_pair(
     output_path: Path, meta_path: Path, *, overwrite: bool,
 ) -> bool:
     """Resume a prepared pair, or require a completely new immutable destination."""
+    if overwrite:
+        raise SystemExit(
+            "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
+        )
     with _retained_parent(meta_path) as manifest_parent_fd:
         if _manifest_recovery_is_invalid(
             meta_path, parent_fd=manifest_parent_fd,

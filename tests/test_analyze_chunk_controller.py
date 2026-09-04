@@ -5838,6 +5838,73 @@ def test_parent_swap_during_state_classification_is_quarantined_across_retry(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+@pytest.mark.parametrize("replacement", ["regular-file", "symlink-loop"])
+def test_invalid_parent_type_during_state_classification_is_quarantined(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    replacement: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    moved_parent = tmp_path / "moved-evidence"
+    parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    pending_meta.write_text(json.dumps(manifest))
+    invalid = publication._invalid_manifest_path(meta)
+    real_invalid_check = publication._manifest_recovery_is_invalid
+    invalid_checks = 0
+
+    def replace_parent_after_marker_check(
+        path: Path, *, parent_fd: int,
+    ) -> bool:
+        nonlocal invalid_checks
+        result = real_invalid_check(path, parent_fd=parent_fd)
+        invalid_checks += 1
+        if invalid_checks == 2:
+            parent.rename(moved_parent)
+            if replacement == "regular-file":
+                parent.write_text("not a directory\n")
+            else:
+                parent.symlink_to(parent.name)
+        return result
+
+    monkeypatch.setattr(
+        publication,
+        "_manifest_recovery_is_invalid",
+        replace_parent_after_marker_check,
+    )
+    with pytest.raises(SystemExit, match="cannot inspect evidence state name"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert (moved_parent / invalid.name).exists()
+    attacker_manifest = {**manifest, "tampered": True}
+    (moved_parent / pending_meta.name).write_text(json.dumps(attacker_manifest))
+    parent.unlink()
+    moved_parent.rename(parent)
+    monkeypatch.setattr(
+        publication, "_manifest_recovery_is_invalid", real_invalid_check,
+    )
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_output.exists()
+    assert not output.exists()
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+
+
 def test_state_presence_io_failure_keeps_pending_pair_retryable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
