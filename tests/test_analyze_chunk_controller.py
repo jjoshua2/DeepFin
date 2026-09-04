@@ -4928,6 +4928,8 @@ def test_producer_recovers_bank_published_before_its_manifest(tmp_path: Path) ->
     assert _require_new_output_pair(output, meta, overwrite=False) is True
     assert output.read_text() == "completed bank\n"
     assert json.loads(meta.read_text()) == manifest
+    assert output.stat().st_nlink == 1
+    assert meta.stat().st_nlink == 1
     assert not pending_output.exists()
     assert not pending_meta.exists()
 
@@ -4974,7 +4976,7 @@ def test_recovery_syncs_pending_manifest_before_any_publication(
         pending_meta.parent.stat().st_ino,
     )
     real_fsync = os.fsync
-    real_link = os.link
+    real_link = publication._link_open_file
     events: list[str] = []
     pending_file_synced = False
     pending_parent_synced = False
@@ -4996,12 +4998,12 @@ def test_recovery_syncs_pending_manifest_before_any_publication(
             pending_parent_synced = True
         real_fsync(descriptor)
 
-    def link_spy(source: Path, destination: Path) -> None:
-        events.append(f"link:{destination.name}")
-        real_link(source, destination)
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
+        events.append(f"link:{name}")
+        real_link(file_fd, parent_fd, name)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
 
     assert publication._require_new_output_pair(output, meta, overwrite=False) is True
 
@@ -5011,6 +5013,48 @@ def test_recovery_syncs_pending_manifest_before_any_publication(
         "fsync:pending-parent",
         f"link:{first_destination.name}",
     ]
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_meta.exists()
+
+
+def test_recovery_syncs_retained_manifest_parent_during_path_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, _pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=True)
+    )
+    parent = pending_meta.parent
+    moved_parent = tmp_path / "moved-manifest"
+    parent_identity = (parent.stat().st_dev, parent.stat().st_ino)
+    pending_identity = (pending_meta.stat().st_dev, pending_meta.stat().st_ino)
+    real_fsync = os.fsync
+    directory_syncs: list[tuple[int, int]] = []
+    swapped = False
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal swapped
+        descriptor_stat = os.fstat(descriptor)
+        identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        if stat.S_ISREG(descriptor_stat.st_mode) and identity == pending_identity:
+            real_fsync(descriptor)
+            parent.rename(moved_parent)
+            parent.mkdir()
+            swapped = True
+            return
+        if stat.S_ISDIR(descriptor_stat.st_mode) and swapped:
+            directory_syncs.append(identity)
+            parent.rmdir()
+            moved_parent.rename(parent)
+            swapped = False
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+
+    assert publication._require_new_output_pair(output, meta, overwrite=False) is True
+
+    assert directory_syncs[0] == parent_identity
     assert json.loads(meta.read_text()) == manifest
     assert not pending_meta.exists()
 
@@ -5035,10 +5079,10 @@ def test_pending_manifest_sync_failure_prevents_recovery_publication(
         pending_meta.parent.stat().st_ino,
     )
     real_fsync = os.fsync
-    real_link = os.link
-    real_unlink = Path.unlink
-    published_links: list[tuple[Path, Path]] = []
-    removed_names: list[Path] = []
+    real_link = publication._link_open_file
+    real_unlink = os.unlink
+    published_links: list[str] = []
+    removed_names: list[str] = []
     pending_file_synced = False
 
     def fsync_spy(descriptor: int) -> None:
@@ -5061,17 +5105,17 @@ def test_pending_manifest_sync_failure_prevents_recovery_publication(
             raise OSError(errno.EIO, "pending manifest parent fsync failed")
         real_fsync(descriptor)
 
-    def link_spy(source: Path, destination: Path) -> None:
-        published_links.append((source, destination))
-        real_link(source, destination)
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
+        published_links.append(name)
+        real_link(file_fd, parent_fd, name)
 
-    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+    def unlink_spy(path: str, *args: Any, **kwargs: Any) -> None:
         removed_names.append(path)
         real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication.os, "link", link_spy)
-    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
+    monkeypatch.setattr(publication.os, "unlink", unlink_spy)
     expected_error = (
         "pending manifest fsync failed"
         if failure_target == "file"
@@ -5102,12 +5146,12 @@ def test_recovery_rejects_pending_manifest_changed_after_durability_barrier(
     output, meta, _pending_output, pending_meta, _manifest = (
         _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
     )
-    real_read = publication._read_pending_manifest
-    real_link = os.link
-    published_links: list[tuple[Path, Path]] = []
+    real_read = publication._read_pending_manifest_fd
+    real_link = publication._link_open_file
+    published_links: list[str] = []
 
-    def read_then_mutate(path: Path) -> dict[str, Any]:
-        payload = real_read(path)
+    def read_then_mutate(file_fd: int, path: Path) -> dict[str, Any]:
+        payload = real_read(file_fd, path)
         if mutation == "content":
             path.write_text(json.dumps({**payload, "tampered": True}))
         else:
@@ -5116,19 +5160,230 @@ def test_recovery_rejects_pending_manifest_changed_after_durability_barrier(
             os.replace(replacement, path)
         return payload
 
-    def link_spy(source: Path, destination: Path) -> None:
-        published_links.append((source, destination))
-        real_link(source, destination)
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
+        published_links.append(name)
+        real_link(file_fd, parent_fd, name)
 
-    monkeypatch.setattr(publication, "_read_pending_manifest", read_then_mutate)
-    monkeypatch.setattr(publication.os, "link", link_spy)
-    with pytest.raises(SystemExit, match="changed while being made durable"):
+    monkeypatch.setattr(publication, "_read_pending_manifest_fd", read_then_mutate)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
+    with pytest.raises(SystemExit, match=r"changed|anchored regular file"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     assert published_links == []
     assert output.exists() is bank_published
     assert not meta.exists()
     assert pending_meta.exists()
+
+
+@pytest.mark.parametrize("bank_published", [True, False], ids=["bank-final", "bank-pending"])
+def test_recovery_rejects_static_pending_manifest_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, bank_published: bool,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
+    )
+    target = pending_meta.with_name("attacker-controlled-manifest.json")
+    pending_meta.unlink()
+    target.write_text(json.dumps(manifest))
+    pending_meta.symlink_to(target)
+    target_bytes = target.read_bytes()
+    target_links = target.stat().st_nlink
+    publication_mutations: list[str] = []
+
+    def forbidden_link(_file_fd: int, _parent_fd: int, name: str) -> None:
+        publication_mutations.append(f"link:{name}")
+
+    def forbidden_unlink(path: str, *_args: Any, **_kwargs: Any) -> None:
+        publication_mutations.append(f"unlink:{path}")
+
+    monkeypatch.setattr(publication, "_link_open_file", forbidden_link)
+    monkeypatch.setattr(publication.os, "unlink", forbidden_unlink)
+    with pytest.raises(SystemExit, match="cannot safely open regular evidence file"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert publication_mutations == []
+    assert not meta.exists()
+    assert pending_meta.is_symlink()
+    assert target.read_bytes() == target_bytes
+    assert target.stat().st_nlink == target_links == 1
+    assert output.exists() is bank_published
+    assert pending_output.exists() is not bank_published
+
+
+@pytest.mark.parametrize("bank_published", [True, False], ids=["bank-final", "bank-pending"])
+def test_recovery_rejects_pending_manifest_with_an_extra_hard_link(
+    tmp_path: Path, *, bank_published: bool,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, _manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
+    )
+    extra_manifest = pending_meta.with_name("extra-manifest-link.json")
+    os.link(pending_meta, extra_manifest)
+
+    with pytest.raises(SystemExit, match="unexpected hard links"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert not meta.exists()
+    assert pending_meta.samefile(extra_manifest)
+    assert pending_meta.stat().st_nlink == 2
+    assert output.exists() is bank_published
+    assert pending_output.exists() is not bank_published
+
+
+@pytest.mark.parametrize("pending_name", [False, True], ids=["final-only", "final-pending"])
+def test_recovery_rejects_bank_with_an_extra_hard_link(
+    tmp_path: Path, *, pending_name: bool,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, _manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=not pending_name)
+    )
+    if pending_name:
+        os.link(pending_output, output)
+    extra_bank = output.with_name("extra-bank-link.jsonl")
+    os.link(output, extra_bank)
+
+    with pytest.raises(SystemExit, match="unexpected hard links"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert not meta.exists()
+    assert pending_meta.exists()
+    assert output.samefile(extra_bank)
+    assert pending_output.exists() is pending_name
+    assert output.stat().st_nlink == (3 if pending_name else 2)
+
+
+def test_recovery_rejects_extra_bank_link_inserted_at_pending_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, _manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    os.link(pending_output, output)
+    extra_bank = output.with_name("extra-bank-link.jsonl")
+    real_unlink = publication._unlink_durable
+
+    def add_link_before_cleanup(path: Path, **kwargs: Any) -> None:
+        if path == pending_output:
+            os.link(output, extra_bank)
+        real_unlink(path, **kwargs)
+
+    monkeypatch.setattr(publication, "_unlink_durable", add_link_before_cleanup)
+    with pytest.raises(SystemExit, match="unexpected hard links"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_output.samefile(output)
+    assert output.samefile(extra_bank)
+    assert output.stat().st_nlink == 3
+    assert pending_meta.exists()
+    assert not meta.exists()
+
+
+@pytest.mark.parametrize("mutation", ["content", "hard-link"])
+def test_final_bank_recovery_guards_bank_through_manifest_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, mutation: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, _pending_output, pending_meta, _manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=True)
+    )
+    extra_bank = output.with_name("extra-bank-link.jsonl")
+    real_publish = publication._publish_no_replace
+
+    def mutate_at_manifest_boundary(
+        tmp: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        if tmp == pending_meta:
+            if mutation == "content":
+                output.write_text("mutated bank\n")
+            else:
+                os.link(output, extra_bank)
+        real_publish(tmp, destination, **kwargs)
+
+    monkeypatch.setattr(publication, "_publish_no_replace", mutate_at_manifest_boundary)
+    with pytest.raises(SystemExit, match=r"changed|unexpected hard links"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_meta.exists()
+    assert not meta.exists()
+    if mutation == "hard-link":
+        assert output.samefile(extra_bank)
+
+
+@pytest.mark.parametrize("mutation", ["content", "hard-link"])
+def test_normal_pair_guards_bank_through_manifest_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, mutation: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    extra_bank = output.with_name("extra-bank-link.jsonl")
+    real_publish = publication._publish_no_replace
+
+    def mutate_at_manifest_boundary(
+        tmp: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        if tmp == pending_meta:
+            if mutation == "content":
+                output.write_text("mutated bank\n")
+            else:
+                os.link(output, extra_bank)
+        real_publish(tmp, destination, **kwargs)
+
+    monkeypatch.setattr(publication, "_publish_no_replace", mutate_at_manifest_boundary)
+    with pytest.raises(SystemExit, match=r"changed|unexpected hard links"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    assert output.exists()
+    assert pending_meta.exists()
+    assert not meta.exists()
+    if mutation == "hard-link":
+        assert output.samefile(extra_bank)
+
+
+def test_final_manifest_recovery_rejects_an_extra_hard_link(tmp_path: Path) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+    extra_manifest = tmp_path / "extra-manifest-link.json"
+    os.link(meta, extra_manifest)
+
+    with pytest.raises(SystemExit, match="not the same recovery hard links"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_meta.samefile(meta)
+    assert meta.samefile(extra_manifest)
+    assert meta.stat().st_nlink == 3
+    assert output.read_text() == "completed bank\n"
 
 
 def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path) -> None:
@@ -5164,16 +5419,16 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
     output = tmp_path / "bank.jsonl"
     events: list[str] = []
     real_fsync = os.fsync
-    real_prepared = publication._prepared_output_artifact
+    real_artifact = publication._artifact_from_fd
 
     def fsync_spy(descriptor: int) -> None:
         descriptor_stat = os.fstat(descriptor)
         events.append("fsync:directory" if stat.S_ISDIR(descriptor_stat.st_mode) else "fsync:file")
         real_fsync(descriptor)
 
-    def prepared_spy(source: Path, destination: Path) -> dict[str, Any]:
+    def artifact_spy(file_fd: int, path: Path) -> dict[str, Any]:
         events.append("snapshot")
-        return real_prepared(source, destination)
+        return real_artifact(file_fd, path)
 
     class FlushSpy:
         def __init__(self, handle: Any) -> None:
@@ -5187,7 +5442,7 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
             return int(self.handle.fileno())
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication, "_prepared_output_artifact", prepared_spy)
+    monkeypatch.setattr(publication, "_artifact_from_fd", artifact_spy)
     with pending.open("w") as handle:
         handle.write("completed bank\n")
         artifact = publication._durably_prepare_output_artifact(
@@ -5196,6 +5451,88 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
 
     assert events == ["flush", "fsync:file", "fsync:directory", "snapshot"]
     assert artifact["sha256"] == hashlib.sha256(b"completed bank\n").hexdigest()
+
+
+def test_pending_bank_sync_uses_parent_retained_from_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "bank"
+    moved_parent = tmp_path / "moved-bank"
+    parent.mkdir()
+    pending = parent / ".bank.jsonl.tmp-pending"
+    output = parent / "bank.jsonl"
+    real_fsync = os.fsync
+    directory_syncs: list[tuple[int, int]] = []
+    swapped = False
+
+    with publication._open_staged_output_file(pending) as (handle, parent_fd):
+        handle.write("completed bank\n")
+        parent_stat = os.fstat(parent_fd)
+        pending_stat = os.fstat(handle.fileno())
+        parent_identity = (parent_stat.st_dev, parent_stat.st_ino)
+        pending_identity = (pending_stat.st_dev, pending_stat.st_ino)
+
+        def fsync_spy(descriptor: int) -> None:
+            nonlocal swapped
+            descriptor_stat = os.fstat(descriptor)
+            identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            if stat.S_ISREG(descriptor_stat.st_mode) and identity == pending_identity:
+                real_fsync(descriptor)
+                parent.rename(moved_parent)
+                parent.mkdir()
+                swapped = True
+                return
+            if stat.S_ISDIR(descriptor_stat.st_mode) and swapped:
+                directory_syncs.append(identity)
+                parent.rmdir()
+                moved_parent.rename(parent)
+                swapped = False
+            real_fsync(descriptor)
+
+        monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+        artifact = publication._durably_prepare_output_artifact(
+            handle, pending, output, parent_fd=parent_fd,
+        )
+
+    assert directory_syncs == [parent_identity]
+    assert artifact["sha256"] == hashlib.sha256(b"completed bank\n").hexdigest()
+    assert pending.read_text() == "completed bank\n"
+
+
+def test_collection_error_anchor_rejects_renamed_parent_decoy(tmp_path: Path) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "bank"
+    moved_parent = tmp_path / "moved-bank"
+    parent.mkdir()
+    pending = parent / ".bank.jsonl.tmp-pending"
+    output = parent / "bank.jsonl"
+    retained_file_fd = -1
+    retained_parent_fd = -1
+    try:
+        with publication._open_staged_output_file(pending) as (handle, parent_fd):
+            handle.write("original observations\n")
+            retained_file_fd = os.dup(handle.fileno())
+            retained_parent_fd = os.dup(parent_fd)
+        parent.rename(moved_parent)
+        parent.mkdir()
+        decoy = parent / pending.name
+        decoy.write_text("decoy observations\n")
+
+        with pytest.raises(SystemExit, match="containing directory changed"):
+            publication._durably_prepare_anchored_output_artifact(
+                retained_file_fd, retained_parent_fd, pending, output,
+            )
+
+        assert decoy.read_text() == "decoy observations\n"
+        assert (moved_parent / pending.name).read_text() == "original observations\n"
+    finally:
+        if retained_file_fd >= 0:
+            os.close(retained_file_fd)
+        if retained_parent_fd >= 0:
+            os.close(retained_parent_fd)
 
 
 def test_completed_pending_bank_fsync_failure_prevents_identity_snapshot(
@@ -5210,13 +5547,13 @@ def test_completed_pending_bank_fsync_failure_prevents_identity_snapshot(
     def fail_fsync(_descriptor: int) -> None:
         raise OSError(errno.EIO, "bank fsync failed")
 
-    def forbidden_snapshot(_source: Path, _destination: Path) -> dict[str, Any]:
+    def forbidden_snapshot(_file_fd: int, _path: Path) -> dict[str, Any]:
         nonlocal snapshot_called
         snapshot_called = True
         raise AssertionError("unsynced bank reached identity snapshot")
 
     monkeypatch.setattr(publication.os, "fsync", fail_fsync)
-    monkeypatch.setattr(publication, "_prepared_output_artifact", forbidden_snapshot)
+    monkeypatch.setattr(publication, "_artifact_from_fd", forbidden_snapshot)
     with pending.open("w") as handle:
         handle.write("completed bank\n")
         with pytest.raises(OSError, match="bank fsync failed"):
@@ -5255,7 +5592,7 @@ def test_staged_manifest_file_sync_failure_durably_removes_partial_file(
     pending_meta = tmp_path / ".bank.meta.json.tmp-pending"
     events: list[str] = []
     real_fsync = os.fsync
-    real_unlink = Path.unlink
+    real_unlink = os.unlink
 
     def fsync_spy(descriptor: int) -> None:
         descriptor_stat = os.fstat(descriptor)
@@ -5266,12 +5603,12 @@ def test_staged_manifest_file_sync_failure_durably_removes_partial_file(
         events.append("fsync:file")
         raise OSError(errno.EIO, "manifest fsync failed")
 
-    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
-        events.append(f"unlink:{path.name}")
+    def unlink_spy(path: str, *args: Any, **kwargs: Any) -> None:
+        events.append(f"unlink:{Path(path).name}")
         real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    monkeypatch.setattr(publication.os, "unlink", unlink_spy)
     with pytest.raises(OSError, match="manifest fsync failed"):
         publication._write_json_staged(pending_meta, {"complete": True})
 
@@ -5317,8 +5654,8 @@ def test_hard_link_publication_syncs_destination_before_consuming_source(
     pending.write_text("completed bank\n")
     events: list[str] = []
     real_fsync = os.fsync
-    real_link = os.link
-    real_unlink = Path.unlink
+    real_link = publication._link_open_file
+    real_unlink = os.unlink
     directory_labels = {
         (source_dir.stat().st_dev, source_dir.stat().st_ino): "source",
         (destination_dir.stat().st_dev, destination_dir.stat().st_ino): "destination",
@@ -5331,17 +5668,17 @@ def test_hard_link_publication_syncs_destination_before_consuming_source(
             events.append(f"fsync:{label}")
         real_fsync(descriptor)
 
-    def link_spy(source: Path, destination: Path) -> None:
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
         events.append("link")
-        real_link(source, destination)
+        real_link(file_fd, parent_fd, name)
 
-    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+    def unlink_spy(path: str, *args: Any, **kwargs: Any) -> None:
         events.append("unlink")
         real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication.os, "link", link_spy)
-    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
+    monkeypatch.setattr(publication.os, "unlink", unlink_spy)
     publication._publish_no_replace(pending, output)
 
     assert events == ["link", "fsync:destination", "unlink", "fsync:source"]
@@ -5359,28 +5696,57 @@ def test_same_directory_publication_keeps_both_sync_barriers(
     pending.write_text("completed bank\n")
     events: list[str] = []
     real_fsync = os.fsync
-    real_link = os.link
-    real_unlink = Path.unlink
+    real_link = publication._link_open_file
+    real_unlink = os.unlink
 
     def fsync_spy(descriptor: int) -> None:
         if stat.S_ISDIR(os.fstat(descriptor).st_mode):
             events.append("fsync")
         real_fsync(descriptor)
 
-    def link_spy(source: Path, destination: Path) -> None:
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
         events.append("link")
-        real_link(source, destination)
+        real_link(file_fd, parent_fd, name)
 
-    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+    def unlink_spy(path: str, *args: Any, **kwargs: Any) -> None:
         events.append("unlink")
         real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication.os, "link", link_spy)
-    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
+    monkeypatch.setattr(publication.os, "unlink", unlink_spy)
     publication._publish_no_replace(pending, output)
 
     assert events == ["link", "fsync", "unlink", "fsync"]
+
+
+def test_publication_rehashes_after_source_directory_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    pending.write_text("completed bank\n")
+    real_fsync = os.fsync
+    directory_syncs = 0
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal directory_syncs
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            directory_syncs += 1
+            if directory_syncs == 2:
+                output.write_text("mutated bank\n")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    with pytest.raises(SystemExit, match="published evidence changed"):
+        publication._publish_no_replace(pending, output)
+
+    assert directory_syncs == 2
+    assert not pending.exists()
+    assert output.read_text() == "mutated bank\n"
+    assert output.stat().st_nlink == 1
 
 
 def test_destination_directory_sync_failure_retains_both_publication_names(
@@ -5407,13 +5773,13 @@ def test_destination_directory_sync_failure_retains_both_publication_names(
             raise OSError(errno.EIO, "destination directory fsync failed")
         real_fsync(descriptor)
 
-    def forbidden_unlink(_path: Path, *_args: Any, **_kwargs: Any) -> None:
+    def forbidden_unlink(_path: str, *_args: Any, **_kwargs: Any) -> None:
         nonlocal unlinked
         unlinked = True
         raise AssertionError("recovery name consumed after destination sync failure")
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(Path, "unlink", forbidden_unlink)
+    monkeypatch.setattr(publication.os, "unlink", forbidden_unlink)
     with pytest.raises(OSError, match="destination directory fsync failed"):
         publication._publish_no_replace(pending, output)
 
@@ -5445,8 +5811,8 @@ def test_recovery_does_not_publish_manifest_after_pending_unlink_sync_failure(
     os.link(pending_output, output)
 
     real_fsync = os.fsync
-    real_link = os.link
-    real_unlink = Path.unlink
+    real_link = publication._link_open_file
+    real_unlink = os.unlink
     bank_directory_syncs = 0
     published_links: list[tuple[Path, Path]] = []
 
@@ -5463,12 +5829,12 @@ def test_recovery_does_not_publish_manifest_after_pending_unlink_sync_failure(
                 raise OSError(errno.EIO, "pending unlink directory fsync failed")
         real_fsync(descriptor)
 
-    def link_spy(source: Path, destination: Path) -> None:
-        published_links.append((source, destination))
-        real_link(source, destination)
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
+        published_links.append((Path(f"/proc/self/fd/{file_fd}"), Path(name)))
+        real_link(file_fd, parent_fd, name)
 
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
-    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
     with pytest.raises(OSError, match="pending unlink directory fsync failed"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
@@ -5480,8 +5846,8 @@ def test_recovery_does_not_publish_manifest_after_pending_unlink_sync_failure(
     assert json.loads(pending_meta.read_text()) == manifest
 
     monkeypatch.setattr(publication.os, "fsync", real_fsync)
-    monkeypatch.setattr(publication.os, "link", real_link)
-    monkeypatch.setattr(Path, "unlink", real_unlink)
+    monkeypatch.setattr(publication, "_link_open_file", real_link)
+    monkeypatch.setattr(publication.os, "unlink", real_unlink)
     assert publication._require_new_output_pair(output, meta, overwrite=False) is True
     assert json.loads(meta.read_text()) == manifest
 
@@ -5502,14 +5868,14 @@ def test_final_manifest_directory_sync_failure_restarts_to_complete_pair(
         "output": publication._prepared_output_artifact(pending_output, output),
     }
     real_fsync = os.fsync
-    real_link = os.link
+    real_link = publication._link_open_file
     final_manifest_linked = False
     injected = False
 
-    def link_spy(source: Path, destination: Path) -> None:
+    def link_spy(file_fd: int, parent_fd: int, name: str) -> None:
         nonlocal final_manifest_linked
-        real_link(source, destination)
-        if destination == meta:
+        real_link(file_fd, parent_fd, name)
+        if name == meta.name:
             final_manifest_linked = True
 
     def fsync_spy(descriptor: int) -> None:
@@ -5519,7 +5885,7 @@ def test_final_manifest_directory_sync_failure_restarts_to_complete_pair(
             raise OSError(errno.EIO, "final manifest directory fsync failed")
         real_fsync(descriptor)
 
-    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(publication, "_link_open_file", link_spy)
     monkeypatch.setattr(publication.os, "fsync", fsync_spy)
     with pytest.raises(OSError, match="final manifest directory fsync failed"):
         publication._publish_evidence_pair(
@@ -5532,7 +5898,7 @@ def test_final_manifest_directory_sync_failure_restarts_to_complete_pair(
     assert not pending_output.exists()
     assert pending_meta.samefile(meta)
 
-    monkeypatch.setattr(publication.os, "link", real_link)
+    monkeypatch.setattr(publication, "_link_open_file", real_link)
     monkeypatch.setattr(publication.os, "fsync", real_fsync)
     assert publication._require_new_output_pair(output, meta, overwrite=False) is True
     assert output.read_text() == "completed bank\n"
@@ -7191,20 +7557,24 @@ def test_internal_namespace_guard_checks_symlink_lexical_name(tmp_path: Path) ->
 def test_publish_output_detects_replacement_before_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts import backtest_chunk_trajectory as producer
+    from scripts import chunk_trajectory_publication as publication
 
     private = tmp_path / ".bank.tmp"
     output = tmp_path / "bank.jsonl"
     private.write_text("producer bytes\n")
-    real_link = producer.os.link
+    real_link = publication._link_open_file
 
-    def replacing_publish(source: Path, destination: Path) -> None:
-        real_link(source, destination)
-        destination.write_text("other producer bytes\n")
+    def replacing_publish(file_fd: int, parent_fd: int, name: str) -> None:
+        real_link(file_fd, parent_fd, name)
+        replacement_fd = os.open(name, os.O_WRONLY | os.O_TRUNC, dir_fd=parent_fd)
+        try:
+            os.write(replacement_fd, b"other producer bytes\n")
+        finally:
+            os.close(replacement_fd)
 
-    monkeypatch.setattr(producer.os, "link", replacing_publish)
+    monkeypatch.setattr(publication, "_link_open_file", replacing_publish)
 
-    with pytest.raises(RuntimeError, match="differs from its private output"):
+    with pytest.raises((RuntimeError, SystemExit), match=r"changed|differs"):
         _publish_output(private, output)
 
 

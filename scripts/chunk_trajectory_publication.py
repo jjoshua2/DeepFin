@@ -14,6 +14,9 @@ import json
 import os
 import stat
 import subprocess
+from contextlib import contextmanager
+from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Protocol
 
@@ -33,27 +36,159 @@ class _FlushableFile(Protocol):
     def fileno(self) -> int: ...
 
 
-def _fsync_directory(path: Path) -> None:
-    """Fsync completed directory-entry transitions; propagate any failure."""
+@dataclass(frozen=True)
+class _AnchoredFile:
+    path: Path
+    parent_fd: int
+    file_fd: int
+    artifact: dict[str, Any]
+
+
+def _identity(file_stat: os.stat_result) -> tuple[int, int]:
+    return int(file_stat.st_dev), int(file_stat.st_ino)
+
+
+def _open_parent(path: Path) -> int:
     flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
+    descriptor = os.open(path.expanduser().parent, flags)
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
         os.close(descriptor)
+        raise SystemExit(f"containing path is not a directory: {path.parent}")
+    return descriptor
 
 
-def _flush_fsync_file_and_parent(fh: _FlushableFile, path: Path) -> None:
+def _require_parent(path: Path, parent_fd: int) -> None:
+    try:
+        named = path.expanduser().parent.stat()
+    except OSError as exc:
+        raise SystemExit(f"cannot revalidate containing directory for {path}") from exc
+    if _identity(named) != _identity(os.fstat(parent_fd)):
+        raise SystemExit(f"containing directory changed during publication: {path.parent}")
+
+
+def _require_entry(
+    path: Path, parent_fd: int, file_fd: int, *, links: int | None,
+) -> os.stat_result:
+    try:
+        named = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise SystemExit(f"cannot revalidate evidence artifact: {path}") from exc
+    opened = os.fstat(file_fd)
+    if (
+        not stat.S_ISREG(named.st_mode)
+        or not stat.S_ISREG(opened.st_mode)
+        or _identity(named) != _identity(opened)
+    ):
+        raise SystemExit(f"evidence artifact is not the anchored regular file: {path}")
+    if links is not None and int(opened.st_nlink) != links:
+        raise SystemExit(f"evidence artifact has unexpected hard links: {path}")
+    return opened
+
+
+def _artifact_from_fd(file_fd: int, path: Path) -> dict[str, Any]:
+    before = os.fstat(file_fd)
+    digest = hashlib.sha256()
+    offset = 0
+    while block := os.pread(file_fd, 1024 * 1024, offset):
+        digest.update(block)
+        offset += len(block)
+    after = os.fstat(file_fd)
+    stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, field) != getattr(after, field) for field in stable):
+        raise SystemExit(f"evidence artifact changed while being read: {path}")
+    return {
+        "path": str(path.expanduser().resolve()),
+        "size": int(after.st_size),
+        "mtime_ns": int(after.st_mtime_ns),
+        "ctime_ns": int(after.st_ctime_ns),
+        "device": int(after.st_dev),
+        "inode": int(after.st_ino),
+        "sha256": digest.hexdigest(),
+    }
+
+
+@contextmanager
+def _anchored_file(
+    path: Path, artifact_path: Path, *, durable: bool, links: int | None,
+) -> Generator[_AnchoredFile, None, None]:
+    path = path.expanduser()
+    parent_fd = _open_parent(path)
+    file_fd = -1
+    try:
+        _require_parent(path, parent_fd)
+        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            file_fd = os.open(path.name, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise SystemExit(f"cannot safely open regular evidence file: {path}") from exc
+        _require_entry(path, parent_fd, file_fd, links=links)
+        before = _artifact_from_fd(file_fd, artifact_path)
+        if durable:
+            os.fsync(file_fd)
+            os.fsync(parent_fd)
+        after = _artifact_from_fd(file_fd, artifact_path)
+        if _artifact_identity(before) != _artifact_identity(after):
+            raise SystemExit(f"evidence artifact changed while being made durable: {path}")
+        _require_entry(path, parent_fd, file_fd, links=links)
+        _require_parent(path, parent_fd)
+        yield _AnchoredFile(path, parent_fd, file_fd, after)
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(parent_fd)
+
+
+def _flush_fsync_file_and_parent(
+    fh: _FlushableFile, path: Path, *, parent_fd: int | None = None,
+) -> None:
     """Flush Python buffers, then fsync the file and its containing directory."""
-    fh.flush()
-    os.fsync(fh.fileno())
-    _fsync_directory(path.parent)
+    owned_parent = parent_fd is None
+    if parent_fd is None:
+        parent_fd = _open_parent(path)
+    try:
+        _require_parent(path, parent_fd)
+        _require_entry(path, parent_fd, fh.fileno(), links=1)
+        fh.flush()
+        os.fsync(fh.fileno())
+        os.fsync(parent_fd)
+        _require_entry(path, parent_fd, fh.fileno(), links=1)
+        _require_parent(path, parent_fd)
+    finally:
+        if owned_parent:
+            os.close(parent_fd)
 
 
-def _unlink_durable(path: Path) -> None:
+def _unlink_durable(
+    path: Path,
+    *,
+    expected_links: int | None = None,
+    surviving_path: Path | None = None,
+    surviving: _AnchoredFile | None = None,
+) -> None:
     """Remove one name and fsync its containing directory before returning."""
-    path.unlink()
-    _fsync_directory(path.parent)
+    with _anchored_file(
+        path, path, durable=False, links=expected_links,
+    ) as source:
+        _require_entry(path, source.parent_fd, source.file_fd, links=expected_links)
+        if surviving is not None and _identity(os.fstat(source.file_fd)) != _identity(
+            os.fstat(surviving.file_fd)
+        ):
+            raise SystemExit("removed and surviving evidence names are not hard links")
+        os.unlink(path.name, dir_fd=source.parent_fd)
+        os.fsync(source.parent_fd)
+        _require_parent(path, source.parent_fd)
+        if surviving_path is not None:
+            if surviving is None:
+                _require_entry(
+                    surviving_path, source.parent_fd, source.file_fd, links=1,
+                )
+            else:
+                _require_entry(
+                    surviving_path,
+                    surviving.parent_fd,
+                    surviving.file_fd,
+                    links=1,
+                )
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
@@ -113,23 +248,49 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+@contextmanager
+def _open_staged_output_file(path: Path) -> Generator[tuple[IO[str], int], None, None]:
+    """Create a private regular file relative to a retained parent descriptor."""
+    path = path.expanduser()
+    parent_fd = _open_parent(path)
+    descriptor = -1
+    try:
+        _require_parent(path, parent_fd)
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path.name, flags, 0o666, dir_fd=parent_fd)
+        _require_entry(path, parent_fd, descriptor, links=1)
+        with os.fdopen(descriptor, "w+") as fh:
+            descriptor = -1
+            yield fh, parent_fd
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
 def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
     """Durably stage JSON at a private path before publishing an evidence pair."""
-    created = False
-    try:
-        with path.open("x") as fh:
-            created = True
+    file_synced = False
+    with _open_staged_output_file(path) as (fh, parent_fd):
+        try:
             json.dump(payload, fh, indent=2, sort_keys=True)
             fh.write("\n")
             fh.flush()
+            _require_entry(path, parent_fd, fh.fileno(), links=1)
             os.fsync(fh.fileno())
-    except BaseException:
-        if created and path.exists():
-            _unlink_durable(path)
-        raise
-    # Keep the complete staged file if this sync fails: it remains the only
-    # recovery source and must not be consumed by failure cleanup.
-    _fsync_directory(path.parent)
+            file_synced = True
+            os.fsync(parent_fd)
+            _require_entry(path, parent_fd, fh.fileno(), links=1)
+            _require_parent(path, parent_fd)
+        except BaseException:
+            if not file_synced:
+                _require_entry(path, parent_fd, fh.fileno(), links=1)
+                os.unlink(path.name, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            # A file whose byte sync succeeded remains the recovery source if
+            # its directory sync or final revalidation fails.
+            raise
 
 
 def _output_lock_path(output_path: Path) -> Path:
@@ -202,22 +363,57 @@ def _require_new_output_pair(
         and pending_meta.exists()
     ):
         manifest = _require_same_manifest_hard_link(meta_path, pending_meta)
-        _require_output_matches_manifest(output_path, output_path, manifest)
-        if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
-            raise SystemExit("published evidence manifest changed during recovery")
-        _durably_prepare_existing_output_artifact(meta_path, meta_path)
-        if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
-            raise SystemExit("published evidence manifest changed during recovery")
-        _unlink_durable(pending_meta)
+        with _matching_output(
+            output_path, output_path, manifest, expected_links=1,
+        ) as final_bank:
+            if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
+                raise SystemExit("published evidence manifest changed during recovery")
+            _durably_prepare_existing_output_artifact(meta_path, meta_path)
+            if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
+                raise SystemExit("published evidence manifest changed during recovery")
+            _require_publication_guards(((final_bank, 1),))
+            _unlink_durable(pending_meta, expected_links=2, surviving_path=meta_path)
+            _require_publication_guards(((final_bank, 1),))
+            if meta_path.lstat().st_nlink != 1:
+                raise SystemExit("published evidence manifest has unexpected hard links")
         return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
-        manifest = _durably_read_pending_manifest(pending_meta)
-        if pending_output.exists():
-            _require_output_matches_manifest(pending_output, output_path, manifest)
-        _require_output_matches_manifest(output_path, output_path, manifest)
-        if pending_output.exists():
-            _unlink_durable(pending_output)
-        _publish_no_replace(pending_meta, meta_path)
+        with _durably_read_pending_manifest(pending_meta) as (manifest, source):
+            if pending_output.exists():
+                with _matching_output(
+                    output_path, output_path, manifest, expected_links=2,
+                ) as final_bank:
+                    with _matching_output(
+                        pending_output, output_path, manifest, expected_links=2,
+                    ) as pending_bank:
+                        if _identity(os.fstat(pending_bank.file_fd)) != _identity(
+                            os.fstat(final_bank.file_fd)
+                        ):
+                            raise SystemExit(
+                                "published and pending trajectory banks are not the same hard links"
+                            )
+                        _unlink_durable(
+                            pending_output,
+                            expected_links=2,
+                            surviving_path=output_path,
+                            surviving=final_bank,
+                        )
+                    _publish_no_replace(
+                        pending_meta,
+                        meta_path,
+                        source=source,
+                        guards=((final_bank, 1),),
+                    )
+            else:
+                with _matching_output(
+                    output_path, output_path, manifest, expected_links=1,
+                ) as final_bank:
+                    _publish_no_replace(
+                        pending_meta,
+                        meta_path,
+                        source=source,
+                        guards=((final_bank, 1),),
+                    )
         return True
     if (
         not output_path.exists()
@@ -225,14 +421,29 @@ def _require_new_output_pair(
         and pending_output.exists()
         and pending_meta.exists()
     ):
-        manifest = _durably_read_pending_manifest(pending_meta)
-        _require_output_matches_manifest(pending_output, output_path, manifest)
-        published = _publish_output(pending_output, output_path)
-        if _publication_artifact_identity(published) != _publication_artifact_identity(
-            manifest.get("output")
-        ):
-            raise RuntimeError("recovered trajectory bank differs from its manifest")
-        _publish_no_replace(pending_meta, meta_path)
+        with _durably_read_pending_manifest(pending_meta) as (manifest, source):
+            _require_output_matches_manifest(
+                pending_output, output_path, manifest, expected_links=1,
+            )
+            published = _publish_output(
+                pending_output,
+                output_path,
+                expected_artifact=manifest.get("output"),
+            )
+            if (
+                _publication_artifact_identity(published)
+                != _publication_artifact_identity(manifest.get("output"))
+            ):
+                raise RuntimeError("recovered trajectory bank differs from its manifest")
+            with _matching_output(
+                output_path, output_path, manifest, expected_links=1,
+            ) as final_bank:
+                _publish_no_replace(
+                    pending_meta,
+                    meta_path,
+                    source=source,
+                    guards=((final_bank, 1),),
+                )
         return True
     if any(
         path.exists() for path in (output_path, meta_path, pending_output, pending_meta)
@@ -244,28 +455,137 @@ def _require_new_output_pair(
     return False
 
 
-def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
+def _link_open_file(file_fd: int, parent_fd: int, name: str) -> None:
+    """Hard-link an exact open inode through procfs, never a mutable source name."""
+    descriptor_path = Path(f"/proc/self/fd/{file_fd}")
+    try:
+        descriptor_stat = descriptor_path.stat()
+    except OSError as exc:
+        raise SystemExit(f"cannot authenticate open link source: {descriptor_path}") from exc
+    if _identity(descriptor_stat) != _identity(os.fstat(file_fd)):
+        raise SystemExit(f"open link source changed: {descriptor_path}")
+    os.link(descriptor_path, name, dst_dir_fd=parent_fd, follow_symlinks=True)
+
+
+def _publish_anchored(
+    source: _AnchoredFile,
+    output_path: Path,
+    guards: tuple[tuple[_AnchoredFile, int], ...],
+) -> None:
+    output_path = output_path.expanduser()
+    _require_entry(source.path, source.parent_fd, source.file_fd, links=1)
+    _require_parent(source.path, source.parent_fd)
+    artifact_path = source.artifact.get("path")
+    if not isinstance(artifact_path, str):
+        raise RuntimeError("authenticated publication source lacks its artifact path")
+    current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+    if _publication_artifact_identity(current) != _publication_artifact_identity(
+        source.artifact
+    ):
+        raise SystemExit(f"staged evidence changed before publication: {source.path}")
+    output_parent_stat = output_path.parent.stat()
+    same_parent = _identity(output_parent_stat) == _identity(os.fstat(source.parent_fd))
+    output_parent_fd = source.parent_fd if same_parent else _open_parent(output_path)
+    try:
+        _require_parent(output_path, output_parent_fd)
+        _require_publication_guards(guards)
+        try:
+            _link_open_file(source.file_fd, output_parent_fd, output_path.name)
+        except FileExistsError as exc:
+            raise _ImmutableEvidenceExistsError(
+                f"refusing to replace immutable evidence at {output_path}"
+            ) from exc
+        _require_entry(output_path, output_parent_fd, source.file_fd, links=2)
+        os.fsync(output_parent_fd)
+        _require_publication_guards(guards)
+        _require_parent(output_path, output_parent_fd)
+        _require_parent(source.path, source.parent_fd)
+        _require_entry(source.path, source.parent_fd, source.file_fd, links=2)
+        _require_entry(output_path, output_parent_fd, source.file_fd, links=2)
+        current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+        if _publication_artifact_identity(current) != _publication_artifact_identity(
+            source.artifact
+        ):
+            raise SystemExit(f"staged evidence changed during publication: {source.path}")
+        _require_entry(source.path, source.parent_fd, source.file_fd, links=2)
+        os.unlink(source.path.name, dir_fd=source.parent_fd)
+        os.fsync(source.parent_fd)
+        _require_parent(source.path, source.parent_fd)
+        _require_parent(output_path, output_parent_fd)
+        _require_entry(output_path, output_parent_fd, source.file_fd, links=1)
+        final = _artifact_from_fd(source.file_fd, Path(artifact_path))
+        if _publication_artifact_identity(final) != _publication_artifact_identity(
+            source.artifact
+        ):
+            raise SystemExit(f"published evidence changed: {output_path}")
+    finally:
+        if not same_parent:
+            os.close(output_parent_fd)
+
+
+def _require_publication_guards(
+    guards: tuple[tuple[_AnchoredFile, int], ...],
+) -> None:
+    for guard, links in guards:
+        _require_entry(guard.path, guard.parent_fd, guard.file_fd, links=links)
+        _require_parent(guard.path, guard.parent_fd)
+        artifact_path = guard.artifact.get("path")
+        if not isinstance(artifact_path, str):
+            raise RuntimeError("publication guard lacks its artifact path")
+        current = _artifact_from_fd(guard.file_fd, Path(artifact_path))
+        if _publication_artifact_identity(current) != _publication_artifact_identity(
+            guard.artifact
+        ):
+            raise SystemExit(f"guarded evidence changed: {guard.path}")
+
+
+def _publish_no_replace(
+    tmp_path: Path,
+    output_path: Path,
+    *,
+    source: _AnchoredFile | None = None,
+    guards: tuple[tuple[_AnchoredFile, int], ...] = (),
+) -> None:
     """Hard-link without replacement, then consume the recovery name in order.
 
     The caller must fsync the staged file's bytes before entering this helper.
     Each directory sync is kept separate even when both names share a parent:
     a crash must not lose the published name after the recovery name is removed.
     """
-    try:
-        os.link(tmp_path, output_path)
-    except FileExistsError as exc:
-        raise _ImmutableEvidenceExistsError(
-            f"refusing to replace immutable evidence at {output_path}"
-        ) from exc
-    _fsync_directory(output_path.parent)
-    _unlink_durable(tmp_path)
+    if source is not None:
+        if source.path != tmp_path.expanduser():
+            raise RuntimeError("publication source does not match its authenticated path")
+        _require_publication_guards(guards)
+        _publish_anchored(source, output_path, guards)
+        _require_publication_guards(guards)
+        return
+    with _anchored_file(
+        tmp_path, tmp_path, durable=False, links=1,
+    ) as opened_source:
+        _require_publication_guards(guards)
+        _publish_anchored(opened_source, output_path, guards)
+        _require_publication_guards(guards)
 
 
-def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
+def _publish_output(
+    tmp_path: Path,
+    output_path: Path,
+    *,
+    expected_artifact: Any = None,
+) -> dict[str, Any]:
     """Publish exactly the private bytes whose identity the manifest records."""
-    expected = _durably_prepare_existing_output_artifact(tmp_path, output_path)
-    _publish_no_replace(tmp_path, output_path)
-    published = _artifact(output_path, require_file=True)
+    with _anchored_file(
+        tmp_path, output_path, durable=True, links=1,
+    ) as source:
+        expected = source.artifact
+        if (
+            expected_artifact is not None
+            and _publication_artifact_identity(expected)
+            != _publication_artifact_identity(expected_artifact)
+        ):
+            raise RuntimeError("private trajectory bank differs from its manifest")
+        _publish_no_replace(tmp_path, output_path, source=source)
+        published = _artifact_from_fd(source.file_fd, output_path)
     if _publication_artifact_identity(published) != _publication_artifact_identity(
         expected
     ):
@@ -279,28 +599,70 @@ def _prepared_output_artifact(tmp_path: Path, output_path: Path) -> dict[str, An
 
 
 def _durably_prepare_output_artifact(
-    fh: _FlushableFile, tmp_path: Path, output_path: Path,
+    fh: _FlushableFile,
+    tmp_path: Path,
+    output_path: Path,
+    *,
+    parent_fd: int | None = None,
 ) -> dict[str, Any]:
     """Make staged bytes and their name durable before snapshotting identity."""
-    _flush_fsync_file_and_parent(fh, tmp_path)
-    return _prepared_output_artifact(tmp_path, output_path)
+    owned_parent = parent_fd is None
+    if parent_fd is None:
+        parent_fd = _open_parent(tmp_path)
+    reader_fd = -1
+    try:
+        _flush_fsync_file_and_parent(fh, tmp_path, parent_fd=parent_fd)
+        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        reader_fd = os.open(tmp_path.name, flags, dir_fd=parent_fd)
+        _require_entry(tmp_path, parent_fd, reader_fd, links=1)
+        if _identity(os.fstat(reader_fd)) != _identity(os.fstat(fh.fileno())):
+            raise SystemExit(f"pending trajectory bank changed: {tmp_path}")
+        private = _artifact_from_fd(reader_fd, tmp_path)
+        _require_parent(tmp_path, parent_fd)
+        return {**private, "path": str(output_path.expanduser().resolve())}
+    finally:
+        if reader_fd >= 0:
+            os.close(reader_fd)
+        if owned_parent:
+            os.close(parent_fd)
 
 
 def _durably_prepare_existing_output_artifact(
-    tmp_path: Path, output_path: Path,
+    tmp_path: Path, output_path: Path, *, expected_links: int | None = None,
 ) -> dict[str, Any]:
     """Durably snapshot a closed staged output, including recovery inputs."""
-    with tmp_path.open("rb") as fh:
-        return _durably_prepare_output_artifact(fh, tmp_path, output_path)
+    with _anchored_file(
+        tmp_path, output_path, durable=True, links=expected_links,
+    ) as source:
+        return source.artifact
 
 
-def _read_pending_manifest(path: Path) -> dict[str, Any]:
-    before = _artifact(path, require_file=True)
+def _durably_prepare_anchored_output_artifact(
+    file_fd: int, parent_fd: int, tmp_path: Path, output_path: Path,
+) -> dict[str, Any]:
+    """Durably snapshot a retained collection file without reopening its path."""
+    _require_parent(tmp_path, parent_fd)
+    _require_entry(tmp_path, parent_fd, file_fd, links=1)
+    os.fsync(file_fd)
+    os.fsync(parent_fd)
+    artifact = _artifact_from_fd(file_fd, tmp_path)
+    _require_entry(tmp_path, parent_fd, file_fd, links=1)
+    _require_parent(tmp_path, parent_fd)
+    return {**artifact, "path": str(output_path.expanduser().resolve())}
+
+
+def _read_pending_manifest_fd(file_fd: int, path: Path) -> dict[str, Any]:
+    before = _artifact_from_fd(file_fd, path)
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        chunks: list[bytes] = []
+        offset = 0
+        while block := os.pread(file_fd, 1024 * 1024, offset):
+            chunks.append(block)
+            offset += len(block)
+        payload = json.loads(b"".join(chunks))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"pending evidence manifest is not valid JSON: {path}") from exc
-    after = _artifact(path, require_file=True)
+    after = _artifact_from_fd(file_fd, path)
     if _artifact_identity(before) != _artifact_identity(after):
         raise SystemExit(f"pending evidence manifest changed while being read: {path}")
     if not isinstance(payload, dict) or payload.get("schema") != CHUNK_TRAJECTORY_SCHEMA:
@@ -310,21 +672,29 @@ def _read_pending_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _durably_read_pending_manifest(path: Path) -> dict[str, Any]:
-    """Sync a recovery manifest and then authenticate a stable reread."""
-    before = _artifact(path, require_file=True)
-    with path.open("rb") as fh:
-        _flush_fsync_file_and_parent(fh, path)
-    manifest = _read_pending_manifest(path)
-    after = _artifact(path, require_file=True)
-    if _artifact_identity(before) != _artifact_identity(after):
-        raise SystemExit(
-            f"pending evidence manifest changed while being made durable: {path}"
-        )
-    return manifest
+def _read_pending_manifest(path: Path) -> dict[str, Any]:
+    with _anchored_file(path, path, durable=False, links=None) as source:
+        return _read_pending_manifest_fd(source.file_fd, path)
 
 
-def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int]:
+@contextmanager
+def _durably_read_pending_manifest(
+    path: Path,
+) -> Generator[tuple[dict[str, Any], _AnchoredFile], None, None]:
+    """Keep the exact synced manifest open through its recovery publication."""
+    with _anchored_file(path, path, durable=True, links=1) as source:
+        manifest = _read_pending_manifest_fd(source.file_fd, path)
+        after = _artifact_from_fd(source.file_fd, path)
+        if _artifact_identity(source.artifact) != _artifact_identity(after):
+            raise SystemExit(
+                f"pending evidence manifest changed while being made durable: {path}"
+            )
+        _require_entry(path, source.parent_fd, source.file_fd, links=1)
+        _require_parent(path, source.parent_fd)
+        yield manifest, source
+
+
+def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int, int]:
     """Require a manifest name to identify a regular file without a symlink."""
     try:
         file_stat = path.lstat()
@@ -332,7 +702,7 @@ def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int]:
         raise SystemExit(f"cannot inspect {role}: {path}") from exc
     if not stat.S_ISREG(file_stat.st_mode):
         raise SystemExit(f"{role} is not a regular file: {path}")
-    return int(file_stat.st_dev), int(file_stat.st_ino)
+    return int(file_stat.st_dev), int(file_stat.st_ino), int(file_stat.st_nlink)
 
 
 def _require_same_manifest_hard_link(
@@ -345,9 +715,9 @@ def _require_same_manifest_hard_link(
     pending_before = _manifest_name_identity(
         pending_meta, role="pending evidence manifest",
     )
-    if published_before != pending_before:
+    if published_before != pending_before or published_before[2] != 2:
         raise SystemExit(
-            "published and pending evidence manifests are not the same recovery hard link"
+            "published and pending evidence manifests are not the same recovery hard links"
         )
     pending_manifest = _read_pending_manifest(pending_meta)
     published_manifest = _read_pending_manifest(meta_path)
@@ -361,23 +731,48 @@ def _require_same_manifest_hard_link(
         published_after != published_before
         or pending_after != pending_before
         or published_after != pending_after
+        or published_after[2] != 2
         or published_manifest != pending_manifest
     ):
         raise SystemExit("published evidence manifest changed during recovery")
     return pending_manifest
 
 
-def _require_output_matches_manifest(
-    candidate_path: Path, output_path: Path, manifest: dict[str, Any],
-) -> None:
+@contextmanager
+def _matching_output(
+    candidate_path: Path,
+    output_path: Path,
+    manifest: dict[str, Any],
+    *,
+    expected_links: int,
+) -> Generator[_AnchoredFile, None, None]:
     expected = manifest.get("output")
     if not isinstance(expected, dict):
         raise SystemExit("pending evidence manifest lacks an output artifact")
-    actual = _durably_prepare_existing_output_artifact(candidate_path, output_path)
-    if _publication_artifact_identity(actual) != _publication_artifact_identity(
-        expected
-    ):
-        raise SystemExit("pending trajectory bank does not match its manifest")
+    with _anchored_file(
+        candidate_path, output_path, durable=True, links=expected_links,
+    ) as source:
+        if _publication_artifact_identity(
+            source.artifact
+        ) != _publication_artifact_identity(expected):
+            raise SystemExit("pending trajectory bank does not match its manifest")
+        yield source
+
+
+def _require_output_matches_manifest(
+    candidate_path: Path,
+    output_path: Path,
+    manifest: dict[str, Any],
+    *,
+    expected_links: int,
+) -> dict[str, Any]:
+    with _matching_output(
+        candidate_path,
+        output_path,
+        manifest,
+        expected_links=expected_links,
+    ) as source:
+        return source.artifact
 
 
 def _publish_evidence_pair(
@@ -389,12 +784,21 @@ def _publish_evidence_pair(
 ) -> None:
     """Prepare both artifacts before publishing either; retain recovery state."""
     _write_json_staged(pending_meta, manifest)
-    published = _publish_output(pending_output, output_path)
+    published = _publish_output(
+        pending_output,
+        output_path,
+        expected_artifact=manifest.get("output"),
+    )
     if _publication_artifact_identity(published) != _publication_artifact_identity(
         manifest.get("output")
     ):
         raise RuntimeError("published trajectory bank differs from its manifest")
-    _publish_no_replace(pending_meta, meta_path)
+    with _matching_output(
+        output_path, output_path, manifest, expected_links=1,
+    ) as final_bank:
+        _publish_no_replace(
+            pending_meta, meta_path, guards=((final_bank, 1),),
+        )
 
 
 def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:

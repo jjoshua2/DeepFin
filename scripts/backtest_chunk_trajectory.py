@@ -328,9 +328,10 @@ from scripts.chunk_trajectory_publication import (
     CHUNK_TRAJECTORY_SCHEMA,
     _acquire_output_lock as _acquire_output_lock,
     _acquire_output_locks,
-    _durably_prepare_existing_output_artifact,
+    _durably_prepare_anchored_output_artifact,
     _durably_prepare_output_artifact,
     _git_ignored_or_outside as _git_ignored_or_outside,
+    _open_staged_output_file,
     _output_lock_path as _output_lock_path,
     _pending_manifest_path,
     _pending_output_path,
@@ -3400,6 +3401,8 @@ def _main() -> None:
     active_snapshots: list[dict[str, Any]] = []
     active_search_result: dict[str, Any] | None = None
     completed_output_artifact: dict[str, Any]
+    retained_output_fd = -1
+    retained_output_parent_fd = -1
     _ACTIVE_PENDING_EVIDENCE = {
         "collection_complete": False,
         "pending_output": tmp_path,
@@ -3413,7 +3416,14 @@ def _main() -> None:
         "reference_censoring_details": reference_censoring_details,
     }
     try:
-        with tmp_path.open("x") as fh:
+        with _open_staged_output_file(tmp_path) as (fh, pending_parent_fd):
+            retained_output_fd = os.dup(fh.fileno())
+            try:
+                retained_output_parent_fd = os.dup(pending_parent_fd)
+            except BaseException:
+                os.close(retained_output_fd)
+                retained_output_fd = -1
+                raise
             collection_started = True
             for pi, pos in enumerate(positions):
                 active_position = pos
@@ -3671,8 +3681,12 @@ def _main() -> None:
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
             completed_output_artifact = _durably_prepare_output_artifact(
-                fh, tmp_path, args.out,
+                fh, tmp_path, args.out, parent_fd=pending_parent_fd,
             )
+        os.close(retained_output_fd)
+        retained_output_fd = -1
+        os.close(retained_output_parent_fd)
+        retained_output_parent_fd = -1
         _ACTIVE_PENDING_EVIDENCE.update({
             "collection_complete": True,
             "row_count": n_rows,
@@ -3702,8 +3716,11 @@ def _main() -> None:
                 )
             )
         try:
-            partial_output_artifact = _durably_prepare_existing_output_artifact(
-                tmp_path, args.out,
+            partial_output_artifact = _durably_prepare_anchored_output_artifact(
+                retained_output_fd,
+                retained_output_parent_fd,
+                tmp_path,
+                args.out,
             )
             _write_json_staged(
                 pending_meta_path,
@@ -3724,6 +3741,10 @@ def _main() -> None:
                 },
             )
         finally:
+            if retained_output_fd >= 0:
+                os.close(retained_output_fd)
+            if retained_output_parent_fd >= 0:
+                os.close(retained_output_parent_fd)
             for output_lock in reversed(output_locks):
                 output_lock.close()
         raise
