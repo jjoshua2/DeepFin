@@ -62,6 +62,9 @@ _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
 _PRODUCTION_WALKERS = 2
 _MIN_DECISION_GRADE_CHUNKS = 4
+# Nine is the smallest cluster count for which the canonical 2,000-sample,
+# seed-zero bootstrap retains at least two OOB games in at least 95% of draws.
+_MIN_DECISION_GRADE_SOURCE_GAMES = 9
 _CANONICAL_FOLDS = 5
 _CANONICAL_BOOTSTRAP_SAMPLES = 2000
 _CANONICAL_SEED = 0
@@ -2521,13 +2524,15 @@ def analyze(
 
 def _evidence_verdict(
     *, evidence_inputs_decision_grade: bool, canonical_preregistered_rule: bool,
-    statistical_gate_passed: bool,
+    source_group_resolution_passed: bool, statistical_gate_passed: bool,
 ) -> str:
     """Name only the next experiment authorized by this deliberately narrow bank."""
     if not evidence_inputs_decision_grade:
         return "METHODOLOGY_SMOKE_ONLY"
     if not canonical_preregistered_rule:
         return "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
+    if not source_group_resolution_passed:
+        return "INSUFFICIENT_SOURCE_GAME_GROUPS"
     if statistical_gate_passed:
         return "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
     return "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
@@ -2636,14 +2641,26 @@ def main() -> None:
         min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
     )
     canonical_rule = bool(canonical_analysis_rule and info["preregistered_design"])
-    decision_grade = evidence_inputs_decision_grade and canonical_rule
+    source_game_group_count = len({row.group_id for row in transitions})
+    source_group_resolution_passed = (
+        source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
+    )
+    decision_grade = bool(
+        evidence_inputs_decision_grade
+        and canonical_rule
+        and source_group_resolution_passed
+    )
     result["canonical_analysis_rule"] = canonical_analysis_rule
     result["canonical_preregistered_rule"] = canonical_rule
     result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
+    result["source_game_group_count"] = source_game_group_count
+    result["minimum_decision_grade_source_games"] = _MIN_DECISION_GRADE_SOURCE_GAMES
+    result["source_group_resolution_passed"] = source_group_resolution_passed
     result["evidence_decision_grade"] = decision_grade
     result["verdict"] = _evidence_verdict(
         evidence_inputs_decision_grade=evidence_inputs_decision_grade,
         canonical_preregistered_rule=canonical_rule,
+        source_group_resolution_passed=source_group_resolution_passed,
         statistical_gate_passed=bool(result["statistical_gate_passed"]),
     )
     payload = {"input": info, "analyzer": analyzer, "analysis": result}

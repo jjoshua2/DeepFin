@@ -76,6 +76,7 @@ from chess_anti_engine.uci.search import (
 )
 from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path, require_tablebases
 from scripts.analyze_chunk_controller import (
+    _MIN_DECISION_GRADE_SOURCE_GAMES,
     _PRODUCTION_WALKERS,
     _canonical_cuda_device_string,
     _complexity_continue,
@@ -470,9 +471,11 @@ def _require_analyzable_source_groups(
     if methodology_smoke:
         return
     groups = {group_id for group_id in group_ids.values() if group_id}
-    if len(groups) < 2:
+    if len(groups) < _MIN_DECISION_GRADE_SOURCE_GAMES:
         raise SystemExit(
-            "decision-grade trajectory banks require at least two distinct source games"
+            "decision-grade trajectory banks require at least "
+            f"{_MIN_DECISION_GRADE_SOURCE_GAMES} distinct source games for the "
+            "canonical OOB bootstrap"
         )
 
 
@@ -740,6 +743,10 @@ def main() -> None:
         print(f"[traj] recovered evidence pair -> {args.out}")
         print(f"[traj] provenance -> {meta_path}")
         return
+    requested_path = "walker_puct" if int(args.walkers) > 1 else "gumbel"
+    _validate_registry_search_values(
+        requested_path, {"chunk_sims": int(args.chunk_sims)},
+    )
     if args.checkpoint is None:
         raise SystemExit("--checkpoint is required unless --recover-publication is used")
     matched_path = args.matched_rows or default_matched_rows_path(args.audit_set)

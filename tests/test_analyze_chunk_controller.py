@@ -1816,17 +1816,17 @@ def test_producer_rejects_output_artifacts_that_would_dirty_checkout(
         )
 
 
-def test_producer_requires_two_source_games_before_decision_grade_collection() -> None:
+def test_producer_requires_enough_source_games_for_canonical_bootstrap() -> None:
     from scripts import backtest_chunk_trajectory as producer
 
-    with pytest.raises(SystemExit, match="at least two distinct source games"):
+    with pytest.raises(SystemExit, match="at least 9 distinct source games"):
         producer._require_analyzable_source_groups(
-            {"a": "snapshot\0game-1", "b": "snapshot\0game-1"},
+            {f"position-{game}": f"snapshot\0game-{game}" for game in range(8)},
             methodology_smoke=False,
         )
 
     producer._require_analyzable_source_groups(
-        {"a": "snapshot\0game-1", "b": "snapshot\0game-2"},
+        {f"position-{game}": f"snapshot\0game-{game}" for game in range(9)},
         methodology_smoke=False,
     )
     producer._require_analyzable_source_groups(
@@ -1838,15 +1838,16 @@ def test_producer_rechecks_games_after_terminal_shortcut_exclusions() -> None:
     from scripts import backtest_chunk_trajectory as producer
 
     requested_groups = {
-        "position-a": "snapshot\0game-1",
-        "position-b": "snapshot\0game-2",
+        f"position-{game}": f"snapshot\0game-{game}" for game in range(9)
     }
-    completed_groups = {"snapshot\0game-1": "snapshot\0game-1"}
+    completed_groups = {
+        f"snapshot\0game-{game}": f"snapshot\0game-{game}" for game in range(8)
+    }
 
     producer._require_analyzable_source_groups(
         requested_groups, methodology_smoke=False,
     )
-    with pytest.raises(SystemExit, match="at least two distinct source games"):
+    with pytest.raises(SystemExit, match="at least 9 distinct source games"):
         producer._require_analyzable_source_groups(
             completed_groups, methodology_smoke=False,
         )
@@ -1975,6 +1976,26 @@ def test_producer_applies_shared_uci_search_ranges() -> None:
         )
 
 
+def test_producer_rejects_chunk_size_before_checkpoint_or_cuda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["backtest_chunk_trajectory", "--checkpoint", "unused", "--chunk-sims", "1"],
+    )
+    monkeypatch.setattr(
+        producer,
+        "_checkpoint_file",
+        lambda _path: pytest.fail("checkpoint resolution ran before range validation"),
+    )
+
+    with pytest.raises(SystemExit, match="production UCI registry"):
+        producer.main()
+
+
 def test_decision_grade_requires_enough_bootstrap_samples() -> None:
     _require_bootstrap_resolution(1, methodology_smoke=True)
     _require_bootstrap_resolution(1000, methodology_smoke=False)
@@ -1999,23 +2020,33 @@ def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
     assert _evidence_verdict(
         evidence_inputs_decision_grade=True,
         canonical_preregistered_rule=True,
+        source_group_resolution_passed=True,
         statistical_gate_passed=True,
     ) == "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
     assert _evidence_verdict(
         evidence_inputs_decision_grade=True,
         canonical_preregistered_rule=True,
+        source_group_resolution_passed=True,
         statistical_gate_passed=False,
     ) == "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
     assert _evidence_verdict(
         evidence_inputs_decision_grade=False,
         canonical_preregistered_rule=True,
+        source_group_resolution_passed=False,
         statistical_gate_passed=True,
     ) == "METHODOLOGY_SMOKE_ONLY"
     assert _evidence_verdict(
         evidence_inputs_decision_grade=True,
         canonical_preregistered_rule=False,
+        source_group_resolution_passed=False,
         statistical_gate_passed=True,
     ) == "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
+    assert _evidence_verdict(
+        evidence_inputs_decision_grade=True,
+        canonical_preregistered_rule=True,
+        source_group_resolution_passed=False,
+        statistical_gate_passed=False,
+    ) == "INSUFFICIENT_SOURCE_GAME_GROUPS"
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(
