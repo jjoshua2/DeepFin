@@ -840,18 +840,164 @@ def _analyzer_provenance(
     }
 
 
-def _write_json_atomic(path: Path, rendered: str) -> None:
-    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    created = False
+@dataclass(frozen=True)
+class _AnchoredOutputTarget:
+    lexical_path: Path
+    parent_fd: int
+    parent_identity: tuple[int, int]
+    input_path: Path
+    meta_path: Path
+    manifest: dict[str, Any] | None
+
+    @property
+    def name(self) -> str:
+        return self.lexical_path.name
+
+    @property
+    def staging_name(self) -> str:
+        return f".{self.name}.tmp-{os.getpid()}"
+
+    @property
+    def descriptor_path(self) -> Path:
+        return Path(f"/proc/self/fd/{self.parent_fd}") / self.name
+
+
+def _directory_identity(stat_result: os.stat_result) -> tuple[int, int]:
+    return int(stat_result.st_dev), int(stat_result.st_ino)
+
+
+def _open_directory_anchored(path: Path, *, create: bool) -> int:
+    """Open an absolute directory without following a path-component symlink."""
+    if not path.is_absolute():
+        raise ValueError("anchored output parent must be absolute")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if nofollow == 0 or directory == 0:
+        raise RuntimeError("safe analyzer output requires O_NOFOLLOW/O_DIRECTORY")
+    flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | directory
+    current_fd = os.open(path.anchor, flags)
     try:
-        with tmp_path.open("x") as fh:
-            created = True
+        for component in path.parts[1:]:
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(component, dir_fd=current_fd)
+                except FileExistsError:
+                    # A concurrent creator is acceptable only if the no-follow
+                    # open below proves that it created a real directory.
+                    pass
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _require_anchored_output_stable(target: _AnchoredOutputTarget) -> None:
+    """Revalidate both the lexical binding and the descriptor-bound destination."""
+    try:
+        current_parent = os.stat(target.lexical_path.parent)
+        descriptor_parent = os.fstat(target.parent_fd)
+    except OSError as exc:
+        raise RuntimeError("analyzer output parent changed during publication") from exc
+    if (
+        not stat.S_ISDIR(current_parent.st_mode)
+        or not stat.S_ISDIR(descriptor_parent.st_mode)
+        or _directory_identity(current_parent) != target.parent_identity
+        or _directory_identity(descriptor_parent) != target.parent_identity
+    ):
+        raise RuntimeError("analyzer output parent changed during publication")
+    _require_safe_output_path(
+        target.input_path,
+        target.meta_path,
+        target.lexical_path,
+        manifest=target.manifest,
+        _resolved_output=target.descriptor_path,
+    )
+
+
+@contextmanager
+def _anchored_output_target(
+    input_path: Path,
+    meta_path: Path,
+    output_path: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> Generator[_AnchoredOutputTarget, None, None]:
+    """Pin the validated output parent for the entire atomic publication."""
+    _require_safe_output_path(input_path, meta_path, output_path, manifest=manifest)
+    lexical_path = output_path.expanduser().absolute()
+    resolved_parent = lexical_path.parent.resolve()
+    parent_fd = _open_directory_anchored(resolved_parent, create=True)
+    target = _AnchoredOutputTarget(
+        lexical_path=lexical_path,
+        parent_fd=parent_fd,
+        parent_identity=_directory_identity(os.fstat(parent_fd)),
+        input_path=input_path,
+        meta_path=meta_path,
+        manifest=manifest,
+    )
+    try:
+        _require_anchored_output_stable(target)
+        yield target
+    finally:
+        os.close(parent_fd)
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return bool(left.st_dev == right.st_dev and left.st_ino == right.st_ino)
+
+
+def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
+    """Publish JSON relative to the directory descriptor validated above."""
+    created_staging = False
+    published_identity: os.stat_result | None = None
+    try:
+        _require_anchored_output_stable(target)
+        staging_fd = os.open(
+            target.staging_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o666,
+            dir_fd=target.parent_fd,
+        )
+        created_staging = True
+        with os.fdopen(staging_fd, "w", encoding="utf-8") as fh:
             fh.write(rendered)
             fh.write("\n")
-        os.replace(tmp_path, path)
+        published_identity = os.stat(
+            target.staging_name, dir_fd=target.parent_fd, follow_symlinks=False,
+        )
+        _require_anchored_output_stable(target)
+        os.replace(
+            target.staging_name,
+            target.name,
+            src_dir_fd=target.parent_fd,
+            dst_dir_fd=target.parent_fd,
+        )
+        created_staging = False
+        try:
+            _require_anchored_output_stable(target)
+        except BaseException:
+            try:
+                destination = os.stat(
+                    target.name, dir_fd=target.parent_fd, follow_symlinks=False,
+                )
+                if _same_file_identity(destination, published_identity):
+                    os.unlink(target.name, dir_fd=target.parent_fd)
+            except FileNotFoundError:
+                pass
+            raise
     finally:
-        if created and tmp_path.exists():
-            tmp_path.unlink()
+        if created_staging:
+            try:
+                os.unlink(target.staging_name, dir_fd=target.parent_fd)
+            except FileNotFoundError:
+                pass
 
 
 def _require_safe_output_path(
@@ -860,19 +1006,31 @@ def _require_safe_output_path(
     output_path: Path | None,
     *,
     manifest: dict[str, Any] | None = None,
+    _resolved_output: Path | None = None,
 ) -> None:
     if output_path is None:
         return
     if reserved_output_path(output_path):
         raise ValueError("--out must not use the output lock/staging namespace")
-    output = output_path.expanduser().resolve()
+    output = (
+        _resolved_output.expanduser().resolve()
+        if _resolved_output is not None
+        else output_path.expanduser().resolve()
+    )
     protected = {
         input_path.expanduser().resolve(),
         meta_path.expanduser().resolve(),
         Path(__file__).resolve(),
         Path(solve_reachable_oracle.__code__.co_filename).resolve(),
     }
-    if repo_controlled_output(output_path, Path(__file__).resolve().parents[1]):
+    repo_root = Path(__file__).resolve().parents[1]
+    if (
+        repo_controlled_output(output_path, repo_root)
+        or (
+            _resolved_output is not None
+            and repo_controlled_output(_resolved_output, repo_root)
+        )
+    ):
         raise ValueError("--out must not overwrite a tracked or repository-control path")
     if manifest is not None:
         for name in (
@@ -5326,14 +5484,14 @@ def main() -> None:
     payload = {"input": info, "analyzer": analyzer, "analysis": result}
     rendered = json.dumps(payload, indent=2, sort_keys=True)
     if args.out is not None:
-        _require_safe_output_path(
+        output_manifest = manifest if isinstance(manifest, dict) else None
+        with _anchored_output_target(
             args.input_path,
             actual_meta,
             args.out,
-            manifest=manifest if isinstance(manifest, dict) else None,
-        )
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        _write_json_atomic(args.out, rendered)
+            manifest=output_manifest,
+        ) as output_target:
+            _write_json_atomic(output_target, rendered)
     print(rendered)
 
 

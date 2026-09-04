@@ -4952,11 +4952,103 @@ def test_analyzer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path)
     staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
     staging.write_text("other process staging\n")
 
-    with pytest.raises(FileExistsError):
-        controller_module._write_json_atomic(output, "{}")
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target, pytest.raises(FileExistsError):
+        controller_module._write_json_atomic(target, "{}")
 
     assert staging.read_text() == "other process staging\n"
     assert not output.exists()
+
+
+def test_analyzer_atomic_json_allows_ordinary_output_and_overwrite(
+    tmp_path: Path,
+) -> None:
+    output_directory = tmp_path / "new" / "nested"
+    alias = tmp_path / "output-parent"
+    output_directory.mkdir(parents=True)
+    alias.symlink_to(output_directory, target_is_directory=True)
+    output = alias / "analysis.json"
+
+    for rendered in ('{"generation": 1}', '{"generation": 2}'):
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, rendered)
+
+    assert output.read_text() == '{"generation": 2}\n'
+
+
+def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safe_parent = tmp_path / "safe"
+    protected_parent = tmp_path / "checkpoint"
+    safe_parent.mkdir()
+    protected_parent.mkdir()
+    checkpoint = protected_parent / "model.pt"
+    checkpoint.write_bytes(b"authenticated checkpoint\n")
+    alias = tmp_path / "output-parent"
+    alias.symlink_to(safe_parent, target_is_directory=True)
+    output = alias / checkpoint.name
+    manifest = {"checkpoint": {"path": str(checkpoint)}}
+    real_replace = controller_module.os.replace
+
+    def swap_parent_before_replace(
+        source: str, destination: str, **kwargs: Any,
+    ) -> None:
+        alias.unlink()
+        alias.symlink_to(protected_parent, target_is_directory=True)
+        real_replace(source, destination, **kwargs)
+
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+        manifest=manifest,
+    ) as target:
+        monkeypatch.setattr(controller_module.os, "replace", swap_parent_before_replace)
+        with pytest.raises(RuntimeError, match="output parent changed"):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert checkpoint.read_bytes() == b"authenticated checkpoint\n"
+    assert not (safe_parent / checkpoint.name).exists()
+
+
+def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyzer_source = Path(controller_module.__file__).resolve()
+    original_source = analyzer_source.read_bytes()
+    safe_parent = tmp_path / "safe"
+    safe_parent.mkdir()
+    alias = tmp_path / "output-parent"
+    alias.symlink_to(safe_parent, target_is_directory=True)
+    output = alias / analyzer_source.name
+    real_replace = controller_module.os.replace
+
+    def swap_parent_before_replace(
+        source: str, destination: str, **kwargs: Any,
+    ) -> None:
+        alias.unlink()
+        alias.symlink_to(analyzer_source.parent, target_is_directory=True)
+        real_replace(source, destination, **kwargs)
+
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target:
+        monkeypatch.setattr(controller_module.os, "replace", swap_parent_before_replace)
+        with pytest.raises(RuntimeError, match="output parent changed"):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert analyzer_source.read_bytes() == original_source
+    assert not (safe_parent / analyzer_source.name).exists()
 
 
 def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
