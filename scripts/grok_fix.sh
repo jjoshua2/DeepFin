@@ -1,125 +1,101 @@
 #!/usr/bin/env bash
-# Have Grok APPLY fixes in an isolated worktree, then run this repo's gates and hand the
-# caller the raw diff and raw exit codes. NO MODEL JUDGES ANYTHING IN THIS SCRIPT.
-#
-# ⚑ THAT IS THE POINT. The sibling `grok-implementer` subagent is `model: sonnet` and its
-# spec tells it to "read the diff yourself for spec violations" and report "deviations from
-# spec" -- i.e. a Sonnet decides what the calling session gets told about work it did not
-# see. This script removes that layer: grok writes, the gates run, the DIFF and the EXIT
-# CODES come back verbatim, and the calling session (Fable/Opus) makes every call.
-#
-# Usage:
-#   scripts/grok_fix.sh --spec <file> --branch <name> [--base origin/main] [--test "<cmd>"]
-#   scripts/grok_fix.sh --findings <file> --branch <name> [...]   # a grok_review.sh block
-#
-# Leaves the worktree in place, UNCOMMITTED, for the caller to inspect and commit.
-set -uo pipefail
+# Run explicitly requested Grok implementation in its own worktree and preserve
+# the output, diff and validation results for the caller's independent judgment.
+set -euo pipefail
+umask 077
 
-REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "not in a git repo" >&2; exit 64; }
-OUT_DIR="${GROK_FIX_OUT:-${TMPDIR:-/tmp}/grok_fix}"
+REPO="$(git rev-parse --show-toplevel)"
 SPEC="" FINDINGS="" BRANCH="" BASE="origin/main" TESTCMD=""
-
-while [ $# -gt 0 ]; do
+DURATION="${GROK_FIX_TIMEOUT_SECONDS:-1800}"
+while [ "$#" -gt 0 ]; do
+    if [ "$#" -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+        echo "argument requires a value: $1" >&2; exit 64
+    fi
     case "$1" in
-        --spec)     SPEC="${2:-}"; shift 2 ;;
-        --findings) FINDINGS="${2:-}"; shift 2 ;;
-        --branch)   BRANCH="${2:-}"; shift 2 ;;
-        --base)     BASE="${2:-}"; shift 2 ;;
-        --test)     TESTCMD="${2:-}"; shift 2 ;;
+        --spec) SPEC="$2" ;;
+        --findings) FINDINGS="$2" ;;
+        --branch) BRANCH="$2" ;;
+        --base) BASE="$2" ;;
+        --test) TESTCMD="$2" ;;
         *) echo "unknown argument: $1" >&2; exit 64 ;;
     esac
+    shift 2
 done
 [ -n "$BRANCH" ] || { echo "--branch is required" >&2; exit 64; }
-[ -n "$SPEC" ] || [ -n "$FINDINGS" ] || { echo "need --spec or --findings" >&2; exit 64; }
-command -v grok >/dev/null 2>&1 || { echo "GROK UNAVAILABLE: not on PATH" >&2; exit 69; }
-
-mkdir -p "$OUT_DIR"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-WT="$OUT_DIR/wt_${BRANCH//\//_}_${STAMP}"
-RAW="$OUT_DIR/grokfix_${BRANCH//\//_}_${STAMP}.txt"
-PROMPT="$OUT_DIR/spec_${BRANCH//\//_}_${STAMP}.md"
-
-# ⚑ A WORKTREE, NEVER THE LIVE TREE. Training re-reads the live tree every iteration, and
-# grok cannot be made read-only by any flag (measured 2026-08-26: --disallowed-tools,
-# --permission-mode plan and --deny were each accepted and each wrote the file anyway).
-# Here we WANT writes -- the containment is the worktree, not a permission setting.
-git -C "$REPO" worktree add -b "$BRANCH" "$WT" "$BASE" >/dev/null 2>&1 || {
-    echo "could not create worktree $WT on $BRANCH from $BASE" >&2; exit 65; }
-
+if { [ -z "$SPEC" ] && [ -z "$FINDINGS" ]; } ||
+    { [ -n "$SPEC" ] && [ -n "$FINDINGS" ]; }; then
+    echo "choose exactly one of --spec or --findings" >&2; exit 64
+fi
+INPUT="${SPEC:-$FINDINGS}"
+[ -r "$INPUT" ] && [ -f "$INPUT" ] || { echo "cannot read input: $INPUT" >&2; exit 65; }
+case "$DURATION" in
+    ""|*[!0-9]*) echo "invalid timeout" >&2; exit 64 ;;
+    *[1-9]*) ;;
+    *) echo "timeout must be positive" >&2; exit 64 ;;
+esac
+for tool in grok timeout; do
+    command -v "$tool" >/dev/null || { echo "$tool is unavailable" >&2; exit 69; }
+done
+BASE_SHA="$(git rev-parse --verify "${BASE}^{commit}")"
+OUT="${GROK_FIX_OUT:-${TMPDIR:-/tmp}/grok_fix}"
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd -P)"
+RUN_DIR="$(mktemp -d "$OUT/run.XXXXXXXX")"
+WT="$RUN_DIR/worktree"
+RAW="$RUN_DIR/raw.txt"
+PROMPT="$RUN_DIR/prompt.md"
 {
-    if [ -n "$SPEC" ]; then cat "$SPEC"; else
-        echo "# Fix these reviewed findings"
-        echo
-        echo "Each line is: index | file:line | severity | claim | failure | settling observation"
-        echo '```'
-        cat "$FINDINGS"
-        echo '```'
-    fi
-    cat <<'SPEC_TAIL'
+    printf 'Source base: %s (%s)\n\n' "$BASE_SHA" "$BASE"
+    cat "$INPUT"
+    cat <<'PROMPT_END'
 
-## How to work in this repo
-Match the surrounding code's style, naming and comment density. Comments are for
-constraints the code cannot show, not narration.
-
-⚑ FIX ONLY WHAT IS LISTED. Do not opportunistically refactor, reformat, rename, or "tidy"
-anything outside the listed items. Unrelated edits are the single fastest way to get this
-whole change rejected, because they make the diff unreviewable.
-
-⚑ If a listed item turns out NOT to be a real defect, DO NOT invent a change to satisfy it.
-Leave the code alone and say so in your final message, naming the item index and why. A
-finding that dissolves under inspection is a useful result; a defensive edit that silences
-it is a corrupted record.
-
-Add or update a test with every behaviour change. A new test is presumed vacuous until you
-have made the breaking change, watched the test fail, and reverted it.
-SPEC_TAIL
+Read the shared project guidance. Implement the requested scope in this assigned
+worktree, preserving unrelated work. Verify any supplied finding before fixing it;
+explain rejected findings instead of inventing a change. Choose tests appropriate to
+the affected behavior. Do not commit, push, open a PR, deploy or affect live jobs.
+Leave the diff for the caller's independent review and report what remains uncertain.
+PROMPT_END
 } > "$PROMPT"
+git -C "$REPO" worktree add -b "$BRANCH" "$WT" "$BASE_SHA"
+printf 'worktree: %s\nbranch: %s\nbase: %s\nraw_output: %s\n' "$WT" "$BRANCH" "$BASE_SHA" "$RAW"
 
-grok --cwd "$WT" --prompt-file "$PROMPT" --permission-mode acceptEdits \
-     --max-turns 40 --no-subagents --output-format plain > "$RAW" 2>&1
-GROK_EXIT=$?
-
-echo "===== GROK FIX RUN ====="
-echo "authored_by: grok-cli"
-echo "worktree:   $WT"
-echo "branch:     $BRANCH  (base $BASE)"
-echo "raw_output: $RAW"
-echo "grok exit:  $GROK_EXIT"
-echo
-echo "----- grok's own final message (raw, unedited) -----"
-tail -c 4000 "$RAW"
-echo
-echo "----- files changed -----"
-git -C "$WT" status --short
-echo
-echo "----- diff --stat -----"
-git -C "$WT" diff --stat HEAD
-
-# ⚑ GATES RUN HERE, AND ONLY THEIR EXIT CODES ARE REPORTED. No interpretation: this repo
-# has already had an agent call lint green while it exited 1, by grepping output instead of
-# reading the status. Bare lint (no path arguments) because a path-scoped run structurally
-# cannot see breakage the change caused in a file it did not open.
-echo
-echo "----- gates -----"
-( cd "$WT" && ./scripts/lint.sh > "$OUT_DIR/lint_${STAMP}.txt" 2>&1 )
-echo "lint exit: $?   (log: $OUT_DIR/lint_${STAMP}.txt)"
-if [ -n "$TESTCMD" ]; then
-    ( cd "$WT" && eval "$TESTCMD" > "$OUT_DIR/test_${STAMP}.txt" 2>&1 )
-    echo "test exit: $?   (log: $OUT_DIR/test_${STAMP}.txt)  cmd: $TESTCMD"
+if timeout --kill-after=5s "${DURATION}s" grok --cwd "$WT" --prompt-file "$PROMPT" \
+    --permission-mode acceptEdits --max-turns 40 --no-subagents --output-format plain \
+    > "$RAW" 2>&1; then
+    GROK_EXIT=0
 else
-    echo "test exit: SKIPPED — no --test given. This is NOT a pass."
+    GROK_EXIT=$?
+fi
+printf 'grok exit: %s\n' "$GROK_EXIT"
+cat "$RAW"
+git -C "$WT" status --short
+git -C "$WT" diff --stat "$BASE_SHA"
+if [ "$GROK_EXIT" -ne 0 ]; then
+    echo "Grok failed; worktree and raw output retained. No success verdict." >&2
+    exit 70
 fi
 
-cat <<'CALLER_TAIL'
-
------ for the CALLING session, which is the only thing here that judges -----
-Nothing above has been assessed. Specifically still owed by you:
-  * read the full diff (`git -C <worktree> diff HEAD`) for edits outside the listed items
-  * compare lint's exit code against the BASE branch's — this repo's suite is red by
-    design, so an absolute number means nothing and only a DELTA does
-  * for each new test, run its mutant and confirm it fails
-  * decide each item: fixed / not-a-defect / still-open — and record the not-a-defects,
-    never silently absorb them
-Nothing is committed and no PR is open; both are yours.
-CALLER_TAIL
-exit 0
+FAILED=0
+if { git -C "$WT" diff --name-only "$BASE_SHA"; git -C "$WT" ls-files --others --exclude-standard; } |
+    awk '/\.(py|pyi|c|h|sh|toml|yaml|yml)$/ { found=1 } END { exit !found }'; then
+    if (cd "$WT" && ./scripts/lint.sh) > "$RUN_DIR/lint.txt" 2>&1; then
+        echo "lint exit: 0"
+    else
+        CODE=$?; echo "lint exit: $CODE"; FAILED=1
+    fi
+    echo "lint log: $RUN_DIR/lint.txt"
+else
+    echo "lint: not run (no code/config changes detected)"
+fi
+if [ -n "$TESTCMD" ]; then
+    if (cd "$WT" && bash -c "$TESTCMD") > "$RUN_DIR/test.txt" 2>&1; then
+        echo "test exit: 0"
+    else
+        CODE=$?; echo "test exit: $CODE"; FAILED=1
+    fi
+    echo "test log: $RUN_DIR/test.txt"
+else
+    echo "tests: not run (no --test command supplied)"
+fi
+echo "Inspect the complete diff and validation logs before deciding what to commit."
+[ "$FAILED" -eq 0 ] || exit 70

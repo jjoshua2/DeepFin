@@ -13,6 +13,9 @@ STEPS=38544
 
 cd "$WT"
 export PYTHONPATH=.
+# The driver refuses to launch as a valid control unless it can read the LIVE
+# yaml (window 4, 2026-08-20): pins cannot detect that the live file moved.
+export CHESS_LIVE_PRODUCTION_CONFIG=$LIVE/configs/pbt2_small.yaml
 
 echo "=== [1/2] purity receipt  $(date '+%H:%M:%S') ==="
 python3 scripts/lc0_control_heldout.py purity \

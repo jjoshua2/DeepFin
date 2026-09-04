@@ -127,15 +127,35 @@ def main() -> None:
     p_net = net_policy(model, d["x"], d["legal"], args.device, args.batch)
 
     # MATCHED SUPPORT: supp(t0) U supp(q) == supp(t_alpha) for alpha in (0,1).
-    support = (t0 > 0) | (q > 0)
+    # ⚑ Computed ONCE and used at EVERY alpha, including alpha=0, where the
+    # target's own support collapses back to supp(t0). Recomputing it per alpha
+    # would move the net's reference distribution along the sweep, so the
+    # baseline would not be a baseline.
+    # ⚑ The membership test is EXACT (`> 0`), not an epsilon. Non-candidates are
+    # written as exact 0.0 by the scatter-add that builds these targets, so a
+    # `> 1e-8`-style cutoff would be an instrument choice with no counterpart in
+    # production. `min positive` below is the sanity check on that claim.
+    s_t0, s_q = t0 > 0, q > 0
+    support = s_t0 | s_q
     kept = (p_net * support).sum(axis=1)
     pn = np.where(support, p_net, 0.0) / np.clip(kept, 1e-12, None)[:, None]
     h_net = row_entropy(pn)
 
-    print(f"\nsupport: t0 {(t0 > 0).sum(1).mean():.1f}  q {(q > 0).sum(1).mean():.1f}  "
-          f"union {support.sum(1).mean():.1f} moves")
-    print(f"tail_mass_net (net mass OUTSIDE the union, discarded by the restriction): "
-          f"mean {1 - kept.mean():.4f}  p90 {np.percentile(1 - kept, 90):.4f}")
+    inter = (s_t0 & s_q).sum(1)
+    jac = inter / np.clip(support.sum(1), 1, None)
+    print("\nSUPPORT GEOMETRY (a blend that ADDS support raises entropy for a real "
+          "reason;\nthe net must simply not be charged for mass the target can never use)")
+    for lab, v in (("|supp(t0)|", s_t0.sum(1)), ("|supp(q_SF)|", s_q.sum(1)),
+                   ("|S| = union", support.sum(1)), ("|intersection|", inter)):
+        print(f"  {lab:16s} mean {v.mean():6.2f}   median {np.median(v):6.1f}")
+    print(f"  {'Jaccard':16s} mean {jac.mean():6.3f}   median {np.median(jac):6.3f}")
+    print(f"  q-only moves (support the blend ADDS): mean "
+          f"{(s_q & ~s_t0).sum(1).mean():.2f}")
+    print(f"  min positive: t0 {t0[s_t0].min():.3e}   q {q[s_q].min():.3e}   "
+          f"(exact-zero test is sound iff these are not denormal noise)")
+    print(f"  tail_mass_net (net mass OUTSIDE S, discarded): mean "
+          f"{1 - kept.mean():.4f}  p90 {np.percentile(1 - kept, 90):.4f}  "
+          f"max {np.max(1 - kept):.4f}")
     print(f"\nH(p_net) on matched support: mean {h_net.mean():.4f}")
     print("(the ledger's 0.7819 is the AUDIT population on its OWN support -- not this)")
 

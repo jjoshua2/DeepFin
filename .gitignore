@@ -38,6 +38,7 @@ htmlcov/
 # Local tooling
 .claude/*
 !.claude/skills
+!.claude/agents/
 .codex
 .skylos/
 .merge_ts

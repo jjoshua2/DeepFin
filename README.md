@@ -38,6 +38,8 @@ See [development](docs/development.md) for setup and validation,
 [project guidance](CLAUDE.md) for agent instructions. `future_ideas.md` preserves
 dated proposals rather than current deployment instructions.
 
+See [toolchain entry points](docs/toolchains.md) and [branch lifecycle](docs/branch_lifecycle.md) for development and production adoption.
+
 ## Setup
 ```bash
 pip install -e ".[dev]"      # full server/test env (server+train+tune+onnx);

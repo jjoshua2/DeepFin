@@ -14,6 +14,8 @@ into its blind spots. The distributed loop is selfplay → shard upload → disk
 replay → training → checkpoint → model publication to workers.
 
 - [Development](docs/development.md): setup, commands, validation and code map.
+- [Toolchains](docs/toolchains.md): corpus, offline training, match and agent entry points.
+- [Branch lifecycle](docs/branch_lifecycle.md): main owns development; live pins deployment.
 - [Experiment navigation](docs/experiments/README.md): find prior decisions and artifacts.
 - [Evaluation](docs/eval_protocol.md): decide what a measurement can establish.
 - [Model heads](docs/model_heads.md): head/target/loss semantics; read before changing them.
@@ -28,6 +30,11 @@ checkpoint rather than copying sizes, paths or tuning values from prose.
 Research configs and dated plans do not establish what is currently enabled.
 
 ## Preserve running work
+
+Put reusable tools and fixes on `main`. The live branch may lag main for an experiment;
+it is not a separate development line. If an urgent fix is first made live, open its
+main-targeted PR in the same session and link it in the run record. Deployment of a
+main revision remains a separate, intentional operation.
 
 This machine often has long-running training, generation and monitoring jobs.
 Before an action that affects them, identify the owning checkout, process, config,

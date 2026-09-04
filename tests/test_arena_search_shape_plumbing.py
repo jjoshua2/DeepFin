@@ -813,6 +813,26 @@ def _fields_where_production_differs_from_the_dataclass_default() -> list[str]:
     ]
 
 
+@pytest.fixture
+def nondefault_production_config(monkeypatch: Any, tmp_path: Any) -> None:
+    """Arm discriminating values without depending on the deployed experiment."""
+    import yaml
+
+    from chess_anti_engine.utils.config_yaml import load_yaml_file
+    from scripts import arena_standard as arena_mod
+
+    raw = load_yaml_file(str(arena_mod.production_config_path()))
+    raw["selfplay"].update({
+        "gumbel_target_max_visit_cap": 5,
+        "gumbel_target_untempered_prior": True,
+        "gumbel_c_scale": 0.25,
+    })
+    config = tmp_path / "nondefault-production.yaml"
+    config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    monkeypatch.setenv("CHESS_ANTI_ENGINE_LIVE_CONFIG", str(config))
+
+
+@pytest.mark.usefixtures("nondefault_production_config")
 def test_the_equality_check_is_not_vacuous_and_catches_a_dropped_knob() -> None:
     """MUTATION, in-suite: drop each live knob and watch the equality go RED.
 
@@ -832,8 +852,8 @@ def test_the_equality_check_is_not_vacuous_and_catches_a_dropped_knob() -> None:
         "the equality test cannot discriminate a carried shape from an empty "
         "one. This is a gate that cannot fail -- do not read it as a pass."
     )
-    # The two knobs this whole fix exists for. Pinned so that a yaml revert
-    # turns this into a visible decision rather than silently defusing the test.
+    # The fixture explicitly arms the two original regression cases; production
+    # may use defaults without weakening this propagation check.
     assert {"target_max_visit_cap", "target_untempered_prior"} <= set(live), (
         f"production no longer sets the two knobs the drift was found on; live "
         f"discriminating fields are {live}. If the yaml genuinely reverted them, "
@@ -851,6 +871,7 @@ def test_the_equality_check_is_not_vacuous_and_catches_a_dropped_knob() -> None:
         )
 
 
+@pytest.mark.usefixtures("nondefault_production_config")
 def test_a_newly_promoted_knob_is_carried_without_editing_the_arena(
     monkeypatch: Any, tmp_path: Any,
 ) -> None:
@@ -892,6 +913,7 @@ def test_a_newly_promoted_knob_is_carried_without_editing_the_arena(
     assert GumbelConfig().target_max_visit_cap != 11
 
 
+@pytest.mark.usefixtures("nondefault_production_config")
 def test_the_runtime_check_refuses_a_training_shape_that_drifted(
     monkeypatch: Any,
 ) -> None:
@@ -1027,6 +1049,7 @@ def test_volatility_reaches_the_search_through_the_merged_overrides(
     )
 
 
+@pytest.mark.usefixtures("nondefault_production_config")
 def test_the_record_shows_the_target_only_knobs_it_ran() -> None:
     """A banked row must be re-readable as to WHICH regime it measured.
 

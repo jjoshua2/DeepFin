@@ -162,6 +162,35 @@ def _arm_directions(
     # top-1 only: is the second floored move carrying weight or diluting?
     d_C1 = _floor_dir(floor_idx[:1], TOP2_FLOOR)
 
+    # --- arm E: MEMBERSHIP ONLY. Floor every surfaced move, no rank read at all.
+    # If ~77% of C's pull really is "floor a surfaced move", E captures it with
+    # strictly less information, and shipping C's rank machinery would be waste.
+    d_E = _floor_dir(surf_idx, TOP2_FLOOR)
+
+    # --- arm F: Josh's adaptive floor -------------------------------------
+    #   * SF's top-1 ALWAYS,
+    #   * plus any surfaced move within `delta` cp of best,
+    #   * but ONLY moves scoring strictly better than the move WE currently pick.
+    # The last clause is what C lacks: it makes the term go QUIET as our argmax
+    # improves, instead of permanently dragging mass onto SF's choice. A move we
+    # already prefer that SF also likes needs no floor.
+    our_i = int(np.argmax(p_ours))
+    score_of = {i: s for i, s, _q in scored}
+    our_score = score_of.get(our_i)
+
+    def _adaptive_idx(delta_cp: float) -> list[int]:
+        keep = [floor_idx[0]]                      # top-1 unconditionally
+        for i, s, _q in scored:
+            if i == floor_idx[0]:
+                continue
+            if best_cp - s > delta_cp:
+                continue                            # not within delta of best
+            if our_score is not None and s <= our_score:
+                continue                            # not better than our pick
+            keep.append(i)
+        return keep
+
+
     # --- arm D: WDL-space regret from SF's OWN w/d, surfaced support ---------
     r_q = np.zeros(n, dtype=np.float64)
     for i, _s, q in scored:
@@ -179,20 +208,39 @@ def _arm_directions(
     d_N1 = -p_ours * (np.where(surfaced, r_N1, 0.0) - mean_N1)
 
     # --- N2: anti-prior. pure confidence flattening, zero SF input -----------
+    # ⚑ arm G: the EXISTING `w_sf_own` knob -- plain CE toward the label's top-1.
+    # loss = -log p[top1]  =>  d/dlogits = p - e_top1  =>  descent dir = e_top1 - p.
+    # UNBOUNDED: it keeps pushing after the move is already searched, unlike the
+    # one-sided floor which stops at tau. This is the "more extreme SL" arm and it
+    # was never scored -- A/B/D were regret-WEIGHTED EXPECTATIONS, a different shape.
+    e_top1 = np.zeros(n, dtype=np.float64)
+    e_top1[floor_idx[0]] = 1.0
+    d_G = e_top1 - p_ours
+
     d_N2 = _softmax_dir(p_ours, p_ours.copy())
 
     return {
+        # sentinel: the PRODUCTION MultiPV-6 label's own top-1, popped by the
+        # caller. Needed to split do-no-harm by whether the shallow label agrees
+        # with the deep ruler -- an arm cannot be blamed for LABEL error.
+        "__meta_label_best": np.array([float(floor_idx[0])]),
         "A_prod_cp_fill": _softmax_dir(p_ours, r_A),
         "B_gated_cp": d_B,
         "C_top2_floor": d_C,
         "C_top1_only": d_C1,
         "C_RANDOM_ctl": d_Crand,
+        "E_membership_all": d_E,
+        "F_adapt20_t0.35": _floor_dir(_adaptive_idx(20.0), 0.35),
+        "F_adapt50_t0.35": _floor_dir(_adaptive_idx(50.0), 0.35),
+        "F_adapt100_t0.35": _floor_dir(_adaptive_idx(100.0), 0.35),
+        "F_adapt20_t0.15": _floor_dir(_adaptive_idx(20.0), 0.15),
         "C_tau0.02": _floor_dir(floor_idx, 0.02),
         "C_tau0.05": _floor_dir(floor_idx, 0.05),
         "C_tau0.20": _floor_dir(floor_idx, 0.20),
         "C_tau0.35": _floor_dir(floor_idx, 0.35),
         "C_tau0.50": _floor_dir(floor_idx, 0.50),
         "D_wdl_space": d_D,
+        "G_sf_own_ce": d_G,
         "N1_shuffled": d_N1,
         "N2_antiprior": d_N2,
     }
@@ -237,6 +285,25 @@ def main() -> None:
     ocos: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
     # argmax pull is ruler-free: the deep-SF best move IS the target
     pull: dict[str, dict[str, float]] = defaultdict(dict)
+    # ⚑ DO-NO-HARM: the COMPLEMENT population -- rows where our argmax ALREADY
+    # is SF's best move. A good term is quiet there. d[our_argmax] < 0 means the
+    # arm drags mass OFF a move we had right. Josh's clause 3 exists for this.
+    harm: dict[str, dict[str, float]] = defaultdict(dict)
+    cpm: dict[str, dict[str, float]] = defaultdict(dict)
+    # ⚑ THE FLOOR IS INERT WHERE SF's BEST IS ALREADY SEARCHED. tau = 1/gumbel_topk
+    # = 0.0625 guarantees root inclusion (ledger ae2ea797b), so rows with
+    # p_ours[sf_best] >= 0.0625 get NOTHING from the floor. Do any arms help THERE?
+    pull_hi: dict[str, dict[str, float]] = defaultdict(dict)
+    pull_lo: dict[str, dict[str, float]] = defaultdict(dict)
+    # ⚑ ORACLE CEILING for a "when to trust SF" gate. Split the pull population by
+    # whether the SHALLOW label's top-1 equals the DEEP ruler's best. A confidence
+    # signal can at BEST recover the difference between these two; if it is small,
+    # no predictor is worth building.
+    pull_agree: dict[str, dict[str, float]] = defaultdict(dict)
+    pull_dis: dict[str, dict[str, float]] = defaultdict(dict)
+    harm_ag: dict[str, dict[str, float]] = defaultdict(dict)
+    harm_dis: dict[str, dict[str, float]] = defaultdict(dict)
+    label_agree: dict[str, float] = {}
     skipped = defaultdict(int)
 
     for key in keys:
@@ -279,6 +346,7 @@ def main() -> None:
         p_deep /= p_deep.sum()
 
         dirs = _arm_directions(p_ours, ucis, shallow[key].get("pvs", []), rng)
+        label_best = int(dirs.pop("__meta_label_best")[0]) if dirs else -1
         if dirs is None:
             skipped["shallow <2 scored"] += 1
             continue
@@ -317,22 +385,69 @@ def main() -> None:
         # d[sf_best] - d[our_argmax] > 0 means the arm raises mass on the deep-SF
         # best move faster than on the move we currently pick. Argmax-invariant
         # interventions (e.g. temperature) score exactly 0, which is correct.
-        sf_best_uci = str(rec_deep.get("bestmove", ""))
-        i_sf = idx_of.get(sf_best_uci)
-        i_ours = int(np.argmax(p_ours))
-        if i_sf is not None and i_sf != i_ours:
-            # normalise by |d| so arms with different natural scales compare
+        # ⚑⚑ THE CP METRIC. argmax pull scores TOP-1 IDENTITY and gives ZERO credit
+        # for promoting a move 5cp from best -- which penalises any arm that follows a
+        # teacher whose disagreements are SMALL. Our shallow label's top-1 costs 12.4cp
+        # vs our own 46.9cp, so its "errors" are near-misses. This scores the arms on
+        # the quantity that matters: the first-order change in EXPECTED DEEP CP LOSS.
+        #   p(logits + eps*d) => dE[r]/deps = sum(p*r*d) - (sum p*r)(sum p*d)
+        # Reported NEGATED so higher = reduces expected cp loss = better.
+        dscored: list[tuple[int, float]] = []
+        for pv in (rec_deep.get("multipv") or []):
+            j = idx_of.get(str(pv.get("move", "")))
+            if j is None:
+                continue
+            sc = _sf_move_score(-32768 if pv.get("cp") is None else int(pv["cp"]),
+                                int(pv.get("mate") or 0))
+            if sc is not None:
+                dscored.append((j, float(sc)))
+        if len(dscored) >= 2:
+            dbest = max(v for _j, v in dscored)
+            dworst = min(v for _j, v in dscored)
+            # unlisted legal moves: worst-listed regret as a FLOOR (audit convention,
+            # a lower bound -- MultiPV >= 10 at >= 1M nodes)
+            rdeep = np.full(int(p_ours.shape[0]),
+                            min(max(dbest - dworst, 0.0), 1000.0), dtype=np.float64)
+            for j, v in dscored:
+                rdeep[j] = min(max(dbest - v, 0.0), 1000.0)
+            pr_ = float(np.dot(p_ours, rdeep))
             for name, d in dirs.items():
                 nrm = float(np.linalg.norm(d))
                 if nrm > 0.0:
-                    pull[name][key] = float(d[i_sf] - d[i_ours]) / nrm
+                    rate = float(np.dot(p_ours * rdeep, d)) - pr_ * float(np.dot(p_ours, d))
+                    cpm[name][key] = -rate / nrm
+
+        sf_best_uci = str(rec_deep.get("bestmove", ""))
+        i_sf = idx_of.get(sf_best_uci)
+        i_ours = int(np.argmax(p_ours))
+        if i_sf is not None and i_sf == i_ours:
+            agree = (label_best == i_sf)
+            label_agree[key] = 1.0 if agree else 0.0
+            for name, d in dirs.items():
+                nrm = float(np.linalg.norm(d))
+                v = (float(d[i_ours]) / nrm) if nrm > 0.0 else 0.0
+                harm[name][key] = v
+                (harm_ag if agree else harm_dis)[name][key] = v
+        if i_sf is not None and i_sf != i_ours:
+            # normalise by |d| so arms with different natural scales compare
+            hi = float(p_ours[i_sf]) >= 0.0625
+            lab_ok = (label_best == i_sf)
+            for name, d in dirs.items():
+                nrm = float(np.linalg.norm(d))
+                if nrm > 0.0:
+                    v = float(d[i_sf] - d[i_ours]) / nrm
+                    pull[name][key] = v
+                    (pull_hi if hi else pull_lo)[name][key] = v
+                    (pull_agree if lab_ok else pull_dis)[name][key] = v
 
     print(f"[rig] skipped: {dict(skipped)}")
     print()
 
     boot = np.random.default_rng(args.seed)
     order = ("A_prod_cp_fill", "B_gated_cp", "C_top2_floor", "D_wdl_space",
-             "C_top1_only", "C_tau0.02", "C_tau0.05", "C_tau0.20", "C_tau0.35",
+             "C_top1_only", "G_sf_own_ce", "E_membership_all",
+             "F_adapt20_t0.15", "F_adapt20_t0.35", "F_adapt50_t0.35", "F_adapt100_t0.35",
+             "C_tau0.02", "C_tau0.05", "C_tau0.20", "C_tau0.35",
              "C_tau0.50", "C_RANDOM_ctl", "N1_shuffled", "N2_antiprior")
     contrasts = (("D_wdl_space", "A_prod_cp_fill"),
                  ("D_wdl_space", "B_gated_cp"),
@@ -352,7 +467,17 @@ def main() -> None:
                  ("C_tau0.20", "C_top2_floor"),
                  ("C_tau0.35", "C_top2_floor"),
                  ("C_tau0.50", "C_top2_floor"),
-                 ("C_tau0.35", "C_RANDOM_ctl"))
+                 ("C_tau0.35", "C_RANDOM_ctl"),
+                 ("F_adapt20_t0.35", "C_RANDOM_ctl"),
+                 ("F_adapt20_t0.35", "C_tau0.35"),
+                 ("F_adapt50_t0.35", "F_adapt20_t0.35"),
+                 ("F_adapt100_t0.35", "F_adapt20_t0.35"),
+                 ("F_adapt20_t0.15", "F_adapt20_t0.35"),
+                 ("E_membership_all", "C_RANDOM_ctl"),
+                 ("E_membership_all", "C_top2_floor"),
+                 ("G_sf_own_ce", "C_RANDOM_ctl"),
+                 ("G_sf_own_ce", "F_adapt20_t0.35"),
+                 ("G_sf_own_ce", "N2_antiprior"))
 
     report: dict = {"tier": args.tier, "n_keys": len(keys),
                     "skipped": dict(skipped), "views": {}}
@@ -422,6 +547,111 @@ def main() -> None:
                           "significant": not (lo <= 0.0 <= hi)}
     prow["_contrasts"] = pc
     report["argmax_pull"] = prow
+    print()
+
+    for lbl, acc in (("FLOOR-INERT  p_ours[sf_best] >= 1/topk (floor does nothing)", pull_hi),
+                     ("FLOOR-ACTIVE p_ours[sf_best] <  1/topk (floor's own rows)", pull_lo)):
+        print(f"═══ ARGMAX PULL — {lbl} ═══")
+        print(f"{'arm':<20} {'n':>6} {'mean pull':>11} {'frac>0':>8}   "
+              f"{'vs C_RANDOM (paired)':>26}")
+        base = acc.get("C_RANDOM_ctl") or {}
+        for name in order:
+            d = acc.get(name) or {}
+            if not d:
+                continue
+            v = np.array(list(d.values()))
+            shared = sorted(set(d) & set(base))
+            if shared and name != "C_RANDOM_ctl":
+                diff = np.array([d[k] - base[k] for k in shared])
+                lo, hi2 = _paired_bootstrap(list(diff), args.bootstrap, boot)
+                star = "***" if (lo > 0 or hi2 < 0) else "   "
+                con = f"{diff.mean():>+9.4f} [{lo:>+7.4f},{hi2:>+7.4f}] {star}"
+            else:
+                con = ""
+            print(f"{name:<20} {v.size:>6} {v.mean():>+11.5f} {100*(v>0).mean():>7.1f}%   {con}")
+        print()
+
+    keep = ("A_prod_cp_fill", "G_sf_own_ce", "C_top2_floor", "C_tau0.35",
+            "F_adapt20_t0.15", "F_adapt20_t0.35", "C_RANDOM_ctl")
+    print("═══ ΔE[deep cp loss] — cp reduced per unit logit step (PARTIAL CREDIT) ═══")
+    print("  the metric argmax-pull cannot see: promoting a move 5cp from best COUNTS.")
+    print(f"{'arm':<20} {'n':>6} {'mean cp/step':>13} {'frac>0':>8}   {'vs C_RANDOM (paired)':>26}")
+    cbase = cpm.get("C_RANDOM_ctl") or {}
+    for name in order:
+        d = cpm.get(name) or {}
+        if not d:
+            continue
+        v = np.array(list(d.values()))
+        sh = sorted(set(d) & set(cbase))
+        if sh and name != "C_RANDOM_ctl":
+            diff = np.array([d[k] - cbase[k] for k in sh])
+            lo, hi2 = _paired_bootstrap(list(diff), args.bootstrap, boot)
+            star = "***" if (lo > 0 or hi2 < 0) else "   "
+            con = f"{diff.mean():>+9.4f} [{lo:>+7.4f},{hi2:>+7.4f}] {star}"
+        else:
+            con = ""
+        print(f"{name:<20} {v.size:>6} {v.mean():>+13.5f} {100*(v>0).mean():>7.1f}%   {con}")
+    print()
+
+    print("═══ ORACLE CEILING — pull split by whether the SHALLOW label == DEEP best ═══")
+    print("  a perfect 'trust SF here' gate zeroes the DISAGREE column; the ceiling is")
+    print("  the gap between 'all rows' and 'agree only, disagree contributing 0'.")
+    print(f"{'arm':<20} {'agree n':>8} {'agree':>9} {'dis n':>7} {'disagree':>10} "
+          f"{'ALL':>9} {'GATED (dis->0)':>15} {'ceiling':>9}")
+    for name in keep:
+        da, dd = pull_agree.get(name) or {}, pull_dis.get(name) or {}
+        if not da and not dd:
+            continue
+        a = np.array(list(da.values())) if da else np.array([])
+        b = np.array(list(dd.values())) if dd else np.array([])
+        tot = a.size + b.size
+        allm = (a.sum() + b.sum()) / max(tot, 1)
+        gated = a.sum() / max(tot, 1)      # disagree rows contribute exactly 0
+        print(f"{name:<20} {a.size:>8} {a.mean() if a.size else 0:>+9.4f} {b.size:>7} "
+              f"{b.mean() if b.size else 0:>+10.4f} {allm:>+9.4f} {gated:>+15.4f} "
+              f"{gated-allm:>+9.4f}")
+    print()
+
+    print("═══ DO-NO-HARM — d[our_argmax] on rows where our move IS SF's best ═══")
+    print("  (>=0 good: term leaves a correct move alone; <0 = drags mass off it)")
+    print(f"{'arm':<20} {'n':>6} {'mean d[ours]':>13} {'frac<0':>8} {'frac==0 (silent)':>18}")
+    hrow: dict = {}
+    for name in order:
+        d = harm.get(name) or {}
+        if not d:
+            continue
+        v = np.array(list(d.values()))
+        hrow[name] = {"n": int(v.size), "mean": float(v.mean()),
+                      "frac_neg": float((v < 0).mean()), "frac_zero": float((v == 0).mean())}
+        print(f"{name:<20} {v.size:>6} {v.mean():>+13.5f} {100*(v<0).mean():>7.1f}% "
+              f"{100*(v==0).mean():>17.1f}%")
+    report["do_no_harm"] = hrow
+    print()
+
+    # ⚑ SPLIT: an arm floors the PRODUCTION MultiPV-6 label's top-1, but this
+    # population is defined by the DEEP ruler's best. Where the two disagree the
+    # arm is faithfully executing a wrong label -- that is label error, not an
+    # arm defect. Where they AGREE the arm has no excuse.
+    ag = np.array(list(label_agree.values()))
+    print(f"═══ DO-NO-HARM SPLIT — shallow label agrees with deep ruler on "
+          f"{100*ag.mean():.1f}% of n={ag.size} ═══")
+    print(f"{'arm':<20} {'mean|AGREE':>11} {'frac<0':>8} {'silent':>8}   "
+          f"{'mean|DISAGREE':>14} {'frac<0':>8}")
+    srow: dict = {}
+    for name in order:
+        da, dd = harm_ag.get(name) or {}, harm_dis.get(name) or {}
+        if not da and not dd:
+            continue
+        a = np.array(list(da.values())) if da else np.array([np.nan])
+        b = np.array(list(dd.values())) if dd else np.array([np.nan])
+        srow[name] = {"n_agree": int(a.size), "mean_agree": float(a.mean()),
+                      "frac_neg_agree": float((a < 0).mean()),
+                      "frac_zero_agree": float((a == 0).mean()),
+                      "n_dis": int(b.size), "mean_dis": float(b.mean()),
+                      "frac_neg_dis": float((b < 0).mean())}
+        print(f"{name:<20} {a.mean():>+11.5f} {100*(a<0).mean():>7.1f}% "
+              f"{100*(a==0).mean():>7.1f}%   {b.mean():>+14.5f} {100*(b<0).mean():>7.1f}%")
+    report["do_no_harm_split"] = srow
     print()
 
     if args.out:

@@ -1,6 +1,8 @@
-# Historical published live configuration at d529afefc (2026-09-04).
+# Portable snapshot of the published live configuration at d529afefc (2026-09-04).
 # Preserved for reproducing its experiments, not an automatic deployment or promotion.
-# Verify machine paths, resume state and experimental settings before use.
+# Repository-root paths are relative and the worker login is a placeholder.
+# The original unmodified configuration remains in the source commit.
+# Verify paths, credentials, resume state and experimental settings before use.
 # THIS IS THE LIVE PRODUCTION CONFIG. train.sh IS pointed at this file, and the running
 # trial re-reads it every iteration.
 #
@@ -96,7 +98,7 @@ replay_window_growth: 20000
 # policy heads at load (trainable_init.py:471-472). The old pointer
 # (data/bootstrap/bootstrap_net_v5_iter239.pt, value/trunk-only, zero_policy_heads: true)
 # is what any revert of this pair must restore -- never revert one line alone.
-bootstrap_checkpoint: /home/josh/projects/chess/scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+bootstrap_checkpoint: scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
 bootstrap_zero_policy_heads: false
 worker_wheel_path: null
 # DELETED bootstrap_max_positions: DEAD KEY - it has exactly two surfaces and neither is a
@@ -113,7 +115,7 @@ worker_wheel_path: null
 #   ([tune/trial_config.py] _get(...,None)). ABSENT from the realized iter-478 config too.
 # ADDED -- GHOST-KEY PURGE #1 of 7, and the only harmful one (TUNE_AUDIT T5).
 # The live trial's SAVED config carries
-#   salvage_seed_pool_dir = '/home/josh/projects/chess/data/salvage/swap_512x16_20260711'
+#   salvage_seed_pool_dir = 'data/salvage/swap_512x16_20260711'
 # -- the −494 Elo swap pool. Today's yaml deliberately OMITS the key, and omission cannot
 # clear it: both writers only add/update (harness.py:362), so the value has ridden every
 # restart since 2026-07-26. Reproduced live 2026-08-04 by
@@ -138,7 +140,7 @@ worker_wheel_path: null
 # the trial log (`[trial] salvage warmstart loaded slot=... from <path>`) BEFORE reading any
 # metric. That log line is the only thing that proves which pool actually won.
 # The key is now kept EQUAL to the pool the CLI passes, so precedence cannot decide the run.
-salvage_seed_pool_dir: "/home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815"
+salvage_seed_pool_dir: "data/salvage/bt4heads_iter100_20260815"
 salvage_restore_donor_config: false
 salvage_restore_full_trainer_state: true
 salvage_restore_pid_state: true
@@ -183,7 +185,7 @@ model:
   gradient_checkpointing: false
 
 stockfish:
-  stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
+  stockfish_path: e2e_server/publish/stockfish
   # FLIP sf_nodes: 5000 -> 50000; 50000 -> 75000 (2026-08-05 boot-hygiene package).
   #   PIN TO REACHABLE. pid.py:961 uses this as initial_nodes and pid.py:487 immediately clamps it
   #   into [sf_pid_min_nodes, sf_pid_max_nodes] = [50000, 1000000]. 75000 = the fresh-boot
@@ -295,18 +297,18 @@ selfplay:
   selfplay_temperature_decay_start_move: 1
   selfplay_temperature_decay_moves: 60
   selfplay_temperature_endgame: 0.0
-  opening_book_path: /home/josh/projects/chess/data/opening_books/2moves_v2_no8overlap_uho060110.pgn.zip
+  opening_book_path: data/opening_books/2moves_v2_no8overlap_uho060110.pgn.zip
   opening_book_max_plies: 4
   opening_book_max_games: 200000
   opening_book_prob: 1.0
-  opening_book_path_2: /home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip
+  opening_book_path_2: data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip
   opening_book_max_plies_2: 16
   opening_book_max_games_2: 200000
   opening_book_mix_prob_2: 0.95
   # PIN. Unreachable only because opening_book_prob is 1.0; keeping it means this deletion
   # is not conditional on another key not moving.
   random_start_plies: 2
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_217.txt
+  opening_fen_list_path: data/blindspot_fens_retire_217.txt
   # DELETED opening_fen_prob: 0.0, and structurally superseded -- [selfplay/opening.py] requires
   #   opening_fen_prob>0 for the probabilistic draw, while seeding now runs through the deterministic
   #   server dole (opening_fen_dole_per_iter). Consumer defaults match ([tune/trial_config.py],
@@ -320,7 +322,7 @@ selfplay:
   sf_refute_full_node_moves: false
   sf_refute_record_opp_rows: false
   sf_refute_opp_policy_net_blend: 0.0
-  blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
+  blindspot_harvest_out_path: data/harvest/blindspot_live.txt
   mcts: gumbel
   mcts_simulations: 100
   # ⚑ PIN. Inert ONLY because it equals mcts_simulations. `progressive_mcts` is not
@@ -385,12 +387,12 @@ selfplay:
   sf_wdl_cp_slope: 0.006
   sf_wdl_cp_draw_width: 120.0
   soft_policy_temp: 2.0
-  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
+  syzygy_path: data/syzygy_3-4-5:data/syzygy_6
   # 2026-08-07: aligned with syzygy_path (was syzygy_3-4-5 alone). NOTE the
   # dir names lie: syzygy_3-4-5 also holds all 365 six-man WDL files, so SF
   # has probed 6-man WDL in search all along — this change only adds 6-man
   # DTZ (root ranking + 50-move-exact conversion), which lives in syzygy_6.
-  stockfish_syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
+  stockfish_syzygy_path: data/syzygy_3-4-5:data/syzygy_6
   syzygy_adjudicate: true
   syzygy_adjudicate_fraction: 0.99
   syzygy_in_search: true
@@ -724,7 +726,7 @@ tune:
   # only ever creates a user on the FIRST run against a given server root. The
   # result is every worker up, authenticating, and getting 401. Change it only
   # between runs, and create the user with manage_users.py first.
-  distributed_worker_username: josh
+  distributed_worker_username: "<worker-user>"
   # ⚑ REMOVED: distributed_worker_password. This file is TRACKED IN A PUBLIC
   # REPOSITORY, so the value that was here is DISCLOSED and stays disclosed in
   # the git history. The credential now comes from $CAE_WORKER_PASSWORD (or the
@@ -781,7 +783,7 @@ tune:
   # false to match the configuration arm B's +13.9 Elo was measured under.
   distributed_async_test_eval: false
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
+  distributed_worker_shared_cache_dir: runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 2700
@@ -794,8 +796,8 @@ tune:
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
-  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
+  distributed_server_root_override: runs/pbt2_small/server
+  tune_replay_root_override: runs/pbt2_small/replay
   shuffle_buffer_size: 100000
   shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
@@ -1082,8 +1084,8 @@ tune:
   # indistinguishable from a forgotten one. Naming the paths makes the startup line an
   # observation that can FAIL: `[probe] era set loaded: path=... rows=... digest=...` on
   # success, `[probe] era: no probe set at <p>` if the build step was skipped.
-  era_probe_path: /home/josh/projects/chess/data/era_probe/era_20260804.npz
-  era_probe_inwindow_path: /home/josh/projects/chess/data/era_probe/inwindow_20260816.npz
+  era_probe_path: data/era_probe/era_20260804.npz
+  era_probe_inwindow_path: data/era_probe/inwindow_20260816.npz
   era_probe_rows: 2048          # construction-only, like the two paths above
   era_probe_interval: 1         # LIVE-RELOADABLE; <= 0 disables scoring (sets stay loaded,
                                 # columns read nan) -- the throttle for a contended box

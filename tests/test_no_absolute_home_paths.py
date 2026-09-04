@@ -520,14 +520,7 @@ _ALLOWED: dict[str, dict[str, tuple[int, str]]] = {
         }
         for rel, n_abs_home in _CONFIGS
     },
-    # PINNED BY A TEST, so it cannot be scrubbed on its own:
-    # `test_param_count.py::test_claude_md_syzygy_pair_matches_the_production_config`
-    # requires CLAUDE.md to quote `configs/pbt2_small.yaml`'s `syzygy_path`
-    # VERBATIM, and to quote no other pair. The doc is downstream of the config;
-    # it goes when the config goes.
-    "CLAUDE.md": {
-        "abs_home": (2, "must quote the production syzygy_path verbatim (test_param_count)"),
-    },
+
 }
 
 # Tracked directories whose contents are FROZEN ARTEFACTS of finished
