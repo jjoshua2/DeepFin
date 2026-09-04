@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -4160,6 +4161,130 @@ def test_cluster_bootstrap_refits_models_inside_resamples(
 
     assert calls >= 4, "each usable replicate must refit both models"
     assert alpha_calls >= 4, "each usable replicate must reselect alpha in-bag"
+
+
+def test_bootstrap_blas_limit_restores_after_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threadpoolctl
+    from scripts import analyze_chunk_controller as controller
+
+    rows = [
+        _transition(str(game), game, horizon, game / horizon, current=True)
+        for game in range(6)
+        for horizon in (100, 150)
+    ]
+    active = False
+    calls: list[tuple[int, str]] = []
+
+    class FakeLimit:
+        def __enter__(self) -> None:
+            nonlocal active
+            assert not active
+            active = True
+
+        def __exit__(self, *_args: object) -> None:
+            nonlocal active
+            assert active
+            active = False
+
+    def fake_limit(*, limits: int, user_api: str) -> FakeLimit:
+        calls.append((limits, user_api))
+        return FakeLimit()
+
+    def checked_refit(
+        transitions: list[Transition], _fold_ids: np.ndarray,
+        *, model: str, n_folds: int,
+    ) -> np.ndarray:
+        del model, n_folds
+        assert active
+        return np.zeros(len(transitions), dtype=np.float64)
+
+    monkeypatch.setattr(threadpoolctl, "threadpool_limits", fake_limit)
+    monkeypatch.setattr(controller, "_refit_fold_predictions", checked_refit)
+    monkeypatch.setattr(
+        controller,
+        "_minimum_reachable_rung_gain_delta",
+        lambda *_args, **_kwargs: 1.0,
+    )
+
+    result = controller.cluster_bootstrap_delta(
+        rows, allocation_fraction=0.5, samples=2, seed=3, n_folds=3,
+    )
+
+    assert calls == [(1, "blas")]
+    assert active is False
+    assert result["valid_samples"] == 2
+
+
+def test_bootstrap_blas_limit_preserves_duplicate_cluster_near_tie_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import analyze_chunk_controller as controller
+
+    rows = [
+        _transition(
+            f"{game}:{copy}", game, horizon,
+            (game - 2.5) * 1e-12 + copy * 1e-15 + horizon * 1e-18,
+            current=(game + copy) % 2 == 0,
+            value=(game * 2 + copy) * 1e-8,
+        )
+        for game in range(6)
+        for copy in range(2)
+        for horizon in (100, 150, 200)
+    ]
+    scoped_limit = controller._bootstrap_blas_limit
+    monkeypatch.setattr(controller, "_bootstrap_blas_limit", nullcontext)
+    unrestricted = controller.cluster_bootstrap_delta(
+        rows, allocation_fraction=0.5, samples=3, seed=9, n_folds=3,
+    )
+    monkeypatch.setattr(controller, "_bootstrap_blas_limit", scoped_limit)
+    scoped = controller.cluster_bootstrap_delta(
+        rows, allocation_fraction=0.5, samples=3, seed=9, n_folds=3,
+    )
+
+    assert scoped == unrestricted
+
+
+def test_bootstrap_missing_analysis_dependency_is_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 0.0, current=True)
+        for game in range(3)
+        for horizon in (100, 150)
+    ]
+    monkeypatch.setitem(sys.modules, "threadpoolctl", None)
+
+    with pytest.raises(RuntimeError, match=r'pip install -e "\.\[analysis\]"'):
+        cluster_bootstrap_delta(
+            rows, allocation_fraction=0.5, samples=1, seed=0, n_folds=2,
+        )
+
+
+def test_trajectory_producer_import_does_not_need_analysis_dependency() -> None:
+    code = """
+import builtins
+
+real_import = builtins.__import__
+
+def blocked_import(name, *args, **kwargs):
+    if name == "threadpoolctl" or name.startswith("threadpoolctl."):
+        raise ModuleNotFoundError("blocked analysis dependency", name="threadpoolctl")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = blocked_import
+import scripts.backtest_chunk_trajectory
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_bootstrap_fails_closed_when_oracle_headroom_is_undefined() -> None:

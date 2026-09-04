@@ -33,7 +33,8 @@ import platform
 import subprocess
 import sys
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
@@ -3277,6 +3278,22 @@ def _resample_source_game_clusters(
     return sampled
 
 
+@contextmanager
+def _bootstrap_blas_limit() -> Generator[None, None, None]:
+    """Keep tiny bootstrap ridge solves on one BLAS thread, then restore the pool."""
+    try:
+        from threadpoolctl import threadpool_limits
+    except ModuleNotFoundError as error:
+        if error.name != "threadpoolctl":
+            raise
+        raise RuntimeError(
+            'controller bootstrap requires the analysis dependencies; install '
+            '`pip install -e ".[analysis]"`'
+        ) from error
+    with threadpool_limits(limits=1, user_api="blas"):
+        yield
+
+
 def cluster_bootstrap_delta(
     transitions: Sequence[Transition],
     *,
@@ -3299,29 +3316,32 @@ def cluster_bootstrap_delta(
     values: list[float] = []
     invalid_samples = 0
     ineligible_samples = 0
-    for _ in range(samples):
-        try:
-            rows = _resample_source_game_clusters(transitions, rng)
-            fold_ids = _evaluation_fold_ids(rows, n_folds)
-            m0 = _refit_fold_predictions(
-                rows, fold_ids, model="M0", n_folds=n_folds,
-            )
-            m1 = _refit_fold_predictions(
-                rows, fold_ids, model="M1", n_folds=n_folds,
-            )
-            delta = _minimum_reachable_rung_gain_delta(
-                rows, m0, m1, allocation_fraction, min_oracle_headroom,
-                fold_ids=fold_ids,
-            )
-        except (ValueError, np.linalg.LinAlgError):
-            invalid_samples += 1
-            continue
-        if delta is None:
-            ineligible_samples += 1
-        elif math.isfinite(delta):
-            values.append(delta)
-        else:
-            invalid_samples += 1
+    # The trajectory producer imports this module for shared validation but
+    # never enters this lazy, scoped analysis-only dependency.
+    with _bootstrap_blas_limit():
+        for _ in range(samples):
+            try:
+                rows = _resample_source_game_clusters(transitions, rng)
+                fold_ids = _evaluation_fold_ids(rows, n_folds)
+                m0 = _refit_fold_predictions(
+                    rows, fold_ids, model="M0", n_folds=n_folds,
+                )
+                m1 = _refit_fold_predictions(
+                    rows, fold_ids, model="M1", n_folds=n_folds,
+                )
+                delta = _minimum_reachable_rung_gain_delta(
+                    rows, m0, m1, allocation_fraction, min_oracle_headroom,
+                    fold_ids=fold_ids,
+                )
+            except (ValueError, np.linalg.LinAlgError):
+                invalid_samples += 1
+                continue
+            if delta is None:
+                ineligible_samples += 1
+            elif math.isfinite(delta):
+                values.append(delta)
+            else:
+                invalid_samples += 1
     lower_tail_failure_samples = invalid_samples + ineligible_samples
     lower_tail_failure_fraction = lower_tail_failure_samples / samples
     valid_fraction = len(values) / samples

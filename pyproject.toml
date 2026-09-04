@@ -45,6 +45,12 @@ include = ["chess_anti_engine*"]
 exclude = ["runs*", "tests*"]
 
 [project.optional-dependencies]
+analysis = [
+  # Scoped BLAS limits keep the controller's many tiny ridge solves from
+  # oversubscribing a host without changing the fitted estimator.
+  "threadpoolctl>=3.6",
+]
+
 train = [
   "tensorboard>=2.0",
   # Unconditional import in train/trainer.py (gradient z-clip).
@@ -57,7 +63,7 @@ train = [
 # (no optional-dep skips), so dev pulls in every extra the tests exercise.
 # The lite client install is `pip install -e ".[worker]"`.
 dev = [
-  "chess-anti-engine[server,train,tune,onnx]",
+  "chess-anti-engine[analysis,server,train,tune,onnx]",
   # tests/test_harness_sync_exclude.py drives pyarrow.fs directly (also a
   # transitive ray dep, pinned here because the test imports it itself).
   "pyarrow>=14.0",
@@ -199,4 +205,3 @@ ignore_names = [
   "pairwise_momentum",
   "n_walkers",
 ]
-
