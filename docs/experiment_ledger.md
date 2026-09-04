@@ -73414,3 +73414,79 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
   exact matched-row value-regret commands. A BT4 failure releases rather than
   strands the independent sampler queue. All original learning and operational
   thresholds remain unchanged; the driver banks results and makes no verdict.
+
+**2026-09-04 14:37Z — BT4 FULL-CONDITIONAL TOP-TIE READOUT: SUCCESS; carry
+the treatment and use it as the control for incremental BT4-policy arms.**
+
+- The immutable matched-sims bank contains exactly 1,000 games / 500 complete
+  opening pairs. The 18.91M-row `top-max-ties`, alpha-1.0 candidate versus the
+  plain 18.91M d9 control produced pentanomial counts
+  `WW=95, WD_DW=157, DD_WL=144, LD_DL=72, LL=32`, score 0.6055, and **+74.4
+  Elo [95% CI +56.4, +92.8]**. This clears the preregistered success rule of
+  Elo above zero with CI lower bound above zero. Verdict: **WORKED**. Raw games
+  remain `scratchpad/bt4_policy_mix/arena_toptie_a100_vs_sf20m.games.jsonl`.
+- Materialization changed 3,433,606 / 18,910,484 rows (18.157%) and zero
+  unique-SF-maximum rows. Candidate mean entropy was 0.51382 versus 0.56897
+  nats, and candidate top-1 agreed with BT4 on 62.45% versus 49.37% for the
+  source. Value arrays remained byte-identical. The full raw BT4 policy
+  sidecar is now reusable for every policy-only follow-up without another
+  network evaluation.
+
+**2026-09-04 14:37Z — PREREG: two independent BT4 extensions on the same
+18.91M bank, near-tie breadth and teacher sharpness; no audit, materialization,
+optimizer step, or arena has run for either treatment at this line.**
+
+- **Shared control and isolation.** Both candidates start from the untouched
+  `qtemp_0.0005_hist_20m` source and the completed raw BT4 sidecar; each changes
+  only `policy_target`, trains from scratch for 36,960 replacement-sampled
+  steps at batch 512 / seed 0, and is judged against the successful
+  `qtemp_0.0005_hist_20m_bt4_toptie_a100/checkpoint.pt`. Do not chain one mixed
+  corpus into the other. Every value/feature/priority array and training option
+  stays identical. The two axes are read separately before any combined arm.
+- **N1, breadth only.** Define the stored-SF near-maximum set as all legal moves
+  with stored probability at least **0.50 times the row maximum**. Preserve the
+  set's total stored SF mass and every probability outside it byte-for-byte;
+  redistribute that mass by the unmodified BT4 prior (teacher temperature 1.0,
+  alpha 1.0). A one-move set is an exact identity row. This strictly contains
+  the successful exact-max-tie treatment while changing neither its BT4
+  sharpness nor any non-policy field. Paths use suffix `bt4_near050_t100`.
+- **S1, sharpness only.** Retain the successful exact stored-SF maximum set and
+  alpha 1.0, but transform BT4 legal probabilities with teacher temperature
+  **0.50** (equivalently square positive probabilities before conditioning on
+  the tied set). Unique-SF-maximum rows remain byte-identical and BT4 ranking
+  is unchanged; only the strength of its soft preference inside exact ties
+  changes. Paths use suffix `bt4_toptie_t050`.
+- **Audit-first admission.** Implement both treatments with explicit algorithm,
+  ratio, and teacher-temperature stamps in every audit, shard, and corpus
+  summary. Before materialization, run each once on the same frozen 4,000-row
+  deep-SF bank and preserve all per-position observations. Kill an arm if its
+  candidate-minus-source expected-regret 95% interval is wholly above zero.
+  N1 must change at least one unique-maximum audit row and report a candidate
+  set wider than the exact-tie set; S1 must change zero unique-maximum rows and
+  preserve the alpha-1.0 top-1 choices. Materialization requires 18,910,484
+  rows / 2,309 shards, matching source/sidecar fingerprints, a nonzero target
+  change, exact treatment stamps, and byte-identical `wdl_target` and
+  `search_wdl`.
+- **ONE deciding yardstick per arm.** After a passing audit and full training,
+  run a no-rolling 1,000-game paired `matched_sims` arena at training search
+  shape / 100 sims against the successful top-tie checkpoint. **SUCCESS** =
+  candidate Elo above zero and pentanomial 95% CI lower bound above zero.
+  **KILL** = Elo below zero and CI upper bound below zero. Otherwise the arm is
+  **INCONCLUSIVE** and does not graduate. Raw game records are mandatory; no
+  matched-time or holdout diagnostic overrides this rule. N1 and S1 run
+  sequentially and never overlap another GPU job.
+- **Precommitted escalation, not a post-hoc grid.** If N1 succeeds, widen the
+  stored-SF ratio in order **0.50 -> 0.25 -> 0.125**, always comparing the next
+  fresh full train to the last successful breadth arm and stopping at the first
+  non-success. If S1 succeeds, sharpen teacher temperature in order
+  **1.0 -> 0.50 -> 0.25 -> 0.125**, always comparing to the last successful
+  sharpness arm and stopping at the first non-success. Each later rung still
+  requires its own launch/readout ledger amendment and audit receipt. Combining
+  breadth and sharpness is a separate later experiment, authorized only if both
+  isolated axes succeed.
+- **Scheduling and storage.** The existing sidecar avoids repeated BT4 GPU
+  inference. Corpus materialization is CPU/disk work at nice 10; training and
+  its arena own the GPU. At launch refuse an existing output/sentinel, code or
+  source identity drift, any active GPU process, or free disk below 150 GiB.
+  Current source/mixed corpora are about 12 GB each against about 605 GiB free,
+  while the 16 nice-19 G10 workers continue independently.
