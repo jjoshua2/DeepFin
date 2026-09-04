@@ -62,6 +62,9 @@ def _open_parent(
 ) -> int:
     parent = path.expanduser().parent
     flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
+    namespace_fields = (
+        "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
+    )
     descriptor = -1
     try:
         named_before = parent.stat()
@@ -85,9 +88,6 @@ def _open_parent(
             finally:
                 os.close(descriptor)
             raise
-        namespace_fields = (
-            "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
-        )
         if (
             _identity(named_before) != _identity(opened)
             or _identity(named_after) != _identity(opened)
@@ -108,7 +108,13 @@ def _open_parent(
             ) from exc
         os.close(descriptor)
         raise
-    if not stat.S_ISDIR(opened.st_mode) or _identity(named_before) != _identity(opened):
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or any(
+            getattr(named_before, field) != getattr(opened, field)
+            for field in namespace_fields
+        )
+    ):
         try:
             if quarantine_meta_path is not None:
                 _mark_manifest_namespace_invalid(
@@ -133,6 +139,9 @@ def _require_parent(path: Path, parent_fd: int) -> None:
 
 def _authenticate_initial_parent(path: Path, parent_fd: int) -> None:
     """Recheck a newly opened parent and classify a transient first failure."""
+    namespace_fields = (
+        "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
+    )
     try:
         opened_before = os.fstat(parent_fd)
     except OSError as exc:
@@ -141,6 +150,7 @@ def _authenticate_initial_parent(path: Path, parent_fd: int) -> None:
         ) from exc
     try:
         _require_parent(path, parent_fd)
+        opened_after = os.fstat(parent_fd)
     except OSError as exc:
         try:
             _require_parent(path, parent_fd)
@@ -151,11 +161,21 @@ def _authenticate_initial_parent(path: Path, parent_fd: int) -> None:
             ) from authentication_exc
         except (SystemExit, RuntimeError) as integrity_exc:
             raise integrity_exc from exc
-        if _identity(opened_before) != _identity(opened_after):
+        if any(
+            getattr(opened_before, field) != getattr(opened_after, field)
+            for field in namespace_fields
+        ):
             raise SystemExit(
                 f"newly opened evidence parent changed: {path.parent}"
             ) from exc
         raise
+    if any(
+        getattr(opened_before, field) != getattr(opened_after, field)
+        for field in namespace_fields
+    ):
+        raise SystemExit(
+            f"newly opened evidence parent changed: {path.parent}"
+        )
 
 
 def _require_entry(
@@ -234,12 +254,7 @@ def _artifact_from_fd(
     file_fd: int, path: Path, *, before: os.stat_result | None = None,
 ) -> dict[str, Any]:
     if before is None:
-        try:
-            before = os.fstat(file_fd)
-        except OSError as exc:
-            raise RuntimeError(
-                f"cannot snapshot evidence artifact: {path}"
-            ) from exc
+        before = os.fstat(file_fd)
     digest = hashlib.sha256()
     offset = 0
     try:
@@ -296,12 +311,7 @@ def _read_stable_bytes_fd(
 ) -> bytes:
     """Read exact bytes while rejecting a concurrent inode-content change."""
     if before is None:
-        try:
-            before = os.fstat(file_fd)
-        except OSError as exc:
-            raise RuntimeError(
-                f"cannot snapshot evidence bytes: {path}"
-            ) from exc
+        before = os.fstat(file_fd)
     chunks: list[bytes] = []
     offset = 0
     try:
@@ -365,7 +375,9 @@ def _require_anchored_artifact_unchanged(
     if isinstance(links, tuple) and int(opened.st_nlink) not in links:
         raise SystemExit(f"evidence artifact has unexpected hard links: {path}")
     _require_parent(path, parent_fd)
-    after = _artifact_from_fd(file_fd, artifact_path or path)
+    after = _artifact_from_fd(
+        file_fd, artifact_path or path, before=opened,
+    )
     identity = _publication_artifact_identity if allow_ctime_change else _artifact_identity
     if identity(before) != identity(after):
         raise SystemExit(f"evidence artifact changed during durability barrier: {path}")
@@ -449,7 +461,12 @@ def _anchored_file(
             try:
                 os.fsync(file_fd)
                 os.fsync(parent_fd)
-                after = _artifact_from_fd(file_fd, artifact_path)
+                opened = _require_entry(
+                    path, parent_fd, file_fd, links=links,
+                )
+                after = _artifact_from_fd(
+                    file_fd, artifact_path, before=opened,
+                )
                 if _artifact_identity(before) != _artifact_identity(after):
                     raise SystemExit(
                         f"evidence artifact changed while being made durable: {path}"
@@ -468,7 +485,8 @@ def _anchored_file(
                 )
                 raise
         else:
-            after = _artifact_from_fd(file_fd, artifact_path)
+            opened = _require_entry(path, parent_fd, file_fd, links=links)
+            after = _artifact_from_fd(file_fd, artifact_path, before=opened)
             if _artifact_identity(before) != _artifact_identity(after):
                 raise SystemExit(
                     f"evidence artifact changed while being made durable: {path}"
@@ -1334,12 +1352,16 @@ def _publish_anchored(
     output_parent_fd: int | None = None,
 ) -> None:
     output_path = output_path.expanduser()
-    _require_entry(source.path, source.parent_fd, source.file_fd, links=1)
+    opened = _require_entry(
+        source.path, source.parent_fd, source.file_fd, links=1,
+    )
     _require_parent(source.path, source.parent_fd)
     artifact_path = source.artifact.get("path")
     if not isinstance(artifact_path, str):
         raise RuntimeError("authenticated publication source lacks its artifact path")
-    current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+    current = _artifact_from_fd(
+        source.file_fd, Path(artifact_path), before=opened,
+    )
     if _publication_artifact_identity(current) != _publication_artifact_identity(
         source.artifact
     ):
@@ -1365,9 +1387,13 @@ def _publish_anchored(
         _require_publication_guards(guards)
         _require_parent(output_path, output_parent_fd)
         _require_parent(source.path, source.parent_fd)
-        _require_entry(source.path, source.parent_fd, source.file_fd, links=2)
+        opened = _require_entry(
+            source.path, source.parent_fd, source.file_fd, links=2,
+        )
         _require_entry(output_path, output_parent_fd, source.file_fd, links=2)
-        current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+        current = _artifact_from_fd(
+            source.file_fd, Path(artifact_path), before=opened,
+        )
         if _publication_artifact_identity(current) != _publication_artifact_identity(
             source.artifact
         ):
@@ -1388,13 +1414,15 @@ def _publish_anchored(
                 _require_publication_guards(guards)
                 _require_parent(source.path, source.parent_fd)
                 _require_parent(output_path, output_parent_fd)
-                _require_entry(
+                opened = _require_entry(
                     source.path, source.parent_fd, source.file_fd, links=2,
                 )
                 _require_entry(
                     output_path, output_parent_fd, source.file_fd, links=2,
                 )
-                current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+                current = _artifact_from_fd(
+                    source.file_fd, Path(artifact_path), before=opened,
+                )
                 if _publication_artifact_identity(
                     current
                 ) != _publication_artifact_identity(source.artifact):
@@ -1417,12 +1445,16 @@ def _require_publication_guards(
     guards: tuple[tuple[_AnchoredFile, int], ...],
 ) -> None:
     for guard, links in guards:
-        _require_entry(guard.path, guard.parent_fd, guard.file_fd, links=links)
+        opened = _require_entry(
+            guard.path, guard.parent_fd, guard.file_fd, links=links,
+        )
         _require_parent(guard.path, guard.parent_fd)
         artifact_path = guard.artifact.get("path")
         if not isinstance(artifact_path, str):
             raise RuntimeError("publication guard lacks its artifact path")
-        current = _artifact_from_fd(guard.file_fd, Path(artifact_path))
+        current = _artifact_from_fd(
+            guard.file_fd, Path(artifact_path), before=opened,
+        )
         if _publication_artifact_identity(current) != _publication_artifact_identity(
             guard.artifact
         ):
@@ -1497,7 +1529,12 @@ def _publish_output(
             source=source,
             output_parent_fd=source.parent_fd,
         )
-        published = _artifact_from_fd(source.file_fd, output_path)
+        opened = _require_entry(
+            tmp_path, source.parent_fd, source.file_fd, links=2,
+        )
+        published = _artifact_from_fd(
+            source.file_fd, output_path, before=opened,
+        )
     if _publication_artifact_identity(published) != _publication_artifact_identity(
         expected
     ):
