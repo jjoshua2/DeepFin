@@ -1332,26 +1332,32 @@ def _require_published_output_stable(target: _AnchoredOutputTarget) -> None:
     """Bind the requested report name to the retained exact rendered bytes."""
     if target.published_fd is None or target.published_bytes is None:
         raise RuntimeError("published analyzer output identity is unavailable")
-    opened = _require_evidence_entry(
-        target.lexical_path,
-        target.parent_fd,
-        target.published_fd,
-        links=1,
+    namespace_fields = (
+        "st_mode", "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
     )
-    content = _read_stable_bytes_fd(
-        target.published_fd,
-        target.lexical_path,
-        before=opened,
-    )
-    if content != target.published_bytes:
-        raise RuntimeError("published analyzer output differs from rendered report")
-    _require_evidence_entry(
-        target.lexical_path,
-        target.parent_fd,
-        target.published_fd,
-        links=1,
-    )
+    parent_before = os.fstat(target.parent_fd)
     _require_anchored_output_stable(target)
+    for _ in range(2):
+        opened = _require_evidence_entry(
+            target.lexical_path,
+            target.parent_fd,
+            target.published_fd,
+            links=1,
+        )
+        content = _read_stable_bytes_fd(
+            target.published_fd,
+            target.lexical_path,
+            before=opened,
+        )
+        if content != target.published_bytes:
+            raise RuntimeError("published analyzer output differs from rendered report")
+        _require_anchored_output_stable(target)
+    parent_after = os.fstat(target.parent_fd)
+    if any(
+        getattr(parent_before, field) != getattr(parent_after, field)
+        for field in namespace_fields
+    ):
+        raise RuntimeError("analyzer output namespace changed during validation")
 
 
 def _link_anonymous_file_no_replace(

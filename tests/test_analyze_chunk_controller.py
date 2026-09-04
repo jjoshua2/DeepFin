@@ -8769,6 +8769,46 @@ def test_analyzer_revalidates_report_leaf_on_context_exit(tmp_path: Path) -> Non
     assert displaced.read_text() == "{}\n"
 
 
+def test_analyzer_brackets_report_leaf_validation_with_parent_namespace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    displaced = tmp_path / "authentic-analysis.json"
+    real_require_stable = controller_module._require_anchored_output_stable
+    checks = 0
+
+    def swap_leaf_before_late_parent_check(
+        target: controller_module._AnchoredOutputTarget,
+    ) -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            output.rename(displaced)
+            output.write_text("attacker report\n")
+        real_require_stable(target)
+
+    def publish_then_swap_during_exit_validation() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            monkeypatch.setattr(
+                controller_module,
+                "_require_anchored_output_stable",
+                swap_leaf_before_late_parent_check,
+            )
+
+    with pytest.raises(SystemExit, match="anchored regular file"):
+        publish_then_swap_during_exit_validation()
+
+    assert checks == 2
+    assert output.read_text() == "attacker report\n"
+    assert displaced.read_text() == "{}\n"
+
+
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
     tmp_path: Path,
 ) -> None:
