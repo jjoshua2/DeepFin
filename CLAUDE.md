@@ -114,7 +114,9 @@ consequential changes; the author is not an independent review. If independent r
 is unavailable, label the self-review and its limits. Address findings or explain why
 they do not warrant a change. Review evidence can be in comments, review bodies and
 inline threads; `reviewDecision` alone cannot establish review status. Paid or external
-review services are optional. Report checks and material limitations accurately.
+review services are optional. For requested Grok reviews, use an available Grok
+review Skill and its disposable-snapshot wrapper, preserve the raw result, and verify
+its findings. Report checks and material limitations accurately.
 
 ## Optional workflows
 
