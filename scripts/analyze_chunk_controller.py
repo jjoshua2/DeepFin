@@ -2607,16 +2607,32 @@ def main() -> None:
         args.out,
         manifest=manifest if isinstance(manifest, dict) else None,
     )
-    result = analyze(
-        transitions,
-        n_folds=args.folds,
-        bootstrap_samples=args.bootstrap_samples,
-        seed=args.seed,
-        allocation_fraction=args.allocation_fraction,
-        min_capture_gain=args.min_capture_gain,
-        min_oracle_headroom=args.min_oracle_headroom,
-        min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
+    source_game_group_count = len({row.group_id for row in transitions})
+    source_group_resolution_passed = (
+        source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
     )
+    result: dict[str, Any]
+    if source_group_resolution_passed:
+        result = analyze(
+            transitions,
+            n_folds=args.folds,
+            bootstrap_samples=args.bootstrap_samples,
+            seed=args.seed,
+            allocation_fraction=args.allocation_fraction,
+            min_capture_gain=args.min_capture_gain,
+            min_oracle_headroom=args.min_oracle_headroom,
+            min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
+        )
+    else:
+        # Do not enter grouped CV merely to discover that a frozen bank can
+        # never satisfy the canonical OOB evidence requirement.
+        result = {
+            "statistical_gate_passed": False,
+            "scope": "fresh_tree_fixed_node_horizons_only",
+            "clock_controller_authorized": False,
+            "cross_move_tree_reuse_tested": False,
+            "analysis_skipped": "insufficient_source_game_groups",
+        }
     analyzer = _analyzer_provenance(
         analyzer_start_sources, analyzer_start_git_sha, analyzer_start_git_dirty,
     )
@@ -2641,10 +2657,6 @@ def main() -> None:
         min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
     )
     canonical_rule = bool(canonical_analysis_rule and info["preregistered_design"])
-    source_game_group_count = len({row.group_id for row in transitions})
-    source_group_resolution_passed = (
-        source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
-    )
     decision_grade = bool(
         evidence_inputs_decision_grade
         and canonical_rule

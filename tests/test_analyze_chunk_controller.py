@@ -2049,6 +2049,58 @@ def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
     ) == "INSUFFICIENT_SOURCE_GAME_GROUPS"
 
 
+def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    one_game = [_transition("position", 1, 100, 0.0, current=True)]
+    info = {
+        "decision_grade": True,
+        "preregistered_design": True,
+        "manifest": {"producer_git_sha": "a" * 40},
+    }
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_chunk_controller",
+            "--in", str(tmp_path / "bank.jsonl"),
+            "--meta", str(tmp_path / "bank.jsonl.meta.json"),
+        ],
+    )
+    monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
+    monkeypatch.setattr(controller_module, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(controller_module, "_require_safe_output_path", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        controller_module,
+        "load_transitions",
+        lambda *_a, **_k: (one_game, info),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "analyze",
+        lambda *_a, **_k: pytest.fail("undersized bank entered grouped analysis"),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_analyzer_provenance",
+        lambda *_a: {
+            "decision_grade": True,
+            "git_sha": "b" * 40,
+            "final_git_sha": "b" * 40,
+        },
+    )
+
+    controller_module.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    analysis = payload["analysis"]
+    assert analysis["verdict"] == "INSUFFICIENT_SOURCE_GAME_GROUPS"
+    assert analysis["analysis_skipped"] == "insufficient_source_game_groups"
+    assert analysis["source_game_group_count"] == 1
+    assert analysis["source_group_resolution_passed"] is False
+    assert analysis["evidence_decision_grade"] is False
+
+
 def test_analyze_cannot_advance_with_an_undersampled_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
