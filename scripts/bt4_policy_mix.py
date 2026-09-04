@@ -11,12 +11,13 @@ This is an offline tool for NNUE-bootstrap control corpora:
 
 ``mix``
     Copy the source corpus and replace only ``policy_target`` with
-    either a global arithmetic mix or the audit-approved top-tie treatment.
-    The latter preserves the source mass on its equal maxima and lets BT4
-    redistribute only ``alpha`` of that mass.  Stockfish-derived value targets
-    and every other replay column are copied unchanged.  Source and sidecar
-    fingerprints are checked before a shard is edited, and the completed
-    output is published by one directory rename.
+    either a global arithmetic mix or an audit-approved source-set treatment.
+    Set treatments preserve the source mass on exact or near maxima and let a
+    separately temperature-scaled BT4 prior redistribute only ``alpha`` of
+    that mass.  Stockfish-derived value targets and every other replay column
+    are copied unchanged.  Source and sidecar fingerprints are checked before
+    a shard is edited, and the completed output is published by one directory
+    rename.
 
 ``audit``
     Reconstruct the stored d9 target on the frozen deep-SF audit set, apply the
@@ -82,10 +83,11 @@ DERIVE_SUMMARY = "derive_targets_summary.json"
 POLICY_FIELD = "policy_target"
 SIDECAR_POLICY_FIELD = "bt4_policy"
 SIDECAR_KEY_FIELD = "source_key"
-MIX_SCOPES = ("global", "top-max-ties")
+MIX_SCOPES = ("global", "top-max-ties", "near-max-ratio")
 TREATMENT_ALGORITHMS = {
     "global": "legal-normalized-global-arithmetic-v1",
     "top-max-ties": "stored-top-set-only-v1",
+    "near-max-ratio": "stored-near-max-set-only-v1",
 }
 SOURCE_TARGET_CONTRACT = {
     "scheme": "uniform-d9",
@@ -105,6 +107,8 @@ AUDIT_RULER_CONTRACT = {
     "bootstrap_replicates": 10_000,
     "bootstrap_seed": 20260903,
 }
+SELECTED_MASS_DRIFT_MEAN_MAX = 0.0002
+SELECTED_MASS_DRIFT_ROW_MAX = 0.005
 _COMPRESSOR = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
 
 
@@ -116,6 +120,54 @@ def validate_alpha(alpha: float) -> float:
             f"--alpha must be finite, positive, and at most 1, got {alpha!r}",
         )
     return value
+
+
+def validate_bt4_temperature(temperature: float) -> float:
+    """Return a finite positive teacher temperature."""
+    value = float(temperature)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            "--bt4-temperature must be finite and positive, "
+            f"got {temperature!r}",
+        )
+    return value
+
+
+def validate_near_max_ratio(ratio: float) -> float:
+    """Return a strict near-maximum probability ratio."""
+    value = float(ratio)
+    if not math.isfinite(value) or not 0.0 < value < 1.0:
+        raise ValueError(
+            "--near-max-ratio must be finite, positive, and below 1, "
+            f"got {ratio!r}",
+        )
+    return value
+
+
+def treatment_spec(
+    *,
+    scope: str,
+    alpha: float,
+    bt4_temperature: float,
+    near_max_ratio: float,
+) -> dict[str, Any]:
+    """Return the complete, mechanically comparable treatment identity."""
+    if scope not in MIX_SCOPES:
+        raise ValueError(f"unknown mix scope {scope!r}; expected one of {MIX_SCOPES}")
+    weight = validate_alpha(alpha)
+    temperature = validate_bt4_temperature(bt4_temperature)
+    ratio = (
+        validate_near_max_ratio(near_max_ratio)
+        if scope == "near-max-ratio"
+        else None
+    )
+    return {
+        "scope": scope,
+        "alpha": weight,
+        "algorithm": TREATMENT_ALGORITHMS[scope],
+        "bt4_temperature": temperature,
+        "near_max_ratio": ratio,
+    }
 
 
 def _sha_array(value: np.ndarray) -> str:
@@ -212,17 +264,63 @@ def _normalized_legal(
     return p / totals[:, None]
 
 
+def _tempered_bt4_policy(
+    bt4: np.ndarray,
+    legal_mask: np.ndarray,
+    *,
+    temperature: float,
+) -> np.ndarray:
+    """Legal-normalize and temperature-scale BT4 without reviving zero mass."""
+    temp = validate_bt4_temperature(temperature)
+    legal = np.asarray(legal_mask) != 0
+    policy = _normalized_legal(bt4, legal, name="BT4 policy")
+    if temp == 1.0:
+        return policy
+
+    positive = legal & (policy > 0.0)
+    logits = np.full(policy.shape, -np.inf, dtype=np.float64)
+    logits[positive] = np.log(policy[positive]) / temp
+    row_max = np.max(logits, axis=1, keepdims=True)
+    scaled = np.where(positive, np.exp(logits - row_max), 0.0)
+    return _normalized_legal(scaled, legal, name="temperature-scaled BT4 policy")
+
+
+def _source_candidate_set(
+    source: np.ndarray,
+    legal_mask: np.ndarray,
+    *,
+    scope: str,
+    near_max_ratio: float,
+) -> np.ndarray:
+    """Select the stored-source set whose mass BT4 may redistribute."""
+    legal = np.asarray(legal_mask) != 0
+    source_values = np.asarray(source, dtype=np.float64)
+    legal_source = np.where(legal, source_values, -np.inf)
+    row_max = np.max(legal_source, axis=1, keepdims=True)
+    if scope == "top-max-ties":
+        return legal & (legal_source == row_max)
+    if scope == "near-max-ratio":
+        ratio = validate_near_max_ratio(near_max_ratio)
+        return legal & (legal_source >= row_max * ratio)
+    raise ValueError(f"scope {scope!r} has no source candidate set")
+
+
 def arithmetic_policy_mix(
     source: np.ndarray,
     bt4: np.ndarray,
     legal_mask: np.ndarray,
     *,
     alpha: float,
+    bt4_temperature: float = 1.0,
 ) -> np.ndarray:
     """Literal probability mixture, legal-normalized on both input teachers."""
     weight = validate_alpha(alpha)
     sf = _normalized_legal(source, legal_mask, name="source policy")
-    lc0 = _normalized_legal(bt4, legal_mask, name="BT4 policy")
+    lc0 = _tempered_bt4_policy(
+        bt4,
+        legal_mask,
+        temperature=bt4_temperature,
+    )
     mixed = (1.0 - weight) * sf + weight * lc0
     mixed = _normalized_legal(mixed, legal_mask, name="mixed policy")
     return mixed.astype(np.float32)
@@ -235,19 +333,28 @@ def mix_policy_targets(
     *,
     alpha: float,
     scope: str,
+    bt4_temperature: float = 1.0,
+    near_max_ratio: float = 0.5,
 ) -> np.ndarray:
     """Apply the selected literal probability-space treatment.
 
-    ``top-max-ties`` changes only rows whose stored source target has more
-    than one legal maximum.  It preserves the source target's total mass on
-    that tied set and uses BT4 only to redistribute ``alpha`` of that mass.
-    A unique source maximum is therefore byte-identical after storage.
+    Set-scoped treatments preserve the source target's total mass on the
+    selected set and use BT4 only to redistribute ``alpha`` of that mass.
+    ``top-max-ties`` selects exact stored maxima; ``near-max-ratio`` also
+    selects moves within the requested fraction of the stored maximum.  A
+    one-move selected set is byte-identical after storage.
     """
     if scope not in MIX_SCOPES:
         raise ValueError(f"unknown mix scope {scope!r}; expected one of {MIX_SCOPES}")
     weight = validate_alpha(alpha)
     if scope == "global":
-        return arithmetic_policy_mix(source, bt4, legal_mask, alpha=weight)
+        return arithmetic_policy_mix(
+            source,
+            bt4,
+            legal_mask,
+            alpha=weight,
+            bt4_temperature=bt4_temperature,
+        )
 
     source_stored = np.asarray(source)
     legal = np.asarray(legal_mask) != 0
@@ -255,32 +362,45 @@ def mix_policy_targets(
     if bool(np.any(source_stored[~legal] != 0.0)):
         raise ValueError("source policy has nonzero mass on illegal moves")
     lc0 = _normalized_legal(bt4, legal, name="BT4 policy")
-    legal_source = np.where(legal, source_stored, -np.inf)
-    top = legal & (legal_source == np.max(legal_source, axis=1, keepdims=True))
-    top_count = top.sum(axis=1)
-    if bool(np.any(top_count <= 0)):
-        raise ValueError("source policy has a row without a legal maximum")
+    selected = _source_candidate_set(
+        source_stored,
+        legal,
+        scope=scope,
+        near_max_ratio=near_max_ratio,
+    )
+    selected_count = selected.sum(axis=1)
+    if bool(np.any(selected_count <= 0)):
+        raise ValueError("source policy has a row without a selected legal move")
 
-    bt4_top = np.where(top, lc0, 0.0)
-    source_values = source_stored.astype(np.float64, copy=False)
-    source_top = np.where(top, source_values, 0.0)
-    top_mass = source_top.sum(axis=1, keepdims=True)
-    bt4_top_mass = bt4_top.sum(axis=1, keepdims=True)
-    no_bt4_tie_mass = np.flatnonzero(bt4_top_mass[:, 0] <= 0.0)
-    if no_bt4_tie_mass.size:
+    bt4_selected_raw = np.where(selected, lc0, 0.0)
+    no_bt4_selected_mass = np.flatnonzero(
+        bt4_selected_raw.sum(axis=1) <= 0.0,
+    )
+    if no_bt4_selected_mass.size:
+        set_name = "source top-tie" if scope == "top-max-ties" else "source near-max"
         raise ValueError(
-            "BT4 policy has no mass on the source top-tie set for "
-            f"{no_bt4_tie_mass.size} rows",
+            f"BT4 policy has no mass on the {set_name} set for "
+            f"{no_bt4_selected_mass.size} rows",
         )
-    bt4_top /= bt4_top_mass
-    redistributed = (1.0 - weight) * source_top + weight * top_mass * bt4_top
+    bt4_selected = _tempered_bt4_policy(
+        bt4_selected_raw,
+        selected,
+        temperature=bt4_temperature,
+    )
+    source_values = source_stored.astype(np.float64, copy=False)
+    source_selected = np.where(selected, source_values, 0.0)
+    selected_mass = source_selected.sum(axis=1, keepdims=True)
+    redistributed = (
+        (1.0 - weight) * source_selected
+        + weight * selected_mass * bt4_selected
+    )
     mixed = source_values.copy()
-    mixed[top] = redistributed[top]
-    # Make unique-maximum rows an exact identity arm, not merely a
-    # floating-point reconstruction of one. Replay policies are stored in
-    # float16 and their rounded row sum need not be exactly one.
-    unique = top_count == 1
-    mixed[unique] = source_stored[unique]
+    mixed[selected] = redistributed[selected]
+    # Make one-move selected rows exact identities, not merely floating-point
+    # reconstructions. Replay policies are float16 and their rounded row sum
+    # need not be exactly one.
+    singleton = selected_count == 1
+    mixed[singleton] = source_stored[singleton]
     return mixed.astype(np.float32)
 
 
@@ -611,6 +731,8 @@ class MixStats:
     shards: int = 0
     changed_rows: int = 0
     source_top_tied_rows: int = 0
+    source_candidate_multi_rows: int = 0
+    candidate_set_wider_rows: int = 0
     changed_unique_max_rows: int = 0
     source_bt4_top1_agree: int = 0
     mixed_source_top1_agree: int = 0
@@ -621,6 +743,8 @@ class MixStats:
     bt4_entropy_sum: float = 0.0
     mixed_entropy_sum: float = 0.0
     l1_from_source_sum: float = 0.0
+    selected_mass_abs_drift_sum: float = 0.0
+    selected_mass_abs_drift_max: float = 0.0
 
 
 def _effective_cp(cp: int | None, mate: int | None) -> float:
@@ -754,6 +878,8 @@ def _load_audit_receipt(
     *,
     alpha: float,
     scope: str,
+    bt4_temperature: float,
+    near_max_ratio: float,
 ) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(f"missing audit receipt {path}")
@@ -767,26 +893,19 @@ def _load_audit_receipt(
         for key, value in expected.items()
         if receipt.get(key) != value
     }
+    expected_treatment = treatment_spec(
+        scope=scope,
+        alpha=alpha,
+        bt4_temperature=bt4_temperature,
+        near_max_ratio=near_max_ratio,
+    )
     treatment = receipt.get("treatment")
     if not isinstance(treatment, dict):
-        bad["treatment"] = (
-            treatment,
-            {
-                "scope": scope,
-                "alpha": alpha,
-                "algorithm": TREATMENT_ALGORITHMS[scope],
-            },
-        )
+        bad["treatment"] = (treatment, expected_treatment)
     else:
-        if treatment.get("scope") != scope:
-            bad["treatment.scope"] = (treatment.get("scope"), scope)
-        if treatment.get("alpha") != alpha:
-            bad["treatment.alpha"] = (treatment.get("alpha"), alpha)
-        if treatment.get("algorithm") != TREATMENT_ALGORITHMS[scope]:
-            bad["treatment.algorithm"] = (
-                treatment.get("algorithm"),
-                TREATMENT_ALGORITHMS[scope],
-            )
+        for key, expected_value in expected_treatment.items():
+            if treatment.get(key) != expected_value:
+                bad[f"treatment.{key}"] = (treatment.get(key), expected_value)
     if receipt.get("source_target_contract") != SOURCE_TARGET_CONTRACT:
         bad["source_target_contract"] = (
             receipt.get("source_target_contract"),
@@ -805,9 +924,68 @@ def _load_audit_receipt(
             gate.get("training_permitted") if isinstance(gate, dict) else None,
             True,
         )
+    if (
+        not isinstance(gate, dict)
+        or gate.get("treatment_invariants_passed") is not True
+    ):
+        bad["gate.treatment_invariants_passed"] = (
+            gate.get("treatment_invariants_passed")
+            if isinstance(gate, dict)
+            else None,
+            True,
+        )
+    invariants = receipt.get("treatment_invariants")
+    if not isinstance(invariants, dict):
+        bad["treatment_invariants"] = (invariants, "dict")
+    else:
+        required_invariants: dict[str, Any] = {
+            "selected_mass_drift_within_bounds": True,
+        }
+        if scope == "near-max-ratio":
+            required_invariants.update(
+                {
+                    "near_max_extended": True,
+                    "candidate_set_wider_rows": lambda value: int(value) > 0,
+                    "changed_unique_max_rows": lambda value: int(value) > 0,
+                }
+            )
+        if scope == "top-max-ties":
+            required_invariants.update(
+                {
+                    "top_tie_unique_max_identity": True,
+                    "changed_unique_max_rows": 0,
+                }
+            )
+        if bt4_temperature != 1.0:
+            required_invariants.update(
+                {
+                    "temperature_one_top1_preserved": True,
+                    "temperature_one_top1_mismatch_rows": 0,
+                }
+            )
+        for key, requirement in required_invariants.items():
+            observed = invariants.get(key)
+            if callable(requirement):
+                try:
+                    matches = bool(requirement(observed))
+                except (TypeError, ValueError):
+                    matches = False
+            else:
+                matches = observed == requirement
+            if not matches:
+                bad[f"treatment_invariants.{key}"] = (observed, requirement)
     if bad:
         raise ValueError(f"audit receipt does not admit this treatment: {bad}")
     return receipt
+
+
+def audit_training_permitted(
+    *,
+    verdict: str,
+    treatment_invariants_passed: bool,
+) -> bool:
+    """Require both the deep-SF gate and treatment-fidelity gate to pass."""
+    return verdict != "kill" and treatment_invariants_passed
 
 
 def audit_mix(args: argparse.Namespace) -> int:
@@ -816,6 +994,14 @@ def audit_mix(args: argparse.Namespace) -> int:
     scope = str(args.scope)
     if scope not in MIX_SCOPES:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
+    bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
+    near_max_ratio = float(args.near_max_ratio)
+    treatment = treatment_spec(
+        scope=scope,
+        alpha=alpha,
+        bt4_temperature=bt4_temperature,
+        near_max_ratio=near_max_ratio,
+    )
     audit_path = Path(args.audit_set).resolve()
     d9_path = Path(args.d9_labels).resolve()
     bt4_path = Path(args.bt4_cache).resolve()
@@ -862,11 +1048,31 @@ def audit_mix(args: argparse.Namespace) -> int:
             legal,
             alpha=alpha,
             scope=scope,
+            bt4_temperature=bt4_temperature,
+            near_max_ratio=near_max_ratio,
         )
         # The materializer casts back to the source policy_target dtype. The
         # 20M source is float16, so audit what the trainer will actually read.
-        candidate = candidate.astype(np.float16).astype(np.float32)
-        candidate = _normalized_legal(candidate, legal, name="stored candidate")[0]
+        candidate_stored = candidate.astype(np.float16).astype(np.float32)
+        reference_stored = mix_policy_targets(
+            source[None, :],
+            bt4[None, :],
+            legal,
+            alpha=alpha,
+            scope=scope,
+            bt4_temperature=1.0,
+            near_max_ratio=near_max_ratio,
+        ).astype(np.float16).astype(np.float32)
+        candidate = _normalized_legal(
+            candidate_stored,
+            legal,
+            name="stored candidate",
+        )[0]
+        reference = _normalized_legal(
+            reference_stored,
+            legal,
+            name="stored temperature-1 reference",
+        )[0]
         regrets = move_regrets(position, legal_ucis)
         source_pair = expected_and_top1_regret(source, regrets)
         candidate_pair = expected_and_top1_regret(candidate, regrets)
@@ -875,6 +1081,19 @@ def audit_mix(args: argparse.Namespace) -> int:
         source_top = int(np.argmax(source))
         candidate_top = int(np.argmax(candidate))
         top_count = int(np.sum(source == np.max(source)))
+        candidate_set = _source_candidate_set(
+            source[None, :],
+            legal,
+            scope=(scope if scope != "global" else "top-max-ties"),
+            near_max_ratio=near_max_ratio,
+        )[0]
+        candidate_count = int(candidate_set.sum())
+        selected_source_mass = float(
+            np.sum(source[candidate_set], dtype=np.float64)
+        )
+        selected_candidate_mass = float(
+            np.sum(candidate_stored[0, candidate_set], dtype=np.float64)
+        )
         source_entropy = _entropy_sum(source[None, :])
         candidate_entropy = _entropy_sum(candidate[None, :])
         per_position.append(
@@ -893,6 +1112,16 @@ def audit_mix(args: argparse.Namespace) -> int:
                 "source_entropy_nats": source_entropy,
                 "candidate_entropy_nats": candidate_entropy,
                 "source_top_tie_count": top_count,
+                "source_candidate_count": candidate_count,
+                "candidate_set_wider_than_top_tie": candidate_count > top_count,
+                "policy_changed": not np.array_equal(candidate_stored[0], source),
+                "selected_mass_abs_drift": abs(
+                    selected_candidate_mass - selected_source_mass
+                ),
+                "temperature_one_top1": legal_ucis[int(np.argmax(reference))],
+                "matches_temperature_one_top1": (
+                    int(np.argmax(reference)) == candidate_top
+                ),
                 "top1_changed": source_top != candidate_top,
             }
         )
@@ -934,14 +1163,59 @@ def audit_mix(args: argparse.Namespace) -> int:
     phase = np.asarray([position.phase for position in positions], dtype=np.int8)
     source_kind = np.asarray([position.source for position in positions], dtype=np.int8)
     all_rows = np.ones(len(positions), dtype=bool)
+    changed_unique_max_rows = int(
+        sum(
+            row["policy_changed"] and row["source_top_tie_count"] == 1
+            for row in per_position
+        )
+    )
+    candidate_set_wider_rows = int(
+        sum(row["candidate_set_wider_than_top_tie"] for row in per_position)
+    )
+    temperature_one_top1_mismatch_rows = int(
+        sum(not row["matches_temperature_one_top1"] for row in per_position)
+    )
+    selected_mass_drifts = np.asarray(
+        [row["selected_mass_abs_drift"] for row in per_position],
+        dtype=np.float64,
+    )
+    treatment_invariants = {
+        "candidate_set_wider_rows": candidate_set_wider_rows,
+        "changed_unique_max_rows": changed_unique_max_rows,
+        "temperature_one_top1_mismatch_rows": temperature_one_top1_mismatch_rows,
+        "near_max_extended": (
+            scope != "near-max-ratio"
+            or (candidate_set_wider_rows > 0 and changed_unique_max_rows > 0)
+        ),
+        "top_tie_unique_max_identity": (
+            scope != "top-max-ties" or changed_unique_max_rows == 0
+        ),
+        "temperature_one_top1_preserved": (
+            bt4_temperature == 1.0 or temperature_one_top1_mismatch_rows == 0
+        ),
+        "selected_mass_drift_within_bounds": (
+            float(selected_mass_drifts.mean()) <= SELECTED_MASS_DRIFT_MEAN_MAX
+            and float(selected_mass_drifts.max(initial=0.0))
+            <= SELECTED_MASS_DRIFT_ROW_MAX
+        ),
+    }
+    treatment_invariants_passed = all(
+        bool(treatment_invariants[key])
+        for key in (
+            "near_max_extended",
+            "top_tie_unique_max_identity",
+            "temperature_one_top1_preserved",
+            "selected_mass_drift_within_bounds",
+        )
+    )
+    training_permitted = audit_training_permitted(
+        verdict=verdict,
+        treatment_invariants_passed=treatment_invariants_passed,
+    )
     report: dict[str, Any] = {
         "schema": 1,
         "kind": "bt4_policy_mix_frozen_deep_sf_audit",
-        "treatment": {
-            "scope": scope,
-            "alpha": alpha,
-            "algorithm": TREATMENT_ALGORITHMS[scope],
-        },
+        "treatment": treatment,
         "source_target_contract": SOURCE_TARGET_CONTRACT,
         "ruler": {
             "audit_set": str(audit_path),
@@ -966,6 +1240,15 @@ def audit_mix(args: argparse.Namespace) -> int:
         "source_top_tied_fraction": float(
             np.mean([row["source_top_tie_count"] > 1 for row in per_position])
         ),
+        "source_candidate_multi_fraction": float(
+            np.mean([row["source_candidate_count"] > 1 for row in per_position])
+        ),
+        "candidate_set_wider_than_top_tie_fraction": float(
+            np.mean(
+                [row["candidate_set_wider_than_top_tie"] for row in per_position]
+            )
+        ),
+        "treatment_invariants": treatment_invariants,
         "top1_changed_fraction": float(
             np.mean([row["top1_changed"] for row in per_position])
         ),
@@ -986,6 +1269,14 @@ def audit_mix(args: argparse.Namespace) -> int:
                     [row["candidate_top1_probability"] >= 0.99 for row in per_position]
                 )
             ),
+            "selected_mass_abs_drift_mean": float(selected_mass_drifts.mean()),
+            "selected_mass_abs_drift_max": float(
+                selected_mass_drifts.max(initial=0.0)
+            ),
+            "selected_mass_abs_drift_bounds": {
+                "mean_max": SELECTED_MASS_DRIFT_MEAN_MAX,
+                "row_max": SELECTED_MASS_DRIFT_ROW_MAX,
+            },
         },
         "by_phase": {
             name: group_summary(phase == index)
@@ -999,7 +1290,8 @@ def audit_mix(args: argparse.Namespace) -> int:
             "metric": "candidate minus source expected deep-SF regret in cp",
             "kill_if": "paired 95% interval is wholly above zero",
             "verdict": verdict,
-            "training_permitted": verdict != "kill",
+            "treatment_invariants_passed": treatment_invariants_passed,
+            "training_permitted": training_permitted,
             "value_gate": "not applicable; mix leaves all value columns byte-identical",
         },
         "per_position": per_position,
@@ -1016,7 +1308,7 @@ def audit_mix(args: argparse.Namespace) -> int:
         f"[{top1_ci[0]:.4f}, {top1_ci[1]:.4f}] -> {out_path}",
         flush=True,
     )
-    return 0 if verdict != "kill" else 2
+    return 0 if training_permitted else 2
 
 
 def mix_corpus(args: argparse.Namespace) -> int:
@@ -1024,9 +1316,24 @@ def mix_corpus(args: argparse.Namespace) -> int:
     scope = str(args.scope)
     if scope not in MIX_SCOPES:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
+    bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
+    near_max_ratio = float(args.near_max_ratio)
+    treatment_specification = treatment_spec(
+        scope=scope,
+        alpha=alpha,
+        bt4_temperature=bt4_temperature,
+        near_max_ratio=near_max_ratio,
+    )
     source_dir = Path(args.shards).resolve()
     sidecar_dir = Path(args.sidecar).resolve()
     out_dir = Path(args.out).resolve()
+    expected_rows = int(args.expected_rows)
+    expected_shards = int(args.expected_shards)
+    expected_source_summary_sha256 = str(args.expected_source_summary_sha256)
+    if expected_rows <= 0 or expected_shards <= 0:
+        raise SystemExit("--expected-rows and --expected-shards must be positive")
+    if len(expected_source_summary_sha256) != 64:
+        raise SystemExit("--expected-source-summary-sha256 must be a SHA-256 hex digest")
     if out_dir.exists():
         raise SystemExit(
             f"{out_dir} exists; mixed corpora are immutable, use a fresh path"
@@ -1052,13 +1359,31 @@ def mix_corpus(args: argparse.Namespace) -> int:
     derive_summary_original = json.loads(
         derive_summary_source.read_text(encoding="utf-8")
     )
+    source_summary_sha256 = file_sha256(derive_summary_source)
+    if source_summary_sha256 != expected_source_summary_sha256:
+        raise SystemExit(
+            "source derive-summary SHA-256 mismatch: "
+            f"{source_summary_sha256} != {expected_source_summary_sha256}",
+        )
     source_rows, source_policy_dtypes = _source_policy_layout(source_paths)
+    if source_rows != expected_rows or len(source_paths) != expected_shards:
+        raise SystemExit(
+            "source corpus size mismatch: "
+            f"rows={source_rows}/{expected_rows}, "
+            f"shards={len(source_paths)}/{expected_shards}",
+        )
     _validate_source_target_contract(
         derive_summary_original,
         storage_dtypes=source_policy_dtypes,
     )
     audit_receipt_path = Path(args.audit_receipt).resolve()
-    _load_audit_receipt(audit_receipt_path, alpha=alpha, scope=scope)
+    _load_audit_receipt(
+        audit_receipt_path,
+        alpha=alpha,
+        scope=scope,
+        bt4_temperature=bt4_temperature,
+        near_max_ratio=near_max_ratio,
+    )
     side_summary_path = sidecar_dir / SIDECAR_SUMMARY
     if not side_summary_path.is_file():
         raise SystemExit(f"missing completed sidecar summary {side_summary_path}")
@@ -1132,6 +1457,8 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     legal,
                     alpha=alpha,
                     scope=scope,
+                    bt4_temperature=bt4_temperature,
+                    near_max_ratio=near_max_ratio,
                 )
                 stored = mixed.astype(destination[POLICY_FIELD].dtype, copy=False)
                 destination[POLICY_FIELD][start:stop] = stored
@@ -1157,8 +1484,42 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     keepdims=True,
                 )
                 source_tied = source_top.sum(axis=1) > 1
+                candidate_set = _source_candidate_set(
+                    sf_stored,
+                    legal_bool,
+                    scope=(scope if scope != "global" else "top-max-ties"),
+                    near_max_ratio=near_max_ratio,
+                )
+                candidate_count = candidate_set.sum(axis=1)
+                source_top_count = source_top.sum(axis=1)
                 stats.changed_rows += int(changed.sum())
                 stats.source_top_tied_rows += int(source_tied.sum())
+                stats.source_candidate_multi_rows += int(
+                    np.sum(candidate_count > 1)
+                )
+                stats.candidate_set_wider_rows += int(
+                    np.sum(candidate_count > source_top_count)
+                )
+                source_selected_mass = np.sum(
+                    np.where(candidate_set, sf_stored, 0.0),
+                    axis=1,
+                    dtype=np.float64,
+                )
+                mixed_selected_mass = np.sum(
+                    np.where(candidate_set, reread, 0.0),
+                    axis=1,
+                    dtype=np.float64,
+                )
+                selected_mass_abs_drift = np.abs(
+                    mixed_selected_mass - source_selected_mass
+                )
+                stats.selected_mass_abs_drift_sum += float(
+                    selected_mass_abs_drift.sum()
+                )
+                stats.selected_mass_abs_drift_max = max(
+                    stats.selected_mass_abs_drift_max,
+                    float(selected_mass_abs_drift.max(initial=0.0)),
+                )
                 stats.changed_unique_max_rows += int(np.sum(changed & ~source_tied))
                 stats.source_bt4_top1_agree += int(np.sum(sf_top == bt4_top))
                 stats.mixed_source_top1_agree += int(np.sum(mixed_top == sf_top))
@@ -1180,6 +1541,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     "policy_target_mix_kind": scope,
                     "policy_target_mix_algorithm": TREATMENT_ALGORITHMS[scope],
                     "policy_target_mix_alpha": alpha,
+                    "policy_target_mix_bt4_temperature": bt4_temperature,
+                    "policy_target_mix_near_max_ratio": (
+                        near_max_ratio if scope == "near-max-ratio" else None
+                    ),
                     "policy_target_mix_source": "stored_stockfish_nnue_bootstrap",
                     "policy_target_mix_external": "bt4_raw_one_eval",
                     "policy_target_mix_sidecar": str(sidecar_dir),
@@ -1196,15 +1561,26 @@ def mix_corpus(args: argparse.Namespace) -> int:
         denom = max(stats.rows, 1)
         treatment = {
             "schema": MIX_SCHEMA,
-            "kind": scope,
-            "algorithm": TREATMENT_ALGORITHMS[scope],
+            "kind": treatment_specification["scope"],
+            "algorithm": treatment_specification["algorithm"],
             "formula": (
                 "mixed=(1-alpha)*stored_stockfish+alpha*bt4_raw_one_eval"
                 if scope == "global"
-                else "redistribute alpha of stored source top-tie mass by BT4 prior"
+                else (
+                    "redistribute alpha of stored source top-tie mass by "
+                    "temperature-scaled BT4 prior"
+                    if scope == "top-max-ties"
+                    else "redistribute alpha of stored source near-max mass by "
+                    "temperature-scaled BT4 prior"
+                )
             ),
             "alpha": alpha,
+            "bt4_temperature": bt4_temperature,
+            "near_max_ratio": treatment_specification["near_max_ratio"],
             "source_dir": str(source_dir),
+            "source_derive_summary_sha256": source_summary_sha256,
+            "expected_rows": expected_rows,
+            "expected_shards": expected_shards,
             "sidecar_dir": str(sidecar_dir),
             "sidecar_summary": {
                 "path": str(side_summary_path),
@@ -1220,6 +1596,12 @@ def mix_corpus(args: argparse.Namespace) -> int:
             "changed_fraction": stats.changed_rows / denom,
             "source_top_tied_rows": stats.source_top_tied_rows,
             "source_top_tied_fraction": stats.source_top_tied_rows / denom,
+            "source_candidate_multi_rows": stats.source_candidate_multi_rows,
+            "source_candidate_multi_fraction": (
+                stats.source_candidate_multi_rows / denom
+            ),
+            "candidate_set_wider_rows": stats.candidate_set_wider_rows,
+            "candidate_set_wider_fraction": stats.candidate_set_wider_rows / denom,
             "changed_unique_max_rows": stats.changed_unique_max_rows,
             "source_bt4_top1_agreement": stats.source_bt4_top1_agree / denom,
             "mixed_source_top1_agreement": stats.mixed_source_top1_agree / denom,
@@ -1234,6 +1616,12 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 "mixed": stats.mixed_top1_ge_0_99_rows / denom,
             },
             "mean_l1_from_source": stats.l1_from_source_sum / denom,
+            "selected_mass_abs_drift": {
+                "mean": stats.selected_mass_abs_drift_sum / denom,
+                "max": stats.selected_mass_abs_drift_max,
+                "mean_bound": SELECTED_MASS_DRIFT_MEAN_MAX,
+                "row_bound": SELECTED_MASS_DRIFT_ROW_MAX,
+            },
             "mutated_arrays": [POLICY_FIELD],
             "value_columns_unchanged": ["wdl_target", "search_wdl"],
             "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -1249,6 +1637,21 @@ def mix_corpus(args: argparse.Namespace) -> int:
             raise ValueError(
                 "top-max-ties changed a unique-maximum source row; refusing "
                 "a treatment outside its declared scope",
+            )
+        if scope == "near-max-ratio" and (
+            stats.changed_unique_max_rows <= 0 or stats.candidate_set_wider_rows <= 0
+        ):
+            raise ValueError(
+                "near-max-ratio did not extend beyond exact source ties; refusing "
+                "an inert breadth treatment",
+            )
+        if (
+            stats.selected_mass_abs_drift_sum / denom
+            > SELECTED_MASS_DRIFT_MEAN_MAX
+            or stats.selected_mass_abs_drift_max > SELECTED_MASS_DRIFT_ROW_MAX
+        ):
+            raise ValueError(
+                "float16 selected-set mass drift exceeds the preregistered bounds",
             )
 
         derive_summary_path = writing / DERIVE_SUMMARY
@@ -1266,7 +1669,9 @@ def mix_corpus(args: argparse.Namespace) -> int:
         raise
 
     print(
-        f"[bt4-mix] complete: {stats.rows} rows, alpha={alpha:.6f}, "
+        f"[bt4-mix] complete: {stats.rows} rows, scope={scope}, "
+        f"alpha={alpha:.6f}, bt4_temperature={bt4_temperature:.6f}, "
+        f"near_max_ratio={treatment_specification['near_max_ratio']}, "
         f"top1 preserved={stats.mixed_source_top1_agree / stats.rows:.4%} -> {out_dir}",
         flush=True,
     )
@@ -1293,6 +1698,11 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--out", type=Path, required=True)
     mix.add_argument("--alpha", type=float, required=True)
     mix.add_argument("--scope", choices=MIX_SCOPES, default="top-max-ties")
+    mix.add_argument("--bt4-temperature", type=float, default=1.0)
+    mix.add_argument("--near-max-ratio", type=float, default=0.5)
+    mix.add_argument("--expected-rows", type=int, required=True)
+    mix.add_argument("--expected-shards", type=int, required=True)
+    mix.add_argument("--expected-source-summary-sha256", required=True)
     mix.add_argument("--audit-receipt", type=Path, required=True)
 
     audit = sub.add_parser(
@@ -1305,6 +1715,8 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--json", type=Path, required=True)
     audit.add_argument("--alpha", type=float, required=True)
     audit.add_argument("--scope", choices=MIX_SCOPES, default="top-max-ties")
+    audit.add_argument("--bt4-temperature", type=float, default=1.0)
+    audit.add_argument("--near-max-ratio", type=float, default=0.5)
     audit.add_argument("--boot", type=int, default=10_000)
     audit.add_argument("--seed", type=int, default=20260903)
     return parser

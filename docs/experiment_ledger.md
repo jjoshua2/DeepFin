@@ -73490,3 +73490,28 @@ optimizer step, or arena has run for either treatment at this line.**
   source identity drift, any active GPU process, or free disk below 150 GiB.
   Current source/mixed corpora are about 12 GB each against about 605 GiB free,
   while the 16 nice-19 G10 workers continue independently.
+
+**2026-09-04 14:49Z — PRE-AUDIT IMPLEMENTATION-FIDELITY AMENDMENT after
+independent review; no N1/S1 audit or training observation exists yet.**
+
+- Audit admission must enforce, not merely print, the treatment-specific
+  invariants above. N1 requires at least one wider candidate set and at least
+  one changed unique-SF-maximum row on the frozen audit. S1 recomputes the
+  temperature-1.0 treatment on every audit row and requires exactly zero
+  stored-policy top-1 mismatches, in addition to zero changed unique-maximum
+  rows. A receipt lacking these observations or a true aggregate invariant
+  flag is inadmissible.
+- Materialization now pins the exact source derive-summary SHA-256
+  `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`,
+  exactly 18,910,484 rows and exactly 2,309 shards; agreement with an arbitrary
+  self-consistent source/sidecar pair is insufficient.
+- Clarify the mass statement at the actual trainer boundary: redistribution
+  preserves selected-set mass exactly in arithmetic, then the target is cast
+  to the source's required float16 storage. Exact arbitrary BT4 ratios and an
+  exact pre-existing float16 sum are not always jointly representable; forcing
+  equality can move probabilities by tenths rather than rounding scale. Keep
+  the nearest float16 target, preserve every outside-set value byte-for-byte,
+  and bank absolute selected-mass drift per row. Audit and materialization
+  require mean drift at most 0.0002 and maximum drift at most 0.005; otherwise
+  the arm fails closed before training. This quantization rule is shared by N1
+  and S1 and does not create an axis difference.
