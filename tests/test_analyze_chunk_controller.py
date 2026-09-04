@@ -1309,6 +1309,27 @@ def _synthetic_tablebase_directory(
         "mtime_ns": 1,
         "ctime_ns": 1,
     }
+    current_path = Path(os.sep)
+    path_components: list[dict[str, int | str]] = [{
+        "path": os.sep,
+        "device": 1,
+        "inode": 1,
+        "mtime_ns": 1,
+        "ctime_ns": 1,
+    }]
+    for index, component in enumerate(Path(path).parts[1:], start=1):
+        current_path /= component
+        identity = (
+            root_identity
+            if current_path == Path(path)
+            else {
+                "device": 1,
+                "inode": index + 1,
+                "mtime_ns": 1,
+                "ctime_ns": 1,
+            }
+        )
+        path_components.append({"path": str(current_path), **identity})
     identities = [
         [f"w{index:03d}.rtbw", 1, 1, 1, 1, inode_offset + index + 1]
         for index in range(wdl_count)
@@ -1325,6 +1346,10 @@ def _synthetic_tablebase_directory(
     identity_document = json.dumps(
         {
             "root_identity": root_identity,
+            "path_component_identity_fields": [
+                "path", "device", "inode", "mtime_ns", "ctime_ns",
+            ],
+            "path_components": path_components,
             "file_identity_fields": identity_fields,
             "file_identities": identities,
         },
@@ -1335,6 +1360,10 @@ def _synthetic_tablebase_directory(
     return {
         "path": path,
         "root_identity": root_identity,
+        "path_component_identity_fields": [
+            "path", "device", "inode", "mtime_ns", "ctime_ns",
+        ],
+        "path_components": path_components,
         "rtbw_count": wdl_count,
         "rtbz_count": dtz_count,
         "file_identity_count": len(identities),
@@ -1360,8 +1389,13 @@ def _synthetic_syzygy_inventory() -> dict[str, Any]:
         directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
     ).encode("utf-8")
     return {
-        "schema": "deepfin.syzygy_inventory.v2",
-        "identity_method": "no_follow_device_inode_size_mtime_ctime",
+        "schema": "deepfin.syzygy_inventory.v3",
+        "identity_method": (
+            "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+        ),
+        "path_anchor_semantics": (
+            "absolute_root_and_each_lexical_directory_component_no_follow"
+        ),
         "path": "/tb/syzygy_3-4-5:/tb/syzygy_6",
         "rtbw_count": 875,
         "rtbz_count": 510,
@@ -2900,6 +2934,40 @@ def test_tablebase_inventory_binds_restored_mtime_content_mutation(
     )
 
 
+def test_tablebase_inventory_binds_ancestor_swap_and_restore(
+    tmp_path: Path,
+) -> None:
+    slot = tmp_path / "slot"
+    tablebases = slot / "tablebases"
+    tablebases.mkdir(parents=True)
+    (tablebases / "KQvK.rtbw").write_bytes(b"trusted table")
+    alternate = tmp_path / "alternate"
+    evil_tablebases = alternate / "tablebases"
+    evil_tablebases.mkdir(parents=True)
+    (evil_tablebases / "KQvK.rtbw").write_bytes(b"hostile table")
+    parent_before = tmp_path.stat()
+    before = _tablebase_inventory(str(tablebases))
+
+    saved = tmp_path / "saved"
+    slot.rename(saved)
+    alternate.rename(slot)
+    slot.rename(alternate)
+    saved.rename(slot)
+    os.utime(
+        tmp_path,
+        ns=(parent_before.st_atime_ns, parent_before.st_mtime_ns),
+        follow_symlinks=False,
+    )
+    after = _tablebase_inventory(str(tablebases))
+
+    before_directory = before["directories"][0]
+    after_directory = after["directories"][0]
+    assert after_directory["root_identity"] == before_directory["root_identity"]
+    assert after_directory["file_identities"] == before_directory["file_identities"]
+    assert after_directory["path_components"] != before_directory["path_components"]
+    assert after != before
+
+
 def test_tablebase_inventory_rejects_symlinked_root(tmp_path: Path) -> None:
     tablebases = tmp_path / "tablebases"
     tablebases.mkdir()
@@ -2988,7 +3056,10 @@ def test_tablebase_inventory_rejects_directory_change_during_traversal(
 
 @pytest.mark.parametrize(
     "tamper",
-    ["schema", "root_identity", "file_identity", "directory_digest", "global_digest"],
+    [
+        "schema", "root_identity", "path_component", "file_identity",
+        "directory_digest", "global_digest",
+    ],
 )
 def test_loader_rejects_malformed_syzygy_identity_inventory(
     tmp_path: Path, tamper: str,
@@ -3001,6 +3072,8 @@ def test_loader_rejects_malformed_syzygy_identity_inventory(
         syzygy["schema"] = "deepfin.syzygy_inventory.v1"
     elif tamper == "root_identity":
         syzygy["directories"][0]["root_identity"].pop("ctime_ns")
+    elif tamper == "path_component":
+        syzygy["directories"][0]["path_components"][0]["ctime_ns"] += 1
     elif tamper == "file_identity":
         syzygy["directories"][0]["file_identities"][0][3] += 1
     elif tamper == "directory_digest":

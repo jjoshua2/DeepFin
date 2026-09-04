@@ -336,9 +336,12 @@ _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
-_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v2"
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v3"
 _TABLEBASE_FILE_IDENTITY_FIELDS = (
     "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
+)
+_TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS = (
+    "path", "device", "inode", "mtime_ns", "ctime_ns",
 )
 _PRODUCTION_GSS_HALVING_REV = 3
 _PRODUCTION_WALKERS = 2
@@ -2090,6 +2093,7 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     root_identity = value.get("root_identity")
+    path_components = value.get("path_components")
     file_identities = value.get("file_identities")
     if (
         not isinstance(value.get("path"), str)
@@ -2099,6 +2103,10 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
         or not _positive_int(root_identity.get("inode"))
         or not _nonnegative_int(root_identity.get("mtime_ns"))
         or not _nonnegative_int(root_identity.get("ctime_ns"))
+        or value.get("path_component_identity_fields")
+        != list(_TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS)
+        or not isinstance(path_components, list)
+        or not path_components
         or value.get("file_identity_fields")
         != list(_TABLEBASE_FILE_IDENTITY_FIELDS)
         or not isinstance(file_identities, list)
@@ -2107,6 +2115,36 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
         or not _positive_int(value.get("rtbz_count"))
         or not _positive_int(value.get("total_bytes"))
         or not _valid_sha256(value.get("inventory_sha256"))
+    ):
+        return False
+    expected_parent: Path | None = None
+    for index, component in enumerate(path_components):
+        component_path = component.get("path") if isinstance(component, dict) else None
+        if (
+            not isinstance(component, dict)
+            or not isinstance(component_path, str)
+            or not component_path
+            or not Path(component_path).is_absolute()
+            or str(Path(component_path)) != component_path
+            or not _nonnegative_int(component.get("device"))
+            or not _positive_int(component.get("inode"))
+            or not _nonnegative_int(component.get("mtime_ns"))
+            or not _nonnegative_int(component.get("ctime_ns"))
+        ):
+            return False
+        current = Path(component_path)
+        if index == 0:
+            if current != Path(os.sep):
+                return False
+        elif expected_parent is None or current.parent != expected_parent:
+            return False
+        expected_parent = current
+    if (
+        expected_parent != Path(str(value["path"]))
+        or any(
+            path_components[-1].get(field) != root_identity.get(field)
+            for field in ("device", "inode", "mtime_ns", "ctime_ns")
+        )
     ):
         return False
     seen_names: set[str] = set()
@@ -2146,6 +2184,10 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
     identity_document = json.dumps(
         {
             "root_identity": root_identity,
+            "path_component_identity_fields": list(
+                _TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS
+            ),
+            "path_components": path_components,
             "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
             "file_identities": file_identities,
         },
@@ -2163,7 +2205,9 @@ def _valid_tablebase_inventory(value: Any) -> bool:
     if (
         value.get("schema") != _TABLEBASE_INVENTORY_SCHEMA
         or value.get("identity_method")
-        != "no_follow_device_inode_size_mtime_ctime"
+        != "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+        or value.get("path_anchor_semantics")
+        != "absolute_root_and_each_lexical_directory_component_no_follow"
         or not isinstance(directories, list)
         or not directories
         or not all(_valid_tablebase_directory_inventory(row) for row in directories)

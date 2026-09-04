@@ -404,9 +404,12 @@ _SCHEMA = CHUNK_TRAJECTORY_SCHEMA
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
-_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v2"
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v3"
 _TABLEBASE_FILE_IDENTITY_FIELDS = (
     "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
+)
+_TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS = (
+    "path", "device", "inode", "mtime_ns", "ctime_ns",
 )
 _PRODUCTION_GSS_HALVING_REV = 3
 _MIN_DECISION_GRADE_CHUNKS = 4
@@ -943,12 +946,22 @@ def _read_tracked_preregistration(
     return {**before, "repo_relative_path": relative_path}, document
 
 
-def _open_directory_no_follow(path: Path) -> tuple[int, Path]:
-    """Open every directory component without ever traversing a symlink."""
+def _open_directory_no_follow(
+    path: Path,
+) -> tuple[int, Path, list[dict[str, int | str]]]:
+    """Open and bind every directory component without traversing a symlink."""
     lexical = Path(os.path.abspath(os.fspath(path.expanduser())))
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
     current_fd = os.open(os.sep, flags)
     try:
+        anchor_stat = os.fstat(current_fd)
+        if not stat.S_ISDIR(anchor_stat.st_mode):
+            raise SystemExit("Syzygy absolute-root anchor is not a directory")
+        path_components: list[dict[str, int | str]] = [{
+            "path": os.sep,
+            **_tablebase_directory_identity(anchor_stat),
+        }]
+        current_path = Path(os.sep)
         for component in lexical.parts[1:]:
             try:
                 component_stat = os.stat(
@@ -989,7 +1002,12 @@ def _open_directory_no_follow(path: Path) -> tuple[int, Path]:
                 )
             os.close(current_fd)
             current_fd = next_fd
-        return current_fd, lexical
+            current_path /= component
+            path_components.append({
+                "path": str(current_path),
+                **_tablebase_directory_identity(opened_stat),
+            })
+        return current_fd, lexical, path_components
     except BaseException:
         os.close(current_fd)
         raise
@@ -1009,20 +1027,28 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
 
     Full byte hashing would read the corpus twice per run (roughly 440 GiB) and
     interfere with the search being measured.  Instead, the initial and final
-    inventories bind every table file's device, inode, size, mtime, and ctime.
-    Ctime deliberately makes an in-place same-size edit visible even if mtime is
-    restored.  The opened root identity also makes directory replacement visible.
+    inventories bind the absolute-root anchor, every traversed directory, and
+    every table file's device, inode, size, mtime, and ctime.  Ctime deliberately
+    makes an in-place same-size edit or swap-and-restore visible even if mtime is
+    restored.
     """
     directories: list[dict[str, Any]] = []
     for raw_directory in path_value.split(SEPARATOR):
         if not raw_directory.strip():
             raise SystemExit("Syzygy path contains an empty directory component")
-        directory_fd, directory = _open_directory_no_follow(
+        directory_fd, directory, path_components = _open_directory_no_follow(
             Path(raw_directory.strip()),
         )
         try:
             root_before = os.fstat(directory_fd)
             root_identity = _tablebase_directory_identity(root_before)
+            if any(
+                path_components[-1].get(field) != root_identity[field]
+                for field in ("device", "inode", "mtime_ns", "ctime_ns")
+            ):
+                raise SystemExit(
+                    f"Syzygy directory changed while it was being opened: {directory}"
+                )
 
             def scan_table_files(
                 directory_fd: int = directory_fd,
@@ -1116,6 +1142,10 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
             identity_document = json.dumps(
                 {
                     "root_identity": root_identity,
+                    "path_component_identity_fields": list(
+                        _TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS
+                    ),
+                    "path_components": path_components,
                     "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
                     "file_identities": file_identities,
                 },
@@ -1126,6 +1156,10 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
             directories.append({
                 "path": str(directory),
                 "root_identity": root_identity,
+                "path_component_identity_fields": list(
+                    _TABLEBASE_PATH_COMPONENT_IDENTITY_FIELDS
+                ),
+                "path_components": path_components,
                 "rtbw_count": counts["rtbw"],
                 "rtbz_count": counts["rtbz"],
                 "file_identity_count": len(file_identities),
@@ -1142,7 +1176,12 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
     ).encode("utf-8")
     return {
         "schema": _TABLEBASE_INVENTORY_SCHEMA,
-        "identity_method": "no_follow_device_inode_size_mtime_ctime",
+        "identity_method": (
+            "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+        ),
+        "path_anchor_semantics": (
+            "absolute_root_and_each_lexical_directory_component_no_follow"
+        ),
         "path": canonical_path,
         "directories": directories,
         "rtbw_count": sum(int(row["rtbw_count"]) for row in directories),
