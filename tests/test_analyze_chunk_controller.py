@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import chess
@@ -284,8 +285,10 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
         "model = load_model_from_checkpoint("
     )
     assert "load_model_from_checkpoint(\n        checkpoint_path," in source
+    assert "tmp_path.unlink()" not in source
+    assert '"raw_observations_preserved": True' in source
     assert module_source.index(
-        'if "--recover-publication" in sys.argv[1:]:'
+        'if __name__ == "__main__" and "--recover-publication" in sys.argv[1:]:'
     ) < module_source.index(
         "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
     )
@@ -456,6 +459,34 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     meta = Path(str(path) + ".meta.json")
+    producer_source_paths = {
+        "producer_script": "scripts/backtest_chunk_trajectory.py",
+        "scripts.chunk_trajectory_publication": (
+            "scripts/chunk_trajectory_publication.py"
+        ),
+        "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
+        "scripts.repo_output_guard": "scripts/repo_output_guard.py",
+        "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
+        "chess_anti_engine.mcts.search_options": (
+            "chess_anti_engine/mcts/search_options.py"
+        ),
+        "chess_anti_engine.uci.search": "chess_anti_engine/uci/search.py",
+        "chess_anti_engine.uci.model_loader": (
+            "chess_anti_engine/uci/model_loader.py"
+        ),
+    }
+    producer_sources: dict[str, dict[str, Any]] = {}
+    for name, relative_path in producer_source_paths.items():
+        source = f"synthetic source for {name}\n".encode()
+        _TEST_GIT_FILES[relative_path] = source
+        producer_sources[name] = {
+            "path": "/producer-checkout/" + relative_path,
+            "repo_relative_path": relative_path,
+            "matches_producer_git_revision": True,
+            "size": len(source),
+            "mtime_ns": 1,
+            "sha256": hashlib.sha256(source).hexdigest(),
+        }
     manifest: dict[str, Any] = {
         "schema": "deepfin.chunk_trajectory.v3",
         "complete": True,
@@ -477,13 +508,11 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
         "producer_git_sha": "a" * 40,
         "producer_git_dirty": False,
-        "producer_script": {
-            "path": "/producer.py", "size": 1, "mtime_ns": 1, "sha256": "a" * 64,
-        },
-        "publication_helper": {
-            "path": "/publication.py", "size": 1, "mtime_ns": 1,
-            "sha256": "3" * 64,
-        },
+        "producer_script": producer_sources["producer_script"],
+        "publication_helper": producer_sources[
+            "scripts.chunk_trajectory_publication"
+        ],
+        "producer_sources": producer_sources,
         "checkpoint": {
             "path": "/trainer.pt", "size": 1, "mtime_ns": 1, "sha256": "b" * 64,
         },
@@ -765,6 +794,40 @@ def test_loader_requires_publication_helper_provenance(tmp_path: Path) -> None:
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="publication_helper artifact provenance"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_publication_helper_not_bound_to_producer_revision(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    foreign_source = b"foreign publication helper\n"
+    manifest["publication_helper"].update({
+        "path": "/foreign-worktree/scripts/chunk_trajectory_publication.py",
+        "size": len(foreign_source),
+        "sha256": hashlib.sha256(foreign_source).hexdigest(),
+    })
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="not bound to the producer Git revision"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_foreign_loaded_producer_python_module(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    foreign_source = b"foreign search implementation\n"
+    manifest["producer_sources"]["chess_anti_engine.uci.search"].update({
+        "path": "/foreign/chess_anti_engine/uci/search.py",
+        "size": len(foreign_source),
+        "sha256": hashlib.sha256(foreign_source).hexdigest(),
+    })
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="producer Python sources"):
         load_transitions(bank)
 
 
@@ -1893,6 +1956,94 @@ def test_recovery_cli_runs_before_project_or_native_imports(tmp_path: Path) -> N
     assert not pending_meta.exists()
 
 
+def test_recovery_cli_rejects_unknown_options_without_publishing(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    default_output = tmp_path / "runs/backtest/chunk_trajectory.jsonl"
+    default_output.parent.mkdir(parents=True)
+    default_meta = Path(str(default_output) + ".meta.json")
+    pending_output = producer._pending_output_path(default_output)
+    pending_meta = producer._pending_manifest_path(default_meta)
+    pending_output.write_text("completed default bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, default_output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+    intended_output = tmp_path / "intended/bank.jsonl"
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    python_path = [str(repo_root)]
+    inherited_python_path = os.environ.get("PYTHONPATH")
+    if inherited_python_path:
+        python_path.append(inherited_python_path)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(python_path)}
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(producer.__file__).resolve()),
+            "--recover-publication",
+            "--ouut", str(intended_output),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "unrecognized arguments: --ouut" in completed.stderr
+    assert pending_output.read_text() == "completed default bank\n"
+    assert json.loads(pending_meta.read_text()) == manifest
+    assert not default_output.exists()
+    assert not default_meta.exists()
+    assert not intended_output.exists()
+
+
+def test_import_never_dispatches_recovery_from_host_argv(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = Path(str(output) + ".meta.json")
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    python_path = [str(repo_root)]
+    inherited_python_path = os.environ.get("PYTHONPATH")
+    if inherited_python_path:
+        python_path.append(inherited_python_path)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(python_path)}
+    program = (
+        "import sys; "
+        f"sys.argv = ['host', '--recover-publication', '--out', {str(output)!r}]; "
+        "import scripts.backtest_chunk_trajectory"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert pending_output.read_text() == "completed bank\n"
+    assert json.loads(pending_meta.read_text()) == manifest
+    assert not output.exists()
+    assert not meta.exists()
+
+
 def test_producer_refuses_unprepared_pending_bank(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -1970,6 +2121,72 @@ def test_producer_marks_post_collection_group_loss_non_decision_grade() -> None:
     )
     assert producer._source_game_group_count(completed_groups) == 8
     assert producer._source_group_resolution_passed(completed_groups) is False
+
+
+def test_excluded_position_evidence_preserves_partial_raw_snapshots() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    position = SimpleNamespace(
+        key="position",
+        fen=chess.Board().fen(),
+        phase=1,
+        source=2,
+        best_cp=42,
+        move_cp={"e2e4": 42, "d2d4": 31},
+    )
+    snapshots = [{
+        "nodes": 50,
+        "actions": [1, 2],
+        "visits": [30, 20],
+        "child_q": [0.2, 0.1],
+        "pv_actions": [1],
+        "pv_uci": ["e2e4"],
+    }]
+
+    evidence = producer._excluded_position_evidence(
+        position,
+        source_dir="/snapshot",
+        source_shard="s0.zarr",
+        game_id=7,
+        group_id="/snapshot\0" + "7",
+        chunks_required=4,
+        snapshots=snapshots,
+        reason="incomplete_search",
+        search_result={"nodes": 50},
+    )
+
+    assert evidence["chunks_observed"] == 1
+    assert evidence["partial_observations"] == snapshots
+    assert evidence["deep_reference_move_cp"] == {"e2e4": 42.0, "d2d4": 31.0}
+    assert evidence["search_result"] == {"nodes": 50}
+
+
+def test_producer_rejects_foreign_loaded_python_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    foreign = tmp_path / "foreign_search.py"
+    foreign.write_text("FOREIGN = True\n")
+    monkeypatch.setitem(
+        sys.modules,
+        "chess_anti_engine.foreign_review_fixture",
+        SimpleNamespace(__file__=str(foreign)),
+    )
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        producer,
+        "_producer_git_file_at_commit",
+        lambda _commit, relative: (
+            (repo_root / relative).read_bytes()
+            if (repo_root / relative).is_file() else None
+        ),
+    )
+
+    with pytest.raises(
+        SystemExit, match=r"chess_anti_engine\.foreign_review_fixture",
+    ):
+        producer._producer_python_source_artifacts("a" * 40, require_tracked=True)
 
 
 def test_producer_requires_driver_provenance_before_decision_grade_search() -> None:
@@ -2225,21 +2442,15 @@ def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
     two_games = [
-        _transition("first", 1, 100, 0.0, current=True),
-        _transition("second", 2, 100, 0.0, current=True),
+        _transition(key, game, horizon, float(game), current=True)
+        for key, game in (("first", 1), ("second", 2))
+        for horizon in (100, 150, 200)
     ]
     info = {
         "decision_grade": False,
         "preregistered_design": False,
         "manifest": {"producer_git_sha": "a" * 40},
     }
-    analyzed = False
-
-    def fake_analyze(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        nonlocal analyzed
-        analyzed = True
-        return {"statistical_gate_passed": False}
-
     monkeypatch.setattr(
         sys,
         "argv",
@@ -2248,6 +2459,9 @@ def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
             "--in", str(tmp_path / "bank.jsonl"),
             "--meta", str(tmp_path / "bank.jsonl.meta.json"),
             "--methodology-smoke",
+            "--folds", "2",
+            "--bootstrap-samples", "1",
+            "--allocation-fraction", "0.5",
         ],
     )
     monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
@@ -2258,7 +2472,6 @@ def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
         "load_transitions",
         lambda *_a, **_k: (two_games, info),
     )
-    monkeypatch.setattr(controller_module, "analyze", fake_analyze)
     monkeypatch.setattr(
         controller_module,
         "_analyzer_provenance",
@@ -2272,11 +2485,22 @@ def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
     controller_module.main()
 
     analysis = json.loads(capsys.readouterr().out)["analysis"]
-    assert analyzed is True
     assert analysis["verdict"] == "METHODOLOGY_SMOKE_ONLY"
+    assert "reachable_rollout" in analysis
     assert analysis["source_game_group_count"] == 2
     assert analysis["grouped_analysis_possible"] is True
     assert analysis["source_group_resolution_passed"] is False
+
+
+def test_grouped_analysis_requires_multiple_held_horizon_training_rows() -> None:
+    two_games_one_horizon = [
+        _transition("first", 1, 100, 0.0, current=True),
+        _transition("second", 2, 100, 0.0, current=True),
+    ]
+
+    assert controller_module._grouped_analysis_possible(
+        two_games_one_horizon, 2,
+    ) is False
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(

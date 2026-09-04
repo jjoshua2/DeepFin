@@ -307,6 +307,11 @@ def _require_safe_output_path(
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
                 protected.add(Path(artifact["path"]).expanduser().resolve())
+        producer_sources = manifest.get("producer_sources")
+        if isinstance(producer_sources, dict):
+            for artifact in producer_sources.values():
+                if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
+                    protected.add(Path(artifact["path"]).expanduser().resolve())
     if output in protected:
         raise ValueError("--out must not overwrite a consumed input artifact")
     syzygy = manifest.get("syzygy") if manifest is not None else None
@@ -419,6 +424,63 @@ def _artifact_provenance_complete(artifact: Any) -> bool:
         and _positive_int(artifact.get("size"))
         and _nonnegative_int(artifact.get("mtime_ns"))
         and _valid_sha256(artifact.get("sha256"))
+    )
+
+
+def _producer_source_matches_revision(
+    artifact: Any, producer_git_sha: Any, relative_path: str,
+) -> bool:
+    """Authenticate producer Python bytes against their reported Git revision."""
+    if (
+        not _artifact_provenance_complete(artifact)
+        or not isinstance(artifact, dict)
+        or artifact.get("repo_relative_path") != relative_path
+        or artifact.get("matches_producer_git_revision") is not True
+        or not isinstance(producer_git_sha, str)
+    ):
+        return False
+    committed = _git_file_at_commit(producer_git_sha, relative_path)
+    return bool(
+        committed is not None
+        and artifact.get("size") == len(committed)
+        and artifact.get("sha256") == hashlib.sha256(committed).hexdigest()
+    )
+
+
+def _producer_sources_match_revision(sources: Any, producer_git_sha: Any) -> bool:
+    """Verify the complete loaded producer Python surface, not only its entrypoint."""
+    if not isinstance(sources, dict) or not sources:
+        return False
+    required = {
+        "producer_script": "scripts/backtest_chunk_trajectory.py",
+        "scripts.chunk_trajectory_publication": (
+            "scripts/chunk_trajectory_publication.py"
+        ),
+        "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
+        "scripts.repo_output_guard": "scripts/repo_output_guard.py",
+        "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
+        "chess_anti_engine.mcts.search_options": (
+            "chess_anti_engine/mcts/search_options.py"
+        ),
+        "chess_anti_engine.uci.search": "chess_anti_engine/uci/search.py",
+        "chess_anti_engine.uci.model_loader": (
+            "chess_anti_engine/uci/model_loader.py"
+        ),
+    }
+    if any(
+        not _producer_source_matches_revision(
+            sources.get(name), producer_git_sha, relative_path,
+        )
+        for name, relative_path in required.items()
+    ):
+        return False
+    return all(
+        isinstance(artifact, dict)
+        and isinstance(artifact.get("repo_relative_path"), str)
+        and _producer_source_matches_revision(
+            artifact, producer_git_sha, artifact["repo_relative_path"],
+        )
+        for artifact in sources.values()
     )
 
 
@@ -1094,6 +1156,20 @@ def _require_manifest(
         )
         if not _artifact_provenance_complete(manifest.get(name))
     )
+    failures.extend(
+        f"{name} is not bound to the producer Git revision"
+        for name, relative_path in (
+            ("producer_script", "scripts/backtest_chunk_trajectory.py"),
+            ("publication_helper", "scripts/chunk_trajectory_publication.py"),
+        )
+        if not _producer_source_matches_revision(
+            manifest.get(name), producer_sha, relative_path,
+        )
+    )
+    if not _producer_sources_match_revision(
+        manifest.get("producer_sources"), producer_sha,
+    ):
+        failures.append("loaded producer Python sources are not bound to the revision")
     checkpoint_params = manifest.get("checkpoint_params")
     if "checkpoint_params" not in manifest or (
         checkpoint_params is not None
@@ -1876,6 +1952,36 @@ def grouped_folds(groups: Sequence[str], n_folds: int) -> list[np.ndarray]:
     return [np.flatnonzero(np.isin(arr, bucket)) for bucket in buckets]
 
 
+def _grouped_analysis_possible(
+    transitions: Sequence[Transition], n_folds: int,
+) -> bool:
+    """Whether held-horizon grouped fitting has enough rows in every split."""
+    groups = np.asarray([transition.group_id for transition in transitions], dtype=str)
+    if len(set(groups.tolist())) < 2:
+        return False
+    horizons = sorted({transition.horizon for transition in transitions})
+    if len(horizons) < 2:
+        return False
+    for horizon in horizons:
+        target_indices = np.flatnonzero(
+            np.asarray([transition.horizon == horizon for transition in transitions])
+        )
+        try:
+            folds = grouped_folds(groups[target_indices].tolist(), n_folds)
+        except ValueError:
+            return False
+        for test_local in folds:
+            test_groups = set(groups[target_indices[test_local]].tolist())
+            training_rows = sum(
+                transition.horizon != horizon
+                and transition.group_id not in test_groups
+                for transition in transitions
+            )
+            if training_rows < 2:
+                return False
+    return True
+
+
 def _inner_alpha(
     transitions: Sequence[Transition], model: str, n_folds: int,
 ) -> float:
@@ -2637,7 +2743,7 @@ def main() -> None:
         source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
     )
     result: dict[str, Any]
-    grouped_analysis_possible = source_game_group_count >= 2
+    grouped_analysis_possible = _grouped_analysis_possible(transitions, args.folds)
     if grouped_analysis_possible:
         result = analyze(
             transitions,

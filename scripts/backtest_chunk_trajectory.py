@@ -36,12 +36,12 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
 from scripts import chunk_trajectory_publication as publication_module
 
-if "--recover-publication" in sys.argv[1:]:
+if __name__ == "__main__" and "--recover-publication" in sys.argv[1:]:
     publication_module.recover_publication_cli(
         sys.argv[1:], repo_root=Path(__file__).resolve().parents[1],
     )
@@ -102,7 +102,6 @@ from scripts.analyze_chunk_controller import (
     _PRODUCTION_WALKERS,
     _canonical_cuda_device_string,
     _complexity_continue,
-    _git_file_at_commit,
     _preregistration_payload,
     _preregistered_design_failures,
     _score,
@@ -117,6 +116,16 @@ _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
 _MIN_DECISION_GRADE_CHUNKS = 4
+_REQUIRED_PRODUCER_SOURCE_MODULES = {
+    "producer_script",
+    "scripts.chunk_trajectory_publication",
+    "scripts.analyze_chunk_controller",
+    "scripts.repo_output_guard",
+    "chess_anti_engine.eval.audit",
+    "chess_anti_engine.mcts.search_options",
+    "chess_anti_engine.uci.search",
+    "chess_anti_engine.uci.model_loader",
+}
 
 
 def _entropy(shares: np.ndarray) -> float:
@@ -157,6 +166,31 @@ def _git_state() -> tuple[str, bool]:
         return "unknown", True
 
 
+def _producer_git_file_at_commit(commit: str, relative_path: str) -> bytes | None:
+    """Read producer-repository bytes without trusting another project module."""
+    relative = PurePosixPath(relative_path)
+    if (
+        len(commit) != 40
+        or any(char not in "0123456789abcdef" for char in commit.lower())
+        or not relative_path
+        or relative.is_absolute()
+        or ":" in relative_path
+        or any(part in ("", ".", "..") for part in relative.parts)
+    ):
+        return None
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{commit}:{relative.as_posix()}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
 def _artifact_if_file(path: Path) -> dict[str, Any] | None:
     """Best-effort end-of-run snapshot; disappearance is evidence, not an abort."""
     try:
@@ -165,6 +199,54 @@ def _artifact_if_file(path: Path) -> dict[str, Any] | None:
         return _artifact(path, require_file=True)
     except OSError:
         return None
+
+
+def _producer_python_source_artifacts(
+    producer_git_sha: str, *, require_tracked: bool,
+) -> dict[str, dict[str, Any]]:
+    """Bind every loaded project Python module to the producer revision."""
+    repo_root = Path(__file__).resolve().parents[1]
+    source_paths = {"producer_script": Path(__file__)}
+    for module_name, module in sorted(sys.modules.items()):
+        if not (
+            module_name in ("chess_anti_engine", "scripts")
+            or module_name.startswith(("chess_anti_engine.", "scripts."))
+        ):
+            continue
+        module_file = getattr(module, "__file__", None)
+        if isinstance(module_file, str) and Path(module_file).suffix == ".py":
+            source_paths[module_name] = Path(module_file)
+    artifacts: dict[str, dict[str, Any]] = {}
+    unbound: list[str] = []
+    for name, path in sorted(source_paths.items()):
+        resolved = path.expanduser().resolve()
+        try:
+            relative_path = resolved.relative_to(repo_root).as_posix()
+        except ValueError:
+            relative_path = None
+        artifact = _artifact(resolved, require_file=True)
+        committed = (
+            _producer_git_file_at_commit(producer_git_sha, relative_path)
+            if relative_path is not None else None
+        )
+        matches_commit = bool(
+            committed is not None
+            and artifact.get("size") == len(committed)
+            and artifact.get("sha256") == hashlib.sha256(committed).hexdigest()
+        )
+        artifacts[name] = {
+            **artifact,
+            "repo_relative_path": relative_path,
+            "matches_producer_git_revision": matches_commit,
+        }
+        if not matches_commit:
+            unbound.append(name)
+    if require_tracked and unbound:
+        raise SystemExit(
+            "decision-grade producer Python sources are not tracked by the producer "
+            f"revision: {', '.join(unbound)}"
+        )
+    return artifacts
 
 
 def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
@@ -198,7 +280,7 @@ def _read_tracked_preregistration(
         or before.get("sha256") != hashlib.sha256(document_bytes).hexdigest()
     ):
         raise SystemExit("--preregistration changed while it was being read")
-    if _git_file_at_commit(producer_git_sha, relative_path) != document_bytes:
+    if _producer_git_file_at_commit(producer_git_sha, relative_path) != document_bytes:
         raise SystemExit(
             "--preregistration must be tracked verbatim by the clean producer commit"
         )
@@ -291,6 +373,45 @@ def _source_game_group_count(group_ids: Mapping[str, str | None]) -> int:
 def _source_group_resolution_passed(group_ids: Mapping[str, str | None]) -> bool:
     """Whether a completed bank retains enough clusters for decision-grade OOB CIs."""
     return _source_game_group_count(group_ids) >= _MIN_DECISION_GRADE_SOURCE_GAMES
+
+
+def _excluded_position_evidence(
+    position: Any,
+    *,
+    source_dir: str | None,
+    source_shard: str | None,
+    game_id: int | None,
+    group_id: str | None,
+    chunks_required: int,
+    snapshots: list[dict[str, Any]],
+    reason: str,
+    search_result: dict[str, Any] | None = None,
+    collection_error: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Retain raw callback observations even when a position cannot be analyzed."""
+    evidence: dict[str, Any] = {
+        "key": position.key,
+        "fen": position.fen,
+        "source_dir": source_dir,
+        "shard": source_shard,
+        "game_id": game_id,
+        "group_id": group_id,
+        "phase": position.phase,
+        "source": position.source,
+        "deep_reference_best_cp": float(position.best_cp),
+        "deep_reference_move_cp": {
+            str(uci): float(cp) for uci, cp in position.move_cp.items()
+        },
+        "chunks_observed": len(snapshots),
+        "chunks_required": chunks_required,
+        "reason": reason,
+        "partial_observations": [dict(snapshot) for snapshot in snapshots],
+    }
+    if search_result is not None:
+        evidence["search_result"] = search_result
+    if collection_error is not None:
+        evidence["collection_error"] = collection_error
+    return evidence
 
 
 def _require_nvidia_driver_provenance(
@@ -525,6 +646,10 @@ def main() -> None:
             "decision-grade trajectory banks require a clean producer checkout; "
             "commit or stash changes, or pass --methodology-smoke"
         )
+    initial_producer_sources = _producer_python_source_artifacts(
+        producer_git_sha,
+        require_tracked=not args.methodology_smoke,
+    )
     if args.preregistration is not None and args.write_preregistration is not None:
         raise SystemExit(
             "--preregistration and --write-preregistration are mutually exclusive"
@@ -548,10 +673,10 @@ def main() -> None:
             _read_tracked_preregistration(preregistration_path, producer_git_sha)
         )
     initial_input_artifacts = {
-        "producer_script": _artifact(Path(__file__), require_file=True),
-        "publication_helper": _artifact(
-            Path(publication_module.__file__), require_file=True,
-        ),
+        "producer_script": initial_producer_sources["producer_script"],
+        "publication_helper": initial_producer_sources[
+            "scripts.chunk_trajectory_publication"
+        ],
         "checkpoint": _artifact(checkpoint_path, require_file=True),
         "audit_set": _artifact(args.audit_set, require_file=True),
         "matched_rows": (
@@ -782,6 +907,29 @@ def main() -> None:
     from chess_anti_engine.uci.time_manager import Deadline
     from chess_anti_engine.worker import _configure_shared_compile_cache
 
+    producer_sources = _producer_python_source_artifacts(
+        producer_git_sha,
+        require_tracked=not args.methodology_smoke,
+    )
+    missing_producer_sources = sorted(
+        _REQUIRED_PRODUCER_SOURCE_MODULES - producer_sources.keys()
+    )
+    if missing_producer_sources and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade producer source inventory is incomplete: "
+            + ", ".join(missing_producer_sources)
+        )
+    producer_source_import_changes = sorted(
+        name for name, artifact in initial_producer_sources.items()
+        if _artifact_identity(artifact)
+        != _artifact_identity(producer_sources.get(name))
+    )
+    if producer_source_import_changes and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade producer sources changed while runtime modules imported: "
+            + ", ".join(producer_source_import_changes)
+        )
+    provenance["producer_sources"] = producer_sources
     checkpoint_params_path = _find_params_json(checkpoint_path)
     provenance["checkpoint_params"] = (
         _artifact(checkpoint_params_path, require_file=True)
@@ -1293,10 +1441,17 @@ def main() -> None:
     completed_group_ids: dict[str, str] = {}
     excluded_positions: list[dict[str, Any]] = []
     started = time.perf_counter()
-    collection_complete = False
+    collection_started = False
+    active_position: Any | None = None
+    active_snapshots: list[dict[str, Any]] = []
+    active_search_result: dict[str, Any] | None = None
     try:
         with tmp_path.open("x") as fh:
+            collection_started = True
             for pi, pos in enumerate(positions):
+                active_position = pos
+                active_snapshots = []
+                active_search_result = None
                 board = chess.Board(pos.fen)
                 ucis, legal_actions = legal_full_indices(board)
                 regrets = move_regrets(pos, ucis)
@@ -1313,7 +1468,7 @@ def main() -> None:
                     for uci, action in zip(ucis, legal_actions, strict=True)
                 }
                 worker.reset_tree()
-                snaps: list[dict[str, Any]] = []
+                snaps = active_snapshots
                 position_started = time.perf_counter()
 
             # Default-arg binding captures this iteration's loop vars (avoids
@@ -1424,6 +1579,16 @@ def main() -> None:
                     max_nodes=int(args.max_chunks) * int(args.chunk_sims), optimum_ms=None,
                     allow_terminal_shortcuts=True, on_chunk=on_chunk,
                 )
+                active_search_result = {
+                    "bestmove_uci": search_result.bestmove_uci,
+                    "nodes": int(search_result.nodes),
+                    "tbhits": int(search_result.tbhits),
+                    "score_cp": int(search_result.score_cp),
+                    "score_mate": search_result.score_mate,
+                    "root_declined": search_result.root_declined,
+                    "pv": list(search_result.pv),
+                    "board_game_over": board.is_game_over(),
+                }
                 if len(snaps) != int(args.max_chunks):
                     terminal_shortcut = bool(
                         not snaps
@@ -1435,31 +1600,32 @@ def main() -> None:
                             or board.is_game_over()
                         )
                     )
-                    excluded_positions.append({
-                        "key": pos.key,
-                        "chunks_observed": len(snaps),
-                        "chunks_required": int(args.max_chunks),
-                        "reason": (
-                            "production_terminal_shortcut"
-                            if terminal_shortcut
-                            else "incomplete_search"
-                        ),
-                        "search_result": {
-                            "bestmove_uci": search_result.bestmove_uci,
-                            "nodes": int(search_result.nodes),
-                            "tbhits": int(search_result.tbhits),
-                            "score_cp": int(search_result.score_cp),
-                            "score_mate": search_result.score_mate,
-                            "root_declined": search_result.root_declined,
-                            "pv": list(search_result.pv),
-                            "board_game_over": board.is_game_over(),
-                        },
-                    })
+                    excluded_positions.append(
+                        _excluded_position_evidence(
+                            pos,
+                            source_dir=source_dirs[pos.key],
+                            source_shard=source_shards[pos.key],
+                            game_id=game_ids[pos.key],
+                            group_id=group_ids[pos.key],
+                            chunks_required=int(args.max_chunks),
+                            snapshots=snaps,
+                            reason=(
+                                "production_terminal_shortcut"
+                                if terminal_shortcut
+                                else "incomplete_search"
+                            ),
+                            search_result=active_search_result,
+                        )
+                    )
+                    active_position = None
+                    active_snapshots = []
+                    active_search_result = None
                     continue
                 final_uci = snaps[-1]["uci"]
                 final_regret = float(snaps[-1]["regret_cp"])
                 abort_last_best = -1
                 stable_chunks = 0
+                position_rows: list[str] = []
                 for k, s in enumerate(snaps):
                     prev = snaps[k - 1] if k > 0 else None
                     flip = bool(prev is not None and s["uci"] != prev["uci"])
@@ -1518,21 +1684,64 @@ def main() -> None:
                         "changes_to_final": bool(s["uci"] != final_uci),
                         "regret_vs_final_cp": float(s["regret_cp"]) - final_regret,
                     }
-                    fh.write(json.dumps(row, sort_keys=True) + "\n")
-                    n_rows += 1
+                    position_rows.append(json.dumps(row, sort_keys=True) + "\n")
+                fh.write("".join(position_rows))
+                n_rows += len(position_rows)
                 completed_positions += 1
                 completed_group_id = group_ids[pos.key]
                 if completed_group_id:
                     completed_group_ids[completed_group_id] = completed_group_id
+                active_position = None
+                active_snapshots = []
+                active_search_result = None
                 if (pi + 1) % 25 == 0:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
-        collection_complete = True
+    except BaseException as exc:
+        if not collection_started:
+            raise
+        collection_error = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        if active_position is not None:
+            excluded_positions.append(
+                _excluded_position_evidence(
+                    active_position,
+                    source_dir=source_dirs.get(active_position.key),
+                    source_shard=source_shards.get(active_position.key),
+                    game_id=game_ids.get(active_position.key),
+                    group_id=group_ids.get(active_position.key),
+                    chunks_required=int(args.max_chunks),
+                    snapshots=active_snapshots,
+                    reason="collection_error",
+                    search_result=active_search_result,
+                    collection_error=collection_error,
+                )
+            )
+        try:
+            _write_json_staged(
+                pending_meta_path,
+                {
+                    **provenance,
+                    "decision_grade": False,
+                    "complete": False,
+                    "failure_stage": "trajectory_collection",
+                    "collection_error": collection_error,
+                    "raw_observations_preserved": True,
+                    "row_count": n_rows,
+                    "position_count": completed_positions,
+                    "excluded_positions": excluded_positions,
+                    "output": _prepared_output_artifact(tmp_path, args.out),
+                },
+            )
+        finally:
+            for output_lock in reversed(output_locks):
+                output_lock.close()
+        raise
     finally:
         worker.close()
-        if not collection_complete and tmp_path.exists():
-            tmp_path.unlink()
 
     incomplete_exclusions = sum(
         entry["reason"] == "incomplete_search" for entry in excluded_positions
@@ -1570,15 +1779,25 @@ def main() -> None:
         "mcts_extension": _artifact_if_file(Path(mcts_extension.__file__)),
         "lc0_extension": _artifact_if_file(Path(lc0_extension.__file__)),
     }
+    try:
+        current_producer_sources = _producer_python_source_artifacts(
+            producer_git_sha,
+            require_tracked=False,
+        )
+    except (OSError, SystemExit):
+        current_producer_sources = None
     changed_artifacts = sorted({
         *input_load_changes,
         *checkpoint_load_changes,
+        *(f"producer_source_import:{name}" for name in producer_source_import_changes),
         *(f"native_import:{module}" for module in native_import_changes),
         *(
             name for name, frozen in frozen_artifacts.items()
             if _artifact_identity(frozen) != _artifact_identity(current_artifacts[name])
         ),
     })
+    if current_producer_sources != provenance["producer_sources"]:
+        changed_artifacts.append("producer_sources")
     try:
         current_syzygy_inventory = (
             _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None

@@ -329,7 +329,7 @@ def recover_publication_cli(argv: list[str], *, repo_root: Path) -> None:
     parser.add_argument(
         "--out", type=Path, default=Path("runs/backtest/chunk_trajectory.jsonl"),
     )
-    args, _unknown = parser.parse_known_args(argv)
+    args = parser.parse_args(argv)
     if not args.recover_publication:
         raise SystemExit("internal recovery dispatch requires --recover-publication")
     if args.write_preregistration is not None:
