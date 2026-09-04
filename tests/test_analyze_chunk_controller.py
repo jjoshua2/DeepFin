@@ -594,8 +594,176 @@ def test_bootstrap_valid_fraction_counts_invalid_recomputed_fold_draws(
 
     assert result["requested_samples"] == 2
     assert result["valid_samples"] == 1
+    assert result["invalid_samples"] == 1
+    assert result["ineligible_samples"] == 0
+    assert result["lower_tail_failure_samples"] == 1
+    assert result["lower_tail_failure_fraction"] == 0.5
     assert result["valid_fraction"] == 0.5
-    assert result["lower_95"] == 1.0
+    assert result["lower_95"] is None
+
+
+def test_bootstrap_five_percent_ineligible_mass_has_no_finite_lower_95(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 1.0, current=True)
+        for game in range(4)
+        for horizon in (100, 150)
+    ]
+    fold_ids = _evaluation_fold_ids(rows, 2)
+    calls = 0
+
+    def five_percent_ineligible(*_args: object, **_kwargs: object) -> float | None:
+        nonlocal calls
+        calls += 1
+        return None if calls <= 100 else 1.0
+
+    monkeypatch.setattr(
+        controller_module, "_resample_source_game_clusters", lambda *_args: rows,
+    )
+    monkeypatch.setattr(
+        controller_module, "_evaluation_fold_ids", lambda *_args: fold_ids,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_refit_fold_predictions",
+        lambda *_args, **_kwargs: np.zeros(len(rows)),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_minimum_reachable_rung_gain_delta",
+        five_percent_ineligible,
+    )
+
+    bootstrap = cluster_bootstrap_delta(
+        rows,
+        allocation_fraction=0.5,
+        samples=2000,
+        seed=0,
+        n_folds=2,
+    )
+
+    assert bootstrap["valid_samples"] == 1900
+    assert bootstrap["invalid_samples"] == 0
+    assert bootstrap["ineligible_samples"] == 100
+    assert bootstrap["valid_fraction"] == 0.95
+    assert bootstrap["lower_tail_failure_fraction"] == 0.05
+    assert bootstrap["lower_95"] is None
+    assert bootstrap["upper_95"] == 1.0
+
+    m0 = np.zeros(len(rows), dtype=np.float64)
+    m1 = np.asarray([row.gain for row in rows], dtype=np.float64)
+    monkeypatch.setattr(
+        controller_module,
+        "held_horizon_predictions",
+        lambda _rows, model, *, n_folds=5: (m0 if model == "M0" else m1, []),
+    )
+    monkeypatch.setattr(
+        controller_module, "cluster_bootstrap_delta", lambda *_args, **_kwargs: bootstrap,
+    )
+
+    result = analyze(
+        rows,
+        n_folds=2,
+        bootstrap_samples=2000,
+        seed=0,
+        allocation_fraction=0.5,
+        min_capture_gain=0.0,
+        min_oracle_headroom=0.0,
+        min_bootstrap_valid_fraction=0.95,
+    )
+
+    assert result["bootstrap_resolution_passed"] is True
+    assert result["statistical_gate_passed"] is False
+
+
+def test_bootstrap_zero_invalid_draws_keep_the_ordinary_percentile_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 1.0, current=True)
+        for game in range(4)
+        for horizon in (100, 150)
+    ]
+    fold_ids = _evaluation_fold_ids(rows, 2)
+    values = iter(float(index) for index in range(40))
+    monkeypatch.setattr(
+        controller_module, "_resample_source_game_clusters", lambda *_args: rows,
+    )
+    monkeypatch.setattr(
+        controller_module, "_evaluation_fold_ids", lambda *_args: fold_ids,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_refit_fold_predictions",
+        lambda *_args, **_kwargs: np.zeros(len(rows)),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_minimum_reachable_rung_gain_delta",
+        lambda *_args, **_kwargs: next(values),
+    )
+
+    result = cluster_bootstrap_delta(
+        rows,
+        allocation_fraction=0.5,
+        samples=40,
+        seed=0,
+        n_folds=2,
+    )
+
+    expected = np.arange(40, dtype=np.float64)
+    assert result["invalid_samples"] == 0
+    assert result["ineligible_samples"] == 0
+    assert result["lower_tail_failure_fraction"] == 0.0
+    assert result["valid_fraction"] == 1.0
+    assert result["lower_95"] == pytest.approx(float(np.quantile(expected, 0.025)))
+    assert result["upper_95"] == pytest.approx(float(np.quantile(expected, 0.975)))
+    assert result["interval_semantics"] == (
+        "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
+    )
+
+
+def test_bootstrap_maps_sub_tail_failure_mass_into_valid_quantiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 1.0, current=True)
+        for game in range(4)
+        for horizon in (100, 150)
+    ]
+    fold_ids = _evaluation_fold_ids(rows, 2)
+    values = iter([None, *(float(index) for index in range(99))])
+    monkeypatch.setattr(
+        controller_module, "_resample_source_game_clusters", lambda *_args: rows,
+    )
+    monkeypatch.setattr(
+        controller_module, "_evaluation_fold_ids", lambda *_args: fold_ids,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_refit_fold_predictions",
+        lambda *_args, **_kwargs: np.zeros(len(rows)),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_minimum_reachable_rung_gain_delta",
+        lambda *_args, **_kwargs: next(values),
+    )
+
+    result = cluster_bootstrap_delta(
+        rows,
+        allocation_fraction=0.5,
+        samples=100,
+        seed=0,
+        n_folds=2,
+    )
+
+    expected_quantile = (0.025 - 0.01) / 0.99
+    assert result["lower_tail_failure_fraction"] == 0.01
+    assert result["lower_95"] == pytest.approx(float(np.quantile(
+        np.arange(99, dtype=np.float64), expected_quantile,
+    )))
 
 
 def test_nine_game_five_fold_global_draws_retain_canonical_resolution(
@@ -1058,6 +1226,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             ),
             "bootstrap_resampling_semantics": (
                 "global_source_game_clusters_with_recomputed_evaluation_folds"
+            ),
+            "bootstrap_interval_semantics": (
+                "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
             ),
         },
     }
@@ -2233,6 +2404,59 @@ def test_loader_rejects_multinode_terminal_shortcut_exclusion(tmp_path: Path) ->
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="accounting is inconsistent"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_source_balanced_panel_after_terminal_exclusion(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    terminal_board = chess.Board("7k/8/8/8/8/8/8/KQ6 w - - 0 1")
+    assert not terminal_board.is_game_over()
+    excluded = {
+        "key": position_key(terminal_board),
+        "fen": terminal_board.fen(),
+        "source_dir": "/snapshot",
+        "shard": "s1.zarr",
+        "game_id": 4,
+        "group_id": "/snapshot\0" + "4",
+        "phase": phase_bucket(chess.popcount(terminal_board.occupied)),
+        "source": 1,
+        "piece_count": chess.popcount(terminal_board.occupied),
+        "deep_reference_best_cp": 0.0,
+        "deep_reference_move_cp": {"b1b7": 0.0},
+        "chunks_observed": 0,
+        "chunks_required": 4,
+        "partial_observations": [],
+        "reason": "production_terminal_shortcut",
+        "search_result": {
+            "nodes": 0,
+            "tbhits": 1,
+            "root_declined": None,
+            "score_mate": None,
+            "board_game_over": False,
+        },
+    }
+    manifest = json.loads(meta.read_text())
+    manifest.update({
+        "requested_position_count": 2,
+        "excluded_position_count": 1,
+        "excluded_positions": [excluded],
+    })
+    _sync_test_panel_selection(manifest, [rows[0], excluded])
+    meta.write_text(json.dumps(manifest))
+
+    assert manifest["panel_selection"]["source_balance"] == {
+        "maximum_difference": 1,
+        "observed_difference": 0,
+        "passed": True,
+    }
+    with pytest.raises(
+        ValueError,
+        match="decision-grade bank contains selected-position exclusions",
+    ):
         load_transitions(bank)
 
 

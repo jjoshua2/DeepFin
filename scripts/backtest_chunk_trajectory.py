@@ -2124,6 +2124,7 @@ def _main() -> None:
             not args.methodology_smoke
             and not preregistration_failures
             and panel_selection["decision_grade_passed"] is True
+            and not excluded_positions
             and incomplete_exclusions == 0
             and completed_positions > 0
             and source_group_resolution_passed

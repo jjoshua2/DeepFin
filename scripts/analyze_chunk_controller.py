@@ -85,6 +85,9 @@ _FOLD_ORACLE_SEMANTICS = "exact_fold_local_nested_stop_depth_assignment"
 _BOOTSTRAP_RESAMPLING_SEMANTICS = (
     "global_source_game_clusters_with_recomputed_evaluation_folds"
 )
+_BOOTSTRAP_INTERVAL_SEMANTICS = (
+    "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
+)
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
 _PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
 _PANEL_REQUIRED_SOURCES = (0, 1)
@@ -531,6 +534,7 @@ def _canonical_analysis_contract() -> dict[str, int | float | str]:
         "reachable_selection_semantics": _FOLD_SELECTION_SEMANTICS,
         "reachable_oracle_semantics": _FOLD_ORACLE_SEMANTICS,
         "bootstrap_resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+        "bootstrap_interval_semantics": _BOOTSTRAP_INTERVAL_SEMANTICS,
     }
 
 
@@ -1976,6 +1980,12 @@ def _require_manifest(
             != len(excluded_details or [])
         ):
             failures.append("row/position/chunk accounting is inconsistent")
+    if (
+        manifest.get("decision_grade") is True
+        and _nonnegative_int(excluded_positions)
+        and int(excluded_positions) > 0
+    ):
+        failures.append("decision-grade bank contains selected-position exclusions")
     if not _valid_panel_selection(
         manifest.get("panel_selection"),
         requested_max_positions=requested_max_positions,
@@ -3276,9 +3286,19 @@ def cluster_bootstrap_delta(
     n_folds: int = 5,
     min_oracle_headroom: float = 0.0,
 ) -> dict[str, Any]:
-    """Refit and bootstrap the fold-local worst-rung M1-minus-M0 gain."""
+    """Refit and bootstrap the fold-local worst-rung M1-minus-M0 gain.
+
+    A replicate that cannot be fitted or lacks preregistered oracle headroom is
+    part of the requested sampling distribution, not missing-at-random data.
+    Such draws occupy the lower tail so the reported lower bound cannot become
+    optimistic by conditioning on only the successful/headroom-eligible draws.
+    """
+    if samples < 1:
+        raise ValueError("bootstrap requires at least one requested sample")
     rng = np.random.default_rng(seed)
     values: list[float] = []
+    invalid_samples = 0
+    ineligible_samples = 0
     for _ in range(samples):
         try:
             rows = _resample_source_game_clusters(transitions, rng)
@@ -3289,21 +3309,49 @@ def cluster_bootstrap_delta(
             m1 = _refit_fold_predictions(
                 rows, fold_ids, model="M1", n_folds=n_folds,
             )
+            delta = _minimum_reachable_rung_gain_delta(
+                rows, m0, m1, allocation_fraction, min_oracle_headroom,
+                fold_ids=fold_ids,
+            )
         except (ValueError, np.linalg.LinAlgError):
+            invalid_samples += 1
             continue
-        delta = _minimum_reachable_rung_gain_delta(
-            rows, m0, m1, allocation_fraction, min_oracle_headroom,
-            fold_ids=fold_ids,
-        )
-        if delta is not None and math.isfinite(delta):
+        if delta is None:
+            ineligible_samples += 1
+        elif math.isfinite(delta):
             values.append(delta)
+        else:
+            invalid_samples += 1
+    lower_tail_failure_samples = invalid_samples + ineligible_samples
+    lower_tail_failure_fraction = lower_tail_failure_samples / samples
+    valid_fraction = len(values) / samples
+
+    def unconditional_quantile(quantile: float) -> float | None:
+        # Model every invalid/ineligible requested draw as worse than every
+        # numeric draw.  Once that mass reaches a requested quantile there is
+        # no finite bound at that quantile; otherwise map the unconditional
+        # rank into the conditional numeric sample without dropping the mass.
+        if not values or lower_tail_failure_fraction >= quantile:
+            return None
+        conditional_quantile = (
+            quantile - lower_tail_failure_fraction
+        ) / valid_fraction
+        return float(np.quantile(
+            np.asarray(values, dtype=np.float64), conditional_quantile,
+        ))
+
     if not values:
         return {
             "resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+            "interval_semantics": _BOOTSTRAP_INTERVAL_SEMANTICS,
             "selection_semantics": _FOLD_SELECTION_SEMANTICS,
             "oracle_semantics": _FOLD_ORACLE_SEMANTICS,
             "requested_samples": samples,
             "valid_samples": 0,
+            "invalid_samples": invalid_samples,
+            "ineligible_samples": ineligible_samples,
+            "lower_tail_failure_samples": lower_tail_failure_samples,
+            "lower_tail_failure_fraction": lower_tail_failure_fraction,
             "valid_fraction": 0.0,
             "mean": None,
             "lower_95": None,
@@ -3312,14 +3360,19 @@ def cluster_bootstrap_delta(
     array = np.asarray(values, dtype=np.float64)
     return {
         "resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+        "interval_semantics": _BOOTSTRAP_INTERVAL_SEMANTICS,
         "selection_semantics": _FOLD_SELECTION_SEMANTICS,
         "oracle_semantics": _FOLD_ORACLE_SEMANTICS,
         "requested_samples": samples,
         "valid_samples": len(values),
-        "valid_fraction": len(values) / samples,
+        "invalid_samples": invalid_samples,
+        "ineligible_samples": ineligible_samples,
+        "lower_tail_failure_samples": lower_tail_failure_samples,
+        "lower_tail_failure_fraction": lower_tail_failure_fraction,
+        "valid_fraction": valid_fraction,
         "mean": float(array.mean()),
-        "lower_95": float(np.quantile(array, 0.025)),
-        "upper_95": float(np.quantile(array, 0.975)),
+        "lower_95": unconditional_quantile(0.025),
+        "upper_95": unconditional_quantile(0.975),
     }
 
 
@@ -3414,6 +3467,7 @@ def analyze(
             "reachable_selection_required": _FOLD_SELECTION_SEMANTICS,
             "reachable_oracle_required": _FOLD_ORACLE_SEMANTICS,
             "bootstrap_resampling_required": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+            "bootstrap_interval_required": _BOOTSTRAP_INTERVAL_SEMANTICS,
             "fold_score_comparison": "within_held_out_fold_only",
             "per_horizon_tables_are_diagnostic_only": True,
             "M1_reachable_rollout_capture_above_random": True,
