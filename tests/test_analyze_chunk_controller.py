@@ -5787,6 +5787,98 @@ def test_invalid_marker_stat_io_failure_cannot_publish_pending_pair(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+def test_parent_swap_during_state_classification_is_quarantined_across_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    manifest_parent = meta.parent
+    moved_parent = tmp_path / "moved-manifest"
+    invalid = publication._invalid_manifest_path(meta)
+    real_invalid_check = publication._manifest_recovery_is_invalid
+    invalid_checks = 0
+
+    def install_empty_parent_after_marker_check(
+        path: Path, *, parent_fd: int,
+    ) -> bool:
+        nonlocal invalid_checks
+        result = real_invalid_check(path, parent_fd=parent_fd)
+        invalid_checks += 1
+        if invalid_checks == 2:
+            manifest_parent.rename(moved_parent)
+            manifest_parent.mkdir()
+        return result
+
+    monkeypatch.setattr(
+        publication,
+        "_manifest_recovery_is_invalid",
+        install_empty_parent_after_marker_check,
+    )
+    with pytest.raises(SystemExit, match="refusing to replace immutable or incomplete"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert (moved_parent / invalid.name).exists()
+    attacker_manifest = {**manifest, "tampered": True}
+    (moved_parent / pending_meta.name).write_text(json.dumps(attacker_manifest))
+    manifest_parent.rmdir()
+    moved_parent.rename(manifest_parent)
+    monkeypatch.setattr(
+        publication, "_manifest_recovery_is_invalid", real_invalid_check,
+    )
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_output.exists()
+    assert not output.exists()
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+
+
+def test_state_presence_io_failure_keeps_pending_pair_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    real_stat = publication.os.stat
+    injected = False
+
+    def fail_output_presence_stat(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal injected
+        if (
+            not injected
+            and path == output
+            and kwargs.get("follow_symlinks") is False
+            and kwargs.get("dir_fd") is None
+        ):
+            injected = True
+            raise OSError(errno.EIO, "state presence stat failure")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "stat", fail_output_presence_stat)
+    with pytest.raises(OSError, match="state presence stat failure"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert not publication._invalid_manifest_path(meta).exists()
+    assert pending_output.read_text() == "completed bank\n"
+    assert json.loads(pending_meta.read_text()) == manifest
+    assert not output.exists()
+    assert not meta.exists()
+
+    assert publication._require_new_output_pair(output, meta, overwrite=False) is True
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+
+
 def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

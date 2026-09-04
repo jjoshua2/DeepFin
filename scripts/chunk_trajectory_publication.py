@@ -442,6 +442,17 @@ def _manifest_recovery_is_invalid(meta_path: Path, *, parent_fd: int) -> bool:
     return True
 
 
+def _entry_name_exists(path: Path) -> bool:
+    """Check one lexical name without following it or hiding inspection errors."""
+    try:
+        os.stat(path.expanduser(), follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return False
+        raise
+    return True
+
+
 def _require_new_output_pair(
     output_path: Path, meta_path: Path, *, overwrite: bool,
 ) -> bool:
@@ -478,13 +489,33 @@ def _require_new_output_pair_at_parent(
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
         )
+    with _quarantine_manifest_recovery_on_integrity_failure(
+        meta_path, parent_fd=manifest_parent_fd,
+    ):
+        return _classify_new_output_pair(
+            output_path,
+            meta_path,
+            manifest_parent_fd=manifest_parent_fd,
+        )
+
+
+def _classify_new_output_pair(
+    output_path: Path,
+    meta_path: Path,
+    *,
+    manifest_parent_fd: int,
+) -> bool:
     pending_output = _pending_output_path(output_path)
     pending_meta = _pending_manifest_path(meta_path)
+    output_exists = _entry_name_exists(output_path)
+    meta_exists = _entry_name_exists(meta_path)
+    pending_output_exists = _entry_name_exists(pending_output)
+    pending_meta_exists = _entry_name_exists(pending_meta)
     if (
-        output_path.exists()
-        and meta_path.exists()
-        and not os.path.lexists(pending_output)
-        and pending_meta.exists()
+        output_exists
+        and meta_exists
+        and not pending_output_exists
+        and pending_meta_exists
     ):
         with (
             _quarantine_manifest_recovery_on_integrity_failure(
@@ -550,14 +581,14 @@ def _require_new_output_pair_at_parent(
                 ):
                     raise SystemExit("published evidence manifest changed during recovery")
         return True
-    if output_path.exists() and not meta_path.exists() and pending_meta.exists():
+    if output_exists and not meta_exists and pending_meta_exists:
         with (
             _quarantine_manifest_recovery_on_integrity_failure(
                 meta_path, parent_fd=manifest_parent_fd,
             ),
             _durably_read_pending_manifest(pending_meta) as (manifest, source),
         ):
-            if pending_output.exists():
+            if pending_output_exists:
                 with _matching_output(
                     output_path, output_path, manifest, expected_links=2,
                 ) as final_bank:
@@ -594,10 +625,10 @@ def _require_new_output_pair_at_parent(
                     )
         return True
     if (
-        not output_path.exists()
-        and not meta_path.exists()
-        and pending_output.exists()
-        and pending_meta.exists()
+        not output_exists
+        and not meta_exists
+        and pending_output_exists
+        and pending_meta_exists
     ):
         with (
             _quarantine_manifest_recovery_on_integrity_failure(
@@ -628,9 +659,7 @@ def _require_new_output_pair_at_parent(
                     guards=((final_bank, 1),),
                 )
         return True
-    if any(
-        path.exists() for path in (output_path, meta_path, pending_output, pending_meta)
-    ):
+    if any((output_exists, meta_exists, pending_output_exists, pending_meta_exists)):
         raise SystemExit(
             f"refusing to replace immutable or incomplete evidence for {output_path}; "
             "choose a new versioned --out, or retain a fully prepared pending pair"
