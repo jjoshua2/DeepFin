@@ -32,6 +32,7 @@ from chess_anti_engine.eval.audit import (
 from chess_anti_engine.moves import move_to_index
 from scripts import analyze_chunk_controller as controller_module
 from scripts import backtest_chunk_trajectory as trajectory_module
+from scripts import chunk_trajectory_publication as publication_module
 from scripts.approved_syzygy import (
     APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256,
     APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256,
@@ -2571,6 +2572,8 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     manifest["preregistration_document"] = document
     _TEST_GIT_FILES[relative_path] = document.encode()
     meta.write_text(json.dumps(manifest))
+    os.link(path, controller_module._pending_output_path(path))
+    os.link(meta, controller_module._pending_manifest_path(meta))
     return meta
 
 
@@ -8962,7 +8965,9 @@ def test_analyzer_pre_anchor_bank_symlink_swap_keeps_consumed_target_protected(
     alias = tmp_path / "bank-link.jsonl"
     alias.symlink_to(bank)
 
-    _transitions, info = load_transitions(alias, meta_path=meta)
+    _transitions, info = load_transitions(
+        alias, meta_path=meta, methodology_smoke=True,
+    )
     consumed = info["analyzer_consumed_inputs"]
     manifest = dict(info["manifest"])
     manifest["output"] = dict(manifest["output"])
@@ -8997,7 +9002,9 @@ def test_analyzer_pre_anchor_meta_symlink_swap_keeps_consumed_target_protected(
     alias = tmp_path / "manifest-link.json"
     alias.symlink_to(meta)
 
-    _transitions, info = load_transitions(bank, meta_path=alias)
+    _transitions, info = load_transitions(
+        bank, meta_path=alias, methodology_smoke=True,
+    )
     consumed = info["analyzer_consumed_inputs"]
     decoy = tmp_path / "decoy.json"
     decoy.write_text("{}\n")
@@ -10373,7 +10380,9 @@ def test_decision_grade_requires_enough_bootstrap_samples() -> None:
         _require_bootstrap_resolution(999, methodology_smoke=False)
 
 
-def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
+def test_evidence_verdict_is_scoped_to_authenticated_live_evidence(
+    tmp_path: Path,
+) -> None:
     from scripts.analyze_chunk_controller import _evidence_verdict, _is_canonical_decision_rule
 
     assert _is_canonical_decision_rule(
@@ -10387,42 +10396,69 @@ def test_evidence_verdict_is_scoped_to_the_fresh_tree_screen() -> None:
         min_oracle_headroom=1e-4, min_bootstrap_valid_fraction=0.95,
     ) is False
 
+    analyzer = {"decision_grade": True}
     assert _evidence_verdict(
-        evidence_inputs_decision_grade=True,
-        canonical_preregistered_rule=True,
-        source_group_resolution_passed=True,
-        statistical_gate_passed=True,
-    ) == "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
-    assert _evidence_verdict(
-        evidence_inputs_decision_grade=True,
-        canonical_preregistered_rule=True,
-        source_group_resolution_passed=True,
-        statistical_gate_passed=False,
-    ) == "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
-    assert _evidence_verdict(
-        evidence_inputs_decision_grade=False,
+        bank_decision_grade=True,
+        analyzer_provenance=analyzer,
+        evidence_guard=None,
         canonical_preregistered_rule=True,
         source_group_resolution_passed=False,
         statistical_gate_passed=True,
     ) == "METHODOLOGY_SMOKE_ONLY"
+
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    with controller_module._retained_decision_grade_evidence(
+        bank, meta,
+    ) as evidence_guard:
+        assert _evidence_verdict(
+            bank_decision_grade=True,
+            analyzer_provenance=analyzer,
+            evidence_guard=evidence_guard,
+            canonical_preregistered_rule=True,
+            source_group_resolution_passed=True,
+            statistical_gate_passed=True,
+        ) == "ADVANCE_TO_CLOCK_HISTORY_REUSED_TREE_BANK"
+        assert _evidence_verdict(
+            bank_decision_grade=True,
+            analyzer_provenance=analyzer,
+            evidence_guard=evidence_guard,
+            canonical_preregistered_rule=True,
+            source_group_resolution_passed=True,
+            statistical_gate_passed=False,
+        ) == "NO_ADVANCE_FROM_FRESH_TREE_FIXED_NODE_SCREEN"
+        assert _evidence_verdict(
+            bank_decision_grade=True,
+            analyzer_provenance=analyzer,
+            evidence_guard=evidence_guard,
+            canonical_preregistered_rule=False,
+            source_group_resolution_passed=False,
+            statistical_gate_passed=True,
+        ) == "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
+        assert _evidence_verdict(
+            bank_decision_grade=True,
+            analyzer_provenance=analyzer,
+            evidence_guard=evidence_guard,
+            canonical_preregistered_rule=True,
+            source_group_resolution_passed=False,
+            statistical_gate_passed=False,
+        ) == "INSUFFICIENT_SOURCE_GAME_GROUPS"
     assert _evidence_verdict(
-        evidence_inputs_decision_grade=True,
-        canonical_preregistered_rule=False,
-        source_group_resolution_passed=False,
-        statistical_gate_passed=True,
-    ) == "NONCANONICAL_RULE_DIAGNOSTIC_ONLY"
-    assert _evidence_verdict(
-        evidence_inputs_decision_grade=True,
+        bank_decision_grade=True,
+        analyzer_provenance=analyzer,
+        evidence_guard=evidence_guard,
         canonical_preregistered_rule=True,
-        source_group_resolution_passed=False,
-        statistical_gate_passed=False,
-    ) == "INSUFFICIENT_SOURCE_GAME_GROUPS"
+        source_group_resolution_passed=True,
+        statistical_gate_passed=True,
+    ) == "METHODOLOGY_SMOKE_ONLY"
 
 
 def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
     one_game = [_transition("position", 1, 100, 0.0, current=True)]
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
     info = {
         "decision_grade": True,
         "preregistered_design": True,
@@ -10433,8 +10469,8 @@ def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
         "argv",
         [
             "analyze_chunk_controller",
-            "--in", str(tmp_path / "bank.jsonl"),
-            "--meta", str(tmp_path / "bank.jsonl.meta.json"),
+            "--in", str(bank),
+            "--meta", str(meta),
         ],
     )
     monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
@@ -10477,6 +10513,59 @@ def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
     assert analysis["grouped_analysis_possible"] is False
     assert analysis["source_group_resolution_passed"] is False
     assert analysis["evidence_decision_grade"] is False
+
+
+def test_analyzer_main_revalidates_witnesses_after_report_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    report = tmp_path / "analysis.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_chunk_controller",
+            "--in", str(bank),
+            "--meta", str(meta),
+            "--out", str(report),
+        ],
+    )
+    monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
+    monkeypatch.setattr(controller_module, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller_module, "_PREIMPORT_PYTHON_SOURCES", {"passed": True},
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_preimport_python_surface_status",
+        lambda _snapshot: {"passed": True},
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_analyzer_provenance",
+        lambda *_a, **_k: {
+            "decision_grade": True,
+            "git_sha": "b" * 40,
+            "final_git_sha": "b" * 40,
+        },
+    )
+    real_write = controller_module._write_json_atomic
+
+    def write_report_then_change_bank(
+        path: controller_module._AnchoredOutputTarget, payload: str,
+    ) -> None:
+        real_write(path, payload)
+        bank.write_text('{"tampered":true}\n')
+
+    monkeypatch.setattr(
+        controller_module, "_write_json_atomic", write_report_then_change_bank,
+    )
+
+    with pytest.raises(SystemExit, match="changed"):
+        controller_module.main()
+
+    assert not report.exists()
 
 
 def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
@@ -10873,17 +10962,174 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     }
 
 
-def test_analyzer_revision_is_authenticated_independently_of_bank_producer() -> None:
+def test_analyzer_revision_is_authenticated_independently_of_bank_producer(
+    tmp_path: Path,
+) -> None:
     analyzer = {
         "decision_grade": True,
         "git_sha": "b" * 40,
         "sources": {"analyzer": {"sha256": "c" * 64}},
     }
 
-    assert controller_module._decision_grade_evidence_inputs(
+    assert not controller_module._decision_grade_evidence_inputs(
         bank_decision_grade=True,
         analyzer_provenance=analyzer,
-    ) is True
+        evidence_guard=None,
+    )
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    with controller_module._retained_decision_grade_evidence(
+        bank, meta,
+    ) as evidence_guard:
+        assert controller_module._decision_grade_evidence_inputs(
+            bank_decision_grade=True,
+            analyzer_provenance=analyzer,
+            evidence_guard=evidence_guard,
+        ) is True
+
+
+def test_decision_grade_loader_records_both_retained_witnesses(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+
+    _transitions, info = load_transitions(bank)
+
+    artifacts = info["analyzer_consumed_inputs"]
+    assert [artifact["role"] for artifact in artifacts] == [
+        "trajectory_bank",
+        "trajectory_bank_witness",
+        "trajectory_manifest",
+        "trajectory_manifest_witness",
+    ]
+    assert all(artifact["descriptor_authenticated"] for artifact in artifacts)
+    assert [artifact["retained_witness"] for artifact in artifacts] == [
+        False, True, False, True,
+    ]
+
+
+def test_methodology_smoke_explicitly_allows_legacy_final_only_inputs(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    controller_module._pending_output_path(bank).unlink()
+    controller_module._pending_manifest_path(meta).unlink()
+
+    transitions, info = load_transitions(bank, methodology_smoke=True)
+
+    assert len(transitions) == 3
+    assert info["decision_grade"] is False
+
+
+def test_decision_grade_loader_rejects_invalid_recovery_marker(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    controller_module._invalid_manifest_path(meta).write_text("invalid\n")
+
+    with pytest.raises(SystemExit, match="invalidated"):
+        load_transitions(bank)
+
+
+def test_decision_grade_loader_restores_marker_removed_during_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    marker = controller_module._invalid_manifest_path(meta)
+    marker.write_text("invalid\n")
+    real_stat = publication_module.os.stat
+    removed = False
+
+    def remove_marker_then_report_absent(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal removed
+        if not removed and path == marker.name and kwargs.get("dir_fd") is not None:
+            removed = True
+            marker.unlink()
+            raise FileNotFoundError(errno.ENOENT, "removed marker", marker.name)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication_module.os, "stat", remove_marker_then_report_absent)
+
+    with pytest.raises(SystemExit, match="invalid-recovery marker absence changed"):
+        load_transitions(bank)
+
+    assert marker.exists()
+
+
+@pytest.mark.parametrize("witness_kind", ["bank", "manifest"])
+def test_decision_grade_loader_rejects_missing_retained_witness(
+    tmp_path: Path, witness_kind: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    witness = (
+        controller_module._pending_output_path(bank)
+        if witness_kind == "bank"
+        else controller_module._pending_manifest_path(meta)
+    )
+    witness.unlink()
+
+    with pytest.raises(SystemExit, match=r"(hard links|safely open)"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize("witness_kind", ["bank", "manifest"])
+def test_decision_grade_loader_rejects_foreign_retained_witness(
+    tmp_path: Path, witness_kind: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    witness = (
+        controller_module._pending_output_path(bank)
+        if witness_kind == "bank"
+        else controller_module._pending_manifest_path(meta)
+    )
+    witness.unlink()
+    witness.write_text("foreign\n")
+
+    with pytest.raises(SystemExit, match=r"(hard links|retained hard link)"):
+        load_transitions(bank)
+
+
+def test_decision_grade_loader_rejects_extra_hard_link(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    os.link(bank, tmp_path / "extra-bank-link")
+
+    with pytest.raises(SystemExit, match="unexpected hard links"):
+        load_transitions(bank)
+
+
+def test_decision_grade_loader_rejects_bank_change_during_consumption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    real_read = controller_module._read_stable_bytes_fd
+    changed = False
+
+    def read_then_change(
+        file_fd: int, path: Path, *, before: os.stat_result | None = None,
+    ) -> bytes:
+        nonlocal changed
+        content = real_read(file_fd, path, before=before)
+        if not changed and path == bank:
+            changed = True
+            bank.write_text('{"tampered":true}\n')
+        return content
+
+    monkeypatch.setattr(controller_module, "_read_stable_bytes_fd", read_then_change)
+
+    with pytest.raises(SystemExit, match="changed"):
+        load_transitions(bank)
 
 
 def test_walker_manifest_omits_gumbel_only_minibatch_setting(tmp_path: Path) -> None:
@@ -10969,7 +11215,7 @@ def test_loader_authenticates_and_parses_one_bank_buffer(
         controller_module, "_read_consumed_artifact", racing_read_artifact,
     )
 
-    transitions, _ = load_transitions(bank)
+    transitions, _ = load_transitions(bank, methodology_smoke=True)
 
     assert len(transitions) == 3
     assert reads[bank.resolve()] == 1
@@ -11000,7 +11246,7 @@ def test_loader_never_reopens_manifest_that_appears_after_absent_read(
     )
 
     with pytest.raises(ValueError, match="decision-grade analysis requires"):
-        load_transitions(bank, meta_path=meta)
+        load_transitions(bank, meta_path=meta, methodology_smoke=True)
 
     assert meta.read_bytes() == manifest_bytes
 

@@ -340,6 +340,20 @@ from scripts.check_c_extensions_fresh import (
     native_build_attestation,
     native_build_dependency_paths,
 )
+from scripts.chunk_trajectory_publication import (
+    _AnchoredFile as _EvidenceAnchor,
+    _anchored_file as _anchored_evidence_file,
+    _invalid_manifest_path,
+    _manifest_recovery_is_invalid,
+    _pending_manifest_path,
+    _pending_output_path,
+    _read_stable_bytes_fd,
+    _require_anchored_artifact_unchanged,
+    _require_entry as _require_evidence_entry,
+    _require_parent as _require_evidence_parent,
+    _retained_manifest_parent,
+    _retained_output_parent,
+)
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
@@ -973,6 +987,202 @@ def _read_consumed_artifact(path: Path, *, role: str) -> tuple[bytes, dict[str, 
         }
     finally:
         os.close(fd)
+
+
+def _consumed_evidence_record(
+    anchor: _EvidenceAnchor, lexical_path: Path, content: bytes, *, role: str,
+) -> dict[str, Any]:
+    artifact = anchor.artifact
+    return {
+        "role": role,
+        "lexical_path": str(lexical_path.expanduser().absolute()),
+        "canonical_path": str(_strict_descriptor_path(anchor.file_fd, kind="file")),
+        "size": len(content),
+        "mtime_ns": artifact["mtime_ns"],
+        "ctime_ns": artifact["ctime_ns"],
+        "device": artifact["device"],
+        "inode": artifact["inode"],
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "stable_read": True,
+        "descriptor_authenticated": True,
+        "retained_witness": role.endswith("_witness"),
+    }
+
+
+@dataclass
+class _RetainedEvidenceInputs:
+    input_path: Path
+    meta_path: Path
+    pending_input_path: Path
+    pending_meta_path: Path
+    output_parent_fd: int
+    manifest_parent_fd: int
+    bank: _EvidenceAnchor
+    bank_witness: _EvidenceAnchor
+    manifest: _EvidenceAnchor
+    manifest_witness: _EvidenceAnchor
+    input_bytes: bytes
+    meta_bytes: bytes
+    consumed_artifacts: tuple[dict[str, Any], ...]
+    active: bool = True
+
+    def require_unchanged(self) -> None:
+        """Reauthenticate the live four-name evidence state and marker absence."""
+        if not self.active:
+            raise RuntimeError("retained decision-grade evidence guard is closed")
+        if _manifest_recovery_is_invalid(
+            self.meta_path, parent_fd=self.manifest_parent_fd,
+        ):
+            raise SystemExit(
+                f"decision-grade evidence was invalidated: "
+                f"{_invalid_manifest_path(self.meta_path)}"
+            )
+        _require_evidence_parent(self.input_path, self.output_parent_fd)
+        _require_evidence_parent(self.meta_path, self.manifest_parent_fd)
+        for anchor, artifact_path in (
+            (self.bank, self.input_path),
+            (self.bank_witness, self.input_path),
+            (self.manifest, self.meta_path),
+            (self.manifest_witness, self.meta_path),
+        ):
+            _require_anchored_artifact_unchanged(
+                anchor.path,
+                artifact_path=artifact_path,
+                parent_fd=anchor.parent_fd,
+                file_fd=anchor.file_fd,
+                before=anchor.artifact,
+                links=2,
+            )
+        if (
+            _directory_identity(os.fstat(self.bank.file_fd))
+            != _directory_identity(os.fstat(self.bank_witness.file_fd))
+        ):
+            raise SystemExit("trajectory bank witness is not the retained hard link")
+        if (
+            _directory_identity(os.fstat(self.manifest.file_fd))
+            != _directory_identity(os.fstat(self.manifest_witness.file_fd))
+        ):
+            raise SystemExit("trajectory manifest witness is not the retained hard link")
+        if _manifest_recovery_is_invalid(
+            self.meta_path, parent_fd=self.manifest_parent_fd,
+        ):
+            raise SystemExit(
+                f"decision-grade evidence was invalidated: "
+                f"{_invalid_manifest_path(self.meta_path)}"
+            )
+
+
+@contextmanager
+def _retained_decision_grade_evidence(
+    input_path: Path, meta_path: Path,
+) -> Generator[_RetainedEvidenceInputs, None, None]:
+    """Retain and authenticate both final inputs and their publication witnesses."""
+    input_path = input_path.expanduser().absolute()
+    meta_path = meta_path.expanduser().absolute()
+    pending_input = _pending_output_path(input_path)
+    pending_meta = _pending_manifest_path(meta_path)
+    with (
+        _retained_manifest_parent(meta_path) as manifest_parent_fd,
+        _retained_output_parent(
+            input_path,
+            meta_path,
+            manifest_parent_fd=manifest_parent_fd,
+        ) as output_parent_fd,
+    ):
+        if _manifest_recovery_is_invalid(
+            meta_path, parent_fd=manifest_parent_fd,
+        ):
+            raise SystemExit(
+                f"decision-grade evidence was invalidated: "
+                f"{_invalid_manifest_path(meta_path)}"
+            )
+        with (
+            _anchored_evidence_file(
+                input_path,
+                input_path,
+                durable=False,
+                links=2,
+                parent_fd=output_parent_fd,
+            ) as bank,
+            _anchored_evidence_file(
+                pending_input,
+                input_path,
+                durable=False,
+                links=2,
+                parent_fd=output_parent_fd,
+            ) as bank_witness,
+            _anchored_evidence_file(
+                meta_path,
+                meta_path,
+                durable=False,
+                links=2,
+                parent_fd=manifest_parent_fd,
+            ) as manifest,
+            _anchored_evidence_file(
+                pending_meta,
+                meta_path,
+                durable=False,
+                links=2,
+                parent_fd=manifest_parent_fd,
+            ) as manifest_witness,
+        ):
+            _require_evidence_entry(
+                input_path, output_parent_fd, bank.file_fd, links=2,
+            )
+            _require_evidence_entry(
+                pending_input, output_parent_fd, bank.file_fd, links=2,
+            )
+            _require_evidence_entry(
+                meta_path, manifest_parent_fd, manifest.file_fd, links=2,
+            )
+            _require_evidence_entry(
+                pending_meta, manifest_parent_fd, manifest.file_fd, links=2,
+            )
+            input_bytes = _read_stable_bytes_fd(bank.file_fd, input_path)
+            meta_bytes = _read_stable_bytes_fd(manifest.file_fd, meta_path)
+            consumed_artifacts = (
+                _consumed_evidence_record(
+                    bank, input_path, input_bytes, role="trajectory_bank",
+                ),
+                _consumed_evidence_record(
+                    bank_witness,
+                    pending_input,
+                    input_bytes,
+                    role="trajectory_bank_witness",
+                ),
+                _consumed_evidence_record(
+                    manifest, meta_path, meta_bytes, role="trajectory_manifest",
+                ),
+                _consumed_evidence_record(
+                    manifest_witness,
+                    pending_meta,
+                    meta_bytes,
+                    role="trajectory_manifest_witness",
+                ),
+            )
+            guard = _RetainedEvidenceInputs(
+                input_path=input_path,
+                meta_path=meta_path,
+                pending_input_path=pending_input,
+                pending_meta_path=pending_meta,
+                output_parent_fd=output_parent_fd,
+                manifest_parent_fd=manifest_parent_fd,
+                bank=bank,
+                bank_witness=bank_witness,
+                manifest=manifest,
+                manifest_witness=manifest_witness,
+                input_bytes=input_bytes,
+                meta_bytes=meta_bytes,
+                consumed_artifacts=consumed_artifacts,
+            )
+            guard.require_unchanged()
+            try:
+                yield guard
+            finally:
+                try:
+                    guard.require_unchanged()
+                finally:
+                    guard.active = False
 
 
 def _open_directory_anchored(path: Path, *, create: bool) -> int:
@@ -4265,22 +4475,51 @@ def load_transitions(
     *,
     meta_path: Path | None = None,
     methodology_smoke: bool = False,
+    evidence_guard: _RetainedEvidenceInputs | None = None,
 ) -> tuple[list[Transition], dict[str, Any]]:
     """Load, validate, and convert trajectory rows to adjacent-chunk decisions."""
     actual_meta = meta_path or Path(str(input_path) + ".meta.json")
+    if methodology_smoke and evidence_guard is not None:
+        raise ValueError("methodology smoke must not use decision-grade evidence")
+    if not methodology_smoke and evidence_guard is None:
+        with _retained_decision_grade_evidence(
+            input_path, actual_meta,
+        ) as retained:
+            return load_transitions(
+                input_path,
+                meta_path=actual_meta,
+                methodology_smoke=False,
+                evidence_guard=retained,
+            )
     # Authenticate and parse the same immutable byte buffers. Reading the
     # paths independently for hashing and parsing leaves a replacement window
     # in which the manifest can attest to bytes other than those analyzed.
-    input_bytes, input_artifact = _read_consumed_artifact(
-        input_path, role="trajectory_bank",
-    )
-    meta_artifact: dict[str, Any] | None = None
-    try:
-        meta_bytes, meta_artifact = _read_consumed_artifact(
-            actual_meta, role="trajectory_manifest",
+    if evidence_guard is not None:
+        if (
+            evidence_guard.input_path != input_path.expanduser().absolute()
+            or evidence_guard.meta_path != actual_meta.expanduser().absolute()
+        ):
+            raise ValueError("retained evidence guard does not match requested inputs")
+        evidence_guard.require_unchanged()
+        input_bytes = evidence_guard.input_bytes
+        meta_bytes: bytes | None = evidence_guard.meta_bytes
+        consumed_artifacts = list(evidence_guard.consumed_artifacts)
+    else:
+        input_bytes, input_artifact = _read_consumed_artifact(
+            input_path, role="trajectory_bank",
         )
-    except FileNotFoundError:
-        meta_bytes = None
+        meta_artifact: dict[str, Any] | None = None
+        try:
+            meta_bytes, meta_artifact = _read_consumed_artifact(
+                actual_meta, role="trajectory_manifest",
+            )
+        except FileNotFoundError:
+            meta_bytes = None
+        consumed_artifacts = [
+            artifact
+            for artifact in (input_artifact, meta_artifact)
+            if artifact is not None
+        ]
     manifest, decision_grade, preregistered_design = _require_manifest(
         actual_meta,
         methodology_smoke,
@@ -4490,6 +4729,8 @@ def load_transitions(
             "matched-spend comparison requires one fixed node tranche; "
             f"observed costs={sorted(costs)}"
         )
+    if evidence_guard is not None:
+        evidence_guard.require_unchanged()
     info = {
         "decision_grade": decision_grade and not methodology_smoke,
         "preregistered_design": preregistered_design and not methodology_smoke,
@@ -4499,11 +4740,7 @@ def load_transitions(
         "clock_conditioning_tested": False,
         "cross_move_tree_reuse_tested": False,
         "reference_censoring": manifest.get("reference_censoring"),
-        "analyzer_consumed_inputs": [
-            artifact
-            for artifact in (input_artifact, meta_artifact)
-            if artifact is not None
-        ],
+        "analyzer_consumed_inputs": consumed_artifacts,
         "manifest": manifest,
     }
     return transitions, info
@@ -5625,10 +5862,17 @@ def analyze(
 
 
 def _evidence_verdict(
-    *, evidence_inputs_decision_grade: bool, canonical_preregistered_rule: bool,
+    *, bank_decision_grade: Any, analyzer_provenance: dict[str, Any],
+    evidence_guard: _RetainedEvidenceInputs | None,
+    canonical_preregistered_rule: bool,
     source_group_resolution_passed: bool, statistical_gate_passed: bool,
 ) -> str:
     """Name only the next experiment authorized by this deliberately narrow bank."""
+    evidence_inputs_decision_grade = _decision_grade_evidence_inputs(
+        bank_decision_grade=bank_decision_grade,
+        analyzer_provenance=analyzer_provenance,
+        evidence_guard=evidence_guard,
+    )
     if not evidence_inputs_decision_grade:
         return "METHODOLOGY_SMOKE_ONLY"
     if not canonical_preregistered_rule:
@@ -5642,12 +5886,153 @@ def _evidence_verdict(
 
 def _decision_grade_evidence_inputs(
     *, bank_decision_grade: Any, analyzer_provenance: dict[str, Any],
+    evidence_guard: _RetainedEvidenceInputs | None,
 ) -> bool:
     """Authenticate frozen observations and estimator revision independently."""
+    if (
+        not isinstance(evidence_guard, _RetainedEvidenceInputs)
+        or not evidence_guard.active
+    ):
+        return False
+    evidence_guard.require_unchanged()
     return bool(
         bank_decision_grade
         and analyzer_provenance.get("decision_grade") is True
     )
+
+
+def _analyze_loaded_evidence(
+    args: Any,
+    actual_meta: Path,
+    transitions: list[Transition],
+    info: dict[str, Any],
+    *,
+    analyzer_start_sources: dict[str, dict[str, Any]],
+    analyzer_start_git_sha: str,
+    analyzer_start_git_dirty: bool,
+    analyzer_preimport_start_status: Mapping[str, Any],
+    evidence_guard: _RetainedEvidenceInputs | None,
+) -> None:
+    if evidence_guard is not None:
+        evidence_guard.require_unchanged()
+    manifest = info.get("manifest")
+    consumed_inputs = info.get("analyzer_consumed_inputs")
+    if not isinstance(consumed_inputs, list) or not all(
+        isinstance(record, dict) for record in consumed_inputs
+    ):
+        if args.out is not None:
+            raise RuntimeError("analyzer input consumption identity is unavailable")
+        consumed_inputs = []
+    _require_safe_output_path(
+        args.input_path,
+        actual_meta,
+        args.out,
+        manifest=manifest if isinstance(manifest, dict) else None,
+        consumed_artifacts=consumed_inputs,
+    )
+    source_game_group_count = len({row.group_id for row in transitions})
+    source_group_resolution_passed = (
+        source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
+    )
+    result: dict[str, Any]
+    grouped_analysis_preflight = _grouped_analysis_preflight(transitions, args.folds)
+    grouped_analysis_possible = bool(grouped_analysis_preflight["passed"])
+    if grouped_analysis_possible:
+        result = analyze(
+            transitions,
+            n_folds=args.folds,
+            bootstrap_samples=args.bootstrap_samples,
+            seed=args.seed,
+            allocation_fraction=args.allocation_fraction,
+            min_capture_gain=args.min_capture_gain,
+            min_oracle_headroom=args.min_oracle_headroom,
+            min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
+        )
+    else:
+        reasons = grouped_analysis_preflight["reasons"]
+        result = {
+            "statistical_gate_passed": False,
+            "scope": "fresh_tree_fixed_node_horizons_only",
+            "clock_controller_authorized": False,
+            "cross_move_tree_reuse_tested": False,
+            "analysis_skipped": reasons[0] if reasons else "grouped_analysis_unavailable",
+        }
+    if evidence_guard is not None:
+        evidence_guard.require_unchanged()
+    analyzer = _analyzer_provenance(
+        analyzer_start_sources,
+        analyzer_start_git_sha,
+        analyzer_start_git_dirty,
+        preimport_start_status=analyzer_preimport_start_status,
+    )
+    if evidence_guard is not None:
+        evidence_guard.require_unchanged()
+    manifest_producer_sha = (
+        manifest.get("producer_git_sha") if isinstance(manifest, dict) else None
+    )
+    analyzer_matches_producer_commit = bool(
+        analyzer["git_sha"] == manifest_producer_sha
+        and analyzer["final_git_sha"] == manifest_producer_sha
+    )
+    evidence_inputs_decision_grade = _decision_grade_evidence_inputs(
+        bank_decision_grade=info["decision_grade"],
+        analyzer_provenance=analyzer,
+        evidence_guard=evidence_guard,
+    )
+    canonical_analysis_rule = _is_canonical_decision_rule(
+        n_folds=args.folds,
+        bootstrap_samples=args.bootstrap_samples,
+        seed=args.seed,
+        allocation_fraction=args.allocation_fraction,
+        min_capture_gain=args.min_capture_gain,
+        min_oracle_headroom=args.min_oracle_headroom,
+        min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
+    )
+    canonical_rule = bool(canonical_analysis_rule and info["preregistered_design"])
+    decision_grade = bool(
+        evidence_inputs_decision_grade
+        and canonical_rule
+        and source_group_resolution_passed
+    )
+    result["canonical_analysis_rule"] = canonical_analysis_rule
+    result["canonical_preregistered_rule"] = canonical_rule
+    result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
+    result["source_game_group_count"] = source_game_group_count
+    result["grouped_analysis_possible"] = grouped_analysis_possible
+    result["grouped_analysis_preflight"] = grouped_analysis_preflight
+    result["reference_censoring"] = info.get("reference_censoring")
+    result["minimum_decision_grade_source_games"] = _MIN_DECISION_GRADE_SOURCE_GAMES
+    result["source_group_resolution_passed"] = source_group_resolution_passed
+    result["evidence_decision_grade"] = decision_grade
+    result["verdict"] = _evidence_verdict(
+        bank_decision_grade=info["decision_grade"],
+        analyzer_provenance=analyzer,
+        evidence_guard=evidence_guard,
+        canonical_preregistered_rule=canonical_rule,
+        source_group_resolution_passed=source_group_resolution_passed,
+        statistical_gate_passed=bool(result["statistical_gate_passed"]),
+    )
+    if evidence_guard is not None:
+        evidence_guard.require_unchanged()
+    payload = {"input": info, "analyzer": analyzer, "analysis": result}
+    rendered = json.dumps(payload, indent=2, sort_keys=True)
+    if args.out is not None:
+        output_manifest = manifest if isinstance(manifest, dict) else None
+        with _anchored_output_target(
+            args.input_path,
+            actual_meta,
+            args.out,
+            manifest=output_manifest,
+            consumed_artifacts=consumed_inputs,
+        ) as output_target:
+            if evidence_guard is not None:
+                evidence_guard.require_unchanged()
+            _write_json_atomic(output_target, rendered)
+            if evidence_guard is not None:
+                evidence_guard.require_unchanged()
+        if evidence_guard is not None:
+            evidence_guard.require_unchanged()
+    print(rendered)
 
 
 def main() -> None:
@@ -5714,110 +6099,43 @@ def main() -> None:
         _require_safe_output_path(args.input_path, actual_meta, args.out)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    transitions, info = load_transitions(
-        args.input_path, meta_path=actual_meta, methodology_smoke=args.methodology_smoke,
-    )
-    manifest = info.get("manifest")
-    consumed_inputs = info.get("analyzer_consumed_inputs")
-    if not isinstance(consumed_inputs, list) or not all(
-        isinstance(record, dict) for record in consumed_inputs
-    ):
-        if args.out is not None:
-            raise RuntimeError("analyzer input consumption identity is unavailable")
-        consumed_inputs = []
-    _require_safe_output_path(
-        args.input_path,
-        actual_meta,
-        args.out,
-        manifest=manifest if isinstance(manifest, dict) else None,
-        consumed_artifacts=consumed_inputs,
-    )
-    source_game_group_count = len({row.group_id for row in transitions})
-    source_group_resolution_passed = (
-        source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
-    )
-    result: dict[str, Any]
-    grouped_analysis_preflight = _grouped_analysis_preflight(transitions, args.folds)
-    grouped_analysis_possible = bool(grouped_analysis_preflight["passed"])
-    if grouped_analysis_possible:
-        result = analyze(
-            transitions,
-            n_folds=args.folds,
-            bootstrap_samples=args.bootstrap_samples,
-            seed=args.seed,
-            allocation_fraction=args.allocation_fraction,
-            min_capture_gain=args.min_capture_gain,
-            min_oracle_headroom=args.min_oracle_headroom,
-            min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
-        )
-    else:
-        reasons = grouped_analysis_preflight["reasons"]
-        result = {
-            "statistical_gate_passed": False,
-            "scope": "fresh_tree_fixed_node_horizons_only",
-            "clock_controller_authorized": False,
-            "cross_move_tree_reuse_tested": False,
-            "analysis_skipped": reasons[0] if reasons else "grouped_analysis_unavailable",
-        }
-    analyzer = _analyzer_provenance(
-        analyzer_start_sources, analyzer_start_git_sha, analyzer_start_git_dirty,
-        preimport_start_status=analyzer_preimport_start_status,
-    )
-    manifest_producer_sha = (
-        manifest.get("producer_git_sha") if isinstance(manifest, dict) else None
-    )
-    analyzer_matches_producer_commit = bool(
-        analyzer["git_sha"] == manifest_producer_sha
-        and analyzer["final_git_sha"] == manifest_producer_sha
-    )
-    evidence_inputs_decision_grade = _decision_grade_evidence_inputs(
-        bank_decision_grade=info["decision_grade"],
-        analyzer_provenance=analyzer,
-    )
-    canonical_analysis_rule = _is_canonical_decision_rule(
-        n_folds=args.folds,
-        bootstrap_samples=args.bootstrap_samples,
-        seed=args.seed,
-        allocation_fraction=args.allocation_fraction,
-        min_capture_gain=args.min_capture_gain,
-        min_oracle_headroom=args.min_oracle_headroom,
-        min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
-    )
-    canonical_rule = bool(canonical_analysis_rule and info["preregistered_design"])
-    decision_grade = bool(
-        evidence_inputs_decision_grade
-        and canonical_rule
-        and source_group_resolution_passed
-    )
-    result["canonical_analysis_rule"] = canonical_analysis_rule
-    result["canonical_preregistered_rule"] = canonical_rule
-    result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
-    result["source_game_group_count"] = source_game_group_count
-    result["grouped_analysis_possible"] = grouped_analysis_possible
-    result["grouped_analysis_preflight"] = grouped_analysis_preflight
-    result["reference_censoring"] = info.get("reference_censoring")
-    result["minimum_decision_grade_source_games"] = _MIN_DECISION_GRADE_SOURCE_GAMES
-    result["source_group_resolution_passed"] = source_group_resolution_passed
-    result["evidence_decision_grade"] = decision_grade
-    result["verdict"] = _evidence_verdict(
-        evidence_inputs_decision_grade=evidence_inputs_decision_grade,
-        canonical_preregistered_rule=canonical_rule,
-        source_group_resolution_passed=source_group_resolution_passed,
-        statistical_gate_passed=bool(result["statistical_gate_passed"]),
-    )
-    payload = {"input": info, "analyzer": analyzer, "analysis": result}
-    rendered = json.dumps(payload, indent=2, sort_keys=True)
-    if args.out is not None:
-        output_manifest = manifest if isinstance(manifest, dict) else None
-        with _anchored_output_target(
+    if args.methodology_smoke:
+        transitions, info = load_transitions(
             args.input_path,
+            meta_path=actual_meta,
+            methodology_smoke=True,
+        )
+        _analyze_loaded_evidence(
+            args,
             actual_meta,
-            args.out,
-            manifest=output_manifest,
-            consumed_artifacts=consumed_inputs,
-        ) as output_target:
-            _write_json_atomic(output_target, rendered)
-    print(rendered)
+            transitions,
+            info,
+            analyzer_start_sources=analyzer_start_sources,
+            analyzer_start_git_sha=analyzer_start_git_sha,
+            analyzer_start_git_dirty=analyzer_start_git_dirty,
+            analyzer_preimport_start_status=analyzer_preimport_start_status,
+            evidence_guard=None,
+        )
+        return
+    with _retained_decision_grade_evidence(
+        args.input_path, actual_meta,
+    ) as evidence_guard:
+        transitions, info = load_transitions(
+            args.input_path,
+            meta_path=actual_meta,
+            evidence_guard=evidence_guard,
+        )
+        _analyze_loaded_evidence(
+            args,
+            actual_meta,
+            transitions,
+            info,
+            analyzer_start_sources=analyzer_start_sources,
+            analyzer_start_git_sha=analyzer_start_git_sha,
+            analyzer_start_git_dirty=analyzer_start_git_dirty,
+            analyzer_preimport_start_status=analyzer_preimport_start_status,
+            evidence_guard=evidence_guard,
+        )
 
 
 if __name__ == "__main__":
