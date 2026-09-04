@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -284,6 +285,11 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     )
     assert "load_model_from_checkpoint(\n        checkpoint_path," in source
     assert module_source.index(
+        'if "--recover-publication" in sys.argv[1:]:'
+    ) < module_source.index(
+        "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
+    )
+    assert module_source.index(
         "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
     ) < module_source.index("from chess_anti_engine.eval.audit import")
 
@@ -474,6 +480,10 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "producer_script": {
             "path": "/producer.py", "size": 1, "mtime_ns": 1, "sha256": "a" * 64,
         },
+        "publication_helper": {
+            "path": "/publication.py", "size": 1, "mtime_ns": 1,
+            "sha256": "3" * 64,
+        },
         "checkpoint": {
             "path": "/trainer.pt", "size": 1, "mtime_ns": 1, "sha256": "b" * 64,
         },
@@ -534,6 +544,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "excluded_position_count": 0,
         "excluded_positions": [],
         "incomplete_exclusion_count": 0,
+        "source_game_group_count": 9,
+        "minimum_decision_grade_source_games": 9,
+        "source_group_resolution_passed": True,
         "requested_search": {
             "device": "cuda", "active_path": "walker_puct",
             "walkers": 2, "chunk_sims": 50, "max_chunks": 4,
@@ -725,6 +738,34 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     assert info["preregistered_design"] is True
     assert info["analysis_scope"] == "fresh_tree_fixed_node_horizons_only"
     assert info["cross_move_tree_reuse_tested"] is False
+
+
+def test_loader_rejects_decision_grade_claim_with_insufficient_source_games(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["source_game_group_count"] = 8
+    manifest["source_group_resolution_passed"] = False
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="insufficient source-game resolution"):
+        load_transitions(bank)
+
+    _transitions, info = load_transitions(bank, methodology_smoke=True)
+    assert info["decision_grade"] is False
+
+
+def test_loader_requires_publication_helper_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    del manifest["publication_helper"]
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="publication_helper artifact provenance"):
+        load_transitions(bank)
 
 
 def test_loader_rejects_a_collection_outside_the_preregistered_design(
@@ -1726,6 +1767,32 @@ def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path)
     assert not meta.exists()
 
 
+def test_producer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "manifest.json"
+    staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    staging.write_text("other process staging\n")
+
+    with pytest.raises(FileExistsError):
+        producer._write_json_atomic(output, {"new": True})
+
+    assert staging.read_text() == "other process staging\n"
+    assert not output.exists()
+
+
+def test_analyzer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path) -> None:
+    output = tmp_path / "analysis.json"
+    staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    staging.write_text("other process staging\n")
+
+    with pytest.raises(FileExistsError):
+        controller_module._write_json_atomic(output, "{}")
+
+    assert staging.read_text() == "other process staging\n"
+    assert not output.exists()
+
+
 def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -1776,6 +1843,56 @@ def test_recovery_cli_does_not_require_search_inputs(
     assert json.loads(meta.read_text()) == manifest
 
 
+def test_recovery_cli_runs_before_project_or_native_imports(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+
+    shadow = tmp_path / "shadow"
+    shadow_package = shadow / "chess_anti_engine"
+    shadow_package.mkdir(parents=True)
+    (shadow_package / "__init__.py").write_text(
+        'raise RuntimeError("search runtime imported")\n'
+    )
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    python_path = [str(shadow), str(repo_root)]
+    inherited_python_path = os.environ.get("PYTHONPATH")
+    if inherited_python_path:
+        python_path.append(inherited_python_path)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(python_path)}
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(producer.__file__).resolve()),
+            "--recover-publication",
+            "--out", str(output),
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "search runtime imported" not in completed.stderr
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+
+
 def test_producer_refuses_unprepared_pending_bank(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -1805,7 +1922,11 @@ def test_producer_rejects_output_artifacts_that_would_dirty_checkout(
 ) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
-    monkeypatch.setattr(producer, "_git_ignored_or_outside", lambda _path, _root: False)
+    monkeypatch.setattr(
+        producer.publication_module,
+        "_git_ignored_or_outside",
+        lambda _path, _root: False,
+    )
 
     with pytest.raises(SystemExit, match="must be Git-ignored or outside"):
         _require_safe_output_paths(
@@ -1834,7 +1955,7 @@ def test_producer_requires_enough_source_games_for_canonical_bootstrap() -> None
     )
 
 
-def test_producer_rechecks_games_after_terminal_shortcut_exclusions() -> None:
+def test_producer_marks_post_collection_group_loss_non_decision_grade() -> None:
     from scripts import backtest_chunk_trajectory as producer
 
     requested_groups = {
@@ -1847,10 +1968,8 @@ def test_producer_rechecks_games_after_terminal_shortcut_exclusions() -> None:
     producer._require_analyzable_source_groups(
         requested_groups, methodology_smoke=False,
     )
-    with pytest.raises(SystemExit, match="at least 9 distinct source games"):
-        producer._require_analyzable_source_groups(
-            completed_groups, methodology_smoke=False,
-        )
+    assert producer._source_game_group_count(completed_groups) == 8
+    assert producer._source_group_resolution_passed(completed_groups) is False
 
 
 def test_producer_requires_driver_provenance_before_decision_grade_search() -> None:
@@ -2097,8 +2216,67 @@ def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
     assert analysis["verdict"] == "INSUFFICIENT_SOURCE_GAME_GROUPS"
     assert analysis["analysis_skipped"] == "insufficient_source_game_groups"
     assert analysis["source_game_group_count"] == 1
+    assert analysis["grouped_analysis_possible"] is False
     assert analysis["source_group_resolution_passed"] is False
     assert analysis["evidence_decision_grade"] is False
+
+
+def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    two_games = [
+        _transition("first", 1, 100, 0.0, current=True),
+        _transition("second", 2, 100, 0.0, current=True),
+    ]
+    info = {
+        "decision_grade": False,
+        "preregistered_design": False,
+        "manifest": {"producer_git_sha": "a" * 40},
+    }
+    analyzed = False
+
+    def fake_analyze(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        nonlocal analyzed
+        analyzed = True
+        return {"statistical_gate_passed": False}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_chunk_controller",
+            "--in", str(tmp_path / "bank.jsonl"),
+            "--meta", str(tmp_path / "bank.jsonl.meta.json"),
+            "--methodology-smoke",
+        ],
+    )
+    monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
+    monkeypatch.setattr(controller_module, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(controller_module, "_require_safe_output_path", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        controller_module,
+        "load_transitions",
+        lambda *_a, **_k: (two_games, info),
+    )
+    monkeypatch.setattr(controller_module, "analyze", fake_analyze)
+    monkeypatch.setattr(
+        controller_module,
+        "_analyzer_provenance",
+        lambda *_a: {
+            "decision_grade": True,
+            "git_sha": "b" * 40,
+            "final_git_sha": "b" * 40,
+        },
+    )
+
+    controller_module.main()
+
+    analysis = json.loads(capsys.readouterr().out)["analysis"]
+    assert analyzed is True
+    assert analysis["verdict"] == "METHODOLOGY_SMOKE_ONLY"
+    assert analysis["source_game_group_count"] == 2
+    assert analysis["grouped_analysis_possible"] is True
+    assert analysis["source_group_resolution_passed"] is False
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(

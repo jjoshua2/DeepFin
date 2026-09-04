@@ -266,13 +266,15 @@ def _analyzer_provenance(
 
 def _write_json_atomic(path: Path, rendered: str) -> None:
     tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    created = False
     try:
         with tmp_path.open("x") as fh:
+            created = True
             fh.write(rendered)
             fh.write("\n")
         os.replace(tmp_path, path)
     finally:
-        if tmp_path.exists():
+        if created and tmp_path.exists():
             tmp_path.unlink()
 
 
@@ -298,8 +300,9 @@ def _require_safe_output_path(
         raise ValueError("--out must not overwrite a tracked or repository-control path")
     if manifest is not None:
         for name in (
-            "producer_script", "checkpoint", "checkpoint_params", "audit_set",
-            "matched_rows", "preregistration", "mcts_extension", "lc0_extension",
+            "producer_script", "publication_helper", "checkpoint",
+            "checkpoint_params", "audit_set", "matched_rows", "preregistration",
+            "mcts_extension", "lc0_extension",
         ):
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
@@ -1085,7 +1088,10 @@ def _require_manifest(
     failures.extend(preregistration_failures)
     failures.extend(
         f"{name} artifact provenance is incomplete"
-        for name in ("producer_script", "checkpoint", "audit_set", "matched_rows")
+        for name in (
+            "producer_script", "publication_helper", "checkpoint", "audit_set",
+            "matched_rows",
+        )
         if not _artifact_provenance_complete(manifest.get(name))
     )
     checkpoint_params = manifest.get("checkpoint_params")
@@ -1122,6 +1128,25 @@ def _require_manifest(
         failures.append("production search warmup was not completed and isolated")
     if manifest.get("game_group_kind") != "source_dir:game_id":
         failures.append(f"game_group_kind={manifest.get('game_group_kind')!r}")
+    source_game_group_count = manifest.get("source_game_group_count")
+    minimum_source_games = manifest.get("minimum_decision_grade_source_games")
+    source_group_resolution_passed = manifest.get("source_group_resolution_passed")
+    source_group_count_valid = _nonnegative_int(source_game_group_count)
+    source_group_resolution_expected = bool(
+        source_group_count_valid
+        and int(source_game_group_count) >= _MIN_DECISION_GRADE_SOURCE_GAMES
+    )
+    if (
+        not source_group_count_valid
+        or minimum_source_games != _MIN_DECISION_GRADE_SOURCE_GAMES
+        or source_group_resolution_passed is not source_group_resolution_expected
+    ):
+        failures.append("source-game resolution provenance is inconsistent")
+    elif (
+        manifest.get("decision_grade") is True
+        and source_group_resolution_passed is not True
+    ):
+        failures.append("decision-grade bank has insufficient source-game resolution")
     if manifest.get("root_position_history") != "fen_only_from_audit_fen":
         failures.append(f"root_position_history={manifest.get('root_position_history')!r}")
     if manifest.get("root_tree_state") != "fresh_per_position_no_cross_move_reuse":
@@ -2612,7 +2637,8 @@ def main() -> None:
         source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
     )
     result: dict[str, Any]
-    if source_group_resolution_passed:
+    grouped_analysis_possible = source_game_group_count >= 2
+    if grouped_analysis_possible:
         result = analyze(
             transitions,
             n_folds=args.folds,
@@ -2624,8 +2650,7 @@ def main() -> None:
             min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
         )
     else:
-        # Do not enter grouped CV merely to discover that a frozen bank can
-        # never satisfy the canonical OOB evidence requirement.
+        # One source game cannot form even a methodology-only grouped split.
         result = {
             "statistical_gate_passed": False,
             "scope": "fresh_tree_fixed_node_horizons_only",
@@ -2666,6 +2691,7 @@ def main() -> None:
     result["canonical_preregistered_rule"] = canonical_rule
     result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
     result["source_game_group_count"] = source_game_group_count
+    result["grouped_analysis_possible"] = grouped_analysis_possible
     result["minimum_decision_grade_source_games"] = _MIN_DECISION_GRADE_SOURCE_GAMES
     result["source_group_resolution_passed"] = source_group_resolution_passed
     result["evidence_decision_grade"] = decision_grade

@@ -26,13 +26,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import math
 import os
 import platform
-import stat
 import subprocess
 import sys
 import threading
@@ -40,6 +38,14 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import IO, Any
+
+from scripts import chunk_trajectory_publication as publication_module
+
+if "--recover-publication" in sys.argv[1:]:
+    publication_module.recover_publication_cli(
+        sys.argv[1:], repo_root=Path(__file__).resolve().parents[1],
+    )
+    raise SystemExit(0)
 
 # These binaries are imported indirectly by the project modules below. Capture
 # their on-disk identity first, then prove after import that the mapped module's
@@ -49,6 +55,22 @@ import numpy as np
 
 from scripts.native_import_guard import artifact as _artifact
 from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS
+from scripts.chunk_trajectory_publication import (
+    CHUNK_TRAJECTORY_SCHEMA,
+    _acquire_output_lock as _acquire_output_lock,
+    _acquire_output_locks,
+    _git_ignored_or_outside as _git_ignored_or_outside,
+    _output_lock_path as _output_lock_path,
+    _pending_manifest_path,
+    _pending_output_path,
+    _prepared_output_artifact,
+    _publish_evidence_pair,
+    _publish_output as _publish_output,
+    _require_new_output_pair,
+    _require_safe_output_paths,
+    _write_json_atomic,
+    _write_json_staged as _write_json_staged,
+)
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 from chess_anti_engine.eval.audit import legal_full_indices, load_audit_set, move_regrets
@@ -89,7 +111,7 @@ from scripts.analyze_chunk_controller import (
 from scripts.backtest_time_value import _stratified
 from scripts.check_c_extensions_fresh import check_extensions
 
-_SCHEMA = "deepfin.chunk_trajectory.v3"
+_SCHEMA = CHUNK_TRAJECTORY_SCHEMA
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
@@ -248,235 +270,27 @@ def _nvidia_driver_version(device_index: int) -> str | None:
     return version or None
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    try:
-        with tmp_path.open("x") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-        _publish_no_replace(tmp_path, path)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
-
-
-def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
-    """Durably stage JSON at a private path before publishing an evidence pair."""
-    created = False
-    try:
-        with path.open("x") as fh:
-            created = True
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-    except BaseException:
-        if created and path.exists():
-            path.unlink()
-        raise
-
-
-def _output_lock_path(output_path: Path) -> Path:
-    return output_path.with_name(f".{output_path.name}.lock")
-
-
-def _pending_output_path(output_path: Path) -> Path:
-    return output_path.with_name(f".{output_path.name}.tmp-pending")
-
-
-def _pending_manifest_path(meta_path: Path) -> Path:
-    return meta_path.with_name(f".{meta_path.name}.tmp-pending")
-
-
-def _acquire_output_lock(output_path: Path) -> IO[bytes]:
-    """Reserve a bank/manifest pair against another producer process."""
-    lock_path = _output_lock_path(output_path)
-    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NONBLOCK
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(lock_path, flags, 0o600)
-    except OSError as exc:
-        raise SystemExit(f"cannot safely open output lock {lock_path}: {exc}") from exc
-    handle = os.fdopen(descriptor, "a+b")
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise SystemExit(f"output lock is not a regular file: {lock_path}")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as exc:
-        handle.close()
-        raise SystemExit(f"another producer holds the output lock: {lock_path}") from exc
-    except BaseException:
-        handle.close()
-        raise
-    return handle
-
-
-def _acquire_output_locks(
-    output_path: Path, meta_path: Path,
-) -> tuple[IO[bytes], ...]:
-    """Reserve every destination in a bank/manifest pair in canonical order."""
-    handles: list[IO[bytes]] = []
-    try:
-        for target in sorted(
-            {output_path.expanduser().resolve(), meta_path.expanduser().resolve()},
-            key=str,
-        ):
-            # Keep partial progress so a later lock failure can release it.
-            handles.append(_acquire_output_lock(target))  # noqa: PERF401
-    except BaseException:
-        for handle in reversed(handles):
-            handle.close()
-        raise
-    return tuple(handles)
-
-
-def _require_new_output_pair(
-    output_path: Path, meta_path: Path, *, overwrite: bool,
-) -> bool:
-    """Resume a prepared pair, or require a completely new immutable destination."""
-    if overwrite:
-        raise SystemExit(
-            "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
-        )
-    pending_output = _pending_output_path(output_path)
-    pending_meta = _pending_manifest_path(meta_path)
-    if output_path.exists() and not meta_path.exists() and pending_meta.exists():
-        manifest = _read_pending_manifest(pending_meta)
-        if pending_output.exists():
-            _require_output_matches_manifest(pending_output, output_path, manifest)
-        _require_output_matches_manifest(output_path, output_path, manifest)
-        if pending_output.exists():
-            pending_output.unlink()
-        _publish_no_replace(pending_meta, meta_path)
-        return True
-    if (
-        not output_path.exists()
-        and not meta_path.exists()
-        and pending_output.exists()
-        and pending_meta.exists()
-    ):
-        manifest = _read_pending_manifest(pending_meta)
-        _require_output_matches_manifest(pending_output, output_path, manifest)
-        published = _publish_output(pending_output, output_path)
-        if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
-            raise RuntimeError("recovered trajectory bank differs from its manifest")
-        _publish_no_replace(pending_meta, meta_path)
-        return True
-    if any(
-        path.exists() for path in (output_path, meta_path, pending_output, pending_meta)
-    ):
-        raise SystemExit(
-            f"refusing to replace immutable or incomplete evidence for {output_path}; "
-            "choose a new versioned --out, or retain a fully prepared pending pair"
-        )
-    return False
-
-
-def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
-    """Atomically publish a same-filesystem staged file without clobbering."""
-    try:
-        os.link(tmp_path, output_path)
-    except FileExistsError as exc:
-        raise RuntimeError(
-            f"refusing to replace immutable evidence at {output_path}"
-        ) from exc
-    tmp_path.unlink()
-
-
-def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
-    """Publish exactly the private bytes whose identity the manifest records."""
-    expected = _prepared_output_artifact(tmp_path, output_path)
-    _publish_no_replace(tmp_path, output_path)
-    published = _artifact(output_path, require_file=True)
-    if _artifact_identity(published) != _artifact_identity(expected):
-        raise RuntimeError("published trajectory bank differs from its private output")
-    return published
-
-
-def _prepared_output_artifact(tmp_path: Path, output_path: Path) -> dict[str, Any]:
-    private = _artifact(tmp_path, require_file=True)
-    return {**private, "path": str(output_path.expanduser().resolve())}
-
-
-def _read_pending_manifest(path: Path) -> dict[str, Any]:
-    before = _artifact(path, require_file=True)
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"pending evidence manifest is not valid JSON: {path}") from exc
-    after = _artifact(path, require_file=True)
-    if _artifact_identity(before) != _artifact_identity(after):
-        raise SystemExit(f"pending evidence manifest changed while being read: {path}")
-    if not isinstance(payload, dict) or payload.get("schema") != _SCHEMA:
-        raise SystemExit(f"pending evidence manifest has the wrong schema: {path}")
-    if payload.get("complete") is not True or not isinstance(payload.get("output"), dict):
-        raise SystemExit(f"pending evidence manifest is incomplete: {path}")
-    return payload
-
-
-def _require_output_matches_manifest(
-    candidate_path: Path, output_path: Path, manifest: dict[str, Any],
-) -> None:
-    expected = manifest.get("output")
-    if not isinstance(expected, dict):
-        raise SystemExit("pending evidence manifest lacks an output artifact")
-    actual = _prepared_output_artifact(candidate_path, output_path)
-    if _artifact_identity(actual) != _artifact_identity(expected):
-        raise SystemExit("pending trajectory bank does not match its manifest")
-
-
-def _publish_evidence_pair(
-    pending_output: Path,
-    output_path: Path,
-    pending_meta: Path,
-    meta_path: Path,
-    manifest: dict[str, Any],
-) -> None:
-    """Prepare both artifacts before publishing either; retain recovery state."""
-    _write_json_staged(pending_meta, manifest)
-    published = _publish_output(pending_output, output_path)
-    if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
-        raise RuntimeError("published trajectory bank differs from its manifest")
-    _publish_no_replace(pending_meta, meta_path)
-
-
-def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
-    """Whether creating a path cannot dirty the producer checkout."""
-    root = repo_root.expanduser().resolve()
-    for candidate in {path.expanduser().absolute(), path.expanduser().resolve()}:
-        try:
-            relative = candidate.relative_to(root)
-        except ValueError:
-            continue
-        try:
-            result = subprocess.run(
-                [
-                    "git", "-C", str(root), "check-ignore", "-q", "--no-index",
-                    "--", str(relative),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-        except OSError:
-            return False
-        if result.returncode != 0:
-            return False
-    return True
-
-
 def _require_analyzable_source_groups(
     group_ids: Mapping[str, str | None], *, methodology_smoke: bool,
 ) -> None:
     if methodology_smoke:
         return
-    groups = {group_id for group_id in group_ids.values() if group_id}
-    if len(groups) < _MIN_DECISION_GRADE_SOURCE_GAMES:
+    if _source_game_group_count(group_ids) < _MIN_DECISION_GRADE_SOURCE_GAMES:
         raise SystemExit(
             "decision-grade trajectory banks require at least "
             f"{_MIN_DECISION_GRADE_SOURCE_GAMES} distinct source games for the "
             "canonical OOB bootstrap"
         )
+
+
+def _source_game_group_count(group_ids: Mapping[str, str | None]) -> int:
+    """Count distinct source-game clusters without treating missing IDs as a group."""
+    return len({group_id for group_id in group_ids.values() if group_id})
+
+
+def _source_group_resolution_passed(group_ids: Mapping[str, str | None]) -> bool:
+    """Whether a completed bank retains enough clusters for decision-grade OOB CIs."""
+    return _source_game_group_count(group_ids) >= _MIN_DECISION_GRADE_SOURCE_GAMES
 
 
 def _require_nvidia_driver_provenance(
@@ -486,52 +300,6 @@ def _require_nvidia_driver_provenance(
         raise RuntimeError(
             "decision-grade trajectory banks require readable NVIDIA driver provenance"
         )
-
-
-def _require_safe_output_paths(
-    output_path: Path,
-    meta_path: Path,
-    *,
-    protected_files: list[Path],
-    protected_directories: list[Path],
-) -> None:
-    """Refuse destructive aliases before ``--overwrite`` can reach an input."""
-    destinations = {
-        output_path.expanduser().resolve(),
-        meta_path.expanduser().resolve(),
-    }
-    if any(reserved_output_path(path) for path in (output_path, meta_path)):
-        raise SystemExit(
-            "--out or its manifest must not use the output lock/staging namespace"
-        )
-    outputs = {
-        *destinations,
-        _output_lock_path(output_path).expanduser().resolve(),
-        _output_lock_path(meta_path).expanduser().resolve(),
-        _pending_output_path(output_path).expanduser().resolve(),
-        _pending_manifest_path(meta_path).expanduser().resolve(),
-    }
-    repo_root = Path(__file__).resolve().parents[1]
-    if any(repo_controlled_output(output, repo_root) for output in outputs):
-        raise SystemExit(
-            "--out or its manifest must not overwrite a tracked or repository-control path"
-        )
-    if any(not _git_ignored_or_outside(output, repo_root) for output in outputs):
-        raise SystemExit(
-            "--out, its manifest, locks, and staging files must be Git-ignored "
-            "or outside the repository"
-        )
-    inputs = {path.expanduser().resolve() for path in protected_files}
-    if outputs & inputs:
-        raise SystemExit("--out or its manifest aliases a consumed input artifact")
-    for output in outputs:
-        for directory in protected_directories:
-            resolved = directory.expanduser().resolve()
-            try:
-                output.relative_to(resolved)
-            except ValueError:
-                continue
-            raise SystemExit("--out or its manifest must not be inside a Syzygy directory")
 
 
 def _write_preregistration_plan(
@@ -781,6 +549,9 @@ def main() -> None:
         )
     initial_input_artifacts = {
         "producer_script": _artifact(Path(__file__), require_file=True),
+        "publication_helper": _artifact(
+            Path(publication_module.__file__), require_file=True,
+        ),
         "checkpoint": _artifact(checkpoint_path, require_file=True),
         "audit_set": _artifact(args.audit_set, require_file=True),
         "matched_rows": (
@@ -797,6 +568,7 @@ def main() -> None:
         meta_path,
         protected_files=[
             args.audit_set, matched_path, checkpoint_path, Path(__file__),
+            Path(publication_module.__file__),
             *([preregistration_path] if preregistration_path is not None else []),
         ],
         protected_directories=syzygy_directories,
@@ -984,6 +756,7 @@ def main() -> None:
         "producer_git_sha": producer_git_sha,
         "producer_git_dirty": producer_git_dirty,
         "producer_script": initial_input_artifacts["producer_script"],
+        "publication_helper": initial_input_artifacts["publication_helper"],
         "checkpoint": initial_input_artifacts["checkpoint"],
         "audit_set": initial_input_artifacts["audit_set"],
         "matched_rows": initial_input_artifacts["matched_rows"],
@@ -1059,6 +832,7 @@ def main() -> None:
             matched_path,
             checkpoint_path,
             Path(__file__),
+            Path(publication_module.__file__),
             Path(mcts_extension.__file__),
             Path(lc0_extension.__file__),
             *([checkpoint_params_path] if checkpoint_params_path is not None else []),
@@ -1449,6 +1223,7 @@ def main() -> None:
                 matched_path,
                 checkpoint_path,
                 Path(__file__),
+                Path(publication_module.__file__),
                 Path(mcts_extension.__file__),
                 Path(lc0_extension.__file__),
                 *([checkpoint_params_path] if checkpoint_params_path is not None else []),
@@ -1753,10 +1528,6 @@ def main() -> None:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
-        _require_analyzable_source_groups(
-            completed_group_ids,
-            methodology_smoke=bool(args.methodology_smoke),
-        )
         collection_complete = True
     finally:
         worker.close()
@@ -1766,8 +1537,13 @@ def main() -> None:
     incomplete_exclusions = sum(
         entry["reason"] == "incomplete_search" for entry in excluded_positions
     )
+    source_game_group_count = _source_game_group_count(completed_group_ids)
+    source_group_resolution_passed = _source_group_resolution_passed(
+        completed_group_ids,
+    )
     frozen_artifacts = {
         "producer_script": provenance["producer_script"],
+        "publication_helper": provenance["publication_helper"],
         "checkpoint": provenance["checkpoint"],
         "checkpoint_params": provenance["checkpoint_params"],
         "audit_set": provenance["audit_set"],
@@ -1779,6 +1555,7 @@ def main() -> None:
     current_params_path = _find_params_json(checkpoint_path)
     current_artifacts = {
         "producer_script": _artifact_if_file(Path(__file__)),
+        "publication_helper": _artifact_if_file(Path(publication_module.__file__)),
         "checkpoint": _artifact_if_file(checkpoint_path),
         "checkpoint_params": (
             _artifact_if_file(current_params_path)
@@ -1827,6 +1604,7 @@ def main() -> None:
             and not preregistration_failures
             and incomplete_exclusions == 0
             and completed_positions > 0
+            and source_group_resolution_passed
             and artifact_stability["passed"]
         ),
         "complete": True,
@@ -1837,6 +1615,9 @@ def main() -> None:
         "excluded_position_count": len(excluded_positions),
         "excluded_positions": excluded_positions,
         "incomplete_exclusion_count": incomplete_exclusions,
+        "source_game_group_count": source_game_group_count,
+        "minimum_decision_grade_source_games": _MIN_DECISION_GRADE_SOURCE_GAMES,
+        "source_group_resolution_passed": source_group_resolution_passed,
         "chunk_count": int(args.max_chunks),
         "runtime_seconds": time.perf_counter() - started,
         "elapsed_measurement": {
