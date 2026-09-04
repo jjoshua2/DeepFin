@@ -73615,3 +73615,28 @@ blobs}` and continue recording, but do not compare, the descriptive
 `git_head`. Any remap commit/blob/clean-state mismatch still fails closed.
 This repairs immutable-artifact reuse only; it changes neither N1/S1 target
 arithmetic nor either banked audit observation.
+
+**2026-09-04 16:12Z — PREREG: shallow-search persistence diagnostic for the
+successful BT4 exact-tie net; no 25-sim games exist at this line.**
+
+- Hypothesis: if the measured +74.4 Elo at 100 matched simulations is primarily
+  a better learned policy prior, it should remain positive when search is
+  reduced to 25 simulations rather than requiring search to manufacture the
+  gain. Run the existing immutable
+  `qtemp_0.0005_hist_20m_bt4_toptie_a100/checkpoint.pt` against the plain
+  `qtemp_0.0005_hist_20m/checkpoint.pt` for exactly 1,000 games / 500 complete
+  color-swapped pairs, `matched_sims`, training search shape, 25 simulations on
+  both sides, seed 42, and `--no-rolling`; bank every game in
+  `scratchpad/bt4_policy_mix/arena_toptie_a100_vs_sf20m_sims25.games.jsonl`.
+- One descriptive readout: **PERSISTS** if Elo is above zero and the
+  pentanomial 95% CI lower bound is above zero; **REVERSES** if Elo is below
+  zero and its upper bound is below zero; otherwise **INCONCLUSIVE**. This is a
+  mechanism diagnostic only and cannot promote, kill, or reorder the separately
+  preregistered N1/S1 training ladder.
+- Scheduling amendment from the user in this session: keep the GPU productive
+  during S1's CPU-only materialization. This arena takes the shared GPU lease,
+  reads only already-frozen checkpoints, and writes a new game bank. It does
+  not touch S1/N1 source, sidecar, `.writing`, run, or arena paths. The queued
+  S1 driver independently refuses to launch training if any GPU process or
+  lease remains when materialization finishes, so overlap cannot contaminate
+  the deciding S1/N1 arenas.
