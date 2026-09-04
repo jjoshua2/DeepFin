@@ -543,10 +543,22 @@ def _flush_fsync_file_and_parent(
         _require_parent(path, parent_fd)
         _require_entry(path, parent_fd, fh.fileno(), links=1)
         fh.flush()
+        before = _require_entry(path, parent_fd, fh.fileno(), links=1)
         os.fsync(fh.fileno())
         os.fsync(parent_fd)
         opened = _require_entry(path, parent_fd, fh.fileno(), links=1)
         _require_parent(path, parent_fd)
+        stable = (
+            "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
+            "st_mtime_ns", "st_ctime_ns",
+        )
+        if any(
+            getattr(before, field) != getattr(opened, field)
+            for field in stable
+        ):
+            raise SystemExit(
+                f"evidence artifact changed during durability barrier: {path}"
+            )
         return opened
     finally:
         if owned_parent:

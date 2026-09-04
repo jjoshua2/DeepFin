@@ -7714,6 +7714,35 @@ def test_completed_bank_reader_open_rejects_same_inode_rewrite(
     assert pending.read_text() == "attacker observations are longer\n"
 
 
+def test_completed_bank_fsync_rejects_same_inode_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    real_fsync = publication.os.fsync
+    writer_fd = -1
+    injected = False
+
+    def rewrite_after_writer_fsync(descriptor: int) -> None:
+        nonlocal injected
+        real_fsync(descriptor)
+        if descriptor == writer_fd and not injected:
+            injected = True
+            pending.write_text("attacker observations are longer\n")
+
+    monkeypatch.setattr(publication.os, "fsync", rewrite_after_writer_fsync)
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        writer_fd = handle.fileno()
+        with pytest.raises(SystemExit, match="changed during durability barrier"):
+            publication._durably_prepare_output_artifact(handle, pending, output)
+
+    assert injected is True
+    assert pending.read_text() == "attacker observations are longer\n"
+
+
 def test_pending_bank_sync_uses_parent_retained_from_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
