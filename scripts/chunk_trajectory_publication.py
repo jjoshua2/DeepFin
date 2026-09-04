@@ -353,9 +353,15 @@ def _retained_output_parent(
         return
     with _retained_parent(output_path) as output_parent_fd:
         yield output_parent_fd
+        _require_parent(output_path, output_parent_fd)
 
 
-def _mark_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
+def _mark_manifest_recovery_invalid(
+    meta_path: Path,
+    *,
+    parent_fd: int,
+    diagnostic: dict[str, Any] | None = None,
+) -> None:
     """Durably quarantine a version whose manifest integrity check failed."""
     marker = _invalid_manifest_path(meta_path)
     descriptor = -1
@@ -370,14 +376,13 @@ def _mark_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
             return
         with os.fdopen(descriptor, "w") as fh:
             descriptor = -1
-            json.dump(
-                {
-                    "schema": "deepfin.chunk_trajectory.invalid_recovery.v1",
-                    "invalid": True,
-                },
-                fh,
-                sort_keys=True,
-            )
+            marker_payload: dict[str, Any] = {
+                "schema": "deepfin.chunk_trajectory.invalid_recovery.v1",
+                "invalid": True,
+            }
+            if diagnostic is not None:
+                marker_payload["diagnostic"] = diagnostic
+            json.dump(marker_payload, fh, sort_keys=True)
             fh.write("\n")
             fh.flush()
             _require_entry(marker, parent_fd, fh.fileno(), links=1)
@@ -901,6 +906,45 @@ def _durably_prepare_anchored_output_artifact(
     _require_entry(tmp_path, parent_fd, file_fd, links=1)
     _require_parent(tmp_path, parent_fd)
     return {**artifact, "path": str(output_path.expanduser().resolve())}
+
+
+def _write_invalid_recovery_diagnostic(
+    pending_output: Path,
+    output_path: Path,
+    meta_path: Path,
+    payload: dict[str, Any],
+    *,
+    file_fd: int,
+    parent_fd: int,
+    expected_artifact: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preserve failure evidence without creating a recoverable manifest."""
+    if pending_output.expanduser().parent != meta_path.expanduser().parent:
+        raise RuntimeError("failure diagnostic does not share the retained bank parent")
+    try:
+        _require_entry(pending_output, parent_fd, file_fd, links=1)
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+        artifact = {
+            **_artifact_from_fd(file_fd, pending_output),
+            "path": str(output_path.expanduser().resolve()),
+        }
+        _require_entry(pending_output, parent_fd, file_fd, links=1)
+        if (
+            expected_artifact is not None
+            and _publication_artifact_identity(artifact)
+            != _publication_artifact_identity(expected_artifact)
+        ):
+            raise RuntimeError("retained failure bank changed after collection")
+        _mark_manifest_recovery_invalid(
+            meta_path,
+            parent_fd=parent_fd,
+            diagnostic={**payload, "output": artifact},
+        )
+    except (FileExistsError, SystemExit, RuntimeError):
+        _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+        raise
+    return artifact
 
 
 def _read_json_fd(file_fd: int, path: Path, *, role: str = "staged evidence") -> Any:

@@ -328,9 +328,10 @@ from scripts.chunk_trajectory_publication import (
     CHUNK_TRAJECTORY_SCHEMA,
     _acquire_output_lock as _acquire_output_lock,
     _acquire_output_locks,
-    _durably_prepare_anchored_output_artifact,
     _durably_prepare_output_artifact,
+    _entry_name_exists,
     _git_ignored_or_outside as _git_ignored_or_outside,
+    _invalid_manifest_path as _invalid_manifest_path,
     _open_staged_output_file,
     _output_lock_path as _output_lock_path,
     _pending_manifest_path,
@@ -342,6 +343,7 @@ from scripts.chunk_trajectory_publication import (
     _require_safe_output_paths,
     _write_json_atomic,
     _write_json_staged as _write_json_staged,
+    _write_invalid_recovery_diagnostic,
 )
 from scripts.approved_syzygy import (
     APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT,
@@ -3407,6 +3409,7 @@ def _main() -> None:
         "collection_complete": False,
         "pending_output": tmp_path,
         "output": args.out,
+        "manifest": meta_path,
         "pending_manifest": pending_meta_path,
         "output_locks": output_locks,
         "provenance": provenance,
@@ -3683,16 +3686,16 @@ def _main() -> None:
             completed_output_artifact = _durably_prepare_output_artifact(
                 fh, tmp_path, args.out, parent_fd=pending_parent_fd,
             )
-        os.close(retained_output_fd)
-        retained_output_fd = -1
-        os.close(retained_output_parent_fd)
-        retained_output_parent_fd = -1
         _ACTIVE_PENDING_EVIDENCE.update({
             "collection_complete": True,
             "row_count": n_rows,
             "position_count": completed_positions,
             "output_artifact": completed_output_artifact,
+            "retained_output_fd": retained_output_fd,
+            "retained_output_parent_fd": retained_output_parent_fd,
         })
+        retained_output_fd = -1
+        retained_output_parent_fd = -1
     except BaseException as exc:
         if not collection_started:
             raise
@@ -3716,14 +3719,10 @@ def _main() -> None:
                 )
             )
         try:
-            partial_output_artifact = _durably_prepare_anchored_output_artifact(
-                retained_output_fd,
-                retained_output_parent_fd,
+            _write_invalid_recovery_diagnostic(
                 tmp_path,
                 args.out,
-            )
-            _write_json_staged(
-                pending_meta_path,
+                meta_path,
                 {
                     **provenance,
                     "decision_grade": False,
@@ -3737,13 +3736,26 @@ def _main() -> None:
                     "row_count": n_rows,
                     "position_count": completed_positions,
                     "excluded_positions": excluded_positions,
-                    "output": partial_output_artifact,
                 },
+                file_fd=retained_output_fd,
+                parent_fd=retained_output_parent_fd,
             )
         finally:
-            if retained_output_fd >= 0:
+            active_retained_output_fd = _ACTIVE_PENDING_EVIDENCE.get(
+                "retained_output_fd"
+            )
+            active_retained_parent_fd = _ACTIVE_PENDING_EVIDENCE.get(
+                "retained_output_parent_fd"
+            )
+            if (
+                retained_output_fd >= 0
+                and active_retained_output_fd != retained_output_fd
+            ):
                 os.close(retained_output_fd)
-            if retained_output_parent_fd >= 0:
+            if (
+                retained_output_parent_fd >= 0
+                and active_retained_parent_fd != retained_output_parent_fd
+            ):
                 os.close(retained_output_parent_fd)
             for output_lock in reversed(output_locks):
                 output_lock.close()
@@ -3964,6 +3976,7 @@ def _main() -> None:
             },
         },
     }
+    _ACTIVE_PENDING_EVIDENCE["publication_manifest"] = manifest
     _publish_evidence_pair(
         tmp_path, args.out, pending_meta_path, meta_path, manifest,
     )
@@ -3981,15 +3994,21 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
         return
     pending_output = state.get("pending_output")
     output = state.get("output")
+    manifest_path = state.get("manifest")
     pending_manifest = state.get("pending_manifest")
     output_artifact = state.get("output_artifact")
+    retained_output_fd = state.get("retained_output_fd")
+    retained_output_parent_fd = state.get("retained_output_parent_fd")
     if (
         not isinstance(pending_output, Path)
         or not isinstance(output, Path)
+        or not isinstance(manifest_path, Path)
         or not isinstance(pending_manifest, Path)
         or not isinstance(output_artifact, dict)
-        or not pending_output.is_file()
-        or pending_manifest.exists()
+        or not isinstance(retained_output_fd, int)
+        or retained_output_fd < 0
+        or not isinstance(retained_output_parent_fd, int)
+        or retained_output_parent_fd < 0
     ):
         return
     provenance = state.get("provenance")
@@ -4002,8 +4021,18 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
     ):
         return
     try:
-        _write_json_staged(
-            pending_manifest,
+        if _entry_name_exists(
+            pending_manifest, parent_fd=retained_output_parent_fd,
+        ) and isinstance(state.get("publication_manifest"), dict):
+            return
+        if not _entry_name_exists(
+            pending_output, parent_fd=retained_output_parent_fd,
+        ):
+            return
+        _write_invalid_recovery_diagnostic(
+            pending_output,
+            output,
+            manifest_path,
             {
                 **provenance,
                 "decision_grade": False,
@@ -4022,8 +4051,10 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
                 "excluded_position_count": len(excluded_positions),
                 "excluded_positions": excluded_positions,
                 "reference_censoring": _reference_censoring_summary(censoring_details),
-                "output": output_artifact,
             },
+            file_fd=retained_output_fd,
+            parent_fd=retained_output_parent_fd,
+            expected_artifact=output_artifact,
         )
     except BaseException:
         # Diagnostics must never replace the producer's original nonzero failure.
@@ -4041,6 +4072,12 @@ def main() -> None:
         raise
     finally:
         state = _ACTIVE_PENDING_EVIDENCE
+        if isinstance(state, dict):
+            for name in ("retained_output_fd", "retained_output_parent_fd"):
+                descriptor = state.get(name)
+                if isinstance(descriptor, int) and descriptor >= 0:
+                    os.close(descriptor)
+                    state[name] = -1
         locks = state.get("output_locks") if isinstance(state, dict) else None
         if isinstance(locks, tuple):
             for output_lock in reversed(locks):
