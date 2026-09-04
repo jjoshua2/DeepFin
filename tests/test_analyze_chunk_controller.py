@@ -5011,7 +5011,7 @@ def test_analyzer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path)
     assert not output.exists()
 
 
-def test_analyzer_atomic_json_allows_ordinary_output_and_overwrite(
+def test_analyzer_atomic_json_requires_fresh_ordinary_output(
     tmp_path: Path,
 ) -> None:
     output_directory = tmp_path / "new" / "nested"
@@ -5020,15 +5020,100 @@ def test_analyzer_atomic_json_allows_ordinary_output_and_overwrite(
     alias.symlink_to(output_directory, target_is_directory=True)
     output = alias / "analysis.json"
 
-    for rendered in ('{"generation": 1}', '{"generation": 2}'):
-        with controller_module._anchored_output_target(
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target:
+        controller_module._write_json_atomic(target, '{"generation": 1}')
+
+    with (
+        pytest.raises(FileExistsError, match="choose a fresh --out path"),
+        controller_module._anchored_output_target(
             tmp_path / "bank.jsonl",
             tmp_path / "bank.jsonl.meta.json",
             output,
-        ) as target:
-            controller_module._write_json_atomic(target, rendered)
+        ),
+    ):
+        pytest.fail("existing analyzer report reached publication")
 
-    assert output.read_text() == '{"generation": 2}\n'
+    assert output.read_text() == '{"generation": 1}\n'
+    assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
+    with pytest.raises(OSError):
+        os.fstat(target.parent_fd)
+
+
+def test_analyzer_no_clobber_when_consumed_bank_appears_at_output_leaf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence_directory = tmp_path / "evidence"
+    output_directory = tmp_path / "reports"
+    evidence_directory.mkdir()
+    output_directory.mkdir()
+    bank = evidence_directory / "bank.jsonl"
+    bank.write_bytes(b"authenticated trajectory bank\n")
+    bank_bytes, consumed = controller_module._read_consumed_artifact(
+        bank, role="trajectory_bank",
+    )
+    output = output_directory / "analysis.json"
+    real_link = controller_module.os.link
+
+    def move_bank_before_link(
+        source: str, destination: str, **kwargs: Any,
+    ) -> None:
+        bank.rename(output)
+        real_link(source, destination, **kwargs)
+
+    with controller_module._anchored_output_target(
+        bank,
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+        consumed_artifacts=(consumed,),
+    ) as target:
+        monkeypatch.setattr(controller_module.os, "link", move_bank_before_link)
+        with pytest.raises(FileExistsError, match="appeared during publication"):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert not bank.exists()
+    assert output.read_bytes() == bank_bytes
+    assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
+    with pytest.raises(OSError):
+        os.fstat(target.parent_fd)
+
+
+def test_analyzer_cleanup_preserves_replaced_staging_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_directory = tmp_path / "reports"
+    output_directory.mkdir()
+    output = output_directory / "analysis.json"
+    staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+
+    def replace_staging_then_fail(
+        source: str, destination: str, **kwargs: Any,
+    ) -> None:
+        del source, destination, kwargs
+        staging.unlink()
+        staging.write_bytes(b"foreign staging entry\n")
+        raise RuntimeError("injected publication failure")
+
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target:
+        monkeypatch.setattr(
+            controller_module.os, "link", replace_staging_then_fail,
+        )
+        with pytest.raises(RuntimeError, match="injected publication failure"):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert staging.read_bytes() == b"foreign staging entry\n"
+    assert not output.exists()
+    with pytest.raises(OSError):
+        os.fstat(target.parent_fd)
 
 
 def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
@@ -5044,14 +5129,14 @@ def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
     alias.symlink_to(safe_parent, target_is_directory=True)
     output = alias / checkpoint.name
     manifest = {"checkpoint": {"path": str(checkpoint)}}
-    real_replace = controller_module.os.replace
+    real_link = controller_module.os.link
 
-    def swap_parent_before_replace(
+    def swap_parent_before_link(
         source: str, destination: str, **kwargs: Any,
     ) -> None:
         alias.unlink()
         alias.symlink_to(protected_parent, target_is_directory=True)
-        real_replace(source, destination, **kwargs)
+        real_link(source, destination, **kwargs)
 
     with controller_module._anchored_output_target(
         tmp_path / "bank.jsonl",
@@ -5059,7 +5144,7 @@ def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
         output,
         manifest=manifest,
     ) as target:
-        monkeypatch.setattr(controller_module.os, "replace", swap_parent_before_replace)
+        monkeypatch.setattr(controller_module.os, "link", swap_parent_before_link)
         with pytest.raises(RuntimeError, match="output parent changed"):
             controller_module._write_json_atomic(target, "{}")
 
@@ -5077,21 +5162,21 @@ def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
     alias = tmp_path / "output-parent"
     alias.symlink_to(safe_parent, target_is_directory=True)
     output = alias / analyzer_source.name
-    real_replace = controller_module.os.replace
+    real_link = controller_module.os.link
 
-    def swap_parent_before_replace(
+    def swap_parent_before_link(
         source: str, destination: str, **kwargs: Any,
     ) -> None:
         alias.unlink()
         alias.symlink_to(analyzer_source.parent, target_is_directory=True)
-        real_replace(source, destination, **kwargs)
+        real_link(source, destination, **kwargs)
 
     with controller_module._anchored_output_target(
         tmp_path / "bank.jsonl",
         tmp_path / "bank.jsonl.meta.json",
         output,
     ) as target:
-        monkeypatch.setattr(controller_module.os, "replace", swap_parent_before_replace)
+        monkeypatch.setattr(controller_module.os, "link", swap_parent_before_link)
         with pytest.raises(RuntimeError, match="output parent changed"):
             controller_module._write_json_atomic(target, "{}")
 

@@ -864,6 +864,7 @@ def _directory_identity(stat_result: os.stat_result) -> tuple[int, int]:
 
 
 _PROC_SELF_FD = Path("/proc/self/fd")
+_MAX_OUTPUT_ANCESTOR_DEPTH = 1024
 
 
 def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
@@ -900,7 +901,7 @@ def _descriptor_ancestor_identities(fd: int) -> frozenset[tuple[int, int]]:
     current_fd = os.dup(fd)
     identities: set[tuple[int, int]] = set()
     try:
-        while True:
+        for _depth in range(_MAX_OUTPUT_ANCESTOR_DEPTH):
             current_stat = os.fstat(current_fd)
             if not stat.S_ISDIR(current_stat.st_mode):
                 raise RuntimeError("analyzer output ancestor is not a directory")
@@ -922,6 +923,8 @@ def _descriptor_ancestor_identities(fd: int) -> frozenset[tuple[int, int]]:
                 break
             os.close(current_fd)
             current_fd = parent_fd
+        else:
+            raise RuntimeError("analyzer output directory ancestry is too deep")
         return frozenset(identities)
     except OSError as exc:
         raise RuntimeError(
@@ -1065,6 +1068,7 @@ def _anchored_output_target(
     )
     try:
         _require_anchored_output_stable(target)
+        _require_fresh_output_leaf(target)
         yield target
     finally:
         os.close(parent_fd)
@@ -1074,51 +1078,103 @@ def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
     return bool(left.st_dev == right.st_dev and left.st_ino == right.st_ino)
 
 
+def _require_fresh_output_leaf(target: _AnchoredOutputTarget) -> None:
+    try:
+        os.stat(target.name, dir_fd=target.parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise FileExistsError(
+        f"analyzer output already exists; choose a fresh --out path: "
+        f"{target.lexical_path}"
+    )
+
+
+def _unlink_owned_output_entry(
+    target: _AnchoredOutputTarget,
+    name: str,
+    expected: os.stat_result,
+) -> bool:
+    """Remove an analyzer-created entry, never a different observed inode."""
+    try:
+        current = os.stat(name, dir_fd=target.parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not _same_file_identity(current, expected):
+        return False
+    try:
+        os.unlink(name, dir_fd=target.parent_fd)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
-    """Publish JSON relative to the directory descriptor validated above."""
-    created_staging = False
-    published_identity: os.stat_result | None = None
+    """Publish fresh JSON without clobbering through the validated directory fd."""
+    staging_fd: int | None = None
+    staging_identity: os.stat_result | None = None
+    destination_is_ours = False
     try:
         _require_anchored_output_stable(target)
+        _require_fresh_output_leaf(target)
         staging_fd = os.open(
             target.staging_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
             0o666,
             dir_fd=target.parent_fd,
         )
-        created_staging = True
-        with os.fdopen(staging_fd, "w", encoding="utf-8") as fh:
+        staging_identity = os.fstat(staging_fd)
+        with os.fdopen(os.dup(staging_fd), "w", encoding="utf-8") as fh:
             fh.write(rendered)
             fh.write("\n")
-        published_identity = os.stat(
+            fh.flush()
+            os.fsync(fh.fileno())
+        staged = os.stat(
             target.staging_name, dir_fd=target.parent_fd, follow_symlinks=False,
         )
+        if not _same_file_identity(staged, staging_identity):
+            raise RuntimeError("analyzer output staging entry changed before publication")
         _require_anchored_output_stable(target)
-        os.replace(
-            target.staging_name,
-            target.name,
-            src_dir_fd=target.parent_fd,
-            dst_dir_fd=target.parent_fd,
-        )
-        created_staging = False
         try:
-            _require_anchored_output_stable(target)
-        except BaseException:
-            try:
-                destination = os.stat(
-                    target.name, dir_fd=target.parent_fd, follow_symlinks=False,
+            os.link(
+                target.staging_name,
+                target.name,
+                src_dir_fd=target.parent_fd,
+                dst_dir_fd=target.parent_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise FileExistsError(
+                f"analyzer output appeared during publication; choose a fresh "
+                f"--out path: {target.lexical_path}"
+            ) from exc
+        destination = os.stat(
+            target.name, dir_fd=target.parent_fd, follow_symlinks=False,
+        )
+        if not _same_file_identity(destination, staging_identity):
+            raise RuntimeError("published analyzer output differs from its staging file")
+        destination_is_ours = True
+        _unlink_owned_output_entry(target, target.staging_name, staging_identity)
+        os.fsync(target.parent_fd)
+        _require_anchored_output_stable(target)
+    except BaseException:
+        directory_changed = False
+        if destination_is_ours and staging_identity is not None:
+            directory_changed = _unlink_owned_output_entry(
+                target, target.name, staging_identity,
+            )
+        if staging_identity is not None:
+            directory_changed = (
+                _unlink_owned_output_entry(
+                    target, target.staging_name, staging_identity,
                 )
-                if _same_file_identity(destination, published_identity):
-                    os.unlink(target.name, dir_fd=target.parent_fd)
-            except FileNotFoundError:
-                pass
-            raise
+                or directory_changed
+            )
+        if directory_changed:
+            os.fsync(target.parent_fd)
+        raise
     finally:
-        if created_staging:
-            try:
-                os.unlink(target.staging_name, dir_fd=target.parent_fd)
-            except FileNotFoundError:
-                pass
+        if staging_fd is not None:
+            os.close(staging_fd)
 
 
 def _add_protected_path(protected: set[Path], raw_path: str | Path) -> None:
