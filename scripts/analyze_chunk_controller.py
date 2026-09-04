@@ -1124,23 +1124,19 @@ def _manifest_directory_identities(
     for directory in directories if isinstance(directories, list) else []:
         if not isinstance(directory, dict):
             continue
-        for record in (
-            directory.get("root_identity"),
-            *(directory.get("path_components", []) or []),
-        ):
-            if isinstance(record, dict):
-                identity = _recorded_identity(record)
-                if identity is not None:
-                    identities.add(identity)
+        root_identity = directory.get("root_identity")
+        if isinstance(root_identity, dict):
+            identity = _recorded_identity(root_identity)
+            if identity is not None:
+                identities.add(identity)
     origin = manifest.get("matched_row_origin_verification")
     snapshot = origin.get("snapshot_inventory") if isinstance(origin, dict) else None
     if isinstance(snapshot, dict):
-        records = [snapshot.get("root_identity"), *(snapshot.get("shards", []) or [])]
-        for record in records:
-            if isinstance(record, dict):
-                identity = _recorded_identity(record)
-                if identity is not None:
-                    identities.add(identity)
+        root_identity = snapshot.get("root_identity")
+        if isinstance(root_identity, dict):
+            identity = _recorded_identity(root_identity)
+            if identity is not None:
+                identities.add(identity)
     return identities
 
 

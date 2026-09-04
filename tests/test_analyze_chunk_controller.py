@@ -5205,6 +5205,34 @@ def test_analyzer_output_rejects_renamed_checkpoint_by_identity(tmp_path: Path) 
     assert renamed.read_bytes() == b"authenticated checkpoint\n"
 
 
+def test_analyzer_full_manifest_allows_output_outside_syzygy_roots(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    filesystem_root = Path(os.sep).stat()
+    for directory in manifest["syzygy"]["directories"]:
+        directory["path_components"][0].update({
+            "device": filesystem_root.st_dev,
+            "inode": filesystem_root.st_ino,
+            "mtime_ns": filesystem_root.st_mtime_ns,
+            "ctime_ns": filesystem_root.st_ctime_ns,
+        })
+    _refresh_synthetic_syzygy_integrity(manifest["syzygy"])
+    meta.write_text(json.dumps(manifest))
+    _transitions, info = load_transitions(bank, meta_path=meta)
+    assert info["decision_grade"] is True
+
+    _require_safe_output_path(
+        bank,
+        meta,
+        tmp_path / "ordinary" / "analysis.json",
+        manifest=info["manifest"],
+        consumed_artifacts=info["analyzer_consumed_inputs"],
+    )
+
+
 def test_analyzer_output_rejects_renamed_syzygy_directory_by_identity(
     tmp_path: Path,
 ) -> None:
@@ -5224,6 +5252,38 @@ def test_analyzer_output_rejects_renamed_syzygy_directory_by_identity(
     }
     renamed = tmp_path / "ordinary-directory"
     tablebases.rename(renamed)
+    output = renamed / "analysis.json"
+
+    with pytest.raises(ValueError, match="inside a consumed protected directory"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest=manifest,
+        )
+
+    assert not output.exists()
+
+
+def test_analyzer_output_rejects_renamed_snapshot_root_by_identity(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    snapshot_stat = snapshot.stat()
+    manifest = {
+        "matched_row_origin_verification": {
+            "snapshot_inventory": {
+                "path": str(snapshot),
+                "root_identity": {
+                    "device": snapshot_stat.st_dev,
+                    "inode": snapshot_stat.st_ino,
+                },
+            },
+        },
+    }
+    renamed = tmp_path / "ordinary-directory"
+    snapshot.rename(renamed)
     output = renamed / "analysis.json"
 
     with pytest.raises(ValueError, match="inside a consumed protected directory"):
