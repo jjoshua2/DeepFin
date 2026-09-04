@@ -5039,7 +5039,7 @@ def test_analyzer_atomic_json_requires_fresh_ordinary_output(
 
     assert output.read_text() == '{"generation": 1}\n'
     assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(target.parent_fd)
 
 
@@ -5078,7 +5078,7 @@ def test_analyzer_no_clobber_when_consumed_bank_appears_at_output_leaf(
     assert not bank.exists()
     assert output.read_bytes() == bank_bytes
     assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(target.parent_fd)
 
 
@@ -5112,7 +5112,7 @@ def test_analyzer_cleanup_preserves_replaced_staging_entry(
 
     assert staging.read_bytes() == b"foreign staging entry\n"
     assert not output.exists()
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(target.parent_fd)
 
 
@@ -5423,7 +5423,7 @@ def test_analyzer_descriptor_ancestry_depth_failure_closes_walk_fds(
         assert stat.S_ISDIR(os.fstat(parent_fd).st_mode)
         assert duplicated_fds
         for duplicated in duplicated_fds:
-            with pytest.raises(OSError):
+            with pytest.raises(OSError, match="Bad file descriptor"):
                 os.fstat(duplicated)
     finally:
         os.close(parent_fd)
