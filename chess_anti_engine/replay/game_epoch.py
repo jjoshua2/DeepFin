@@ -254,7 +254,14 @@ def _choose_games(
         raise RuntimeError(
             f"{len(forced)} games are due in a batch with room for {count}",
         )
-    candidates = [key for key in active if key not in forced]
+    # Planning and realized loading can insert the same active games in a
+    # different dictionary order.  In particular, the planner visits a
+    # shard's source-local game order while ``_add_loaded_chunk`` groups the
+    # decoded rows by namespaced game key.  Sampling array positions from the
+    # raw dict order therefore lets the two seeded schedules diverge even when
+    # their active game sets and weights are identical.  Canonicalize the keys
+    # before the weighted draw so insertion order is not part of the schedule.
+    candidates = sorted(key for key in active if key not in forced)
     random_count = int(count) - len(forced)
     if random_count > len(candidates):
         raise RuntimeError(
