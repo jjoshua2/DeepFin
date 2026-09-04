@@ -13,6 +13,10 @@ prediction is out of sample twice: the target horizon is absent from training,
 and the target game is in an outer held-out group.  Ridge strength is selected
 inside the remaining games with grouped inner CV.
 
+Allocation ranks those predictions only within the outer fold that produced
+them.  Deterministic nested fold quotas sum to the preregistered global spend;
+random and exact reachable-oracle comparisons use the same quotas.
+
 This tool deliberately tests fixed NODE horizons only.  Trajectory banks do
 not contain real game clocks, soft budgets, or time-forfeit observations, so a
 positive result can justify collecting a clock bank but cannot justify a
@@ -30,7 +34,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -62,8 +66,8 @@ _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
 _PRODUCTION_WALKERS = 2
 _MIN_DECISION_GRADE_CHUNKS = 4
-# Nine is the smallest cluster count for which the canonical 2,000-sample,
-# seed-zero bootstrap retains at least two OOB games in at least 95% of draws.
+# Keep the preregistered source-game floor; the fixed-fold bootstrap below no
+# longer makes its validity depend on random OOB retention.
 _MIN_DECISION_GRADE_SOURCE_GAMES = 9
 _CANONICAL_FOLDS = 5
 _CANONICAL_BOOTSTRAP_SAMPLES = 2000
@@ -1973,6 +1977,31 @@ def grouped_folds(groups: Sequence[str], n_folds: int) -> list[np.ndarray]:
     return [np.flatnonzero(np.isin(arr, bucket)) for bucket in buckets]
 
 
+def _evaluation_fold_ids(
+    transitions: Sequence[Transition], n_folds: int,
+) -> np.ndarray:
+    """Assign every trajectory for a position to one deterministic game fold."""
+    horizons, _keys, by_horizon = _rollout_layout(transitions)
+    anchor_indices = by_horizon[horizons[0]]
+    anchor_groups = [transitions[int(index)].group_id for index in anchor_indices]
+    result = np.full(len(transitions), -1, dtype=np.int64)
+    group_to_fold: dict[str, int] = {}
+    for fold, local_indices in enumerate(grouped_folds(anchor_groups, n_folds)):
+        for local_index in local_indices:
+            group = anchor_groups[int(local_index)]
+            group_to_fold[group] = fold
+    for index, transition in enumerate(transitions):
+        try:
+            result[index] = group_to_fold[transition.group_id]
+        except KeyError as error:
+            raise ValueError(
+                "every source game must occur at the anchor horizon"
+            ) from error
+    if (result < 0).any():
+        raise AssertionError("evaluation fold assignment is incomplete")
+    return result
+
+
 def _grouped_analysis_possible(
     transitions: Sequence[Transition], n_folds: int,
 ) -> bool:
@@ -2031,13 +2060,13 @@ def held_horizon_predictions(
     diagnostics: list[dict[str, Any]] = []
     horizons = sorted({transition.horizon for transition in transitions})
     groups = np.asarray([transition.group_id for transition in transitions], dtype=str)
+    fold_ids = _evaluation_fold_ids(transitions, n_folds)
     for horizon in horizons:
         target_indices = np.flatnonzero(
             np.asarray([transition.horizon == horizon for transition in transitions])
         )
-        target_groups = groups[target_indices]
-        for test_local in grouped_folds(target_groups.tolist(), n_folds):
-            test = target_indices[test_local]
+        for fold in sorted(set(fold_ids.tolist())):
+            test = target_indices[fold_ids[target_indices] == fold]
             test_group_set = set(groups[test].tolist())
             train = np.asarray([
                 index for index, transition in enumerate(transitions)
@@ -2054,6 +2083,7 @@ def held_horizon_predictions(
             )
             predictions[test] = fitted.predict(_design([transitions[index] for index in test], model))
             diagnostics.append({
+                "fold": fold,
                 "horizon": horizon,
                 "test_groups": sorted(test_group_set),
                 "train_groups": sorted(set(groups[train].tolist())),
@@ -2167,6 +2197,83 @@ def _stage_counts(n_positions: int, n_stages: int, fraction: float) -> list[int]
     return counts
 
 
+def _apportion_fold_count(
+    count: int, fold_sizes: Sequence[int], capacities: Sequence[int],
+) -> list[int]:
+    """Split one global quota deterministically without exceeding fold capacity."""
+    if len(fold_sizes) != len(capacities) or not fold_sizes:
+        raise ValueError("fold sizes and capacities must be non-empty and aligned")
+    if count < 0 or count > sum(capacities):
+        raise ValueError("global quota exceeds the available fold capacity")
+    total_positions = sum(fold_sizes)
+    if total_positions <= 0:
+        raise ValueError("fold-local allocation requires at least one position")
+    ideals = [count * size / total_positions for size in fold_sizes]
+    allocated = [
+        min(int(capacity), math.floor(ideal))
+        for ideal, capacity in zip(ideals, capacities, strict=True)
+    ]
+    while sum(allocated) < count:
+        candidates = [
+            fold for fold, capacity in enumerate(capacities)
+            if allocated[fold] < capacity
+        ]
+        if not candidates:
+            raise AssertionError("could not apportion the fold-local allocation quota")
+        fold = max(
+            candidates,
+            key=lambda index: (ideals[index] - allocated[index], -index),
+        )
+        allocated[fold] += 1
+    return allocated
+
+
+def _fold_stage_counts(
+    fold_sizes: Sequence[int], n_stages: int, fraction: float,
+) -> tuple[list[int], list[list[int]]]:
+    """Make nested per-fold quotas whose column sums equal the global schedule."""
+    global_counts = _stage_counts(sum(fold_sizes), n_stages, fraction)
+    capacities = list(fold_sizes)
+    by_fold = [[0] * n_stages for _ in fold_sizes]
+    for stage, count in enumerate(global_counts):
+        allocated = _apportion_fold_count(count, fold_sizes, capacities)
+        for fold, fold_count in enumerate(allocated):
+            by_fold[fold][stage] = fold_count
+        capacities = allocated
+    if any(
+        sum(by_fold[fold][stage] for fold in range(len(fold_sizes))) != count
+        for stage, count in enumerate(global_counts)
+    ):
+        raise AssertionError("fold-local quotas do not preserve the global schedule")
+    if any(
+        later > earlier
+        for counts in by_fold
+        for earlier, later in pairwise(counts)
+    ):
+        raise AssertionError("fold-local quotas are not nested")
+    return global_counts, by_fold
+
+
+def _fold_partitions(
+    transitions: Sequence[Transition], fold_ids: Sequence[int] | np.ndarray | None,
+) -> list[np.ndarray]:
+    """Return stable row partitions and reject a position split across folds."""
+    if fold_ids is None:
+        return [np.arange(len(transitions), dtype=np.int64)]
+    folds = np.asarray(fold_ids, dtype=np.int64)
+    if len(folds) != len(transitions) or (folds < 0).any():
+        raise ValueError("fold ids must contain one non-negative id per transition")
+    key_folds: dict[str, int] = {}
+    for transition, fold in zip(transitions, folds, strict=True):
+        existing = key_folds.setdefault(transition.key, int(fold))
+        if existing != int(fold):
+            raise ValueError("one position trajectory cannot be split across folds")
+    return [
+        np.flatnonzero(folds == fold)
+        for fold in sorted(set(folds.tolist()))
+    ]
+
+
 def _rollout_selected_indices(
     transitions: Sequence[Transition],
     scores: np.ndarray,
@@ -2268,13 +2375,18 @@ def _reachable_stage_diagnostics(
     m1_selected: np.ndarray,
     *,
     n_positions: int,
+    random_stage_gains: Sequence[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Compare signed gains at each decision rung under reachable policies."""
     oracle_set = {int(index) for index in oracle_selected}
     m0_set = {int(index) for index in m0_selected}
     m1_set = {int(index) for index in m1_selected}
     diagnostics: list[dict[str, Any]] = []
-    for horizon, count in zip(horizons, stage_counts, strict=True):
+    if random_stage_gains is not None and len(random_stage_gains) != len(horizons):
+        raise ValueError("random stage gains do not match the rollout horizons")
+    for stage, (horizon, count) in enumerate(
+        zip(horizons, stage_counts, strict=True)
+    ):
         stage_indices = [
             index for index, row in enumerate(transitions) if row.horizon == horizon
         ]
@@ -2288,7 +2400,9 @@ def _reachable_stage_diagnostics(
             transitions[index].gain for index in stage_indices if index in oracle_set
         )
         random_gain = (
-            int(count) / n_positions
+            float(random_stage_gains[stage])
+            if random_stage_gains is not None
+            else int(count) / n_positions
             * math.fsum(transitions[index].gain for index in stage_indices)
         )
         headroom = (oracle_gain - random_gain) / n_positions
@@ -2312,38 +2426,94 @@ def evaluate_reachable_rollout(
     m1_scores: np.ndarray,
     *,
     allocation_fraction: float,
+    fold_ids: Sequence[int] | np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Evaluate policies as nested stop/continue trajectories at matched spend."""
-    horizons, keys, by_horizon = _rollout_layout(transitions)
-    counts = _stage_counts(len(keys), len(horizons), allocation_fraction)
-    random_gain = 0.0
+    """Evaluate nested policies without comparing scores from different fits."""
+    horizons, keys, _by_horizon = _rollout_layout(transitions)
+    if len(m0_scores) != len(transitions) or len(m1_scores) != len(transitions):
+        raise ValueError("rollout scores do not match the trajectory bank")
+    partitions = _fold_partitions(transitions, fold_ids)
+    fold_sizes: list[int] = []
+    fold_layouts: list[tuple[list[Transition], np.ndarray]] = []
+    for indices in partitions:
+        rows = [transitions[int(index)] for index in indices]
+        fold_horizons, fold_keys, _ = _rollout_layout(rows)
+        if fold_horizons != horizons:
+            raise ValueError("every evaluation fold must contain every horizon")
+        fold_sizes.append(len(fold_keys))
+        fold_layouts.append((rows, indices))
+    counts, fold_counts = _fold_stage_counts(
+        fold_sizes, len(horizons), allocation_fraction,
+    )
+    random_stage_gains = [0.0] * len(horizons)
     relaxed_oracle_gain = 0.0
-    for count, horizon in zip(counts, horizons, strict=True):
-        indices = by_horizon[horizon]
-        gains = np.asarray([transitions[int(index)].gain for index in indices])
-        random_gain += float(count / len(keys) * gains.sum())
-        relaxed_oracle_gain += float(
-            gains[_top_indices(gains, [transitions[int(i)].key for i in indices], count)].sum()
+    oracle_gain = 0.0
+    selected_by_policy: dict[str, list[np.ndarray]] = {
+        "oracle": [], "complexity_predicate": [], "M0": [], "M1": [],
+    }
+    fold_diagnostics: list[dict[str, Any]] = []
+    for fold, ((rows, indices), local_counts) in enumerate(
+        zip(fold_layouts, fold_counts, strict=True)
+    ):
+        _fold_horizons, fold_keys, fold_by_horizon = _rollout_layout(rows)
+        local_oracle, local_oracle_gain = _reachable_oracle_selected_indices(
+            rows, local_counts,
         )
-    oracle_selected, oracle_gain = _reachable_oracle_selected_indices(
-        transitions, counts,
-    )
-    m0_selected = _rollout_selected_indices(transitions, m0_scores, counts)
-    m1_selected = _rollout_selected_indices(transitions, m1_scores, counts)
-    complexity_selected = _rollout_selected_indices(
-        transitions, np.zeros(len(transitions)), counts, complexity=True,
-    )
+        local_m0 = _rollout_selected_indices(rows, m0_scores[indices], local_counts)
+        local_m1 = _rollout_selected_indices(rows, m1_scores[indices], local_counts)
+        local_complexity = _rollout_selected_indices(
+            rows, np.zeros(len(rows)), local_counts, complexity=True,
+        )
+        for name, local_selected in (
+            ("oracle", local_oracle),
+            ("complexity_predicate", local_complexity),
+            ("M0", local_m0),
+            ("M1", local_m1),
+        ):
+            selected_by_policy[name].append(indices[local_selected])
+        oracle_gain += local_oracle_gain
+        fold_relaxed_gain = 0.0
+        for stage, (count, horizon) in enumerate(
+            zip(local_counts, horizons, strict=True)
+        ):
+            stage_indices = fold_by_horizon[horizon]
+            gains = np.asarray([rows[int(index)].gain for index in stage_indices])
+            random_stage_gains[stage] += float(count / len(fold_keys) * gains.sum())
+            fold_relaxed_gain += float(
+                gains[
+                    _top_indices(
+                        gains,
+                        [rows[int(index)].key for index in stage_indices],
+                        count,
+                    )
+                ].sum()
+            )
+        relaxed_oracle_gain += fold_relaxed_gain
+        fold_diagnostics.append({
+            "fold": fold,
+            "n_positions": len(fold_keys),
+            "stage_continue_counts": local_counts,
+            "reachable_oracle_signed_gain": local_oracle_gain,
+            "relaxed_oracle_signed_gain": fold_relaxed_gain,
+        })
+    selected = {
+        name: np.concatenate(parts).astype(np.int64, copy=False)
+        for name, parts in selected_by_policy.items()
+    }
+    random_gain = math.fsum(random_stage_gains)
+    oracle_selected = selected["oracle"]
+    m0_selected = selected["M0"]
+    m1_selected = selected["M1"]
+    complexity_selected = selected["complexity_predicate"]
     reachable_stages = _reachable_stage_diagnostics(
         transitions, horizons, counts, oracle_selected, m0_selected, m1_selected,
         n_positions=len(keys),
+        random_stage_gains=random_stage_gains,
     )
     policies = {
         "random": {
             "selected": sum(counts),
-            "spend": int(sum(
-                count * transitions[int(by_horizon[horizon][0])].cost
-                for count, horizon in zip(counts, horizons, strict=True)
-            )),
+            "spend": int(sum(counts) * transitions[0].cost),
             "signed_gain": random_gain,
             "capture_over_random": (
                 0.0 if oracle_gain > random_gain else None
@@ -2366,6 +2536,14 @@ def evaluate_reachable_rollout(
             random_gain=random_gain, oracle_gain=oracle_gain,
         )),
     }
+    expected_selected = sum(counts)
+    expected_spend = expected_selected * transitions[0].cost
+    if any(
+        policy["selected"] != expected_selected
+        or policy["spend"] != expected_spend
+        for policy in policies.values()
+    ):
+        raise AssertionError("reachable policies are not evaluated at matched spend")
     return {
         "n_positions": len(keys),
         "n_stages": len(horizons),
@@ -2373,8 +2551,16 @@ def evaluate_reachable_rollout(
         "stage_continue_counts": counts,
         "target_allocation_fraction": allocation_fraction,
         "realized_allocation_fraction": sum(counts) / (len(keys) * len(horizons)),
-        "selection_semantics": "nested_prefix_no_reentry",
-        "oracle_semantics": "exact_nested_stop_depth_assignment",
+        "selection_semantics": (
+            "fold_local_nested_prefix_no_reentry"
+            if fold_ids is not None else "nested_prefix_no_reentry"
+        ),
+        "oracle_semantics": (
+            "exact_fold_local_nested_stop_depth_assignment"
+            if fold_ids is not None else "exact_nested_stop_depth_assignment"
+        ),
+        "evaluation_fold_count": len(partitions),
+        "fold_diagnostics": fold_diagnostics,
         "reachable_oracle_signed_gain": oracle_gain,
         "relaxed_oracle_signed_gain": relaxed_oracle_gain,
         "relaxation_gap": relaxed_oracle_gain - oracle_gain,
@@ -2389,17 +2575,45 @@ def evaluate_reachable_rollout(
 def evaluate_horizon(
     transitions: Sequence[Transition], m0_scores: np.ndarray, m1_scores: np.ndarray,
     *, selected_count: int | None = None,
+    fold_ids: Sequence[int] | np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Compare every policy at exactly the same count of fixed-size tranches."""
+    """Compare fixed-size tranches without pooling scores across fitted folds."""
+    if len(m0_scores) != len(transitions) or len(m1_scores) != len(transitions):
+        raise ValueError("scores do not match the horizon rows")
     natural_count = sum(row.complexity_continue for row in transitions)
     count = natural_count if selected_count is None else int(selected_count)
     if not 0 <= count <= len(transitions):
         raise ValueError("selected_count is outside the available positions")
-    keys = [row.key for row in transitions]
     gains = np.asarray([row.gain for row in transitions], dtype=np.float64)
-    complexity = _complexity_predicate_indices(transitions, keys, count)
-    oracle = _top_indices(gains, keys, count)
-    random_gain = float(count / len(transitions) * gains.sum())
+    partitions = _fold_partitions(transitions, fold_ids)
+    fold_counts = _apportion_fold_count(
+        count, [len(indices) for indices in partitions],
+        [len(indices) for indices in partitions],
+    )
+    selected_by_policy: dict[str, list[np.ndarray]] = {
+        "oracle": [], "complexity_predicate": [], "M0": [], "M1": [],
+    }
+    random_gain = 0.0
+    for indices, fold_count in zip(partitions, fold_counts, strict=True):
+        rows = [transitions[int(index)] for index in indices]
+        keys = [row.key for row in rows]
+        local_gains = gains[indices]
+        random_gain += float(fold_count / len(rows) * local_gains.sum())
+        for name, local in (
+            ("oracle", _top_indices(local_gains, keys, fold_count)),
+            (
+                "complexity_predicate",
+                _complexity_predicate_indices(rows, keys, fold_count),
+            ),
+            ("M0", _top_indices(m0_scores[indices], keys, fold_count)),
+            ("M1", _top_indices(m1_scores[indices], keys, fold_count)),
+        ):
+            selected_by_policy[name].append(indices[local])
+    selected = {
+        name: np.concatenate(parts).astype(np.int64, copy=False)
+        for name, parts in selected_by_policy.items()
+    }
+    oracle = selected["oracle"]
     oracle_gain = float(gains[oracle].sum())
     policies = {
         "random": {
@@ -2412,25 +2626,40 @@ def evaluate_horizon(
             transitions, oracle, random_gain=random_gain, oracle_gain=oracle_gain,
         )),
         "complexity_predicate": asdict(_policy_result(
-            transitions, complexity, random_gain=random_gain, oracle_gain=oracle_gain,
+            transitions, selected["complexity_predicate"],
+            random_gain=random_gain, oracle_gain=oracle_gain,
         )),
         "M0": asdict(_policy_result(
-            transitions, _top_indices(m0_scores, keys, count),
+            transitions, selected["M0"],
             random_gain=random_gain, oracle_gain=oracle_gain,
         )),
         "M1": asdict(_policy_result(
-            transitions, _top_indices(m1_scores, keys, count),
+            transitions, selected["M1"],
             random_gain=random_gain, oracle_gain=oracle_gain,
         )),
     }
+    expected_spend = count * transitions[0].cost
+    if any(
+        policy["selected"] != count or policy["spend"] != expected_spend
+        for policy in policies.values()
+    ):
+        raise AssertionError("horizon policies are not evaluated at matched spend")
     return {
         "n": len(transitions),
         "extension_fraction": count / len(transitions),
         "complexity_predicate_natural_extension_fraction": natural_count / len(transitions),
         "complexity_predicate_baseline": (
-            "exact clock-free predicate selection" if count == natural_count
+            "exact clock-free predicate selection"
+            if fold_ids is None and count == natural_count
+            else "fold-local clock-free predicate with deterministic tie-break"
+            if fold_ids is not None
             else "clock-free predicate, then stability and emitted-gap tie-break"
         ),
+        "selection_semantics": (
+            "fold_local_matched_quota" if fold_ids is not None else "pooled_matched_quota"
+        ),
+        "evaluation_fold_count": len(partitions),
+        "fold_selected_counts": fold_counts,
         "signed_gain_mean_if_all": float(gains.mean()),
         "oracle_over_random_headroom_mean": (oracle_gain - random_gain) / len(transitions),
         "corrections": int((gains > 0).sum()),
@@ -2443,9 +2672,11 @@ def evaluate_horizon(
 def _minimum_reachable_rung_gain_delta(
     transitions: Sequence[Transition], m0: np.ndarray, m1: np.ndarray,
     allocation_fraction: float, min_oracle_headroom: float = 0.0,
+    *, fold_ids: Sequence[int] | np.ndarray | None = None,
 ) -> float | None:
     result = evaluate_reachable_rollout(
         transitions, m0, m1, allocation_fraction=allocation_fraction,
+        fold_ids=fold_ids,
     )
     headroom = float(result["oracle_over_random_headroom_mean"])
     stages = result["reachable_stage_diagnostics"]
@@ -2463,38 +2694,76 @@ def _minimum_reachable_rung_gain_delta(
     return min(float(stage["M1_minus_M0_signed_gain_mean"]) for stage in stages)
 
 
-def _refit_oob_predictions(
-    transitions: Sequence[Transition],
-    train_indices: np.ndarray,
-    test_indices: np.ndarray,
-    *,
-    model: str,
-    n_folds: int,
+def _refit_fold_predictions(
+    transitions: Sequence[Transition], fold_ids: Sequence[int] | np.ndarray,
+    *, model: str, n_folds: int,
 ) -> np.ndarray:
-    """Select alpha and fit on one draw; predict only its untouched OOB games."""
-    predictions = np.full(len(test_indices), np.nan, dtype=np.float64)
-    for horizon in sorted({transitions[index].horizon for index in test_indices}):
-        target_local = np.flatnonzero([
-            transitions[index].horizon == horizon for index in test_indices
-        ])
-        train = np.asarray([
-            index for index in train_indices
-            if transitions[index].horizon != horizon
-        ], dtype=np.int64)
-        if len(train) < 2 or not len(target_local):
-            raise ValueError("bootstrap replicate cannot fit every held horizon")
-        train_rows = [transitions[int(index)] for index in train]
-        test_rows = [transitions[int(test_indices[int(index)])] for index in target_local]
-        alpha = _inner_alpha(train_rows, model, n_folds)
-        fitted = _fit_ridge(
-            _design(train_rows, model),
-            np.asarray([row.gain for row in train_rows], dtype=np.float64),
-            alpha,
-        )
-        predictions[target_local] = fitted.predict(_design(test_rows, model))
+    """Refit every held-fold/held-horizon model on a cluster resample."""
+    folds = np.asarray(fold_ids, dtype=np.int64)
+    if len(folds) != len(transitions):
+        raise ValueError("bootstrap fold ids do not match the resampled bank")
+    predictions = np.full(len(transitions), np.nan, dtype=np.float64)
+    horizons = sorted({transition.horizon for transition in transitions})
+    for fold in sorted(set(folds.tolist())):
+        for horizon in horizons:
+            test = np.flatnonzero([
+                int(row_fold) == fold and transition.horizon == horizon
+                for transition, row_fold in zip(transitions, folds, strict=True)
+            ])
+            train = np.flatnonzero([
+                int(row_fold) != fold and transition.horizon != horizon
+                for transition, row_fold in zip(transitions, folds, strict=True)
+            ])
+            if len(train) < 2 or not len(test):
+                raise ValueError("bootstrap replicate cannot fit every held fold/horizon")
+            train_rows = [transitions[int(index)] for index in train]
+            test_rows = [transitions[int(index)] for index in test]
+            alpha = _inner_alpha(train_rows, model, n_folds)
+            fitted = _fit_ridge(
+                _design(train_rows, model),
+                np.asarray([row.gain for row in train_rows], dtype=np.float64),
+                alpha,
+            )
+            predictions[test] = fitted.predict(_design(test_rows, model))
     if not np.isfinite(predictions).all():
-        raise ValueError("bootstrap replicate left OOB rows unpredicted")
+        raise ValueError("bootstrap replicate left held-fold rows unpredicted")
     return predictions
+
+
+def _resample_evaluation_folds(
+    transitions: Sequence[Transition], fold_ids: Sequence[int] | np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[list[Transition], np.ndarray]:
+    """Cluster-resample each fixed evaluation fold while preserving trajectories."""
+    folds = np.asarray(fold_ids, dtype=np.int64)
+    groups_by_fold: dict[int, list[str]] = {}
+    indices_by_group: dict[str, list[int]] = {}
+    group_fold: dict[str, int] = {}
+    for index, (transition, fold) in enumerate(
+        zip(transitions, folds, strict=True)
+    ):
+        fold_number = int(fold)
+        previous = group_fold.setdefault(transition.group_id, fold_number)
+        if previous != fold_number:
+            raise ValueError("one source game cannot be split across evaluation folds")
+        indices_by_group.setdefault(transition.group_id, []).append(index)
+    for group, fold in group_fold.items():
+        groups_by_fold.setdefault(fold, []).append(group)
+
+    sampled: list[Transition] = []
+    sampled_folds: list[int] = []
+    for fold in sorted(groups_by_fold):
+        groups = sorted(groups_by_fold[fold])
+        drawn = rng.choice(groups, size=len(groups), replace=True)
+        for occurrence, group in enumerate(drawn.tolist()):
+            for index in indices_by_group[str(group)]:
+                transition = transitions[index]
+                sampled.append(replace(
+                    transition,
+                    key=f"{transition.key}\0bootstrap:{fold}:{occurrence}",
+                ))
+                sampled_folds.append(fold)
+    return sampled, np.asarray(sampled_folds, dtype=np.int64)
 
 
 def cluster_bootstrap_delta(
@@ -2505,42 +2774,34 @@ def cluster_bootstrap_delta(
     seed: int,
     n_folds: int = 5,
     min_oracle_headroom: float = 0.0,
-) -> dict[str, float | int | None]:
-    """Bootstrap the worst reachable rung's signed M1-minus-M0 gain."""
-    groups = sorted({row.group_id for row in transitions})
-    by_group = {
-        group: np.flatnonzero([row.group_id == group for row in transitions])
-        for group in groups
-    }
+) -> dict[str, Any]:
+    """Refit and bootstrap the fold-local worst-rung M1-minus-M0 gain."""
+    point_fold_ids = _evaluation_fold_ids(transitions, n_folds)
     rng = np.random.default_rng(seed)
     values: list[float] = []
     for _ in range(samples):
-        drawn = rng.choice(groups, size=len(groups), replace=True)
-        drawn_set = {str(group) for group in drawn}
-        oob_groups = [group for group in groups if group not in drawn_set]
-        if len(oob_groups) < 2:
-            continue
-        train_indices = np.concatenate([by_group[str(group)] for group in drawn])
-        test_indices = np.concatenate([by_group[group] for group in oob_groups])
-        rows = [transitions[index] for index in test_indices]
+        rows, fold_ids = _resample_evaluation_folds(
+            transitions, point_fold_ids, rng,
+        )
         try:
-            m0 = _refit_oob_predictions(
-                transitions, train_indices, test_indices,
-                model="M0", n_folds=n_folds,
+            m0 = _refit_fold_predictions(
+                rows, fold_ids, model="M0", n_folds=n_folds,
             )
-            m1 = _refit_oob_predictions(
-                transitions, train_indices, test_indices,
-                model="M1", n_folds=n_folds,
+            m1 = _refit_fold_predictions(
+                rows, fold_ids, model="M1", n_folds=n_folds,
             )
         except (ValueError, np.linalg.LinAlgError):
             continue
         delta = _minimum_reachable_rung_gain_delta(
             rows, m0, m1, allocation_fraction, min_oracle_headroom,
+            fold_ids=fold_ids,
         )
         if delta is not None and math.isfinite(delta):
             values.append(delta)
     if not values:
         return {
+            "selection_semantics": "fold_local_nested_prefix_no_reentry",
+            "oracle_semantics": "exact_fold_local_nested_stop_depth_assignment",
             "requested_samples": samples,
             "valid_samples": 0,
             "valid_fraction": 0.0,
@@ -2550,6 +2811,8 @@ def cluster_bootstrap_delta(
         }
     array = np.asarray(values, dtype=np.float64)
     return {
+        "selection_semantics": "fold_local_nested_prefix_no_reentry",
+        "oracle_semantics": "exact_fold_local_nested_stop_depth_assignment",
         "requested_samples": samples,
         "valid_samples": len(values),
         "valid_fraction": len(values) / samples,
@@ -2564,6 +2827,7 @@ def analyze(
     seed: int, allocation_fraction: float, min_capture_gain: float,
     min_oracle_headroom: float, min_bootstrap_valid_fraction: float,
 ) -> dict[str, Any]:
+    fold_ids = _evaluation_fold_ids(transitions, n_folds)
     m0, m0_diagnostics = held_horizon_predictions(transitions, "M0", n_folds=n_folds)
     m1, m1_diagnostics = held_horizon_predictions(transitions, "M1", n_folds=n_folds)
     horizons: dict[str, Any] = {}
@@ -2573,6 +2837,7 @@ def analyze(
         count = min(len(rows), max(1, round(allocation_fraction * len(rows))))
         result = evaluate_horizon(
             rows, m0[indices], m1[indices], selected_count=count,
+            fold_ids=fold_ids[indices],
         )
         c0 = result["policies"]["M0"]["capture_over_random"]
         c1 = result["policies"]["M1"]["capture_over_random"]
@@ -2589,6 +2854,7 @@ def analyze(
         horizons[str(horizon)] = result
     rollout = evaluate_reachable_rollout(
         transitions, m0, m1, allocation_fraction=allocation_fraction,
+        fold_ids=fold_ids,
     )
     capture_m0 = rollout["policies"]["M0"]["capture_over_random"]
     capture_m1 = rollout["policies"]["M1"]["capture_over_random"]
@@ -2644,11 +2910,12 @@ def analyze(
             "allocation_fraction": allocation_fraction,
             "minimum_M1_minus_M0_oracle_capture": min_capture_gain,
             "minimum_oracle_over_random_headroom_mean": min_oracle_headroom,
-            "reachable_selection_required": "nested_prefix_no_reentry",
+            "reachable_selection_required": "fold_local_nested_prefix_no_reentry",
+            "fold_score_comparison": "within_held_out_fold_only",
             "per_horizon_tables_are_diagnostic_only": True,
             "M1_reachable_rollout_capture_above_random": True,
             "M1_minus_M0_reachable_signed_gain_positive_at_every_rung": True,
-            "refitted_OOB_game_cluster_bootstrap_worst_rung_lower_95_above_zero": True,
+            "fold_refit_game_cluster_bootstrap_worst_rung_lower_95_above_zero": True,
             "bootstrap_samples": bootstrap_samples,
             "minimum_decision_grade_bootstrap_samples": (
                 _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES
@@ -2667,7 +2934,7 @@ def analyze(
         "reachable_stage_rule_passed": reachable_stage_rule_passed,
         "tail_rule_passed": tail_ok,
         "bootstrap_resolution_passed": bootstrap_resolution_ok,
-        "bootstrap_refit_oob_worst_reachable_rung_M1_minus_M0_signed_gain": bootstrap,
+        "bootstrap_fold_refit_worst_reachable_rung_M1_minus_M0_signed_gain": bootstrap,
         "reachable_rollout": rollout,
         "stage_conditional_diagnostics": horizons,
         "cv_diagnostics": {"M0": m0_diagnostics, "M1": m1_diagnostics},

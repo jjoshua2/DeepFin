@@ -22,6 +22,8 @@ from scripts import analyze_chunk_controller as controller_module
 from scripts.analyze_chunk_controller import (
     Transition,
     _complexity_continue,
+    _evaluation_fold_ids,
+    _fold_stage_counts,
     _rollout_selected_indices,
     _source_group,
     _stage_counts,
@@ -212,6 +214,59 @@ def test_reachable_gate_requires_oracle_headroom_at_every_rung() -> None:
     ) is None
 
 
+def test_fold_local_rollout_is_invariant_to_cross_fit_score_offsets() -> None:
+    rows = [
+        _transition(key, game, horizon, gain, current=True)
+        for key, game, gain in (
+            ("a", 1, 0.0),
+            ("b", 2, 0.0),
+            ("c", 3, 10.0),
+            ("d", 4, -10.0),
+        )
+        for horizon in (100, 150)
+    ]
+    fold_ids = np.asarray([
+        0 if row.key in {"a", "c"} else 1 for row in rows
+    ])
+    scores = np.asarray([
+        {"a": 10.0, "b": 0.0, "c": 9.0, "d": -1.0}[row.key]
+        for row in rows
+    ])
+    shifted = scores + np.where(fold_ids == 1, 1000.0, 0.0)
+
+    pooled = evaluate_reachable_rollout(
+        rows, scores, scores, allocation_fraction=0.5,
+    )
+    shifted_pooled = evaluate_reachable_rollout(
+        rows, shifted, shifted, allocation_fraction=0.5,
+    )
+    assert pooled["policies"]["M1"]["signed_gain"] != (
+        shifted_pooled["policies"]["M1"]["signed_gain"]
+    )
+
+    local = evaluate_reachable_rollout(
+        rows, scores, scores, allocation_fraction=0.5, fold_ids=fold_ids,
+    )
+    shifted_local = evaluate_reachable_rollout(
+        rows, shifted, shifted, allocation_fraction=0.5, fold_ids=fold_ids,
+    )
+    assert local["selection_semantics"] == "fold_local_nested_prefix_no_reentry"
+    assert local["policies"] == shifted_local["policies"]
+    assert local["reachable_stage_diagnostics"] == (
+        shifted_local["reachable_stage_diagnostics"]
+    )
+
+
+def test_fold_local_quotas_are_nested_and_preserve_exact_global_spend() -> None:
+    global_counts, fold_counts = _fold_stage_counts([5, 3, 2], 4, 0.35)
+
+    assert global_counts == _stage_counts(10, 4, 0.35)
+    assert [sum(counts[stage] for counts in fold_counts) for stage in range(4)] == (
+        global_counts
+    )
+    assert all(counts == sorted(counts, reverse=True) for counts in fold_counts)
+
+
 def test_held_horizon_cv_excludes_horizon_and_source_game() -> None:
     rows = [
         _transition(str(game), game, horizon, game / 10, current=game % 2 == 0)
@@ -225,6 +280,11 @@ def test_held_horizon_cv_excludes_horizon_and_source_game() -> None:
     for fold in diagnostics:
         assert fold["horizon"] not in fold["train_horizons"]
         assert set(fold["test_groups"]).isdisjoint(fold["train_groups"])
+    fold_ids = _evaluation_fold_ids(rows, 4)
+    assert all(
+        len({int(fold_ids[index]) for index, row in enumerate(rows) if row.key == key}) == 1
+        for key in {row.key for row in rows}
+    )
 
 
 def test_grouped_folds_never_split_a_game() -> None:
@@ -414,6 +474,47 @@ def test_cluster_bootstrap_is_deterministic() -> None:
         allocation_fraction=0.5, samples=20, seed=7, n_folds=3,
     )
     assert first == second
+    assert first["selection_semantics"] == "fold_local_nested_prefix_no_reentry"
+    point_folds = _evaluation_fold_ids(rows, 3)
+    point = evaluate_reachable_rollout(
+        rows, np.zeros(len(rows)), np.zeros(len(rows)),
+        allocation_fraction=0.5, fold_ids=point_folds,
+    )
+    assert first["selection_semantics"] == point["selection_semantics"]
+    assert first["oracle_semantics"] == point["oracle_semantics"]
+
+
+def test_bootstrap_refits_exclude_the_target_fold_and_horizon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, game / horizon, current=True)
+        for game in range(9)
+        for horizon in (100, 150, 200)
+    ]
+    fold_ids = _evaluation_fold_ids(rows, 3)
+    group_fold = {
+        row.group_id: int(fold_ids[index]) for index, row in enumerate(rows)
+    }
+    seen = 0
+
+    def checked_alpha(
+        train_rows: list[Transition], model: str, n_folds: int,
+    ) -> float:
+        nonlocal seen
+        del model, n_folds
+        seen += 1
+        assert len({row.horizon for row in train_rows}) == 2
+        assert len({group_fold[row.group_id] for row in train_rows}) == 2
+        return 1.0
+
+    monkeypatch.setattr(controller_module, "_inner_alpha", checked_alpha)
+    predictions = controller_module._refit_fold_predictions(
+        rows, fold_ids, model="M0", n_folds=3,
+    )
+
+    assert np.isfinite(predictions).all()
+    assert seen == 9
 
 
 def _write_bank(path: Path, *, correct_gap: bool) -> Path:
@@ -2576,10 +2677,13 @@ def test_analyze_cannot_advance_with_an_undersampled_interval(
     from scripts import analyze_chunk_controller as controller
 
     rows = [
-        _transition("a", 1, horizon, -1.0, current=False)
-        for horizon in (100, 150)
-    ] + [
-        _transition("b", 2, horizon, 1.0, current=True)
+        _transition(key, game, horizon, gain, current=gain > 0.0)
+        for key, game, gain in (
+            ("a", 1, -1.0),
+            ("b", 2, -1.0),
+            ("c", 3, 1.0),
+            ("d", 4, 1.0),
+        )
         for horizon in (100, 150)
     ]
     m0 = np.zeros(len(rows), dtype=np.float64)
@@ -2641,11 +2745,15 @@ def test_analyze_requires_M1_improvement_at_every_reachable_rung(
     rows = [
         _transition("a", 1, 100, 0.0, current=False),
         _transition("a", 1, 150, 0.0, current=False),
-        _transition("b", 2, 100, 10.0, current=True),
-        _transition("b", 2, 150, -1.0, current=True),
+        _transition("b", 2, 100, 0.0, current=False),
+        _transition("b", 2, 150, 0.0, current=False),
+        _transition("c", 3, 100, 0.0, current=False),
+        _transition("c", 3, 150, -1.0, current=True),
+        _transition("d", 4, 100, 10.0, current=True),
+        _transition("d", 4, 150, 0.0, current=False),
     ]
     m0 = np.zeros(len(rows), dtype=np.float64)
-    m1 = np.asarray([0.0, 0.0, 10.0, -1.0], dtype=np.float64)
+    m1 = np.asarray([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0])
 
     monkeypatch.setattr(
         controller,
