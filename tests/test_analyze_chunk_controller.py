@@ -53,6 +53,7 @@ from scripts.backtest_chunk_trajectory import (
     _require_search_take_effect,
     _validate_registry_search_values,
 )
+from scripts.check_c_extensions_fresh import extension_spec
 
 
 _TEST_GIT_FILES: dict[str, bytes] = {}
@@ -766,7 +767,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     for module in controller_module._NATIVE_MODULES:
         dependency_bytes = {
             relative_path: f"synthetic native input {relative_path}\n".encode()
-            for relative_path in controller_module.extension_spec(module).dependencies
+            for relative_path in extension_spec(module).dependencies
         }
         _TEST_GIT_FILES.update(dependency_bytes)
         native_builds[module] = {
@@ -1523,6 +1524,65 @@ def test_loader_rejects_native_build_dependency_not_at_producer_revision(
     _TEST_GIT_FILES[dependency] += b" changed after foreign build"
 
     with pytest.raises(ValueError, match=message):
+        load_transitions(bank)
+
+
+def test_historical_native_attestation_uses_its_versioned_dependency_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import check_c_extensions_fresh as freshness
+
+    module = "chess_anti_engine.encoding._features_ext"
+    schema = "deepfin.native_build.v1"
+    dependency_bytes = {
+        relative_path: f"historical:{relative_path}\n".encode()
+        for relative_path in freshness.native_build_dependency_paths(schema, module)
+    }
+    _TEST_GIT_FILES.update(dependency_bytes)
+    artifact = {
+        "build_attestation": {
+            **freshness.native_build_attestation(
+                module, "a" * 40, dependency_bytes, schema=schema,
+            ),
+            "current_inputs_match_revision": True,
+            "matches_producer_revision": True,
+        },
+    }
+    grown = freshness.ExtensionSpec(
+        module,
+        (*extension_spec(module).dependencies, "chess_anti_engine/future_header.h"),
+    )
+    monkeypatch.setattr(
+        freshness,
+        "EXTENSION_SPECS",
+        tuple(
+            grown if spec.module == module else spec
+            for spec in freshness.EXTENSION_SPECS
+        ),
+    )
+
+    assert controller_module._native_build_matches_revision(
+        artifact, "a" * 40, module,
+    ) is True
+    with pytest.raises(RuntimeError, match="publish a new schema"):
+        freshness.require_current_native_build_attestation_schema()
+
+
+@pytest.mark.parametrize("tamper", ["unknown_schema", "added_dependency"])
+def test_loader_rejects_native_attestation_schema_or_dependency_set_tamper(
+    tmp_path: Path, tamper: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    build = manifest["features_extension"]["build_attestation"]
+    if tamper == "unknown_schema":
+        build["schema"] = "deepfin.native_build.unknown"
+    else:
+        build["dependencies"]["chess_anti_engine/unexpected.h"] = "f" * 64
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="feature encoding extension"):
         load_transitions(bank)
 
 
@@ -3001,7 +3061,7 @@ def test_producer_rejects_native_binary_built_from_another_revision(
     repo_root = Path(producer.__file__).resolve().parents[1]
     dependencies = {
         relative_path: (repo_root / relative_path).read_bytes()
-        for relative_path in controller_module.extension_spec(module_name).dependencies
+        for relative_path in extension_spec(module_name).dependencies
     }
     copied = controller_module.native_build_attestation(
         module_name, "b" * 40, dependencies,
@@ -3035,7 +3095,7 @@ def test_producer_rejects_native_binary_built_from_altered_then_restored_inputs(
     repo_root = Path(producer.__file__).resolve().parents[1]
     dependencies = {
         relative_path: (repo_root / relative_path).read_bytes()
-        for relative_path in controller_module.extension_spec(module_name).dependencies
+        for relative_path in extension_spec(module_name).dependencies
     }
     built_from = dict(dependencies)
     changed_path = next(iter(built_from))
@@ -3072,7 +3132,7 @@ def test_producer_rejects_missing_native_build_attestation(
     repo_root = Path(producer.__file__).resolve().parents[1]
     dependencies = {
         relative_path: (repo_root / relative_path).read_bytes()
-        for relative_path in controller_module.extension_spec(module_name).dependencies
+        for relative_path in extension_spec(module_name).dependencies
     }
     monkeypatch.setattr(
         producer,

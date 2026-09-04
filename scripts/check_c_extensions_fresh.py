@@ -11,6 +11,7 @@ import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 
@@ -20,12 +21,53 @@ class ExtensionSpec:
     dependencies: tuple[str, ...]
 
 
-NATIVE_BUILD_ATTESTATION_SCHEMA = "deepfin.native_build.v1"
+_NATIVE_BUILD_ATTESTATION_SCHEMA_V1 = "deepfin.native_build.v1"
+NATIVE_BUILD_ATTESTATION_SCHEMA = _NATIVE_BUILD_ATTESTATION_SCHEMA_V1
 NATIVE_BUILD_ATTESTED_MODULES = (
     "chess_anti_engine.encoding._features_ext",
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
 )
+
+# This is a versioned wire-format contract, not an alias for EXTENSION_SPECS.
+# Historical evidence must remain verifiable after the live include graph grows.
+# Keep each published schema immutable; when any dependency surface changes, add
+# a new schema mapping and advance NATIVE_BUILD_ATTESTATION_SCHEMA instead.
+_NATIVE_BUILD_DEPENDENCIES_V1: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "chess_anti_engine.encoding._features_ext": (
+        "setup.py",
+        "chess_anti_engine/_native_build_attestation.h",
+        "chess_anti_engine/encoding/_features_ext.c",
+        "chess_anti_engine/encoding/_features_impl.h",
+        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+        "chess_anti_engine/encoding/_slider_attacks_impl.h",
+    ),
+    "chess_anti_engine.encoding._lc0_ext": (
+        "setup.py",
+        "chess_anti_engine/_native_build_attestation.h",
+        "chess_anti_engine/encoding/_lc0_ext.c",
+        "chess_anti_engine/encoding/_cboard_impl.h",
+        "chess_anti_engine/encoding/_features_impl.h",
+        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+        "chess_anti_engine/encoding/_slider_attacks_impl.h",
+    ),
+    "chess_anti_engine.mcts._mcts_tree": (
+        "setup.py",
+        "chess_anti_engine/_native_build_attestation.h",
+        "chess_anti_engine/mcts/_mcts_tree.c",
+        "chess_anti_engine/mcts/_value_provider.h",
+        "chess_anti_engine/mcts/_search_terminal.h",
+        "chess_anti_engine/encoding/_cboard_impl.h",
+        "chess_anti_engine/encoding/_features_impl.h",
+        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+        "chess_anti_engine/encoding/_slider_attacks_impl.h",
+    ),
+})
+_NATIVE_BUILD_SCHEMA_DEPENDENCIES: Mapping[
+    str, Mapping[str, tuple[str, ...]]
+] = MappingProxyType({
+    _NATIVE_BUILD_ATTESTATION_SCHEMA_V1: _NATIVE_BUILD_DEPENDENCIES_V1,
+})
 
 
 # setup.py is a compile input, not merely packaging metadata: it owns extension
@@ -116,10 +158,53 @@ def extension_spec(module: str) -> ExtensionSpec:
     return matches[0]
 
 
+def native_build_dependency_paths(schema: str, module: str) -> tuple[str, ...]:
+    """Return the immutable dependency surface published by one schema."""
+    schemas = _NATIVE_BUILD_SCHEMA_DEPENDENCIES.get(schema)
+    if schemas is None:
+        raise ValueError(f"unknown native build attestation schema: {schema!r}")
+    dependencies = schemas.get(module)
+    if dependencies is None:
+        raise ValueError(
+            f"native build attestation schema {schema!r} does not cover {module}"
+        )
+    return dependencies
+
+
+def require_current_native_build_attestation_schema() -> None:
+    """Force dependency changes to publish a new attestation schema."""
+    current_schema = _NATIVE_BUILD_SCHEMA_DEPENDENCIES.get(
+        NATIVE_BUILD_ATTESTATION_SCHEMA
+    )
+    if current_schema is None:
+        raise RuntimeError(
+            "current native build attestation schema is unpublished; publish a new schema"
+        )
+    schema_modules = tuple(current_schema)
+    if schema_modules != NATIVE_BUILD_ATTESTED_MODULES:
+        raise RuntimeError(
+            "current native build attestation schema module set is stale; "
+            "publish a new schema"
+        )
+    mismatches = [
+        module
+        for module in NATIVE_BUILD_ATTESTED_MODULES
+        if extension_spec(module).dependencies
+        != native_build_dependency_paths(NATIVE_BUILD_ATTESTATION_SCHEMA, module)
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "current native extension dependency surface differs from attestation "
+            "schema; publish a new schema for: " + ", ".join(mismatches)
+        )
+
+
 def native_build_attestation(
     module: str,
     source_git_sha: str,
     dependency_bytes: Mapping[str, bytes],
+    *,
+    schema: str = NATIVE_BUILD_ATTESTATION_SCHEMA,
 ) -> dict[str, Any]:
     """Canonical revision-bound input record embedded into a native module.
 
@@ -128,8 +213,21 @@ def native_build_attestation(
     prevents the same bytes from being silently relabelled as a different module
     or build revision.
     """
-    spec = extension_spec(module)
-    expected = set(spec.dependencies)
+    if schema == _NATIVE_BUILD_ATTESTATION_SCHEMA_V1:
+        return _native_build_attestation_v1(module, source_git_sha, dependency_bytes)
+    raise ValueError(f"unknown native build attestation schema: {schema!r}")
+
+
+def _native_build_attestation_v1(
+    module: str,
+    source_git_sha: str,
+    dependency_bytes: Mapping[str, bytes],
+) -> dict[str, Any]:
+    """Frozen v1 digest semantics; later schemas get separate implementations."""
+    dependency_paths = native_build_dependency_paths(
+        _NATIVE_BUILD_ATTESTATION_SCHEMA_V1, module,
+    )
+    expected = set(dependency_paths)
     observed = set(dependency_bytes)
     if observed != expected:
         raise ValueError(
@@ -143,10 +241,10 @@ def native_build_attestation(
         raise ValueError("native build source_git_sha must be a full commit id")
     dependencies = {
         path: hashlib.sha256(dependency_bytes[path]).hexdigest()
-        for path in sorted(spec.dependencies)
+        for path in sorted(dependency_paths)
     }
     payload = {
-        "schema": NATIVE_BUILD_ATTESTATION_SCHEMA,
+        "schema": _NATIVE_BUILD_ATTESTATION_SCHEMA_V1,
         "module": module,
         "source_git_sha": source_git_sha,
         "dependencies": dependencies,

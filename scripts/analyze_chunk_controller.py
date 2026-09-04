@@ -51,7 +51,10 @@ from chess_anti_engine.eval.audit import (
 )
 from chess_anti_engine.mcts import search_options as search_options_module
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
-from scripts.check_c_extensions_fresh import extension_spec, native_build_attestation
+from scripts.check_c_extensions_fresh import (
+    native_build_attestation,
+    native_build_dependency_paths,
+)
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
@@ -1048,9 +1051,15 @@ def _native_build_matches_revision(
     """Independently recompute the embedded native-input stamp from Git bytes."""
     if not isinstance(artifact, dict) or not isinstance(producer_git_sha, str):
         return False
+    build_attestation = artifact.get("build_attestation")
+    if not isinstance(build_attestation, dict):
+        return False
+    schema = build_attestation.get("schema")
+    if not isinstance(schema, str):
+        return False
     dependency_bytes: dict[str, bytes] = {}
     try:
-        dependencies = extension_spec(module).dependencies
+        dependencies = native_build_dependency_paths(schema, module)
     except ValueError:
         return False
     for relative_path in dependencies:
@@ -1060,11 +1069,11 @@ def _native_build_matches_revision(
         dependency_bytes[relative_path] = committed
     try:
         expected = native_build_attestation(
-            module, producer_git_sha, dependency_bytes,
+            module, producer_git_sha, dependency_bytes, schema=schema,
         )
     except ValueError:
         return False
-    return artifact.get("build_attestation") == {
+    return build_attestation == {
         **expected,
         "current_inputs_match_revision": True,
         "matches_producer_revision": True,

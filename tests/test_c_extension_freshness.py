@@ -7,12 +7,16 @@ from pathlib import Path
 
 import pytest
 
+from scripts import check_c_extensions_fresh as freshness
 from scripts.check_c_extensions_fresh import (
     EXTENSION_SPECS,
+    ExtensionSpec,
     NATIVE_BUILD_ATTESTED_MODULES,
     check_extensions,
     extension_spec,
     native_build_attestation,
+    native_build_dependency_paths,
+    require_current_native_build_attestation_schema,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +108,79 @@ def test_native_build_attestation_covers_every_declared_input(module: str) -> No
         native_build_attestation(module, "b" * 40, dependencies)["input_sha256"]
         != attestation["input_sha256"]
     )
+
+
+def test_current_extension_specs_match_published_attestation_schema() -> None:
+    require_current_native_build_attestation_schema()
+
+
+def test_published_attestation_schema_rejects_unknown_schema_and_input_set() -> None:
+    module = NATIVE_BUILD_ATTESTED_MODULES[0]
+    dependencies = {
+        path: path.encode()
+        for path in native_build_dependency_paths(
+            freshness.NATIVE_BUILD_ATTESTATION_SCHEMA, module,
+        )
+    }
+
+    with pytest.raises(ValueError, match="unknown native build attestation schema"):
+        native_build_attestation(
+            module, "a" * 40, dependencies, schema="deepfin.native_build.unknown",
+        )
+    with pytest.raises(ValueError, match="build inputs mismatch"):
+        native_build_attestation(
+            module, "a" * 40, {**dependencies, "unexpected.h": b"unexpected"},
+        )
+
+
+def test_v1_attestation_digest_semantics_are_pinned() -> None:
+    module = "chess_anti_engine.encoding._features_ext"
+    schema = "deepfin.native_build.v1"
+    dependencies = {
+        path: f"known-vector:{path}\n".encode()
+        for path in native_build_dependency_paths(schema, module)
+    }
+
+    attestation = native_build_attestation(
+        module, "0123456789abcdef0123456789abcdef01234567", dependencies,
+        schema=schema,
+    )
+
+    assert attestation["input_sha256"] == (
+        "1e32d91a3a7d04b54f131d4b11cd580b9529c9e34730686c54813f71c49ff42d"
+    )
+
+
+def test_v1_registry_survives_a_current_schema_bump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = "chess_anti_engine.encoding._features_ext"
+    v1_paths = native_build_dependency_paths("deepfin.native_build.v1", module)
+    monkeypatch.setattr(
+        freshness, "NATIVE_BUILD_ATTESTATION_SCHEMA", "deepfin.native_build.v2",
+    )
+
+    assert native_build_dependency_paths("deepfin.native_build.v1", module) == v1_paths
+    with pytest.raises(RuntimeError, match="unpublished; publish a new schema"):
+        require_current_native_build_attestation_schema()
+
+
+def test_current_spec_growth_requires_a_new_attestation_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = NATIVE_BUILD_ATTESTED_MODULES[0]
+    grown = ExtensionSpec(
+        module,
+        (*extension_spec(module).dependencies, "chess_anti_engine/future_header.h"),
+    )
+    monkeypatch.setattr(
+        freshness,
+        "EXTENSION_SPECS",
+        tuple(grown if spec.module == module else spec for spec in EXTENSION_SPECS),
+    )
+
+    with pytest.raises(RuntimeError, match="publish a new schema"):
+        require_current_native_build_attestation_schema()
 
 
 def test_check_extensions_rejects_unknown_module_filter(tmp_path: Path) -> None:

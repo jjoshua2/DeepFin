@@ -22,6 +22,7 @@ from scripts.check_c_extensions_fresh import (
     NATIVE_BUILD_ATTESTED_MODULES,
     extension_spec,
     native_build_attestation,
+    require_current_native_build_attestation_schema,
 )
 
 
@@ -129,6 +130,7 @@ def revision_build_attestations(
     root: Path, source_git_sha: str,
 ) -> dict[str, dict[str, object]]:
     """Freeze every producer-loaded extension input at one clean revision."""
+    require_current_native_build_attestation_schema()
     result: dict[str, dict[str, object]] = {}
     for module in NATIVE_BUILD_ATTESTED_MODULES:
         dependencies: dict[str, bytes] = {}

@@ -117,9 +117,11 @@ from scripts.analyze_chunk_controller import (
     _update_stability,
 )
 from scripts.check_c_extensions_fresh import (
+    NATIVE_BUILD_ATTESTATION_SCHEMA,
     check_extensions,
-    extension_spec,
     native_build_attestation,
+    native_build_dependency_paths,
+    require_current_native_build_attestation_schema,
 )
 
 _SCHEMA = CHUNK_TRAJECTORY_SCHEMA
@@ -447,9 +449,12 @@ def _loaded_native_build_attestation(
     module: Any, module_name: str, producer_git_sha: str,
 ) -> dict[str, Any]:
     """Bind one loaded binary's embedded stamp to exact producer-revision inputs."""
+    require_current_native_build_attestation_schema()
     dependency_bytes: dict[str, bytes] = {}
     current_inputs_match_revision = True
-    for relative_path in extension_spec(module_name).dependencies:
+    for relative_path in native_build_dependency_paths(
+        NATIVE_BUILD_ATTESTATION_SCHEMA, module_name,
+    ):
         committed = _producer_git_file_at_commit(producer_git_sha, relative_path)
         try:
             current = (Path(__file__).resolve().parents[1] / relative_path).read_bytes()
