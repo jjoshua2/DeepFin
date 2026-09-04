@@ -8985,19 +8985,23 @@ def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
         alias.symlink_to(protected_parent, target_is_directory=True)
         real_publish(source_fd, parent_fd, name)
 
-    with controller_module._anchored_output_target(
-        tmp_path / "bank.jsonl",
-        tmp_path / "bank.jsonl.meta.json",
-        output,
-        manifest=manifest,
-    ) as target:
-        monkeypatch.setattr(
-            controller_module,
-            "_link_anonymous_file_no_replace",
-            swap_parent_before_publish,
-        )
-        with pytest.raises(RuntimeError, match="output parent changed"):
+    monkeypatch.setattr(
+        controller_module,
+        "_link_anonymous_file_no_replace",
+        swap_parent_before_publish,
+    )
+
+    def attempt_publication() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest=manifest,
+        ) as target:
             controller_module._write_json_atomic(target, "{}")
+
+    with pytest.raises(RuntimeError, match="output parent changed"):
+        attempt_publication()
 
     assert checkpoint.read_bytes() == b"authenticated checkpoint\n"
     assert (safe_parent / checkpoint.name).read_text() == "{}\n"
@@ -9022,18 +9026,22 @@ def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
         alias.symlink_to(analyzer_source.parent, target_is_directory=True)
         real_publish(source_fd, parent_fd, name)
 
-    with controller_module._anchored_output_target(
-        tmp_path / "bank.jsonl",
-        tmp_path / "bank.jsonl.meta.json",
-        output,
-    ) as target:
-        monkeypatch.setattr(
-            controller_module,
-            "_link_anonymous_file_no_replace",
-            swap_parent_before_publish,
-        )
-        with pytest.raises(RuntimeError, match="output parent changed"):
+    monkeypatch.setattr(
+        controller_module,
+        "_link_anonymous_file_no_replace",
+        swap_parent_before_publish,
+    )
+
+    def attempt_publication() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
             controller_module._write_json_atomic(target, "{}")
+
+    with pytest.raises(RuntimeError, match="output parent changed"):
+        attempt_publication()
 
     assert analyzer_source.read_bytes() == original_source
     assert (safe_parent / analyzer_source.name).read_text() == "{}\n"
