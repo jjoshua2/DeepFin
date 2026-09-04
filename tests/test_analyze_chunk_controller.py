@@ -5768,6 +5768,54 @@ def test_manifest_artifact_first_fstat_drift_is_quarantined(
     assert not meta.exists()
 
 
+def test_successful_manifest_open_drift_is_quarantined_same_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, _pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    attacker_manifest = {**manifest, "attacker": "successful-open-rewrite"}
+    real_open = publication.os.open
+    real_fstat = publication.os.fstat
+    manifest_fd = -1
+    manifest_fstats = 0
+    injected = False
+
+    def track_manifest_open(
+        path: Any, flags: int, *args: Any, **kwargs: Any,
+    ) -> int:
+        nonlocal manifest_fd
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == pending_meta.name and kwargs.get("dir_fd") is not None:
+            manifest_fd = descriptor
+        return descriptor
+
+    def mutate_between_open_snapshots(descriptor: int) -> os.stat_result:
+        nonlocal manifest_fstats, injected
+        if descriptor == manifest_fd:
+            manifest_fstats += 1
+            if manifest_fstats == 2:
+                injected = True
+                pending_meta.write_text(json.dumps(attacker_manifest))
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(publication.os, "open", track_manifest_open)
+    monkeypatch.setattr(publication.os, "fstat", mutate_between_open_snapshots)
+    with pytest.raises(SystemExit, match="changed during authentication"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    monkeypatch.setattr(publication.os, "open", real_open)
+    monkeypatch.setattr(publication.os, "fstat", real_fstat)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert not meta.exists()
+
+
 def test_same_inode_staged_manifest_drift_is_quarantined_across_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

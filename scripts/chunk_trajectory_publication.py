@@ -187,6 +187,10 @@ def _authenticate_initial_open(
     links: int | None,
 ) -> os.stat_result:
     """Bind a returned descriptor to its name despite a transient first check."""
+    stable = (
+        "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
+        "st_mtime_ns", "st_ctime_ns",
+    )
     try:
         opened_before = os.fstat(file_fd)
     except OSError as exc:
@@ -208,10 +212,6 @@ def _authenticate_initial_open(
             ) from authentication_exc
         except (SystemExit, RuntimeError) as integrity_exc:
             raise integrity_exc from exc
-        stable = (
-            "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
-            "st_mtime_ns", "st_ctime_ns",
-        )
         if any(
             getattr(opened_before, field) != getattr(opened_after, field)
             for field in stable
@@ -220,6 +220,13 @@ def _authenticate_initial_open(
                 f"newly opened evidence changed during authentication: {path}"
             ) from exc
         raise
+    if any(
+        getattr(opened_before, field) != getattr(opened, field)
+        for field in stable
+    ):
+        raise SystemExit(
+            f"newly opened evidence changed during authentication: {path}"
+        )
     return opened
 
 
