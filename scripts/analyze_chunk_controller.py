@@ -83,6 +83,9 @@ _BOOTSTRAP_RESAMPLING_SEMANTICS = (
     "global_source_game_clusters_with_recomputed_evaluation_folds"
 )
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
+_PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
+_PANEL_REQUIRED_SOURCES = (0, 1)
+_PANEL_SOURCE_BALANCE_MAX_DIFFERENCE = 1
 SEARCH_OPTIONS = search_options_module.SEARCH_OPTIONS
 _NATIVE_MODULES = [
     "chess_anti_engine.encoding._features_ext",
@@ -565,6 +568,232 @@ def _nonnegative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _panel_key_digest(keys: Sequence[str]) -> str:
+    payload = json.dumps(
+        sorted(keys), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _panel_piece_bucket(piece_count: int) -> int:
+    return min(32, max(2, int(piece_count))) // 4
+
+
+def _panel_source_counts(value: Any) -> dict[int, int] | None:
+    if not isinstance(value, list):
+        return None
+    counts: dict[int, int] = {}
+    for row in value:
+        if not isinstance(row, dict) or set(row) != {"source", "count"}:
+            return None
+        source, count = row["source"], row["count"]
+        if (
+            not isinstance(source, int)
+            or isinstance(source, bool)
+            or source in counts
+            or not _nonnegative_int(count)
+        ):
+            return None
+        counts[source] = count
+    if any(source not in counts for source in _PANEL_REQUIRED_SOURCES):
+        return None
+    return counts
+
+
+def _panel_stratum_counts(value: Any) -> dict[tuple[int, int, int], int] | None:
+    if not isinstance(value, list):
+        return None
+    counts: dict[tuple[int, int, int], int] = {}
+    for row in value:
+        if not isinstance(row, dict) or set(row) != {
+            "source", "phase", "piece_bucket", "count",
+        }:
+            return None
+        source = row["source"]
+        phase = row["phase"]
+        piece_bucket = row["piece_bucket"]
+        count = row["count"]
+        if (
+            not isinstance(source, int)
+            or isinstance(source, bool)
+            or not isinstance(phase, int)
+            or isinstance(phase, bool)
+            or phase not in (0, 1, 2)
+            or not isinstance(piece_bucket, int)
+            or isinstance(piece_bucket, bool)
+            or not 0 <= piece_bucket <= 8
+            or not _positive_int(count)
+        ):
+            return None
+        key = (source, phase, piece_bucket)
+        if key in counts:
+            return None
+        counts[key] = count
+    return counts
+
+
+def _valid_panel_selection(
+    value: Any, *, requested_max_positions: Any, requested_position_count: Any,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    available_count = value.get("available_position_count")
+    selected_count = value.get("selected_position_count")
+    requested_limit = value.get("requested_max_positions")
+    available_sources = _panel_source_counts(value.get("available_source_counts"))
+    selected_sources = _panel_source_counts(value.get("selected_source_counts"))
+    available_strata = _panel_stratum_counts(value.get("available_stratum_counts"))
+    selected_strata = _panel_stratum_counts(value.get("selected_stratum_counts"))
+    balance = value.get("source_balance")
+    if (
+        value.get("strategy") != _PANEL_SELECTION_STRATEGY
+        or value.get("stratum_fields") != ["source", "phase", "piece_bucket"]
+        or value.get("piece_bucket_definition")
+        != "clamp_2_32_then_floor_divide_by_4"
+        or value.get("within_stratum_order")
+        != "sha256_position_key_then_position_key"
+        or value.get("source_order") != list(_PANEL_REQUIRED_SOURCES)
+        or not _nonnegative_int(requested_limit)
+        or requested_limit != requested_max_positions
+        or not _nonnegative_int(available_count)
+        or not _nonnegative_int(selected_count)
+        or selected_count != requested_position_count
+        or available_sources is None
+        or selected_sources is None
+        or available_strata is None
+        or selected_strata is None
+        or not _valid_sha256(value.get("available_position_keys_sha256"))
+        or not _valid_sha256(value.get("selected_position_keys_sha256"))
+        or value.get("available_keys_unique") is not True
+        or value.get("phase_morphology_passed") is not True
+        or not isinstance(balance, dict)
+        or set(balance) != {"maximum_difference", "observed_difference", "passed"}
+    ):
+        return False
+    assert isinstance(requested_limit, int)
+    assert isinstance(available_count, int)
+    assert isinstance(selected_count, int)
+    assert available_sources is not None
+    assert selected_sources is not None
+    assert available_strata is not None
+    assert selected_strata is not None
+    assert isinstance(balance, dict)
+    expected_selected = (
+        available_count
+        if requested_limit <= 0 or requested_limit >= available_count
+        else requested_limit
+    )
+    expected_mode = (
+        "full_set"
+        if expected_selected == available_count
+        else "truncated_joint_stratified"
+    )
+    available_by_stratum_source: defaultdict[int, int] = defaultdict(int)
+    selected_by_stratum_source: defaultdict[int, int] = defaultdict(int)
+    for (source, _phase, _piece_bucket), count in available_strata.items():
+        available_by_stratum_source[source] += count
+    for stratum, count in selected_strata.items():
+        selected_by_stratum_source[stratum[0]] += count
+        if count > available_strata.get(stratum, 0):
+            return False
+    source_domain_passed = all(
+        source in _PANEL_REQUIRED_SOURCES or count == 0
+        for source, count in available_sources.items()
+    )
+    source_difference = abs(
+        selected_sources[_PANEL_REQUIRED_SOURCES[0]]
+        - selected_sources[_PANEL_REQUIRED_SOURCES[1]]
+    )
+    source_balance_passed = bool(
+        all(
+            source in _PANEL_REQUIRED_SOURCES or count == 0
+            for source, count in selected_sources.items()
+        )
+        and source_difference <= _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE
+    )
+    decision_grade_passed = bool(
+        selected_count > 0
+        and source_domain_passed
+        and source_balance_passed
+    )
+    return bool(
+        selected_count == expected_selected
+        and value.get("selection_mode") == expected_mode
+        and sum(available_sources.values()) == available_count
+        and sum(selected_sources.values()) == selected_count
+        and dict(available_by_stratum_source) == {
+            source: count for source, count in available_sources.items() if count
+        }
+        and dict(selected_by_stratum_source) == {
+            source: count for source, count in selected_sources.items() if count
+        }
+        and all(
+            selected_sources.get(source, 0) <= count
+            for source, count in available_sources.items()
+        )
+        and value.get("source_domain_passed") is source_domain_passed
+        and balance.get("maximum_difference")
+        == _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE
+        and balance.get("observed_difference") == source_difference
+        and balance.get("passed") is source_balance_passed
+        and value.get("decision_grade_passed") is decision_grade_passed
+    )
+
+
+def _panel_selection_matches_observations(
+    manifest: dict[str, Any], by_key: dict[str, list[dict[str, Any]]],
+) -> bool:
+    selection = manifest.get("panel_selection")
+    if not isinstance(selection, dict):
+        return False
+    observations = [trajectory[0] for trajectory in by_key.values()]
+    excluded = manifest.get("excluded_positions")
+    if not isinstance(excluded, list) or not all(isinstance(row, dict) for row in excluded):
+        return False
+    observations.extend(excluded)
+    keys: list[str] = []
+    source_counts: defaultdict[int, int] = defaultdict(int)
+    stratum_counts: defaultdict[tuple[int, int, int], int] = defaultdict(int)
+    for row in observations:
+        key, fen = row.get("key"), row.get("fen")
+        source, phase = row.get("source"), row.get("phase")
+        if (
+            not isinstance(key, str)
+            or not key
+            or not isinstance(fen, str)
+            or not fen
+            or not isinstance(source, int)
+            or isinstance(source, bool)
+            or source not in _PANEL_REQUIRED_SOURCES
+            or not isinstance(phase, int)
+            or isinstance(phase, bool)
+        ):
+            return False
+        try:
+            piece_count = chess.popcount(chess.Board(fen).occupied)
+        except ValueError:
+            return False
+        if phase != phase_bucket(piece_count):
+            return False
+        keys.append(key)
+        source_counts[source] += 1
+        stratum_counts[(source, phase, _panel_piece_bucket(piece_count))] += 1
+    selected_sources = _panel_source_counts(selection.get("selected_source_counts"))
+    selected_strata = _panel_stratum_counts(selection.get("selected_stratum_counts"))
+    if selected_sources is None or selected_strata is None:
+        return False
+    observed_sources = {
+        source: int(source_counts.get(source, 0))
+        for source in sorted(set(_PANEL_REQUIRED_SOURCES) | set(source_counts))
+    }
+    return bool(
+        len(keys) == len(set(keys)) == selection.get("selected_position_count")
+        and _panel_key_digest(keys) == selection.get("selected_position_keys_sha256")
+        and observed_sources == selected_sources
+        and dict(stratum_counts) == selected_strata
+    )
+
+
 def _canonical_cuda_device_string(value: Any) -> bool:
     if not isinstance(value, str) or not value.startswith("cuda:"):
         return False
@@ -739,6 +968,7 @@ def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "audit_set_sha256": artifact_sha("audit_set"),
             "matched_rows_sha256": artifact_sha("matched_rows"),
             "max_positions": manifest.get("requested_max_positions"),
+            "panel_selection": manifest.get("panel_selection"),
             "requested_search": manifest.get("requested_search"),
             "requested_model_search_contract": manifest.get(
                 "requested_model_search_contract"
@@ -1737,6 +1967,12 @@ def _require_manifest(
             != len(excluded_details or [])
         ):
             failures.append("row/position/chunk accounting is inconsistent")
+    if not _valid_panel_selection(
+        manifest.get("panel_selection"),
+        requested_max_positions=requested_max_positions,
+        requested_position_count=requested_positions,
+    ):
+        failures.append("audit panel selection provenance is inconsistent")
     decision_grade = manifest.get("decision_grade") is True and not failures
     if (failures or not decision_grade) and not methodology_smoke:
         detail = ", ".join(failures) if failures else "manifest is non-decision-grade"
@@ -2022,6 +2258,12 @@ def load_transitions(
     }
     if not methodology_smoke and excluded_keys.intersection(by_key):
         raise ValueError("a trajectory is both completed and excluded")
+    if not methodology_smoke and not _panel_selection_matches_observations(
+        manifest, by_key,
+    ):
+        raise ValueError(
+            "unique-position source/phase counts disagree with panel selection provenance"
+        )
     transitions: list[Transition] = []
     has_score_regret = all("regret_score" in row for row in rows)
     if not has_score_regret and not methodology_smoke:

@@ -16,7 +16,12 @@ import chess
 import numpy as np
 import pytest
 
-from chess_anti_engine.eval.audit import legal_full_indices, phase_bucket, position_key
+from chess_anti_engine.eval.audit import (
+    AuditPosition,
+    legal_full_indices,
+    phase_bucket,
+    position_key,
+)
 from chess_anti_engine.moves import move_to_index
 from scripts import analyze_chunk_controller as controller_module
 from scripts.analyze_chunk_controller import (
@@ -794,6 +799,42 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "root_position_history": "fen_only_from_audit_fen",
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:game_id",
+        "panel_selection": {
+            "strategy": "joint_audit_source_phase_piece_round_robin_v1",
+            "selection_mode": "full_set",
+            "stratum_fields": ["source", "phase", "piece_bucket"],
+            "piece_bucket_definition": "clamp_2_32_then_floor_divide_by_4",
+            "within_stratum_order": "sha256_position_key_then_position_key",
+            "source_order": [0, 1],
+            "requested_max_positions": 2,
+            "available_position_count": 1,
+            "selected_position_count": 1,
+            "available_position_keys_sha256": controller_module._panel_key_digest(
+                [position_key(chess.Board())]
+            ),
+            "selected_position_keys_sha256": controller_module._panel_key_digest(
+                [position_key(chess.Board())]
+            ),
+            "available_keys_unique": True,
+            "source_domain_passed": True,
+            "phase_morphology_passed": True,
+            "available_source_counts": [
+                {"source": 0, "count": 1}, {"source": 1, "count": 0},
+            ],
+            "selected_source_counts": [
+                {"source": 0, "count": 1}, {"source": 1, "count": 0},
+            ],
+            "available_stratum_counts": [
+                {"source": 0, "phase": 2, "piece_bucket": 8, "count": 1},
+            ],
+            "selected_stratum_counts": [
+                {"source": 0, "phase": 2, "piece_bucket": 8, "count": 1},
+            ],
+            "source_balance": {
+                "maximum_difference": 1, "observed_difference": 1, "passed": True,
+            },
+            "decision_grade_passed": True,
+        },
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": 2,
@@ -990,6 +1031,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "audit_set_sha256": manifest["audit_set"]["sha256"],
             "matched_rows_sha256": manifest["matched_rows"]["sha256"],
             "max_positions": manifest["requested_max_positions"],
+            "panel_selection": manifest["panel_selection"],
             "requested_search": manifest["requested_search"],
             "requested_model_search_contract": manifest[
                 "requested_model_search_contract"
@@ -1043,6 +1085,79 @@ def _rewrite_bank(bank: Path, meta: Path, rows: list[dict[str, object]]) -> None
     meta.write_text(json.dumps(manifest))
 
 
+def _sync_test_panel_selection(
+    manifest: dict[str, Any], position_rows: list[dict[str, Any]],
+) -> None:
+    source_counts = {0: 0, 1: 0}
+    stratum_counts: dict[tuple[int, int, int], int] = {}
+    for row in position_rows:
+        source = int(row["source"])
+        phase = int(row["phase"])
+        piece_bucket = min(32, max(2, int(row["piece_count"]))) // 4
+        source_counts[source] = source_counts.get(source, 0) + 1
+        stratum = (source, phase, piece_bucket)
+        stratum_counts[stratum] = stratum_counts.get(stratum, 0) + 1
+    keys = [str(row["key"]) for row in position_rows]
+    difference = abs(source_counts[0] - source_counts[1])
+    selection = {
+        "strategy": "joint_audit_source_phase_piece_round_robin_v1",
+        "selection_mode": "full_set",
+        "stratum_fields": ["source", "phase", "piece_bucket"],
+        "piece_bucket_definition": "clamp_2_32_then_floor_divide_by_4",
+        "within_stratum_order": "sha256_position_key_then_position_key",
+        "source_order": [0, 1],
+        "requested_max_positions": manifest["requested_max_positions"],
+        "available_position_count": len(position_rows),
+        "selected_position_count": len(position_rows),
+        "available_position_keys_sha256": controller_module._panel_key_digest(keys),
+        "selected_position_keys_sha256": controller_module._panel_key_digest(keys),
+        "available_keys_unique": len(keys) == len(set(keys)),
+        "source_domain_passed": set(source_counts).issubset({0, 1}),
+        "phase_morphology_passed": True,
+        "available_source_counts": [
+            {"source": source, "count": count}
+            for source, count in sorted(source_counts.items())
+        ],
+        "selected_source_counts": [
+            {"source": source, "count": count}
+            for source, count in sorted(source_counts.items())
+        ],
+        "available_stratum_counts": [
+            {
+                "source": source, "phase": phase,
+                "piece_bucket": piece_bucket, "count": count,
+            }
+            for (source, phase, piece_bucket), count in sorted(stratum_counts.items())
+        ],
+        "selected_stratum_counts": [
+            {
+                "source": source, "phase": phase,
+                "piece_bucket": piece_bucket, "count": count,
+            }
+            for (source, phase, piece_bucket), count in sorted(stratum_counts.items())
+        ],
+        "source_balance": {
+            "maximum_difference": 1,
+            "observed_difference": difference,
+            "passed": difference <= 1,
+        },
+        "decision_grade_passed": bool(
+            position_rows and len(keys) == len(set(keys)) and difference <= 1
+        ),
+    }
+    manifest["panel_selection"] = selection
+    preregistration = json.loads(manifest["preregistration_document"])
+    preregistration["producer"]["panel_selection"] = selection
+    document = json.dumps(
+        preregistration, sort_keys=True, separators=(",", ":"),
+    ) + "\n"
+    manifest["preregistration_document"] = document
+    manifest["preregistration"]["size"] = len(document.encode())
+    manifest["preregistration"]["sha256"] = hashlib.sha256(document.encode()).hexdigest()
+    relative_path = manifest["preregistration"]["repo_relative_path"]
+    _TEST_GIT_FILES[relative_path] = document.encode()
+
+
 def test_loader_refuses_leader_gap_for_nonleading_emitted_action(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     _write_bank(bank, correct_gap=False)
@@ -1081,6 +1196,36 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     assert info["preregistered_design"] is True
     assert info["analysis_scope"] == "fresh_tree_fixed_node_horizons_only"
     assert info["cross_move_tree_reuse_tested"] is False
+
+
+def test_loader_rejects_panel_source_counts_that_disagree_with_rows(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    for row in rows:
+        row["source"] = 1
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="source/phase counts disagree"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_tampered_panel_selection_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["panel_selection"]["source_balance"]["observed_difference"] = 0
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(
+        ValueError,
+        match=r"preregistered design.*audit panel selection provenance",
+    ) as exc_info:
+        load_transitions(bank)
+    assert "does not match the preregistered design" in str(exc_info.value)
+    assert "audit panel selection provenance" in str(exc_info.value)
 
 
 def test_loader_rejects_decision_grade_claim_with_insufficient_source_games(
@@ -1664,6 +1809,9 @@ def test_loader_requires_manifest_position_count_unique_trajectories(
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
     manifest.update({"row_count": 8, "position_count": 2, "requested_position_count": 2})
+    claimed_second_position = json.loads(json.dumps(rows[0]))
+    claimed_second_position.update({"key": "claimed-second-position", "source": 1})
+    _sync_test_panel_selection(manifest, [rows[0], claimed_second_position])
     manifest["output"] = {
         "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
         "size": bank.stat().st_size,
@@ -1711,6 +1859,7 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
             "q_drift": None if chunk == 1 else 0.0,
             "visit_churn": None if chunk == 1 else 0.0,
             "phase": phase_bucket(chess.popcount(other_board.occupied)),
+            "source": 1,
             "piece_count": chess.popcount(other_board.occupied),
             "legal_move_count": 1,
         })
@@ -1718,6 +1867,7 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
     bank.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = json.loads(meta.read_text())
     manifest.update({"row_count": 8, "position_count": 2, "requested_position_count": 2})
+    _sync_test_panel_selection(manifest, [rows[0], rows[4]])
     manifest["output"] = {
         "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
         "size": bank.stat().st_size,
@@ -1767,6 +1917,7 @@ def test_loader_accepts_production_forced_move_stability_semantics(tmp_path: Pat
     manifest = json.loads(meta.read_text())
     manifest.update({"row_count": 4, "chunk_count": 4})
     manifest["requested_search"]["max_chunks"] = 4
+    _sync_test_panel_selection(manifest, [rows[0]])
     manifest["output"] = {
         "sha256": hashlib.sha256(bank.read_bytes()).hexdigest(),
         "size": bank.stat().st_size,
@@ -2625,6 +2776,85 @@ def test_producer_requires_enough_source_games_for_canonical_bootstrap() -> None
     )
     producer._require_analyzable_source_groups(
         {"a": None}, methodology_smoke=True,
+    )
+
+
+def test_producer_truncation_balances_source_blocks_and_morphology() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    opening = chess.Board().fen()
+    endgame = "8/8/8/8/8/8/4K3/7k w - - 0 1"
+
+    def position(source: int, index: int) -> AuditPosition:
+        fen = opening if index % 2 == 0 else endgame
+        pieces = chess.popcount(chess.Board(fen).occupied)
+        return AuditPosition(
+            key=f"source-{source}-position-{index}",
+            fen=fen,
+            phase=phase_bucket(pieces),
+            source=source,
+            move_cp={"a2a3": 0.0},
+            best_cp=0.0,
+            deep_wdl=(0.0, 1.0, 0.0),
+            sf_nodes=1_000_000,
+            sf_depth=1,
+        )
+
+    source_blocked = [
+        position(source, index)
+        for source in (0, 1)
+        for index in range(24)
+    ]
+    selected, evidence = producer._select_audit_panel(source_blocked, 20)
+    reverse_selected, reverse_evidence = producer._select_audit_panel(
+        list(reversed(source_blocked)), 20,
+    )
+
+    assert [row["count"] for row in evidence["selected_source_counts"]] == [10, 10]
+    assert sorted(row.source for row in selected) == [0] * 10 + [1] * 10
+    assert evidence["source_balance"] == {
+        "maximum_difference": 1, "observed_difference": 0, "passed": True,
+    }
+    assert evidence["selected_stratum_counts"] == [
+        {"source": 0, "phase": 0, "piece_bucket": 0, "count": 5},
+        {"source": 0, "phase": 2, "piece_bucket": 8, "count": 5},
+        {"source": 1, "phase": 0, "piece_bucket": 0, "count": 5},
+        {"source": 1, "phase": 2, "piece_bucket": 8, "count": 5},
+    ]
+    assert [row.key for row in reverse_selected] == [row.key for row in selected]
+    assert reverse_evidence == evidence
+
+
+def test_producer_panel_preserves_full_set_order_and_fails_closed_on_imbalance() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    board = chess.Board()
+    positions = [
+        AuditPosition(
+            key=f"position-{index}",
+            fen=board.fen(),
+            phase=phase_bucket(chess.popcount(board.occupied)),
+            source=0,
+            move_cp={"a2a3": 0.0},
+            best_cp=0.0,
+            deep_wdl=(0.0, 1.0, 0.0),
+            sf_nodes=1_000_000,
+            sf_depth=1,
+        )
+        for index in range(9)
+    ]
+
+    selected, evidence = producer._select_audit_panel(positions, 0)
+
+    assert selected is positions
+    assert evidence["selection_mode"] == "full_set"
+    assert evidence["source_balance"]["passed"] is False
+    with pytest.raises(SystemExit, match="source-balanced audit panel"):
+        producer._require_decision_grade_panel_selection(
+            evidence, methodology_smoke=False,
+        )
+    producer._require_decision_grade_panel_selection(
+        evidence, methodology_smoke=True,
     )
 
 

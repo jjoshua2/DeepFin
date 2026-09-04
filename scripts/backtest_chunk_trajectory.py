@@ -35,6 +35,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import Counter, deque
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
@@ -73,7 +74,13 @@ from scripts.chunk_trajectory_publication import (
 )
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
-from chess_anti_engine.eval.audit import legal_full_indices, load_audit_set, move_regrets
+from chess_anti_engine.eval.audit import (
+    AuditPosition,
+    legal_full_indices,
+    load_audit_set,
+    move_regrets,
+    phase_bucket,
+)
 from chess_anti_engine.eval.audit_history import MatchedAuditRows, default_matched_rows_path
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.mcts.gumbel import (
@@ -109,7 +116,6 @@ from scripts.analyze_chunk_controller import (
     _trajectory_reference_censoring,
     _update_stability,
 )
-from scripts.backtest_time_value import _stratified
 from scripts.check_c_extensions_fresh import (
     check_extensions,
     extension_spec,
@@ -122,6 +128,9 @@ _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
 _PRODUCTION_GSS_HALVING_REV = 3
 _MIN_DECISION_GRADE_CHUNKS = 4
+_PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
+_PANEL_REQUIRED_SOURCES = (0, 1)
+_PANEL_SOURCE_BALANCE_MAX_DIFFERENCE = 1
 _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "producer_script",
     "scripts.chunk_trajectory_publication",
@@ -133,6 +142,175 @@ _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "chess_anti_engine.uci.model_loader",
 }
 _ACTIVE_PENDING_EVIDENCE: Any = None
+
+
+def _panel_piece_bucket(piece_count: int) -> int:
+    return min(32, max(2, int(piece_count))) // 4
+
+
+def _panel_key_digest(keys: list[str]) -> str:
+    payload = json.dumps(
+        sorted(keys), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _panel_count_rows(
+    counts: Mapping[tuple[int, int, int], int],
+) -> list[dict[str, int]]:
+    return [
+        {
+            "source": source,
+            "phase": phase,
+            "piece_bucket": piece_bucket,
+            "count": int(count),
+        }
+        for (source, phase, piece_bucket), count in sorted(counts.items())
+    ]
+
+
+def _panel_source_count_rows(counts: Mapping[int, int]) -> list[dict[str, int]]:
+    sources = sorted(set(_PANEL_REQUIRED_SOURCES) | set(counts))
+    return [
+        {"source": source, "count": int(counts.get(source, 0))}
+        for source in sources
+    ]
+
+
+def _panel_position_metadata(position: AuditPosition) -> tuple[int, int, int, bool]:
+    piece_count = chess.popcount(chess.Board(position.fen).occupied)
+    realized_phase = phase_bucket(piece_count)
+    return (
+        int(position.source),
+        int(position.phase),
+        _panel_piece_bucket(piece_count),
+        int(position.phase) == realized_phase,
+    )
+
+
+def _round_robin_panel_source(
+    buckets: Mapping[tuple[int, int, int], list[AuditPosition]],
+) -> deque[AuditPosition]:
+    ordered = {
+        stratum: deque(sorted(
+            positions,
+            key=lambda position: (
+                hashlib.sha256(position.key.encode("utf-8")).digest(),
+                position.key,
+            ),
+        ))
+        for stratum, positions in sorted(buckets.items())
+    }
+    result: deque[AuditPosition] = deque()
+    while any(ordered.values()):
+        for stratum in ordered:
+            if ordered[stratum]:
+                result.append(ordered[stratum].popleft())
+    return result
+
+
+def _select_audit_panel(
+    positions: list[AuditPosition], limit: int,
+) -> tuple[list[AuditPosition], dict[str, Any]]:
+    """Select an order-independent panel jointly balanced by source and morphology."""
+    position_metadata = [
+        _panel_position_metadata(position) for position in positions
+    ]
+    strata: dict[tuple[int, int, int], list[AuditPosition]] = {}
+    available_sources: Counter[int] = Counter()
+    available_strata: Counter[tuple[int, int, int]] = Counter()
+    for position, position_row in zip(positions, position_metadata, strict=True):
+        source, phase, piece_bucket, _phase_matches = position_row
+        stratum = (source, phase, piece_bucket)
+        strata.setdefault(stratum, []).append(position)
+        available_sources[source] += 1
+        available_strata[stratum] += 1
+
+    truncated = 0 < limit < len(positions)
+    if not truncated:
+        selected = positions
+        selection_mode = "full_set"
+    else:
+        by_source: dict[int, dict[tuple[int, int, int], list[AuditPosition]]] = {}
+        for stratum, bucket in strata.items():
+            by_source.setdefault(stratum[0], {})[stratum] = bucket
+        source_queues = {
+            source: _round_robin_panel_source(source_buckets)
+            for source, source_buckets in sorted(by_source.items())
+        }
+        selected = []
+        while len(selected) < limit and any(source_queues.values()):
+            for source in source_queues:
+                if source_queues[source] and len(selected) < limit:
+                    selected.append(source_queues[source].popleft())
+        selection_mode = "truncated_joint_stratified"
+
+    selected_sources: Counter[int] = Counter()
+    selected_strata: Counter[tuple[int, int, int]] = Counter()
+    for position in selected:
+        source, phase, piece_bucket, _phase_matches = _panel_position_metadata(position)
+        selected_sources[source] += 1
+        selected_strata[(source, phase, piece_bucket)] += 1
+    source_difference = abs(
+        selected_sources[_PANEL_REQUIRED_SOURCES[0]]
+        - selected_sources[_PANEL_REQUIRED_SOURCES[1]]
+    )
+    unique_keys = len({position.key for position in positions}) == len(positions)
+    source_domain_passed = set(available_sources).issubset(_PANEL_REQUIRED_SOURCES)
+    phase_morphology_passed = all(row[3] for row in position_metadata)
+    source_balance_passed = bool(
+        set(selected_sources).issubset(_PANEL_REQUIRED_SOURCES)
+        and source_difference <= _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE
+    )
+    decision_grade_passed = bool(
+        selected
+        and unique_keys
+        and source_domain_passed
+        and phase_morphology_passed
+        and source_balance_passed
+    )
+    selection = {
+        "strategy": _PANEL_SELECTION_STRATEGY,
+        "selection_mode": selection_mode,
+        "stratum_fields": ["source", "phase", "piece_bucket"],
+        "piece_bucket_definition": "clamp_2_32_then_floor_divide_by_4",
+        "within_stratum_order": "sha256_position_key_then_position_key",
+        "source_order": list(_PANEL_REQUIRED_SOURCES),
+        "requested_max_positions": int(limit),
+        "available_position_count": len(positions),
+        "selected_position_count": len(selected),
+        "available_position_keys_sha256": _panel_key_digest(
+            [position.key for position in positions]
+        ),
+        "selected_position_keys_sha256": _panel_key_digest(
+            [position.key for position in selected]
+        ),
+        "available_keys_unique": unique_keys,
+        "source_domain_passed": source_domain_passed,
+        "phase_morphology_passed": phase_morphology_passed,
+        "available_source_counts": _panel_source_count_rows(available_sources),
+        "selected_source_counts": _panel_source_count_rows(selected_sources),
+        "available_stratum_counts": _panel_count_rows(available_strata),
+        "selected_stratum_counts": _panel_count_rows(selected_strata),
+        "source_balance": {
+            "maximum_difference": _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE,
+            "observed_difference": source_difference,
+            "passed": source_balance_passed,
+        },
+        "decision_grade_passed": decision_grade_passed,
+    }
+    return selected, selection
+
+
+def _require_decision_grade_panel_selection(
+    selection: Mapping[str, Any], *, methodology_smoke: bool,
+) -> None:
+    if methodology_smoke or selection.get("decision_grade_passed") is True:
+        return
+    raise SystemExit(
+        "decision-grade trajectory banks require a unique, source-balanced audit "
+        "panel with valid source and phase morphology"
+    )
 
 
 def _entropy(shares: np.ndarray) -> float:
@@ -832,7 +1010,12 @@ def _main() -> None:
             "--walkers >1 selects production walker PUCT; these classic-Gumbel "
             "overrides would be inert: " + ", ".join(inert_overrides)
         )
-    positions = _stratified(load_audit_set(args.audit_set), int(args.max_positions))
+    positions, panel_selection = _select_audit_panel(
+        load_audit_set(args.audit_set), int(args.max_positions),
+    )
+    _require_decision_grade_panel_selection(
+        panel_selection, methodology_smoke=bool(args.methodology_smoke),
+    )
     matched: MatchedAuditRows | None = None
     if matched_path.exists():
         matched = MatchedAuditRows(matched_path)
@@ -928,6 +1111,7 @@ def _main() -> None:
         "root_position_history": "fen_only_from_audit_fen",
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:game_id",
+        "panel_selection": panel_selection,
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": int(_ABORT_MIN_STABLE_CHUNKS),
@@ -1934,6 +2118,7 @@ def _main() -> None:
         "decision_grade": bool(
             not args.methodology_smoke
             and not preregistration_failures
+            and panel_selection["decision_grade_passed"] is True
             and incomplete_exclusions == 0
             and completed_positions > 0
             and source_group_resolution_passed
