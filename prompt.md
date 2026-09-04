@@ -1,3 +1,8 @@
+> **Historical design document.** This preserves earlier proposals and their
+> original wording; it is not the current architecture, task list or operating
+> procedure. Use [project guidance](CLAUDE.md), current source/configuration and
+> [experiment records](docs/experiments/README.md) to establish what applies.
+
 # Chess Anti-Engine: Implementation Prompt
 
 You are building a chess neural network training framework in Python/PyTorch. The network trains by playing games against Stockfish, learning to exploit its known weaknesses (fortress blindness, horizon effects, closed-position overconfidence). This is a consumer-GPU project (RTX 3090/4090/5090, 24-32GB VRAM).

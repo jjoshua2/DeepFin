@@ -1,381 +1,129 @@
-# CLAUDE.md
+# Project guidance
 
-The single source of project instructions for every agent (Claude Code, Codex, Grok).
-`AGENTS.md` is a pointer to this file — keep it that way: a second copy of these rules
-drifts, and deleting it would silently strip Codex of its instructions.
+Shared guidance for every agent. `AGENTS.md` points here; keep one copy.
+This guide holds durable project constraints. Task-specific procedures live in
+Skills and the linked documentation. Explicit user direction sets the task scope;
+historical plans and experiment entries are evidence, not new assignments.
+When documentation disagrees with the running system, check the relevant source,
+config and artifacts, and describe the discrepancy.
 
-Everything here is either a hard rule or a fact you cannot get by reading the code.
-Module-level detail is deliberately absent — read the source.
+## Purpose and navigation
 
-## Project
+This project trains chess networks primarily against Stockfish, including research
+into its blind spots. The distributed loop is selfplay → shard upload → disk-backed
+replay → training → checkpoint → model publication to workers.
 
-Chess anti-engine training framework — trains a transformer to exploit Stockfish
-weaknesses (fortress blindness, horizon effects, closed-position overconfidence).
-CUDA, primarily one RTX 5090.
+- [Development](docs/development.md): setup, commands, validation and code map.
+- [Experiment navigation](docs/experiments/README.md): find prior decisions and artifacts.
+- [Evaluation](docs/eval_protocol.md): decide what a measurement can establish.
+- [Model heads](docs/model_heads.md): head/target/loss semantics; read before changing them.
+- [Operations](docs/operations.md): training, pause/recovery, config reload and deployment.
+- [Loop audit](docs/rl_loop_audit.md): measurement traps and stage invariants; read the
+  relevant method and stage sections when diagnosing the pipeline.
 
-Per-iteration data flow: distributed selfplay (MCTS vs Stockfish) → shard upload →
-ingest into disk-backed replay buffer → training step → checkpoint → publish model to
-workers.
+`configs/pbt2_small.yaml` is the production configuration template;
+`configs/default.yaml` is a reference model. The live checkout can differ from
+`main`, and a checkpoint carries its own architecture. Read the relevant config or
+checkpoint rather than copying sizes, paths or tuning values from prose.
+Research configs and dated plans do not establish what is currently enabled.
 
-Layout: `chess_anti_engine/` is the package — `encoding/` + `moves/` (input and policy
-encoding), `model/` + `mcts/` + `selfplay/` + `train/` + `replay/` (the training loop),
-`stockfish/` + `server/` + `worker.py` + `tune/` (the distributed pipeline). Plus
-`tests/`, `configs/`, `scripts/`. `runs/`, `tb/`, `server/`, `data/` and large
-model/book artifacts are runtime output — they stay uncommitted.
+## Preserve running work
 
-## Commands
+This machine often has long-running training, generation and monitoring jobs.
+Before an action that affects them, identify the owning checkout, process, config,
+artifacts and resource use. Continue from existing records and banked data before
+starting replacement work. Preserve unrelated dirty files and detached jobs.
 
-```bash
-pip install -e ".[dev]"     # full env; the test suite hard-requires every extra (no skips)
-pip install -e ".[worker]"  # lite selfplay-client install
-python -m pytest                             # torch capped at 2 threads — see below
-CAE_TEST_THREADS=auto python -m pytest       # UNCAPPED: only when training is paused
+Use a separate worktree for branch work when a checkout serves a live run. Never
+switch or reset that checkout underneath it: the live YAML is re-read during training.
+A merged PR does not update Python already loaded by a process or its native extension
+image. Plan adoption and any restart separately from merging.
 
-PYTHONPATH=. python3 -m chess_anti_engine.run --config configs/pbt2_small.yaml --mode tune [--resume]
-```
+A live YAML edit is a production change. Trace schema → validation → consumer →
+reload behavior for the affected key; acceptance does not prove it takes effect.
+Validate a copy first and verify the realized value after adoption. Some keys are
+restart-only, and removing an override may leave the old value in memory. The live
+run Skill and operations document cover the mechanics.
 
-**⚑ `tests/conftest.py` caps torch at 2 threads on EVERY pytest invocation, and that is
-deliberate — do not "fix" it by raising the default.** torch sizes its intra-op pool to
-the machine, so one plain `python -m pytest` on tiny unit-test tensors was measured at
-**848% CPU** next to a live training arm on 2026-08-14, taking 8.5 cores from selfplay
-workers that deliberately run at `nice 15`. The visible cost was arm B iteration 2 at
-**1125 s against the control's 714 s (+57%)** — no corruption, no invalid experiment
-(arms are compared at equal `training_iteration`), purely wall clock, billed silently to
-whoever's run was live. The cap lives in `conftest.py` rather than in a flag because a
-flag is a thing to remember, and the failure mode is that nobody does.
+Respect intentional-stop and pause markers. Before a change whose effects survive a
+config revert, preserve enough state to recover: weights, optimizer, PID and replay,
+plus their provenance. Ray can prune checkpoints, so copy long-lived evaluation
+baselines outside its managed tune directory. Keep run output and large artifacts
+out of commits.
 
-- **Lift it with `CAE_TEST_THREADS=auto`** (or `off`/`none`/`0`), or set an explicit number
-  (`CAE_TEST_THREADS=8`). Do this when **training is stopped** — a full-suite run is much
-  faster uncapped and there is nothing to protect.
-- Every run prints which regime it is in as its first line, so a capped session is never
-  mistaken for a slow one. **Read that line before concluding the suite got slower.** ⚑ It
-  is written through the terminal reporter, NOT `pytest_report_header`, because this repo's
-  `addopts = "-q"` suppresses the header — the first cut documented an escape hatch in a
-  line the documented invocation never printed.
-- CI passes `auto` (`.github/workflows/ci.yml`): a runner never shares a box with training,
-  and that job has a 30-minute timeout to protect. ⚑ In YAML write it **quoted** (`"auto"`):
-  a bare `off` parses as the boolean `False` and arrives as `"false"`. That spelling is
-  accepted for exactly this reason, but quoting removes the question.
-- An unparseable value falls back to the CAP, never to uncapped — the safe direction, since
-  failing open steals cores from someone else's live run while failing closed only slows
-  your own tests. It is **announced** in the regime line rather than absorbed silently.
-- The cap is NOT auto-detected from whether training is running. A detector that guesses
-  wrong in the permissive direction starves training exactly when it matters, and a check
-  that silently fails to fire is this repo's signature defect. Deterministic default plus a
-  visible switch, on purpose.
-- ⚑ The same courtesy applies to anything else CPU-heavy run beside a live arm (lint,
-  arenas, audits): prefer a pause window — see `docs/operations.md`.
+Budget CPU, GPU memory and disk alongside existing jobs. No simulation count or GPU
+allocator fraction guarantees an arena is safe next to training. Pytest defaults to
+two torch threads for this reason; keep that default on a shared machine.
 
-Scripts need `PYTHONPATH=.`. CLI modes are `train`, `tune`, `salvage` — there is no
-`single` mode. `--mode train` is a single distributed trial (no PBT), not a local one:
-it still boots the server and at least one worker, because there is no non-distributed
-selfplay path. Drive live training with `scripts/train.sh`, not the module directly;
-see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint detail.
+## Experiments and evidence
 
-## Configs
+The [ledger](docs/experiment_ledger.md) records hypotheses, readouts and revert
+points. Search relevant entries and the “Protocol gotchas” before an experiment;
+there is no need to load the whole ledger for routine code work.
 
-- `configs/pbt2_small.yaml` — **production**, and the only config active training uses.
-  512-dim × 16-layer × 16-head, **63.08M trainable params** (63,084,128, counted
-  2026-07-26 by unique storage on `checkpoint_000042`). **An earlier revision of
-  this line "corrected" 63M up to 78.8M. That was the error, not the fix.**
-  78.81M is the sum of `numel()` over the 496 `state_dict` entries, which
-  double-counts weight tying: the 16 `layer_smolgens.N.gen_weight.weight` keys
-  are **one shared tensor** (16 keys, 1 distinct storage, 1,048,576 params), so
-  15 × 1,048,576 = 15,728,640 is counted 15 times too many — exactly the gap.
-  Count unique `v.untyped_storage().data_ptr()`, never `sum(v.numel())`.
-  Per-layer Smolgen still dominates, but by less than advertised:
-  `layer_smolgens` **26.7M of 63.08M (42.3%)**, not 42.4M of 78.8M (54%).
-  `ffn_mult` is per-layer and non-uniform (1.5 rising to ~1.9 in the upper
-  blocks), so the count is not reproducible by assuming a flat multiplier.
-  Related: only 28.6% of trainable params are in the Aurora matrix group
-  (`matrix_optimizer_scope: mlp_out`) — see `docs/rl_loop_audit.md` I12.
-  `tests/test_param_count.py` rebuilds both configs and fails if any number in
-  this section drifts from the measurement.
-- `configs/default.yaml` — reference BT3-scale model (768-dim × 15-layer × 24-head,
-  **73,700,885 params**), unused. The "~105M" this line used to claim was never
-  measured; the config has no tied tensors, so its `state_dict` sum agrees.
-- `configs/exp_*.yaml` — flag-gated research bets, ALL default off. A flag enters the
-  production config only once promoted; promotion status lives in the ledger, not here.
+Before committing training compute or changing the live distribution, record the
+hypothesis, baseline/control, deciding metric, success/kill rule, compute budget,
+readout horizon and recovery plan. Choose these for the question using the evaluation
+protocol; a screen does not automatically require a training run or a fixed-size arena.
+Existing authorization covers work within that scope and budget. Resolve ordinary
+implementation choices without a new approval gate.
 
-All tunables live in the yaml — grep it rather than assuming a value.
+Keep one data-affecting intervention per readout window where practical; record
+confounds when overlap is necessary. Bank raw observations and their source, shard,
+game and position identities alongside engine/build/search settings. Reuse those
+observations when correcting an estimator. Cluster correlated measurements at their
+sampling unit; game IDs are not necessarily unique across shards or corpora.
 
-## Working on a live run
+Verify the producing code, effective settings and artifact lineage before a verdict.
+Record the readout against the precommitted rule, including uncertainty or an unread
+status when evidence is insufficient. Negative results are conditional on the model,
+data and horizon tested. Calibration, teacher agreement and throughput do not by
+themselves establish playing strength.
 
-The run is usually live. These break production:
+## Semantics worth knowing
 
-- **Never `git checkout` in this working tree while a run is live.** The live yaml is
-  part of the tree and is re-read every iteration, so a branch switch silently reverts
-  live experiments (2026-07-02: rolled back three experiments for 3 iterations). Use
-  `git worktree` for all branch work, and merge PRs touching the live yaml promptly.
-- **⚑ A bad live-yaml edit has three outcomes, not one. Establish which CATEGORY the key
-  is in BEFORE you edit** — (a) not in the yaml schema, (b) in the schema, read by
-  `TrialConfig.from_dict`, and validated, (c) in the schema but never validated. All
-  measured 2026-08-09, re-verified against `main` 2026-08-10.
-  - **(a) Not in the schema.** MID-RUN: `_reload_yaml_into_config`
-    (`tune/trainable_config_ops.py`) catches the `ValueError`, logs `YAML reload failed`,
-    and keeps the OLD config — the WHOLE reload is rejected, **the trial survives**. AT
-    LAUNCH the same `ValueError` is fatal: `run.py` calls `flatten_run_config_defaults`
-    before the main argument parser is built and outside any `try`, so **the process never
-    starts** and there is no old config to fall back to. ⇒ **restarting onto code that
-    predates a live yaml key does not silently revert, it fails to boot.** Before ANY
-    restart, diff the live yaml's KEYS against the target branch's SCHEMA
-    (`utils/config_yaml.py`), not against the target branch's yaml — and add a new key to
-    the live yaml only AFTER restarting onto code that defines it. This is why a PR that
-    adds a live key must be merged before the branch it is missing from can be restarted
-    onto.
-  - **(b) In the schema, validated by `from_dict`, value out of range.** The reload
-    SUCCEEDS, then `TrialConfig.from_dict` (`tune/trial_config.py`) raises inside
-    `train_trial`'s iteration-loop `try:` — which has a `finally:` and **zero `except`** —
-    so `_cleanup_trial_resources` runs and **the trial dies mid-iteration**. Measured on
-    `gumbel_policy_temp` (band `[0.05, 20.0]`, endpoints inclusive): `0.0`, `0.02` and
-    `200` each kill it, `2.0` applies cleanly. The realistic trigger is a decimal typo.
-    This belongs to EVERY `TrialConfig` validator — a band does not create the hazard, it
-    only widens the trigger set.
-  - **(c) In the schema, NOT validated** — the schema accepts it, nothing range-checks it,
-    the overlay applies it, and its consumer gets it raw: `zclip_max_norm: 1e-9` lands
-    silently. Neither a crash nor a rejection — **silent wrongness**, and the slowest of
-    the three to notice. Two sub-shapes, and the second is the dangerous one:
-    - never read by `from_dict` at all — `w_wdl`, `zclip_max_norm`, and most of the live
-      yaml's `train:` section. These reach their consumer through the raw `config` dict
-      instead.
-    - **read by `from_dict`, but with no validator** — most of the constructor, including
-      **`lr`** (`lr=float(config["lr"]) if "lr" in config else 0.0003`). ⚑ Do not read
-      "not validated" as "inert": `lr` is a `TrialConfig` field, it IS read, and a live
-      `lr: 0.3` is accepted and applied to the running trainer (GPBT: LR > 0.003 destroys
-      the model). Only a NON-NUMERIC value trips it, and then `float()` raises inside
-      `from_dict` and it dies as category (b).
+- The SF component of the WDL blend has been load-bearing in prior runs. Consult the
+  ledger before removing it; a sharper teacher-fit score is not sufficient evidence.
+- `policy_sf` predicts the opponent's reply at P1 after the network's move. It is not
+  a teacher distribution over the network's current moves.
+- MCTS uses the `wdl` value head; `sf_eval` and `categorical` are auxiliary.
+- Higher PID `wdl_regret` permits worse Stockfish moves and makes the opponent weaker.
+  Best-move-based labels are distinct from the handicapped move actually played.
+- Search action IDs and network policy indices are different spaces. Use shared
+  mappings in `moves/torch_maps.py`; preserve encoding and history metadata across
+  checkpoints, replay and evaluation.
+- Count tied parameters once. A naive `state_dict` element sum counts shared Smolgen
+  weights repeatedly; architecture regression tests measure the actual model.
+- Production uses `train_views_per_ingested_position`; the old
+  `train_views_per_position` name is rejected and used a different denominator.
 
-    ⚑ Do not test membership by `.get("<key>", ...)`: `from_dict` reads `lr` by
-    SUBSCRIPT, so a `.get`-only scan reports the single most consequential key in the
-    file as unread. `sf_pid_*` splits: 4 of its 40 schema keys (`sf_pid_enabled`,
-    `sf_pid_ema_alpha`, `sf_pid_target_winrate`, `sf_pid_wdl_regret_max`) are read by
-    `from_dict`; the other 36 are not.
+## Implementation and review
 
-  ⇒ "an unknown key rejects the whole reload" is category (a) MID-RUN only; it is wrong
-  about (b) and about (c). **A live edit to a validated key is not a soft operation.**
-  Dry-run on a COPY first —
-  `TrialConfig.from_dict(flatten_run_config_defaults(yaml.safe_load(open(<copy>))))` —
-  and only then write the live file. Note the dry-run proves only that the value SURVIVES
-  category (b); it says nothing about category (c), which by construction cannot fail it.
-- **Never run a 256+ sim arena concurrent with training** — GPU OOM crashed the run
-  2026-06-18. sims-1/32 arenas and `audit_targets`/`value_regret` at small batch with
-  `--gpu-mem-fraction` are safe.
-- Ray prunes live checkpoints. Copy one out of the tune dir before using it as a
-  long-lived arena/audit baseline.
-- After pulling `.c`/`.h` changes, rebuild with
-  `python3 scripts/build_production_extensions.py` (GCC15 + native + LTO, forced
-  rebuild) — NOT `pip install -e .`, the .venv setuptools lacks PEP 660. Keep
-  distributed wheels portable unless every target CPU matches.
+Follow nearby code and use tests that demonstrate the affected behavior, especially
+configuration propagation through the real worker path. This project's recurring
+failure is a value that is accepted but silently ignored. Ask what observable result
+proves the intended effect. [Development](docs/development.md) defines validation by
+change scope; avoid repeated full suites after checks pass without a new reason.
 
-## Experiment protocol — MANDATORY
+Delegate bounded independent work when useful, with clear ownership and enough
+context to judge it. Inherit the selected model unless the task warrants another;
+there is no fixed worker count or requirement to predesign every implementation.
 
-**`docs/experiment_ledger.md` is the canonical experiment record** (WORKED / FAILED /
-LIVE-UNREAD verdicts, yardstick anchors, revert points). Read it before proposing,
-launching, judging, or reverting any experiment.
+Open PRs ready for review unless requested otherwise. Use a separate reviewer for
+consequential changes; the author is not an independent review. If independent review
+is unavailable, label the self-review and its limits. Address findings or explain why
+they do not warrant a change. Review evidence can be in comments, review bodies and
+inline threads; `reviewDecision` alone cannot establish review status. Paid or external
+review services are optional. Report checks and material limitations accurately.
 
-**`docs/rl_loop_audit.md` is the companion invariant record** — per-stage checks with
-the exact instrument and current status. The ledger says whether an experiment worked;
-the audit says whether the pipeline that produced the number was sound. Read its
-"Method rules" before deriving any metric by hand: several confident findings there
-turned out to be artifacts of the measurement, not the loop. A verdict read off a stage
-that FAILS its invariant is not a verdict.
+## Optional workflows
 
-1. **Before a training-affecting change goes live** (config key, loss weight,
-   data-pipeline or selfplay change, PR merge that alters training): add a ledger entry
-   with the hypothesis, ONE deciding yardstick as an exact command, and a pre-committed
-   kill/success threshold. No entry → don't launch.
-2. **Before big changes**, snapshot weights + optimizer + PID + replay window and record
-   it in the ledger's Revert points table:
-   `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/<label>`
-   (safe while training runs, ~2.3G; `--metric training_iteration` is REQUIRED — the
-   default picks the best-metric row, not current state). A yaml revert is NOT a
-   rollback: the replay window holds ~a day of data made under the old settings.
-3. **After a readout**, record the verdict the same session, judged by the pre-committed
-   rule rather than post-hoc reading. "Deferred" is not a verdict. Stability/throughput
-   changes read out in ~5 iterations (~3h, spanning ≥2 of the failure's cadence periods);
-   learning-quality changes need day-plus windows and paired CIs.
-4. **One data-affecting change per readout window.** Unavoidable overlaps go in each
-   entry's Confounds line.
-5. **Before running any yardstick**, read the ledger's "Protocol gotchas".
-6. **⚑ FREEZE THE OBSERVATIONS, ITERATE THE ESTIMATOR.** Any expensive run against a
-   DETERMINISTIC teacher or search — Stockfish panels, audit scoring, arena PV dumps,
-   distillation targets — must bank the LOWEST-LEVEL observations it collected, not just
-   the summary statistic. Bank the raw per-move scores/PVs keyed by position and game id,
-   with the arm settings, in a `.json`/`.jsonl` beside the log.
-   - **Why this is a rule and not a nicety:** every later correction — a clustered
-     bootstrap, a new stratification, a different loss metric, a rebased baseline, a
-     re-fit α — then costs seconds instead of a rerun. A rerun is not just expensive, it
-     is *dangerous*: re-running to "reproduce" an analysis silently re-rolls the
-     intervention, and any drift in engine build, node budget, TT state or sampling is
-     then confounded with the method change you were trying to isolate.
-   - **MEASURED 2026-08-16.** The MPV6 tail panel banked its three-arm PVs, so switching a
-     row bootstrap to a game-cluster bootstrap was a re-analysis of the SAME 500 positions:
-     every point estimate came back byte-identical and only the intervals moved — which is
-     itself the proof the fix did what it claimed and nothing else. Without the dump that
-     would have been a fresh 4M-node run and an uninterpretable comparison.
-   - ⚑ A banked dump also has to record the RESAMPLING UNIT's key (here `game_id`). An
-     analysis cannot cluster on something the dump did not keep. See
-     [[bank_the_dump_not_just_the_number]].
+Repository Skills live in `.agents/skills/`; `.claude/skills` links to the same files.
+Load only the workflow relevant to the task:
 
-## Evaluation
+- `experiment-readout`: banked-data analysis, preregistration and readouts.
+- `live-run-change`: changing or recovering an existing long-running job.
+- `independent-review`: reviewing a diff or reconciling PR review findings.
 
-`docs/eval_protocol.md` is the decision protocol. The audit-first rule: every
-training-target candidate is scored against the frozen deep-SF audit set BEFORE any
-training compute, and one that loses the direct audit is killed without training.
-
-- `scripts/arena_standard.py` — paired-opening arena, pentanomial Elo + 95% CI.
-  `matched_sims` for search/target changes; `matched_time` only when the change ships in
-  the fast C path, since Python-path features are under-credited.
-- `scripts/build_audit_set.py` / `scripts/audit_targets.py` — the frozen audit set
-  (≥1M nodes, MultiPV ≥10, side-to-move canonical) and its scorer. The set FREEZES after
-  generation; new sampling = new version.
-- `scripts/value_regret.py` — value-head 1-ply deep-SF regret, the VALUE yardstick.
-  Brier/ECE are fooled by calibration and must not be used to judge value strength.
-- `scripts/probe_policy_targets.py`, `scripts/retarget_retrain.py`,
-  `scripts/convert_shards_v2_threats.py` — policy/soft-policy divergence, offline
-  SF-target retuning, offline v1→v2_threats shard conversion.
-- **Production Syzygy is the colon-separated pair**
-  `/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6` —
-  `configs/pbt2_small.yaml`'s `syzygy_path`, and **both halves are local**. The directory
-  names lie, so read them off the contents rather than the name: `syzygy_3-4-5` holds 3–6
-  man WDL (`.rtbw`, 510 files) plus 3–5 man DTZ (`.rtbz`, 145); the 6-man DTZ that supplies
-  root ranking and 50-move-exact conversion is the separate local `data/syzygy_6` (365
-  `.rtbw` + 365 `.rtbz`, 151G). Pass the full pair as `SyzygyPath` to BOTH engines for a
-  production-equivalent match; `data/syzygy_3-4man` is a smoke-test set only.
-  `tests/test_param_count.py` pins this pair to the config, because the claim above is
-  exactly the kind that drifts: production moved off the external drive on 2026-07-14 and
-  15 research configs (14 `configs/exp_*.yaml` plus `configs/bt4_aurora_asha.yaml`, all
-  default-off) still point their second half at `/mnt/e/chess/syzygy_6_dtz` — same tables,
-  external drive, **not what production reads**.
-
-## Non-obvious training facts
-
-Consequential and not apparent from the code:
-
-- **The WDL blend's SF component is load-bearing — do not zero it.** Removing it crashed
-  winrate 0.64 → 0.40. The cp-logistic label is deliberately soft; don't chase value
-  sharpness against a deep-SF ruler. Blend spec and the full head/target/loss table are
-  in `docs/model_heads.md` — read it before touching `train/losses.py`, loss weights, or
-  replay-sample target building.
-- **`policy_sf` trains on the OPPONENT's reply distribution**, labels queried at P1 after
-  the net's move and POV-flipped. It is not a move-teacher, which is why upweighting it
-  hurt.
-- **`wdl` is the only value head used in MCTS**; `sf_eval` and `categorical` are
-  auxiliary.
-- **PID regret runs backwards from intuition**: SF picks randomly among moves within
-  `wdl_regret` of best, so higher regret = weaker SF = model wins more. The controller
-  LOWERS regret to raise difficulty and RAISES it as an airbag on low winrate. Training
-  targets are always best-move based and never depend on which handicapped move SF
-  actually played.
-- `selfplay.record_fast_ply_value` is OFF in production — tried and REVERTED for trunk
-  dilution. Check the ledger before re-enabling.
-- Production input is 175 planes (`v2_threats`); `v1`'s 146 planes are legacy. Production
-  policy output is the compact `lc0_1858` encoding, though search still uses 4672 action
-  ids. Use the shared device-cached lookups in `moves/torch_maps.py` — don't add
-  per-module `lru_cache` copies.
-- Production optimizer is `aurora` with `matrix_optimizer_scope: mlp_out`.
-- Step budget uses views-targeting (`train_views_per_position`), so steps scale with
-  ingest volume; `train_window_fraction` is the legacy mode and the ingest-drought floor.
-- GPBT is wired up but effectively off — the production config pins everything.
-
-## Code conventions
-
-Python 3.10+ with `from __future__ import annotations`; type hints on functions and
-dataclasses; tests in `tests/`. 4-space indent; `snake_case` functions and modules,
-`PascalCase` classes, `test_*` tests; imports grouped stdlib / third-party / local.
-Write code that reads like the code around it.
-
-Add or update tests with every behaviour change, and prefer deterministic units around
-encoding, replay, MCTS and training targets. For distributed or selfplay-path changes
-also run `tests/test_e2e_smoke.py` (`-k gumbel_selfplay_smoke` for the search path) — it
-boots the real selfplay → replay → train → checkpoint chain, so it catches wiring that
-unit tests mock away. The `scripts/e2e_distributed_smoke_gumbel.sh` the old `AGENTS.md`
-named alongside it has not existed since `dcb31fdf2` (2026-04-18); the instruction
-outlived the script by four months, which is the drift this file exists to stop.
-
-Run `./scripts/lint.sh <paths>` after editing, **and `./scripts/lint.sh` with no
-arguments before committing**; the gate is kept at zero findings repo-wide with no
-baseline. Naming paths narrows basedpyright to those files, so a path-scoped run
-structurally cannot see breakage the change caused in a file it did not open — that is
-how `main` went red. Every invocation *without* paths (bare, `--changed`, `--fast`,
-`--deep`, `--slop`, `--all`) uses CI's whole-repo scope.
-Fix a new finding in the same commit or disable the rule in
-`pyrightconfig.json` if the whole category isn't worth the ceremony — there is no
-deferral queue, don't recreate one. basedpyright ignores mypy-style
-`# type: ignore[...]`; use `# pyright: ignore[reportRuleName]`. Never write a suppression
-whose validity depends on the installed numpy/torch version — rewrite the code
-version-proof instead.
-
-## Reviews and pull requests
-
-Optimize for end-state quality, not the cheapest diff. When a review surfaces an
-improvement, decide it now: either make the change or say why it isn't worth making.
-"Deferred to later" is an unresolved decision rotting in a comment. "Premature
-abstraction" is a valid reason to skip; "it touches more files than I expected" is not.
-State the call and the reasoning explicitly.
-
-Open PRs ready for review, not draft, unless asked. Every PR gets a manual correctness
-review before it counts as done, with the verdict recorded in the PR conversation or
-session summary.
-
-**⚑⚑ `reviewDecision` IS A FALSE NEGATIVE — DO NOT USE IT TO ASK "HAS THIS BEEN REVIEWED".**
-It is set only by a FORMAL submission (`APPROVED`/`CHANGES_REQUESTED`), and reviews here are
-almost never submitted that way: **agent reviewers post their verdict as an ordinary PR
-COMMENT**, and Codex submits as `COMMENTED`. Neither sets the field. Measured 2026-08-10:
-all five open PRs read `reviewDecision: ""` while three carried full independent reviews,
-one of them an APPROVE-WITH-CHANGES whose four blocking findings were already closed — and
-that PR was wrongly reported as unreviewed and held. Read the bodies instead:
-
-```bash
-gh pr view <N> --json comments,reviews          # human/agent verdicts, in comment bodies
-gh api repos/{owner}/{repo}/pulls/<N>/comments  # ⚑ INLINE review threads — NOT in the above
-gh pr view <N> --json commits                   # "close the review's ..." = findings addressed
-```
-
-**⚑⚑ THE SECOND COMMAND IS NOT OPTIONAL, AND IT IS THE SAME BUG ONE LEVEL DOWN.**
-`--json comments` returns ISSUE comments and `--json reviews` returns review BODIES; neither
-returns the inline, line-anchored review threads, which is where Codex puts **every** finding.
-Measured on PR #381: `gh pr view 381 --json comments,reviews` yields 5 issue comments and one
-review whose body is 621 characters of pure boilerplate — while the REST comments endpoint
-returns **10 P2 findings** on `scripts/search_gain_probe.py`. Reading only the two `gh pr view`
-fields there reports "reviewed, zero findings" about a review with ten. Same shape as
-`reviewDecision`: the field you queried is populated and truthful, and it is not the field the
-question was about.
-
-Judge three axes separately, because they move independently: **reviewed?** (comment bodies
-*and* inline threads) · **findings closed?** (later commits) · **CI meaningful?** (green is
-worthless if the base advanced — CI does not re-run on base changes, `strict: false`).
-
-**The Codex bot is INSTALLED and answers `@codex review` on demand — it does NOT review
-automatically.** (The line that used to sit here said it "was disabled 2026-07-11"; that went
-stale. On 2026-08-10 it reviewed six PRs — #373/#374/#377/#379/#381/#382 — each 7-21 min after
-an explicit `@codex review` comment, and did NOT review #388, opened later the same day with no
-trigger.) So: still don't wait for a bot review, but do summon it —
-`gh pr comment <N> --body "@codex review"` — as a second reviewer from a different model family,
-alongside a Claude review agent rather than instead of one. ⚑ It is credit-metered, and its
-review BODY is always the same boilerplate template regardless of what it found: per that
-template it comments when it has suggestions and reacts 👍 when it does not. So the body tells
-you nothing at all — a Codex review's content is exactly its inline threads, and a template
-with no threads under it is a genuine zero-finding pass. A presence check is not a value read,
-here as everywhere else.
-
-**THE REVIEWER MUST NOT BE THE AUTHOR.** A subagent that wrote a change does not review
-it — spawn a SEPARATE agent whose only job is the review, and give it the PR, not the
-authoring agent's summary. Self-review reliably passes: the author re-reads the reasoning
-that produced the code, so a wrong premise gets confirmed rather than caught. The failure
-this rule exists for is real and recent — PR #267's J9 "fix" replaced a working
-`str.replace(...)` with `str.removeprefix(...)`, which silently cannot strip the NESTED
-`module._orig_mod.*` key `AveragedModel` produces. Its own tests passed, because they only
-inspected the output where the prefix happened to be leading. A separate reviewer caught
-it by patching `main`'s helper to the PR's semantics and watching `main`'s own test fail.
-
-Give the reviewing agent the standing bias: **this codebase's signature defect is a value
-that is accepted and then silently ignored** — a knob that never reaches the worker, a
-metric that does not mean what its name says, a gate that cannot fail. So the review
-question is not "is this code correct" but "does this take effect on the production path,
-and what observation would prove it did".
-
-When the author is the main session rather than a subagent, the same rule applies: spawn a
-review agent. If that is genuinely impractical, say in the PR that the review was
-self-performed — an unlabelled self-review is the thing to avoid, not the occasional
-justified one.
+These Skills describe reusable methods. Repository-specific constraints stay here;
+commands and operating details stay in the linked documentation.

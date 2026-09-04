@@ -5,61 +5,22 @@ yardstick, and what is live-but-unread right now. Every entry records enough to 
 understood a year later. Companion to `docs/eval_protocol.md` (which defines HOW we
 decide; this file records WHAT we decided).
 
-**Rules for entries** (the protocol that keeps this scientific):
+## Current entry guidance
 
-1. Before an experiment goes live: write its hypothesis, the single yardstick that
-   judges it, and the pre-committed kill/success threshold. Verdicts are decided by
-   the pre-committed rule, not by post-hoc reading.
-2. One data-affecting change per readout window when possible; when changes must
-   overlap, list them in each other's *Confounds*.
-3. A verdict is WORKED / FAILED / MIXED / UNREAD. "Deferred" is not a verdict.
-4. When reverting, record what returning to known-good means (exact keys/values).
-5. Before any big/data-affecting change: snapshot weights + optimizer + PID + replay
-   window with `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration
-   --out data/salvage/<label>` (safe while training runs; ~2.3G per snapshot) and
-   record the pool path in the entry. `--metric training_iteration` is REQUIRED for
-   a current-state snapshot: the default metric (`opponent_strength`) selects the
-   best-metric row, which may be an older checkpoint. Restore =
-   `./scripts/train.sh salvage-restart <pool>`. Config keys alone are NOT a revert —
-   the window keeps training on the changed data for ~a day.
-6. **Offline outcome-gate for sampling/loss-weight/target knobs** (added 07-06,
-   after #104): any knob that reshapes what/how the trainer samples or weights
-   must first show ≥neutral broad value_regret on a 2-seed offline
-   `retarget_retrain` arm vs a same-seed control before it gets a live window.
-   The #104 dry-run checked plumbing (priority mass, ESS) but never asked "does
-   one epoch of this damage value?" — the post-hoc screen answered that in a
-   day, GPU-cheap, and would have saved the whole live window + recovery. Live
-   windows are the scarce resource; screens are nearly free. (Extends the
-   audit-first rule from training-target candidates to knobs.)
-7. **Every experiment carries the arm/measurement that explains its own
-   failure** (added 07-06): a dose ladder, a control arm, or a
-   mechanism-specific secondary (like #104's gap_resolution) — decided at
-   design time. It converts "failed" into "failed because X" (dose-flat ⇒
-   wrong mechanism; on-target-improved-but-broad-regressed ⇒ capacity theft)
-   and is impossible to reconstruct after the fact.
-8. **Verify artifact provenance before recording a verdict** (added 07-06,
-   after the signed-arm no-op): a result file proves a job RAN, not that it ran
-   the intended code. Before a verdict lands in this ledger: check the
-   producing log/timestamps chain, and for code-flag experiments confirm the
-   executing tree actually contains the flag (`grep` it). The no-op "signed"
-   arms recorded their override in the report json while silently ignoring it
-   — only code inspection of the worktree caught it.
-9. **Kill verdicts are state-conditional** (added 07-07): mid-run and
-   offline-from-checkpoint tests measure "this change, applied to THIS run's
-   co-adapted weights, on this horizon" — they carry a status-quo advantage
-   (the checkpoint sits in the groove production config dug; short retrain
-   horizons overweight re-adaptation cost vs slow-compounding benefit). The
-   in-house proof this bias is real: v3 input-plane ADDS failed AND v2_lean
-   REMOVALS failed (ablation-reliance ≠ training-value). So record kills as
-   "dead for this run", not "dead as an idea"; ideas with strong external
-   priors (e.g. KataGo/LC0 validated surprise weighting FROM SCRATCH) go on
-   the from-scratch retest list for any future from-scratch run (105M /
-   default.yaml). Escalation tools when a mid-run verdict feels
-   state-confounded: from-scratch mini-net A/B (June 8-net ablation infra),
-   or a 3× longer offline arm. NOTE the diagnostic asymmetry: a change whose
-   TARGET improves while the broad distribution regresses (#104's signature)
-   is real reallocation, not adjustment cost — that kill stands on mechanism,
-   not just on level.
+Use [project guidance](../CLAUDE.md) for durable experiment constraints and
+[the evaluation protocol](eval_protocol.md) for staged decision criteria.
+[Experiment navigation](experiments/README.md) explains targeted lookup and the entry
+fields. The dated records below preserve their original protocols and verdicts;
+fixed seed counts, horizons and proposed actions in them are not standing launch gates.
+
+Record the hypothesis, deciding command/threshold, baseline/control, uncertainty,
+budget, readout horizon, provenance, confounds and recovery state before an experiment
+starts. Afterward, record WORKED / FAILED / MIXED / UNREAD with the evidence and limits.
+An inconclusive readout need not trigger more compute. State-conditional failures do
+not establish that an idea fails from scratch or on every horizon.
+
+For live changes, [operations](operations.md) describes current-state salvage and
+adoption. A config revert alone cannot restore weights or remove already-ingested data.
 
 ## Mechanics: changing a PBT-pinned key (e.g. `lr`) on a running trial
 
@@ -92,7 +53,7 @@ and 2026-07-02):
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
 | `data/best_pools/` (various) | older best-regret pools, pre-June-17 run | pick a pool from `./scripts/train.sh best-list`, then `./scripts/train.sh salvage-restart data/best_pools/<pool>` |
 
-## Yardsticks (canonical protocols)
+## Yardsticks and historical anchors
 
 | yardstick | command / protocol | known-good anchor |
 |---|---|---|
@@ -102,9 +63,10 @@ and 2026-07-02):
 | Real-game strength | `PYTHONPATH=. python3 scripts/arena_standard.py` paired openings, or external engine match | vs full Cheese: 0 wins / 35 real losses (Jun 21, ckpt150-era) |
 | Progress-over-time | low-sim cross-checkpoint arena (current vs pinned older ckpt) | not yet cadenced — see Queue |
 
-Copy checkpoints OUT of the tune dir before long audits (Ray prunes live
-checkpoints). All three GPU yardsticks are safe concurrent with training at the
-listed batch / mem-fraction settings.
+Copy checkpoints out of the tune dir before long audits (Ray prunes live
+checkpoints). The listed batch sizes and allocator fractions describe historical
+runs, not a guarantee of safe concurrency. Assess current resource use and follow
+[the evaluation protocol](eval_protocol.md) when selecting and budgeting a launch.
 
 **Paired CIs are mandatory for A/B verdicts (2026-07-02).** Both audit scripts
 take `--dump-per-position`; judge any two reads with `scripts/paired_compare.py`

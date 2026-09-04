@@ -36,7 +36,8 @@ htmlcov/
 /server/
 
 # Local tooling
-.claude/
+.claude/*
+!.claude/skills
 .codex
 .skylos/
 .merge_ts
