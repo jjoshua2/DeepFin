@@ -27,6 +27,7 @@
 #include <string.h>
 #include <pthread.h>
 
+#include "../_native_build_attestation.h"
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -6335,6 +6336,10 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
      * _mcts_tree.so and must be read per module. */
     if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
                                    DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+    if (deepfin_add_native_build_attestation(m) < 0) {
         Py_DECREF(m);
         return NULL;
     }

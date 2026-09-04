@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_c_extensions_fresh import EXTENSION_SPECS, check_extensions
+from scripts.check_c_extensions_fresh import (
+    EXTENSION_SPECS,
+    NATIVE_BUILD_ATTESTED_MODULES,
+    check_extensions,
+    extension_spec,
+    native_build_attestation,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,6 +83,27 @@ def test_check_extensions_accepts_fresh_outputs(tmp_path: Path):
     _write_all_extensions(tmp_path, mtime_ns=20)
 
     assert check_extensions(tmp_path) == []
+
+
+@pytest.mark.parametrize("module", NATIVE_BUILD_ATTESTED_MODULES)
+def test_native_build_attestation_covers_every_declared_input(module: str) -> None:
+    dependencies = {
+        path: f"input:{path}".encode()
+        for path in extension_spec(module).dependencies
+    }
+    attestation = native_build_attestation(module, "a" * 40, dependencies)
+
+    assert set(attestation["dependencies"]) == set(dependencies)
+    changed = dict(dependencies)
+    changed[next(iter(changed))] += b" changed"
+    assert (
+        native_build_attestation(module, "a" * 40, changed)["input_sha256"]
+        != attestation["input_sha256"]
+    )
+    assert (
+        native_build_attestation(module, "b" * 40, dependencies)["input_sha256"]
+        != attestation["input_sha256"]
+    )
 
 
 def test_check_extensions_rejects_unknown_module_filter(tmp_path: Path) -> None:

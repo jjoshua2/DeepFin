@@ -617,6 +617,20 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "mtime_ns": 1,
             "sha256": hashlib.sha256(source).hexdigest(),
         }
+    native_builds: dict[str, dict[str, Any]] = {}
+    for module in controller_module._NATIVE_MODULES:
+        dependency_bytes = {
+            relative_path: f"synthetic native input {relative_path}\n".encode()
+            for relative_path in controller_module.extension_spec(module).dependencies
+        }
+        _TEST_GIT_FILES.update(dependency_bytes)
+        native_builds[module] = {
+            **controller_module.native_build_attestation(
+                module, "a" * 40, dependency_bytes,
+            ),
+            "current_inputs_match_revision": True,
+            "matches_producer_revision": True,
+        }
     manifest: dict[str, Any] = {
         "schema": "deepfin.chunk_trajectory.v3",
         "complete": True,
@@ -666,6 +680,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "features_extension": {
             "path": "/_features_ext.so", "size": 1, "mtime_ns": 1,
             "sha256": "4" * 64,
+            "build_attestation": native_builds[
+                "chess_anti_engine.encoding._features_ext"
+            ],
             "freshness_check": {
                 "modules": list(controller_module._NATIVE_MODULES),
                 "minimum_gcc_major": 15,
@@ -677,6 +694,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
             "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
             "gss_halving_rev": 3,
+            "build_attestation": native_builds[
+                "chess_anti_engine.mcts._mcts_tree"
+            ],
             "freshness_check": {
                 "modules": list(controller_module._NATIVE_MODULES),
                 "minimum_gcc_major": 15,
@@ -687,6 +707,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "lc0_extension": {
             "path": "/_lc0_ext.so", "size": 1, "mtime_ns": 1,
             "sha256": "2" * 64, "cboard_encode_full": True,
+            "build_attestation": native_builds[
+                "chess_anti_engine.encoding._lc0_ext"
+            ],
             "freshness_check": {
                 "modules": list(controller_module._NATIVE_MODULES),
                 "minimum_gcc_major": 15,
@@ -1140,6 +1163,74 @@ def test_loader_requires_feature_encoder_binary_provenance(tmp_path: Path) -> No
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="feature encoding extension"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("section", "module", "message"),
+    [
+        (
+            "features_extension",
+            "chess_anti_engine.encoding._features_ext",
+            "feature encoding extension",
+        ),
+        (
+            "lc0_extension",
+            "chess_anti_engine.encoding._lc0_ext",
+            "CBoard encoding extension",
+        ),
+        (
+            "mcts_extension",
+            "chess_anti_engine.mcts._mcts_tree",
+            "MCTS extension",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_git_sha", "b" * 40),
+        ("input_sha256", "c" * 64),
+        ("matches_producer_revision", False),
+    ],
+)
+def test_loader_rejects_mismatched_embedded_native_build_attestation(
+    tmp_path: Path,
+    section: str,
+    module: str,
+    message: str,
+    field: str,
+    value: object,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    assert manifest[section]["build_attestation"]["module"] == module
+    manifest[section]["build_attestation"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=message):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ("features_extension", "feature encoding extension"),
+        ("lc0_extension", "CBoard encoding extension"),
+        ("mcts_extension", "MCTS extension"),
+    ],
+)
+def test_loader_rejects_native_build_dependency_not_at_producer_revision(
+    tmp_path: Path, section: str, message: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    dependency = next(iter(manifest[section]["build_attestation"]["dependencies"]))
+    _TEST_GIT_FILES[dependency] += b" changed after foreign build"
+
+    with pytest.raises(ValueError, match=message):
         load_transitions(bank)
 
 
@@ -2522,6 +2613,101 @@ def test_producer_rejects_foreign_loaded_python_module(
         SystemExit, match=r"chess_anti_engine\.foreign_review_fixture",
     ):
         producer._producer_python_source_artifacts("a" * 40, require_tracked=True)
+
+
+@pytest.mark.parametrize("module_name", controller_module._NATIVE_MODULES)
+def test_producer_rejects_native_binary_built_from_another_revision(
+    module_name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    dependencies = {
+        relative_path: (repo_root / relative_path).read_bytes()
+        for relative_path in controller_module.extension_spec(module_name).dependencies
+    }
+    copied = controller_module.native_build_attestation(
+        module_name, "b" * 40, dependencies,
+    )
+    loaded = SimpleNamespace(
+        BUILD_ATTESTATION_SCHEMA=copied["schema"],
+        BUILD_MODULE_NAME=copied["module"],
+        BUILD_SOURCE_GIT_SHA=copied["source_git_sha"],
+        BUILD_INPUT_SHA256=copied["input_sha256"],
+    )
+    monkeypatch.setattr(
+        producer,
+        "_producer_git_file_at_commit",
+        lambda _commit, relative: dependencies.get(relative),
+    )
+
+    observed = producer._loaded_native_build_attestation(
+        loaded, module_name, "a" * 40,
+    )
+
+    assert observed["current_inputs_match_revision"] is True
+    assert observed["matches_producer_revision"] is False
+
+
+@pytest.mark.parametrize("module_name", controller_module._NATIVE_MODULES)
+def test_producer_rejects_native_binary_built_from_altered_then_restored_inputs(
+    module_name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    dependencies = {
+        relative_path: (repo_root / relative_path).read_bytes()
+        for relative_path in controller_module.extension_spec(module_name).dependencies
+    }
+    built_from = dict(dependencies)
+    changed_path = next(iter(built_from))
+    built_from[changed_path] += b" locally modified for build"
+    altered = controller_module.native_build_attestation(
+        module_name, "a" * 40, built_from,
+    )
+    loaded = SimpleNamespace(
+        BUILD_ATTESTATION_SCHEMA=altered["schema"],
+        BUILD_MODULE_NAME=altered["module"],
+        BUILD_SOURCE_GIT_SHA=altered["source_git_sha"],
+        BUILD_INPUT_SHA256=altered["input_sha256"],
+    )
+    monkeypatch.setattr(
+        producer,
+        "_producer_git_file_at_commit",
+        lambda _commit, relative: dependencies.get(relative),
+    )
+
+    observed = producer._loaded_native_build_attestation(
+        loaded, module_name, "a" * 40,
+    )
+
+    assert observed["current_inputs_match_revision"] is True
+    assert observed["matches_producer_revision"] is False
+
+
+@pytest.mark.parametrize("module_name", controller_module._NATIVE_MODULES)
+def test_producer_rejects_missing_native_build_attestation(
+    module_name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    repo_root = Path(producer.__file__).resolve().parents[1]
+    dependencies = {
+        relative_path: (repo_root / relative_path).read_bytes()
+        for relative_path in controller_module.extension_spec(module_name).dependencies
+    }
+    monkeypatch.setattr(
+        producer,
+        "_producer_git_file_at_commit",
+        lambda _commit, relative: dependencies.get(relative),
+    )
+
+    observed = producer._loaded_native_build_attestation(
+        SimpleNamespace(), module_name, "a" * 40,
+    )
+
+    assert observed["matches_producer_revision"] is False
 
 
 def test_real_producer_source_inventory_round_trips_through_analyzer(

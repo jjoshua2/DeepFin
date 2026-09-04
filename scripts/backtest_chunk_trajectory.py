@@ -110,7 +110,11 @@ from scripts.analyze_chunk_controller import (
     _update_stability,
 )
 from scripts.backtest_time_value import _stratified
-from scripts.check_c_extensions_fresh import check_extensions
+from scripts.check_c_extensions_fresh import (
+    check_extensions,
+    extension_spec,
+    native_build_attestation,
+)
 
 _SCHEMA = CHUNK_TRAJECTORY_SCHEMA
 _PRODUCTION_WDL_FILES = 875
@@ -258,6 +262,54 @@ def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
     return {
         name: artifact.get(name)
         for name in ("path", "size", "mtime_ns", "device", "inode", "sha256")
+    }
+
+
+def _loaded_native_build_attestation(
+    module: Any, module_name: str, producer_git_sha: str,
+) -> dict[str, Any]:
+    """Bind one loaded binary's embedded stamp to exact producer-revision inputs."""
+    dependency_bytes: dict[str, bytes] = {}
+    current_inputs_match_revision = True
+    for relative_path in extension_spec(module_name).dependencies:
+        committed = _producer_git_file_at_commit(producer_git_sha, relative_path)
+        try:
+            current = (Path(__file__).resolve().parents[1] / relative_path).read_bytes()
+        except OSError:
+            current = None
+        if committed is None:
+            current_inputs_match_revision = False
+            continue
+        dependency_bytes[relative_path] = committed
+        if current != committed:
+            current_inputs_match_revision = False
+    expected: dict[str, Any] | None = None
+    try:
+        expected = native_build_attestation(
+            module_name, producer_git_sha, dependency_bytes,
+        )
+    except ValueError:
+        current_inputs_match_revision = False
+    observed = {
+        "schema": getattr(module, "BUILD_ATTESTATION_SCHEMA", None),
+        "module": getattr(module, "BUILD_MODULE_NAME", None),
+        "source_git_sha": getattr(module, "BUILD_SOURCE_GIT_SHA", None),
+        "input_sha256": getattr(module, "BUILD_INPUT_SHA256", None),
+    }
+    expected_core = (
+        {
+            name: expected[name]
+            for name in ("schema", "module", "source_git_sha", "input_sha256")
+        }
+        if expected is not None else None
+    )
+    return {
+        **observed,
+        "dependencies": expected.get("dependencies", {}) if expected is not None else {},
+        "current_inputs_match_revision": current_inputs_match_revision,
+        "matches_producer_revision": bool(
+            current_inputs_match_revision and observed == expected_core
+        ),
     }
 
 
@@ -954,6 +1006,17 @@ def _main() -> None:
     mcts_module = "chess_anti_engine.mcts._mcts_tree"
     lc0_module = "chess_anti_engine.encoding._lc0_ext"
     native_modules = [features_module, lc0_module, mcts_module]
+    native_build_attestations = {
+        features_module: _loaded_native_build_attestation(
+            features_extension, features_module, producer_git_sha,
+        ),
+        lc0_module: _loaded_native_build_attestation(
+            lc0_extension, lc0_module, producer_git_sha,
+        ),
+        mcts_module: _loaded_native_build_attestation(
+            mcts_extension, mcts_module, producer_git_sha,
+        ),
+    }
     native_import_changes = sorted(
         module for module, loaded in (
             (features_module, loaded_features_artifact),
@@ -977,6 +1040,11 @@ def _main() -> None:
     extension_issues.extend(
         f"{module} changed between pre-import snapshot and loaded-path readback"
         for module in native_import_changes
+    )
+    extension_issues.extend(
+        f"{module} was not built from producer revision {producer_git_sha}"
+        for module, attestation in native_build_attestations.items()
+        if attestation.get("matches_producer_revision") is not True
     )
     if extension_issues and not args.methodology_smoke:
         raise SystemExit(
@@ -1904,6 +1972,7 @@ def _main() -> None:
         "realized_tablebase": realized_tablebase,
         "features_extension": {
             **loaded_features_artifact,
+            "build_attestation": native_build_attestations[features_module],
             "freshness_check": {
                 "modules": native_modules,
                 "minimum_gcc_major": 15,
@@ -1914,6 +1983,7 @@ def _main() -> None:
         },
         "mcts_extension": {
             **loaded_mcts_artifact,
+            "build_attestation": native_build_attestations[mcts_module],
             "abi_version": int(getattr(mcts_extension, "ABI_VERSION", 0)),
             "required_abi_version": int(_REQUIRED_MCTS_ABI),
             "gss_halving_rev": loaded_halving_rev,
@@ -1927,6 +1997,7 @@ def _main() -> None:
         },
         "lc0_extension": {
             **loaded_lc0_artifact,
+            "build_attestation": native_build_attestations[lc0_module],
             "cboard_encode_full": bool(hasattr(CBoard.from_board(chess.Board()), "encode_full")),
             "freshness_check": {
                 "modules": native_modules,

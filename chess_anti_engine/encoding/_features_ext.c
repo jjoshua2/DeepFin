@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "../_native_build_attestation.h"
 #include "_features_impl.h"
 
 static int validate_piece_array(PyArrayObject *arr, const char *name) {
@@ -166,6 +167,10 @@ PyMODINIT_FUNC PyInit__features_ext(void) {
      * leave "does this module have fast sliders?" unanswered. */
     if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
                                    DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+    if (deepfin_add_native_build_attestation(m) < 0) {
         Py_DECREF(m);
         return NULL;
     }

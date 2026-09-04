@@ -14,7 +14,9 @@ Environment variables:
                          when running Python with ASAN.
   CAE_EXT_WERROR=1     — promote warnings to errors (strict builds)
 """
+import json
 import os
+import re
 
 from setuptools import setup, Extension
 import numpy as np
@@ -22,6 +24,31 @@ import numpy as np
 
 def _env_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _native_attestation_macros(module: str) -> list[tuple[str, str | None]]:
+    """Embed production-builder provenance; mark ordinary builds unattested."""
+    source_sha = os.environ.get("CAE_EXT_BUILD_GIT_SHA", "").strip()
+    raw_digests = os.environ.get("CAE_EXT_BUILD_INPUT_DIGESTS", "").strip()
+    macros: list[tuple[str, str | None]] = [
+        ("DEEPFIN_BUILD_MODULE_NAME", f'"{module}"'),
+    ]
+    if not source_sha and not raw_digests:
+        return macros
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise RuntimeError("CAE_EXT_BUILD_GIT_SHA must be a lowercase full commit id")
+    try:
+        digests = json.loads(raw_digests)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("CAE_EXT_BUILD_INPUT_DIGESTS is invalid JSON") from exc
+    digest = digests.get(module) if isinstance(digests, dict) else None
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RuntimeError(f"missing native build input digest for {module}")
+    macros.extend([
+        ("DEEPFIN_BUILD_GIT_SHA", f'"{source_sha}"'),
+        ("DEEPFIN_BUILD_INPUT_SHA256", f'"{digest}"'),
+    ])
+    return macros
 
 
 def _warning_flags() -> list[str]:
@@ -151,6 +178,9 @@ features_ext = Extension(
     "chess_anti_engine.encoding._features_ext",
     sources=["chess_anti_engine/encoding/_features_ext.c"],
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
+    define_macros=_native_attestation_macros(
+        "chess_anti_engine.encoding._features_ext"
+    ),
     extra_compile_args=_ext_compile_args(),
     extra_link_args=_ext_link_args(),
 )
@@ -159,7 +189,10 @@ lc0_ext = Extension(
     "chess_anti_engine.encoding._lc0_ext",
     sources=["chess_anti_engine/encoding/_lc0_ext.c"],
     include_dirs=[np.get_include()],
-    define_macros=_CBOARD_FAST_SLIDER_MACROS,
+    define_macros=[
+        *_CBOARD_FAST_SLIDER_MACROS,
+        *_native_attestation_macros("chess_anti_engine.encoding._lc0_ext"),
+    ],
     extra_compile_args=_ext_compile_args(),
     extra_link_args=_ext_link_args(),
 )
@@ -180,7 +213,10 @@ mcts_tree_ext = Extension(
     # macros below make the TREE's own movegen table-backed and reach nothing
     # inside _nnue_ext.so; that extension is given them separately.
     include_dirs=[np.get_include(), "chess_anti_engine/encoding"],
-    define_macros=_CBOARD_FAST_SLIDER_MACROS,
+    define_macros=[
+        *_CBOARD_FAST_SLIDER_MACROS,
+        *_native_attestation_macros("chess_anti_engine.mcts._mcts_tree"),
+    ],
     extra_compile_args=_mcts_compile_args(),
     extra_link_args=_ext_link_args(openmp=True),
 )

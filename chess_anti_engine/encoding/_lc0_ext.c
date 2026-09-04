@@ -13,6 +13,7 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 
+#include "../_native_build_attestation.h"
 /* Pure-C CBoard implementation (bitboard utilities, attack tables, move gen, CBoard) */
 #include "_cboard_impl.h"
 
@@ -1348,6 +1349,10 @@ PyMODINIT_FUNC PyInit__lc0_ext(void) {
      * gate comment in encoding/_slider_attacks_impl.h. */
     if (PyModule_AddStringConstant(m, "SLIDER_BACKEND",
                                    DEEPFIN_SLIDER_BACKEND_NAME) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
+    if (deepfin_add_native_build_attestation(m) < 0) {
         Py_DECREF(m);
         return NULL;
     }

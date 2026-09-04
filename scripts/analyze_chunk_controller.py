@@ -51,6 +51,7 @@ from chess_anti_engine.eval.audit import (
 )
 from chess_anti_engine.mcts import search_options as search_options_module
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
+from scripts.check_c_extensions_fresh import extension_spec, native_build_attestation
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
@@ -321,6 +322,9 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
             str(search_options_module.__file__)
         ),
         "chess_anti_engine.moves.encode": Path(index_to_move_strict.__code__.co_filename),
+        "scripts.check_c_extensions_fresh": Path(
+            native_build_attestation.__code__.co_filename
+        ),
         "scripts.reachable_oracle": Path(solve_reachable_oracle.__code__.co_filename),
         "scripts.repo_output_guard": Path(repo_controlled_output.__code__.co_filename),
     }
@@ -328,7 +332,11 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
         if not (
             module_name == "chess_anti_engine"
             or module_name.startswith("chess_anti_engine.")
-            or module_name in ("scripts.reachable_oracle", "scripts.repo_output_guard")
+            or module_name in (
+                "scripts.check_c_extensions_fresh",
+                "scripts.reachable_oracle",
+                "scripts.repo_output_guard",
+            )
         ):
             continue
         module_file = getattr(module, "__file__", None)
@@ -796,7 +804,36 @@ def _preregistered_design_failures(manifest: dict[str, Any]) -> list[str]:
     return []
 
 
-def _compatible_native_extension(artifact: Any) -> bool:
+def _native_build_matches_revision(
+    artifact: Any, producer_git_sha: Any, module: str,
+) -> bool:
+    """Independently recompute the embedded native-input stamp from Git bytes."""
+    if not isinstance(artifact, dict) or not isinstance(producer_git_sha, str):
+        return False
+    dependency_bytes: dict[str, bytes] = {}
+    try:
+        dependencies = extension_spec(module).dependencies
+    except ValueError:
+        return False
+    for relative_path in dependencies:
+        committed = _git_file_at_commit(producer_git_sha, relative_path)
+        if committed is None:
+            return False
+        dependency_bytes[relative_path] = committed
+    try:
+        expected = native_build_attestation(
+            module, producer_git_sha, dependency_bytes,
+        )
+    except ValueError:
+        return False
+    return artifact.get("build_attestation") == {
+        **expected,
+        "current_inputs_match_revision": True,
+        "matches_producer_revision": True,
+    }
+
+
+def _compatible_native_extension(artifact: Any, producer_git_sha: Any) -> bool:
     if not isinstance(artifact, dict):
         return False
     abi = artifact.get("abi_version")
@@ -809,6 +846,9 @@ def _compatible_native_extension(artifact: Any) -> bool:
         return False
     return (
         _artifact_provenance_complete(artifact)
+        and _native_build_matches_revision(
+            artifact, producer_git_sha, "chess_anti_engine.mcts._mcts_tree",
+        )
         and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and abi >= required
         and halving_rev == _PRODUCTION_GSS_HALVING_REV
@@ -822,9 +862,12 @@ def _compatible_native_extension(artifact: Any) -> bool:
     )
 
 
-def _compatible_lc0_extension(artifact: Any) -> bool:
+def _compatible_lc0_extension(artifact: Any, producer_git_sha: Any) -> bool:
     return bool(
         _artifact_provenance_complete(artifact)
+        and _native_build_matches_revision(
+            artifact, producer_git_sha, "chess_anti_engine.encoding._lc0_ext",
+        )
         and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and artifact.get("cboard_encode_full") is True
         and artifact.get("freshness_check") == {
@@ -837,9 +880,12 @@ def _compatible_lc0_extension(artifact: Any) -> bool:
     )
 
 
-def _compatible_features_extension(artifact: Any) -> bool:
+def _compatible_features_extension(artifact: Any, producer_git_sha: Any) -> bool:
     return bool(
         _artifact_provenance_complete(artifact)
+        and _native_build_matches_revision(
+            artifact, producer_git_sha, "chess_anti_engine.encoding._features_ext",
+        )
         and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and artifact.get("freshness_check") == {
             "modules": _NATIVE_MODULES,
@@ -1365,11 +1411,13 @@ def _require_manifest(
     ):
         failures.append("checkpoint architecture provenance is incomplete")
     mcts_extension = manifest.get("mcts_extension")
-    if not _compatible_native_extension(mcts_extension):
+    if not _compatible_native_extension(mcts_extension, producer_sha):
         failures.append("native MCTS extension provenance is incomplete")
-    if not _compatible_features_extension(manifest.get("features_extension")):
+    if not _compatible_features_extension(
+        manifest.get("features_extension"), producer_sha,
+    ):
         failures.append("native feature encoding extension provenance is incomplete")
-    if not _compatible_lc0_extension(manifest.get("lc0_extension")):
+    if not _compatible_lc0_extension(manifest.get("lc0_extension"), producer_sha):
         failures.append("native CBoard encoding extension provenance is incomplete")
     artifact_stability = manifest.get("artifact_stability")
     if (
