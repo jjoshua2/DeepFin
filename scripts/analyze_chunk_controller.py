@@ -5630,7 +5630,9 @@ def main() -> None:
     if not isinstance(consumed_inputs, list) or not all(
         isinstance(record, dict) for record in consumed_inputs
     ):
-        raise RuntimeError("analyzer input consumption identity is unavailable")
+        if args.out is not None:
+            raise RuntimeError("analyzer input consumption identity is unavailable")
+        consumed_inputs = []
     _require_safe_output_path(
         args.input_path,
         actual_meta,
