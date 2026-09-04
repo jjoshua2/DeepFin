@@ -1563,10 +1563,18 @@ def _durably_prepare_output_artifact(
         _flush_fsync_file_and_parent(fh, tmp_path, parent_fd=parent_fd)
         flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
         reader_fd = os.open(tmp_path.name, flags, dir_fd=parent_fd)
-        _require_entry(tmp_path, parent_fd, reader_fd, links=1)
-        if _identity(os.fstat(reader_fd)) != _identity(os.fstat(fh.fileno())):
+        opened = _require_entry(tmp_path, parent_fd, reader_fd, links=1)
+        writer = os.fstat(fh.fileno())
+        stable = (
+            "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
+            "st_mtime_ns", "st_ctime_ns",
+        )
+        if any(
+            getattr(opened, field) != getattr(writer, field)
+            for field in stable
+        ):
             raise SystemExit(f"pending trajectory bank changed: {tmp_path}")
-        private = _artifact_from_fd(reader_fd, tmp_path)
+        private = _artifact_from_fd(reader_fd, tmp_path, before=opened)
         _require_parent(tmp_path, parent_fd)
         return {**private, "path": str(output_path.expanduser().resolve())}
     finally:

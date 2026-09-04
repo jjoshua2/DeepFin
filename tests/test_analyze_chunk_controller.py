@@ -7595,9 +7595,14 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
         events.append("fsync:directory" if stat.S_ISDIR(descriptor_stat.st_mode) else "fsync:file")
         real_fsync(descriptor)
 
-    def artifact_spy(file_fd: int, path: Path) -> dict[str, Any]:
+    def artifact_spy(
+        file_fd: int,
+        path: Path,
+        *,
+        before: os.stat_result | None = None,
+    ) -> dict[str, Any]:
         events.append("snapshot")
-        return real_artifact(file_fd, path)
+        return real_artifact(file_fd, path, before=before)
 
     class FlushSpy:
         def __init__(self, handle: Any) -> None:
@@ -7620,6 +7625,47 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
 
     assert events == ["flush", "fsync:file", "fsync:directory", "snapshot"]
     assert artifact["sha256"] == hashlib.sha256(b"completed bank\n").hexdigest()
+
+
+def test_completed_bank_reader_baseline_rejects_same_inode_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    real_open = publication.os.open
+    real_fstat = publication.os.fstat
+    reader_fd = -1
+    writer_fd = -1
+    injected = False
+
+    def track_reader_open(
+        path: Any, flags: int, *args: Any, **kwargs: Any,
+    ) -> int:
+        nonlocal reader_fd
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == pending.name and kwargs.get("dir_fd") is not None:
+            reader_fd = descriptor
+        return descriptor
+
+    def rewrite_before_writer_comparison(descriptor: int) -> os.stat_result:
+        nonlocal injected
+        if descriptor == writer_fd and reader_fd >= 0 and not injected:
+            injected = True
+            pending.write_text("attacker observations are longer\n")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(publication.os, "open", track_reader_open)
+    monkeypatch.setattr(publication.os, "fstat", rewrite_before_writer_comparison)
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        writer_fd = handle.fileno()
+        with pytest.raises(SystemExit, match="pending trajectory bank changed"):
+            publication._durably_prepare_output_artifact(handle, pending, output)
+
+    assert injected is True
+    assert pending.read_text() == "attacker observations are longer\n"
 
 
 def test_pending_bank_sync_uses_parent_retained_from_creation(
@@ -7937,7 +7983,9 @@ def test_completed_pending_bank_fsync_failure_prevents_identity_snapshot(
     def fail_fsync(_descriptor: int) -> None:
         raise OSError(errno.EIO, "bank fsync failed")
 
-    def forbidden_snapshot(_file_fd: int, _path: Path) -> dict[str, Any]:
+    def forbidden_snapshot(
+        _file_fd: int, _path: Path, **_kwargs: Any,
+    ) -> dict[str, Any]:
         nonlocal snapshot_called
         snapshot_called = True
         raise AssertionError("unsynced bank reached identity snapshot")
