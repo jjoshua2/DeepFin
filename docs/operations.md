@@ -1024,12 +1024,15 @@ and the search — find where before reporting any number from that run.
 
 ## Static analysis
 
+Choose validation scope using [development guidance](development.md#validation-by-change-scope).
+Documentation-only work does not require the code lint gate.
+
 `./scripts/lint.sh <paths>` — default gate is ruff + basedpyright + vulture, a few
 seconds, kept at **zero findings repo-wide with no baseline**. CI gates basedpyright on
 the whole repo.
 
 ```bash
-./scripts/lint.sh                    # ruff + basedpyright at CI's scope — run before committing
+./scripts/lint.sh                    # ruff + basedpyright at CI's scope — final code validation
 ./scripts/lint.sh --changed          # changed/untracked .py (basedpyright: whole repo)
 ./scripts/lint.sh --deep [paths...]  # + skylos + ruff cleanup report (advisory, ~40s)
 ```
@@ -1038,8 +1041,8 @@ the whole repo.
 versus 544 in ~32s whole-repo. Every invocation without paths (bare, `--changed`,
 `--fast`, `--deep`, `--slop`, `--all`) runs it at `pyrightconfig.json`'s whole-repo scope,
 which is what CI runs. A path-scoped run cannot see breakage the change caused in a file
-it never opened; that is how PR #295 turned `main` red. Run the no-argument form before
-committing.
+it never opened; that is how PR #295 turned `main` red. For code changes, run the
+no-argument form on the final candidate as described in the development guidance.
 
 `--changed` narrows **ruff and vulture** to the changed `.py` files, falling back to the
 full default list when the change collected none. It is a scope *swap* for basedpyright,
