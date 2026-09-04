@@ -15,12 +15,45 @@ import os
 import stat
 import subprocess
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Protocol
 
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 
 CHUNK_TRAJECTORY_SCHEMA = "deepfin.chunk_trajectory.v6"
+
+
+class _ImmutableEvidenceExistsError(RuntimeError):
+    """A no-clobber publication destination already exists."""
+
+
+class _FlushableFile(Protocol):
+    def flush(self) -> None: ...
+
+    def fileno(self) -> int: ...
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist completed directory-entry transitions, or fail closed."""
+    flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _flush_fsync_file_and_parent(fh: _FlushableFile, path: Path) -> None:
+    """Flush Python buffers, then persist file bytes and its containing entry."""
+    fh.flush()
+    os.fsync(fh.fileno())
+    _fsync_directory(path.parent)
+
+
+def _unlink_durable(path: Path) -> None:
+    """Remove one name and persist that removal before returning."""
+    path.unlink()
+    _fsync_directory(path.parent)
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
@@ -72,16 +105,12 @@ def _publication_artifact_identity(artifact: Any) -> dict[str, Any] | None:
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    created = False
+    _write_json_staged(tmp_path, payload)
     try:
-        with tmp_path.open("x") as fh:
-            created = True
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.write("\n")
         _publish_no_replace(tmp_path, path)
-    finally:
-        if created and tmp_path.exists():
-            tmp_path.unlink()
+    except _ImmutableEvidenceExistsError:
+        _unlink_durable(tmp_path)
+        raise
 
 
 def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
@@ -96,8 +125,11 @@ def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(fh.fileno())
     except BaseException:
         if created and path.exists():
-            path.unlink()
+            _unlink_durable(path)
         raise
+    # Keep the complete staged file if this sync fails: it remains the only
+    # recovery source and must not be consumed by failure cleanup.
+    _fsync_directory(path.parent)
 
 
 def _output_lock_path(output_path: Path) -> Path:
@@ -169,7 +201,7 @@ def _require_new_output_pair(
             _require_output_matches_manifest(pending_output, output_path, manifest)
         _require_output_matches_manifest(output_path, output_path, manifest)
         if pending_output.exists():
-            pending_output.unlink()
+            _unlink_durable(pending_output)
         _publish_no_replace(pending_meta, meta_path)
         return True
     if (
@@ -198,19 +230,25 @@ def _require_new_output_pair(
 
 
 def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
-    """Atomically publish a same-filesystem staged file without clobbering."""
+    """Publish one durable hard link, then durably consume its recovery name.
+
+    The caller must fsync the staged file's bytes before entering this helper.
+    Each directory sync is kept separate even when both names share a parent:
+    a crash must not lose the published name after the recovery name is removed.
+    """
     try:
         os.link(tmp_path, output_path)
     except FileExistsError as exc:
-        raise RuntimeError(
+        raise _ImmutableEvidenceExistsError(
             f"refusing to replace immutable evidence at {output_path}"
         ) from exc
-    tmp_path.unlink()
+    _fsync_directory(output_path.parent)
+    _unlink_durable(tmp_path)
 
 
 def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     """Publish exactly the private bytes whose identity the manifest records."""
-    expected = _prepared_output_artifact(tmp_path, output_path)
+    expected = _durably_prepare_existing_output_artifact(tmp_path, output_path)
     _publish_no_replace(tmp_path, output_path)
     published = _artifact(output_path, require_file=True)
     if _publication_artifact_identity(published) != _publication_artifact_identity(
@@ -223,6 +261,22 @@ def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
 def _prepared_output_artifact(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     private = _artifact(tmp_path, require_file=True)
     return {**private, "path": str(output_path.expanduser().resolve())}
+
+
+def _durably_prepare_output_artifact(
+    fh: _FlushableFile, tmp_path: Path, output_path: Path,
+) -> dict[str, Any]:
+    """Make staged bytes and their name durable before snapshotting identity."""
+    _flush_fsync_file_and_parent(fh, tmp_path)
+    return _prepared_output_artifact(tmp_path, output_path)
+
+
+def _durably_prepare_existing_output_artifact(
+    tmp_path: Path, output_path: Path,
+) -> dict[str, Any]:
+    """Durably snapshot a closed staged output, including recovery inputs."""
+    with tmp_path.open("rb") as fh:
+        return _durably_prepare_output_artifact(fh, tmp_path, output_path)
 
 
 def _read_pending_manifest(path: Path) -> dict[str, Any]:
@@ -247,7 +301,7 @@ def _require_output_matches_manifest(
     expected = manifest.get("output")
     if not isinstance(expected, dict):
         raise SystemExit("pending evidence manifest lacks an output artifact")
-    actual = _prepared_output_artifact(candidate_path, output_path)
+    actual = _durably_prepare_existing_output_artifact(candidate_path, output_path)
     if _publication_artifact_identity(actual) != _publication_artifact_identity(
         expected
     ):

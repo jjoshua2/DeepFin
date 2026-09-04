@@ -328,11 +328,13 @@ from scripts.chunk_trajectory_publication import (
     CHUNK_TRAJECTORY_SCHEMA,
     _acquire_output_lock as _acquire_output_lock,
     _acquire_output_locks,
+    _durably_prepare_existing_output_artifact,
+    _durably_prepare_output_artifact,
     _git_ignored_or_outside as _git_ignored_or_outside,
     _output_lock_path as _output_lock_path,
     _pending_manifest_path,
     _pending_output_path,
-    _prepared_output_artifact,
+    _prepared_output_artifact as _prepared_output_artifact,
     _publish_evidence_pair,
     _publish_output as _publish_output,
     _require_new_output_pair,
@@ -3397,6 +3399,7 @@ def _main() -> None:
     active_position: Any | None = None
     active_snapshots: list[dict[str, Any]] = []
     active_search_result: dict[str, Any] | None = None
+    completed_output_artifact: dict[str, Any]
     _ACTIVE_PENDING_EVIDENCE = {
         "collection_complete": False,
         "pending_output": tmp_path,
@@ -3667,10 +3670,14 @@ def _main() -> None:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
+            completed_output_artifact = _durably_prepare_output_artifact(
+                fh, tmp_path, args.out,
+            )
         _ACTIVE_PENDING_EVIDENCE.update({
             "collection_complete": True,
             "row_count": n_rows,
             "position_count": completed_positions,
+            "output_artifact": completed_output_artifact,
         })
     except BaseException as exc:
         if not collection_started:
@@ -3695,6 +3702,9 @@ def _main() -> None:
                 )
             )
         try:
+            partial_output_artifact = _durably_prepare_existing_output_artifact(
+                tmp_path, args.out,
+            )
             _write_json_staged(
                 pending_meta_path,
                 {
@@ -3710,7 +3720,7 @@ def _main() -> None:
                     "row_count": n_rows,
                     "position_count": completed_positions,
                     "excluded_positions": excluded_positions,
-                    "output": _prepared_output_artifact(tmp_path, args.out),
+                    "output": partial_output_artifact,
                 },
             )
         finally:
@@ -3883,7 +3893,7 @@ def _main() -> None:
             "kind": "callback_instrumented_wall_time",
             "usable_for_controller_or_cost_analysis": False,
         },
-        "output": _prepared_output_artifact(tmp_path, args.out),
+        "output": completed_output_artifact,
         "requested_search": requested_search,
         "realized_search": realized_search,
         "requested_model_search_contract": expected_model_search_contract,
@@ -3951,10 +3961,12 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
     pending_output = state.get("pending_output")
     output = state.get("output")
     pending_manifest = state.get("pending_manifest")
+    output_artifact = state.get("output_artifact")
     if (
         not isinstance(pending_output, Path)
         or not isinstance(output, Path)
         or not isinstance(pending_manifest, Path)
+        or not isinstance(output_artifact, dict)
         or not pending_output.is_file()
         or pending_manifest.exists()
     ):
@@ -3989,7 +4001,7 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
                 "excluded_position_count": len(excluded_positions),
                 "excluded_positions": excluded_positions,
                 "reference_censoring": _reference_censoring_summary(censoring_details),
-                "output": _prepared_output_artifact(pending_output, output),
+                "output": output_artifact,
             },
         )
     except BaseException:

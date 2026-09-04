@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib
 import importlib.machinery
@@ -4955,6 +4956,337 @@ def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path
     assert not pending_meta.exists()
 
 
+def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_prepared = publication._prepared_output_artifact
+
+    def fsync_spy(descriptor: int) -> None:
+        descriptor_stat = os.fstat(descriptor)
+        events.append("fsync:directory" if stat.S_ISDIR(descriptor_stat.st_mode) else "fsync:file")
+        real_fsync(descriptor)
+
+    def prepared_spy(source: Path, destination: Path) -> dict[str, Any]:
+        events.append("snapshot")
+        return real_prepared(source, destination)
+
+    class FlushSpy:
+        def __init__(self, handle: Any) -> None:
+            self.handle = handle
+
+        def flush(self) -> None:
+            events.append("flush")
+            self.handle.flush()
+
+        def fileno(self) -> int:
+            return int(self.handle.fileno())
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication, "_prepared_output_artifact", prepared_spy)
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        artifact = publication._durably_prepare_output_artifact(
+            FlushSpy(handle), pending, output,
+        )
+
+    assert events == ["flush", "fsync:file", "fsync:directory", "snapshot"]
+    assert artifact["sha256"] == hashlib.sha256(b"completed bank\n").hexdigest()
+
+
+def test_completed_pending_bank_fsync_failure_prevents_identity_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    snapshot_called = False
+
+    def fail_fsync(_descriptor: int) -> None:
+        raise OSError(errno.EIO, "bank fsync failed")
+
+    def forbidden_snapshot(_source: Path, _destination: Path) -> dict[str, Any]:
+        nonlocal snapshot_called
+        snapshot_called = True
+        raise AssertionError("unsynced bank reached identity snapshot")
+
+    monkeypatch.setattr(publication.os, "fsync", fail_fsync)
+    monkeypatch.setattr(publication, "_prepared_output_artifact", forbidden_snapshot)
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        with pytest.raises(OSError, match="bank fsync failed"):
+            publication._durably_prepare_output_artifact(handle, pending, output)
+
+    assert snapshot_called is False
+    assert pending.read_text() == "completed bank\n"
+
+
+def test_staged_manifest_syncs_bytes_then_its_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    events: list[str] = []
+    real_fsync = os.fsync
+
+    def fsync_spy(descriptor: int) -> None:
+        descriptor_stat = os.fstat(descriptor)
+        events.append("directory" if stat.S_ISDIR(descriptor_stat.st_mode) else "file")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    pending_meta = tmp_path / ".bank.meta.json.tmp-pending"
+    publication._write_json_staged(pending_meta, {"complete": True})
+
+    assert events == ["file", "directory"]
+    assert json.loads(pending_meta.read_text()) == {"complete": True}
+
+
+def test_staged_manifest_file_sync_failure_durably_removes_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending_meta = tmp_path / ".bank.meta.json.tmp-pending"
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_unlink = Path.unlink
+
+    def fsync_spy(descriptor: int) -> None:
+        descriptor_stat = os.fstat(descriptor)
+        if stat.S_ISDIR(descriptor_stat.st_mode):
+            events.append("fsync:directory")
+            real_fsync(descriptor)
+            return
+        events.append("fsync:file")
+        raise OSError(errno.EIO, "manifest fsync failed")
+
+    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+        events.append(f"unlink:{path.name}")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    with pytest.raises(OSError, match="manifest fsync failed"):
+        publication._write_json_staged(pending_meta, {"complete": True})
+
+    assert events == [
+        "fsync:file",
+        f"unlink:{pending_meta.name}",
+        "fsync:directory",
+    ]
+    assert not pending_meta.exists()
+
+
+def test_staged_manifest_directory_sync_failure_keeps_recovery_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending_meta = tmp_path / ".bank.meta.json.tmp-pending"
+    real_fsync = os.fsync
+
+    def fsync_spy(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EIO, "manifest directory fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    with pytest.raises(OSError, match="manifest directory fsync failed"):
+        publication._write_json_staged(pending_meta, {"complete": True})
+
+    assert json.loads(pending_meta.read_text()) == {"complete": True}
+
+
+def test_hard_link_publication_syncs_destination_before_consuming_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    source_dir = tmp_path / "staging"
+    destination_dir = tmp_path / "published"
+    source_dir.mkdir()
+    destination_dir.mkdir()
+    pending = source_dir / ".bank.jsonl.tmp-pending"
+    output = destination_dir / "bank.jsonl"
+    pending.write_text("completed bank\n")
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_link = os.link
+    real_unlink = Path.unlink
+    directory_labels = {
+        (source_dir.stat().st_dev, source_dir.stat().st_ino): "source",
+        (destination_dir.stat().st_dev, destination_dir.stat().st_ino): "destination",
+    }
+
+    def fsync_spy(descriptor: int) -> None:
+        descriptor_stat = os.fstat(descriptor)
+        label = directory_labels.get((descriptor_stat.st_dev, descriptor_stat.st_ino))
+        if label is not None:
+            events.append(f"fsync:{label}")
+        real_fsync(descriptor)
+
+    def link_spy(source: Path, destination: Path) -> None:
+        events.append("link")
+        real_link(source, destination)
+
+    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+        events.append("unlink")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    publication._publish_no_replace(pending, output)
+
+    assert events == ["link", "fsync:destination", "unlink", "fsync:source"]
+    assert output.read_text() == "completed bank\n"
+    assert not pending.exists()
+
+
+def test_same_directory_publication_keeps_both_sync_barriers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    pending.write_text("completed bank\n")
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_link = os.link
+    real_unlink = Path.unlink
+
+    def fsync_spy(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            events.append("fsync")
+        real_fsync(descriptor)
+
+    def link_spy(source: Path, destination: Path) -> None:
+        events.append("link")
+        real_link(source, destination)
+
+    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+        events.append("unlink")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    publication._publish_no_replace(pending, output)
+
+    assert events == ["link", "fsync", "unlink", "fsync"]
+
+
+def test_destination_directory_sync_failure_retains_both_publication_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    source_dir = tmp_path / "staging"
+    destination_dir = tmp_path / "published"
+    source_dir.mkdir()
+    destination_dir.mkdir()
+    pending = source_dir / ".bank.jsonl.tmp-pending"
+    output = destination_dir / "bank.jsonl"
+    pending.write_text("completed bank\n")
+    real_fsync = os.fsync
+    unlinked = False
+
+    def fsync_spy(descriptor: int) -> None:
+        descriptor_stat = os.fstat(descriptor)
+        if (
+            descriptor_stat.st_dev == destination_dir.stat().st_dev
+            and descriptor_stat.st_ino == destination_dir.stat().st_ino
+        ):
+            raise OSError(errno.EIO, "destination directory fsync failed")
+        real_fsync(descriptor)
+
+    def forbidden_unlink(_path: Path, *_args: Any, **_kwargs: Any) -> None:
+        nonlocal unlinked
+        unlinked = True
+        raise AssertionError("recovery name consumed after destination sync failure")
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(Path, "unlink", forbidden_unlink)
+    with pytest.raises(OSError, match="destination directory fsync failed"):
+        publication._publish_no_replace(pending, output)
+
+    assert unlinked is False
+    assert output.read_text() == "completed bank\n"
+    assert pending.read_text() == "completed bank\n"
+
+
+def test_recovery_does_not_publish_manifest_after_pending_unlink_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    bank_dir = tmp_path / "bank"
+    manifest_dir = tmp_path / "manifest"
+    bank_dir.mkdir()
+    manifest_dir.mkdir()
+    output = bank_dir / "bank.jsonl"
+    meta = manifest_dir / "bank.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_output, output)
+
+    real_fsync = os.fsync
+    real_link = os.link
+    real_unlink = Path.unlink
+    bank_directory_syncs = 0
+    published_links: list[tuple[Path, Path]] = []
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal bank_directory_syncs
+        descriptor_stat = os.fstat(descriptor)
+        bank_stat = bank_dir.stat()
+        if (
+            descriptor_stat.st_dev == bank_stat.st_dev
+            and descriptor_stat.st_ino == bank_stat.st_ino
+        ):
+            bank_directory_syncs += 1
+            if bank_directory_syncs == 3:
+                raise OSError(errno.EIO, "pending unlink directory fsync failed")
+        real_fsync(descriptor)
+
+    def link_spy(source: Path, destination: Path) -> None:
+        published_links.append((source, destination))
+        real_link(source, destination)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    with pytest.raises(OSError, match="pending unlink directory fsync failed"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert bank_directory_syncs == 3
+    assert published_links == []
+    assert output.read_text() == "completed bank\n"
+    assert not pending_output.exists()
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == manifest
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    monkeypatch.setattr(publication.os, "link", real_link)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    assert publication._require_new_output_pair(output, meta, overwrite=False) is True
+    assert json.loads(meta.read_text()) == manifest
+
+
 def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -6080,6 +6412,9 @@ def test_post_collection_failure_preserves_complete_pending_bank_with_manifest(
             "pending_output": pending_output,
             "output": output,
             "pending_manifest": pending_meta,
+            "output_artifact": producer._prepared_output_artifact(
+                pending_output, output,
+            ),
             "output_locks": (),
             "provenance": {"schema": producer._SCHEMA},
             "row_count": 2,
