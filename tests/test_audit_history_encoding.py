@@ -24,6 +24,7 @@ emitted by `scripts/verify_audit_history_transform.py`). Tests never read
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -487,6 +488,165 @@ def test_match_audit_rows_unifies_the_same_game_across_shards() -> None:
         candidate_has_game=False,
         candidate_game=-1,
     )
+
+
+def _matched_origin_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claimed_game_id: int = 7,
+    claimed_source_row: int = 0,
+    claimed_duplicate_count: int = 1,
+    claimed_ambiguous: bool = False,
+    source_game_ids: tuple[int, ...] = (7,),
+) -> tuple[Path, Path, Path, list[dict[str, str]]]:
+    from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+    from chess_anti_engine.eval.audit import position_key
+    from scripts import match_audit_rows as matcher
+
+    board = chess.Board()
+    key = position_key(board)
+    stored = encode_cboard(
+        CBoard.from_board(board),
+        input_history_encoding=STORED_HISTORY_ENCODING,
+        input_extra_features=STORED_EXTRA_FEATURES,
+    ).astype(np.float16)
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text(json.dumps({"key": key, "fen": board.fen()}) + "\n")
+    snapshot = tmp_path / "snapshot"
+    shard = snapshot / "s0.zarr"
+    shard.mkdir(parents=True)
+    matched = tmp_path / "matched.npz"
+    np.savez(
+        matched,
+        x_stored=stored[None],
+        found=np.asarray([True]),
+        key=np.asarray([key]),
+        src_shard=np.asarray([shard.name]),
+        src_row=np.asarray([claimed_source_row], dtype=np.int64),
+        game_id=np.asarray([claimed_game_id], dtype=np.int64),
+        has_game_id=np.asarray([1], dtype=np.uint8),
+        source_cluster_ambiguous=np.asarray([claimed_ambiguous], dtype=np.uint8),
+        dup_count=np.asarray([claimed_duplicate_count], dtype=np.int64),
+        snapshot=np.asarray([str(snapshot.resolve())]),
+        audit_set=np.asarray([str(audit.resolve())]),
+        input_history_encoding=np.asarray([STORED_HISTORY_ENCODING]),
+        input_extra_features=np.asarray([STORED_EXTRA_FEATURES]),
+    )
+
+    def fake_load(path: Path, *, lazy: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+        assert lazy
+        assert Path(path) == shard
+        return {
+            "x": np.stack([stored] * len(source_game_ids)),
+            "game_id": np.asarray(source_game_ids, dtype=np.int64),
+            "has_game_id": np.ones(len(source_game_ids), dtype=np.uint8),
+            "_input_history_encoding": np.asarray([STORED_HISTORY_ENCODING]),
+        }, {}
+
+    monkeypatch.setattr(matcher, "load_shard_arrays", fake_load)
+    monkeypatch.setattr(matcher, "_report_builder_is_bound", lambda _report: True)
+    report = matcher.default_matched_rows_report_path(matched)
+    row_origins = [{
+        "key": key,
+        "shard": shard.name,
+        "row": claimed_source_row,
+        "stored_x_sha256": matcher._row_sha256(stored),
+        "has_game_id": True,
+        "game_id": claimed_game_id,
+        "source_cluster_ambiguous": claimed_ambiguous,
+        "duplicate_count": claimed_duplicate_count,
+    }]
+    row_origins_document = json.dumps(
+        row_origins, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode()
+    report.write_text(json.dumps({
+        "schema": matcher.MATCHED_ROWS_REPORT_SCHEMA,
+        "complete": True,
+        "verification_passed": True,
+        "builder": {},
+        "audit_set": matcher._file_artifact(audit),
+        "output": matcher._file_artifact(matched),
+        "snapshot_inventory": matcher.snapshot_inventory(snapshot),
+        "row_origin_count": 1,
+        "row_origins_sha256": matcher._sha256_bytes(row_origins_document),
+        "row_origins": row_origins,
+    }))
+    return audit, matched, report, [{"key": key, "fen": board.fen()}]
+
+
+def test_selected_origin_verification_requires_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.match_audit_rows import verify_selected_row_origins
+
+    audit, matched, report, selected = _matched_origin_fixture(tmp_path, monkeypatch)
+    report.unlink()
+    with pytest.raises(SystemExit, match="regular file"):
+        verify_selected_row_origins(
+            audit_set=audit, matched_rows=matched, report_path=report, selected=selected,
+        )
+
+
+def test_selected_origin_verification_rejects_forged_report_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.match_audit_rows import verify_selected_row_origins
+
+    audit, matched, report, selected = _matched_origin_fixture(tmp_path, monkeypatch)
+    payload = json.loads(report.read_text())
+    payload["output"]["sha256"] = "0" * 64
+    report.write_text(json.dumps(payload))
+    with pytest.raises(SystemExit, match="does not bind the consumed NPZ"):
+        verify_selected_row_origins(
+            audit_set=audit, matched_rows=matched, report_path=report, selected=selected,
+        )
+
+
+def test_selected_origin_verification_rejects_fabricated_unique_game_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.match_audit_rows import verify_selected_row_origins
+
+    audit, matched, report, selected = _matched_origin_fixture(
+        tmp_path, monkeypatch, claimed_game_id=99,
+    )
+    with pytest.raises(SystemExit, match="game_id"):
+        verify_selected_row_origins(
+            audit_set=audit, matched_rows=matched, report_path=report, selected=selected,
+        )
+
+
+def test_selected_origin_verification_rejects_one_field_origin_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.match_audit_rows import verify_selected_row_origins
+
+    audit, matched, report, selected = _matched_origin_fixture(
+        tmp_path, monkeypatch, claimed_source_row=1,
+    )
+    with pytest.raises(SystemExit, match="src_row"):
+        verify_selected_row_origins(
+            audit_set=audit, matched_rows=matched, report_path=report, selected=selected,
+        )
+
+
+def test_selected_origin_verification_recomputes_duplicate_cluster_ambiguity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.match_audit_rows import verify_selected_row_origins
+
+    audit, matched, report, selected = _matched_origin_fixture(
+        tmp_path,
+        monkeypatch,
+        claimed_duplicate_count=2,
+        claimed_ambiguous=False,
+        source_game_ids=(7, 8),
+    )
+    with pytest.raises(SystemExit, match="source_cluster_ambiguous"):
+        verify_selected_row_origins(
+            audit_set=audit, matched_rows=matched, report_path=report, selected=selected,
+        )
 
 
 def test_matched_rows_requires_presence_mask_for_decision_grade_only(

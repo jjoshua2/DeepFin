@@ -1333,6 +1333,7 @@ def _producer_sources_match_revision(sources: Any, producer_git_sha: Any) -> boo
         ),
         "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
         "scripts.repo_output_guard": "scripts/repo_output_guard.py",
+        "scripts.match_audit_rows": "scripts/match_audit_rows.py",
         "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
         "chess_anti_engine.mcts.search_options": (
             "chess_anti_engine/mcts/search_options.py"
@@ -1541,6 +1542,14 @@ def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "checkpoint_params_sha256": artifact_sha("checkpoint_params"),
             "audit_set_sha256": artifact_sha("audit_set"),
             "matched_rows_sha256": artifact_sha("matched_rows"),
+            "matched_rows_report_sha256": artifact_sha("matched_rows_report"),
+            "matched_rows_snapshot_inventory_sha256": (
+                manifest.get("matched_row_origin_verification", {})
+                .get("snapshot_inventory", {})
+                .get("inventory_sha256")
+                if isinstance(manifest.get("matched_row_origin_verification"), dict)
+                else None
+            ),
             "max_positions": manifest.get("requested_max_positions"),
             "panel_selection": manifest.get("panel_selection"),
             "deep_reference_evidence": manifest.get("deep_reference_evidence"),
@@ -1872,6 +1881,173 @@ def _source_group(row: dict[str, Any]) -> str | None:
     ):
         return None
     return "\0".join((source_dir, str(game_id)))
+
+
+def _matched_origin_proofs(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Validate banked replay readback and recompute every game grouping claim."""
+    verification = manifest.get("matched_row_origin_verification")
+    report_artifact = manifest.get("matched_rows_report")
+    if not isinstance(verification, dict):
+        raise ValueError("matched-row origin verification is missing")
+    if (
+        verification.get("schema") != "deepfin.matched_audit_rows.v1"
+        or verification.get("passed") is not True
+    ):
+        raise ValueError("matched-row origin verification did not pass")
+    banked_report = verification.get("report")
+    if (
+        not _artifact_provenance_complete(report_artifact)
+        or not _artifact_provenance_complete(banked_report)
+        or not isinstance(report_artifact, dict)
+        or not isinstance(banked_report, dict)
+        or any(
+            report_artifact.get(field) != banked_report.get(field)
+            for field in ("path", "size", "sha256")
+        )
+    ):
+        raise ValueError("matched-row report identity is not bound to origin verification")
+    report_builder = verification.get("report_builder")
+    builder_script = (
+        report_builder.get("script") if isinstance(report_builder, dict) else None
+    )
+    builder_sha = (
+        report_builder.get("git_sha") if isinstance(report_builder, dict) else None
+    )
+    if (
+        not isinstance(report_builder, dict)
+        or report_builder.get("git_dirty") is not False
+        or not isinstance(builder_script, dict)
+        or builder_script.get("repo_relative_path") != "scripts/match_audit_rows.py"
+        or builder_script.get("matches_git_revision") is not True
+        or not isinstance(builder_sha, str)
+    ):
+        raise ValueError("matched-row builder revision provenance is incomplete")
+    committed_builder = _git_file_at_commit(builder_sha, "scripts/match_audit_rows.py")
+    if (
+        committed_builder is None
+        or builder_script.get("size") != len(committed_builder)
+        or builder_script.get("sha256")
+        != hashlib.sha256(committed_builder).hexdigest()
+    ):
+        raise ValueError("matched-row builder source is not bound to its Git revision")
+    for proof_field, manifest_field in (
+        ("report_audit_set", "audit_set"),
+        ("report_output", "matched_rows"),
+    ):
+        proof_artifact = verification.get(proof_field)
+        manifest_artifact = manifest.get(manifest_field)
+        if (
+            not isinstance(proof_artifact, dict)
+            or not isinstance(manifest_artifact, dict)
+            or any(
+                proof_artifact.get(field) != manifest_artifact.get(field)
+                for field in ("path", "size", "sha256")
+            )
+        ):
+            raise ValueError("matched-row report input/output bindings are inconsistent")
+    if verification.get("report_input_stability") != {
+        "audit_set_unchanged": True,
+        "snapshot_unchanged": True,
+        "builder_checkout_unchanged": True,
+    }:
+        raise ValueError("matched-row report did not prove stable builder inputs")
+    snapshot = verification.get("snapshot_inventory")
+    if (
+        not isinstance(snapshot, dict)
+        or not isinstance(snapshot.get("path"), str)
+        or not snapshot.get("path")
+        or not _positive_int(snapshot.get("shard_count"))
+        or not _valid_sha256(snapshot.get("inventory_sha256"))
+        or not isinstance(snapshot.get("shards"), list)
+        or len(snapshot["shards"]) != snapshot["shard_count"]
+    ):
+        raise ValueError("matched-row replay snapshot inventory is incomplete")
+    shard_names: set[str] = set()
+    for shard in snapshot["shards"]:
+        if (
+            not isinstance(shard, dict)
+            or not isinstance(shard.get("name"), str)
+            or not str(shard["name"]).endswith(".zarr")
+            or shard["name"] in shard_names
+            or not _nonnegative_int(shard.get("device"))
+            or not _nonnegative_int(shard.get("inode"))
+            or not _nonnegative_int(shard.get("mtime_ns"))
+            or not _nonnegative_int(shard.get("ctime_ns"))
+            or not _nonnegative_int(shard.get("file_count"))
+            or not _nonnegative_int(shard.get("total_bytes"))
+            or not _valid_sha256(shard.get("entries_identity_sha256"))
+        ):
+            raise ValueError("matched-row replay shard inventory is malformed")
+        shard_names.add(str(shard["name"]))
+    inventory_document = json.dumps(
+        snapshot["shards"], sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    if hashlib.sha256(inventory_document).hexdigest() != snapshot["inventory_sha256"]:
+        raise ValueError("matched-row replay snapshot inventory digest is inconsistent")
+    rows = verification.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("matched-row origin proof rows are missing")
+    result: dict[str, dict[str, Any]] = {}
+    for proof in rows:
+        if not isinstance(proof, dict):
+            raise ValueError("matched-row origin proof is not an object")
+        key = proof.get("key")
+        source_dir = proof.get("source_dir")
+        selected = proof.get("selected_origin")
+        occurrences = proof.get("occurrences")
+        if (
+            not isinstance(key, str)
+            or not key
+            or key in result
+            or source_dir != snapshot["path"]
+            or not isinstance(selected, dict)
+            or not isinstance(occurrences, list)
+            or not occurrences
+            or selected != occurrences[0]
+            or proof.get("duplicate_count") != len(occurrences)
+            or proof.get("source_cluster_ambiguous") is not False
+            or proof.get("source_cluster_unique") is not True
+        ):
+            raise ValueError("matched-row selected-origin proof is inconsistent")
+        selected_game = selected.get("game_id")
+        if selected.get("has_game_id") is not True or not _nonnegative_int(selected_game):
+            raise ValueError(f"{key}: selected replay origin lacks a source game id")
+        for occurrence in occurrences:
+            if (
+                not isinstance(occurrence, dict)
+                or occurrence.get("position_key") != key
+                or not isinstance(occurrence.get("shard"), str)
+                or occurrence.get("shard") not in shard_names
+                or not _nonnegative_int(occurrence.get("row"))
+                or not _valid_sha256(occurrence.get("stored_x_sha256"))
+                or occurrence.get("has_game_id") is not True
+                or occurrence.get("game_id") != selected_game
+            ):
+                raise ValueError(f"{key}: duplicate-origin proof does not establish one game")
+        result[key] = proof
+    expected_count = verification.get("selected_position_count")
+    expected_digest = verification.get("selected_position_keys_sha256")
+    actual_digest = hashlib.sha256(json.dumps(
+        sorted(result), ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    if expected_count != len(result) or expected_digest != actual_digest:
+        raise ValueError("matched-row origin proof key inventory is inconsistent")
+    return result
+
+
+def _row_matches_origin_proof(row: Mapping[str, Any], proof: Mapping[str, Any]) -> bool:
+    selected = proof.get("selected_origin")
+    if not isinstance(selected, dict):
+        return False
+    source_dir = proof.get("source_dir")
+    game_id = selected.get("game_id")
+    return bool(
+        row.get("key") == proof.get("key")
+        and row.get("source_dir") == source_dir
+        and row.get("shard") == selected.get("shard")
+        and row.get("game_id") == game_id
+        and row.get("group_id") == "\0".join((str(source_dir), str(game_id)))
+    )
 
 
 def _active_search_values_valid(active_path: str, values: Any) -> bool:
@@ -2233,7 +2409,7 @@ def _require_manifest(
         f"{name} artifact provenance is incomplete"
         for name in (
             "producer_script", "publication_helper", "checkpoint", "audit_set",
-            "matched_rows",
+            "matched_rows", "matched_rows_report",
         )
         if not _artifact_provenance_complete(manifest.get(name))
     )
@@ -2289,6 +2465,10 @@ def _require_manifest(
         failures.append("production search warmup was not completed and isolated")
     if manifest.get("game_group_kind") != "source_dir:game_id":
         failures.append(f"game_group_kind={manifest.get('game_group_kind')!r}")
+    try:
+        _matched_origin_proofs(manifest)
+    except ValueError as exc:
+        failures.append(str(exc))
     source_game_group_count = manifest.get("source_game_group_count")
     minimum_source_games = manifest.get("minimum_decision_grade_source_games")
     source_group_resolution_passed = manifest.get("source_group_resolution_passed")
@@ -2894,6 +3074,18 @@ def load_transitions(
     }
     if not methodology_smoke and excluded_keys.intersection(by_key):
         raise ValueError("a trajectory is both completed and excluded")
+    origin_proofs: dict[str, dict[str, Any]] = {}
+    if not methodology_smoke:
+        origin_proofs = _matched_origin_proofs(manifest)
+        selected_keys = set(by_key) | excluded_keys
+        if selected_keys != set(origin_proofs):
+            raise ValueError(
+                "matched-row origin proofs do not cover exactly the selected positions"
+            )
+        for entry in manifest.get("excluded_positions", []):
+            key = str(entry["key"])
+            if not _row_matches_origin_proof(entry, origin_proofs[key]):
+                raise ValueError(f"{key}: excluded source group disagrees with row readback")
     if not methodology_smoke and not _panel_selection_matches_observations(
         manifest, by_key,
     ):
@@ -2929,6 +3121,14 @@ def load_transitions(
             trajectory,
             methodology_smoke=methodology_smoke,
         )
+        if (
+            not methodology_smoke
+            and any(
+                not _row_matches_origin_proof(row, origin_proofs[key])
+                for row in trajectory
+            )
+        ):
+            raise ValueError(f"{key}: trajectory source group disagrees with row readback")
         for index, (lower, upper) in enumerate(pairwise(trajectory)):
             observed_gap, stable = recomputed_states[index]
             game_id = lower.get("game_id")

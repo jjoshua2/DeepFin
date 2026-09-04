@@ -65,9 +65,13 @@ current_live_20260602_202037_v2threats
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 import chess
@@ -89,6 +93,154 @@ _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
 # The 7 non-current lc0 history frames: 0% occupied FEN-only, ~71% occupied
 # from a stored row. This block IS audit-v2.
 _HISTORY_PLANES = slice(13, 104)
+MATCHED_ROWS_REPORT_SCHEMA = "deepfin.matched_audit_rows.v1"
+
+
+def default_matched_rows_report_path(matched_rows: str | Path) -> Path:
+    """Provenance sidecar written for one matched-row NPZ."""
+    path = Path(matched_rows)
+    return path.with_suffix(path.suffix + ".report.json")
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _file_artifact(path: Path) -> dict[str, Any]:
+    """Content and filesystem identity of one immutable input/output file."""
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise SystemExit(f"matched-row provenance requires a regular file: {resolved}")
+    file_stat = resolved.stat()
+    return {
+        "path": str(resolved),
+        "size": int(file_stat.st_size),
+        "mtime_ns": int(file_stat.st_mtime_ns),
+        "ctime_ns": int(file_stat.st_ctime_ns),
+        "device": int(file_stat.st_dev),
+        "inode": int(file_stat.st_ino),
+        "sha256": _sha256_bytes(resolved.read_bytes()),
+    }
+
+
+def _artifact_content_identity(value: object) -> tuple[object, object, object]:
+    if not isinstance(value, dict):
+        return None, None, None
+    return value.get("path"), value.get("size"), value.get("sha256")
+
+
+def _git_file_at_commit(commit: str, relative_path: str) -> bytes | None:
+    relative = PurePosixPath(relative_path)
+    if (
+        len(commit) != 40
+        or any(char not in "0123456789abcdef" for char in commit.lower())
+        or not relative_path
+        or relative.is_absolute()
+        or ":" in relative_path
+        or any(part in ("", ".", "..") for part in relative.parts)
+    ):
+        return None
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{commit}:{relative.as_posix()}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _builder_git_provenance() -> dict[str, Any]:
+    """Bind the index builder to exact tracked bytes and a clean revision."""
+    repo_root = Path(__file__).resolve().parents[1]
+    relative_path = Path(__file__).resolve().relative_to(repo_root).as_posix()
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip())
+    except (OSError, subprocess.CalledProcessError):
+        revision, dirty = "unknown", True
+    artifact = _file_artifact(Path(__file__))
+    committed = _git_file_at_commit(revision, relative_path)
+    return {
+        "git_sha": revision,
+        "git_dirty": dirty,
+        "script": {
+            **artifact,
+            "repo_relative_path": relative_path,
+            "matches_git_revision": bool(
+                committed is not None
+                and artifact["size"] == len(committed)
+                and artifact["sha256"] == _sha256_bytes(committed)
+            ),
+        },
+    }
+
+
+def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
+    """Deterministic identity inventory of every replay shard and its files.
+
+    The inventory intentionally hashes filesystem identities, not an additional
+    full copy of every replay byte.  The producer separately reads and verifies
+    every candidate row needed to prove the selected positions' origin and
+    duplicate-game identity.  Two inventory passes make concurrent replacement
+    visible without turning a minute-long row scan into a multi-hundred-GB hash.
+    """
+    root = Path(snapshot).expanduser().resolve()
+    shards = sorted(root.glob("*.zarr"), key=lambda path: path.name)
+    if not shards:
+        raise SystemExit(f"no *.zarr shards under {root}")
+    shard_rows: list[dict[str, Any]] = []
+    for shard in shards:
+        shard_stat = shard.stat()
+        entries: list[list[object]] = []
+        total_bytes = 0
+        for child in sorted(
+            (path for path in shard.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(shard).as_posix(),
+        ):
+            child_stat = child.stat()
+            total_bytes += int(child_stat.st_size)
+            entries.append([
+                child.relative_to(shard).as_posix(),
+                int(child_stat.st_size),
+                int(child_stat.st_mtime_ns),
+                int(child_stat.st_ctime_ns),
+                int(child_stat.st_dev),
+                int(child_stat.st_ino),
+            ])
+        entries_document = json.dumps(
+            entries, ensure_ascii=True, separators=(",", ":"),
+        ).encode("utf-8")
+        shard_rows.append({
+            "name": shard.name,
+            "device": int(shard_stat.st_dev),
+            "inode": int(shard_stat.st_ino),
+            "mtime_ns": int(shard_stat.st_mtime_ns),
+            "ctime_ns": int(shard_stat.st_ctime_ns),
+            "file_count": len(entries),
+            "total_bytes": total_bytes,
+            "entries_identity_sha256": _sha256_bytes(entries_document),
+        })
+    document = json.dumps(
+        shard_rows, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "path": str(root),
+        "shard_count": len(shard_rows),
+        "shards": shard_rows,
+        "inventory_sha256": _sha256_bytes(document),
+    }
 
 
 def board_fingerprint(board: chess.Board) -> bytes:
@@ -187,6 +339,356 @@ def _source_game_cluster_is_ambiguous(
     )
 
 
+def _strict_report(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read one immutable report and reject duplicate JSON keys."""
+    before = _file_artifact(path)
+
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise SystemExit(f"matched-row report has duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=no_duplicates)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot read matched-row report {path}: {exc}") from exc
+    after = _file_artifact(path)
+    if before != after:
+        raise SystemExit(f"matched-row report changed while being read: {path}")
+    if not isinstance(payload, dict):
+        raise SystemExit(f"matched-row report is not a JSON object: {path}")
+    return payload, before
+
+
+def _report_builder_is_bound(report: Mapping[str, Any]) -> bool:
+    builder = report.get("builder")
+    if not isinstance(builder, dict) or builder.get("git_dirty") is not False:
+        return False
+    revision = builder.get("git_sha")
+    script = builder.get("script")
+    if (
+        not isinstance(revision, str)
+        or not isinstance(script, dict)
+        or script.get("repo_relative_path") != "scripts/match_audit_rows.py"
+        or script.get("matches_git_revision") is not True
+    ):
+        return False
+    committed = _git_file_at_commit(revision, "scripts/match_audit_rows.py")
+    return bool(
+        committed is not None
+        and script.get("size") == len(committed)
+        and script.get("sha256") == _sha256_bytes(committed)
+    )
+
+
+def _matched_array(data: Any, name: str, n: int) -> np.ndarray:
+    if name not in data:
+        raise SystemExit(f"matched-row index lacks decision-grade field {name!r}")
+    value = np.asarray(data[name])
+    if value.ndim != 1 or value.shape[0] != n:
+        raise SystemExit(
+            f"matched-row field {name!r} has shape {value.shape}; expected ({n},)"
+        )
+    return value
+
+
+def _row_sha256(row: np.ndarray) -> str:
+    value = np.ascontiguousarray(np.asarray(row, dtype=np.float16))
+    return _sha256_bytes(value.tobytes())
+
+
+def verify_selected_row_origins(
+    *,
+    audit_set: str | Path,
+    matched_rows: str | Path,
+    report_path: str | Path,
+    selected: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Authenticate selected cluster identities by replay-snapshot readback.
+
+    The report and NPZ are build artifacts, not signatures.  Their claims only
+    become decision-grade after this function independently rescans the exact
+    snapshot, reads every selected source row, and recomputes all occurrences'
+    game identities.  That full scan is what prevents a fabricated set of
+    unique NPZ game ids from narrowing a clustered interval.
+    """
+    audit_path = Path(audit_set).expanduser().resolve()
+    matched_path = Path(matched_rows).expanduser().resolve()
+    report_file = Path(report_path).expanduser().resolve()
+    report, report_artifact = _strict_report(report_file)
+    if report.get("schema") != MATCHED_ROWS_REPORT_SCHEMA:
+        raise SystemExit(
+            f"matched-row report has schema {report.get('schema')!r}; rebuild it"
+        )
+    if report.get("complete") is not True or report.get("verification_passed") is not True:
+        raise SystemExit("matched-row report is incomplete or failed its builder checks")
+    actual_audit = _file_artifact(audit_path)
+    actual_matched = _file_artifact(matched_path)
+    if _artifact_content_identity(report.get("audit_set")) != (
+        actual_audit["path"], actual_audit["size"], actual_audit["sha256"],
+    ):
+        raise SystemExit("matched-row report does not bind the consumed audit set")
+    if _artifact_content_identity(report.get("output")) != (
+        actual_matched["path"], actual_matched["size"], actual_matched["sha256"],
+    ):
+        raise SystemExit("matched-row report does not bind the consumed NPZ")
+    if not _report_builder_is_bound(report):
+        raise SystemExit("matched-row report builder is dirty or not bound to its Git revision")
+    report_origins = report.get("row_origins")
+    if not isinstance(report_origins, list) or not all(
+        isinstance(row, dict) for row in report_origins
+    ):
+        raise SystemExit("matched-row report lacks raw row-origin evidence")
+    report_origins_document = json.dumps(
+        report_origins, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    if (
+        report.get("row_origin_count") != len(report_origins)
+        or report.get("row_origins_sha256") != _sha256_bytes(report_origins_document)
+    ):
+        raise SystemExit("matched-row report row-origin inventory is inconsistent")
+    report_origins_by_key = {
+        str(row.get("key")): row for row in report_origins
+    }
+    if len(report_origins_by_key) != len(report_origins):
+        raise SystemExit("matched-row report repeats a row-origin key")
+
+    reported_snapshot = report.get("snapshot_inventory")
+    if not isinstance(reported_snapshot, dict):
+        raise SystemExit("matched-row report lacks a replay snapshot inventory")
+    snapshot_path = Path(str(reported_snapshot.get("path", ""))).expanduser().resolve()
+    before_inventory = snapshot_inventory(snapshot_path)
+    if before_inventory != reported_snapshot:
+        raise SystemExit("replay snapshot identity differs from the matched-row report")
+
+    selected_by_key: dict[str, chess.Board] = {}
+    for record in selected:
+        key = record.get("key")
+        fen = record.get("fen")
+        if not isinstance(key, str) or not key or not isinstance(fen, str):
+            raise SystemExit("selected audit origin request lacks key/FEN")
+        if key in selected_by_key:
+            raise SystemExit(f"selected audit origin request repeats key {key!r}")
+        try:
+            board = chess.Board(fen)
+        except ValueError as exc:
+            raise SystemExit(f"selected audit key {key!r} has invalid FEN") from exc
+        if not board.turn or position_key(board) != key:
+            raise SystemExit(f"selected audit key {key!r} disagrees with its canonical FEN")
+        selected_by_key[key] = board
+
+    with np.load(matched_path, allow_pickle=False) as data:
+        if "key" not in data or "found" not in data or "x_stored" not in data:
+            raise SystemExit("matched-row index lacks current decision-grade row fields")
+        raw_keys = np.asarray(data["key"])
+        if raw_keys.ndim != 1 or raw_keys.dtype.kind not in ("S", "U"):
+            raise SystemExit("matched-row key field is not a one-dimensional string array")
+        all_keys = [str(value) for value in raw_keys]
+        n = len(all_keys)
+        found = np.asarray(data["found"])
+        if found.ndim != 1 or found.shape[0] != n or found.dtype != np.dtype(bool):
+            raise SystemExit("matched-row found mask has the wrong shape")
+        if len(set(all_keys)) != n:
+            raise SystemExit("matched-row index contains duplicate audit keys")
+        key_to_index = {key: index for index, key in enumerate(all_keys)}
+        x_stored = np.asarray(data["x_stored"])
+        if (
+            x_stored.shape != (n, STORED_PLANES, 8, 8)
+            or x_stored.dtype != np.dtype(np.float16)
+        ):
+            raise SystemExit("matched-row x_stored has the wrong shape")
+        raw_src_shard = _matched_array(data, "src_shard", n)
+        raw_src_row = _matched_array(data, "src_row", n)
+        raw_game_id = _matched_array(data, "game_id", n)
+        has_game_id = _matched_array(data, "has_game_id", n)
+        ambiguity = _matched_array(data, "source_cluster_ambiguous", n)
+        raw_dup_count = _matched_array(data, "dup_count", n)
+        if raw_src_shard.dtype.kind not in ("S", "U"):
+            raise SystemExit("matched-row src_shard is not a string array")
+        if any(
+            value.dtype != np.dtype(np.int64)
+            for value in (raw_src_row, raw_game_id, raw_dup_count)
+        ):
+            raise SystemExit("matched-row row/game/duplicate claims are not int64")
+        if any(
+            value.dtype != np.dtype(np.uint8)
+            for value in (has_game_id, ambiguity)
+        ):
+            raise SystemExit("matched-row presence/ambiguity claims are not uint8")
+        src_shard = raw_src_shard.astype(str)
+        src_row = raw_src_row.astype(np.int64, copy=False)
+        game_id = raw_game_id.astype(np.int64, copy=False)
+        dup_count = raw_dup_count.astype(np.int64, copy=False)
+        for name, value in (
+            ("has_game_id", has_game_id),
+            ("source_cluster_ambiguous", ambiguity),
+        ):
+            if np.any((value != 0) & (value != 1)):
+                raise SystemExit(f"matched-row {name} is not binary")
+        def scalar_string(name: str) -> str:
+            if name not in data:
+                raise SystemExit(f"matched-row NPZ lacks {name!r}")
+            raw = np.asarray(data[name])
+            if raw.size != 1 or raw.dtype.kind not in ("S", "U"):
+                raise SystemExit(f"matched-row NPZ {name!r} is not one string")
+            return str(raw.reshape(-1)[0])
+
+        matched_snapshot = scalar_string("snapshot")
+        if Path(matched_snapshot).expanduser().resolve() != snapshot_path:
+            raise SystemExit("matched-row NPZ and report name different replay snapshots")
+        matched_audit = scalar_string("audit_set")
+        if Path(matched_audit).expanduser().resolve() != audit_path:
+            raise SystemExit("matched-row NPZ and report name different audit sets")
+        if (
+            scalar_string("input_history_encoding") != STORED_HISTORY_ENCODING
+            or scalar_string("input_extra_features") != STORED_EXTRA_FEATURES
+        ):
+            raise SystemExit("matched-row NPZ does not declare the production stored layout")
+
+        selected_indices: dict[str, int] = {}
+        for key in selected_by_key:
+            index = key_to_index.get(key)
+            if index is None or not bool(found[index]):
+                raise SystemExit(f"matched-row index has no recovered row for {key!r}")
+            selected_indices[key] = index
+
+        fps: dict[bytes, list[str]] = {}
+        for key, board in selected_by_key.items():
+            fps.setdefault(board_fingerprint(board), []).append(key)
+        occurrences: dict[str, list[dict[str, Any]]] = {
+            key: [] for key in selected_by_key
+        }
+        for shard in sorted(snapshot_path.glob("*.zarr"), key=lambda path: path.name):
+            group, _meta = load_shard_arrays(shard, lazy=True)
+            layout = _shard_layout(group)
+            if layout != (STORED_HISTORY_ENCODING, STORED_PLANES):
+                continue
+            rows = group["x"]
+            x12 = np.asarray(rows[:, :PIECE_PLANES], dtype=np.float32)
+            candidates: list[tuple[int, str]] = []
+            for row_index, fingerprint in enumerate(shard_fingerprints(x12)):
+                candidates.extend(
+                    (row_index, key) for key in fps.get(fingerprint, ())
+                )
+            if not candidates:
+                continue
+            game_values, game_presence = _game_ids_and_presence(group, source=shard)
+            for row_index, key in candidates:
+                stored = np.asarray(rows[row_index], dtype=np.float16)
+                board = decode_board_from_planes(
+                    np.asarray(stored, dtype=np.float32),
+                    input_history_encoding=STORED_HISTORY_ENCODING,
+                )
+                if board is None or position_key(board) != key:
+                    continue
+                has_game = bool(
+                    game_presence is not None and game_presence[row_index]
+                )
+                source_game = (
+                    int(game_values[row_index])
+                    if has_game and game_values is not None else -1
+                )
+                occurrences[key].append({
+                    "shard": shard.name,
+                    "row": int(row_index),
+                    "position_key": key,
+                    "stored_x_sha256": _row_sha256(stored),
+                    "has_game_id": has_game,
+                    "game_id": source_game if has_game else None,
+                })
+
+        proofs: list[dict[str, Any]] = []
+        for key in sorted(selected_by_key):
+            index = selected_indices[key]
+            copies = occurrences[key]
+            if not copies:
+                raise SystemExit(f"replay snapshot no longer contains selected key {key!r}")
+            first = copies[0]
+            first_has_game = bool(first["has_game_id"])
+            first_game = int(first["game_id"]) if first_has_game else -1
+            recomputed_ambiguous = any(
+                _source_game_cluster_is_ambiguous(
+                    existing_has_game=first_has_game,
+                    existing_game=first_game,
+                    candidate_has_game=bool(copy["has_game_id"]),
+                    candidate_game=(
+                        int(copy["game_id"]) if copy["has_game_id"] else -1
+                    ),
+                )
+                for copy in copies[1:]
+            )
+            mismatches: list[str] = []
+            if str(src_shard[index]) != first["shard"]:
+                mismatches.append("src_shard")
+            if int(src_row[index]) != first["row"]:
+                mismatches.append("src_row")
+            if _row_sha256(x_stored[index]) != first["stored_x_sha256"]:
+                mismatches.append("x_stored")
+            if bool(has_game_id[index]) != first_has_game:
+                mismatches.append("has_game_id")
+            if first_has_game and int(game_id[index]) != first_game:
+                mismatches.append("game_id")
+            if bool(ambiguity[index]) != recomputed_ambiguous:
+                mismatches.append("source_cluster_ambiguous")
+            if int(dup_count[index]) != len(copies):
+                mismatches.append("dup_count")
+            expected_report_origin = {
+                "key": key,
+                "shard": str(src_shard[index]),
+                "row": int(src_row[index]),
+                "stored_x_sha256": _row_sha256(x_stored[index]),
+                "has_game_id": bool(has_game_id[index]),
+                "game_id": int(game_id[index]) if bool(has_game_id[index]) else None,
+                "source_cluster_ambiguous": bool(ambiguity[index]),
+                "duplicate_count": int(dup_count[index]),
+            }
+            if report_origins_by_key.get(key) != expected_report_origin:
+                mismatches.append("report_row_origin")
+            if mismatches:
+                raise SystemExit(
+                    f"matched-row claims disagree with replay readback for {key!r}: "
+                    + ", ".join(mismatches)
+                )
+            cluster_unique = bool(
+                first_has_game and first_game >= 0 and not recomputed_ambiguous
+            )
+            if not cluster_unique:
+                raise SystemExit(
+                    f"selected key {key!r} has no provably unique source-game cluster"
+                )
+            proofs.append({
+                "key": key,
+                "source_dir": str(snapshot_path),
+                "selected_origin": first,
+                "duplicate_count": len(copies),
+                "source_cluster_ambiguous": recomputed_ambiguous,
+                "source_cluster_unique": cluster_unique,
+                "occurrences": copies,
+            })
+
+    after_inventory = snapshot_inventory(snapshot_path)
+    if before_inventory != after_inventory:
+        raise SystemExit("replay snapshot changed while selected origins were verified")
+    return {
+        "schema": MATCHED_ROWS_REPORT_SCHEMA,
+        "passed": True,
+        "report": report_artifact,
+        "report_builder": report["builder"],
+        "report_audit_set": report["audit_set"],
+        "report_output": report["output"],
+        "report_input_stability": report.get("input_stability"),
+        "snapshot_inventory": before_inventory,
+        "selected_position_count": len(proofs),
+        "selected_position_keys_sha256": _sha256_bytes(json.dumps(
+            sorted(selected_by_key), ensure_ascii=True, separators=(",", ":"),
+        ).encode("utf-8")),
+        "rows": proofs,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -204,8 +706,23 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    out_path = args.out or default_matched_rows_path(args.audit_set)
+    args.audit_set = args.audit_set.expanduser().resolve()
+    args.snapshot = args.snapshot.expanduser().resolve()
+    out_path = (args.out or default_matched_rows_path(args.audit_set)).expanduser().resolve()
+    report_path = default_matched_rows_report_path(out_path)
+    if out_path.suffix != ".npz":
+        raise SystemExit("--out must end in .npz")
+    if (
+        out_path == args.audit_set
+        or report_path == args.audit_set
+        or out_path.is_relative_to(args.snapshot)
+        or report_path.is_relative_to(args.snapshot)
+    ):
+        raise SystemExit("matched-row outputs cannot replace an input or live inside the snapshot")
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    initial_audit_artifact = _file_artifact(args.audit_set)
+    initial_snapshot_inventory = snapshot_inventory(args.snapshot)
+    builder = _builder_git_provenance()
 
     audit = [
         json.loads(line)
@@ -376,10 +893,31 @@ def main() -> None:
     per_plane_stored = (
         np.abs(np.asarray(x_stored[found], dtype=np.float32)).max(axis=(2, 3)) > 1e-9
     ).mean(0)
+    row_origins = [
+        {
+            "key": keys[index],
+            "shard": src_shard[index],
+            "row": int(src_row[index]),
+            "stored_x_sha256": _row_sha256(x_stored[index]),
+            "has_game_id": bool(src_has_game[index]),
+            "game_id": (
+                int(src_game[index]) if bool(src_has_game[index]) else None
+            ),
+            "source_cluster_ambiguous": bool(src_cluster_ambiguous[index]),
+            "duplicate_count": int(dup_count[index]),
+        }
+        for index in np.flatnonzero(found)
+    ]
+    row_origins_document = json.dumps(
+        row_origins, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
 
-    report: dict[str, object] = {
-        "audit_set": str(args.audit_set),
-        "snapshot": str(args.snapshot),
+    report: dict[str, Any] = {
+        "schema": MATCHED_ROWS_REPORT_SCHEMA,
+        "complete": True,
+        "builder": builder,
+        "audit_set": initial_audit_artifact,
+        "snapshot_inventory": initial_snapshot_inventory,
         "input_history_encoding": STORED_HISTORY_ENCODING,
         "input_extra_features": STORED_EXTRA_FEATURES,
         "audit_rows": n,
@@ -390,6 +928,9 @@ def main() -> None:
         "fingerprint_candidate_pairs": fp_hits,
         "duplicate_multiplicity_mean": float(dup_count[found].mean()) if found.any() else 0.0,
         "duplicate_multiplicity_max": int(dup_count.max()),
+        "row_origin_count": len(row_origins),
+        "row_origins_sha256": _sha256_bytes(row_origins_document),
+        "row_origins": row_origins,
         # Each of these names exactly what it proves. The predecessor of this
         # block was a single `meta_planes_104_111_identical` boolean that read
         # FALSE on a sound join — because plane 108 is *supposed* to differ —
@@ -434,7 +975,30 @@ def main() -> None:
         snapshot=np.array([str(args.snapshot)]),
         audit_set=np.array([str(args.audit_set)]),
     )
-    report_path = out_path.with_suffix(out_path.suffix + ".report.json")
+    final_audit_artifact = _file_artifact(args.audit_set)
+    final_snapshot_inventory = snapshot_inventory(args.snapshot)
+    final_builder = _builder_git_provenance()
+    report.update({
+        "output": _file_artifact(out_path),
+        "input_stability": {
+            "audit_set_unchanged": initial_audit_artifact == final_audit_artifact,
+            "snapshot_unchanged": (
+                initial_snapshot_inventory == final_snapshot_inventory
+            ),
+            "builder_checkout_unchanged": builder == final_builder,
+        },
+    })
+    report["verification_passed"] = bool(
+        report["canonicalisation_current_frame_identical"]
+        and report["canonicalisation_castling_104_107_identical"]
+        and report["legal_move_sets_identical"]
+        and report["input_stability"]["audit_set_unchanged"]
+        and report["input_stability"]["snapshot_unchanged"]
+        and report["input_stability"]["builder_checkout_unchanged"]
+        and not skipped_layout
+        and builder["git_dirty"] is False
+        and builder["script"]["matches_git_revision"] is True
+    )
     report_path.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(json.dumps(report, indent=1))
     print(f"[match] index -> {out_path}\n[match] report -> {report_path}")

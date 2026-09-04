@@ -1024,6 +1024,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         ),
         "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
         "scripts.repo_output_guard": "scripts/repo_output_guard.py",
+        "scripts.match_audit_rows": "scripts/match_audit_rows.py",
         "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
         "chess_anti_engine.mcts.search_options": (
             "chess_anti_engine/mcts/search_options.py"
@@ -1205,6 +1206,51 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "matched_rows": {
             "path": "/matched.npz", "size": 1, "mtime_ns": 1, "sha256": "d" * 64,
         },
+        "matched_rows_report": {
+            "path": "/matched.npz.report.json", "size": 1,
+            "mtime_ns": 1, "sha256": "8" * 64,
+        },
+        "matched_row_origin_verification": {
+            "schema": "deepfin.matched_audit_rows.v1",
+            "passed": True,
+            "report": {
+                "path": "/matched.npz.report.json", "size": 1,
+                "mtime_ns": 1, "sha256": "8" * 64,
+            },
+            "snapshot_inventory": {
+                "path": "/snapshot",
+                "shard_count": 1,
+                "shards": [{
+                    "name": "s0.zarr", "device": 1, "inode": 1,
+                    "mtime_ns": 1, "ctime_ns": 1, "file_count": 1,
+                    "total_bytes": 1, "entries_identity_sha256": "5" * 64,
+                }],
+                "inventory_sha256": "7" * 64,
+            },
+            "selected_position_count": 1,
+            "selected_position_keys_sha256": hashlib.sha256(json.dumps(
+                [position_key(board)], ensure_ascii=True, separators=(",", ":"),
+            ).encode()).hexdigest(),
+            "rows": [{
+                "key": position_key(board),
+                "source_dir": "/snapshot",
+                "selected_origin": {
+                    "shard": "s0.zarr", "row": 0,
+                    "position_key": position_key(board),
+                    "stored_x_sha256": "6" * 64,
+                    "has_game_id": True, "game_id": 3,
+                },
+                "duplicate_count": 1,
+                "source_cluster_ambiguous": False,
+                "source_cluster_unique": True,
+                "occurrences": [{
+                    "shard": "s0.zarr", "row": 0,
+                    "position_key": position_key(board),
+                    "stored_x_sha256": "6" * 64,
+                    "has_game_id": True, "game_id": 3,
+                }],
+            }],
+        },
         "features_extension": {
             "path": "/_features_ext.so", "size": 1, "mtime_ns": 1,
             "sha256": "4" * 64,
@@ -1369,6 +1415,30 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
         "output": {"sha256": digest, "size": path.stat().st_size},
     }
+    matched_builder_script = dict(producer_sources["scripts.match_audit_rows"])
+    matched_builder_script["matches_git_revision"] = True
+    manifest["matched_row_origin_verification"].update({
+        "report_builder": {
+            "git_sha": "a" * 40,
+            "git_dirty": False,
+            "script": matched_builder_script,
+        },
+        "report_audit_set": dict(manifest["audit_set"]),
+        "report_output": dict(manifest["matched_rows"]),
+        "report_input_stability": {
+            "audit_set_unchanged": True,
+            "snapshot_unchanged": True,
+            "builder_checkout_unchanged": True,
+        },
+    })
+    synthetic_shards = manifest["matched_row_origin_verification"][
+        "snapshot_inventory"
+    ]["shards"]
+    manifest["matched_row_origin_verification"]["snapshot_inventory"][
+        "inventory_sha256"
+    ] = hashlib.sha256(json.dumps(
+        synthetic_shards, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode()).hexdigest()
     preregistration = {
         "schema": "deepfin.chunk_controller_preregistration.v2",
         "producer": {
@@ -1377,6 +1447,10 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "checkpoint_params_sha256": None,
             "audit_set_sha256": manifest["audit_set"]["sha256"],
             "matched_rows_sha256": manifest["matched_rows"]["sha256"],
+            "matched_rows_report_sha256": manifest["matched_rows_report"]["sha256"],
+            "matched_rows_snapshot_inventory_sha256": manifest[
+                "matched_row_origin_verification"
+            ]["snapshot_inventory"]["inventory_sha256"],
             "max_positions": manifest["requested_max_positions"],
             "panel_selection": manifest["panel_selection"],
             "deep_reference_evidence": manifest["deep_reference_evidence"],
@@ -1503,6 +1577,33 @@ def _sync_test_panel_selection(
             audit_set_sha256=manifest["audit_set"]["sha256"],
         )
     )
+    origin_rows = []
+    for row in position_rows:
+        origin = {
+            "shard": str(row["shard"]),
+            "row": 0,
+            "position_key": str(row["key"]),
+            "stored_x_sha256": "6" * 64,
+            "has_game_id": True,
+            "game_id": int(row["game_id"]),
+        }
+        origin_rows.append({
+            "key": str(row["key"]),
+            "source_dir": str(row["source_dir"]),
+            "selected_origin": origin,
+            "duplicate_count": 1,
+            "source_cluster_ambiguous": False,
+            "source_cluster_unique": True,
+            "occurrences": [dict(origin)],
+        })
+    verification = manifest["matched_row_origin_verification"]
+    verification["selected_position_count"] = len(origin_rows)
+    verification["selected_position_keys_sha256"] = hashlib.sha256(json.dumps(
+        sorted(str(row["key"]) for row in position_rows),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()).hexdigest()
+    verification["rows"] = origin_rows
     preregistration = json.loads(manifest["preregistration_document"])
     preregistration["producer"]["panel_selection"] = selection
     preregistration["producer"]["deep_reference_evidence"] = manifest[
@@ -1648,6 +1749,45 @@ def test_loader_accepts_verified_emitted_action_gap(tmp_path: Path) -> None:
     assert info["preregistered_design"] is True
     assert info["analysis_scope"] == "fresh_tree_fixed_node_horizons_only"
     assert info["cross_move_tree_reuse_tested"] is False
+
+
+def test_loader_rejects_missing_matched_row_report(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    del manifest["matched_rows_report"]
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="matched_rows_report"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_fabricated_unique_game_id_against_origin_proof(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    for row in rows:
+        row["game_id"] = 99
+        row["group_id"] = "/snapshot\0" + "99"
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="disagrees with row readback"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_one_field_origin_proof_mutation(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["matched_row_origin_verification"]["rows"][0][
+        "selected_origin"
+    ]["row"] = 1
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="selected-origin proof is inconsistent"):
+        load_transitions(bank)
 
 
 def test_loader_rejects_panel_source_counts_that_disagree_with_rows(

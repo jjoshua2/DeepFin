@@ -291,6 +291,12 @@ from scripts.chunk_trajectory_publication import (
     _write_json_staged as _write_json_staged,
 )
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
+from scripts.match_audit_rows import (
+    MATCHED_ROWS_REPORT_SCHEMA,
+    default_matched_rows_report_path,
+    snapshot_inventory as _matched_snapshot_inventory,
+    verify_selected_row_origins,
+)
 
 from chess_anti_engine.eval.audit import (
     AuditPosition,
@@ -357,6 +363,7 @@ _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "scripts.chunk_trajectory_publication",
     "scripts.analyze_chunk_controller",
     "scripts.repo_output_guard",
+    "scripts.match_audit_rows",
     "chess_anti_engine.eval.audit",
     "chess_anti_engine.mcts.search_options",
     "chess_anti_engine.uci.search",
@@ -1068,6 +1075,10 @@ def _main() -> None:
         help="audit-to-game index (default: <audit-set>.matched_rows.npz)",
     )
     ap.add_argument(
+        "--matched-rows-report", type=Path, default=None,
+        help="authenticated index report (default: <matched-rows>.report.json)",
+    )
+    ap.add_argument(
         "--syzygy-path", default=default_syzygy_path(),
         help="production Syzygy directory pair; required for decision-grade banks",
     )
@@ -1139,6 +1150,10 @@ def _main() -> None:
     if args.checkpoint is None:
         raise SystemExit("--checkpoint is required unless --recover-publication is used")
     matched_path = args.matched_rows or default_matched_rows_path(args.audit_set)
+    matched_report_path = (
+        args.matched_rows_report
+        or default_matched_rows_report_path(matched_path)
+    )
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
     producer_git_sha, producer_git_dirty = _git_state()
     if (
@@ -1189,6 +1204,10 @@ def _main() -> None:
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.is_file() else None
         ),
+        "matched_rows_report": (
+            _artifact(matched_report_path, require_file=True)
+            if matched_report_path.is_file() else None
+        ),
         "preregistration": preregistration_artifact,
     }
     syzygy_directories = (
@@ -1199,7 +1218,7 @@ def _main() -> None:
         args.out,
         meta_path,
         protected_files=[
-            args.audit_set, matched_path, checkpoint_path, Path(__file__),
+            args.audit_set, matched_path, matched_report_path, checkpoint_path, Path(__file__),
             Path(publication_module.__file__),
             *([preregistration_path] if preregistration_path is not None else []),
         ],
@@ -1318,12 +1337,33 @@ def _main() -> None:
             "build it with scripts/match_audit_rows.py, or pass --methodology-smoke "
             "for a non-decision-grade pipeline check"
         )
+    if not args.methodology_smoke:
+        if not matched_report_path.is_file():
+            raise SystemExit(
+                "decision-grade trajectory banks require the authenticated matched-row "
+                f"report {matched_report_path}; rebuild the index with "
+                "scripts/match_audit_rows.py"
+            )
+        matched_origin_verification = verify_selected_row_origins(
+            audit_set=args.audit_set,
+            matched_rows=matched_path,
+            report_path=matched_report_path,
+            selected=[{"key": pos.key, "fen": pos.fen} for pos in positions],
+        )
+    else:
+        matched_origin_verification = {
+            "schema": MATCHED_ROWS_REPORT_SCHEMA,
+            "passed": False,
+            "reason": "methodology_smoke_does_not_authenticate_source_clusters",
+            "rows": [],
+        }
     post_load_artifacts = {
         "audit_set": _artifact_if_file(args.audit_set),
         "matched_rows": _artifact_if_file(matched_path),
+        "matched_rows_report": _artifact_if_file(matched_report_path),
     }
     input_load_changes = sorted(
-        name for name in ("audit_set", "matched_rows")
+        name for name in ("audit_set", "matched_rows", "matched_rows_report")
         if _artifact_identity(initial_input_artifacts[name])
         != _artifact_identity(post_load_artifacts[name])
     )
@@ -1336,15 +1376,41 @@ def _main() -> None:
     source_dirs: dict[str, str | None] = {}
     source_shards: dict[str, str | None] = {}
     group_ids: dict[str, str | None] = {}
+    raw_origin_proofs = matched_origin_verification.get("rows")
+    if not isinstance(raw_origin_proofs, list):
+        raw_origin_proofs = []
+    origin_proofs = {
+        str(row["key"]): row
+        for row in raw_origin_proofs
+        if isinstance(row, dict) and "key" in row
+    }
     for pos in positions:
-        gid = matched.game_id(pos.key) if matched is not None and pos.key in matched else None
-        source_dir = matched.snapshot if matched is not None and pos.key in matched else None
+        proof = origin_proofs.get(pos.key)
+        selected_origin = proof.get("selected_origin") if isinstance(proof, dict) else None
+        if not args.methodology_smoke and not isinstance(selected_origin, dict):
+            raise SystemExit(f"selected audit key {pos.key!r} lacks origin readback proof")
+        gid = (
+            int(selected_origin["game_id"])
+            if isinstance(selected_origin, dict)
+            else matched.game_id(pos.key)
+            if matched is not None and pos.key in matched else None
+        )
+        source_dir = (
+            str(proof["source_dir"])
+            if isinstance(proof, dict)
+            else matched.snapshot
+            if matched is not None and pos.key in matched else None
+        )
         source_shard = (
-            matched.source_shard(pos.key)
+            str(selected_origin["shard"])
+            if isinstance(selected_origin, dict)
+            else matched.source_shard(pos.key)
             if matched is not None and pos.key in matched else None
         )
         source_cluster_unique = bool(
-            matched is not None
+            proof.get("source_cluster_unique")
+            if isinstance(proof, dict)
+            else matched is not None
             and pos.key in matched
             and matched.source_cluster_is_unique(pos.key)
         )
@@ -1422,6 +1488,8 @@ def _main() -> None:
         "checkpoint": initial_input_artifacts["checkpoint"],
         "audit_set": initial_input_artifacts["audit_set"],
         "matched_rows": initial_input_artifacts["matched_rows"],
+        "matched_rows_report": initial_input_artifacts["matched_rows_report"],
+        "matched_row_origin_verification": matched_origin_verification,
         "preregistration": initial_input_artifacts["preregistration"],
         "preregistration_document": preregistration_document,
         "syzygy": syzygy_inventory,
@@ -1942,6 +2010,7 @@ def _main() -> None:
             protected_files=[
                 args.audit_set,
                 matched_path,
+                matched_report_path,
                 checkpoint_path,
                 Path(__file__),
                 Path(publication_module.__file__),
@@ -2358,6 +2427,7 @@ def _main() -> None:
         "checkpoint_params": provenance["checkpoint_params"],
         "audit_set": provenance["audit_set"],
         "matched_rows": provenance["matched_rows"],
+        "matched_rows_report": provenance["matched_rows_report"],
         "preregistration": provenance["preregistration"],
         "features_extension": loaded_features_artifact,
         "mcts_extension": loaded_mcts_artifact,
@@ -2374,6 +2444,7 @@ def _main() -> None:
         ),
         "audit_set": _artifact_if_file(args.audit_set),
         "matched_rows": _artifact_if_file(matched_path),
+        "matched_rows_report": _artifact_if_file(matched_report_path),
         "preregistration": (
             _artifact_if_file(preregistration_path)
             if preregistration_path is not None else None
@@ -2407,6 +2478,16 @@ def _main() -> None:
     provenance["python_preimport"]["post_run_check"] = python_post_run_status
     if python_post_run_status.get("passed") is not True:
         changed_artifacts.append("python_preimport_surface")
+    origin_snapshot = matched_origin_verification.get("snapshot_inventory")
+    if isinstance(origin_snapshot, dict):
+        try:
+            final_origin_snapshot = _matched_snapshot_inventory(
+                str(origin_snapshot.get("path", "")),
+            )
+        except (OSError, SystemExit):
+            final_origin_snapshot = None
+        if final_origin_snapshot != origin_snapshot:
+            changed_artifacts.append("matched_rows_snapshot")
     try:
         current_syzygy_inventory = (
             _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
