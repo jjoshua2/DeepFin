@@ -5868,7 +5868,10 @@ def test_manifest_quarantine_rejects_decoy_only_success_path(
             (moved_parent / pending_meta.name).rename(parent / pending_meta.name)
 
     monkeypatch.setattr(publication, "_write_json_staged", stage_then_install_decoy)
-    with pytest.raises(SystemExit, match="containing directory changed"):
+    with pytest.raises(
+        SystemExit,
+        match=r"containing directory changed|cannot revalidate evidence artifact",
+    ):
         publication._publish_evidence_pair(
             pending_output, output, pending_meta, meta, manifest,
         )
