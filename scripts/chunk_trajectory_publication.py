@@ -85,9 +85,17 @@ def _open_parent(
             finally:
                 os.close(descriptor)
             raise
-        if _identity(named_before) != _identity(opened) or _identity(
-            named_after
-        ) != _identity(opened):
+        namespace_fields = (
+            "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
+        )
+        if (
+            _identity(named_before) != _identity(opened)
+            or _identity(named_after) != _identity(opened)
+            or any(
+                getattr(named_before, field) != getattr(named_after, field)
+                for field in namespace_fields
+            )
+        ):
             try:
                 if quarantine_meta_path is not None:
                     _mark_manifest_namespace_invalid(

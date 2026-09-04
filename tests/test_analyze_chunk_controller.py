@@ -6852,6 +6852,49 @@ def test_invalid_marker_enoent_after_removal_is_restored_before_recovery(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+def test_parent_open_fstat_error_detects_marker_namespace_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    attacker_manifest = {**manifest, "tampered": True}
+    pending_meta.write_text(json.dumps(attacker_manifest))
+    invalid = publication._invalid_manifest_path(meta)
+    invalid.write_text("invalidated\n")
+    real_fstat = publication.os.fstat
+    injected = False
+
+    def remove_marker_on_first_parent_fstat(descriptor: int) -> os.stat_result:
+        nonlocal injected
+        descriptor_stat = real_fstat(descriptor)
+        if (
+            not injected
+            and stat.S_ISDIR(descriptor_stat.st_mode)
+            and invalid.exists()
+        ):
+            injected = True
+            invalid.unlink()
+            raise OSError(errno.EIO, "parent descriptor stat failed")
+        return descriptor_stat
+
+    monkeypatch.setattr(publication.os, "fstat", remove_marker_on_first_parent_fstat)
+    with pytest.raises(SystemExit, match="containing directory changed while being opened"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    monkeypatch.setattr(publication.os, "fstat", real_fstat)
+    assert injected is True
+    assert invalid.exists()
+    assert pending_output.exists()
+    assert not output.exists()
+    assert not meta.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+
+
 def test_invalid_marker_recreates_blocking_name_after_final_check_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
