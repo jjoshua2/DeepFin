@@ -5406,6 +5406,63 @@ def test_normal_pair_retains_requested_manifest_through_publication(
     assert json.loads(pending_meta.read_text()) == {**manifest, "tampered": True}
 
 
+def test_post_sync_manifest_name_swap_is_quarantined_across_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    attacker_manifest = {**manifest, "tampered": True}
+    real_fsync = publication.os.fsync
+    manifest_synced = False
+    injected = False
+
+    def replace_manifest_then_fail_parent_sync(descriptor: int) -> None:
+        nonlocal manifest_synced, injected
+        descriptor_stat = os.fstat(descriptor)
+        if stat.S_ISREG(descriptor_stat.st_mode) and pending_meta.exists():
+            pending_stat = pending_meta.stat()
+            if (descriptor_stat.st_dev, descriptor_stat.st_ino) == (
+                pending_stat.st_dev,
+                pending_stat.st_ino,
+            ):
+                real_fsync(descriptor)
+                pending_meta.unlink()
+                pending_meta.write_text(json.dumps(attacker_manifest))
+                manifest_synced = True
+                return
+        if manifest_synced and stat.S_ISDIR(descriptor_stat.st_mode) and not injected:
+            injected = True
+            raise OSError(errno.EIO, "manifest parent sync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        publication.os, "fsync", replace_manifest_then_fail_parent_sync,
+    )
+    with pytest.raises(SystemExit, match="anchored regular file"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+    assert not meta.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert not meta.exists()
+
+
 def test_manifest_quarantine_uses_retained_parent_during_decoy_swap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5863,6 +5920,50 @@ def test_invalid_marker_stat_io_failure_cannot_publish_pending_pair(
     with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
     assert json.loads(pending_meta.read_text()) == attacker_manifest
+
+
+def test_invalid_marker_recreates_blocking_name_after_final_check_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    pending_meta.write_text(json.dumps({**manifest, "tampered": True}))
+    invalid = publication._invalid_manifest_path(meta)
+    parent_fd = os.open(
+        meta.parent,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+    )
+    real_fsync = publication.os.fsync
+    removed = False
+
+    def remove_marker_after_parent_sync(descriptor: int) -> None:
+        nonlocal removed
+        real_fsync(descriptor)
+        if (
+            not removed
+            and stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            and invalid.exists()
+        ):
+            invalid.unlink()
+            removed = True
+
+    monkeypatch.setattr(publication.os, "fsync", remove_marker_after_parent_sync)
+    try:
+        with pytest.raises(SystemExit, match="revalidate evidence artifact"):
+            publication._mark_manifest_recovery_invalid(meta, parent_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    assert removed is True
+    assert invalid.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert pending_output.exists()
+    assert not output.exists()
 
 
 def test_parent_swap_during_state_classification_is_quarantined_across_retry(
@@ -6745,6 +6846,63 @@ def test_final_manifest_directory_sync_failure_restarts_to_complete_pair(
     assert not pending_meta.exists()
 
 
+@pytest.mark.parametrize("phase", ["linked", "source-unlinked"])
+def test_manifest_publication_io_failure_quarantines_named_manifest_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    phase: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    attacker_manifest = {**manifest, "tampered": True}
+    attacker = tmp_path / "attacker-manifest.json"
+    attacker.write_text(json.dumps(attacker_manifest))
+    real_fsync = publication.os.fsync
+    injected = False
+
+    def mutate_manifest_then_fail_sync(descriptor: int) -> None:
+        nonlocal injected
+        if not injected and stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            if phase == "linked" and meta.exists() and pending_meta.exists():
+                meta.unlink()
+                pending_meta.unlink()
+                os.link(attacker, meta)
+                os.link(attacker, pending_meta)
+                attacker.unlink()
+                injected = True
+                raise OSError(errno.EIO, "linked manifest sync failure")
+            if phase == "source-unlinked" and meta.exists() and not pending_meta.exists():
+                meta.write_text(json.dumps(attacker_manifest))
+                injected = True
+                raise OSError(errno.EIO, "unlinked manifest sync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", mutate_manifest_then_fail_sync)
+    with pytest.raises(SystemExit, match=r"anchored regular file|changed"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == attacker_manifest
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+
 def test_final_manifest_recovery_rejects_identical_different_inode_manifest(
     tmp_path: Path,
 ) -> None:
@@ -6963,6 +7121,52 @@ def test_final_manifest_cleanup_sync_failure_leaves_valid_pair_immutable(
 
     monkeypatch.setattr(publication.os, "fsync", real_fsync)
     with pytest.raises(SystemExit, match="immutable or incomplete evidence"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+
+def test_final_manifest_cleanup_io_failure_quarantines_survivor_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    attacker_manifest = {**manifest, "tampered": True}
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+    real_fsync = publication.os.fsync
+    injected = False
+
+    def mutate_survivor_then_fail_sync(descriptor: int) -> None:
+        nonlocal injected
+        if (
+            not injected
+            and stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            and meta.exists()
+            and not pending_meta.exists()
+        ):
+            meta.write_text(json.dumps(attacker_manifest))
+            injected = True
+            raise OSError(errno.EIO, "manifest cleanup sync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", mutate_survivor_then_fail_sync)
+    with pytest.raises(SystemExit, match="guarded evidence changed"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert json.loads(meta.read_text()) == attacker_manifest
+    assert not pending_meta.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
 

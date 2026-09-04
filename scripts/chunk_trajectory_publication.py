@@ -188,25 +188,61 @@ def _unlink_durable(
     with _anchored_file(
         path, path, durable=False, links=expected_links,
     ) as source:
-        _require_entry(path, source.parent_fd, source.file_fd, links=expected_links)
-        if surviving is not None:
-            if expected_links is None:
-                raise RuntimeError("surviving evidence requires an expected link count")
-            _require_publication_guards(((surviving, expected_links),))
-            if _identity(os.fstat(source.file_fd)) != _identity(
-                os.fstat(surviving.file_fd)
-            ):
-                raise SystemExit("removed and surviving evidence names are not hard links")
-        os.unlink(path.name, dir_fd=source.parent_fd)
-        os.fsync(source.parent_fd)
-        _require_parent(path, source.parent_fd)
-        if surviving_path is not None:
-            if surviving is None:
-                _require_entry(
-                    surviving_path, source.parent_fd, source.file_fd, links=1,
-                )
-            else:
-                _require_publication_guards(((surviving, 1),))
+        unlinked = False
+        try:
+            _require_entry(path, source.parent_fd, source.file_fd, links=expected_links)
+            if surviving is not None:
+                if expected_links is None:
+                    raise RuntimeError(
+                        "surviving evidence requires an expected link count"
+                    )
+                _require_publication_guards(((surviving, expected_links),))
+                if _identity(os.fstat(source.file_fd)) != _identity(
+                    os.fstat(surviving.file_fd)
+                ):
+                    raise SystemExit(
+                        "removed and surviving evidence names are not hard links"
+                    )
+            os.unlink(path.name, dir_fd=source.parent_fd)
+            unlinked = True
+            os.fsync(source.parent_fd)
+            _require_parent(path, source.parent_fd)
+            if surviving_path is not None:
+                if surviving is None:
+                    _require_entry(
+                        surviving_path, source.parent_fd, source.file_fd, links=1,
+                    )
+                else:
+                    _require_publication_guards(((surviving, 1),))
+        except OSError as exc:
+            if unlinked:
+                try:
+                    if _entry_name_exists(path, parent_fd=source.parent_fd):
+                        raise SystemExit(f"removed evidence name reappeared: {path}")
+                    _require_parent(path, source.parent_fd)
+                    if surviving is not None:
+                        _require_publication_guards(((surviving, 1),))
+                    elif surviving_path is not None:
+                        _require_entry(
+                            surviving_path,
+                            source.parent_fd,
+                            source.file_fd,
+                            links=1,
+                        )
+                        current = _artifact_from_fd(source.file_fd, surviving_path)
+                        if _publication_artifact_identity(
+                            current
+                        ) != _publication_artifact_identity(source.artifact):
+                            raise SystemExit(
+                                f"surviving evidence changed after cleanup: {surviving_path}"
+                            )
+                except OSError as authentication_exc:
+                    raise RuntimeError(
+                        "cannot authenticate surviving evidence after cleanup"
+                    ) from authentication_exc
+                except (SystemExit, RuntimeError) as integrity_exc:
+                    raise integrity_exc from exc
+            raise
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
@@ -306,11 +342,19 @@ def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(parent_fd)
             _require_entry(path, parent_fd, fh.fileno(), links=1)
             _require_parent(path, parent_fd)
-        except BaseException:
+        except BaseException as exc:
             if not file_synced:
                 _require_entry(path, parent_fd, fh.fileno(), links=1)
                 os.unlink(path.name, dir_fd=parent_fd)
                 os.fsync(parent_fd)
+            elif isinstance(exc, OSError):
+                try:
+                    _require_entry(path, parent_fd, fh.fileno(), links=1)
+                    _require_parent(path, parent_fd)
+                except OSError:
+                    pass
+                except (SystemExit, RuntimeError) as integrity_exc:
+                    raise integrity_exc from exc
             # A file whose byte sync succeeded remains the recovery source if
             # its directory sync or final revalidation fails.
             raise
@@ -356,13 +400,12 @@ def _retained_output_parent(
         _require_parent(output_path, output_parent_fd)
 
 
-def _mark_manifest_recovery_invalid(
+def _write_manifest_recovery_invalid_once(
     meta_path: Path,
     *,
     parent_fd: int,
     diagnostic: dict[str, Any] | None = None,
 ) -> None:
-    """Durably quarantine a version whose manifest integrity check failed."""
     marker = _invalid_manifest_path(meta_path)
     descriptor = -1
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
@@ -373,6 +416,10 @@ def _mark_manifest_recovery_invalid(
         except FileExistsError:
             os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
             os.fsync(parent_fd)
+            try:
+                os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError as exc:
+                raise SystemExit("invalid-recovery marker disappeared") from exc
             return
         with os.fdopen(descriptor, "w") as fh:
             descriptor = -1
@@ -392,6 +439,41 @@ def _mark_manifest_recovery_invalid(
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def _ensure_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
+    """Re-establish a blocking name after a failed marker durability barrier."""
+    marker = _invalid_manifest_path(meta_path)
+    try:
+        os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno != errno.ENOENT:
+            raise
+        _write_manifest_recovery_invalid_once(meta_path, parent_fd=parent_fd)
+        return
+    os.fsync(parent_fd)
+    try:
+        os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno != errno.ENOENT:
+            raise
+        _write_manifest_recovery_invalid_once(meta_path, parent_fd=parent_fd)
+
+
+def _mark_manifest_recovery_invalid(
+    meta_path: Path,
+    *,
+    parent_fd: int,
+    diagnostic: dict[str, Any] | None = None,
+) -> None:
+    """Durably quarantine a version whose manifest integrity check failed."""
+    try:
+        _write_manifest_recovery_invalid_once(
+            meta_path, parent_fd=parent_fd, diagnostic=diagnostic,
+        )
+    except BaseException:
+        _ensure_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+        raise
 
 
 @contextmanager
@@ -743,15 +825,20 @@ def _publish_anchored(
         )
     same_parent = _identity(output_parent_stat) == _identity(os.fstat(source.parent_fd))
     output_parent_fd = source.parent_fd if same_parent else _open_parent(output_path)
+    link_attempted = False
+    linked = False
+    source_removed = False
     try:
         _require_parent(output_path, output_parent_fd)
         _require_publication_guards(guards)
         try:
+            link_attempted = True
             _link_open_file(source.file_fd, output_parent_fd, output_path.name)
         except FileExistsError as exc:
             raise _ImmutableEvidenceExistsError(
                 f"refusing to replace immutable evidence at {output_path}"
             ) from exc
+        linked = True
         _require_entry(output_path, output_parent_fd, source.file_fd, links=2)
         os.fsync(output_parent_fd)
         _require_publication_guards(guards)
@@ -766,6 +853,7 @@ def _publish_anchored(
             raise SystemExit(f"staged evidence changed during publication: {source.path}")
         _require_entry(source.path, source.parent_fd, source.file_fd, links=2)
         os.unlink(source.path.name, dir_fd=source.parent_fd)
+        source_removed = True
         os.fsync(source.parent_fd)
         _require_parent(source.path, source.parent_fd)
         _require_parent(output_path, output_parent_fd)
@@ -775,6 +863,50 @@ def _publish_anchored(
             source.artifact
         ):
             raise SystemExit(f"published evidence changed: {output_path}")
+    except OSError as exc:
+        if link_attempted and not linked:
+            try:
+                linked = _entry_name_exists(
+                    output_path, parent_fd=output_parent_fd,
+                )
+            except OSError as authentication_exc:
+                raise RuntimeError(
+                    "cannot authenticate destination after failed publication link"
+                ) from authentication_exc
+        if linked:
+            try:
+                _require_publication_guards(guards)
+                _require_parent(source.path, source.parent_fd)
+                _require_parent(output_path, output_parent_fd)
+                if source_removed:
+                    if _entry_name_exists(source.path, parent_fd=source.parent_fd):
+                        raise SystemExit(
+                            f"consumed recovery name reappeared: {source.path}"
+                        )
+                    _require_entry(
+                        output_path, output_parent_fd, source.file_fd, links=1,
+                    )
+                else:
+                    _require_entry(
+                        source.path, source.parent_fd, source.file_fd, links=2,
+                    )
+                    _require_entry(
+                        output_path, output_parent_fd, source.file_fd, links=2,
+                    )
+                current = _artifact_from_fd(source.file_fd, Path(artifact_path))
+                if _publication_artifact_identity(
+                    current
+                ) != _publication_artifact_identity(source.artifact):
+                    raise SystemExit(
+                        f"staged evidence changed during failed publication: {source.path}"
+                    )
+            except OSError as authentication_exc:
+                raise RuntimeError(
+                    "cannot authenticate evidence after failed publication mutation"
+                ) from authentication_exc
+            except (SystemExit, RuntimeError) as integrity_exc:
+                raise integrity_exc from exc
+        raise
     finally:
         if not same_parent:
             os.close(output_parent_fd)
