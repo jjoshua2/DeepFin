@@ -2240,6 +2240,46 @@ def _find_direct_evaluator(evaluator: Any) -> Any:
     return current
 
 
+def _publish_collected_evidence_pair(
+    pending_output: Path,
+    output: Path,
+    pending_manifest: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+) -> None:
+    """Publish only through the exact bank and parent retained at collection."""
+    state = _ACTIVE_PENDING_EVIDENCE
+    if not isinstance(state, dict):
+        raise RuntimeError("complete collection lacks retained publication evidence")
+    retained_output_fd = state.get("retained_output_fd")
+    retained_output_parent_fd = state.get("retained_output_parent_fd")
+    retained_output_artifact = state.get("output_artifact")
+    if (
+        state.get("collection_complete") is not True
+        or state.get("pending_output") != pending_output
+        or state.get("output") != output
+        or state.get("manifest") != manifest_path
+        or state.get("pending_manifest") != pending_manifest
+        or not isinstance(retained_output_fd, int)
+        or retained_output_fd < 0
+        or not isinstance(retained_output_parent_fd, int)
+        or retained_output_parent_fd < 0
+        or not isinstance(retained_output_artifact, dict)
+    ):
+        raise RuntimeError("complete collection lacks retained publication evidence")
+    state["publication_manifest"] = manifest
+    _publish_evidence_pair(
+        pending_output,
+        output,
+        pending_manifest,
+        manifest_path,
+        manifest,
+        retained_output_fd=retained_output_fd,
+        retained_output_parent_fd=retained_output_parent_fd,
+        retained_output_artifact=retained_output_artifact,
+    )
+
+
 def _main() -> None:
     global _ACTIVE_PENDING_EVIDENCE
     ap = argparse.ArgumentParser(prog="backtest_chunk_trajectory")
@@ -3976,9 +4016,12 @@ def _main() -> None:
             },
         },
     }
-    _ACTIVE_PENDING_EVIDENCE["publication_manifest"] = manifest
-    _publish_evidence_pair(
-        tmp_path, args.out, pending_meta_path, meta_path, manifest,
+    _publish_collected_evidence_pair(
+        tmp_path,
+        args.out,
+        pending_meta_path,
+        meta_path,
+        manifest,
     )
     for output_lock in reversed(output_locks):
         output_lock.close()

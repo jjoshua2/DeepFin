@@ -234,22 +234,26 @@ def _anchored_file(
     durable: bool,
     links: int | None,
     parent_fd: int | None = None,
+    file_fd: int | None = None,
     exit_links: int | None = None,
 ) -> Generator[_AnchoredFile, None, None]:
     path = path.expanduser()
     owned_parent = parent_fd is None
     if parent_fd is None:
         parent_fd = _open_parent(path)
-    file_fd = -1
+    owned_file = file_fd is None
+    if file_fd is None:
+        file_fd = -1
     try:
         _require_parent(path, parent_fd)
-        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            file_fd = os.open(path.name, flags, dir_fd=parent_fd)
-        except OSError as exc:
-            _raise_path_access_failure(
-                exc, f"cannot safely open regular evidence file: {path}",
-            )
+        if owned_file:
+            flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                file_fd = os.open(path.name, flags, dir_fd=parent_fd)
+            except OSError as exc:
+                _raise_path_access_failure(
+                    exc, f"cannot safely open regular evidence file: {path}",
+                )
         _require_entry(path, parent_fd, file_fd, links=links)
         try:
             before = _artifact_from_fd(file_fd, artifact_path)
@@ -327,7 +331,7 @@ def _anchored_file(
             allow_ctime_change=True,
         )
     finally:
-        if file_fd >= 0:
+        if owned_file and file_fd >= 0:
             os.close(file_fd)
         if owned_parent:
             os.close(parent_fd)
@@ -1450,8 +1454,43 @@ def _publish_evidence_pair(
     pending_meta: Path,
     meta_path: Path,
     manifest: dict[str, Any],
+    *,
+    retained_output_fd: int | None = None,
+    retained_output_parent_fd: int | None = None,
+    retained_output_artifact: dict[str, Any] | None = None,
 ) -> None:
     """Prepare both artifacts before publishing either; retain recovery state."""
+    retained = (
+        retained_output_fd,
+        retained_output_parent_fd,
+        retained_output_artifact,
+    )
+    if any(item is not None for item in retained) and not all(
+        item is not None for item in retained
+    ):
+        raise RuntimeError("retained publication evidence is incomplete")
+    if retained_output_parent_fd is not None:
+        if output_path.expanduser().parent != meta_path.expanduser().parent:
+            raise RuntimeError(
+                "retained bank and manifest publication require one shared parent"
+            )
+        with _quarantine_manifest_recovery_on_integrity_failure(
+            meta_path, parent_fd=retained_output_parent_fd,
+        ):
+            _publish_evidence_pair_at_parents(
+                pending_output,
+                output_path,
+                pending_meta,
+                meta_path,
+                manifest,
+                manifest_parent_fd=retained_output_parent_fd,
+                output_parent_fd=retained_output_parent_fd,
+                retained_output_fd=retained_output_fd,
+                retained_output_artifact=retained_output_artifact,
+            )
+            _require_parent(output_path, retained_output_parent_fd)
+            _require_parent(meta_path, retained_output_parent_fd)
+        return
     with (
         _retained_parent(meta_path) as manifest_parent_fd,
         _quarantine_manifest_recovery_on_integrity_failure(
@@ -1463,6 +1502,49 @@ def _publish_evidence_pair(
             manifest_parent_fd=manifest_parent_fd,
         ) as output_parent_fd,
     ):
+        _publish_evidence_pair_at_parents(
+            pending_output,
+            output_path,
+            pending_meta,
+            meta_path,
+            manifest,
+            manifest_parent_fd=manifest_parent_fd,
+            output_parent_fd=output_parent_fd,
+        )
+
+
+def _publish_evidence_pair_at_parents(
+    pending_output: Path,
+    output_path: Path,
+    pending_meta: Path,
+    meta_path: Path,
+    manifest: dict[str, Any],
+    *,
+    manifest_parent_fd: int,
+    output_parent_fd: int,
+    retained_output_fd: int | None = None,
+    retained_output_artifact: dict[str, Any] | None = None,
+) -> None:
+    """Publish while keeping the producer's exact collected bank authenticated."""
+    with _anchored_file(
+        pending_output,
+        output_path,
+        durable=True,
+        links=1,
+        parent_fd=output_parent_fd,
+        file_fd=retained_output_fd,
+        exit_links=2,
+    ) as pending_bank:
+        if retained_output_artifact is not None and (
+            _publication_artifact_identity(pending_bank.artifact)
+            != _publication_artifact_identity(retained_output_artifact)
+        ):
+            raise RuntimeError("retained trajectory bank changed after collection")
+        if (
+            _publication_artifact_identity(pending_bank.artifact)
+            != _publication_artifact_identity(manifest.get("output"))
+        ):
+            raise RuntimeError("private trajectory bank differs from its manifest")
         _write_json_staged(
             pending_meta, manifest, parent_fd=manifest_parent_fd,
         )
@@ -1476,33 +1558,25 @@ def _publish_evidence_pair(
                 raise SystemExit(
                     "staged evidence manifest differs from requested manifest"
                 )
-            published = _publish_output(
+            _publish_no_replace(
                 pending_output,
                 output_path,
-                expected_artifact=manifest.get("output"),
-                parent_fd=output_parent_fd,
+                source=pending_bank,
+                output_parent_fd=output_parent_fd,
             )
+            published = _artifact_from_fd(pending_bank.file_fd, output_path)
             if (
                 _publication_artifact_identity(published)
                 != _publication_artifact_identity(manifest.get("output"))
             ):
                 raise RuntimeError("published trajectory bank differs from its manifest")
-            with (
-                _matching_output(
-                    output_path,
-                    output_path,
-                    manifest,
-                    expected_links=2,
-                    parent_fd=output_parent_fd,
-                ) as final_bank,
-                _matching_output(
-                    pending_output,
-                    output_path,
-                    manifest,
-                    expected_links=2,
-                    parent_fd=output_parent_fd,
-                ) as pending_bank,
-            ):
+            with _matching_output(
+                output_path,
+                output_path,
+                manifest,
+                expected_links=2,
+                parent_fd=output_parent_fd,
+            ) as final_bank:
                 if _identity(os.fstat(pending_bank.file_fd)) != _identity(
                     os.fstat(final_bank.file_fd)
                 ):

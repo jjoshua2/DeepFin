@@ -5838,10 +5838,31 @@ def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path
         "complete": True,
         "output": producer._prepared_output_artifact(pending_output, output),
     }
-
-    producer._publish_evidence_pair(
-        pending_output, output, pending_meta, meta, manifest,
+    retained_output_fd = os.open(pending_output, os.O_RDONLY | os.O_CLOEXEC)
+    retained_output_parent_fd = os.open(
+        pending_output.parent,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
     )
+    producer._ACTIVE_PENDING_EVIDENCE = {
+        "collection_complete": True,
+        "pending_output": pending_output,
+        "output": output,
+        "manifest": meta,
+        "pending_manifest": pending_meta,
+        "output_artifact": manifest["output"],
+        "retained_output_fd": retained_output_fd,
+        "retained_output_parent_fd": retained_output_parent_fd,
+    }
+    try:
+        producer._publish_collected_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+        os.fstat(retained_output_fd)
+        os.fstat(retained_output_parent_fd)
+    finally:
+        os.close(retained_output_fd)
+        os.close(retained_output_parent_fd)
+        producer._ACTIVE_PENDING_EVIDENCE = None
 
     assert output.read_text() == "completed bank\n"
     assert json.loads(meta.read_text()) == manifest
@@ -5849,6 +5870,67 @@ def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path
     assert meta.samefile(pending_meta)
     assert output.stat().st_nlink == 2
     assert meta.stat().st_nlink == 2
+
+
+def test_producer_retained_publication_handoff_rejects_parent_decoy(
+    tmp_path: Path,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    held_parent = tmp_path / "held-evidence"
+    decoy_parent = tmp_path / "decoy-evidence"
+    parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    output_artifact = producer._prepared_output_artifact(pending_output, output)
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": output_artifact,
+    }
+    retained_output_fd = os.open(pending_output, os.O_RDONLY | os.O_CLOEXEC)
+    retained_output_parent_fd = os.open(
+        parent,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+    )
+    producer._ACTIVE_PENDING_EVIDENCE = {
+        "collection_complete": True,
+        "pending_output": pending_output,
+        "output": output,
+        "manifest": meta,
+        "pending_manifest": pending_meta,
+        "output_artifact": output_artifact,
+        "retained_output_fd": retained_output_fd,
+        "retained_output_parent_fd": retained_output_parent_fd,
+    }
+    parent.rename(held_parent)
+    parent.mkdir()
+    (held_parent / pending_output.name).rename(parent / pending_output.name)
+    try:
+        with pytest.raises(SystemExit, match="containing directory changed"):
+            producer._publish_collected_evidence_pair(
+                pending_output, output, pending_meta, meta, manifest,
+            )
+        os.fstat(retained_output_fd)
+        os.fstat(retained_output_parent_fd)
+    finally:
+        os.close(retained_output_fd)
+        os.close(retained_output_parent_fd)
+        producer._ACTIVE_PENDING_EVIDENCE = None
+
+    parent.rename(decoy_parent)
+    held_parent.rename(parent)
+    assert publication._invalid_manifest_path(meta).exists()
+    assert not output.exists()
+    assert not meta.exists()
+    assert (decoy_parent / pending_output.name).read_text() == "completed bank\n"
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
 
 
 @pytest.mark.parametrize("failed_link", ["bank", "manifest"])
