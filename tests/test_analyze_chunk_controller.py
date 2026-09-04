@@ -6778,7 +6778,7 @@ def test_manifest_parent_first_fstat_decoy_is_quarantined(
     monkeypatch.setattr(
         publication.os, "fstat", install_decoy_on_first_retained_parent_fstat,
     )
-    with pytest.raises(RuntimeError, match="snapshot newly opened evidence parent"):
+    with pytest.raises(SystemExit, match="containing directory changed"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     monkeypatch.setattr(publication.os, "fstat", real_fstat)
@@ -7673,7 +7673,7 @@ def test_complete_pair_never_reopens_parent_during_nested_validation(
     monkeypatch.setattr(
         publication, "_read_pending_manifest_fd", restore_before_final_manifest_read,
     )
-    with pytest.raises(SystemExit, match="pending trajectory bank does not match"):
+    with pytest.raises(SystemExit, match="containing directory changed"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     # Validation uses the retained parent; the later opens are the fail-closed

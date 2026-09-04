@@ -986,11 +986,12 @@ def _stable_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
 def _read_consumed_artifact(path: Path, *, role: str) -> tuple[bytes, dict[str, Any]]:
     """Read exact bytes while retaining their descriptor-authenticated identity."""
     lexical_path = path.expanduser().absolute()
+    resolved_path = lexical_path.resolve(strict=True)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if nofollow == 0:
         raise RuntimeError("safe consumed-artifact reads require O_NOFOLLOW")
     fd = os.open(
-        lexical_path,
+        resolved_path,
         os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
     )
     try:
