@@ -5210,7 +5210,9 @@ def test_analyzer_full_manifest_allows_output_outside_syzygy_roots(
 ) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
-    manifest = json.loads(meta.read_text())
+    _transitions, info = load_transitions(bank, meta_path=meta)
+    assert info["decision_grade"] is True
+    manifest = info["manifest"]
     filesystem_root = Path(os.sep).stat()
     for directory in manifest["syzygy"]["directories"]:
         directory["path_components"][0].update({
@@ -5219,16 +5221,12 @@ def test_analyzer_full_manifest_allows_output_outside_syzygy_roots(
             "mtime_ns": filesystem_root.st_mtime_ns,
             "ctime_ns": filesystem_root.st_ctime_ns,
         })
-    _refresh_synthetic_syzygy_integrity(manifest["syzygy"])
-    meta.write_text(json.dumps(manifest))
-    _transitions, info = load_transitions(bank, meta_path=meta)
-    assert info["decision_grade"] is True
 
     _require_safe_output_path(
         bank,
         meta,
         tmp_path / "ordinary" / "analysis.json",
-        manifest=info["manifest"],
+        manifest=manifest,
         consumed_artifacts=info["analyzer_consumed_inputs"],
     )
 
