@@ -4932,6 +4932,205 @@ def test_producer_recovers_bank_published_before_its_manifest(tmp_path: Path) ->
     assert not pending_meta.exists()
 
 
+def _prepare_pending_manifest_recovery(
+    tmp_path: Path, *, bank_published: bool,
+) -> tuple[Path, Path, Path, Path, dict[str, Any]]:
+    from scripts import chunk_trajectory_publication as publication
+
+    bank_dir = tmp_path / "bank"
+    manifest_dir = tmp_path / "manifest"
+    bank_dir.mkdir()
+    manifest_dir.mkdir()
+    output = bank_dir / "bank.jsonl"
+    meta = manifest_dir / "bank.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    if bank_published:
+        publication._publish_output(pending_output, output)
+    # Model an interrupted staged write whose close made bytes readable from
+    # cache but whose file and directory durability barriers never completed.
+    pending_meta.write_text(json.dumps(manifest))
+    return output, meta, pending_output, pending_meta, manifest
+
+
+@pytest.mark.parametrize("bank_published", [True, False], ids=["bank-final", "bank-pending"])
+def test_recovery_syncs_pending_manifest_before_any_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, bank_published: bool,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, _pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
+    )
+    pending_identity = (pending_meta.stat().st_dev, pending_meta.stat().st_ino)
+    parent_identity = (
+        pending_meta.parent.stat().st_dev,
+        pending_meta.parent.stat().st_ino,
+    )
+    real_fsync = os.fsync
+    real_link = os.link
+    events: list[str] = []
+    pending_file_synced = False
+    pending_parent_synced = False
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal pending_file_synced, pending_parent_synced
+        descriptor_stat = os.fstat(descriptor)
+        identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        if stat.S_ISREG(descriptor_stat.st_mode) and identity == pending_identity:
+            events.append("fsync:pending-manifest")
+            pending_file_synced = True
+        elif (
+            stat.S_ISDIR(descriptor_stat.st_mode)
+            and identity == parent_identity
+            and pending_file_synced
+            and not pending_parent_synced
+        ):
+            events.append("fsync:pending-parent")
+            pending_parent_synced = True
+        real_fsync(descriptor)
+
+    def link_spy(source: Path, destination: Path) -> None:
+        events.append(f"link:{destination.name}")
+        real_link(source, destination)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+
+    assert publication._require_new_output_pair(output, meta, overwrite=False) is True
+
+    first_destination = meta if bank_published else output
+    assert events[:3] == [
+        "fsync:pending-manifest",
+        "fsync:pending-parent",
+        f"link:{first_destination.name}",
+    ]
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_meta.exists()
+
+
+@pytest.mark.parametrize("bank_published", [True, False], ids=["bank-final", "bank-pending"])
+@pytest.mark.parametrize("failure_target", ["file", "parent"])
+def test_pending_manifest_sync_failure_prevents_recovery_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    bank_published: bool,
+    failure_target: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
+    )
+    pending_identity = (pending_meta.stat().st_dev, pending_meta.stat().st_ino)
+    parent_identity = (
+        pending_meta.parent.stat().st_dev,
+        pending_meta.parent.stat().st_ino,
+    )
+    real_fsync = os.fsync
+    real_link = os.link
+    real_unlink = Path.unlink
+    published_links: list[tuple[Path, Path]] = []
+    removed_names: list[Path] = []
+    pending_file_synced = False
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal pending_file_synced
+        descriptor_stat = os.fstat(descriptor)
+        identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        if (
+            stat.S_ISREG(descriptor_stat.st_mode)
+            and identity == pending_identity
+        ):
+            if failure_target == "file":
+                raise OSError(errno.EIO, "pending manifest fsync failed")
+            pending_file_synced = True
+        elif (
+            failure_target == "parent"
+            and pending_file_synced
+            and stat.S_ISDIR(descriptor_stat.st_mode)
+            and identity == parent_identity
+        ):
+            raise OSError(errno.EIO, "pending manifest parent fsync failed")
+        real_fsync(descriptor)
+
+    def link_spy(source: Path, destination: Path) -> None:
+        published_links.append((source, destination))
+        real_link(source, destination)
+
+    def unlink_spy(path: Path, *args: Any, **kwargs: Any) -> None:
+        removed_names.append(path)
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(Path, "unlink", unlink_spy)
+    expected_error = (
+        "pending manifest fsync failed"
+        if failure_target == "file"
+        else "pending manifest parent fsync failed"
+    )
+    with pytest.raises(OSError, match=expected_error):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert published_links == []
+    assert removed_names == []
+    assert output.exists() is bank_published
+    assert pending_output.exists() is not bank_published
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == manifest
+
+
+@pytest.mark.parametrize("bank_published", [True, False], ids=["bank-final", "bank-pending"])
+@pytest.mark.parametrize("mutation", ["content", "inode"])
+def test_recovery_rejects_pending_manifest_changed_after_durability_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    bank_published: bool,
+    mutation: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, _pending_output, pending_meta, _manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=bank_published)
+    )
+    real_read = publication._read_pending_manifest
+    real_link = os.link
+    published_links: list[tuple[Path, Path]] = []
+
+    def read_then_mutate(path: Path) -> dict[str, Any]:
+        payload = real_read(path)
+        if mutation == "content":
+            path.write_text(json.dumps({**payload, "tampered": True}))
+        else:
+            replacement = path.with_name(f"{path.name}.replacement")
+            replacement.write_bytes(path.read_bytes())
+            os.replace(replacement, path)
+        return payload
+
+    def link_spy(source: Path, destination: Path) -> None:
+        published_links.append((source, destination))
+        real_link(source, destination)
+
+    monkeypatch.setattr(publication, "_read_pending_manifest", read_then_mutate)
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    with pytest.raises(SystemExit, match="changed while being made durable"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert published_links == []
+    assert output.exists() is bank_published
+    assert not meta.exists()
+    assert pending_meta.exists()
+
+
 def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 

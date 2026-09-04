@@ -211,7 +211,7 @@ def _require_new_output_pair(
         _unlink_durable(pending_meta)
         return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
-        manifest = _read_pending_manifest(pending_meta)
+        manifest = _durably_read_pending_manifest(pending_meta)
         if pending_output.exists():
             _require_output_matches_manifest(pending_output, output_path, manifest)
         _require_output_matches_manifest(output_path, output_path, manifest)
@@ -225,7 +225,7 @@ def _require_new_output_pair(
         and pending_output.exists()
         and pending_meta.exists()
     ):
-        manifest = _read_pending_manifest(pending_meta)
+        manifest = _durably_read_pending_manifest(pending_meta)
         _require_output_matches_manifest(pending_output, output_path, manifest)
         published = _publish_output(pending_output, output_path)
         if _publication_artifact_identity(published) != _publication_artifact_identity(
@@ -308,6 +308,20 @@ def _read_pending_manifest(path: Path) -> dict[str, Any]:
     if payload.get("complete") is not True or not isinstance(payload.get("output"), dict):
         raise SystemExit(f"pending evidence manifest is incomplete: {path}")
     return payload
+
+
+def _durably_read_pending_manifest(path: Path) -> dict[str, Any]:
+    """Sync a recovery manifest and then authenticate a stable reread."""
+    before = _artifact(path, require_file=True)
+    with path.open("rb") as fh:
+        _flush_fsync_file_and_parent(fh, path)
+    manifest = _read_pending_manifest(path)
+    after = _artifact(path, require_file=True)
+    if _artifact_identity(before) != _artifact_identity(after):
+        raise SystemExit(
+            f"pending evidence manifest changed while being made durable: {path}"
+        )
+    return manifest
 
 
 def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int]:
