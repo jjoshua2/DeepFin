@@ -73946,3 +73946,24 @@ matches every v2 audit receipt within 0.0000012 cp.
   window >30 cp as stopped by the preregistered cross-fit plateau.  Any attempt
   to override that stop after seeing G requires new data, not another selection
   on this ruler.
+
+**2026-09-04 15:50 EDT — PRE-TRAIN REVIEW CORRECTION: keep follow-up axes
+orthogonal.** Independent Grok review of `a9fba8dec...0959a43e0` correctly
+found that the proposed K5/30 cell changed both rank and window, violated the
+15:30 amendment's at-most-two orthogonal-arm rule, and matched neither its
+pooled one-SE nor raw optimum.  No G corpus, optimizer step or arena exists, so
+supersede that nomination before execution; all A-F rules remain unchanged.
+
+- If and only if C=K3/20/alpha1/T0.5 becomes the selected 100-sim leader, run
+  at most these two independent confirmations against C: **R=K5/20/alpha1/T0.5**
+  changes rank cap only, and **W=K3/14/alpha1/T0.5** changes cp window only.
+  R follows the stable K4/K5 fold choices while holding C's 20-cp window; its
+  ruler delta is -2.5098 cp versus exact ties, 0.1620 cp better than C.  W is
+  the exact pooled one-SE K3/14 selection.  Use the same exact-epoch and paired
+  100-sim SUCCESS rule; neither arm launches if C is not the leader.
+- If neither succeeds, retain C.  If one succeeds, retain it.  If both succeed,
+  compare their same-opening paired outcomes directly and require a positive
+  lower bound to displace W; otherwise prefer W as the narrower one-SE target.
+  The preregistered rank-6/8 plateau and the receding window beyond the selected
+  region stop further same-ruler expansion.  This is the complete follow-up
+  slate; no joint K5/window-change cell is authorized.
