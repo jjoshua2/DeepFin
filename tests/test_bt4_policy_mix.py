@@ -366,9 +366,11 @@ def _write_audit_receipt(
                     "candidate_set_wider_rows": 1 if near else 0,
                     "changed_unique_max_rows": 1 if near else 0,
                     "temperature_one_top1_mismatch_rows": 0,
+                    "temperature_prestorage_top1_mismatch_rows": 0,
                     "near_max_extended": True,
                     "top_tie_unique_max_identity": True,
                     "temperature_one_top1_preserved": True,
+                    "temperature_rank_preserved_before_storage": True,
                     "selected_mass_drift_within_bounds": True,
                 },
                 "gate": {

@@ -73829,3 +73829,18 @@ optimizer step, or arena exists at this line.**
   existing output or partial, any foreign GPU process, or free disk below 150
   GiB.  Delete nothing automatically; later mixed corpora may be retired only
   after their immutable summaries and verdicts are recorded.
+
+**2026-09-04 18:01Z — PRE-RERUN FIDELITY CORRECTION: temperature ordering is
+checked before float16 storage for score-window arms.** All six first-pass
+audit receipts are preserved.  B and D reported deep-SF `graduate_win` and
+passed the screen's preregistered breadth/mass gates, but the tool returned 2
+because one of 4,000 rows became an exact float16 tie after T=2 softening and
+therefore failed an inherited S1 rule requiring the stored `argmax` to equal
+T=1.  That rule was preregistered for the old exact-tie sharpener, not for this
+screen; applying it here would forbid the very target softening being tested.
+For alpha-1 score-window cells, require instead that temperature scaling
+preserve BT4 top-1 before storage, and bank the post-storage mismatch count as
+descriptive quantization evidence.  Keep the old stored-top-1 rule unchanged
+for `top-max-ties`.  Rerun all six cells to fresh `v2` receipts under the one
+corrected invariant before materialization; do not reuse or delete the v1
+receipts and do not change any cell parameter or scientific gate.

@@ -1167,11 +1167,26 @@ def _load_audit_receipt(
                     "changed_unique_max_rows": 0,
                 }
             )
-        if bt4_temperature != 1.0 and alpha == 1.0:
+        if (
+            scope == "top-max-ties"
+            and bt4_temperature != 1.0
+            and alpha == 1.0
+        ):
             required_invariants.update(
                 {
                     "temperature_one_top1_preserved": True,
                     "temperature_one_top1_mismatch_rows": 0,
+                }
+            )
+        if (
+            scope == "sf-cp-window"
+            and bt4_temperature != 1.0
+            and alpha == 1.0
+        ):
+            required_invariants.update(
+                {
+                    "temperature_rank_preserved_before_storage": True,
+                    "temperature_prestorage_top1_mismatch_rows": 0,
                 }
             )
         for key, requirement in required_invariants.items():
@@ -1281,8 +1296,9 @@ def audit_mix(args: argparse.Namespace) -> int:
         )
         # The materializer casts back to the source policy_target dtype. The
         # 20M source is float16, so audit what the trainer will actually read.
-        candidate_stored = candidate.astype(np.float16).astype(np.float32)
-        reference_stored = mix_policy_targets(
+        candidate_unstored = candidate
+        candidate_stored = candidate_unstored.astype(np.float16).astype(np.float32)
+        reference_unstored = mix_policy_targets(
             source[None, :],
             bt4[None, :],
             legal,
@@ -1294,7 +1310,8 @@ def audit_mix(args: argparse.Namespace) -> int:
             sf_rank_gaps_cp=sf_rank_gaps_cp,
             sf_rank_cap=sf_rank_cap,
             sf_cp_window=sf_cp_window,
-        ).astype(np.float16).astype(np.float32)
+        )
+        reference_stored = reference_unstored.astype(np.float16).astype(np.float32)
         candidate = _normalized_legal(
             candidate_stored,
             legal,
@@ -1358,6 +1375,10 @@ def audit_mix(args: argparse.Namespace) -> int:
                 "matches_temperature_one_top1": (
                     int(np.argmax(reference)) == candidate_top
                 ),
+                "matches_temperature_one_top1_before_storage": (
+                    int(np.argmax(reference_unstored[0]))
+                    == int(np.argmax(candidate_unstored[0]))
+                ),
                 "top1_changed": source_top != candidate_top,
             }
         )
@@ -1411,6 +1432,12 @@ def audit_mix(args: argparse.Namespace) -> int:
     temperature_one_top1_mismatch_rows = int(
         sum(not row["matches_temperature_one_top1"] for row in per_position)
     )
+    temperature_prestorage_top1_mismatch_rows = int(
+        sum(
+            not row["matches_temperature_one_top1_before_storage"]
+            for row in per_position
+        )
+    )
     selected_mass_drifts = np.asarray(
         [row["selected_mass_abs_drift"] for row in per_position],
         dtype=np.float64,
@@ -1419,6 +1446,9 @@ def audit_mix(args: argparse.Namespace) -> int:
         "candidate_set_wider_rows": candidate_set_wider_rows,
         "changed_unique_max_rows": changed_unique_max_rows,
         "temperature_one_top1_mismatch_rows": temperature_one_top1_mismatch_rows,
+        "temperature_prestorage_top1_mismatch_rows": (
+            temperature_prestorage_top1_mismatch_rows
+        ),
         "near_max_extended": (
             scope not in {"near-max-ratio", "sf-cp-window"}
             or (candidate_set_wider_rows > 0 and changed_unique_max_rows > 0)
@@ -1429,7 +1459,14 @@ def audit_mix(args: argparse.Namespace) -> int:
         "temperature_one_top1_preserved": (
             bt4_temperature == 1.0
             or alpha != 1.0
+            or scope != "top-max-ties"
             or temperature_one_top1_mismatch_rows == 0
+        ),
+        "temperature_rank_preserved_before_storage": (
+            bt4_temperature == 1.0
+            or alpha != 1.0
+            or scope != "sf-cp-window"
+            or temperature_prestorage_top1_mismatch_rows == 0
         ),
         "selected_mass_drift_within_bounds": (
             float(selected_mass_drifts.mean()) <= SELECTED_MASS_DRIFT_MEAN_MAX
@@ -1443,6 +1480,7 @@ def audit_mix(args: argparse.Namespace) -> int:
             "near_max_extended",
             "top_tie_unique_max_identity",
             "temperature_one_top1_preserved",
+            "temperature_rank_preserved_before_storage",
             "selected_mass_drift_within_bounds",
         )
     )
