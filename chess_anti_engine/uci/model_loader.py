@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import fields, replace
 from pathlib import Path
+from typing import BinaryIO
 
 import torch
 
@@ -139,6 +140,125 @@ def _history_encoding_from_mapping(mapping: dict | None) -> str | None:
     return normalize_lc0_history_encoding(mapping.get("input_history_encoding"))
 
 
+def _load_model_from_payloads(
+    ckpt: object,
+    *,
+    trainer_pt: Path,
+    params: dict | None,
+    device: str,
+    model_config: ModelConfig | None,
+    require_complete: bool | None,
+) -> torch.nn.Module:
+    """Construct a model from checkpoint and optional architecture payloads."""
+    explicit_model_config = model_config is not None
+
+    input_history_encoding = LC0_HISTORY_LEGACY
+    arch_history_encoding: str | None = None
+    if isinstance(ckpt, dict):
+        arch_history_encoding = _history_encoding_from_mapping(ckpt.get("arch"))
+        input_history_encoding = (
+            _history_encoding_from_mapping(ckpt)
+            or arch_history_encoding
+            or input_history_encoding
+        )
+
+    arch_from_checkpoint = False
+    if model_config is None:
+        if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
+            model_config = model_config_from_arch(ckpt["arch"])
+            arch_from_checkpoint = True
+        else:
+            if params is None:
+                raise FileNotFoundError(
+                    f"{trainer_pt} has no embedded arch and no params.json "
+                    "in its own directory tree. Re-save with the current "
+                    "Trainer to embed the arch key, or pass model_config "
+                    "explicitly."
+                )
+            model_config = _model_config_from_params(params)
+
+    params_history_encoding = (
+        None if explicit_model_config else _history_encoding_from_mapping(params)
+    )
+    input_history_encoding = normalize_lc0_history_encoding(
+        arch_history_encoding
+        or params_history_encoding
+        or getattr(model_config, "input_history_encoding", input_history_encoding),
+    )
+    model_config = replace(model_config, input_history_encoding=input_history_encoding)
+
+    model = build_model(model_config)
+    if not isinstance(ckpt, dict):
+        raise TypeError(f"checkpoint payload must be a mapping: {trainer_pt}")
+    state = ckpt.get("model", ckpt)
+    load_state_dict_tolerant(
+        model,
+        state,
+        label="uci-load",
+        require_complete=(
+            arch_from_checkpoint if require_complete is None else require_complete
+        ),
+    )
+    setattr(
+        model,
+        "input_history_encoding",
+        model_config.input_history_encoding,
+    )
+    model.to(device).eval()
+    return model
+
+
+def _decode_params_json(document: bytes, *, source: Path) -> dict:
+    try:
+        value = json.loads(document.decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid checkpoint architecture JSON at {source}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"checkpoint architecture JSON is not an object: {source}")
+    return value
+
+
+def load_model_from_checkpoint_artifacts(
+    checkpoint_file: BinaryIO,
+    *,
+    checkpoint_path: str | Path,
+    params_json: bytes | None,
+    params_path: str | Path | None,
+    device: str = "cpu",
+    model_config: ModelConfig | None = None,
+    require_complete: bool | None = None,
+) -> torch.nn.Module:
+    """Load from caller-opened checkpoint and caller-snapshotted params bytes.
+
+    Unlike :func:`load_model_from_checkpoint`, this entry point never resolves or
+    reopens either pathname.  Decision-grade evidence producers can therefore
+    authenticate one open file description and pass that exact object to
+    ``torch.load`` without buffering a multi-gigabyte checkpoint in memory.
+    ``params_json`` is likewise the exact immutable byte string that supplies any
+    fallback architecture fields.
+    """
+    trainer_pt = Path(checkpoint_path)
+    params = (
+        _decode_params_json(
+            params_json,
+            source=Path(params_path) if params_path is not None else trainer_pt,
+        )
+        if params_json is not None else None
+    )
+    checkpoint_file.seek(0)
+    # weights_only=True blocks arbitrary pickle execution — our trainer only
+    # writes tensors + primitives (including the `arch` dict).
+    ckpt = torch.load(checkpoint_file, map_location=device, weights_only=True)
+    return _load_model_from_payloads(
+        ckpt,
+        trainer_pt=trainer_pt,
+        params=params,
+        device=device,
+        model_config=model_config,
+        require_complete=require_complete,
+    )
+
+
 def load_model_from_checkpoint(
     path: str | Path,
     *,
@@ -185,57 +305,15 @@ def load_model_from_checkpoint(
     def _load_params() -> dict | None:
         nonlocal params
         if params is None and params_path is not None:
-            with params_path.open() as fh:
-                params = json.load(fh)
+            params = _decode_params_json(params_path.read_bytes(), source=params_path)
         return params
-
-    input_history_encoding = LC0_HISTORY_LEGACY
-    arch_history_encoding: str | None = None
-    if isinstance(ckpt, dict):
-        arch_history_encoding = _history_encoding_from_mapping(ckpt.get("arch"))
-        input_history_encoding = (
-            _history_encoding_from_mapping(ckpt)
-            or arch_history_encoding
-            or input_history_encoding
-        )
-
-    arch_from_checkpoint = False
-    if model_config is None:
-        if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
-            model_config = model_config_from_arch(ckpt["arch"])
-            arch_from_checkpoint = True
-        else:
-            if params_path is None:
-                raise FileNotFoundError(
-                    f"{trainer_pt} has no embedded arch and no params.json "
-                    "in its own directory tree. Re-save with the current "
-                    "Trainer to embed the arch key, or pass model_config "
-                    "explicitly."
-                )
-            params = _load_params()
-            assert params is not None
-            model_config = _model_config_from_params(params)
-
-    params_history_encoding = None if explicit_model_config else _history_encoding_from_mapping(_load_params())
-    input_history_encoding = normalize_lc0_history_encoding(
-        arch_history_encoding
-        or params_history_encoding
-        or getattr(model_config, "input_history_encoding", input_history_encoding),
+    if not explicit_model_config:
+        _load_params()
+    return _load_model_from_payloads(
+        ckpt,
+        trainer_pt=trainer_pt,
+        params=params,
+        device=device,
+        model_config=model_config,
+        require_complete=require_complete,
     )
-    model_config = replace(model_config, input_history_encoding=input_history_encoding)
-
-    model = build_model(model_config)
-    state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-    load_state_dict_tolerant(
-        model,
-        state,
-        label="uci-load",
-        require_complete=arch_from_checkpoint if require_complete is None else require_complete,
-    )
-    setattr(
-        model,
-        "input_history_encoding",
-        model_config.input_history_encoding,
-    )
-    model.to(device).eval()
-    return model

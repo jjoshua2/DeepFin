@@ -8,7 +8,10 @@ import pytest
 import torch
 
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model
-from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from chess_anti_engine.uci.model_loader import (
+    load_model_from_checkpoint,
+    load_model_from_checkpoint_artifacts,
+)
 
 
 def _write_tiny_checkpoint(root: Path, *, params: dict | None, include_arch: bool) -> Path:
@@ -69,6 +72,33 @@ def test_uci_loader_defaults_legacy_history_for_arch_checkpoint(tmp_path: Path) 
     model = load_model_from_checkpoint(ckpt, device="cpu")
 
     assert getattr(model, "input_history_encoding") == "legacy"
+
+
+def test_artifact_loader_consumes_stream_and_params_bytes_without_reopening(
+    tmp_path: Path,
+) -> None:
+    ckpt = _write_tiny_checkpoint(
+        tmp_path,
+        params={"model": "tiny", "input_history_encoding": "lc0_root"},
+        include_arch=False,
+    )
+    trainer_pt = ckpt / "trainer.pt"
+    params_path = tmp_path / "params.json"
+    params_json = params_path.read_bytes()
+    with trainer_pt.open("rb") as checkpoint_file:
+        trainer_pt.replace(tmp_path / "authenticated-trainer.pt")
+        trainer_pt.write_bytes(b"not a torch checkpoint")
+        params_path.write_text('{"model":"transformer"}', encoding="utf-8")
+
+        model = load_model_from_checkpoint_artifacts(
+            checkpoint_file,
+            checkpoint_path=trainer_pt,
+            params_json=params_json,
+            params_path=params_path,
+            device="cpu",
+        )
+
+    assert getattr(model, "input_history_encoding") == "lc0_root"
 
 
 def test_uci_loader_reads_history_encoding_from_params_json(tmp_path: Path) -> None:

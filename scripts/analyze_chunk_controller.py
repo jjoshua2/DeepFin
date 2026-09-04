@@ -327,7 +327,7 @@ from scripts.check_c_extensions_fresh import (
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
-_SCHEMA = "deepfin.chunk_trajectory.v4"
+_SCHEMA = "deepfin.chunk_trajectory.v5"
 _CP_TO_SCORE_C = 300.0
 _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 _COMPLEXITY_VISIT_GAP = 0.25
@@ -366,6 +366,7 @@ _BOOTSTRAP_INTERVAL_SEMANTICS = (
 )
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v2"
 _DEEP_REFERENCE_EVIDENCE_SCHEMA = "deepfin.chunk_deep_reference_evidence.v2"
+_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v1"
 # data/audit_set_v1.jsonl, whose sibling README freezes the requested
 # unhandicapped Stockfish budget at 1,000,000 nodes and MultiPV 10. Some
 # forced-mate rows legitimately terminate early, so the artifact identity—not
@@ -1470,6 +1471,61 @@ def _artifact_provenance_complete(artifact: Any) -> bool:
     )
 
 
+def _model_input_consumption_complete(manifest: Mapping[str, Any]) -> bool:
+    """Validate that attested model inputs are the objects the loader consumed."""
+    checkpoint = manifest.get("checkpoint")
+    params = manifest.get("checkpoint_params")
+    proof = manifest.get("model_input_consumption")
+
+    def stable_artifact(value: Any, consumption: str) -> bool:
+        return bool(
+            _artifact_provenance_complete(value)
+            and isinstance(value, dict)
+            and isinstance(value.get("lexical_path"), str)
+            and value.get("lexical_path")
+            and _nonnegative_int(value.get("ctime_ns"))
+            and _nonnegative_int(value.get("device"))
+            and _positive_int(value.get("inode"))
+            and value.get("stable_read") is True
+            and value.get("consumption") == consumption
+        )
+
+    checkpoint_ok = stable_artifact(
+        checkpoint, "torch_load_from_same_open_file_description",
+    )
+    params_ok = (
+        params is None
+        or stable_artifact(params, "json_decode_from_exact_authenticated_bytes")
+    )
+    return bool(
+        checkpoint_ok
+        and params_ok
+        and isinstance(proof, dict)
+        and proof.get("schema") == _MODEL_INPUT_CONSUMPTION_SCHEMA
+        and proof.get("checkpoint_open") == "absolute_lexical_path_o_nofollow"
+        and proof.get("checkpoint")
+        == "torch_load_from_same_open_file_description"
+        and proof.get("checkpoint_path_reopened_by_loader") is False
+        and proof.get("checkpoint_identity_verified_before_search") is True
+        and proof.get(
+            "checkpoint_sha256_streamed_from_same_open_file_description"
+        ) is True
+        and proof.get("params")
+        == (
+            "json_decode_from_exact_authenticated_bytes"
+            if params is not None else "no_params_json"
+        )
+        and proof.get("params_open")
+        == (
+            "absolute_lexical_path_o_nofollow"
+            if params is not None else "no_params_json"
+        )
+        and proof.get("params_path_reopened_by_loader") is False
+        and proof.get("params_identity_verified_before_search") is True
+        and proof.get("passed") is True
+    )
+
+
 def _producer_source_matches_revision(
     artifact: Any, producer_git_sha: Any, relative_path: str,
 ) -> bool:
@@ -1826,6 +1882,7 @@ def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "source_git_sha": manifest.get("producer_git_sha"),
             "checkpoint_sha256": artifact_sha("checkpoint"),
             "checkpoint_params_sha256": artifact_sha("checkpoint_params"),
+            "model_input_consumption": manifest.get("model_input_consumption"),
             "audit_set_sha256": artifact_sha("audit_set"),
             "matched_rows_sha256": artifact_sha("matched_rows"),
             "matched_rows_report_sha256": artifact_sha("matched_rows_report"),
@@ -2857,6 +2914,10 @@ def _require_manifest(
         and not _artifact_provenance_complete(checkpoint_params)
     ):
         failures.append("checkpoint architecture provenance is incomplete")
+    if not _model_input_consumption_complete(manifest):
+        failures.append(
+            "checkpoint or params consumption is not bound to authenticated inputs"
+        )
     mcts_extension = manifest.get("mcts_extension")
     if not _compatible_native_extension(mcts_extension, producer_sha):
         failures.append("native MCTS extension provenance is incomplete")

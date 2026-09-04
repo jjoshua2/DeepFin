@@ -42,7 +42,7 @@ import threading
 import time
 import types
 from collections import Counter, deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
@@ -416,6 +416,7 @@ _MIN_DECISION_GRADE_CHUNKS = 4
 _PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
 _PANEL_REQUIRED_SOURCES = (0, 1)
 _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE = 1
+_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v1"
 _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "producer_script",
     "scripts.chunk_trajectory_publication",
@@ -815,6 +816,7 @@ def _producer_python_source_artifacts(
             and artifact.get("path") == preimport.get("path")
             and artifact.get("size") == preimport.get("size")
             and artifact.get("mtime_ns") == preimport.get("mtime_ns")
+            and artifact.get("ctime_ns") == preimport.get("ctime_ns")
             and artifact.get("device") == preimport.get("device")
             and artifact.get("inode") == preimport.get("inode")
             and artifact.get("sha256") == preimport.get("sha256")
@@ -858,8 +860,240 @@ def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
         return None
     return {
         name: artifact.get(name)
-        for name in ("path", "size", "mtime_ns", "device", "inode", "sha256")
+        for name in (
+            "path", "size", "mtime_ns", "ctime_ns", "device", "inode", "sha256",
+        )
     }
+
+
+def _stat_identity(file_stat: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(file_stat.st_mode),
+        int(file_stat.st_size),
+        int(file_stat.st_mtime_ns),
+        int(file_stat.st_ctime_ns),
+        int(file_stat.st_dev),
+        int(file_stat.st_ino),
+    )
+
+
+def _open_authenticated_input(path: Path) -> tuple[IO[bytes], dict[str, Any]]:
+    """Open one regular input without following its final path component."""
+    lexical = Path(os.path.abspath(path.expanduser()))
+    descriptor: int | None = None
+    try:
+        lexical_stat = lexical.lstat()
+        if stat.S_ISLNK(lexical_stat.st_mode):
+            raise SystemExit(
+                f"decision-grade model input cannot be a symlink: {lexical}"
+            )
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise SystemExit("decision-grade model inputs require O_NOFOLLOW support")
+        flags = os.O_RDONLY | os.O_CLOEXEC | nofollow
+        descriptor = os.open(lexical, flags)
+        opened = os.fstat(descriptor)
+        post_open_lexical_stat = lexical.lstat()
+        resolved = Path(f"/proc/self/fd/{descriptor}").resolve(strict=True)
+        resolved_stat = resolved.lstat()
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or _stat_identity(lexical_stat) != _stat_identity(opened)
+            or _stat_identity(post_open_lexical_stat) != _stat_identity(opened)
+            or _stat_identity(resolved_stat) != _stat_identity(opened)
+        ):
+            raise SystemExit(
+                f"decision-grade model input is not a stable regular file: {resolved}"
+            )
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+    except OSError as exc:
+        raise SystemExit(f"cannot safely open model input {lexical}: {exc}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return stream, {
+        "path": str(resolved),
+        "lexical_path": str(lexical),
+        "mode": int(opened.st_mode),
+        "size": int(opened.st_size),
+        "mtime_ns": int(opened.st_mtime_ns),
+        "ctime_ns": int(opened.st_ctime_ns),
+        "device": int(opened.st_dev),
+        "inode": int(opened.st_ino),
+    }
+
+
+def _read_authenticated_bytes(
+    stream: IO[bytes], opened: Mapping[str, Any],
+) -> bytes:
+    """Read immutable bytes from an authenticated open file description."""
+    stream.seek(0)
+    content = stream.read()
+    after = os.fstat(stream.fileno())
+    if (
+        _stat_identity(after)
+        != tuple(
+            int(opened[name])
+            for name in (
+                "mode", "size", "mtime_ns", "ctime_ns", "device", "inode",
+            )
+        )
+        or len(content) != int(opened["size"])
+    ):
+        raise SystemExit("model input changed while its bytes were read")
+    return content
+
+
+def _finish_authenticated_input(
+    stream: IO[bytes],
+    opened: Mapping[str, Any],
+    *,
+    consumed_bytes: bytes | None,
+    consumption: str,
+) -> dict[str, Any]:
+    """Verify one loader input and hash the same open file description."""
+    expected = tuple(
+        int(opened[name])
+        for name in ("mode", "size", "mtime_ns", "ctime_ns", "device", "inode")
+    )
+    try:
+        before_hash = os.fstat(stream.fileno())
+        lexical_stat = Path(str(opened["lexical_path"])).lstat()
+        resolved_stat = Path(str(opened["path"])).lstat()
+    except OSError as exc:
+        raise SystemExit(f"model input disappeared while being loaded: {exc}") from exc
+    if (
+        _stat_identity(before_hash) != expected
+        or _stat_identity(lexical_stat) != expected
+        or _stat_identity(resolved_stat) != expected
+    ):
+        raise SystemExit("model input identity changed while being loaded")
+    if consumed_bytes is None:
+        stream.seek(0)
+        digest = hashlib.sha256()
+        byte_count = 0
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+            byte_count += len(block)
+        sha256 = digest.hexdigest()
+    else:
+        byte_count = len(consumed_bytes)
+        sha256 = hashlib.sha256(consumed_bytes).hexdigest()
+    after_hash = os.fstat(stream.fileno())
+    try:
+        final_lexical_stat = Path(str(opened["lexical_path"])).lstat()
+        final_resolved_stat = Path(str(opened["path"])).lstat()
+    except OSError as exc:
+        raise SystemExit(f"model input disappeared while being hashed: {exc}") from exc
+    if (
+        _stat_identity(after_hash) != expected
+        or _stat_identity(final_lexical_stat) != expected
+        or _stat_identity(final_resolved_stat) != expected
+        or byte_count != int(opened["size"])
+    ):
+        raise SystemExit("model input changed while being loaded or hashed")
+    return {
+        name: opened[name]
+        for name in (
+            "path", "lexical_path", "size", "mtime_ns", "ctime_ns", "device", "inode",
+        )
+    } | {
+        "sha256": sha256,
+        "stable_read": True,
+        "consumption": consumption,
+    }
+
+
+def _authenticated_input_artifact_if_file(
+    path: Path, *, consumption: str,
+) -> dict[str, Any] | None:
+    """Best-effort streaming recheck without buffering a checkpoint in RAM."""
+    stream: IO[bytes] | None = None
+    try:
+        stream, opened = _open_authenticated_input(path)
+        return _finish_authenticated_input(
+            stream,
+            opened,
+            consumed_bytes=None,
+            consumption=consumption,
+        )
+    except (OSError, SystemExit):
+        return None
+    finally:
+        if stream is not None:
+            stream.close()
+
+
+def _load_authenticated_model_inputs(
+    checkpoint_path: Path,
+    checkpoint_params_path: Path | None,
+    *,
+    loader: Callable[..., Any],
+    device: str,
+    require_complete: bool,
+) -> tuple[Any, dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+    """Load the exact checkpoint/params objects later recorded in provenance."""
+    checkpoint_stream, checkpoint_opened = _open_authenticated_input(checkpoint_path)
+    params_stream: IO[bytes] | None = None
+    params_opened: dict[str, Any] | None = None
+    params_bytes: bytes | None = None
+    try:
+        if checkpoint_params_path is not None:
+            params_stream, params_opened = _open_authenticated_input(
+                checkpoint_params_path
+            )
+            params_bytes = _read_authenticated_bytes(params_stream, params_opened)
+        model = loader(
+            checkpoint_stream,
+            checkpoint_path=checkpoint_path,
+            params_json=params_bytes,
+            params_path=checkpoint_params_path,
+            device=device,
+            require_complete=require_complete,
+        )
+        checkpoint_artifact = _finish_authenticated_input(
+            checkpoint_stream,
+            checkpoint_opened,
+            consumed_bytes=None,
+            consumption="torch_load_from_same_open_file_description",
+        )
+        params_artifact = (
+            _finish_authenticated_input(
+                params_stream,
+                params_opened,
+                consumed_bytes=params_bytes,
+                consumption="json_decode_from_exact_authenticated_bytes",
+            )
+            if params_stream is not None
+            and params_opened is not None
+            and params_bytes is not None
+            else None
+        )
+    finally:
+        checkpoint_stream.close()
+        if params_stream is not None:
+            params_stream.close()
+    proof = {
+        "schema": _MODEL_INPUT_CONSUMPTION_SCHEMA,
+        "checkpoint_open": "absolute_lexical_path_o_nofollow",
+        "checkpoint": "torch_load_from_same_open_file_description",
+        "checkpoint_path_reopened_by_loader": False,
+        "checkpoint_identity_verified_before_search": True,
+        "checkpoint_sha256_streamed_from_same_open_file_description": True,
+        "params": (
+            "json_decode_from_exact_authenticated_bytes"
+            if params_artifact is not None else "no_params_json"
+        ),
+        "params_open": (
+            "absolute_lexical_path_o_nofollow"
+            if params_artifact is not None else "no_params_json"
+        ),
+        "params_path_reopened_by_loader": False,
+        "params_identity_verified_before_search": True,
+        "passed": True,
+    }
+    return model, checkpoint_artifact, params_artifact, proof
 
 
 def _loaded_native_build_attestation(
@@ -1191,11 +1425,34 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
 
 
 def _checkpoint_file(path: Path) -> Path:
-    resolved = path.expanduser().resolve()
-    candidate = resolved / "trainer.pt" if resolved.is_dir() else resolved
-    if not candidate.is_file():
-        raise SystemExit(f"checkpoint has no trainer.pt: {resolved}")
+    lexical = Path(os.path.abspath(path.expanduser()))
+    try:
+        input_stat = lexical.lstat()
+    except OSError as exc:
+        raise SystemExit(f"checkpoint cannot be inspected: {lexical}: {exc}") from exc
+    if stat.S_ISLNK(input_stat.st_mode):
+        raise SystemExit(f"checkpoint path cannot be a symlink: {lexical}")
+    candidate = lexical / "trainer.pt" if stat.S_ISDIR(input_stat.st_mode) else lexical
+    try:
+        candidate_stat = candidate.lstat()
+    except OSError as exc:
+        raise SystemExit(f"checkpoint has no trainer.pt: {lexical}") from exc
+    if stat.S_ISLNK(candidate_stat.st_mode) or not stat.S_ISREG(candidate_stat.st_mode):
+        raise SystemExit(f"checkpoint has no regular trainer.pt: {lexical}")
     return candidate
+
+
+def _checkpoint_params_file(trainer_pt: Path) -> Path | None:
+    """Mirror the UCI loader's bounded, checkpoint-local params lookup."""
+    current = trainer_pt.parent
+    for _ in range(6):
+        candidate = current / "params.json"
+        if candidate.is_file():
+            return candidate
+        if current.parent == current:
+            break
+        current = current.parent
+    return None
 
 
 def _nvidia_driver_version(device_index: int) -> str | None:
@@ -1541,6 +1798,7 @@ def _main() -> None:
         or default_matched_rows_report_path(matched_path)
     )
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
+    checkpoint_params_path = _checkpoint_params_file(checkpoint_path)
     producer_git_sha, producer_git_dirty = _git_state()
     if (
         not args.methodology_smoke
@@ -1588,7 +1846,10 @@ def _main() -> None:
         "publication_helper": initial_producer_sources[
             "scripts.chunk_trajectory_publication"
         ],
-        "checkpoint": _artifact(checkpoint_path, require_file=True),
+        # Checkpoint and params artifacts are filled from the exact open objects
+        # consumed by the model loader immediately before search construction.
+        "checkpoint": None,
+        "checkpoint_params": None,
         "audit_set": audit_set_artifact,
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.is_file() else None
@@ -1607,7 +1868,9 @@ def _main() -> None:
         args.out,
         meta_path,
         protected_files=[
-            args.audit_set, matched_path, matched_report_path, checkpoint_path, Path(__file__),
+            args.audit_set, matched_path, matched_report_path, checkpoint_path,
+            *([checkpoint_params_path] if checkpoint_params_path is not None else []),
+            Path(__file__),
             Path(publication_module.__file__),
             *([preregistration_path] if preregistration_path is not None else []),
         ],
@@ -1763,6 +2026,7 @@ def _main() -> None:
         matched_path,
         matched_report_path,
         checkpoint_path,
+        *([checkpoint_params_path] if checkpoint_params_path is not None else []),
         Path(__file__),
         Path(publication_module.__file__),
         *([preregistration_path] if preregistration_path is not None else []),
@@ -1918,6 +2182,7 @@ def _main() -> None:
         "producer_script": initial_input_artifacts["producer_script"],
         "publication_helper": initial_input_artifacts["publication_helper"],
         "checkpoint": initial_input_artifacts["checkpoint"],
+        "checkpoint_params": initial_input_artifacts["checkpoint_params"],
         "audit_set": initial_input_artifacts["audit_set"],
         "matched_rows": initial_input_artifacts["matched_rows"],
         "matched_rows_report": initial_input_artifacts["matched_rows_report"],
@@ -1938,8 +2203,7 @@ def _main() -> None:
     from chess_anti_engine.tablebase import SyzygyProbe
     from chess_anti_engine.uci.__main__ import _make_evaluator_factory
     from chess_anti_engine.uci.model_loader import (
-        _find_params_json,
-        load_model_from_checkpoint,
+        load_model_from_checkpoint_artifacts,
     )
     from chess_anti_engine.uci.search import SearchWorker
     from chess_anti_engine.uci.time_manager import Deadline
@@ -1994,13 +2258,8 @@ def _main() -> None:
         raise SystemExit(
             "decision-grade producer sources changed while runtime modules imported: "
             + ", ".join(producer_source_import_changes)
-        )
-    provenance["producer_sources"] = producer_sources
-    checkpoint_params_path = _find_params_json(checkpoint_path)
-    provenance["checkpoint_params"] = (
-        _artifact(checkpoint_params_path, require_file=True)
-        if checkpoint_params_path is not None else None
     )
+    provenance["producer_sources"] = producer_sources
     loaded_halving_rev = int(getattr(mcts_extension, "GSS_HALVING_REV", 0))
     loaded_mcts_artifact = _artifact(
         Path(mcts_extension.__file__), require_file=True,
@@ -2085,33 +2344,27 @@ def _main() -> None:
             f"{loaded_halving_rev} from {mcts_extension.__file__}"
         )
 
-    model = load_model_from_checkpoint(
+    (
+        model,
+        checkpoint_artifact,
+        checkpoint_params_artifact,
+        model_input_consumption,
+    ) = _load_authenticated_model_inputs(
         checkpoint_path,
+        checkpoint_params_path,
+        loader=load_model_from_checkpoint_artifacts,
         device=args.device,
         require_complete=not args.methodology_smoke,
     )
+    provenance["checkpoint"] = checkpoint_artifact
+    provenance["checkpoint_params"] = checkpoint_params_artifact
+    provenance["model_input_consumption"] = model_input_consumption
     model.eval()
-    post_checkpoint_params_path = _find_params_json(checkpoint_path)
-    post_model_load_artifacts = {
-        "checkpoint": _artifact_if_file(checkpoint_path),
-        "checkpoint_params": (
-            _artifact_if_file(post_checkpoint_params_path)
-            if post_checkpoint_params_path is not None else None
-        ),
-    }
-    checkpoint_load_changes = sorted(
-        name for name, before in (
-            ("checkpoint", provenance["checkpoint"]),
-            ("checkpoint_params", provenance["checkpoint_params"]),
-        )
-        if _artifact_identity(before)
-        != _artifact_identity(post_model_load_artifacts[name])
-    )
-    if checkpoint_load_changes and not args.methodology_smoke:
-        raise SystemExit(
-            "decision-grade checkpoint inputs changed while being loaded: "
-            + ", ".join(checkpoint_load_changes)
-        )
+    # The helper raises before this point unless the exact file description
+    # consumed by torch and the exact params bytes remained stable. Avoid a
+    # redundant multi-gigabyte pathname re-hash here; final run provenance
+    # still rechecks the live pathname after collection.
+    checkpoint_load_changes: list[str] = []
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
@@ -2882,14 +3135,19 @@ def _main() -> None:
         "mcts_extension": loaded_mcts_artifact,
         "lc0_extension": loaded_lc0_artifact,
     }
-    current_params_path = _find_params_json(checkpoint_path)
     current_artifacts = {
         "producer_script": _artifact_if_file(Path(__file__)),
         "publication_helper": _artifact_if_file(Path(publication_module.__file__)),
-        "checkpoint": _artifact_if_file(checkpoint_path),
+        "checkpoint": _authenticated_input_artifact_if_file(
+            checkpoint_path,
+            consumption="torch_load_from_same_open_file_description",
+        ),
         "checkpoint_params": (
-            _artifact_if_file(current_params_path)
-            if current_params_path is not None else None
+            _authenticated_input_artifact_if_file(
+                checkpoint_params_path,
+                consumption="json_decode_from_exact_authenticated_bytes",
+            )
+            if checkpoint_params_path is not None else None
         ),
         "audit_set": _artifact_if_file(args.audit_set),
         "matched_rows": _artifact_if_file(matched_path),

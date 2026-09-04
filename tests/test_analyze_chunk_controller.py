@@ -53,6 +53,8 @@ from scripts.analyze_chunk_controller import (
 from scripts.backtest_chunk_trajectory import (
     _acquire_output_lock,
     _acquire_output_locks,
+    _open_authenticated_input,
+    _load_authenticated_model_inputs,
     _publish_output,
     _require_new_output_pair,
     _require_safe_preregistration_path,
@@ -375,9 +377,12 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     )
     assert source.index("initial_input_artifacts =") < source.index("MatchedAuditRows(")
     assert source.index("output_locks = _acquire_output_locks") < source.index(
-        "model = load_model_from_checkpoint("
+        "_load_authenticated_model_inputs("
     )
-    assert "load_model_from_checkpoint(\n        checkpoint_path," in source
+    assert "loader=load_model_from_checkpoint_artifacts" in source
+    assert source.index("_load_authenticated_model_inputs(") < source.index(
+        "worker = SearchWorker("
+    )
     assert "tmp_path.unlink()" not in source
     assert '"raw_observations_preserved": True' in source
     assert module_source.index(
@@ -388,6 +393,101 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert module_source.index(
         "from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS"
     ) < module_source.index("from chess_anti_engine.eval.audit import")
+
+
+def _restore_mtime(path: Path, original: os.stat_result) -> None:
+    os.utime(
+        path,
+        ns=(int(original.st_atime_ns), int(original.st_mtime_ns)),
+    )
+
+
+def test_authenticated_checkpoint_load_rejects_fixed_size_alter_load_restore(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "trainer.pt"
+    original = b"checkpoint-original"
+    altered = b"checkpoint-altered!"
+    assert len(original) == len(altered)
+    checkpoint.write_bytes(original)
+    original_stat = checkpoint.stat()
+
+    def racing_loader(stream: Any, **_kwargs: Any) -> object:
+        checkpoint.write_bytes(altered)
+        _restore_mtime(checkpoint, original_stat)
+        stream.seek(0)
+        assert stream.read() == altered
+        checkpoint.write_bytes(original)
+        _restore_mtime(checkpoint, original_stat)
+        return object()
+
+    with pytest.raises(SystemExit, match="identity changed"):
+        _load_authenticated_model_inputs(
+            checkpoint,
+            None,
+            loader=racing_loader,
+            device="cpu",
+            require_complete=True,
+        )
+
+    assert checkpoint.read_bytes() == original
+    assert checkpoint.stat().st_mtime_ns == original_stat.st_mtime_ns
+
+
+def test_authenticated_input_rejects_final_component_symlink_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested = tmp_path / "trainer.pt"
+    requested.write_bytes(b"authenticated")
+    substitute = tmp_path / "substitute.pt"
+    substitute.write_bytes(b"substituted!!")
+    real_open = os.open
+
+    def swap_before_open(path: Any, flags: int, *args: Any) -> int:
+        requested.unlink()
+        requested.symlink_to(substitute)
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(os, "open", swap_before_open)
+    with pytest.raises(SystemExit, match="model input"):
+        _open_authenticated_input(requested)
+
+
+def test_authenticated_params_load_rejects_fixed_size_alter_load_restore(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "trainer.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    params = tmp_path / "params.json"
+    original = b'{"model":"tiny"}'
+    altered = b'{"model":"evil"}'
+    assert len(original) == len(altered)
+    params.write_bytes(original)
+    original_stat = params.stat()
+
+    def racing_loader(
+        _stream: Any, *, params_json: bytes | None, **_kwargs: Any,
+    ) -> object:
+        params.write_bytes(altered)
+        _restore_mtime(params, original_stat)
+        # The loader receives the already-authenticated immutable bytes, not a
+        # pathname it can race independently.
+        assert params_json == original
+        params.write_bytes(original)
+        _restore_mtime(params, original_stat)
+        return object()
+
+    with pytest.raises(SystemExit, match="identity changed"):
+        _load_authenticated_model_inputs(
+            checkpoint,
+            params,
+            loader=racing_loader,
+            device="cpu",
+            require_complete=True,
+        )
+
+    assert params.read_bytes() == original
+    assert params.stat().st_mtime_ns == original_stat.st_mtime_ns
 
 
 def test_trajectory_preimport_guard_covers_every_loaded_project_extension() -> None:
@@ -830,12 +930,13 @@ def test_recovery_source_guard_needs_no_native_extensions(tmp_path: Path) -> Non
     pending_output.write_text("completed bank\n")
     file_stat = pending_output.stat()
     manifest = {
-        "schema": "deepfin.chunk_trajectory.v4",
+        "schema": "deepfin.chunk_trajectory.v5",
         "complete": True,
         "output": {
             "path": str(output.resolve()),
             "size": file_stat.st_size,
             "mtime_ns": file_stat.st_mtime_ns,
+            "ctime_ns": file_stat.st_ctime_ns,
             "device": file_stat.st_dev,
             "inode": file_stat.st_ino,
             "sha256": hashlib.sha256(pending_output.read_bytes()).hexdigest(),
@@ -1451,7 +1552,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     )
     rows = [
         {
-            "schema": "deepfin.chunk_trajectory.v4",
+            "schema": "deepfin.chunk_trajectory.v5",
             "key": position_key(board), "source_dir": "/snapshot", "shard": "s0.zarr",
             "fen": board.fen(),
             "game_id": 3, "group_id": "/snapshot\0" + "3",
@@ -1669,7 +1770,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
     }
     manifest: dict[str, Any] = {
-        "schema": "deepfin.chunk_trajectory.v4",
+        "schema": "deepfin.chunk_trajectory.v5",
         "complete": True,
         "decision_grade": True,
         "analysis_scope": "fixed_node_horizons_only",
@@ -1743,9 +1844,26 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         ],
         "producer_sources": producer_sources,
         "checkpoint": {
-            "path": "/trainer.pt", "size": 1, "mtime_ns": 1, "sha256": "b" * 64,
+            "path": "/trainer.pt", "lexical_path": "/trainer.pt",
+            "size": 1, "mtime_ns": 1, "ctime_ns": 1,
+            "device": 1, "inode": 201, "sha256": "b" * 64,
+            "stable_read": True,
+            "consumption": "torch_load_from_same_open_file_description",
         },
         "checkpoint_params": None,
+        "model_input_consumption": {
+            "schema": "deepfin.model_input_consumption.v1",
+            "checkpoint_open": "absolute_lexical_path_o_nofollow",
+            "checkpoint": "torch_load_from_same_open_file_description",
+            "checkpoint_path_reopened_by_loader": False,
+            "checkpoint_identity_verified_before_search": True,
+            "checkpoint_sha256_streamed_from_same_open_file_description": True,
+            "params": "no_params_json",
+            "params_open": "no_params_json",
+            "params_path_reopened_by_loader": False,
+            "params_identity_verified_before_search": True,
+            "passed": True,
+        },
         "audit_set": {
             "path": "/audit.jsonl", "size": 1, "mtime_ns": 1,
             "sha256": audit_set_sha256,
@@ -1983,6 +2101,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "source_git_sha": "9" * 40,
             "checkpoint_sha256": manifest["checkpoint"]["sha256"],
             "checkpoint_params_sha256": None,
+            "model_input_consumption": manifest["model_input_consumption"],
             "audit_set_sha256": manifest["audit_set"]["sha256"],
             "matched_rows_sha256": manifest["matched_rows"]["sha256"],
             "matched_rows_report_sha256": manifest["matched_rows_report"]["sha256"],

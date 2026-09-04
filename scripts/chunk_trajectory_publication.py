@@ -20,7 +20,7 @@ from typing import IO, Any
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 
-CHUNK_TRAJECTORY_SCHEMA = "deepfin.chunk_trajectory.v4"
+CHUNK_TRAJECTORY_SCHEMA = "deepfin.chunk_trajectory.v5"
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
@@ -34,6 +34,7 @@ def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
         "path": str(resolved),
         "size": int(file_stat.st_size),
         "mtime_ns": int(file_stat.st_mtime_ns),
+        "ctime_ns": int(file_stat.st_ctime_ns),
         "device": int(file_stat.st_dev),
         "inode": int(file_stat.st_ino),
     }
@@ -51,8 +52,22 @@ def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
         return None
     return {
         name: artifact.get(name)
-        for name in ("path", "size", "mtime_ns", "device", "inode", "sha256")
+        for name in (
+            "path", "size", "mtime_ns", "ctime_ns", "device", "inode", "sha256",
+        )
     }
+
+
+def _publication_artifact_identity(artifact: Any) -> dict[str, Any] | None:
+    """Identity preserved when a staged file is atomically renamed.
+
+    Rename updates ctime on Linux, so ctime remains part of generic stability
+    comparisons but cannot be a precommitted property of the published name.
+    """
+    identity = _artifact_identity(artifact)
+    if identity is not None:
+        identity.pop("ctime_ns")
+    return identity
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -166,7 +181,9 @@ def _require_new_output_pair(
         manifest = _read_pending_manifest(pending_meta)
         _require_output_matches_manifest(pending_output, output_path, manifest)
         published = _publish_output(pending_output, output_path)
-        if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
+        if _publication_artifact_identity(published) != _publication_artifact_identity(
+            manifest.get("output")
+        ):
             raise RuntimeError("recovered trajectory bank differs from its manifest")
         _publish_no_replace(pending_meta, meta_path)
         return True
@@ -196,7 +213,9 @@ def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     expected = _prepared_output_artifact(tmp_path, output_path)
     _publish_no_replace(tmp_path, output_path)
     published = _artifact(output_path, require_file=True)
-    if _artifact_identity(published) != _artifact_identity(expected):
+    if _publication_artifact_identity(published) != _publication_artifact_identity(
+        expected
+    ):
         raise RuntimeError("published trajectory bank differs from its private output")
     return published
 
@@ -229,7 +248,9 @@ def _require_output_matches_manifest(
     if not isinstance(expected, dict):
         raise SystemExit("pending evidence manifest lacks an output artifact")
     actual = _prepared_output_artifact(candidate_path, output_path)
-    if _artifact_identity(actual) != _artifact_identity(expected):
+    if _publication_artifact_identity(actual) != _publication_artifact_identity(
+        expected
+    ):
         raise SystemExit("pending trajectory bank does not match its manifest")
 
 
@@ -243,7 +264,9 @@ def _publish_evidence_pair(
     """Prepare both artifacts before publishing either; retain recovery state."""
     _write_json_staged(pending_meta, manifest)
     published = _publish_output(pending_output, output_path)
-    if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
+    if _publication_artifact_identity(published) != _publication_artifact_identity(
+        manifest.get("output")
+    ):
         raise RuntimeError("published trajectory bank differs from its manifest")
     _publish_no_replace(pending_meta, meta_path)
 
