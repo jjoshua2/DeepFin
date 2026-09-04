@@ -402,13 +402,25 @@ def _publication_artifact_identity(artifact: Any) -> dict[str, Any] | None:
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_name(f".{path.name}.tmp-{secrets.token_hex(16)}")
-    _write_json_staged(tmp_path, payload)
-    with _anchored_file(
-        tmp_path, tmp_path, durable=True, links=1, exit_links=2,
-    ) as staged:
-        if _read_json_fd(staged.file_fd, tmp_path) != payload:
-            raise SystemExit("staged JSON differs from requested payload")
-        _publish_no_replace(tmp_path, path, source=staged)
+    with _retained_parent(path) as parent_fd:
+        _write_json_staged(tmp_path, payload, parent_fd=parent_fd)
+        with _anchored_file(
+            tmp_path,
+            tmp_path,
+            durable=True,
+            links=1,
+            parent_fd=parent_fd,
+            exit_links=2,
+        ) as staged:
+            if _read_json_fd(staged.file_fd, tmp_path) != payload:
+                raise SystemExit("staged JSON differs from requested payload")
+            _publish_no_replace(
+                tmp_path,
+                path,
+                source=staged,
+                output_parent_fd=parent_fd,
+            )
+        _require_parent(path, parent_fd)
 
 
 @contextmanager

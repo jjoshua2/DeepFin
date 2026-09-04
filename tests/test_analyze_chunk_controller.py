@@ -7321,6 +7321,56 @@ def test_producer_atomic_json_retains_requested_payload_through_publication(
     assert not output.exists()
 
 
+def test_producer_atomic_json_retains_one_parent_across_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    live = tmp_path / "live"
+    held = tmp_path / "held-live"
+    decoy = tmp_path / "decoy"
+    live.mkdir()
+    decoy.mkdir()
+    output = live / "preregistration.json"
+    staging = live / ".preregistration.json.tmp-fixed"
+    payload = {"schema": "preregistration", "complete": True}
+    real_open_parent = publication._open_parent
+    real_require_parent = publication._require_parent
+    open_calls = 0
+    swapped = False
+
+    def swap_on_third_parent_open(path: Path) -> int:
+        nonlocal open_calls, swapped
+        open_calls += 1
+        if open_calls == 3:
+            live.rename(held)
+            decoy.rename(live)
+            swapped = True
+        return real_open_parent(path)
+
+    def restore_before_source_revalidation(path: Path, parent_fd: int) -> None:
+        nonlocal swapped
+        if swapped and path.name == staging.name:
+            live.rename(decoy)
+            held.rename(live)
+            swapped = False
+        real_require_parent(path, parent_fd)
+
+    monkeypatch.setattr(publication.secrets, "token_hex", lambda _size: "fixed")
+    monkeypatch.setattr(publication, "_open_parent", swap_on_third_parent_open)
+    monkeypatch.setattr(
+        publication, "_require_parent", restore_before_source_revalidation,
+    )
+
+    publication._write_json_atomic(output, payload)
+
+    assert open_calls == 1
+    assert swapped is False
+    assert json.loads(output.read_text()) == payload
+    assert output.samefile(staging)
+    assert not (decoy / output.name).exists()
+
+
 def test_analyzer_anonymous_json_preserves_preexisting_staging_file(
     tmp_path: Path,
 ) -> None:
