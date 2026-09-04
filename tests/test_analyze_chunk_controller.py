@@ -5884,7 +5884,7 @@ def test_invalid_parent_type_during_state_classification_is_quarantined(
         "_manifest_recovery_is_invalid",
         replace_parent_after_marker_check,
     )
-    with pytest.raises(SystemExit, match="cannot inspect evidence state name"):
+    with pytest.raises(SystemExit, match="cannot open containing directory"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     assert (moved_parent / invalid.name).exists()
@@ -5905,6 +5905,68 @@ def test_invalid_parent_type_during_state_classification_is_quarantined(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+def test_parent_aba_during_state_inventory_cannot_create_a_retry_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    moved_parent = tmp_path / "moved-evidence"
+    parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    pending_meta.write_text(json.dumps(manifest))
+    real_invalid_check = publication._manifest_recovery_is_invalid
+    real_name_exists = publication._entry_name_exists
+    invalid_checks = 0
+    inventory_checks = 0
+
+    def install_empty_parent_after_marker_check(
+        path: Path, *, parent_fd: int,
+    ) -> bool:
+        nonlocal invalid_checks
+        result = real_invalid_check(path, parent_fd=parent_fd)
+        invalid_checks += 1
+        if invalid_checks == 2:
+            parent.rename(moved_parent)
+            parent.mkdir()
+        return result
+
+    def restore_parent_after_inventory(path: Path, *, parent_fd: int) -> bool:
+        nonlocal inventory_checks
+        result = real_name_exists(path, parent_fd=parent_fd)
+        inventory_checks += 1
+        if inventory_checks == 4:
+            parent.rmdir()
+            moved_parent.rename(parent)
+        return result
+
+    monkeypatch.setattr(
+        publication,
+        "_manifest_recovery_is_invalid",
+        install_empty_parent_after_marker_check,
+    )
+    monkeypatch.setattr(publication, "_entry_name_exists", restore_parent_after_inventory)
+    first_result = publication._require_new_output_pair(output, meta, overwrite=False)
+    if not first_result:
+        pending_meta.write_text(json.dumps({**manifest, "tampered": True}))
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert first_result is True
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+    assert not publication._invalid_manifest_path(meta).exists()
+
+
 def test_state_presence_io_failure_keeps_pending_pair_retryable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5922,9 +5984,9 @@ def test_state_presence_io_failure_keeps_pending_pair_retryable(
         nonlocal injected
         if (
             not injected
-            and path == output
+            and path == output.name
             and kwargs.get("follow_symlinks") is False
-            and kwargs.get("dir_fd") is None
+            and kwargs.get("dir_fd") is not None
         ):
             injected = True
             raise OSError(errno.EIO, "state presence stat failure")

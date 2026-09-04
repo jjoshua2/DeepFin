@@ -442,15 +442,13 @@ def _manifest_recovery_is_invalid(meta_path: Path, *, parent_fd: int) -> bool:
     return True
 
 
-def _entry_name_exists(path: Path) -> bool:
-    """Check one lexical name without following it or hiding inspection errors."""
+def _entry_name_exists(path: Path, *, parent_fd: int) -> bool:
+    """Check one name through its retained parent without hiding I/O errors."""
     try:
-        os.stat(path.expanduser(), follow_symlinks=False)
+        os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
         if exc.errno == errno.ENOENT:
             return False
-        if exc.errno in {errno.ENOTDIR, errno.ELOOP}:
-            raise SystemExit(f"cannot inspect evidence state name: {path}") from exc
         raise
     return True
 
@@ -463,7 +461,10 @@ def _require_new_output_pair(
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
         )
-    with _retained_parent(meta_path) as manifest_parent_fd:
+    with (
+        _retained_parent(meta_path) as manifest_parent_fd,
+        _retained_parent(output_path) as output_parent_fd,
+    ):
         if _manifest_recovery_is_invalid(
             meta_path, parent_fd=manifest_parent_fd,
         ):
@@ -476,6 +477,7 @@ def _require_new_output_pair(
             meta_path,
             overwrite=overwrite,
             manifest_parent_fd=manifest_parent_fd,
+            output_parent_fd=output_parent_fd,
         )
 
 
@@ -485,6 +487,7 @@ def _require_new_output_pair_at_parent(
     *,
     overwrite: bool,
     manifest_parent_fd: int,
+    output_parent_fd: int,
 ) -> bool:
     if _manifest_recovery_is_invalid(meta_path, parent_fd=manifest_parent_fd):
         raise SystemExit(
@@ -498,11 +501,14 @@ def _require_new_output_pair_at_parent(
     with _quarantine_manifest_recovery_on_integrity_failure(
         meta_path, parent_fd=manifest_parent_fd,
     ):
-        return _classify_new_output_pair(
+        recovered = _classify_new_output_pair(
             output_path,
             meta_path,
             manifest_parent_fd=manifest_parent_fd,
+            output_parent_fd=output_parent_fd,
         )
+        _require_parent(output_path, output_parent_fd)
+        return recovered
 
 
 def _classify_new_output_pair(
@@ -510,13 +516,18 @@ def _classify_new_output_pair(
     meta_path: Path,
     *,
     manifest_parent_fd: int,
+    output_parent_fd: int,
 ) -> bool:
     pending_output = _pending_output_path(output_path)
     pending_meta = _pending_manifest_path(meta_path)
-    output_exists = _entry_name_exists(output_path)
-    meta_exists = _entry_name_exists(meta_path)
-    pending_output_exists = _entry_name_exists(pending_output)
-    pending_meta_exists = _entry_name_exists(pending_meta)
+    output_exists = _entry_name_exists(output_path, parent_fd=output_parent_fd)
+    meta_exists = _entry_name_exists(meta_path, parent_fd=manifest_parent_fd)
+    pending_output_exists = _entry_name_exists(
+        pending_output, parent_fd=output_parent_fd,
+    )
+    pending_meta_exists = _entry_name_exists(
+        pending_meta, parent_fd=manifest_parent_fd,
+    )
     if (
         output_exists
         and meta_exists
