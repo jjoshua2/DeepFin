@@ -301,8 +301,8 @@ from scripts.match_audit_rows import (
 from chess_anti_engine.eval.audit import (
     AuditPosition,
     legal_full_indices,
-    load_audit_set,
     move_regrets,
+    parse_audit_record,
     phase_bucket,
 )
 from chess_anti_engine.eval.audit_history import MatchedAuditRows, default_matched_rows_path
@@ -329,6 +329,7 @@ from chess_anti_engine.uci.search import (
 )
 from chess_anti_engine.utils.syzygy import SEPARATOR, default_syzygy_path, require_tablebases
 from scripts.analyze_chunk_controller import (
+    _APPROVED_AUDIT_SET_SHA256,
     _MIN_DECISION_GRADE_SOURCE_GAMES,
     _PRODUCTION_WALKERS,
     _canonical_cuda_device_string,
@@ -625,6 +626,68 @@ def _artifact_if_file(path: Path) -> dict[str, Any] | None:
         return _artifact(path, require_file=True)
     except OSError:
         return None
+
+
+def _load_audit_set_snapshot(
+    path: Path, *, require_approved: bool,
+) -> tuple[list[AuditPosition], dict[str, Any]]:
+    """Hash and parse one immutable snapshot of the audit-set bytes.
+
+    The old flow hashed the path and then reopened it through ``load_audit_set``.
+    A replace/read/restore race could therefore authenticate one file while using
+    rows from another.  This function reads one stable file descriptor into an
+    immutable ``bytes`` object; that exact object supplies both the digest and
+    every parsed position.
+    """
+    try:
+        resolved = path.expanduser().resolve(strict=True)
+        with resolved.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            content = stream.read()
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise SystemExit(f"cannot read audit set {path}: {exc}") from exc
+    identity = (
+        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
+        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
+    )
+    stable_read = bool(
+        identity == (
+            int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
+            int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
+        )
+        and stat.S_ISREG(after.st_mode)
+        and len(content) == after.st_size
+    )
+    if not stable_read:
+        raise SystemExit("audit set changed while its immutable snapshot was read")
+    digest = hashlib.sha256(content).hexdigest()
+    if require_approved and digest != _APPROVED_AUDIT_SET_SHA256:
+        raise SystemExit(
+            "decision-grade trajectory banks require the approved frozen audit set "
+            f"SHA256 {_APPROVED_AUDIT_SET_SHA256}; observed {digest}"
+        )
+    try:
+        document = content.decode("utf-8", errors="strict")
+        positions = [
+            parse_audit_record(line)
+            for raw_line in document.splitlines()
+            if (line := raw_line.strip())
+        ]
+    except (UnicodeError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"cannot parse audit-set snapshot {resolved}: {exc}") from exc
+    artifact = {
+        "path": str(resolved),
+        "size": len(content),
+        "mtime_ns": int(after.st_mtime_ns),
+        "ctime_ns": int(after.st_ctime_ns),
+        "device": int(after.st_dev),
+        "inode": int(after.st_ino),
+        "sha256": digest,
+        "stable_read": True,
+        "consumption": "sha256_and_positions_from_same_immutable_byte_snapshot",
+    }
+    return positions, artifact
 
 
 def _producer_python_source_artifacts(
@@ -1194,13 +1257,16 @@ def _main() -> None:
         preregistration_artifact, preregistration_document = (
             _read_tracked_preregistration(preregistration_path, producer_git_sha)
         )
+    audit_positions, audit_set_artifact = _load_audit_set_snapshot(
+        args.audit_set, require_approved=not args.methodology_smoke,
+    )
     initial_input_artifacts = {
         "producer_script": initial_producer_sources["producer_script"],
         "publication_helper": initial_producer_sources[
             "scripts.chunk_trajectory_publication"
         ],
         "checkpoint": _artifact(checkpoint_path, require_file=True),
-        "audit_set": _artifact(args.audit_set, require_file=True),
+        "audit_set": audit_set_artifact,
         "matched_rows": (
             _artifact(matched_path, require_file=True) if matched_path.is_file() else None
         ),
@@ -1303,7 +1369,7 @@ def _main() -> None:
             "overrides would be inert: " + ", ".join(inert_overrides)
         )
     positions, panel_selection = _select_audit_panel(
-        load_audit_set(args.audit_set), int(args.max_positions),
+        audit_positions, int(args.max_positions),
     )
     _require_decision_grade_panel_selection(
         panel_selection, methodology_smoke=bool(args.methodology_smoke),

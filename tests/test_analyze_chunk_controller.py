@@ -362,7 +362,10 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     assert '"root_child_q"' in source
     assert '"pv_actions"' in source
     assert '"checkpoint_params"' in source
-    assert source.index("initial_input_artifacts =") < source.index("load_audit_set(")
+    assert "load_audit_set(" not in source
+    assert source.index("_load_audit_set_snapshot(") < source.index(
+        "initial_input_artifacts ="
+    )
     assert source.index("initial_input_artifacts =") < source.index("MatchedAuditRows(")
     assert source.index("output_locks = _acquire_output_locks") < source.index(
         "model = load_model_from_checkpoint("
@@ -1625,12 +1628,13 @@ def test_deep_reference_evidence_pins_the_approved_frozen_ruler() -> None:
     )
     forced_move = next(iter(forced_board.legal_moves)).uci()
     assert forced_board.legal_moves.count() == 1
-    position = {
+    position: dict[str, Any] = {
         "key": position_key(forced_board),
         "fen": forced_board.fen(),
         "deep_reference_nodes": 1_522,
         "deep_reference_depth": 245,
         "deep_reference_scored_multipv": 1,
+        "deep_reference_best_cp": 100_000.0,
         "deep_reference_move_cp": {forced_move: 100_000.0},
     }
 
@@ -1646,6 +1650,144 @@ def test_deep_reference_evidence_pins_the_approved_frozen_ruler() -> None:
     assert approved["positions_below_requested_nodes"] == [position["key"]]
     assert substituted["audit_set_identity_passed"] is False
     assert substituted["passed"] is False
+
+
+@pytest.mark.parametrize("mutation", ["move_key", "move_cp", "best_cp"])
+def test_deep_reference_evidence_digest_covers_full_ruler_values(
+    mutation: str,
+) -> None:
+    board = chess.Board()
+    position = {
+        "key": position_key(board),
+        "fen": board.fen(),
+        "deep_reference_nodes": 1_000_000,
+        "deep_reference_depth": 30,
+        "deep_reference_scored_multipv": 10,
+        "deep_reference_best_cp": 100.0,
+        "deep_reference_move_cp": {
+            "e2e4": 100.0,
+            "d2d4": 90.0,
+            "g1f3": 80.0,
+            "c2c4": 70.0,
+            "b1c3": 60.0,
+            "c2c3": 50.0,
+            "g2g3": 40.0,
+            "b2b3": 30.0,
+            "f2f4": 20.0,
+            "a2a3": 10.0,
+        },
+    }
+    original = controller_module._deep_reference_evidence_summary(
+        [position],
+        audit_set_sha256=controller_module._APPROVED_AUDIT_SET_SHA256,
+    )
+    changed = json.loads(json.dumps(position))
+    if mutation == "move_key":
+        changed["deep_reference_move_cp"]["h2h3"] = (
+            changed["deep_reference_move_cp"].pop("a2a3")
+        )
+    elif mutation == "move_cp":
+        changed["deep_reference_move_cp"]["a2a3"] = 11.0
+    else:
+        changed["deep_reference_best_cp"] = 101.0
+
+    mutated = controller_module._deep_reference_evidence_summary(
+        [changed],
+        audit_set_sha256=controller_module._APPROVED_AUDIT_SET_SHA256,
+    )
+
+    assert mutated["position_evidence_sha256"] != original[
+        "position_evidence_sha256"
+    ]
+
+
+@pytest.mark.parametrize("field", ["deep_reference_best_cp", "deep_reference_move_cp"])
+def test_deep_reference_evidence_rejects_nonfinite_scores(field: str) -> None:
+    board = chess.Board()
+    position: dict[str, Any] = {
+        "key": position_key(board),
+        "fen": board.fen(),
+        "deep_reference_nodes": 1_000_000,
+        "deep_reference_depth": 30,
+        "deep_reference_scored_multipv": 1,
+        "deep_reference_best_cp": 10.0,
+        "deep_reference_move_cp": {"e2e4": 10.0},
+    }
+    if field == "deep_reference_move_cp":
+        position[field]["e2e4"] = float("nan")
+    else:
+        position[field] = float("inf")
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        controller_module._deep_reference_evidence_summary(
+            [position],
+            audit_set_sha256=controller_module._APPROVED_AUDIT_SET_SHA256,
+        )
+
+
+def test_audit_snapshot_hashes_and_parses_the_same_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chess_anti_engine.eval.audit import parse_audit_record as real_parse
+    from scripts import backtest_chunk_trajectory as producer
+
+    board = chess.Board()
+    record = {
+        "key": position_key(board),
+        "fen": board.fen(),
+        "phase": phase_bucket(32),
+        "source": 0,
+        "multipv": [{"move": "e2e4", "cp": 42}],
+        "wdl": [400, 400, 200],
+        "nodes": 1_000_000,
+        "depth": 30,
+    }
+    audit_path = tmp_path / "audit.jsonl"
+    original_bytes = (json.dumps(record) + "\n").encode()
+    audit_path.write_bytes(original_bytes)
+    original_digest = hashlib.sha256(original_bytes).hexdigest()
+    monkeypatch.setattr(producer, "_APPROVED_AUDIT_SET_SHA256", original_digest)
+    substituted = {**record, "multipv": [{"move": "d2d4", "cp": -999}]}
+    substituted_bytes = (json.dumps(substituted) + "\n").encode()
+    parse_calls = 0
+
+    def replace_restore_while_parsing(line: str) -> AuditPosition:
+        nonlocal parse_calls
+        parse_calls += 1
+        audit_path.write_bytes(substituted_bytes)
+        try:
+            return real_parse(line)
+        finally:
+            audit_path.write_bytes(original_bytes)
+
+    monkeypatch.setattr(producer, "parse_audit_record", replace_restore_while_parsing)
+    positions, artifact = producer._load_audit_set_snapshot(
+        audit_path, require_approved=True,
+    )
+
+    assert parse_calls == 1
+    assert positions[0].move_cp == {"e2e4": 42.0}
+    assert artifact["sha256"] == original_digest
+    assert artifact["consumption"] == (
+        "sha256_and_positions_from_same_immutable_byte_snapshot"
+    )
+
+
+def test_audit_snapshot_rejects_unapproved_bytes_before_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    audit_path = tmp_path / "substituted.jsonl"
+    audit_path.write_text("{}\n")
+    monkeypatch.setattr(
+        producer,
+        "parse_audit_record",
+        lambda _line: pytest.fail("unapproved bytes reached the audit parser"),
+    )
+
+    with pytest.raises(SystemExit, match="approved frozen audit set SHA256"):
+        producer._load_audit_set_snapshot(audit_path, require_approved=True)
 
 
 def test_loader_rejects_a_shallow_one_move_reference(tmp_path: Path) -> None:

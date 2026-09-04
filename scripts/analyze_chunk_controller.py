@@ -308,7 +308,7 @@ _BOOTSTRAP_INTERVAL_SEMANTICS = (
     "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
 )
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v2"
-_DEEP_REFERENCE_EVIDENCE_SCHEMA = "deepfin.chunk_deep_reference_evidence.v1"
+_DEEP_REFERENCE_EVIDENCE_SCHEMA = "deepfin.chunk_deep_reference_evidence.v2"
 # data/audit_set_v1.jsonl, whose sibling README freezes the requested
 # unhandicapped Stockfish budget at 1,000,000 nodes and MultiPV 10. Some
 # forced-mate rows legitimately terminate early, so the artifact identity—not
@@ -852,6 +852,23 @@ def _nonnegative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _canonical_reference_cp(value: Any, *, key: str, field: str) -> str:
+    """Canonicalize one finite ruler score for content-sensitive evidence hashing."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{key}: {field} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key}: {field} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{key}: {field} must be a finite number")
+    # Numeric JSON spellings such as 1, 1.0, and 1e0 carry the same CP value.
+    # Float.hex is locale-independent and exact; collapse signed zero as well.
+    if number == 0.0:
+        number = 0.0
+    return number.hex()
+
+
 def _deep_reference_evidence_summary(
     positions: Sequence[Mapping[str, Any]], *, audit_set_sha256: Any,
 ) -> dict[str, Any]:
@@ -863,7 +880,7 @@ def _deep_reference_evidence_summary(
     per-row minimum. ``minimum_multipv`` is a coverage requirement: positions
     with fewer than ten legal moves must list every legal move.
     """
-    records: list[dict[str, int | str]] = []
+    records: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     for position in positions:
         key = position.get("key")
@@ -872,6 +889,7 @@ def _deep_reference_evidence_summary(
         depth = position.get("deep_reference_depth")
         recorded_count = position.get("deep_reference_scored_multipv")
         move_cp = position.get("deep_reference_move_cp")
+        best_cp = position.get("deep_reference_best_cp")
         if not isinstance(key, str) or not key:
             raise ValueError("deep-reference evidence has no position key")
         if not isinstance(fen, str) or not fen:
@@ -888,6 +906,19 @@ def _deep_reference_evidence_summary(
         assert isinstance(depth, int)
         assert isinstance(recorded_count, int)
         scored_count = len(move_cp)
+        if any(not isinstance(uci, str) or not uci for uci in move_cp):
+            raise ValueError(f"{key}: deep-reference move key is malformed")
+        canonical_move_cp: list[list[str]] = []
+        for uci, cp in sorted(move_cp.items()):
+            canonical_move_cp.append([
+                uci,
+                _canonical_reference_cp(
+                    cp, key=key, field=f"deep_reference_move_cp[{uci!r}]",
+                ),
+            ])
+        canonical_best_cp = _canonical_reference_cp(
+            best_cp, key=key, field="deep_reference_best_cp",
+        )
         legal_move_count = board.legal_moves.count()
         required_count = min(_DEEP_REFERENCE_MIN_MULTIPV, legal_move_count)
         record = {
@@ -898,6 +929,8 @@ def _deep_reference_evidence_summary(
             "recorded_scored_multipv": recorded_count,
             "legal_move_count": legal_move_count,
             "required_scored_multipv": required_count,
+            "deep_reference_best_cp": canonical_best_cp,
+            "deep_reference_move_cp": canonical_move_cp,
         }
         records.append(record)
         reasons: list[str] = []
@@ -932,6 +965,7 @@ def _deep_reference_evidence_summary(
             "deep_reference_nodes",
             "deep_reference_depth",
             "deep_reference_scored_multipv",
+            "deep_reference_best_cp",
             "deep_reference_move_cp",
         ],
         "position_count": len(records),
@@ -1004,6 +1038,7 @@ def _valid_deep_reference_evidence(value: Any) -> bool:
             "deep_reference_nodes",
             "deep_reference_depth",
             "deep_reference_scored_multipv",
+            "deep_reference_best_cp",
             "deep_reference_move_cp",
         ]
         or not _positive_int(value.get("position_count"))
