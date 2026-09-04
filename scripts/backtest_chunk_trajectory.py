@@ -30,6 +30,7 @@ executes ``scripts/__init__.py`` before the entrypoint can snapshot project sour
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
@@ -50,15 +51,58 @@ from typing import IO, Any
 _PYTHON_PREIMPORT_SCHEMA = "deepfin.python_preimport.v1"
 
 
+def _early_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(stat_result.st_mode), int(stat_result.st_size),
+        int(stat_result.st_mtime_ns), int(stat_result.st_ctime_ns),
+        int(stat_result.st_dev), int(stat_result.st_ino),
+    )
+
+
+def _read_stable_regular_file(path: Path) -> tuple[bytes, os.stat_result]:
+    """Read a no-follow regular file without blocking on a special file."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise OSError(errno.ENOTSUP, "safe reads require O_NOFOLLOW", str(path))
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        blocks: list[bytes] = []
+        offset = 0
+        while offset < int(before.st_size):
+            block = os.pread(
+                descriptor,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not block:
+                break
+            blocks.append(block)
+            offset += len(block)
+        content = b"".join(blocks)
+        after = os.fstat(descriptor)
+        if (
+            _early_file_identity(before) != _early_file_identity(after)
+            or len(content) != int(after.st_size)
+        ):
+            raise OSError(errno.EIO, "file changed during stable read", str(path))
+        return content, after
+    finally:
+        os.close(descriptor)
+
+
 def _preimport_python_file_artifact(
     path: Path, *, expected_oid: str, object_format: str,
 ) -> dict[str, Any]:
     """Read one source without accepting a change during the read."""
     resolved = path.resolve()
     try:
-        before = resolved.lstat()
-        content = resolved.read_bytes()
-        after = resolved.lstat()
+        content, after = _read_stable_regular_file(resolved)
     except OSError as exc:
         return {
             "path": str(resolved),
@@ -67,18 +111,7 @@ def _preimport_python_file_artifact(
             "stable_read": False,
             "matches_git_revision": False,
         }
-    identity = (
-        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
-        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
-    )
-    stable_read = bool(
-        identity == (
-            int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
-            int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
-        )
-        and stat.S_ISREG(before.st_mode)
-        and len(content) == before.st_size
-    )
+    stable_read = True
     blob = f"blob {len(content)}\0".encode("ascii") + content
     observed_oid = hashlib.new(object_format, blob).hexdigest()
     return {
@@ -221,7 +254,12 @@ def _install_authenticated_source_only_import(
     existing = sys.modules.get(module_name)
     if existing is None:
         source_path = Path(str(snapshot["repo_root"])) / relative_path
-        source = source_path.read_bytes()
+        try:
+            source, _source_stat = _read_stable_regular_file(source_path)
+        except OSError as exc:
+            raise ImportError(
+                "source-only import guard cannot be safely read"
+            ) from exc
         digest = hashlib.sha256(source).hexdigest()
         if digest != expected["sha256"]:
             raise ImportError("source-only import guard changed after pre-import snapshot")
@@ -722,26 +760,9 @@ def _load_audit_set_snapshot(
     """
     try:
         resolved = path.expanduser().resolve(strict=True)
-        with resolved.open("rb") as stream:
-            before = os.fstat(stream.fileno())
-            content = stream.read()
-            after = os.fstat(stream.fileno())
+        content, after = _read_stable_regular_file(resolved)
     except OSError as exc:
         raise SystemExit(f"cannot read audit set {path}: {exc}") from exc
-    identity = (
-        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
-        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
-    )
-    stable_read = bool(
-        identity == (
-            int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
-            int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
-        )
-        and stat.S_ISREG(after.st_mode)
-        and len(content) == after.st_size
-    )
-    if not stable_read:
-        raise SystemExit("audit set changed while its immutable snapshot was read")
     digest = hashlib.sha256(content).hexdigest()
     if require_approved and digest != _APPROVED_AUDIT_SET_SHA256:
         raise SystemExit(
@@ -913,7 +934,7 @@ def _open_authenticated_input(path: Path) -> tuple[IO[bytes], dict[str, Any]]:
         nofollow = getattr(os, "O_NOFOLLOW", None)
         if nofollow is None:
             raise SystemExit("decision-grade model inputs require O_NOFOLLOW support")
-        flags = os.O_RDONLY | os.O_CLOEXEC | nofollow
+        flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
         descriptor = os.open(lexical, flags)
         opened = os.fstat(descriptor)
         post_open_lexical_stat = lexical.lstat()
@@ -1167,7 +1188,9 @@ def _loaded_native_build_attestation(
     ):
         committed = _producer_git_file_at_commit(producer_git_sha, relative_path)
         try:
-            current = (Path(__file__).resolve().parents[1] / relative_path).read_bytes()
+            current, _current_stat = _read_stable_regular_file(
+                Path(__file__).resolve().parents[1] / relative_path
+            )
         except OSError:
             current = None
         if committed is None:
@@ -1218,7 +1241,7 @@ def _read_tracked_preregistration(
         raise SystemExit("--preregistration must be a tracked file inside the repo") from exc
     before = _artifact(resolved, require_file=True)
     try:
-        document_bytes = resolved.read_bytes()
+        document_bytes, _document_stat = _read_stable_regular_file(resolved)
     except OSError as exc:
         raise SystemExit(f"cannot read --preregistration {resolved}: {exc}") from exc
     after = _artifact(resolved, require_file=True)
@@ -1338,7 +1361,7 @@ def _tablebase_checksum_catalog(
     entry_stat: os.stat_result,
 ) -> tuple[dict[str, Any], tuple[tuple[str, str], ...]]:
     """Read the small official checksum catalog from one stable no-follow FD."""
-    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW
     try:
         file_fd = os.open(entry_name, file_flags, dir_fd=directory_fd)
     except OSError as exc:
@@ -1348,12 +1371,22 @@ def _tablebase_checksum_catalog(
         ) from exc
     try:
         opened_before = os.fstat(file_fd)
+        if not stat.S_ISREG(opened_before.st_mode):
+            raise SystemExit(
+                f"Syzygy checksum catalog is not a regular file: "
+                f"{directory / entry_name}"
+            )
         chunks: list[bytes] = []
-        while True:
-            chunk = os.read(file_fd, 64 * 1024)
+        bytes_read = 0
+        while bytes_read < int(opened_before.st_size):
+            chunk = os.read(
+                file_fd,
+                min(64 * 1024, int(opened_before.st_size) - bytes_read),
+            )
             if not chunk:
                 break
             chunks.append(chunk)
+            bytes_read += len(chunk)
         opened_after = os.fstat(file_fd)
     finally:
         os.close(file_fd)
@@ -1376,6 +1409,11 @@ def _tablebase_checksum_catalog(
             f"{directory / entry_name}"
         )
     content = b"".join(chunks)
+    if len(content) != int(opened_after.st_size):
+        raise SystemExit(
+            f"Syzygy checksum catalog could not be read completely: "
+            f"{directory / entry_name}"
+        )
     try:
         lines = content.decode("ascii", errors="strict").splitlines()
     except UnicodeError as exc:
@@ -1487,7 +1525,8 @@ def _verify_tablebase_contents(
                 expected_identity = tuple(int(value) for value in identity[1:])
                 try:
                     file_fd = os.open(
-                        name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                        name,
+                        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW,
                         dir_fd=directory_fd,
                     )
                 except OSError as exc:
@@ -1512,8 +1551,14 @@ def _verify_tablebase_contents(
                         )
                     digest = hashlib.md5(usedforsecurity=False)
                     file_bytes = 0
-                    while True:
-                        chunk = os.read(file_fd, 8 * 1024 * 1024)
+                    while file_bytes < int(before.st_size):
+                        chunk = os.read(
+                            file_fd,
+                            min(
+                                8 * 1024 * 1024,
+                                int(before.st_size) - file_bytes,
+                            ),
+                        )
                         if not chunk:
                             break
                         digest.update(chunk)
@@ -1684,7 +1729,12 @@ def _tablebase_inventory(
                     suffix = Path(entry.name).suffix
                     if suffix not in (".rtbw", ".rtbz"):
                         continue
-                    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+                    file_flags = (
+                        os.O_RDONLY
+                        | os.O_CLOEXEC
+                        | os.O_NONBLOCK
+                        | os.O_NOFOLLOW
+                    )
                     try:
                         file_fd = os.open(
                             entry.name, file_flags, dir_fd=directory_fd,

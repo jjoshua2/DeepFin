@@ -13,7 +13,8 @@ import stat
 import subprocess
 import sys
 import sysconfig
-from contextlib import nullcontext
+from collections.abc import Generator
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -513,6 +514,75 @@ def test_authenticated_input_rejects_final_component_symlink_swap(
         _open_authenticated_input(requested)
 
 
+def test_authenticated_input_does_not_block_on_fifo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested = tmp_path / "trainer.pt"
+    os.mkfifo(requested)
+    real_open = os.open
+    opened_fifo = False
+
+    def require_nonblocking_open(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if Path(path) == requested:
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", require_nonblocking_open)
+
+    with pytest.raises(SystemExit, match="stable regular file"):
+        _open_authenticated_input(requested)
+
+    assert opened_fifo is True
+
+
+def test_syzygy_catalog_reader_does_not_block_on_fifo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = tmp_path / "checksums.md5"
+    os.mkfifo(catalog)
+    directory_fd = os.open(
+        tmp_path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY,
+    )
+    real_open = os.open
+    opened_fifo = False
+
+    def require_nonblocking_open(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if path == catalog.name and kwargs.get("dir_fd") == directory_fd:
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", require_nonblocking_open)
+    try:
+        with pytest.raises(SystemExit, match="not a regular file"):
+            trajectory_module._tablebase_checksum_catalog(
+                directory_fd,
+                tmp_path,
+                catalog.name,
+                catalog.lstat(),
+            )
+    finally:
+        os.close(directory_fd)
+
+    assert opened_fifo is True
+
+
 def test_authenticated_params_load_rejects_fixed_size_alter_load_restore(
     tmp_path: Path,
 ) -> None:
@@ -928,6 +998,65 @@ def test_analyzer_preimport_snapshot_detects_alter_execute_restore(
 
     assert status["passed"] is False
     assert status["changed"] == ["dependency.py"]
+
+
+def test_authenticated_source_readers_reject_special_files_without_blocking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import native_import_guard, source_only_import
+
+    fifo = tmp_path / "source.py"
+    os.mkfifo(fifo)
+    real_open = os.open
+    fifo_opens = 0
+
+    def require_nonblocking_open(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal fifo_opens
+        if Path(path) == fifo:
+            assert flags & os.O_NONBLOCK
+            fifo_opens += 1
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", require_nonblocking_open)
+    readers = (
+        controller_module._read_stable_regular_file,
+        trajectory_module._read_stable_regular_file,
+        source_only_import._stable_regular_bytes,
+        native_import_guard._stable_regular_bytes,
+    )
+    for reader in readers:
+        with pytest.raises(OSError, match="not a regular file"):
+            reader(fifo)
+        with pytest.raises(OSError, match="not a regular file"):
+            reader(Path("/dev/zero"))
+
+    assert fifo_opens == len(readers)
+
+
+def test_analyzer_owned_readers_reject_fifo_without_blocking(
+    tmp_path: Path,
+) -> None:
+    fifo = tmp_path / "evidence.jsonl"
+    os.mkfifo(fifo)
+
+    artifact = controller_module._preimport_python_file_artifact(
+        fifo,
+        expected_oid="0" * 40,
+        object_format="sha1",
+    )
+    assert artifact["stable_read"] is False
+    with pytest.raises(OSError, match="not a regular file"):
+        controller_module._artifact_snapshot(fifo)
+    with pytest.raises(RuntimeError, match="not a regular file"):
+        controller_module._read_consumed_artifact(
+            fifo, role="trajectory_bank",
+        )
 
 
 def test_python_preimport_snapshots_precede_project_and_third_party_imports() -> None:
@@ -4872,6 +5001,25 @@ def test_producer_output_lock_serializes_the_bank_manifest_pair(tmp_path: Path) 
     retry.close()
 
 
+def test_producer_output_lock_closes_descriptor_on_fdopen_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "bank.jsonl"
+
+    def fail_fdopen(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError(errno.EIO, "injected fdopen failure")
+
+    monkeypatch.setattr(publication_module.os, "fdopen", fail_fdopen)
+    before = len(os.listdir("/proc/self/fd"))
+
+    for _ in range(20):
+        with pytest.raises(SystemExit, match="cannot safely open output lock"):
+            _acquire_output_lock(output)
+
+    assert len(os.listdir("/proc/self/fd")) == before
+
+
 def test_producer_output_locks_serialize_overlapping_pairs(tmp_path: Path) -> None:
     output = tmp_path / "bank.jsonl"
     meta = Path(str(output) + ".meta.json")
@@ -7630,6 +7778,76 @@ def test_completed_pending_bank_is_synced_before_its_identity_snapshot(
     assert artifact["sha256"] == hashlib.sha256(b"completed bank\n").hexdigest()
 
 
+def test_publication_artifact_reader_does_not_block_on_fifo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fifo = tmp_path / "artifact.bin"
+    os.mkfifo(fifo)
+    real_open = publication_module.os.open
+    opened_fifo = False
+
+    def require_nonblocking_open(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if Path(path) == fifo:
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(publication_module.os, "open", require_nonblocking_open)
+
+    with pytest.raises(SystemExit, match="regular file"):
+        publication_module._artifact(fifo, require_file=True)
+
+    assert opened_fifo is True
+
+
+def test_completed_bank_reader_does_not_block_on_fifo_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    displaced = tmp_path / "authentic-pending-bank"
+    output = tmp_path / "bank.jsonl"
+    real_open = publication_module.os.open
+    opened_fifo = False
+
+    def replace_reader_name_with_fifo(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if path == pending.name and kwargs.get("dir_fd") is not None:
+            pending.rename(displaced)
+            os.mkfifo(pending)
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        monkeypatch.setattr(
+            publication_module.os,
+            "open",
+            replace_reader_name_with_fifo,
+        )
+        with pytest.raises(SystemExit, match="regular"):
+            publication_module._durably_prepare_output_artifact(
+                handle, pending, output,
+            )
+
+    assert opened_fifo is True
+    assert stat.S_ISFIFO(pending.stat().st_mode)
+    assert displaced.read_text() == "completed bank\n"
+
+
 def test_completed_bank_reader_baseline_rejects_same_inode_rewrite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -8974,6 +9192,70 @@ def test_analyzer_final_report_open_does_not_block_on_fifo(
     assert opened_fifo is True
     assert stat.S_ISFIFO(output.stat().st_mode)
     assert displaced.read_text() == "{}\n"
+
+
+def test_analyzer_output_target_closes_parent_on_initial_fstat_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_open_directory = controller_module._open_directory_anchored
+    real_fstat = controller_module.os.fstat
+    opened_parents: set[int] = set()
+
+    def track_parent(path: Path, *, create: bool) -> int:
+        descriptor = real_open_directory(path, create=create)
+        opened_parents.add(descriptor)
+        return descriptor
+
+    def fail_initial_parent_snapshot(descriptor: int) -> os.stat_result:
+        if descriptor in opened_parents:
+            raise OSError(errno.EIO, "injected parent snapshot failure")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(
+        controller_module, "_open_directory_anchored", track_parent,
+    )
+    monkeypatch.setattr(
+        controller_module.os, "fstat", fail_initial_parent_snapshot,
+    )
+    before = len(os.listdir("/proc/self/fd"))
+
+    for index in range(20):
+        with (
+            pytest.raises(OSError, match="injected parent snapshot failure"),
+            controller_module._anchored_output_target(
+                tmp_path / "bank.jsonl",
+                tmp_path / "bank.jsonl.meta.json",
+                tmp_path / f"analysis-{index}.json",
+            ),
+        ):
+            pytest.fail("initial output-parent failure reached publication")
+
+    assert len(os.listdir("/proc/self/fd")) == before
+
+
+def test_analyzer_json_writer_closes_duplicate_on_fdopen_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_fdopen(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError(errno.EIO, "injected fdopen failure")
+
+    monkeypatch.setattr(controller_module.os, "fdopen", fail_fdopen)
+    before = len(os.listdir("/proc/self/fd"))
+
+    for index in range(20):
+        with (
+            controller_module._anchored_output_target(
+                tmp_path / "bank.jsonl",
+                tmp_path / "bank.jsonl.meta.json",
+                tmp_path / f"analysis-{index}.json",
+            ) as target,
+            pytest.raises(OSError, match="injected fdopen failure"),
+        ):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
@@ -11312,6 +11594,246 @@ def test_decision_grade_loader_records_both_retained_witnesses(
     ]
 
 
+def test_retained_evidence_closes_manifest_parent_duplicate_on_exit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    real_dup = controller_module.os.dup
+    real_require_parent = publication_module._require_parent
+    duplicate_created = False
+
+    def track_duplicate(descriptor: int) -> int:
+        nonlocal duplicate_created
+        duplicate_created = True
+        return real_dup(descriptor)
+
+    def fail_retained_parent_exit(path: Path, parent_fd: int) -> None:
+        nonlocal duplicate_created
+        if duplicate_created:
+            duplicate_created = False
+            raise OSError(errno.EIO, "injected retained-parent exit failure")
+        real_require_parent(path, parent_fd)
+
+    monkeypatch.setattr(controller_module.os, "dup", track_duplicate)
+    monkeypatch.setattr(
+        publication_module, "_require_parent", fail_retained_parent_exit,
+    )
+    before = len(os.listdir("/proc/self/fd"))
+
+    for _ in range(20):
+        with (
+            pytest.raises(OSError, match="retained-parent exit failure"),
+            controller_module._retained_decision_grade_evidence(bank, meta),
+        ):
+            pytest.fail("retained-parent exit failure reached evidence body")
+
+    assert len(os.listdir("/proc/self/fd")) == before
+
+
+@pytest.mark.parametrize("swap_parent", [False, True])
+def test_retained_manifest_parent_classifies_duplicate_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    swap_parent: bool,
+) -> None:
+    live_parent = tmp_path / "evidence"
+    displaced_parent = tmp_path / "authentic-evidence"
+    decoy_parent = tmp_path / "decoy-evidence"
+    live_parent.mkdir()
+    decoy_parent.mkdir()
+    bank = live_parent / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    marker = controller_module._invalid_manifest_path(meta)
+    real_dup = controller_module.os.dup
+    injected = False
+
+    def fail_manifest_parent_duplicate(descriptor: int) -> int:
+        nonlocal injected
+        if not injected:
+            injected = True
+            if swap_parent:
+                live_parent.rename(displaced_parent)
+                decoy_parent.rename(live_parent)
+            raise OSError(errno.EIO, "injected manifest-parent dup failure")
+        return real_dup(descriptor)
+
+    monkeypatch.setattr(
+        controller_module.os, "dup", fail_manifest_parent_duplicate,
+    )
+    try:
+        expected_error = SystemExit if swap_parent else OSError
+        with (
+            pytest.raises(expected_error),
+            controller_module._retained_decision_grade_evidence(bank, meta),
+        ):
+            pytest.fail("manifest-parent duplicate failure reached body")
+    finally:
+        if swap_parent:
+            live_parent.rename(decoy_parent)
+            displaced_parent.rename(live_parent)
+
+    assert marker.exists() is swap_parent
+    monkeypatch.setattr(controller_module.os, "dup", real_dup)
+    if swap_parent:
+        with (
+            pytest.raises(SystemExit, match="invalidated"),
+            controller_module._retained_decision_grade_evidence(bank, meta),
+        ):
+            pytest.fail("invalidated duplicate-failure evidence reached body")
+    else:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pass
+
+
+@pytest.mark.parametrize("failure_boundary", ["enter", "exit"])
+def test_split_output_parent_integrity_failure_invalidates_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_boundary: str,
+) -> None:
+    bank_parent = tmp_path / "banks"
+    manifest_parent = tmp_path / "manifests"
+    decoy_parent = tmp_path / "decoy-banks"
+    displaced_parent = tmp_path / "authentic-banks"
+    bank_parent.mkdir()
+    manifest_parent.mkdir()
+    decoy_parent.mkdir()
+    bank = bank_parent / "bank.jsonl"
+    adjacent_meta = _write_bank(bank, correct_gap=True)
+    meta = manifest_parent / adjacent_meta.name
+    adjacent_pending_meta = controller_module._pending_manifest_path(adjacent_meta)
+    pending_meta = controller_module._pending_manifest_path(meta)
+    adjacent_meta.rename(meta)
+    adjacent_pending_meta.rename(pending_meta)
+    marker = controller_module._invalid_manifest_path(meta)
+    real_require_parent = publication_module._require_parent
+    real_retained_output_parent = controller_module._retained_output_parent
+    swapped = False
+
+    def replace_split_parent() -> None:
+        nonlocal swapped
+        bank_parent.rename(displaced_parent)
+        decoy_parent.rename(bank_parent)
+        swapped = True
+
+    def swap_split_parent_on_enter(path: Path, parent_fd: int) -> None:
+        if path == bank and not swapped:
+            replace_split_parent()
+        real_require_parent(path, parent_fd)
+
+    @contextmanager
+    def swap_split_parent_on_exit(
+        output_path: Path,
+        meta_path: Path,
+        *,
+        manifest_parent_fd: int,
+    ) -> Generator[int, None, None]:
+        with real_retained_output_parent(
+            output_path,
+            meta_path,
+            manifest_parent_fd=manifest_parent_fd,
+        ) as output_parent_fd:
+            yield output_parent_fd
+            replace_split_parent()
+
+    if failure_boundary == "enter":
+        monkeypatch.setattr(
+            publication_module, "_require_parent", swap_split_parent_on_enter,
+        )
+    else:
+        monkeypatch.setattr(
+            controller_module,
+            "_retained_output_parent",
+            swap_split_parent_on_exit,
+        )
+
+    def attempt_split_parent_acquisition() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            if failure_boundary == "enter":
+                pytest.fail("split-parent acquisition failure reached body")
+
+    try:
+        with pytest.raises(SystemExit, match="containing directory changed"):
+            attempt_split_parent_acquisition()
+    finally:
+        if swapped:
+            bank_parent.rename(decoy_parent)
+            displaced_parent.rename(bank_parent)
+
+    assert marker.exists()
+    monkeypatch.setattr(
+        publication_module, "_require_parent", real_require_parent,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_retained_output_parent",
+        real_retained_output_parent,
+    )
+
+    def enter_invalidated_split_parent_evidence() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pytest.fail("invalidated split-parent evidence reached body")
+
+    with pytest.raises(SystemExit, match="invalidated"):
+        enter_invalidated_split_parent_evidence()
+
+
+def test_consumed_record_integrity_failure_invalidates_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    displaced = tmp_path / "authentic-bank.jsonl"
+    marker = controller_module._invalid_manifest_path(meta)
+    real_record = controller_module._consumed_evidence_record
+    changed = False
+
+    def replace_bank_during_record(
+        anchor: Any,
+        lexical_path: Path,
+        content: bytes,
+        *,
+        role: str,
+    ) -> dict[str, Any]:
+        nonlocal changed
+        if not changed:
+            bank.rename(displaced)
+            bank.write_text("attacker bank\n")
+            changed = True
+            raise RuntimeError("injected consumed-record failure")
+        return real_record(anchor, lexical_path, content, role=role)
+
+    monkeypatch.setattr(
+        controller_module,
+        "_consumed_evidence_record",
+        replace_bank_during_record,
+    )
+
+    def enter_changed_record_evidence() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pytest.fail("consumed-record integrity failure reached body")
+
+    with pytest.raises((SystemExit, RuntimeError)):
+        enter_changed_record_evidence()
+
+    assert marker.exists()
+    bank.unlink()
+    displaced.rename(bank)
+    monkeypatch.setattr(
+        controller_module, "_consumed_evidence_record", real_record,
+    )
+
+    def enter_invalidated_record_evidence() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pytest.fail("invalidated consumed-record evidence reached body")
+
+    with pytest.raises(SystemExit, match="invalidated"):
+        enter_invalidated_record_evidence()
+
+
 def test_methodology_smoke_explicitly_allows_legacy_final_only_inputs(
     tmp_path: Path,
 ) -> None:
@@ -11363,6 +11885,77 @@ def test_decision_grade_loader_restores_marker_removed_during_check(
         load_transitions(bank)
 
     assert marker.exists()
+
+
+def test_marker_read_failure_invalidates_retained_and_current_meta_parents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank_parent = tmp_path / "banks"
+    live_meta_parent = tmp_path / "manifests"
+    decoy_meta_parent = tmp_path / "decoy-manifests"
+    displaced_meta_parent = tmp_path / "authentic-manifests"
+    bank_parent.mkdir()
+    live_meta_parent.mkdir()
+    decoy_meta_parent.mkdir()
+    bank = bank_parent / "bank.jsonl"
+    adjacent_meta = _write_bank(bank, correct_gap=True)
+    meta = live_meta_parent / adjacent_meta.name
+    adjacent_pending_meta = controller_module._pending_manifest_path(adjacent_meta)
+    pending_meta = controller_module._pending_manifest_path(meta)
+    adjacent_meta.rename(meta)
+    adjacent_pending_meta.rename(pending_meta)
+    decoy_meta = decoy_meta_parent / meta.name
+    decoy_meta.write_bytes(meta.read_bytes())
+    os.link(
+        decoy_meta,
+        controller_module._pending_manifest_path(decoy_meta),
+    )
+    marker = controller_module._invalid_manifest_path(meta)
+    real_stat = publication_module.os.stat
+    swapped = False
+
+    def swap_meta_parent_during_marker_read(
+        path: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal swapped
+        if (
+            not swapped
+            and path == marker.name
+            and kwargs.get("dir_fd") is not None
+        ):
+            live_meta_parent.rename(displaced_meta_parent)
+            decoy_meta_parent.rename(live_meta_parent)
+            swapped = True
+            raise OSError(errno.EIO, "injected marker read failure")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "stat",
+        swap_meta_parent_during_marker_read,
+    )
+
+    def enter_evidence_during_marker_read_failure() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pytest.fail("marker read failure reached evidence body")
+
+    with pytest.raises(SystemExit, match="containing directory changed"):
+        enter_evidence_during_marker_read_failure()
+
+    assert swapped is True
+    assert marker.exists()
+    assert (displaced_meta_parent / marker.name).exists()
+    monkeypatch.setattr(publication_module.os, "stat", real_stat)
+
+    def enter_invalidated_decoy_evidence() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            pytest.fail("invalidated decoy evidence reached body")
+
+    with pytest.raises(SystemExit, match="invalidated"):
+        enter_invalidated_decoy_evidence()
 
 
 @pytest.mark.parametrize("witness_kind", ["bank", "manifest"])

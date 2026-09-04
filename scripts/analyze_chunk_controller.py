@@ -53,15 +53,58 @@ from typing import Any
 _PYTHON_PREIMPORT_SCHEMA = "deepfin.python_preimport.v1"
 
 
+def _early_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(stat_result.st_mode), int(stat_result.st_size),
+        int(stat_result.st_mtime_ns), int(stat_result.st_ctime_ns),
+        int(stat_result.st_dev), int(stat_result.st_ino),
+    )
+
+
+def _read_stable_regular_file(path: Path) -> tuple[bytes, os.stat_result]:
+    """Read a no-follow regular file without blocking on a substituted FIFO."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise OSError(errno.ENOTSUP, "safe reads require O_NOFOLLOW", str(path))
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        blocks: list[bytes] = []
+        offset = 0
+        while offset < int(before.st_size):
+            block = os.pread(
+                descriptor,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not block:
+                break
+            blocks.append(block)
+            offset += len(block)
+        content = b"".join(blocks)
+        after = os.fstat(descriptor)
+        if (
+            _early_file_identity(before) != _early_file_identity(after)
+            or len(content) != int(after.st_size)
+        ):
+            raise OSError(errno.EIO, "file changed during stable read", str(path))
+        return content, after
+    finally:
+        os.close(descriptor)
+
+
 def _preimport_python_file_artifact(
     path: Path, *, expected_oid: str, object_format: str,
 ) -> dict[str, Any]:
     """Read one source without accepting a change during the read."""
     resolved = path.resolve()
     try:
-        before = resolved.lstat()
-        content = resolved.read_bytes()
-        after = resolved.lstat()
+        content, after = _read_stable_regular_file(resolved)
     except OSError as exc:
         return {
             "path": str(resolved),
@@ -70,18 +113,7 @@ def _preimport_python_file_artifact(
             "stable_read": False,
             "matches_git_revision": False,
         }
-    identity = (
-        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
-        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
-    )
-    stable_read = bool(
-        identity == (
-            int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
-            int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
-        )
-        and stat.S_ISREG(before.st_mode)
-        and len(content) == before.st_size
-    )
+    stable_read = True
     blob = f"blob {len(content)}\0".encode("ascii") + content
     observed_oid = hashlib.new(object_format, blob).hexdigest()
     return {
@@ -224,7 +256,12 @@ def _install_authenticated_source_only_import(
     existing = sys.modules.get(module_name)
     if existing is None:
         source_path = Path(str(snapshot["repo_root"])) / relative_path
-        source = source_path.read_bytes()
+        try:
+            source, _source_stat = _read_stable_regular_file(source_path)
+        except OSError as exc:
+            raise ImportError(
+                "source-only import guard cannot be safely read"
+            ) from exc
         digest = hashlib.sha256(source).hexdigest()
         if digest != expected["sha256"]:
             raise ImportError("source-only import guard changed after pre-import snapshot")
@@ -607,14 +644,6 @@ class PolicyResult:
     regret_p99: float
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for block in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _git_state() -> tuple[str, bool]:
     repo_root = Path(__file__).resolve().parents[1]
     try:
@@ -638,15 +667,15 @@ def _git_state() -> tuple[str, bool]:
 
 def _artifact_snapshot(path: Path) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
-    stat = resolved.stat()
+    content, observed = _read_stable_regular_file(resolved)
     return {
         "path": str(resolved),
-        "size": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
-        "ctime_ns": int(stat.st_ctime_ns),
-        "device": int(stat.st_dev),
-        "inode": int(stat.st_ino),
-        "sha256": _sha256(resolved),
+        "size": int(observed.st_size),
+        "mtime_ns": int(observed.st_mtime_ns),
+        "ctime_ns": int(observed.st_ctime_ns),
+        "device": int(observed.st_dev),
+        "inode": int(observed.st_ino),
+        "sha256": hashlib.sha256(content).hexdigest(),
     }
 
 
@@ -951,22 +980,37 @@ def _descriptor_ancestor_identities(fd: int) -> frozenset[tuple[int, int]]:
 
 
 def _stable_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
-    return (
-        int(stat_result.st_mode), int(stat_result.st_size),
-        int(stat_result.st_mtime_ns), int(stat_result.st_ctime_ns),
-        int(stat_result.st_dev), int(stat_result.st_ino),
-    )
+    return _early_file_identity(stat_result)
 
 
 def _read_consumed_artifact(path: Path, *, role: str) -> tuple[bytes, dict[str, Any]]:
     """Read exact bytes while retaining their descriptor-authenticated identity."""
     lexical_path = path.expanduser().absolute()
-    fd = os.open(lexical_path, os.O_RDONLY | os.O_CLOEXEC)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise RuntimeError("safe consumed-artifact reads require O_NOFOLLOW")
+    fd = os.open(
+        lexical_path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+    )
     try:
         before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError(f"consumed {role} is not a regular file")
         canonical_before = _strict_descriptor_path(fd, kind="file")
-        with os.fdopen(os.dup(fd), "rb") as fh:
-            content = fh.read()
+        chunks: list[bytes] = []
+        offset = 0
+        while offset < int(before.st_size):
+            block = os.pread(
+                fd,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not block:
+                break
+            chunks.append(block)
+            offset += len(block)
+        content = b"".join(chunks)
         after = os.fstat(fd)
         canonical_after = _strict_descriptor_path(fd, kind="file")
         if (
@@ -1082,6 +1126,37 @@ class _RetainedEvidenceInputs:
 
 
 @contextmanager
+def _quarantined_retained_output_parent(
+    input_path: Path,
+    meta_path: Path,
+    *,
+    manifest_parent_fd: int,
+) -> Generator[int, None, None]:
+    """Quarantine only output-parent acquisition and exit authentication."""
+    parent_contexts = ExitStack()
+    try:
+        with _quarantine_manifest_recovery_on_integrity_failure(
+            meta_path, parent_fd=manifest_parent_fd,
+        ):
+            output_parent_fd = parent_contexts.enter_context(
+                _retained_output_parent(
+                    input_path,
+                    meta_path,
+                    manifest_parent_fd=manifest_parent_fd,
+                )
+            )
+        try:
+            yield output_parent_fd
+        finally:
+            with _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ):
+                parent_contexts.close()
+    finally:
+        parent_contexts.close()
+
+
+@contextmanager
 def _retained_decision_grade_evidence(
     input_path: Path, meta_path: Path,
 ) -> Generator[_RetainedEvidenceInputs, None, None]:
@@ -1090,10 +1165,11 @@ def _retained_decision_grade_evidence(
     meta_path = meta_path.expanduser().absolute()
     pending_input = _pending_output_path(input_path)
     pending_meta = _pending_manifest_path(meta_path)
-    with _retained_manifest_parent(meta_path) as acquired_manifest_parent_fd:
-        manifest_parent_fd = os.dup(acquired_manifest_parent_fd)
+    manifest_parent_fd = -1
     try:
-        output_parent_context = _retained_output_parent(
+        with _retained_manifest_parent(meta_path) as acquired_manifest_parent_fd:
+            manifest_parent_fd = os.dup(acquired_manifest_parent_fd)
+        output_parent_context = _quarantined_retained_output_parent(
             input_path,
             meta_path,
             manifest_parent_fd=manifest_parent_fd,
@@ -1157,42 +1233,52 @@ def _retained_decision_grade_evidence(
                 except BaseException:
                     anchors.close()
                     raise
-            consumed_artifacts = (
-                _consumed_evidence_record(
-                    bank, input_path, input_bytes, role="trajectory_bank",
-                ),
-                _consumed_evidence_record(
-                    bank_witness,
-                    pending_input,
-                    input_bytes,
-                    role="trajectory_bank_witness",
-                ),
-                _consumed_evidence_record(
-                    manifest, meta_path, meta_bytes, role="trajectory_manifest",
-                ),
-                _consumed_evidence_record(
-                    manifest_witness,
-                    pending_meta,
-                    meta_bytes,
-                    role="trajectory_manifest_witness",
-                ),
-            )
-            guard = _RetainedEvidenceInputs(
-                input_path=input_path,
-                meta_path=meta_path,
-                pending_input_path=pending_input,
-                pending_meta_path=pending_meta,
-                output_parent_fd=output_parent_fd,
-                manifest_parent_fd=manifest_parent_fd,
-                bank=bank,
-                bank_witness=bank_witness,
-                manifest=manifest,
-                manifest_witness=manifest_witness,
-                input_bytes=input_bytes,
-                meta_bytes=meta_bytes,
-                consumed_artifacts=consumed_artifacts,
-            )
-            guard.require_unchanged()
+            with _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ):
+                try:
+                    consumed_artifacts = (
+                        _consumed_evidence_record(
+                            bank, input_path, input_bytes, role="trajectory_bank",
+                        ),
+                        _consumed_evidence_record(
+                            bank_witness,
+                            pending_input,
+                            input_bytes,
+                            role="trajectory_bank_witness",
+                        ),
+                        _consumed_evidence_record(
+                            manifest,
+                            meta_path,
+                            meta_bytes,
+                            role="trajectory_manifest",
+                        ),
+                        _consumed_evidence_record(
+                            manifest_witness,
+                            pending_meta,
+                            meta_bytes,
+                            role="trajectory_manifest_witness",
+                        ),
+                    )
+                    guard = _RetainedEvidenceInputs(
+                        input_path=input_path,
+                        meta_path=meta_path,
+                        pending_input_path=pending_input,
+                        pending_meta_path=pending_meta,
+                        output_parent_fd=output_parent_fd,
+                        manifest_parent_fd=manifest_parent_fd,
+                        bank=bank,
+                        bank_witness=bank_witness,
+                        manifest=manifest,
+                        manifest_witness=manifest_witness,
+                        input_bytes=input_bytes,
+                        meta_bytes=meta_bytes,
+                        consumed_artifacts=consumed_artifacts,
+                    )
+                    guard._require_unchanged()
+                except BaseException:
+                    anchors.close()
+                    raise
             try:
                 yield guard
             finally:
@@ -1207,7 +1293,8 @@ def _retained_decision_grade_evidence(
                     finally:
                         guard.active = False
     finally:
-        os.close(manifest_parent_fd)
+        if manifest_parent_fd >= 0:
+            os.close(manifest_parent_fd)
 
 
 def _open_directory_anchored(path: Path, *, create: bool) -> int:
@@ -1291,16 +1378,17 @@ def _anchored_output_target(
     lexical_path = output_path.expanduser().absolute()
     resolved_parent = lexical_path.parent.resolve()
     parent_fd = _open_directory_anchored(resolved_parent, create=True)
-    target = _AnchoredOutputTarget(
-        lexical_path=lexical_path,
-        parent_fd=parent_fd,
-        parent_identity=_directory_identity(os.fstat(parent_fd)),
-        input_path=input_path,
-        meta_path=meta_path,
-        manifest=manifest,
-        consumed_artifacts=tuple(consumed_artifacts),
-    )
+    target: _AnchoredOutputTarget | None = None
     try:
+        target = _AnchoredOutputTarget(
+            lexical_path=lexical_path,
+            parent_fd=parent_fd,
+            parent_identity=_directory_identity(os.fstat(parent_fd)),
+            input_path=input_path,
+            meta_path=meta_path,
+            manifest=manifest,
+            consumed_artifacts=tuple(consumed_artifacts),
+        )
         _require_anchored_output_stable(target)
         _require_fresh_output_leaf(target)
         yield target
@@ -1308,7 +1396,7 @@ def _anchored_output_target(
         if target.published_fd is not None:
             _require_published_output_stable(target)
     finally:
-        if target.published_fd is not None:
+        if target is not None and target.published_fd is not None:
             os.close(target.published_fd)
         os.close(parent_fd)
 
@@ -1452,7 +1540,13 @@ def _write_json_atomic(
             dir_fd=target.parent_fd,
         )
         staging_identity = os.fstat(staging_fd)
-        with os.fdopen(os.dup(staging_fd), "wb") as fh:
+        writer_fd = os.dup(staging_fd)
+        try:
+            writer = os.fdopen(writer_fd, "wb")
+        except BaseException:
+            os.close(writer_fd)
+            raise
+        with writer as fh:
             fh.write(expected_bytes)
             fh.flush()
             os.fsync(fh.fileno())

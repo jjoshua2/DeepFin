@@ -258,7 +258,14 @@ def _artifact_from_fd(
     digest = hashlib.sha256()
     offset = 0
     try:
-        while block := os.pread(file_fd, 1024 * 1024, offset):
+        while offset < int(before.st_size):
+            block = os.pread(
+                file_fd,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not block:
+                break
             digest.update(block)
             offset += len(block)
     except OSError as exc:
@@ -295,6 +302,8 @@ def _artifact_from_fd(
         raise
     if any(getattr(before, field) != getattr(after, field) for field in stable):
         raise SystemExit(f"evidence artifact changed while being read: {path}")
+    if offset != int(after.st_size):
+        raise SystemExit(f"evidence artifact could not be read completely: {path}")
     return {
         "path": str(path.expanduser().resolve()),
         "size": int(after.st_size),
@@ -315,7 +324,14 @@ def _read_stable_bytes_fd(
     chunks: list[bytes] = []
     offset = 0
     try:
-        while block := os.pread(file_fd, 1024 * 1024, offset):
+        while offset < int(before.st_size):
+            block = os.pread(
+                file_fd,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not block:
+                break
             chunks.append(block)
             offset += len(block)
     except OSError as exc:
@@ -352,6 +368,8 @@ def _read_stable_bytes_fd(
         raise
     if any(getattr(before, field) != getattr(after, field) for field in stable):
         raise SystemExit(f"evidence artifact changed while being read: {path}")
+    if offset != int(after.st_size):
+        raise SystemExit(f"evidence artifact could not be read completely: {path}")
     return b"".join(chunks)
 
 
@@ -572,26 +590,34 @@ def _flush_fsync_file_and_parent(
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
-    if require_file and not resolved.is_file():
-        raise SystemExit(f"decision-grade provenance requires a regular file: {resolved}")
-    if not resolved.exists():
-        raise SystemExit(f"artifact does not exist: {resolved}")
-    file_stat = resolved.stat()
-    result: dict[str, Any] = {
-        "path": str(resolved),
-        "size": int(file_stat.st_size),
-        "mtime_ns": int(file_stat.st_mtime_ns),
-        "ctime_ns": int(file_stat.st_ctime_ns),
-        "device": int(file_stat.st_dev),
-        "inode": int(file_stat.st_ino),
-    }
-    if resolved.is_file():
-        digest = hashlib.sha256()
-        with resolved.open("rb") as fh:
-            for block in iter(lambda: fh.read(1024 * 1024), b""):
-                digest.update(block)
-        result["sha256"] = digest.hexdigest()
-    return result
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise SystemExit("decision-grade provenance requires O_NOFOLLOW")
+    try:
+        descriptor = os.open(
+            resolved,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+        )
+    except OSError as exc:
+        raise SystemExit(f"artifact does not exist: {resolved}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            if require_file:
+                raise SystemExit(
+                    f"decision-grade provenance requires a regular file: {resolved}"
+                )
+            return {
+                "path": str(resolved),
+                "size": int(opened.st_size),
+                "mtime_ns": int(opened.st_mtime_ns),
+                "ctime_ns": int(opened.st_ctime_ns),
+                "device": int(opened.st_dev),
+                "inode": int(opened.st_ino),
+            }
+        return _artifact_from_fd(descriptor, resolved, before=opened)
+    finally:
+        os.close(descriptor)
 
 
 def _artifact_identity(artifact: Any) -> dict[str, Any] | None:
@@ -897,8 +923,16 @@ def _quarantine_manifest_recovery_on_integrity_failure(
     try:
         yield
         _require_parent(meta_path, parent_fd)
-    except (FileExistsError, SystemExit, RuntimeError):
-        _mark_manifest_namespace_invalid(meta_path, parent_fd=parent_fd)
+    except BaseException as failure:
+        try:
+            _require_parent(meta_path, parent_fd)
+        except (SystemExit, RuntimeError) as integrity_failure:
+            _mark_manifest_namespace_invalid(meta_path, parent_fd=parent_fd)
+            raise integrity_failure from failure
+        except OSError as authentication_failure:
+            raise failure from authentication_failure
+        if isinstance(failure, (FileExistsError, SystemExit, RuntimeError)):
+            _mark_manifest_namespace_invalid(meta_path, parent_fd=parent_fd)
         raise
 
 
@@ -907,22 +941,22 @@ def _acquire_output_lock(output_path: Path) -> IO[bytes]:
     lock_path = _output_lock_path(output_path)
     flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NONBLOCK
     flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
     try:
         descriptor = os.open(lock_path, flags, 0o600)
-    except OSError as exc:
-        raise SystemExit(f"cannot safely open output lock {lock_path}: {exc}") from exc
-    handle = os.fdopen(descriptor, "a+b")
-    try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise SystemExit(f"output lock is not a regular file: {lock_path}")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        handle = os.fdopen(descriptor, "a+b")
+        descriptor = -1
+        return handle
     except BlockingIOError as exc:
-        handle.close()
         raise SystemExit(f"another producer holds the output lock: {lock_path}") from exc
-    except BaseException:
-        handle.close()
-        raise
-    return handle
+    except OSError as exc:
+        raise SystemExit(f"cannot safely open output lock {lock_path}: {exc}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _acquire_output_locks(
@@ -1585,7 +1619,12 @@ def _durably_prepare_output_artifact(
         writer_before = _flush_fsync_file_and_parent(
             fh, tmp_path, parent_fd=parent_fd,
         )
-        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | os.O_NONBLOCK
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
         reader_fd = os.open(tmp_path.name, flags, dir_fd=parent_fd)
         opened = _authenticate_initial_open(
             tmp_path, parent_fd, reader_fd, links=1,

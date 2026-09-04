@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import importlib.abc
 import importlib.machinery
+import errno
+import os
 import stat
 import sys
 from collections.abc import Mapping
@@ -29,6 +31,48 @@ PERMITTED_NATIVE_MODULES = (
 _ACTIVE_GUARD: SourceOnlyProjectImportGuard | None = None
 
 
+def _stable_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(value.st_mode), int(value.st_size), int(value.st_mtime_ns),
+        int(value.st_ctime_ns), int(value.st_dev), int(value.st_ino),
+    )
+
+
+def _stable_regular_bytes(path: Path) -> tuple[bytes, os.stat_result]:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise OSError(errno.ENOTSUP, "safe reads require O_NOFOLLOW", str(path))
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        chunks: list[bytes] = []
+        offset = 0
+        while offset < int(before.st_size):
+            chunk = os.pread(
+                descriptor,
+                min(1024 * 1024, int(before.st_size) - offset),
+                offset,
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            offset += len(chunk)
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if _stable_identity(before) != _stable_identity(after) or len(
+            content
+        ) != int(after.st_size):
+            raise OSError(errno.EIO, "file changed during stable read", str(path))
+        return content, after
+    finally:
+        os.close(descriptor)
+
+
 def _is_project_module(fullname: str) -> bool:
     return any(
         fullname == root or fullname.startswith(root + ".")
@@ -41,17 +85,7 @@ def _file_bytes(
 ) -> bytes:
     """Return exact snapshotted bytes or fail before compiling anything."""
     resolved = path.resolve()
-    before = resolved.lstat()
-    content = resolved.read_bytes()
-    after = resolved.lstat()
-    before_identity = (
-        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
-        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
-    )
-    after_identity = (
-        int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
-        int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
-    )
+    content, after = _stable_regular_bytes(resolved)
     blob = f"blob {len(content)}\0".encode("ascii") + content
     observed_oid = hashlib.new(object_format, blob).hexdigest()
     expected_identity = (
@@ -69,9 +103,7 @@ def _file_bytes(
         expected.get("matches_git_revision") is True,
     )
     if (
-        before_identity != after_identity
-        or not stat.S_ISREG(after.st_mode)
-        or not all(expected_identity)
+        not stat.S_ISREG(after.st_mode) or not all(expected_identity)
     ):
         raise ImportError(
             f"tracked project source changed after the pre-import snapshot: {resolved}"
@@ -137,23 +169,12 @@ def _identity(artifact: Mapping[str, Any]) -> tuple[Any, ...]:
 def _native_file_artifact(path: Path) -> dict[str, Any]:
     """Read one extension as stable bytes before the dynamic loader maps it."""
     resolved = path.resolve()
-    before = resolved.lstat()
-    content = resolved.read_bytes()
-    after = resolved.lstat()
-    before_identity = (
-        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
-        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
-    )
-    after_identity = (
-        int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
-        int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
-    )
-    if (
-        before_identity != after_identity
-        or not stat.S_ISREG(after.st_mode)
-        or len(content) != after.st_size
-    ):
-        raise ImportError(f"native extension changed while authenticated: {resolved}")
+    try:
+        content, after = _stable_regular_bytes(resolved)
+    except OSError as exc:
+        raise ImportError(
+            f"native extension changed while authenticated: {resolved}"
+        ) from exc
     return {
         "path": str(resolved),
         "lexical_path": str(resolved),
