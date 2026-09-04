@@ -75,6 +75,7 @@ _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION = 0.95
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
 SEARCH_OPTIONS = search_options_module.SEARCH_OPTIONS
 _NATIVE_MODULES = [
+    "chess_anti_engine.encoding._features_ext",
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
 ]
@@ -302,7 +303,7 @@ def _require_safe_output_path(
         for name in (
             "producer_script", "publication_helper", "checkpoint",
             "checkpoint_params", "audit_set", "matched_rows", "preregistration",
-            "mcts_extension", "lc0_extension",
+            "features_extension", "mcts_extension", "lc0_extension",
         ):
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
@@ -432,8 +433,12 @@ def _producer_source_matches_revision(
 ) -> bool:
     """Authenticate producer Python bytes against their reported Git revision."""
     if (
-        not _artifact_provenance_complete(artifact)
-        or not isinstance(artifact, dict)
+        not isinstance(artifact, dict)
+        or not isinstance(artifact.get("path"), str)
+        or not artifact.get("path")
+        or not _nonnegative_int(artifact.get("size"))
+        or not _nonnegative_int(artifact.get("mtime_ns"))
+        or not _valid_sha256(artifact.get("sha256"))
         or artifact.get("repo_relative_path") != relative_path
         or artifact.get("matches_producer_git_revision") is not True
         or not isinstance(producer_git_sha, str)
@@ -676,6 +681,20 @@ def _compatible_lc0_extension(artifact: Any) -> bool:
         _artifact_provenance_complete(artifact)
         and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and artifact.get("cboard_encode_full") is True
+        and artifact.get("freshness_check") == {
+            "modules": _NATIVE_MODULES,
+            "minimum_gcc_major": 15,
+            "production_recipe_required": True,
+            "passed": True,
+            "issues": [],
+        }
+    )
+
+
+def _compatible_features_extension(artifact: Any) -> bool:
+    return bool(
+        _artifact_provenance_complete(artifact)
+        and str(artifact.get("path", "")).endswith((".so", ".pyd"))
         and artifact.get("freshness_check") == {
             "modules": _NATIVE_MODULES,
             "minimum_gcc_major": 15,
@@ -1179,6 +1198,8 @@ def _require_manifest(
     mcts_extension = manifest.get("mcts_extension")
     if not _compatible_native_extension(mcts_extension):
         failures.append("native MCTS extension provenance is incomplete")
+    if not _compatible_features_extension(manifest.get("features_extension")):
+        failures.append("native feature encoding extension provenance is incomplete")
     if not _compatible_lc0_extension(manifest.get("lc0_extension")):
         failures.append("native CBoard encoding extension provenance is incomplete")
     artifact_stability = manifest.get("artifact_stability")

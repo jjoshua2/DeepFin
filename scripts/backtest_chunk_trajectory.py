@@ -892,6 +892,7 @@ def main() -> None:
 
     import torch
 
+    from chess_anti_engine.encoding import _features_ext as features_extension
     from chess_anti_engine.encoding import _lc0_ext as lc0_extension
     from chess_anti_engine.encoding.cboard_encode import CBoard
     from chess_anti_engine.mcts.gumbel import GumbelConfig
@@ -939,14 +940,19 @@ def main() -> None:
     loaded_mcts_artifact = _artifact(
         Path(mcts_extension.__file__), require_file=True,
     )
+    loaded_features_artifact = _artifact(
+        Path(features_extension.__file__), require_file=True,
+    )
     loaded_lc0_artifact = _artifact(
         Path(lc0_extension.__file__), require_file=True,
     )
+    features_module = "chess_anti_engine.encoding._features_ext"
     mcts_module = "chess_anti_engine.mcts._mcts_tree"
     lc0_module = "chess_anti_engine.encoding._lc0_ext"
-    native_modules = [lc0_module, mcts_module]
+    native_modules = [features_module, lc0_module, mcts_module]
     native_import_changes = sorted(
         module for module, loaded in (
+            (features_module, loaded_features_artifact),
             (lc0_module, loaded_lc0_artifact),
             (mcts_module, loaded_mcts_artifact),
         )
@@ -959,6 +965,7 @@ def main() -> None:
         require_production_recipe=True,
         modules=native_modules,
         loaded_paths={
+            features_module: Path(features_extension.__file__),
             lc0_module: Path(lc0_extension.__file__),
             mcts_module: Path(mcts_extension.__file__),
         },
@@ -981,6 +988,7 @@ def main() -> None:
             checkpoint_path,
             Path(__file__),
             Path(publication_module.__file__),
+            Path(features_extension.__file__),
             Path(mcts_extension.__file__),
             Path(lc0_extension.__file__),
             *([checkpoint_params_path] if checkpoint_params_path is not None else []),
@@ -1372,6 +1380,7 @@ def main() -> None:
                 checkpoint_path,
                 Path(__file__),
                 Path(publication_module.__file__),
+                Path(features_extension.__file__),
                 Path(mcts_extension.__file__),
                 Path(lc0_extension.__file__),
                 *([checkpoint_params_path] if checkpoint_params_path is not None else []),
@@ -1758,6 +1767,7 @@ def main() -> None:
         "audit_set": provenance["audit_set"],
         "matched_rows": provenance["matched_rows"],
         "preregistration": provenance["preregistration"],
+        "features_extension": loaded_features_artifact,
         "mcts_extension": loaded_mcts_artifact,
         "lc0_extension": loaded_lc0_artifact,
     }
@@ -1776,6 +1786,7 @@ def main() -> None:
             _artifact_if_file(preregistration_path)
             if preregistration_path is not None else None
         ),
+        "features_extension": _artifact_if_file(Path(features_extension.__file__)),
         "mcts_extension": _artifact_if_file(Path(mcts_extension.__file__)),
         "lc0_extension": _artifact_if_file(Path(lc0_extension.__file__)),
     }
@@ -1855,6 +1866,16 @@ def main() -> None:
         "search_warmup": search_warmup,
         "artifact_stability": artifact_stability,
         "realized_tablebase": realized_tablebase,
+        "features_extension": {
+            **loaded_features_artifact,
+            "freshness_check": {
+                "modules": native_modules,
+                "minimum_gcc_major": 15,
+                "production_recipe_required": True,
+                "passed": not extension_issues,
+                "issues": extension_issues,
+            },
+        },
         "mcts_extension": {
             **loaded_mcts_artifact,
             "abi_version": int(getattr(mcts_extension, "ABI_VERSION", 0)),

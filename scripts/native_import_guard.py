@@ -15,6 +15,7 @@ from typing import Any
 
 
 EARLY_NATIVE_MODULES = (
+    "chess_anti_engine.encoding._features_ext",
     "chess_anti_engine.encoding._lc0_ext",
     "chess_anti_engine.mcts._mcts_tree",
 )

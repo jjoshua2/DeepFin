@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import inspect
 import json
 import os
@@ -297,6 +298,33 @@ def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> N
     ) < module_source.index("from chess_anti_engine.eval.audit import")
 
 
+def test_trajectory_preimport_guard_covers_every_loaded_project_extension() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    program = "\n".join((
+        "import json, sys",
+        "from pathlib import Path",
+        "import scripts.backtest_chunk_trajectory",
+        "from scripts.native_import_guard import EARLY_NATIVE_MODULES",
+        "loaded = sorted(name for name, module in sys.modules.items() "
+        "if name.startswith('chess_anti_engine.') "
+        "and isinstance(getattr(module, '__file__', None), str) "
+        "and Path(module.__file__).suffix in ('.so', '.pyd'))",
+        "print(json.dumps({'guarded': sorted(EARLY_NATIVE_MODULES), 'loaded': loaded}))",
+    ))
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    inventory = json.loads(completed.stdout)
+
+    assert inventory["loaded"] == inventory["guarded"]
+    assert "chess_anti_engine.encoding._features_ext" in inventory["loaded"]
+
+
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
     realized: dict[str, float | int | bool | str] = {
         "concurrency_mode": "walker_puct",
@@ -523,15 +551,22 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "matched_rows": {
             "path": "/matched.npz", "size": 1, "mtime_ns": 1, "sha256": "d" * 64,
         },
+        "features_extension": {
+            "path": "/_features_ext.so", "size": 1, "mtime_ns": 1,
+            "sha256": "4" * 64,
+            "freshness_check": {
+                "modules": list(controller_module._NATIVE_MODULES),
+                "minimum_gcc_major": 15,
+                "production_recipe_required": True,
+                "passed": True, "issues": [],
+            },
+        },
         "mcts_extension": {
             "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
             "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
             "gss_halving_rev": 3,
             "freshness_check": {
-                "modules": [
-                    "chess_anti_engine.encoding._lc0_ext",
-                    "chess_anti_engine.mcts._mcts_tree",
-                ],
+                "modules": list(controller_module._NATIVE_MODULES),
                 "minimum_gcc_major": 15,
                 "production_recipe_required": True,
                 "passed": True, "issues": [],
@@ -541,10 +576,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "path": "/_lc0_ext.so", "size": 1, "mtime_ns": 1,
             "sha256": "2" * 64, "cboard_encode_full": True,
             "freshness_check": {
-                "modules": [
-                    "chess_anti_engine.encoding._lc0_ext",
-                    "chess_anti_engine.mcts._mcts_tree",
-                ],
+                "modules": list(controller_module._NATIVE_MODULES),
                 "minimum_gcc_major": 15,
                 "production_recipe_required": True,
                 "passed": True, "issues": [],
@@ -985,6 +1017,17 @@ def test_loader_requires_realized_syzygy_and_native_binary(tmp_path: Path) -> No
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match=r"MCTS.*Syzygy|Syzygy.*MCTS"):
+        load_transitions(bank)
+
+
+def test_loader_requires_feature_encoder_binary_provenance(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["features_extension"]["sha256"] = "not-a-hash"
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="feature encoding extension"):
         load_transitions(bank)
 
 
@@ -2187,6 +2230,30 @@ def test_producer_rejects_foreign_loaded_python_module(
         SystemExit, match=r"chess_anti_engine\.foreign_review_fixture",
     ):
         producer._producer_python_source_artifacts("a" * 40, require_tracked=True)
+
+
+def test_real_producer_source_inventory_round_trips_through_analyzer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    importlib.import_module("chess_anti_engine.uci.model_loader")
+    repo_root = Path(producer.__file__).resolve().parents[1]
+
+    def tracked_bytes(_commit: str, relative: str) -> bytes | None:
+        path = repo_root / relative
+        return path.read_bytes() if path.is_file() else None
+
+    monkeypatch.setattr(producer, "_producer_git_file_at_commit", tracked_bytes)
+    monkeypatch.setattr(controller_module, "_git_file_at_commit", tracked_bytes)
+
+    sources = producer._producer_python_source_artifacts(
+        "a" * 40, require_tracked=True,
+    )
+
+    assert sources["scripts"]["repo_relative_path"] == "scripts/__init__.py"
+    assert sources["scripts"]["size"] == 0
+    assert controller_module._producer_sources_match_revision(sources, "a" * 40)
 
 
 def test_producer_requires_driver_provenance_before_decision_grade_search() -> None:
